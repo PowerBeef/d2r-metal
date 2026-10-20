@@ -33,6 +33,8 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
 
 版本号与构建号可以指定：`DM_MAC_VERSION`（缺省 1.0）、`DM_MAC_BUILD`（缺省取当前的月日时分）。
 
+App 带本项目自己的图标（`dm/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png`）。想换成自己的图：`DM_MAC_ICON_SOURCE=<图>`（要不透明、铺满的正方形；macOS 26 起圆角由系统自己裁，四周留透明边的图会被缩小放进灰色底框）；不要图标：`DM_MAC_ICON_SOURCE=none`。
+
 ## 第一次打开
 
 双击 App。第一次启动会请你选**游戏资源文件夹**：选 `~/dm-work/data/switch/3.3.94012/Update`（或它里面的 `RomFS`）即可，里面要有 `data` 文件夹；直接选装着各个 `.data` 和 `build_manifest.psv` 的那个文件夹也可以。选错了会说明原因并让你重选；选对之后会记住，下次不再问。

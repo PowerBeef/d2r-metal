@@ -62,18 +62,22 @@ if [ "${DM_MAC_ROMFS_COPY:-0}" = 1 ]; then
   [ -f "$ROM/data/build_manifest.psv" ] || { echo "🔴 DM_MAC_ROMFS_COPY=1 但资源里没有清单：$ROM/data/build_manifest.psv"; exit 2; }
   ditto "$ROM" "$RES/romfs"
 fi
-# DM_MAC_ICON_SOURCE=<图>：用自己给的图出 App 图标（仓库不带美术）
-# DM_MAC_ICON_SOURCE=<image>: build the App icon from an image you provide (the repository carries no artwork)
-if [ -n "${DM_MAC_ICON_SOURCE:-}" ]; then
-  [ -f "$DM_MAC_ICON_SOURCE" ] || { echo "🔴 DM_MAC_ICON_SOURCE 指的图不存在：$DM_MAC_ICON_SOURCE"; exit 2; }
+# DM_MAC_ICON_SOURCE=<图>：App 图标用的图，缺省是仓库自带的 iOS 图标（ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png）；=none 不带图标。
+# 图要是不透明、铺满的正方形：macOS 26 起圆角由系统自己裁；四周留透明边的图（macOS 25 以前的画法）在 macOS 27 上实测会被缩小放进灰色底框里显示
+# DM_MAC_ICON_SOURCE=<image>: the picture for the App icon, by default the repository's own iOS icon (ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png); =none builds without an icon.
+# Use an opaque, full-bleed square: from macOS 26 on the system rounds the corners itself; a picture with transparent margins (the pre-macOS 26 way of drawing) was shown shrunk inside a gray frame on macOS 27
+ICON_SRC=${DM_MAC_ICON_SOURCE:-$DM/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png}; ICON_KEY=
+if [ "$ICON_SRC" != none ]; then
+  [ -f "$ICON_SRC" ] || { echo "🔴 DM_MAC_ICON_SOURCE 指的图不存在：$ICON_SRC"; exit 2; }
   ICONSET="$RES/AppIcon.iconset"; mkdir "$ICONSET"
   for size in 16 32 128 256 512; do
-    sips -s format png -z "$size" "$size" "$DM_MAC_ICON_SOURCE" --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
+    sips -s format png -z "$size" "$size" "$ICON_SRC" --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
     twice=$((size * 2))
-    sips -s format png -z "$twice" "$twice" "$DM_MAC_ICON_SOURCE" --out "$ICONSET/icon_${size}x${size}@2x.png" > /dev/null
+    sips -s format png -z "$twice" "$twice" "$ICON_SRC" --out "$ICONSET/icon_${size}x${size}@2x.png" > /dev/null
   done
   iconutil -c icns "$ICONSET" -o "$RES/AppIcon.icns"
   rm -r "$ICONSET"
+  ICON_KEY="<key>CFBundleIconFile</key><string>AppIcon</string>"
 fi
 if [ -z "$LINK" ] && [ -n "$(find "$RES" -type l -print -quit)" ]; then
   echo "🔴 自带资源的包里不许有符号链接（换到别的机器就断）"; exit 3
@@ -89,7 +93,7 @@ cat > "$APP/Contents/Info.plist" <<PL
 <key>CFBundleDisplayName</key><string>$NAME</string>
 <key>CFBundleIdentifier</key><string>$BID</string>
 <key>CFBundleExecutable</key><string>D2RMobile</string>
-${DM_MAC_ICON_SOURCE:+<key>CFBundleIconFile</key><string>AppIcon</string>}
+${ICON_KEY}
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$VER</string>
 <key>CFBundleVersion</key><string>$BUILD</string>

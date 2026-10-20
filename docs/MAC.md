@@ -33,6 +33,8 @@ The App contains only our own program. The rewritten game program, the shader li
 
 Version and build number can be set: `DM_MAC_VERSION` (default 1.0) and `DM_MAC_BUILD` (default: the current month-day-hour-minute).
 
+The App gets the project's own icon (`dm/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png`). Use your own picture with `DM_MAC_ICON_SOURCE=<image>` (an opaque square that fills the whole picture; macOS 26 and later round the corners themselves, and a picture with transparent margins is shown shrunk inside a gray frame), or build without an icon with `DM_MAC_ICON_SOURCE=none`.
+
 ## First launch
 
 Double-click the App. The first launch asks you to choose the **game resource folder**: pick `~/dm-work/data/switch/3.3.94012/Update` (or the `RomFS` inside it); it must contain a `data` folder. Choosing the folder that directly holds the `.data` files and `build_manifest.psv` also works. A wrong choice is explained and you are asked again; a correct one is remembered.
