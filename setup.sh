@@ -17,13 +17,15 @@ die() { echo "✗ $*" >&2; exit 1; }
 case "${DM_LANG:-${LC_ALL:-${LANG:-}}}" in zh*) ZH=1;; *) ZH=0;; esac
 m() { if [ "$ZH" = 1 ]; then echo "$1"; else echo "$2"; fi; }
 
-# 给了游戏包与密钥：先把游戏文件取出来放到位（dm/tools/extract_game.sh），再接着往下做
+# 给了游戏包与密钥：先把游戏文件取出来放到位（dm/tools/extract_game.sh），再接着往下做。本体与更新可以是分开的两个包：先给所有游戏包，最后给 prod.keys
+# Given game packages and keys: first extract the game files into place (dm/tools/extract_game.sh), then carry on. The base game and the update may be separate packages: all game packages first, prod.keys last
 case "${1:-}" in
   *.xci|*.XCI|*.nsp|*.NSP)
-    [ $# -ge 2 ] || die "$(m "用法：./setup.sh <游戏包 .xci 或 .nsp> <prod.keys>" "Usage: ./setup.sh <game package .xci or .nsp> <prod.keys>")"
+    PKGS=(); while [ $# -gt 0 ]; do case "$1" in *.xci|*.XCI|*.nsp|*.NSP) PKGS+=("$1"); shift;; *) break;; esac; done
+    [ $# -ge 1 ] || die "$(m "用法：./setup.sh <游戏包 .xci 或 .nsp> [<游戏包> …] <prod.keys>" "Usage: ./setup.sh <game package .xci or .nsp> [<game package> ...] <prod.keys>")"
     if [ -d "$GAME" ]; then say "$(m "已有游戏文件目录 ${GAME}，不再解包" "Game files directory $GAME already exists; skipping extraction")"
-    else bash "$HERE/dm/tools/extract_game.sh" "$1" "$2" || exit 1; fi
-    shift 2;;
+    else bash "$HERE/dm/tools/extract_game.sh" "${PKGS[@]}" "$1" || exit 1; fi
+    shift;;
 esac
 
 # 体检：逐项报「状态 / 缺的话去哪拿 / 下一步命令」。./setup.sh check 只做这一段，不动任何东西
