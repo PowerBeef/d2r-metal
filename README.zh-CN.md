@@ -255,7 +255,7 @@ flowchart LR
 
 装到手机上第一次打开，App 会要「游戏资源文件夹」——就是游戏文件里的 18 个资源档案，怎么放见 [docs/GAME_FILES.zh-CN.md](docs/GAME_FILES.zh-CN.md) 的「手机上要放的那个游戏资源文件夹」一节。
 
-`./setup.sh check` 是体检：逐项报告这台电脑、工具、游戏文件、签名配置的状态，缺的每一项都给出去哪拿和下一步命令，不做任何改动。手上是一整个游戏包（`.xci` / `.nsp`）时，`./setup.sh <游戏包> <prod.keys>` 会先把游戏文件取出来放到位再接着准备（要先装 hactool）。每次更新到新的提交之后都要再跑一遍 `./setup.sh`：它会按当前源码重出改写产物与着色器库（已是最新的步骤会跳过）。它还会改写仓库里三个随工具指纹变化的文件（`dm/gfx/tools/dmsh_chain.lock`、`dm/gfx/nvn/dmsh_chain.h`、`dm/gfx/nvn/c1_full.tsv`），这是预期的，不要提交它们。
+`./setup.sh check` 是体检：逐项报告这台电脑、工具、游戏文件、签名配置的状态，缺的每一项都给出去哪拿和下一步命令，不做任何改动。手上是一整个游戏包（`.xci` / `.nsp`）时，`./setup.sh <游戏包> <prod.keys>` 会先把游戏文件取出来放到位再接着准备（要先装 hactool）；本体与更新是分开的两个包时两个都给：`./setup.sh <本体> <更新> <prod.keys>`。每次更新到新的提交之后都要再跑一遍 `./setup.sh`：它会按当前源码重出改写产物与着色器库（已是最新的步骤会跳过）。它还会改写仓库里三个随工具指纹变化的文件（`dm/gfx/tools/dmsh_chain.lock`、`dm/gfx/nvn/dmsh_chain.h`、`dm/gfx/nvn/c1_full.tsv`），这是预期的，不要提交它们。
 
 ### 在 Mac 上直接玩
 
