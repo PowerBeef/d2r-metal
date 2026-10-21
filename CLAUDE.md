@@ -13,24 +13,43 @@ Everything derived from the user's game files lives in the workspace `$DM_ROOT` 
 
 ## Fork workflow
 
+The fork develops on its own `main`. Changes worth sharing go upstream as cherry-picks.
+
 - **Remotes:**
-  - `origin` = the fork.
-  - `upstream` = jhaizhou-ops, fetch only (push URL `DISABLED`).
+  - `origin` = the fork. `main` is its default branch.
+  - `upstream` = jhaizhou-ops, fetch only (push URL `DISABLED`). Its branch is read as `upstream/main`; there is no local mirror.
 - **Branches:**
-  - `main` mirrors `upstream/main` and never gets local commits.
-  - Each upstream PR has its own branch off `main`: `fix/...` or `feat/...`.
-  - `personal` is the integration branch the user's own apps are built from. It holds `main` + every PR branch (merged with `--no-ff`) + fork-only commits such as this file.
-- **Updating `personal`:** merge `main` and the updated PR branches into it. Don't recreate it from `main`, or the fork-only commits are lost.
+  - **`main` is the fork's trunk.** All work lands here first, and the user's apps are built from it.
+    - It is public: never force-push it, rebase it, or reset it to `upstream/main`.
+    - Bigger work can use a short-lived local topic branch, merged into `main` when done.
+  - **`up/<topic>` branches exist only for upstream PRs.** Each starts from `upstream/main` and receives cherry-picks from `main`.
+    - PRs opened before this workflow keep their old branch names: `fix/extract-split-nsp`, `fix/ios-install-battery-gate`, `feat/mac-default-icon`, `feat/mac-cursor-autohide`.
+- **Commits on `main`:**
+  - Keep one topic per commit (or a short series), so any of them can be cherry-picked on its own.
+  - Code follows the upstream rules below even when it isn't meant for upstream yet, so it can be sent later without rework.
+  - End each message with an `Upstream:` trailer, before the attribution lines:
+    - `Upstream: candidate` may go upstream. It must not touch fork-only files.
+    - `Upstream: fork-only` stays here: this file, fork tooling, and the user's own preferences.
+- **Pulling upstream changes into `main`:**
   1. `git fetch upstream`
-  2. `git switch main && git merge --ff-only upstream/main && git push origin main`
-  3. Rebase each PR branch onto `main` and force-push it to `origin`.
-  4. `git switch personal && git merge main <PR branches>`
-  5. Push, then rebuild the apps.
-- **Upstream PRs:**
-  - Open them only after the user approves each one: `gh pr create -R jhaizhou-ops/d2r-mobile --head PowerBeef:<branch>`.
-  - Fill in `.github/PULL_REQUEST_TEMPLATE.md` honestly: tick only the checks actually run, and paste their last line.
-  - Maintainers "adopt" PRs: they close them and re-apply the change on their own `main` with author credit.
-  - Fork-only files (like this one) never go on `main` or on PR branches.
+  2. `git switch main && git merge upstream/main`. Always merge, never rebase. On a conflict, `git merge --abort` and report; don't auto-resolve.
+     - Maintainers adopt PRs by re-applying them, so a conflict can come from our own change in its adopted form. Upstream's version wins, after the user confirms.
+  3. Rebase each open PR branch onto `upstream/main` and push it with `--force-with-lease`. This updates the open upstream PR.
+  4. `git push origin main`, then rebuild the apps.
+- **Sending commits upstream:**
+  1. The user picks the commits. Candidates not yet upstream:
+     - `git log --format='%h %s' --grep='^Upstream: candidate' upstream/main..main`
+     - `git cherry -v upstream/main main` marks with `-` the commits upstream already has in identical form.
+     - `git log --all --grep='cherry picked from commit <sha>'` shows whether a commit is already on a PR branch.
+  2. `git fetch upstream && git switch -c up/<topic> upstream/main`
+  3. `git cherry-pick -x <sha>...`. A conflict means the change depends on other fork commits: `git cherry-pick --abort` and report.
+  4. `git diff --name-only upstream/main` must list no fork-only file. Run the source checks and the test suites the change touches on this branch.
+  5. Only after the user approves each PR:
+     - `git push -u origin up/<topic>`
+     - `gh pr create -R jhaizhou-ops/d2r-mobile --head PowerBeef:up/<topic>`
+  6. Fill in `.github/PULL_REQUEST_TEMPLATE.md` honestly: tick only the checks actually run, and paste their last line.
+  7. For review feedback, fix on `main` first, then cherry-pick the fix onto the PR branch.
+  8. Maintainers "adopt" PRs: they close them and re-apply the change on their own `main` with author credit. After that, ask before deleting the PR branch locally and on `origin`.
 - **The three files `./setup.sh` rewrites for local tools stay dirty and are never committed:** `dm/gfx/tools/dmsh_chain.lock`, `dm/gfx/nvn/dmsh_chain.h`, `dm/gfx/nvn/c1_full.tsv`.
   - Don't `git reset --hard` / `git checkout .` over them. Restoring them means re-running `./setup.sh`, which re-translates every shader (~10 min).
   - Switch branches with `git switch`; use `git stash` if needed.
