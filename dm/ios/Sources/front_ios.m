@@ -1108,14 +1108,22 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
 // 强实现覆盖 hle_fs.c 的弱日志实现；每个被拒事务由平台层调用一次。
 // After a save transaction is rejected, only notify the player: the game thread does not wait for UIKit and the recovery / commit flow of the next transaction is unchanged.
 // The strong implementation overrides the weak logging implementation in hle_fs.c; the platform layer calls it once per rejected transaction.
+// 找弹框的窗口同系统输入框：主窗口 → 前台活跃场景的窗口 → 任一窗口（进后台时那次存盘失败，这一刻多半没有主窗口）；一个窗口都没有就记下，下次激活时再弹
+// The window to present on is found the same way as for the system input box: key window → a window of the foreground active scene → any window (when the save on entering the background fails there is most likely no key window at that moment); with no window at all, remember it and present it on the next activation
+static _Atomic int g_save_failed_err;
 void front_save_failed(int err) {
     LOG("前端：存档写失败 errno=%d，异步提示玩家", err);
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *vc = nil;
+        UIViewController *vc = nil, *alt = nil, *any = nil;
         for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
-            if ([s isKindOfClass:UIWindowScene.class]) for (UIWindow *w in ((UIWindowScene *)s).windows) if (w.isKeyWindow) vc = w.rootViewController;
+            if ([s isKindOfClass:UIWindowScene.class]) for (UIWindow *w in ((UIWindowScene *)s).windows) {
+                if (!w.rootViewController) continue;
+                if (w.isKeyWindow) vc = w.rootViewController;
+                else if (s.activationState == UISceneActivationStateForegroundActive && !alt) alt = w.rootViewController;
+                else if (!any) any = w.rootViewController; }
+        if (!vc) vc = alt ?: any;
         while (vc.presentedViewController) vc = vc.presentedViewController;
-        if (!vc) { LOG("【红】前端：存档失败提示没有窗口 errno=%d", err); return; }
+        if (!vc) { atomic_store(&g_save_failed_err, err); LOG("【红】前端：存档失败提示此刻没有窗口 errno=%d，下次激活时再弹", err); return; }
         UIAlertController *a = [UIAlertController alertControllerWithTitle:SWT("dmSaveNoSpace") message:nil preferredStyle:UIAlertControllerStyleAlert];
         [a addAction:[UIAlertAction actionWithTitle:SWT("dmConfirm") style:UIAlertActionStyleDefault handler:nil]];
         [vc presentViewController:a animated:YES completion:^{ LOG("前端：存档失败提示已显示 errno=%d", err); }];
@@ -1147,9 +1155,15 @@ static void audio_apply(void) { dm_audio_suspend(g_audio_bg || g_audio_intr); }
 // 这段时间游戏主循环照常跑，出图直接丢弃。不在局内（主菜单 / 选角）不等：那里没有待存的进度
 // In the enter-background callback (the system gives this callback 10 seconds): wait only in a run. Wait until "a save commit has appeared after sending the background focus, and no new commit for 0.2 seconds after that" (character and shared stash are two containers and may commit separately), at most 2.5 seconds.
 // During this time the game main loop runs as usual and presented frames are simply dropped. Outside a run (main menu / character select) do not wait: there is no unsaved progress there
+static _Atomic int g_rs_busy; static _Atomic uint64_t g_rs_saved_ns;   // 失活时游戏停着、在后台线程上存的那次：进行中 / 存成的时刻（resign_save） | the save made on a background thread at resign while the game was stopped: in progress / when it committed (resign_save)
 static void background_wait_save(void) {
-    int dm_ingame_now(void); void mtl_present_discard(int on); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
+    int dm_ingame_now(void), dm_game_paused(void); void mtl_present_discard(int on); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms); uint64_t now_ns(void);
     if (!dm_ingame_now()) return;
+    for (uint64_t t0 = now_ns(); atomic_load(&g_rs_busy) && now_ns() - t0 < 3500000000ull; ) usleep(10000);   // 失活时那次还在存：等它存完，两次别叠在一起 | the resign-time save is still running: wait for it so the two do not overlap
+    { uint64_t at = atomic_load(&g_rs_saved_ns); if (at && dm_game_paused() && now_ns() - at < 10000000000ull) { LOG("前端：进后台——失活时刚存过、游戏一直停着（没有新进度），不再存"); return; } }
+    // 系统输入框（数量框 / 起名框）开着：游戏那边在等它、客体时钟冻着（hle_swkbd），拍不走就存不了。先按「取消」关掉（游戏那边的输入框保持原值），再请存盘
+    // The system input box (quantity / name box) is open: the game is waiting for it and the guest clock is frozen (hle_swkbd), so no tick runs and nothing can be saved. Close it with "Cancel" first (the game's own input box keeps its value), then ask for the save
+    if (g_text_alert) { UIAlertController *a = g_text_alert; void (^fin)(int) = g_text_alert_finish; [a dismissViewControllerAnimated:NO completion:nil]; if (fin) fin(0); LOG("前端：进后台——系统输入框开着，按取消关掉再存盘"); }
     uint64_t n = 0; int froze = 0; double ms = 0;
     mtl_present_discard(1);
     dm_save_wait(2.5, &n, &froze, &ms);   // 游戏停着（暂停菜单开着）时冻住世界、临时放开暂停存这一次，存完写回（diag.c） | If the game is stopped (pause menu open), freeze the world and temporarily release the pause for this one save, then write it back (diag.c)
@@ -1162,11 +1176,34 @@ static void background_wait_save(void) {
 // Also ask the game to save once on resign active (gap found while investigating #22): when swiping up into the app switcher the App mostly only "resigns active" without entering background, and swiping the process away there
 // never reaches the enter-background save, losing the progress since the last timed save (the game saves every 5 minutes). Only sets the game's "auto-save on the next tick" timer (same as dm_request_save), does not wait for the commit and does not block the main thread;
 // requested at most once per 30 seconds (pulling Notification Center / Control Center back and forth does not save repeatedly). Becoming active again does nothing
+// 游戏停着（暂停菜单开着）时不走拍，光请「下一拍存」等于没请：这时照进后台的做法真存一次（冻住世界、临时放开暂停），在后台线程上等，不挡主线程。
+// 30 秒的节流只在上次请过之后真有过存档提交时才算：那次没存成就照请
+// While the game is stopped (pause menu open) it does not tick, so only asking for "save on the next tick" achieves nothing: then really save once the way going to the background does (freeze the world, temporarily release the pause), waiting on a background thread without blocking the main thread.
+// The 30-second throttle only counts when a save commit actually happened after the last request: if that one did not get saved, ask again
 static void resign_save(void) {
-    int dm_ingame_now(void); int dm_request_save(void); uint64_t now_ns(void);
-    static uint64_t last; uint64_t now = now_ns();
-    if (!dm_ingame_now() || (last && now - last < 30000000000ull)) return;
-    if (dm_request_save()) { last = now; LOG("前端：失活，请游戏下一拍存一次盘（不等）"); }
+    int dm_ingame_now(void), dm_game_paused(void); void dm_save_soon(void); uint64_t now_ns(void), dm_fs_commit_count(void); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
+    static uint64_t last, last_c; uint64_t now = now_ns();
+    if (!dm_ingame_now()) return;
+    if (dm_game_paused()) {
+        if (atomic_exchange(&g_rs_busy, 1)) return;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ uint64_t n = 0; int froze = 0; double ms = 0; dm_save_wait(2.5, &n, &froze, &ms);
+            if (n) atomic_store(&g_rs_saved_ns, now_ns());
+            LOG("前端：失活时游戏停着，存一次盘 %.0f ms，期间存档提交 %llu 次%s%s", ms, (unsigned long long)n, froze ? "（冻结世界存盘、已恢复暂停）" : "", n ? "" : "【红】（2.5 秒内没等到）");
+            atomic_store(&g_rs_busy, 0); });
+        return;
+    }
+    if (last && now - last < 30000000000ull && dm_fs_commit_count() != last_c) return;
+    last = now; last_c = dm_fs_commit_count(); dm_save_soon(); LOG("前端：失活，请游戏下一拍存一次盘（不等）");
+}
+// App 终止 / 场景断开前（main.m 调，系统只给几秒）：还在前台的（多任务界面里直接划掉、没进过后台）照进后台的做法存一次盘，再把这一局传上 iCloud。
+// 进过后台的在进后台时已经存过，图形也挂起了，不再存
+// Before the App terminates / the scene disconnects (called by main.m; the system gives only a few seconds): if still in the foreground (swiped away straight from the app switcher without ever entering the background), save once the way going to the background does, then upload this run to iCloud.
+// An App that went to the background already saved then, and its graphics are suspended, so it does not save again
+static int g_in_bg;   // 进了后台还没回前台（front_ios_focus_event 1 → 2） | in the background and not yet back to the foreground (front_ios_focus_event 1 → 2)
+void front_ios_final_save(void) {
+    if (g_in_bg) { LOG("前端：终止前——进后台时已存过，不再存"); return; }
+    background_wait_save();
+    { int dm_cloud_flush_wait(double sec); dm_cloud_flush_wait(2); }
 }
 // 场景生命周期（main.m 的 SceneDelegate 调）：0 失活 1 进后台 2 回前台 3 激活
 // Scene lifecycle (called by SceneDelegate in main.m): 0 resign active, 1 enter background, 2 return to foreground, 3 become active
@@ -1177,12 +1214,13 @@ void front_ios_focus_event(int ev) {
         case 0: [g_touch_view cancelControls]; { void dm_gamepad_reset(void); dm_gamepad_reset(); } dm_focus_set(2); resign_save(); break;   // 手柄的键和摇杆一并清零：按着键切走、在后台松开，回来不会补「松开」 | Controller buttons and sticks are zeroed as well: if a button is held while switching away and released in the background, no "release" is delivered on return
         // 进后台：客体时钟一并冻结（等效 Switch 挂起）——否则游戏线程挡在提交处、墙钟照走，回来时游戏内时间一下跳过整段后台时长（补拍 / 动画 / 冷却全跟着跳）
         // Entering background: the guest clock is frozen as well (equivalent to Switch suspend) -- otherwise the game thread is blocked at submission while the wall clock keeps running, and on return in-game time jumps over the whole background duration at once (catch-up ticks / animations / cooldowns all jump with it)
-        case 1: dm_focus_set(3); dm_ui_lifecycle(1); g_audio_bg = 1; audio_apply(); { void dm_cloud_flush(int); dm_cloud_flush(1); }   // iCloud：局内攒下的存档切后台时传掉（cloud_ios.m） | iCloud: saves accumulated in the run are uploaded when going to background (cloud_ios.m)
+        case 1: dm_focus_set(3); dm_ui_lifecycle(1); g_audio_bg = 1; audio_apply(); g_in_bg = 1;
             background_wait_save();   // 进后台先让游戏存一次盘并等提交完成，再挂起：手机上切出去后进程随时可能被系统回收，原版 5 分钟才自动存一次 | On entering background, first have the game save once and wait for the commit to finish, then suspend: on a phone the process may be reclaimed by the system at any time after switching away, and the original game only auto-saves every 5 minutes
+            { void dm_cloud_flush(int); dm_cloud_flush(1); }   // iCloud：局内攒下的存档（含刚才这次）切后台时传掉，用系统给的后台收尾时间（cloud_ios.m）。放在存盘之后：放前面的话刚才那次提交在收尾时间之外传 | iCloud: the saves accumulated in the run (including the one just made) are uploaded on going to background, within the background time the system grants (cloud_ios.m). Placed after the save: placed before it, the commit just made would be uploaded outside that time
             guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); break;   // 挂起返回前在途 GPU 已清空 | In-flight GPU work is already drained before the suspend returns
         case 2: dm_ui_lifecycle(0); { void dm_update_foreground(void); dm_update_foreground(); void dm_cloud_foreground(void); dm_cloud_foreground(); }   // 回前台时人若停在选角页，重查一次新版本（dm/host/dm_update.c；局内不查） | If the player is on the character select page when returning to foreground, check for a new version once more (dm/host/dm_update.c; not checked in a run)
-            { void dm_3d_scale_resumed(void); dm_3d_scale_resumed(); } dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); g_audio_bg = g_audio_intr = 0; audio_apply(); dm_focus_set(2); break;   // 回前台一律当打断已过：进后台时系统自己会发一次「被打断」（真机实测），却不保证回来时补发「结束」；会话若真还被占，启动声卡失败不致命、激活时重试 | Returning to foreground always treats the interruption as over: when entering background the system itself sends one "interrupted" (measured on a real device) but does not guarantee an "ended" on return; if the session is really still occupied, failing to start the audio device is not fatal and is retried on activation
-        case 3: dm_focus_set(1); audio_apply(); break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
+            { void dm_3d_scale_resumed(void); dm_3d_scale_resumed(); } dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); g_in_bg = 0; g_audio_bg = g_audio_intr = 0; audio_apply(); dm_focus_set(2); break;   // 回前台一律当打断已过：进后台时系统自己会发一次「被打断」（真机实测），却不保证回来时补发「结束」；会话若真还被占，启动声卡失败不致命、激活时重试 | Returning to foreground always treats the interruption as over: when entering background the system itself sends one "interrupted" (measured on a real device) but does not guarantee an "ended" on return; if the session is really still occupied, failing to start the audio device is not fatal and is retried on activation
+        case 3: dm_focus_set(1); audio_apply(); { int e = atomic_exchange(&g_save_failed_err, 0); if (e) front_save_failed(e); } break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
     }
 }
 

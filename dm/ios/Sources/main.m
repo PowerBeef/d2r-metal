@@ -304,6 +304,7 @@ int dm_main(int argc, char **argv);   // dm/host/main.c 以 -Dmain=dm_main 编�
 UIView *front_ios_view(CGRect frame); // front_ios.m
 void front_ios_lifecycle_install(void); // front_ios.m
 void front_ios_focus_event(int ev);     // front_ios.m
+void front_ios_final_save(void);        // front_ios.m：终止 / 断开前存一次盘 | front_ios.m: save once before terminating / disconnecting
 static char *g_boot_argv[8];
 static int g_boot_argc = 4;
 // RomFS 在哪：开发机由 devicectl 推进 Application Support/romfs；TestFlight / 商店安装在苹果托管资源包 romfs 里（只读）。都没有返回 nil（why 写原因）
@@ -767,6 +768,9 @@ static void host_start(void) {
     g_host_up = 1; plog("boot: 场景到前台，起宿主（进程已活 %.1f ms）", since_start());
     { const char *mw = getenv("DM_TEST_MEMWARN");   // 测试开关 DM_TEST_MEMWARN=<秒>：起宿主后这么多秒，照系统的调法调一次内存告警回调（验那一行日志；系统真发告警的时机造不出来） | test switch DM_TEST_MEMWARN=<seconds>: this many seconds after the host starts, call the memory-warning callback once the way the system does (to check that log line; the moment the system really sends a warning cannot be staged)
       if (mw && atof(mw) > 0) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(mw) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ UIApplication *app = UIApplication.sharedApplication; [app.delegate applicationDidReceiveMemoryWarning:app]; }); }
+    { const char *tt = getenv("DM_TEST_TERM_AT");   // 测试开关 DM_TEST_TERM_AT=<秒>：起宿主后这么多秒，照「多任务界面里划掉一个没进后台的 App」的顺序走一遍——先失活，0.3 秒后调 App 终止回调（Mac 上退出会先进后台，走不到这条路） | test switch DM_TEST_TERM_AT=<seconds>: this many seconds after the host starts, replay the order of "swiping away an App that never went to the background in the app switcher" -- resign active first, then call the App termination callback 0.3 seconds later (quitting on a Mac goes to the background first and never takes this path)
+      if (tt && atof(tt) > 0) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(tt) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ front_ios_focus_event(0);
+          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ UIApplication *app = UIApplication.sharedApplication; [app.delegate applicationWillTerminate:app]; }); }); }
     boot_begin();                    // 覆盖层、宿主装载与预取：也等到这里才做（在后台线程，和后面的界面收尾并行） | overlay, host loading and prefetch: also deferred until here (on a background thread, in parallel with the UI wrap-up that follows)
     front_ios_lifecycle_install();   // 过热 / 不自动锁屏 / 亮度（窗口与焦点在 SceneDelegate） | overheating / no auto-lock / brightness (window and focus are in SceneDelegate)
     run_boot();                      // 宿主线程自己写 DONE | The host thread writes DONE itself
@@ -1155,9 +1159,9 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
 - (void)sceneDidEnterBackground:(UIScene *)s { if (g_host_up) front_ios_focus_event(1); }
 - (void)sceneWillEnterForeground:(UIScene *)s { log_promote(); if ([g_mode isEqualToString:@"boot"] && !g_need_assets && !g_no_bc && !g_block_title) { host_start(); if (g_host_up) front_ios_focus_event(2); } }
 - (void)sceneDidBecomeActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(3); }
-// 场景断开 / App 终止：宿主有序收尾后 _exit（hle_lifecycle.c）。注意：用户在多任务界面划掉一个已在后台挂起的 App 时，系统直接 SIGKILL，不走这两个回调
-// Scene disconnect / App termination: the host shuts down in order, then _exit (hle_lifecycle.c). Note: when the user swipes away an App already suspended in the background from the multitasking screen, the system sends SIGKILL directly and neither of these two callbacks runs
-- (void)sceneDidDisconnect:(UIScene *)s { if (g_host_up) dm_host_shutdown("iOS 场景断开"); }
+// 场景断开 / App 终止：还在前台就先存一次盘（front_ios_final_save），再有序收尾、_exit（hle_lifecycle.c）。注意：用户在多任务界面划掉一个已在后台挂起的 App 时，系统直接 SIGKILL，不走这两个回调
+// Scene disconnect / App termination: if still in the foreground, save once first (front_ios_final_save), then shut down in order and _exit (hle_lifecycle.c). Note: when the user swipes away an App already suspended in the background from the multitasking screen, the system sends SIGKILL directly and neither of these two callbacks runs
+- (void)sceneDidDisconnect:(UIScene *)s { if (g_host_up) { front_ios_final_save(); dm_host_shutdown("iOS 场景断开"); } }
 @end
 // 测试开关 DM_TEST_BG_RELAUNCH=<网址>：造一次真的「系统后台拉起」——用一个会唤起 App 的后台下载会话、推迟 6 秒取这个网址，2 秒后本进程自己退出；
 // 系统下完后在后台重新拉起 App（那次启动不带任何环境变量）、把事件交到 handleEventsForBackgroundURLSession。看那次的日志：只该有「后台测试会话」一行，不该起宿主。
@@ -1184,7 +1188,7 @@ static void bg_relaunch_test(void) {
 }
 
 @implementation App
-- (void)applicationWillTerminate:(UIApplication *)a { if (g_host_up) dm_host_shutdown("iOS App 终止"); }
+- (void)applicationWillTerminate:(UIApplication *)a { if (g_host_up) { front_ios_final_save(); dm_host_shutdown("iOS App 终止"); } }
 // 系统内存告警：只记一行，不放任何缓存。用途：玩家被系统按内存终止前不会有任何通知，上一局日志里至少留下前兆与当时的几项读数
 // （常驻、显卡已分配、游戏主堆余量是上次每 300 帧读到的值、离系统内存上限还有多少）。一局最多记 50 行
 // System memory warning: log one line only, release no cache. Purpose: a player gets no notice before the system terminates the app for memory, so the previous session's log at least keeps the precursor and a few readouts at that moment
