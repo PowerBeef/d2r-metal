@@ -27,7 +27,7 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
 - **Commits on `main`:**
   - Keep one topic per commit (or a short series), so any of them can be cherry-picked on its own.
   - Code follows the upstream rules below even when it isn't meant for upstream yet, so it can be sent later without rework.
-  - End each message with an `Upstream:` trailer, before the attribution lines:
+  - End each message with an `Upstream:` trailer. Put it on the line just above the attribution lines, in the same block with no blank line, so git reads it as a trailer:
     - `Upstream: candidate` may go upstream. It must not touch fork-only files.
     - `Upstream: fork-only` stays here: this file, fork tooling, and the user's own preferences.
 - **Pulling upstream changes into `main`:**
