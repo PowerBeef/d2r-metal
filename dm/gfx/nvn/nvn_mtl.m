@@ -326,7 +326,7 @@ static void udc_selftest(void) {
         MLOG("UDC自检 %s %s %lux%lu 首值 %08x 与首值不同 %lu / %lu", g_dev.name.UTF8String, depth ? "Depth32F_S8" : "RGBA8", (unsigned long)w, (unsigned long)h, px[0], (unsigned long)bad, (unsigned long)(w * h));
     }
 }
-void mtl_init(void) {
+static void mtl_init_once(void) {
     if (g_dev) return;
     const char *link = getenv("DM_PRESENT_LINK");
     g_dm_present_link = link ? atoi(link) : 1; if (g_dm_present_link < 0 || g_dm_present_link > 2) g_dm_present_link = 1;   // 缺省 1（真机同进程交替：负载超一拍时长帧 15% → 0、帧间隔变匀；稳 60 时与 0 无差别）；DM_PRESENT_LINK=0 关   // 1 = 60 Hz 节拍每拍出图；2 = 120 Hz 节拍、游戏隔拍出一帧（落后时下一个 8.33 ms 拍就能上屏） | Default 1 (real-device same-process alternation: when load exceeds one display-link period, long frames 15% → 0 and frame intervals even out; no difference from 0 at a steady 60); DM_PRESENT_LINK=0 turns it off   // 1 = present on every tick of a 60 Hz display link; 2 = 120 Hz display link, the game presents a frame every other display-link tick (when behind, it can present on the next 8.33 ms display-link tick)
@@ -930,7 +930,11 @@ static void mtl_finish_gpu(void) {
 void mtl_present_flush(void);
 void mtl_finish(void) { mtl_present_flush(); mtl_finish_gpu(); }   // 队列语义：已入队的出图也算队列工作 | Queue semantics: already-enqueued presents also count as queue work
 static void present_drop_for_suspend(void);
-void mtl_drain(void) { present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu(); }
+// 只建一次：游戏线程（登记内存池、提交）和主线程（挂起前清空）都可能先到这里，原先只靠没加锁的「g_dev 有没有」挡，两边同时进来会各建一套设备与队列
+// Created only once: the game threads (pool registration, submit) and the main thread (drain before suspending) may each get here first; previously only an unlocked "is g_dev set" check guarded it, and two threads arriving together would each create a device and queue
+void mtl_init(void) { static dispatch_once_t once; dispatch_once(&once, ^{ mtl_init_once(); }); }
+// 图形还没初始化（开机头几秒就进后台）：没有在途工作要清，也别在这条线程上替游戏初始化 | Graphics not initialized yet (going to the background in the first seconds of boot): there is no in-flight work to drain, and do not initialize it on this thread on the game's behalf
+void mtl_drain(void) { if (!g_dev) return; present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu(); }
 
 // ================= 渲染回放 =================
 // ================= Render replay =================
