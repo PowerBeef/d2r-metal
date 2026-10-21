@@ -40,6 +40,7 @@ void dm_belt_put(unsigned id) { (void)id; }
 void dm_test_sell_first(void) {}
 int dm_shop_open(void) { return 0; }
 _Atomic int g_dm_frz_want, g_dm_frozen; void dm_freeze_frame(int want) { (void)want; }   // 面板冻结（diag.c）的桩 | stub for the panel freeze (diag.c)
+void dm_save_frame(void) {}   // 存盘握手（diag.c）的桩 | stub for the save handshake (diag.c)
 int dm_cursor_item(void *out) { (void)out; return 0; }   // 光标下的物品（dm_cursor_item.c）：没有 | item under the cursor (dm_cursor_item.c): none
 void dm_test_belt_first_potion(void) {}
 void dm_shop_get(void *out) { __builtin_memset(out, 0, 320); }   // 商人读数（dm_actions.c）：全 0（dm_shop_info 不到 320 字节） | vendor readout (dm_actions.c): all 0 (dm_shop_info is under 320 bytes)

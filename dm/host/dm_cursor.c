@@ -2743,6 +2743,7 @@ static int ui_touch_mode(void) { int dm_padmode_current(void), dm_padmode_busy(v
 void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线程）；每个出图帧做一次 | called where the game fetches the controller (hle_hid fill, main thread); done once per presented frame
     static uint64_t last_frame = UINT64_MAX; uint64_t fr = dm_guest_frame();
     if (fr == last_frame) return;
+    { void dm_save_frame(void); dm_save_frame(); }   // 前端请的存盘在这里落到游戏主线程（diag.c）；放在最前，下面有提前返回 | Save requests from the front end are carried out here on the game main thread (diag.c); kept first because of the early returns below
     (void)dm_ui_gen();   // 每帧核一次顶层面板（界面代号）：卸掉又在同一地址建出新面板的那种，隔帧才核会漏 | Check the top-level panels (UI generation) once per frame: a panel unloaded and rebuilt at the same address would be missed by checking every other frame
     ui_watch_pump();
     { module_t *pm0 = main_module(); uint64_t pr = 0; if (pm0) memcpy(&pr, pm0->base + 0x2f05458, 8); if (pr) { ui_panel_heal(pr, fr); ui_panel_state_pump(pr); } }

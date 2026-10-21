@@ -1644,10 +1644,10 @@ static int freeze_attach(void) {   // 挂冻结用的四个入口门（产物里
 }
 // 暂停菜单开着进后台时存一次盘：原版单机暂停时游戏不走拍，前端请的那次存盘要等下一拍，进后台 2.5 秒等不到（10142104 日志 4 次），
 // 上次自动存盘到开暂停之间的进度在后台被系统回收时会丢。做法：先冻住世界（同面板冻结：世界 / 客户端 / 动画 / 渲染四个入口换成空跑，拍号不前进——怪不动、时间不走），
-// 再临时放开原版暂停的两个界面状态字节让拍走起来、执行那次存盘；等到提交（前端 background_wait_save）后写回两个字节、解冻。前端在主线程调
+// 再临时放开原版暂停的两个界面状态字节让拍走起来、执行那次存盘；等到提交（前端 background_wait_save）后写回两个字节、解冻。游戏主线程调（dm_save_frame）
 // Save once when going to the background with the pause menu open: in single-player pause the original game does not tick, so the save the front end asks for waits for the next tick and the 2.5 s background wait never sees it (seen 4 times in a player's log);
 // progress between the last autosave and opening the pause menu is lost if the system reclaims the app in the background. Method: first freeze the world (same as panel freezing: the world / client / animation / render entry points become no-ops and the tick number does not advance, so monsters do not move and time does not pass),
-// then temporarily release the two UI state bytes of the original pause so ticks run and perform the save; after the commit (front end background_wait_save) write the two bytes back and unfreeze. Called by the front end on the main thread
+// then temporarily release the two UI state bytes of the original pause so ticks run and perform the save; after the commit (front end background_wait_save) write the two bytes back and unfreeze. Called on the game main thread (dm_save_frame)
 static _Atomic int g_bgsave; static uint8_t g_bg_pause[2];
 static int save_unpause_begin(void) {   // 1 = 冻住世界并放开了暂停；0 = 游戏没停着（不用做）；-1 = 产物没有冻结门，做不了 | 1 = froze the world and released the pause; 0 = the game is not stopped (nothing to do); -1 = the product has no freeze gates, cannot do it
     uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
@@ -1675,18 +1675,39 @@ static void save_unpause_end(void) {
 // temporarily releases the original pause so ticks run and perform this save, and after waiting writes the pause back and unfreezes, so when the player returns both the world and the pause are as they left them. It waits until "a save commit has happened and no new commit for 0.2 s"
 // (character and shared stash are two containers and may commit separately), at most max_s seconds; before entering a game (loading screen) it retries every 20 ms and asks once in game. Returns 1 = the save was requested.
 // *commits = number of save commits in the meantime, *froze = whether it froze and released the pause, *ms = time taken. Called on the front end's main thread (game ticks keep running on the guest thread)
+// 前端线程只置请求、读回报，不碰游戏内存：冻结世界、放开 / 写回暂停、请存盘都在游戏主线程上做（dm_save_frame，每帧取手柄处调，暂停时也照调）。
+// 原先这些直接在前端线程上做——取快照要调客体函数逐个读单位、改暂停字节、写 G——碰上「保存并退出」拆局，就是在别的线程里摸已释放的单位和 G
+// The front-end thread only sets the request and reads the reports back, never touching game memory: freezing the world, releasing / restoring the pause and asking for the save all happen on the game main thread (dm_save_frame, called each frame where the controller is fetched, also while paused).
+// Previously they ran directly on the front-end thread -- the snapshot calls a guest function on every unit, then the pause bytes and G are written -- so during a "Save and Exit" teardown another thread was touching freed units and G
+static _Atomic int g_sv_req, g_sv_asked, g_sv_froze, g_sv_soon;   // 前端：要存（等提交）/ 下一拍存一次（不等）；游戏线程回报：已请到存盘、冻结放开过暂停 | front end: wants a save (waiting for the commit) / save once on the next tick (not waiting); game thread reports: save requested, froze and released the pause
+static int g_sv_bg;   // 这次 save_unpause_begin 的结果，只在游戏主线程读写 | the result of this save_unpause_begin, read and written only on the game main thread
+void dm_save_frame(void) {   // 游戏主线程，每帧（dm_cursor.c dm_ui_mouse_pump 开头） | game main thread, every frame (start of dm_cursor.c dm_ui_mouse_pump)
+    if (atomic_exchange(&g_sv_soon, 0) && dm_request_save()) LOG("存盘：前端请下一拍存一次盘（不等）");
+    if (atomic_load(&g_sv_req)) {
+        if (atomic_load(&g_sv_asked) || !in_game()) return;
+        if (!g_sv_bg) { g_sv_bg = save_unpause_begin(); if (g_sv_bg > 0) atomic_store(&g_sv_froze, 1); }   // 先冻、放开暂停，再请存盘 | Freeze first, release the pause, then ask for the save
+        if (dm_request_save()) atomic_store(&g_sv_asked, 1);
+        return;
+    }
+    if (g_sv_bg > 0) save_unpause_end();
+    if (g_sv_bg || atomic_load(&g_sv_asked)) { g_sv_bg = 0; atomic_store(&g_sv_asked, 0); atomic_store(&g_sv_froze, 0); }
+}
+// 不等提交、只请游戏下一拍存一次盘（iOS 失活时用）：同样交给游戏主线程去写 | Only ask the game to save once on the next tick without waiting for the commit (used on iOS resign active): also handed to the game main thread to write
+void dm_save_soon(void) { atomic_store(&g_sv_soon, 1); }
 uint64_t dm_fs_commit_count(void);
 int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms) {
-    uint64_t c0 = dm_fs_commit_count(), t0 = now_ns(), last = c0, last_t = 0, lim = (uint64_t)(max_s * 1e9); int asked = 0, bg = 0;
+    uint64_t c0 = dm_fs_commit_count(), t0 = now_ns(), last = c0, last_t = 0, lim = (uint64_t)(max_s * 1e9);
+    atomic_store(&g_sv_req, 1);
     for (;;) {
-        if (!bg && in_game()) bg = save_unpause_begin();   // 先冻、放开暂停，再请存盘 | Freeze first, release the pause, then ask for the save
-        if (!asked) asked = dm_request_save();
         usleep(20000); uint64_t c = dm_fs_commit_count(), t = now_ns();
         if (c != last) { last = c; last_t = t; }
-        if ((asked && last_t && t - last_t >= 200000000ull) || t - t0 >= lim) break;
+        if ((atomic_load(&g_sv_asked) && last_t && t - last_t >= 200000000ull) || t - t0 >= lim) break;
     }
-    if (bg > 0) save_unpause_end();
-    *commits = last - c0; *froze = bg > 0; *ms = (now_ns() - t0) / 1e6;
+    int asked = atomic_load(&g_sv_asked), bg = atomic_load(&g_sv_froze);
+    atomic_store(&g_sv_req, 0);
+    // 等游戏线程写回暂停、解冻（下一帧就做），最多 0.5 秒；游戏线程这时不走（图形挂起）就留给它恢复后的第一帧 | Wait for the game thread to restore the pause and unfreeze (done on the next frame), at most 0.5 s; if the game thread is not running now (graphics suspended), it is left to its first frame after resuming
+    for (uint64_t te = now_ns(); (atomic_load(&g_sv_asked) || atomic_load(&g_sv_froze)) && now_ns() - te < 500000000ull; ) usleep(5000);
+    *commits = last - c0; *froze = bg; *ms = (now_ns() - t0) / 1e6;
     return asked;
 }
 static void freeze_tick(uint64_t G) {   // 拍入口：定这一拍冻不冻，冻就把拍号先减 1 | Tick entry: decide whether this tick is frozen; if so, decrement the tick number by 1 first
