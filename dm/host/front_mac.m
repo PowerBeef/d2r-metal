@@ -64,7 +64,11 @@ static void app_quit(const char *why) {
     static int once; if (once++) return;
     { uint64_t dm_audio_render_calls(void); LOG("窗口：退出（%s）；声卡回调累计 %llu（0 = 这次没出声）", why, (unsigned long long)dm_audio_render_calls()); }
     int dm_ingame_now(void); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
-    if (!dm_ingame_now() && !dm_uiscreen_ingame()) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_host_shutdown(why); return; }
+    int dm_cloud_flush_wait(double sec);
+    if (!dm_ingame_now() && !dm_uiscreen_ingame()) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
+    // 最小化着退出：游戏线程挡在图形挂起处（dm_gfx_suspend）、客体时钟冻着，拍不走就存不了盘。先恢复（出图照丢，不画到看不见的窗口），再请存盘
+    // Quitting while minimized: the game thread is blocked at the graphics suspend (dm_gfx_suspend) and the guest clock is frozen, so no tick runs and nothing can be saved. Resume first (frames are still dropped, nothing is drawn to the hidden window), then ask for the save
+    if (g_win.miniaturized) { void mtl_present_discard(int on); void guest_clock_freeze_for(int reason, int on); mtl_present_discard(1); dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); LOG("窗口：最小化着退出，先恢复图形与客体时钟再存盘"); }
     uint64_t n = 0; int froze = 0; double ms = 0; int asked = dm_save_wait(3, &n, &froze, &ms);
     if (n && asked) LOG("窗口：退出前等游戏存盘 %.0f ms，期间存档提交 %llu 次%s", ms, (unsigned long long)n, froze ? "（原先暂停着：冻结世界存盘、已恢复暂停）" : "");
     else LOG("【红】窗口：未存盘退出——3 秒内没等到存档提交（%s%s）", asked ? "已请游戏存盘" : "一直没到能请存盘的状态（读取画面？）", froze ? "，原先暂停着、冻结放开过" : "");
@@ -110,7 +114,7 @@ static NSString *share_logs(NSString *to) {
     return nil;
 }
 static void share_logs_ui(void) { NSString *e = share_logs(nil); if (e) { LOG("【红】分享日志：打包失败 %s", e.UTF8String); NSAlert *a = [NSAlert new]; a.messageText = @(ui("dmAppShareFail")); a.informativeText = e; [a addButtonWithTitle:@(ui("dmAppOK"))]; [a runModal]; } }
-@interface DmWinCtl : NSObject <NSWindowDelegate> @end
+@interface DmWinCtl : NSObject <NSWindowDelegate, NSApplicationDelegate> @end
 // 窗口所在那块屏的名字与刷新率（主线程读 AppKit，存一份给出图线程）：出图节拍按它选整除的帧率（nvn_mtl.m mtl_pace_hz）。
 // 窗口换屏、屏幕参数变（改刷新率、接拔显示器）时重读。刷新率取显示模式的值，内建屏读不到（0）时取屏幕的最高帧率
 // Name and refresh rate of the screen the window is on (read from AppKit on the main thread, a copy kept for the present thread): present pacing picks an evenly dividing frame rate from it (nvn_mtl.m mtl_pace_hz).
@@ -134,6 +138,11 @@ double front_display_refresh(char *name, size_t n) {
 - (void)windowDidChangeBackingProperties:(NSNotification *)n { (void)n; layout_game(); }
 - (void)windowDidChangeScreen:(NSNotification *)n { (void)n; screen_note(); }
 - (void)quit:(id)s { (void)s; app_quit("菜单退出"); }
+// 系统来的退出（程序坞「退出」、⌘-Tab 时按 Q、注销 / 重启 / 关机、AppleScript quit）都走 terminate:。没有这个委托方法时 AppKit 直接结束进程，不存盘。
+// app_quit 存完盘自己结束进程（dm_host_shutdown）；它返回了说明已有一次退出在进行，这次取消，让那次走完
+// Quits coming from the system (Quit in the Dock, Q while Cmd-Tabbing, log out / restart / shut down, AppleScript quit) all go through terminate:. Without this delegate method AppKit ends the process directly, without saving.
+// app_quit ends the process itself after saving (dm_host_shutdown); if it returns, a quit is already in progress, so cancel this one and let that one finish
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)a { (void)a; app_quit("系统退出"); return NSTerminateCancel; }
 - (void)keys:(id)s { (void)s; show_keys(); }
 - (void)share:(id)s { (void)s; share_logs_ui(); }
 @end
@@ -199,7 +208,7 @@ void front_run(void (*guest)(void)) {
         NSView *v = win.contentView; g_view = v;
         v.wantsLayer = YES; v.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
         win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary; win.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); if (g_full) win.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
-        static DmWinCtl *ctl; ctl = [DmWinCtl new]; win.delegate = ctl;
+        static DmWinCtl *ctl; ctl = [DmWinCtl new]; win.delegate = ctl; NSApp.delegate = ctl;
         g_layer = [CAMetalLayer layer];
         g_layer.device = MTLCreateSystemDefaultDevice();
         g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -367,7 +376,15 @@ void front_run(void (*guest)(void)) {
                       [NSApp postEvent:ev atStart:NO]; }); }
               LOG("DM_TEST_NSMOUSE：%d 条排好", n); }
           if ((e = getenv("DM_TEST_SHARELOG"))) { NSString *to = @(e); dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSString *er = share_logs(to); LOG("DM_TEST_SHARELOG：第 8 秒打包到 %s → %s", to.lastPathComponent.UTF8String, er ? er.UTF8String : "OK"); }); }   // 测试：不弹存储面板，第 8 秒直接把压缩包写到这个路径 | test: no save panel, write the archive directly to this path at second 8
-          if ((e = getenv("DM_TEST_QUIT_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ app_quit("DM_TEST_QUIT_AT"); }); }
+          if ((e = getenv("DM_TEST_QUIT_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ app_quit("DM_TEST_QUIT_AT"); });
+          // DM_TEST_TERMINATE_AT=<秒>：走一次系统退出（[NSApp terminate:]，同程序坞「退出」）；DM_TEST_MINI_AT=<秒>[;<秒>…]：每个时刻切一次最小化（来回切）。
+          // 游戏窗口本来不带「可最小化」（没有黄色按钮、没有 ⌘M）：这个开关只在测试时给窗口加上，验上面的最小化处理
+          // DM_TEST_TERMINATE_AT=<seconds>: go through one system quit ([NSApp terminate:], same as Quit in the Dock); DM_TEST_MINI_AT=<seconds>[;<seconds>...]: toggle minimize at each time (back and forth).
+          // The game window is not minimizable by itself (no yellow button, no Cmd-M): this switch adds that only for the test, to check the minimize handling above
+          if ((e = getenv("DM_TEST_TERMINATE_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; });
+          if ((e = getenv("DM_TEST_MINI_AT"))) win.styleMask |= NSWindowStyleMaskMiniaturizable;
+          if ((e = getenv("DM_TEST_MINI_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (win.miniaturized) [win deminiaturize:nil]; else [win miniaturize:nil]; }); }
         // 生命周期（hle.h / dm.h）：失焦 → 2、拿回焦点 → 1；最小化 → 3 + 音频暂停 + GPU 挂起，还原 → 恢复（随后拿回焦点 → 1）
         // Lifecycle (hle.h / dm.h): focus lost → 2, focus regained → 1; minimized → 3 + audio paused + GPU suspended, restored → resume (followed by focus regained → 1)
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
@@ -394,8 +411,12 @@ void front_run(void (*guest)(void)) {
               }); }
         [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; if (!win.miniaturized) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
         [nc addObserverForName:NSWindowDidBecomeKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; dm_focus_set(1); }];
-        [nc addObserverForName:NSWindowDidMiniaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; dm_focus_set(3); dm_audio_suspend(1); dm_gfx_suspend(1); }];
-        [nc addObserverForName:NSWindowDidDeminiaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; dm_gfx_suspend(0); dm_audio_suspend(0); dm_focus_set(2); }];
+        // 最小化：客体时钟一并冻结（同 iOS 进后台）。否则游戏线程挡在图形挂起处、墙钟照走，恢复时主循环把整段最小化时长的拍一口气补跑完——角色站着不动、怪照打（专家模式死了就没了）
+        // Minimize: the guest clock is frozen as well (as when iOS goes to the background). Otherwise the game thread is blocked at the graphics suspend while the wall clock keeps running, and on restore the main loop catches up on every tick of the minimized period in one burst -- the character stands still while monsters keep attacking (a death in Hardcore is permanent)
+        [nc addObserverForName:NSWindowDidMiniaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; void guest_clock_freeze_for(int reason, int on); uint64_t guest_ns(void);
+            dm_focus_set(3); dm_audio_suspend(1); guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); LOG("窗口：最小化（客体时钟 %.3f s，冻结）", guest_ns() / 1e9); }];
+        [nc addObserverForName:NSWindowDidDeminiaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; void guest_clock_freeze_for(int reason, int on); uint64_t guest_ns(void);
+            dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); dm_audio_suspend(0); dm_focus_set(2); LOG("窗口：恢复（客体时钟 %.3f s）", guest_ns() / 1e9); }];
         // 客体线程：栈 64 MiB（Switch 主线程栈由 npdm 指定，宿主给足）
         // Guest thread: 64 MiB stack (the Switch main thread stack is specified by npdm; the host gives plenty)
         static guest_arg ga; ga.fn = guest;
