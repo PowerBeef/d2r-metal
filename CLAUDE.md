@@ -43,6 +43,7 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
      - `git log --all --grep='cherry picked from commit <sha>'` shows whether a commit is already on a PR branch.
   2. `git fetch upstream && git switch -c up/<topic> upstream/main`
   3. `git cherry-pick -x <sha>...`. A conflict means the change depends on other fork commits: `git cherry-pick --abort` and report.
+     - Drop the fork-only `Upstream:` line from each picked commit, keeping the `(cherry picked from commit …)` line: `git log -1 --format=%B | sed '/^Upstream: /d' | git commit --amend -F -`.
   4. `git diff --name-only upstream/main` must list no fork-only file. Run the source checks and the test suites the change touches on this branch.
   5. Only after the user approves each PR:
      - `git push -u origin up/<topic>`
