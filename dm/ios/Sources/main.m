@@ -763,7 +763,10 @@ static void host_start(void) {
 #ifdef DM_SHELL
     // 壳：着色器是以源码进包的话，进游戏之前先一次编完（dm_shader_prep.m，带进度页）；做完它回头再调这里
     // Shell: if the shaders are shipped as source in the package, compile them all in one go before entering the game (dm_shader_prep.m, with a progress page); when done it calls back here
-    { extern int dm_shader_prep_begin(void (^)(void)); static int asked; if (!asked) { asked = 1; if (dm_shader_prep_begin(^{ host_start(); })) return; } }
+    // 编着的时候又进来（中途切走再回前台，sceneWillEnterForeground 又调了一次）：不起，编完它自己回头调这里——原先第二次进来跳过编译直接起宿主，游戏在进度页底下跑
+    // Called again while compiling (switched away mid-way and back, sceneWillEnterForeground calls once more): do not start; when done it calls back here itself -- previously the second call skipped compiling and started the host directly, with the game running under the progress page
+    { extern int dm_shader_prep_begin(void (^)(void)); static int asked, running; if (running) return;
+      if (!asked) { asked = 1; if (dm_shader_prep_begin(^{ running = 0; host_start(); })) { running = 1; return; } } }
 #endif
     g_host_up = 1; plog("boot: 场景到前台，起宿主（进程已活 %.1f ms）", since_start());
     { const char *mw = getenv("DM_TEST_MEMWARN");   // 测试开关 DM_TEST_MEMWARN=<秒>：起宿主后这么多秒，照系统的调法调一次内存告警回调（验那一行日志；系统真发告警的时机造不出来） | test switch DM_TEST_MEMWARN=<seconds>: this many seconds after the host starts, call the memory-warning callback once the way the system does (to check that log line; the moment the system really sends a warning cannot be staged)
@@ -1106,6 +1109,9 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
     g_need_assets = 0;
     self.view = front_ios_view(self.view.window.windowScene.coordinateSpace.bounds);
     [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures]; [self setNeedsUpdateOfHomeIndicatorAutoHidden];
+    // 下载 / 补充包在后台做完时系统会在后台叫醒 App 走到这里：那时起宿主就是在后台起游戏、提交 GPU（后台提交会被系统杀）。只换好界面，回前台时 sceneWillEnterForeground 起宿主
+    // When a download / the Legacy Device Pack finishes in the background the system wakes the App in the background and it gets here: starting the host then would boot the game and submit GPU work in the background (background submits get killed by the system). Only swap the view; sceneWillEnterForeground starts the host on returning to the foreground
+    if (self.view.window.windowScene.activationState == UISceneActivationStateBackground) { plog("assets: 资源就绪，但 App 在后台：回前台再起宿主"); return; }
     host_start();
     front_ios_focus_event(3);
 }
