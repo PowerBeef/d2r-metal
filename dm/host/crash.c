@@ -140,21 +140,25 @@ static void cb_flush(crash_buf *c) {
 #define MAX_FAULT_HOOK 4
 static int (*g_fault_hook[MAX_FAULT_HOOK])(void *addr, int is_write, void *uc);
 static void (*g_write_prep[MAX_FAULT_HOOK])(void *addr, size_t len);
-static int g_nfault_hook, g_nwrite_prep;
+// 个数用释放 / 获取发布：先写函数指针、再加个数，别的线程（读文件线程、信号处理）见到新个数时一定见到那个指针（原先是普通 int，线程消毒版报竞争：读者可能先见到个数、调到空指针）
+// The counts are published with release / acquire: the function pointer is written first, then the count, so another thread (a file-read thread, the signal handler) that sees the new count also sees that pointer (they were plain ints; the TSan host reported the race: a reader could see the count first and call a null pointer)
+static _Atomic int g_nfault_hook, g_nwrite_prep;
 void dm_fault_hook_register(int (*fn)(void *addr, int is_write, void *uc)) {
-    if (g_nfault_hook >= MAX_FAULT_HOOK) die("缺页钩子过多");
-    g_fault_hook[g_nfault_hook++] = fn;
+    int n = atomic_load_explicit(&g_nfault_hook, memory_order_relaxed);
+    if (n >= MAX_FAULT_HOOK) die("缺页钩子过多");
+    g_fault_hook[n] = fn; atomic_store_explicit(&g_nfault_hook, n + 1, memory_order_release);
 }
 static void (*g_res_report)(uint32_t tick, const char *why);   // 资源计数回调（图形层注册，diag.c 按拍 / 事件调用） | Resource count callback (registered by the graphics layer, called by diag.c per tick / event)
 void dm_res_report_register(void (*fn)(uint32_t tick, const char *why)) { g_res_report = fn; }
 void (*dm_res_report_cb(void))(uint32_t, const char *) { return g_res_report; }
 void dm_guest_write_prep_register(void (*fn)(void *addr, size_t len)) {
-    if (g_nwrite_prep >= MAX_FAULT_HOOK) die("宿主写前钩子过多");
-    g_write_prep[g_nwrite_prep++] = fn;
+    int n = atomic_load_explicit(&g_nwrite_prep, memory_order_relaxed);
+    if (n >= MAX_FAULT_HOOK) die("宿主写前钩子过多");
+    g_write_prep[n] = fn; atomic_store_explicit(&g_nwrite_prep, n + 1, memory_order_release);
 }
 // 宿主自己写客体内存（read() 直读进客体缓冲等）之前调用：写保护页不会对系统调用触发缺页、而是返回 EFAULT
 // Called before the host itself writes guest memory (read() straight into a guest buffer, etc.): for a system call a write-protected page does not trigger a page fault but returns EFAULT
-void dm_guest_write_prepare(void *addr, size_t len) { for (int i = 0; i < g_nwrite_prep; i++) g_write_prep[i](addr, len); }
+void dm_guest_write_prepare(void *addr, size_t len) { int n = atomic_load_explicit(&g_nwrite_prep, memory_order_acquire); for (int i = 0; i < n; i++) g_write_prep[i](addr, len); }
 
 // 诊断模块（diag.c 的探针）与线程现场（hle_thread.c）由各自注册进来：单测只链本文件时不依赖它们
 // The diagnostics module (the probes in diag.c) and the thread state dump (hle_thread.c) each register themselves here: a unit test that links only this file does not depend on them
@@ -214,7 +218,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
     if (sig == SIGTRAP && g_trap_hook && g_trap_hook(uc)) return;
     if (sig == SIGSEGV || sig == SIGBUS) {
         int is_write = (int)((UC_ESR(uc) >> 6) & 1);   // ESR 的 WnR 位 | The WnR bit of ESR
-        for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
+        for (int i = 0, n = atomic_load_explicit(&g_nfault_hook, memory_order_acquire); i < n; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
     }
     if (g_dm_event_crash_fn) { module_t *m = module_of((void *)UC_PC(uc)); g_dm_event_crash_fn(sig, UC_PC(uc), m ? m->name : NULL, m ? UC_PC(uc) - (uint64_t)m->base : 0, (uint64_t)si->si_addr); }   // 事件先出（现场打印可能卡住） | the event goes out first (printing the state may hang)
     crash_json(sig, si, uc);   // 结构化现场先落盘（异步信号安全） | the structured state is written first (async-signal-safe)
