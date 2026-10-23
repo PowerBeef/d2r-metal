@@ -4,6 +4,9 @@
 // Expected values are computed directly from the sample rate and block length: 4800 frames / 48 kHz = 100 ms.
 #include "../hle_audio.c"
 #include <time.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 uint64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + t.tv_nsec; }
 static struct { const void *k; void *v; } om[8];
 void *objmap_get(const void *k) { for (int i = 0; i < 8; i++) if (om[i].k == k) return om[i].v; return NULL; }
@@ -26,6 +29,14 @@ int main(void) {
             printf("下混：%s：期望 (%d,%d) → 真结果 (%d,%d) %s\n", c[i].what, c[i].l, c[i].r, o[0], o[1], ok ? "✓" : "✗"); }
         if (bad) return 1; }
     char out[64], ev[64]; uint8_t prm[16]; gbuf b[3]; static int16_t pcm[3][4800 * 2];
+    {   // 声道数上限：8 声道照开；9 声道拒绝（宿主报错退出），不交给按 8 声道开暂存的静音接收端去越界写 | channel count limit: 8 channels open as usual; 9 channels are refused (the host reports and exits) rather than handed to the silent sink, whose scratch is sized for 8 and would be overrun
+        h_au_InitParam(prm); *(uint16_t *)(prm + 4) = 9;
+        fflush(stdout); pid_t pid = fork();   // 先于任何线程：子进程里开 9 声道 | before any thread exists: the child opens 9 channels
+        if (!pid) { int r = h_au_Open(out, ev, NULL, prm); _exit(r ? 3 : 0); }
+        int st = 0; waitpid(pid, &st, 0); int refused = WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT;
+        *(uint16_t *)(prm + 4) = 8; int ok8 = !h_au_Open(out, ev, NULL, prm) && h_au_Ch(out) == 8; if (ok8) h_au_Close(out);
+        printf("声道数：8 声道照开 %s，9 声道被拒绝 %s | channel count: 8 opens %s, 9 is refused %s\n", ok8 ? "✓" : "✗", refused ? "✓" : "✗", ok8 ? "ok" : "FAIL", refused ? "ok" : "FAIL");
+        if (!ok8 || !refused) return 1; }
     h_au_InitParam(prm);
     if (h_au_Open(out, ev, NULL, prm)) return 1;
     if (h_au_Ch(out) != 2 || h_au_Rate(out) != 48000 || h_au_State(out) != STATE_STOPPED) { puts("FAIL 参数"); return 1; }

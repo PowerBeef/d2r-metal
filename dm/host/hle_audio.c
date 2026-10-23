@@ -375,6 +375,7 @@ HLE_FORCE("_ZN2nn5audio12OpenAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventEPKcRKN
     int ch = *(const uint16_t *)(param + 4); int rate = *(const int32_t *)param;
     if (!ch) ch = 2;
     if (rate && rate != RATE) die("AudioOut 采样率 %d 不支持（只做 48 kHz）", rate);
+    if (ch > 8) die("AudioOut 声道数 %d 不支持（最多 8；静音接收端的暂存按 8 声道开）", ch);   // 游戏只开 2 / 6 声道；超过 8 原先照收，静音接收端每 5 ms 往栈上 8 声道大小的暂存里写满 ch 声道，越界 | The game only opens 2 / 6 channels; more than 8 used to be accepted, and the silent sink wrote ch channels every 5 ms into a stack scratch sized for 8, overflowing it
     aout *a = calloc(1, sizeof *a);
     pthread_mutex_init(&a->m, NULL); a->event = ev; a->ch = ch;
     atomic_init(&a->state, STATE_STOPPED);
