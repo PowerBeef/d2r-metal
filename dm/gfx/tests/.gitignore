@@ -33,6 +33,8 @@ t_rt_depth_ro
 t_rt_depth_ro.dSYM/
 t_pso_skey
 t_pso_skey.dSYM/
+t_prog_key
+t_prog_key.dSYM/
 t_dirty_slots
 t_dirty_race
 t_dirty_race.dSYM/

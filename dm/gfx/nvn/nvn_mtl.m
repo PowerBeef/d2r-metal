@@ -2457,7 +2457,8 @@ static __unsafe_unretained NvProg *prog_get(const prog_t *cp) {   // 只在提�
     shmap_load();
     NvProg *o = [NvProg new];
     for (unsigned i = 0; i < p->nstage; i++) {
-        uint8_t md[32]; CC_SHA256(p->sd[i].control, 0x880, md);
+        const uint8_t *md = p->key[i];   // SetShaders 时取的键（hle_nvn.c），不读游戏的控制段 | The key taken at SetShaders (hle_nvn.c); the game's control section is not read
+        if (!p->sd[i].control) { MLOG("【红】着色器程序第 %u 段没有控制段", i); continue; }
         NSString *k = [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x%02x%02x", md[0], md[1], md[2], md[3], md[4], md[5], md[6], md[7]];
         NSString *zh = g_shmap[k];
         if (!zh) {   // 不在包里：查 main 本体内嵌的计算核（nvn_builtin.h） | Not in the package: look up the compute kernels embedded in the main body (nvn_builtin.h)

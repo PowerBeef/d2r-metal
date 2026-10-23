@@ -58,6 +58,8 @@ t_rt_range: t_rt_range.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rt_range.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rt_depth_ro: t_rt_depth_ro.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rt_depth_ro.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_prog_key: t_prog_key.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_prog_key.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_skey.m -framework Foundation
 t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -81,6 +83,7 @@ run: \
 	t_pace \
 	t_pfv \
 	t_present_crop \
+	t_prog_key \
 	t_pso_skey \
 	t_refl \
 	t_refl_lib \
@@ -95,6 +98,7 @@ run: \
 	t_zskip
 	./t_copy_pitch
 	./t_nvn
+	./t_prog_key
 	./t_dirty_slots
 	./t_dirty_race
 	./t_builtin

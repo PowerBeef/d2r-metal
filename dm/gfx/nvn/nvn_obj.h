@@ -44,7 +44,10 @@ typedef struct { uint8_t minf, magf, ws, wt, wr, cmp_mode, cmp_func; float lod_m
 typedef struct { NVNdevice *dev; samp_par p; } samp_builder_t;                                FITS(samp_builder_t, NVNsamplerBuilder);
 typedef struct { uint32_t magic; samp_par p; } samp_t;                                        FITS(samp_t, NVNsampler);
 
-typedef struct { uint32_t magic, nstage; NVNshaderData sd[6]; uint64_t serial; const void *snap; } prog_t;     FITS(prog_t, NVNprogram);   // serial：回放层解析结果的表键；snap：本序号的不可变副本（同 tex_t） | serial: table key for the replay layer's resolved results; snap: this serial's immutable snapshot (same as tex_t)
+// key：各段着色器键 = sha256(控制段前 NVN_CTL_KEY_LEN 字节) 的前 8 字节，SetShaders 时取（NVN 只要求数据段常驻，控制段之后游戏可改写 / 释放）
+// key: each stage's shader key = the first 8 bytes of sha256(the first NVN_CTL_KEY_LEN bytes of the control section), taken at SetShaders (NVN only requires the data section to stay resident; the game may rewrite / free the control section afterwards)
+#define NVN_CTL_KEY_LEN 0x880
+typedef struct { uint32_t magic, nstage; NVNshaderData sd[6]; uint64_t serial; const void *snap; uint8_t key[6][8]; } prog_t;     FITS(prog_t, NVNprogram);   // serial：回放层解析结果的表键；snap：本序号的不可变副本（同 tex_t） | serial: table key for the replay layer's resolved results; snap: this serial's immutable snapshot (same as tex_t)
 
 typedef struct { uint32_t magic, fenced; uint64_t fence; } sync_t;                            FITS(sync_t, NVNsync);
 typedef struct { const pool_t *pool; int64_t off; } ev_builder_t;                             FITS(ev_builder_t, NVNeventBuilder);
