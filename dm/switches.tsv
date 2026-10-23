@@ -562,7 +562,7 @@ DM_TEST_UISHOT	ios	ios/Sources/main.m	-
 DM_TEST_UPDATE_BUILD	ios	ios/Sources/dm_update.m	-
 DM_TEST_UPDATE_DENY	ios	ios/Sources/dm_update.m	-
 DM_TEST_UPDATE_FAIL_FIRST	ios	ios/Sources/dm_update.m	-
-DM_TEST_UPDATE_NOOPEN	host	host/app_mac.m	-
+DM_TEST_UPDATE_NOOPEN	host	host/app_mac.m host/tests/t_app_mac.m	-
 DM_TEST_UPDATE_OPEN	ios	ios/Sources/dm_update.m	-
 DM_TEST_UPDATE_URL	host,ios	host/app_mac.m ios/Sources/dm_update.m	-
 DM_TEST_UP_LEAK	gfx	gfx/nvn/nvn_mtl.m	-

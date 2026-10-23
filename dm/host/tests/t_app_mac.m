@@ -1,12 +1,34 @@
-// Mac App 外壳（直接包含 app_mac.m）的单测：选资源文件夹时，build_manifest.psv 在、档案文件也要齐（romfs_validate.c）才收，不全的给出清单。
-// 档案文件按本构建的字节数建成稀疏文件（不占盘、不含任何游戏内容）。
-// Unit test of the Mac App shell (includes app_mac.m directly): when a resource folder is chosen, it is accepted only if build_manifest.psv is there and the archive files are complete too (romfs_validate.c); an incomplete one gets the list.
-// The archive files are created as sparse files with this build's byte counts (no disk space, no game content at all).
+// Mac App 外壳（直接包含 app_mac.m）的单测：选资源文件夹时，build_manifest.psv 在、档案文件也要齐（romfs_validate.c）才收，不全的给出清单；
+// 更新检查的两个入口（启动时的后台队列、游戏线程上的选角页回调）同时到、点「更新」也在别的线程上时，共用的状态只在主线程读写（tsan 目标在线程消毒器下跑同一个程序）。
+// 档案文件按本构建的字节数建成稀疏文件（不占盘、不含任何游戏内容）；版本文件由本地的假 HTTP 协议回答，不联网。
+// Unit test of the Mac App shell (includes app_mac.m directly): when a resource folder is chosen, it is accepted only if build_manifest.psv is there and the archive files are complete too (romfs_validate.c); an incomplete one gets the list;
+// when the update check's two entry points (a background queue at launch, the character-select callback on the game thread) arrive together and "Update" is tapped on yet another thread, the shared state is read and written on the main thread only (the tsan target runs the same program under ThreadSanitizer).
+// The archive files are created as sparse files with this build's byte counts (no disk space, no game content at all); the version file is answered by a local fake HTTP protocol, with no network access.
 #import <Foundation/Foundation.h>
+@interface NSURLSessionConfiguration (DmTest) + (NSURLSessionConfiguration *)dm_test_ephemeral; @end
+#define ephemeralSessionConfiguration dm_test_ephemeral   // 被测代码建的会话换成带假协议的那个 | the session the code under test creates gets the fake protocol
 #include "../app_mac.m"
+#undef ephemeralSessionConfiguration
 #include "../romfs_validate.c"
+static _Atomic int g_requests, g_offers;
+@interface DmFakeHTTP : NSURLProtocol @end
+@implementation DmFakeHTTP
++ (BOOL)canInitWithRequest:(NSURLRequest *)r { return [r.URL.host isEqualToString:@"dmtest.invalid"]; }
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)r { return r; }
+- (void)startLoading {
+    int n = atomic_fetch_add(&g_requests, 1); NSString *body = [NSString stringWithFormat:@"{\"build\":2,\"note\":\"n\",\"url\":\"http://dmtest.invalid/page/%d\"}", n];
+    NSHTTPURLResponse *rsp = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{ @"Content-Type": @"application/json" }];
+    [self.client URLProtocol:self didReceiveResponse:rsp cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+    [self.client URLProtocol:self didLoadData:[body dataUsingEncoding:NSUTF8StringEncoding]];
+    [self.client URLProtocolDidFinishLoading:self];
+}
+- (void)stopLoading {}
+@end
+@implementation NSURLSessionConfiguration (DmTest)
++ (NSURLSessionConfiguration *)dm_test_ephemeral { NSURLSessionConfiguration *c = [NSURLSessionConfiguration ephemeralSessionConfiguration]; c.protocolClasses = @[ DmFakeHTTP.class ]; return c; }
+@end
 void dm_update_init(int own_build, void (*on_select)(void), void (*on_click)(void)) { (void)own_build; (void)on_select; (void)on_click; }
-void dm_update_offer(int new_build, const char *note, int urgent) { (void)new_build; (void)note; (void)urgent; }
+void dm_update_offer(int new_build, const char *note, int urgent) { (void)note; (void)urgent; if (new_build) atomic_fetch_add(&g_offers, 1); }
 void dm_update_safe_left(int units) { (void)units; }
 int dm_custom_get(const char *key) { (void)key; return 0; }
 static int checks, fails;
@@ -52,6 +74,18 @@ int main(void) {
         CHECK(!r && [why containsString:@"build_manifest.psv"] && !g_romfs_title, "不是资源文件夹：原因与标题照旧 | not a resource folder: reason and title as before");
         [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
 
+        // 更新检查：两个入口同时到（启动时的后台队列 + 游戏线程的选角页回调），另一个线程一直在点「更新」 | update check: both entry points at once (the launch background queue + the game thread's character-select callback), while another thread keeps tapping "Update"
+        setenv("DM_TEST_UPDATE_NOOPEN", "1", 1); g_upd_url = @"http://dmtest.invalid/latest_mac.json"; g_upd_own = 1;
+        dispatch_group_t g = dispatch_group_create();
+        dispatch_group_async(g, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ upd_check(); });
+        dispatch_group_async(g, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{ upd_check(); });
+        dispatch_group_async(g, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ for (int i = 0; i < 2000; i++) { upd_click(); usleep(200); } });
+        for (int i = 0; i < 300 && (atomic_load(&g_offers) < 1 || dispatch_group_wait(g, DISPATCH_TIME_NOW)); i++) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);   // 主线程转起来（主队列上的事在这里做） | run the main thread (the main-queue work happens here)
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.2, false);
+        CHECK(atomic_load(&g_requests) == 1 && atomic_load(&g_offers) == 1, "两个入口同时到：60 秒里只查一次（请求 %d 次，提示 %d 次） | both entry points at once: one check within 60 s (requests %d, offers %d)", atomic_load(&g_requests), atomic_load(&g_offers), atomic_load(&g_requests), atomic_load(&g_offers));
+        CHECK([g_upd_page isEqualToString:@"http://dmtest.invalid/page/0"], "下载页地址在主线程上记下了（%s） | the download page address was recorded on the main thread (%s)", g_upd_page.UTF8String, g_upd_page.UTF8String);
+        upd_check(); CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.3, false);
+        CHECK(atomic_load(&g_requests) == 1, "60 秒内再来一次：不查 | another one within 60 s: not checked");
     }
     printf("== t_app_mac %d 项，失败 %d | %d checks, %d failed ==\n", checks, fails, checks, fails);
     return fails != 0;

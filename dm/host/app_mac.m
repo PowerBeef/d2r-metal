@@ -182,8 +182,14 @@ int dm_app_bootstrap(int *argc, char ***argv) {
 // build larger than the package's build number -> handed to the hint core shared by both platforms (host/dm_update.c: one line "New version N - note" under "Build N" at the top right of the gamepad-layout main menu; Y / keyboard I opens the download page);
 // unreadable / timed out / malformed are all silent (logged only) and do not affect startup. Nothing is downloaded or replaced automatically. The download page address is accepted only if it is an http(s) address on the same host as the version file
 void dm_update_init(int own_build, void (*on_select)(void), void (*on_click)(void)); void dm_update_offer(int new_build, const char *note, int urgent); void dm_update_safe_left(int units);
+// g_upd_last 与 g_upd_page 只在主线程读写：查更新有两个入口（启动时的后台队列、选角页回调所在的游戏线程），回执在 NSURLSession 的队列上，
+// 点「更新」在游戏线程上——原先各自直接读写这两个全局（数据竞争，两个入口同时到还会各查一遍）。g_upd_url / g_upd_own 启动时写一次，之后只读
+// g_upd_last and g_upd_page are read and written on the main thread only: the update check has two entry points (a background queue at launch, and the game thread the character-select callback runs on), the reply arrives on the NSURLSession queue,
+// and tapping "Update" happens on the game thread -- before, each of them read and wrote these two globals directly (a data race, and two entry points arriving together each ran a check). g_upd_url / g_upd_own are written once at launch and only read afterwards
 static NSString *g_upd_url, *g_upd_page; static int g_upd_own; static double g_upd_last;
-static void upd_check(void) {
+static void upd_check_main(void);
+static void upd_check(void) { dispatch_async(dispatch_get_main_queue(), ^{ upd_check_main(); }); }
+static void upd_check_main(void) {
     double now = CFAbsoluteTimeGetCurrent(); if (g_upd_last && now - g_upd_last < 60) return; g_upd_last = now;
     NSURL *u = [NSURL URLWithString:g_upd_url]; if (!u) return;
     NSURLSessionConfiguration *cf = NSURLSessionConfiguration.ephemeralSessionConfiguration; cf.timeoutIntervalForRequest = 2; cf.timeoutIntervalForResource = 2; cf.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
@@ -194,18 +200,18 @@ static void upd_check(void) {
         if (![b isKindOfClass:NSNumber.class] || b.intValue < 1) { LOG("更新：读版本文件没成（%s，HTTP %ld），本次不提示", e ? e.localizedDescription.UTF8String : "格式不对", (long)code); return; }
         NSString *zh = [j[@"note"] isKindOfClass:NSString.class] ? j[@"note"] : @"", *en = [j[@"note_en"] isKindOfClass:NSString.class] ? j[@"note_en"] : zh, *pg = [j[@"url"] isKindOfClass:NSString.class] ? j[@"url"] : nil;
         NSURL *pu = pg ? [NSURL URLWithString:pg] : nil; BOOL okpg = pu && ([pu.scheme isEqualToString:@"https"] || [pu.scheme isEqualToString:@"http"]) && [pu.host isEqualToString:u.host];
-        g_upd_page = okpg ? [pg copy] : nil;
+        NSString *page = okpg ? [pg copy] : nil; dispatch_async(dispatch_get_main_queue(), ^{ g_upd_page = page; });
         if (b.intValue > g_upd_own) { const char *l = getenv("DM_LANG"); NSString *note = (l && !strncmp(l, "zh", 2)) ? zh : en; LOG("更新：最新构建 %d 比自己（%d）新 → 主菜单提示（下载页 %s）", b.intValue, g_upd_own, okpg ? "有" : "没给或不同主机，不可点"); dm_update_offer(b.intValue, note.UTF8String, 0); }
         else { LOG("更新：最新构建 %d，不比自己（%d）新，不提示", b.intValue, g_upd_own); dm_update_offer(0, "", 0); }
     }] resume];
 }
-static void upd_click(void) { NSString *pg = g_upd_page; if (!pg) return; dispatch_async(dispatch_get_main_queue(), ^{ LOG("更新：打开下载页"); if (!getenv("DM_TEST_UPDATE_NOOPEN")) [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:pg]]; }); }
+static void upd_click(void) { dispatch_async(dispatch_get_main_queue(), ^{ NSString *pg = g_upd_page; if (!pg) return; LOG("更新：打开下载页"); if (!getenv("DM_TEST_UPDATE_NOOPEN")) [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:pg]]; }); }
 static void upd_start(void) {
     NSDictionary *inf = NSBundle.mainBundle.infoDictionary; const char *te = getenv("DM_TEST_UPDATE_URL");   // 测试：换一个版本文件地址（本机起的小服务 / 不存在的地址） | test: use a different version file address (a small local server / a non-existent address)
     g_upd_url = te ? @(te) : [inf[@"SWUpdateURL"] description]; g_upd_own = [[inf[@"CFBundleVersion"] description] intValue];
     if (!g_upd_url.length || g_upd_own < 1) { LOG("更新：包里没配版本文件地址，不检查"); return; }
     dm_update_init(g_upd_own, upd_check, upd_click); dm_update_safe_left(0);
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ upd_check(); });   // 启动时查一次：手柄版主菜单不发「选角页出现」那条消息（核心靠它叫外壳去查），不能只等回调；回调若来了也照查（两次之间隔 60 秒） | check once at launch: the gamepad-layout main menu does not send the "character selection appeared" message (which the core relies on to ask the shell to check), so waiting for the callback alone is not enough; if the callback does come it checks as well (at least 60 seconds apart)
+    upd_check();   // 启动时查一次：手柄版主菜单不发「选角页出现」那条消息（核心靠它叫外壳去查），不能只等回调；回调若来了也照查（两次之间隔 60 秒） | check once at launch: the gamepad-layout main menu does not send the "character selection appeared" message (which the core relies on to ask the shell to check), so waiting for the callback alone is not enough; if the callback does come it checks as well (at least 60 seconds apart)
 }
 
 // 手柄代码（ios/Sources/dm_gamepad.m，两边共用）问「现在是不是面板 / 读取画面开着」：只用来决定空着的 ZR 格要不要当免费回城。

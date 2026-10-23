@@ -147,6 +147,8 @@ $(B)/t_mac_overlay: t_mac_overlay.m ../app_mac_overlay.h | $(B)
 	clang -O1 -Wall -Werror -fobjc-arc -framework Foundation -o $@ t_mac_overlay.m
 $(B)/t_app_mac: t_app_mac.m ../app_mac.m ../romfs_validate.c ../romfs_validate.h ../dm_i18n.c ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wall -Werror -fobjc-arc -I.. -Wl,-dead_strip -framework Cocoa -o $@ t_app_mac.m ../dm_i18n.c
+$(B)/t_app_mac_tsan: t_app_mac.m ../app_mac.m ../romfs_validate.c ../romfs_validate.h ../dm_i18n.c ../dm_i18n_tab.h | $(B)
+	clang -O1 -g -fsanitize=thread -Wall -Werror -fobjc-arc -I.. -Wl,-dead_strip -framework Cocoa -o $@ t_app_mac.m ../dm_i18n.c
 $(B)/t_hud_dead: t_hud_dead.c ../dm_hud.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_hud_dead.c
 $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)
@@ -200,11 +202,12 @@ $(B)/%.orig.bin: $(EXEFS)/% | $(B)
 $(B):
 	mkdir -p $@
 .PHONY: run tsan
-tsan: $(B)/t_audio_spsc_tsan $(B)/t_svc_mem_tsan
+tsan: $(B)/t_audio_spsc_tsan $(B)/t_svc_mem_tsan $(B)/t_app_mac_tsan
 	$(B)/t_audio_spsc_tsan
 	$(B)/t_svc_mem_tsan
 	$(B)/t_svc_mem_tsan disjoint 300
 	$(B)/t_svc_mem_tsan overlap 300
+	TMPDIR="$(abspath $(B))" TSAN_OPTIONS=halt_on_error=1 $(B)/t_app_mac_tsan
 $(B)/t_dump: t_dump.c ../hle_thread.c ../crash.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_dump.c ../crash.c
 $(B)/t_dump_asan: t_dump.c ../hle_thread.c ../crash.c ../dm.h | $(B)
