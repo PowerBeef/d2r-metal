@@ -47,6 +47,7 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 | `expect_state 字段=值 … [timeout=5]` | 也可写 `字段>=n`、`字段<=n`、`字段!=v` | 反复读 `state`，直到每一条都成立。 |
 | `sleep <秒>`、`log <文字>` | | |
 | `remember <字段> [as=名]` | | 记下 `state` 的一个字段；后面的值可写 `$名`、`$名+N`、`$名-N`（如 `expect_state tick<=$tick+30`）。 |
+| `gpu_capture [frames=1] [path=frame.gputrace] [keep=1]` | | `cli` / `mac-app`：用 `gpucapture` 截 GPU 帧，结果给 `gpudebug` 的摘要（命令缓冲、编码器、绘制、计算派发）。截帧文件（一帧约 4 GB）缺省删掉，`keep=1` 才留。这一局自动带 `MTL_CAPTURE_ENABLED=1`。截帧时出图会停，要加 `check no_red allow=e6db5cb6`。 |
 | `export_save <名> [overwrite=1]` | | `cli` / `mac-app`：存盘并等提交，把这局已提交的存档拷到 `$DM_ROOT/data/switch/save_ref_<名>/`（只在本机，不入库）。`warlock` 永不替换。 |
 | `enter_game [slot=0]` | | 从主菜单进局：主菜单上按 `X`，载入 `slot` 那个角色，等 `loading_done`。已在局内时什么都不做。 |
 | `open_pause`、`close_pause` | | `+` 开总面板，`L` 三次切到暂停页（`pause_open`）；`B` 关掉。 |

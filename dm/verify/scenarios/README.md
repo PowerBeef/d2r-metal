@@ -47,6 +47,7 @@ Steps:
 | `expect_state field=value …  [timeout=5]` | `field>=n`, `field<=n`, `field!=v` too | Polls `state` until every condition holds. |
 | `sleep <s>`, `log <text>` | | |
 | `remember <field> [as=name]` | | Keeps a `state` field; later values can say `$name`, `$name+N` or `$name-N` (e.g. `expect_state tick<=$tick+30`). |
+| `gpu_capture [frames=1] [path=frame.gputrace] [keep=1]` | | `cli` / `mac-app`: captures GPU frames with `gpucapture` and returns the `gpudebug` summary (command buffers, encoders, draws, dispatches). The trace (about 4 GB a frame) is deleted unless `keep=1`. The run gets `MTL_CAPTURE_ENABLED=1` automatically. Capturing stalls presentation, so add `check no_red allow=e6db5cb6`. |
 | `export_save <name> [overwrite=1]` | | `cli` / `mac-app`: saves, waits for the commit and copies this run's committed save to `$DM_ROOT/data/switch/save_ref_<name>/` (local only, never committed). `warlock` is never replaced. |
 | `enter_game [slot=0]` | | From the main menu into a run: `X` on the main menu, load the character in `slot`, wait for `loading_done`. Does nothing when already in a run. |
 | `open_pause`, `close_pause` | | `+` opens the combined panel and `L` three times reaches the pause page (`pause_open`); `B` closes it. |

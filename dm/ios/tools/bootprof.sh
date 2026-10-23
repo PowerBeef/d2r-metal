@@ -97,3 +97,8 @@ if metal_cold:
                 print(f'🔴 {kind} {key} 分段覆盖 {len(duration)}/{N}', file=sys.stderr); sys.exit(1)
             print(f'{kind} {key} {label} 中位数：{statistics.median(duration):.3f}（{statistics.median(cumulative):.3f}）')
 PY
+rc=$?
+# 每局的分段记进启动时间历史账本（dm/tools/boothist.py；$DM_ROOT/run/bootprof/history.tsv），跨提交比：boothist.py show --label device
+# Each run's segments go into the boot-time history ledger (dm/tools/boothist.py; $DM_ROOT/run/bootprof/history.tsv), for comparison across revisions: boothist.py show --label device
+python3 "$(dirname "$0")/../../tools/boothist.py" record $R/*.log --label device >/dev/null 2>&1 || true
+exit $rc

@@ -28,6 +28,8 @@ Three kinds of things live here. The first you will use when following the front
 | `save_txn_regress.sh` | Determinism regression for save transactions |
 | `host_war13.sh` | Host replay of one fixed case, compared tick by tick and by save |
 | `l3reg.py`, `l3seg.sh`, `l3run.sh`, `test_l3reg.py` | Long-run memory regression: fits the growth of memory and handles against game ticks and extrapolates to a long session |
+| `gpucap.py` | GPU frame capture and summary, live Metal stats and the Metal HUD (wraps `gpucapture`, `gpudebug --json`, `metalperftrace`) |
+| `boothist.py`, `test_boothist.py` | Boot-time history ledger: boot stages per run from the event stream and the `DM_BOOTPROF` table, compared across revisions |
 | `bench.py`, `test_bench.py` | Fixed-route benchmarks ([dm/verify/bench](../verify/bench/README.md)): per-segment frame, CPU, NVN and GPU time per frame into bench.json; interleaved A/B with Mann-Whitney U and a bootstrap interval, recorded in a ledger |
 | `imgdiff.py`, `test_imgdiff.py` | Perceptual difference of two screenshots (LDR-FLIP: what the eye can tell apart at a viewing distance), for A/B and before / after comparisons; `--max-mean` judges OK / RED |
 | `scenario.py`, `test_scenario.py` | Scenario runner: plays the step-by-step scenarios in [dm/verify/scenarios](../verify/scenarios/README.md) through the control port on the CLI host, the iOS package on a Mac or a device, and judges them by events, state and checks |

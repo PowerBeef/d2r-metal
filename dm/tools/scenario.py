@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from typing import Any
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -36,7 +37,7 @@ POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 
        'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name']}
 ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away')
-LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save')
+LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture')
 HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires')
 CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event')
 BAD = ('red', 'fatal', 'crash', 'watchdog')
@@ -141,6 +142,7 @@ class CliBackend:
         except OSError as e: self.stop(); raise ScenarioError(f'host did not connect to the control port: {e}') from e
 
     def alive(self): return self.proc is not None and self.proc.poll() is None
+    def pid(self): return self.proc.pid if self.alive() and self.proc else None
     def wait_exit(self, timeout):
         try: return self.proc.wait(timeout) if self.proc else None
         except subprocess.TimeoutExpired: return None
@@ -221,6 +223,7 @@ class LaunchBackend:
         return dmctl.Ctl(port, connect_timeout=90, log=os.path.join(self.run, 'port.log'))
 
     def alive(self): return not self.ended and self._ask('alive', 30) == 'yes'
+    def pid(self): return None   # iOS 包的 GPU 截帧走 Xcode | GPU capture of the iOS package goes through Xcode
     def wait_exit(self, timeout):
         end = time.time() + timeout
         while time.time() < end:
@@ -249,6 +252,8 @@ class Runner:
         self.run = out or os.path.join(DM_ROOT, 'run', 'scenario', f"{self.meta['name']}_{backend_name}_{stamp}_{os.getpid()}")
         os.makedirs(self.run, exist_ok=True)
         self.backend = CliBackend(self.meta, self.run, headless) if backend_name == 'cli' else MacAppBackend(self.meta, self.run, headless) if backend_name == 'mac-app' else LaunchBackend(backend_name, self.meta, self.run)
+        if any(st['op'] == 'gpu_capture' for st in self.steps): self.meta['env'].setdefault('MTL_CAPTURE_ENABLED', '1')   # 进程得带它起才截得了帧 | the process must start with it to be capturable
+        self.on_started: Callable[[Any], None] | None = None   # 回调（后端）：连上之后、第一步之前调，基准测试用它挂系统读数 | callback(backend): called after connecting and before the first step; benchmarks attach system readings with it
         self.c: dmctl.Ctl | None = None; self.prev_mark = -1; self.records: list[dict[str, Any]] = []
         self.vars: dict[str, Any] = {}   # remember 记下的值，后面的值里写 $名 或 $名+N / $名-N 引用 | values kept by remember, referenced later as $name or $name+N / $name-N
 
@@ -348,6 +353,17 @@ class Runner:
             raise ScenarioError(f'unexpected event: {json.dumps(e, ensure_ascii=False)}')
         if op == 'expect_state': return self.expect_state(kw)
         if op == 'sleep': time.sleep(float(st['args'][0])); return None
+        if op == 'gpu_capture':   # gpu_capture [frames=1] [path=frame.gputrace] [keep=1]：截 GPU 帧（gpucapture，只 cli / mac-app），结果带 gpudebug 的摘要 | capture GPU frames (gpucapture, cli / mac-app only); the result carries the gpudebug summary
+            pid = self.backend.pid()
+            if not pid: raise ScenarioError('gpu_capture needs the cli or mac-app backend')
+            import gpucap   # noqa: PLC0415
+            out = self.backend.shot_path(kw.get('path', 'frame.gputrace'))
+            cap = gpucap.capture(pid, int(kw.get('frames', 1)), out, False)
+            if not cap['ok']: raise ScenarioError(f"gpucapture failed: {cap['error']}")
+            sm = gpucap.summary(out)
+            kept = str(kw.get('keep', '0')) == '1'   # 一帧约 4 GB：缺省只留摘要，keep=1 才留截帧文件 | about 4 GB per frame: by default only the summary is kept, keep=1 keeps the capture file
+            if not kept: shutil.rmtree(out, ignore_errors=True)
+            return dict(path=out if kept else None, mb=round(cap['bytes'] / 1e6, 1), **{k: sm.get(k) for k in ('command_buffers', 'encoders', 'draws', 'dispatches')})
         if op == 'export_save':   # export_save 名 [overwrite=1]：存盘并等提交，把这局已提交的存档拷成 save_ref_<名>（只命令行宿主） | export_save name [overwrite=1]: save and wait for the commit, then copy this run's committed save to save_ref_<name> (CLI host only)
             if self.backend.name not in ('cli', 'mac-app'): raise ScenarioError('export_save works on the cli / mac-app backends only (the iOS backends use saves bundled at build time)')
             src_save = os.path.join(self.run, 'support', 'save') if self.backend.name == 'mac-app' else os.path.join(self.run, 'save')
@@ -407,6 +423,7 @@ class Runner:
         tsv = open(os.path.join(self.run, 'steps.tsv'), 'w', encoding='utf-8'); tsv.write('步 | step\t行 | line\t结果 | result\t秒 | s\t说明 | detail\n')
         try:
             self.c = self.backend.start()
+            if self.on_started: self.on_started(self.backend)
             deadline = t0 + self.meta['timeout']
             for i, st in enumerate(self.steps, 1):
                 if time.time() > deadline: fail = dict(step=i, line=st['line'], reason=f"scenario timeout {self.meta['timeout']} s"); break

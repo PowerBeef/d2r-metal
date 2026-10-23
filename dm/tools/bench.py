@@ -175,7 +175,7 @@ def metric(seg, path):
     return v if isinstance(v, (int, float)) else None
 
 
-def run_once(route, backend, out_dir, env, host, cool):
+def run_once(route, backend, out_dir, env, host, cool, mpt=False):
     th0, waited = wait_cool(cool)
     saved = {k: os.environ.get(k) for k in list(env) + ['DM_FRAMES', 'DM_STATEREP', 'SCN_DMHOST', 'DM_NVN_TSV', 'DM_NVN_TSV_CALLS']}
     os.environ.update(env); os.environ['DM_FRAMES'] = os.path.join(out_dir, 'frames.tsv'); os.environ['DM_STATEREP'] = '1'
@@ -183,12 +183,23 @@ def run_once(route, backend, out_dir, env, host, cool):
     if host: os.environ['SCN_DMHOST'] = host
     try:
         os.makedirs(out_dir, exist_ok=True)
-        res, code = scenario.Runner(route, backend, out_dir, False).go()
+        runner = scenario.Runner(route, backend, out_dir, False); lst: dict[str, Any] = {}
+        if mpt:   # 系统的 Metal 读数（metalperftrace listen）陪跑整遍 | the system's Metal readings (metalperftrace listen) for the whole run
+            import gpucap   # noqa: PLC0415
+            def attach(b):
+                pid = b.pid()
+                if pid: lst['l'] = gpucap.Listener(pid)
+            runner.on_started = attach
+        res, code = runner.go()
+        if 'l' in lst: lst['mpt'] = lst.pop('l').stop(os.path.join(out_dir, 'metalperftrace.json'))
+        if code == 0 and os.path.exists(os.path.join(out_dir, 'events.ndjson')):   # 启动各阶段记进历史账本（boothist.py） | boot stages go into the history ledger (boothist.py)
+            import boothist   # noqa: PLC0415
+            boothist.record([os.path.join(out_dir, 'events.ndjson')], f'bench:{backend}')
     finally:
         for k, v in saved.items():
             if v is None: os.environ.pop(k, None)
             else: os.environ[k] = v
-    return dict(ok=code == 0, reason=res.get('reason'), thermal_before=th0, cooled_s=waited, thermal_after=thermal(), segments=segments(out_dir), dir=out_dir)
+    return dict(ok=code == 0, reason=res.get('reason'), thermal_before=th0, cooled_s=waited, thermal_after=thermal(), segments=segments(out_dir), metalperftrace=lst.get('mpt'), dir=out_dir)
 
 
 def summarize(reps):
@@ -219,7 +230,7 @@ def cmd_run(a):
     env = parse_env(a.env); reps = []
     for i in range(a.reps):
         print(f'== 第 {i + 1}/{a.reps} 遍 | run {i + 1}/{a.reps}', flush=True)
-        reps.append(run_once(a.route, a.backend, os.path.join(base, f'r{i + 1}'), env, a.host, a.cool))
+        reps.append(run_once(a.route, a.backend, os.path.join(base, f'r{i + 1}'), env, a.host, a.cool, a.mpt))
     res = dict(schema='bench/1', route=name, backend=a.backend, started=stamp, env=env, host=a.host, environment=environment(), reps=reps, summary=summarize(reps))
     out = a.out or os.path.join(base, 'bench.json')
     with open(out, 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
@@ -282,6 +293,7 @@ def main(argv):
     sub = ap.add_subparsers(dest='cmd', required=True)
     r = sub.add_parser('run'); r.add_argument('route'); r.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); r.add_argument('--reps', type=int, default=3)
     r.add_argument('--env', action='append'); r.add_argument('--host'); r.add_argument('--out'); r.add_argument('--cool', type=float, default=120)
+    r.add_argument('--mpt', action='store_true', help='also record metalperftrace listen (on-glass intervals, lateness, skipped frames) per run')
     b = sub.add_parser('ab'); b.add_argument('route'); b.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); b.add_argument('--reps', type=int, default=6)
     b.add_argument('--a-env', default=''); b.add_argument('--b-env', default=''); b.add_argument('--a-host'); b.add_argument('--b-host'); b.add_argument('--metric', default='nvn_ms.p50', choices=METRICS)
     b.add_argument('--out'); b.add_argument('--cool', type=float, default=120)

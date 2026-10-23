@@ -41,6 +41,20 @@ Checked on this tree (Apple M6, macOS 27):
 - **A/A run** (two identical variants): "no difference", town −0.004 ms [−0.032, +0.056], p = 1.0.
 - **Half 3D resolution** (`DM_3D_SCALE` 1.0 vs 0.5): "B faster", GPU p50 6.28 → 3.79 ms [−2.51, −2.46], p = 0.029.
 
+## Profiling a run
+
+| Tool | Command | What you get |
+|---|---|---|
+| Signposts | `xcrun xctrace record --template Logging --attach <pid> --time-limit 10s` | `XTRACE_*` intervals (subsystem `org.d2rmobile`, Points of Interest): the translation thread's `dm-x-submit`, `dm-x-present`, `dm-x-frame`, `dm-x-wait-sub`, `dm-game-syncwait`, plus `dm-count` values. Off the timeline they cost one check. |
+| Live Metal stats | `python3 dm/tools/gpucap.py listen --pid <pid> --seconds 10`, or `bench.py run … --mpt` | `metalperftrace listen`: on-glass frame interval, present lateness and skipped frames per second. |
+| Always-on Metal record | `metalperftrace collect --last 10m <dir>` then `metalperftrace overview --aggregate --domain GameState <trace>` | The system's own record, split by `game_state` when the run had `DM_STATEREP=1`. |
+| GPU capture | `python3 dm/tools/gpucap.py capture --pid <pid>` (or the scenario step `gpu_capture`) | One frame at the layer boundary, about 4 GB; the process must start with `MTL_CAPTURE_ENABLED=1`. `gpucap.py summary <trace>` lists command buffers, encoders, draws and dispatches (`gpudebug --json`). Capturing pauses presentation for a few seconds, so the host logs a red "display link silent" line (code `e6db5cb6`). |
+| Metal HUD | `python3 dm/tools/gpucap.py hud --pid <pid> on|off` | The system performance overlay, switched on a running process (`metalperftrace setup`). |
+
+## Boot-time history
+
+Every benchmark run and every `dm/ios/tools/bootprof.sh` run appends the time from process start to each boot stage to `$DM_ROOT/run/bootprof/history.tsv`, with the git revision. The stages come from the event stream (`boot`, `main_menu`, `game_enter`, `loading_done`) and from the `DM_BOOTPROF` table (⓪–⑥). `python3 dm/tools/boothist.py show --label bench:cli` compares the median of the latest runs with the runs before and marks stages more than 10% and 50 ms slower.
+
 ## Routes
 
 | Route | Segments | Notes |

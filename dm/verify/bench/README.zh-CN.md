@@ -41,6 +41,20 @@ python3 dm/tools/bench.py show bench.json
 - **A/A**（两个变体完全相同）：「无差别」，营地 −0.004 ms [−0.032, +0.056]，p = 1.0。
 - **3D 分辨率减半**（`DM_3D_SCALE` 1.0 对 0.5）：「B 更快」，GPU p50 6.28 → 3.79 ms [−2.51, −2.46]，p = 0.029。
 
+## 剖析一局
+
+| 工具 | 命令 | 得到什么 |
+|---|---|---|
+| 时间线打点 | `xcrun xctrace record --template Logging --attach <pid> --time-limit 10s` | `XTRACE_*` 区间（子系统 `org.d2rmobile`，Points of Interest）：翻译线程的 `dm-x-submit`、`dm-x-present`、`dm-x-frame`、`dm-x-wait-sub`、`dm-game-syncwait`，以及 `dm-count` 读数。不在录制时每处只多一次判断。 |
+| 实时 Metal 读数 | `python3 dm/tools/gpucap.py listen --pid <pid> --seconds 10`，或 `bench.py run … --mpt` | `metalperftrace listen`：每秒的上屏间隔、上屏迟到、跳帧。 |
+| 系统常开的 Metal 记录 | `metalperftrace collect --last 10m <目录>`，再 `metalperftrace overview --aggregate --domain GameState <记录>` | 系统自己的记录；那一局设了 `DM_STATEREP=1` 的话按 `game_state` 分段。 |
+| GPU 截帧 | `python3 dm/tools/gpucap.py capture --pid <pid>`（或场景步骤 `gpu_capture`） | 按图层边界截一帧，约 4 GB；进程要带 `MTL_CAPTURE_ENABLED=1` 起。`gpucap.py summary <截帧>` 列命令缓冲、编码器、绘制、计算派发数（`gpudebug --json`）。截帧时出图停几秒，宿主会记一条红标「显示节拍没回调」（码 `e6db5cb6`）。 |
+| Metal HUD | `python3 dm/tools/gpucap.py hud --pid <pid> on|off` | 系统的性能叠层，运行中开关（`metalperftrace setup`）。 |
+
+## 启动时间历史
+
+每一遍基准与每次 `dm/ios/tools/bootprof.sh` 都把进程起点到各启动阶段的秒数连同 git 提交追加进 `$DM_ROOT/run/bootprof/history.tsv`。阶段取自事件流（`boot`、`main_menu`、`game_enter`、`loading_done`）与 `DM_BOOTPROF` 表（⓪–⑥）。`python3 dm/tools/boothist.py show --label bench:cli` 拿最近几次的中位数和再往前几次比，慢了超过 10% 且 50 ms 的阶段标出来。
+
 ## 路线
 
 | 路线 | 段 | 说明 |
