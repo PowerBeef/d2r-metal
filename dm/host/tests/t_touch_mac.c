@@ -24,7 +24,8 @@ static uint64_t polled_buttons;
 static float click_x, click_y, walk_x, walk_y;
 static int test_ui_y, test_ui_h, test_real_h;
 int test_ui_item_at_now(float x, float y) { (void)x; (void)y; return test_hit; }
-void test_ui_touch(int op, float x, float y) { (void)op; (void)x; (void)y; ui_events++; }
+static int ops[512], nops; static float op_y[512];   // 前端页交给界面的每一下（相位与纵坐标） | each event handed to the UI on front-end pages (phase and y)
+void test_ui_touch(int op, float x, float y) { (void)x; ui_events++; if (nops < 512) { ops[nops] = op; op_y[nops] = y; nops++; } }
 void test_ui_tab_go(void) { tabs++; }
 void (*dm_pad_hook)(uint64_t, uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *);
 uint64_t guest_ns(void) { return 0; }
@@ -182,6 +183,31 @@ static void test_live_hover(void) {
     CHECK(hovers == 3, "hover resumes after gestures complete");
 }
 
+// 游戏线程卡住、拖动事件把 64 格的队列排满时：抬起不能丢（丢了按下就一直按着），按下放不下时整笔丢掉、不留只有按下的那种
+// When the game thread stalls and drag events fill the 64-slot queue: the release must not be dropped (otherwise the press stays held), and a press that does not fit is dropped as a whole gesture, never leaving a press without its release
+static void test_live_queue(void) {
+    live_reset(); result = 0;
+    dm_touch_host_live(0, .70f, .40f);
+    for (int i = 0; i < 70; i++) dm_touch_host_live(1, .70f + i * .001f, .40f);
+    dm_touch_host_live(2, 0, 0);
+    live_poll();
+    CHECK(!g_lm.owned && !g_lm.down, "in game: a release posted after 70 drags still reaches the host (the world gesture ends)");
+    int w0 = walks; for (int k = 0; k < 10; k++) { test_now += 33333334ull; live_poll(); }
+    CHECK(walks == w0, "in game: no held movement after that release");
+
+    live_reset(); test_in = 0; nops = 0;
+    dm_touch_host_live(0, .20f, .20f);
+    for (int i = 0; i < 70; i++) dm_touch_host_live(1, .20f, .20f + i * .001f);
+    dm_touch_host_live(2, 0, 0);
+    dm_touch_host_live(0, .50f, .50f); dm_touch_host_live(1, .50f, .51f); dm_touch_host_live(2, 0, 0);   // 队列还满着：这一笔放不下，整笔丢掉 | the queue is still full: this gesture does not fit and is dropped whole
+    live_poll();
+    int downs = 0, ups = 0; for (int i = 0; i < nops; i++) { downs += ops[i] == 0; ups += ops[i] == 2; }
+    CHECK(nops > 2 && ops[0] == 0 && ops[nops - 1] == 2 && downs == 1 && ups == 1, "front end: the full queue still delivers press ... release, and the gesture that did not fit leaves no press behind");
+    CHECK(fabsf(op_y[nops - 1] - (.20f + 69 * .001f)) < .0001f, "front end: the release lands at the newest drag position, not at a stale one");
+    nops = 0; dm_touch_host_live(0, .30f, .30f); dm_touch_host_live(2, 0, 0); live_poll();
+    CHECK(nops == 2 && ops[0] == 0 && ops[1] == 2, "once drained, the next click goes through as usual");
+}
+
 int main(void) {
     const char *path = "build/touch_host.script";
     FILE *f = fopen(path, "w"); if (!f) return 2;
@@ -213,6 +239,7 @@ int main(void) {
       dm_ui_cache_mode_leave(); CHECK(1, "界面缓存清理在没有界面根时不崩"); }
     test_live_mouse();
     test_live_hover();
+    test_live_queue();
     printf("== touch host %d 项，失败 %d ==\n", checks, fails);
     return fails != 0;
 }

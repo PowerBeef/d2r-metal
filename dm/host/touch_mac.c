@@ -61,6 +61,12 @@ static _Atomic uint64_t g_live_hover;
 // 世界手势从按下到抬起独占；点选答案只用于空地回退，不能让抬起再触发一次。
 // Own a world gesture from down through up; the pick result only supplies the ground fallback, never a second click on release.
 static struct { int owned, down, repeat; uint32_t last; float x, y; unsigned tap_seq; float tap_x, tap_y; } g_lm;
+// 队列快满时（游戏线程卡住、拖动事件堆积）：拖动只留最新的一条暂存，抬起前补进去，抬起就落在最后的位置；按下要给自己、最后一次拖动和抬起都留得下位置才收，
+// 收不下就连同这一笔后面的拖动 / 抬起整笔丢掉。原先满了一律丢，丢掉的若是抬起，按下就一直按着（局内一直走、前端那一下点击也没了）。只有前端线程写
+// When the queue is nearly full (the game thread stalled and drag events piled up): only the newest drag is kept aside and added just before the release, so the release lands at the last position; a press is taken only if there is room for itself, a last drag and its release,
+// otherwise that whole gesture (its drags / release too) is dropped. Before, everything was dropped once full, and if the dropped one was the release, the press stayed held (walking on in game, and the click was lost in the front end). Written by the front-end thread only
+static struct { int on, skip; float nx, ny; } g_live_mv;
+static void live_push(unsigned t, int op, float nx, float ny) { g_live.q[t % 64].op = op; g_live.q[t % 64].nx = nx; g_live.q[t % 64].ny = ny; atomic_store(&g_live.tail, t + 1); }
 void dm_touch_host_live(int op, float nx, float ny) {   // 前端线程：op 0 按下 1 拖动 2 抬起 3 悬停；坐标 = 界面归一化，悬停可在画面外 | Front-end thread: op 0 down, 1 drag, 2 up, 3 hover; coordinates = UI-normalized, hover may be outside the picture
     if (!g_live_on) return;
     if (op == 3) {
@@ -70,8 +76,13 @@ void dm_touch_host_live(int op, float nx, float ny) {   // 前端线程：op 0 �
         atomic_store(&g_live_hover, p); return;
     }
     atomic_store(&g_live_hover, 0);
-    if (!g_live_on) return; unsigned t = atomic_load(&g_live.tail); if (t - atomic_load(&g_live.head) >= 64) return;
-    g_live.q[t % 64].op = op; g_live.q[t % 64].nx = nx; g_live.q[t % 64].ny = ny; atomic_store(&g_live.tail, t + 1);
+    unsigned t = atomic_load(&g_live.tail), used = t - atomic_load(&g_live.head);
+    if (op == 0) { g_live_mv.on = 0; if ((g_live_mv.skip = used + 3 > 64)) return; }
+    else if (g_live_mv.skip) { if (op == 2) g_live_mv.skip = 0; return; }
+    else if (op == 1 && used + 3 > 64) { g_live_mv.on = 1; g_live_mv.nx = nx; g_live_mv.ny = ny; return; }
+    else if (op == 1) g_live_mv.on = 0;
+    else if (g_live_mv.on && used < 64) { live_push(t++, 1, g_live_mv.nx, g_live_mv.ny); g_live_mv.on = 0; used++; }
+    if (used < 64) live_push(t, op, nx, ny);
 }
 static void touch_uimsg(const char *cat, const char *act, const char *arg) {
     static dm_tc_scene scene;
