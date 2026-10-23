@@ -46,6 +46,7 @@ English: [control_port.md](control_port.md)
 | `pause` | | 冻结游戏拍（`DM_TICK_HOLD` 那种冻结）。要局内跑过拍、且开着控制通道。冻着超过 `DM_WATCH_STALL` 秒看门狗会判死。 | `tick` |
 | `step` | `n`（1） | 冻着时：放行正好 `n` 拍再冻上。 | `tick` |
 | `resume` | | 解冻。 | `tick` |
+| `mark` | `name` | 往事件流里打一个 `mark` 事件（带当前帧号），基准路线用它切段。 | `t`、`frame` |
 | `wait` | `frames`、`ticks` 或 `ms`；`timeout`（60 秒） | 在宿主这头等。 | `frame`、`tick` |
 | `save_now` | `timeout`（5 秒） | 请游戏照自己的定时存盘路径存一次并等提交（前端退出 / 进后台用的同一个 `dm_save_wait`）。 | `commits`、`ms`、`paused` |
 | `dump` | | 把各线程在等什么写进日志。 | |

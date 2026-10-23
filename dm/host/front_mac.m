@@ -429,9 +429,9 @@ void front_run(void (*guest)(void)) {
         // 最小化：客体时钟一并冻结（同 iOS 进后台）。否则游戏线程挡在图形挂起处、墙钟照走，恢复时主循环把整段最小化时长的拍一口气补跑完——角色站着不动、怪照打（专家模式死了就没了）
         // Minimize: the guest clock is frozen as well (as when iOS goes to the background). Otherwise the game thread is blocked at the graphics suspend while the wall clock keeps running, and on restore the main loop catches up on every tick of the minimized period in one burst -- the character stands still while monsters keep attacking (a death in Hardcore is permanent)
         [nc addObserverForName:NSWindowDidMiniaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; void guest_clock_freeze_for(int reason, int on); uint64_t guest_ns(void);
-            dm_focus_set(3); dm_audio_suspend(1); guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); LOG("窗口：最小化（客体时钟 %.3f s，冻结）", guest_ns() / 1e9); DM_EV("app", "state:s", "minimized"); }];
+            dm_focus_set(3); dm_audio_suspend(1); guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); LOG("窗口：最小化（客体时钟 %.3f s，冻结）", guest_ns() / 1e9); DM_EV("app", "state:s", "minimized"); void dm_game_state_background(int); dm_game_state_background(1); }];
         [nc addObserverForName:NSWindowDidDeminiaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; void guest_clock_freeze_for(int reason, int on); uint64_t guest_ns(void);
-            dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); dm_audio_suspend(0); dm_focus_set(2); LOG("窗口：恢复（客体时钟 %.3f s）", guest_ns() / 1e9); DM_EV("app", "state:s", "restored"); }];
+            dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); dm_audio_suspend(0); dm_focus_set(2); LOG("窗口：恢复（客体时钟 %.3f s）", guest_ns() / 1e9); DM_EV("app", "state:s", "restored"); void dm_game_state_background(int); dm_game_state_background(0); }];
         // 客体线程：栈 64 MiB（Switch 主线程栈由 npdm 指定，宿主给足）
         // Guest thread: 64 MiB stack (the Switch main thread stack is specified by npdm; the host gives plenty)
         static guest_arg ga; ga.fn = guest;

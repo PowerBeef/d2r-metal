@@ -376,6 +376,31 @@ static void monres_on_setinfo(const uint64_t *regs, uint64_t payload) {
     memcpy(buf + keep, add, n); memcpy(buf + keep + n, "\xee\x81\xbe" "0", 4); memset(buf + keep + n + 4, ' ', len - keep); buf[keep + n + 4 + (len - keep)] = 0;
 }
 
+// 游戏状态（给系统时间线与性能工具分段用，dm_events.h g_dm_state_fn、事件 game_state）：Menu 前端 / Loading 进局到读取画面撤下 / Playing 局内 / Paused 暂停页开着 / Background 进后台或最小化
+// 从界面消息推（与下面的里程碑同源），进后台由前端调 dm_game_state_background；状态没变不报
+// Game state (to segment the system timeline and performance tools, g_dm_state_fn in dm_events.h, event game_state): Menu front end / Loading from entering a run until the loading screen goes / Playing in a run / Paused pause page open / Background in the background or minimized
+// Derived from the UI messages (same source as the milestones below); the front ends call dm_game_state_background for the background; nothing is reported when the state does not change
+static const char *g_gs = "", *g_gs_fg = "";
+static void game_state_set(const char *s) {
+    if (!strcmp(s, g_gs)) return;
+    g_gs = s;
+    DM_EV("game_state", "state:s", s);
+    if (g_dm_state_fn) { dm_hud_info h; dm_hud_get(&h); g_dm_state_fn(s, h.area, h.players); }
+}
+void dm_game_state_background(int on) {
+    if (on) { if (strcmp(g_gs, "Background")) g_gs_fg = g_gs; game_state_set("Background"); }
+    else if (!strcmp(g_gs, "Background")) game_state_set(*g_gs_fg ? g_gs_fg : "Menu");
+}
+static void game_state_ui(const char *cat, const char *act, const char *arg) {
+    if (!strcmp(g_gs, "Background")) return;   // 后台时只等回前台 | in the background, only waiting for the foreground
+    if (!strcmp(cat, "FrontEndNavigation")) { if (!strcmp(act, "ToGame")) game_state_set("Loading"); else if (!strcmp(act, "ToFrontEnd")) game_state_set("Menu"); }
+    else if (!strcmp(cat, "PanelManager") && *arg) {
+        if (!strcmp(act, "OpenPanel") && !strcmp(arg, "MainMenuButtonRibbon")) game_state_set("Menu");
+        else if (!strcmp(act, "UnloadPanel") && !strcmp(arg, "LoadScreenPanel") && !strcmp(g_gs, "Loading")) game_state_set("Playing");
+        else if (!strcmp(act, "OpenPanel") && !strncmp(arg, "PauseLayout", 11) && !strcmp(g_gs, "Playing")) game_state_set("Paused");
+        else if (!strcmp(act, "ClosePanel") && !strcmp(arg, "UISwitcher") && !strcmp(g_gs, "Paused")) game_state_set("Playing");
+    }
+}
 // 事件流（dm_events.h）：前端导航、面板开关，与读这些消息的里程碑——主菜单出来、进局、读取画面撤下、退回前端、暂停菜单打开（smoke / logport.py 原先 grep 的就是这几条 UIMSG）
 // Event stream (dm_events.h): front-end navigation, panel open / close, and the milestones read from these messages -- main menu shown, game entered, loading screen dismissed, back to the front end, pause menu opened (the UIMSG lines that smoke / logport.py used to grep)
 static void ui_events(const char *cat, const char *act, const char *arg) {
@@ -410,6 +435,7 @@ static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄
     snprintf(stage, sizeof stage, "%s:%s:%s", n0, n1, have_arg ? nm : "");
     crash_watch_progress(cur_tick(), stage);
     if (g_dm_event_fn) ui_events(n0, n1, have_arg ? nm : "");
+    if (g_dm_event_fn || g_dm_state_fn) game_state_ui(n0, n1, have_arg ? nm : "");
     // 看门狗的「进局前按出图帧算进展」：启动后到主菜单出来为止（主菜单上不动 = 按键序卡住，照判死）；
     // 从局里退回前端（ToFrontEnd 且之前进过局）后重新按出图帧算，直到再进局——局后停在前端发呆不是卡住（回前端 15 秒报「卡在 ClosePanel:SaveIndicatorPanel」的误报）
     // The watchdog's "before joining a run, measure progress by presented frames": from launch until the main menu appears (no movement on the main menu = the key sequence is stuck, still judged dead);
@@ -1574,6 +1600,9 @@ void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 �
     static const char *path; static int init; static unsigned c16, c25, c33, disc; static double sum; static uint64_t t0, f0, cpu0, tstart;
     if (!init) { init = 1; const char *e = getenv("DM_PERF_FILE"); path = e ? (strcmp(e, "0") ? e : NULL) : (DM_PHONE ? "perf.txt" : NULL); t0 = tstart = now_ns(); f0 = dm_nvn_frame_count(); cpu0 = dm_nvn_sub_cpu_ns(); }
     dm_3d_scale_feed(iv);   // 动态 3D 比例的控制器吃同一份上屏间隔（hle_oe.c） | The dynamic 3D scale controller consumes the same present intervals (hle_oe.c)
+    { static FILE *ff; static int fi;   // DM_FRAMES=<文件>：逐帧记「秒（同事件时钟）\t上屏间隔 ms」，基准测试（dm/tools/bench.py）按 mark 事件切段 | DM_FRAMES=<file>: per frame "seconds (event clock)\tpresent interval ms", cut into segments by mark events in the benchmarks (dm/tools/bench.py)
+      if (!fi) { fi = 1; const char *e = getenv("DM_FRAMES"); if (e && *e && (ff = fopen(e, "w"))) { setvbuf(ff, NULL, _IOLBF, 0); fputs("t\tiv_ms\n", ff); } }
+      if (ff) fprintf(ff, "%.4f\t%.3f\n", dm_events_now_s(), iv); }
     if (!path) return;
     if (iv < 0) disc++; else if (iv > 0) { sum += iv; if (iv <= 20.8) c16++; else if (iv <= 29.2) c25++; else c33++; }
     uint64_t now = now_ns(); if (now - t0 < 10000000000ull) return;

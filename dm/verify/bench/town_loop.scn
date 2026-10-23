@@ -1,0 +1,21 @@
+# 基准路线：营地里走一圈（town），再出南门进血腥荒野走一段（wild）。固定存档、固定地图种子，mark 切段；bench.py 按段出帧时间统计
+# Benchmark route: one loop inside the camp (town), then out of the south gate into the Blood Moor for a stretch (wild). Fixed save and map seed; mark cuts the segments; bench.py reports frame-time statistics per segment
+name town_loop
+save warlock
+env DM_GAME_SEED=305419896
+timeout 240
+
+enter_game
+sleep 2
+mark town
+walk_to 5789 4470 timeout=20
+walk_to 5762 4413 timeout=20
+walk_to 5789 4414 timeout=20
+walk_to 5789 4495 timeout=20
+mark wild
+walk_to 5791 4523 timeout=25
+expect_state area=2 timeout=10
+walk_to 5791 4560 timeout=25
+mark end
+quit
+check no_red

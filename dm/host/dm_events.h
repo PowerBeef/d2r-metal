@@ -38,6 +38,10 @@ void dm_events_set_sink(void (*fn)(const char *line, size_t n));   // 装出口�
 // JSON helpers (same escaping as the events): write ",\"name\":value,..." per the signature into out (returns the length); write one JSON string (with quotes)
 size_t dm_json_fields(char *out, size_t cap, const char *sig, ...);
 void dm_json_str(char *out, size_t cap, const char *s);
+// 游戏状态（diag.c dm_game_state_*：Menu / Loading / Playing / Paused / Background）变了时调（dm_staterep.m 设：上报给系统的 StateReporting）
+// Called when the game state changes (diag.c dm_game_state_*: Menu / Loading / Playing / Paused / Background) (set by dm_staterep.m: reported to the system's StateReporting)
+__attribute__((weak)) void (*g_dm_state_fn)(const char *label, int area, int players) = 0;
 // 读 DM_EVENTS 等开关、开好输出、填上面的指针；可重复调（只生效一次）。要在起别的线程之前调
 // Reads DM_EVENTS and the other switches, opens the outputs and fills the pointers above; may be called repeatedly (takes effect once). Must be called before other threads start
 void dm_events_init(void);
+double dm_events_now_s(void);   // 与事件 t 同一时钟的当前秒数（基准测试的逐帧记录用） | current seconds on the same clock as the events' t (for the benchmarks' per-frame record)

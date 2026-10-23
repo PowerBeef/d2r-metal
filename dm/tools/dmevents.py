@@ -39,7 +39,9 @@ def parse_line(line):
 
 
 def load(src):
-    text = src if '\n' in src or not os.path.exists(src) else open(src, encoding='utf-8', errors='replace').read()
+    if '\n' in src or not os.path.exists(src): text = src
+    else:
+        with open(src, encoding='utf-8', errors='replace') as f: text = f.read()
     return [e for e in map(parse_line, text.splitlines()) if e]
 
 

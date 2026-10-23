@@ -46,6 +46,7 @@ A command is a flat JSON object: `{"id":<number or string>,"cmd":"<name>",<argum
 | `pause` | | Freezes game ticks (the `DM_TICK_HOLD` freeze). Needs a run that has ticked with a control channel on. Frozen longer than `DM_WATCH_STALL`, the watchdog gives up. | `tick` |
 | `step` | `n` (1) | While paused: lets exactly `n` ticks run, then freezes again. | `tick` |
 | `resume` | | Unfreezes. | `tick` |
+| `mark` | `name` | Puts a `mark` event (with the current frame number) into the event stream; benchmark routes use it to cut segments. | `t`, `frame` |
 | `wait` | `frames`, `ticks` or `ms`; `timeout` (60 s) | Waits on the host side. | `frame`, `tick` |
 | `save_now` | `timeout` (5 s) | Asks the game to save along its own timed-save path and waits for the commit (the same `dm_save_wait` the front ends use on quit and background). | `commits`, `ms`, `paused` |
 | `dump` | | Writes what each thread is waiting on into the log. | |

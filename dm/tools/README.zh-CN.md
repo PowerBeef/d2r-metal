@@ -28,6 +28,7 @@ English: [README.md](README.md)
 | `save_txn_regress.sh` | 存档事务的确定性回归 |
 | `host_war13.sh` | 一个固定用例的宿主回放，逐拍与存档对拍 |
 | `l3reg.py`、`l3seg.sh`、`l3run.sh`、`test_l3reg.py` | 长时间运行的内存回归：按游戏拍数回归内存与句柄的增长斜率，外推到长局 |
+| `bench.py`、`test_bench.py` | 固定路线基准（[dm/verify/bench](../verify/bench/README.zh-CN.md)）：按段出每帧的帧、CPU、NVN、GPU 时间，写 bench.json；A/B 交替跑，做 Mann-Whitney U 与自助法区间，记进账本 |
 | `imgdiff.py`、`test_imgdiff.py` | 两张截图的感知差异（LDR-FLIP：在给定观看距离下人眼看得出的差别），做 A/B 与改动前后对比；`--max-mean` 判 OK / RED |
 | `scenario.py`、`test_scenario.py` | 场景运行器：经控制口在命令行宿主、Mac 上的 iOS 包或真机上跑 [dm/verify/scenarios](../verify/scenarios/README.zh-CN.md) 里的分步场景，按事件、状态和检查项判 |
 | `dmctl.py`、`test_dmctl.py` | 控制口客户端（[control_port.zh-CN.md](../verify/control_port.zh-CN.md)）：发命令、等事件，Python 或命令行都能用 |

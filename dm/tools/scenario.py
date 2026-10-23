@@ -33,7 +33,7 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
-       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': []}
+       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name']}
 ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away')
 LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save')
@@ -118,9 +118,12 @@ class CliBackend:
         self.meta, self.run, self.headless, self.proc, self.log = meta, run, headless, None, None
 
     def start(self):
-        dmhost = os.path.join(DM, 'host', 'dmhost')
-        if subprocess.run(['make', '-s', '-C', os.path.join(DM, 'host'), 'dmhost'], capture_output=True, check=False).returncode or not os.access(dmhost, os.X_OK):
-            raise ScenarioError('host build failed (make -C dm/host dmhost)')
+        dmhost = os.environ.get('SCN_DMHOST')   # 另指一个宿主可执行文件（基准 A/B 比两个构建时用），不重编 | point at another host executable (benchmark A/B between two builds), without rebuilding
+        if dmhost and not os.access(dmhost, os.X_OK): raise ScenarioError(f'SCN_DMHOST {dmhost} is not executable')
+        if not dmhost:
+            dmhost = os.path.join(DM, 'host', 'dmhost')
+            if subprocess.run(['make', '-s', '-C', os.path.join(DM, 'host'), 'dmhost'], capture_output=True, check=False).returncode or not os.access(dmhost, os.X_OK):
+                raise ScenarioError('host build failed (make -C dm/host dmhost)')
         out = subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'touch'], capture_output=True, text=True, check=False).stdout.strip()
         if not out or not os.path.isdir(out): raise ScenarioError('no rewrite output: run ./setup.sh first')
         romfs = os.environ.get('DM_ROMFS') or os.path.join(DM_ROOT, 'data', 'switch', '3.3.94012', 'Update', 'RomFS')
@@ -258,10 +261,10 @@ class Runner:
         print(line, flush=True)
 
     # 步骤 | steps
-    def ctl(self, name, **kw):
-        if name == 'screenshot' and 'path' in kw: kw['path'] = self.backend.shot_path(kw['path'])
+    def ctl(self, cmdname, **kw):   # 参数可能就叫 name（mark、tap_ui）：命令名用别的名字 | an argument may be called name (mark, tap_ui): the command name uses another name
+        if cmdname == 'screenshot' and 'path' in kw: kw['path'] = self.backend.shot_path(kw['path'])
         args: dict[str, Any] = {k: value(v) if not isinstance(v, (int, float, bool)) else v for k, v in kw.items()}
-        return self.cc.cmd(name, reply_timeout=float(kw.get('timeout', 0) or 0) + 120, **args)
+        return self.cc.cmd(cmdname, reply_timeout=float(kw.get('timeout', 0) or 0) + 120, **args)
 
     def expect(self, ev, kw, after):
         kw = dict(kw); t = float(kw.pop('timeout', 30))

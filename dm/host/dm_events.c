@@ -197,3 +197,7 @@ static void init_once(void) {
     atexit(ev_atexit);   // exit() 走这里；_exit 的路径（看门狗、拍数记满、优雅退出）自己先发 exit | exit() comes here; the _exit paths (watchdog, tick count reached, graceful exit) emit exit themselves first
 }
 void dm_events_init(void) { pthread_once(&g_once, init_once); }
+double dm_events_now_s(void) {   // 与事件的 t 同一时钟（进程创建以来的秒；事件流没开时也算得出） | the same clock as the events' t (seconds since process creation; works without the event stream too)
+    static uint64_t t0; if (!t0) t0 = g_t0 ? g_t0 : start_t0();
+    return (double)(now_ns() - t0) / 1e9;
+}

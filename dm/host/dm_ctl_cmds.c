@@ -262,6 +262,13 @@ static int cmd_app(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     return 1;
 }
 
+// mark name=…：在事件流里打一个标记（基准路线用它切段） | mark name=...: put a marker into the event stream (benchmark routes use it to cut segments)
+static int cmd_mark(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *n = dm_ctl_get(a, "name"); if (!n || !*n) ERR("missing name");
+    uint64_t dm_nvn_frame_count(void); uint64_t f = dm_nvn_frame_count();   // 帧号与 DM_NVN_TSV 逐帧计时行同一计数 | the frame number uses the same count as the DM_NVN_TSV per-frame timing rows
+    DM_EV("mark", "name:s frame:u", n, (unsigned long long)f); dm_json_fields(out, cap, "t:f frame:u", dm_events_now_s(), (unsigned long long)f); return 1;
+}
+
 void dm_ctl_commands_init(void) {
     dm_ctl_register("state", cmd_state);
     dm_ctl_register("save_now", cmd_save_now);
@@ -283,4 +290,5 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("await_ui", cmd_await_ui);
     dm_ctl_register("tap_unit", cmd_tap_unit);
     dm_ctl_register("app", cmd_app);
+    dm_ctl_register("mark", cmd_mark);
 }

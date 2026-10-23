@@ -56,6 +56,8 @@ UTF-8，一行一个对象，以 `\n` 结尾；一次 `write()` 写出，多线�
 | `shot` | `path`、`ok` | 一张截图写完（`DM_NVN_SHOT_UI`、控制口 `screenshot`）。 |
 | `tick_hold` | `on` | 控制口冻结（`pause`、`step`）或放开了游戏拍。 |
 | `ctl` | `state`（`connected`） | 有控制口客户端连上（`DM_CTL_PORT`）。 |
+| `game_state` | `state`：`Menu`、`Loading`、`Playing`、`Paused`、`Background` | 游戏状态变了（从界面消息与外壳的进后台事件推出）。设 `DM_STATEREP=1` 时同样的状态也报给系统的 StateReporting（`GameState` 域）。 |
+| `mark` | `name`、`frame` | 控制口的 `mark` 命令（基准切段）；`frame` 与 `DM_NVN_TSV` 计时行同一帧号。 |
 | `exit` | `why`（`exit`、`ticks_full`、`watchdog`、`shutdown`、`nnMain returned`）、`code` | 进程即将结束。走 `_exit` 的路径自己先发；`exit()` 经 `atexit` 发。 |
 
 只有经过 `LOG` / `MLOG`（以及 `die` / `MDIE`）的行才会变成 `red` / `fatal` 事件；标记写在格式串里或在 `%s` 参数里都算。用别的方式打的行（比如 iOS 外壳的 `plog`）看不到。

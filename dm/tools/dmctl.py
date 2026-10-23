@@ -82,14 +82,14 @@ class Ctl:
     def send_raw(self, line):
         self.sock.sendall(line.encode() + b'\n')
 
-    def cmd(self, name, reply_timeout=30.0, check=True, **args):   # 命令自己的参数可以叫 timeout（walk_to / save_now） | the command's own arguments may be called timeout (walk_to / save_now)
+    def cmd(self, cmd_name, reply_timeout=30.0, check=True, **args):   # 命令参数可能叫 name：命令名不用这个名字 | a command argument may be called name, so the command name is not   # 命令自己的参数可以叫 timeout（walk_to / save_now） | the command's own arguments may be called timeout (walk_to / save_now)
         with self.cv: rid = self.next_id; self.next_id += 1
-        self.send_raw(json.dumps(dict(id=rid, cmd=name, **args), ensure_ascii=False))
+        self.send_raw(json.dumps(dict(id=rid, cmd=cmd_name, **args), ensure_ascii=False))
         end = time.time() + reply_timeout
         with self.cv:
             while rid not in self.replies:
                 left = end - time.time()
-                if left <= 0 or self.closed: raise TimeoutError(f'{name}: no reply' + (' (connection closed)' if self.closed else ''))
+                if left <= 0 or self.closed: raise TimeoutError(f'{cmd_name}: no reply' + (' (connection closed)' if self.closed else ''))
                 self.cv.wait(left)
             r = self.replies.pop(rid)
         if check and not r.get('ok'): raise CtlError(r)

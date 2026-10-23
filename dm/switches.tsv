@@ -91,6 +91,7 @@ DM_FD_LOG	host	host/hle_fdstat.c	-
 DM_FE_AUTO	host	host/dm_cursor.c	-
 DM_FIXED_TIME	host	host/dm_kills.c host/hle_time.c host/main.c	y
 DM_FPS	gfx	gfx/nvn/nvn_mtl.m	y
+DM_FRAMES	host	host/diag.c	y
 DM_FREE_ACCOUNT	ios-tools	ios/run.sh	-
 DM_FS	host	host/main.c	-
 DM_FSLOG	host	host/hle_fs.c	-
@@ -382,6 +383,7 @@ DM_SOAK	host,ios	host/diag.c ios/Sources/front_ios.m	-
 DM_SRC	android	android/docker/build.sh	-
 DM_STASH_SEED	host	host/hle_fs.c	-
 DM_STATE	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	-
+DM_STATEREP	host	host/dm_staterep.m	y
 DM_SVC	host	host/main.c	y
 DM_SWAP_IMAGES	android	android/vulkan_present.cpp	-
 DM_SYMCHECK	host	host/loader.c	-
