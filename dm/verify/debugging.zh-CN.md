@@ -39,3 +39,102 @@ python3 dm/tools/guestsyms.py lookup main+0x455aa4 sdk+0x2b0470
 - **说明**取自源码注释里提到 `模块+0x…` 的那几行。例：`main+0x455aa4` 是 `fn_455a80` 里第 0x24 字节，注释说这个函数在拼血条信息。
 
 `crashlog.py` 以及别的打 `模块+偏移` 的地方都能用这张表。
+
+## 调试器
+
+### 停在某一拍
+
+`DM_BREAK_AT_TICK=<拍>[:<等待秒>]`（缺省等 300 秒）让游戏的拍线程在那一拍的入口停下：
+
+1. 宿主在日志里打出 pid，并发 `break` 事件（`tick`、`pid`、`wait_s`；[event_stream.zh-CN.md](event_stream.zh-CN.md)）。
+2. 拍线程等调试器挂上（这期间游戏拍冻住）。
+3. 一挂上就执行 `__builtin_debugtrap()`，调试器停在拍线程的拍入口。`continue` 或 `process detach` 之后游戏照常往下走。
+4. 等待时间内没有调试器来，游戏自己往下走。
+
+看门狗（`DM_WATCH`、`DM_WATCH_STALL`）把等待和停在调试器里的时间都当作没有进展。调试时手动起宿主（`CLAUDE.md` 里的命令行宿主命令），这两个都别设。场景运行器总会设 `DM_WATCH`，并因此开着 15 秒的停顿上限，在它下面停的时间要短。
+
+```bash
+DM_BREAK_AT_TICK=40 DM_ROMFS=… DM_SAVE=… ./dmhost "$(../tools/product.sh path touch)" main sdk
+lldb -p <日志里的 pid>
+(lldb) command script import dm/tools/lldb/dm.py
+(lldb) continue          # 停在拍线程的陷阱上
+```
+
+`lldb --batch` 把停在陷阱上算作类似崩溃的停止，之后的命令要用 `-k`（停下时执行）给，不能用 `-o`。
+
+### 游戏地址的 LLDB 命令
+
+`dm/tools/lldb/dm.py` 加一个 `dm` 命令，读宿主的模块表和上面那张客体符号表：
+
+| 命令 | 作用 |
+|---|---|
+| `dm modules` | 各游戏模块的装载范围（`g_mod`） |
+| `dm where <地址表达式>` | `main+0x…` / `sdk+0x…` 加客体函数，或宿主符号 |
+| `dm bt [-a]` | 当前线程（`-a`：全部线程）的回溯，每帧给模块偏移和客体函数，带源码注释里的说明 |
+| `dm break <模块>+0x<偏移>` | 在游戏地址下断点，按当前装载基址换算 |
+| `dm tick` | 当前服务端拍号（调 `dm_cur_tick`） |
+
+### 给代理用：lldb-mcp
+
+Xcode 的 LLDB 能提供模型上下文协议（MCP）服务，代理可以驱动同一个调试会话：
+
+1. 在 lldb 里：`(lldb) protocol-server start MCP`。`protocol-server get MCP` 显示监听地址。
+2. 代理的 MCP 配置里，服务命令是 `xcrun lldb-mcp`（标准输入输出）。Claude Code：`claude mcp add lldb -- xcrun lldb-mcp`。
+3. 它提供的工具是 `command`（执行一条 lldb 命令，例如 `dm bt`）和 `debugger_list`。
+
+同一时间只能有一个 lldb 提供 MCP 服务：多了的话 `lldb-mcp` 报「too many MCP servers running」退出。被杀掉的 lldb 会留下 `~/.lldb/lldb-mcp-<pid>.json`，过时的要删掉。
+
+## 消毒器构建
+
+```bash
+make -C dm/host dmhost_asan     # 地址消毒 + 未定义行为消毒
+make -C dm/host dmhost_ubsan    # 只有未定义行为消毒
+make -C dm/host dmhost_tsan     # 线程消毒
+SCN_DMHOST=$PWD/dm/host/dmhost_asan python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn
+```
+
+- 只插桩宿主代码，游戏程序不插桩。这几个目标不跟踪头文件，改了头文件要先删掉可执行文件再编。
+- 每次跑场景都会查日志里的消毒器报告。有报告就判红，按摘要行去重后汇总在结果目录的 `sanitizer.txt`。命令行：`python3 dm/verify/assertlib.py sanitizers <日志>`。
+- 各消毒器需要的选项编进了可执行文件（`main.c`），不用设环境变量。
+
+这几个构建做了哪些调整、为什么：
+
+| 构建 | 调整 | 原因 |
+|---|---|---|
+| ASan | 不插桩栈帧（`-mllvm -asan-stack=0`），堆和全局变量照查 | 宿主代码跑在游戏给的栈上。红区让栈帧变大，留下的红区标记还会在游戏复用那块内存时误报。 |
+| ASan | 登记表（`DM_SECT`）不加红区 | 宿主把每个表段当成紧挨着的数组读。 |
+| ASan | `use_sigaltstack=0:detect_leaks=0` | 宿主每线程自己设备用信号栈（`crash.c`）；ASan 会在线程退出时 `munmap` 这块 malloc 来的栈。 |
+| ASan、TSan | 游戏线程改在 8 MiB 的宿主栈上跑，不用游戏给的那块（`hle_thread.c`） | ASan 的释放路径和 TSan 报告时的符号化都在当前栈上跑，撑爆过游戏的小线程栈（有的只有十几 KiB）。 |
+| TSan | 客体内存（地址空间预留块和各模块映像）登记为良性竞争范围（`DM_TSAN_GUEST`） | 它由游戏自己的同步定序，TSan 看不见。 |
+| TSan | 内置抑制表（`main.c` 里的 `__tsan_default_suppressions`） | 查过的宿主侧情形：记账计数器、故意不拿锁读的现场导出、fd 表（由 `close` / `open` 定序）、单写者的值（`g_fence`、`g_done`、`g_link`、`g_lastG`、`g_layout_logged`）。新的竞争照报。 |
+
+ASan 每次跑会打一次「ignoring requested `__asan_handle_no_return`」：游戏线程的栈不是 ASan 认识的 pthread 栈。没有害处。
+
+查出来并已修掉的问题：
+
+- UBSan：`nvn_mtl.m` 对 `uint8_t` 的映射表判 `lmap[j] >= 0`，而 0xff 表示「没有映射」。这个判断恒真，于是从 8 项的表里读了第 255 项的清屏色。现在改成判 `< 8`。
+- UBSan：`loader.c` 里不对齐的 8 字节重定位写入，`dm_vault.c` 里一次不对齐的 2 字节读，以及 `dm_world.c` 里对紧排的图形范围的不对齐读（在 UBSan 宿主上乱按时查出，见下文）。都改为经 `memcpy`。
+
+`inventory`、`pause_menu`、`save_while_paused`、`enter_game` 和 `bench/town_loop` 在三种构建下都没有报告。`enter_game` 在普通宿主和 ASan 宿主上约 4 秒，在 TSan 宿主上约 23 秒。
+
+## Metal 校验
+
+```bash
+python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn --metal-validation api
+make -C dm/host dmhost_m3 && SCN_DMHOST=$PWD/dm/host/dmhost_m3 python3 dm/tools/scenario.py run dm/verify/bench/town_loop.scn --metal-validation shader
+```
+
+| 档 | 打开 | 判定 |
+|---|---|---|
+| `api` | 接口校验（`MTL_DEBUG_LAYER=1`）；错误记进日志、不断言，警告不报 | 有消息就判红 |
+| `lint` | `api` 再加警告（`MTL_DEBUG_LAYER_WARNING_MODE=nslog`）：多余或没用上的状态设置 | 只汇总 |
+| `shader` | 着色器校验，报到 stderr；停顿上限放宽到 300 秒，因为每条管线都要插桩重编（每条约 0.15 秒） | 有消息就判红 |
+| `all` | `api` + `shader` | 有消息就判红 |
+
+消息汇总在 `metal_validation.txt`；命令行：`python3 dm/verify/assertlib.py metal <日志> [--lint]`。这个选项对 `cli` 和 `mac-app` 后端有效。iOS 后端起进程的方式不同，传不进这些变量。
+
+发现：
+
+- 开着着色器校验时，Metal 4 宿主第一次出图提交就崩在 Metal 自己的 `-[MTL4GPUDebugCommandBuffer applyResidencySets:]` 里，当时挂着图层的驻留集（macOS 27）。着色器校验请用旧接口宿主（`dmhost_m3`）。它跑同一批着色器；运行器见到这种组合会打一行提示。
+- 上面那些场景在 `api` 和 `shader` 档下都没有消息。
+- `lint`：12 秒的 `enter_game` 里约有 46,600 次多余的 `setComputePipelineState`，来自贴图反交错编码（`dm/gfx/tex/nvn_deswizzle_gpu.m`）：它在同一个编码器上每个级别、每层都设一次管线。开销不大（一次读取总共几毫秒），没有改。

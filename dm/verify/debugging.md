@@ -39,3 +39,102 @@ python3 dm/tools/guestsyms.py lookup main+0x455aa4 sdk+0x2b0470
 - **Notes** come from the source comments that mention `module+0x…`. For example, `main+0x455aa4` is 0x24 into `fn_455a80`, the function the comments describe as building the health-bar info.
 
 `crashlog.py` and anything else that prints `module+offset` can use this table.
+
+## The debugger
+
+### Stopping at a tick
+
+`DM_BREAK_AT_TICK=<tick>[:<wait seconds>]` (default wait 300 s) stops the game's tick thread at the entry of that server tick:
+
+1. The host logs the pid and emits a `break` event (`tick`, `pid`, `wait_s`; [event_stream.md](event_stream.md)).
+2. The tick thread waits for a debugger to attach (game ticks are frozen meanwhile).
+3. Once one is attached, it executes `__builtin_debugtrap()`, so the debugger stops on the tick thread at the tick entry. After `continue` or `process detach` the game carries on.
+4. If no debugger arrives within the wait, the game carries on by itself.
+
+The watchdogs (`DM_WATCH`, `DM_WATCH_STALL`) count the wait and the time stopped in the debugger as no progress. For a debugging session, start the host by hand (the CLI host command in `CLAUDE.md`) with neither set. The scenario runner always sets `DM_WATCH` and arms the 15 s stall limit, so a stop under it must be short.
+
+```bash
+DM_BREAK_AT_TICK=40 DM_ROMFS=… DM_SAVE=… ./dmhost "$(../tools/product.sh path touch)" main sdk
+lldb -p <pid from the log>
+(lldb) command script import dm/tools/lldb/dm.py
+(lldb) continue          # stops at the trap on the tick thread
+```
+
+In `lldb --batch`, a stop at the trap counts as a crash-like stop, so commands after it must be given with `-k` (run on stop), not `-o`.
+
+### LLDB commands for game addresses
+
+`dm/tools/lldb/dm.py` adds a `dm` command that reads the host's module table and the guest symbol table above:
+
+| Command | Does |
+|---|---|
+| `dm modules` | Load range of each game module (`g_mod`) |
+| `dm where <address expression>` | `main+0x…` / `sdk+0x…` plus the guest function, or the host symbol |
+| `dm bt [-a]` | Backtrace of the current thread (all threads with `-a`), every frame as module offset and guest function, with source-comment notes |
+| `dm break <module>+0x<offset>` | Breakpoint at a game address, converted with the current load base |
+| `dm tick` | Current server tick (calls `dm_cur_tick`) |
+
+### Agents: lldb-mcp
+
+Xcode's LLDB can serve the Model Context Protocol, so an agent can drive the same session:
+
+1. In the lldb session: `(lldb) protocol-server start MCP`. `protocol-server get MCP` shows the listener.
+2. In the agent's MCP configuration, the server command is `xcrun lldb-mcp` (stdio). For Claude Code: `claude mcp add lldb -- xcrun lldb-mcp`.
+3. Its tools are `command` (runs one lldb command, for example `dm bt`) and `debugger_list`.
+
+Only one lldb may serve MCP at a time: with more, `lldb-mcp` stops with "too many MCP servers running". An lldb that was killed leaves its `~/.lldb/lldb-mcp-<pid>.json` behind; delete stale ones.
+
+## Sanitizer builds
+
+```bash
+make -C dm/host dmhost_asan     # AddressSanitizer + UndefinedBehaviorSanitizer
+make -C dm/host dmhost_ubsan    # UndefinedBehaviorSanitizer only
+make -C dm/host dmhost_tsan     # ThreadSanitizer
+SCN_DMHOST=$PWD/dm/host/dmhost_asan python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn
+```
+
+- Only host code is instrumented; the game program is not. The targets don't track headers, so remove the binary to force a rebuild after a header change.
+- Every scenario run scans its logs for sanitizer reports. Any report makes the run red, and they are summarized, deduplicated by summary line, in `sanitizer.txt` in the result folder. From the shell: `python3 dm/verify/assertlib.py sanitizers <log>`.
+- The options each sanitizer needs are built into the binaries (`main.c`), so no environment is required.
+
+What the builds adapt to, and why:
+
+| Build | Adaptation | Reason |
+|---|---|---|
+| ASan | Stack frames are not instrumented (`-mllvm -asan-stack=0`); heap and globals are | Host code runs on stacks the game provides. Redzones make frames larger, and stale redzone marks are falsely reported when the game reuses that memory. |
+| ASan | Registration tables (`DM_SECT`) get no redzones | The host reads each table section as a packed array. |
+| ASan | `use_sigaltstack=0:detect_leaks=0` | The host sets its own per-thread alternate signal stack (`crash.c`); ASan would `munmap` that malloc'd stack at thread exit. |
+| ASan, TSan | Game threads run on an 8 MiB host stack instead of the game's buffer (`hle_thread.c`) | ASan's free path and TSan's report symbolization run on the current stack and overflowed the game's small thread stacks (some are a dozen KiB). |
+| TSan | Guest memory (the address-space reservation and the module images) is registered as a benign-race range (`DM_TSAN_GUEST`) | It is ordered by the game's own synchronization, which TSan cannot see. |
+| TSan | Built-in suppressions (`__tsan_default_suppressions` in `main.c`) | Reviewed host-side cases: bookkeeping counters, the state dumps that read without locks on purpose, the fd tables (ordered by `close`/`open`), and single-writer values (`g_fence`, `g_done`, `g_link`, `g_lastG`, `g_layout_logged`). New races still report. |
+
+ASan prints "ignoring requested `__asan_handle_no_return`" once per run: the guest threads' stacks are not the pthread stacks ASan knows. It is harmless.
+
+What they found (fixed):
+
+- UBSan: `nvn_mtl.m` tested `lmap[j] >= 0` on a `uint8_t` map, where 0xff means "no mapping". The test was always true, so clear colors were read from slot 255 of an 8-entry table. It now tests `< 8`.
+- UBSan: misaligned 8-byte relocation stores in `loader.c`, a misaligned 2-byte read in `dm_vault.c`, and misaligned reads of the packed sprite extents in `dm_world.c` (found by random play on the UBSan host, below). All now go through `memcpy`.
+
+`inventory`, `pause_menu`, `save_while_paused`, `enter_game` and `bench/town_loop` run clean under all three builds. `enter_game` takes about 4 s on the normal and ASan hosts, and about 23 s on the TSan host.
+
+## Metal validation
+
+```bash
+python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn --metal-validation api
+make -C dm/host dmhost_m3 && SCN_DMHOST=$PWD/dm/host/dmhost_m3 python3 dm/tools/scenario.py run dm/verify/bench/town_loop.scn --metal-validation shader
+```
+
+| Level | Turns on | Verdict |
+|---|---|---|
+| `api` | API validation (`MTL_DEBUG_LAYER=1`); errors are logged instead of asserting, warnings are off | Any message is red |
+| `lint` | `api` plus the warnings (`MTL_DEBUG_LAYER_WARNING_MODE=nslog`): redundant or unused state settings | Summary only |
+| `shader` | Shader validation, reported to stderr; the stall limit is raised to 300 s, because every pipeline is instrumented and recompiled (about 0.15 s each) | Any message is red |
+| `all` | `api` + `shader` | Any message is red |
+
+The messages are summarized in `metal_validation.txt`; from the shell, `python3 dm/verify/assertlib.py metal <log> [--lint]`. The flag works with the `cli` and `mac-app` backends. The iOS backends start their process differently and don't pass these variables.
+
+Findings:
+
+- With shader validation on, the Metal 4 host crashes at its first present commit inside Metal's own `-[MTL4GPUDebugCommandBuffer applyResidencySets:]`, with the layer's residency set attached (macOS 27). Use the older-API host (`dmhost_m3`) for shader validation. It runs the same shaders, and the runner prints a note when it sees the combination.
+- `api` and `shader` runs of the scenarios above report nothing.
+- `lint`: about 46,600 redundant `setComputePipelineState` calls in a 12 s `enter_game`. They come from the texture deswizzle encoder (`dm/gfx/tex/nvn_deswizzle_gpu.m`), which sets the pipeline once per level and layer on the same encoder. This is cheap (a few ms over a load) and has not been changed.
