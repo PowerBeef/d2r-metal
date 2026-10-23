@@ -34,8 +34,8 @@ class MacBundleTest(unittest.TestCase):
         run('clang', *flags, '-dynamiclib', self.root/'parent.c', self.lib/'libleaf.dylib', '-Wl,-install_name,@rpath/libparent.dylib', '-o', self.lib/'libparent.dylib')
         run('clang', *flags, self.root/'main.c', self.lib/'libparent.dylib', '-Wl,-rpath,'+str(self.lib), '-o', self.exe)
 
-    def test_packager_copies_private_resources_and_preserves_existing_output(self):
-        import plistlib
+    def packager_fixture(self):
+        """带 mac_app.sh 与假宿主 / 产物 / 着色器库的源码树；返回 (dm, data, env)。 | A source tree with mac_app.sh and a stub host / product / shader library; returns (dm, data, env)."""
         import struct
         import zlib
         dm = self.root/'source/dm'
@@ -72,6 +72,12 @@ class MacBundleTest(unittest.TestCase):
         icon.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR', struct.pack('>IIBBBBB',1024,1024,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(pixels))+chunk(b'IEND',b''))
         env = dict(os.environ, DM_ROOT=str(data), DM_MAC_LINK='', DM_MAC_OVERLAY='none',
                    DM_ROMFS_SRC=str(rom), DM_MSL_DIR=str(data/'msl'), DM_MAC_ROMFS_COPY='1', DM_MAC_ICON_SOURCE=str(icon))
+        return dm, data, env
+
+    def test_packager_copies_private_resources_and_preserves_existing_output(self):
+        import plistlib
+        dm, data, env = self.packager_fixture()
+        product = data/'product'
         output = self.root/'output'
         run('bash', dm/'tools/mac_app.sh', output, env=env)
         app = output/'D2R Mobile.app'
@@ -110,6 +116,40 @@ class MacBundleTest(unittest.TestCase):
         (product/'external.link').unlink(); (self.root/'moved libraries').rename(self.lib)
         run('bash', dm/'tools/mac_app.sh', output, env=env)   # 同一输出目录再出一次：整包重建（各条出包流程都靠这一点），旧包里多出的东西不留 | Build again into the same output directory: the whole package is rebuilt (every packaging flow relies on this), and nothing extra from the old package survives
         self.assertFalse(sentinel.exists())
+        run('codesign', '--verify', '--deep', '--strict', app)
+
+    def test_failed_rebuild_keeps_previous_package_and_overlay(self):
+        # 重出失败（这里让图标图不存在，挂在覆盖层与大半个包都做完之后）：上一次的包与链接式的覆盖层原样留着、能验签，输出目录里不留暂存
+        # A failed rebuild (here the icon image is missing, which fails after the overlay and most of the package are done): the previous package and the
+        # link-style overlay stay exactly as they were and still verify, and no staging folder is left in the output folder
+        dm, data, env = self.packager_fixture()
+        for name, variant in (('overlay one', True), ('overlay two', False)):
+            (data/name/'data').mkdir(parents=True)
+            (data/name/'data/marker.txt').write_text(name)
+            if variant:
+                (data/(name + '_variants')/'combo/data').mkdir(parents=True)
+        linked = dict(env, DM_MAC_LINK='1', DM_MAC_OVERLAY=str(data/'overlay one'))
+        for key in ('DM_MAC_ROMFS_COPY', 'DM_MAC_ICON_SOURCE'):
+            linked.pop(key)
+        output = self.root/'linked output'
+        run('bash', dm/'tools/mac_app.sh', output, env=linked)
+        app = output/'D2R Mobile.app'
+        info = (app/'Contents/Info.plist').read_bytes()
+        overlay = output/'romfs_overlay.local'
+        self.assertIn(f'romfs_overlay={overlay}', (app/'Contents/Resources/paths.txt').read_text())
+        failed = subprocess.run(['bash', str(dm/'tools/mac_app.sh'), str(output)], check=False, capture_output=True, text=True,
+                                env=dict(linked, DM_MAC_OVERLAY=str(data/'overlay two'), DM_MAC_ICON_SOURCE=str(self.root/'missing.png')))
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn('DM_MAC_ICON_SOURCE', failed.stdout)
+        self.assertEqual((app/'Contents/Info.plist').read_bytes(), info)
+        run('codesign', '--verify', '--deep', '--strict', app)
+        self.assertEqual((overlay/'data/marker.txt').read_text(), 'overlay one')
+        self.assertTrue((output/'romfs_overlay.local_variants/combo/data').is_dir())
+        self.assertEqual(sorted(p.name for p in output.iterdir() if p.name.startswith('.')), [])
+        run('bash', dm/'tools/mac_app.sh', output, env=dict(linked, DM_MAC_OVERLAY=str(data/'overlay two')))
+        self.assertEqual((overlay/'data/marker.txt').read_text(), 'overlay two')
+        self.assertFalse((output/'romfs_overlay.local_variants').exists())
+        self.assertNotIn('romfs_overlay_variants=', (app/'Contents/Resources/paths.txt').read_text())
         run('codesign', '--verify', '--deep', '--strict', app)
 
     def test_loader_relative_paths_are_resolved_at_original_host(self):

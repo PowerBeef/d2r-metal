@@ -17,7 +17,7 @@ M3=${DM_MAC_M3:-}; NAME="D2R Mobile${M3:+ M3}"; [ -z "$M3" ] || BID=${DM_MAC_BUN
 # 把 profile 放进签名目录（缺省 ~/dm-work/mac-sign，DM_MAC_SIGN_DIR 可换）即可：团队、包标识、entitlements、证书全从 profile 里读，
 # 签名身份按内嵌证书的 SHA-1 指纹在钥匙串精确匹配；包标识决定 iCloud 容器（iOS 包的 profile = 与手机同步，自定标识 = 两台 Mac 互同步）。
 # 不设时照旧：本机临时签名，不需要开发者账号。
-ICLOUD=${DM_MAC_ICLOUD:-}; PF=
+ICLOUD=${DM_MAC_ICLOUD:-}; PF=; TMPD=
 if [ -n "$ICLOUD" ]; then
   SIGN_DIR=${DM_MAC_SIGN_DIR:-$ROOT/mac-sign}
   PF=$(ls -t "$SIGN_DIR"/*.provisionprofile "$SIGN_DIR"/*.mobileprovision 2>/dev/null | head -1)
@@ -40,7 +40,13 @@ if [ -n "$ICLOUD" ]; then
 fi
 make -C "$DM/host" ${M3:+dmhost_m3} > /dev/null
 MIN=$(make -s -C "$DM/host" print-macos-min${M3:+-m3})   # 最低系统版本：与编译宿主用的是同一个数（host/Makefile 的 MACOS_MIN / MACOS_MIN_M3） | minimum system version: the same number the host is compiled with (MACOS_MIN / MACOS_MIN_M3 in host/Makefile)
-APP="$OUT/$NAME.app"; rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# 整包先在输出目录里的暂存目录 STG 出（链接式的覆盖层、旧接口版重编的着色器库也在里面），codesign --verify 过了才换到输出目录：
+# 原先一上来就删旧包，后面哪一步失败都只剩半个包（/Applications 里的链接指着一个起不来的 App），覆盖层也已经被删掉重出
+# The whole package is first built in the staging folder STG inside the output folder (together with the link-style overlay and the shader libraries the older-API build recompiles) and only moved into the output folder after codesign --verify passes:
+# the old package used to be deleted first, so a failure at any later step left half a package (the /Applications link pointed at an App that could not start), with the overlay already deleted and being rebuilt
+DST="$OUT/$NAME.app"; STG="$OUT/.mac_app.new"; APP="$STG/$NAME.app"
+trap 'rm -rf "$STG" ${TMPD:+"$TMPD"}' EXIT
+rm -rf "$STG"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$DM/host/dmhost${M3:+_m3}" "$APP/Contents/MacOS/D2RMobile"
 LINK=${DM_MAC_LINK-1}; [ "$LINK" != 0 ] || LINK=; RES="$APP/Contents/Resources"; : > "$RES/paths.txt"
 if [ -n "$LINK" ]; then echo "product=$P" >> "$RES/paths.txt"; else cp -R "$P" "$RES/product"; fi
@@ -52,26 +58,29 @@ cp "$DM/gfx/nvn/pso_manifest.tsv" "$APP/Contents/Resources/pso_manifest.tsv"   #
 V=$(sed -n 's/.*DMSH_CHAIN "\(.*\)".*/\1/p' "$DM/gfx/nvn/dmsh_chain.h")
 # 旧接口版：着色器库也要按它的最低系统重编一份（缓存里那份记的目标是编译机的系统版本，老系统上加载不了）；DM_MSL_DIR 给了就用给的
 # Older-API build: the shader libraries must also be recompiled for its minimum system (the ones in the cache record the system version of the build machine as target and cannot be loaded on an older system); DM_MSL_DIR is used when given
-[ -z "$M3" ] || [ -n "${DM_MSL_DIR:-}" ] || { bash "$DM/gfx/tools/msl_retarget.sh" "$MIN" "$OUT/msl_min$MIN" > /dev/null || { echo "🔴 着色器库按 macOS ${MIN} 重编失败"; exit 2; }; DM_MSL_DIR=$OUT/msl_min$MIN; }
-MSL=${DM_MSL_DIR:-$ROOT/build/cache/metal_shader_cache}/b-$V
-[ -d "$MSL" ] || { echo "🔴 没有着色器库 ${MSL}（先跑 dm/gfx/tools/dmsh_build.py）"; exit 2; }
+# 重编到暂存目录，包里记的是换上去之后的位置 $OUT/msl_min$MIN；MSLR = 这次从哪读 | Recompiled into the staging folder; the package records the location after the swap, $OUT/msl_min$MIN; MSLR = where to read from this time
+MSLR=
+[ -z "$M3" ] || [ -n "${DM_MSL_DIR:-}" ] || { bash "$DM/gfx/tools/msl_retarget.sh" "$MIN" "$STG/msl_min$MIN" > /dev/null || { echo "🔴 着色器库按 macOS ${MIN} 重编失败"; exit 2; }; DM_MSL_DIR=$OUT/msl_min$MIN; MSLR=$STG/msl_min$MIN/b-$V; }
+MSL=${DM_MSL_DIR:-$ROOT/build/cache/metal_shader_cache}/b-$V; MSLR=${MSLR:-$MSL}
+[ -d "$MSLR" ] || { echo "🔴 没有着色器库 ${MSL}（先跑 dm/gfx/tools/dmsh_build.py）"; exit 2; }
 if [ -n "$LINK" ]; then echo "msl=$(dirname "$MSL")" >> "$RES/paths.txt"
-else mkdir -p "$RES/msl/b-$V"; rsync -a --include='*.metallib' --include='*.json' --exclude='*' "$MSL/" "$RES/msl/b-$V/"; fi
+else mkdir -p "$RES/msl/b-$V"; rsync -a --include='*.metallib' --include='*.json' --exclude='*' "$MSLR/" "$RES/msl/b-$V/"; fi
 # 界面覆盖层（自定义页、珍宝匣、秘境等我们的页面都在里面）：从游戏资源现生成（约 3 秒）；DM_MAC_OVERLAY=<目录> 用现成的，=none 不带（原版界面）
 # UI overlay (the Custom page, the trove, rifts and our other pages all live in it): generated on the spot from the game resources (about 3 seconds); DM_MAC_OVERLAY=<dir> uses an existing one, =none leaves it out (original UI)
 if [ "${DM_MAC_OVERLAY:-}" != none ]; then
-  OVD="$RES/romfs_overlay"; [ -z "$LINK" ] || { OVD="$OUT/romfs_overlay.local"; echo "romfs_overlay=$OVD" >> "$RES/paths.txt"; }
+  # OVD = 覆盖层最终的位置，OVW = 这次写到哪：自带的在包里；链接式的写进暂存目录，最后随包换到 $OUT | OVD = the overlay's final location, OVW = where this run writes it: inside the package when bundled; the link style writes into the staging folder and is moved to $OUT with the package at the end
+  OVD="$RES/romfs_overlay"; OVW=$OVD; [ -z "$LINK" ] || { OVD="$OUT/romfs_overlay.local"; OVW="$STG/romfs_overlay.local"; echo "romfs_overlay=$OVD" >> "$RES/paths.txt"; }
   # 基础覆盖层与开关组合成套更新，防止复用输出目录时残留旧组合；外部覆盖层也照带同名兄弟目录。
   # Refresh the base overlay and the feature combinations together, so no stale combination survives when an output directory is reused; an external overlay brings its same-named sibling directory too.
   if [ -n "${DM_MAC_OVERLAY:-}" ]; then
     [ "$(cd "$DM_MAC_OVERLAY" && pwd -P)" != "$(mkdir -p "$OVD" && cd "$OVD" && pwd -P)" ] || { echo "DM_MAC_OVERLAY must differ from the output overlay directory"; exit 2; }
   fi
-  rm -rf "$OVD" "${OVD}_variants"
+  rm -rf "$OVW" "${OVW}_variants"
   if [ -n "${DM_MAC_OVERLAY:-}" ]; then
-    cp -R "$DM_MAC_OVERLAY" "$OVD"
-    [ ! -d "${DM_MAC_OVERLAY%/}_variants" ] || cp -R "${DM_MAC_OVERLAY%/}_variants" "${OVD}_variants"
-  else DM_OVERLAY_MAC=1 python3 "$DM/ios/tools/gen_romfs_overlay.py" "${DM_ROMFS_SRC:-$ROOT/data/switch/3.3.94012/Update/RomFS}" "$OVD" > /dev/null || { echo "🔴 界面覆盖层生成失败"; exit 2; }; fi
-  [ -z "$LINK" ] || [ ! -d "${OVD}_variants" ] || echo "romfs_overlay_variants=${OVD}_variants" >> "$RES/paths.txt"
+    cp -R "$DM_MAC_OVERLAY" "$OVW"
+    [ ! -d "${DM_MAC_OVERLAY%/}_variants" ] || cp -R "${DM_MAC_OVERLAY%/}_variants" "${OVW}_variants"
+  else DM_OVERLAY_MAC=1 python3 "$DM/ios/tools/gen_romfs_overlay.py" "${DM_ROMFS_SRC:-$ROOT/data/switch/3.3.94012/Update/RomFS}" "$OVW" > /dev/null || { echo "🔴 界面覆盖层生成失败"; exit 2; }; fi
+  [ -z "$LINK" ] || [ ! -d "${OVW}_variants" ] || echo "romfs_overlay_variants=${OVD}_variants" >> "$RES/paths.txt"
 fi
 # DM_MAC_ROMFS_COPY=1：把自己的游戏资源拷进包（Resources/romfs），启动时 app_mac.m 优先用它，不再问资源文件夹；只给自己用，不许分发
 # DM_MAC_ROMFS_COPY=1: copy your own game resources into the package (Resources/romfs); at launch app_mac.m prefers them and no longer asks for the resource folder. For your own use only, never distribute it
@@ -161,4 +170,9 @@ else
   echo "签名：${ID}（iCloud 容器 $(/usr/libexec/PlistBuddy -c "Print :com.apple.developer.icloud-container-identifiers:0" "$TMPD/ent.plist" 2>/dev/null || echo "?")）"
 fi
 codesign --verify --deep --strict "$APP"
+# 验过了，换上去：先删同名的旧包（链接式的还有旧覆盖层与它的组合目录，免得留下上一套多出来的），再把暂存目录里的逐项挪进输出目录（同一个盘内只是改名）
+# Verified, so swap it in: first delete the old package of the same name (for the link style also the old overlay and its combinations directory, so nothing extra from the previous set survives), then move each item of the staging folder into the output folder (a rename on the same disk)
+[ -z "$LINK" ] || [ "${DM_MAC_OVERLAY:-}" = none ] || rm -rf "$OUT/romfs_overlay.local" "$OUT/romfs_overlay.local_variants"
+for e in "$STG"/*; do rm -rf "${OUT:?}/${e##*/}"; mv "$e" "$OUT/" || { echo "🔴 新包换不到 ${OUT}（${e##*/}）"; exit 3; }; done
+APP=$DST
 echo "MACAPP ${APP}（${M3:+旧接口版，}版本 ${VER} 构建 ${BUILD}，最低系统 macOS ${MIN}，产物 $(basename "$P")，$(du -sh "$APP" | cut -f1)${LINK:+，不带派生物：只能在本机跑}）"

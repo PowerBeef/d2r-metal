@@ -65,9 +65,13 @@ class MacFeatures(unittest.TestCase):
                     paths = res / 'paths.txt'
                     paths.touch()
                     ov = out / 'romfs_overlay.local' if link else res / 'romfs_overlay'
-                    stale = Path(str(ov) + '_variants') / 'stale'
+                    # 链接式的覆盖层先写进暂存目录 STG，整包验过签名后才换到 ov（mac_app.sh 末尾）；paths.txt 记的是 ov
+                    # The link-style overlay is written into the staging folder STG first and only moved to ov once the whole package verifies (end of mac_app.sh); paths.txt records ov
+                    stg = out / '.mac_app.new'
+                    wr = stg / 'romfs_overlay.local' if link else ov
+                    stale = Path(str(wr) + '_variants') / 'stale'
                     stale.mkdir(parents=True)
-                    env = dict(os.environ, OUT=str(out), RES=str(res), ROOT=str(root), DM=str(DM),
+                    env = dict(os.environ, OUT=str(out), RES=str(res), ROOT=str(root), DM=str(DM), STG=str(stg),
                                LINK=link, PATH=str(tools) + ':' + os.environ['PATH'])
                     env['DM_MAC_OVERLAY'] = {'generated': '', 'external': str(external) + '/',
                                              'bare': str(bare), 'none': 'none'}[mode]
@@ -77,15 +81,15 @@ class MacFeatures(unittest.TestCase):
                         self.assertEqual(entries, {})
                         continue
                     self.assertFalse(stale.exists())
-                    self.assertTrue(ov.is_dir())
+                    self.assertTrue(wr.is_dir())
                     have_variants = mode != 'bare'
-                    self.assertEqual(Path(str(ov) + '_variants').is_dir(), have_variants)
+                    self.assertEqual(Path(str(wr) + '_variants').is_dir(), have_variants)
                     self.assertEqual(entries.get('romfs_overlay'), str(ov) if link else None)
                     self.assertEqual(entries.get('romfs_overlay_variants'), str(ov) + '_variants' if link and have_variants else None)
                     if mode == 'generated':
-                        self.assertTrue((Path(str(ov) + '_variants') / 'item_notes/dm_textbox_plain.tsv').is_file())
+                        self.assertTrue((Path(str(wr) + '_variants') / 'item_notes/dm_textbox_plain.tsv').is_file())
                     if mode == 'external':
-                        self.assertEqual((Path(str(ov) + '_variants') / 'item_notes/sentinel').read_text(), 'synthetic')
+                        self.assertEqual((Path(str(wr) + '_variants') / 'item_notes/sentinel').read_text(), 'synthetic')
                 env['DM_MAC_OVERLAY'] = str(ov)
                 ov.mkdir(exist_ok=True)
                 (ov / 'keep').write_text('synthetic')
