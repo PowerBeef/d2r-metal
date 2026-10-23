@@ -27,6 +27,7 @@
 #include <mach/mach.h>
 #include <pthread/qos.h>
 #include <dlfcn.h>
+#include <setjmp.h>
 #include <stdarg.h>
 #include <unistd.h>
 #if defined(__has_feature)
@@ -69,6 +70,7 @@ typedef struct thr {
     uint64_t nsvc;             // SVC 次数（现场导出用） | SVC count (for the state dump)
     mach_port_t mport;         // 宿主线程端口（取 CPU 时间） | Host thread port (to get CPU time)
     uint32_t qos;
+    jmp_buf *exit_jb;          // thread_main 在宿主栈上留的返回点：ExitThread 从客体栈跳回这里收尾（主线程没有） | the return point thread_main leaves on the host stack: ExitThread jumps back here from the guest stack to finish (the main thread has none)
 } thr_t;
 static thr_t *g_all;
 
@@ -136,6 +138,28 @@ static void wake(thr_t *t, int64_t res) {
 // 挂起直到被唤醒或超时（ns<0 无限、0 立即超时）；返回 wres 或 R_TIMEOUT
 // Suspend until woken or timed out (ns<0 infinite, 0 immediate timeout); returns wres or R_TIMEOUT
 static int64_t block_inner(thr_t *t, int kind, int64_t ns);
+static int64_t now_mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1000000000ll + ts.tv_nsec; }
+// 限时等待按单调钟算：截止时刻记成单调钟读数，每次只等剩下的那段（苹果：相对时长的条件等待；别的平台：条件变量建在 CLOCK_MONOTONIC 上）。
+// 原先按 CLOCK_REALTIME 算绝对截止，墙钟一调（对时、手动改时间）等待就被拉长或缩短
+// Timed waits run on the monotonic clock: the deadline is a monotonic reading and each wait covers only what is left (Apple: a condition wait with a relative duration; other platforms: condition variables on CLOCK_MONOTONIC).
+// It used to be an absolute deadline on CLOCK_REALTIME, so every wall-clock change (time sync, a manual change) stretched or shortened the wait
+static void thr_cv_init(pthread_cond_t *cv) {
+#ifdef __APPLE__
+    pthread_cond_init(cv, NULL);
+#else
+    pthread_condattr_t a; pthread_condattr_init(&a); pthread_condattr_setclock(&a, CLOCK_MONOTONIC); pthread_cond_init(cv, &a); pthread_condattr_destroy(&a);
+#endif
+}
+static int thr_cv_wait_for(pthread_cond_t *cv, int64_t left_ns) {   // 持 G 调；left_ns > 0 | called holding G; left_ns > 0
+#ifdef __APPLE__
+    struct timespec rel = {(time_t)(left_ns / 1000000000), (long)(left_ns % 1000000000)};
+    return pthread_cond_timedwait_relative_np(cv, &G, &rel);
+#else
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); ts.tv_sec += (time_t)(left_ns / 1000000000); ts.tv_nsec += (long)(left_ns % 1000000000);
+    if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
+    return pthread_cond_timedwait(cv, &G, &ts);
+#endif
+}
 static int64_t block(thr_t *t, int kind, int64_t ns) {   // 启动时间线：按等待种类累计（全线程）+ 主线程单列 | Boot timeline: accumulated by wait kind (all threads) + the main thread listed separately
     if (!g_flag.bootprof) return block_inner(t, kind, ns);
     uint64_t t0 = now_ns(); int64_t r = block_inner(t, kind, ns); uint64_t d = now_ns() - t0;
@@ -163,11 +187,10 @@ static int spin_phase_on(void) {
 static int64_t block_inner(thr_t *t, int kind, int64_t ns) {
     t->wkind = kind; t->woke = 0; t->next = g_wait; g_wait = t; t->wseq = ++g_wseq;
     if (ns == 0) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }
-    struct timespec dl;
     int det_wait = ns > 0 && dm_detclock_enabled();
-    uint64_t guest_deadline = det_wait ? guest_ns() + (uint64_t)ns : 0;
-    if (ns > 0 && !det_wait) { clock_gettime(CLOCK_REALTIME, &dl); dl.tv_sec += ns / 1000000000; dl.tv_nsec += ns % 1000000000;
-                  if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; } }
+    uint64_t guest_deadline = 0; int64_t mono_deadline = 0;
+    if (det_wait) { uint64_t now = guest_ns(); if ((uint64_t)ns > UINT64_MAX - now) ns = -1, det_wait = 0; else guest_deadline = now + (uint64_t)ns; }   // 截止越过计数上限 = 无限等 | a deadline past the counter's range = wait forever
+    else if (ns > 0) { int64_t now = now_mono_ns(); if (ns > INT64_MAX - now) ns = -1; else mono_deadline = now + ns; }
     if (!g_spin_init) { const char *e = getenv("DM_HLE_SPIN_US"); g_spin_ns = e ? (uint64_t)atoi(e) * 1000 : 0; e = getenv("DM_HLE_SPIN_AB"); g_spin_ab = e ? atoi(e) : 0; g_spin_init = 1; }   // under G
     if (g_spin_ns && t->handle == 0x1001 && (ns < 0 || (uint64_t)ns > g_spin_ns) && spin_phase_on()) {
         t->spinning = 1;
@@ -189,8 +212,9 @@ static int64_t block_inner(thr_t *t, int kind, int64_t ns) {
             if (now >= guest_deadline) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }
             (void)(guest_deadline - now);
             rc = pthread_cond_wait(&t->cv, &G);
-        } else rc = ns > 0 ? pthread_cond_timedwait(&t->cv, &G, &dl) : pthread_cond_wait(&t->cv, &G);
-        if (rc == ETIMEDOUT && !t->woke && (!det_wait || guest_ns() >= guest_deadline)) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }
+        } else if (ns > 0) { int64_t left = mono_deadline - now_mono_ns(); rc = left > 0 ? thr_cv_wait_for(&t->cv, left) : ETIMEDOUT; }
+        else rc = pthread_cond_wait(&t->cv, &G);
+        if (rc == ETIMEDOUT && !t->woke && (det_wait ? guest_ns() >= guest_deadline : now_mono_ns() >= mono_deadline)) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }
     }
     return t->wres;
 }
@@ -228,6 +252,7 @@ extern void dm_thread_enter(uint64_t entry, uint64_t arg, uint64_t sp);   // ent
 uint32_t (*dm_thread_tick_fn)(void);   // 取当前游戏拍；diag.c 初始化时登记（单测不登记，拍号记 0） | Gets the current game tick; registered when diag.c initializes (unit tests do not register it, the tick number is recorded as 0)
 void crash_thread_init(void);
 void guest_thread_init(void);   // thread.c：每线程 TSD 槽（门、x18、TLS、TLR）唯一设置点 | thread.c: the single place that sets the per-thread TSD slots (gate, x18, TLS, TLR)
+static void thread_exit_finish(thr_t *t);
 static void *thread_main(void *p) {
     thr_t *t = p;
     pthread_setspecific(g_keythr, t);
@@ -238,8 +263,11 @@ static void *thread_main(void *p) {
     crash_thread_init();
     guest_thread_init();
     pthread_mutex_lock(&G); while (!t->started) pthread_cond_wait(&t->cv, &G); pthread_mutex_unlock(&G);
+    jmp_buf back;   // 用 setjmp / longjmp（不是 _setjmp / _longjmp）：线程消毒版只拦这一对 | setjmp / longjmp (not _setjmp / _longjmp): the ThreadSanitizer build intercepts only this pair
+    if (setjmp(back)) { thread_exit_finish(t); return NULL; }   // ExitThread 从客体栈跳回到这里：此后的收尾（含 pthread 退出与线程键析构）都在宿主栈上 | ExitThread jumps back here from the guest stack: all teardown from here on (pthread exit and thread-key destructors included) runs on the host stack
+    t->exit_jb = &back;
 #ifdef DM_SAN_STACK
-    dm_thread_enter(t->entry, t->arg, ((uint64_t)__builtin_frame_address(0) - 4096) & ~0xFull);   // 本帧以下整段宿主栈（本帧不会再回来） | the whole host stack below this frame (this frame is never returned to)
+    dm_thread_enter(t->entry, t->arg, ((uint64_t)__builtin_frame_address(0) - 4096) & ~0xFull);   // 本帧以下 4 KiB 起的整段宿主栈（本帧只经 ExitThread 跳回） | the whole host stack from 4 KiB below this frame (this frame is only jumped back to by ExitThread)
 #else
     dm_thread_enter(t->entry, t->arg, t->stack_top);   // 不返回：客体须经 ExitThread 退出 | Does not return: the guest must exit through ExitThread
 #endif
@@ -250,17 +278,25 @@ static void thr_free(thr_t *t) {   // 持 G；从全部线程链摘下并释放 
     pthread_cond_destroy(&t->cv); free(t);
 }
 static const char *thr_name(thr_t *t, char *buf, size_t n);
+// ExitThread：先跳回宿主栈，再公布「已退出」、唤醒等它的线程。等的一方（SDK 的 WaitThread）一醒就 DestroyThread → UnmapMemory，这段客体栈随后可能映射给新线程；
+// 原先在客体栈上公布、唤醒之后才 pthread_exit（线程键析构也在客体栈上跑），收尾那几帧会被新线程的栈内容踩掉
+// ExitThread: first jump back to the host stack, then publish "exited" and wake the threads waiting for it. The waiter (the SDK's WaitThread) does DestroyThread → UnmapMemory as soon as it wakes, and that guest stack may then be mapped for a new thread;
+// it used to publish and wake on the guest stack and only then call pthread_exit (the thread-key destructors running on the guest stack too), so those last frames could be overwritten by the new thread's stack contents
 static void thread_exit(thr_t *t) {
     t->exit_ns = now_ns(); t->exit_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
     // 这里不打日志：退出发生在客体线程自己的栈上（有的只有十几 KiB），带浮点的 printf 会把栈撑爆（真机冒烟：LibcurlResolver 退出时 SIGBUS，回溯 fprintf → __dtoa）。时刻只记下来，现场导出时再打
     // No logging here: the exit happens on the guest thread's own stack (some are only a dozen or so KiB), and a printf with floating point would blow the stack (real-device smoke test: SIGBUS when LibcurlResolver exits, backtrace fprintf → __dtoa). Only the time is recorded, and it is printed later in the state dump
+    if (t->exit_jb) longjmp(*t->exit_jb, 1);   // 回 thread_main（宿主栈）收尾 | back to thread_main (host stack) to finish
+    thread_exit_finish(t);                      // 没有宿主栈返回点（主线程）：原地收尾 | no host-stack return point (the main thread): finish in place
+    pthread_exit(NULL);
+}
+static void thread_exit_finish(thr_t *t) {
     pthread_mutex_lock(&G);
     t->exited = 1;
     for (thr_t *w = g_wait; w; ) { thr_t *n = w->next; if (w->wkind == 4) wake(w, -1); w = n; }   // 同步等待者重查 | Synchronization waiters re-check
     pthread_setspecific(g_keythr, NULL);
     if (t->closed) thr_free(t);
     pthread_mutex_unlock(&G);
-    pthread_exit(NULL);
 }
 void dm_thread_returned(void) { die("客体线程入口函数返回（Horizon 要求 ExitThread）"); }
 
@@ -269,7 +305,7 @@ void dm_thread_returned(void) { die("客体线程入口函数返回（Horizon �
 uint32_t svc_thread_main_init(void) {
     pthread_key_create(&g_keythr, NULL);
     thr_t *t = calloc(1, sizeof *t);
-    pthread_cond_init(&t->cv, NULL);
+    thr_cv_init(&t->cv);
     t->started = 1; t->prio = 44; t->core = 0; t->mask = 7; t->pt = pthread_self(); t->mport = pthread_mach_thread_np(t->pt);
     pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
     pthread_setspecific(g_keythr, t);
@@ -309,7 +345,6 @@ static void wake_sync_waiters(void) {
     for (thr_t *w = g_wait; w; ) { thr_t *n = w->next; if (w->wkind == 4) wake(w, -1); w = n; }
 }
 
-static int64_t now_mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1000000000ll + ts.tv_nsec; }
 void dm_guest_clock_advanced(void) {
     if (!dm_detclock_enabled()) return;
     pthread_mutex_lock(&G);
@@ -624,9 +659,14 @@ int svc_thread(int num, uint64_t *regs) {
     switch (num) {
     case 0x08: {  // CreateThread(→w1 句柄; x1 入口, x2 参数, x3 栈顶, w4 优先级, w5 核) | CreateThread(→w1 handle; x1 entry, x2 argument, x3 stack top, w4 priority, w5 core)
         thr_t *t = calloc(1, sizeof *t);
-        pthread_cond_init(&t->cv, NULL);
+        thr_cv_init(&t->cv);
         t->entry = regs[1]; t->arg = regs[2]; t->stack_top = regs[3] & ~0xFull;
-        t->prio = (int)regs[4]; t->core = (int)regs[5]; t->mask = t->core >= 0 ? 1ull << t->core : 7;
+        // 理想核 −2（IdealCoreUseProcessValue）= 进程的理想核，应用的是 0（Horizon 的 CreateThread 先这样换掉再核对；−1 / −3 在那边不合法，这里也记成 0）。
+        // 掩码照旧：负值给全部三核——宿主不把线程钉在核上，掩码只是记账（Horizon 会给 1 << 理想核，SDK 随后多半自己 SetThreadCoreMask）
+        // Ideal core -2 (IdealCoreUseProcessValue) = the process's ideal core, 0 for an application (Horizon's CreateThread replaces it like this before validating; -1 / -3 are invalid there and are stored as 0 here too).
+        // The mask is as before: all three cores for a negative value -- the host never pins threads to cores, the mask is only bookkeeping (Horizon gives 1 << ideal core, and the SDK mostly calls SetThreadCoreMask itself afterwards)
+        int core = (int)regs[5];
+        t->prio = (int)regs[4]; t->core = core >= 0 ? core : 0; t->mask = core >= 0 ? 1ull << core : 7;
         t->born_ns = now_ns(); t->born_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
         pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
         pthread_attr_t a; pthread_attr_init(&a);
@@ -671,9 +711,9 @@ int svc_thread(int num, uint64_t *regs) {
     case 0x0D: { thr_t *t = h_get((uint32_t)regs[0], O_THREAD); if (t) t->prio = (int)regs[1]; regs[0] = t ? 0 : R_BAD_HANDLE; return 1; }
     case 0x0E: { thr_t *t = h_get((uint32_t)regs[2], O_THREAD);
                  regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)(uint32_t)t->core : 0; regs[2] = t ? t->mask : 0; return 1; }
-    case 0x0F: {  // SetThreadCoreMask(w0, w1 理想核, x2 掩码)：-1 = 用进程缺省、-2/-3 = 不改理想核；宿主只记账 | SetThreadCoreMask(w0, w1 ideal core, x2 mask): -1 = use the process default, -2/-3 = leave the ideal core unchanged; the host only keeps the bookkeeping
+    case 0x0F: {  // SetThreadCoreMask(w0, w1 理想核, x2 掩码)：−2 = 用进程的理想核（0）、−3 = 不改理想核、−1 = 不在乎（Horizon 记成 −1，这里记 0，GetCurrentProcessorNumber 才是真实核号）；宿主只记账 | SetThreadCoreMask(w0, w1 ideal core, x2 mask): -2 = use the process's ideal core (0), -3 = leave the ideal core unchanged, -1 = don't care (Horizon stores -1; stored as 0 here so that GetCurrentProcessorNumber is a real core); the host only keeps the bookkeeping
         thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
-        if (t) { int c = (int)regs[1]; if (c >= 0) t->core = c; else if (c == -1) t->core = 0; if (regs[2]) t->mask = regs[2]; }
+        if (t) { int c = (int)regs[1]; if (c >= 0) t->core = c; else if (c == -1 || c == -2) t->core = 0; if (regs[2]) t->mask = regs[2]; }
         regs[0] = t ? 0 : R_BAD_HANDLE; return 1;
     }
     case 0x10: regs[0] = (uint64_t)(uint32_t)cur()->core; return 1;
@@ -746,6 +786,10 @@ int svc_thread(int num, uint64_t *regs) {
         if (type != 0) {
             int32_t nv = val + 1;
             if (type == 2) {
+                // 有人等时写 value−1（count ≤ 0 与 count > 0 两支都是）：与当前 Mesosphere 的 KAddressArbiter 相同。较早的资料（mesosphere 旧版、yuzu）在 count ≤ 0 时写 value−2，
+                // Atmosphère 提交 5f2d713（2022，「kern: mea culpa (some time since 7.x)」）已改成 value−1——别照旧资料改回去（审计 F-CORE-9 因此驳回；单测 t_thr_sem signal 对照）
+                // With waiters it writes value-1 (in both the count <= 0 and the count > 0 branch): the same as current Mesosphere's KAddressArbiter. Older references (old mesosphere, yuzu) write value-2 for count <= 0;
+                // Atmosphère commit 5f2d713 (2022, "kern: mea culpa (some time since 7.x)") changed that to value-1 -- do not change it back from the old references (audit finding F-CORE-9 was rejected for this; checked by the unit test t_thr_sem signal)
                 if (cnt <= 0) nv = nw > 0 ? val - 1 : val + 1;
                 else nv = nw == 0 ? val + 1 : nw <= cnt ? val - 1 : val;
             }
@@ -781,7 +825,9 @@ int svc_thread(int num, uint64_t *regs) {
     }
     case 0x18: {  // WaitSynchronization(→w1 下标; x1 句柄数组, w2 个数, x3 超时) | WaitSynchronization(→w1 index; x1 handle array, w2 count, x3 timeout)
         thr_t *t = cur(); const uint32_t *hs = (const uint32_t *)regs[1]; int n = (int)regs[2]; int64_t ns = (int64_t)regs[3];
-        int64_t deadline = ns > 0 ? (dm_detclock_enabled() ? (int64_t)guest_ns() : now_mono_ns()) + ns : 0;
+        int64_t base = ns > 0 ? (dm_detclock_enabled() ? (int64_t)guest_ns() : now_mono_ns()) : 0;
+        if (ns > 0 && ns > INT64_MAX - base) ns = -1;   // 截止越过 INT64_MAX（超时接近 INT64_MAX）= 无限等，不让加法溢出 | a deadline past INT64_MAX (a timeout near INT64_MAX) = wait forever, without letting the addition overflow
+        int64_t deadline = ns > 0 ? base + ns : 0;
         pthread_mutex_lock(&G);
         int64_t r; int idx = -1;
         for (;;) {

@@ -107,9 +107,9 @@ static _Atomic long g_churned;
 static void *short_lived(void *p) {
     (void)p; thr_t *t = reg_self();
     usleep(200);
-    uint64_t r[8] = {t->handle}; svc_thread(0x16, r);   // CloseHandle（自己的句柄）：closed = 1 | CloseHandle(own handle): closed = 1
+    uint64_t r[32] = {t->handle}; svc_thread(0x16, r);   // CloseHandle（自己的句柄）：closed = 1 | CloseHandle(own handle): closed = 1
     atomic_fetch_add(&g_churned, 1);
-    uint64_t x[8] = {0}; svc_thread(0x0A, x);           // ExitThread：exited = 1，thr_free，pthread_exit | ExitThread: exited = 1, thr_free, pthread_exit
+    uint64_t x[32] = {0}; svc_thread(0x0A, x);           // ExitThread：exited = 1，thr_free，pthread_exit | ExitThread: exited = 1, thr_free, pthread_exit
     return NULL;
 }
 static void *churn(void *p) { (void)p; for (;;) { pthread_t t; pthread_create(&t, NULL, short_lived, NULL); pthread_detach(t); usleep(300); } return NULL; }

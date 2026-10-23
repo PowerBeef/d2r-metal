@@ -52,6 +52,7 @@ run: \
 	$(B)/t_swkbd \
 	$(B)/t_target_rank \
 	$(B)/t_textbox \
+	$(B)/t_thr_sem \
 	$(B)/t_thread_leak \
 	$(B)/t_touch \
 	$(B)/t_touch_mac \
@@ -114,6 +115,7 @@ run: \
 	$(B)/t_dump 2>/dev/null
 	ASAN_OPTIONS=detect_leaks=0 $(B)/t_dump_asan uaf 2>/dev/null
 	$(B)/t_svc_mem
+	$(B)/t_thr_sem
 	$(B)/t_target_rank 2>/dev/null
 	$(B)/t_hud_dead
 	$(B)/t_namegen
@@ -187,6 +189,8 @@ $(B)/t_dump: t_dump.c ../hle_thread.c ../crash.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_dump.c ../crash.c
 $(B)/t_dump_asan: t_dump.c ../hle_thread.c ../crash.c ../dm.h | $(B)
 	clang -O1 -g -fsanitize=address -Wall -Wno-unused-function -I.. -o $@ t_dump.c ../crash.c
+$(B)/t_thr_sem: t_thr_sem.c ../hle_thread.c ../dm.h | $(B)
+	clang -O1 -g -fsanitize=undefined -fno-sanitize-recover=undefined -Wall -Wno-unused-function -I.. -o $@ t_thr_sem.c
 $(B)/t_svc_mem: t_svc_mem.c ../hle_svc.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_svc_mem.c
 $(B)/t_svc_mem_tsan: t_svc_mem.c ../hle_svc.c ../hle.h ../dm.h | $(B)
