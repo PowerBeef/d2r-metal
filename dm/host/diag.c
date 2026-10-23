@@ -1817,8 +1817,27 @@ static void freeze_tick(uint64_t G) {   // 拍入口：定这一拍冻不冻，�
     else if (!want && frozen) { int nm = 0, hp = 0; uint32_t h = frz_snapshot(G, &nm, &hp); atomic_store(&g_dm_frozen, 0); frozen = 0; if (mtl_world_frozen) mtl_world_frozen(0); LOG("面板冻结：拍 %u 解冻（冻了 %u 次拍入口）；怪 %d 只 校验 %08x 玩家生命 %d", t, calls, nm, h, hp); }
     if (frozen) { calls++; uint32_t t1 = t - 1; memcpy((void *)(uintptr_t)(G + 0x170), &t1, 4); }
 }
+// DM_BREAK_AT_TICK=<拍>[:等待秒，缺省 300]：游戏走到这一拍时在拍入口停下等调试器（日志与事件 break 给出 pid），调试器一挂上就 __builtin_debugtrap()，停在游戏的拍线程上；
+// 等不到就照常往下走。等的时候拍线程睡着（游戏拍自然冻住）；看门狗（DM_WATCH / DM_WATCH_STALL，场景运行器会设）会把它判死：调试时手动起宿主、这两个都别设
+// DM_BREAK_AT_TICK=<tick>[:wait seconds, default 300]: when the game reaches that tick, stop at the tick entry and wait for a debugger (the log and the break event give the pid); as soon as a debugger is attached, __builtin_debugtrap(), stopping on the game's tick thread;
+// if none comes, carry on. While waiting the tick thread sleeps (game ticks freeze naturally); the watchdogs (DM_WATCH / DM_WATCH_STALL, which the scenario runner sets) would give up on it: for debugging start the host by hand with neither set
+#include <sys/sysctl.h>
+static int traced(void) { struct kinfo_proc kp; size_t n = sizeof kp; int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()}; return !sysctl(mib, 4, &kp, &n, NULL, 0) && (kp.kp_proc.p_flag & P_TRACED); }
+static void break_at_tick(void) {
+    static uint32_t at; static unsigned wait_s; static int init;
+    if (!init) { init = 1; const char *e = getenv("DM_BREAK_AT_TICK"); if (e && *e) { at = (uint32_t)strtoul(e, NULL, 0); const char *c = strchr(e, ':'); wait_s = c ? (unsigned)atoi(c + 1) : 300; } }
+    if (!at) return;
+    uint32_t t = 0; vm_size_t got = 0; uint64_t G = g_lastG;
+    if (!G || vm_read_overwrite(mach_task_self(), G + 0x170, 4, (vm_address_t)&t, &got) || got != 4 || t < at) return;
+    at = 0;
+    LOG("DM_BREAK_AT_TICK：拍 %u 停下，等调试器（最多 %u 秒）：lldb -p %d，再 command script import dm/tools/lldb/dm.py", t, wait_s, (int)getpid());
+    DM_EV("break", "tick:u pid:d wait_s:u", t, (int)getpid(), wait_s);
+    for (unsigned i = 0; i < wait_s * 10 && !traced(); i++) usleep(100000);
+    if (traced()) { LOG("DM_BREAK_AT_TICK：调试器已挂上，停在拍 %u 入口", t); __builtin_debugtrap(); }
+    else LOG("DM_BREAK_AT_TICK：%u 秒内没有调试器，照常往下走", wait_s);
+}
 static int g_ctl_track;   // 有控制通道（DM_CTL_PORT / DM_LOG_PORT）：产品拍入口也跟时限零点，控制口 pause / step 才换算得了 | a control channel is configured (DM_CTL_PORT / DM_LOG_PORT): the product tick entry also tracks the deadline origin, so control-port pause / step can convert it
-static void tick_gate_product(const uint64_t *regs) { g_lastG = regs[0]; players_apply(); hud_tick(regs[0]); freeze_tick(regs[0]); if (g_ctl_track) hold_track_origin(); }   // 产品缺省的拍入口：只落地难度档、发布 HUD 数字 | The product default tick entry: only applies the difficulty level and publishes the HUD numbers
+static void tick_gate_product(const uint64_t *regs) { g_lastG = regs[0]; players_apply(); hud_tick(regs[0]); freeze_tick(regs[0]); if (g_ctl_track) hold_track_origin(); break_at_tick(); }   // 产品缺省的拍入口：只落地难度档、发布 HUD 数字 | The product default tick entry: only applies the difficulty level and publishes the HUD numbers
 static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入本拍命令包，再取状态哈希 | Tick entry: first inject this tick's command packets, then take the state hash
     {   // 拍入口只在一条客体线程上跑：state_dump / ticks_hash 的 static 缓冲靠这一点不竞争。换线程即中止，别让输出悄悄写乱 | The tick entry runs on only one guest thread: the static buffers of state_dump / ticks_hash rely on this to be race-free. Abort if the thread changes, do not let the output silently get garbled
         static _Atomic uintptr_t owner; uintptr_t me = (uintptr_t)pthread_self(), exp = 0;
@@ -1827,6 +1846,7 @@ static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入�
     g_lastG = regs[0];
     players_apply();
     hud_tick(regs[0]);
+    break_at_tick();
     crash_watch_progress(cur_tick(), "拍入口");
     if (getenv("DM_TEST_LEAK")) {
         static void **leaks; static size_t nleaks;

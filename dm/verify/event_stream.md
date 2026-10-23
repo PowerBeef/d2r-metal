@@ -58,6 +58,7 @@ UTF-8, one object per line, terminated by `\n`, written with a single `write()` 
 | `ctl` | `state` (`connected`) | A control-port client connected (`DM_CTL_PORT`). |
 | `game_state` | `state`: `Menu`, `Loading`, `Playing`, `Paused`, `Background` | The game state changed (from the UI messages and the shells' background events). With `DM_STATEREP=1` the same states go to the system's StateReporting (`GameState` domain). |
 | `mark` | `name`, `frame` | The control port's `mark` command (benchmark segments); `frame` is the frame number of the `DM_NVN_TSV` timing rows. |
+| `break` | `tick`, `pid`, `wait_s` | `DM_BREAK_AT_TICK` reached its tick: the tick thread waits up to `wait_s` seconds for a debugger to attach to `pid` (`dm/verify/debugging.md`). |
 | `exit` | `why` (`exit`, `ticks_full`, `watchdog`, `shutdown`, `nnMain returned`), `code` | The process is about to end. Paths that use `_exit` emit it themselves; `exit()` goes through `atexit`. |
 
 Only lines that reach `LOG` / `MLOG` (and `die` / `MDIE`) become `red` / `fatal` events. A marker in a format string or in a `%s` argument both count. Lines printed another way, such as the iOS shell's `plog`, are not seen.

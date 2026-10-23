@@ -46,6 +46,7 @@ DM_BC_VERIFY	gfx	gfx/vulkan/engine/xbg_texture.c	-
 DM_BINDING_DIAG	ios	ios/Sources/dm_touch_game_bridge.c	-
 DM_BOOTPROF	gfx,host,ios	gfx/nvn/nvn_mtl.m host/main.c ios/Sources/bootprof_ios.m	y
 DM_BOSSRUSH_TZ	host	host/dm_bossrush.c	-
+DM_BREAK_AT_TICK	host	host/diag.c	y
 DM_BRIGHTNESS	ios	ios/Sources/front_ios.m	-
 DM_BRIGHT_K	host	host/dm_bright.c	y
 DM_BRIGHT_TRACE	host	host/dm_bright.c	-
