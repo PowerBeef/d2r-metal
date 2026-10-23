@@ -19,6 +19,7 @@ __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn
 #include "hle.h"
 #include "dm_ctl.h"
 #include <signal.h>
+#include <stdatomic.h>
 
 void dm_touch_host_live_enable(void); void dm_touch_host_live(int op, float nx, float ny);   // touch_mac.c
 static int g_live;   // App 形态（或 DM_TOUCH_LIVE=1）：鼠标进我们的触屏状态机；否则照旧当原版触摸屏的一个触点 | App form (or DM_TOUCH_LIVE=1): the mouse goes into our touch state machine; otherwise it stays a single touch point of the original touch screen as before
@@ -174,8 +175,8 @@ uint64_t front_game_res(int docked) {
     return docked ? 900ull << 32 | 1600 : 720ull << 32 | 1280;
 }
 
-static NSPoint g_test_last;   // 合成鼠标脚本：上一条带坐标的指令落在视图里的点（dragto 从这里起拖） | synthetic mouse script: the point in the view where the last instruction with coordinates landed (dragto starts dragging from here)
 static int g_mouse_down;      // 这一笔左键的按下收了（落在画面里）：随后的拖动 / 抬起才交下去 | the press of this left-button gesture was taken (inside the picture): only then are its drags / release passed on
+static NSPoint g_test_last;   // 合成鼠标脚本：上一条带坐标的指令落在视图里的点（dragto 从这里起拖） | synthetic mouse script: the point in the view where the last instruction with coordinates landed (dragto starts dragging from here)
 static int g_wheel;   // 滚轮：+1 / −1 = 右摇杆向上 / 向下推一小会儿（原版手柄版用右摇杆滚列表） | Wheel: +1 / -1 = push the right stick up / down for a short while (the original gamepad UI scrolls lists with the right stick)
 static void push(void) {
     int32_t lx = (g_d - g_a) * 32767, ly = (g_w - g_s) * 32767;
@@ -471,4 +472,20 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
     (void)max_chars;                              // 截断按 UTF-16 单元在 hle_swkbd.c 统一做 | Truncation is done uniformly in hle_swkbd.c in UTF-16 units
     snprintf(out, out_cap, "%s", text.UTF8String);
     return 1;
+}
+
+// 存档没写进去（front.h；宿主 hle_fs.c 在游戏线程调，盖过那里只记日志的弱实现）：同 iOS 壳，告诉玩家「存储空间不足，进度未保存」，只通知、不改存档流程。
+// 在主线程弹成游戏窗口上的表单：不开模态循环，游戏线程不等它，主队列上别的事照走；已有一个在屏上就不再叠，只记一行。没有窗口（命令行没开 DM_WINDOW）只记日志
+// Save not written (front.h; called by the host's hle_fs.c on the game thread, overriding the weak implementation there that only logs): like the iOS shell, tell the player 「存储空间不足，进度未保存」(Not enough storage. Progress was not saved) -- notify only, the save flow is unchanged.
+// Shown on the main thread as a sheet on the game window: no modal loop, so the game thread does not wait for it and other main-queue work keeps going; if one is already on screen no second one is stacked, only a log line. Without a window (command line without DM_WINDOW) only a log line
+static _Atomic int g_save_alert_on;
+void front_save_failed(int err) {
+    if (!g_win) { LOG("前端：存档写失败 errno=%d（没有窗口，只记日志）", err); return; }
+    if (atomic_exchange(&g_save_alert_on, 1)) { LOG("前端：存档写失败 errno=%d，提示已在屏上，不再叠一个", err); return; }
+    LOG("前端：存档写失败 errno=%d，异步提示玩家", err);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSAlert *a = [NSAlert new]; a.messageText = @(ui("dmSaveNoSpace")); [a addButtonWithTitle:@(ui("dmConfirm"))];
+        [a beginSheetModalForWindow:g_win completionHandler:^(NSModalResponse r) { (void)r; atomic_store(&g_save_alert_on, 0); LOG("前端：存档失败提示已关"); }];
+        LOG("前端：存档失败提示已显示 errno=%d（%s）", err, a.window.visible ? "在屏上" : "窗口最小化着，还原后出现");
+    });
 }

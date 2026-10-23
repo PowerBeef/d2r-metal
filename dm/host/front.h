@@ -38,10 +38,10 @@ void dm_host_preload_start(int argc, char **argv);
 typedef struct { uint32_t id; float x, y; } dm_touch;
 void dm_touch_set(const dm_touch *t, int n);
 
-// 存档未保存（宿主 hle_fs.c 调；iOS 前端写同名强实现弹原生提示「存储空间不足，进度未保存」，缺省弱实现只记日志）。
+// 存档未保存（宿主 hle_fs.c 调；iOS 前端与 Mac 前端 front_mac.m 各写同名强实现弹原生提示「存储空间不足，进度未保存」，缺省弱实现只记日志）。
 // 时机：游戏一次存档事务（两次 Commit 之间）里有存档写失败（盘满等），这次 Commit 被拒、已提交的旧档不变时，每个被拒的事务调一次；
 // 下一个事务成功就照常提交，前端不必做恢复动作。err = 首个失败的 errno（ENOSPC = 28 即空间不足）。在游戏线程调，前端自己切主线程、不要阻塞
-// Save not written (called by the host's hle_fs.c; the iOS front end provides a strong implementation of the same name that shows the native prompt 「存储空间不足，进度未保存」(Not enough storage. Progress was not saved); the default weak implementation only logs).
+// Save not written (called by the host's hle_fs.c; the iOS front end and the Mac front end front_mac.m each provide a strong implementation of the same name that shows the native prompt 「存储空间不足，进度未保存」(Not enough storage. Progress was not saved); the default weak implementation only logs).
 // Timing: when a save write fails (disk full etc.) within one of the game's save transactions (between two Commits), so that this Commit is refused and the previously committed save is unchanged, it is called once per refused transaction;
 // the next transaction that succeeds commits as usual, and the front end need not do any recovery. err = the first failing errno (ENOSPC = 28 means out of space). Called on the game thread; the front end switches to the main thread itself and must not block
 void front_save_failed(int err);
