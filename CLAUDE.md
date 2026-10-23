@@ -155,6 +155,20 @@ python3 dm/tools/imgdiff.py a.png b.png --max-mean 0.05            # perceptual 
 - `ios-mac` needs `.iosdd_mac/DmMacSmoke.app`; `dm/ios/tools/smoke_mac.sh 1` builds it. Saves for the iOS backends are the ones bundled at build time.
 - Generated saves (`export_save`, `scenarios/saves/*.scn`) stay in `$DM_ROOT/data/switch/save_ref_<name>/` and are never committed.
 
+**Performance:**
+
+```bash
+python3 dm/tools/bench.py run dm/verify/bench/town_loop.scn --reps 3 [--mpt]       # per-segment CPU / NVN / GPU / present time → bench.json
+python3 dm/tools/bench.py ab dm/verify/bench/town_loop.scn --reps 6 --a-env … --b-env … --metric gpu_ms.p50   # ABBA, Mann-Whitney + bootstrap, ledger
+python3 dm/tools/gpucap.py capture|summary|listen|hud …                            # gpucapture / gpudebug / metalperftrace
+python3 dm/tools/boothist.py show --label bench:cli                                # boot-stage history across revisions
+```
+
+- Present intervals are pinned at 16.67 ms by vsync on this Mac; compare `cpu_ms`, `nvn_ms` and `gpu_ms` instead.
+- Use at least 4 runs per variant (the minimum exact p is 0.029); 6 is the default.
+- `XTRACE_*` are os_signposts on Apple. Record them with `xctrace record --template Logging --attach <pid>`.
+- A GPU capture is about 4 GB per frame, and the disk is tight. `gpucap` refuses to capture when free space is short, and the `gpu_capture` step deletes the trace unless `keep=1`.
+
 **CLI host (Mac):**
 
 ```bash
