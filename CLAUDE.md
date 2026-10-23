@@ -169,6 +169,26 @@ python3 dm/tools/boothist.py show --label bench:cli                             
 - `XTRACE_*` are os_signposts on Apple. Record them with `xctrace record --template Logging --attach <pid>`.
 - A GPU capture is about 4 GB per frame, and the disk is tight. `gpucap` refuses to capture when free space is short, and the `gpu_capture` step deletes the trace unless `keep=1`.
 
+**Debugging** (all in `dm/verify/debugging.md`):
+
+```bash
+python3 dm/tools/crashlog.py show <run>/crash.json                                  # symbolicated crash (DM_CRASH_JSON; the runner writes crash.txt)
+python3 dm/tools/guestsyms.py build                                                  # local guest symbol table for module+offset lookups
+make -C dm/host dmhost_asan|dmhost_ubsan|dmhost_tsan && SCN_DMHOST=$PWD/dm/host/dmhost_asan python3 dm/tools/scenario.py run …   # sanitizer host; any report is red (sanitizer.txt)
+python3 dm/tools/scenario.py run … --metal-validation api|lint|shader|all           # Metal validation layers (metal_validation.txt)
+python3 dm/tools/explore.py run --seed N --episodes K [--dmhost …]                  # random play; a red run is shrunk to minimal_<k>.scn
+python3 dm/tools/replay.py record <scn> && python3 dm/tools/replay.py check <dir> --dmhost A --dmhost B   # same input on two builds → first divergent tick
+python3 dm/tools/tickdiff.py a/ticks.jsonl b/ticks.jsonl                             # first divergent tick between two DM_TICKS records
+DM_BREAK_AT_TICK=<tick> ./dmhost … ; lldb -p <pid>; (lldb) command script import dm/tools/lldb/dm.py   # dm modules|where|bt|break|tick
+```
+
+- The sanitizer targets don't track headers: delete the binary to force a rebuild. They run game threads on 8 MiB host stacks and carry their own options and TSan suppressions (`main.c`).
+- Shader validation crashes the Metal 4 host inside Metal (macOS 27); use `SCN_DMHOST=dm/host/dmhost_m3`.
+- `DM_BREAK_AT_TICK` waits on the tick thread: start the host by hand without `DM_WATCH` / `DM_WATCH_STALL`. In `lldb --batch`, commands after the trap go in `-k`, not `-o`.
+- Agents can drive the same lldb through `(lldb) protocol-server start MCP` + `xcrun lldb-mcp` (one MCP server at a time; delete stale `~/.lldb/lldb-mcp-<pid>.json`).
+- `explore.py` uses only steps without assertions; `open_pause` / `close_pause` are assertions and go red on their own.
+- Replay needs the town spawn moved as when recording (`replay.py` sets `DM_TOWNWP_OFF=0`) and no tick-0 join lines in the packet file. Check with a positive control (drop input, expect a divergence) before trusting an "identical" result.
+
 **CLI host (Mac):**
 
 ```bash
