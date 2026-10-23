@@ -20,7 +20,10 @@
 #endif
 
 #define MAX_MOD 8
-#define LOG(...) do { fprintf(stderr, "[dm] " __VA_ARGS__); fputc('\n', stderr); } while (0)
+#include "dm_events.h"
+// 设了 DM_EVENTS 时整行交给日志钩子（dm_events.c：一次写出，红标 / FATAL 行另记成事件）；没设时照旧直接写
+// With DM_EVENTS set the whole line goes to the log hook (dm_events.c: written out at once, red-marker / FATAL lines are also recorded as events); without it, written directly as before
+#define LOG(...) do { if (g_dm_log_hook) g_dm_log_hook(__FILE_NAME__, __LINE__, "[dm] " __VA_ARGS__); else { fprintf(stderr, "[dm] " __VA_ARGS__); fputc('\n', stderr); } } while (0)
 #define die(...) do { LOG("FATAL " __VA_ARGS__); abort(); } while (0)
 
 typedef struct { uint32_t st_name; uint8_t st_info, st_other; uint16_t st_shndx; uint64_t st_value, st_size; } Elf64_Sym;

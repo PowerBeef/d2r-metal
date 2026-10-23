@@ -376,6 +376,21 @@ static void monres_on_setinfo(const uint64_t *regs, uint64_t payload) {
     memcpy(buf + keep, add, n); memcpy(buf + keep + n, "\xee\x81\xbe" "0", 4); memset(buf + keep + n + 4, ' ', len - keep); buf[keep + n + 4 + (len - keep)] = 0;
 }
 
+// 事件流（dm_events.h）：前端导航、面板开关，与读这些消息的里程碑——主菜单出来、进局、读取画面撤下、退回前端、暂停菜单打开（smoke / logport.py 原先 grep 的就是这几条 UIMSG）
+// Event stream (dm_events.h): front-end navigation, panel open / close, and the milestones read from these messages -- main menu shown, game entered, loading screen dismissed, back to the front end, pause menu opened (the UIMSG lines that smoke / logport.py used to grep)
+static void ui_events(const char *cat, const char *act, const char *arg) {
+    static int played, loading;
+    if (!strcmp(cat, "FrontEndNavigation")) {
+        DM_EV("nav", "to:s", act);
+        if (!strcmp(act, "ToGame")) { played = loading = 1; DM_EV("game_enter", ""); }
+        else if (!strcmp(act, "ToFrontEnd")) { if (played) { played = loading = 0; DM_EV("game_leave", ""); } else DM_EV("boot", "stage:s", "front_end"); }
+    } else if (!strcmp(cat, "PanelManager") && *arg) {
+        DM_EV("panel", "act:s name:s", act, arg);
+        if (!strcmp(act, "OpenPanel") && !strcmp(arg, "MainMenuButtonRibbon")) DM_EV("main_menu", "");
+        else if (!strcmp(act, "UnloadPanel") && !strcmp(arg, "LoadScreenPanel") && loading) { loading = 0; DM_EV("loading_done", ""); }
+        else if (!strcmp(act, "OpenPanel") && !strcmp(arg, "PauseLayout")) DM_EV("pause_open", "");
+    }
+}
 static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄存器 | Observation gate callback: registers are read-only
     if ((g_ui_print || atomic_load(&g_nui_sub)) && !g_uih) uih_build();
     uint64_t msg = regs[1], f[3] = {0}; vm_size_t got = 0;
@@ -394,6 +409,7 @@ static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄
     const char *n0 = uih_name(f[0], c0), *n1 = uih_name(f[1], c1);   // 名字表里有就返回表里的串、不写进 c0 / c1（原先拿 c0 / c1 比「ToGame」永远比不上） | If the name table has it, return the table's string without writing into c0 / c1 (it used to compare c0 / c1 against "ToGame", which could never match)
     snprintf(stage, sizeof stage, "%s:%s:%s", n0, n1, have_arg ? nm : "");
     crash_watch_progress(cur_tick(), stage);
+    if (g_dm_event_fn) ui_events(n0, n1, have_arg ? nm : "");
     // 看门狗的「进局前按出图帧算进展」：启动后到主菜单出来为止（主菜单上不动 = 按键序卡住，照判死）；
     // 从局里退回前端（ToFrontEnd 且之前进过局）后重新按出图帧算，直到再进局——局后停在前端发呆不是卡住（回前端 15 秒报「卡在 ClosePanel:SaveIndicatorPanel」的误报）
     // The watchdog's "before joining a run, measure progress by presented frames": from launch until the main menu appears (no movement on the main menu = the key sequence is stuck, still judged dead);
@@ -1150,7 +1166,7 @@ static void ticks_hash(const uint64_t *regs) {
         }
     fflush(g_tkfp);
     g_tklast = tick;
-    if (g_tkleft > 0 && --g_tkleft == 0) { fclose(g_tkfp); res_report("退出"); LOG("DM_TICKS 记满，最后拍号 %u，退出", tick); _exit(0); }
+    if (g_tkleft > 0 && --g_tkleft == 0) { fclose(g_tkfp); res_report("退出"); LOG("DM_TICKS 记满，最后拍号 %u，退出", tick); DM_EV("exit", "why:s code:d", "ticks_full", 0); _exit(0); }
 }
 
 // ---------- 客户端命令包：DM_C2S_LOG=<路径>（main 0x6e5b40 命令分派入口观测门 OBS_C2S）/ DM_C2S_REPLAY=<路径> ----------
@@ -1244,6 +1260,13 @@ int dm_diag_srv_merc(uint32_t id, int *hp, int *mx, int *healing) {
 int dm_diag_difficulty(void) { uint8_t d = 0; return in_game() && tk_rd(g_lastG + 0x104, &d, 1) && d < 3 ? d : -1; }   // 当前局难度（G+0x104：0 普通 1 噩梦 2 地狱），不在局内 -1；一键重开用（dm_cursor.c） | Difficulty of the current run (G+0x104: 0 Normal 1 Nightmare 2 Hell), -1 when not in a run; used by one-tap restart (dm_cursor.c)
 uint32_t dm_cur_tick(void) { uint32_t t = 0; if (in_game()) tk_rd(g_lastG + 0x170, &t, 4); return t; }   // 触点脚本（touch_mac.c）用 | For the touch point script (touch_mac.c)
 static uint32_t cur_tick(void) { return dm_cur_tick(); }
+// 事件流的拍号来源（dm_events.h g_dm_event_tick_fn）：只读、不改 g_lastG、不走 tk_rd（它给拍状态采集计数，事件不能扰动 DM_TICKS）
+// Tick source of the event stream (g_dm_event_tick_fn in dm_events.h): read-only, does not change g_lastG and does not use tk_rd (that one counts toward tick state collection; events must not disturb DM_TICKS)
+static long long ev_tick(void) {
+    uint64_t G = g_lastG; uint32_t t = 0; vm_size_t got = 0;
+    if (!G || !game_live() || vm_read_overwrite(mach_task_self(), G + 0x170, 4, (vm_address_t)&t, &got) || got != 4) return -1;
+    return t;
+}
 static _Atomic int g_holding;   // DM_TICK_HOLD 冻结中（定义见下） | DM_TICK_HOLD freeze in progress (defined below)
 // hid 脚本用：不在局内、或 DM_TICK_HOLD 冻结中（拍号不前进，按拍计的延时永远到不了——host_savecmp 退出键序 %1 死等 451 s）返回 UINT64_MAX，脚本改按出图帧计
 // For the hid script: when not in a run, or while DM_TICK_HOLD is frozen (the tick number does not advance, so tick-counted delays never come due -- the host_savecmp exit key sequence %1 waited dead for 451 s), return UINT64_MAX and the script counts by presented frames instead
@@ -1953,6 +1976,7 @@ void dm_note_loadscreen_unload(void);   // hle_oe.c：DM_OE_SCRIPT 的 @ingame �
 static void res_on_uimsg(const char *cat, const char *act, const char *arg) { (void)cat; if (!strcmp(act, "UnloadPanel") && !strcmp(arg, "LoadScreenPanel")) { dm_note_loadscreen_unload(); l3mem_request(in_game() ? cur_tick() : 0); res_report("读取画面已撤"); } }
 void ticks_install(void) {
     const char *e = getenv("DM_TICKS"), *rp = getenv("DM_C2S_REPLAY"), *lg = getenv("DM_C2S_LOG"), *sp = getenv("DM_STATE");
+    if (g_dm_event_fn) g_dm_event_tick_fn = ev_tick;
     const char *pn = getenv("DM_PLAYERS");
     if (pn && *pn) { dm_hud_request_players(atoi(pn)); LOG("DM_PLAYERS：起局请求档位 %d", dm_hud_requested_players()); }
     if ((e || rp || lg) && gate_obs_present(OBS_UIMSG)) { void uimsg_subscribe(void (*)(const char *, const char *, const char *)); uimsg_subscribe(res_on_uimsg); }

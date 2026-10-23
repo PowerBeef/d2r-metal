@@ -76,7 +76,8 @@
 // Function parameters in this file are never retained again in the callee (the caller / global tables already hold them, and lifetime is guaranteed by defer_obj_release): saves a retain / release pair per call on the hot path
 #pragma clang attribute push(__attribute__((objc_externally_retained)), apply_to = function)
 
-#define MLOG(...) do { fprintf(stderr, "[dm] [nvn-mtl] " __VA_ARGS__); fputc('\n', stderr); } while (0)
+#include "../../host/dm_events.h"   // 日志钩子：同宿主 LOG（dm.h） | log hook: same as the host's LOG (dm.h)
+#define MLOG(...) do { if (g_dm_log_hook) g_dm_log_hook(__FILE_NAME__, __LINE__, "[dm] [nvn-mtl] " __VA_ARGS__); else { fprintf(stderr, "[dm] [nvn-mtl] " __VA_ARGS__); fputc('\n', stderr); } } while (0)
 #define MDIE(...) do { MLOG("FATAL " __VA_ARGS__); abort(); } while (0)
 
 static void warm_start(void);

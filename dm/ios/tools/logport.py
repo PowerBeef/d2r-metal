@@ -24,11 +24,35 @@ App 侧（dm/ios/Sources/main.m，只在 DM_LOG_PORT 开关下）：连上先补
             read the log and judge three stages, on success send quit and confirm exit. Stdout is a result the shell can eval:
             result=0|1 stage=启动|主菜单|进局|撤屏 (launch|main menu|enter game|screen dismissal) pk=0|1 (a known PK was seen this run) tL= tM= tG= tS= (Unix whole seconds) exited=0|1 lines=N
 """
+import json
 import socket
 import sys
 import time
 
 PK = '占不到 pthread 键 507'
+
+
+class Milestones:
+    """一行日志 → 里程碑名（main_menu / game_enter / loading_done / pause_open）或 None。
+    App 设了 DM_EVENTS=log 时读它打的「[dm] EV {json}」事件行（dm/verify/event_stream.md）；见过一条事件行以后只认事件。
+    没有事件的旧构建退回 UIMSG 原文（DM_UIMSG=1 时的「UIMSG … PanelManager OpenPanel MainMenuButtonRibbon」等）。
+    One log line -> milestone name (main_menu / game_enter / loading_done / pause_open) or None.
+    When the App has DM_EVENTS=log set, read the "[dm] EV {json}" event lines it prints (dm/verify/event_stream.md); once one event line has been seen, only events count.
+    Older builds without events fall back to the UIMSG text ("UIMSG ... PanelManager OpenPanel MainMenuButtonRibbon" etc. with DM_UIMSG=1)."""
+    UIMSG = (('main_menu', 'MainMenuButtonRibbon'), ('game_enter', 'FrontEndNavigation ToGame'), ('loading_done', 'UnloadPanel LoadScreenPanel'), ('pause_open', 'OpenPanel PauseLayout'))
+
+    def __init__(self):
+        self.events = False
+
+    def __call__(self, line):
+        i = line.find('[dm] EV {')
+        if i >= 0:
+            self.events = True
+            try: ev = json.loads(line[i + 8:]).get('ev')
+            except ValueError: return None
+            return ev if ev in ('main_menu', 'game_enter', 'loading_done', 'pause_open') else None
+        if self.events: return None
+        return next((k for k, text in self.UIMSG if text in line), None)
 
 
 def connect(port, wait=1.0):
@@ -107,6 +131,7 @@ def read(port, log, menu_limit, game_limit):
     deadline = t0 + menu_limit
     sock = None
     buf = b''
+    ms = Milestones()
     while time.time() < deadline and r['result']:
         if sock is None:
             sock, first = connect(port)
@@ -137,12 +162,13 @@ def read(port, log, menu_limit, game_limit):
                 r['tL'] = now
             if PK in line:
                 r['pk'] = 1
-            if not r['tM'] and 'MainMenuButtonRibbon' in line:
+            m = ms(line)
+            if not r['tM'] and m == 'main_menu':
                 r['tM'], r['stage'] = now, '进局'
                 deadline = time.time() + game_limit
-            if r['tM'] and not r['tG'] and 'FrontEndNavigation ToGame' in line:
+            if r['tM'] and not r['tG'] and m == 'game_enter':
                 r['tG'], r['stage'] = now, '撤屏'
-            if r['tG'] and not r['tS'] and 'UnloadPanel LoadScreenPanel' in line:
+            if r['tG'] and not r['tS'] and m == 'loading_done':
                 r['tS'], r['result'] = now, 0
                 break
     if r['tL'] and r['stage'] == '启动':
@@ -181,7 +207,7 @@ def player(port, log, menu_limit, game_s, pause_s):
     标准输出：result=0|1 stage=启动|进局|暂停|静置 why=<原因> tS= tP= exited=0|1
     Player path: game_s seconds after entering the game (loading screen dismissed), the key sequence opens the pause menu, then idle for pause_s seconds; meanwhile the log port stays connected and there are no watchdog / CRASH lines.
         Stdout: result=0|1 stage=启动|进局|暂停|静置 (launch|enter game|pause|idle) why=<reason> tS= tP= exited=0|1"""
-    t0 = time.time(); out = open(log, 'ab'); sock = None; buf = b''; tS = tP = None; why = ''
+    t0 = time.time(); out = open(log, 'ab'); sock = None; buf = b''; tS = tP = None; why = ''; ms = Milestones()
     end = t0 + menu_limit + game_s + 30
     while time.time() < end:
         if sock is None:
@@ -200,8 +226,9 @@ def player(port, log, menu_limit, game_s, pause_s):
         while b'\n' in buf:
             raw, buf = buf.split(b'\n', 1); out.write(raw + b'\n'); line = raw.decode(errors='replace')
             if '看门狗' in line or 'CRASH' in line: why = line.strip()[:80]
-            if tS is None and 'UnloadPanel LoadScreenPanel' in line: tS = time.time()
-            if tS and tP is None and 'OpenPanel PauseLayout' in line: tP = time.time(); end = tP + pause_s
+            m = ms(line)
+            if tS is None and m == 'loading_done': tS = time.time()
+            if tS and tP is None and m == 'pause_open': tP = time.time(); end = tP + pause_s
         if why: break
     stage = '启动' if tS is None else '暂停' if tP is None else '静置'
     ok = not why and tP is not None and time.time() >= tP + pause_s - 0.5

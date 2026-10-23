@@ -111,9 +111,9 @@ run_stage() {
     local pk=0 tL="" tM="" tG="" tS="" exited=1
     while [ "$attempt" -lt 3 ]; do
       attempt=$((attempt + 1)); port=$(freeport); tA=$(date +%s)
-      open -n "$W" $DEVP $CGA --env DM_SAVE_FRESH=warlock --env DM_WATCH=$((main_menu_timeout + game_screen_timeout + 5)) --env DM_UIMSG=1 --env DM_LOG_PORT="$port" --env "DM_KEYS=$KEYS" \
+      open -n "$W" $DEVP $CGA --env DM_SAVE_FRESH=warlock --env DM_WATCH=$((main_menu_timeout + game_screen_timeout + 5)) --env DM_UIMSG=1 --env DM_EVENTS=log --env DM_LOG_PORT="$port" --env "DM_KEYS=$KEYS" \
         --args -mode boot "${LG_ARGS[@]}" > "$OUT/launch_${attempt}.txt" 2>&1; local lrc=$?
-      [ "$lrc" -ne 0 ] && [ -z "$(pids)" ] && { sleep 2; echo "第 $i 次：open 失败（$(tail -1 "$OUT/launch_${attempt}.txt" | cut -c1-80)），重试一次"; open -n "$W" $DEVP $CGA --env DM_SAVE_FRESH=warlock --env DM_WATCH=$((main_menu_timeout + game_screen_timeout + 5)) --env DM_UIMSG=1 --env DM_LOG_PORT="$port" --env "DM_KEYS=$KEYS" --args -mode boot "${LG_ARGS[@]}" >> "$OUT/launch_${attempt}.txt" 2>&1; lrc=$?; tA=$(date +%s); }
+      [ "$lrc" -ne 0 ] && [ -z "$(pids)" ] && { sleep 2; echo "第 $i 次：open 失败（$(tail -1 "$OUT/launch_${attempt}.txt" | cut -c1-80)），重试一次"; open -n "$W" $DEVP $CGA --env DM_SAVE_FRESH=warlock --env DM_WATCH=$((main_menu_timeout + game_screen_timeout + 5)) --env DM_UIMSG=1 --env DM_EVENTS=log --env DM_LOG_PORT="$port" --env "DM_KEYS=$KEYS" --args -mode boot "${LG_ARGS[@]}" >> "$OUT/launch_${attempt}.txt" 2>&1; lrc=$?; tA=$(date +%s); }
       eval "$(python3 "$TOOLS/logport.py" read "$port" "$OUT/console_${attempt}.txt" "$main_menu_timeout" "$game_screen_timeout")"
       cat "$OUT/console_${attempt}.txt" >> "$RUN/console_${i}.txt"
       chan=""; [ "$lrc" -ne 0 ] && chan="（open 退出码 ${lrc}）"
@@ -137,8 +137,8 @@ run_stage() {
     # 当时台账里 mini 上没有别的 Mac 冒烟在跑（锁落在被测机器上：run_stage 在哪台跑就锁哪台的 macsmoke.lock）。本机没有实例在跑时等 2 秒重试一次，两次的报错都留在 player_launch.txt
     # Once during a merge this step on the second Mac reported "Launch failed ... Launchd job spawn failed (POSIX 162)" with 0 log lines, and passed when rerun unchanged; the cause was not found (the system log could not be read),
     # at the time the ledger showed no other Mac smoke test running on the second Mac (the lock lives on the machine under test: whichever machine run_stage runs on, that machine's macsmoke.lock is taken). When no instance is running on this machine, wait 2 seconds and retry once; both error messages are kept in player_launch.txt
-    open -n "$W" $DEVP $CGA --env DM_SAVE_TEST=1 --env DM_LOG_PORT="$port" --env DM_UIMSG=1 --env "DM_KEYS=$KP" > "$RUN/player_launch.txt" 2>&1 \
-      || { [ -z "$(pids)" ] && { sleep 2; echo "玩家路径：open 失败（$(tail -1 "$RUN/player_launch.txt" | cut -c1-80)），重试一次"; open_diag 玩家路径; open -n "$W" $DEVP $CGA --env DM_SAVE_TEST=1 --env DM_LOG_PORT="$port" --env DM_UIMSG=1 --env "DM_KEYS=$KP" >> "$RUN/player_launch.txt" 2>&1; }; }
+    open -n "$W" $DEVP $CGA --env DM_SAVE_TEST=1 --env DM_LOG_PORT="$port" --env DM_UIMSG=1 --env DM_EVENTS=log --env "DM_KEYS=$KP" > "$RUN/player_launch.txt" 2>&1 \
+      || { [ -z "$(pids)" ] && { sleep 2; echo "玩家路径：open 失败（$(tail -1 "$RUN/player_launch.txt" | cut -c1-80)），重试一次"; open_diag 玩家路径; open -n "$W" $DEVP $CGA --env DM_SAVE_TEST=1 --env DM_LOG_PORT="$port" --env DM_UIMSG=1 --env DM_EVENTS=log --env "DM_KEYS=$KP" >> "$RUN/player_launch.txt" 2>&1; }; }
     pr=$(python3 "$TOOLS/logport.py" player "$port" "$RUN/player.txt" "$main_menu_timeout" 35 20)
     au_real=$(grep -c 'audio::OpenAudioOut .*真出声' "$RUN/player.txt" 2>/dev/null); au_null=$(grep -c 'audio::OpenAudioOut .*静音接收端' "$RUN/player.txt" 2>/dev/null)
     # 产品缺省必须读得到受控玩家（UIKit 底栏数字与难度条靠它；曾经拍入口只在带测试变量时才挂，玩家路径下一直没有）

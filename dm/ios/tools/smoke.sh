@@ -207,6 +207,7 @@ for i in $(seq 1 "$N"); do
     export DEVICECTL_CHILD_DM_SAVE_FRESH=warlock
     export DEVICECTL_CHILD_DM_WATCH=$((main_menu_timeout + game_screen_timeout + 5))
     export DEVICECTL_CHILD_DM_UIMSG=1
+    export DEVICECTL_CHILD_DM_EVENTS=log   # 事件行随日志走日志端口，logport.py 按事件认里程碑（dm/verify/event_stream.md） | event lines travel with the log over the log port, and logport.py reads the milestones from them (dm/verify/event_stream.md)
     export DEVICECTL_CHILD_DM_LOG_PORT=$DEV_PORT
     export DEVICECTL_CHILD_DM_KEYS="$KEYS"
     # 日志走 iproxy 读 App 测试端口（logport.py），devicectl 只用来拉起；不带 --terminate-existing：上一局已由 quit 退出，并由 wait_gone 等到进程表里没有它
@@ -273,8 +274,8 @@ if [ -z "${SMOKE_KEYS:-}" ] && [ "${SMOKE_PLAYER:-1}" = 1 ]; then
   KP="$KEYS_DEFAULT,PLUS@UnloadPanel:LoadScreenPanel%35>OpenPanel:PlayerInventoryExpansionLayout,R@OpenPanel:PlayerInventoryExpansionLayout%1>OpenPanel:SkillsTreePanel,R@OpenPanel:SkillsTreePanel%1>OpenPanel:PauseLayout"
   player_once() {
   wait_gone "玩家路径"
-  env -u DEVICECTL_CHILD_DM_WATCH -u DEVICECTL_CHILD_DM_SAVE_FRESH DEVICECTL_CHILD_DM_SAVE_TEST=1 DEVICECTL_CHILD_DM_LOG_PORT=$DEV_PORT DEVICECTL_CHILD_DM_UIMSG=1 DEVICECTL_CHILD_DM_KEYS="$KP" \
-    "$TIMEOUT_BIN" -k 5s 30s xcrun devicectl device process launch --device "$D" "$B" > "$RUN/player_launch.txt" 2>&1 || { cds_restart "玩家路径拉起失败"; env -u DEVICECTL_CHILD_DM_WATCH -u DEVICECTL_CHILD_DM_SAVE_FRESH DEVICECTL_CHILD_DM_SAVE_TEST=1 DEVICECTL_CHILD_DM_LOG_PORT=$DEV_PORT DEVICECTL_CHILD_DM_UIMSG=1 DEVICECTL_CHILD_DM_KEYS="$KP" "$TIMEOUT_BIN" -k 5s 30s xcrun devicectl device process launch --device "$D" "$B" >> "$RUN/player_launch.txt" 2>&1; }
+  env -u DEVICECTL_CHILD_DM_WATCH -u DEVICECTL_CHILD_DM_SAVE_FRESH DEVICECTL_CHILD_DM_SAVE_TEST=1 DEVICECTL_CHILD_DM_LOG_PORT=$DEV_PORT DEVICECTL_CHILD_DM_UIMSG=1 DEVICECTL_CHILD_DM_EVENTS=log DEVICECTL_CHILD_DM_KEYS="$KP" \
+    "$TIMEOUT_BIN" -k 5s 30s xcrun devicectl device process launch --device "$D" "$B" > "$RUN/player_launch.txt" 2>&1 || { cds_restart "玩家路径拉起失败"; env -u DEVICECTL_CHILD_DM_WATCH -u DEVICECTL_CHILD_DM_SAVE_FRESH DEVICECTL_CHILD_DM_SAVE_TEST=1 DEVICECTL_CHILD_DM_LOG_PORT=$DEV_PORT DEVICECTL_CHILD_DM_UIMSG=1 DEVICECTL_CHILD_DM_EVENTS=log DEVICECTL_CHILD_DM_KEYS="$KP" "$TIMEOUT_BIN" -k 5s 30s xcrun devicectl device process launch --device "$D" "$B" >> "$RUN/player_launch.txt" 2>&1; }
   pr=$(python3 "$TOOLS/logport.py" player "$LOCAL_PORT" "$RUN/player.txt" "$main_menu_timeout" 35 20)
   }
   player_once

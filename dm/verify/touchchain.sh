@@ -50,7 +50,7 @@ export DM_KEYS=${DM_KEYS:-'X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterS
 export DM_TICKS="$RUN/ticks.jsonl" DM_TICKS_FULL=1 DM_TICKS_N=${DM_TICKS_N:-${PREFIX:+720}}
 [ -f "$CASE_DIR/ticks" ] && export DM_TICKS_N=${DM_TICKS_N:-$(head -1 "$CASE_DIR/ticks")}   # 用例自带总拍数（如等通知 10 秒自己关） | The case brings its own total tick count (e.g. waiting for a notification that closes itself after 10 seconds)
 export DM_TICKS_N=${DM_TICKS_N:-900}
-export DM_C2S_LOG="$RUN/c2s.jsonl" DM_UIMSG="$RUN/uimsg.jsonl" DM_STATE="$RUN/state.jsonl" DM_WATCH_STALL=15 DM_WATCH=90
+export DM_C2S_LOG="$RUN/c2s.jsonl" DM_UIMSG="$RUN/uimsg.jsonl" DM_STATE="$RUN/state.jsonl" DM_EVENTS="$RUN/events.ndjson" DM_WATCH_STALL=15 DM_WATCH=90
 # 功能用例的判据都是命令包 / 游戏状态（逻辑判据），不需要产品节奏：出图不限速 + 确定性客体时钟快进，
 # 起局按状态（进局 / 回放结束且读取画面已撤，touch_mac.c），触点脚本按服务端游戏拍推进，与出图速度、本机负载无关。
 # 原先按产品节奏每例 17–19 s、时限 20 s，本机一并行就超时报红。
@@ -67,7 +67,9 @@ host_status=$?
 # 宿主没正常结束（崩溃 / 看门狗 / 超时）：不跑断言，照样出 RED 判定行再退（原先直接 exit，判定行没打，host_status 也恒为 0）；退出码沿用宿主的
 # The host did not finish normally (crash / watchdog / timeout): skip the asserts but still print the RED verdict line before exiting (previously it exited straight away without the verdict line, and host_status was always 0); the exit code stays the host's
 if [ "$host_status" -ne 0 ]; then
-    grep '【红】看门狗' "$RUN/host.log" | tail -1 >&2 || true
+    # 原因从事件流读（第一个崩溃 / 致命 / 看门狗，没有就第一条红标，dm/tools/dmevents.py）；读不出再退回日志里的看门狗行
+    # The reason is read from the event stream (the first crash / fatal / watchdog, else the first red marker, dm/tools/dmevents.py); if that yields nothing, fall back to the watchdog line in the log
+    python3 "$ROOT/tools/dmevents.py" why "$RUN/events.ndjson" >&2 || grep '【红】看门狗' "$RUN/host.log" | tail -1 >&2 || true
     echo "【红】touchchain ${CASE}：宿主退出码 ${host_status}，没跑断言；局目录：$RUN" >&2
     echo "TOUCHCHAIN $CASE RED 用时 $((SECONDS - START)) 秒"
     exit "$host_status"

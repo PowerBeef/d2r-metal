@@ -72,13 +72,14 @@ static void guest_main(void) {
     dm_prof_mark("② SDK 初始化（nnosInitialize → nninitStartup）");
     run_module_inits();   // rtld 回调 B：各模块 DT_INIT（全局构造函数） | rtld callback B: each module's DT_INIT (global constructors)
     dm_prof_mark("③ 各模块 init_array");
+    DM_EV("boot", "stage:s", "module_inits");
     ((fnp)req("_ZN2nn2os11SetHostArgcEi"))((void *)(uint64_t)g_argc);
     ((fnp)req("_ZN2nn2os11SetHostArgvEPPc"))(g_argv);
     game_seed_maybe(); save_throttle_patch();
     { void dm_guest_spawn_selftest(void); dm_guest_spawn_selftest(); }   // DM_GUEST_SPAWN_TEST 宿主客体线程自检（hle_guestthread.c） | DM_GUEST_SPAWN_TEST self-test of host-created guest threads (hle_guestthread.c)
     { void dm_padmode_boot(void); dm_padmode_boot(); }   // 触屏覆盖层在：布局前缀改指触屏版（dm_padmode.c），要在游戏建面板之前 | Touch overlay present: repoint the layout prefixes to the touch version (dm_padmode.c); must happen before the game builds its panels
-    LOG(">>> nnMain"); ((fn0)req("nnMain"))();
-    LOG("nnMain returned");
+    LOG(">>> nnMain"); DM_EV("boot", "stage:s", "nnmain"); ((fn0)req("nnMain"))();
+    LOG("nnMain returned"); DM_EV("exit", "why:s", "nnMain returned");
 }
 
 struct dm_flags g_flag;
@@ -125,6 +126,7 @@ static unsigned g_race_n, g_race_want;
 static void *keyrace_thread(void *unused);
 static void host_preload(int argc, char **argv) {
     g_t0_ns = proc_start_mono_ns();
+    dm_events_init();   // DM_EVENTS 事件流（dm_events.h）；iOS 壳在 main() 里接好日志后已调过（这里不再生效） | DM_EVENTS event stream (dm_events.h); the iOS shell already called it in main() after connecting the log (no effect here then)
     flags_init();
     dm_prof_mark("⓪ 进程创建 → 宿主 main（dyld）");
     if (argc < 2) die("usage: dmhost <dir> [mod...] [-- 游戏参数...]");
@@ -164,6 +166,7 @@ static void host_preload(int argc, char **argv) {
     stubs_report();
     if (g_flag.bootprof) LOG("① 细分（装载后）：探针 / 拍门 / 按键 %.1f ms、预取启动（读清单）%.1f ms、桩报告 %.1f ms", (tb - ta) / 1e6, (tc - tb) / 1e6, (now_ns() - tc) / 1e6);
     dm_prof_mark("① 宿主装载（读 NSO / 重定位 / 强制接管）");
+    DM_EV("boot", "stage:s mods:d", "host_loaded", g_nmod);
     { void loader_hash_log(void); loader_hash_log(); }   // DM_LOADHASH=1：装载结果的地址无关哈希（loader.c） | DM_LOADHASH=1: address-independent hash of the load result (loader.c)
 }
 static struct { int argc; char **argv; pthread_t th; _Atomic int started; } g_pre;

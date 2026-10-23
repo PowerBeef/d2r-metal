@@ -64,12 +64,14 @@ static void *watchdog_main(void *arg) {
             int idx = atomic_load(&g_watch_stage_idx);
             LOG("【红】看门狗：第 %llu 秒起无进展，卡在 拍 %u / 阶段 %s", (unsigned long long)sec,
                 atomic_load(&g_watch_tick), g_watch_stage[idx]);
+            DM_EV("watchdog", "stalled_s:u stage:s", (unsigned long long)sec, g_watch_stage[idx]);
             if (g_dump_hook) g_dump_hook();
             if (g_wait_dump) g_wait_dump();   // 图形侧所有阻塞等待点的状态（nvn_mtl.m 初始化时注册） | State of all blocking wait points on the graphics side (registered when nvn_mtl.m initializes)
 #if TARGET_OS_OSX
             { const char *d = getenv("DM_WATCH_SAMPLE");   // Mac 诊断：卡住时对自己采样 1 秒，线程栈写到该路径 | Mac diagnostics: when stuck, sample itself for 1 second and write the thread stacks to this path
               if (d) { char c[1200]; snprintf(c, sizeof c, "/usr/bin/sample %d 1 -f '%s' >/dev/null 2>&1", (int)getpid(), d); if (system(c)) LOG("看门狗：采样失败"); else LOG("看门狗：线程栈已写 %s", d); } }
 #endif
+            DM_EV("exit", "why:s code:d", "watchdog", 128 + SIGALRM);
             _exit(128 + SIGALRM);
         }
     }
@@ -137,6 +139,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
         int is_write = (int)((UC_ESR(uc) >> 6) & 1);   // ESR 的 WnR 位 | The WnR bit of ESR
         for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
     }
+    if (g_dm_event_crash_fn) { module_t *m = module_of((void *)UC_PC(uc)); g_dm_event_crash_fn(sig, UC_PC(uc), m ? m->name : NULL, m ? UC_PC(uc) - (uint64_t)m->base : 0, (uint64_t)si->si_addr); }   // 事件先出（现场打印可能卡住） | the event goes out first (printing the state may hang)
     fprintf(stderr, "[dm] CRASH sig=%d", sig);
     off("addr", (uint64_t)si->si_addr); off("pc", UC_PC(uc)); off("lr", UC_LR(uc));
     fprintf(stderr, " sp=%#llx\n", UC_SP(uc));

@@ -26,6 +26,7 @@ void dm_host_shutdown(const char *why);   // 宿主优雅退出（dm/host/hle_li
 #include "front.h"                        // front_game_res（全屏输出分辨率） | front_game_res (full-screen output resolution)
 #include "../../host/romfs_validate.h"
 #include "../../host/dm_i18n.h"
+#include "../../host/dm_events.h"
 static NSString *T(const char *k) { return @(dm_ui(k)); }   // 我们自己的界面文字（中英表 dm/i18n/ui_text.tsv，语言跟原版设置走） | our own UI text (Chinese-English string table dm/i18n/ui_text.tsv, language follows the original game's setting)
 #import <Network/Network.h>
 #include "dm_metal_cache_guard.h"
@@ -1305,6 +1306,7 @@ int main(int argc, char *argv[]) {
         } else {
             dup2(g_log, 2);                           // 宿主 LOG/die 写 stderr → 同一日志文件（提前装载线程也写） | Host LOG/die write to stderr → the same log file (the early-load thread writes there too)
         }
+        dm_events_init();   // DM_EVENTS 事件流（dm_events.h）：stderr 已接到日志之后、起宿主线程之前；DM_EVENTS=log 的事件行随日志走日志端口 | DM_EVENTS event stream (dm_events.h): after stderr is connected to the log and before host threads start; with DM_EVENTS=log the event lines travel with the log over the log port
         metal_cache_report_and_clean();
         char why[2048];
         { id<MTLDevice> dev = MTLCreateSystemDefaultDevice(); g_no_bc = !dev.supportsBCTextureCompression || getenv("DM_TEST_NO_BC");
