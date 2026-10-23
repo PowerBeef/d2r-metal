@@ -124,7 +124,20 @@ dm/tools/product.sh build|path <touch|rules|keypage>|rev
 ```
 
 - Use `regress.sh --fresh` whenever `dm/tools/patch_nso.py` changed.
-- `dm/verify/accept.sh` items need ground-truth recordings that aren't shipped, so they can't be fully run here.
+- `dm/verify/accept.sh` items need ground-truth recordings that aren't shipped, so they can't be fully run here. Those items report `⚪ 不可用` (unavailable) and don't count as red.
+
+**Machine-readable results** (prefer these to grepping Chinese log lines):
+
+```bash
+python3 dm/tools/dmtest.py [--junit j.xml] [--timeout s] -- <any runner>   # result.json + last RESULT {json} from the runner's verdict lines
+DM_EVENTS=<file>|log ./dmhost …                                           # NDJSON events: boot, main_menu, game_enter, loading_done, save, red, fatal, crash, app, exit
+python3 dm/tools/dmevents.py expect <file> main_menu game_enter loading_done --no-red   # also: summary | why | follow
+python3 dm/tools/switches.py check                                         # dm/switches.tsv is current; no script sets a switch nothing reads
+```
+
+- The event types are listed in `dm/verify/event_stream.md`. Add new events with `DM_EV(...)` and keep the Chinese log line next to it.
+- `switches.py gen` must run after adding a `getenv("DM_…")` or a doc mention, or `make -C dm/host/tests run` goes red.
+- Analysers with a `RESULT {json}` last line: `dm/ios/tools/soak_report.py` (soak), `dm/gfx/tools/ub_table.py` (`DM_NVN_UB` A/B phases).
 
 **CLI host (Mac):**
 
