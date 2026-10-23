@@ -90,7 +90,9 @@ if [ -z "$UDID" ]; then
   echo "SMOKE RED 0/$N 用时 $(( $(date +%s) - T0 )) 秒"
   exit 2
 fi
-iproxy -u "$UDID" "$LOCAL_PORT:$DEV_PORT" >"$RUN/iproxy.log" 2>&1 & IPROXY_PID=$!
+# 手机只连着无线网时（usbmuxd 只在网络列表里看到它）iproxy 要加 -n，否则缺省只找 USB、日志端口零行 | When the phone is only on Wi-Fi (usbmuxd sees it only in its network list), iproxy needs -n; by default it looks only on USB and the log port gets zero lines
+IPX=(-u "$UDID"); [ -n "$(local_env_iproxy_net "$UDID")" ] && IPX=(-n "${IPX[@]}")
+iproxy "${IPX[@]}" "$LOCAL_PORT:$DEV_PORT" >"$RUN/iproxy.log" 2>&1 & IPROXY_PID=$!
 sleep 1; kill -0 "$IPROXY_PID" 2>/dev/null || { LEDGER_RES=转发没起来; echo "【红】端口转发没起来（$RUN/iproxy.log：$(tail -1 "$RUN/iproxy.log" | cut -c1-120)）"; echo "SMOKE RED 0/$N 用时 $(( $(date +%s) - T0 )) 秒"; exit 2; }
 
 # CoreDeviceService 是本用户的 XPC 服务，结束后下一条 devicectl 自动拉起；实测其坏会话让 launch 拖 37–120 s

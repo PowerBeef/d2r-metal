@@ -5,7 +5,7 @@
 # Usage: dm/ios/tools/lifecycle.sh. Smoke-test class, goes through the device lock; the build uses this tree's .iosdd_ui (does not touch the shared directory). Last line LIFECYCLE OK|RED
 set -u
 cd "$(dirname "$0")/.."
-source tools/local_env.sh && local_env_need DM_DEVICE DM_IOS_UDID || exit 1   # 本机设备配置（不进仓，见 dm/ios/local.env.example） | Local device configuration (not committed, see dm/ios/local.env.example)
+source tools/local_env.sh && local_env_need DM_DEVICE && { local_env_udid; local_env_need DM_IOS_UDID; } || exit 1   # 本机设备配置（不进仓，见 dm/ios/local.env.example） | Local device configuration (not committed, see dm/ios/local.env.example)
 D=$DM_DEVICE; UDID=$DM_IOS_UDID; B=${DM_BUNDLE_ID:?先在本机配置里设 DM_BUNDLE_ID（App 包名，见 dm/ios/local.env.example）}
 TREE=$(git rev-parse --show-toplevel); DD=$TREE/.iosdd_ui; R=${DM_ROOT:-$HOME/dm-work}/run/ios/lifecycle/$(date +%m%d_%H%M%S)_$$; mkdir -p "$R"
 t(){ echo "[$(date +%T)] $*"; }

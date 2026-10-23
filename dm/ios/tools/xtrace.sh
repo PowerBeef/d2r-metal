@@ -63,7 +63,7 @@ if [ "${1:-}" = mac ]; then   # 本机（Mac / mini）带窗口宿主：xtrace.s
   echo "RUN $R PID $p"; exit   # 出表：xtrace_report.py <目录>（自动按 $R/pid 的进程号过滤） | Produce tables: xtrace_report.py <dir> (automatically filters by the process id in $R/pid)
 fi
 SC=${1:?camp|wild|menu|blank}; TPL=${2:?模板名}; SEC=${3:-30}; WARM=${4:-30}   # 占机 = 预热 + 录制 + 约 60 s，测量类单轮上限 4 分钟 | Device occupancy = warm-up + recording + about 60 s; the single-round limit for measurement jobs is 4 minutes
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/local_env.sh" && local_env_need DM_DEVICE DM_IOS_UDID || exit 1   # 本机设备配置（不进仓，见 dm/ios/local.env.example） | Local device configuration (not committed, see dm/ios/local.env.example)
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/local_env.sh" && local_env_need DM_DEVICE && { local_env_udid; local_env_need DM_IOS_UDID; } || exit 1   # 本机设备配置（不进仓，见 dm/ios/local.env.example） | Local device configuration (not committed, see dm/ios/local.env.example)
 D=$DM_DEVICE; XD=${XT_UDID:-$DM_IOS_UDID}; B=${DM_BUNDLE_ID:?先在本机配置里设 DM_BUNDLE_ID（App 包名，见 dm/ios/local.env.example）}; W=${XT_TREE:?XT_TREE 必填}
 APP=$W/.iosdd/Build/Products/Release-iphoneos/DmIOS.app; [ -d "$APP" ] || { echo "🔴 $APP 不存在（先构建）"; exit 1; }
 R=${DM_ROOT:-$HOME/dm-work}/run/ios/xtrace/$(date +%m%d_%H%M%S)_${SC}_$(basename "$TPL" .tracetemplate | tr ' ' '_'); mkdir -p "$R"
