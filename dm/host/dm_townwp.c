@@ -8,6 +8,7 @@
 //   · 原先是进局第 2 拍用换关 0x634000(…, 13) 把人挪到小站上：尸体留在原出生点（「死后重进游戏得跑尸体」），且第 1 拍挪会让客户端佣兵 0 属性——现在整段删掉，没有第二次落位。
 //   · 只管进局那一下；局内换关、走小站进城不经过这两处调用。一键重开 = 登出再登入，新局照样走这里。
 //   · 回放原版录制（DM_C2S_REPLAY）与 DM_TOWNWP_OFF=1 时原样代调：录制是从原版出生点走起的。
+//     显式 DM_TOWNWP_OFF=0 时回放也照挪：自录自放（dm/tools/replay.py）录制时开着这个功能。
 // 五幕城镇关卡号与小站物件类号（objects.txt 行号）：1 / 119、40 / 156、75 / 237、103 / 398、109 / 429。
 // Join lands next to the town waypoint (the spawn position for both entering the game and one-tap restart is moved next to the town waypoint;
 // not exactly on the waypoint but a fixed safe distance away, to avoid triggering the waypoint by mistake when tapping the corpse underfoot; the corpse and the character land at the same point).
@@ -19,6 +20,7 @@
 //   · Previously, on tick 2 after joining, the level change 0x634000(..., 13) moved the player onto the waypoint: the corpse stayed at the original spawn point ("after dying and re-entering the game you have to run to the corpse"), and moving on tick 1 left the client mercenary with 0 stats - that whole section is now deleted, and there is no second placement.
 //   · Only covers the moment of joining; in-run level changes and arriving in town by waypoint do not go through these two call sites. One-tap restart = log out and log in again, and the new run goes through here just the same.
 //   · When replaying an original-game recording (DM_C2S_REPLAY) and with DM_TOWNWP_OFF=1, the call is forwarded unchanged: the recording starts walking from the original spawn point.
+//     An explicit DM_TOWNWP_OFF=0 keeps the move during replay too: self-recorded replays (dm/tools/replay.py) were recorded with this feature on.
 // Town level ids and waypoint object class ids (objects.txt row numbers) for the five acts: 1 / 119, 40 / 156, 75 / 237, 103 / 398, 109 / 429.
 #include "hle.h"
 #include "dm_unit.h"
@@ -56,7 +58,8 @@ void svc_join_spawn(uint64_t *regs, int corpse) {
     spot_fn orig = (spot_fn)(B + 0x5596c0); int ver = (int)(uint32_t)regs[0], lv = (int)(uint32_t)regs[2], type = (int)(uint32_t)regs[3], size = (int)(uint32_t)regs[6]; uint64_t act = regs[1];
     int32_t *px = (int32_t *)(uintptr_t)regs[4], *py = (int32_t *)(uintptr_t)regs[5]; int cls = town_cls(lv);
     const char *off = getenv("DM_TOWNWP_OFF"); int no = off && *off && strcmp(off, "0");   // 测试开关 DM_TOWNWP_OFF=1 不改（uireg 公共环境带 =1，wp 局再写 =0） | Test switch DM_TOWNWP_OFF=1 leaves it unchanged (the uireg common environment carries =1, and the wp run then sets =0)
-    if (type != 0 || !cls || no || getenv("DM_C2S_REPLAY")) { regs[0] = orig(ver, act, lv, type, px, py, size);
+    int keep = off && !strcmp(off, "0");   // 显式 DM_TOWNWP_OFF=0：回放时也照挪（自录自放 replay.py：录制时开着这个功能） | explicit DM_TOWNWP_OFF=0: move it during replay too (self-recorded replay, replay.py: the recording had the feature on)
+    if (type != 0 || !cls || no || (getenv("DM_C2S_REPLAY") && !keep)) { regs[0] = orig(ver, act, lv, type, px, py, size);
         if (!corpse && !g_sp.calls++) LOG("城镇小站落点：%s，原版出生点 %d,%d（关卡 %d）", !cls ? "进局不在城镇" : no ? "DM_TOWNWP_OFF" : "回放原版录制", *px, *py, lv);
         return; }
     if (corpse && g_sp.on && g_sp.lv == lv && g_sp.room) {   // 尸体：就用玩家那次定下的点，在它 3 格内找能站的空格——两次各自挑方向会落到不同的两处（Mac 实测第二、四幕尸体离人 9–11 格） | Corpse: just use the point settled in the player's call and find a free standable cell within 3 cells of it - picking directions separately in the two calls would land in two different places (measured on Mac: in acts 2 and 4 the corpse was 9–11 cells from the player)
