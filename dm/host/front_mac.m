@@ -182,7 +182,7 @@ static void on_key(NSEvent *e, int down) {
     unsigned short c = e.keyCode;
     switch (c) { case 13: g_w = down; break; case 0: g_a = down; break; case 1: g_s = down; break; case 2: g_d = down; break; }
     int b = key_bit(c);
-    if (down && (b >= 0 || c == 13 || c <= 2)) { void dm_padmode_request_kbd(int kbd); dm_padmode_request_kbd(1); }   // 按了游戏用的键：键位图标换成键盘键帽（鼠标移动 / 点击不算） | a key used by the game was pressed: switch the key icons to keyboard key caps (mouse moves / clicks do not count)
+    if (down && (b >= 0 || c == 13 || c <= 2)) dm_padmode_request_glyph(DM_GLYPH_KBD);   // 按了游戏用的键：键位图标换成键盘键帽（鼠标移动 / 点击不算） | a key used by the game was pressed: switch the key icons to keyboard key caps (mouse moves / clicks do not count)
     if (b >= 0) g_btn = down ? (g_btn | 1ull << b) : (g_btn & ~(1ull << b));
     push();
 }
@@ -285,11 +285,10 @@ void front_run(void (*guest)(void)) {
             }];
             // 指针自动隐藏：鼠标指针停在游戏窗口里不动一段时间就藏起来（用键盘 / 手柄玩时不挡画面）。用 setHiddenUntilMouseMoves，鼠标一动系统自己显示回来，没有隐藏 / 显示的计数要配对。
             // 计时器只挂在缺省运行循环模式上：菜单、拖动改窗口大小、模态对话框（键位对照、起名输入框）期间都不触发。只在 App 在前台、游戏窗口是主窗口、指针在窗口内容区里、没按着鼠标键时隐藏。
-            // 时长：defaults write org.d2rmobile.mac CursorHideSeconds -float <秒>（老接口版的包标识是 org.d2rmobile.mac.m3；0 = 关），缺省 3 秒
-            // Pointer auto-hide: once the mouse pointer has rested inside the game window for a while it is hidden (keyboard / gamepad play). Uses setHiddenUntilMouseMoves: macOS shows it
-            // again on the next mouse movement, so there is no hide / unhide count to balance. The timer runs in the default run-loop mode only, so menus, live resize and modal dialogs
-            // (key mapping, name input box) never hide it. Hides only while the App is frontmost, the game window is key, the pointer is inside the window's content area and no mouse button is held.
-            // Delay: defaults write org.d2rmobile.mac CursorHideSeconds -float <seconds> (the older-API build's bundle identifier is org.d2rmobile.mac.m3; 0 = off), default 3 seconds
+            // 时长：defaults write org.d2rmobile.mac CursorHideSeconds -float <秒>（旧接口版的包标识是 org.d2rmobile.mac.m3；0 = 关），缺省 3 秒
+            // Pointer auto-hide: the mouse pointer hides after it rests over the game window for a while (so it doesn't cover the picture while you play with keyboard / controller). It uses setHiddenUntilMouseMoves: the system shows it again on the next mouse movement, so there is no hide / unhide count to balance.
+            // The timer is scheduled only in the default run loop mode: it does not fire during menus, window resizing or modal dialogs (key map, name input). It hides only while the App is frontmost, the game window is key, the pointer is inside the window's content area and no mouse button is held.
+            // Duration: defaults write org.d2rmobile.mac CursorHideSeconds -float <seconds> (the older-API build's bundle ID is org.d2rmobile.mac.m3; 0 = off), default 3 seconds
             { id pref = [NSUserDefaults.standardUserDefaults objectForKey:@"CursorHideSeconds"];   // 手写的设置可能是任何类型：只认数字或数字字符串，数组、日期等当没设 | a hand-written default can be any type: only a number or numeric string counts, an array, date etc. is treated as unset
               double idle = [pref respondsToSelector:@selector(doubleValue)] ? [pref doubleValue] : 3.0;
               if (idle > 0 && isfinite(idle)) { __block NSPoint last = NSMakePoint(NAN, NAN); __block double since = 0; __block BOOL hid = NO;

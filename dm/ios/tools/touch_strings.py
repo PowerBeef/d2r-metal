@@ -51,13 +51,9 @@ TABLE = {
     },
 }
 
-# 英文列（英文版）：同一批键的 enUS 改成触摸说法；口径同上（空串 = 这句不要）。不在这里的键英文照原版。俄语列见下面 RU。
-# 人物页「%s\n命中值」那两条是中文大字号排版问题，英文不动。西语两列见下面 ES / MX；别的语言列不改（我们自己的字只做中英西俄，别的语言按英文）
+# 英文列（英文版）：同一批键的 enUS 改成触摸说法；口径同上（空串 = 这句不要）。不在这里的键英文照原版。俄语列见下面 RU，韩语列见下面 KO。
+# 人物页「%s\n命中值」那两条是中文大字号排版问题，英文不动。西语两列见下面 ES / MX；别的语言列不改（我们自己的字只做中英西俄韩，别的语言按英文）
 # 与中文表同一写法：原文只存校验（SHA-1 前 8 位），表里不存原版文字
-# English column (English version): the same keys' enUS changed to touch wording; same rules as above (empty string = drop the sentence). Keys not listed keep the original English. The Russian column is RU below.
-# The two "%s
-# Attack Rating" entries on the character page are a Chinese large-font layout issue; English is untouched. The two Spanish columns are ES / MX below; other language columns are unchanged (our own text covers Chinese, English, Spanish and Russian; other languages use English)
-# Same scheme as the Chinese table: only a checksum of the original is stored (first 8 hex digits of SHA-1), never the original text
 EN = {
     'ui-controller.json': {
         'UseItemController': ('3c07d84d', 'Double-tap to Use'),
@@ -188,7 +184,39 @@ RU = {
         'MoviePlaybackHoldToSkip': ('8f05e751', ''),
     },
 }
-EXTRA = (('enUS', EN), ('esES', ES), ('esMX', MX), ('ruRU', RU))   # 中文以外改的列 | Columns changed besides Chinese
+# 韩语列（韩语版）：同一批键的 koKR 改成触摸说法，口径同英文（空串 = 这句不要）；用词跟原版韩文（「길게 눌러」换成「두 번 탭하여」，其余照原句）；原版韩文的原文校验各自单独存
+KO = {
+    'ui-controller.json': {
+        'UseItemController': ('9f6ea691', '두 번 탭하여 사용'),
+        'OpenHoradricCubeController': ('395d1d8b', '두 번 탭하여 열기'),
+        'ReadScrollController': ('10a460a7', '두 번 탭하여 읽기'),
+        'UsePotionOfLifeController': ('4a202757', '두 번 탭하여 생명력 영구적으로 20 추가하기'),
+        'UseBookOfSkillController': ('f4d729a8', '두 번 탭하여 원하는 기술 습득하기'),
+        'UseScrollOfResistanceController': ('097b145c', '두 번 탭하여 시전'),
+        'UseTokenOfAbsolutionController': ('26eaa9f9', '두 번 탭하여 능력치/기술 포인트 초기화'),
+        'UseTerrorTokenAct1Controller': ('389c4cc6', '두 번 탭하여 1막에 공포의 마수 뻗기'),
+        'UseTerrorTokenAct2Controller': ('7a18b7cd', '두 번 탭하여 2막에 공포의 마수 뻗기'),
+        'UseTerrorTokenAct3Controller': ('5d603b60', '두 번 탭하여 3막에 공포의 마수 뻗기'),
+        'UseTerrorTokenAct4Controller': ('72a0b14d', '두 번 탭하여 4막에 공포의 마수 뻗기'),
+        'UseTerrorTokenAct5Controller': ('fa51c7d5', '두 번 탭하여 5막에 공포의 마수 뻗기'),
+        'comparisonTooltipController': ('d111fdb3', ''),
+        'hireComparisonTooltipController': ('d111fdb3', ''),
+        'StrYouDiedConsole': ('bc6a629b', '죽었습니다.'),
+        'ControllerInteractButton': ('54234e14', ''),
+        'ControllerTitleScreenPrompt': ('95b73988', '화면을 탭하여 시작'),
+        'EnterCharacterName': ('6046f65e', ''),
+        'ControllerCycleComparisonTooltips': ('a1ce13cb', '다시 탭하여 다른 아이템과 비교'),
+        'SelectButtonNoteText': ('7f42b887', ''),
+        'MoviePlaybackHoldToSkip_switch': ('9c102e1d', ''),
+    },
+    'ui.json': {
+        'LevelUpStatsNotificationController': ('615ba7bd', '레벨이 올랐습니다.'),
+        'LevelUpNotificationController': ('5f712271', '레벨이 올랐습니다.'),
+        'QuestLogNotificationController': ('62166da0', '퀘스트가 갱신되었습니다.'),
+        'MoviePlaybackHoldToSkip': ('9c102e1d', ''),
+    },
+}
+EXTRA = (('enUS', EN), ('esES', ES), ('esMX', MX), ('ruRU', RU), ('koKR', KO))   # 中文以外改的列 | Columns changed besides Chinese
 
 # 手柄支持：手柄说法 ↔ 触摸说法按模式切，不再改字符串文件——build_sidecar 出旁路表，宿主触屏模式把串表里这几个键的串换成触摸说法、
 # 手柄模式换回原文（dm/host/dm_padmode.c）。只有下面这两条是排版用的（大字号，两种模式都要），照旧改文件
@@ -204,6 +232,7 @@ def build_sidecar(romfs):
     for name, items in TABLE.items():
         path, text = touch_layout.read_layout(romfs, None, suffix='/lng/strings/' + name)
         for key, (old, new) in items.items():
+            if key.startswith('MoviePlaybackHoldToSkip') and os.environ.get('MOVIE_FFMPEG') == '1': continue
             if key in FILE_ONLY: continue
             m = re.search(r'"Key":\s*"%s",.*?"zhCN":\s*("(?:[^"\\]|\\.)*")' % re.escape(key), text, re.S)
             if not m: raise SystemExit('touch_strings：%s 里没有键 %s' % (name, key))
@@ -216,6 +245,7 @@ def build_sidecar(romfs):
         # whichever language the game is in, only that column's rows match and get replaced; the host needn't track language separately. Duplicate rows when two columns share the same original (e.g. same sentence in esES / esMX) are harmless
         for lang, tab in EXTRA:
             for key, (old, new) in tab.get(name, {}).items():
+                if key.startswith('MoviePlaybackHoldToSkip') and os.environ.get('MOVIE_FFMPEG') == '1': continue
                 m = re.search(r'"Key":\s*"%s",.*?"%s":\s*("(?:[^"\\]|\\.)*")' % (re.escape(key), lang), text, re.S)
                 if not m: raise SystemExit('touch_strings：%s 里没有键 %s 的 %s' % (name, key, lang))
                 cur = json.loads(m.group(1))
@@ -230,6 +260,7 @@ def build(romfs, outdir):
         path, text = touch_layout.read_layout(romfs, None, suffix='/lng/strings/' + name)
         if not any(k in FILE_ONLY for k in items): continue
         for key, (old, new) in items.items():
+            if key.startswith('MoviePlaybackHoldToSkip') and os.environ.get('MOVIE_FFMPEG') == '1': continue
             if key not in FILE_ONLY: continue
             m = re.search(r'"Key":\s*"%s",.*?"zhCN":\s*("(?:[^"\\]|\\.)*")' % re.escape(key), text, re.S)
             if not m: raise SystemExit('touch_strings：%s 里没有键 %s' % (name, key))

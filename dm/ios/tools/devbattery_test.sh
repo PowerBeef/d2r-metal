@@ -53,6 +53,7 @@ L2=$T/device2.lock; rm -f $T/device_low_battery
 ( unset DM_DEVBATTERY; DM_DEVBATTERY_LOCKS="$T/x.lock $L2" DEVBATTERY_FAKE="25 0 1 0" DM_DEVBATTERY_WAIT_S=1 DM_DEVBATTERY_POLL_S=1 DM_DEVLOCK_DIR=$L2 bash -c 'source ./devlock.sh; devlock_acquire 单测 2>/dev/null; echo 不该走到这' >/dev/null ); r=$?
 [ $r = 4 ] && [ ! -d $L2 ] && [ -f $T/device_low_battery ] && echo "通 名单内锁 不在充 25% → 暂停（退出 4、落标记）" || { echo "不通 名单内锁 不在充 25% → $r"; bad=1; }
 ( unset DM_DEVBATTERY; DM_DEVBATTERY_LOCKS="$T/x.lock" DEVBATTERY_FAKE="25 0 1 0" DM_DEVLOCK_DIR=$L2 bash -c 'source ./devlock.sh; devlock_acquire 单测 2>/dev/null; [ -d "$DEVLOCK_DIR" ] && devlock_release' ) && echo "通 名单外锁不过闸" || { echo "不通 名单外锁被闸住"; bad=1; }
-# DM_DEVBATTERY=0（run.sh install 装包时用）：真机锁不过闸，电量低也直接取到锁 | DM_DEVBATTERY=0 (used by run.sh install): the device lock skips the gate and is taken even with a low battery
+# DM_DEVBATTERY=0（run.sh install 装包时用）：真机锁不过闸，电量低也直接取到锁
+# DM_DEVBATTERY=0 (used by run.sh install): the device lock skips the gate and is taken even with a low battery
 DM_DEVBATTERY=0 DEVBATTERY_FAKE="10 0 1 0" DM_DEVBATTERY_WAIT_S=1 DM_DEVBATTERY_POLL_S=1 DM_DEVLOCK_DIR=$L bash -c 'source ./devlock.sh; devlock_acquire 单测 2>/dev/null; [ -d "$DEVLOCK_DIR" ] && devlock_release' && echo "通 DM_DEVBATTERY=0 电量低也取到锁" || { echo "不通 DM_DEVBATTERY=0 仍被闸住"; bad=1; }
 rm -rf "$T"; [ $bad = 0 ] && echo "devbattery 单测全过" || { echo "devbattery 单测有不通"; exit 1; }
