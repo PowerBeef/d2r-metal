@@ -57,6 +57,7 @@ run: \
 	$(B)/t_thread_leak \
 	$(B)/t_touch \
 	$(B)/t_touch_mac \
+	$(B)/t_ui_taps \
 	$(B)/t_unimpl \
 	$(B)/t_unit_level \
 	$(B)/t_widget
@@ -124,6 +125,7 @@ run: \
 	$(B)/t_hud_dead
 	$(B)/t_namegen
 	$(B)/t_minimap_lift
+	TMPDIR="$(abspath $(B))" $(B)/t_ui_taps
 	$(B)/t_modetx
 	$(B)/t_padmap
 	$(B)/t_unit_level
@@ -153,6 +155,8 @@ $(B)/t_padmap: t_padmap.c ../dm_padmap.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_padmap.c
 $(B)/t_minimap_lift: t_minimap_lift.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_minimap_lift.c
+$(B)/t_ui_taps: t_ui_taps.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_ui_taps.c
 $(B)/t_modetx: t_modetx.c ../dm_modetx.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_modetx.c
 $(B)/t_namegen: t_namegen.c ../dm_namegen.c | $(B)

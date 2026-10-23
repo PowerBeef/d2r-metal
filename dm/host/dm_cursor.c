@@ -516,21 +516,60 @@ int dm_fe_bliss(void) { return atomic_load(&g_fe_bliss); }
 // Delete-character popup: the original game requires 'long-press 「是」(Yes)', and the long-press is measured by how long controller A is held (holding the mouse for 4 seconds only produces one Confirm on release and does not delete). Hold A while the finger is pressed on 「是」(Yes), and release it when the finger lifts
 static _Atomic int g_fe_del_open, g_del_q, g_del_hold;   // 模式页 / 确认框开着；模式页上点了牌子以外 → 返回 | Mode page / confirmation box open; on the mode page a tap landed outside the plaques -> back
 int dm_restart_busy(void);   // 一键重开进行中（定义在下面）：界面触点一律丢掉 | One-key restart in progress (defined below): all UI touch points are dropped
-void dm_ui_touch(int phase, float nx, float ny) { if (phase != 3 && dm_restart_busy()) return;   // phase：0 按下 1 移动 2 抬起 3 作废（按下后改成了滚动：这次不点）；nx / ny = 出图画面归一化坐标 [0,1] | phase: 0 down, 1 move, 2 up, 3 cancelled (turned into a scroll after the press: no click this time); nx / ny = coordinates normalized to the rendered picture [0,1]
-    if (phase == 3) { atomic_store(&g_ut_phase, 0); atomic_store(&g_del_q, 0); atomic_store(&g_del_hold, 0); return; }
-    if (phase != 1) DM_LAT("ui_touch %d", phase);
-    nx = nx < 0 ? 0 : nx > 1 ? 1 : nx; ny = ny < 0 ? 0 : ny > 1 ? 1 : ny;
-    atomic_store(&g_ut_xy, ((uint64_t)(uint32_t)(nx * 65535 + .5f) << 16) | (uint32_t)(ny * 65535 + .5f));
-    // 「选择游戏模式」页只有标准 / 专家两块牌子（布局 y 899–1259 / 2160，覆盖层已挪走天梯行与键位提示）：点牌子那一行以外 = 返回职业选择
-    // The 「选择游戏模式」(Select game modes) page has only the two plaques standard / hardcore (layout y 899–1259 / 2160; the overlay has already moved away the ladder row and the key hints): tapping outside the plaque row = back to class selection
-    if (phase == 2 && atomic_load(&g_ut_phase) == 1 && atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_confirm_open) && (ny < 899 / 2160.0f || ny > 1259 / 2160.0f) && !(ny > BLISS_Y0 / 2160.0f && ny < BLISS_Y1 / 2160.0f)) { atomic_store(&g_ut_phase, 0); atomic_store(&g_fe_back, 1); return; }   // 牌子下面那一行是「极乐世界」勾选项，不算返回 | The row below the plaques is the 「极乐世界」(Elysium) checkbox and does not count as back
-    if (phase == 2 && atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_confirm_open)) atomic_store(&g_fe_opt_side, nx >= 0.5f);
-    if (phase == 2 && (atomic_exchange(&g_del_hold, 0) | atomic_exchange(&g_del_q, 0))) { atomic_store(&g_ut_phase, 0); return; }
-    if (phase == 0 && atomic_load(&g_fe_del_open)) atomic_store(&g_del_q, 1);
-    if (phase == 2) { if (atomic_load(&g_ut_phase) == 1) atomic_store(&g_ut_phase, 2); }
-    else atomic_store(&g_ut_phase, 1);
+// 「选择游戏模式」页只有标准 / 专家两块牌子（布局 y 899–1259 / 2160，覆盖层已挪走天梯行与键位提示）：点牌子那一行以外 = 返回职业选择。牌子下面那一行是「极乐世界」勾选项，不算返回
+// The 「选择游戏模式」(Select game modes) page has only the two plaques standard / hardcore (layout y 899–1259 / 2160; the overlay has already moved away the ladder row and the key hints): tapping outside the plaque row = back to class selection. The row below the plaques is the 「极乐世界」(Elysium) checkbox and does not count as back
+static int fe_opt_outside(float ny) { return atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_confirm_open) && (ny < 899 / 2160.0f || ny > 1259 / 2160.0f) && !(ny > BLISS_Y0 / 2160.0f && ny < BLISS_Y1 / 2160.0f); }
+// 后到的点按排在在途的那一下后面：一下点击还没发完（相 2 待发按下 / 相 3 待发抬起）时又来了按下，原先直接改写坐标和相位——前一下被丢掉，
+// 或者按下已经发了、抬起再也不发（Mac 的真鼠标一帧里收到两下点击只剩后一下）。现在新的手势先记成「下一下」（按着期间跟着移动），抬起后进待发队列；
+// 在途的那下发完，取手柄处（ut_promote）按先后接上。没有点击在途时照旧直接走上面的相位，单独一下点按的行为不变。
+// 前端线程与游戏线程（点世界落在讲话框上、编年史页）都会调 dm_ui_touch，这几项与相位的改写由一把锁串起来
+// A later tap waits behind the click in flight: a press that arrived while a click was not yet fully sent (phase 2 press pending / phase 3 release pending) used to overwrite the coordinates and the phase --
+// the earlier tap was lost, or its press had been sent and its release never was (on the Mac, two real mouse clicks within one frame left only the second). Now the new gesture is first kept as the "next" one (following moves while held) and goes into the pending queue on release;
+// once the click in flight is done, the controller read (ut_promote) takes them up in order. With no click in flight it goes straight through the phases above as before, so a single tap behaves as it did.
+// Both front-end threads and the game thread (a world tap landing on the speech box, the Chronicle page) call dm_ui_touch, so these items and the phase updates are serialized by one lock
+enum { UT_QN = 8 };
+static pthread_mutex_t g_ut_mu = PTHREAD_MUTEX_INITIALIZER;
+static int g_ut_next; static uint64_t g_ut_next_xy;                 // 1 = 下一下按着（坐标 = 最近一次按下 / 移动） | 1 = the next gesture is held (coordinates = its latest press / move)
+static uint64_t g_ut_q[UT_QN]; static unsigned g_ut_qr, g_ut_qw;   // 已抬起、排着等发的点按（满了丢最新的） | released taps waiting to be sent (when full the newest is dropped)
+static int ut_defer(int phase, uint64_t xy) {   // 持锁调；返回 1 = 有点击在途，这一下已排到后面 | called with the lock held; returns 1 = a click is in flight and this event has been queued behind it
+    int p = atomic_load(&g_ut_phase);
+    if (!(p == 2 || p == 3 || g_ut_next || g_ut_qw != g_ut_qr)) return 0;
+    if (phase == 3) { if (!g_ut_next) return 0; g_ut_next = 0; return 1; }   // 作废只作废还按着的那一下；没有就照旧 | cancel only voids the gesture still held; without one, as before
+    if (phase != 2) { g_ut_next = 1; g_ut_next_xy = xy; return 1; }
+    if (g_ut_next && g_ut_qw - g_ut_qr < UT_QN) g_ut_q[g_ut_qw++ % UT_QN] = xy;
+    g_ut_next = 0; return 1;
 }
-int dm_ui_touch_active(void) { return atomic_load(&g_ut_phase) != 0; }
+// 取手柄处调：在途那下发完（相 0）就接上排着的下一下。模式页的「点牌子以外 = 返回」与「点了哪张牌」按接上那一刻的页面状态判，顺序不乱
+// Called at the controller read: once the click in flight is done (phase 0), take up the next one waiting. The mode page's "outside the plaques = back" and "which card was tapped" are judged by the page state at the moment it is taken up, so the order is kept
+static void ut_promote(void) {
+    pthread_mutex_lock(&g_ut_mu);
+    while (!atomic_load(&g_ut_phase) && g_ut_qr != g_ut_qw) { uint64_t xy = g_ut_q[g_ut_qr++ % UT_QN]; float nx = ((xy >> 16) & 0xffff) / 65535.0f, ny = (xy & 0xffff) / 65535.0f;
+        if (fe_opt_outside(ny)) { atomic_store(&g_fe_back, 1); continue; }
+        if (atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_confirm_open)) atomic_store(&g_fe_opt_side, nx >= 0.5f);
+        atomic_store(&g_ut_xy, xy); atomic_store(&g_ut_phase, 2); }
+    if (!atomic_load(&g_ut_phase) && g_ut_next) { atomic_store(&g_ut_xy, g_ut_next_xy); atomic_store(&g_ut_phase, 1); g_ut_next = 0; if (atomic_load(&g_fe_del_open)) atomic_store(&g_del_q, 1); }
+    pthread_mutex_unlock(&g_ut_mu);
+}
+static void ut_reset(void) { pthread_mutex_lock(&g_ut_mu); g_ut_next = 0; g_ut_qr = g_ut_qw; atomic_store(&g_ut_phase, 0); pthread_mutex_unlock(&g_ut_mu); }
+void dm_ui_touch(int phase, float nx, float ny) { if (phase != 3 && dm_restart_busy()) return;   // phase：0 按下 1 移动 2 抬起 3 作废（按下后改成了滚动：这次不点）；nx / ny = 出图画面归一化坐标 [0,1] | phase: 0 down, 1 move, 2 up, 3 cancelled (turned into a scroll after the press: no click this time); nx / ny = coordinates normalized to the rendered picture [0,1]
+    if (phase != 1 && phase != 3) DM_LAT("ui_touch %d", phase);
+    nx = nx < 0 ? 0 : nx > 1 ? 1 : nx; ny = ny < 0 ? 0 : ny > 1 ? 1 : ny;
+    uint64_t xy = ((uint64_t)(uint32_t)(nx * 65535 + .5f) << 16) | (uint32_t)(ny * 65535 + .5f);
+    pthread_mutex_lock(&g_ut_mu);
+    if (ut_defer(phase, xy)) { pthread_mutex_unlock(&g_ut_mu); return; }
+    if (phase == 3) { atomic_store(&g_ut_phase, 0); atomic_store(&g_del_q, 0); atomic_store(&g_del_hold, 0); }
+    else if (phase == 2 && atomic_load(&g_ut_phase) == 1 && fe_opt_outside(ny)) { atomic_store(&g_ut_xy, xy); atomic_store(&g_ut_phase, 0); atomic_store(&g_fe_back, 1); }
+    else {
+        atomic_store(&g_ut_xy, xy);
+        if (phase == 2 && atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_confirm_open)) atomic_store(&g_fe_opt_side, nx >= 0.5f);
+        if (phase == 2 && (atomic_exchange(&g_del_hold, 0) | atomic_exchange(&g_del_q, 0))) atomic_store(&g_ut_phase, 0);
+        else {
+            if (phase == 0 && atomic_load(&g_fe_del_open)) atomic_store(&g_del_q, 1);
+            if (phase == 2) { if (atomic_load(&g_ut_phase) == 1) atomic_store(&g_ut_phase, 2); }
+            else atomic_store(&g_ut_phase, 1); } }
+    pthread_mutex_unlock(&g_ut_mu);
+}
+int dm_ui_touch_active(void) { pthread_mutex_lock(&g_ut_mu); int on = atomic_load(&g_ut_phase) != 0 || g_ut_next || g_ut_qw != g_ut_qr; pthread_mutex_unlock(&g_ut_mu); return on; }
 // 前端纵向拖能不能当滚动：删除角色确认框（长按「是」，手指一漂就作废长按）、模式页（牌子以外 = 返回）、起名页、确认框开着时不当，照旧是点按
 // Whether a vertical drag in the front end can count as a scroll: not while the delete-character confirmation box (long-press 「是」(Yes); the long-press is voided as soon as the finger drifts), the mode page (outside the plaques = back), the naming page, or a confirmation box is open; those stay taps as before
 int dm_ui_fe_drag_ok(void) { return !atomic_load(&g_fe_del_open) && !atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_name_open) && !atomic_load(&g_fe_confirm_open); }
@@ -576,8 +615,12 @@ void dm_ui_ptr(int kind, float nx, float ny, int arg) { if (dm_restart_busy()) r
 // Method: walk the widget tree by name from the UI root widget (+8 name, +0x50 visible, +0x58 / +0x60 children); for visible widgets named grid / horadriccube_grid / Belt / slot_* / advancedstash_* / basicstash_container
 // call the widget's own hit function (vtable +0x48, argument = cursor x / y packed; the MouseScroll handler at main+0xad4d04 decides 'is the cursor on me' exactly this way).
 // The front end asks when the touch point goes down (any thread), and the game main thread answers where it reads the controller: the widget tree is read only on the main thread.
+// 查询字 g_iq_xy：位 31–16 = x、15–0 = y（归一化，各 16 位）；落点查询另带位 48 = 1、位 47–32 = 手指处的 y（物品图抬起前）。
+// 查询种类、手指 y 与坐标在同一个字里一起换：原先「是落点查询」是单独的标志，落点查询之后、主线程作答之前又来一次按下查询，这次按下就被当成落点查询答了（还用着上一次的手指 y）
+// Query word g_iq_xy: bits 31–16 = x, 15–0 = y (normalized, 16 bits each); a drop-point query also carries bit 48 = 1 and bits 47–32 = the y at the finger (before the item image is lifted).
+// The query kind, the finger y and the coordinates change together in one word: "is a drop query" used to be a separate flag, so a press query arriving after a drop query and before the main thread answered was answered as a drop query (with the previous finger y)
 static _Atomic uint64_t g_iq_xy; static _Atomic unsigned g_iq_seq, g_iq_done; static _Atomic int g_iq_res;
-static _Atomic int g_iq_drop;
+#define IQ_DROP (1ull << 48)
 static _Atomic int g_drop_last = -1;   // 最近一次答上的拖放落点类 | Class of the most recently answered drag-and-drop landing point
 // 「界面命中」行的限频：同一个答案 1 秒内至多打 4 条，答案变了立刻打。原先按进程累计封顶（判类 400 条、落点 60 条），
 // 长局（如 2 小时的局）后半段就没有判类行了，读不出触点走了哪条路
@@ -590,14 +633,15 @@ static int hit_log_ok(const char *hit) {
 }
 static _Atomic int g_iq_out;   // 这次查询的触点在界面矩形之外（见 ui_classify） | The touch point of this query is outside the UI rectangle (see ui_classify)
 #define UI_OUT(nx, ny) ((nx) < 0 || (nx) > 1 || (ny) < 0 || (ny) > 1)
-unsigned dm_ui_item_query(float nx, float ny) {
-    if (!atomic_load(&g_iq_drop)) { atomic_store(&g_drop_last, -1); atomic_store(&g_sn_new, 1); }   // 普通命中查询（按下）= 新手势：上一次拖放的落点、吸附 / 停靠都作废 | Ordinary hit query (press) = new gesture: the previous drag-and-drop landing point and the snap / parking are all invalidated
+static unsigned item_query(float nx, float ny, uint64_t drop) {   // drop = 0（按下）或 IQ_DROP | 手指 y（落点） | drop = 0 (press) or IQ_DROP | finger y (drop point)
+    if (!drop) { atomic_store(&g_drop_last, -1); atomic_store(&g_sn_new, 1); }   // 普通命中查询（按下）= 新手势：上一次拖放的落点、吸附 / 停靠都作废 | Ordinary hit query (press) = new gesture: the previous drag-and-drop landing point and the snap / parking are all invalidated
     DM_LAT("query");
     atomic_store(&g_iq_out, UI_OUT(nx, ny));
     nx = nx < 0 ? 0 : nx > 1 ? 1 : nx; ny = ny < 0 ? 0 : ny > 1 ? 1 : ny;
-    atomic_store(&g_iq_xy, ((uint64_t)(uint32_t)(nx * 65535 + .5f) << 16) | (uint32_t)(ny * 65535 + .5f));
+    atomic_store(&g_iq_xy, drop | ((uint64_t)(uint32_t)(nx * 65535 + .5f) << 16) | (uint32_t)(ny * 65535 + .5f));
     return atomic_fetch_add(&g_iq_seq, 1) + 1;
 }
+unsigned dm_ui_item_query(float nx, float ny) { return item_query(nx, ny, 0); }
 int dm_ui_item_result(unsigned seq) { return atomic_load(&g_iq_done) == seq ? atomic_load(&g_iq_res) : -1; }   // -1 = 还没答 | -1 = not answered yet
 static int item_name(const char *n) { return !strcmp(n, "grid") || !strcmp(n, "horadriccube_grid") || !strcmp(n, "Belt") || !strncmp(n, "slot_", 5) || !strncmp(n, "advancedstash_", 14) || !strcmp(n, "basicstash_container"); }
 static uint64_t g_iw_base;   // main 模块基址（item_walk 按虚表认高级仓库的成叠格用；ui_classify 进来时写） | Base address of the main module (used by item_walk to identify advanced stash stacked cells by vtable; written on entry to ui_classify)
@@ -1338,10 +1382,9 @@ int dm_ui_drop_point(float *nx, float *ny) {   // 最近一次落点判定为 5 
     module_t *m = main_module(); if (!m) return 0; int32_t vw = *(int32_t *)(m->base + 0x211da38), vh = *(int32_t *)(m->base + 0x211da3c); if (vw <= 0 || vh <= 0) return 0;
     uint64_t v = atomic_load(&g_drop_xy); *nx = (float)((v & 0xffffffff) + 0.5) / vw; *ny = (float)((v >> 32) + 0.5) / vh; return 1;
 }
-static _Atomic uint32_t g_iq_y2;
 unsigned dm_ui_drop_query(float nx, float ny_lifted, float ny_finger) {
-    ny_finger = ny_finger < 0 ? 0 : ny_finger > 1 ? 1 : ny_finger; atomic_store(&g_iq_y2, (uint32_t)(ny_finger * 65535 + .5f)); atomic_store(&g_iq_drop, 1);
-    return dm_ui_item_query(nx, ny_lifted);
+    ny_finger = ny_finger < 0 ? 0 : ny_finger > 1 ? 1 : ny_finger;
+    return item_query(nx, ny_lifted, IQ_DROP | (uint64_t)(uint32_t)(ny_finger * 65535 + .5f) << 32);
 }
 int dm_ui_drop_at_now(float nx, float ny_lifted, float ny_finger) {   // 同步版，只许游戏主线程调 | Synchronous version, callable only from the game main thread
     module_t *m = main_module(); if (!m) return 1; uint64_t root = 0; memcpy(&root, m->base + 0x2f05458, 8);
@@ -1528,7 +1571,7 @@ static void ui_item_pump(uint64_t root, int width, int height) {
     unsigned seq = atomic_load(&g_iq_seq); if (seq == atomic_load(&g_iq_done)) return;
     uint64_t v = atomic_load(&g_iq_xy); int x = (int)(((v >> 16) & 0xffff) / 65535.0 * width), y = (int)((v & 0xffff) / 65535.0 * height);
     char hit[40] = ""; int r; g_cls_out = atomic_load(&g_iq_out);
-    if (atomic_exchange(&g_iq_drop, 0)) { r = ui_drop_kind(main_module(), root, x, y, (int)(atomic_load(&g_iq_y2) / 65535.0 * height)); 
+    if (v & IQ_DROP) { r = ui_drop_kind(main_module(), root, x, y, (int)((v >> 32 & 0xffff) / 65535.0 * height)); 
         if (r == 5 && g_press_stack && dm_wref_get(&g_slot) && *(uint64_t *)(dm_wref_get(&g_slot) + 8) && !strcmp((const char *)*(uint64_t *)(dm_wref_get(&g_slot) + 8), "horadriccube_grid")) r = 11;   // 11 = 从成叠格拖出、物品图落在这一页下方的魔盒格上（前端：1 件进魔盒，不是取到背包）。g_slot = 刚才落点分类命中的物品区控件 | 11 = dragged out of a stacked slot with the item image landing on the Horadric Cube slot below this page (front end: 1 item goes into the Cube, not taken to the backpack). g_slot = the item-area widget hit by the drop-point classification just now
         snprintf(hit, sizeof hit, "拖放落点类 %d", r); atomic_store(&g_iq_res, r); atomic_store(&g_drop_last, r); atomic_store(&g_iq_done, seq);
         if (hit_log_ok(hit)) LOG("界面命中：(%d,%d) → %s", x, y, hit); return; }
@@ -2199,7 +2242,7 @@ static void ui_wtap_pump(module_t *m, uint64_t root, int width, int height) {   
     { uint64_t sp = ui_find(root, "ScrollSpeechPanel", 0); static const char *part[2] = { "DialogBorder", "ScrollingText" };
       for (int k = 0; sp && *(uint8_t *)(sp + 0x50) && k < 2; k++) { uint64_t c = ui_find(sp, part[k], 0);
           if (c && *(uint8_t *)(c + 0x50) && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)c + 0x48))(c, (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32) & 1)) {
-              float ux = (v >> 45 & 0x7fff) / 32767.0f, uy = (v >> 30 & 0x7fff) / 32767.0f; dm_ui_touch(0, ux, uy); dm_ui_touch(2, ux, uy);
+              float ux = (x + 0.5f) / width, uy = (y + 0.5f) / height; dm_ui_touch(0, ux, uy); dm_ui_touch(2, ux, uy);   // 点击位置 = 上面命中检测用的那个像素（原先按旧的 15 位字段解码，落在 (ux/2, uy/4)） | click position = the pixel the hit test above used (it used to be decoded from the old 15-bit fields and landed at (ux/2, uy/4))
               LOG("界面命中：(%d,%d) → 讲话文字框 %s@ScrollSpeechPanel（单独开着），送界面点击关它", x, y, part[k]); return; } } }
     unsigned dm_world_tap(float, float); dm_world_tap((v >> 15 & 0x7fff) / 32767.0f, (v & 0x7fff) / 32767.0f);
 }
@@ -2801,6 +2844,7 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
             if (th) { ui_auto_key(th); tnext = fr + 8; } } } }
     { module_t *pm = main_module(); uint64_t proot = 0; if (pm) { memcpy(&proot, pm->base + 0x2f05458, 8); int32_t pw = *(int32_t *)(pm->base + 0x211da38), phh = *(int32_t *)(pm->base + 0x211da3c);
         static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } if (atomic_load(&g_uidump_req)) { ui_dump(proot, 0, g_uidump_want, 0, pm); atomic_store(&g_uidump_req, 0); } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_trove_tabs_pump(pm, proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); ui_widestash_pump(proot); mv_audit_pump(proot, fr); ui_pages_pump(pm, proot); } } }
+    ut_promote();   // 在途的那下发完了：接上排着的下一下 | the click in flight is done: take up the next one waiting
     if (atomic_load(&g_fe_name_open) && atomic_load(&g_ut_phase) == 2) {   // 起名页：点输入框（底板 / 文本框）= 重新弹系统键盘，不发鼠标点击 | naming page: tapping the input box (backplate / text box) = pop up the system keyboard again, no mouse click is sent
         module_t *nm = main_module(); uint64_t nroot = 0; if (nm) memcpy(&nroot, nm->base + 0x2f05458, 8); uint64_t pn = nroot ? ui_find(nroot, "CharacterCreateNamePanel", 0) : 0;
         if (pn && nm) { int32_t w = *(int32_t *)(nm->base + 0x211da38), h = *(int32_t *)(nm->base + 0x211da3c); uint64_t v = atomic_load(&g_ut_xy);
@@ -3277,7 +3321,7 @@ void dm_ui_cache_mode_leave(void) {
     { uint64_t bk = root ? ui_panel(root, "BankExpansionLayout") : 0, tabs = bk && *(uint8_t *)(bk + 0x50) ? ui_find(bk, "BankTabs", 0) : 0;   // 储藏箱开着：记下页签，重建后选回去（ui_pages_pump） | Stash is open: remember the tab and select it again after the rebuild (ui_pages_pump)
       g_bank_tab_keep = tabs ? TAB_SEL(tabs) : -1; g_bank_tab_until = dm_guest_frame() + 120; }
     for (int o = 0; o < MV_N; o++) mv_restore(root, o);
-    g_nmv = 0; dm_wref_set(&g_down, 0); dm_wref_set(&g_slot, 0); dm_wref_set(&g_bd_hit_ref, 0); dm_wref_set(&g_click, 0); dm_wref_set(&g_tab_ref, 0); atomic_store(&g_tab_have, 0); atomic_store(&g_ut_phase, 0);
+    g_nmv = 0; dm_wref_set(&g_down, 0); dm_wref_set(&g_slot, 0); dm_wref_set(&g_bd_hit_ref, 0); dm_wref_set(&g_click, 0); dm_wref_set(&g_tab_ref, 0); atomic_store(&g_tab_have, 0); ut_reset();
     // 在途的触摸请求（触屏专属的泵切到手柄后不再跑，留着会在切回触屏时突然落地）和保持中的悬停 / 没发完的指针事件
     // In-flight touch requests (the touch-only pumps no longer run after switching to the controller, and leaving them would make them land suddenly on switching back to touch) plus a held hover / pointer events not yet fully sent
     atomic_store(&g_wtap, 0); atomic_store(&g_buy_at, 0); atomic_store(&g_tap_req, 0); atomic_store(&g_use_req, 0); atomic_store(&g_long_req, 0); atomic_store(&g_ident_req, 0);
