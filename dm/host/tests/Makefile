@@ -33,6 +33,7 @@ run: \
 	$(B)/t_loader_reloc \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
+	$(B)/t_app_mac \
 	$(B)/t_modetx \
 	$(B)/t_movie \
 	$(B)/t_movie_loop \
@@ -72,6 +73,7 @@ run: \
 	$(B)/t_loader_weak
 	$(B)/t_loader_reloc 2>/dev/null
 	$(B)/t_mac_overlay
+	TMPDIR="$(abspath $(B))" $(B)/t_app_mac
 	$(PY) test_mac_features.py
 	python3 ../../tools/test_dmtest.py
 	python3 ../../tools/test_dmevents.py
@@ -143,6 +145,8 @@ $(B)/t_i18n: t_i18n.c ../dm_i18n.c ../dm_i18n.h ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_i18n.c ../dm_i18n.c
 $(B)/t_mac_overlay: t_mac_overlay.m ../app_mac_overlay.h | $(B)
 	clang -O1 -Wall -Werror -fobjc-arc -framework Foundation -o $@ t_mac_overlay.m
+$(B)/t_app_mac: t_app_mac.m ../app_mac.m ../romfs_validate.c ../romfs_validate.h ../dm_i18n.c ../dm_i18n_tab.h | $(B)
+	clang -O1 -Wall -Werror -fobjc-arc -I.. -Wl,-dead_strip -framework Cocoa -o $@ t_app_mac.m ../dm_i18n.c
 $(B)/t_hud_dead: t_hud_dead.c ../dm_hud.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_hud_dead.c
 $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)

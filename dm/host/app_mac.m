@@ -14,6 +14,7 @@
 #include "dm_i18n.h"
 #include "dm_custom.h"
 #include "app_mac_overlay.h"
+#include "romfs_validate.h"
 #define T(k) (@(dm_ui(k)))
 
 #ifndef APP_NAME
@@ -37,18 +38,29 @@ static NSString *g_sup;   // 应用支持目录（dm_app_bootstrap 里定）：�
 //   ① The pick is the resource root (contains data/build_manifest.psv); picking one or two levels above (the root of the unpacked directory, Update) is also accepted, searching one level down;
 //   ② The pick is the data level itself (build_manifest.psv directly inside the folder): if the folder is named data → use its parent; if not named data → create a shell directory
 //      romfs_flat in the Application Support directory containing a data link pointing to it, and use the shell directory as the resource root (the game's "root/data/..." reads stay unchanged). Returns the resource root; otherwise returns nil and gives the reason
+// 找到 build_manifest.psv 之后再核一遍档案文件（romfs_validate.c，同 iOS 壳）：原先只看清单在不在，档案缺了或没拷完的文件夹照收，进游戏读不到资源才出事。
+// 不全时原因给完整清单（已有几个、缺哪些、哪些没拷完），提示框的标题也换成「游戏资源不全」（g_romfs_title）
+// After build_manifest.psv is found, the archive files are checked as well (romfs_validate.c, same as the iOS shell): before, only the manifest's presence was checked, so a folder with archives missing or half-copied was accepted and things only went wrong once the game could not read its data.
+// When incomplete, the reason is the full list (how many are present, which are missing, which are incomplete), and the alert title becomes "The game data is incomplete" (g_romfs_title)
+static NSString *g_romfs_title;   // 上一次 romfs_root 不收时提示框的标题（nil = 「这不是游戏资源文件夹」） | alert title for the last refusal by romfs_root (nil = "This is not the game data folder")
+static BOOL romfs_whole(NSString *data, NSString **why) {
+    char w[512]; if (dm_romfs_validate(data.fileSystemRepresentation, w, sizeof w)) { LOG("App：资源文件夹 %s：%s", data.UTF8String, w); return YES; }
+    char rep[1500]; dm_romfs_report(data.fileSystemRepresentation, rep, sizeof rep); LOG("App：资源文件夹 %s 不全：%s", data.UTF8String, w);
+    if (why) *why = fmt1("dmAppRomfsPartial", @(rep)); g_romfs_title = T("dmAppRomfsPartialTitle"); return NO;
+}
 static NSString *romfs_root(NSString *dir, NSString **why) {
-    NSFileManager *fm = NSFileManager.defaultManager;
+    NSFileManager *fm = NSFileManager.defaultManager; g_romfs_title = nil;
     for (NSString *sub in @[@"", @"RomFS", @"romfs", @"Update/RomFS"]) {
         NSString *d = sub.length ? [dir stringByAppendingPathComponent:sub] : dir;
         if ([fm fileExistsAtPath:[d stringByAppendingPathComponent:@"data/build_manifest.psv"]]) {
             if (![fm isReadableFileAtPath:[d stringByAppendingPathComponent:@"data/build_manifest.psv"]]) { if (why) *why = T("dmAppNoRead"); return nil; }
-            return d;
+            return romfs_whole([d stringByAppendingPathComponent:@"data"], why) ? d : nil;
         }
     }
     NSString *m = [dir stringByAppendingPathComponent:@"build_manifest.psv"];
     if ([fm fileExistsAtPath:m]) {
         if (![fm isReadableFileAtPath:m]) { if (why) *why = T("dmAppNoRead"); return nil; }
+        if (!romfs_whole(dir, why)) return nil;
         if ([dir.lastPathComponent isEqualToString:@"data"]) return dir.stringByDeletingLastPathComponent;
         if (g_sup) { NSString *shim = [g_sup stringByAppendingPathComponent:@"romfs_flat"], *link = [shim stringByAppendingPathComponent:@"data"];
             [fm createDirectoryAtPath:shim withIntermediateDirectories:YES attributes:nil error:nil];
@@ -73,7 +85,7 @@ static NSString *pick_romfs(NSString *first_why) {
         if ([p runModal] != NSModalResponseOK) return nil;
         NSString *w = nil, *r = romfs_root(p.URL.path, &w);
         if (r) return r;
-        alert(T("dmAppNotRomfsTitle"), w); why = w;
+        alert(g_romfs_title ?: T("dmAppNotRomfsTitle"), w); why = w;
     }
 }
 
@@ -127,7 +139,7 @@ int dm_app_bootstrap(int *argc, char ***argv) {
             if (r) { [ud setObject:r forKey:kRomfsKey]; if ([old boolForKey:@"KeysShown"]) [ud setBool:YES forKey:@"KeysShown"]; LOG("App：从旧包标识的偏好里接过资源文件夹 %s", r.UTF8String); } }
         NSString *saved = [ud stringForKey:kRomfsKey], *why = nil, *bundled = res_item(@"romfs");
         NSString *rom = bundled ? romfs_root(bundled, &why) : saved ? romfs_root(saved, &why) : nil;
-        if (bundled && !rom) { alert(T("dmAppNotRomfsTitle"), why ?: T("dmAppNoRead")); exit(2); }
+        if (bundled && !rom) { alert(g_romfs_title ?: T("dmAppNotRomfsTitle"), why ?: T("dmAppNoRead")); exit(2); }
         if (getenv("DM_APP_ROMFS")) {   // 测试（没人点对话框时用）：直接给资源文件夹；不对就把同一句报错写进日志并退出，不弹框、不记进偏好 | Test (for when nobody is there to click the dialog): give the resource folder directly; if it is wrong, write the same error sentence to the log and exit, with no dialog and nothing saved to preferences
             rom = romfs_root(@(getenv("DM_APP_ROMFS")), &why);
             if (!rom) { LOG("【红】App：DM_APP_ROMFS 给的不是游戏资源文件夹：%s", why.UTF8String); exit(2); }
