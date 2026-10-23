@@ -1950,7 +1950,7 @@ static void sd_finish(void);
 // the first draw does not blend and writes all channels, every covered pixel is rewritten by it, and the original content is not visible (Switch immediate-mode rendering has no such cost; on TBDR load = reading the whole thing from memory into the tile)
 static const p_draw *g_fd_dw; static const p_draw_idx *g_fd_di;   // 开通道的这次绘制（非索引 / 索引其一）；仅 draw() 开通道期间非空 | The draw that opens the pass (one of non-indexed / indexed); non-null only while draw() is opening a pass
 static uint64_t g_fd_n;         // 累计判可省的附件数 | Cumulative number of attachments judged elidable
-static int g_fd_why;            // 最近一次不成立的原因（PASSDUMP 的 Q 行：1 无程序 2 着色器 3 附件 4 混合/掩码/光栅 5 深度模板测试 6 顶点数 7 位置属性 8 格式/流 9 越界 10 地址 11 几何） | Reason for the most recent failure (Q line of PASSDUMP: 1 no program 2 shader 3 attachment 4 blend/mask/raster 5 depth-stencil test 6 vertex count 7 position attribute 8 format/stream 9 out of bounds 10 address 11 geometry)
+static int g_fd_why;            // 最近一次不成立的原因（PASSDUMP 的 Q 行：1 无程序 2 着色器 3 附件 4 混合/掩码/光栅 5 深度模板测试 6 顶点数 7 位置属性 8 格式/流 9 越界 10 地址 11 几何 12 同提交待写） | Reason for the most recent failure (Q line of PASSDUMP: 1 no program 2 shader 3 attachment 4 blend/mask/raster 5 depth-stencil test 6 vertex count 7 position attribute 8 format/stream 9 out of bounds 10 address 11 geometry 12 pending same-submit write)
 static int first_draw_covers(int i, id<MTLTexture> t, NSUInteger level);
 static int pf_is_float(MTLPixelFormat f) {   // 能存 NaN 的浮点颜色格式（读入可省探针的哨兵选择；RGB9E5 存不了 NaN，不算） | Float color formats that can store NaN (sentinel choice for the load-elision probe; RGB9E5 cannot store NaN and does not count)
     switch (f) { case MTLPixelFormatR16Float: case MTLPixelFormatRG16Float: case MTLPixelFormatRGBA16Float: case MTLPixelFormatR32Float:
@@ -2552,11 +2552,22 @@ static id<MTLTexture> tex_by_id(int tid) {   // 调用方持 g_rmu | Caller hold
         if (cur == v || v.parentTexture == cur) { rp->view_ser = sg; rp->view_dirty = dg; return v; }
         defer_obj_unref(v); CFRelease(rp->view); rp->view = NULL; rp->view_rid = 0; v = nil;
     }
-    treg_t r = *rp;
+    treg_t r = *rp; if (!r.has_v) memset(&r.v, 0, sizeof r.v);   // 没登记视图时 v 可能是上一次登记留下的 | Without a registered view, v may be left over from an earlier registration
     id<MTLTexture> base = tex_mtl(&rp->t);
     if (!base) return nil;
     v = base;
-    if (r.has_v && (r.v.set_format || r.v.set_levels || r.v.set_layers || r.v.set_target)) {
+    // 分量重映射（nvn_fmt_to_mtl 的 swz）只能放在只读视图上：贴图自身带重映射与渲染目标 / 着色器写用途不相容（Metal 校验层断言），
+    // 带重映射的视图也只剩采样用途——所以只在这里（贴图号 → 采样用的视图）加。无 alpha 格式（RGBX / BGRX / RGB_DXT1 等）a 读 1：游戏画进去的、上传的内容都适用；
+    // r / b 互换的 16 位打包格式只对上传的数据成立（Metal 画进去的不用换），位序也没用真数据核过：不换、报红；可写的图像贴图（图像槽要可写视图）同样不换、报红
+    // A channel swizzle (the swz of nvn_fmt_to_mtl) can only go on a read-only view: a swizzle on the texture itself is incompatible with render-target / shader-write usage (a Metal validation assertion),
+    // and a swizzled view keeps only sampling usage - so it is added only here (texture ID → the view used for sampling). No-alpha formats (RGBX / BGRX / RGB_DXT1 etc.) read a as 1, which holds both for what the game renders into them and for uploaded data;
+    // the 16-bit packed formats with r / b swapped hold only for uploaded data (what Metal renders needs no swap) and their bit order was never checked with real data: not swapped, red line; writable image textures (image slots need a writable view) are not swizzled either, red line
+    int swz_a1 = 0; { uint32_t spf = 0; uint8_t sw[4]; int sf = r.v.set_format ? r.v.format : r.t.d.format;
+        if (nvn_fmt_to_mtl(sf, &spf, sw) && spf && (sw[0] != NVN_SWZ_R || sw[2] != NVN_SWZ_B || sw[3] != NVN_SWZ_A)) {
+            if (sw[0] != NVN_SWZ_R) RED_ONCE(58, "格式 %#x 的 r / b 互换未做（位序未核，采样按原序）", sf);
+            else if ((base.usage & MTLTextureUsageShaderWrite) || base.textureType == MTLTextureTypeTextureBuffer) RED_ONCE(57, "格式 %#x 可写 / 缓冲贴图的 a 不强制为 1（图像槽要可写视图）", sf);
+            else swz_a1 = 1; } }
+    if (swz_a1 || (r.has_v && (r.v.set_format || r.v.set_levels || r.v.set_layers || r.v.set_target))) {
         uint32_t pf = (uint32_t)base.pixelFormat; uint8_t swz[4];
         if (r.v.set_format && !(nvn_fmt_to_mtl(r.v.format, &pf, swz) && pf)) pf = (uint32_t)base.pixelFormat;
         { uint32_t upf; int ubpp; if (r.v.set_format && bc_unpack(r.v.format, &upf, &ubpp)) pf = upf; }   // 无 BC：BC 视图跟底图一样换成解压后的格式 | No BC: a BC view is switched to the decompressed format just like the base texture
@@ -2569,7 +2580,8 @@ static id<MTLTexture> tex_by_id(int tid) {   // 调用方持 g_rmu | Caller hold
         NSUInteger ns = base.textureType == MTLTextureType3D ? 1 : (r.v.set_layers && r.v.nlayers ? r.v.nlayers : base.arrayLength * (base.textureType == MTLTextureTypeCube || base.textureType == MTLTextureTypeCubeArray ? 6 : 1) - s0);
         MTLTextureType tt = r.v.set_target ? ttype(r.v.target, base.textureType) : base.textureType;
         if (tt == MTLTextureType2D && ns > 1) ns = 1;
-        v = [base newTextureViewWithPixelFormat:(MTLPixelFormat)pf textureType:tt levels:NSMakeRange(l0, nl) slices:NSMakeRange(s0, ns)];
+        v = swz_a1 ? [base newTextureViewWithPixelFormat:(MTLPixelFormat)pf textureType:tt levels:NSMakeRange(l0, nl) slices:NSMakeRange(s0, ns) swizzle:MTLTextureSwizzleChannelsMake(MTLTextureSwizzleRed, MTLTextureSwizzleGreen, MTLTextureSwizzleBlue, MTLTextureSwizzleOne)]
+                   : [base newTextureViewWithPixelFormat:(MTLPixelFormat)pf textureType:tt levels:NSMakeRange(l0, nl) slices:NSMakeRange(s0, ns)];
         if (!v) { RED_ONCE(11, "贴图视图建不出 id %d", tid); v = base; }
     }
     rp->view = (void *)CFBridgingRetain(v); rp->view_rid = v.gpuResourceID._impl; rp->view_ser = sg; rp->view_dirty = dg;
@@ -3402,14 +3414,14 @@ static void sd_finish(void) {
 //   状态：该附件不混合、写掩码满、无 alpha-to-coverage、填充模式、无深度测试（或 ALWAYS）、无模板测试、单采样、非 3D
 //   顶点：非索引或 16 / 32 位索引绘制，索引与位置都从 CPU 可见的池内存读出；剪裁 / 视口 / 几何 / 朝向 / 深度裁剪的判定在 nvn_cover.h（纯函数，有单测）
 // 读出本次绘制全部顶点的属性 a（非索引或 16 / 32 位索引；顶点号 = first + k 或 索引值 + base_vertex），缺分量按取数规则补 0 / 1。
-// 成功返回 0，失败返回原因码（6 顶点数 / 索引类型，7 属性号，8 格式 / 流，9 越界，10 地址）
+// 成功返回 0，失败返回原因码（6 顶点数 / 索引类型，7 属性号，8 格式 / 流，9 越界，10 地址，12 本提交里已编码、未执行的写落在要读的索引 / 顶点上——CPU 读到的是旧值）
 // Continue scanning in real replay order: current list -> callers at each level (return stack from the top down) -> remaining handles of this submit; the render pass necessarily ends when the submit ends (rp_flush before commit)
 // Coverage proof (holds only if all are satisfied; anything unrecognized is treated as not holding):
 //   Shader: the vertex position xyz is taken as-is from one vertex attribute, w is 1 or the same attribute's .w (dmsh_build raster_facts); the fragment does not discard, does not write sample_mask, and writes this color index
 //   State: this attachment has no blending, a full write mask, no alpha-to-coverage, fill mode, no depth test (or ALWAYS), no stencil test, single sample, not 3D
 //   Vertices: non-indexed or 16 / 32-bit indexed draws, with indices and positions both read from CPU-visible pool memory; the scissor / viewport / geometry / winding / depth clipping decisions are in nvn_cover.h (pure functions, with unit tests)
 // Read out attribute a of all vertices of this draw (non-indexed or 16 / 32-bit indexed; vertex number = first + k or index value + base_vertex), with missing components filled with 0 / 1 per the fetch rules.
-// Returns 0 on success, a reason code on failure (6 vertex count / index type, 7 attribute index, 8 format / stream, 9 out of bounds, 10 address)
+// Returns 0 on success, a reason code on failure (6 vertex count / index type, 7 attribute index, 8 format / stream, 9 out of bounds, 10 address, 12 a write encoded earlier in this submit but not yet executed covers the indices / vertices to read - the CPU would read old values)
 static int attr_read(int a, const p_draw *dw, const p_draw_idx *di, float P[64][4]) {
     int n = dw ? dw->count : di->count;
     if (n < 1 || n > 64 || (dw && dw->first < 0) || (di && (di->itype < 1 || di->itype > 2))) return 6;
@@ -3418,13 +3430,14 @@ static int attr_read(int a, const p_draw *dw, const p_draw_idx *di, float P[64][
     MTLVertexFormat vf = vfmt(at.fmt); int nc = vf == MTLVertexFormatFloat2 ? 2 : vf == MTLVertexFormatFloat3 ? 3 : vf == MTLVertexFormatFloat4 ? 4 : 0;
     if (!nc || !sm.stride || sm.divisor || !vb.address) return 8;
     const uint8_t *ib = NULL; int isz = di ? (di->itype == 1 ? 2 : 4) : 0;
-    if (di) { void *m; uint64_t o; if (!mtl_addr(di->ibuf, (uint64_t)n * isz, &m, &o) || !(ib = [(__bridge id<MTLBuffer>)m contents])) return 10; ib += o; }
+    if (di) { void *m; uint64_t o; if (!mtl_addr(di->ibuf, (uint64_t)n * isz, &m, &o) || !(ib = [(__bridge id<MTLBuffer>)m contents])) return 10; ib += o; if (pend_hits(di->ibuf, (uint64_t)n * isz)) return 12; }
     for (int k = 0; k < n; k++) {
         int64_t vid = dw ? (int64_t)dw->first + k : (isz == 2 ? (int64_t)((const uint16_t *)ib)[k] : (int64_t)((const uint32_t *)ib)[k]) + di->base_vertex;
         uint64_t off = (uint64_t)vid * sm.stride + at.offset;
         if (vid < 0 || off + 4 * nc > vb.size) return 9;
         void *mb; uint64_t mo; const uint8_t *base;
         if (!mtl_addr(vb.address + off, 4 * nc, &mb, &mo) || !(base = [(__bridge id<MTLBuffer>)mb contents])) return 10;
+        if (pend_hits(vb.address + off, 4 * nc)) return 12;
         float v[4] = {0, 0, 0, 1}; memcpy(v, base + mo, 4 * nc); memcpy(P[k], v, sizeof v);
     }
     return 0;
@@ -3886,8 +3899,8 @@ static void hoist_try(void) {
                     const tex_t *t = g->rt->color[c->index];
                     if (has_sc && !(sc.x <= 0 && sc.y <= 0 && sc.x + sc.w >= (int)t->d.width && sc.y + sc.h >= (int)t->d.height)) return;
                     g->clear_c[c->index] = 1; g->cc[c->index] = MTLClearColorMake(c->rgba[0], c->rgba[1], c->rgba[2], c->rgba[3]); }
-                else { const p_clear_ds *c = a; if (!g->rt->depth) return;
-                    if (c->depth_mask) { g->clear_d = 1; g->cd = c->depth; } if (c->stencil_mask) { g->clear_s = 1; g->cs = (uint32_t)c->stencil; } }
+                else { const p_clear_ds *c = a; if (!g->rt->depth || ((c->stencil_mask & 0xff) && (c->stencil_mask & 0xff) != 0xff)) return;   // 部分模板掩码不提前（同回放：只认整 8 位清） | A partial stencil mask is not hoisted (as in the replay: only full 8-bit clears count)
+                    if (c->depth_mask) { g->clear_d = 1; g->cd = c->depth; } if ((c->stencil_mask & 0xff) == 0xff) { g->clear_s = 1; g->cs = (uint32_t)c->stencil; } }
                 g->sc = sc; g->has_sc = has_sc; g->ops[g->nops++] = p; break; }
             case OP_SET_RT: { const p_set_rt *r = a;
                 if (rt_same(&R.rt, r)) {   // 回到本通道的目标：前提成立的话执行 | Back to this render pass's targets: execute if hoisting holds
@@ -4322,8 +4335,8 @@ static void fuse_try(void) {
                 const tex_t *t = r2->color[c->index];
                 if (has_sc && !(sc.x <= 0 && sc.y <= 0 && sc.x + sc.w >= (int)t->d.width && sc.y + sc.h >= (int)t->d.height)) return;
                 clr[c->index] = 1; cc[c->index] = MTLClearColorMake(c->rgba[0], c->rgba[1], c->rgba[2], c->rgba[3]); cl[ncl++] = p; break; }
-            case OP_CLEAR_DS: { const p_clear_ds *c = a; if (ncl >= 8 || !r2->depth) return;
-                if (c->depth_mask) { cd_f = 1; cdv = c->depth; } if (c->stencil_mask) { cs_f = 1; csv = (uint32_t)c->stencil; } cl[ncl++] = p; break; }
+            case OP_CLEAR_DS: { const p_clear_ds *c = a; if (ncl >= 8 || !r2->depth || ((c->stencil_mask & 0xff) && (c->stencil_mask & 0xff) != 0xff)) return;   // 部分模板掩码不合并（同回放：只认整 8 位清） | A partial stencil mask is not merged (as in the replay: only full 8-bit clears count)
+                if (c->depth_mask) { cd_f = 1; cdv = c->depth; } if ((c->stencil_mask & 0xff) == 0xff) { cs_f = 1; csv = (uint32_t)c->stencil; } cl[ncl++] = p; break; }
             default: break;
         }
         if (!fz_next(&cur, &p, &h, &a)) return;
@@ -5659,7 +5672,10 @@ void mtl_exec(const uint8_t *p) {
                 if (g_rt_merged) rp_end();
                 if (g_enc) { RED_ONCE(7, "通道中途的深度模板清除未实现"); break; }
                 if (c->depth_mask) { R.clear_d = 1; R.cd = c->depth; }
-                if (c->stencil_mask) { R.clear_s = 1; R.cs = (uint32_t)c->stencil; }
+                // 模板清除折进通道读入只能整 8 位清；NVN 只写掩码内的位，部分掩码原先也被当成整清（掩码外的位被抹掉）
+                // A stencil clear folded into the pass load can only clear all 8 bits; NVN writes only the bits inside the mask, and a partial mask used to be taken as a full clear too (wiping the bits outside the mask)
+                if ((c->stencil_mask & 0xff) == 0xff) { R.clear_s = 1; R.cs = (uint32_t)c->stencil; }
+                else if (c->stencil_mask & 0xff) RED_ONCE(59, "部分掩码的模板清除未实现（首例 掩码 %#x），这次不清模板", c->stencil_mask);
                 break;
             }
             case OP_DRAW: g_exec_next = p + h.size; draw(a, NULL); g_exec_next = NULL; break;   // 前瞻起点 | Lookahead start point
