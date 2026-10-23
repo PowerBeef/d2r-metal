@@ -274,14 +274,14 @@ static void relocate(module_t *m) {
     for (int t = 0; t < 2; t++)
         for (uint64_t i = 0; i < sizes[t] / sizeof(Elf64_Rela); i++) {
             const Elf64_Rela *r = &tabs[t][i];
-            uint64_t *where = (uint64_t *)(m->base + r->r_offset);
+            uint8_t *where = (uint8_t *)(m->base + r->r_offset);   // 字节指针：类型化指针即使经 memcpy 也带对齐假设 | byte pointer: a typed pointer carries an alignment assumption even through memcpy
             unsigned type = ELF64_R_TYPE(r->r_info), si = ELF64_R_SYM(r->r_info);
-            if (type == R_AARCH64_RELATIVE) { *where = (uint64_t)m->base + r->r_addend; cnt[0]++; continue; }
+            if (type == R_AARCH64_RELATIVE) { uint64_t v = (uint64_t)m->base + r->r_addend; memcpy(where, &v, 8); cnt[0]++; continue; }   // 重定位目标可能不对齐（游戏的数据布局）：memcpy（arm64 上同一条指令，C 里不算未定义行为） | relocation targets may be unaligned (the game's data layout): memcpy (the same instruction on arm64, not undefined behaviour in C)
             const Elf64_Sym *s = &m->symtab[si];
             uint64_t v = (uint64_t)force_lookup(m->strtab + s->st_name);
             if (!v) v = s->st_shndx ? (uint64_t)m->base + s->st_value : resolve_sym(m, m->strtab + s->st_name, (s->st_info >> 4) == 2);
-            if (type == R_AARCH64_JUMP_SLOT) { *where = v; cnt[2]++; }
-            else { *where = v + r->r_addend; cnt[1]++; }       // ABS64 / GLOB_DAT
+            if (type == R_AARCH64_JUMP_SLOT) { memcpy(where, &v, 8); cnt[2]++; }
+            else { uint64_t w = v + r->r_addend; memcpy(where, &w, 8); cnt[1]++; }       // ABS64 / GLOB_DAT
         }
     LOG("%s: reloc relative=%d abs/glob=%d jump=%d", m->name, cnt[0], cnt[1], cnt[2]);
 }

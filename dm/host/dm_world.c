@@ -339,8 +339,9 @@ static int w_sprite_box(uint8_t *b, uint64_t u, int out[4]) {
     uint64_t tb = *(uint64_t *)(u + 0x78); if (!tb) return 0; uint64_t arr = *(uint64_t *)(tb + 0x28), cnt = *(uint64_t *)(tb + 0x30); if (!arr || !cnt || cnt > 4096) return 0;
     uint32_t type = *(uint32_t *)u, cls = *(uint32_t *)(u + 4), mode = (type <= 1 && *(uint64_t *)(u + 0x40)) ? *(uint32_t *)(u + 0x58) : *(uint32_t *)(u + 0xc);
     ((void (*)(uint64_t, uint32_t *, uint32_t *, uint32_t *, uint64_t, int))(b + 0x5b23f0))(u, &type, &cls, &mode, (uint64_t)(uintptr_t)(b + 0x1d5a900), 0);
-    for (uint64_t i = 0; i < cnt; i++) { uint64_t e = arr + i * 16; if (*(uint32_t *)e != mode) continue; uint64_t q = *(uint64_t *)(e + 8), r = q ? *(uint64_t *)(q + 0x18) : 0; if (!r) return 0;
-        out[0] = *(int32_t *)(r + 8); out[1] = *(int32_t *)(r + 0xc); out[2] = *(int32_t *)(r + 0x10); out[3] = *(int32_t *)(r + 0x14); return out[1] > out[0] && out[3] > out[2] && out[1] - out[0] < 2000 && out[3] - out[2] < 2000; }
+    for (uint64_t i = 0; i < cnt; i++) { uint64_t e = arr + i * 16; if (*(uint32_t *)e != mode) continue; uint64_t q = *(uint64_t *)(e + 8), r = 0; if (q) memcpy(&r, (const void *)(uintptr_t)(q + 0x18), 8); if (!r) return 0;
+        memcpy(out, (const void *)(uintptr_t)(r + 8), 16);   // 图形数据是紧排的，q / r 只按 2 字节对齐：memcpy 读（UBSan，explore.py 点世界时查出） | the graphic data is packed and q / r are only 2-byte aligned: read with memcpy (UBSan, found by explore.py on world taps)
+        return out[1] > out[0] && out[3] > out[2] && out[1] - out[0] < 2000 && out[3] - out[2] < 2000; }
     return 0;
 }
 static uint64_t w_hit(uint8_t *b, float sx, float sy, float min, float *dist, int *by_label) {

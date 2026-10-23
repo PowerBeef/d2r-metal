@@ -79,7 +79,7 @@ int dm_item_write(uint8_t *b, uint64_t it, uint8_t *buf); uint64_t dm_item_make(
 void *dm_memfind(const uint8_t *h, size_t hn, const uint8_t *n, size_t nn);
 
 static const char *vault_name(uint8_t *b) {   // 同游戏选共享仓库名：DLC 类型（3）= ModernSharedStash*、毁灭之王类型（2）= SharedStash*；状态位 2 = 专家 | Same as the game's choice of shared stash name: DLC type (3) = ModernSharedStash*, Lord of Destruction type (2) = SharedStash*; status bit 2 = hardcore
-    uint8_t mode = *(uint8_t *)(b + 0x2127c48); int hc = (*(uint16_t *)(b + 0x21278d5) >> 2) & 1;
+    uint8_t mode = *(uint8_t *)(b + 0x2127c48); uint16_t st; memcpy(&st, b + 0x21278d5, 2); int hc = (st >> 2) & 1;   // 状态字在奇数地址：memcpy 读 | the status word sits at an odd address: read with memcpy
     if (mode == 3) return hc ? "ModernSharedStashHardCoreV2" : "ModernSharedStashSoftCoreV2";
     if (mode == 2) return hc ? "SharedStashHardCoreV2" : "SharedStashSoftCoreV2";
     return NULL;   // 经典类型：没有共享仓库，也不开编年史仓库 | Classic type: no shared stash, and no chronicle vault either
