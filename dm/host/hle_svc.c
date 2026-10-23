@@ -111,7 +111,11 @@ enum { I_CoreMask=0, I_PriorityMask=1, I_AliasAddr=2, I_AliasSize=3, I_HeapAddr=
 static uint8_t g_seen[256];
 
 // 已映射区间登记（MapMemory 栈、MapPhysicalMemory alias 页），QueryMemory 据此回报；SDK 靠它找空位
+// 查表 → 核对 → 改权限 / 搬内容 → 登记 / 删除整段持 g_map_lock，QueryMemory 扫表也持它（下面三个函数都要调用方持锁）。
+// 原先只有登记 / 删除那一下持锁：两条线程同时映射同一目标都会成功（两份栈叠在一处）；删除把末项挪进空位，另一条 Unmap 手里的下标就过期了，会删掉别人活着的栈
 // Registry of mapped ranges (MapMemory stacks, MapPhysicalMemory alias pages), QueryMemory reports from it; the SDK relies on it to find free space
+// g_map_lock is held across lookup → validate → permission change / copy → record / delete, and QueryMemory holds it while it scans (all three functions below require the caller to hold it).
+// Before, only the record / delete step held it: two threads mapping the same target both succeeded (two stacks on top of each other), and a delete moves the last entry into the hole, so the index another Unmap had in hand went stale and it deleted someone else's live stack
 #define MAX_MAP 4096
 static struct { uint64_t base, size, src; uint32_t state; } g_map[MAX_MAP];
 static int g_nmap;
@@ -121,12 +125,10 @@ static int map_find(uint64_t a, uint64_t n) {       // 返回 1 基下标，0 = 
     return 0;
 }
 static void map_add(uint64_t b, uint64_t n, uint64_t src, uint32_t st) {
-    pthread_mutex_lock(&g_map_lock);
     if (g_nmap >= MAX_MAP) die("映射表满");
     g_map[g_nmap++] = (typeof(g_map[0])){b, n, src, st};
-    pthread_mutex_unlock(&g_map_lock);
 }
-static void map_del(int i) { pthread_mutex_lock(&g_map_lock); g_map[i] = g_map[--g_nmap]; pthread_mutex_unlock(&g_map_lock); }
+static void map_del(int i) { g_map[i] = g_map[--g_nmap]; }
 
 int svc_thread(int num, uint64_t *regs);   // hle_thread.c：线程与同步类 | hle_thread.c: thread and synchronization kind
 
@@ -152,24 +154,31 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
     case 0x03: regs[0] = 0; return 0;   // SetMemoryAttribute
     case 0x04: {  // MapMemory(dst, src, size)：SDK 建线程时把堆上的栈搬进栈区 | MapMemory(dst, src, size): when creating a thread the SDK moves the stack on the heap into the stack region
         uint64_t dst = regs[0], src = regs[1], size = regs[2];
-        if ((uint8_t *)dst < g_stack || (uint8_t *)dst + size > g_stack + g_stack_cap || map_find(dst, size)) {
-            LOG("MapMemory 目标非法或已占用 %#llx+%#llx", dst, size); regs[0] = 0xDC01; return 0; }
+        if ((uint8_t *)dst < g_stack || (uint8_t *)dst + size > g_stack + g_stack_cap) {
+            LOG("MapMemory 目标非法 %#llx+%#llx", dst, size); regs[0] = 0xDC01; return 0; }   // 不在栈区：InvalidMemoryRegion | outside the stack region: InvalidMemoryRegion
+        pthread_mutex_lock(&g_map_lock);
+        // 已占用回 InvalidCurrentMemory（同 Horizon）：SDK 的 MapAliasStack（sdk+0x34ff00）见到它先查目标是不是空闲，不是就换个地址重试
+        // An occupied target gets InvalidCurrentMemory (as on Horizon): the SDK's MapAliasStack (sdk+0x34ff00) then checks whether the target is free and, if not, retries at another address
+        if (map_find(dst, size)) { pthread_mutex_unlock(&g_map_lock); LOG("MapMemory 目标已占用 %#llx+%#llx", dst, size); regs[0] = 0xD401; return 0; }
         // 苹果页 16K、Horizon 页 4K：可访问区扩到 16K 边界（多放开的是同区未用页，不影响语义）
         // Apple pages are 16K, Horizon pages 4K: the accessible region is extended to a 16K boundary (the extra pages opened are unused pages of the same region, semantics unaffected)
         uint64_t lo = dst & ~0x3FFFull, hi = (dst + size + 0x3FFF) & ~0x3FFFull;
         if (mprotect((void *)lo, hi - lo, PROT_READ | PROT_WRITE)) die("MapMemory mprotect errno=%d", errno);
         memcpy((void *)dst, (void *)src, size);   // 搬移语义：映射期间源区不被访问（Horizon 把它设为不可访问） | move semantics: the source region is not accessed while mapped (Horizon makes it inaccessible)
         map_add(dst, size, src, 0x0B /*MappedMemory*/);
+        pthread_mutex_unlock(&g_map_lock);
         if (g_flag.svc) LOG("MapMemory %#llx <- %#llx +%#llx", dst, src, size);
         regs[0] = 0; return 0;
     }
     case 0x05: {  // UnmapMemory(dst, src, size)：内容搬回源区；16K 页可能与相邻映射共用，不收回权限 | UnmapMemory(dst, src, size): contents are moved back to the source region; a 16K page may be shared with an adjacent mapping, permissions are not revoked
         uint64_t dst = regs[0], src = regs[1], size = regs[2];
+        pthread_mutex_lock(&g_map_lock);
         int k = map_find(dst, size);
         if (!k || g_map[k - 1].base != dst || g_map[k - 1].size != size || g_map[k - 1].src != src) {
-            LOG("UnmapMemory 与映射不符 %#llx+%#llx", dst, size); regs[0] = 0xD401; return 0; }
+            pthread_mutex_unlock(&g_map_lock); LOG("UnmapMemory 与映射不符 %#llx+%#llx", dst, size); regs[0] = 0xD401; return 0; }
         memcpy((void *)src, (void *)dst, size);
         map_del(k - 1);
+        pthread_mutex_unlock(&g_map_lock);
         regs[0] = 0; return 0;
     }
     case 0x06: {  // QueryMemory(MemoryInfo* out, PageInfo* pout, addr) → x1 = pageinfo
@@ -178,6 +187,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         uint8_t *a = (uint8_t *)addr;
         uint64_t base, size, state, perm;
         int k;
+        pthread_mutex_lock(&g_map_lock);   // 扫映射表期间别人不能增删 | nobody may add or delete entries while the registry is scanned
         if (a >= g_heap && a < g_heap + g_heap_cur) { base=(uint64_t)g_heap; size=g_heap_cur; state=5/*Heap*/; perm=3; }
         else if ((k = map_find(addr, 1))) { base=g_map[k-1].base; size=g_map[k-1].size; state=g_map[k-1].state; perm=3; }
         else if (a >= g_as && a < g_as + g_reserve) {   // 空闲：到相邻映射/堆边界为止 | free: up to the adjacent mapping/heap boundary
@@ -202,6 +212,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
             uint64_t top = (uint64_t)pthread_get_stackaddr_np(pthread_self()), ssz = pthread_get_stacksize_np(pthread_self());
             if (addr < top && addr >= top - ssz) { base = top - ssz; size = ssz; state = 0xB/*Stack*/; perm = 3; }
             else { base=addr & ~0xFFFull; size=0x1000; state=3/*Code*/; perm=5; } }
+        pthread_mutex_unlock(&g_map_lock);
         if (mi) { uint64_t *m=(uint64_t*)mi; m[0]=base; m[1]=size; ((uint32_t*)mi)[4]=state; ((uint32_t*)mi)[5]=0; ((uint32_t*)mi)[6]=perm; ((uint32_t*)mi)[7]=0; ((uint32_t*)mi)[8]=0; }
         regs[0] = 0; regs[1] = 0; return 0;
     }

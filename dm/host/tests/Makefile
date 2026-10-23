@@ -45,6 +45,7 @@ run: \
 	$(B)/t_warp_diag \
 	$(B)/t_romfs_validate \
 	$(B)/t_rwlv \
+	$(B)/t_svc_mem \
 	$(B)/t_swkbd \
 	$(B)/t_target_rank \
 	$(B)/t_textbox \
@@ -106,6 +107,7 @@ run: \
 	$(B)/t_movie
 	$(B)/t_condvar
 	$(B)/t_condvar_old
+	$(B)/t_svc_mem
 	$(B)/t_target_rank 2>/dev/null
 	$(B)/t_hud_dead
 	$(B)/t_namegen
@@ -170,8 +172,15 @@ $(B)/%.orig.bin: $(EXEFS)/% | $(B)
 $(B):
 	mkdir -p $@
 .PHONY: run tsan
-tsan: $(B)/t_audio_spsc_tsan
+tsan: $(B)/t_audio_spsc_tsan $(B)/t_svc_mem_tsan
 	$(B)/t_audio_spsc_tsan
+	$(B)/t_svc_mem_tsan
+	$(B)/t_svc_mem_tsan disjoint 300
+	$(B)/t_svc_mem_tsan overlap 300
+$(B)/t_svc_mem: t_svc_mem.c ../hle_svc.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_svc_mem.c
+$(B)/t_svc_mem_tsan: t_svc_mem.c ../hle_svc.c ../hle.h ../dm.h | $(B)
+	clang -O1 -g -fsanitize=thread -Wall -Wno-unused-function -I.. -o $@ t_svc_mem.c
 $(B)/t_condvar: t_condvar.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle_thread.c
 $(B)/t_condvar_old: t_condvar.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
