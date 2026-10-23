@@ -241,7 +241,7 @@ else
   # Package transfer has a wall-clock limit (package about 260 MB, tens of seconds over LAN; 180 s given) and prints rsync's error text verbatim: when the second Mac's disk is full rsync reports No space left and then hangs without exiting; one merge was stuck for 17 minutes
   TB=$(command -v timeout || command -v gtimeout)
   { $S "mkdir -p $RD/tools" && ${TB:+$TB 180} rsync -a --delete "$W" "$HOST:$RD/" && ${TB:+$TB 30} rsync -a "$TOOLS/smoke_mac.sh" $(for _sm_f in $SMOKE_MAC_DEPS; do printf '%s ' "$TOOLS/$_sm_f"; done) "$HOST:$RD/tools/"; } > "$RUN/rsync.log" 2>&1 \
-    || { LEDGER_RES=传包失败; echo "【红】传包到 $HOST 失败（退出码 $?；124 = 超时）：$(tail -2 "$RUN/rsync.log" | tr '\n' ' ' | cut -c1-200)"; echo "SMOKE-MAC RED 0/$N 用时 $(( $(date +%s) - T0 )) 秒"; exit 2; }
+    || { trc=$?; LEDGER_RES=传包失败; echo "【红】传包到 $HOST 失败（退出码 ${trc}；124 = 超时）：$(tail -2 "$RUN/rsync.log" | tr '\n' ' ' | cut -c1-200)"; echo "SMOKE-MAC RED 0/$N 用时 $(( $(date +%s) - T0 )) 秒"; exit 2; }
   if [ "${SMOKE_MAC_PKG_ONLY:-0}" = 1 ]; then trap 'eval "$CLEAN"' EXIT; echo "SMOKE-MAC 只出包 $HOST:$RD/DmMacSmoke.app"; exit 0; fi
   $S "SMOKE_MAC_STAGE=run SMOKE_MAC_WRAP=\$HOME/$RD/DmMacSmoke.app SMOKE_MAC_RUN=\$HOME/$RR SMOKE_OWNER='${SMOKE_OWNER:-未署名}' SMOKE_PLAYER=${SMOKE_PLAYER:-1} DM_MAC_DEVICE_PROFILE=${DM_MAC_DEVICE_PROFILE:-1} ${SMOKE_KEYS:+SMOKE_KEYS='$SMOKE_KEYS'} bash \$HOME/$RD/tools/smoke_mac.sh $N"; rc=$?
   rsync -a "$HOST:$RR/" "$RUN/" 2>/dev/null; $S "rm -rf \$HOME/$RR"

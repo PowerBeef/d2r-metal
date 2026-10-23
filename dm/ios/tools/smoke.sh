@@ -227,6 +227,9 @@ for i in $(seq 1 "$N"); do
       cds_restart "第 $i 次拉起失败（rc=${lrc}）"; tA=$(date +%s)
       "$TIMEOUT_BIN" -k 5s 30s xcrun devicectl device process launch --device "$D" "$B" -mode boot >>"$OUT/launch_${attempt}.txt" 2>&1; lrc=$?
     elif [ $(( $(date +%s) - tA )) -gt 10 ]; then CDS_DUE=1; fi
+    # 先按「什么都没看到」填好 logport.py 会打的各项：它读日志中途出异常时一行都不打，set -u 下下一行就因 tL 未定义退出、连判定行都没有
+    # Preset everything logport.py prints to "nothing seen": when it hits an exception while reading the log it prints nothing, and under set -u the next line would exit on the undefined tL without any verdict line
+    result=1 stage=启动 pk=0 tL='' tM='' tG='' tS='' exited=0
     eval "$(python3 "$TOOLS/logport.py" read "$LOCAL_PORT" "$attempt_log" "$main_menu_timeout" "$game_screen_timeout")"
     cat "$attempt_log" >> "$CONSOLE"
     if [ "$result" -ne 0 ] && [ -z "$tL" ] && [ "$lrc" -eq 0 ] && [ "$envre" = 0 ] && noenv_instance "第 $i 次"; then envre=1; attempt=$((attempt - 1)); continue; fi
