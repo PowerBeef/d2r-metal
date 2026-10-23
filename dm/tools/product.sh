@@ -18,9 +18,13 @@ case "${1:-}" in
   rev)  echo "${P##*-}";;
   build)   # 用本工作树的改写器重出三种产物到本机缺省目录（换代 / 改了 patch_nso.py 之后跑）。种类 → 规则集：keypage = 原生；rules = 触屏规则、不带宿主私有门；touch = 触屏规则 + 私有门 | Rebuild the three kinds of build output with this worktree's rewriter into the local default directory (run after a revision bump / after changing patch_nso.py). Kind → rule set: keypage = native; rules = touchscreen rules, without host-private gates; touch = touchscreen rules + private gates
     HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); PY=${DM_PY:-${DM_ROOT:-$HOME/dm-work}/build/cache/dm/venv/bin/python3}; NSO=${DM_NSO_DIR:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/ExeFS}
-    for k in keypage rules touch; do O=${DM_ROOT:-$HOME/dm-work}/build/cache/dm/out/$P-$k; mkdir -p "$O"
+    # 每种产物三个模块都改写成功后最后写完成标记 .complete（内容 = 这次用的 patch_nso.py 的校验值），重出前先删：setup.sh 凭它判断产物齐全、是不是当前改写器出的
+    # After all three modules of a kind are rewritten successfully, the completion stamp .complete is written last (content = the checksum of the patch_nso.py used); it is deleted before rebuilding: setup.sh uses it to tell whether the build output is complete and was made by the current rewriter
+    SRC=$(shasum -a 256 "$HERE/patch_nso.py" | cut -c1-64)
+    for k in keypage rules touch; do O=${DM_ROOT:-$HOME/dm-work}/build/cache/dm/out/$P-$k; mkdir -p "$O"; rm -f "$O/.complete"
       case $k in keypage) E=(DM_RULESET=native);; rules) E=(DM_RULESET=touch-run-v4 DM_PRIVATE_GATES=0);; touch) E=(DM_RULESET=touch-run-v4);; esac
       for m in main sdk subsdk0; do env "${E[@]}" "$PY" "$HERE/patch_nso.py" "$NSO/$m" "$O" "$m" > "$O/$m.patch.log" 2>&1 || { echo "🔴 $k $m 改写失败：$(tail -2 "$O/$m.patch.log")" >&2; exit 1; }; done
+      echo "$SRC" > "$O/.complete"
       echo "$P-$k 已出：$(ls "$O" | wc -l | tr -d ' ') 个文件"; done;;
   *) echo "用法：product.sh name|path <种类> | rev | build" >&2; exit 2;;
 esac

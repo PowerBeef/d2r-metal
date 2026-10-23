@@ -120,7 +120,13 @@ py_env() { python3 -m venv "$DM_ROOT/build/cache/dm/venv" && "$PY" -m pip instal
 [ -x "$PY" ] && "$PY" -c 'import PIL, numpy, lz4, capstone, unicorn' 2> /dev/null || step "Python 环境与包" py_env
 
 P=$(head -1 "$HERE/dm/PRODUCT")
-[ -f "$DM_ROOT/build/cache/dm/out/$P-touch/main.patched.bin" ] || step "改写主程序（三种产物）" env DM_PY="$PY" bash "$HERE/dm/tools/product.sh" build
+# 三种产物都有完成标记、且标记里的改写器校验值与仓里 patch_nso.py 一致才跳过改写（product.sh build 最后写 .complete）。
+# 原先只看 touch/main.patched.bin 在不在：改写中途被打断、或拉了改过 patch_nso.py 的新提交，旧产物都会被当成好的接着用
+# Skip the rewrite only when all three kinds of build output have the completion stamp and the rewriter checksum in it matches the repository's patch_nso.py (product.sh build writes .complete last).
+# Previously only whether touch/main.patched.bin existed was checked: after an interrupted rewrite, or after pulling commits that changed patch_nso.py, the old output was taken as good and kept
+products_ok() { local k want; want=$(shasum -a 256 "$HERE/dm/tools/patch_nso.py" | cut -c1-64)
+  for k in keypage rules touch; do [ "$(cat "$DM_ROOT/build/cache/dm/out/$P-$k/.complete" 2>/dev/null)" = "$want" ] || return 1; done; }
+products_ok || step "改写主程序（三种产物）" env DM_PY="$PY" bash "$HERE/dm/tools/product.sh" build
 
 packs() {
   mkdir -p "$DM_ROOT/build/cache/dm/dmsh" && cd "$DM_ROOT/build/cache/dm/dmsh" || return 1
