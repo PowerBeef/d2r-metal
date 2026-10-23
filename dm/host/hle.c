@@ -3,6 +3,7 @@
 #include "dm.h"
 #include "dm_sect.h"
 #include <dlfcn.h>
+#include <stdatomic.h>
 #include <time.h>
 
 typedef struct { const char *name; void *fn; } hle_ent;
@@ -12,11 +13,11 @@ typedef struct { const char *name; void *fn; } hle_ent;
 #define MAX_STUB 4096                 // 与 entry.S 的 .rept 次数一致 | Matches the .rept count in entry.S
 static unsigned g_nstub;
 static const char *g_stub_name[MAX_STUB];
-static uint8_t g_stub_seen[MAX_STUB];
+static _Atomic uint8_t g_stub_seen[MAX_STUB];   // 见过 = 1（交换置位：多线程同时首调也只记一行；原先是会回绕的计数，每 256 次又记一行） | seen = 1 (set by exchange: one line even when several threads make the first call at once; it used to be a wrapping counter that logged again every 256 calls)
 extern uint64_t unimpl_stubs[MAX_STUB];   // 每桩 8 字节 | 8 bytes per stub
 
 uint64_t unimpl_c(unsigned idx, uint64_t *regs) {
-    if (!g_stub_seen[idx]++)
+    if (!atomic_exchange(&g_stub_seen[idx], 1))
         LOG("UNIMPL %s (x0=%#llx x1=%#llx x2=%#llx)", g_stub_name[idx], regs[0], regs[1], regs[2]);
     return 0;
 }

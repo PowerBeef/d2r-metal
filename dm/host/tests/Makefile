@@ -57,6 +57,7 @@ run: \
 	$(B)/t_thread_leak \
 	$(B)/t_touch \
 	$(B)/t_touch_mac \
+	$(B)/t_unimpl \
 	$(B)/t_unit_level \
 	$(B)/t_widget
 	python3 native_write_scan.py --selftest ..
@@ -118,6 +119,7 @@ run: \
 	$(B)/t_svc_mem
 	$(B)/t_thr_sem
 	$(B)/t_guest_clock
+	$(B)/t_unimpl
 	$(B)/t_target_rank 2>/dev/null
 	$(B)/t_hud_dead
 	$(B)/t_namegen
@@ -253,3 +255,6 @@ $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 
 $(B)/t_loader_reloc: t_loader_reloc.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_reloc.c ../hle.c
+
+$(B)/t_unimpl: t_unimpl.c ../hle.c ../dm.h ../hle.h | $(B)
+	clang -O1 -Wno-unused-function -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_unimpl.c
