@@ -59,6 +59,7 @@ class AcceptTests(unittest.TestCase):
         # Prerequisites of the items that need ground-truth data (2 5 6 7 10): stand-ins for the ground-truth recording directory and ryu/selfcmp.py; without them these items are "unavailable" (see test_missing_truth_is_unavailable_not_red)
         (self.root / 'dm-work/data/switch/truth_runs/cvd5').mkdir(parents=True)
         self.write('dm/verify/ryu/selfcmp.py', 'echo 替身\n')
+        self.write('dm/data/bootlist_fixture.tsv', '# BUILD_ID\tfixture\n')   # ⓪ 要的启动块清单（公开仓库不带）的替身 | Stand-in for the boot block list step 0 needs (not shipped in the public repository)
 
     def write(self, rel, body):
         p = self.root / rel; p.parent.mkdir(parents=True, exist_ok=True)
@@ -79,15 +80,16 @@ class AcceptTests(unittest.TestCase):
             self.assertIn(want, r.stdout, ch)
 
     def test_missing_truth_is_unavailable_not_red(self):
-        # 真值录制与 ryu 脚本不在（仓里不发布真值数据）：要它们的项记 ⚪ 不可用、不跑、不算红；末行报不可用几项，退出码 0（期望按规则手写：② ⑤ ⑦ ⑩ 四项）
-        # The ground-truth recording and the ryu scripts are absent (ground-truth data is not shipped with the repo): the items needing them are recorded as ⚪ unavailable, not run, not red; the last line reports how many were unavailable, exit code 0 (expected by rule: the four items 2 5 7 10)
+        # 真值录制、ryu 脚本、启动块清单都不在（仓里不发布这些）：要它们的项记 ⚪ 不可用、不跑、不算红；末行报不可用几项，退出码 0（期望按规则手写：⓪ ② ⑤ ⑦ ⑩ 五项）
+        # The ground-truth recording, the ryu scripts and the boot block list are all absent (the repository does not ship them): the items needing them are recorded as ⚪ unavailable, not run, not red; the last line reports how many were unavailable, exit code 0 (expected by rule: the five items 0 2 5 7 10)
         shutil.rmtree(self.root / 'dm-work/data/switch/truth_runs')
         shutil.rmtree(self.verify / 'ryu')
+        shutil.rmtree(self.root / 'dm/data')
         r = self.run_accept('--fast', '/fixture/out')
         self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertEqual(r.stdout.count('⚪ 不可用'), 4, r.stdout)
+        self.assertEqual(r.stdout.count('⚪ 不可用'), 5, r.stdout)   # ⓪ ② ⑤ ⑦ ⑩ | items 0 2 5 7 10
         self.assertIn('缺 data/switch/truth_runs/cvd5 dm/verify/ryu/selfcmp.py', r.stdout)
-        self.assertIn('（不可用 4 项）', r.stdout.splitlines()[-1])
+        self.assertIn('（不可用 5 项）', r.stdout.splitlines()[-1])
 
     def test_m3_shotgate_row_present(self):
         # 夹具不是 git 仓库、读不出改动清单 ⇒ 照跑：表里有 ⑪ 这一行，画面闸门脚本被调了两次（缺省宿主一次、旧接口版宿主一次）

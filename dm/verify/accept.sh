@@ -93,7 +93,10 @@ item() {   # item <序号> <名> <期望> <日志> <读数行正则> <读数行�
   printf '%s\n| %s | %s | %s %s | %s 秒 |\n' "$rc" "$name" "$want" "$mark" "${got:-（无读数行，见 ${log}）}" "$((SECONDS - s))" > "$L/$k.row"
   echo "$mark ${name}（$((SECONDS - s)) 秒）"
 }
-item 0 "⓪ 启动块清单 bootlist.tsv" "存在、构建号与 main.cuts.tsv 一致、与仓库 dm/data/bootlist_<构建号>.tsv 逐字节相同、sha 自洽、块数 > 0、逐块与资源包一致" bootlist.log '^BOOTLIST' 1 "$HERE/bootchk.sh" "$OUT"
+# ⓪ 要仓库里的启动块清单 dm/data/bootlist_<构建号>.tsv：公开仓库不带它（每行带原版资源块的开头字节，patch_nso.py 没它就不出 bootlist.tsv），没有就记不可用
+# Step 0 needs the boot block list dm/data/bootlist_<build ID>.tsv in the repository: the public repository does not ship it (each line carries the first bytes of an original resource block, and patch_nso.py writes no bootlist.tsv without it); without it the item is unavailable
+BL_ANY=$(ls "$HERE"/../data/bootlist_*.tsv 2>/dev/null | head -1)
+NEED="${BL_ANY:-$HERE/../data/bootlist_<构建号>.tsv}" item 0 "⓪ 启动块清单 bootlist.tsv" "存在、构建号与 main.cuts.tsv 一致、与仓库 dm/data/bootlist_<构建号>.tsv 逐字节相同、sha 自洽、块数 > 0、逐块与资源包一致" bootlist.log '^BOOTLIST' 1 "$HERE/bootchk.sh" "$OUT"
 # ①②③ 互相独立，并行（accept ≤ 2 分钟）：regress 吃 CPU、host_savecmp 一局宿主、shotgate 4 路宿主
 # (1)(2)(3) are independent of each other and run in parallel (accept <= 2 minutes): regress eats CPU, host_savecmp is one host run, shotgate is 4 hosts in parallel
 regress_both() {   # ① 被测产物全套 + 出包产物（iOS 发给玩家的 touch）结构核对（触屏私有门 4 条登记缺口，accept 只核 keypage 一直没暴露） | (1) structure check of the full set of build output under test + the packaging build output (the touch one iOS ships to players) (4 registration gaps in the touch-screen private gates went unexposed because accept only checked keypage)
