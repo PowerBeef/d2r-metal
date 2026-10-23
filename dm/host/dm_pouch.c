@@ -13,6 +13,7 @@
 //   所以按整串位流（含背包格位）只在本角色档里找：
 //   收进囊：这次要提交的角色档里已没有那一串 → 并进盘上状态；放到背包：角色档里已有放好的那一串 → 从盘上状态去掉，之后才发 0x63（0x63 之后的事全在原版存档里）。
 //   都在提交前钩子里判，侧文件与角色档同一次提交原子换入：杀进程只会回到某次提交的一致状态，不丢、不复制。没证明的留着等下一次存盘（服务端拍每 2 秒再请一次）。
+//   提交前钩子只暂记（侧文件按「盘上状态 + 这次证明的」写），提交结果钩子 pouch_post 报成了才并进盘上状态、才交出等发 0x63 的新物品；没成（被拒 / 克隆失败）就回到待证明，下次提交重新核对。
 //   开箱放之前先等收进囊的都证明完（同一件不会同时挂着收和放）。
 // 界面：物品栏面板里我们自己的控件（布局 dm/ios/tools/pouch_layout.py）：TouchPouch / TouchStore 两个按钮发 ClosePanel:TouchPouch / TouchStore（空操作，这里当信号收）。
 // 百宝囊框的数字 = 囊里件数，点它出清单（读侧文件来的内容，重进游戏还在；开箱搬完清零）。
@@ -34,6 +35,7 @@
 //   so search for the whole bitstream (including the inventory cell position) in this character's save only:
 //   stow into the pouch: the character save about to be committed no longer contains that bitstream -> merge into the on-disk state; release to the inventory: the character save already contains the placed bitstream -> remove from the on-disk state, and only then send 0x63 (everything after 0x63 lives in the original save).
 //   All decided in the pre-commit hook; the sidecar file and the character save are swapped in atomically in the same commit: killing the process only returns to the consistent state of some commit, nothing lost, nothing duplicated. Unproven entries wait for the next save (the server tick requests one again every 2 seconds).
+//   The pre-commit hook only stages (the sidecar file is written as "on-disk state + what was proven this time"); only when the commit outcome hook pouch_post reports success are they merged into the on-disk state and the new item ids handed out for 0x63; otherwise (refused / clone failed) they go back to pending and are checked again at the next commit.
 //   Before releasing on stash open, wait until everything stowed into the pouch is proven (the same item is never pending both stow and release).
 // UI: our own widgets in the inventory panel (layout dm/ios/tools/pouch_layout.py): the two buttons TouchPouch / TouchStore send ClosePanel:TouchPouch / TouchStore (a no-op, received here as a signal).
 // The number on the pouch box = item count in the pouch; tapping it shows the list (contents read from the sidecar file, still there after re-entering the game; reset to zero once the stash-open transfer finishes).
@@ -93,16 +95,17 @@ static uint64_t bag_item(uint64_t pl, uint32_t id) {
 #define UMAX 1024
 #define UBYTES 64          // 符文 / 宝石是简单物品，位流很短（宿主实测：十几字节） | Runes / gems are simple items with very short bitstreams (measured on the host: a dozen or so bytes)
 typedef struct { uint32_t code; uint16_t len; uint8_t bits[UBYTES]; } uitem;
-typedef struct { int put; uitem it; uint16_t plen; uint8_t pb[UBYTES]; uint32_t nid; } upend;   // put：收进囊（证据 pb = 背包里那一串，要「没有」）；否则放到背包（pb = 放好后那一串，要「有」，nid = 新物品 id） | put: stow into the pouch (evidence pb = that bitstream in the inventory, must be "absent"); otherwise release to the inventory (pb = the bitstream after placement, must be "present", nid = new item id)
+typedef struct { int put; uitem it; uint16_t plen; uint8_t pb[UBYTES]; uint32_t nid; int stg; } upend;   // put：收进囊（证据 pb = 背包里那一串，要「没有」）；否则放到背包（pb = 放好后那一串，要「有」，nid = 新物品 id）；stg = 这次提交前已证明、等提交结果 | put: stow into the pouch (evidence pb = that bitstream in the inventory, must be "absent"); otherwise release to the inventory (pb = the bitstream after placement, must be "present", nid = new item id); stg = proven before this commit, waiting for its outcome
 static uitem g_u[UMAX], g_ud[UMAX]; static int g_nu, g_nud, g_uload; static char g_uchar[64];   // g_u = 囊里（界面看的）；g_ud = 盘上状态（侧文件写它） | g_u = in the pouch (what the UI sees); g_ud = on-disk state (what the sidecar file writes)
 static upend g_up[256]; static int g_nup, g_udirty;   // g_udirty：盘上状态 g_ud 变了但侧文件还没写成（上次写失败），下次提交再写 | g_udirty: the on-disk state g_ud changed but the side file has not been written successfully yet (the last write failed); it is written again at the next commit
-static uint32_t g_ready[64]; static int g_nready;   // 已证明放进背包、等发 0x63 的新物品 id（钩子写、服务端拍取） | New item ids proven to be in the inventory and waiting for 0x63 to be sent (written by the hook, taken by the server tick)
+static uint32_t g_ready[64]; static int g_nready;   // 已证明放进背包、等发 0x63 的新物品 id（提交结果钩子写、服务端拍取） | New item ids proven to be in the inventory and waiting for 0x63 to be sent (written by the commit outcome hook, taken by the server tick)
+static uitem g_ux[UMAX]; static int g_nux, g_ustaged; static unsigned g_uloadgen, g_ustg_gen;   // 暂记的盘上状态（这次提交写进侧文件的那份）；g_ustaged = 这次提交写了它、等结果；读入一次加一代，结果来时已换了角色就不认 | Staged on-disk state (the copy this commit wrote into the side file); g_ustaged = this commit wrote it and waits for the outcome; one generation per load, so an outcome arriving after a character change is ignored
 static pthread_mutex_t g_umu = PTHREAD_MUTEX_INITIALIZER;   // 服务端拍与写盘线程（提交前钩子）都碰；界面读清单也拿它 | Touched by both the server tick and the disk-write thread (pre-commit hook); the UI also takes it when reading the list
 static _Atomic int g_ucount, g_ugen;   // 囊里件数 / 内容一变就加一（界面读） | Item count in the pouch / incremented by one whenever the contents change (read by the UI)
 static void pouch_path(char *p, size_t n, const char *wd) { snprintf(p, n, "%s/%s/%s.swpouch", wd, g_uchar, g_uchar); }
 static void pouch_pub(void) { atomic_store(&g_ucount, g_nu); atomic_fetch_add(&g_ugen, 1); }
 static void pouch_load(void) {   // 进局读一次（工作目录里的那份 = 上次提交的）。格式（小端）：'SWPU' u8 版本 1 u8 0 u16 条数；每条 u32 物品码 u16 位流长 + 位流 | Read once on entering a run (the copy in the working directory = the last committed one). Format (little-endian): 'SWPU' u8 version 1 u8 0 u16 entry count; each entry u32 item code u16 bitstream length + bitstream
-    g_nu = g_nud = g_nup = g_nready = 0; const char *wd = dm_save_workdir(); if (!wd || !g_uchar[0]) { pouch_pub(); return; }
+    g_nu = g_nud = g_nup = g_nready = 0; g_udirty = 0; g_uloadgen++; const char *wd = dm_save_workdir(); if (!wd || !g_uchar[0]) { pouch_pub(); return; }
     char p[1200]; pouch_path(p, sizeof p, wd); FILE *f = fopen(p, "rb");
     if (!f) { LOG("百宝囊：%s 还没有侧文件（空）", g_uchar); pouch_pub(); return; }
     uint8_t h[8]; int bad = 0;
@@ -112,11 +115,11 @@ static void pouch_load(void) {   // 进局读一次（工作目录里的那份 =
     fclose(f); if (bad) LOG("【红】百宝囊：%s 读到第 %d 条坏了，只用前面读好的（文件不动）", p, g_nu);
     memcpy(g_ud, g_u, sizeof(uitem) * (size_t)g_nu); g_nud = g_nu; pouch_pub(); LOG("百宝囊：%s 读入 %d 件", g_uchar, g_nu);
 }
-static int pouch_save(const char *wd) {   // 写盘上状态 g_ud（临时文件再改名），只在提交前钩子里调 | Write the on-disk state g_ud (temp file then rename); called only in the pre-commit hook
+static int pouch_save(const char *wd, const uitem *ud, int nud) {   // 写给定的盘上状态（暂记的那份，临时文件再改名），只在提交前钩子里调 | Write the given on-disk state (the staged copy; temp file then rename); called only in the pre-commit hook
     { static int nf = -1; if (nf < 0) { const char *e = getenv("DM_TEST_POUCH_SAVE_FAIL"); nf = e ? atoi(e) : 0; } if (nf > 0) { nf--; LOG("【红】百宝囊：测试 DM_TEST_POUCH_SAVE_FAIL 这次当作写失败"); return -1; } }   // 测试开关：前 N 次写当作失败 | test switch: the first N writes are treated as failures
     char p[1200], t[1210]; pouch_path(p, sizeof p, wd); snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "wb"); if (!f) return -1;
-    uint8_t h[8] = { 'S', 'W', 'P', 'U', 1, 0, 0, 0 }; *(uint16_t *)(h + 6) = (uint16_t)g_nud; int ok = fwrite(h, 1, 8, f) == 8;
-    for (int i = 0; i < g_nud && ok; i++) { uint8_t e[6]; memcpy(e, &g_ud[i].code, 4); *(uint16_t *)(e + 4) = g_ud[i].len; ok = fwrite(e, 1, 6, f) == 6 && fwrite(g_ud[i].bits, 1, g_ud[i].len, f) == g_ud[i].len; }
+    uint8_t h[8] = { 'S', 'W', 'P', 'U', 1, 0, 0, 0 }; *(uint16_t *)(h + 6) = (uint16_t)nud; int ok = fwrite(h, 1, 8, f) == 8;
+    for (int i = 0; i < nud && ok; i++) { uint8_t e[6]; memcpy(e, &ud[i].code, 4); *(uint16_t *)(e + 4) = ud[i].len; ok = fwrite(e, 1, 6, f) == 6 && fwrite(ud[i].bits, 1, ud[i].len, f) == ud[i].len; }
     ok = fclose(f) == 0 && ok; if (!ok || rename(t, p)) { remove(t); LOG("【红】百宝囊：写 %s 失败", p); return -1; }
     return 0;
 }
@@ -125,28 +128,43 @@ static int char_blob(const char *wd, dm_blob *o) {   // 本角色档 <角色>/<�
     fseek(f, 0, SEEK_END); long L = ftell(f); fseek(f, 0, SEEK_SET); o->d = L > 0 && L < (16 << 20) ? malloc((size_t)L) : NULL; o->n = o->d ? fread(o->d, 1, (size_t)L, f) : 0; fclose(f);
     if (!o->n) { free(o->d); o->d = NULL; } return o->n > 0;
 }
-static void pouch_hook(const char *wd) {   // 提交前钩子（写盘线程，持存档锁） | Pre-commit hook (disk-write thread, holding the save lock)
+static void pouch_hook(const char *wd) {   // 提交前钩子（写盘线程，持存档锁）：证明了的只暂记，侧文件写「盘上状态 + 这次证明的」，等 pouch_post 报结果 | Pre-commit hook (disk-write thread, holding the save lock): what is proven is only staged, the side file gets "on-disk state + what was proven this time", and pouch_post reports the outcome
     pthread_mutex_lock(&g_umu);
+    g_ustaged = 0;
     if (g_uload && (g_nup || g_udirty)) {
         dm_blob bl; int hb = char_blob(wd, &bl), done = 0; uint64_t cno = dm_fs_commit_count() + 1;
         if (!hb) LOG("【红】百宝囊：提交前核对 #%llu —— 读不到 %s 的角色档，这次不判", (unsigned long long)cno, g_uchar);
-        for (int i = 0; hb && i < g_nup; ) { upend *p = &g_up[i]; int have = dm_memfind(bl.d, bl.n, p->pb, p->plen) != NULL;
-            if (p->put == have) { i++; continue; }
-            if (p->put) { if (g_nud < UMAX) g_ud[g_nud++] = p->it; else LOG("【红】百宝囊：盘上状态已满 %d 件", UMAX); }
-            else { int k = -1; for (int j = 0; j < g_nud && k < 0; j++) if (g_ud[j].len == p->it.len && !memcmp(g_ud[j].bits, p->it.bits, p->it.len)) k = j;
-                if (k >= 0) g_ud[k] = g_ud[--g_nud]; else LOG("【红】百宝囊：放到背包的 %.3s 在盘上状态里找不到", (const char *)&p->it.code);
-                if (g_nready < 64) g_ready[g_nready++] = p->nid; }
-            LOG("百宝囊：提交前核对 #%llu —— %.3s %s → 并进盘上状态", (unsigned long long)cno, (const char *)&p->it.code, p->put ? "收进囊：角色档里已没有背包那一串" : "放到背包：角色档里已有放好的那一串");
-            g_up[i] = g_up[--g_nup]; done++; }
+        memcpy(g_ux, g_ud, sizeof(uitem) * (size_t)g_nud); g_nux = g_nud;
+        for (int i = 0; i < g_nup; i++) { upend *p = &g_up[i]; p->stg = 0; if (!hb) continue; int have = dm_memfind(bl.d, bl.n, p->pb, p->plen) != NULL;
+            if (p->put == have) continue;
+            if (p->put) { if (g_nux < UMAX) g_ux[g_nux++] = p->it; else LOG("【红】百宝囊：盘上状态已满 %d 件", UMAX); }
+            else { int k = -1; for (int j = 0; j < g_nux && k < 0; j++) if (g_ux[j].len == p->it.len && !memcmp(g_ux[j].bits, p->it.bits, p->it.len)) k = j;
+                if (k >= 0) g_ux[k] = g_ux[--g_nux]; else LOG("【红】百宝囊：放到背包的 %.3s 在盘上状态里找不到", (const char *)&p->it.code); }
+            LOG("百宝囊：提交前核对 #%llu —— %.3s %s → 暂记，这次提交成了再并进盘上状态", (unsigned long long)cno, (const char *)&p->it.code, p->put ? "收进囊：角色档里已没有背包那一串" : "放到背包：角色档里已有放好的那一串");
+            p->stg = 1; done++; }
         free(bl.d);
         // 侧文件没写成：同编年史（dm_vault.c vault_pre_commit）——这次提交拒绝、盘上状态标脏，服务端拍接着请存盘，写成为止
         // The side file failed to write: same as the Chronicle (dm_vault.c vault_pre_commit) -- this commit is refused, the on-disk state is marked dirty, and the server tick keeps requesting a save until the write succeeds
-        if (done || g_udirty) { if (pouch_save(wd) == 0) { LOG("百宝囊：侧文件随这次提交落盘（盘上 %d 件、囊里 %d 件、还有 %d 条待证明）", g_nud, g_nu, g_nup); g_udirty = 0; }
-            else { void dm_fs_save_poison(int e); g_udirty = 1; dm_fs_save_poison(EIO); LOG("【红】百宝囊：侧文件没写成 → 这次存档提交拒绝，之后重试（盘上状态 %d 件留在内存）", g_nud); } }
+        if (done || g_udirty) { if (pouch_save(wd, g_ux, g_nux) == 0) { g_ustaged = 1; g_ustg_gen = g_uloadgen; LOG("百宝囊：侧文件随这次提交写下（盘上 %d 件、囊里 %d 件、这次证明 %d 条、还有 %d 条待证明），等提交结果", g_nux, g_nu, done, g_nup - done); }
+            else { void dm_fs_save_poison(int e); g_udirty = 1; dm_fs_save_poison(EIO); for (int i = 0; i < g_nup; i++) g_up[i].stg = 0; LOG("【红】百宝囊：侧文件没写成 → 这次存档提交拒绝，之后重试（盘上状态 %d 件留在内存）", g_nud); } }
     }
     pthread_mutex_unlock(&g_umu);
 }
-__attribute__((constructor)) static void pouch_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[2] = pouch_hook; }
+// 提交结果钩子（hle_fs.c post_commit，同一次 Commit 里、持存档锁）：成了 → 暂记的并进盘上状态、放到背包的交出去等发 0x63；没成 → 暂记作废、回到待证明，侧文件标脏（工作目录里那份可能是暂记版，下次提交一定重写）
+// Commit outcome hook (hle_fs.c post_commit, in the same Commit, holding the save lock): success -> merge the staged entries into the on-disk state and hand the released items out for 0x63; failure -> the staged entries are void and back to pending, and the side file is marked dirty (the copy in the work directory may be the staged one, so the next commit always rewrites it)
+static void pouch_post(int ok) {
+    pthread_mutex_lock(&g_umu);
+    if (g_ustaged && g_ustg_gen == g_uloadgen) {
+        int n = 0; for (int i = 0; i < g_nup; i++) n += g_up[i].stg;
+        if (ok) { memcpy(g_ud, g_ux, sizeof(uitem) * (size_t)g_nux); g_nud = g_nux; g_udirty = 0;
+            for (int i = 0; i < g_nup; ) { if (!g_up[i].stg) { i++; continue; } if (!g_up[i].put && g_nready < 64) g_ready[g_nready++] = g_up[i].nid; g_up[i] = g_up[--g_nup]; }
+            if (n) LOG("百宝囊：这次提交成了 → %d 条并进盘上状态（盘上 %d 件、还有 %d 条待证明）", n, g_nud, g_nup); }
+        else { for (int i = 0; i < g_nup; i++) g_up[i].stg = 0; g_udirty = 1; LOG("【红】百宝囊：这次提交没成 → 暂记的 %d 条回到待证明，下次提交重新核对（盘上状态 %d 件不变）", n, g_nud); }
+    }
+    g_ustaged = 0;
+    pthread_mutex_unlock(&g_umu);
+}
+__attribute__((constructor)) static void pouch_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); extern void (*g_dm_post_commit_hook[5])(int); g_dm_pre_commit_hook[2] = pouch_hook; g_dm_post_commit_hook[2] = pouch_post; }
 
 // 收进囊：背包里的这件符文 / 宝石（服务端物品）→ 写位流 → 摘下 → 通知 → 释放；记一条「收」（持 g_umu 调）
 // Stow into the pouch: this rune / gem in the inventory (server item) -> write bitstream -> remove -> notify -> free; record one "stow" entry (called holding g_umu)

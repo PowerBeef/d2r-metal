@@ -52,6 +52,7 @@ run: \
 	$(B)/t_warp_diag \
 	$(B)/t_romfs_validate \
 	$(B)/t_rwlv \
+	$(B)/t_save_hooks \
 	$(B)/t_svc_mem \
 	$(B)/t_swkbd \
 	$(B)/t_target_rank \
@@ -111,6 +112,7 @@ run: \
 	$(B)/t_oe 2>/dev/null
 	$(B)/t_fs 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_fs_case 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_save_hooks 2>/dev/null
 	DM_ROMFS="$(DM_ROOT)/data/switch/3.3.94012/Update/RomFS" $(B)/t_romfs_validate
 	$(B)/t_audio
 	$(B)/t_audio_spsc
@@ -225,6 +227,12 @@ $(B)/t_condvar_old: t_condvar.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
 
 $(B)/t_fs_case: t_fs_case.c ../hle_fs.c ../hle.h ../dm.h ../dm_i18n.c | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_fs_case.c ../dm_i18n.c
+# 存档钩子单测带 ASan + UBSan：三个模块各编一个目标文件（静态量互不冲突），驱动直接包含 hle_fs.c
+# The save hook unit test is built with ASan + UBSan: one object file per module (their statics do not clash), and the driver includes hle_fs.c directly
+SAVE_CF = -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wno-unused-function -I..
+$(B)/t_save_hooks: t_save_hooks.c t_save_mods.c t_save_stub.c ../hle_fs.c ../dm_vault.c ../dm_pouch.c ../dm_pages.c ../hle.h ../dm.h | $(B)
+	for m in VAULT POUCH PAGES; do clang $(SAVE_CF) -DMOD_$$m -c -o $(B)/t_save_mod_$$m.o t_save_mods.c || exit 1; done
+	clang $(SAVE_CF) -o $@ t_save_hooks.c t_save_stub.c $(B)/t_save_mod_VAULT.o $(B)/t_save_mod_POUCH.o $(B)/t_save_mod_PAGES.o
 $(B)/t_romfs_validate: t_romfs_validate.c ../romfs_validate.c ../romfs_validate.h ../dm_i18n.c ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_romfs_validate.c ../romfs_validate.c ../dm_i18n.c
 

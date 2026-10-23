@@ -21,6 +21,7 @@
 #include <stdatomic.h>
 #include <pthread.h>
 #include <dirent.h>
+#include <errno.h>
 #include "dm.h"
 
 #define VBYTES 1024   // 单件位流上限（含孔里的） | Upper limit of a single item's bitstream (including socketed ones)
@@ -92,6 +93,8 @@ int dm_bits_simple(const uint8_t *bits, int len) { return len >= 4 && (bits[2] &
 //   格 = B → 翻页后；格 = A → 翻页前，带待定记录写、再请一次存盘；两份都等判翻页后；都不等 = 翻页后又动过格 → 翻页后。
 //   位置在位流里、一格只放得下一件，别处有同字节的复制品不影响（丢整页的病根）。
 // 进局读到待定记录：按格里实际的件同一规则落定（pages_resolve）。
+// 证明了也先只暂记：侧文件写定稿，内存里的待定记录留到提交结果钩子 pages_post 报「成了」才清；没成（被拒 / 克隆失败）就仍是待定，下次提交重新核对。
+// 侧文件写不成（带待定记录的、定稿的都算）就让这次提交被拒（F-SAVE-6）：照常提交就是翻页后的角色档配翻页前的侧文件，搬出的那页哪都没有。
 // 进局读侧文件时页里某件（有自己身份的）字节在原版存档里也有一份，只记不删（两件同字节是可能的，删了就是丢）
 // ---------- Personal stash pages 2–5 ----------
 // The personal stash grid in the character file (player inventory page 4) holds the 'current page'; the item bit streams of the other 4 pages live in the side file <character>/<character>.swpage (in the save working directory, swapped in atomically with each save commit).
@@ -104,12 +107,15 @@ int dm_bits_simple(const uint8_t *bits, int len) { return len >= 4 && (bits[2] &
 //   grid = B -> after; grid = A -> before, write with the pending record and request another save; both equal -> after; neither = the grid changed after the turn -> after.
 //   The position is in the bit stream and a cell holds only one item, so same-byte copies elsewhere do not matter (the root cause of losing a whole page).
 // On entering the game with a pending record: settle it by the actual items in the grid with the same rule (pages_resolve).
+// A proof is only staged at first: the side file gets the final version, and the pending record in memory is cleared only when the commit outcome hook pages_post reports success; otherwise (refused / clone failed) it stays pending and is checked again at the next commit.
+// If the side file cannot be written (with the pending record or the final version) this commit is refused (F-SAVE-6): committing as usual would pair the post-turn character file with the pre-turn side file, and the turned-away page would be nowhere.
 // When reading the side file on entry, an item (with its own identity) whose bytes also exist in the original save is logged, not removed (two items with the same bytes are possible; removing one loses it)
 #define PGN 5
 typedef struct { uint8_t x, y; uint16_t len; uint8_t *bits; } pitem;
 typedef struct { int n; pitem *it; } ppage;
 static ppage g_pp[PGN]; static int g_pcur, g_pload; static char g_pchar[64];
 static int g_ppend, g_pdirty;   // 待定翻页：[0] 搬出的、[1] 搬进的；g_pdirty = 进局去重改了页，下次提交要写 | Pending flip: [0] moved out, [1] moved in; g_pdirty = dedup on entering the run changed a page, to be written on the next commit
+static int g_pstaged; static unsigned g_ploadgen, g_pstg_gen;   // 这次提交写了：1 = 页槽（g_pdirty 那次）、2 = 翻页定稿；等 pages_post 报结果。读入一次加一代 | This commit wrote: 1 = the page slots (for g_pdirty), 2 = the final version of a turn; waiting for pages_post. One generation per load
 static uint64_t g_pmade; static int g_pmore; static char g_pstash[64];   // 翻页时已提交过几次、翻页后 [G+0x5800] 的值、之后看到过真的序列化、钩子要再请一次存盘、共享仓库名 | Number of commits already made at flip time, the value of [G+0x5800] after the flip, a real serialization has been seen since, the hook needs to request another save, shared stash name
 uint64_t dm_fs_commit_count(void); const char *dm_stash_name(uint8_t *b);
 static _Atomic int g_preq, g_pcur_pub;
@@ -155,7 +161,7 @@ void dm_pages_request_flip(int dir) { atomic_store(&g_preq, dir < 0 ? -1 : 1); }
 static void ppage_free(ppage *p) { for (int i = 0; i < p->n; i++) free(p->it[i].bits); free(p->it); p->n = 0; p->it = NULL; }
 static void pitem_dup(ppage *p, const pitem *it) { uint8_t *c = malloc(it->len); pitem *m = realloc(p->it, sizeof(pitem) * (size_t)(p->n + 1)); if (m) p->it = m; if (!c || !m) { free(c); return; } memcpy(c, it->bits, it->len); p->it[p->n] = *it; p->it[p->n++].bits = c; }
 static void pend_clear(void) { ppage_free(&g_pA); ppage_free(&g_pB); ppage_free(&g_pS0); }
-static void pages_clear(void) { pend_clear(); for (int i = 0; i < PGN; i++) ppage_free(&g_pp[i]); g_pcur = 0; g_ppend = 0; g_pdirty = 0; atomic_store(&g_pcur_pub, 0); }
+static void pages_clear(void) { pend_clear(); for (int i = 0; i < PGN; i++) ppage_free(&g_pp[i]); g_pcur = 0; g_ppend = 0; g_pdirty = 0; g_pstaged = 0; g_ploadgen++; atomic_store(&g_pcur_pub, 0); }
 static void pages_path(char *p, size_t n, const char *wd) { snprintf(p, n, "%s/%s/%s.swpage", wd, g_pchar, g_pchar); }
 static int ppage_read(FILE *f, ppage *p) {   // 一页：件数 u16，每件 x、y、长度 u16、位流；读坏返回 −1（读好的件留着） | One page: item count u16, then per item x, y, length u16, bit stream; returns -1 on a bad read (items read so far are kept)
     uint8_t c[2]; if (fread(c, 1, 2, f) != 2) return -1; int n = *(uint16_t *)c; if (!n) return 0;
@@ -215,12 +221,13 @@ static void pages_load(uint8_t *b, uint64_t player) {   // 进局读一次（工
     atomic_store(&g_pcur_pub, g_pcur); tot = 0; for (int pg = 0; pg < PGN; pg++) tot += g_pp[pg].n;   // 落定后重数 | Recount after settling
     LOG("个人仓库：%s 当前第 %d 页，另外几页共 %d 件", g_pchar, g_pcur + 1, tot);
 }
-static int pages_save(const char *wd) {   // 写进工作目录（临时文件再改名）；只在提交前钩子里调 | Write into the working directory (temp file then rename); called only in the pre-commit hook
+static int pages_save(const char *wd, int final) {   // 写进工作目录（临时文件再改名）；final = 写定稿（不带待定记录，内存里的待定记录等提交结果再清）；只在提交前钩子里调 | Write into the working directory (temp file then rename); final = write the final version (without the pending record; the pending record in memory is cleared when the commit outcome arrives); called only in the pre-commit hook
     char p[1200], t[1210]; pages_path(p, sizeof p, wd); snprintf(t, sizeof t, "%s.tmp", p);
-    FILE *f = fopen(t, "wb"); if (!f) return -1;
-    uint8_t h[8] = { 'S', 'W', 'P', 'G', 2, (uint8_t)g_pcur, (uint8_t)(g_ppend ? 1 : 0), 0 }; int ok = fwrite(h, 1, 8, f) == 8;
+    FILE *f = fopen(t, "wb"); if (!f) { LOG("【红】个人仓库：写 %s 失败（打不开临时文件 errno=%d）", t, errno); return -1; }   // 原先这里不出声（F-SAVE-6） | this used to fail silently (F-SAVE-6)
+    int pend = g_ppend && !final;
+    uint8_t h[8] = { 'S', 'W', 'P', 'G', 2, (uint8_t)g_pcur, (uint8_t)(pend ? 1 : 0), 0 }; int ok = fwrite(h, 1, 8, f) == 8;
     for (int pg = 0; pg < PGN && ok; pg++) ok = ppage_write(f, &g_pp[pg]);
-    if (ok && g_ppend) { uint8_t ft[2] = { (uint8_t)g_pfrom, (uint8_t)g_pto }; ok = fwrite(ft, 1, 2, f) == 2 && fwrite(&g_pH0, 8, 1, f) == 1 && ppage_write(f, &g_pA) && ppage_write(f, &g_pB) && ppage_write(f, &g_pS0); }
+    if (ok && pend) { uint8_t ft[2] = { (uint8_t)g_pfrom, (uint8_t)g_pto }; ok = fwrite(ft, 1, 2, f) == 2 && fwrite(&g_pH0, 8, 1, f) == 1 && ppage_write(f, &g_pA) && ppage_write(f, &g_pB) && ppage_write(f, &g_pS0); }
     ok = fclose(f) == 0 && ok; if (!ok || rename(t, p)) { remove(t); LOG("【红】个人仓库：写 %s 失败", p); return -1; }
     return 0;
 }
@@ -262,8 +269,9 @@ static void pages_flip(uint8_t *b, uint64_t G, uint64_t player, int dir) {
 static void pages_pre_commit(const char *wd) {   // 提交前钩子（持 g_pmu 调），规则见文件头「落盘一致性」 | Pre-commit hook (called holding g_pmu); for the rules see "On-disk consistency" in the file header
     { static int kill = -1; if (kill < 0) { const char *e = getenv("DM_TEST_PG_KILL"); kill = e ? atoi(e) : 0; }   // 测试开关 DM_TEST_PG_KILL=<n>：本局翻过页后，到翻页后第 n 次提交前直接结束进程（验任意时刻被杀：重进后不丢不重） | Test switch DM_TEST_PG_KILL=<n>: after a page turn in this session, exit the process right before the n-th commit after the turn (checks being killed at any moment: nothing lost or duplicated after re-entering)
       if (kill && g_pmade && dm_fs_commit_count() + 1 == g_pmade + (uint64_t)kill) { LOG("DM_TEST_PG_KILL：翻页后第 %d 次提交前结束进程（%s）", kill, g_ppend ? "翻页待定" : "翻页已落定"); fflush(stderr); _exit(9); } }
+    g_pstaged = 0;
     if (!g_pload || !g_pchar[0] || (!g_ppend && !g_pdirty)) return;
-    if (!g_ppend) { if (pages_save(wd) == 0) { g_pdirty = 0; LOG("个人仓库：进局后改过的页槽（去重 / 落定上次的翻页）随这次提交落盘"); } return; }
+    if (!g_ppend) { if (pages_save(wd, 0) == 0) { g_pstaged = 1; g_pstg_gen = g_ploadgen; LOG("个人仓库：进局后改过的页槽（去重 / 落定上次的翻页）随这次提交写下，等提交结果"); } return; }   // 写不成就下次再写：已提交的那份照样能落定，不必拒绝 | if it cannot be written, write it next time: the committed copy still settles correctly, no need to refuse
     // 只看这次要提交的本角色档里的个人仓库格：搬出页快照（A）与目标页快照（B）每件带位置的完整位流（简单物品也算）是否都在。
     // 位置在位流里，同一格只放得下一件，所以别处（共享仓库 / 别的角色 / 背包）有同字节的复制品不影响判断。
     // 格 = B → 翻页后；格 = A → 翻页前；两份都等（内容相同）判哪边都对，取翻页后；都不等 = 翻页后玩家又动过格 → 翻页后。
@@ -287,10 +295,21 @@ static void pages_pre_commit(const char *wd) {   // 提交前钩子（持 g_pmu 
     else if (isA && g_pA.n) { g_pmore = 1; LOG("个人仓库：提交前核对 #%llu —— 格里是搬出页（%d / %d 件都在）→ 角色档是翻页前的，等翻页后的存档", (unsigned long long)cno, na, g_pA.n); }
     else if (!g_pA.n && !nb) { g_pmore = 1; LOG("个人仓库：提交前核对 #%llu —— 从空页翻来、格里还没有目标页的件（0 / %d）→ 像是翻页前的，等翻页后的存档", (unsigned long long)cno, g_pB.n); }
     else why = "格里既不是搬出页也不是目标页（翻页后又动过格）";
-    if (why) { g_ppend = 0;   // 先清待定再写：这次写的是不带待定记录的定稿 | Clear the pending state before writing: this write is the final version without the pending record
-        if (pages_save(wd) == 0) { pend_clear(); g_pdirty = 0; g_pmore = 0; LOG("个人仓库：提交前核对 #%llu —— %s → 翻页后，侧文件随这次提交落盘（当前第 %d 页）", (unsigned long long)cno, why, g_pcur + 1); }
-        else g_ppend = 1; }
-    else if (pages_save(wd) == 0) LOG("个人仓库：提交前核对 #%llu —— 还没证明，侧文件带待定翻页记录随这次提交落盘（第 %d → %d 页，搬出 %d 件、搬进 %d 件）", (unsigned long long)cno, g_pfrom + 1, g_pto + 1, g_pA.n, g_pB.n);
+    void dm_fs_save_poison(int e);
+    if (why) {   // 写不带待定记录的定稿；内存里的待定记录等 pages_post 报成了再清 | write the final version without the pending record; the pending record in memory is cleared when pages_post reports success
+        if (pages_save(wd, 1) == 0) { g_pstaged = 2; g_pstg_gen = g_ploadgen; LOG("个人仓库：提交前核对 #%llu —— %s → 翻页后，侧文件定稿随这次提交写下（当前第 %d 页），等提交结果", (unsigned long long)cno, why, g_pcur + 1); }
+        else { dm_fs_save_poison(EIO); g_pmore = 1; LOG("【红】个人仓库：提交前核对 #%llu —— 定稿写不成 → 这次存档提交拒绝，翻页仍待定，之后重试", (unsigned long long)cno); } }
+    else if (pages_save(wd, 0) == 0) LOG("个人仓库：提交前核对 #%llu —— 还没证明，侧文件带待定翻页记录随这次提交落盘（第 %d → %d 页，搬出 %d 件、搬进 %d 件）", (unsigned long long)cno, g_pfrom + 1, g_pto + 1, g_pA.n, g_pB.n);
+    else { dm_fs_save_poison(EIO); g_pmore = 1; LOG("【红】个人仓库：提交前核对 #%llu —— 带待定记录的侧文件写不成 → 这次存档提交拒绝，之后重试", (unsigned long long)cno); }
+}
+// 提交结果钩子（hle_fs.c post_commit，同一次 Commit 里、持存档锁）：成了 → 定稿的翻页清掉待定记录与快照、页槽不再标脏；没成 → 翻页仍待定、页槽仍标脏，再请一次存盘
+// Commit outcome hook (hle_fs.c post_commit, in the same Commit, holding the save lock): success -> a finalized turn drops its pending record and snapshots, and the page slots are no longer dirty; failure -> the turn stays pending and the page slots stay dirty, and another save is requested
+static void pages_post(int ok) {
+    pthread_mutex_lock(&g_pmu);
+    if (g_pstaged && g_pstg_gen == g_ploadgen && ok) { if (g_pstaged == 2) { g_ppend = 0; pend_clear(); g_pmore = 0; LOG("个人仓库：这次提交成了 → 翻页落定（当前第 %d 页）", g_pcur + 1); } g_pdirty = 0; }
+    else if (!ok && g_pload && (g_ppend || g_pdirty)) { g_pmore = 1; if (g_pstaged) LOG("【红】个人仓库：这次提交没成 → %s，下次提交重新核对", g_pstaged == 2 ? "翻页仍待定" : "页槽仍待写"); }
+    g_pstaged = 0;
+    pthread_mutex_unlock(&g_pmu);
 }
 // 测试开关 DM_TEST_PG_SOCK=<拍>（造带孔物品现场）：背包里找一件能镶的装备 + 一颗宝石，用原版镶嵌 0x64d080 镶上，再把母件搬进个人仓库格 (5,5)（写位流 → 摘下 → 释放 → 建物品（含孔里的）→ 读档放物品）
 // Test switch DM_TEST_PG_SOCK=<tick> (sets up a socketed-item test case): find a socketable piece of equipment + a gem in the inventory, socket it with the original game's socketing 0x64d080, then move the parent item to personal stash cell (5,5) (write bitstream -> remove -> free -> build item (including socketed ones) -> load-time item placement)
@@ -348,4 +367,4 @@ void dm_pages_tick(uint64_t G, uint64_t player, uint8_t *b) {   // 服务端拍�
     if (dir) { pthread_mutex_lock(&g_pmu); pages_flip(b, G, player, dir); pthread_mutex_unlock(&g_pmu); }
 }
 static void pages_hook(const char *wd) { pthread_mutex_lock(&g_pmu); pages_pre_commit(wd); pthread_mutex_unlock(&g_pmu); }
-__attribute__((constructor)) static void pages_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[0] = pages_hook; }
+__attribute__((constructor)) static void pages_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); extern void (*g_dm_post_commit_hook[5])(int); g_dm_pre_commit_hook[0] = pages_hook; g_dm_post_commit_hook[0] = pages_post; }

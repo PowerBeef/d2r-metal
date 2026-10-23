@@ -13,6 +13,7 @@
 //   取出后第二次提交起、且已过 10 秒仍哪都没有 → 那件已离开（卖掉 / 丢下 / 用掉），也并进（不无限期挂着）。依据：存取后马上请存盘，下一拍就序列化；
 //   序列化在存取之前、提交在存取之后的那一次至多一次（定时存盘的序列化与写盘之间夹着存取，角色档由另一条线程写）。
 // 前一条没证明，后面的都等（次序：交换时旧件先取出、新件后存入）。侧文件与角色档在同一次提交里原子换入；提交前被杀，重启时工作目录从已提交版重新克隆，两边一起回到上一次。
+// 提交前钩子只暂记（侧文件按「盘上状态 + 这次证明的」写），提交结果钩子 vault_post 报成了才并进盘上状态；没成（被拒 / 克隆失败）就回到待落盘，下次提交重新核对。
 // 进局读侧文件时再兜一道：侧文件里某件的字节已出现在原版存档里（已取出），就从编年史里去掉（只会去重，不会凭空少）。
 // 格式（小端）：'SWVT' u16 版本 1 u16 条数；每条 u8 类型（0 套装件 / 1 暗金）u8 保留 u16 行号 u16 位流长 + 位流（游戏自己写存档时那件物品的字节，含孔里的）。
 // Chronicle vault: accepts only identified unique and set items, one cell in the vault per item (type + row number in the table).
@@ -30,6 +31,7 @@
 //   from the second commit after a withdraw on, with 10 seconds passed and it still nowhere → that item has left (sold / dropped / used up), merge as well (do not leave it hanging indefinitely). Basis: a save is requested right after a store / withdraw and serialization happens on the next tick;
 //   there is at most one commit whose serialization was before the store / withdraw and whose commit was after it (the store / withdraw falls between a timed save's serialization and its disk write, with the character save written by another thread).
 // If an earlier entry is not proven, all later ones wait (order: in a swap the old item is withdrawn first, the new item stored after). The sidecar file and the character save are swapped in atomically in the same commit; if killed before commit, on restart the working directory is re-cloned from the committed version and both sides go back to the previous state together.
+// The pre-commit hook only stages (the sidecar file is written as "on-disk state + what was proven this time"); only when the commit outcome hook vault_post reports success are they merged into the on-disk state; otherwise (refused / clone failed) they go back to pending and are checked again at the next commit.
 // One more safety net when reading the sidecar file on join: if an item's bytes in the sidecar file already appear in the original saves (already withdrawn), it is removed from the chronicle (this only deduplicates, never loses items out of nowhere).
 // Format (little-endian): 'SWVT' u16 version 1 u16 entry count; per entry u8 type (0 set item / 1 unique) u8 reserved u16 row number u16 bitstream length + bitstream (the bytes of that item as the game itself writes it in a save, including socketed ones).
 #include <time.h>
@@ -51,11 +53,12 @@ static ventry g_d[VMAX]; static int g_nd, g_ddirty;   // g_d = 盘上状态（�
 static pthread_mutex_t g_vmu = PTHREAD_MUTEX_INITIALIZER;   // 服务端拍（存取）与写盘线程（提交前钩子）都碰仓库 | Both the server tick (store / withdraw) and the disk write thread (pre-commit hook) touch the vault
 // 待落盘的一次存取：位流整份留着（并进 g_d 用），指纹 = 位流跳过前 8 字节的前 48 字节：前 4 字节是标志位（取出时清「新物品」位会变），接着是位置字段（方式 / 装备位 / x / y / 页，取出后可能穿在身上）
 // One pending store / withdraw: the whole bitstream is kept (for merging into g_d); fingerprint = 48 bytes of the bitstream after skipping the first 8 bytes: the first 4 bytes are flag bits (clearing the "new item" bit on withdraw changes them), followed by the position fields (mode / equipment slot / x / y / page; after withdraw it may be equipped)
-typedef struct { int put; uint8_t kind; uint16_t idx, len; uint8_t *data; int n; uint64_t made, t; } vpend;   // made = 记下时已成功提交过几次；t = 记下时的单调时钟（秒） | made = number of successful commits when recorded; t = monotonic clock when recorded (seconds)
+typedef struct { int put; uint8_t kind; uint16_t idx, len; uint8_t *data; int n; uint64_t made, t; int stg; } vpend;   // made = 记下时已成功提交过几次；t = 记下时的单调时钟（秒）；stg = 这次提交前已证明（1 并进 / 2 作废）、等提交结果 | made = number of successful commits when recorded; t = monotonic clock when recorded (seconds); stg = proven before this commit (1 merge / 2 drop), waiting for its outcome
 enum { VPEND = 64 };
 static vpend g_pend[VPEND]; static int g_npend, g_pend_cap = VPEND;   // g_pend_cap：测试开关 DM_TEST_VAULT_PEND=<条数> 可调小（造「队列满」） | g_pend_cap: can be lowered with the test switch DM_TEST_VAULT_PEND=<entries> (to produce "queue full")
 uint64_t dm_fs_commit_count(void); void dm_fs_save_poison(int e);
 static _Atomic int g_vretry;   // 侧文件上次没写成：服务端拍据此每 10 秒请一次存盘，直到写成 | the side file failed to write last time: based on this the server tick requests a save every 10 seconds until the write succeeds
+static ventry g_dx[VMAX]; static int g_ndx, g_vstaged; static unsigned g_vloadgen, g_vstg_gen;   // 暂记的盘上状态（这次提交写进侧文件的那份；数据指针借 g_d / 待落盘那条的，不归它管）；读入一次加一代 | Staged on-disk state (the copy this commit wrote into the sidecar file; its data pointers are borrowed from g_d / the pending entry, not owned); one generation per load
 static double now_s(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + ts.tv_nsec / 1e9; }
 static void pend_add(int put, int kind, int idx, const uint8_t *bits, int len) {
     if (g_npend >= VPEND || len <= 16) { LOG("【红】编年史仓库：待落盘已满 %d 条，这次存取不记（不该到这里：服务端拍在队列快满时先不做存取，见 dm_vault_tick）", VPEND); return; }
@@ -86,7 +89,7 @@ static const char *vault_name(uint8_t *b) {   // 同游戏选共享仓库名：D
 }
 const char *dm_stash_name(uint8_t *b) { return vault_name(b); }   // 个人仓库多页（dm_pages.c）核对时也要认共享仓库档 | Personal stash multi-page (dm_pages.c) verification also needs to recognize the shared stash save
 static void vault_clear(void) { for (int i = 0; i < g_nv; i++) free(g_v[i].data); g_nv = 0; for (int i = 0; i < g_nd; i++) free(g_d[i].data); g_nd = 0; g_ddirty = 0;
-    for (int i = 0; i < g_npend; i++) free(g_pend[i].data); g_npend = 0; }
+    for (int i = 0; i < g_npend; i++) free(g_pend[i].data); g_npend = 0; g_vloadgen++; g_vstaged = 0; }
 int dm_save_blobs(const char *wd, const char *stash, dm_blob *out, int max); int dm_blobs_have(const dm_blob *bl, int nb, const uint8_t *bits, int len); void dm_blobs_free(dm_blob *bl, int nb);   // dm_pages.c
 static int dfind(int kind, int idx) { for (int i = 0; i < g_nd; i++) if (g_d[i].kind == kind && g_d[i].idx == idx) return i; return -1; }
 static int vault_load(const char *name) {   // 进局读一次（工作目录里的那份 = 上次提交的） | Read once on entering a run (the copy in the working directory = the last committed one)
@@ -110,14 +113,14 @@ static int vault_load(const char *name) {   // 进局读一次（工作目录里
     if (bad) return -2;
     LOG("编年史仓库：%s 读入 %d 件（对原版存档去重 %d 件，比对 %d 份存档）", name, g_nv, drop, nb); return g_nv;
 }
-static int vault_save(const char *wd, const char *name) {   // 写进工作目录（临时文件再改名），随这次提交落盘；只在提交前钩子里调 | Write into the working directory (temp file, then rename), flushed to disk with this commit; called only in the pre-commit hook
+static int vault_save(const char *wd, const char *name, const ventry *d, int nd) {   // 把给定的盘上状态（暂记的那份）写进工作目录（临时文件再改名），随这次提交落盘；只在提交前钩子里调 | Write the given on-disk state (the staged copy) into the working directory (temp file, then rename), flushed to disk with this commit; called only in the pre-commit hook
     if (!wd) return -1;
     { static int nf = -1; if (nf < 0) { const char *e = getenv("DM_TEST_VAULT_SAVE_FAIL"); nf = e ? atoi(e) : 0; } if (nf > 0) { nf--; LOG("【红】编年史仓库：测试 DM_TEST_VAULT_SAVE_FAIL 这次当作写失败"); return -1; } }   // 测试开关：前 N 次写当作失败（验拒绝提交 + 重试） | test switch: the first N writes are treated as failures (verifies refusing the commit + retry)
     char p[1200], t[1210]; snprintf(p, sizeof p, "%s/%s.swvault", wd, name); snprintf(t, sizeof t, "%s.tmp", p);
     FILE *f = fopen(t, "wb"); if (!f) return -1;
-    uint8_t h[8] = { 'S', 'W', 'V', 'T', 1, 0, 0, 0 }; int nw = 0; for (int i = 0; i < g_nd; i++) nw += g_d[i].len > 0; *(uint16_t *)(h + 6) = (uint16_t)nw; int ok = fwrite(h, 1, 8, f) == 8;   // 写盘上状态 g_d | Write the on-disk state g_d
-    for (int i = 0; i < g_nd && ok; i++) { if (!g_d[i].len) continue; uint8_t e[6] = { g_d[i].kind, 0 }; *(uint16_t *)(e + 2) = g_d[i].idx; *(uint16_t *)(e + 4) = g_d[i].len;
-        ok = fwrite(e, 1, 6, f) == 6 && fwrite(g_d[i].data, 1, g_d[i].len, f) == g_d[i].len; }
+    uint8_t h[8] = { 'S', 'W', 'V', 'T', 1, 0, 0, 0 }; int nw = 0; for (int i = 0; i < nd; i++) nw += d[i].len > 0; *(uint16_t *)(h + 6) = (uint16_t)nw; int ok = fwrite(h, 1, 8, f) == 8;   // 写给定的盘上状态 | Write the given on-disk state
+    for (int i = 0; i < nd && ok; i++) { if (!d[i].len) continue; uint8_t e[6] = { d[i].kind, 0 }; *(uint16_t *)(e + 2) = d[i].idx; *(uint16_t *)(e + 4) = d[i].len;
+        ok = fwrite(e, 1, 6, f) == 6 && fwrite(d[i].data, 1, d[i].len, f) == d[i].len; }
     ok = fclose(f) == 0 && ok; if (!ok || rename(t, p)) { remove(t); LOG("【红】编年史仓库：写 %s 失败", p); return -1; }
     return 0;
 }
@@ -268,31 +271,54 @@ done:
     int np = g_npend; pthread_mutex_unlock(&g_vmu);
     if (np) { int s = getenv("DM_TEST_VAULT_NOSAVE") ? -9 : dm_request_save(); LOG("编年史仓库：仓库现有 %d 件、待落盘 %d 条，请游戏存盘 → %d", g_nv, np, s); }   // 测试开关 DM_TEST_VAULT_NOSAVE=1：存取后不请存盘（配合杀进程验「存取后、落盘前」掉电） | Test switch DM_TEST_VAULT_NOSAVE=1: do not request a save after a store / withdraw (used with killing the process to verify power loss "after store / withdraw, before flush")
 }
-// 提交前钩子（写盘线程，持着存档锁）：待落盘的存取按次序在原版存档里证明，证明了的并进盘上状态 g_d，有变化就写侧文件（规则见文件头）
-// Pre-commit hook (disk write thread, holding the save lock): pending store / withdraw operations are proven in order against the original save, the proven ones are merged into the on-disk state g_d, and the sidecar file is written if anything changed (rules in the file header)
+// 提交前钩子（写盘线程，持着存档锁）：待落盘的存取按次序在原版存档里证明，证明了的只暂记，有变化就把「盘上状态 g_d + 暂记的」写进侧文件；定稿等 vault_post（规则见文件头）
+// Pre-commit hook (disk write thread, holding the save lock): pending store / withdraw operations are proven in order against the original save, the proven ones are only staged, and if anything changed the sidecar file gets "on-disk state g_d + the staged ones"; vault_post settles them (rules in the file header)
+static int dxfind(int kind, int idx) { for (int i = 0; i < g_ndx; i++) if (g_dx[i].kind == kind && g_dx[i].idx == idx) return i; return -1; }
 static void vault_pre_commit(const char *wd) {
     pthread_mutex_lock(&g_vmu);
+    g_vstaged = 0;
     if ((g_npend || g_ddirty) && g_loaded) {
         dm_blob bl[64]; int nb = dm_save_blobs(wd, g_vname, bl, 64), done = 0; uint64_t cno = dm_fs_commit_count() + 1; double t = now_s();
-        while (g_npend > 0) { vpend *p = &g_pend[0]; int have = dm_blobs_have(bl, nb, p->data, p->len), ok = 0; const char *why = "";
+        memcpy(g_dx, g_d, sizeof(ventry) * (size_t)g_nd); g_ndx = g_nd;
+        for (int i = 0; i < g_npend; i++) g_pend[i].stg = 0;
+        for (int i = 0; i < g_npend; i++) { vpend *p = &g_pend[i]; int have = dm_blobs_have(bl, nb, p->data, p->len), ok = 0; const char *why = "";
             int late = cno >= p->made + 2 && t - (double)p->t >= 10;   // 存取后第二次提交起、且过了 10 秒：这次提交的原版存档一定是存取之后序列化的 | From the second commit after the store / withdraw on, and more than 10 seconds later: the original save in this commit was definitely serialized after the store / withdraw
             if (p->put) { if (!have) { ok = 1; why = "存入：原版存档里已没有那件"; } else if (late && cno >= p->made + 3) { ok = 2; why = "【红】存入：存入后好几次提交原版存档里那件还在（存入没生效？），不并进、编年史里也去掉"; } }
             else { if (have) { ok = 1; why = "取出：原版存档里已有那件"; } else if (late) { ok = 1; why = "取出：之后的存档里哪都没有那件（卖掉 / 丢下 / 用掉）"; } }
-            if (!ok) { LOG("编年史仓库：提交前核对 —— 第 1 条待落盘（%s %s %d）还没证明（这次提交 #%llu，记下于 #%llu 之后），这次及后面的都等", p->put ? "存入" : "取出", p->kind ? "暗金" : "套装件", p->idx, (unsigned long long)cno, (unsigned long long)p->made); break; }
-            int di = dfind(p->kind, p->idx);
-            if (ok == 1 && p->put) { if (di >= 0) { free(g_d[di].data); g_d[di].data = p->data; g_d[di].len = p->len; } else if (g_nd < VMAX) g_d[g_nd++] = (ventry){ p->kind, p->idx, p->len, p->data }; else free(p->data); p->data = NULL; }
-            else if (ok == 1) { if (di >= 0 && g_d[di].len >= 16 && !memcmp(g_d[di].data + 8, p->data + 8, (size_t)p->n)) { free(g_d[di].data); g_d[di] = g_d[--g_nd]; } }
-            else { int vi = vfind(p->kind, p->idx); if (vi >= 0 && g_v[vi].len == p->len && !memcmp(g_v[vi].data, p->data, p->len)) { free(g_v[vi].data); g_v[vi] = g_v[--g_nv]; atomic_fetch_add(&g_vgen, 1); } }
-            LOG("编年史仓库：提交前核对 #%llu —— %s（%s %d）→ 并进盘上状态", (unsigned long long)cno, why, p->kind ? "暗金" : "套装件", p->idx);
-            free(p->data); memmove(&g_pend[0], &g_pend[1], (size_t)(g_npend - 1) * sizeof g_pend[0]); g_npend--; done++; }
+            if (!ok) { LOG("编年史仓库：提交前核对 —— 第 %d 条待落盘（%s %s %d）还没证明（这次提交 #%llu，记下于 #%llu 之后），这次及后面的都等", i + 1, p->put ? "存入" : "取出", p->kind ? "暗金" : "套装件", p->idx, (unsigned long long)cno, (unsigned long long)p->made); break; }
+            int di = dxfind(p->kind, p->idx);
+            if (ok == 1 && p->put) { if (di >= 0) { g_dx[di].data = p->data; g_dx[di].len = p->len; } else if (g_ndx < VMAX) g_dx[g_ndx++] = (ventry){ p->kind, p->idx, p->len, p->data }; }
+            else if (ok == 1) { if (di >= 0 && g_dx[di].len >= 16 && !memcmp(g_dx[di].data + 8, p->data + 8, (size_t)p->n)) g_dx[di] = g_dx[--g_ndx]; }
+            LOG("编年史仓库：提交前核对 #%llu —— %s（%s %d）→ 暂记，这次提交成了再并进盘上状态", (unsigned long long)cno, why, p->kind ? "暗金" : "套装件", p->idx);
+            p->stg = ok; done++; }
         dm_blobs_free(bl, nb);
         // 侧文件没写成：这次提交不许照常进行（并进盘上状态的那几件已不在原版存档里，侧文件里又没有，提交后被杀就是丢件）。
         // 走存档事务自己的写失败口子：这次提交被拒绝、已提交版不变（同存档写失败，前端有提示）；盘上状态留在内存里标脏，服务端拍每 10 秒请一次存盘，写成为止
         // The side file failed to write: this commit must not go ahead as usual (the pieces merged into the on-disk state are no longer in the original save and are not in the side file either; being killed after the commit means lost items).
         // Take the save transaction's own write-failure path: this commit is refused and the committed version is unchanged (same as a save write failure, the front end shows a notice); the on-disk state stays in memory marked dirty, and the server tick requests a save every 10 seconds until the write succeeds
-        if (done || g_ddirty) { if (vault_save(wd, g_vname) == 0) { LOG("编年史仓库：侧文件随这次提交落盘（盘上 %d 件、内存 %d 件、还有 %d 条待证明）", g_nd, g_nv, g_npend); g_ddirty = 0; atomic_store(&g_vretry, 0); }
-            else { g_ddirty = 1; atomic_store(&g_vretry, 1); dm_fs_save_poison(EIO); LOG("【红】编年史仓库：侧文件没写成 → 这次存档提交拒绝，之后重试（盘上状态 %d 件留在内存）", g_nd); } }
+        if (done || g_ddirty) { if (vault_save(wd, g_vname, g_dx, g_ndx) == 0) { g_vstaged = 1; g_vstg_gen = g_vloadgen; LOG("编年史仓库：侧文件随这次提交写下（盘上 %d 件、内存 %d 件、这次证明 %d 条、还有 %d 条待证明），等提交结果", g_ndx, g_nv, done, g_npend - done); }
+            else { g_ddirty = 1; atomic_store(&g_vretry, 1); dm_fs_save_poison(EIO); for (int i = 0; i < g_npend; i++) g_pend[i].stg = 0; LOG("【红】编年史仓库：侧文件没写成 → 这次存档提交拒绝，之后重试（盘上状态 %d 件留在内存）", g_nd); } }
     }
     pthread_mutex_unlock(&g_vmu);
 }
-__attribute__((constructor)) static void vault_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[1] = vault_pre_commit; }
+// 提交结果钩子（hle_fs.c post_commit，同一次 Commit 里、持存档锁）：成了 → 暂记的按次序并进盘上状态 g_d、从待落盘里去掉（保留其余的先后）；没成 → 暂记作废、回到待落盘，侧文件标脏（下次提交一定重写）
+// Commit outcome hook (hle_fs.c post_commit, in the same Commit, holding the save lock): success -> merge the staged entries into the on-disk state g_d in order and drop them from the pending queue (the rest keep their order); failure -> the staged entries are void and back to pending, and the sidecar file is marked dirty (the next commit always rewrites it)
+static void vault_post(int ok) {
+    pthread_mutex_lock(&g_vmu);
+    if (g_vstaged && g_vstg_gen == g_vloadgen) {
+        int n = 0, k = 0;
+        for (int i = 0; i < g_npend; i++) { vpend *p = &g_pend[i];
+            if (!ok || !p->stg) { p->stg = 0; g_pend[k++] = *p; continue; }
+            int di = dfind(p->kind, p->idx);
+            if (p->stg == 1 && p->put) { if (di >= 0) { free(g_d[di].data); g_d[di].data = p->data; g_d[di].len = p->len; } else if (g_nd < VMAX) g_d[g_nd++] = (ventry){ p->kind, p->idx, p->len, p->data }; else free(p->data); p->data = NULL; }
+            else if (p->stg == 1) { if (di >= 0 && g_d[di].len >= 16 && !memcmp(g_d[di].data + 8, p->data + 8, (size_t)p->n)) { free(g_d[di].data); g_d[di] = g_d[--g_nd]; } }
+            else { int vi = vfind(p->kind, p->idx); if (vi >= 0 && g_v[vi].len == p->len && !memcmp(g_v[vi].data, p->data, p->len)) { free(g_v[vi].data); g_v[vi] = g_v[--g_nv]; atomic_fetch_add(&g_vgen, 1); } }
+            free(p->data); n++; }
+        g_npend = k;
+        if (ok) { g_ddirty = 0; atomic_store(&g_vretry, 0); if (n) LOG("编年史仓库：这次提交成了 → %d 条并进盘上状态（盘上 %d 件、还有 %d 条待落盘）", n, g_nd, g_npend); }
+        else { g_ddirty = 1; LOG("【红】编年史仓库：这次提交没成 → 暂记的回到待落盘，下次提交重新核对（盘上状态 %d 件不变）", g_nd); }
+    }
+    g_vstaged = 0;
+    pthread_mutex_unlock(&g_vmu);
+}
+__attribute__((constructor)) static void vault_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); extern void (*g_dm_post_commit_hook[5])(int); g_dm_pre_commit_hook[1] = vault_pre_commit; g_dm_post_commit_hook[1] = vault_post; }

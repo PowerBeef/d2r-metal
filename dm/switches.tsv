@@ -437,7 +437,7 @@ DM_TEST_FOLD	ios	ios/Sources/front_ios.m	-
 DM_TEST_FREETP	host	host/dm_freetp.c	-
 DM_TEST_FREEZE	host	host/diag.c	-
 DM_TEST_FRZ	host	host/diag.c	-
-DM_TEST_FS_FAIL	host	host/hle_fs.c host/tests/t_fs.c	-
+DM_TEST_FS_FAIL	host	host/hle_fs.c host/tests/t_fs.c host/tests/t_save_hooks.c	-
 DM_TEST_FS_FAILAT	host	host/hle_fs.c host/tests/t_fs.c	-
 DM_TEST_FULLSCREEN_AT	host	host/front_mac.m	-
 DM_TEST_GHOST	gfx	gfx/nvn/nvn_mtl.m	-
@@ -517,7 +517,7 @@ DM_TEST_POS_LOG	host	host/diag.c	-
 DM_TEST_POTPICK_BURST	host	host/dm_potpick.c	-
 DM_TEST_POTPICK_FROM	host	host/dm_potpick.c	-
 DM_TEST_POUCH_NOSAVE	host	host/dm_pouch.c	-
-DM_TEST_POUCH_SAVE_FAIL	host	host/dm_pouch.c	-
+DM_TEST_POUCH_SAVE_FAIL	host	host/dm_pouch.c host/tests/t_save_hooks.c	-
 DM_TEST_PRESENT_RGB	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_PRESENT_SHOT	host	host/front_mac.m	-
 DM_TEST_QUIT_AT	host	host/front_mac.m	-

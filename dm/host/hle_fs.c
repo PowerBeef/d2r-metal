@@ -73,6 +73,36 @@ void dm_fs_save_poison(int e) { save_poison(e); }   // 提交前钩子用：旁�
 // 缺省弱实现只记日志（Mac）；iOS 前端写同名强实现弹原生提示。在游戏线程调，前端自己切主线程
 // The default weak implementation only logs (Mac); the iOS front end provides a strong implementation of the same name that shows a native alert. Called on the game thread, the front end switches to the main thread itself
 __attribute__((weak)) void front_save_failed(int err) { LOG("front_save_failed(errno=%d)：前端未接（缺省弱实现）", err); }
+// 克隆 / 互换这一步失败（工作目录完好、进度只在工作目录里）也通知前端，但一段连续失败只通知一次：游戏几秒就提交一次，
+// iOS 前端每次调用都弹一个新提示框（叠在前一个上面）；成功提交一次就清零，下一段失败再通知。持 g_lock 时读写，通知在放锁之后、同一游戏线程
+// A failure at the clone / swap step (the work directory is intact and the progress lives only there) is reported to the front end too, but only once per run of consecutive failures: the game commits every few seconds,
+// and the iOS front end shows a new alert (stacked on the previous one) for every call; one successful commit resets it, so the next run of failures is reported again. Read and written holding g_lock; the notification itself is sent after the lock is released, on the same game thread
+static int g_commit_fail_said;
+// 这条客体路径落在不落在事务式存档挂载上 | whether this guest path is on the transactional save mount
+static int txn_mount(const char *path) { const char *c = strchr(path, ':'); size_t ln = c ? (size_t)(c - path) : 0;
+    for (int i = 0; c && i < g_nmnt; i++) if (strlen(g_mnt[i].name) == ln && !strncmp(g_mnt[i].name, path, ln)) return g_mnt[i].commit[0] != 0; return 0; }
+// 工作目录「上次提交之后没改过」的记号（工作目录本身的扩展属性）：挂载克隆后、每次提交成功后设上，之后对存档挂载的第一次增删改把它去掉。
+// 下次挂载时有它 = 残留的工作目录和已提交版一样，照旧删掉；没有（进程在提交之前没了、或提交失败了）就逐个文件和已提交版比，有没提交的改动就整个挪到旁边留一份
+// Mark meaning "the work directory has not changed since the last commit" (an extended attribute on the work directory itself): set after the mount clone and after every successful commit, removed by the first mutation on the save mount after that.
+// At the next mount, if it is there, the leftover work directory equals the committed version and is deleted as before; if not (the process ended before committing, or commits failed), compare file by file with the committed version and, if there are uncommitted changes, move the whole directory aside and keep it
+#define FS_CLEAN_MARK "org.d2rmobile.txn-clean"
+static _Atomic int g_work_clean;
+static void work_mark(const char *work, int on) {
+#ifdef __APPLE__
+    if (on) setxattr(work, FS_CLEAN_MARK, "1", 1, 0, XATTR_NOFOLLOW); else removexattr(work, FS_CLEAN_MARK, XATTR_NOFOLLOW);
+#else
+    if (on) lsetxattr(work, "user." FS_CLEAN_MARK, "1", 1, 0); else lremovexattr(work, "user." FS_CLEAN_MARK);
+#endif
+}
+static int work_marked(const char *work) { char v[4];
+#ifdef __APPLE__
+    return getxattr(work, FS_CLEAN_MARK, v, sizeof v, 0, XATTR_NOFOLLOW) > 0;
+#else
+    return lgetxattr(work, "user." FS_CLEAN_MARK, v, sizeof v) > 0;
+#endif
+}
+const char *dm_save_workdir(void);
+static void txn_touch(void) { if (atomic_exchange(&g_work_clean, 0)) { const char *w = dm_save_workdir(); if (w) work_mark(w, 0); } }
 // DM_FSLOG=<文件>：每次 ReadFile 记一行 TSV「启动后秒\t客体路径\t偏移\t长度\t客体缓冲地址」（启动读了哪些字节，离线对清单反查用）
 // DM_FSLOG=<file>: each ReadFile logs one TSV line "seconds since boot\tguest path\toffset\tlength\tguest buffer address" (which bytes boot read, for offline reverse lookup against the manifest)
 static FILE *g_fslog; static char *g_fdpath[4096]; static pthread_mutex_t g_fslog_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -99,6 +129,25 @@ static int dm_fs_test_fail(const char *pt) {
 }
 static int in_txn_dir(const char *hp) { for (int i = 0; i < g_nmnt; i++) { size_t n = strlen(g_mnt[i].dir); if (g_mnt[i].commit[0] && !strncmp(hp, g_mnt[i].dir, n) && (hp[n] == '/' || !hp[n])) return 1; } return 0; }
 static int rm_tree(const char *p);
+// 两棵目录树一样不一样（挂载时判残留的工作目录有没有没提交的改动）：名字、类型、大小相同，内容相同（修改时间也相同就当相同：克隆保留修改时间）；访达自己写的 .DS_Store 不算。
+// 路径缓冲放堆上、比字节的缓冲是静态的：挂存档的游戏线程栈小（见 settings_seed），挂载持着 g_lock，同一时刻只有一个线程在这里
+// Whether two directory trees are the same (at mount, to tell whether the leftover work directory holds uncommitted changes): same names, types and sizes, and the same contents (an equal modification time too counts as equal: clones keep modification times); .DS_Store written by Finder itself is ignored.
+// Path buffers live on the heap and the byte-compare buffers are static: the game thread that mounts the save has a small stack (see settings_seed), and mounting holds g_lock, so only one thread is in here at a time
+static int file_same(const char *a, const char *b) {
+    static char p[4096], q[4096]; FILE *x = fopen(a, "rb"), *y = x ? fopen(b, "rb") : NULL; int same = x && y;
+    while (same) { size_t n = fread(p, 1, sizeof p, x), m = fread(q, 1, sizeof q, y); if (n != m || memcmp(p, q, n)) same = 0; else if (!n) break; }
+    if (x) fclose(x); if (y) fclose(y); return same; }
+static int tree_skip(const char *n) { return !strcmp(n, ".") || !strcmp(n, "..") || !strcmp(n, ".DS_Store"); }
+static int tree_same(const char *a, const char *b, int depth) {
+    DIR *d = opendir(a); char *pa = malloc(2400), *pb = pa ? pa + 1200 : NULL; int same = d && pa && depth < 8, na = 0, nb = 0; struct dirent *e;
+    while (same && (e = readdir(d))) { if (tree_skip(e->d_name)) continue; struct stat sa, sb; na++;
+        snprintf(pa, 1200, "%s/%s", a, e->d_name); snprintf(pb, 1200, "%s/%s", b, e->d_name);
+        if (lstat(pa, &sa) || lstat(pb, &sb) || (sa.st_mode & S_IFMT) != (sb.st_mode & S_IFMT)) same = 0;
+        else if (S_ISDIR(sa.st_mode)) same = tree_same(pa, pb, depth + 1);
+        else if (S_ISREG(sa.st_mode)) same = sa.st_size == sb.st_size && ((sa.st_mtimespec.tv_sec == sb.st_mtimespec.tv_sec && sa.st_mtimespec.tv_nsec == sb.st_mtimespec.tv_nsec) || file_same(pa, pb)); }
+    if (d) closedir(d); free(pa);
+    if (same && (d = opendir(b))) { while ((e = readdir(d))) nb += !tree_skip(e->d_name); closedir(d); } else same = 0;
+    return same && na == nb; }
 static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
     PATH_LOCK(); pthread_mutex_lock(&g_lock);
     for (int i = 0; i < g_nmnt; i++)
@@ -110,17 +159,28 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
         strlcpy(g_mnt[g_nmnt].overlay, getenv("DM_ROMFS_OVERLAY"), sizeof g_mnt[0].overlay);
     int txn_err = 0;   // 事务目录建不起来（清不掉残留 / 克隆失败，盘满时真实可能）：不退出，改成只读挂载已提交目录——角色照常读得到，写一律失败、提交为空操作，已提交版本一个字节不动 | The transaction directory cannot be set up (leftovers cannot be cleared / clone failed, which really happens on a full disk): do not exit; mount the committed directory read-only instead. Characters still load, every write fails, commits are no-ops, and not one byte of the committed version changes
     if (txn) {
-        char work[1100], neu[1100]; snprintf(work, sizeof work, "%s.work", dir); snprintf(neu, sizeof neu, "%s.new", dir);
+        char work[1100], neu[1100], orph[1120]; snprintf(work, sizeof work, "%s.work", dir); snprintf(neu, sizeof neu, "%s.new", dir); snprintf(orph, sizeof orph, "%s.work.orphan", dir);
         mkdir(dir, 0755);
-        const char *why = NULL;
-        if (!access(work, F_OK) && rm_tree(work)) why = "清不掉上次残留的工作目录";
-        else if (!access(neu, F_OK) && rm_tree(neu)) why = "清不掉上次残留的 .new";
-        else if (dm_fs_test_fail("mountclone") || clonefile(dir, work, 0)) why = "克隆工作目录失败";
+        const char *why = NULL; errno = 0;
+        // 先清残留的 .new，再动工作目录：.new 清不掉就改只读挂载，工作目录原样留着（里面可能是上一局唯一的一份进度）。原先先删工作目录、再在 .new 上失败，进度先没了（F-SAVE-8）。
+        // 残留的工作目录：有「没改过」记号或和已提交版逐个文件相同 → 照旧删掉；否则（上一局在提交前没了，或提交一直失败）整个挪到 <存档>.work.orphan 留一份（只留最近的一份），
+        // 不自动放回存档——它可能是半截的，要不要找回由人看过再定
+        // Clear a leftover .new first and only then touch the work directory: if .new cannot be cleared, mount read-only and leave the work directory as it is (it may hold the only copy of the last run's progress). Before, the work directory was deleted first and then the mount failed on .new, so the progress was gone first (F-SAVE-8).
+        // A leftover work directory: with the "unchanged" mark, or identical file by file to the committed version → deleted as before; otherwise (the last run ended before committing, or its commits kept failing) the whole directory is moved to <save>.work.orphan and kept (only the most recent one),
+        // and never put back into the save automatically: it may be half-written, so whether to recover it is up to a person who has looked at it
+        if (!access(neu, F_OK) && rm_tree(neu)) why = "清不掉上次残留的 .new（工作目录原样留着）";
+        else if (!access(work, F_OK)) {
+            if (work_marked(work) || tree_same(work, dir, 0)) { if (rm_tree(work)) why = "清不掉上次残留的工作目录"; }
+            else if ((!access(orph, F_OK) && rm_tree(orph)) || rename(work, orph)) why = "上次的工作目录里有没提交的改动，挪不到旁边（工作目录原样留着）";
+            else LOG("【红】存档事务：上次的工作目录里有没提交的改动（上一局在提交前没了，或提交一直失败）→ 整个挪到 %s 留一份；不自动放回存档，已提交版本不变", orph);
+        }
+        if (!why && (dm_fs_test_fail("mountclone") || clonefile(dir, work, 0))) why = "克隆工作目录失败";
         if (why) { txn_err = errno ? errno : EIO; g_mnt[g_nmnt].ro = 1; strlcpy(g_mnt[g_nmnt].dir, dir, sizeof g_mnt[0].dir);
             LOG("【红】存档事务：%s（%s，errno=%d）——改为只读挂载已提交目录 %s：本局存档写不进去，已提交版本不变", why, work, txn_err, dir); }
         else {
             strlcpy(g_mnt[g_nmnt].commit, dir, sizeof g_mnt[0].commit);
             atomic_store(&g_save_poison, 0);                                // 工作目录刚从已提交版克隆，完好 | the working directory was just cloned from the committed version, intact
+            work_mark(work, 1); atomic_store(&g_work_clean, 1);            // 刚克隆：和已提交版一样 | just cloned: the same as the committed version
             strlcpy(g_mnt[g_nmnt].dir, work, sizeof g_mnt[0].dir); }
     } else strlcpy(g_mnt[g_nmnt].dir, dir, sizeof g_mnt[0].dir);
     g_nmnt++;
@@ -279,6 +339,7 @@ static Result err_res(const char *op, const char *path) {
 // Name resolution shares one lock with create/rename/enumerate, aliases and xattr are published to the guest together.
 #define HP_EX(path, create) PATH_LOCK(); char hp[1024]; int ro = 0; if (!host_path_ex(path, hp, sizeof hp, &ro, create)) return err_res("path", path)
 #define HP(path) HP_EX(path, 0)
+static void txn_touch_path(const char *path) { if (txn_mount(path)) txn_touch(); }   // 改事务存档之前去掉「没改过」记号 | remove the "unchanged" mark before changing the transactional save
 #define RW() if (ro) { LOG("fs 写只读挂载：%s", hp); return RES_FAIL; }
 // 建目录 / 建文件：目标已存在就照可写挂载的语义回「已存在」——游戏只认得这一种失败（原版存档盘不会写失败），回通用失败它会拿空句柄继续走（iOS 只读回退局在 CloseDirectory 崩）
 // Create directory / create file: if the target exists, answer "already exists" as a writable mount would. That is the only failure the game understands (the original save storage never fails to write); with a generic failure it carries on with a null handle (the iOS read-only fallback crashed in CloseDirectory)
@@ -448,14 +509,58 @@ HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv；存档 �
 }
 void (*g_dm_pre_commit_hook[5])(const char *workdir);   // 提交前调（工作目录）：宿主旁路文件按工作目录里的存档内容核对后再写（[0] 个人仓库多页 dm_pages.c、[2] 百宝囊 dm_pouch.c、[1] 编年史仓库 dm_vault.c、[3] 秘境进度 dm_rift.c、[4] iCloud 收件箱并回 dm_cloudmerge.c） | Called before commit (working directory): host side files are checked against the save content in the working directory before being written ([0] personal stash multi-page dm_pages.c, [2] pouch dm_pouch.c, [1] Chronicle stash dm_vault.c, [3] Rift progress dm_rift.c, [4] iCloud inbox merge dm_cloudmerge.c)
 void (*g_dm_save_commit_hook)(const char *commit_dir);   // 存档提交成功后调（已提交目录）；iOS 的 iCloud 同步设它，宿主为空 | called after a save commit succeeds (committed directory); the iOS iCloud sync sets it, NULL on the host
+// 提交结果钩子（与提交前钩子同下标）：每次 Commit 在同一次调用里、持着存档锁报一次这次提交成没成。
+//   ok = 1：工作目录已原子换入，提交前钩子这次写进工作目录的旁路文件已落盘，钩子把这次核对通过的那些定下来（记成已落盘）；
+//   ok = 0：这次没提交（本事务有写失败被拒、克隆或互换失败），钩子这次写的不算数，核对通过的那些回到「待证明」，下次提交按那时的存档重新核对。
+// 提交前钩子只「暂记」、等这里的结果再定稿：原先钩子在提交前就把状态记成已落盘，提交一被拒，刚写的旁路文件随工作目录丢了、状态却再也不写（F-SAVE-2）。
+// 本事务已有写失败的提交不跑提交前钩子，也照样报 ok = 0（钩子没有暂记就什么都不做）。调用时 dm_fs_commit_count() 已含这次成功的提交。iCloud 并回（[4]）以后接同一套
+// Commit outcome hooks (same indices as the pre-commit hooks): every Commit reports once, in the same call and holding the save lock, whether this commit went through.
+//   ok = 1: the work directory was swapped in atomically, the side files the pre-commit hooks wrote into it this time are on disk, and the hooks settle what passed their checks this time (record it as persisted);
+//   ok = 0: nothing was committed this time (refused because a write failed in this transaction, or the clone / swap failed); what the hooks wrote does not count, what passed their checks goes back to "pending" and is checked again at the next commit against the save as it is then.
+// The pre-commit hooks only stage and settle on this outcome: before, the hooks recorded their state as persisted before the commit, so when the commit was refused the side files just written were lost with the work directory and the state was never written again (F-SAVE-2).
+// A commit whose transaction already had a write failure does not run the pre-commit hooks and still reports ok = 0 (a hook with nothing staged does nothing). When called, dm_fs_commit_count() already includes a successful commit. The iCloud merge ([4]) can adopt the same scheme later
+void (*g_dm_post_commit_hook[5])(int ok);
+static void post_commit(int ok) { for (int k = 0; k < 5; k++) if (g_dm_post_commit_hook[k]) g_dm_post_commit_hook[k](ok); }
 static _Atomic uint64_t g_save_commits;   // 成功提交过几次（前端进后台时等「游戏这次存盘已提交」用） | number of successful commits (used by the front end when going to background to wait for "the game's current save has been committed")
 uint64_t dm_fs_commit_count(void) { return atomic_load(&g_save_commits); }
+// 克隆之前把这个事务改过的文件（工作目录里和已提交版大小或修改时间不同、或已提交版里没有的）逐个 fsync（数据交给盘），最后对其中一个发一次 F_BARRIERFSYNC（盘上的屏障）：
+// 这些数据排在屏障前面，之后的克隆与原子互换（元数据）排在后面，掉电 / 内核崩溃后换入的新版不会是「目录已换、内容还没写下去」。
+// 每个文件都发屏障要多花几毫秒（局内实测 2 个文件 7.6 毫秒），一次屏障就够排序；不用 F_FULLFSYNC（每次都把整个盘的写缓存刷空，慢得多）。失败只记红行、不拒绝提交（这一步只管掉电，不是写失败）
+// Before cloning, fsync every file this transaction changed (in the work directory with a size or modification time different from the committed copy, or missing from the committed version), handing the data to the drive, then issue one F_BARRIERFSYNC on one of them (a barrier on the drive):
+// that data is ordered before the barrier and the clone and atomic swap (metadata) that follow after it, so after a power loss / kernel panic the swapped-in version is never "directory swapped, contents not yet written".
+// A barrier per file costs several milliseconds more (measured in game: 7.6 ms for 2 files) while one barrier is enough for the ordering; not F_FULLFSYNC (it flushes the whole drive write cache every time, which is much slower). A failure only logs a red line and does not refuse the commit (this step only guards against power loss; it is not a write failure)
+static int txn_sync(const char *work, const char *commit, int depth, int *nerr, char *last, size_t lastn) {
+    DIR *d = opendir(work); char *pw = malloc(2400), *pc = pw ? pw + 1200 : NULL; int n = 0; struct dirent *e;
+    while (d && pw && depth < 8 && (e = readdir(d))) { if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue; struct stat sw, sc;
+        snprintf(pw, 1200, "%s/%s", work, e->d_name); snprintf(pc, 1200, "%s/%s", commit, e->d_name); if (lstat(pw, &sw)) continue;
+        if (S_ISDIR(sw.st_mode)) { n += txn_sync(pw, pc, depth + 1, nerr, last, lastn); continue; }
+        if (!S_ISREG(sw.st_mode) || (!lstat(pc, &sc) && sc.st_size == sw.st_size && sc.st_mtimespec.tv_sec == sw.st_mtimespec.tv_sec && sc.st_mtimespec.tv_nsec == sw.st_mtimespec.tv_nsec)) continue;
+        int fd = open(pw, O_RDONLY); if (fd < 0) { if (errno != ENOENT) (*nerr)++; continue; }   // 列出之后没了（服务端拍的临时文件）不算 | gone after being listed (a server-tick temp file) does not count
+        if (fsync(fd)) (*nerr)++; else strlcpy(last, pw, lastn);
+        close(fd); n++; }
+    if (d) closedir(d); free(pw); return n; }
+static int txn_barrier(const char *path) {   // 返回 0 = 屏障发出去了（不支持屏障的卷 fsync 已经做过，也算） | returns 0 = the barrier was issued (on volumes without barrier support the fsync already done counts too)
+#ifdef F_BARRIERFSYNC
+    int fd = open(path, O_RDONLY); if (fd < 0) return -1; int r = fcntl(fd, F_BARRIERFSYNC) && errno != ENOTSUP ? -1 : 0; close(fd); return r;
+#else
+    (void)path; return 0;
+#endif
+}
 HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv；事务式存档：工作目录整树 clone 后与已提交目录原子互换（renamex_np RENAME_SWAP）", Result, h_fs_Commit, const char *name) {
+    // 拿路径锁之前先把游戏这次写好的文件 fsync 一遍（要等真正写到盘上，局内实测 2 个文件 5–12 毫秒）：持着路径锁做会把别的线程开文件挡这么久。
+    // 锁里克隆之前再走一遍（这时只剩钩子刚写的旁路文件有新数据，其余的已经干净，很快）再发屏障
+    // Before taking the path lock, fsync the files the game has just written (it waits for the data to really reach the disk, measured in game at 5-12 ms for 2 files): doing it under the path lock would block other threads' file opens that long.
+    // Under the lock, right before the clone, walk once more (by then only the side files the hooks just wrote have new data and the rest are clean, so it is quick) and then issue the barrier
+    { char w[1024] = "", c[1024] = "", last[1200]; int e = 0; pthread_mutex_lock(&g_lock);
+      for (int k = 0; k < g_nmnt; k++) if (!strcmp(g_mnt[k].name, name) && g_mnt[k].commit[0]) { strlcpy(w, g_mnt[k].dir, sizeof w); strlcpy(c, g_mnt[k].commit, sizeof c); }
+      pthread_mutex_unlock(&g_lock); if (w[0]) txn_sync(w, c, 0, &e, last, sizeof last); }
     PATH_LOCK(); pthread_mutex_lock(&g_lock);
     int i = 0; while (i < g_nmnt && strcmp(g_mnt[i].name, name)) i++;
     if (i == g_nmnt || !g_mnt[i].commit[0]) { pthread_mutex_unlock(&g_lock); return RES_OK; }   // 非事务挂载：无可提交 | non-transactional mount: nothing to commit
     uint64_t tc0 = clock_gettime_nsec_np(CLOCK_MONOTONIC), tw0 = atomic_exchange(&g_txn_first_ns, 0);
-    for (int k = 0; k < 5; k++) if (g_dm_pre_commit_hook[k]) g_dm_pre_commit_hook[k](g_mnt[i].dir);
+    // 先看本事务有没有写失败：有就注定被拒，不跑提交前钩子（不往要丢弃的工作目录里写旁路文件，F-SAVE-2）；钩子自己写失败的在钩子之后再看一次
+    // Check first whether this transaction already had a write failure: if so it will be refused, so the pre-commit hooks do not run (no side files written into a work directory about to be discarded, F-SAVE-2); a hook's own failed write is checked again after the hooks
+    if (!atomic_load(&g_save_poison)) for (int k = 0; k < 5; k++) if (g_dm_pre_commit_hook[k]) g_dm_pre_commit_hook[k](g_mnt[i].dir);
     uint64_t tc1 = clock_gettime_nsec_np(CLOCK_MONOTONIC);   // 写进工作目录的旁路文件随这次提交一起原子换入 | side files written into the working directory are swapped in atomically together with this commit
     int perr = atomic_exchange(&g_save_poison, 0);
     if (perr) {                                                         // 本事务有写失败：拒绝提交、丢弃工作目录 | a write failed in this transaction: refuse the commit, discard the working directory
@@ -478,29 +583,45 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv；事务式存档：工作目录整�
         if (!access(re, F_OK) && rm_tree(re)) rerr = errno ? errno : EIO;
         else if (dm_fs_test_fail("reclone") || clonefile(g_mnt[i].commit, re, 0)) { rerr = errno ? errno : EIO; rm_tree(re); }
         else if (renamex_np(re, g_mnt[i].dir, RENAME_SWAP)) { rerr = errno ? errno : EIO; rm_tree(re); }
-        else rm_tree(re);                                               // 换下来的被污染工作目录 | The swapped-out tainted work directory
+        else { rm_tree(re); work_mark(g_mnt[i].dir, 1); atomic_store(&g_work_clean, 1); }   // 换下来的被污染工作目录；新工作目录 = 已提交版 | The swapped-out tainted work directory; the new work directory = the committed version
         if (rerr) { save_poison(perr); LOG("【红】存档事务：重新克隆工作目录失败 errno=%d——工作目录不动、保持已污染（下次提交照样拒绝并重试），已提交版本不变", rerr); }
+        post_commit(0);
         pthread_mutex_unlock(&g_lock);
         LOG("【红】存档提交拒绝：本事务有存档写失败 errno=%d（工作目录里 0 字节文件：%s）；已提交版本不变，工作目录%s%s", perr, tl ? torn + 1 : "无", rerr ? "没能重新克隆（见上一行）" : "已从已提交版重新克隆", nopen ? "；【红】仍有存档文件开着" : "");
         DM_EV("save", "result:s errno:d", "rejected", perr);
         front_save_failed(perr);
         return RES_FAIL;
     }
-    char neu[1100]; snprintf(neu, sizeof neu, "%s.new", g_mnt[i].commit);
-    Result r = RES_OK; int ferr = 0;
-    if (!access(neu, F_OK)) rm_tree(neu);
-    if (clonefile(g_mnt[i].dir, neu, 0)) { ferr = errno; LOG("【红】存档提交：clonefile %s 失败 errno=%d（已提交版本不变）", neu, ferr); r = RES_FAIL; }
+    char neu[1100], prev[1100]; snprintf(neu, sizeof neu, "%s.new", g_mnt[i].commit); snprintf(prev, sizeof prev, "%s.prev", g_mnt[i].commit);
+    char last[1200] = ""; uint64_t ts0 = clock_gettime_nsec_np(CLOCK_MONOTONIC); Result r = RES_OK; int ferr = 0, serr = 0, ns = txn_sync(g_mnt[i].dir, g_mnt[i].commit, 0, &serr, last, sizeof last);
+    if (last[0] && txn_barrier(last)) serr++;
+    uint64_t ts1 = clock_gettime_nsec_np(CLOCK_MONOTONIC);
+    if (serr) LOG("【红】存档提交：改过的 %d 个文件里有 %d 处刷盘失败（fsync / F_BARRIERFSYNC）——照常提交，掉电时这次的新版可能不完整", ns, serr);
+    // 残留的 .new 清不掉（上次删换下来的旧版没删成、权限 / 锁定标志）就别往下克隆：原先不看结果，之后每次提交都在 clonefile 上失败、只有一行日志（F-SAVE-8）
+    // If a leftover .new cannot be cleared (the swapped-out old version was not deleted last time, permissions / the locked flag), do not go on to clone: before, the result was ignored, and every commit after that failed in clonefile with only a log line (F-SAVE-8)
+    errno = 0;
+    if (!access(neu, F_OK) && rm_tree(neu)) { ferr = errno ? errno : EIO; LOG("【红】存档提交：清不掉残留的 %s errno=%d（已提交版本不变，进度留在工作目录里）", neu, ferr); r = RES_FAIL; }
+    else if (clonefile(g_mnt[i].dir, neu, 0)) { ferr = errno; LOG("【红】存档提交：clonefile %s 失败 errno=%d（已提交版本不变）", neu, ferr); r = RES_FAIL; }
     else if (renamex_np(neu, g_mnt[i].commit, RENAME_SWAP)) { ferr = errno; LOG("【红】存档提交：原子互换失败 errno=%d（已提交版本不变）", ferr); rm_tree(neu); r = RES_FAIL; }
-    else rm_tree(neu);                                                  // 换下来的旧版 | the old version that was swapped out
+    else {   // 换下来的旧版留一份 <存档>.prev（上一个已提交版本，只供人手工找回；没有哪段代码读它），挪不过去就照旧删掉 | Keep the swapped-out old version as <save>.prev (the previous committed version, only for manual recovery; no code reads it); if it cannot be moved there, delete it as before
+        if ((access(prev, F_OK) && errno == ENOENT) || !rm_tree(prev)) { if (rename(neu, prev)) rm_tree(neu); } else rm_tree(neu);
+        if (!access(neu, F_OK)) LOG("【红】存档提交：换下来的旧版 %s 删不掉 errno=%d（这次已提交；下次提交前要先清掉它）", neu, errno);
+        work_mark(g_mnt[i].dir, 1); atomic_store(&g_work_clean, 1); }   // 工作目录 = 刚提交的版本 | the work directory = the version just committed
     if (r != RES_OK) DM_EV("save", "result:s errno:d", "fail", ferr);
     // 耗时读数（整数微秒，不带浮点）：提交前钩子、克隆 + 原子互换各多久；从本事务第一次存档写到提交完一共多久（游戏写文件 + 提交，0 = 本事务没有存档写）
     // Timing readouts (integer microseconds, no floating point): how long the pre-commit hook and the clone + atomic swap each took; how long in total from this transaction's first save write to the end of the commit (the game writing files + the commit; 0 = no save write in this transaction)
     static int n; if (r == RES_OK) { uint64_t tc2 = clock_gettime_nsec_np(CLOCK_MONOTONIC);
-        LOG("存档提交 #%d：%s 原子换入 %s（此前存档写 %d 次）（钩子 %llu 微秒、克隆换入 %llu 微秒、自本事务首次写起 %llu 微秒）", ++n, g_mnt[i].dir, g_mnt[i].commit, atomic_load(&g_save_writes),
-            (unsigned long long)((tc1 - tc0) / 1000), (unsigned long long)((tc2 - tc1) / 1000), (unsigned long long)(tw0 ? (tc2 - tw0) / 1000 : 0)); atomic_fetch_add(&g_save_commits, 1);
+        LOG("存档提交 #%d：%s 原子换入 %s（此前存档写 %d 次）（钩子 %llu 微秒、克隆换入 %llu 微秒〔其中刷盘 %d 个文件 %llu 微秒〕、自本事务首次写起 %llu 微秒）", ++n, g_mnt[i].dir, g_mnt[i].commit, atomic_load(&g_save_writes),
+            (unsigned long long)((tc1 - tc0) / 1000), (unsigned long long)((tc2 - tc1) / 1000), ns, (unsigned long long)((ts1 - ts0) / 1000), (unsigned long long)(tw0 ? (tc2 - tw0) / 1000 : 0)); atomic_fetch_add(&g_save_commits, 1);
         DM_EV("save", "result:s n:d writes:d commit_us:u txn_us:u", "commit", n, atomic_load(&g_save_writes), (unsigned long long)((tc2 - tc1) / 1000), (unsigned long long)(tw0 ? (tc2 - tw0) / 1000 : 0));
+        post_commit(1);
         if (g_dm_save_commit_hook) g_dm_save_commit_hook(g_mnt[i].commit); }   // iCloud 同步（cloud_ios.m）：持着锁调，那边只做 clonefile 快照 | iCloud sync (cloud_ios.m): called with the lock held, that side only takes a clonefile snapshot
+    else post_commit(0);
+    // 克隆 / 互换失败：前端提示「进度没存上」（一段连续失败只提示一次，见 g_commit_fail_said），放锁之后在本线程调，同被拒的提交
+    // Clone / swap failure: the front end shows "progress not saved" (once per run of consecutive failures, see g_commit_fail_said), called on this thread after the lock is released, as for refused commits
+    int say = r != RES_OK && !g_commit_fail_said; g_commit_fail_said = r != RES_OK;
     pthread_mutex_unlock(&g_lock);
+    if (say) front_save_failed(ferr ? ferr : EIO);
     return r;
 }
 HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv；挂载表常驻，卸载为空操作", void, h_fs_Unmount, const char *name) { (void)name; }
@@ -627,7 +748,7 @@ HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp
             kill_n = k && !strncmp(k, "write:", 6) ? atoi(k + 6) : 0;
             if (f && !strncmp(f, "write:", 6)) { fail_n = atoi(f + 6); const char *c = strchr(f + 6, ':'); fail_e = c ? atoi(c + 1) : ENOSPC; }
             cfg = 1; }
-        int n = atomic_fetch_add(&g_save_writes, 1) + 1;
+        int n = atomic_fetch_add(&g_save_writes, 1) + 1; txn_touch();
         { uint64_t z = 0; atomic_compare_exchange_strong(&g_txn_first_ns, &z, clock_gettime_nsec_np(CLOCK_MONOTONIC)); }
         if (kill_n && n == kill_n) { LOG("DM_TEST_KILL_AT：存档第 %d 次写，直接 _exit（模拟写到一半被杀）", n); _exit(9); }
         if (fail_n && n == fail_n) { LOG("DM_TEST_FS_FAIL：存档第 %d 次写返回失败 errno=%d", n, fail_e); errno = fail_e; save_poison(fail_e); return err_res("pwrite（注入）", "fd"); }
@@ -647,6 +768,7 @@ HLE_FORCE("_ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE", "fsp-srv → fstat(2)", 
 }
 HLE_FORCE("_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", "fsp-srv → ftruncate(2)", Result, h_fs_SetFileSize, uint64_t h, int64_t sz) {
     if (!h) return RES_FAIL;
+    if (g_fsave[(int)h & 0xffff]) txn_touch();
     if (!ftruncate((int)h, sz)) return RES_OK;
     if (g_fsave[(int)h & 0xffff]) save_poison(errno);
     return err_res("ftruncate", "fd");
@@ -662,7 +784,7 @@ HLE_FORCE("_ZN2nn2fs15GetFileOpenModeENS0_10FileHandleE", "fsp-srv；打开方�
 // ---------- 路径操作 ----------
 // ---------- Path operations ----------
 HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftruncate", Result, h_fs_CreateFile, const char *path, int64_t sz) {
-    HP_EX(path, 1); RW_CREATE();
+    HP_EX(path, 1); RW_CREATE(); txn_touch_path(path);
     int fd = open(hp, O_WRONLY | O_CREAT | O_EXCL, 0644);
     if (fd < 0) return err_res("create", hp);
     int rc = ftruncate(fd, sz); int e = errno; close(fd);
@@ -670,8 +792,8 @@ HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftrunc
     if (rc) unlink(hp);
     errno = e; return rc ? err_res("create", hp) : RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs10DeleteFileEPKc", "fsp-srv → unlink(2)", Result, h_fs_DeleteFile, const char *path) { HP(path); RW(); return unlink(hp) ? err_res("unlink", hp) : RES_OK; }
-HLE_FORCE("_ZN2nn2fs15CreateDirectoryEPKc", "fsp-srv → mkdir(2)", Result, h_fs_CreateDirectory, const char *path) { HP_EX(path, 1); RW_CREATE();
+HLE_FORCE("_ZN2nn2fs10DeleteFileEPKc", "fsp-srv → unlink(2)", Result, h_fs_DeleteFile, const char *path) { HP(path); RW(); txn_touch_path(path); return unlink(hp) ? err_res("unlink", hp) : RES_OK; }
+HLE_FORCE("_ZN2nn2fs15CreateDirectoryEPKc", "fsp-srv → mkdir(2)", Result, h_fs_CreateDirectory, const char *path) { HP_EX(path, 1); RW_CREATE(); txn_touch_path(path);
     if (mkdir(hp, 0755)) return err_res("mkdir", hp);
     if (set_guest_name(hp, path)) { int e = errno; rmdir(hp); errno = e; return err_res("mkdir name", hp); }
     return RES_OK; }
@@ -687,12 +809,13 @@ static int rm_tree(const char *p) {
     return rc | rmdir(p);
 }
 HLE_FORCE("_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", "fsp-srv → 递归删除（只在可写挂载内）", Result, h_fs_DeleteDirRec, const char *path) {
-    HP(path); RW(); return rm_tree(hp) ? err_res("rmtree", hp) : RES_OK;
+    HP(path); RW(); txn_touch_path(path); return rm_tree(hp) ? err_res("rmtree", hp) : RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs10RenameFileEPKcS2_", "fsp-srv → rename(2)", Result, h_fs_RenameFile, const char *from, const char *to) {
     HP(from); RW(); char hp2[1024];
     if (!host_path_ex(to, hp2, sizeof hp2, NULL, 1)) return err_res("rename path", to);
     if (!access(hp2, F_OK)) return RES_PATH_EXISTS;
+    txn_touch_path(from);
     if (rename(hp, hp2)) return err_res("rename", hp);
     if (dm_fs_test_fail("guestname") || set_guest_name(hp2, to)) { int e = errno ? errno : EIO;
         if (dm_fs_test_fail("renameback") || rename(hp2, hp)) {   // 回退也失败：文件留在新路径、客体名元数据不对；不退出——在事务存档里就让本事务提交被拒（已提交版本不变，重新克隆即复原） | Rollback also failed: the file stays at the new path with wrong guest-name metadata; do not exit. In a transactional save, this transaction's commit is refused (the committed version is unchanged and recloning restores it)

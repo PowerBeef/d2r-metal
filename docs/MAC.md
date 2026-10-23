@@ -121,7 +121,7 @@ AirDrop, a cable (the Files tab in Finder) or iCloud Drive all work for getting 
 2. In Finder press ⇧⌘G, enter `~/Library/Application Support/D2R Mobile` and press Return. (This folder exists only after the game has been started once.)
 3. **Back up first**: rename the existing `save` folder there (for example `save backup`); do not delete it.
 4. Put the `save` folder from the phone here. Correct looks like this: directly under `D2R Mobile/save/` are the character folders, `Settings` and a few `.d2i` files — no extra level (not `save/save/…`).
-5. If `save.work` or `save.new` sit next to it, leave them; the game discards and rebuilds them at launch.
+5. If `save.work`, `save.new` or `save.prev` sit next to it, leave them; the game manages them itself (it rebuilds the first two at launch, and `save.prev`, the previously saved version, is replaced at every save). A `save.work.orphan` folder holds the unsaved progress of a run that ended before it could save (kept aside, never put back into the save automatically); it can be deleted once you no longer need it.
 6. Open the game; the phone's characters should appear on the main menu.
 
 Got it wrong or want to go back: quit the game, take the `save` you just put in away, and rename the one from step 3 back to `save`.

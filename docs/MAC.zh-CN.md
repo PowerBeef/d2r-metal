@@ -121,7 +121,7 @@ App 带本项目自己的图标（`dm/ios/Assets.xcassets/AppIcon.appiconset/App
 2. 在访达里按 ⇧⌘G，输入 `~/Library/Application Support/D2R Mobile` 回车。（这个文件夹在游戏第一次启动后才有。）
 3. **先备份**：把里面现有的 `save` 文件夹改个名字（比如 `save 备份`），别删。
 4. 把从手机拷来的 `save` 文件夹放进来。放对的样子是：`D2R Mobile/save/` 下面直接就是各个角色文件夹、`Settings`、几个 `.d2i` 文件——不要多套一层（不是 `save/save/…`）。
-5. 旁边若有 `save.work`、`save.new` 不用管，游戏启动时会丢掉重建。
+5. 旁边若有 `save.work`、`save.new`、`save.prev` 不用管，游戏自己管（前两个启动时丢掉重建；`save.prev` 是上一次存盘的版本，每次存盘换新）。`save.work.orphan` 文件夹里是某一局没来得及存上的进度（挪到一边留着，游戏不会自动放回存档）；不需要了可以删掉。
 6. 打开游戏，主菜单上应当出现手机上的角色。
 
 放错了或想恢复：退出游戏，把刚放进去的 `save` 拿走，把第 3 步改了名的那份改回 `save`。
