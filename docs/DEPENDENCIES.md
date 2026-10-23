@@ -33,7 +33,7 @@ Everything the build needs is on this page: what each item is, what it is for, w
 | capstone | 5.0.9 | Disassembly, for rewriting the program and for verification | <https://pypi.org/project/capstone/> |
 | unicorn | 2.1.4 | Checking, site by site, that rewritten code behaves the same | <https://pypi.org/project/unicorn/> |
 
-All at once: `python3 -m pip install pillow numpy lz4 capstone unicorn` (`./setup.sh` creates an isolated environment and installs them for you)
+All at once: `python3 -m pip install pillow numpy lz4==4.4.5 capstone==5.0.9 unicorn==2.1.4` (`./setup.sh` creates an isolated environment and installs them for you, with lz4, capstone and unicorn pinned to these versions; capstone 6 renames the constants the rewriter uses, so the rewrite stops on it)
 
 ## Additionally for Android
 

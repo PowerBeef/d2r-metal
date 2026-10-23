@@ -28,7 +28,7 @@ for PKG in "${PKGS[@]}"; do [ -f "$PKG" ] || die "没有这个游戏包 | no suc
 # That HOME is created on its own in the system temporary folder and only you can read it, so keys never land in the workspace; the 9 GB of intermediate files stay in the workspace
 ht() { HOME="$KH" "$HT" -k "$KEYS" --disablekeywarns --suppresskeys "$@"; }
 T=$DM_ROOT/build/cache/dm/extract.$$; KH=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/dm-keys.XXXXXX") || die "建不了放密钥的临时目录 | cannot create the temporary folder for the keys"
-trap 'rm -rf "$T" "$KH"' EXIT; mkdir -p "$T/nca" "$KH/.switch" || die "建不了中间目录 $T | cannot create the intermediate folder $T"
+PART=; trap 'rm -rf "$T" "$KH" ${PART:+"$PART"}' EXIT; mkdir -p "$T/nca" "$KH/.switch" || die "建不了中间目录 $T | cannot create the intermediate folder $T"
 TK=$KH/.switch/title.keys
 if [ -f "$HOME/.switch/title.keys" ]; then
   cat "$HOME/.switch/title.keys" > "$TK"; [ -z "$(tail -c1 "$TK")" ] || echo >> "$TK"   # 原文件末尾没换行时补一个，免得下面接上的票据密钥并进它的最后一行 | add a newline if the file does not end with one, so the ticket keys appended below do not join its last line
@@ -93,7 +93,9 @@ done
 [ -n "$UPD" ] || die "游戏包里没有更新：本项目要 3.3.94012 的更新，只有本体不行（更新是单独的包的话，一起给上） | the package has no update: this project needs the 3.3.94012 update, the base game alone is not enough (if the update is a separate package, give it too)"
 
 say "取程序文件与资源（约 9 GB） | extracting the program files and the assets (about 9 GB)"
-mkdir -p "$OUT.part" || die "建不了 | cannot create $OUT.part"
+# $OUT.part（可到 9 GB）在改名成 $OUT 之前都归退出钩子删：原先只删中间目录与密钥目录，中途 Ctrl-C 会把它留在工作区；上次被强杀留下的也先清掉，不和这次的混在一起
+# $OUT.part (up to 9 GB) belongs to the exit hook until it is renamed to $OUT: the hook used to remove only the intermediate and key folders, so a Ctrl-C midway left it in the workspace; one left by an earlier killed run is cleared first so it does not mix with this one
+PART=$OUT.part; rm -rf "$PART"; mkdir -p "$PART" || die "建不了 | cannot create $OUT.part"
 ht -t nca --basenca="$BASE" --exefsdir="$OUT.part/ExeFS" --romfsdir="$OUT.part/RomFS" "$UPD" > "$T/extract.log" 2>&1 || { rm -rf "$OUT.part"; die "更新内容取不出来 | cannot extract the update content: $(hterr "$T/extract.log")"; }
 
 # 版本核对：三个程序文件的校验值必须是 3.3.94012 的
@@ -110,4 +112,5 @@ SUMS
 [ -f "$OUT.part/RomFS/data/build_manifest.psv" ] || { echo "  ✗ 资源里没有 | the assets have no data/build_manifest.psv"; ok=0; }
 [ "$ok" = 1 ] || { rm -rf "$OUT.part"; die "版本不对：游戏包里的更新不是 3.3.94012 | wrong version: the update in the game packages is not 3.3.94012"; }
 mv "$OUT.part" "$OUT" || die "改名到 $OUT 没成 | renaming to $OUT failed"
+PART=
 say "好了：${OUT}。接着在仓库根目录运行 ./setup.sh | done: ${OUT}. Next, run ./setup.sh in the repository root"

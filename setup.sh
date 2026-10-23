@@ -23,7 +23,7 @@ case "${1:-}" in
   *.xci|*.XCI|*.nsp|*.NSP)
     PKGS=(); while [ $# -gt 0 ]; do case "$1" in *.xci|*.XCI|*.nsp|*.NSP) PKGS+=("$1"); shift;; *) break;; esac; done
     [ $# -ge 1 ] || die "$(m "用法：./setup.sh <游戏包 .xci 或 .nsp> [<游戏包> …] <prod.keys>" "Usage: ./setup.sh <game package .xci or .nsp> [<game package> ...] <prod.keys>")"
-    if [ -d "$GAME" ]; then say "$(m "已有游戏文件目录 ${GAME}，不再解包" "Game files directory $GAME already exists; skipping extraction")"
+    if [ -d "$GAME" ]; then say "$(m "已有游戏文件目录 ${GAME}，不再解包" "Game files directory $GAME already exists; skipping extraction")"; SKIPPED=1   # 它不全或版本不对时，第三段核对后停下 | if it is incomplete or the wrong version, stop after the section 3 check
     else bash "$HERE/dm/tools/extract_game.sh" "${PKGS[@]}" "$1" || exit 1; fi
     shift;;
 esac
@@ -97,7 +97,11 @@ if [ "$gf" != 0 ]; then
   missing=$((missing+gf))
   if command -v "${HACTOOL:-hactool}" > /dev/null 2>&1; then G="./setup.sh $(m "<你的游戏包 .xci 或 .nsp> <你的 prod.keys>" "<your game package .xci or .nsp> <your prod.keys>")"
   else G="$(m "先装 hactool（https://github.com/SciresM/hactool ，按它的说明编译，放进 PATH），再执行 ./setup.sh <你的游戏包> <你的 prod.keys>" "Install hactool first (https://github.com/SciresM/hactool, build it per its instructions and put it in PATH), then run ./setup.sh <your game package> <your prod.keys>")"; fi
+  # 目录已在、却不全或不是这一版：再给游戏包也只会「已有，不再解包」，原样再卡一次，所以先让人把它移走
+  # The directory exists but is incomplete or not this version: giving the packages again would only print "already exists; skipping extraction" and get stuck the same way, so ask for it to be moved aside first
+  [ ! -e "$GAME" ] || G="$(m "先把 ${GAME} 移到别处（例如 mv \"$GAME\" \"$GAME.old\"），再：" "Move $GAME aside first (for example mv \"$GAME\" \"$GAME.old\"), then: ")$G"
   echo "      → $G"; echo "      → $(m "游戏文件只能从你自己买的 Switch 版导出，怎么导出见 docs/GAME_FILES.zh-CN.md" "Game files can only come from the Switch copy you own; see docs/GAME_FILES.md for how to export them")"; [ -n "$NEXT" ] || NEXT=$G
+  [ "${SKIPPED:-0}" != 1 ] || die "$(m "已有的游戏文件目录 ${GAME} 不全或不是 3.3.94012 这一版，所以没有解包：先把它移到别处（例如 mv \"$GAME\" \"$GAME.old\"），再重跑同一条命令" "The existing game files directory $GAME is incomplete or not version 3.3.94012, so the packages were not extracted: move it aside (for example mv \"$GAME\" \"$GAME.old\"), then rerun the same command")"
 fi
 
 say "$(m "四、签名（出 App 时才用，现在缺也不拦）" "4. Signing (only needed when building the app; not blocking now)")"
@@ -116,7 +120,9 @@ if [ "${1:-}" = check ]; then echo; m "体检通过。下一步：./setup.sh（�
 
 step() { local name=$1; shift; local t0; t0=$(date +%s); say "$name"; "$@" || die "$name 没成功"; say "$name 完成（$(( $(date +%s) - t0 )) 秒）"; }
 
-py_env() { python3 -m venv "$DM_ROOT/build/cache/dm/venv" && "$PY" -m pip install -q pillow numpy lz4 capstone unicorn; }
+# 改写用到的三个包钉在验过的版本上（docs/DEPENDENCIES.zh-CN.md）：改写器靠 capstone 的反汇编文本核对每处改写，capstone 6 起常数也改了名，新版装进来改写就停
+# The three packages the rewrite uses are pinned to the verified versions (docs/DEPENDENCIES.md): the rewriter checks every rewrite against capstone's disassembly text, and from capstone 6 on the constants are renamed too, so a newer release would stop the rewrite
+py_env() { python3 -m venv "$DM_ROOT/build/cache/dm/venv" && "$PY" -m pip install -q pillow numpy lz4==4.4.5 capstone==5.0.9 unicorn==2.1.4; }
 [ -x "$PY" ] && "$PY" -c 'import PIL, numpy, lz4, capstone, unicorn' 2> /dev/null || step "Python 环境与包" py_env
 
 P=$(head -1 "$HERE/dm/PRODUCT")

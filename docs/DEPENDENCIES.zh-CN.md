@@ -33,7 +33,7 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 | capstone | 5.0.9 | 反汇编，用于改写主程序与验证 | <https://pypi.org/project/capstone/> |
 | unicorn | 2.1.4 | 逐处核对改写前后行为等价 | <https://pypi.org/project/unicorn/> |
 
-一次装齐：`python3 -m pip install pillow numpy lz4 capstone unicorn`（`./setup.sh` 会自动建独立环境并装好，不用手动执行）
+一次装齐：`python3 -m pip install pillow numpy lz4==4.4.5 capstone==5.0.9 unicorn==2.1.4`（`./setup.sh` 会自动建独立环境并装好，不用手动执行；其中 lz4、capstone、unicorn 钉在这几个版本；capstone 6 把改写器用到的常数改了名，装了它改写会停）
 
 ## 安卓版另外需要
 
