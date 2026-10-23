@@ -60,6 +60,7 @@ run: \
 	$(B)/t_loader_weak
 	$(B)/t_mac_overlay
 	$(PY) test_mac_features.py
+	python3 ../../tools/test_dmtest.py
 	$(B)/t_rift_clock
 	$(B)/t_rift_next
 	$(B)/t_rift_oldrun

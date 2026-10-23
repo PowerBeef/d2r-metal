@@ -28,6 +28,7 @@ Three kinds of things live here. The first you will use when following the front
 | `save_txn_regress.sh` | Determinism regression for save transactions |
 | `host_war13.sh` | Host replay of one fixed case, compared tick by tick and by save |
 | `l3reg.py`, `l3seg.sh`, `l3run.sh`, `test_l3reg.py` | Long-run memory regression: fits the growth of memory and handles against game ticks and extrapolates to a long session |
+| `dmtest.py`, `test_dmtest.py` | Uniform result wrapper for any test command: passes its output through and turns its verdict lines into `result.json`, optional JUnit XML and a last `RESULT {json}` line |
 | `frameprobe.sh` | Comparison measurement of frame pacing stability |
 | `conc_watch.sh` | Concurrency check for timed runs: a timing taken while other heavy work was running is discarded |
 | `sampagg.py`, `lockalign.py` | Aggregation of sampling logs; call-chain statistics for lock-holding threads |
