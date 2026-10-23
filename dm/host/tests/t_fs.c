@@ -154,7 +154,7 @@ int main(void) {
     CHECK(h_fs_Commit("save") == RES_FAIL && g_nfail == nf0 + 1, "本事务被拒（重新克隆注入失败），进程还在，前端通知 1 次");
     snprintf(p, sizeof p, "%s/a", save); CHECK(same(p, "new"), "已提交目录 a 仍是 new");
     snprintf(p, sizeof p, "%s/a", work); CHECK(same(p, "bad"), "工作目录没删（a 还是 bad）");
-    CHECK(h_fs_Commit("save") == RES_FAIL && g_nfail == nf0 + 2, "仍是已污染：下一次提交照样拒绝");
+    CHECK(h_fs_Commit("save") == RES_FAIL && g_nfail == nf0 + 1, "仍是已污染：下一次提交照样拒绝（同一段连续失败不再通知前端）");
     snprintf(p, sizeof p, "%s/a", work); CHECK(same(p, "new"), "这次重新克隆成了：工作目录 a 回到 new");
     snprintf(p, sizeof p, "%s.re", work); CHECK(access(p, F_OK) != 0, "没有 .re 残留");
     CHECK(write_save("save:/a", "good") == RES_OK && h_fs_Commit("save") == RES_OK, "下一个事务写 a=good，提交成功");

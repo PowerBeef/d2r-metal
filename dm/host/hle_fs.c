@@ -73,9 +73,9 @@ void dm_fs_save_poison(int e) { save_poison(e); }   // 提交前钩子用：旁�
 // 缺省弱实现只记日志（命令行宿主等没有前端的）；iOS 与 Mac 前端（front_ios.m / front_mac.m）各写同名强实现弹原生提示。在游戏线程调，前端自己切主线程
 // The default weak implementation only logs (hosts without a front end, such as the command-line host); the iOS and Mac front ends (front_ios.m / front_mac.m) each provide a strong implementation of the same name that shows a native alert. Called on the game thread, the front end switches to the main thread itself
 __attribute__((weak)) void front_save_failed(int err) { LOG("front_save_failed(errno=%d)：前端未接（缺省弱实现）", err); }
-// 克隆 / 互换这一步失败（工作目录完好、进度只在工作目录里）也通知前端，但一段连续失败只通知一次：游戏几秒就提交一次，
+// 提交没成（本事务有写失败被拒，或克隆 / 互换失败——工作目录完好、进度只在工作目录里）都通知前端，但一段连续失败只通知一次：游戏几秒就提交一次（盘满时旁路文件待证明还每 2 秒请一次存盘），
 // 前端每次调用都弹一次提示（iOS 叠一个新提示框在前一个上面，Mac 弹一个表单）；成功提交一次就清零，下一段失败再通知。持 g_lock 时读写，通知在放锁之后、同一游戏线程
-// A failure at the clone / swap step (the work directory is intact and the progress lives only there) is reported to the front end too, but only once per run of consecutive failures: the game commits every few seconds,
+// A commit that does not go through (refused because a write failed in this transaction, or a failure at the clone / swap step, where the work directory is intact and the progress lives only there) is reported to the front end, but only once per run of consecutive failures: the game commits every few seconds (and on a full disk pending side files request a save every 2 s),
 // and the front ends show an alert for every call (iOS stacks a new alert on the previous one, the Mac shows a sheet); one successful commit resets it, so the next run of failures is reported again. Read and written holding g_lock; the notification itself is sent after the lock is released, on the same game thread
 static int g_commit_fail_said;
 // 事务目录里的增删改失败（建文件 / 建目录 / 删 / 改名 / 写方式打开）也按写失败拒绝本事务，同 pwrite / ftruncate：游戏不看这些返回值，照常 Commit 就会把缺了一块的存档提交进去。
@@ -605,10 +605,11 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv；事务式存档：工作目录整�
         else { rm_tree(re); work_mark(g_mnt[i].dir, 1); atomic_store(&g_work_clean, 1); }   // 换下来的被污染工作目录；新工作目录 = 已提交版 | The swapped-out tainted work directory; the new work directory = the committed version
         if (rerr) { save_poison(perr); LOG("【红】存档事务：重新克隆工作目录失败 errno=%d——工作目录不动、保持已污染（下次提交照样拒绝并重试），已提交版本不变", rerr); }
         post_commit(0);
+        int say = !g_commit_fail_said; g_commit_fail_said = 1;   // 同一段连续失败只提示一次（见 g_commit_fail_said） | one alert per run of consecutive failures (see g_commit_fail_said)
         pthread_mutex_unlock(&g_lock);
         LOG("【红】存档提交拒绝：本事务有存档写失败 errno=%d（工作目录里 0 字节文件：%s）；已提交版本不变，工作目录%s%s", perr, tl ? torn + 1 : "无", rerr ? "没能重新克隆（见上一行）" : "已从已提交版重新克隆", nopen ? "；【红】仍有存档文件开着" : "");
         DM_EV("save", "result:s errno:d", "rejected", perr);
-        front_save_failed(perr);
+        if (say) front_save_failed(perr);
         return RES_FAIL;
     }
     char neu[1100], prev[1100]; snprintf(neu, sizeof neu, "%s.new", g_mnt[i].commit); snprintf(prev, sizeof prev, "%s.prev", g_mnt[i].commit);
