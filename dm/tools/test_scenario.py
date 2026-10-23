@@ -116,6 +116,19 @@ class ScenarioTest(unittest.TestCase):
             res, code = r.go()
         self.assertEqual(code, 1); self.assertIn('crash', res['reason'])
 
+    def test_log_scans(self):   # 日志里有消毒器报告：步骤都过了也判红；--metal-validation 档的环境进了场景、lint 只汇总 | a sanitizer report in the log is red even when every step passed; the --metal-validation level's environment reaches the scenario, lint only summarizes
+        log = self.dir / 'host.log'
+        log.write_text('[dm] 一行\nSUMMARY: AddressSanitizer: heap-use-after-free x.c:1 in f\n2026-10-23 07:54:08.699 dmhost[1:2] Render Command Encoder Set Cull Mode Validation.\nPrevious setCullMode was unused.\n', encoding='utf-8')
+        r = scenario.Runner(self.scn('ping\n'), 'cli', str(self.dir / 'out'), True, metal='lint')
+        self.assertEqual(r.meta['env'].get('MTL_DEBUG_LAYER_WARNING_MODE'), 'nslog')
+        fb = FakeBackend(); fb.log_file = lambda: str(log); r.backend = fb   # type: ignore[assignment,method-assign]
+        res, code = r.go()
+        self.assertEqual((code, res['verdict']), (1, 'RED'))
+        by = {c['check']: c for c in res['checks']}
+        self.assertFalse(by['no sanitizer reports']['ok']); self.assertIn('heap-use-after-free', by['no sanitizer reports']['detail'])
+        self.assertTrue(by['metal validation (lint)']['ok']); self.assertIn('1 messages', by['metal validation (lint)']['detail'])
+        self.assertTrue((self.dir / 'out' / 'sanitizer.txt').exists() and (self.dir / 'out' / 'metal_validation.txt').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

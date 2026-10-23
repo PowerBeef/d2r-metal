@@ -13,6 +13,8 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 
 每个场景打 `STEP` 行、`CHECK` 行、`SCENARIO <名> OK|RED <原因>` 判定行，末行 `RESULT {json}`。结果目录（`$DM_ROOT/run/scenario/<名>_<后端>_<时刻>/`）里有 `host.log`、`events.ndjson`（命令行宿主）、`port.log`、`steps.tsv`、`result.json` 和截图。
 
+`SCN_DMHOST=<可执行文件>` 让 `cli` 后端跑另一个宿主构建，例如消毒器构建（`make -C dm/host dmhost_asan`）。每次跑都会查日志里的消毒器报告，有就判红（`sanitizer.txt`）。`--metal-validation api|shader|all|lint` 打开 Metal 的校验层（`metal_validation.txt`）。两者见 [debugging.zh-CN.md](../debugging.zh-CN.md)。
+
 ## 后端
 
 | 后端 | 跑的是什么 | 控制 | 需要 |

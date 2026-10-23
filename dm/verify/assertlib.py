@@ -5,6 +5,8 @@
     局外（无 tick）的消息归入此前最近的拍号，首个拍号之前归入拍 0。
 二、事件流（DM_EVENTS，event_stream.md）：events(路径) → Events，按事件问面板、存档、红标。
 三、日志红标守卫：logred(日志, allow=[正则…]) → 没被放行的红标行（【红】、🔴、FATAL、CRASH、看门狗）；命令行 assertlib.py logred <日志> [--allow 正则]… 打 LOGRED OK|RED。
+四、消毒器报告：sanitizers(日志) → [(种类, 摘要行, 次数)]（地址 / 未定义行为 / 线程消毒器，按摘要行去重）；命令行 assertlib.py sanitizers <日志> 打 SANITIZERS OK|RED。
+五、Metal 校验层消息：metal_validation(日志) → [(标题, 消息, 次数)]（MTL_DEBUG_LAYER 的 nslog 输出、断言、着色器校验报到 stderr 的行）；命令行 assertlib.py metal <日志> 打 METALVAL OK|RED。
 Shared assertion library for verification (formerly touchcases/lib.py; touchcases keeps a shim of the same name, so cases still import lib).
 
 1. Run directories of touch full-chain cases (touchchain.sh): load(dir) -> Result, reading the four records c2s / ticks / uimsg / state.
@@ -12,6 +14,8 @@ Shared assertion library for verification (formerly touchcases/lib.py; touchcase
    out-of-run messages (no tick) are attributed to the most recent preceding tick number, and those before the first tick number to tick 0.
 2. The event stream (DM_EVENTS, event_stream.md): events(path) -> Events, asking about panels, saves and red markers by event.
 3. Log red-marker guard: logred(log, allow=[regex...]) -> the red-marker lines not allowed (【红】, 🔴, FATAL, CRASH, watchdog); from the shell, assertlib.py logred <log> [--allow regex]... prints LOGRED OK|RED.
+4. Sanitizer reports: sanitizers(log) -> [(kind, summary line, count)] (Address / UndefinedBehavior / Thread sanitizers, deduplicated by summary line); from the shell, assertlib.py sanitizers <log> prints SANITIZERS OK|RED.
+5. Metal validation layer messages: metal_validation(log) -> [(title, message, count)] (the nslog output of MTL_DEBUG_LAYER, assertions, and the lines shader validation reports to stderr); from the shell, assertlib.py metal <log> prints METALVAL OK|RED.
 """
 
 import json
@@ -241,8 +245,79 @@ def logred_main(argv):
     return 1 if bad else 0
 
 
+# ---------- 消毒器报告 | Sanitizer reports ----------
+_SAN_START = re.compile(r"^==\d+==ERROR: (AddressSanitizer)|: runtime error: |^WARNING: (ThreadSanitizer)")
+_SAN_SUMMARY = re.compile(r"^SUMMARY: (AddressSanitizer|UndefinedBehaviorSanitizer|ThreadSanitizer): (.+)$")
+
+
+def sanitizers(log_path):
+    """日志里的消毒器报告，按摘要行去重：[(种类, 摘要, 次数)]，次数多的在前。没有摘要行的报告（未定义行为消毒器只打一行 runtime error）按那一行记。 | Sanitizer reports in the log, deduplicated by summary line: [(kind, summary, count)], most frequent first. Reports without a summary line (UndefinedBehaviorSanitizer prints just one runtime error line) are counted by that line."""
+    counts, kinds, pending = {}, {}, None
+    with open(log_path, encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            m = _SAN_SUMMARY.match(line)
+            if m:
+                key = m.group(2)[:240]; counts[key] = counts.get(key, 0) + 1; kinds[key] = m.group(1); pending = None; continue
+            if _SAN_START.search(line):
+                if pending: counts[pending] = counts.get(pending, 0) + 1   # 上一份没等到摘要行 | the previous one never got a summary line
+                pending = re.sub(r"0x[0-9a-f]+", "0x…", line.split("runtime error: ")[-1] if "runtime error: " in line else line)[:240]
+                kinds.setdefault(pending, "UndefinedBehaviorSanitizer" if "runtime error: " in line else "AddressSanitizer" if "AddressSanitizer" in line else "ThreadSanitizer")
+    if pending: counts[pending] = counts.get(pending, 0) + 1
+    # 未定义行为消毒器在地址消毒版里也打 SUMMARY，同一份报告的 runtime error 行与摘要行别记两次 | UBSan also prints a SUMMARY in the ASan build: do not count a report's runtime error line and its summary line twice
+    return sorted(((kinds[k], k, n) for k, n in counts.items()), key=lambda x: -x[2])
+
+
+def sanitizers_main(argv):
+    import argparse   # noqa: PLC0415
+    ap = argparse.ArgumentParser(prog="assertlib.py sanitizers", description="Fail when a log has AddressSanitizer / UBSan / ThreadSanitizer reports.")
+    ap.add_argument("log")
+    rep = sanitizers(ap.parse_args(argv).log)
+    for kind, what, n in rep[:20]: print(f"  {n:5} {kind}: {what}")
+    print(f"SANITIZERS {'RED' if rep else 'OK'} {sum(n for _, _, n in rep)} 份报告、{len(rep)} 处 | reports, {len(rep)} sites")
+    return 1 if rep else 0
+
+
+# ---------- Metal 校验层 | Metal validation layer ----------
+# nslog 模式：「时刻 进程[pid:tid] <标题> Validation」一行，下一行是消息；断言模式：「failed assertion `…`」；着色器校验报到 stderr 的行带 Invalid … / executing … function
+# nslog mode: a "time process[pid:tid] <title> Validation" line, with the message on the next line; assert mode: "failed assertion `...`"; the lines shader validation reports to stderr carry Invalid ... / executing ... function
+_MTL_HEAD = re.compile(r"^\d{4}-\d\d-\d\d [\d:.]+ \S+\[\d+:\d+\] (.+ Validation\.?)$")
+_MTL_ONELINE = re.compile(r"failed assertion|Invalid (?:device|constant|texture|threadgroup|resource)|executing (?:kernel|vertex|fragment|tile|mesh|object) function|GPU Validation error|Shader Validation", re.I)
+
+
+def metal_validation(log_path):
+    """日志里的 Metal 校验层消息：[(标题, 消息, 次数)]，次数多的在前（地址抹成 0x…）。只数「… Validation Enabled」以外的行。 | Metal validation layer messages in the log: [(title, message, count)], most frequent first (addresses blanked to 0x...). Lines other than "... Validation Enabled" only."""
+    counts, head = {}, None
+    with open(log_path, encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            if line.startswith("[dm]"): head = None; continue
+            m = _MTL_HEAD.match(line)
+            if m: head = m.group(1); continue
+            if head is not None:
+                if line.strip(): key = (head, re.sub(r"0x[0-9a-f]+", "0x…", line.strip())[:240]); counts[key] = counts.get(key, 0) + 1
+                head = None; continue
+            if _MTL_ONELINE.search(line) and "Validation Enabled" not in line:
+                key = ("", re.sub(r"0x[0-9a-f]+", "0x…", line.strip())[:240]); counts[key] = counts.get(key, 0) + 1
+    return sorted(((t, msg, n) for (t, msg), n in counts.items()), key=lambda x: -x[2])
+
+
+def metal_main(argv):
+    import argparse   # noqa: PLC0415
+    ap = argparse.ArgumentParser(prog="assertlib.py metal", description="Summarize Metal API / shader validation messages in a log; --lint reports them without failing.")
+    ap.add_argument("log"); ap.add_argument("--lint", action="store_true", help="warnings run (MTL_DEBUG_LAYER_WARNING_MODE=nslog): summarize, do not fail")
+    a = ap.parse_args(argv)
+    rep = metal_validation(a.log)
+    for title, msg, n in rep[:30]: print(f"  {n:6} {title + ': ' if title else ''}{msg}")
+    red = bool(rep) and not a.lint
+    print(f"METALVAL {'RED' if red else 'OK'} {sum(n for _, _, n in rep)} 条消息、{len(rep)} 种 | messages, {len(rep)} kinds" + ("（只汇总 | summary only）" if a.lint else ""))
+    return 1 if red else 0
+
+
 def main(argv=None):
     if argv and argv[0] == "logred": return logred_main(argv[1:])
+    if argv and argv[0] == "sanitizers": return sanitizers_main(argv[1:])
+    if argv and argv[0] == "metal": return metal_main(argv[1:])
     del argv
     if _FAILURES:
         print(f"红 {len(_FAILURES)} 条")

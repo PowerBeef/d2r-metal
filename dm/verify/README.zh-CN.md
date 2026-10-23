@@ -120,7 +120,7 @@ dm/verify/accept.sh [--fast|--full] [产物目录]
 每个用例是 `touchcases/<名>/` 下的一对文件：
 
 - `script.txt`：触点脚本（哪个时刻、哪根手指、在哪按下或抬起），经 `DM_TOUCH_SCRIPT` 交给宿主的触摸前端。
-- `assert.py`：断言。读局目录里宿主写下的四份记录——逐拍状态 `ticks.jsonl`、命令包 `c2s.jsonl`、UI 消息 `uimsg.jsonl`、状态探针 `state.jsonl`——判断这次触摸有没有产生该有的结果（物品挪没挪、发没发某个命令包、面板开没开）。公共函数在 `assertlib.py`（用例照旧 `import lib`，`touchcases/` 里留了转接），测试是 `touchcases/test_lib.py` 与 `test_assertlib.py`；它还能读事件流，并带日志红标守卫（`python3 dm/verify/assertlib.py logred <日志> [--allow 正则]`）。
+- `assert.py`：断言。读局目录里宿主写下的四份记录——逐拍状态 `ticks.jsonl`、命令包 `c2s.jsonl`、UI 消息 `uimsg.jsonl`、状态探针 `state.jsonl`——判断这次触摸有没有产生该有的结果（物品挪没挪、发没发某个命令包、面板开没开）。公共函数在 `assertlib.py`（用例照旧 `import lib`，`touchcases/` 里留了转接），测试是 `touchcases/test_lib.py` 与 `test_assertlib.py`；它还能读事件流，并带日志红标守卫（`python3 dm/verify/assertlib.py logred <日志> [--allow 正则]`）、消毒器报告扫描（`sanitizers <日志>`）与 Metal 校验汇总（`metal <日志> [--lint]`；[debugging.zh-CN.md](debugging.zh-CN.md)）。
 
 可选文件：`prefix`（一行，一个前缀目录的路径；先回放这段真值输入，把角色带到野外等位置再开始）、`ticks`（一行，本例总拍数）、`pending`（有这个文件的用例不跑，但会被列出，首行写原因）。
 

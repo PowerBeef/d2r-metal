@@ -13,6 +13,8 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 
 Each scenario prints `STEP` lines, `CHECK` lines, a `SCENARIO <name> OK|RED <reason>` verdict and a final `RESULT {json}`. The result folder (`$DM_ROOT/run/scenario/<name>_<backend>_<time>/`) holds `host.log`, `events.ndjson` (CLI host), `port.log`, `steps.tsv`, `result.json` and the screenshots.
 
+`SCN_DMHOST=<executable>` runs another host build on the `cli` backend, for example a sanitizer build (`make -C dm/host dmhost_asan`). Every run scans its logs for sanitizer reports; any report makes it red (`sanitizer.txt`). `--metal-validation api|shader|all|lint` turns on Metal's validation layers (`metal_validation.txt`). Both are described in [debugging.md](../debugging.md).
+
 ## Backends
 
 | Backend | What runs | Control | Needs |

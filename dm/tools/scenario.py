@@ -2,15 +2,17 @@
 # 场景运行器：按场景文件（dm/verify/scenarios/*.scn）一步一步驱动游戏（控制口 dm/verify/control_port.md），每步等它生效再走下一步，末尾按检查项判 OK / RED。
 # 场景文件是一行一步的文本，用的是触屏脚本的那套动作名（tap_ui、await_ui、walk_to、tap_unit、shot …），但不按时刻排，按顺序做；格式见 dm/verify/scenarios/README.md。
 #   后端：cli（Mac 命令行宿主，缺省）、mac-app（玩家装的 Mac App，DM_APP_SUPPORT 隔开存档与日志）、ios-mac（Mac 上跑的 iOS 包，走日志端口）、device（真机：devicectl 拉起 + iproxy 转日志端口）
-#   用法：scenario.py run <场景文件>… [--backend cli|mac-app|ios-mac|device] [--out 目录] [--headless]
+#   用法：scenario.py run <场景文件>… [--backend cli|mac-app|ios-mac|device] [--out 目录] [--headless] [--metal-validation api|shader|all|lint]
 #         scenario.py check <场景文件>…      只解析、不跑（语法 / 动作名 / 参数）
 #   每个场景打「SCENARIO <名> OK|RED …」判定行（dmtest.py 认得），末行 RESULT {json}；结果目录里有 host.log、events.ndjson、port.log、steps.tsv 与截图
+#   跑完都查一遍日志里的消毒器报告（SCN_DMHOST=dm/host/dmhost_asan 等，有就判红，汇总进 sanitizer.txt）；--metal-validation 开 Metal 校验层，消息汇总进 metal_validation.txt（lint 只汇总、不判红）
 # Scenario runner: drives the game step by step from a scenario file (dm/verify/scenarios/*.scn) through the control port (dm/verify/control_port.md), waits for each step to take effect before the next, and judges OK / RED by the checks at the end.
 # A scenario file is text with one step per line, using the touch script's action names (tap_ui, await_ui, walk_to, tap_unit, shot ...), but run in order instead of by time; the format is in dm/verify/scenarios/README.md.
 #   Backends: cli (Mac command-line host, default), mac-app (the Mac App players install, saves and logs kept apart with DM_APP_SUPPORT), ios-mac (the iOS package running on a Mac, over the log port), device (real device: launched with devicectl, log port forwarded through iproxy)
-#   Usage: scenario.py run <scenario file>... [--backend cli|mac-app|ios-mac|device] [--out dir] [--headless]
+#   Usage: scenario.py run <scenario file>... [--backend cli|mac-app|ios-mac|device] [--out dir] [--headless] [--metal-validation api|shader|all|lint]
 #          scenario.py check <scenario file>...   parse only, do not run (syntax / action names / arguments)
 #   Each scenario prints a "SCENARIO <name> OK|RED ..." verdict line (dmtest.py understands it), last line RESULT {json}; the result directory holds host.log, events.ndjson, port.log, steps.tsv and the screenshots
+#   Every run then checks the log for sanitizer reports (SCN_DMHOST=dm/host/dmhost_asan and the like; any report is red, summarized in sanitizer.txt); --metal-validation turns on the Metal validation layers, with the messages summarized in metal_validation.txt (lint only summarizes, never red)
 import argparse
 import datetime
 import json
@@ -245,8 +247,20 @@ class LaunchBackend:
 
 
 # ---------- 运行 | Running ----------
+# --metal-validation 各档的环境（man MetalValidation）：api = 接口校验，错误记日志不断言、警告不报；lint = 再把警告（多余 / 没用上的状态设置等，性能上的提示）也记下来；
+# shader = 着色器校验（管线现场插桩重编，每条约 0.15 秒，停顿阈值放宽到 300 秒），报到 stderr；all = api + shader
+# Environment of each --metal-validation level (man MetalValidation): api = API validation, errors logged instead of asserting, warnings not reported; lint = also log the warnings (redundant / unused state settings and the like, performance hints);
+# shader = shader validation (pipelines are instrumented and recompiled on the spot, about 0.15 s each, so the stall threshold is raised to 300 s), reported to stderr; all = api + shader
+METAL_VALIDATION = {
+    'api': dict(MTL_DEBUG_LAYER='1', MTL_DEBUG_LAYER_ERROR_MODE='nslog', MTL_DEBUG_LAYER_WARNING_MODE='ignore'),
+    'lint': dict(MTL_DEBUG_LAYER='1', MTL_DEBUG_LAYER_ERROR_MODE='nslog', MTL_DEBUG_LAYER_WARNING_MODE='nslog'),
+    'shader': dict(MTL_SHADER_VALIDATION='1', MTL_SHADER_VALIDATION_REPORT_TO_STDERR='1', DM_WATCH_STALL='300'),
+}
+METAL_VALIDATION['all'] = dict(METAL_VALIDATION['api'], **METAL_VALIDATION['shader'])
+
+
 class Runner:
-    def __init__(self, path, backend_name, out, headless):
+    def __init__(self, path, backend_name, out, headless, metal=None):
         self.path = path
         self.meta, self.steps, self.checks = parse(path)
         stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -254,6 +268,8 @@ class Runner:
         os.makedirs(self.run, exist_ok=True)
         self.backend = CliBackend(self.meta, self.run, headless) if backend_name == 'cli' else MacAppBackend(self.meta, self.run, headless) if backend_name == 'mac-app' else LaunchBackend(backend_name, self.meta, self.run)
         if any(st['op'] == 'gpu_capture' for st in self.steps): self.meta['env'].setdefault('MTL_CAPTURE_ENABLED', '1')   # 进程得带它起才截得了帧 | the process must start with it to be capturable
+        self.metal = metal
+        for k, v in METAL_VALIDATION.get(metal or '', {}).items(): self.meta['env'].setdefault(k, v)
         self.on_started: Callable[[Any], None] | None = None   # 回调（后端）：连上之后、第一步之前调，基准测试用它挂系统读数 | callback(backend): called after connecting and before the first step; benchmarks attach system readings with it
         self.c: dmctl.Ctl | None = None; self.prev_mark = -1; self.records: list[dict[str, Any]] = []
         self.vars: dict[str, Any] = {}   # remember 记下的值，后面的值里写 $名 或 $名+N / $名-N 引用 | values kept by remember, referenced later as $name or $name+N / $name-N
@@ -415,6 +431,25 @@ class Runner:
             self.say(f"CHECK {'✓' if ok else '✗'} {ck['line']} — {why}")
         return out
 
+    def log_scans(self):
+        """跑完查日志：消毒器报告（总查，有就判红）与 Metal 校验层消息（开了 --metal-validation 才查；lint 只汇总）。汇总写进结果目录的 sanitizer.txt / metal_validation.txt。 | Log scans after the run: sanitizer reports (always; any is red) and Metal validation messages (only with --metal-validation; lint only summarizes). Summaries go to sanitizer.txt / metal_validation.txt in the result folder."""
+        sys.path.insert(0, os.path.join(DM, 'verify')); import assertlib   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+        lf = getattr(self.backend, 'log_file', None)
+        logs = [x for x in ((lf() if lf else None), os.path.join(self.run, 'launch.log')) if x and os.path.exists(x)]   # mac-app 的 stderr 在 launch.log | the mac-app stderr is in launch.log
+        out = []
+        san = [r for x in logs for r in assertlib.sanitizers(x)]
+        if san:
+            with open(os.path.join(self.run, 'sanitizer.txt'), 'w', encoding='utf-8') as f: f.writelines(f'{n}\t{k}\t{w}\n' for k, w, n in san)
+            why = f'{sum(n for _, _, n in san)} reports, first: {san[0][0]}: {san[0][1][:140]}'
+            out.append(dict(check='no sanitizer reports', ok=False, detail=why)); self.say(f'CHECK ✗ no sanitizer reports — {why}')
+        if self.metal:
+            mv = [r for x in logs for r in assertlib.metal_validation(x)]
+            with open(os.path.join(self.run, 'metal_validation.txt'), 'w', encoding='utf-8') as f: f.writelines(f'{n}\t{t}\t{m}\n' for t, m, n in mv)
+            ok = self.metal == 'lint' or not mv
+            why = f'{sum(n for _, _, n in mv)} messages of {len(mv)} kinds' + (f', top: {mv[0][0]}: {mv[0][1][:120]}' if mv else '') + (' (lint: summary only)' if self.metal == 'lint' else '')
+            out.append(dict(check=f'metal validation ({self.metal})', ok=ok, detail=why)); self.say(f"CHECK {'✓' if ok else '✗'} metal validation ({self.metal}) — {why}")
+        return out
+
     def go(self):
         t0 = time.time(); fail: dict[str, Any] | None = None; name = self.meta['name']
         self.say(f'场景 | scenario {name}（{self.backend.name}，{len(self.steps)} 步 | steps）→ {self.run}')
@@ -460,7 +495,7 @@ class Runner:
             top = next((fr for fr in cr.get('frames', []) if fr.get('name') or fr.get('where')), {})
             what = f"crash {cr.get('signal', '?')} at " + (' '.join(x for x in (top.get('where'), top.get('name')) if x) or '?')
             fail = dict(step=(fail or {}).get('step', len(self.steps)), line=(fail or {}).get('line', '(after the steps)'), reason=what + (f"; {fail['reason']}" if fail else ''))
-        checks = self.final_checks() if not fail or fail['step'] else []
+        checks = (self.final_checks() if not fail or fail['step'] else []) + self.log_scans()
         bad_ck = [c for c in checks if not c['ok']]
         verdict = 'OK' if not fail and not bad_ck else 'RED'
         why = f"step {fail['step']} ({fail['line']}): {fail['reason'][:160]}" if fail else f'check: {bad_ck[0]["check"]} — {bad_ck[0]["detail"][:120]}' if bad_ck else f'{len(self.steps)} steps, {len(checks)} checks'
@@ -475,6 +510,7 @@ def main(argv):
     sub = ap.add_subparsers(dest='cmd', required=True)
     r = sub.add_parser('run'); r.add_argument('files', nargs='+'); r.add_argument('--backend', default='cli', choices=('cli', 'mac-app', 'ios-mac', 'device'))
     r.add_argument('--out'); r.add_argument('--headless', action='store_true')
+    r.add_argument('--metal-validation', choices=sorted(METAL_VALIDATION), help='turn on the Metal validation layers; messages go to metal_validation.txt (lint: summary only)')
     c = sub.add_parser('check'); c.add_argument('files', nargs='+')
     a = ap.parse_args(argv)
     if a.cmd == 'check':
@@ -484,10 +520,14 @@ def main(argv):
             except ScenarioError as e: bad += 1; print(f'SCENARIO-CHECK {os.path.basename(f)} RED {e}')
         return 1 if bad else 0
     results, rc = [], 0
+    if a.metal_validation in ('shader', 'all') and not os.environ.get('SCN_DMHOST', '').endswith('_m3'):
+        # macOS 27 实测：Metal 4 宿主开着色器校验时，第一次出图提交就崩在 Metal 自己的 -[MTL4GPUDebugCommandBuffer applyResidencySets:]（挂着图层的驻留集）；旧接口宿主正常
+        # Measured on macOS 27: with shader validation the Metal 4 host crashes at the first present commit inside Metal's own -[MTL4GPUDebugCommandBuffer applyResidencySets:] (with the layer's residency set attached); the older-API host works
+        print('NOTE 着色器校验在 Metal 4 宿主上会崩在 Metal 的校验层里，用旧接口宿主：make -C dm/host dmhost_m3 && SCN_DMHOST=dm/host/dmhost_m3 | shader validation crashes inside Metal\'s validation layer on the Metal 4 host; use the older-API host: make -C dm/host dmhost_m3 && SCN_DMHOST=dm/host/dmhost_m3')
     for f in a.files:
         try:
             ensure_save(parse(f)[0]['save'], a.headless)
-            res, code = Runner(f, a.backend, a.out if len(a.files) == 1 else None, a.headless).go()
+            res, code = Runner(f, a.backend, a.out if len(a.files) == 1 else None, a.headless, metal=a.metal_validation).go()
         except ScenarioError as e: res, code = dict(name=os.path.basename(f), verdict='RED', reason=str(e)), 1; print(f'SCENARIO {os.path.basename(f)} RED {e}')
         results.append(res); rc = max(rc, code)
     print('RESULT ' + json.dumps(dict(name='scenario', verdict='OK' if rc == 0 else 'RED', scenarios=[dict(name=r['name'], verdict=r['verdict'], reason=r.get('reason'), dir=r.get('dir')) for r in results]), ensure_ascii=False))
