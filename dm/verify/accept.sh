@@ -77,9 +77,16 @@ else
   echo "ACCEPT RED 宿主预构建失败 日志 $L"
   exit 1
 fi
+# 「不可用」：这一项要的真值录制 / 参照图 / 脚本不在本机或仓里（真值数据不随仓发布，见 dm/verify/README.md）。这种项不跑、不算红，表里记 ⚪ 和缺的东西，末行报不可用几项。
+# 用法：NEED="<路径> …" item …（缺任何一个即不可用）；need 输出缺的那些（相对 $DM_ROOT）并返回非零
+# "Unavailable": the ground-truth recording / reference images / scripts this item needs are not on this machine or in the repository (ground-truth data is not shipped with the repo, see dm/verify/README.md). Such an item is not run and does not count as red; the table records ⚪ and what is missing, and the last line reports how many items were unavailable.
+# Usage: NEED="<path> ..." item ... (any one missing makes it unavailable); need prints the missing ones (relative to $DM_ROOT) and returns nonzero
+need() { local m="" p q r="${DM_ROOT:-$HOME/dm-work}/" g; g="$(cd "$HERE/../.." && pwd)/"; for p in "$@"; do [ -e "$p" ] || { q=${p#"$r"}; m="$m ${q#"$g"}"; }; done; printf '%s' "${m# }"; [ -z "$m" ]; }
+unavail() { printf '0\n| %s | %s | ⚪ 不可用：缺 %s | 0 秒 |\n' "$2" "$3" "$4" > "$L/$1.row"; echo "$1" >> "$L/unavail"; echo "⚪ ${2}（不可用：缺 ${4}）"; }
 item() {   # item <序号> <名> <期望> <日志> <读数行正则> <读数行数> <命令…>：结果写 $L/<序号>.row（首行 rc，次行表格行） | item <number> <name> <expected> <log> <readout line regex> <readout line count> <command...>: the result is written to $L/<number>.row (first line rc, second line the table row)
   local k=$1 name=$2 want=$3 log=$4 kl=$5 kn=$6; shift 6; local s=$SECONDS
   case " $SKIP " in *" $k "*) printf '0\n| %s | %s | ⏭ 跳过：%s | 0 秒 |\n' "$name" "$want" "$SCOPE" > "$L/$k.row"; echo "⏭ ${name}（跳过：${SCOPE}）"; return 0;; esac
+  if [ -n "${NEED:-}" ]; then local miss; local -a nd; read -r -a nd <<< "$NEED"; miss=$(need "${nd[@]}") || { unavail "$k" "$name" "$want" "$miss"; return 0; }; fi
   "$@" > "$L/$log" 2>&1; local rc=$?
   local got=$(grep -E "$kl" "$L/$log" | tail -$kn | tr '\n' ' ') mark
   [ $rc = 0 ] && mark="✅" || mark="🔴"
@@ -110,7 +117,7 @@ savecmp_gate() {   # host_savecmp + 宿主日志红线（只比存档字节、�
   echo "PREFETCH 预取命中 ${hit:-无读数} 块（只报不判）"
   return $rc
 }
-item 2 "② 存档逐字节对拍 host_savecmp $(basename "$TR")" "逐拍 6 格一致、正对照一致、负对照不一致、宿主日志无红线" savecmp.log 'SELFCMP|^SAVECMP|结论|^HOSTLOG|^PREFETCH' 6 savecmp_gate savecmp.log &
+NEED="$TR $HERE/ryu/selfcmp.py" item 2 "② 存档逐字节对拍 host_savecmp $(basename "$TR")" "逐拍 6 格一致、正对照一致、负对照不一致、宿主日志无红线" savecmp.log 'SELFCMP|^SAVECMP|结论|^HOSTLOG|^PREFETCH' 6 savecmp_gate savecmp.log &
 gatebc() {
   local rc=0 rule_out=${DM_RULE_OUT:-$(bash "$(dirname "$0")/../tools/product.sh" path rules)} self_out=${DM_LOGICSELF_OUT:-$(bash "$(dirname "$0")/../tools/product.sh" path touch)}
   if [ ! -f "$HERE/rulegate.sh" ] || [ ! -f "$HERE/logicself.sh" ]; then
@@ -122,7 +129,7 @@ gatebc() {
   bash "$HERE/logicself.sh" "$self_out" 230 || rc=1
   return $rc
 }
-item 7 "②B/C 逻辑闸门 rulegate + logicself" "RULEGATE 400 逐拍六组一致；LOGICSELF 230 逐拍自身基线一致" logic_gate.log '^(RULEGATE|LOGICSELF)' 8 gatebc &
+NEED="$TR $HERE/ryu/selfcmp.py" item 7 "②B/C 逻辑闸门 rulegate + logicself" "RULEGATE 400 逐拍六组一致；LOGICSELF 230 逐拍自身基线一致" logic_gate.log '^(RULEGATE|LOGICSELF)' 8 gatebc &
 # ⑤ 确定性回归：拍 400 入口人为睡 300 ms 造补拍积压，冻结拍仍须落在 401、存档正绿负红
 # (5) Determinism regression: sleep 300 ms artificially at the entry of tick 400 to build a catch-up tick backlog; the frozen tick must still land on 401, and the save must pass in the positive case and fail in the negative case
 lag_gate() {   # ⑤：savecmp_gate + 射程（证明不是空跑——宿主日志「下一拍时限 A → B」的增量须 ≥ 200；注入时实测 281、不注入 28） | (5): savecmp_gate + coverage (proves it is not an empty run -- the increment of the host log 「下一拍时限 A → B」(next tick deadline A -> B) must be >= 200; measured 281 with injection, 28 without)
@@ -132,7 +139,7 @@ lag_gate() {   # ⑤：savecmp_gate + 射程（证明不是空跑——宿主日
   if [ -n "$inc" ] && [ "$inc" -ge 200 ]; then echo "LAGRANGE 积压已造出：下一拍时限增量 ${inc}（≥ 200）"; else echo "LAGRANGE 空跑：下一拍时限增量 ${inc:-无读数}（须 ≥ 200）"; rc=1; fi
   return $rc
 }
-item 5 "⑤ 补拍积压下冻结拍确定性 DM_TEST_LAG=400 $(basename "$TR")" "冻结拍 401（目标 401）不带【红】、正对照一致、负对照不一致、宿主日志无红线、积压射程增量 ≥ 200" savecmp_lag.log 'SELFCMP|^SAVECMP|结论|^HOSTLOG|^LAGRANGE|^PREFETCH' 7 env DM_TEST_LAG=400 bash -c "$(declare -f savecmp_gate lag_gate); HERE=$HERE TR=$TR OUT=$OUT L=$L lag_gate" &
+NEED="$TR $HERE/ryu/selfcmp.py" item 5 "⑤ 补拍积压下冻结拍确定性 DM_TEST_LAG=400 $(basename "$TR")" "冻结拍 401（目标 401）不带【红】、正对照一致、负对照不一致、宿主日志无红线、积压射程增量 ≥ 200" savecmp_lag.log 'SELFCMP|^SAVECMP|结论|^HOSTLOG|^LAGRANGE|^PREFETCH' 7 env DM_TEST_LAG=400 bash -c "$(declare -f savecmp_gate lag_gate); HERE=$HERE TR=$TR OUT=$OUT L=$L lag_gate" &
 func_cases() {
   local case_dir name total green=0 status elapsed note log detail reported
   local cases=() pending=()
@@ -197,20 +204,27 @@ PAGES=()
 PAGE_NAMES=${PAGES[*]:-$(cd "$HERE/shotgate_pages" && ls *.json | sed 's/\.json$//' | tr '\n' ' ')}
 # ⑪ 旧接口版画面闸门：同一批页面用旧接口版宿主（make dmhost_m3）再过一遍。排在 ③ 后面串着跑，不和 ③ 抢宿主
 # Step 11, older-API picture gate: the same set of pages is run once more with the older-API host (make dmhost_m3). It runs serially after step 3 and does not compete with it for hosts
+# ③ / ⑪ 的真值参照图（Ryujinx 截的，不随仓发布）：一张都没有就记不可用；有一部分的照跑，缺图的那几页由 shotgate 自己报红
+# Ground-truth reference images for (3) / (11) (captured on Ryujinx, not shipped with the repo): with none at all the item is unavailable; with some present it runs, and shotgate itself reports the pages whose image is missing as red
+SHOT_TRUTH_ANY=$(cd "$HERE/shotgate_pages" 2>/dev/null && python3 -c 'import json,os; ps=[os.path.expanduser(t) for f in sorted(os.listdir(".")) if f.endswith(".json") for t in [json.load(open(f)).get("truth")] if t]; print(next((p for p in ps if os.path.exists(p)), ps[0] if ps else ""))')   # 页规格里没写真值图的不算要求 | a page spec without a truth image adds no requirement
 m3_shotgate() {
   local name="⑪ 旧接口版画面闸门 shotgate ${MODE}（DM_NVN_M3=1，${PAGE_NAMES}）" want="旧接口版宿主每页对真值绿"
   if [ $M3GATE != 1 ]; then printf '0\n| %s | %s | ⏭ 旧接口版画面闸门：本次改动不涉及，跳过 | 0 秒 |\n' "$name" "$want" > "$L/11.row"; echo "⏭ ${name}（旧接口版画面闸门：本次改动不涉及，跳过）"; return 0; fi
   case " $SKIP " in *" 3 "*) printf '0\n| %s | %s | ⏭ 跳过：%s | 0 秒 |\n' "$name" "$want" "$SCOPE" > "$L/11.row"; echo "⏭ ${name}（跳过：${SCOPE}）"; return 0;; esac
+  local miss; [ -z "$SHOT_TRUTH_ANY" ] || miss=$(need "$SHOT_TRUTH_ANY") || { unavail 11 "$name" "$want" "$miss"; return 0; }
   local s=$SECONDS rc=0
   { make -s -C "$HERE/../host" dmhost_m3 && DM_HOST="$HERE/../host/dmhost_m3" "$HERE/shotgate.sh" "$OUT" ${PAGES[@]+"${PAGES[@]}"}; } > "$L/shotgate_m3.log" 2>&1 || rc=1
   local got=$(grep -E 'SHOTGATE_ALL' "$L/shotgate_m3.log" | tail -1) mark; [ $rc = 0 ] && mark="✅" || mark="🔴"
   printf '%s\n| %s | %s | %s %s | %s 秒 |\n' "$rc" "$name" "$want" "$mark" "${got:-（无读数行，见 shotgate_m3.log）}" "$((SECONDS - s))" > "$L/11.row"; echo "$mark ${name}（$((SECONDS - s)) 秒）"
 }
-{ item 3 "③ 画面闸门 shotgate ${MODE}（${PAGE_NAMES}）" "每页对真值绿（结构 / 非黑 / 网格 / 命名区域 / 应有元素 / 宿主日志无【红】）" shotgate.log 'SHOTGATE_ALL' 1 "$HERE/shotgate.sh" "$OUT" ${PAGES[@]+"${PAGES[@]}"}; m3_shotgate; } &
+{ NEED="$SHOT_TRUTH_ANY" item 3 "③ 画面闸门 shotgate ${MODE}（${PAGE_NAMES}）" "每页对真值绿（结构 / 非黑 / 网格 / 命名区域 / 应有元素 / 宿主日志无【红】）" shotgate.log 'SHOTGATE_ALL' 1 "$HERE/shotgate.sh" "$OUT" ${PAGES[@]+"${PAGES[@]}"}; m3_shotgate; } &
 unit_tests() {   # ④ 宿主与图形单测（E:SHOT 合入后 gfx 单测链接失败，accept 却绿）：任何失败或构建 / 链接错误即红 | (4) host and graphics unit tests (after E:SHOT was merged the gfx unit test failed to link, yet accept was green): any failure or build / link error is a failure
   local rc=0
-  "${DM_ROOT:-$HOME/dm-work}/build/cache/dm/venv/bin/python" "$HERE/ryu/test_selfcmp.py" > "$L/unit_selfcmp.log" 2>&1 && echo "UNIT selfcmp 通过" || { echo "UNIT selfcmp 失败（见 unit_selfcmp.log）"; rc=1; }
-  "${DM_ROOT:-$HOME/dm-work}/build/cache/dm/venv/bin/python" "$HERE/ryu/test_plan.py" > "$L/unit_plan.log" 2>&1 && echo "UNIT plan 通过" || { echo "UNIT plan 失败（见 unit_plan.log）"; rc=1; }
+  # selfcmp / plan 两套在 dm/verify/ryu/，仓里没有时记不可用、不算红（同上面的不可用项） | the selfcmp / plan suites live in dm/verify/ryu/; when the repository does not have them they are recorded as unavailable, not red (same as the unavailable items above)
+  if [ -f "$HERE/ryu/test_selfcmp.py" ]; then "${DM_ROOT:-$HOME/dm-work}/build/cache/dm/venv/bin/python" "$HERE/ryu/test_selfcmp.py" > "$L/unit_selfcmp.log" 2>&1 && echo "UNIT selfcmp 通过" || { echo "UNIT selfcmp 失败（见 unit_selfcmp.log）"; rc=1; }
+  else echo "UNIT selfcmp 不可用（缺 dm/verify/ryu/test_selfcmp.py）"; fi
+  if [ -f "$HERE/ryu/test_plan.py" ]; then "${DM_ROOT:-$HOME/dm-work}/build/cache/dm/venv/bin/python" "$HERE/ryu/test_plan.py" > "$L/unit_plan.log" 2>&1 && echo "UNIT plan 通过" || { echo "UNIT plan 失败（见 unit_plan.log）"; rc=1; }
+  else echo "UNIT plan 不可用（缺 dm/verify/ryu/test_plan.py）"; fi
   make -j8 -C "$HERE/../host/tests" run > "$L/unit_host.log" 2>&1 && echo "UNIT host 通过" || { echo "UNIT host 失败：$(grep -m1 -iE 'error|fail|失败|红' "$L/unit_host.log" | cut -c1-140)"; rc=1; }
   make -j8 -C "$HERE/../gfx/tests" run > "$L/unit_gfx.log" 2>&1 && make -j8 -C "$HERE/../gfx/tests" run-m3 >> "$L/unit_gfx.log" 2>&1 && echo "UNIT gfx 通过" || { echo "UNIT gfx 失败：$(grep -m1 -iE 'error|fail|失败|红|undefined' "$L/unit_gfx.log" | cut -c1-140)"; rc=1; }
   # iOS 触摸层单测（这一套从没接进闸门，回城钮改版后红了一天没人看见）
@@ -237,15 +251,16 @@ ios_build_gate() {
 item 8 "⑧ iOS 构建（只编不装）" "DM_NOINSTALL=1 工作树派生目录构建成功；首个 error 可见" iosbuild.log '^IOSBUILD (OK|RED)' 2 ios_build_gate &
 # ⑩ 局内切运行模式（真机过热切掌机即崩、各闸门都不切模式没抓到）：进局后 主机 → 掌机，进程须活着继续出帧
 # (10) Switching operation mode in game (a real device overheating and switching to handheld crashed immediately, and no gate check switched modes so it was not caught): after joining a run, docked -> handheld, and the process must stay alive and keep producing frames
-item 10 "⑩ 局内切运行模式 opmode" "切换前已进局；取走通知 30/31；活到 timeout 无 CRASH；切换后 ≥ 300 帧；宿主日志无红线" opmode.log '^OPMODE (OK|RED)' 1 bash "$HERE/opmode.sh" "$OUT" &
+NEED="$TR" item 10 "⑩ 局内切运行模式 opmode" "切换前已进局；取走通知 30/31；活到 timeout 无 CRASH；切换后 ≥ 300 帧；宿主日志无红线" opmode.log '^OPMODE (OK|RED)' 1 bash "$HERE/opmode.sh" "$OUT" &
 # 事务四局串行本身占约 90 秒，列入全档；与其余项目独立，原来的六项判据保持不变。
 # The four transaction runs in series take about 90 seconds by themselves and are put in the full mode; they are independent of the other items, and the original six criteria stay unchanged.
-[ "$MODE" = full ] && item 6 "⑥ 存档事务 save_txn_regress" "4/4 注入命中；已提交文件同期望版；校验和自洽；残缺工作目录 / 拒绝日志负对照成立" save_txn.log '^✓|^✗|^结论|^SAVE_TXN' 6 bash "$HERE/../tools/save_txn_regress.sh" "$OUT" &
+[ "$MODE" = full ] && NEED="$TR" item 6 "⑥ 存档事务 save_txn_regress" "4/4 注入命中；已提交文件同期望版；校验和自洽；残缺工作目录 / 拒绝日志负对照成立" save_txn.log '^✓|^✗|^结论|^SAVE_TXN' 6 bash "$HERE/../tools/save_txn_regress.sh" "$OUT" &
 wait
 allrc=0; rows=()
 ITEMS=(0 1 2 3 11 4 5 7 8 9 10); [ "$MODE" = full ] && ITEMS+=(6)
 for k in "${ITEMS[@]}"; do { read -r rc; read -r row; } < "$L/$k.row"; [ "$rc" = 0 ] || allrc=1; rows+=("$row"); done
 [ "$allrc" = 0 ] || echo "ACCEPT $MODE 红；本目录保留，不删不覆盖" > "$L/KEEP"
 echo; echo "| 项 | 期望 | 真结果 | 用时 |"; echo "|---|---|---|---|"; printf '%s\n' "${rows[@]}"
-echo; echo "ACCEPT $([ $allrc = 0 ] && echo OK || echo RED) 档位 $MODE 产物 $(basename "$OUT") 总用时 $((SECONDS - T0)) 秒 日志 $L"
+NU=$(sort -u "$L/unavail" 2>/dev/null | wc -l | tr -d ' ')
+echo; echo "ACCEPT $([ $allrc = 0 ] && echo OK || echo RED) 档位 $MODE 产物 $(basename "$OUT") 总用时 $((SECONDS - T0)) 秒$([ "$NU" != 0 ] && echo "（不可用 $NU 项）") 日志 $L"
 exit $allrc

@@ -55,6 +55,10 @@ class AcceptTests(unittest.TestCase):
             'dmhost_m3:\n\t@true\n')   # 旧接口版宿主（accept ⑪ 用） | older-API host (used by accept step 11)
         for p in ['camp_e', 'stash', 'wild', 'charselect', 'skilltree', 'npc']:
             (self.verify / f'shotgate_pages/{p}.json').write_text('{}')
+        # 要真值数据的几项（② ⑤ ⑥ ⑦ ⑩）的前提：真值录制目录与 ryu/selfcmp.py 的替身；缺了它们这几项记「不可用」（见 test_missing_truth_is_unavailable_not_red）
+        # Prerequisites of the items that need ground-truth data (2 5 6 7 10): stand-ins for the ground-truth recording directory and ryu/selfcmp.py; without them these items are "unavailable" (see test_missing_truth_is_unavailable_not_red)
+        (self.root / 'dm-work/data/switch/truth_runs/cvd5').mkdir(parents=True)
+        self.write('dm/verify/ryu/selfcmp.py', 'echo 替身\n')
 
     def write(self, rel, body):
         p = self.root / rel; p.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +77,17 @@ class AcceptTests(unittest.TestCase):
                          ('dm/ios/Sources/main.m docs/x.md', '旧接口版画面闸门 本次改动不涉及，跳过')):
             r = self.run_accept('/fixture/out', ACCEPT_SCOPE_CH=ch, ACCEPT_SCOPE_ONLY='1')
             self.assertIn(want, r.stdout, ch)
+
+    def test_missing_truth_is_unavailable_not_red(self):
+        # 真值录制与 ryu 脚本不在（仓里不发布真值数据）：要它们的项记 ⚪ 不可用、不跑、不算红；末行报不可用几项，退出码 0（期望按规则手写：② ⑤ ⑦ ⑩ 四项）
+        # The ground-truth recording and the ryu scripts are absent (ground-truth data is not shipped with the repo): the items needing them are recorded as ⚪ unavailable, not run, not red; the last line reports how many were unavailable, exit code 0 (expected by rule: the four items 2 5 7 10)
+        shutil.rmtree(self.root / 'dm-work/data/switch/truth_runs')
+        shutil.rmtree(self.verify / 'ryu')
+        r = self.run_accept('--fast', '/fixture/out')
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(r.stdout.count('⚪ 不可用'), 4, r.stdout)
+        self.assertIn('缺 data/switch/truth_runs/cvd5 dm/verify/ryu/selfcmp.py', r.stdout)
+        self.assertIn('（不可用 4 项）', r.stdout.splitlines()[-1])
 
     def test_m3_shotgate_row_present(self):
         # 夹具不是 git 仓库、读不出改动清单 ⇒ 照跑：表里有 ⑪ 这一行，画面闸门脚本被调了两次（缺省宿主一次、旧接口版宿主一次）
