@@ -22,8 +22,10 @@ case "${1:-}" in
     # After all three modules of a kind are rewritten successfully, the completion stamp .complete is written last (content = the checksum of the patch_nso.py used); it is deleted before rebuilding: setup.sh uses it to tell whether the build output is complete and was made by the current rewriter
     SRC=$(shasum -a 256 "$HERE/patch_nso.py" | cut -c1-64)
     for k in keypage rules touch; do O=${DM_ROOT:-$HOME/dm-work}/build/cache/dm/out/$P-$k; mkdir -p "$O"; rm -f "$O/.complete"
-      case $k in keypage) E=(DM_RULESET=native);; rules) E=(DM_RULESET=touch-run-v4 DM_PRIVATE_GATES=0);; touch) E=(DM_RULESET=touch-run-v4);; esac
-      for m in main sdk subsdk0; do env "${E[@]}" "$PY" "$HERE/patch_nso.py" "$NSO/$m" "$O" "$m" > "$O/$m.patch.log" 2>&1 || { echo "🔴 $k $m 改写失败：$(tail -2 "$O/$m.patch.log")" >&2; exit 1; }; done
+      # 每种的开关都写全（touch 的 DM_PRIVATE_GATES=1 原先靠缺省，调用方环境里漏进 0 就出成不带私有门的 touch、还照样打完成标记）；-I 不让 PYTHONOPTIMIZE 等环境变量去掉改写器的核对
+      # Every kind spells out its switches (touch used to rely on the default for DM_PRIVATE_GATES=1, so a 0 leaking in from the caller's environment built a touch without private gates and still stamped it complete); -I keeps PYTHONOPTIMIZE and other environment variables from removing the rewriter's checks
+      case $k in keypage) E=(DM_RULESET=native);; rules) E=(DM_RULESET=touch-run-v4 DM_PRIVATE_GATES=0);; touch) E=(DM_RULESET=touch-run-v4 DM_PRIVATE_GATES=1);; esac
+      for m in main sdk subsdk0; do env "${E[@]}" "$PY" -I "$HERE/patch_nso.py" "$NSO/$m" "$O" "$m" > "$O/$m.patch.log" 2>&1 || { echo "🔴 $k $m 改写失败：$(tail -2 "$O/$m.patch.log")" >&2; exit 1; }; done
       echo "$SRC" > "$O/.complete"
       echo "$P-$k 已出：$(ls "$O" | wc -l | tr -d ' ') 个文件"; done;;
   *) echo "用法：product.sh name|path <种类> | rev | build" >&2; exit 2;;

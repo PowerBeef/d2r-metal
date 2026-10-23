@@ -31,7 +31,7 @@ echo "# regress $TS out=$OUT mods=$MODS fresh=$FRESH struct_only=$STRUCT_ONLY se
 if [ $FRESH = 1 ]; then
   F=$RUN/fresh; rm -rf "$F"; mkdir -p "$F"
   for m in $MODS; do
-    "$PY" "$HERE/../tools/patch_nso.py" "$NSO_DIR/$m" "$F" "$m" >> "$LOG" 2>&1 || { echo "FAIL patch_nso $m" | tee -a "$LOG"; exit 1; }
+    "$PY" -I "$HERE/../tools/patch_nso.py" "$NSO_DIR/$m" "$F" "$m" >> "$LOG" 2>&1 || { echo "FAIL patch_nso $m" | tee -a "$LOG"; exit 1; }   # -I：环境里的 PYTHONOPTIMIZE 去不掉改写器的核对 | -I: a PYTHONOPTIMIZE in the environment cannot remove the rewriter's checks
     for e in patched.bin fixups.tsv gates.tsv sites.tsv; do
       if [ ! -e "$OUT/$m.$e" ]; then r=缺; elif cmp -s "$F/$m.$e" "$OUT/$m.$e"; then r=同; else r=不同; fi
       echo "FRESH $m.$e 与 $OUT $r" | tee -a "$LOG"
