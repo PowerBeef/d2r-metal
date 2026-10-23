@@ -31,10 +31,16 @@
 // in the page-fault handler, exceeding it returns "not our page" and lets the crash handler report the crash truthfully instead of spinning silently. The wait only reads atomics and takes no lock.
 enum { PG_NONE = 0, PG_PROT = 1, PG_BUSY = 2 };
 enum { BUSY_WAIT_MS = 2000 };
-// 跟踪区间 = 各内存池（MemoryPoolInitialize 登记）。池销毁后复用 live=0 的槽，信号处理里无锁扫描。
-// Tracked ranges = the memory pools (registered by MemoryPoolInitialize). After a pool is destroyed its live=0 slot is reused; the signal handler scans without locks.
+// 跟踪区间 = 各内存池（MemoryPoolInitialize 登记，键 = 池的存储地址）。池销毁后复用 live=0 的槽，信号处理里无锁扫描。
+// 页状态 / 写代号按宿主页全局一份（下面的 g_pt），不挂在区间上：NVN 池只按 4 KiB 对齐，区间按宿主页（16 KiB）取整，相邻两池共用边界那一页。
+// 原先每个区间各存一份，缺页 / 设只读 / 查脏都按「覆盖该地址的第一个在册区间」找——槽复用后这个「第一个」会变成另一个池，
+// 受保护的页查到的是那个池里的「未保护」，缺页处理不认、进程 SIGSEGV；销池按起点找也会摘错池（乙从甲最后一页中间开始时摘掉的是甲）。
+// Tracked ranges = the memory pools (registered by MemoryPoolInitialize, key = the pool's storage address). After a pool is destroyed its live=0 slot is reused; the signal handler scans without locks.
+// Page state / write generation is kept once per host page, globally (g_pt below), not per range: NVN pools are only 4 KiB aligned, ranges are rounded out to host pages (16 KiB), so two adjacent pools share their boundary page.
+// It used to be stored per range, and faults / protect / dirty checks used "the first registered range covering the address" - after slot reuse that "first" becomes another pool,
+// a protected page then reads as "unprotected" in that pool, the fault handler does not claim it and the process gets SIGSEGV; destroying a pool by its start address could remove the wrong pool too (when B starts in the middle of A's last page, A was removed).
 #define MAX_RANGE 4096   // 原为 256：内存池多于它时超出的池不跟踪，里面的贴图每次取用都当成脏的重传（暗黑实测峰值见内存读数行的「内存池」；塞尔达约 300 个，踩过）。扫描只到已用的槽数，容量大不增加开销 | was 256: with more memory pools than that the excess pools are untracked and their textures are treated as dirty and re-uploaded on every use (for Diablo's measured peak see "memory pools" in the memory readout line; Zelda has about 300 and hit this). The scan only covers slots in use, so a larger capacity costs nothing
-typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; } range_t;
+typedef struct { uintptr_t base, end; const void *key; _Atomic int live; } range_t;
 static range_t g_r[MAX_RANGE];
 static _Atomic int g_nr;
 static uintptr_t g_pg, g_shift;
@@ -46,6 +52,30 @@ void nvn_dirty_stat(int *live, int *peak, int *cap) { *live = atomic_load(&g_liv
 static _Atomic int g_overflow_logged;
 static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // 建池 / 销池（客体线程，可能并发）互斥选槽；缺页处理路径不碰它 | Pool creation / destruction (guest threads, possibly concurrent) pick slots under a mutex; the page-fault handling path does not touch it
 static _Atomic uint64_t g_mp_calls, g_mp_pages, g_mp_ticks;   // 本模块的 mprotect：调用次数、覆盖页数、耗时（mach 时基，缺页路径里也安全） | This module's mprotect: call count, pages covered, time spent (mach timebase, safe in the page-fault path too)
+// 页表：宿主页号三级稀疏表，叶 = 2048 页的状态与写代号。表项在登记池时（持 g_slot_mu）分配、永不释放；读端（含缺页处理）只做原子读
+// Page table: a three-level sparse table indexed by host page number; a leaf = state and write generation of 2048 pages. Entries are allocated when a pool is registered (under g_slot_mu) and never freed; readers (the fault handler included) only do atomic loads
+#define PT_BITS 11
+#define PT_N (1u << PT_BITS)
+#define PT_TOP (1u << 14)   // 页号上限 2^36：48 位地址、4 KiB 页也够 | Page numbers below 2^36: enough for 48-bit addresses even with 4 KiB pages
+typedef struct { _Atomic uint8_t state[PT_N]; _Atomic uint64_t gen[PT_N]; } pt_leaf;
+typedef struct { _Atomic(pt_leaf *) leaf[PT_N]; } pt_mid;
+static _Atomic(pt_mid *) g_pt[PT_TOP];
+static pt_leaf *pt_get(uintptr_t pn) {
+    if (pn >> (2 * PT_BITS) >= PT_TOP) return NULL;
+    pt_mid *m = atomic_load_explicit(&g_pt[pn >> (2 * PT_BITS)], memory_order_acquire);
+    return m ? atomic_load_explicit(&m->leaf[(pn >> PT_BITS) & (PT_N - 1)], memory_order_acquire) : NULL;
+}
+static int pt_make(uintptr_t pn) {   // 持 g_slot_mu；0 = 页号超出表 | Holds g_slot_mu; 0 = page number beyond the table
+    if (pn >> (2 * PT_BITS) >= PT_TOP) return 0;
+    pt_mid *m = atomic_load_explicit(&g_pt[pn >> (2 * PT_BITS)], memory_order_acquire);
+    if (!m) { if (!(m = calloc(1, sizeof *m))) die("脏页表分配失败"); atomic_store_explicit(&g_pt[pn >> (2 * PT_BITS)], m, memory_order_release); }
+    if (!atomic_load_explicit(&m->leaf[(pn >> PT_BITS) & (PT_N - 1)], memory_order_acquire)) {
+        pt_leaf *l = calloc(1, sizeof *l); if (!l) die("脏页表分配失败");
+        atomic_store_explicit(&m->leaf[(pn >> PT_BITS) & (PT_N - 1)], l, memory_order_release); }
+    return 1;
+}
+#define ST(l, pn) (&(l)->state[(pn) & (PT_N - 1)])
+#define GEN(l, pn) (&(l)->gen[(pn) & (PT_N - 1)])
 static void mp(uintptr_t a, size_t len, int prot) {
     uint64_t t = mach_absolute_time(); mprotect((void *)a, len, prot);
     atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - t); atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, len >> g_shift);
@@ -55,13 +85,13 @@ static mach_timebase_info_data_t g_tb;   // 首次登记池时取好（缺页路
 static _Atomic int g_busy_red;
 // 等这一页离开 BUSY。返回 1 = 已离开；0 = 等过了上限（报红一次）。信号处理里可用：只有原子读、mach_absolute_time、sched_yield
 // Wait for this page to leave BUSY. Returns 1 = it has left; 0 = waited past the limit (reported red once). Usable in a signal handler: only atomic reads, mach_absolute_time and sched_yield
-static int busy_wait(range_t *r, uintptr_t p) {
+static int busy_wait(pt_leaf *l, uintptr_t pn) {
     uint64_t t0 = 0;
-    for (unsigned n = 1; atomic_load(&r->state[p]) == PG_BUSY; n++) {
+    for (unsigned n = 1; atomic_load(ST(l, pn)) == PG_BUSY; n++) {
         if (n & 0x3ff) continue;
         uint64_t now = mach_absolute_time(); if (!t0) t0 = now;
         if ((now - t0) * g_tb.numer / g_tb.denom > (uint64_t)BUSY_WAIT_MS * 1000000ull) {
-            if (!atomic_exchange(&g_busy_red, 1)) LOG("【红】脏页跟踪：页 %p 停在「忙」超过 %d 毫秒（改保护的线程没走完），不再等", (void *)(r->base + (p << g_shift)), BUSY_WAIT_MS);
+            if (!atomic_exchange(&g_busy_red, 1)) LOG("【红】脏页跟踪：页 %p 停在「忙」超过 %d 毫秒（改保护的线程没走完），不再等", (void *)(pn << g_shift), BUSY_WAIT_MS);
             return 0; }
         sched_yield();
     }
@@ -72,20 +102,20 @@ static range_t *find(uintptr_t a) {
     for (int i = 0; i < n; i++) if (atomic_load_explicit(&g_r[i].live, memory_order_acquire) && a >= g_r[i].base && a < g_r[i].end) return &g_r[i];
     return NULL;
 }
-static void unprotect_page(range_t *r, uintptr_t p) {   // 调用方已把状态从 PROT 改成 BUSY | The caller has already changed the state from PROT to BUSY
-    mp(r->base + (p << g_shift), g_pg, PROT_READ | PROT_WRITE);
-    atomic_store(&r->gen[p], atomic_fetch_add(&g_now, 1) + 1);
-    atomic_store(&r->state[p], PG_NONE);
+static void unprotect_page(pt_leaf *l, uintptr_t pn) {   // 调用方已把状态从 PROT 改成 BUSY | The caller has already changed the state from PROT to BUSY
+    mp(pn << g_shift, g_pg, PROT_READ | PROT_WRITE);
+    atomic_store(GEN(l, pn), atomic_fetch_add(&g_now, 1) + 1);
+    atomic_store(ST(l, pn), PG_NONE);
 }
 static int on_fault(void *addr, int is_write, void *uc) {
     (void)uc;
-    range_t *r = is_write ? find((uintptr_t)addr) : NULL;
-    if (!r) return 0;
-    uintptr_t p = ((uintptr_t)addr - r->base) >> g_shift;
+    if (!is_write || !find((uintptr_t)addr)) return 0;
+    uintptr_t pn = (uintptr_t)addr >> g_shift; pt_leaf *l = pt_get(pn);
+    if (!l) return 0;
     uint8_t st = PG_PROT;
-    if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p); atomic_fetch_add(&g_faults, 1); return 1; }
-    if (st == PG_BUSY) return busy_wait(r, p);   // 别的线程正在改这页的保护：等它改完重执行（改成了只读就再缺页一次、走上面那一支） | Another thread is changing this page's protection: wait for it to finish and re-execute (if it became read-only, it faults once more and takes the branch above)
-    return atomic_load(&r->gen[p]) != 0;   // 刚被别的线程解掉（本次缺页发生在解之前）：重执行；从未保护过的页不是我们的 | Just unprotected by another thread (this fault happened before the unprotect): re-execute; pages that were never protected are not ours
+    if (atomic_compare_exchange_strong(ST(l, pn), &st, PG_BUSY)) { unprotect_page(l, pn); atomic_fetch_add(&g_faults, 1); return 1; }
+    if (st == PG_BUSY) return busy_wait(l, pn);   // 别的线程正在改这页的保护：等它改完重执行（改成了只读就再缺页一次、走上面那一支） | Another thread is changing this page's protection: wait for it to finish and re-execute (if it became read-only, it faults once more and takes the branch above)
+    return atomic_load(GEN(l, pn)) != 0;   // 刚被别的线程解掉（本次缺页发生在解之前）：重执行；从未保护过的页不是我们的 | Just unprotected by another thread (this fault happened before the unprotect): re-execute; pages that were never protected are not ours
 }
 static void prep_write(void *addr, size_t len) {
     uintptr_t a = (uintptr_t)addr, e = a + len;
@@ -93,10 +123,11 @@ static void prep_write(void *addr, size_t len) {
         range_t *r = find(a);
         if (!r) { a = (a + g_pg) & ~(g_pg - 1); continue; }
         uintptr_t stop = e < r->end ? e : r->end;
-        for (uintptr_t p = (a - r->base) >> g_shift, q = (stop - 1 - r->base) >> g_shift; p <= q; p++) {
+        for (uintptr_t pn = a >> g_shift, q = (stop - 1) >> g_shift; pn <= q; pn++) {
+            pt_leaf *l = pt_get(pn); if (!l) continue;
             for (;;) { uint8_t st = PG_PROT;   // 见 BUSY 等完要重看：对方可能是在设只读，等完这页是 PROT，照样得解 | After waiting out BUSY, look again: the other side may have been setting read-only, in which case the page is PROT after the wait and still has to be unprotected
-                if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p); atomic_fetch_add(&g_preps, 1); break; }
-                if (st != PG_BUSY || !busy_wait(r, p)) break; }
+                if (atomic_compare_exchange_strong(ST(l, pn), &st, PG_BUSY)) { unprotect_page(l, pn); atomic_fetch_add(&g_preps, 1); break; }
+                if (st != PG_BUSY || !busy_wait(l, pn)) break; }
         }
         a = stop;
     }
@@ -118,31 +149,26 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
         }
         slot = n;
     }
-    { int lv = atomic_fetch_add(&g_live, 1) + 1, pk = atomic_load(&g_live_peak); while (lv > pk && !atomic_compare_exchange_weak(&g_live_peak, &pk, lv)) {} }
     range_t *r = &g_r[slot];
     uintptr_t base = (uintptr_t)mem & ~(g_pg - 1), end = ((uintptr_t)mem + size + g_pg - 1) & ~(g_pg - 1);
-    size_t np = (end - base) >> g_shift;
-    _Atomic uint8_t *state = r->state;
-    _Atomic uint64_t *gen = r->gen;
-    if (r->cap < np) {
-        state = calloc(np, 1); gen = calloc(np, sizeof *gen);
-        if (!state || !gen) die("脏页表分配失败（%zu 页）", np);
-        // 旧数组不 free：信号处理里可能仍有极短暂的陈旧读者，泄漏量 = 每页 9 字节。
-        // The old array is not freed: the signal handler may still have a very brief stale reader; leak = 9 bytes per page.
-        r->cap = np;
-    } else {
-        memset((void *)state, 0, np); memset((void *)gen, 0, np * sizeof *gen);
+    // 本池的页建好表项；别的在册池不覆盖的页清成「未保护、从未写过」（同原先新区间清零），与别的池共用的边界页保留现状
+    // Create the table entries for this pool's pages; pages no other registered pool covers are reset to "unprotected, never written" (as a new range used to be zeroed), boundary pages shared with another pool keep their state
+    for (uintptr_t pn = base >> g_shift; pn < end >> g_shift; pn++) {
+        if (!pt_make(pn)) { LOG("【红】脏页跟踪：池 %p 的地址超出页表，不跟踪", mem); pthread_mutex_unlock(&g_slot_mu); return; }
+        if (!find(pn << g_shift)) { pt_leaf *l = pt_get(pn); atomic_store(ST(l, pn), PG_NONE); atomic_store(GEN(l, pn), 0); }
     }
-    r->base = base; r->end = end; r->state = state; r->gen = gen;
+    { int lv = atomic_fetch_add(&g_live, 1) + 1, pk = atomic_load(&g_live_peak); while (lv > pk && !atomic_compare_exchange_weak(&g_live_peak, &pk, lv)) {} }
+    r->base = base; r->end = end; r->key = mem;
     if (slot == n) atomic_store(&g_nr, n + 1);
     atomic_store_explicit(&r->live, 1, memory_order_release);
     pthread_mutex_unlock(&g_slot_mu);
 }
-// 池销毁：先把仍受保护的页还原成可写（池内存归还游戏后可能另作他用），再标失效
-// Pool destruction: first restore still-protected pages to writable (the pool memory may be reused for something else once returned to the game), then mark invalid
+// 池销毁（按登记时的池键找，不按地址）：先把仍受保护的页还原成可写（池内存归还游戏后可能另作他用；与别的池共用的边界页也解开，那边下次使用按脏重传），再标失效
+// Pool destruction (looked up by the pool key given at registration, not by address): first restore still-protected pages to writable (the pool memory may be reused for something else once returned to the game; a boundary page shared with another pool is unprotected too, and that pool re-uploads it as dirty on next use), then mark invalid
 void nvn_dirty_remove_range(const void *mem) {
     pthread_mutex_lock(&g_slot_mu);
-    range_t *r = find((uintptr_t)mem);
+    range_t *r = NULL; int n = atomic_load(&g_nr);
+    for (int i = 0; i < n && !r; i++) if (atomic_load_explicit(&g_r[i].live, memory_order_acquire) && g_r[i].key == mem) r = &g_r[i];
     if (r) { prep_write((void *)r->base, r->end - r->base); atomic_store_explicit(&r->live, 0, memory_order_release); atomic_fetch_sub(&g_live, 1); }
     pthread_mutex_unlock(&g_slot_mu);
 }
@@ -153,27 +179,25 @@ int nvn_dirty_tracked(const void *addr, size_t len) {
 // Set read-only: mark the page BUSY first, and mark it PROT only after mprotect has landed (for the order and the invariant see the state notes at the top of the file)
 void nvn_dirty_protect(const void *addr, size_t len) {
     if (!len || !nvn_dirty_tracked(addr, len)) return;
-    range_t *r = find((uintptr_t)addr);
-    uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
+    uintptr_t a = (uintptr_t)addr, p = a >> g_shift, q = (a + len - 1) >> g_shift;
     // 连续置成 PROT 的页合成一次 mprotect（逐页调用在首传大贴图时一帧上千次；选角页启动帧 5：4888 次）。
     // 已是 PROT / BUSY 的页断开连续段：不重复保护，也不碰别的线程正在改的页
     // Consecutive pages set to PROT are merged into one mprotect (per-page calls ran to over a thousand per frame when large textures were first uploaded; character select, startup frame 5: 4888 calls).
     // Pages already PROT / BUSY break a run: they are not protected again, and pages another thread is changing are left alone
     uintptr_t run = 0; int open = 0;
     for (uintptr_t i = p; i <= q + 1; i++) {
-        uint8_t st = PG_NONE;
-        int took = i <= q && atomic_compare_exchange_strong(&r->state[i], &st, PG_BUSY);
+        uint8_t st = PG_NONE; pt_leaf *l = i <= q ? pt_get(i) : NULL;
+        int took = l && atomic_compare_exchange_strong(ST(l, i), &st, PG_BUSY);
         if (took && !open) { run = i; open = 1; }
-        if (!took && open) { mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ); for (uintptr_t k = run; k < i; k++) atomic_store(&r->state[k], PG_PROT); open = 0; }
+        if (!took && open) { mp(run << g_shift, (i - run) << g_shift, PROT_READ); for (uintptr_t k = run; k < i; k++) atomic_store(ST(pt_get(k), k), PG_PROT); open = 0; }
     }
 }
 uint64_t nvn_dirty_now(void) { return atomic_load(&g_now); }
 int nvn_dirty_since(const void *addr, size_t len, uint64_t stamp) {
     if (!len) return 0;
     if (!nvn_dirty_tracked(addr, len)) return 1;   // 未跟踪时保守视为脏，宁可多传也不显示旧内容 | When untracked, conservatively treat as dirty: better to upload more than to show stale content
-    range_t *r = find((uintptr_t)addr);
-    uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
-    for (uintptr_t i = p; i <= q; i++) if (atomic_load(&r->gen[i]) > stamp) return 1;   // 上传前最后一次写的代号 ≤ 戳；之后的写必 > 戳 | The generation of the last write before upload is <= the stamp; any later write must be > the stamp
+    uintptr_t a = (uintptr_t)addr, p = a >> g_shift, q = (a + len - 1) >> g_shift;
+    for (uintptr_t i = p; i <= q; i++) { pt_leaf *l = pt_get(i); if (!l || atomic_load(GEN(l, i)) > stamp) return 1; }   // 上传前最后一次写的代号 ≤ 戳；之后的写必 > 戳 | The generation of the last write before upload is <= the stamp; any later write must be > the stamp
     return 0;
 }
 void nvn_dirty_slot_stats(int *live, int *used_slots, uint64_t *adds_total) {
