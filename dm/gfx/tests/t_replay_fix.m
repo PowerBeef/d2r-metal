@@ -1,5 +1,5 @@
-// 回放层几处修正的回归（真实 Metal 回放，闭式期望，不依赖游戏）：预编扫描不改剪裁、换格式清除的视图留到提交跑完、部分模板掩码不当整清、顶点流 14 不被零属性槽盖掉、无 alpha 格式采样读 1、同提交待写的顶点不进覆盖证明、出图槽等本槽上次的命令缓冲真正跑完才复用。
-// Regression tests for several replay fixes (real Metal replay, closed-form expectations, no dependence on the game): the prediction scan keeps the scissor, a format-changing clear view is kept until the submit has run, a partial stencil mask is not taken as a full clear, vertex stream 14 is not overwritten by the zero-attribute slot, no-alpha formats sample alpha as 1, vertex data with pending same-submit writes stays out of the coverage proof, a present slot is reused only after its previous command buffer has really finished.
+// 回放层几处修正的回归（真实 Metal 回放，闭式期望，不依赖游戏）：预编扫描不改剪裁、换格式清除的视图留到提交跑完、部分模板掩码不当整清、顶点流 14 不被零属性槽盖掉、无 alpha 格式采样读 1、同提交待写的顶点不进覆盖证明、调色表释放后紫闪探针放手、遮挡查询跨提交求和不读被复用的槽、旧接口地址表满了也不丢缓冲、出图槽等本槽上次的命令缓冲真正跑完才复用。
+// Regression tests for several replay fixes (real Metal replay, closed-form expectations, no dependence on the game): the prediction scan keeps the scissor, a format-changing clear view is kept until the submit has run, a partial stencil mask is not taken as a full clear, vertex stream 14 is not overwritten by the zero-attribute slot, no-alpha formats sample alpha as 1, vertex data with pending same-submit writes stays out of the coverage proof, the magenta probe lets go of a released color table, occlusion sums across submits do not read reused slots, the older-API address table does not drop buffers when full, a present slot is reused only after its previous command buffer has really finished.
 #include "../nvn/nvn_mtl.m"
 #include <pthread.h>
 static CAMetalLayer *t_layer;   // 出图那一例才建（其余各例与别的单测一样没有图层） | Created only for the present case (the other cases have no layer, like the other unit tests)
@@ -112,6 +112,66 @@ static void pending_vb_case(void) {
     EXPECT("同提交待写的顶点：不判读入可省 | pending-write vertices: load not elided", 0, g_fd_n - n0);
     readback(&a, px); EXPECT("同提交待写的顶点：三角之外仍是原来的绿色 | pending-write vertices: outside the triangle stays green", 1, count_px(px, 0, 255, 0) >= 60);
 }
+// F-GFX-14：紫闪探针每次出图从调色表拷几格；游戏释放这张表后探针不能再攥着它（会读已移出驻留集的贴图）
+// F-GFX-14: the magenta probe copies a few cells of the color table on every present; once the game releases the table the probe must let go (it would read a texture already removed from the residency set)
+static void lut_case(void) {
+    tex_t t = tex(4, NVN_FORMAT_RGBA16F); t.d.target = NVN_TEXTURE_TARGET_3D; t.d.depth = 4; t.d.flags = NVN_TEXTURE_FLAGS_IMAGE;
+    mtl_reg_tex(1401, &t, NULL); state_reset(); S.img[5][0] = 1401;
+    NvShader *cs = [NvShader new]; cs->stage = 5; snprintf(cs->key, sizeof cs->key, "552f45c348a61b86_b"); cs->rf.nb = 1; cs->rf.b[0] = (nvn_rbind){.kind = NVN_RB_IMG, .reg = 0};
+    bright_lut(cs);
+    os_unfair_lock_lock(&g_mp_lk); int held = g_mp_lut != nil; os_unfair_lock_unlock(&g_mp_lk); EXPECT("调色表：探针记下了这张表 | color table: the probe noted the table", 1, held);
+    mtl_tex_release(&t);
+    os_unfair_lock_lock(&g_mp_lk); held = g_mp_lut != nil; os_unfair_lock_unlock(&g_mp_lk); EXPECT("调色表释放后：探针放手 | after the color table is released: the probe lets go", 0, held);
+}
+// F-GFX-17：遮挡查询的「通过采样数」= 自清零以来各通道槽之和，可跨提交；后一次提交不能复用还被记着槽的可见性缓冲，
+// 报告要读的缓冲在那次提交的完成回调读完之前也不能复用。先做的一段让 GPU 队列先等事件，B、C 两次提交都排着；B 的完成回调先等 C 在 GPU 上做完再求和（环从空着开始，C 若可复用 A 的缓冲就会挑中它）
+// F-GFX-17: "samples passed" = the sum of the per-pass slots since the reset, which can span submits; a later submit must not reuse a visibility buffer whose slots are still on record,
+// nor a buffer a report reads before that submit's completion callback has read it. The part run first makes the GPU queue wait for an event so submits B and C are both queued; B's completion callback first waits until C has finished on the GPU, then sums (the ring starts unused, so C would pick A's buffer if it were allowed to reuse it)
+static void gate_queue(id<MTLSharedEvent> ev) {
+#if DM_NVN_M3
+    id<MTLCommandBuffer> g = [g_q commandBuffer]; [g encodeWaitForEvent:ev value:1]; [g commit];
+#else
+    [g_q4 waitForEvent:ev value:1];
+#endif
+}
+static void signal_after_queue(id<MTLSharedEvent> ev) {
+#if DM_NVN_M3
+    id<MTLCommandBuffer> g = [g_q commandBuffer]; [g encodeSignalEvent:ev value:1]; [g commit];
+#else
+    [g_q4 signalEvent:ev value:1];
+#endif
+}
+static void vis_ring_case(void) {
+    prog_t pg; prog(&pg, shader(@"v", 0), fs_red()); tex_t a = tex(8, NVN_FORMAT_RGBA8); uint64_t *rep = (uint64_t *)pool_mem(4096); uint64_t ty = NVN_COUNTER_TYPE_SAMPLES_PASSED;
+    struct { uint64_t t, ad; } r1 = {ty, (uint64_t)rep}, r2 = {ty, (uint64_t)(rep + 4)}, r3 = {ty, (uint64_t)(rep + 8)};
+    vis_clear();
+    chain ca = chain_new(); emit(&ca, OP_RESET_COUNTER, &ty, 8); set_rt(&ca, &a, NULL); scissor(&ca, 0, 0, 4, 4); ds_off(&ca); bind_prog(&ca, &pg); draw_cmd(&ca); exec(&ca); commit();   // A：16 | A: 16
+    id<MTLSharedEvent> go = [g_dev newSharedEvent], c_done = [g_dev newSharedEvent]; gate_queue(go);
+    chain cb = chain_new(); set_rt(&cb, &a, NULL); scissor(&cb, 0, 0, 1, 1); ds_off(&cb); bind_prog(&cb, &pg); draw_cmd(&cb); emit(&cb, OP_REPORT_COUNTER, &r2, sizeof r2); emit(&cb, OP_RESET_COUNTER, &ty, 8); exec(&cb);   // B：1，报告 A + B 后清零 | B: 1, report A + B, then reset
+    [g_commit_blocks addObject:^{ for (int i = 0; i < 500 && c_done.signaledValue < 1; i++) usleep(10000); }];   // B 的完成回调先等 C 在 GPU 上做完 | B's completion callback first waits for C to finish on the GPU
+    uint64_t fb = mtl_sub_commit();
+    chain cc = chain_new(); set_rt(&cc, &a, NULL); ds_off(&cc); bind_prog(&cc, &pg); draw_cmd(&cc); emit(&cc, OP_REPORT_COUNTER, &r3, sizeof r3); exec(&cc);   // C：64 | C: 64
+    uint64_t fc = mtl_sub_commit(); signal_after_queue(c_done); go.signaledValue = 1;
+    EXPECT("遮挡查询：B 完成 | occlusion: B done", 1, mtl_wait(fb, 5000000000ull)); EXPECT("遮挡查询：C 完成 | occlusion: C done", 1, mtl_wait(fc, 5000000000ull));
+    EXPECT("遮挡查询：B 报告 A + B = 16 + 1（C 没复用 A 的缓冲）| occlusion: B reports A + B = 16 + 1 (C did not reuse A's buffer)", 17, rep[4]);
+    EXPECT("遮挡查询：C 报告 64 | occlusion: C reports 64", 64, rep[8]);
+    chain c = chain_new(); emit(&c, OP_RESET_COUNTER, &ty, 8); set_rt(&c, &a, NULL); clear_color(&c, 0, 0, 0, 1); ds_off(&c); bind_prog(&c, &pg); draw_cmd(&c); exec(&c); commit();   // 64 个采样 | 64 samples
+    chain c2 = chain_new(); set_rt(&c2, &a, NULL); scissor(&c2, 0, 0, 1, 1); ds_off(&c2); bind_prog(&c2, &pg); draw_cmd(&c2);   // 1 个采样 | 1 sample
+    emit(&c2, OP_REPORT_COUNTER, &r1, sizeof r1); exec(&c2); commit();
+    EXPECT("遮挡查询：跨两次提交的通过采样数 64 + 1 | occlusion: samples passed across two submits 64 + 1", 65, rep[0]);
+    vis_clear(); g_vis_on = g_vis_counting = 0;
+}
+// F-GFX-18：旧接口按地址反查登记过的缓冲；表原先定长 512、满了就静默丢
+// F-GFX-18: the older API looks registered buffers up by address; the table used to be fixed at 512 entries and silently dropped new ones when full
+static void m3_table_case(void) {
+#if DM_NVN_M3
+    enum { N = 600 }; static __strong id<MTLBuffer> bs[N];
+    for (int i = 0; i < N; i++) { bs[i] = [g_dev newBufferWithLength:256 options:MTLResourceStorageModeShared]; res_add(bs[i]); }
+    NSUInteger off = 1; id<MTLBuffer> got = m3_buf(bs[N - 1].gpuAddress + 16, &off);
+    EXPECT("旧接口地址表：第 600 个登记的缓冲查得到 | older-API table: the 600th registered buffer is found", 1, got == bs[N - 1] && off == 16);
+    for (int i = 0; i < N; i++) { res_remove(bs[i]); bs[i] = nil; }
+#endif
+}
 // F-GFX-2：显示节拍合并旧帧时把票号直接推到「本帧 − 1」，在途的上一帧也被算成做完；出图槽（Metal 4 的命令分配器）复用前要等本槽上次的命令缓冲真正完成。
 // 这里让 GPU 队列先等一个事件，票 1 的命令缓冲就一直在途；照合并的写法把 g_pq_done 推到 3，再出票 4（与票 1 同槽）：事件发出之前它不能返回
 // F-GFX-2: when the display link merges old frames it bumps the ticket straight to "this frame - 1", so an in-flight earlier frame is counted as done too; a present slot (a Metal 4 command allocator) may be reused only after that slot's previous command buffer has really completed.
@@ -141,5 +201,5 @@ static void present_slot_case(void) {
 }
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init(); lib_init();
-    scissor_case(); clear_view_case(); stencil_mask_case(); stream14_case(); swizzle_case(); pending_vb_case(); present_slot_case();
+    scissor_case(); clear_view_case(); stencil_mask_case(); stream14_case(); swizzle_case(); pending_vb_case(); lut_case(); vis_ring_case(); m3_table_case(); present_slot_case();
     printf("== %d 项，失败 %d ==\n", count, fail); return fail != 0; } }

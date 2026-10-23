@@ -154,9 +154,16 @@ static NSHashTable *g_res_objects;
 // 弱引用登记（__unsafe_unretained + 撤驻留时摘掉）；最近命中的那一项先试——同一通道里的绑定几乎都落在同一两个缓冲上
 // The older API binds by "buffer object + offset", while the replay layer holds GPU addresses: registered buffers (zero-copy buffers of memory pools, argument blocks, staging blocks and so on, a few dozen) are looked up by address range.
 // Registered by weak reference (__unsafe_unretained, removed when residency is withdrawn); the most recently hit entry is tried first - bindings within one pass almost always land on the same one or two buffers
-enum { M3_BUFS = 512 };
-static struct { uint64_t gpu, len; __unsafe_unretained id<MTLBuffer> buf; } g_m3_bufs[M3_BUFS]; static int g_m3_nbufs; static os_unfair_lock g_m3_lk = OS_UNFAIR_LOCK_INIT;
-static void m3_buf_add(id<MTLBuffer> b) { os_unfair_lock_lock(&g_m3_lk); if (g_m3_nbufs < M3_BUFS) { g_m3_bufs[g_m3_nbufs].gpu = b.gpuAddress; g_m3_bufs[g_m3_nbufs].len = b.length; g_m3_bufs[g_m3_nbufs++].buf = b; } os_unfair_lock_unlock(&g_m3_lk); }
+// 表按需翻倍（原先定长 512、满了静默丢，之后按地址绑定只剩一行红）；扩不了才报红
+// The table doubles on demand (it used to be fixed at 512 and silently dropped new buffers when full, leaving only one red line at bind time later); a red line only if it cannot grow
+static struct { uint64_t gpu, len; __unsafe_unretained id<MTLBuffer> buf; } *g_m3_bufs; static int g_m3_nbufs, g_m3_cap; static os_unfair_lock g_m3_lk = OS_UNFAIR_LOCK_INIT;
+static void m3_buf_add(id<MTLBuffer> b) {
+    os_unfair_lock_lock(&g_m3_lk);
+    if (g_m3_nbufs == g_m3_cap) { int n = g_m3_cap ? g_m3_cap * 2 : 512; void *q = realloc(g_m3_bufs, n * sizeof *g_m3_bufs); if (q) { g_m3_bufs = q; g_m3_cap = n; } }
+    int ok = g_m3_nbufs < g_m3_cap; if (ok) { g_m3_bufs[g_m3_nbufs].gpu = b.gpuAddress; g_m3_bufs[g_m3_nbufs].len = b.length; g_m3_bufs[g_m3_nbufs++].buf = b; }
+    int n = g_m3_nbufs; os_unfair_lock_unlock(&g_m3_lk);
+    if (!ok) { static int once; if (!once++) MLOG("【红】旧接口地址表扩不了（已有 %d 项），新登记的缓冲按显卡地址查不到", n); }
+}
 static void m3_buf_del(id b) { os_unfair_lock_lock(&g_m3_lk); for (int i = 0; i < g_m3_nbufs; i++) if (g_m3_bufs[i].buf == b) { g_m3_bufs[i] = g_m3_bufs[--g_m3_nbufs]; break; } os_unfair_lock_unlock(&g_m3_lk); }
 static id<MTLBuffer> m3_buf(uint64_t gpu, NSUInteger *off) {
     static _Thread_local int last; id<MTLBuffer> r = nil; *off = 0; if (!gpu) return nil;
@@ -515,15 +522,20 @@ typedef struct { __strong id<MTLBuffer> buf; uint64_t fence; } vis_buf;
 static vis_buf g_vis_ring[4]; static int g_vis_ring_n, g_vis_ring_i = -1;
 static id<MTLBuffer> g_vis; static uint32_t g_vis_n;   // 本次提交的可见性缓冲与已用槽数 | This submission's visibility buffer and number of slots used
 static int vis_in_ring(id<MTLBuffer> b) { for (int i = 0; i < g_vis_ring_n; i++) if (g_vis_ring[i].buf == b) return 1; return 0; }
+static int vis_held(id<MTLBuffer> b);
 static int g_vis_on, g_vis_counting, g_vis_cur = -1; static uint64_t g_vis_cur_pass;
 static vis_slot *g_vs; static int g_nvs, g_vscap;      // 自上次清零以来的槽 | Slots since the last reset
 static uint64_t g_cnt_report[32], g_cnt_reset[32];       // 各计数器类型的报告 / 清零次数（诊断） | Report / reset counts per counter type (diagnostics)
 static void vis_clear(void) { for (int i = 0; i < g_nvs; i++) CFRelease(g_vs[i].buf); g_nvs = 0; g_vis_cur = -1; }
+// 报告的求和在本次提交的完成回调里读各槽：所引用的环内缓冲按「本次提交在用」记，本次提交做完之前不给后面的提交复用
+// The report's sum reads the slots in this submit's completion callback: the ring buffers it references are marked "in use by this submit" and are not reused by later submits before this submit has finished
 static vis_list *vis_snapshot(void) {
     vis_list *l = malloc(sizeof *l + g_nvs * sizeof(vis_slot)); l->n = g_nvs;
-    for (int i = 0; i < g_nvs; i++) { l->s[i] = g_vs[i]; CFRetain(g_vs[i].buf); }
+    for (int i = 0; i < g_nvs; i++) { l->s[i] = g_vs[i]; CFRetain(g_vs[i].buf); for (int k = 0; k < g_vis_ring_n; k++) if ((__bridge void *)g_vis_ring[k].buf == g_vs[i].buf) g_vis_ring[k].fence = UINT64_MAX; }
     return l;
 }
+// 自上次清零以来的槽（可能跨提交）还记着这块缓冲：后面的报告要读它，不能复用 | The slots since the last reset (possibly across submits) still reference this buffer: a later report will read it, so it must not be reused
+static int vis_held(id<MTLBuffer> b) { for (int i = 0; i < g_nvs; i++) if (g_vs[i].buf == (__bridge void *)b) return 1; return 0; }
 // 本次提交里已编码、尚未在 GPU 上执行的缓冲写（拷贝 / uniform 内联更新）的目标区间：编码期在 CPU 侧读这些地址读到的是旧值（uv_proof 读 uniform 时避开）
 // Target ranges of buffer writes (copies / inline uniform updates) already encoded in this submission but not yet executed on the GPU: reading these addresses on the CPU side at encode time yields old values (uv_proof avoids them when reading uniforms)
 #define PEND_MAX 256
@@ -610,16 +622,23 @@ void mtl_sub_begin(void) {
     [g_cb beginCommandBufferWithAllocator:g_alloc4[alloc_i]];
 #endif
     g_commit_blocks = [NSMutableArray array];
+    if (g_vis && !vis_in_ring(g_vis)) defer_obj_release(g_vis);   // 上次提交留下的溢出缓冲（见 g_vis_n >= VIS_SLOTS 那一处）：退役，否则它一直留在驻留集里（原先这句在 g_vis 清空之后，从没生效） | the overflow buffer left by the previous submission (see the place with g_vis_n >= VIS_SLOTS): retire it, otherwise it stays in the residency set forever (this line used to come after g_vis was cleared and never took effect)
     g_npost = 0; g_vis = nil; g_vis_n = 0; g_vis_cur = -1; g_npend = 0; g_pend_over = 0;
     zskip_clear(); g_zskip_count = 0;
+    // 环里挑一块可见性缓冲：它那次提交已做完，且没有槽还被记着（自上次清零以来的槽可跨提交，报告时才求和；新提交的槽号从 0 起，复用会盖掉前面的值）。
+    // 四块都被记着时不挑：g_vis 留空，开通道时另建溢出缓冲（rp_begin_ex）
+    // Pick a visibility buffer from the ring: its submit has finished and no slot in it is still on record (slots since the last reset can span submits and are summed only at the report; a new submit numbers its slots from 0, so reuse would overwrite the earlier values).
+    // When all four are on record none is picked: g_vis stays empty and opening a pass creates an overflow buffer instead (rp_begin_ex)
     int pick = -1;
-    for (int i = 0; i < g_vis_ring_n; i++) if (g_vis_ring[i].fence <= g_done) { pick = i; break; }
+    for (int i = 0; i < g_vis_ring_n; i++) if (g_vis_ring[i].fence <= g_done && !vis_held(g_vis_ring[i].buf)) { pick = i; break; }
     if (pick < 0 && g_vis_ring_n < 4) pick = g_vis_ring_n++;
-    if (pick < 0) { uint64_t oldest = UINT64_MAX; for (int i = 0; i < 4; i++) if (g_vis_ring[i].fence < oldest) { oldest = g_vis_ring[i].fence; pick = i; } if (oldest > g_done) mtl_wait(oldest, UINT64_MAX); }
-    g_vis_ring_i = pick; g_vis_ring[pick].fence = UINT64_MAX;
-    if (!g_vis_ring[pick].buf) { g_vis_ring[pick].buf = [g_dev newBufferWithLength:VIS_SLOTS * 8 options:MTLResourceStorageModeShared]; res_add(g_vis_ring[pick].buf); }
-    if (g_vis && !vis_in_ring(g_vis)) defer_obj_release(g_vis);   // 上次提交留下的溢出缓冲（见 g_vis_n >= VIS_SLOTS 那一处）：退役，否则它一直留在驻留集里 | the overflow buffer left by the previous submission (see the place with g_vis_n >= VIS_SLOTS): retire it, otherwise it stays in the residency set forever
-    g_vis = g_vis_ring[pick].buf;
+    if (pick < 0) { uint64_t oldest = UINT64_MAX; for (int i = 0; i < 4; i++) if (!vis_held(g_vis_ring[i].buf) && g_vis_ring[i].fence < oldest) { oldest = g_vis_ring[i].fence; pick = i; } if (pick >= 0 && oldest > g_done) mtl_wait(oldest, UINT64_MAX); }
+    g_vis_ring_i = pick;
+    if (pick >= 0) {
+        g_vis_ring[pick].fence = UINT64_MAX;
+        if (!g_vis_ring[pick].buf) { g_vis_ring[pick].buf = [g_dev newBufferWithLength:VIS_SLOTS * 8 options:MTLResourceStorageModeShared]; res_add(g_vis_ring[pick].buf); }
+        g_vis = g_vis_ring[pick].buf;
+    }
     void pg_sub_begin_ext(uint64_t fence); pg_sub_begin_ext(g_fence + 1);
     void arena_begin(void); arena_begin();
 }
@@ -882,7 +901,7 @@ uint64_t mtl_sub_commit(void) {
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     up_flush();
     uint64_t fence = ++g_fence;
-    if (g_vis_ring_i >= 0) g_vis_ring[g_vis_ring_i].fence = fence;
+    for (int i = 0; i < g_vis_ring_n; i++) if (g_vis_ring[i].fence == UINT64_MAX) g_vis_ring[i].fence = fence;   // 本次提交在用的（本提交挑的那块、本提交报告要读的）都等本次提交做完 | Those in use by this submit (the one it picked, those its reports read) all wait for this submit to finish
     // 完成后的 CPU 可见效果：拷贝一份操作表进回调
     // CPU-visible effects after completion: copy the op table into the callback
     int n = g_npost; post_op *ops = n ? malloc(n * sizeof *ops) : NULL;
@@ -1504,7 +1523,8 @@ void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb, int heap_
 }
 void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads) { *uploads = g_pkg_uploads; *reuploads = g_pkg_reuploads; }
 uint64_t mtl_pkg_miss(void) { return g_pkg_miss; }
-void mtl_tex_release(tex_t *t) { if (t->serial) serial_del(t->serial); }
+static void mp_lut_forget(uint64_t ser);
+void mtl_tex_release(tex_t *t) { if (t->serial) { mp_lut_forget(t->serial); serial_del(t->serial); } }
 
 // ---------- 渲染通道：SetRenderTargets 开新通道；通道里第一条命令之前的清除并进 load 动作 ----------
 // ---------- Render passes: SetRenderTargets opens a new pass; clears before the first command in the pass are folded into the load action ----------
@@ -5002,7 +5022,10 @@ static void warm_claim(void) {
 // for each present, at the end of the present command buffer, copy 5 points of the game's final picture (the center and the four quarter points) and 4 cells of the color table into a shared buffer, and judge them in the completion callback — no GPU wait, no frame cost.
 // If ≥3 of the 5 picture points are magenta (R≥200, G≤60, B≥200), log a red line with the color-table readings, the brightening factor and the number of display-link callback stalls; a color-table cell that is NaN / infinite / magenta gets its own red line; log a summary every 3600 presents (coverage).
 // Color table = the 32³ table looked up by tone mapping (see the 3D brightening section below), recorded at dispatch 552f45c348a61b86. Only on the Metal 4 present path (iOS / Mac release builds)
-static os_unfair_lock g_mp_lk = OS_UNFAIR_LOCK_INIT; static id<MTLTexture> g_mp_lut;
+static os_unfair_lock g_mp_lk = OS_UNFAIR_LOCK_INIT; static id<MTLTexture> g_mp_lut; static uint64_t g_mp_lut_ser;   // g_mp_lut_ser：这张表的贴图序号（释放时据此放手） | g_mp_lut_ser: the texture serial of this table (used to let go of it when it is released)
+// 游戏释放调色表那张贴图（mtl_tex_release）时探针放手：原先一直攥着，每次出图还从已移出驻留集的贴图拷格子
+// When the game releases the color table's texture (mtl_tex_release) the probe lets go: it used to hold on to it and kept copying cells from a texture already removed from the residency set on every present
+static void mp_lut_forget(uint64_t ser) { id old = nil; os_unfair_lock_lock(&g_mp_lk); if (g_mp_lut && g_mp_lut_ser == ser) { old = g_mp_lut; g_mp_lut = nil; g_mp_lut_ser = 0; } os_unfair_lock_unlock(&g_mp_lk); (void)old; }   // old：出了锁才放 | old: released only after the lock is dropped
 static MTLPixelFormat g_mp_fmt[3]; static int g_mp_haslut[3];
 static _Atomic uint64_t g_mp_n, g_mp_mag, g_mp_lutbad;
 static uint64_t g_stall_t0, g_stall_n;   // 定义在显示节拍那段 | Defined in the display-link section
@@ -5085,8 +5108,8 @@ static void bright_lut(NvShader *cs) {
 #endif
     if (failed || strncmp(cs->key, "552f45c348a61b86", 16)) return;
     int tid = 0; for (int i = 0; i < cs->rf.nb && !tid; i++) if (cs->rf.b[i].kind == NVN_RB_IMG && cs->rf.b[i].reg < 32) tid = (int)(S.img[5][cs->rf.b[i].reg] & 0xfffff);
-    pthread_mutex_lock(&g_rmu); id<MTLTexture> lut = tid ? tex_by_id(tid) : nil; pthread_mutex_unlock(&g_rmu);
-    if (lut && lut.textureType == MTLTextureType3D) { os_unfair_lock_lock(&g_mp_lk); g_mp_lut = lut; os_unfair_lock_unlock(&g_mp_lk); }   // 紫闪探针在出图时取这张表的几格 | The magenta probe samples a few cells of this table at present time
+    pthread_mutex_lock(&g_rmu); id<MTLTexture> lut = tid ? tex_by_id(tid) : nil; uint64_t lser = lut ? g_treg[tid].t.serial : 0; pthread_mutex_unlock(&g_rmu);
+    if (lut && lut.textureType == MTLTextureType3D) { os_unfair_lock_lock(&g_mp_lk); g_mp_lut = lut; g_mp_lut_ser = lser; os_unfair_lock_unlock(&g_mp_lk); }   // 紫闪探针在出图时取这张表的几格 | The magenta probe samples a few cells of this table at present time
     float k = dm_bright_k(); if (!(k > 1.005f)) return;   // k ≈ 1（局外 / 正午）：表保持原版 | k ~= 1 (out of game / noon): the table stays as in the original game
     if (k > 4.0f) k = 4.0f;
     if (!lut || lut.textureType != MTLTextureType3D || !(lut.usage & MTLTextureUsageShaderWrite)) { static int n; if (!n++) MLOG("【红】3D 画面加亮：调色表认不出（贴图号 %d），不加亮", tid); return; }
