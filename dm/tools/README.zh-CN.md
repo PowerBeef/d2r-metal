@@ -30,6 +30,9 @@ English: [README.md](README.md)
 | `l3reg.py`、`l3seg.sh`、`l3run.sh`、`test_l3reg.py` | 长时间运行的内存回归：按游戏拍数回归内存与句柄的增长斜率，外推到长局 |
 | `crashlog.py` | 读取并符号化宿主的 `crash.json`（`DM_CRASH_JSON`），收集系统的 `.ips` 报告 |
 | `guestsyms.py`、`test_guestsyms.py` | 游戏程序的符号表（`.eh_frame` 函数、动态符号、源码注释说明），放本机构建缓存 |
+| `explore.py`、`test_explore.py` | 自动探索：经场景运行器按种子乱按，把红了的一局缩成最短的场景（[debugging.zh-CN.md](../verify/debugging.zh-CN.md)） |
+| `replay.py` | 录下一局场景的命令包与逐拍状态，在各宿主构建上回放，找第一个不同的拍 |
+| `tickdiff.py`、`test_tickdiff.py` | 两份 `DM_TICKS` 记录第一个不同的拍，及不同的格、单位和字段 |
 | `lldb/dm.py` | LLDB 命令 `dm`（`modules`、`where`、`bt`、`break`、`tick`）：游戏地址换成模块偏移与客体函数（[debugging.zh-CN.md](../verify/debugging.zh-CN.md)） |
 | `gpucap.py` | GPU 截帧与摘要、实时 Metal 读数、Metal HUD（包装 `gpucapture`、`gpudebug --json`、`metalperftrace`） |
 | `boothist.py`、`test_boothist.py` | 启动时间历史账本：每次的启动阶段取自事件流与 `DM_BOOTPROF` 表，跨提交比 |

@@ -138,3 +138,44 @@ make -C dm/host dmhost_m3 && SCN_DMHOST=$PWD/dm/host/dmhost_m3 python3 dm/tools/
 - 开着着色器校验时，Metal 4 宿主第一次出图提交就崩在 Metal 自己的 `-[MTL4GPUDebugCommandBuffer applyResidencySets:]` 里，当时挂着图层的驻留集（macOS 27）。着色器校验请用旧接口宿主（`dmhost_m3`）。它跑同一批着色器；运行器见到这种组合会打一行提示。
 - 上面那些场景在 `api` 和 `shader` 档下都没有消息。
 - `lint`：12 秒的 `enter_game` 里约有 46,600 次多余的 `setComputePipelineState`，来自贴图反交错编码（`dm/gfx/tex/nvn_deswizzle_gpu.m`）：它在同一个编码器上每个级别、每层都设一次管线。开销不大（一次读取总共几毫秒），没有改。
+
+## 自动探索
+
+`dm/tools/explore.py` 按种子随机生成一串玩家操作，经场景运行器去跑，每一局都按场景的判据判：崩溃、红标事件、日志红标行、消毒器报告和看门狗。
+
+```bash
+python3 dm/tools/explore.py run --seed 21 --episodes 3 --steps 40 --dmhost dm/host/dmhost_asan
+python3 dm/tools/explore.py gen --seed 21 --steps 40      # 打出一局的操作
+```
+
+- **操作：**`press`（任意键）、`stick`、`tap`、`world_tap`、`sleep`。都是不带断言的普通步骤，所以一局红了说明是游戏或宿主出了错，不是脚本本身。会主动结束或打断这一局的步骤（`quit`、`crash`、`app`、`background`）从不生成。
+- **红了：**先重跑一次，看能不能复现。再用增量调试把操作串缩到仍以同一指纹红的最短一串。指纹是崩溃地点、红标事件码，或者抹掉数字后的红标行 / 消毒器摘要。
+- **结果：**写成 `minimal_<k>.scn`，这是能直接用 `scenario.py run` 重放的场景。全部结果在 `$DM_ROOT/run/explore/<时刻>_<种子>/`，判定行 `EXPLORE OK|RED`，末行 `RESULT {json}`。
+- **选项：**`--budget` 限制缩短的次数（缺省 24），`--allow-red` 放行已知的红标码，`--no-shrink` 不缩。
+
+第一次的结果：在 UBSan 宿主上，种子 21 的三局都因 `dm_world.c` 的不对齐读而红，每局都在 7–11 次之内缩到一步（某处的 `world_tap`）。修好之后同一种子跑下来没有红。
+
+## 回放与第一个不同的拍
+
+`dm/tools/replay.py` 在跑场景时录下客户端命令包和逐拍状态（`DM_C2S_LOG`、`DM_TICKS_FULL`），之后在任意宿主构建上回放这些包（`DM_C2S_REPLAY`），逐拍比对。它回答的是：某个改动或某个构建有没有改变游戏逻辑。
+
+```bash
+python3 dm/tools/replay.py record dm/verify/bench/town_loop.scn                  # → $DM_ROOT/run/replay/town_loop_4242/
+python3 dm/tools/replay.py check ~/dm-work/run/replay/town_loop_4242 --dmhost dm/host/dmhost --dmhost dm/host/dmhost_asan
+python3 dm/tools/tickdiff.py a/ticks.jsonl b/ticks.jsonl                          # 任意两份 DM_TICKS 记录
+```
+
+`tickdiff.py` 报出两份记录第一个不同的拍，以及哪几格状态不同（玩家、怪物、物件、飞行物、物品、种子）。两边都带逐单位明细时，还说出是哪几个单位、哪些字段：`player id 1 cls 1: mode 3→5, yf 65437→32768`。`host_savecmp.sh` 原先调用的比对脚本不在仓库里，现在改用它。
+
+确定性需要什么、工具怎么处理：
+
+- **固定种子和时刻：**`DM_GAME_SEED` 与 `DM_FIXED_TIME`。场景自己设了的话，`record` 就用场景的值；`town_loop` 设了，它的坐标靠这两个值。
+- **同样的进局路径和出生点：**回放走和 `enter_game` 宏同一条路进局。宿主会把城镇里的出生点挪到小站旁边（`dm_townwp.c`），但回放时缺省不挪，因为原版录制是从原版出生点走起的。所以回放设 `DM_TOWNWP_OFF=0`，照样挪。不这样的话，回放的起点差了大约 40 格，所有移动包都落空；几次回放之间一致，只是因为什么都没发生。
+- **文件里不放加入握手：**拍 0 的系统类消息不进回放文件。回放在文件首末拍之间丢弃客户端自发的消息，首拍若是 0，宿主客户端自己的加入也会被丢掉，服务端就永远等下去。
+
+实测：
+
+- **构建之间一致：**`town_loop`（781 拍、144 条命令包，营地加血腥荒野）在普通、ASan 和旧接口宿主上回放，都与录制逐拍相同。
+- **改动能查出来：**删掉第 405–500 拍的移动命令后，第一个不同的拍是 444：玩家走完已经下达的路线就停下了。
+
+录制由游戏程序推出，只放在本机。

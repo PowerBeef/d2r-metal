@@ -30,6 +30,9 @@ Three kinds of things live here. The first you will use when following the front
 | `l3reg.py`, `l3seg.sh`, `l3run.sh`, `test_l3reg.py` | Long-run memory regression: fits the growth of memory and handles against game ticks and extrapolates to a long session |
 | `crashlog.py` | Reads and symbolicates the host's `crash.json` (`DM_CRASH_JSON`) and collects the system `.ips` reports |
 | `guestsyms.py`, `test_guestsyms.py` | Symbol table for the game program (`.eh_frame` functions, dynamic symbols, source-comment notes), kept in the local build cache |
+| `explore.py`, `test_explore.py` | Automatic exploration: seeded random play through the scenario runner, shrinking a red run to a minimal scenario ([debugging.md](../verify/debugging.md)) |
+| `replay.py` | Records a scenario run's command packets and per-tick state, replays them on host builds and finds the first divergent tick |
+| `tickdiff.py`, `test_tickdiff.py` | First divergent tick between two `DM_TICKS` records, with the slots, units and fields that differ |
 | `lldb/dm.py` | LLDB command `dm` (`modules`, `where`, `bt`, `break`, `tick`): game addresses as module offsets and guest functions ([debugging.md](../verify/debugging.md)) |
 | `gpucap.py` | GPU frame capture and summary, live Metal stats and the Metal HUD (wraps `gpucapture`, `gpudebug --json`, `metalperftrace`) |
 | `boothist.py`, `test_boothist.py` | Boot-time history ledger: boot stages per run from the event stream and the `DM_BOOTPROF` table, compared across revisions |

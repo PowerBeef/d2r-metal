@@ -91,7 +91,7 @@ DM_EVENTS	host	host/dm_events.c host/tests/t_events.c	y
 DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-
 DM_FE_AUTO	host	host/dm_cursor.c	-
-DM_FIXED_TIME	host	host/dm_kills.c host/hle_time.c host/main.c	y
+DM_FIXED_TIME	host,tools	host/dm_kills.c host/hle_time.c host/main.c tools/replay.py	y
 DM_FPS	gfx	gfx/nvn/nvn_mtl.m	y
 DM_FRAMES	host	host/diag.c	y
 DM_FREE_ACCOUNT	ios-tools	ios/run.sh	-
@@ -101,7 +101,7 @@ DM_FSLOG_HASH	host	host/hle_fs.c	-
 DM_FS_NEG_DIR	ios-tools	ios/tools/pages.sh	-
 DM_GAMEPERF	harmony	harmony/native/gameperf_ohos.c	-
 DM_GAME_RES	android,harmony,host,ios	android/front_android.c harmony/native/front_ohos.c host/front_mac.m ios/Sources/front_ios.m	y
-DM_GAME_SEED	host	host/main.c	y
+DM_GAME_SEED	host,tools	host/main.c tools/replay.py	y
 DM_GATE_SAVE	verify	verify/gfxq/ruler.sh verify/hostshot.sh verify/shotgate.sh	y
 DM_GEN_ASSETS	ios-tools	ios/tools/gen_paths.py	-
 DM_GEN_DIR	android	android/docker/build.sh	y
@@ -621,7 +621,7 @@ DM_TOUCH_SCRIPT	host,ios	host/tests/t_touch_mac.c host/touch_mac.c ios/Sources/f
 DM_TOUCH_SCRIPT_START	ios	ios/Sources/front_ios.m	y
 DM_TOUCH_SHOT	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSmoke.swift	-
 DM_TOUCH_TEST_DROP	host	host/tests/t_touch_mac.c host/touch_mac.c	-
-DM_TOWNWP_OFF	host	host/dm_townwp.c	-
+DM_TOWNWP_OFF	host	host/dm_townwp.c	y
 DM_TURN_SMOOTH	host	host/dm_turnsmooth.c	-
 DM_TURN_YAW	host	host/dm_turnsmooth.c	-
 DM_TV_DD	tvos	tvos/build.sh	-
