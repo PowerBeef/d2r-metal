@@ -46,6 +46,7 @@ static void mem_init(void) {
     g_stack = g_as + 0x30000000; g_stack_cap = 0x10000000;
     g_heap  = g_as + 0x40000000; g_heap_cap  = g_reserve - 0x40000000;
     LOG("guest AS %p +%zu MiB（降档后实际预留 %zu MiB）  heap %p alias %p stack %p", g_as, g_reserve >> 20, g_reserve >> 20, g_heap, g_alias, g_stack);
+    DM_TSAN_GUEST(g_as, g_reserve);
 }
 
 // 应用内存池 = Switch（4 GB 机型）给应用的 3285 MB。游戏启动（main+0x1b66160）把 QueryMemoryInfo 报的总量整块设成堆、失败就减 2 MB 重试，

@@ -27,6 +27,15 @@
 #include <mach/mach.h>
 #include <pthread/qos.h>
 #include <dlfcn.h>
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+// 消毒版宿主（make dmhost_asan / dmhost_tsan）：消毒器运行库要的栈比游戏给的线程栈（有的只有十几 KiB）深得多——地址消毒的释放路径、线程消毒报告时的符号化都在当前栈上跑，实测撞栈底护页（SIGBUS）。
+// 这两种构建里客体线程改在本线程自己的 8 MiB 宿主栈上跑，不用游戏给的那块（客体线程状态在寄存器与线程槽里，不在栈上）；其余构建不变
+// Sanitizer hosts (make dmhost_asan / dmhost_tsan): the sanitizer runtimes need far more stack than the thread stacks the game provides (some only a dozen or so KiB): AddressSanitizer's free path and ThreadSanitizer's report symbolization run on the current stack, and were measured hitting the guard page below (SIGBUS).
+// In these two builds guest threads run on this thread's own 8 MiB host stack instead of the block the game provides (guest thread state lives in registers and thread slots, not on the stack); every other build is unchanged
+#define DM_SAN_STACK (8 << 20)
+#endif
+#endif
 
 #define R_TIMEOUT     0xEA01u   // 内核模块 1，描述 117 | Kernel module 1, description 117
 #define R_CANCELLED   0xEC01u   // 118
@@ -227,7 +236,11 @@ static void *thread_main(void *p) {
     crash_thread_init();
     guest_thread_init();
     pthread_mutex_lock(&G); while (!t->started) pthread_cond_wait(&t->cv, &G); pthread_mutex_unlock(&G);
+#ifdef DM_SAN_STACK
+    dm_thread_enter(t->entry, t->arg, ((uint64_t)__builtin_frame_address(0) - 4096) & ~0xFull);   // 本帧以下整段宿主栈（本帧不会再回来） | the whole host stack below this frame (this frame is never returned to)
+#else
     dm_thread_enter(t->entry, t->arg, t->stack_top);   // 不返回：客体须经 ExitThread 退出 | Does not return: the guest must exit through ExitThread
+#endif
     die("客体线程入口返回");
 }
 static void thr_free(thr_t *t) {   // 持 G；从全部线程链摘下并释放 | Holding G; unlink from the all-threads chain and free
@@ -494,7 +507,12 @@ int svc_thread(int num, uint64_t *regs) {
         t->prio = (int)regs[4]; t->core = (int)regs[5]; t->mask = t->core >= 0 ? 1ull << t->core : 7;
         t->born_ns = now_ns(); t->born_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
         pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
-        pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 1 << 20);
+        pthread_attr_t a; pthread_attr_init(&a);
+#ifdef DM_SAN_STACK
+        pthread_attr_setstacksize(&a, DM_SAN_STACK);
+#else
+        pthread_attr_setstacksize(&a, 1 << 20);
+#endif
         pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);   // 退出即回收宿主资源（客体经句柄等待，不 join） | Host resources are reclaimed on exit (the guest waits through the handle, no join)
         if (pthread_create(&t->pt, &a, thread_main, t)) die("pthread_create");
         pthread_attr_destroy(&a);

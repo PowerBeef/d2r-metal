@@ -21,6 +21,17 @@
 
 #define MAX_MOD 8
 #include "dm_events.h"
+// 线程消毒版宿主（make dmhost_tsan）：客体内存（地址空间预留块、各模块映像）的访问由游戏自己的同步定序（客体代码不插桩，消毒器看不见），登记成良性竞争范围；宿主自己的内存照查。其余构建为空
+// ThreadSanitizer host (make dmhost_tsan): accesses to guest memory (the address-space reservation, each module image) are ordered by the game's own synchronization (guest code is not instrumented, so the sanitizer cannot see it), so register it as a benign-race range; the host's own memory is still checked. Empty in every other build
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+void AnnotateBenignRaceSized(const char *file, int line, const volatile void *mem, unsigned long size, const char *desc);
+#define DM_TSAN_GUEST(p, n) AnnotateBenignRaceSized(__FILE__, __LINE__, (p), (unsigned long)(n), "guest memory")
+#endif
+#endif
+#ifndef DM_TSAN_GUEST
+#define DM_TSAN_GUEST(p, n) ((void)0)
+#endif
 // 设了 DM_EVENTS 时整行交给日志钩子（dm_events.c：一次写出，红标 / FATAL 行另记成事件）；没设时照旧直接写
 // With DM_EVENTS set the whole line goes to the log hook (dm_events.c: written out at once, red-marker / FATAL lines are also recorded as events); without it, written directly as before
 #define LOG(...) do { if (g_dm_log_hook) g_dm_log_hook(__FILE_NAME__, __LINE__, "[dm] " __VA_ARGS__); else { fprintf(stderr, "[dm] " __VA_ARGS__); fputc('\n', stderr); } } while (0)

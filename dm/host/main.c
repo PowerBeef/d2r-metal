@@ -192,6 +192,35 @@ void dm_host_preload_start(int argc, char **argv) {
     if (pthread_create(&g_pre.th, &a, preload_thread, NULL)) die("dm_host_preload_start：起线程失败");
 }
 #include <TargetConditionals.h>
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+// 地址消毒版宿主（make dmhost_asan）的缺省选项：宿主每线程自己设备用信号栈（crash.c，malloc 来的），消毒器不再设、也不在线程退出时去 munmap 它；macOS 上不查泄漏
+// Default options of the AddressSanitizer host (make dmhost_asan): the host sets its own alternate signal stack per thread (crash.c, from malloc), so the sanitizer no longer sets one or munmaps it at thread exit; no leak checking on macOS
+const char *__asan_default_options(void);
+const char *__asan_default_options(void) { return "use_sigaltstack=0:detect_leaks=0"; }
+#endif
+#endif
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+// 线程消毒版宿主（make dmhost_tsan）内置的抑制表：只放查过、确认是有意为之的宿主侧竞争（客体内存整块另按良性竞争登记，见 dm.h DM_TSAN_GUEST）；新出现的竞争照报
+//   ① 记账计数器与诊断快照：单写者递增、只给日志 / 状态导出看，读到旧值无妨
+//   ② 现场导出（看门狗 / 崩溃 / 卡死时）：故意不拿锁读线程与提交状态，免得在死锁里再卡住
+//   ③ fd 表：CloseFile 先清表项再 close，内核要等 close 之后才把同一个号给下一次 open，先后由系统调用定序（消毒器不建模）
+//   ④ 单写者发布：g_fence（提交线程独占递增、对齐 8 字节）、g_link（节拍线程建好对象后发布一次）、g_lastG（拍入口每拍重写的缓存，别的线程清零最多让 in_game 晚一拍）、g_layout_logged（只打一次的日志标记）；g_done（完成回调持锁单调写，别处不拿锁只问「栅栏到了没」，读到旧值只会当作还没到，偏保守）
+// Suppressions built into the ThreadSanitizer host (make dmhost_tsan): only host-side races that were reviewed and are intentional (guest memory as a whole is registered as a benign-race range instead, see DM_TSAN_GUEST in dm.h); new races are still reported
+//   (1) bookkeeping counters and diagnostic snapshots: single-writer increments read only by logs / state dumps, a stale value is harmless
+//   (2) state dumps (watchdog / crash / hang): they read thread and submission state without locks on purpose, so they cannot get stuck in a deadlock themselves
+//   (3) fd tables: CloseFile clears the entries before close, and the kernel only hands the same number to the next open after that close, so the system calls order them (the sanitizer does not model that)
+//   (4) single-writer publication: g_fence (incremented only by the submit thread, aligned 8 bytes), g_link (published once by the display-link thread after building the object), g_lastG (a cache rewritten at every tick entry; another thread clearing it delays in_game by at most one tick), g_layout_logged (a log-once flag); g_done (written monotonically under the lock by the completion callback, read elsewhere without the lock only to ask "has this fence completed", and a stale value only reads as "not yet", the conservative side)
+const char *__tsan_default_suppressions(void);
+const char *__tsan_default_suppressions(void) {
+    return "race:g_stat_*\nrace:g_bw_*\nrace:g_pkg_*\nrace:g_pass_full_rw\nrace:g_udc_saved_bytes\nrace:g_present_n\nrace:g_tkreads\nrace:g_bp_*\nrace:g_frame\n"
+           "race:svc_thread_dump\nrace:thr_bt\nrace:mtl_wait_state_dump\nrace:crash_dump_now\n"
+           "race:g_fmode\nrace:g_fd2s\nrace:g_fsave\nrace:g_hm\n"
+           "race:g_fence\nrace:g_link\nrace:g_lastG\nrace:g_layout_logged\nrace:g_done\n";
+}
+#endif
+#endif
 int dm_app_bootstrap(int *argc, char ***argv);   // app_mac.m：包成 .app 双击起时备好环境与参数；命令行起原样 | app_mac.m: when packaged as an .app and started by double-click, prepare the environment and arguments; command-line starts are unchanged
 int main(int argc, char **argv) {
 #if TARGET_OS_OSX   // iOS 包也编这个文件（入口由外壳调），那边没有 app_mac.m | The iOS package compiles this file too (the entry is called by the shell); there is no app_mac.m on that side
