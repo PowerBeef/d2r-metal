@@ -23,7 +23,14 @@
 import struct, re, sys, os
 from itertools import combinations
 import lz4.block
-from capstone import *
+# 改写按 capstone 5 的反汇编文本核对每处改写（subst、sp_frame）；capstone 6 起 CS_ARCH_ARM64 也改了名。先核版本再导入，版本号取包的元数据：capstone.__version__ 不准（5.0.9 的包里写着 5.0.7）
+# Every rewrite is checked against capstone 5's disassembly text (subst, sp_frame); from capstone 6 on CS_ARCH_ARM64 is renamed as well. The version is checked before the import, from the package metadata: capstone.__version__ is wrong (the 5.0.9 package says 5.0.7)
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
+try: _CS_VER = _pkg_version('capstone')
+except PackageNotFoundError: _CS_VER = None
+if _CS_VER and _CS_VER.split('.')[0] != '5':
+    sys.exit(f'【红】capstone {_CS_VER} 不是验过的 5.x，改写不做：pip install capstone==5.0.9 | capstone {_CS_VER} is not the verified 5.x, not rewriting: pip install capstone==5.0.9')
+from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
 
 src, outdir, NAME = sys.argv[1], sys.argv[2], sys.argv[3]
 d = open(src, 'rb').read()
@@ -246,7 +253,13 @@ KEYS = {'K18': 508, 'KTLS': 509, 'KTLR': 510, 'KGATE': 511, 'KRES0': 506, 'KRES1
 KEY_INDEX = {k: i for i, k in enumerate(('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI'))}
 
 md = Cs(CS_ARCH_ARM64, CS_MODE_ARM); md.detail = True
+# 按函数取指令表用的反汇编器：遇到解不出的字记一条 .byte 接着往下解（md 会在第一个解不出的字处停，后面的独占窗口、跳转表、跳进窗口的分支都看不见）
+# Disassembler for the per-function instruction lists: an undecodable word becomes one .byte entry and decoding goes on (md stops at the first undecodable word, hiding the exclusive windows, jump tables and branches into windows after it)
+md_func = Cs(CS_ARCH_ARM64, CS_MODE_ARM); md_func.detail = True; md_func.skipdata = True
 patch = bytearray(); fix = []; gates = []; stats = {}
+def stop(msg):
+    """改写器认为不安全时明确停下（不用 assert：PYTHONOPTIMIZE 会把它去掉）。 | Stop explicitly when the rewriter considers something unsafe (not assert: PYTHONOPTIMIZE removes it)."""
+    sys.exit(f'【红】{NAME}：{msg}')
 def stat(k): stats[k] = stats.get(k, 0) + 1
 def here(): return PATCH_OFF + len(patch)
 def emit(w, kind=None):
@@ -260,18 +273,24 @@ def emit_slot_addr(base, key_reg, kind):
     emit_key_addr(key_reg, kind); emit(ADDR(base, base, key_reg))
 
 # ---- 编码器 ----
+# 立即数一律先核范围：原先按位截断，超出的偏移静默绕成另一个数（如 ldp 的 #-520 编成 #+504），编出的块照样能跑、读写的却是别处
 # ---- Encoders ----
+# Every immediate is range-checked first: it used to be masked, so an out-of-range offset silently wrapped to another value (an ldp's #-520 encoded as #+504), and the block still ran but accessed somewhere else
+def fit(v, bits, scale=1, signed=True):
+    q, r = divmod(v, scale); lo, hi = (-(1 << (bits - 1)), (1 << (bits - 1)) - 1) if signed else (0, (1 << bits) - 1)
+    if r or not lo <= q <= hi: stop(f'立即数 {v} 编不进 {bits} 位（步长 {scale}） | immediate {v} does not fit {bits} bits (step {scale})')
+    return q & ((1 << bits) - 1)
 def B(frm, to):
     off = to - frm; assert -(1 << 27) <= off < (1 << 27) and off % 4 == 0
     return 0x14000000 | ((off >> 2) & 0x3FFFFFF)
-def STP(t, t2, n, off): return 0xA9000000 | (((off // 8) & 0x7F) << 15) | (t2 << 10) | (n << 5) | t
-def LDP(t, t2, n, off): return 0xA9400000 | (((off // 8) & 0x7F) << 15) | (t2 << 10) | (n << 5) | t
-def STP_PRE(t, t2, n, off): return 0xA9800000 | (((off // 8) & 0x7F) << 15) | (t2 << 10) | (n << 5) | t
-def LDP_POST(t, t2, n, off): return 0xA8C00000 | (((off // 8) & 0x7F) << 15) | (t2 << 10) | (n << 5) | t
-def STUR(t, n, off): return 0xF8000000 | ((off & 0x1FF) << 12) | (n << 5) | t   # stur xt,[xn,#off]（off 可负） | stur xt,[xn,#off] (off may be negative)
-def LDUR(t, n, off): return 0xF8400000 | ((off & 0x1FF) << 12) | (n << 5) | t   # ldur xt,[xn,#off]
-def LDRX(t, n, imm12=0): return 0xF9400000 | (imm12 << 10) | (n << 5) | t
-def STRX(t, n, imm12=0): return 0xF9000000 | (imm12 << 10) | (n << 5) | t
+def STP(t, t2, n, off): return 0xA9000000 | (fit(off, 7, 8) << 15) | (t2 << 10) | (n << 5) | t
+def LDP(t, t2, n, off): return 0xA9400000 | (fit(off, 7, 8) << 15) | (t2 << 10) | (n << 5) | t
+def STP_PRE(t, t2, n, off): return 0xA9800000 | (fit(off, 7, 8) << 15) | (t2 << 10) | (n << 5) | t
+def LDP_POST(t, t2, n, off): return 0xA8C00000 | (fit(off, 7, 8) << 15) | (t2 << 10) | (n << 5) | t
+def STUR(t, n, off): return 0xF8000000 | (fit(off, 9) << 12) | (n << 5) | t   # stur xt,[xn,#off]（off 可负） | stur xt,[xn,#off] (off may be negative)
+def LDUR(t, n, off): return 0xF8400000 | (fit(off, 9) << 12) | (n << 5) | t   # ldur xt,[xn,#off]
+def LDRX(t, n, imm12=0): return 0xF9400000 | (fit(imm12, 12, signed=False) << 10) | (n << 5) | t
+def STRX(t, n, imm12=0): return 0xF9000000 | (fit(imm12, 12, signed=False) << 10) | (n << 5) | t
 def MRS_TPIDRRO(t): return 0xD53BD060 | t
 def MRS_TPIDR(t): return 0xD53BD040 | t
 # 线程槽基址：苹果 = tpidrro_el0（pthread TSD 数组，槽 = 基址 + 键号 × 8）；
@@ -299,8 +318,8 @@ def emit_tp(t):
 # to its offset, and one that writes sp back gets its own stack layout (see sp_frame). The odd site that cannot be encoded keeps the
 # old layout and is counted as below_sp. The Apple target is unchanged (Apple's arm64 ABI has a 128-byte red zone).
 NOREDZONE = TARGET == 'android'   # 鸿蒙（ohos）暂沿用旧排法：现有鸿蒙改写产物都按它生成并实测过；musl 同样没有红区，改用新排法需重出产物再实测 | HarmonyOS (ohos) keeps the old layout for now: every HarmonyOS module so far was generated and tested with it; musl has no red zone either, so switching needs regenerated modules and a new device test
-def STR_PRE(t, n, off): return 0xF8000C00 | ((off & 0x1FF) << 12) | (n << 5) | t
-def LDR_POST(t, n, off): return 0xF8400400 | ((off & 0x1FF) << 12) | (n << 5) | t
+def STR_PRE(t, n, off): return 0xF8000C00 | (fit(off, 9) << 12) | (n << 5) | t
+def LDR_POST(t, n, off): return 0xF8400400 | (fit(off, 9) << 12) | (n << 5) | t
 def stash(S, T, nrz=None):
     emit(STP_PRE(S, T, 31, -16) if (NOREDZONE if nrz is None else nrz) else STP(S, T, 31, -16))
 def unstash(S, T, nrz=None):
@@ -309,9 +328,11 @@ def uses_sp(ins): return re.search(r'\bw?sp\b', ins.op_str) is not None
 def ADRP(dd, pc, target):
     imm = ((target & ~0xFFF) - (pc & ~0xFFF)) >> 12; assert -(1 << 20) <= imm < (1 << 20)
     return 0x90000000 | ((imm & 3) << 29) | (((imm >> 2) & 0x7FFFF) << 5) | dd
-def ADDI(dd, n, imm12, sh=0): return 0x91000000 | (sh << 22) | (imm12 << 10) | (n << 5) | dd
+def ADDI(dd, n, imm12, sh=0): return 0x91000000 | (sh << 22) | (fit(imm12, 12, signed=False) << 10) | (n << 5) | dd
 def ADDR(dd, n, m): return 0x8B000000 | (m << 16) | (n << 5) | dd
-def SUBI(dd, n, imm12, sh=0): return 0xD1000000 | (sh << 22) | (imm12 << 10) | (n << 5) | dd
+def SUBI(dd, n, imm12, sh=0): return 0xD1000000 | (sh << 22) | (fit(imm12, 12, signed=False) << 10) | (n << 5) | dd
+# PC 相对的字面量读（ldr / ldrsw / prfm / SIMD ldr 的 literal 形）：按编码认，搬进补丁区就读错地址 | PC-relative literal loads (the literal forms of ldr / ldrsw / prfm / SIMD ldr): recognized by encoding; copied into the patch area they would read the wrong address
+def is_literal_load(w): return (w & 0x3B000000) == 0x18000000
 def BR(n): return 0xD61F0000 | (n << 5)
 def BLR(n): return 0xD63F0000 | (n << 5)
 NOP = 0xD503201F
@@ -449,7 +470,9 @@ def site_plain(ins):
         return start
     if NOREDZONE: stat('below_sp')
     save = -16 if dlt == 0 else -112          # 改 sp 的指令会写到 sp 下方，暂存放到保留区深处 | Instructions that modify sp write below sp, so the scratch save is placed deep in the reserved area
-    assert dlt == 0 or dlt >= -96, f'sp delta {dlt} at {ins.address:x}'
+    # 暂存位 [原 sp-112, 原 sp-96) 要不和原指令压栈的那块重叠（dlt ≥ -96），原指令改完 sp 后也还在 128 字节红区里（dlt ≤ 16）；r44 只有 sdk 两处（-16 / +16）
+    # The save slot [old sp-112, old sp-96) must not overlap what the original instruction pushes (dlt ≥ -96) and must still be inside the 128-byte red zone once the original instruction has moved sp (dlt ≤ 16); r44 has only two such sites, both in sdk (-16 / +16)
+    if dlt and not -96 <= dlt <= 16: stop(f'{ins.address:#x} {ins.mnemonic} {ins.op_str}：sp 写回量 {dlt} 超出 [-96, 16]，暂存位会出红区或被压栈盖掉 | sp write-back {dlt} is outside [-96, 16]; the save slot would leave the red zone or be overwritten by the push')
     start = here()
     emit(STP(S, T, 31, save)); emit_tp(T); emit_slot_addr(T, S, 'K18'); emit(LDRX(S, T))
     emit(subst(ins, S))
@@ -511,6 +534,8 @@ def site_br(ins, base, count):
 def site_sysreg_read(ins, kind):
     """mrs xN, tpidr_el0 / tpidrro_el0 → xN = 线程槽值。 | mrs xN, tpidr_el0 / tpidrro_el0 → xN = thread slot value."""
     N = ins.bytes[0] & 31
+    # 客体的 x18 住在线程槽 K18：mrs x18 若照写真 x18，客体读不到结果 | The guest's x18 lives in thread slot K18: writing the real x18 for mrs x18 would leave the guest without the result
+    if N == 18: stop(f'{ins.address:#x} mrs x18, {ins.op_str.split(", ")[-1]}：目的是 x18，块会写真 x18 而不是客体的 K18 槽 | the destination is x18; the block would write the real x18, not the guest K18 slot')
     tmp = 16 if N != 16 else 17
     start = here()
     emit(STR_PRE(tmp, 31, -16) if NOREDZONE else STUR(tmp, 31, -16)); emit_tp(N); emit_slot_addr(N, tmp, kind); emit(LDRX(N, N)); emit(LDR_POST(tmp, 31, 16) if NOREDZONE else LDUR(tmp, 31, -16))   # tmp 存红区借用 | tmp is saved by borrowing the red zone
@@ -519,6 +544,7 @@ def site_sysreg_read(ins, kind):
 
 def site_tpidr_write(ins):
     N = struct.unpack('<I', ins.bytes)[0] & 31
+    if N == 18: stop(f'{ins.address:#x} msr tpidr_el0, x18：块会存真 x18 而不是客体的 K18 槽 | the block would store the real x18, not the guest K18 slot')   # 同上 | as above
     (T,) = pick({N}, 1)
     start = here()
     tmp = next(x for x in (16, 17) if x not in (N, T))
@@ -545,6 +571,9 @@ def emit_gate_call():
 
 def site_gate(ins, kind, arg):
     """svc / mrs cntpct_el0 → 宿主门。门地址取自线程槽 KGATE；门按返回点（本块 ldp 的地址）查 gates.tsv。 | svc / mrs cntpct_el0 → host gate. The gate address is taken from thread slot KGATE; the gate looks up gates.tsv by return point (the address of this block's ldp)."""
+    # 计时门的结果由 dm_gate 写回目的寄存器：x18 它不回写（客体的 x18 在 K18 槽），x29 / x30 随后被本块的 ldp x29, x30 盖掉（x30 还会让 dm_gate 的 ret 跳到计数值）；xzr 无妨
+    # dm_gate writes a counter gate's result back to the destination register: it does not write x18 back (the guest's x18 is in slot K18), and x29 / x30 are then overwritten by this block's ldp x29, x30 (x30 even makes dm_gate's ret jump to the counter value); xzr is harmless
+    if kind != 'svc' and arg in (18, 29, 30): stop(f'{ins.address:#x} mrs x{arg}, {kind}_el0：计时门的结果写不进 x{arg} | the counter gate result cannot reach x{arg}')
     start = here()
     emit(STP_PRE(29, 30, 31, -16))
     emit_gate_call()
@@ -584,10 +613,19 @@ def find_windows(insl):
         if ins.mnemonic not in EXCL_LD: continue
         j = i
         while j < len(insl) and insl[j].mnemonic not in EXCL_ST: j += 1
-        if j >= len(insl) or j - i >= 16: continue
+        if j >= len(insl): continue
+        if j - i >= 16:
+            # 原先静默跳过：里面的 x18 随后各自当普通改写点，块里的读写打断独占监视，stxr 一直失败
+            # This used to be skipped silently: the x18 accesses inside then became separate plain sites, whose loads and stores break the exclusive monitor, so the stxr keeps failing
+            if any(has18(x) for x in insl[i:j + 1]): stop(f'独占窗口 {ins.address:#x} 有 {j - i + 1} 条且用到 x18，不按窗口改写不安全 | exclusive window {ins.address:#x} has {j - i + 1} instructions and uses x18; rewriting it outside a window is unsafe')
+            continue
         if j + 1 < len(insl) and insl[j + 1].mnemonic in ('cbz', 'cbnz'): j += 1
         seg = insl[i:j + 1]
-        if any(has18(x) for x in seg): out.append(seg)
+        if any(has18(x) for x in seg):
+            # 窗口整段原样搬进补丁区：其中解不出的字、自己也要改写的字（svc、tpidr、计时器）搬过去就是原指令 | The whole window is copied into the patch area as is: an undecodable word, or a word that needs its own rewrite (svc, tpidr, counter), would arrive there unrewritten
+            odd = [x for x in seg if x.mnemonic == '.byte' or kinds.get(x.address, ('x18',))[0] != 'x18']
+            if odd: stop(f'独占窗口 {ins.address:#x} 里有不能原样搬的字 {odd[0].address:#x} {odd[0].mnemonic} {odd[0].op_str} | exclusive window {ins.address:#x} holds a word that cannot be copied as is')
+            out.append(seg)
     return out
 
 def site_window(seg):
@@ -616,8 +654,8 @@ def site_window(seg):
             if m in ('tbz', 'tbnz'): w = (w & 0xFFF8001F) | ((off & 0x3FFF) << 5)
             else: w = (w & 0xFF00001F) | ((off & 0x7FFFF) << 5)
             dd = dis(w, pc); assert dd.operands[-1].imm == newt and dd.mnemonic == m
-        else:
-            assert m not in ('adr', 'adrp', 'b', 'bl', 'br', 'blr', 'ret') and not (m == 'ldr' and '[' not in x.op_str), hex(x.address)
+        elif m in ('adr', 'adrp', 'b', 'bl', 'br', 'blr', 'ret') or is_literal_load(struct.unpack('<I', x.bytes)[0]):
+            stop(f'独占窗口 {lo:#x} 里的 {x.address:#x} {m} {x.op_str} 与位置有关，搬不走 | {x.address:#x} {m} {x.op_str} in exclusive window {lo:#x} depends on its position and cannot be moved')
         words.append(w)
     for w in words: emit(w)
     # 出口桩的次序：副本最后一条指令执行完是「顺序落出」，落进紧跟在副本后面的第 0 个出口桩——所以第 0 个必须是回 hi 的落出口，窗口外的跳转目标排在其后。
@@ -682,7 +720,7 @@ def func_of(a):
 done = set(); windows = []; jumps = {}
 funcs = sorted({func_of(a) for a, (k, _) in kinds.items() if k == 'x18'})
 for fa, fb in funcs:
-    insl = list(md.disasm(bytes(IMG[fa:fb]), fa))
+    insl = list(md_func.disasm(bytes(IMG[fa:fb]), fa))
     ws = find_windows(insl)
     for wseg in ws:
         windows.append(wseg); done |= {x.address for x in wseg}
@@ -722,7 +760,7 @@ for a in sorted(kinds):
         if m == 'br': st = site_br(ins, *jumps[a]); stat('br')
         elif m in ('cbz', 'cbnz', 'tbz', 'tbnz'): st = site_cond(ins); stat('cond')
         elif m in ('adr', 'adrp'): st = site_pcrel(ins); stat('pcrel')
-        elif m in ('blr', 'ret', 'b', 'bl') or (m == 'ldr' and '[' not in ins.op_str): raise RuntimeError(f'{a:x} {m} {ins.op_str}')
+        elif m in ('blr', 'ret', 'b', 'bl') or is_literal_load(struct.unpack('<I', ins.bytes)[0]): raise RuntimeError(f'{a:x} {m} {ins.op_str}')
         else: st = site_plain(ins); stat('plain')
     elif k == 'tpidr_r': st = site_sysreg_read(ins, 'KTLS'); stat(k)
     elif k == 'tpidrro_r': st = site_sysreg_read(ins, 'KTLR'); stat(k)

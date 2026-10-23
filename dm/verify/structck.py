@@ -5,9 +5,9 @@
 #  ① 非 text 段除剪口外与原映像逐字节相同，映像尾到补丁区之间全 0
 #  ② text 改动的字 == 改写点头（sites.tsv 非 J 行 + 窗口起点）∪ text 内剪口，改写点头都是跳进补丁区的 B
 #  ③ 独立分母：llvm-objdump 读原 text，x18/w18 操作数、tpidr_el0 读写、tpidrro_el0 读、svc、cntpct/cntvct
-#     全部落在改写点或窗口内；反向，每个改写点都在独立集合里（窗口起点除外）
+#     全部落在改写点或窗口内；反向，每个改写点都在独立集合里（窗口起点除外）；用到 x18 的独占读写（ldxr / stxr 等）都在窗口内
 #  ④ 补丁区里不再有 x18/w18、tpidr_el0、svc、cntpct/cntvct
-#  ⑤ 宿主门（svc / 计时）块逐字等于模板，gates.tsv 一一对上（返回点、种类、svc 号 / 目标寄存器、原地址）
+#  ⑤ 宿主门（svc / 计时）块逐字等于模板，gates.tsv 一一对上（返回点、种类、svc 号 / 目标寄存器、原地址）；计时门的目标寄存器不是 x18 / x29 / x30
 #  ⑧ 参数门（params.tsv）：原两字为 64 位 movz/movk 造常数、新两字 = mrs tpidrro / ldr 键槽、中间不碰该寄存器、区间无分支目标、键号登记、同键原值唯一
 #  ⑦ 已登记观测门（obs.tsv）：原映像该处 == 登记原指令字；原指令可搬（非 PC 相对 / 非分支 / 不涉 x18 / 不读写系统寄存器，capstone 判）；
 #     可在函数中间（门 ABI 全存回，gatefn 核）；不与改写点 / 窗口 / 剪口重叠；门块逐字 = 模板（svc 门同构前半 + 原指令 + b 回 off+4），gates.tsv 记 obs 行
@@ -23,9 +23,9 @@
 #  ① non-text segments equal the original image byte for byte except the cuts; all zero between the image end and the patch area
 #  ② words changed in text == rewrite site heads (non-J lines of sites.tsv + window starts) ∪ cuts inside text, and every site head is a B into the patch area
 #  ③ independent denominators: llvm-objdump reads the original text; every x18/w18 operand, tpidr_el0 read/write, tpidrro_el0 read, svc, cntpct/cntvct
-#     falls on a rewrite site or inside a window; conversely every rewrite site is in the independent set (window starts excepted)
+#     falls on a rewrite site or inside a window; conversely every rewrite site is in the independent set (window starts excepted); every exclusive access (ldxr / stxr ...) that uses x18 is inside a window
 #  ④ no x18/w18, tpidr_el0, svc or cntpct/cntvct left in the patch area
-#  ⑤ host gate (svc / timer) blocks equal the template word for word and match gates.tsv one to one (return point, kind, svc number / target register, original address)
+#  ⑤ host gate (svc / timer) blocks equal the template word for word and match gates.tsv one to one (return point, kind, svc number / target register, original address); a timer gate's target register is not x18 / x29 / x30
 #  ⑧ parameter gates (params.tsv): the two original words are a 64-bit movz/movk constant, the two new words = mrs tpidrro / ldr key slot, nothing in between touches the register, no branch target in the range, key registered, one original value per key
 #  ⑦ registered observation gates (obs.tsv): original image == registered original word there; the original instruction is movable (not PC-relative / not a branch / no x18 / no system register access, judged by capstone);
 #     may be mid-function (the gate ABI saves everything back, checked by gatefn); no overlap with sites / windows / cuts; gate block == template word for word (first half as the svc gate + original instruction + b back to off+4), gates.tsv has an obs line
@@ -227,6 +227,10 @@ extra = sorted(a for a, k in sites.items() if k != 'W' and a not in ind and a no
 if extra: bad(f'改写点不在独立集合里：{len(extra)} 例 {[(hex(x), D.get(x)) for x in extra[:5]]}')
 kmis = sorted(a for a, k in sites.items() if k != 'W' and a in ind and ind[a] != k)
 if kmis: bad(f'改写点种类与独立判读不同：{len(kmis)} 例 {[(hex(x), sites[x], D[x]) for x in kmis[:5]]}')
+# 用到 x18 的独占读写必须整段按窗口改写：当成普通改写点的话，块里的读写会打断独占监视，stxr 永远失败
+# An exclusive access that uses x18 must be rewritten as part of a window: as a plain site, the loads and stores of its block break the exclusive monitor and the stxr never succeeds
+excl = sorted(o for o, t in D.items() if re.match(r'(ldx|ldax|stx|stlx)[rp][bh]?\s', t) and RX18.search(t) and o not in inwin)
+if excl: bad(f'用到 x18 的独占读写不在窗口里：{len(excl)} 例 {[(hex(x), D[x]) for x in excl[:5]]}')
 nwin_ref = sum(1 for o in ind if o in inwin)
 
 # ④ 补丁区干净
@@ -305,6 +309,8 @@ for a in gsites:
             or W(pat, ks[0] + 12) != 0xA8C17BFD or W(pat, ks[0] + 16) != B(ks[0] + 16, a + 4):
         bad(f'门块不符键页模板 {a:#x}'); continue
     arg = (ow >> 5) & 0xFFFF if sites[a] == 'svc' else ow & 31
+    # 计时门的结果由 dm_gate 写回目标寄存器：x18 不回写，x29 / x30 又被门块的 ldp 盖掉（见 patch_nso site_gate） | dm_gate writes a timer gate's result back to its target register: not to x18, and x29 / x30 are overwritten by the gate block's ldp (see patch_nso site_gate)
+    if sites[a] != 'svc' and arg in (18, 29, 30): bad(f'计时门 {a:#x} 的目标寄存器 x{arg} 收不到结果')
     g = gates.get(ks[0] + 12)
     if g != (sites[a], arg, a): bad(f'gates.tsv 不符 {a:#x}：表 {g} 期望 {(sites[a], arg, a)}')
     seen.add(ks[0] + 12)
