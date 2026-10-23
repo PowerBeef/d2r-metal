@@ -23,6 +23,7 @@ run: \
 	$(B)/t_dump_asan \
 	$(B)/t_fs \
 	$(B)/t_fs_case \
+	$(B)/t_guest_clock \
 	$(B)/t_hid_receipt \
 	$(B)/t_hid_script \
 	$(B)/t_hud_dead \
@@ -116,6 +117,7 @@ run: \
 	ASAN_OPTIONS=detect_leaks=0 $(B)/t_dump_asan uaf 2>/dev/null
 	$(B)/t_svc_mem
 	$(B)/t_thr_sem
+	$(B)/t_guest_clock
 	$(B)/t_target_rank 2>/dev/null
 	$(B)/t_hud_dead
 	$(B)/t_namegen
@@ -229,6 +231,8 @@ $(B)/t_rift_oldrun: t_rift_oldrun.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle
 	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_oldrun.c ../hle_os.c
 $(B)/t_rift_wave: t_rift_wave.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_wave.c ../hle_os.c
+$(B)/t_guest_clock: t_guest_clock.c ../hle_os.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_guest_clock.c
 $(B)/t_thread_leak: t_thread_leak.c ../thread.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_thread_leak.c
 

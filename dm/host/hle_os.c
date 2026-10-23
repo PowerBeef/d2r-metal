@@ -60,7 +60,17 @@ static int detclock_cfg(void) {
     static int c = -1; if (c < 0) { const char *e = getenv("DM_DETCLOCK"); g_gdet_step = e ? strtoull(e, 0, 0) : 0; c = g_gdet_step > 0; }
     return c;
 }
-static uint64_t wall_guest_ns(void) { return atomic_load(&g_gfz) ? atomic_load(&g_gfrozen) : now_ns() - atomic_load(&g_glag); }
+// 冻结 / 解冻与读者不同步：读者先见到「未冻结」再取 now_ns()，冻结线程正好在两者之间存下冻结值，读者就返回比冻结值大的数，下一次又读到冻结值——客体时间倒退
+// （实测 4 条读者在每次冻结上约各倒退一次，最多几十 µs）。所以对所有线程只往前：返回值不小于任何线程已经拿到过的（g_glast 上做比较交换）
+// Freezing / unfreezing is not synchronized with readers: a reader that saw "not frozen" and then took now_ns() while the freezer stored the frozen value in between returns more than the frozen value, and its next read gets the frozen value -- guest time goes backwards
+// (measured: about one backward step per reader per freeze, up to tens of us). So it only moves forward across all threads: a value is never below one any thread has already been given (compare-and-swap on g_glast)
+static _Atomic uint64_t g_glast;
+static uint64_t wall_guest_ns(void) {
+    uint64_t v = atomic_load(&g_gfz) ? atomic_load(&g_gfrozen) : now_ns() - atomic_load(&g_glag);
+    uint64_t last = atomic_load_explicit(&g_glast, memory_order_relaxed);
+    while (v > last) if (atomic_compare_exchange_weak_explicit(&g_glast, &last, v, memory_order_relaxed, memory_order_relaxed)) return v;
+    return last;
+}
 uint64_t guest_ns(void) { return atomic_load(&g_gdet_on) ? atomic_load(&g_gdet) : wall_guest_ns(); }
 int dm_detclock_enabled(void) { return detclock_cfg() && atomic_load(&g_gdet_on); }
 // 进局对齐：前端 / 选角阶段出图帧数随真实时间变（装载在后台线程按墙钟推进），首帧起累计的客体时钟值因此每局不同——
