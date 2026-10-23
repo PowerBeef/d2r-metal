@@ -88,7 +88,7 @@ done
 [ "$(grep -c 'OpenPanel MainMenuButtonRibbon' "$T/host.log")" -ge 2 ] || { kill $P 2>/dev/null; grep '【红】看门狗' "$T/host.log" | tail -1; red "${WALL} 秒内没回到主菜单"; }
 sleep 2; kill $P 2>/dev/null; wait $P 2>/dev/null
 grep -E 'DM_FIXED_TIME|DM_C2S_REPLAY|hid 脚本步.*(确认|红)|【红】|ExitGame' "$T/host.log" | grep -v 贴图号 | cut -c1-160
-K6=0; [ -f "$TR/ticks.jsonl" ] && { $PY "$HERE/verify/ryu/selfcmp.py" "$TR/ticks.jsonl" "$T/ticks.jsonl" | tail -8; K6=${PIPESTATUS[0]}; }
+K6=0; [ -f "$TR/ticks.jsonl" ] && { $PY "$HERE/tools/tickdiff.py" "$TR/ticks.jsonl" "$T/ticks.jsonl" | tail -8; K6=${PIPESTATUS[0]}; }   # 逐拍比对、第一个不同的拍（原先调的 verify/ryu/selfcmp.py 不在仓库里） | tick-by-tick comparison, first divergent tick (the verify/ryu/selfcmp.py called before is not in the repository)
 
 # ③ 判据（时间字段核来源：宿主侧 --b-time=FT；真值侧 meta.json 有 wall_start/wall_end 用 --a-meta，否则须显式给 A_TIME=秒，不给则 savecmp 判「未核」红）
 # ③ Criterion (time field source check: host side --b-time=FT; on the ground-truth side use --a-meta if meta.json has wall_start/wall_end, otherwise A_TIME=seconds must be given explicitly, and if it is not, savecmp fails with 「未核」(unverified))
