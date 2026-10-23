@@ -26,6 +26,7 @@ run: \
 	$(B)/t_hud_dead \
 	$(B)/t_i18n \
 	$(B)/t_minimap_lift \
+	$(B)/t_loader_reloc \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
 	$(B)/t_modetx \
@@ -61,6 +62,7 @@ run: \
 	python3 ../../i18n/scan_literals.py
 	$(B)/t_thread_leak
 	$(B)/t_loader_weak
+	$(B)/t_loader_reloc 2>/dev/null
 	$(B)/t_mac_overlay
 	$(PY) test_mac_features.py
 	python3 ../../tools/test_dmtest.py
@@ -232,3 +234,6 @@ $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 
 $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_weak.c ../hle.c
+
+$(B)/t_loader_reloc: t_loader_reloc.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
+	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_reloc.c ../hle.c

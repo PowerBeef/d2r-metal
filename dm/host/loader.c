@@ -270,13 +270,22 @@ static void relocate(module_t *m) {
     }
     int cnt[3] = {0};
     const Elf64_Rela *tabs[2] = {(const Elf64_Rela *)(m->base + rela), (const Elf64_Rela *)(m->base + jmprel)};
-    uint64_t sizes[2] = {relasz, pltsz};
+    uint64_t sizes[2] = {relasz, pltsz}, offs[2] = {rela, jmprel};
+    // 表、写入位置、符号下标都先核对再用：越界即停，不写到映像外、不读符号表外；只认这四种类型（产物里实测只有它们），别的类型停下，不再一律当 ABS64 写
+    // The table, the write position and the symbol index are checked before use: out of range stops, nothing is written outside the image or read outside the symbol table;
+    // only these four types are accepted (the only ones measured in the products), any other type stops instead of being written as ABS64
+    for (int t = 0; t < 2; t++)
+        if (sizes[t] && (offs[t] > m->size || sizes[t] > m->size - offs[t])) die("%s: 重定位表 %#llx+%#llx 越出映像（%#zx）", m->name, offs[t], sizes[t], m->size);
     for (int t = 0; t < 2; t++)
         for (uint64_t i = 0; i < sizes[t] / sizeof(Elf64_Rela); i++) {
             const Elf64_Rela *r = &tabs[t][i];
-            uint8_t *where = (uint8_t *)(m->base + r->r_offset);   // 字节指针：类型化指针即使经 memcpy 也带对齐假设 | byte pointer: a typed pointer carries an alignment assumption even through memcpy
             unsigned type = ELF64_R_TYPE(r->r_info), si = ELF64_R_SYM(r->r_info);
+            if (m->size < 8 || r->r_offset > m->size - 8) die("%s: 重定位第 %llu 条写入位置 %#llx 越出映像（%#zx）", m->name, i, r->r_offset, m->size);
+            if (type != R_AARCH64_RELATIVE && type != R_AARCH64_ABS64 && type != R_AARCH64_GLOB_DAT && type != R_AARCH64_JUMP_SLOT)
+                die("%s: 重定位第 %llu 条类型 %u 未支持（偏移 %#llx）", m->name, i, type, r->r_offset);
+            uint8_t *where = (uint8_t *)(m->base + r->r_offset);   // 字节指针：类型化指针即使经 memcpy 也带对齐假设 | byte pointer: a typed pointer carries an alignment assumption even through memcpy
             if (type == R_AARCH64_RELATIVE) { uint64_t v = (uint64_t)m->base + r->r_addend; memcpy(where, &v, 8); cnt[0]++; continue; }   // 重定位目标可能不对齐（游戏的数据布局）：memcpy（arm64 上同一条指令，C 里不算未定义行为） | relocation targets may be unaligned (the game's data layout): memcpy (the same instruction on arm64, not undefined behaviour in C)
+            if (si >= m->nsym) die("%s: 重定位第 %llu 条符号下标 %u 越出符号表（%u 个）", m->name, i, si, m->nsym);
             const Elf64_Sym *s = &m->symtab[si];
             uint64_t v = (uint64_t)force_lookup(m->strtab + s->st_name);
             if (!v) v = s->st_shndx ? (uint64_t)m->base + s->st_value : resolve_sym(m, m->strtab + s->st_name, (s->st_info >> 4) == 2);
