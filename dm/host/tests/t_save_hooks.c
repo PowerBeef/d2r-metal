@@ -4,14 +4,18 @@
 //   放到背包的那件等提交成了才交出去发 0x63；本事务已有写失败就不跑提交前钩子、照样报一次「没成」；
 //   个人仓库侧文件写不成 → 这次提交被拒（F-SAVE-6）；
 //   残留的 .new 删不掉 → 提交失败、一段连续失败只通知前端一次；重挂时先处理 .new、工作目录不删；能清掉以后，有没提交改动的工作目录整个挪到 .work.orphan（F-SAVE-8）；
-//   正常退出后重挂不留 .work.orphan（「没改过」记号 / 逐个文件相同）；提交后留一份 .prev，克隆前有改过的文件才发一次 F_BARRIERFSYNC（F-SAVE-12）。本测试带 ASan + UBSan。
+//   正常退出后重挂不留 .work.orphan（「没改过」记号 / 逐个文件相同）；提交后留一份 .prev，克隆前有改过的文件才发一次 F_BARRIERFSYNC（F-SAVE-12）；
+//   事务目录里建文件 / 写方式打开失败、空句柄写都让本事务被拒，「已存在 / 不存在」不算；列目录时别的项刚好没了不影响查找（F-SAVE-9）；
+//   fd ≥ 4096 打开不越界（F-SAVE-13，本测试带 ASan）；设置文件关文件失败不换掉原文件（F-SAVE-14）。
 // Save transaction + pre-commit / commit outcome hook unit test (takes seconds): includes hle_fs.c directly and links the real dm_vault.c / dm_pouch.c / dm_pages.c (t_save_mods.c), running real mounts / writes / Commits in a temp directory.
 // One child process per case (the modules' statics and test switches are read once). All expected values are hand-written from the semantics, not computed by calling the implementation under test:
 //   after a refused commit (a game write failed / a later hook failed to write), the stores / stows / page turns that earlier hooks had proven go back to pending, and the next commit still persists them (F-SAVE-2);
 //   an item released to the inventory is handed out for 0x63 only once its commit went through; a commit whose transaction already had a write failure does not run the pre-commit hooks and still reports "not committed" once;
 //   the personal stash side file failing to write refuses this commit (F-SAVE-6);
 //   a leftover .new that cannot be deleted fails the commit and the front end is notified once per run of failures; a remount deals with .new first and keeps the work directory; once it can be cleared, a work directory with uncommitted changes is moved whole to .work.orphan (F-SAVE-8);
-//   a remount after a normal exit leaves no .work.orphan ("unchanged" mark / identical files); a commit keeps one .prev, and before the clone one F_BARRIERFSYNC is issued only when some file changed (F-SAVE-12). This test is built with ASan + UBSan.
+//   a remount after a normal exit leaves no .work.orphan ("unchanged" mark / identical files); a commit keeps one .prev, and before the clone one F_BARRIERFSYNC is issued only when some file changed (F-SAVE-12);
+//   a failed create / open for writing in the transaction directory and a null-handle write refuse the transaction, "already exists / does not exist" do not; another entry vanishing during a listing does not break a lookup (F-SAVE-9);
+//   opening with fd >= 4096 stays in bounds (F-SAVE-13, this test is built with ASan); a settings file whose close fails does not replace the original (F-SAVE-14).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,11 +26,18 @@
 #include <sys/resource.h>
 #include <sys/xattr.h>
 #include <fcntl.h>
+static ssize_t fake_getxattr(const char *path, const char *name, void *value, size_t size, u_int32_t position, int options);
 static int fake_fcntl(int fd, int cmd, ...);
+#define getxattr fake_getxattr
 #define fcntl fake_fcntl
 #include "../hle_fs.c"
+#undef getxattr
 #undef fcntl
-static int g_nbarrier;   // 发了几次 F_BARRIERFSYNC | how many F_BARRIERFSYNC were issued
+ssize_t getxattr(const char *path, const char *name, void *value, size_t size, u_int32_t position, int options);
+static int g_race, g_nbarrier;   // g_race = 1：名字以 .tmp 结尾的项在列出之后、读客体名之前没了 | g_race = 1: entries named *.tmp vanish after being listed and before their guest name is read
+static ssize_t fake_getxattr(const char *path, const char *name, void *value, size_t size, u_int32_t position, int options) {
+    size_t L = strlen(path); if (g_race && L > 4 && !strcmp(path + L - 4, ".tmp")) { errno = ENOENT; return -1; }
+    return getxattr(path, name, value, size, position, options); }
 static int fake_fcntl(int fd, int cmd, ...) { if (cmd == F_BARRIERFSYNC) g_nbarrier++; va_list a; va_start(a, cmd); long arg = va_arg(a, long); va_end(a); return fcntl(fd, cmd, arg); }
 
 struct dm_flags g_flag; uint64_t g_t0_ns; uint64_t now_ns(void) { return 0; }   // 日志时间戳与读路径的桩 | stubs for log timestamps and the read path
@@ -179,10 +190,44 @@ static void c_prev_sync(void) {
     CHECK(file_has(prev, "Joe/Joe.d2s", X, 40) == 1, ".prev 跟着换成上一个版本（有 X） | .prev moves on to the previous version (with X)");
     char neu[1300]; snprintf(neu, sizeof neu, "%s.new", save); CHECK(access(neu, F_OK) != 0, "没有 .new 残留 | no leftover .new");
 }
+// ---- F-SAVE-9：事务目录里的增删改失败 | F-SAVE-9: failed mutations in the transaction directory
+static void c_mutations(void) {
+    base_save(NULL, 0); tmount(); int nf0 = g_nfail;
+    CHECK(h_fs_CreateFile("save:/Joe/Joe.d2s", 4) == RES_PATH_EXISTS && h_fs_DeleteFile("save:/Joe/none") == RES_PATH_NOT_FOUND, "已存在 / 不存在照常回答 | already exists / does not exist answered as usual");
+    put_d2s(X, 40, NULL, 0); CHECK(h_fs_Commit("save") == RES_OK && g_nfail == nf0, "这些不算写失败：照常提交 | these are not write failures: the commit goes through");
+    char jd[1300]; snprintf(jd, sizeof jd, "%s/Joe", work); chmod(jd, 0555);
+    Result rc = h_fs_CreateFile("save:/Joe/Joe.ma0", 8); chmod(jd, 0755);
+    CHECK(rc != RES_OK && h_fs_Commit("save") != RES_OK && g_nfail == nf0 + 1 && !exists(save, "Joe/Joe.ma0"), "建文件被拒（权限）→ 本事务被拒 | create refused (permissions) -> the transaction is refused");
+    uint8_t b[64]; size_t k = d2s(b, NULL, 0, NULL, 0); Result w = gwrite("save:/Joe/Joe.key", b, k);   // 不存在的文件写方式打开失败 → 空句柄写 | a write-mode open of a missing file fails -> null-handle write
+    CHECK(w != RES_OK && h_fs_Commit("save") != RES_OK, "打开失败后的空句柄写 → 本事务被拒 | a null-handle write after a failed open -> the transaction is refused");
+    uint64_t h = 0; CHECK(h_fs_OpenFile(&h, "save:/Joe/Joe.d2s", MODE_WRITE) == RES_OK, "写方式打开成功（清掉上次失败的记号） | an open for writing succeeds (clearing the earlier failure)"); h_fs_CloseFile(h);
+    { setenv("DM_TEMP", root, 1); h_fs_MountTemp("temp"); gwrite("temp:/none", b, k); CHECK(h_fs_Commit("save") == RES_OK, "临时区上的空句柄写不碰存档事务 | a null-handle write on the temp mount leaves the save transaction alone"); }
+    char t[1400]; const char *tn[] = { "Joe.sw_kills.tmp", "Joe.dm_pets.tmp", "Joe.swpouch.tmp", "Joe.swpage.tmp", "Joe.sw_rift.tmp", "a.tmp", "b.tmp", "c.tmp" };   // 服务端拍写手的临时文件名 | the server-tick writers' temp file names
+    for (int i = 0; i < 8; i++) { snprintf(t, sizeof t, "%s/Joe/%s", work, tn[i]); putb(t, "k", 1); }
+    g_race = 1; k = d2s(b, Y, 40, NULL, 0); w = gwrite("save:/Joe/Joe.d2s", b, k); g_race = 0;
+    for (int i = 0; i < 8; i++) { snprintf(t, sizeof t, "%s/Joe/%s", work, tn[i]); unlink(t); }
+    CHECK(w == RES_OK && h_fs_Commit("save") == RES_OK && file_has(save, "Joe/Joe.d2s", Y, 40) == 1, "旁边的临时文件刚好没了：照样找到 Joe.d2s、新进度提交进去 | sibling temp files vanished meanwhile: Joe.d2s is still found and the new progress is committed");
+}
+// ---- F-SAVE-13：fd ≥ 4096 打开不越界（ASan） | F-SAVE-13: opening with fd >= 4096 stays in bounds (ASan)
+static void c_high_fd(void) {
+    base_save(NULL, 0); tmount(); struct rlimit rl; getrlimit(RLIMIT_NOFILE, &rl); rl.rlim_cur = rl.rlim_max < 8192 ? rl.rlim_max : 8192;
+    if (setrlimit(RLIMIT_NOFILE, &rl) || rl.rlim_cur < 4200) { CHECK(1, "（fd 上限不够 4200，跳过） | (fd limit below 4200, skipped)"); return; }
+    int last = -1; while ((last = open("/dev/null", O_RDONLY)) >= 0 && last < 4100) ;
+    uint64_t h = 0; CHECK(last >= 4100 && h_fs_OpenFile(&h, "save:/Joe/Joe.d2s", MODE_READ) == RES_OK && h >= 4096, "fd %llu 打开成功（没越界） | fd %llu opened (in bounds)", (unsigned long long)h, (unsigned long long)h);
+}
+// ---- F-SAVE-14：设置缺省关文件失败（文件大小上限代替盘满）不换掉原文件 | F-SAVE-14: a failed close of the settings seed (a file size cap standing in for a full disk) does not replace the original
+static void c_settings(void) {
+    char sd[1300], sp[1400]; snprintf(sd, sizeof sd, "%s/s14", root); snprintf(sp, sizeof sp, "%s/Settings/Settings.json", sd);
+    const char *good = "{\n    \"Foo\": 1\n}\n"; putb(sp, good, strlen(good)); setenv("DM_TOUCH_DEFAULTS", "1", 1);
+    signal(SIGXFSZ, SIG_IGN); struct rlimit rl; getrlimit(RLIMIT_FSIZE, &rl); struct rlimit lim = { 40, rl.rlim_max };
+    setrlimit(RLIMIT_FSIZE, &lim); settings_seed(sd); setrlimit(RLIMIT_FSIZE, &rl);
+    size_t n; uint8_t *d = readb(sp, &n); char tmp[1500]; snprintf(tmp, sizeof tmp, "%s.seed", sp);
+    CHECK(d && n == strlen(good) && !memcmp(d, good, n) && access(tmp, F_OK) != 0, "原 Settings.json 不动（%zu 字节）、没留临时文件 | the original Settings.json is untouched (%zu bytes) and no temp file is left", n, n); free(d);
+}
 static const struct { const char *name; void (*fn)(void); } k_cases[] = {
     { "refused_vault", c_refused_vault }, { "refused_crosshook", c_refused_crosshook }, { "refused_pouch", c_refused_pouch }, { "refused_pages", c_refused_pages },
     { "release_waits", c_release_waits }, { "poison_skips", c_poison_skips }, { "pages_write_fail", c_pages_write_fail }, { "stuck_new", c_stuck_new },
-    { "relaunch", c_relaunch }, { "prev_sync", c_prev_sync },
+    { "relaunch", c_relaunch }, { "prev_sync", c_prev_sync }, { "mutations", c_mutations }, { "high_fd", c_high_fd }, { "settings", c_settings },
 };
 int main(int argc, char **argv) {
     init_items(); const char *tmp = getenv("TMPDIR"); int bad = 0, total = 0;

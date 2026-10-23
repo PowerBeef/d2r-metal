@@ -78,9 +78,18 @@ __attribute__((weak)) void front_save_failed(int err) { LOG("front_save_failed(e
 // A failure at the clone / swap step (the work directory is intact and the progress lives only there) is reported to the front end too, but only once per run of consecutive failures: the game commits every few seconds,
 // and the iOS front end shows a new alert (stacked on the previous one) for every call; one successful commit resets it, so the next run of failures is reported again. Read and written holding g_lock; the notification itself is sent after the lock is released, on the same game thread
 static int g_commit_fail_said;
-// 这条客体路径落在不落在事务式存档挂载上 | whether this guest path is on the transactional save mount
+// 事务目录里的增删改失败（建文件 / 建目录 / 删 / 改名 / 写方式打开）也按写失败拒绝本事务，同 pwrite / ftruncate：游戏不看这些返回值，照常 Commit 就会把缺了一块的存档提交进去。
+// 「不存在」「已存在」是游戏拿来判断的正常回答（原版存档盘也这样回），不算；只有真的写不进去（盘满、权限、句柄用尽……）才算。txn = 这条客体路径落在事务式存档挂载上
+// Failed mutations in the transaction directory (create file / create directory / delete / rename / open for writing) also refuse this transaction like pwrite / ftruncate do: the game ignores these return values and would Commit a save with a piece missing.
+// "Does not exist" and "already exists" are normal answers the game decides on (the original save storage answers the same), so they do not count; only a real failure to write (disk full, permissions, out of handles...) counts. txn = this guest path is on the transactional save mount
 static int txn_mount(const char *path) { const char *c = strchr(path, ':'); size_t ln = c ? (size_t)(c - path) : 0;
     for (int i = 0; c && i < g_nmnt; i++) if (strlen(g_mnt[i].name) == ln && !strncmp(g_mnt[i].name, path, ln)) return g_mnt[i].commit[0] != 0; return 0; }
+static void txn_fail(const char *path, int e) { if (e != ENOENT && e != ENOTDIR && e != EEXIST && txn_mount(path)) { LOG("【红】存档事务：%s 失败 errno=%d → 本事务提交将被拒", path, e); save_poison(e); } }
+// 游戏写方式打开存档文件失败后会拿空句柄接着写（WriteFile / SetFileSize 句柄 0）：这条线程最近一次写方式打开落在事务存档上且失败了，空句柄写就算本事务写失败；
+// 别的挂载（临时区）上打开失败后的空句柄写不碰存档事务
+// After failing to open a save file for writing the game keeps writing with the null handle (WriteFile / SetFileSize with handle 0): if this thread's latest open for writing was on the transactional save and failed, a null-handle write counts as a write failure of this transaction;
+// null-handle writes after a failed open on another mount (temp) leave the save transaction alone
+static _Thread_local int t_wopen_failed_txn;
 // 工作目录「上次提交之后没改过」的记号（工作目录本身的扩展属性）：挂载克隆后、每次提交成功后设上，之后对存档挂载的第一次增删改把它去掉。
 // 下次挂载时有它 = 残留的工作目录和已提交版一样，照旧删掉；没有（进程在提交之前没了、或提交失败了）就逐个文件和已提交版比，有没提交的改动就整个挪到旁边留一份
 // Mark meaning "the work directory has not changed since the last commit" (an extended attribute on the work directory itself): set after the mount clone and after every successful commit, removed by the first mutation on the save mount after that.
@@ -224,7 +233,9 @@ static int path_component(char *parent, size_t n, const char *name, int create) 
     struct dirent *e; char physical[0x301] = "", guest[0x301];
     while ((e = readdir(d))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        if (!guest_name(parent, e->d_name, guest, sizeof guest)) { closedir(d); return 0; }
+        // 列出来之后、读客体名之前这一项没了（服务端拍上的旁路文件写手：临时文件写完改名，不拿路径锁）：跳过它，别让无关的一项让整条查找失败（F-SAVE-9）
+        // The entry vanished after it was listed and before its guest name was read (side-file writers on the server tick write a temp file and rename it without the path lock): skip it, so an unrelated entry does not fail the whole lookup (F-SAVE-9)
+        if (!guest_name(parent, e->d_name, guest, sizeof guest)) { if (errno == ENOENT) continue; closedir(d); return 0; }
         if (!strcmp(guest, name)) { strlcpy(physical, e->d_name, sizeof physical); break; }
     }
     closedir(d);
@@ -339,6 +350,10 @@ static Result err_res(const char *op, const char *path) {
 // Name resolution shares one lock with create/rename/enumerate, aliases and xattr are published to the guest together.
 #define HP_EX(path, create) PATH_LOCK(); char hp[1024]; int ro = 0; if (!host_path_ex(path, hp, sizeof hp, &ro, create)) return err_res("path", path)
 #define HP(path) HP_EX(path, 0)
+// 增删改用的版本：查找失败（不是「不存在」）也按事务写失败算（txn_fail，F-SAVE-9）；txn_res 同 err_res，另把失败记进事务
+// The version for mutations: a failed lookup (other than "does not exist") also counts as a transaction write failure (txn_fail, F-SAVE-9); txn_res is err_res that also records the failure in the transaction
+#define HP_MUT(path, create) PATH_LOCK(); char hp[1024]; int ro = 0; if (!host_path_ex(path, hp, sizeof hp, &ro, create)) { int e_ = errno; txn_fail(path, e_); errno = e_; return err_res("path", path); }
+static Result txn_res(const char *op, const char *hp, const char *path) { int e = errno; txn_fail(path, e); errno = e; return err_res(op, hp); }
 static void txn_touch_path(const char *path) { if (txn_mount(path)) txn_touch(); }   // 改事务存档之前去掉「没改过」记号 | remove the "unchanged" mark before changing the transactional save
 #define RW() if (ro) { LOG("fs 写只读挂载：%s", hp); return RES_FAIL; }
 // 建目录 / 建文件：目标已存在就照可写挂载的语义回「已存在」——游戏只认得这一种失败（原版存档盘不会写失败），回通用失败它会拿空句柄继续走（iOS 只读回退局在 CloseDirectory 崩）
@@ -450,8 +465,11 @@ static void settings_seed(const char *save_dir) {
         o += (size_t)snprintf(out + o, sizeof out - o, "%s", rest); }
     else { out[o - 1] = 0; o--; o += (size_t)snprintf(out + o, sizeof out - o, "\n}\n"); }
     mkdir(dir, 0755); char tmp[1300]; snprintf(tmp, sizeof tmp, "%s.seed", path);
-    f = fopen(tmp, "wb"); if (!f || fwrite(out, 1, o, f) != o) { if (f) fclose(f); LOG("【红】设置缺省：写 %s 失败", tmp); return; }
-    fclose(f); if (rename(tmp, path)) { LOG("【红】设置缺省：改名到 %s 失败", path); return; }
+    // fclose 也要看：缓冲里的最后一块在关文件时才写下去，盘满时只在这里失败；失败了不改名，原文件不动（F-SAVE-14，同 low_vision_off）
+    // fclose must be checked too: the last buffered block is only written when the file is closed, so on a full disk only this call fails; on failure do not rename, and the original file is left alone (F-SAVE-14, same as low_vision_off)
+    f = fopen(tmp, "wb"); if (!f || fwrite(out, 1, o, f) != o) { if (f) fclose(f); remove(tmp); LOG("【红】设置缺省：写 %s 失败", tmp); return; }
+    if (fclose(f) != 0) { remove(tmp); LOG("【红】设置缺省：写 %s 失败（关文件时）", tmp); return; }
+    if (rename(tmp, path)) { remove(tmp); LOG("【红】设置缺省：改名到 %s 失败", path); return; }
     LOG("设置缺省：%s 补了 %d 个键（显示物品 = 开关式 / 说明条热键 = 关 / 小地图放右、进局自动开%s；已有的键不动）", path, added, first ? " / 首次安装按系统语言写 Language" : "");
 }
 // 语言开关（自定义页标题行那一格，dm_custom.c 的 lang：0 中文 / 1 English / 2 Español / 3 Русский / 4 한국어）：玩家点过「应用」后设置文件里有明确的值，每次挂存档（游戏读设置之前）
@@ -478,8 +496,9 @@ static void settings_lang_apply(const char *save_dir) {
     int voice = vsel == 0 ? 8 : vsel == 1 ? 0 : in && sel == 0 && vcur > 0 ? vcur : voice_for(want);   // 明确选了配音就用它；没选时维持原来的跟随规则
     int ch = json_int_set(buf, sizeof buf, "\"Language\"", want) | json_int_set(buf, sizeof buf, "\"VoiceLanguage\"", voice); if (!ch) return;
     char tmp[1300]; snprintf(tmp, sizeof tmp, "%s.lang", path); f = fopen(tmp, "wb"); size_t m = strlen(buf);
-    if (!f || fwrite(buf, 1, m, f) != m) { if (f) fclose(f); LOG("【红】语言开关：写 %s 失败", tmp); return; }
-    fclose(f); if (rename(tmp, path)) { LOG("【红】语言开关：改名到 %s 失败", path); return; }
+    if (!f || fwrite(buf, 1, m, f) != m) { if (f) fclose(f); remove(tmp); LOG("【红】语言开关：写 %s 失败", tmp); return; }
+    if (fclose(f) != 0) { remove(tmp); LOG("【红】语言开关：写 %s 失败（关文件时）", tmp); return; }   // 同 settings_seed：关文件失败不改名 | same as settings_seed: a failed close does not rename
+    if (rename(tmp, path)) { remove(tmp); LOG("【红】语言开关：改名到 %s 失败", path); return; }
     static const char *const nm[5] = { "中文", "English", "Español", "Русский", "한국어" };
     LOG("语言开关：设置文件的 Language / VoiceLanguage 改成 %d / %d（%s；单独配音 %s；原文字语言 %d）", want, voice, sel < 0 ? "不改文字" : nm[sel], vsel < 0 ? "跟随语言" : vsel ? "English" : "中文", cur);
 }
@@ -697,15 +716,18 @@ ssize_t dm_data_pread(int fd, void *buf, size_t n, off_t off) {   // 语义同 p
     return (ssize_t)done;
 }
 HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Result, h_fs_OpenFile, uint64_t *out, const char *path, int mode) {
-    HP(path);
-    if (mode & (MODE_WRITE | MODE_APPEND)) RW();
-    int fd = open(hp, (mode & (MODE_WRITE | MODE_APPEND)) ? ((mode & MODE_READ) ? O_RDWR : O_WRONLY) : O_RDONLY);
-    if (fd < 0) return err_res("open", hp);
+    int wr = (mode & (MODE_WRITE | MODE_APPEND)) != 0; if (wr) t_wopen_failed_txn = 0;
+    PATH_LOCK(); char hp[1024]; int ro = 0;
+    if (!host_path_ex(path, hp, sizeof hp, &ro, 0)) { int e = errno; if (wr) { t_wopen_failed_txn = txn_mount(path) ? (e ? e : EIO) : 0; txn_fail(path, e); } errno = e; return err_res("path", path); }
+    if (wr) RW();
+    int fd = open(hp, wr ? ((mode & MODE_READ) ? O_RDWR : O_WRONLY) : O_RDONLY);
+    if (fd < 0) { int e = errno; if (wr) { t_wopen_failed_txn = txn_mount(path) ? (e ? e : EIO) : 0; txn_fail(path, e); } errno = e; return err_res("open", hp); }
     struct stat st; fstat(fd, &st);
     if (S_ISDIR(st.st_mode)) { close(fd); return RES_PATH_NOT_FOUND; }
     if (fd >= (int)sizeof g_fmode) die("fd 超出表");
     g_fmode[fd] = (uint8_t)mode; *out = (uint64_t)fd; g_fd2s[fd] = (mode & (MODE_WRITE | MODE_APPEND)) && is_d2s(path);
-    g_hm[fd] = NULL; if (!(mode & (MODE_WRITE | MODE_APPEND))) dm_data_note_fd(fd, hp);
+    if (fd < 4096) g_hm[fd] = NULL;   // 区段表只登记前 4096 个 fd（同 dm_data_note_fd / CloseFile），iOS 软上限 4096、Mac 缺省 256，再大的 fd 也可能有（F-SAVE-13） | the extent table only covers the first 4096 fds (same as dm_data_note_fd / CloseFile); the iOS soft limit is 4096 and the Mac default 256, but larger fds are possible (F-SAVE-13)
+    if (!(mode & (MODE_WRITE | MODE_APPEND))) dm_data_note_fd(fd, hp);
     { const char *c = strchr(path, ':'); size_t ln = c ? (size_t)(c - path) : 0; g_fsave[fd] = 0;
       for (int i = 0; c && i < g_nmnt; i++) if (strlen(g_mnt[i].name) == ln && !strncmp(g_mnt[i].name, path, ln)) g_fsave[fd] = g_mnt[i].commit[0] != 0; }
     fslog_init();
@@ -739,8 +761,11 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
     }
     return RES_OK;
 }
+// 空句柄写：这条线程上一次写方式打开事务存档失败了（t_wopen_failed_txn），这一笔写就丢了，按本事务写失败算（F-SAVE-9）
+// A null-handle write: this thread's last open for writing on the transactional save failed (t_wopen_failed_txn), so this write is lost; count it as a write failure of this transaction (F-SAVE-9)
+static Result null_handle_write(const char *op) { if (t_wopen_failed_txn) { LOG("【红】存档事务：%s 用的是打开失败后的空句柄（打开时 errno=%d）→ 本事务提交将被拒", op, t_wopen_failed_txn); save_poison(t_wopen_failed_txn); } return RES_FAIL; }
 HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp-srv → pwrite(2)", Result, h_fs_WriteFile, uint64_t h, int64_t off, const void *buf, size_t sz, const void *opt) {
-    if (!h) return RES_FAIL;
+    if (!h) return null_handle_write("WriteFile");
     (void)opt; size_t put = 0;
     if (g_fsave[(int)h & 0xffff]) {                                     // 存档写注入点（确定性回归用；只数存档挂载上的写） | Save write injection point (for deterministic regression; only writes on the save mount are counted)
         static int cfg = -1, kill_n, fail_n, fail_e;
@@ -767,7 +792,7 @@ HLE_FORCE("_ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE", "fsp-srv → fstat(2)", 
     *out = (int)h < 4096 && g_hm[(int)h] ? g_hm[(int)h]->size : st.st_size; return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", "fsp-srv → ftruncate(2)", Result, h_fs_SetFileSize, uint64_t h, int64_t sz) {
-    if (!h) return RES_FAIL;
+    if (!h) return null_handle_write("SetFileSize");
     if (g_fsave[(int)h & 0xffff]) txn_touch();
     if (!ftruncate((int)h, sz)) return RES_OK;
     if (g_fsave[(int)h & 0xffff]) save_poison(errno);
@@ -784,18 +809,18 @@ HLE_FORCE("_ZN2nn2fs15GetFileOpenModeENS0_10FileHandleE", "fsp-srv；打开方�
 // ---------- 路径操作 ----------
 // ---------- Path operations ----------
 HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftruncate", Result, h_fs_CreateFile, const char *path, int64_t sz) {
-    HP_EX(path, 1); RW_CREATE(); txn_touch_path(path);
+    HP_MUT(path, 1); RW_CREATE(); txn_touch_path(path);
     int fd = open(hp, O_WRONLY | O_CREAT | O_EXCL, 0644);
-    if (fd < 0) return err_res("create", hp);
+    if (fd < 0) return txn_res("create", hp, path);
     int rc = ftruncate(fd, sz); int e = errno; close(fd);
     if (!rc && set_guest_name(hp, path)) { rc = -1; e = errno; }
     if (rc) unlink(hp);
-    errno = e; return rc ? err_res("create", hp) : RES_OK;
+    errno = e; return rc ? txn_res("create", hp, path) : RES_OK;
 }
-HLE_FORCE("_ZN2nn2fs10DeleteFileEPKc", "fsp-srv → unlink(2)", Result, h_fs_DeleteFile, const char *path) { HP(path); RW(); txn_touch_path(path); return unlink(hp) ? err_res("unlink", hp) : RES_OK; }
-HLE_FORCE("_ZN2nn2fs15CreateDirectoryEPKc", "fsp-srv → mkdir(2)", Result, h_fs_CreateDirectory, const char *path) { HP_EX(path, 1); RW_CREATE(); txn_touch_path(path);
-    if (mkdir(hp, 0755)) return err_res("mkdir", hp);
-    if (set_guest_name(hp, path)) { int e = errno; rmdir(hp); errno = e; return err_res("mkdir name", hp); }
+HLE_FORCE("_ZN2nn2fs10DeleteFileEPKc", "fsp-srv → unlink(2)", Result, h_fs_DeleteFile, const char *path) { HP_MUT(path, 0); RW(); txn_touch_path(path); return unlink(hp) ? txn_res("unlink", hp, path) : RES_OK; }
+HLE_FORCE("_ZN2nn2fs15CreateDirectoryEPKc", "fsp-srv → mkdir(2)", Result, h_fs_CreateDirectory, const char *path) { HP_MUT(path, 1); RW_CREATE(); txn_touch_path(path);
+    if (mkdir(hp, 0755)) return txn_res("mkdir", hp, path);
+    if (set_guest_name(hp, path)) { int e = errno; rmdir(hp); errno = e; return txn_res("mkdir name", hp, path); }
     return RES_OK; }
 static int rm_tree(const char *p) {
     DIR *d = opendir(p); if (!d) return -1;
@@ -809,18 +834,18 @@ static int rm_tree(const char *p) {
     return rc | rmdir(p);
 }
 HLE_FORCE("_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", "fsp-srv → 递归删除（只在可写挂载内）", Result, h_fs_DeleteDirRec, const char *path) {
-    HP(path); RW(); txn_touch_path(path); return rm_tree(hp) ? err_res("rmtree", hp) : RES_OK;
+    HP_MUT(path, 0); RW(); txn_touch_path(path); return rm_tree(hp) ? txn_res("rmtree", hp, path) : RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs10RenameFileEPKcS2_", "fsp-srv → rename(2)", Result, h_fs_RenameFile, const char *from, const char *to) {
-    HP(from); RW(); char hp2[1024];
-    if (!host_path_ex(to, hp2, sizeof hp2, NULL, 1)) return err_res("rename path", to);
+    HP_MUT(from, 0); RW(); char hp2[1024];
+    if (!host_path_ex(to, hp2, sizeof hp2, NULL, 1)) return txn_res("rename path", to, to);
     if (!access(hp2, F_OK)) return RES_PATH_EXISTS;
     txn_touch_path(from);
-    if (rename(hp, hp2)) return err_res("rename", hp);
+    if (rename(hp, hp2)) return txn_res("rename", hp, from);
     if (dm_fs_test_fail("guestname") || set_guest_name(hp2, to)) { int e = errno ? errno : EIO;
         if (dm_fs_test_fail("renameback") || rename(hp2, hp)) {   // 回退也失败：文件留在新路径、客体名元数据不对；不退出——在事务存档里就让本事务提交被拒（已提交版本不变，重新克隆即复原） | Rollback also failed: the file stays at the new path with wrong guest-name metadata; do not exit. In a transactional save, this transaction's commit is refused (the committed version is unchanged and recloning restores it)
             LOG("【红】fs 改名元数据失败且回退失败 errno=%d：%s 留在新路径%s", errno, hp2, in_txn_dir(hp2) ? "，本事务存档提交将被拒" : ""); if (in_txn_dir(hp2)) save_poison(e); }
-        errno = e; return err_res("rename name", hp2); }
+        errno = e; return txn_res("rename name", hp2, to); }   // 回退成了：文件回到原路径，但游戏以为改了名，照常提交就少一步（F-SAVE-9） | rolled back: the file is back at its old path, but the game believes it was renamed, so committing as usual would miss a step (F-SAVE-9)
     if (is_d2s(to)) atomic_store(&g_d2s_wseq, dm_seq_next());
     return RES_OK;
 }
@@ -889,7 +914,7 @@ HLE_FORCE("_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandl
         int isdir = S_ISDIR(st.st_mode);
         if (!(h->mode & (isdir ? DIRMODE_DIR : DIRMODE_FILE))) continue;
         DirectoryEntry *o = &ents[n++]; memset(o, 0, sizeof *o);
-        if (!guest_name(h->path, e->d_name, o->name, sizeof o->name)) { *count = n - 1; return err_res("directory name", c); }
+        if (!guest_name(h->path, e->d_name, o->name, sizeof o->name)) { if (errno == ENOENT) { n--; continue; } *count = n - 1; return err_res("directory name", c); }   // stat 之后没了：跳过（同 path_component） | gone after stat: skip it (same as path_component)
         o->type = isdir ? ENT_DIR : ENT_FILE; o->size = isdir ? 0 : dm_data_logical_size(c, st.st_size);
     }
     *count = n; return RES_OK;

@@ -607,7 +607,7 @@ DM_TICKS_FULL	host,ios-tools	host/diag.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_TICKS_N	host,verify	host/diag.c verify/touchchain.sh	y
 DM_TICK_HOLD	host	host/diag.c	y
 DM_TOUCH_CONTROL_LOG	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSmoke.swift	-
-DM_TOUCH_DEFAULTS	harmony,host,ios	harmony/native/touch_ohos.c host/app_mac.m host/hle_fs.c ios/Sources/front_ios.m	-
+DM_TOUCH_DEFAULTS	harmony,host,ios	harmony/native/touch_ohos.c host/app_mac.m host/hle_fs.c host/tests/t_save_hooks.c …	-
 DM_TOUCH_KEEP	verify	verify/touchchain.sh	y
 DM_TOUCH_LIVE	host	host/front_mac.m	-
 DM_TOUCH_LOG	host	host/hle_touch.c	-
