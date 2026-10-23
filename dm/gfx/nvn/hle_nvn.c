@@ -546,11 +546,13 @@ NVN(nvnQueueFinish, void, NVNqueue *q) { (void)q; x_drain(); mtl_finish(); }
 // ---------- Command buffer: record into the game's command memory, perform CPU-visible side effects at submit ----------
 #define CB(c) ((cmd_t *)(c))
 #define OP_RESERVE 24                             // 段尾永远留够一条 JUMP / END | Always keep enough room at the segment end for one JUMP / END
+static void hostseg_leave(const cmd_t *o, int all);
 
 NVN(nvnCommandBufferInitialize, NVNboolean, NVNcommandBuffer *c, NVNdevice *d) {
+    hostseg_leave(CB(c), 1);   // 同址重建：此前这个对象占着的宿主补段放开 | Re-initialized at the same address: release the host segments this object held
     memset(c, 0, sizeof(cmd_t)); CB(c)->magic = MAGIC('C', 'M', 'D', 'B'); CB(c)->dev = d; return 1;
 }
-NVN(nvnCommandBufferFinalize, void, NVNcommandBuffer *c) { CB(c)->magic = 0; }
+NVN(nvnCommandBufferFinalize, void, NVNcommandBuffer *c) { hostseg_leave(CB(c), 1); CB(c)->magic = 0; }
 NVN(nvnCommandBufferSetMemoryCallback, void, NVNcommandBuffer *c, PFNNVNCOMMANDBUFFERMEMORYCALLBACKPROC cb) { CB(c)->cb = cb; }
 NVN(nvnCommandBufferSetMemoryCallbackData, void, NVNcommandBuffer *c, void *d) { CB(c)->cb_data = d; }
 static uint8_t *align8(uint8_t *p) { return (uint8_t *)(((uintptr_t)p + 7) & ~(uintptr_t)7); }
@@ -582,33 +584,146 @@ static void cmd_new_segment(cmd_t *o, uint8_t *mem, size_t n) {
 }
 // 游戏自己的命令内存用完时的宿主补段：游戏的补内存回调在它那块命令内存池分不出来时，会拿空池（p = NULL、n = 0）调 AddCommandMemory
 //（88 级法师档开高级属性页：一帧里列表项很多，原实现在这里读 NULL+8 段错误）。我们的记录比真机 NVN 的命令大，游戏按真机用量留的预算不一定够，
-// 所以这不是游戏的错误状态而是我们要兜住的：给一段宿主内存接着录。段在提交时就地回放，留 8 帧后回收（提交在录制之后同帧或下一帧）。
+// 所以这不是游戏的错误状态而是我们要兜住的：给一段宿主内存接着录。段里的命令在提交时由翻译线程就地回放（uniform 更新的载荷先暂存进参数区块，
+// 宿主补段不是内存池，见 nvn_mtl.m sub_copy），GPU 不读这段内存。
+// 回收（原先只按「交出后 8 帧」，还在录的段也会被别的命令缓冲领走、重复提交的旧录制会回放别人的命令）：一段可回收 =
+//   ① 没有命令缓冲还在往里写，也没有还没录完的录制写过它（hold）；② 引用它的提交都已拿到提交号（pins = 0），最近那次在 GPU 上已做完（sub）；
+//   ③ 离最近一次交出或被提交引用已过 8 帧（游戏会隔几帧重复提交同一份录制）。
+// 回收后游戏若又提交落在这段里的旧录制：提交时认出（g_hrec：句柄 → 碰过的段 + 录完时的交出序号），报红，这次不回放它。
 // Host-supplied segment when the game's own command memory runs out: when the game's out-of-memory callback cannot allocate from its command memory pool, it calls AddCommandMemory with an empty pool (p = NULL, n = 0)
 // (opening the advanced stats page on the level 88 sorceress save: many list items in one frame, and the original implementation segfaulted here reading NULL+8). Our records are larger than real-device NVN commands, so the budget the game reserved for real-device usage is not necessarily enough,
-// so this is not an error state of the game but something we must catch: provide a segment of host memory to keep recording. The segment is replayed in place at submit and reclaimed after being kept for 8 frames (submit is in the same frame as recording or the next one).
+// so this is not an error state of the game but something we must catch: provide a segment of host memory to keep recording. The commands in it are replayed in place by the translation thread at submit (uniform update payloads are first staged into the argument block,
+// since a host segment is not a memory pool, see nvn_mtl.m sub_copy); the GPU does not read this memory.
+// Reclaim (it used to go only by "8 frames after hand-out", so a segment still being recorded could be taken by another command buffer, and a re-submitted old recording replayed someone else's commands): a segment can be reclaimed when
+//   (1) no command buffer is still writing into it and no unfinished recording wrote into it (hold); (2) every submit referencing it has its submit number (pins = 0) and the latest one is done on the GPU (sub);
+//   (3) 8 frames have passed since its last hand-out or last reference by a submit (the game re-submits the same recording a few frames apart).
+// If the game then submits an old recording lying in the reclaimed segment, the submit recognizes it (g_hrec: handle -> segments touched + hand-out number at the end of recording), reports red and does not replay it this time.
 #define HOSTSEG_SZ (1u << 20)
 #define HOSTSEG_MAX 64
+#define HOSTSEG_KEEP 8
 uint64_t dm_nvn_frame_count(void);
-static struct { uint8_t *mem; uint64_t frame; int busy; } g_hostseg[HOSTSEG_MAX];
+enum { HS_CUR = 1, HS_REC = 2 };   // hold：owner 正在这段里写 / owner 还没录完的录制写过这段 | hold: the owner is writing in this segment / the owner's unfinished recording wrote into it
+typedef struct {
+    uint8_t *mem; const cmd_t *owner;
+    uint64_t frame, sub, ticket;   // frame：最近一次交出或被提交引用的帧；sub：引用它的最近一次提交（栅栏值）；ticket：交出序号，每交出一次换新 | frame: last hand-out or reference by a submit; sub: latest submit referencing it (fence value); ticket: hand-out number, new on every hand-out
+    int busy, hold, pins;          // pins：正在入队、还没拿到提交号的提交引用它 | pins: submits being enqueued that reference it and have no submit number yet
+} hostseg_t;
+static hostseg_t g_hostseg[HOSTSEG_MAX];
 static pthread_mutex_t g_hostseg_mu = PTHREAD_MUTEX_INITIALIZER;
-static uint8_t *hostseg_take(void) {
+static _Atomic int g_hostseg_ever;   // 交出过宿主补段（之前录制 / 提交路径只多读这一个数） | A host segment has been handed out (before that, the recording / submit paths only read this one flag)
+static uint64_t g_hostseg_tickets, g_hostseg_stale;   // 交出总次数；提交时认出、没回放的旧录制次数 | Total hand-outs; old recordings recognized at submit and not replayed
+// 碰过宿主补段的录制：句柄 → 段位图 + 录完时的交出序号；任一段之后被回收（busy = 0）或重交（ticket 变大），这份录制即作废。
+// 开放寻址、线性探测；同一句柄的新录制（游戏复用了那块命令内存）顶替旧项；表满四分之三时先清作废项（被清的旧录制若在游戏内存里，之后就认不出了）
+// Recordings that touched host segments: handle -> segment bitmap + hand-out number at the end of recording; once any of those segments is reclaimed (busy = 0) or handed out again (larger ticket), the recording is void.
+// Open addressing, linear probing; a new recording with the same handle (the game reused that command memory) replaces the old entry; at three quarters full the void entries are purged first (a purged old recording in game memory is no longer recognized afterwards)
+typedef struct { uint64_t h, mask, ticket; } hrec_t;
+#define HREC_N 4096
+static hrec_t g_hrec[HREC_N], g_hrec_tmp[HREC_N]; static int g_hrec_n;
+static hrec_t *hrec_find(uint64_t h) {   // 以下持 g_hostseg_mu | The functions below hold g_hostseg_mu
+    for (uint32_t i = (uint32_t)((h >> 3) * 0x9E3779B97F4A7C15ull >> 52), k = 0; k < HREC_N; k++, i = (i + 1) & (HREC_N - 1)) {
+        if (!g_hrec[i].h) return NULL;
+        if (g_hrec[i].h == h) return &g_hrec[i];
+    }
+    return NULL;
+}
+static int hrec_live(const hrec_t *e) {
+    for (int i = 0; i < HOSTSEG_MAX; i++) if ((e->mask >> i & 1) && (!g_hostseg[i].busy || g_hostseg[i].ticket > e->ticket)) return 0;
+    return 1;
+}
+static void hrec_ins(hrec_t e) {   // 放进第一个空位（调用方已确认表里没有这个句柄、也没满） | Put into the first free slot (the caller made sure the handle is absent and the table is not full)
+    uint32_t i = (uint32_t)((e.h >> 3) * 0x9E3779B97F4A7C15ull >> 52);
+    while (g_hrec[i].h) i = (i + 1) & (HREC_N - 1);
+    g_hrec[i] = e; g_hrec_n++;
+}
+static void hrec_put(hrec_t e) {
+    hrec_t *p = hrec_find(e.h); if (p) { *p = e; return; }
+    if (g_hrec_n >= HREC_N * 3 / 4) {   // 只留有效项、重建 | Keep only valid entries and rebuild
+        int n = 0; for (int i = 0; i < HREC_N; i++) if (g_hrec[i].h && hrec_live(&g_hrec[i])) g_hrec_tmp[n++] = g_hrec[i];
+        memset(g_hrec, 0, sizeof g_hrec); g_hrec_n = 0;
+        for (int i = 0; i < n; i++) hrec_ins(g_hrec_tmp[i]);
+        if (g_hrec_n >= HREC_N * 3 / 4) { static int red; if (!red++) LOG("【红】NVN 命令内存：碰过宿主补段的有效录制超过 %d 份，新录制不再登记", HREC_N * 3 / 4); return; }
+    }
+    hrec_ins(e);
+}
+static void hrec_del(hrec_t *p) {   // 删掉后把同一簇后面的项重新放：线性探测不留空洞 | After deleting, reinsert the later items of the same cluster: linear probing leaves no holes
+    uint32_t i = (uint32_t)(p - g_hrec); p->h = 0; g_hrec_n--;
+    for (uint32_t j = (i + 1) & (HREC_N - 1); g_hrec[j].h; j = (j + 1) & (HREC_N - 1)) { hrec_t e = g_hrec[j]; g_hrec[j].h = 0; g_hrec_n--; hrec_ins(e); }
+}
+static int hostseg_at(const void *p) {   // p 落在哪段宿主补段的内存里（含已回收的段；-1 = 不在） | Which host segment's memory p lies in (reclaimed segments included; -1 = none)
+    for (int i = 0; i < HOSTSEG_MAX; i++) if (g_hostseg[i].mem && (const uint8_t *)p >= g_hostseg[i].mem && (const uint8_t *)p < g_hostseg[i].mem + HOSTSEG_SZ) return i;
+    return -1;
+}
+static void hostseg_release(const cmd_t *o, int all) {   // o 不再写它所在的段；不在录制中（或 all：销毁 / 重建）时，也不再有它的录制占着 | o no longer writes its segment; when not recording (or all: finalize / re-initialize), no recording of it holds them either
+    for (int i = 0; i < HOSTSEG_MAX; i++) if (g_hostseg[i].busy && g_hostseg[i].owner == o) {
+        g_hostseg[i].hold = all || !o->recording ? 0 : g_hostseg[i].hold & ~HS_CUR;
+        if (all) g_hostseg[i].owner = NULL;
+    }
+}
+static void hostseg_leave(const cmd_t *o, int all) {
+    if (!atomic_load_explicit(&g_hostseg_ever, memory_order_relaxed)) return;
+    pthread_mutex_lock(&g_hostseg_mu); hostseg_release(o, all); pthread_mutex_unlock(&g_hostseg_mu);
+}
+static uint8_t *hostseg_take(cmd_t *o, size_t *n) {
     static unsigned total; uint64_t f = dm_nvn_frame_count(); uint8_t *m = NULL;
     pthread_mutex_lock(&g_hostseg_mu);
-    for (int i = 0; i < HOSTSEG_MAX; i++) if (g_hostseg[i].busy && g_hostseg[i].frame + 8 < f) g_hostseg[i].busy = 0;
-    for (int i = 0; i < HOSTSEG_MAX && !m; i++) if (!g_hostseg[i].busy) {
-        if (!g_hostseg[i].mem) g_hostseg[i].mem = malloc(HOSTSEG_SZ);
-        g_hostseg[i].busy = 1; g_hostseg[i].frame = f; m = g_hostseg[i].mem; }
+    hostseg_release(o, 0);   // o 离开它此前所在的段 | o leaves the segment it was in
+    for (int i = 0; i < HOSTSEG_MAX; i++) { hostseg_t *s = &g_hostseg[i];
+        if (s->busy && !s->hold && !s->pins && s->frame + HOSTSEG_KEEP < f && (!s->sub || mtl_wait(s->sub, 0))) s->busy = 0; }
+    for (int i = 0; i < HOSTSEG_MAX && !m; i++) { hostseg_t *s = &g_hostseg[i]; if (s->busy) continue;
+        if (!s->mem && !(s->mem = malloc(HOSTSEG_SZ))) die("NVN 命令内存：宿主补段分配失败");
+        s->busy = 1; s->owner = o; s->hold = HS_CUR | (o->recording ? HS_REC : 0); s->frame = f; s->sub = 0; s->ticket = ++g_hostseg_tickets;
+        size_t skew = (size_t)(s->ticket % 64) * 64;   // 每次交出段内起点错开：回收后旧句柄几乎不会恰好落在新录制的开头 | Shift the start inside the segment on every hand-out: after reclaim an old handle almost never lands exactly on the start of a new recording
+        m = s->mem + skew; *n = HOSTSEG_SZ - skew; atomic_store(&g_hostseg_ever, 1); }
     unsigned t = ++total;
     pthread_mutex_unlock(&g_hostseg_mu);
-    if (!m) die("NVN 命令内存：游戏池已空，宿主补段 %d 段也用完（8 帧内）", HOSTSEG_MAX);
+    if (!m) die("NVN 命令内存：游戏池已空，宿主补段 %d 段都还在用（在写、待提交或 8 帧内被引用）", HOSTSEG_MAX);
     if (t == 1 || t % 256 == 0) LOG("[nvn] 游戏的命令内存池已空，宿主补段（累计 %u 次，帧 %llu）", t, (unsigned long long)f);
     return m;
 }
+static void hostseg_rec_begin(const cmd_t *o) {   // 录制开始：它所在的段记上「未录完的录制写过」 | Recording starts: mark its segment as "written by an unfinished recording"
+    if (!atomic_load_explicit(&g_hostseg_ever, memory_order_relaxed)) return;
+    pthread_mutex_lock(&g_hostseg_mu);
+    for (int i = 0; i < HOSTSEG_MAX; i++) if (g_hostseg[i].busy && g_hostseg[i].owner == o && (g_hostseg[i].hold & HS_CUR)) g_hostseg[i].hold |= HS_REC;
+    pthread_mutex_unlock(&g_hostseg_mu);
+}
+static void hostseg_rec_end(const cmd_t *o, uint64_t h) {   // 录制结束：登记它碰过的段；没碰过而同一句柄有旧项 = 游戏复用了那块命令内存，删旧项 | Recording ends: register the segments it touched; if it touched none and the handle has an old entry = the game reused that command memory, delete the old entry
+    if (!atomic_load_explicit(&g_hostseg_ever, memory_order_relaxed)) return;
+    pthread_mutex_lock(&g_hostseg_mu);
+    uint64_t mask = 0;
+    for (int i = 0; i < HOSTSEG_MAX; i++) if (g_hostseg[i].busy && g_hostseg[i].owner == o && (g_hostseg[i].hold & HS_REC)) { mask |= 1ull << i; g_hostseg[i].hold &= ~HS_REC; }
+    if (mask) hrec_put((hrec_t){h, mask, g_hostseg_tickets});
+    else { hrec_t *e = hrec_find(h); if (e) hrec_del(e); }
+    pthread_mutex_unlock(&g_hostseg_mu);
+}
+// 录制是否还能回放：落在已回收段里的、或跳进过已回收段的，不能（持 g_hostseg_mu） | Whether a recording can still be replayed: not if it lies in, or jumped into, a reclaimed segment (holds g_hostseg_mu)
+static int hostseg_stale(uint64_t h, uint64_t *mask) {
+    hrec_t *e = hrec_find(h);
+    if (e ? hrec_live(e) : hostseg_at((const void *)h) < 0) { *mask = e ? e->mask : 0; return 0; }
+    uint64_t c = ++g_hostseg_stale;
+    if (c == 1 || c % 256 == 0) LOG("【红】NVN 命令内存：提交的录制落在已回收的宿主补段里（句柄 %#llx，累计 %llu 次），这次不回放", (unsigned long long)h, (unsigned long long)c);
+    return 1;
+}
+// 提交入队前：剔掉作废的录制，钉住其余录制碰过的段；入队拿到提交号后记上、松开 | Before the submit is enqueued: drop void recordings and pin the segments the others touched; once enqueued with a submit number, record it and unpin
+static int hostseg_submit(uint64_t *h, int n, uint64_t *pinned) {
+    uint64_t pm = 0, m; int k = 0;
+    pthread_mutex_lock(&g_hostseg_mu);
+    for (int i = 0; i < n; i++) if (!hostseg_stale(h[i], &m)) { pm |= m; h[k++] = h[i]; }
+    for (int i = 0; i < HOSTSEG_MAX; i++) if (pm >> i & 1) g_hostseg[i].pins++;
+    pthread_mutex_unlock(&g_hostseg_mu);
+    *pinned = pm; return k;
+}
+static void hostseg_submitted(uint64_t pm, uint64_t sub) {
+    uint64_t f = dm_nvn_frame_count();
+    pthread_mutex_lock(&g_hostseg_mu);
+    for (int i = 0; i < HOSTSEG_MAX; i++) if (pm >> i & 1) { hostseg_t *s = &g_hostseg[i]; s->pins--; if (sub > s->sub) s->sub = sub; s->frame = f; }
+    pthread_mutex_unlock(&g_hostseg_mu);
+}
 NVN(nvnCommandBufferAddCommandMemory, void, NVNcommandBuffer *c, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
     const pool_t *pl = (const pool_t *)p;
-    if (!pl || n < 64) { if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.hostseg++; pthread_mutex_unlock(&g_cs_mu); } cmd_new_segment(CB(c), hostseg_take(), HOSTSEG_SZ); return; }
+    if (!pl || n < 64) { if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.hostseg++; pthread_mutex_unlock(&g_cs_mu); } size_t hn; uint8_t *m = hostseg_take(CB(c), &hn); cmd_new_segment(CB(c), m, hn); return; }
     if (!pl->mem) { LOG("【红】AddCommandMemory 池没有 CPU 存储"); return; }
     if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.grants++; g_cs.grant_bytes += n; if (!g_cs.grant_min || n < g_cs.grant_min) g_cs.grant_min = n; if (n > g_cs.grant_max) g_cs.grant_max = n; pthread_mutex_unlock(&g_cs_mu); }
+    hostseg_leave(CB(c), 0);
     cmd_new_segment(CB(c), pl->mem + off, n);
 }
 NVN(nvnCommandBufferAddControlMemory, void, NVNcommandBuffer *c, void *m, size_t n) { (void)c; (void)m; (void)n; }
@@ -629,11 +744,13 @@ NVN(nvnCommandBufferBeginRecording, void, NVNcommandBuffer *c) {
     if (o->recording) LOG("【红】BeginRecording 重入");
     o->recording = 1;
     uint8_t *p = cmd_alloc(o, 8); put_hdr(p, OP_BEGIN, 8); o->begin = p;
+    hostseg_rec_begin(o);
 }
 NVN(nvnCommandBufferEndRecording, NVNcommandHandle, NVNcommandBuffer *c) {
     cmd_t *o = CB(c);
     uint8_t *p = cmd_alloc(o, 8); put_hdr(p, OP_END, 8);
     o->recording = 0;
+    hostseg_rec_end(o, (uint64_t)o->begin);
     return (NVNcommandHandle)o->begin;
 }
 NVN(nvnCommandBufferIsRecording, NVNboolean, const NVNcommandBuffer *c) { return ((const cmd_t *)c)->recording != 0; }
@@ -1053,8 +1170,11 @@ NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h)
     ((queue_t *)q)->submits++;
     xjob j = {XJ_SUBMIT, n, n > 0 ? malloc((size_t)n * sizeof *h) : NULL};   // 句柄数组是游戏的，入队时拷一份 | The handle array belongs to the game; copy it when enqueuing
     if (n > 0) memcpy(j.h, h, (size_t)n * sizeof *h);
+    uint64_t pinned = 0;   // 用过宿主补段后：剔掉落在已回收段里的录制、钉住其余录制碰过的段（hostseg_submit） | Once host segments have been used: drop recordings lying in reclaimed segments and pin the segments the others touched (hostseg_submit)
+    if (n > 0 && atomic_load_explicit(&g_hostseg_ever, memory_order_relaxed)) j.n = hostseg_submit(j.h, n, &pinned);
     j.host = mtl_host_latch();
     x_push(&j);
+    if (pinned) hostseg_submitted(pinned, j.sub);
     gfx_leave();
 }
 

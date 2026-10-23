@@ -726,13 +726,21 @@ static BENC blit(void) { blit_note(); rp_end();
     return g_blit; }
 #endif
 
-void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t n) {
+static size_t arena_alloc(size_t n, id<MTLBuffer> *buf);
+#define ARENA_SZ (4u << 20)   // 参数区块一块的大小（arena_new） | Size of one argument block (arena_new)
+// stage：源不在任何内存池里时先把这 n 字节暂存进本次提交的参数区块，再从那里拷（只给 uniform 更新：载荷在命令内存里，
+// 游戏命令内存池用空时 hle_nvn.c 给的宿主补段不是内存池——原先在这里 MDIE 退出进程）。两套接口同一条路：参数区块在驻留集里（Metal 4），旧接口按缓冲对象拷
+// stage: when the source is in no memory pool, first stage these n bytes into this submission's argument block and copy from there (only for uniform updates: the payload is in command memory,
+// and the host segment hle_nvn.c hands out when the game's command memory pool is empty is not a memory pool - this used to MDIE here and end the process). Both APIs take the same path: argument blocks are in the residency set (Metal 4), and the older API copies by buffer object
+static void sub_copy(uint64_t src, uint64_t dst, uint64_t n, int stage) {
     if (g_npend < PEND_MAX) { g_pend_lo[g_npend] = dst; g_pend_hi[g_npend++] = dst + n; } else g_pend_over = 1;
-    void *sb, *db; uint64_t so, dof;
-    if (!mtl_addr(src, n, &sb, &so) || !mtl_addr(dst, n, &db, &dof))
+    void *sb = NULL, *db; uint64_t so = 0, dof; id<MTLBuffer> ab = nil;
+    if (!mtl_addr(src, n, &sb, &so) && stage && n <= ARENA_SZ) { so = arena_alloc(n, &ab); memcpy((uint8_t *)ab.contents + so, (const void *)src, n); sb = (__bridge void *)ab; }
+    if (!sb || !mtl_addr(dst, n, &db, &dof))
         MDIE("缓冲拷贝地址不在任何内存池内 src=%#llx dst=%#llx n=%#llx", (unsigned long long)src, (unsigned long long)dst, (unsigned long long)n);
     enc_b_copy_buffer(blit(), (__bridge id<MTLBuffer>)sb, so, (__bridge id<MTLBuffer>)db, dof, n);
 }
+void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t n) { sub_copy(src, dst, n, 0); }
 
 static void post(post_op o) {
     if (g_npost == g_postcap) { g_postcap = g_postcap ? g_postcap * 2 : 64; g_post = realloc(g_post, g_postcap * sizeof *g_post); }
@@ -2593,7 +2601,7 @@ static NvArena *arena_new(void) {
     // for-in 循环变量不持有对象：先取强引用再从数组删，否则数组释放后返回的是野指针
     // The for-in loop variable does not retain the object: take a strong reference first and then remove it from the array, otherwise what is returned after the array releases it is a dangling pointer
     for (NvArena *it in g_arenas) if (it->fence && it->fence <= g_done) { NvArena *r = it; [g_arenas removeObject:r]; r->fence = 0; r->used = 0; return r; }
-    NvArena *a = [NvArena new]; a->buf = [g_dev newBufferWithLength:4 << 20 options:MTLResourceStorageModeShared]; a->gpu = a->buf.gpuAddress; res_add(a->buf); return a;
+    NvArena *a = [NvArena new]; a->buf = [g_dev newBufferWithLength:ARENA_SZ options:MTLResourceStorageModeShared]; a->gpu = a->buf.gpuAddress; res_add(a->buf); return a;
 }
 void arena_begin(void) { if (!g_arenas) { g_arenas = [NSMutableArray array]; g_sub_arenas = [NSMutableArray array]; } g_cur_arena = nil; }
 void arena_commit(uint64_t fence) { for (NvArena *a in g_sub_arenas) { a->fence = fence; [g_arenas addObject:a]; } [g_sub_arenas removeAllObjects]; g_cur_arena = nil; }
@@ -5585,7 +5593,7 @@ void mtl_exec(const uint8_t *p) {
             case OP_COPY_B2B: { uint64_t s_, d, n; memcpy(&s_, a, 8); memcpy(&d, (const uint8_t *)a + 8, 8); memcpy(&n, (const uint8_t *)a + 16, 8);
                 PD("Y copy_b2b cmd=%p src=%#llx dst=%#llx bytes=%llu", p, (unsigned long long)s_, (unsigned long long)d, (unsigned long long)n); mtl_sub_copy(s_, d, n); break; }
             case OP_UPDATE_UB: { uint64_t d, n; memcpy(&d, a, 8); memcpy(&n, (const uint8_t *)a + 8, 8);
-                PD("Y update_ub cmd=%p src=%#llx dst=%#llx bytes=%llu", p, (unsigned long long)((const uint8_t *)a + 16), (unsigned long long)d, (unsigned long long)n); mtl_sub_copy((uint64_t)((const uint8_t *)a + 16), d, n); break; }
+                PD("Y update_ub cmd=%p src=%#llx dst=%#llx bytes=%llu", p, (unsigned long long)((const uint8_t *)a + 16), (unsigned long long)d, (unsigned long long)n); sub_copy((uint64_t)((const uint8_t *)a + 16), d, n, 1); break; }   // 载荷可能在宿主补段里：暂存后拷 | The payload may be in a host segment: staged, then copied
             case OP_SET_RT: {
                 const p_set_rt *r = a;
                 if (defer_begin_q(p)) break;

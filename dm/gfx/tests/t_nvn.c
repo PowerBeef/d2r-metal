@@ -42,6 +42,21 @@ static NVNqueue *g_sq; static NVNcommandHandle g_sh; static NVNT_nvnQueueSubmitC
 static void *susp_thr(void *a) { (void)a; pthread_mutex_lock(&g_smu); atomic_store(&g_sstarted, 1); pthread_cond_broadcast(&g_scv); pthread_mutex_unlock(&g_smu); g_sub(g_sq, 1, &g_sh); atomic_store(&g_sdone, 1); return NULL; }
 static int wait_started(void) { struct timespec dl; clock_gettime(CLOCK_REALTIME, &dl); dl.tv_sec += 10; pthread_mutex_lock(&g_smu); while (!atomic_load(&g_sstarted) && pthread_cond_timedwait(&g_scv, &g_smu, &dl) == 0) {} int ok = atomic_load(&g_sstarted); pthread_mutex_unlock(&g_smu); return ok; }
 
+// 游戏命令内存池已空时的回调：游戏拿空池调 AddCommandMemory(NULL, 0)，宿主给一段宿主补段（hle_nvn.c hostseg_take）
+// Callback when the game's command memory pool is empty: the game calls AddCommandMemory(NULL, 0) and the host hands out a host segment (hle_nvn.c hostseg_take)
+static void mem_cb_empty(NVNcommandBuffer *c, NVNcommandBufferMemoryEvent ev, size_t minsz, void *data) {
+    (void)minsz; (void)data;
+    if (ev == NVN_COMMAND_BUFFER_MEMORY_EVENT_OUT_OF_COMMAND_MEMORY) P(nvnCommandBufferAddCommandMemory)(c, NULL, 0, 0);
+}
+static int hostseg_of(const void *p) {   // p 落在第几段宿主补段里（-1 = 不在） | Which host segment p lies in (-1 = none)
+    for (int i = 0; i < HOSTSEG_MAX; i++) if (g_hostseg[i].mem && (const uint8_t *)p >= g_hostseg[i].mem && (const uint8_t *)p < g_hostseg[i].mem + HOSTSEG_SZ) return i;
+    return -1;
+}
+static int words_eq(const uint8_t *p, uint32_t first, int n) {   // p 起 n 个字依次为 first, first+1, … | The n words from p are first, first+1, ...
+    for (int i = 0; i < n; i++) { uint32_t w; memcpy(&w, p + 4 * i, 4); if (w != first + (uint32_t)i) return 0; }
+    return 1;
+}
+
 static size_t tex_size(int fmt, int w, int h, int flags, size_t *align) {
     NVNtextureBuilder tb;
     P(nvnTextureBuilderSetDevice)(&tb, &dev); P(nvnTextureBuilderSetDefaults)(&tb);
@@ -430,6 +445,80 @@ int main(void) {
             EXPECT("回收后旧拷贝对象再取副本：宽 8、序号是它自己的", 8, s2->serial == ((const tex_t *)&cp)->serial ? (long long)s2->d.width : -1);
         }
         P(nvnTextureFinalize)(&tx); P(nvnProgramFinalize)(&pg);
+    }
+
+    // 9. 宿主补段与拷命令：游戏命令内存池用空后 AddCommandMemory(NULL, 0) 给的宿主内存段；每项先换到 100 帧之后，前面各项的段都可回收
+    // 9. Host segments and copied commands: host memory handed out by AddCommandMemory(NULL, 0) after the game's command memory pool is empty; each case first moves 100 frames ahead, so the segments of the previous cases can all be reclaimed
+    {
+        uint32_t d4[4];
+        // 9a. 命令缓冲甲还在宿主补段里录，9 帧后乙用空池：乙不能领到甲正在写的段，甲已录的命令不被乙覆盖
+        // 9a. Command buffer A is still recording in its host segment; 9 frames later B runs out of pool: B must not get the segment A is writing, and A's recorded commands are not overwritten by B
+        g_frame += 100;
+        NVNcommandBuffer ca, cbb; P(nvnCommandBufferInitialize)(&ca, &dev); P(nvnCommandBufferInitialize)(&cbb, &dev);
+        P(nvnCommandBufferSetMemoryCallback)(&ca, mem_cb_empty); P(nvnCommandBufferSetMemoryCallback)(&cbb, mem_cb_empty);
+        P(nvnCommandBufferBeginRecording)(&ca);
+        const uint8_t *a_beg = CB(&ca)->begin;
+        for (int i = 0; i < 4; i++) { for (int k = 0; k < 4; k++) d4[k] = 0x100 + 4 * i + k; P(nvnCommandBufferUpdateUniformBuffer)(&ca, (NVNbufferAddress)(poolmem + 0x6000), 4096, 16 * i, 16, d4); }
+        g_frame += 9;
+        P(nvnCommandBufferBeginRecording)(&cbb);
+        const uint8_t *b_beg = CB(&cbb)->begin;
+        for (int i = 0; i < 8; i++) { for (int k = 0; k < 4; k++) d4[k] = 0x200 + 4 * i + k; P(nvnCommandBufferUpdateUniformBuffer)(&cbb, (NVNbufferAddress)(poolmem + 0x6100), 4096, 16 * i, 16, d4); }
+        int ia = hostseg_of(a_beg), ib = hostseg_of(b_beg);
+        EXPECT("9a 甲的录制在宿主补段里", 1, ia >= 0);
+        EXPECT("9a 甲还在录：9 帧后乙领到的不是甲的段", 1, ib >= 0 && ib != ia);
+        op_hdr ah; memcpy(&ah, a_beg + 8, sizeof ah);
+        EXPECT("9a 甲 BEGIN 后第一条仍是甲录的 uniform 更新", OP_UPDATE_UB, ah.op);
+        for (int k = 0; k < 4; k++) d4[k] = 0x110 + k;
+        P(nvnCommandBufferUpdateUniformBuffer)(&ca, (NVNbufferAddress)(poolmem + 0x6000), 4096, 64, 16, d4);
+        NVNcommandHandle ha = P(nvnCommandBufferEndRecording)(&ca), hb = P(nvnCommandBufferEndRecording)(&cbb);
+        if (ia >= 0 && ib >= 0 && ib != ia) {   // 段已分开才提交（共段时两份录制互相穿插，不回放） | Submit only when the segments are separate (with a shared segment the two recordings interleave; do not replay them)
+            memset(poolmem + 0x6000, 0, 0x200);
+            NVNcommandHandle hab[2] = {ha, hb}; P(nvnQueueSubmitCommands)(&q, 2, hab); P(nvnQueueFinish)(&q);
+            EXPECT("9a 甲的 5 次更新全部生效（宿主补段载荷）", 1, words_eq(poolmem + 0x6000, 0x100, 20));
+            EXPECT("9a 乙的 8 次更新全部生效", 1, words_eq(poolmem + 0x6100, 0x200, 32));
+        }
+        P(nvnCommandBufferFinalize)(&ca); P(nvnCommandBufferFinalize)(&cbb);
+
+        // 9b. 甲在宿主补段里录完、提交、销毁；段回收后乙领到同一块内存。游戏再提交甲的旧句柄：不得回放（那块内存现在是乙的录制）
+        // 9b. A records in a host segment, submits and is finalized; after the segment is reclaimed, B gets the same memory. The game submits A's old handle again: it must not be replayed (that memory now holds B's recording)
+        g_frame += 100;
+        P(nvnCommandBufferInitialize)(&ca, &dev); P(nvnCommandBufferSetMemoryCallback)(&ca, mem_cb_empty);
+        P(nvnCommandBufferBeginRecording)(&ca);
+        for (int k = 0; k < 4; k++) { uint32_t w = 0x300 + k; memcpy(poolmem + 0x7400 + 4 * k, &w, 4); w = 0x400 + k; memcpy(poolmem + 0x7500 + 4 * k, &w, 4); }
+        P(nvnCommandBufferCopyBufferToBuffer)(&ca, (NVNbufferAddress)(poolmem + 0x7400), (NVNbufferAddress)(poolmem + 0x7000), 16, 0);
+        NVNcommandHandle hA = P(nvnCommandBufferEndRecording)(&ca);
+        P(nvnQueueSubmitCommands)(&q, 1, &hA); P(nvnQueueFinish)(&q); P(nvnCommandBufferFinalize)(&ca);
+        EXPECT("9b 甲的录制在宿主补段里且已生效", 1, hostseg_of((const void *)hA) >= 0 && words_eq(poolmem + 0x7000, 0x300, 4));
+        g_frame += 100;
+        P(nvnCommandBufferInitialize)(&cbb, &dev); P(nvnCommandBufferSetMemoryCallback)(&cbb, mem_cb_empty);
+        P(nvnCommandBufferBeginRecording)(&cbb);
+        P(nvnCommandBufferCopyBufferToBuffer)(&cbb, (NVNbufferAddress)(poolmem + 0x7500), (NVNbufferAddress)(poolmem + 0x7100), 16, 0);
+        NVNcommandHandle hB = P(nvnCommandBufferEndRecording)(&cbb);
+        P(nvnQueueSubmitCommands)(&q, 1, &hB); P(nvnQueueFinish)(&q);
+        EXPECT("9b 乙领到甲回收的那段内存", hostseg_of((const void *)hA), hostseg_of((const void *)hB));
+        EXPECT("9b 乙的拷贝生效", 1, words_eq(poolmem + 0x7100, 0x400, 4));
+        memset(poolmem + 0x7000, 0xEE, 0x200);
+        uint64_t st0 = g_hostseg_stale;
+        P(nvnQueueSubmitCommands)(&q, 1, &hA); P(nvnQueueFinish)(&q);   // 游戏重复提交已回收内存里的旧录制 | The game re-submits an old recording that lies in reclaimed memory
+        EXPECT("9b 提交时认出这份旧录制（报红 1 次）", 1, g_hostseg_stale - st0);
+        uint32_t w7000, w7100; memcpy(&w7000, poolmem + 0x7000, 4); memcpy(&w7100, poolmem + 0x7100, 4);
+        EXPECT("9b 旧句柄不回放乙的录制（乙的目标仍是哨兵值）", 0xEEEEEEEE, w7100);
+        EXPECT("9b 旧句柄也不回放甲当年的内容（甲的目标仍是哨兵值）", 0xEEEEEEEE, w7000);
+        P(nvnCommandBufferFinalize)(&cbb);
+
+        // 9d. 宿主补段里录 uniform 更新再提交：回放从命令内存拷载荷，宿主补段不是内存池（原先在 mtl_sub_copy 里 MDIE 退出进程）
+        // 9d. A uniform update recorded in a host segment, then submitted: the replay copies the payload from command memory, and a host segment is not a memory pool (this used to MDIE in mtl_sub_copy and end the process)
+        g_frame += 100;
+        NVNcommandBuffer cd; P(nvnCommandBufferInitialize)(&cd, &dev); P(nvnCommandBufferSetMemoryCallback)(&cd, mem_cb_empty);
+        P(nvnCommandBufferBeginRecording)(&cd);
+        uint32_t d16[16]; for (int k = 0; k < 16; k++) d16[k] = 0x600 + k;
+        P(nvnCommandBufferUpdateUniformBuffer)(&cd, (NVNbufferAddress)(poolmem + 0x7300), 4096, 0, 64, d16);
+        NVNcommandHandle hD = P(nvnCommandBufferEndRecording)(&cd);
+        EXPECT("9d 录制在宿主补段里", 1, hostseg_of((const void *)hD) >= 0);
+        memset(poolmem + 0x7300, 0, 64);
+        P(nvnQueueSubmitCommands)(&q, 1, &hD); P(nvnQueueFinish)(&q);
+        EXPECT("9d 宿主补段里的 uniform 更新已写进缓冲（16 个字）", 1, words_eq(poolmem + 0x7300, 0x600, 16));
+        P(nvnCommandBufferFinalize)(&cd);
     }
 
     // 7. 未实现函数：返回 0、报红、只报一次
