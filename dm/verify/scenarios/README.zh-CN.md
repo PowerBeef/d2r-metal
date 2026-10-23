@@ -41,7 +41,7 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 
 | 步骤 | 参数 | 做什么 |
 |---|---|---|
-| 任一控制口命令 | 同 [control_port.zh-CN.md](../control_port.zh-CN.md)；按位置的写法：`press 键 [帧]`、`stick X Y [帧]`、`tap X Y`、`msg 消息`、`world_tap X Y`、`walk_to X Y [超时]`、`screenshot 路径`（别名 `shot`）、`ui_dump [want]`、`step [n]`、`save_now`、`tap_ui 名`、`await_ui 名`、`tap_unit 类型 类号`、`app 动作`、`mark 名`、`quit` | 发这条命令；回执 `ok:false` 即红。截图的相对路径落在结果目录（命令行宿主）或 `Documents/`（iOS）。 |
+| 任一控制口命令 | 同 [control_port.zh-CN.md](../control_port.zh-CN.md)；按位置的写法：`press 键 [帧]`、`stick X Y [帧]`、`tap X Y`、`msg 消息`、`world_tap X Y`、`walk_to X Y [超时]`、`screenshot 路径`（别名 `shot`）、`ui_dump [want]`、`step [n]`、`save_now`、`tap_ui 名`、`await_ui 名`、`tap_unit 类型 类号`、`app 动作`、`mark 名`、`crash 种类`、`quit` | 发这条命令；回执 `ok:false` 即红。截图的相对路径落在结果目录（命令行宿主）或 `Documents/`（iOS）。 |
 | `expect <事件> [字段=值 …] [timeout=30]` | | 等上一步开始以来出现这个事件（所以上一步触发的事件不会漏掉）。 |
 | `expect_no <事件> [字段=值 …] [for=3]` | | `for` 秒内出现这个事件即红。 |
 | `expect_state 字段=值 … [timeout=5]` | 也可写 `字段>=n`、`字段<=n`、`字段!=v` | 反复读 `state`，直到每一条都成立。 |

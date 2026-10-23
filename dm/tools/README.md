@@ -28,6 +28,8 @@ Three kinds of things live here. The first you will use when following the front
 | `save_txn_regress.sh` | Determinism regression for save transactions |
 | `host_war13.sh` | Host replay of one fixed case, compared tick by tick and by save |
 | `l3reg.py`, `l3seg.sh`, `l3run.sh`, `test_l3reg.py` | Long-run memory regression: fits the growth of memory and handles against game ticks and extrapolates to a long session |
+| `crashlog.py` | Reads and symbolicates the host's `crash.json` (`DM_CRASH_JSON`) and collects the system `.ips` reports |
+| `guestsyms.py`, `test_guestsyms.py` | Symbol table for the game program (`.eh_frame` functions, dynamic symbols, source-comment notes), kept in the local build cache |
 | `gpucap.py` | GPU frame capture and summary, live Metal stats and the Metal HUD (wraps `gpucapture`, `gpudebug --json`, `metalperftrace`) |
 | `boothist.py`, `test_boothist.py` | Boot-time history ledger: boot stages per run from the event stream and the `DM_BOOTPROF` table, compared across revisions |
 | `bench.py`, `test_bench.py` | Fixed-route benchmarks ([dm/verify/bench](../verify/bench/README.md)): per-segment frame, CPU, NVN and GPU time per frame into bench.json; interleaved A/B with Mann-Whitney U and a bootstrap interval, recorded in a ledger |

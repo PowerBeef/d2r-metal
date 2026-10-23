@@ -50,6 +50,7 @@ English: [control_port.md](control_port.md)
 | `wait` | `frames`、`ticks` 或 `ms`；`timeout`（60 秒） | 在宿主这头等。 | `frame`、`tick` |
 | `save_now` | `timeout`（5 秒） | 请游戏照自己的定时存盘路径存一次并等提交（前端退出 / 进后台用的同一个 `dm_save_wait`）。 | `commits`、`ms`、`paused` |
 | `dump` | | 把各线程在等什么写进日志。 | |
+| `crash` | `kind`：`segv`、`abort`、`trap` | 在控制口线程上故意让宿主崩（测崩溃这一路：事件、`crash.json`、`.ips`、判红）。 | |
 | `quit` | `save`（0） | 先回执，再优雅退出（`dm_host_shutdown`）。`save=1` 时先像 Mac 关窗那样存一次。 | `saved` |
 
 `state.tick` 与事件的 `tick` 是服务端拍号；`frames` 数的是出图帧，进局之前在前端也一直走。

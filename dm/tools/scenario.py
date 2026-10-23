@@ -34,7 +34,7 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
-       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name']}
+       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind']}
 ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away')
 LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture')
@@ -133,7 +133,7 @@ class CliBackend:
         srv, port = dmctl.bind()
         env = dict(os.environ, DM_ROMFS=romfs, DM_SAVE=prepare_save(self.meta, self.run), DM_TEMP=os.path.join(self.run, 'tmp'),
                    DM_MSL_DIR=os.path.join(DM_ROOT, 'build', 'cache', 'metal_shader_cache'), DM_CTL_PORT=str(port),
-                   DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_WATCH=str(self.meta['timeout'] + 60))
+                   DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_WATCH=str(self.meta['timeout'] + 60), DM_CRASH_JSON=os.path.join(self.run, 'crash.json'))
         if self.meta['window'] and not self.headless: env['DM_WINDOW'] = '1'
         env.update(self.meta['env'])
         self.log = open(os.path.join(self.run, 'host.log'), 'wb')
@@ -178,7 +178,8 @@ class MacAppBackend(CliBackend):
         save = prepare_save(self.meta, self.run); shutil.move(save, os.path.join(sup, 'save'))
         srv, port = dmctl.bind()
         env = {k: v for k, v in os.environ.items() if k not in ('DM_SAVE', 'DM_TEMP', 'DM_ROMFS', 'DM_ROOT')}
-        env.update(DM_APP_SUPPORT=sup, DM_APP_ROMFS=romfs, DM_CTL_PORT=str(port), DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_AUDIO='0', DM_WATCH=str(self.meta['timeout'] + 60))
+        env.update(DM_APP_SUPPORT=sup, DM_APP_ROMFS=romfs, DM_CTL_PORT=str(port), DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_AUDIO='0', DM_WATCH=str(self.meta['timeout'] + 60),
+                   DM_CRASH_JSON=os.path.join(self.run, 'crash.json'))
         env.update(self.meta['env'])
         self.log = open(os.path.join(self.run, 'launch.log'), 'wb')
         self.proc = subprocess.Popen([exe], env=env, stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
@@ -447,6 +448,18 @@ class Runner:
                 self.backend.wait_exit(10)
             if self.c: self.c.close()
             self.backend.stop()
+        cj = os.path.join(self.run, 'crash.json')
+        if os.path.exists(cj):   # 进程崩了：现场符号化进 crash.txt，系统的 .ips 也收进结果目录，判红原因直接说崩在哪 | the process crashed: the state is symbolicated into crash.txt, the system .ips is collected into the result folder, and the red reason says where it crashed
+            import contextlib, io, crashlog   # noqa: E401, PLC0415
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                try: cr = crashlog.show(cj, None)
+                except (OSError, ValueError, KeyError): cr = {}
+                crashlog.collect('D2RMobile' if self.backend.name == 'mac-app' else 'dmhost', t0, self.run)
+            with open(os.path.join(self.run, 'crash.txt'), 'w', encoding='utf-8') as f: f.write(buf.getvalue())
+            top = next((fr for fr in cr.get('frames', []) if fr.get('name') or fr.get('where')), {})
+            what = f"crash {cr.get('signal', '?')} at " + (' '.join(x for x in (top.get('where'), top.get('name')) if x) or '?')
+            fail = dict(step=(fail or {}).get('step', len(self.steps)), line=(fail or {}).get('line', '(after the steps)'), reason=what + (f"; {fail['reason']}" if fail else ''))
         checks = self.final_checks() if not fail or fail['step'] else []
         bad_ck = [c for c in checks if not c['ok']]
         verdict = 'OK' if not fail and not bad_ck else 'RED'

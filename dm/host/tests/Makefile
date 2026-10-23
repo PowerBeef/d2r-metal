@@ -69,6 +69,7 @@ run: \
 	python3 ../../tools/test_imgdiff.py
 	python3 ../../tools/test_bench.py
 	python3 ../../tools/test_boothist.py
+	python3 ../../tools/test_guestsyms.py
 	python3 ../../tools/scenario.py check ../../verify/bench/*.scn
 	python3 ../../verify/test_assertlib.py
 	python3 ../../verify/touchcases/test_lib.py

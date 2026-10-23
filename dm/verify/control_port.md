@@ -50,6 +50,7 @@ A command is a flat JSON object: `{"id":<number or string>,"cmd":"<name>",<argum
 | `wait` | `frames`, `ticks` or `ms`; `timeout` (60 s) | Waits on the host side. | `frame`, `tick` |
 | `save_now` | `timeout` (5 s) | Asks the game to save along its own timed-save path and waits for the commit (the same `dm_save_wait` the front ends use on quit and background). | `commits`, `ms`, `paused` |
 | `dump` | | Writes what each thread is waiting on into the log. | |
+| `crash` | `kind`: `segv`, `abort`, `trap` | Crashes the host on purpose on the control-port thread (tests the crash path: event, `crash.json`, `.ips`, red verdict). | |
 | `quit` | `save` (0) | Replies, then exits gracefully (`dm_host_shutdown`). With `save=1` it first saves as closing the Mac window does. | `saved` |
 
 `state.tick` and the events' `tick` field come from the server tick; `frames` count presented frames, which keep advancing on the front end before a run.

@@ -269,6 +269,18 @@ static int cmd_mark(const ctl_args *a, char *out, size_t cap, char *err, size_t 
     DM_EV("mark", "name:s frame:u", n, (unsigned long long)f); dm_json_fields(out, cap, "t:f frame:u", dm_events_now_s(), (unsigned long long)f); return 1;
 }
 
+// crash kind=segv|abort|trap：故意让进程崩在控制口线程上（测崩溃这一路：crash 事件、crash.json、系统 .ips、场景判红），只在测试里用
+// crash kind=segv|abort|trap: deliberately crash the process on the control-port thread (to test the crash path: crash event, crash.json, the system .ips, the scenario going red); for tests only
+static int cmd_crash(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *k = dm_ctl_get(a, "kind"); (void)out; (void)cap;
+    if (!k || (strcmp(k, "segv") && strcmp(k, "abort") && strcmp(k, "trap"))) ERR("kind must be segv, abort or trap");
+    LOG("控制口：按要求崩溃（%s）", k);
+    if (!strcmp(k, "abort")) abort();
+    if (!strcmp(k, "trap")) __builtin_trap();
+    *(volatile int *)(uintptr_t)8 = 1;   // segv：写低地址 | segv: write to a low address
+    return 1;
+}
+
 void dm_ctl_commands_init(void) {
     dm_ctl_register("state", cmd_state);
     dm_ctl_register("save_now", cmd_save_now);
@@ -291,4 +303,5 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("tap_unit", cmd_tap_unit);
     dm_ctl_register("app", cmd_app);
     dm_ctl_register("mark", cmd_mark);
+    dm_ctl_register("crash", cmd_crash);
 }

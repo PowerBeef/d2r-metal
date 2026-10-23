@@ -41,7 +41,7 @@ Steps:
 
 | Step | Arguments | Does |
 |---|---|---|
-| Any control-port command | as in [control_port.md](../control_port.md); positional forms: `press KEYS [frames]`, `stick X Y [frames]`, `tap X Y`, `msg SPEC`, `world_tap X Y`, `walk_to X Y [timeout]`, `screenshot PATH` (alias `shot`), `ui_dump [want]`, `step [n]`, `save_now`, `tap_ui NAME`, `await_ui NAME`, `tap_unit TYPE CLS`, `app DO`, `mark NAME`, `quit` | Sends the command; red if the reply is `ok:false`. A relative screenshot path lands in the result folder (CLI) or in `Documents/` (iOS). |
+| Any control-port command | as in [control_port.md](../control_port.md); positional forms: `press KEYS [frames]`, `stick X Y [frames]`, `tap X Y`, `msg SPEC`, `world_tap X Y`, `walk_to X Y [timeout]`, `screenshot PATH` (alias `shot`), `ui_dump [want]`, `step [n]`, `save_now`, `tap_ui NAME`, `await_ui NAME`, `tap_unit TYPE CLS`, `app DO`, `mark NAME`, `crash KIND`, `quit` | Sends the command; red if the reply is `ok:false`. A relative screenshot path lands in the result folder (CLI) or in `Documents/` (iOS). |
 | `expect <event> [field=value …] [timeout=30]` | | Waits for the event since the previous step started (so an event triggered by that step is not missed). |
 | `expect_no <event> [field=value …] [for=3]` | | Red if the event appears within `for` seconds. |
 | `expect_state field=value …  [timeout=5]` | `field>=n`, `field<=n`, `field!=v` too | Polls `state` until every condition holds. |

@@ -28,6 +28,8 @@ English: [README.md](README.md)
 | `save_txn_regress.sh` | 存档事务的确定性回归 |
 | `host_war13.sh` | 一个固定用例的宿主回放，逐拍与存档对拍 |
 | `l3reg.py`、`l3seg.sh`、`l3run.sh`、`test_l3reg.py` | 长时间运行的内存回归：按游戏拍数回归内存与句柄的增长斜率，外推到长局 |
+| `crashlog.py` | 读取并符号化宿主的 `crash.json`（`DM_CRASH_JSON`），收集系统的 `.ips` 报告 |
+| `guestsyms.py`、`test_guestsyms.py` | 游戏程序的符号表（`.eh_frame` 函数、动态符号、源码注释说明），放本机构建缓存 |
 | `gpucap.py` | GPU 截帧与摘要、实时 Metal 读数、Metal HUD（包装 `gpucapture`、`gpudebug --json`、`metalperftrace`） |
 | `boothist.py`、`test_boothist.py` | 启动时间历史账本：每次的启动阶段取自事件流与 `DM_BOOTPROF` 表，跨提交比 |
 | `bench.py`、`test_bench.py` | 固定路线基准（[dm/verify/bench](../verify/bench/README.zh-CN.md)）：按段出每帧的帧、CPU、NVN、GPU 时间，写 bench.json；A/B 交替跑，做 Mann-Whitney U 与自助法区间，记进账本 |

@@ -132,6 +132,45 @@ void crash_set_wait_dump(void (*fn)(void)) { g_wait_dump = fn; }
 // 按需导出现场（不退出）：iOS 包没有无进展看门狗，冒烟判红时经 DM_LOG_PORT 发 dump 触发——各客体线程在等什么 + 图形侧等待点，和看门狗打的是同一份
 // Dump the current state on demand (without exiting): the iOS app has no no-progress watchdog, so when the smoke test fails it sends dump through DM_LOG_PORT to trigger this -- what each guest thread is waiting on + the graphics-side wait points, the same thing the watchdog prints
 void crash_dump_now(const char *why) { fprintf(stderr, "[dm] 现场导出（%s）：拍 %u / 阶段 %s\n", why, atomic_load(&g_watch_tick), g_watch_stage[atomic_load(&g_watch_stage_idx)]); if (g_dump_hook) g_dump_hook(); if (g_wait_dump) g_wait_dump(); }
+// ---------- crash.json（DM_CRASH_JSON=<路径>）：结构化现场，给脚本 / 代理读 ----------
+// 信号处理里只用异步信号安全的调用（open / write / close）、静态缓冲与手写的数字格式化，不用 printf / malloc / dladdr，所以在打日志现场之前先写（日志那段可能卡住）。
+// 内容：信号、si_code、出错地址、pc / lr / sp / fp 及其模块内偏移、x0–x28、帧指针回溯（每帧模块 + 偏移）、各客体模块的装载范围、宿主映像基址（atos -l 用）、看门狗记的最后拍号与阶段
+// ---------- crash.json (DM_CRASH_JSON=<path>): structured crash state for scripts / agents ----------
+// The signal handler only uses async-signal-safe calls (open / write / close), a static buffer and hand-written number formatting, no printf / malloc / dladdr, so it is written before the log dump (which may hang).
+// Contents: signal, si_code, fault address, pc / lr / sp / fp with their module offsets, x0-x28, a frame-pointer backtrace (module + offset per frame), each guest module's load range, the host image base (for atos -l), and the watchdog's last tick and stage
+#include <fcntl.h>
+#include <mach-o/dyld.h>
+static const char *g_crash_json;
+static uint64_t g_host_base;
+static const module_t *g_cmods; static int g_cnmod;   // 装载器装完模块后交过来（main.c）：本文件不链装载器（图形单测只链本文件） | handed over by the loader after the modules are loaded (main.c): this file does not link the loader (the graphics unit tests link only this file)
+void crash_set_modules(const module_t *m, int n) { g_cmods = m; g_cnmod = n; }
+static char g_cj[32768]; static size_t g_cjn;
+static void cj(const char *s) { while (*s && g_cjn < sizeof g_cj - 1) g_cj[g_cjn++] = *s++; }
+static void cj_hex(uint64_t v) { char t[24]; int n = 0; do { t[n++] = "0123456789abcdef"[v & 15]; v >>= 4; } while (v); cj("\"0x"); while (n) { char c[2] = {t[--n], 0}; cj(c); } cj("\""); }
+static void cj_dec(int64_t v) { char t[24]; int n = 0; uint64_t u = v < 0 ? (uint64_t)-v : (uint64_t)v; do { t[n++] = (char)('0' + u % 10); u /= 10; } while (u); if (v < 0) cj("-"); while (n) { char c[2] = {t[--n], 0}; cj(c); } }
+static void cj_str(const char *s) { cj("\""); for (; s && *s && g_cjn < sizeof g_cj - 8; s++) { unsigned char c = (unsigned char)*s; if (c == '"' || c == '\\') { char e[3] = {'\\', (char)c, 0}; cj(e); } else if (c >= 0x20) { char e[2] = {(char)c, 0}; cj(e); } } cj("\""); }
+static void cj_where(uint64_t a) { module_t *m = module_of((void *)a); if (!m) { cj("null"); return; } cj("\""); cj(m->name); cj("+0x"); { uint64_t v = a - (uint64_t)m->base; char t[24]; int n = 0; do { t[n++] = "0123456789abcdef"[v & 15]; v >>= 4; } while (v); while (n) { char c[2] = {t[--n], 0}; cj(c); } } cj("\""); }
+static void crash_json(int sig, siginfo_t *si, ucontext_t *uc) {
+    if (!g_crash_json) return;
+    g_cjn = 0;
+    cj("{\"v\":1,\"sig\":"); cj_dec(sig); cj(",\"code\":"); cj_dec(si->si_code); cj(",\"addr\":"); cj_hex((uint64_t)si->si_addr);
+    cj(",\"pc\":"); cj_hex(UC_PC(uc)); cj(",\"pc_where\":"); cj_where(UC_PC(uc));
+    cj(",\"lr\":"); cj_hex(UC_LR(uc)); cj(",\"lr_where\":"); cj_where(UC_LR(uc));
+    cj(",\"sp\":"); cj_hex(UC_SP(uc)); cj(",\"fp\":"); cj_hex(UC_FP(uc));
+    cj(",\"x\":["); for (int i = 0; i < 29; i++) { if (i) cj(","); cj_hex(UC_X(uc, i)); } cj("]");
+    cj(",\"bt\":[");
+    { uint64_t fp = UC_FP(uc); int first = 1;   // 同 dm_backtrace：只走 8 字节对齐、单调上升的帧 | as dm_backtrace: only 8-byte aligned, monotonically increasing frames
+      for (int i = 0; i < 48 && fp && !(fp & 7); i++) { uint64_t nfp = ((uint64_t *)fp)[0], ra = ((uint64_t *)fp)[1];
+          if (!first) cj(","); first = 0; cj("{\"pc\":"); cj_hex(ra); cj(",\"where\":"); cj_where(ra); cj("}");
+          if (nfp <= fp) break; fp = nfp; } }
+    cj("],\"modules\":[");
+    for (int i = 0; i < g_cnmod; i++) { if (i) cj(","); cj("{\"name\":"); cj_str(g_cmods[i].name); cj(",\"base\":"); cj_hex((uint64_t)g_cmods[i].base); cj(",\"size\":"); cj_dec((int64_t)g_cmods[i].size); cj("}"); }
+    cj("],\"host_base\":"); cj_hex(g_host_base);
+    cj(",\"tick\":"); cj_dec(atomic_load(&g_watch_tick)); cj(",\"stage\":"); cj_str(g_watch_stage[atomic_load(&g_watch_stage_idx)]);
+    cj("}\n");
+    int fd = open(g_crash_json, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) { (void)!write(fd, g_cj, g_cjn); close(fd); }
+}
 static void on_crash(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
     if (sig == SIGTRAP && g_trap_hook && g_trap_hook(uc)) return;
@@ -140,6 +179,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
         for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
     }
     if (g_dm_event_crash_fn) { module_t *m = module_of((void *)UC_PC(uc)); g_dm_event_crash_fn(sig, UC_PC(uc), m ? m->name : NULL, m ? UC_PC(uc) - (uint64_t)m->base : 0, (uint64_t)si->si_addr); }   // 事件先出（现场打印可能卡住） | the event goes out first (printing the state may hang)
+    crash_json(sig, si, uc);   // 结构化现场先落盘（异步信号安全） | the structured state is written first (async-signal-safe)
     fprintf(stderr, "[dm] CRASH sig=%d", sig);
     off("addr", (uint64_t)si->si_addr); off("pc", UC_PC(uc)); off("lr", UC_LR(uc));
     fprintf(stderr, " sp=%#llx\n", UC_SP(uc));
@@ -147,9 +187,9 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
     fprintf(stderr, "\n");
     dm_backtrace(UC_FP(uc));
     if (g_dump_hook) g_dump_hook();
-    // abort()（die()、系统库里的断言、未接住的 ObjC 异常）：打完现场后恢复缺省处理再发一次，进程照旧按 SIGABRT 结束，系统那边的崩溃报告（.ips）也照写
-    // abort() (die(), an assertion in a system library, an uncaught ObjC exception): after printing the state, restore the default action and raise it again, so the process still ends by SIGABRT and the system still writes its crash report (.ips)
-    if (sig == SIGABRT) { signal(SIGABRT, SIG_DFL); raise(SIGABRT); }
+    // 所有致命信号都恢复缺省处理再发一次：进程照旧按这个信号结束，系统的崩溃报告（.ips）照写（原先只 SIGABRT 这样，别的 _exit 掉、系统那边没有报告）；shell 看到的退出码仍是 128 + 信号
+    // Every fatal signal restores the default action and is raised again: the process still ends by this signal and the system still writes its crash report (.ips) (previously only SIGABRT did this, the others _exit-ed with no system report); the exit code a shell sees is still 128 + signal
+    signal(sig, SIG_DFL); raise(sig);
     _exit(128 + sig);
 }
 // 信号备用栈是每线程的：每个客体线程起跑时都要调（栈溢出时才能在备用栈上打出现场）
@@ -174,6 +214,7 @@ void crash_thread_init(void) {}
 #endif
 void crash_install(void) {
     crash_thread_init();
+    { const char *e = getenv("DM_CRASH_JSON"); if (e && *e) g_crash_json = strdup(e); g_host_base = (uint64_t)(uintptr_t)_dyld_get_image_header(0); }
     struct sigaction sa = {.sa_sigaction = on_crash, .sa_flags = SA_SIGINFO | CRASH_SA_ONSTACK};
     sigaction(SIGALRM, &sa, 0);
     // 两种看门狗都只在测试显式设了 DM_WATCH / DM_WATCH_STALL 时开：产品（玩家从桌面启动，无环境变量）一个不开。
