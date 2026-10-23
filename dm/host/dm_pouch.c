@@ -15,6 +15,9 @@
 //   都在提交前钩子里判，侧文件与角色档同一次提交原子换入：杀进程只会回到某次提交的一致状态，不丢、不复制。没证明的留着等下一次存盘（服务端拍每 2 秒再请一次）。
 //   提交前钩子只暂记（侧文件按「盘上状态 + 这次证明的」写），提交结果钩子 pouch_post 报成了才并进盘上状态、才交出等发 0x63 的新物品；没成（被拒 / 克隆失败）就回到待证明，下次提交重新核对。
 //   开箱放之前先等收进囊的都证明完（同一件不会同时挂着收和放）。
+//   简单物品的字节可能和另一件一模一样（同种符文落在同一格）：只比字节，收进囊后又有同种的一颗落到那一格，就永远证明不了（F-SAVE-15）。所以收 / 放时没有在途的存盘就记下
+//   工作目录里本角色档的整份指纹 h0（同 dm_pages.c 的 g_pH0）：之后要提交的角色档指纹 ≠ h0，就只能是收 / 放之后序列化的——收进囊据此即证明，放到背包还要「有放好的那一串」。
+//   提交没成（被拒时工作目录会从已提交版重新克隆，角色档可能回到更早的一份）就把 h0 作废，只按字节判。
 // 界面：物品栏面板里我们自己的控件（布局 dm/ios/tools/pouch_layout.py）：TouchPouch / TouchStore 两个按钮发 ClosePanel:TouchPouch / TouchStore（空操作，这里当信号收）。
 // 百宝囊框的数字 = 囊里件数，点它出清单（读侧文件来的内容，重进游戏还在；开箱搬完清零）。
 // 只写自己的控件（TouchPouch* / TouchStore）；「自定义」页开关 gem_pick（自动收符文宝石 + 百宝囊框）、store_btn（存放按钮），缺省开，关了整块挪到屏外。
@@ -37,6 +40,9 @@
 //   All decided in the pre-commit hook; the sidecar file and the character save are swapped in atomically in the same commit: killing the process only returns to the consistent state of some commit, nothing lost, nothing duplicated. Unproven entries wait for the next save (the server tick requests one again every 2 seconds).
 //   The pre-commit hook only stages (the sidecar file is written as "on-disk state + what was proven this time"); only when the commit outcome hook pouch_post reports success are they merged into the on-disk state and the new item ids handed out for 0x63; otherwise (refused / clone failed) they go back to pending and are checked again at the next commit.
 //   Before releasing on stash open, wait until everything stowed into the pouch is proven (the same item is never pending both stow and release).
+//   A simple item's bytes can be identical to another one's (a rune of the same kind landing in the same cell): comparing bytes only, a stow followed by an identical rune landing in that cell could never be proven (F-SAVE-15). So at a stow / release with no save in flight,
+//   the whole-file fingerprint h0 of this character's file in the work directory is recorded (as g_pH0 in dm_pages.c): a character file about to be committed whose fingerprint != h0 can only have been serialized after the stow / release -- that alone proves a stow, a release also needs "the placed bitstream is there".
+//   When a commit does not go through (a refused one reclones the work directory from the committed version, so the character file may go back to an older copy) h0 is dropped and only the bytes count.
 // UI: our own widgets in the inventory panel (layout dm/ios/tools/pouch_layout.py): the two buttons TouchPouch / TouchStore send ClosePanel:TouchPouch / TouchStore (a no-op, received here as a signal).
 // The number on the pouch box = item count in the pouch; tapping it shows the list (contents read from the sidecar file, still there after re-entering the game; reset to zero once the stash-open transfer finishes).
 // Writes only our own widgets (TouchPouch* / TouchStore); 「自定义」(Custom) page switches gem_pick (auto stow runes and gems + pouch box) and store_btn (Deposit button), on by default; when off the whole block is moved off-screen.
@@ -52,6 +58,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <sys/stat.h>
 
 int dm_custom_get(const char *key);
 uint64_t dm_guest_frame(void);
@@ -95,7 +102,7 @@ static uint64_t bag_item(uint64_t pl, uint32_t id) {
 #define UMAX 1024
 #define UBYTES 64          // 符文 / 宝石是简单物品，位流很短（宿主实测：十几字节） | Runes / gems are simple items with very short bitstreams (measured on the host: a dozen or so bytes)
 typedef struct { uint32_t code; uint16_t len; uint8_t bits[UBYTES]; } uitem;
-typedef struct { int put; uitem it; uint16_t plen; uint8_t pb[UBYTES]; uint32_t nid; int stg; } upend;   // put：收进囊（证据 pb = 背包里那一串，要「没有」）；否则放到背包（pb = 放好后那一串，要「有」，nid = 新物品 id）；stg = 这次提交前已证明、等提交结果 | put: stow into the pouch (evidence pb = that bitstream in the inventory, must be "absent"); otherwise release to the inventory (pb = the bitstream after placement, must be "present", nid = new item id); stg = proven before this commit, waiting for its outcome
+typedef struct { int put; uitem it; uint16_t plen; uint8_t pb[UBYTES]; uint32_t nid; int stg; uint64_t h0; } upend;   // put：收进囊（证据 pb = 背包里那一串，要「没有」）；否则放到背包（pb = 放好后那一串，要「有」，nid = 新物品 id）；stg = 这次提交前已证明、等提交结果 | put: stow into the pouch (evidence pb = that bitstream in the inventory, must be "absent"); otherwise release to the inventory (pb = the bitstream after placement, must be "present", nid = new item id); stg = proven before this commit, waiting for its outcome
 static uitem g_u[UMAX], g_ud[UMAX]; static int g_nu, g_nud, g_uload; static char g_uchar[64];   // g_u = 囊里（界面看的）；g_ud = 盘上状态（侧文件写它） | g_u = in the pouch (what the UI sees); g_ud = on-disk state (what the sidecar file writes)
 static upend g_up[256]; static int g_nup, g_udirty;   // g_udirty：盘上状态 g_ud 变了但侧文件还没写成（上次写失败），下次提交再写 | g_udirty: the on-disk state g_ud changed but the side file has not been written successfully yet (the last write failed); it is written again at the next commit
 static uint32_t g_ready[64]; static int g_nready;   // 已证明放进背包、等发 0x63 的新物品 id（提交结果钩子写、服务端拍取） | New item ids proven to be in the inventory and waiting for 0x63 to be sent (written by the commit outcome hook, taken by the server tick)
@@ -123,6 +130,11 @@ static int pouch_save(const char *wd, const uitem *ud, int nud) {   // 写给定
     ok = fclose(f) == 0 && ok; if (!ok || rename(t, p)) { remove(t); LOG("【红】百宝囊：写 %s 失败", p); return -1; }
     return 0;
 }
+int dm_ser_state(void); uint64_t dm_fnv64(const uint8_t *d, size_t n);   // dm_pages.c
+static int char_blob(const char *wd, dm_blob *o);
+// 收 / 放这一刻的角色档指纹（见文件头）：没有在途的存盘才记（有在途的，工作目录里那份之后可能被翻页前序列化的那份盖掉），读不到为 0（持 g_umu 调）
+// The character file fingerprint at the moment of a stow / release (see the file header): recorded only with no save in flight (with one in flight, the copy in the work directory may later be overwritten by one serialized before), 0 if it cannot be read (called holding g_umu)
+static uint64_t pend_fp(void) { const char *wd = dm_save_workdir(); dm_blob bl; if (!wd || dm_ser_state() != 0 || !char_blob(wd, &bl)) return 0; uint64_t h = dm_fnv64(bl.d, bl.n); free(bl.d); return h; }
 static int char_blob(const char *wd, dm_blob *o) {   // 本角色档 <角色>/<角色>.d2s 整份读进内存（只比本角色：别的角色同一格放着同种符文，字节会一样） | Read this character's save <character>/<character>.d2s whole into memory (compare against this character only: another character with the same kind of rune in the same cell would have identical bytes)
     char p[1200]; snprintf(p, sizeof p, "%s/%s/%s.d2s", wd, g_uchar, g_uchar); FILE *f = fopen(p, "rb"); o->d = NULL; o->n = 0; if (!f) return 0;
     fseek(f, 0, SEEK_END); long L = ftell(f); fseek(f, 0, SEEK_SET); o->d = L > 0 && L < (16 << 20) ? malloc((size_t)L) : NULL; o->n = o->d ? fread(o->d, 1, (size_t)L, f) : 0; fclose(f);
@@ -132,15 +144,21 @@ static void pouch_hook(const char *wd) {   // 提交前钩子（写盘线程，�
     pthread_mutex_lock(&g_umu);
     g_ustaged = 0;
     if (g_uload && (g_nup || g_udirty)) {
-        dm_blob bl; int hb = char_blob(wd, &bl), done = 0; uint64_t cno = dm_fs_commit_count() + 1;
+        // 钩子在主菜单上也开着（F-SAVE-1）：这个角色已不在存档里（在主菜单删掉了），侧文件随角色目录一起没了，它的待证明也就不必再管，别让写不成拒掉删角色那次提交
+        // The hook stays enabled on the main menu too (F-SAVE-1): if this character is no longer in the save (deleted on the main menu), its side file went with its directory and its pending entries no longer matter; a failed write must not refuse the commit that deletes the character
+        { char cd[1200]; struct stat st; snprintf(cd, sizeof cd, "%s/%s", wd, g_uchar); if (!g_uchar[0] || stat(cd, &st)) {
+            LOG("百宝囊：角色 %s 已不在存档里（删掉了）→ 丢掉它的 %d 条待证明", g_uchar, g_nup); g_nu = g_nud = g_nup = g_nready = 0; g_udirty = 0; g_uload = 0; g_uloadgen++; pouch_pub(); pthread_mutex_unlock(&g_umu); return; } }
+        dm_blob bl; int hb = char_blob(wd, &bl), done = 0; uint64_t cno = dm_fs_commit_count() + 1, h = hb ? dm_fnv64(bl.d, bl.n) : 0;
         if (!hb) LOG("【红】百宝囊：提交前核对 #%llu —— 读不到 %s 的角色档，这次不判", (unsigned long long)cno, g_uchar);
         memcpy(g_ux, g_ud, sizeof(uitem) * (size_t)g_nud); g_nux = g_nud;
-        for (int i = 0; i < g_nup; i++) { upend *p = &g_up[i]; p->stg = 0; if (!hb) continue; int have = dm_memfind(bl.d, bl.n, p->pb, p->plen) != NULL;
-            if (p->put == have) continue;
+        for (int i = 0; i < g_nup; i++) { upend *p = &g_up[i]; p->stg = 0; if (!hb) continue; int have = dm_memfind(bl.d, bl.n, p->pb, p->plen) != NULL, after = p->h0 && h != p->h0;
+            // 收进囊：角色档是收之后序列化的（指纹 ≠ h0），或里面已没有背包那一串；放到背包：要有放好的那一串，记过指纹的还要是放之后序列化的（F-SAVE-15）
+            // Stow: the character file was serialized after the stow (fingerprint != h0), or the inventory bitstream is gone from it; release: the placed bitstream must be there, and with a recorded fingerprint the file must also be serialized after the release (F-SAVE-15)
+            if (p->put ? !(after || !have) : !(have && (!p->h0 || after))) continue;
             if (p->put) { if (g_nux < UMAX) g_ux[g_nux++] = p->it; else LOG("【红】百宝囊：盘上状态已满 %d 件", UMAX); }
             else { int k = -1; for (int j = 0; j < g_nux && k < 0; j++) if (g_ux[j].len == p->it.len && !memcmp(g_ux[j].bits, p->it.bits, p->it.len)) k = j;
                 if (k >= 0) g_ux[k] = g_ux[--g_nux]; else LOG("【红】百宝囊：放到背包的 %.3s 在盘上状态里找不到", (const char *)&p->it.code); }
-            LOG("百宝囊：提交前核对 #%llu —— %.3s %s → 暂记，这次提交成了再并进盘上状态", (unsigned long long)cno, (const char *)&p->it.code, p->put ? "收进囊：角色档里已没有背包那一串" : "放到背包：角色档里已有放好的那一串");
+            LOG("百宝囊：提交前核对 #%llu —— %.3s %s → 暂记，这次提交成了再并进盘上状态", (unsigned long long)cno, (const char *)&p->it.code, p->put && after ? "收进囊：角色档已是收之后序列化的（指纹变了）" : p->put ? "收进囊：角色档里已没有背包那一串" : "放到背包：角色档里已有放好的那一串");
             p->stg = 1; done++; }
         free(bl.d);
         // 侧文件没写成：同编年史（dm_vault.c vault_pre_commit）——这次提交拒绝、盘上状态标脏，服务端拍接着请存盘，写成为止
@@ -161,6 +179,7 @@ static void pouch_post(int ok) {
             if (n) LOG("百宝囊：这次提交成了 → %d 条并进盘上状态（盘上 %d 件、还有 %d 条待证明）", n, g_nud, g_nup); }
         else { for (int i = 0; i < g_nup; i++) g_up[i].stg = 0; g_udirty = 1; LOG("【红】百宝囊：这次提交没成 → 暂记的 %d 条回到待证明，下次提交重新核对（盘上状态 %d 件不变）", n, g_nud); }
     }
+    if (!ok) for (int i = 0; i < g_nup; i++) g_up[i].h0 = 0;   // 工作目录可能已回到更早的已提交版：收 / 放时记的指纹作废，只按字节判（见文件头） | the work directory may be back at an older committed version: the fingerprints from the stow / release are dropped and only bytes count (see the file header)
     g_ustaged = 0;
     pthread_mutex_unlock(&g_umu);
 }
@@ -177,7 +196,7 @@ static int pouch_put(uint8_t *b, uint64_t G, uint64_t player, uint32_t id) {
     ((void (*)(uint64_t))(b + 0x55e430))(it);
     ((void (*)(uint64_t, uint64_t, uint64_t, int, int, int, int, int, int))(b + 0x642f70))(G, player, it, 0x20, 4, 0, 0, y, x);
     ((void (*)(uint64_t, uint64_t))(b + 0x658be0))(G, it);
-    g_u[g_nu++] = u; upend *p = &g_up[g_nup++]; memset(p, 0, sizeof *p); p->put = 1; p->it = u; p->plen = (uint16_t)len; memcpy(p->pb, buf, (size_t)len);
+    g_u[g_nu++] = u; upend *p = &g_up[g_nup++]; memset(p, 0, sizeof *p); p->put = 1; p->it = u; p->plen = (uint16_t)len; memcpy(p->pb, buf, (size_t)len); p->h0 = pend_fp();
     pouch_pub(); LOG("百宝囊：收进 %.3s（物品 id %u，背包格 %d,%d，位流 %d 字节）→ 囊里 %d 件", (const char *)&u.code, id, x, y, len, g_nu);
     return 1;
 }
@@ -196,7 +215,7 @@ static int pouch_take(uint8_t *b, uint64_t G, uint64_t player) {
     if (!*(uint64_t *)(nd + 0xa0)) { ((void (*)(uint64_t, uint64_t))(b + 0x658be0))(G, nu); LOG("【红】百宝囊：%.3s 放进背包没成（格 %u,%u），留在囊里", (const char *)&u.code, fx, fy); return 0; }
     ((void (*)(uint64_t, uint64_t, uint64_t, int, int, int, int, int, uint64_t))(b + 0x642f70))(G, player, nu, 1, 2, 0, 0, 0, (uint64_t)(fx & 0xffff) | (uint64_t)fy << 16);
     uint8_t buf[1024]; int len = dm_item_write(b, nu, buf);
-    upend *p = &g_up[g_nup++]; memset(p, 0, sizeof *p); p->put = 0; p->it = u; p->nid = *(uint32_t *)(nu + 8);
+    upend *p = &g_up[g_nup++]; memset(p, 0, sizeof *p); p->put = 0; p->it = u; p->nid = *(uint32_t *)(nu + 8); p->h0 = pend_fp();
     if (len > 0 && len <= UBYTES) { p->plen = (uint16_t)len; memcpy(p->pb, buf, (size_t)len); } else { p->plen = u.len; memcpy(p->pb, u.bits, u.len); LOG("【红】百宝囊：放好后的位流 %d 字节，用囊里那串作证据", len); }
     g_nu--; pouch_pub(); LOG("百宝囊：%.3s 放到背包格 %u,%u（新 id %u）→ 囊里还剩 %d 件，等落盘证明后进高级仓库", (const char *)&u.code, fx, fy, p->nid, g_nu);
     return 1;
@@ -469,17 +488,27 @@ void dm_pouch_step(uint8_t *b) {   // 游戏主线程每帧（dm_world.c） | ev
     store_step(pl, fr);
     if (dm_custom_get("gem_pick") && g_ist < 0) auto_pick(pl, fr);
 }
-void dm_pouch_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {   // 服务端拍（diag.c hud_tick；不在局内 player 为 0）：收 / 放 / 系统提示（系统提示只许服务端线程发） | Server tick (hud_tick in diag.c; player is 0 when not in a run): stow / release / system notices (system notices may only be sent from the server thread)
-    static uint64_t lp; if (!player) { lp = 0; pthread_mutex_lock(&g_umu); g_uload = 0; pthread_mutex_unlock(&g_umu); return; }
-    B = b; uint32_t tq = *(uint32_t *)(G + 0x170);
-    if (player != lp) { lp = player; uint64_t pd = *(uint64_t *)(player + 0x10); pthread_mutex_lock(&g_umu); strlcpy(g_uchar, pd ? (const char *)pd : "", sizeof g_uchar); pouch_load(); g_uload = 1; pthread_mutex_unlock(&g_umu); }   // 进局（换了玩家单位）读一次 | Read once on entering a run (the player unit changed)
+// 服务端拍（diag.c hud_tick）：收 / 放 / 系统提示（系统提示只许服务端线程发）。这一拍没有受控玩家（不在局内 / 正在死）player 为 0，当没有这一拍：
+// 原先死亡那几拍在这里关掉提交前钩子，再按「换了玩家单位」重读侧文件，收进囊还没证明的那件就哪都没有了（F-SAVE-1）。现在只在换了一局（dm_sess_new）或换了角色时重读，钩子一直开着
+// Server tick (hud_tick in diag.c): stow / release / system notices (system notices may only be sent from the server thread). player is 0 on ticks without a controlled player (not in a run / dying), and such a tick counts as no tick at all:
+// before, the dying ticks disabled the pre-commit hook here and the side file was reread on "the player unit changed", so an item stowed but not yet proven was then nowhere (F-SAVE-1). Now it is reread only on a new session (dm_sess_new) or a different character, and the hook stays enabled
+static dm_sess g_uss;
+static int pouch_enter(uint64_t G, uint32_t tq, const char *nm) {   // 换了一局或换了角色才重读侧文件，返回 1 = 重读了（持 g_umu 调） | reread the side file only on a new session or a different character; returns 1 = reread (called holding g_umu)
+    if (!dm_sess_new(&g_uss, G, tq) && g_uload && !strcmp(nm, g_uchar)) return 0;
+    strlcpy(g_uchar, nm, sizeof g_uchar); pouch_load(); g_uload = 1; return 1; }
+void dm_pouch_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
+    if (!player) return;
+    B = b; uint32_t tq = *(uint32_t *)(G + 0x170); uint64_t pd = *(uint64_t *)(player + 0x10);
+    pthread_mutex_lock(&g_umu); pouch_enter(G, tq, pd ? (const char *)pd : ""); pthread_mutex_unlock(&g_umu);
     int near = ((int (*)(uint64_t, uint64_t, int, int))(b + 0x650d10))(G, player, 0x10b, 0x32) & 1; atomic_store(&g_near_pub, near);   // 原版「移到仓库」用的同一个判断：50 以内有储藏箱物件 267 | The same check the original game's "move to stash" uses: a stash object 267 within 50
     uint32_t unit = adv_stash_unit(player); int go63 = near && unit;
     typedef struct { uint32_t id, t; } watch; static watch wl[64]; static int nw;   // 发了 0x63、等它离开背包的 | Items for which 0x63 was sent, waiting for them to leave the inventory
     int full_notice = 0;
     int saved = 0;
     pthread_mutex_lock(&g_umu);
-    for (unsigned r = atomic_load(&g_absr); r != atomic_load(&g_absw); r++) { uint32_t id = atomic_load(&g_absq[r % 64]); atomic_store(&g_absr, r + 1);   // 收：储藏箱旁直接进高级仓库，别处进囊 | Stow: next to the stash it goes straight into the advanced stash, elsewhere into the pouch
+    for (unsigned r = atomic_load(&g_absr); r != atomic_load(&g_absw); r++) {   // 收：储藏箱旁直接进高级仓库，别处进囊 | Stow: next to the stash it goes straight into the advanced stash, elsewhere into the pouch
+        if (!go63 && unit && dm_ser_state() == 1) break;   // 有在途的存盘（至多 50 拍）：先不收，等它写完再收，收的那一刻才记得下指纹（见文件头） | a save is in flight (at most 50 ticks): do not stow yet; stow once it is written, so the fingerprint can be recorded at the stow (see the file header)
+        uint32_t id = atomic_load(&g_absq[r % 64]); atomic_store(&g_absr, r + 1);
         if (go63) { move_to_stash(b, G, player, id, unit); if (nw < 64) wl[nw++] = (watch){ id, tq }; LOG("百宝囊：物品 id %u 在储藏箱旁 → 原版移到仓库（高级仓库单位 %u）", id, unit); }
         else if (!unit) LOG("百宝囊：物品 id %u —— 这个角色没有高级仓库，不收", id);
         else if (pouch_put(b, G, player, id) > 0) saved = 1; }

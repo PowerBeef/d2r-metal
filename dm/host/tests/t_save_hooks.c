@@ -6,7 +6,9 @@
 //   残留的 .new 删不掉 → 提交失败、一段连续失败只通知前端一次；重挂时先处理 .new、工作目录不删；能清掉以后，有没提交改动的工作目录整个挪到 .work.orphan（F-SAVE-8）；
 //   正常退出后重挂不留 .work.orphan（「没改过」记号 / 逐个文件相同）；提交后留一份 .prev，克隆前有改过的文件才发一次 F_BARRIERFSYNC（F-SAVE-12）；
 //   事务目录里建文件 / 写方式打开失败、空句柄写都让本事务被拒，「已存在 / 不存在」不算；列目录时别的项刚好没了不影响查找（F-SAVE-9）；
-//   fd ≥ 4096 打开不越界（F-SAVE-13，本测试带 ASan）；设置文件关文件失败不换掉原文件（F-SAVE-14）。
+//   fd ≥ 4096 打开不越界（F-SAVE-13，本测试带 ASan）；设置文件关文件失败不换掉原文件（F-SAVE-14）；
+//   死亡那几拍（没有受控玩家）不关钩子、之后同一局同一角色不重读，没证明完的收进囊 / 存入 / 翻页留着；换了一局或换了角色才重读；角色删了就丢掉它的待证明、不拒提交（F-SAVE-1）；
+//   编年史各格各证、同一格守先后，有待落盘的每 2 秒再请存盘（F-SAVE-17）；收进囊按「之后序列化的角色档」指纹证明，同格同种符文挡不住；提交没成指纹作废（F-SAVE-15）。
 // Save transaction + pre-commit / commit outcome hook unit test (takes seconds): includes hle_fs.c directly and links the real dm_vault.c / dm_pouch.c / dm_pages.c (t_save_mods.c), running real mounts / writes / Commits in a temp directory.
 // One child process per case (the modules' statics and test switches are read once). All expected values are hand-written from the semantics, not computed by calling the implementation under test:
 //   after a refused commit (a game write failed / a later hook failed to write), the stores / stows / page turns that earlier hooks had proven go back to pending, and the next commit still persists them (F-SAVE-2);
@@ -15,7 +17,9 @@
 //   a leftover .new that cannot be deleted fails the commit and the front end is notified once per run of failures; a remount deals with .new first and keeps the work directory; once it can be cleared, a work directory with uncommitted changes is moved whole to .work.orphan (F-SAVE-8);
 //   a remount after a normal exit leaves no .work.orphan ("unchanged" mark / identical files); a commit keeps one .prev, and before the clone one F_BARRIERFSYNC is issued only when some file changed (F-SAVE-12);
 //   a failed create / open for writing in the transaction directory and a null-handle write refuse the transaction, "already exists / does not exist" do not; another entry vanishing during a listing does not break a lookup (F-SAVE-9);
-//   opening with fd >= 4096 stays in bounds (F-SAVE-13, this test is built with ASan); a settings file whose close fails does not replace the original (F-SAVE-14).
+//   opening with fd >= 4096 stays in bounds (F-SAVE-13, this test is built with ASan); a settings file whose close fails does not replace the original (F-SAVE-14);
+//   the dying ticks (no controlled player) keep the hooks enabled, and the same character in the same session is not reread, so unproven stows / stores / page turns survive; only a new session or a different character rereads; a deleted character drops its pending entries without refusing the commit (F-SAVE-1);
+//   Chronicle cells are proven independently with the order kept within a cell, and a save is requested every 2 seconds while anything is pending (F-SAVE-17); a stow is proven by the fingerprint of a character file serialized afterwards, so an identical rune in the same cell cannot block it; a commit that does not go through drops the fingerprints (F-SAVE-15).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +53,10 @@ void tp_setup(const char *ch); void tp_stow(uint32_t code, const uint8_t *bits, 
 int tp_take_ready(uint32_t *ids, int max); void tp_state(int *nu, int *nud, int *nup, int *udirty);
 void tg_setup(const char *ch); void tg_preflip(int from, int to, const uint8_t *B, int bl); void tg_flip(int from, int to, const uint8_t *A, int al, const uint8_t *B, int bl);
 void tg_state(int *ppend, int *pdirty, int *pmore, int *pcur); int tg_file_has(const char *path, const uint8_t *bits, int len, int *slot_out, int *cur_out, int *pend_out);
+int tv_enter(uint64_t G, uint32_t tq, const char *who); void tv_tick0(void); void tv_resave(uint32_t tq); int tv_loaded(void);
+int tp_enter(uint64_t G, uint32_t tq, const char *name); void tp_tick0(void); int tp_hook_on(void);
+int tg_enter(uint64_t G, uint32_t tq, const char *name); void tg_tick0(void); int tg_hook_on(void); void tg_set_inflight(int on); void tg_dirty(void);
+extern int g_nsave_req;
 void *dm_memfind(const uint8_t *h, size_t hn, const uint8_t *n, size_t nn);
 
 static int fails, checks;
@@ -64,7 +72,8 @@ static Result gwrite(const char *gpath, const uint8_t *b, size_t n) {   // 游�
     uint64_t h = 0; Result r = h_fs_OpenFile(&h, gpath, MODE_WRITE); if (r) h = 0;
     h_fs_SetFileSize(h, (int64_t)n); Result w = h_fs_WriteFile(h, 0, b, n, NULL); if (h) h_fs_CloseFile(h); return r ? r : w; }
 static uint8_t X[40], Y[40], R[14], R2[14], A[30], Bb[30];   // X / Y 暗金件，R 符文（背包格 1），R2 同一颗放到背包格 2，A / Bb 个人仓库两页各一件 | X / Y unique items, R a rune (inventory cell 1), R2 the same rune placed in inventory cell 2, A / Bb one item on each of two personal stash pages
-static size_t d2s(uint8_t *o, const uint8_t *i1, size_t n1, const uint8_t *i2, size_t n2) { static const uint8_t hdr[16] = "D2S-HEADER-0001"; size_t k = 16; memcpy(o, hdr, 16);
+static int g_stamp = 1;   // 角色档头里的存盘时刻（真档每次存盘都变）：测试里要「同样内容、下一次存盘」时加一 | the save time in the character file header (a real file changes it at every save): tests bump it for "same content, a later save"
+static size_t d2s(uint8_t *o, const uint8_t *i1, size_t n1, const uint8_t *i2, size_t n2) { char hdr[17]; snprintf(hdr, sizeof hdr, "D2S-HEADER-%04d", g_stamp); size_t k = 16; memcpy(o, hdr, 16);
     if (i1) { memcpy(o + k, i1, n1); k += n1; } if (i2) { memcpy(o + k, i2, n2); k += n2; } memcpy(o + k, "TRAILER", 7); return k + 7; }
 static void init_items(void) { for (int i = 0; i < 40; i++) { X[i] = (uint8_t)(0x10 + i); Y[i] = (uint8_t)(0x80 + i); } for (int i = 0; i < 14; i++) R[i] = R2[i] = (uint8_t)(0xc0 + i); R[2] = R2[2] = 0x20; R2[5] = 0x55;
     for (int i = 0; i < 30; i++) { A[i] = (uint8_t)(0x40 + i); Bb[i] = (uint8_t)(0x60 ^ i); } }
@@ -224,10 +233,90 @@ static void c_settings(void) {
     size_t n; uint8_t *d = readb(sp, &n); char tmp[1500]; snprintf(tmp, sizeof tmp, "%s.seed", sp);
     CHECK(d && n == strlen(good) && !memcmp(d, good, n) && access(tmp, F_OK) != 0, "原 Settings.json 不动（%zu 字节）、没留临时文件 | the original Settings.json is untouched (%zu bytes) and no temp file is left", n, n); free(d);
 }
+// ---- F-SAVE-1：死亡那几拍不关钩子、同一局同一角色不重读，没证明完的留着 | F-SAVE-1: the dying ticks keep the hooks enabled and the same character in the same session is not reread, so unproven entries survive
+#define G1 0x10000ull
+static void enter_all(uint64_t G, uint32_t tq, const char *who, int *rp, int *rv, int *rg) { *rp = tp_enter(G, tq, who); *rv = tv_enter(G, tq, who); *rg = tg_enter(G, tq, who); }
+static void c_death_keeps(void) {
+    uint8_t ci[60]; memcpy(ci, R, 14); memcpy(ci + 14, Y, 40); base_save(ci, 54); tmount(); tv_setup(STASH); int rp, rv, rg; enter_all(G1, 10, "Joe", &rp, &rv, &rg);
+    CHECK(rp && rv && rg, "进局：三个模块都读了侧文件 | entering the run: all three modules read their side files");
+    tp_stow(0x31307220, R, 14); tv_deposit(1, 7, Y, 40); tg_dirty();
+    tp_tick0(); tv_tick0(); tg_tick0(); CHECK(tp_hook_on() && tv_loaded() && tg_hook_on(), "死亡那几拍（没有受控玩家）：钩子都还开着 | the dying ticks (no controlled player): every hook stays enabled");
+    enter_all(G1, 260, "Joe", &rp, &rv, &rg); int nu, nud, nup, ud, np, dd, nv, nd; tp_state(&nu, &nud, &nup, &ud); tv_state(&np, &dd, &nv, &nd);
+    CHECK(!rp && !rv && !rg && nup == 1 && np == 1 && nu == 1 && tv_mem_has(1, 7), "复活（同一局、同一角色）：不重读，收进囊 / 存入仍待证明 | respawn (same session, same character): no reread, the stow and the store are still pending");
+    tp_tick0(); put_d2s(NULL, 0, NULL, 0); CHECK(h_fs_Commit("save") == RES_OK, "死亡那几拍里的一次提交 | a commit during the dying ticks");
+    CHECK(file_has(save, "Joe/Joe.swpouch", R, 14) == 1 && file_has(save, STASH ".swvault", Y, 40) == 1 && file_has(save, "Joe/Joe.d2s", R, 14) == 0, "钩子照样核对：R 进 .swpouch、Y 进 .swvault，角色档里都没有 | the hooks still check: R in .swpouch, Y in .swvault, neither in the character file");
+    restart(); tp_setup("Joe"); tp_state(&nu, &nud, &nup, &ud); CHECK(nu == 1, "重启后囊里恰 1 件 | after a restart the pouch holds exactly 1 item");
+}
+// ---- F-SAVE-1：换了一局（拍数从头数）或换了角色才重读；保存并退出后进另一个角色同样重读 | F-SAVE-1: only a new session (ticks counted from zero) or a different character rereads; Save and Exit into another character rereads too
+static void c_new_session(void) {
+    base_save(R, 14); char p[1400]; snprintf(p, sizeof p, "%s/Ann/Ann.d2s", save); { uint8_t b[64]; size_t k = d2s(b, NULL, 0, NULL, 0); putb(p, b, k); }
+    tmount(); tv_setup(STASH); int rp, rv, rg, nu, nud, nup, ud; enter_all(G1, 10, "Joe", &rp, &rv, &rg); tp_stow(0x31307220, R, 14);
+    enter_all(G1, 5, "Joe", &rp, &rv, &rg); tp_state(&nu, &nud, &nup, &ud);
+    CHECK(rp && rv && rg && nup == 0 && nu == 0, "保存并退出、再进同一角色（拍数从头数）：重读，按工作目录里那份（游戏也从盘上重读了角色） | Save and Exit, then the same character (ticks from zero): reread from the work directory (the game reread the character from disk too)");
+    enter_all(G1, 90, "Joe", &rp, &rv, &rg); CHECK(!rp && !rv && !rg, "同一局往后：不重读 | later in the same session: no reread");
+    enter_all(G1, 95, "Ann", &rp, &rv, &rg); CHECK(rp && rv && rg, "换了角色：重读 | a different character: reread");
+    enter_all(G1, 3, "Joe", &rp, &rv, &rg); CHECK(rp && rv && rg, "保存并退出后进另一个角色：重读 | Save and Exit into another character: reread");
+    enter_all(G1 + 0x40, 400, "Joe", &rp, &rv, &rg); CHECK(rp && rv && rg, "服务端游戏结构换了：重读 | the server game struct changed: reread");
+}
+// ---- F-SAVE-1：钩子在主菜单上也开着，删掉的角色丢掉它的待证明、不拒删角色那次提交 | F-SAVE-1: the hooks stay enabled on the main menu; a deleted character drops its pending entries and does not refuse the commit that deletes it
+static void c_deleted_char(void) {
+    base_save(R, 14); tmount(); int rp, rv, rg; tv_setup(STASH); enter_all(G1, 10, "Joe", &rp, &rv, &rg); tp_stow(0x31307220, R, 14); tg_dirty(); tp_tick0(); tg_tick0();
+    int nf0 = g_nfail; CHECK(h_fs_DeleteDirRec("save:/Joe") == RES_OK && h_fs_Commit("save") == RES_OK && g_nfail == nf0, "主菜单上删掉角色：提交照常 | deleting the character on the main menu: the commit goes through");
+    int nu, nud, nup, ud; tp_state(&nu, &nud, &nup, &ud); CHECK(nup == 0 && !tp_hook_on() && !tg_hook_on() && !exists(save, "Joe"), "它的待证明丢掉、钩子关了、已提交版里没有这个角色 | its pending entries dropped, its hooks off, the character gone from the committed version");
+}
+// ---- F-SAVE-17：编年史各格各证、同一格守先后；有待落盘的每 2 秒再请存盘 | F-SAVE-17: Chronicle cells are proven independently with the order kept within a cell; a save is requested every 2 seconds while anything is pending
+static void c_vault_cells(void) {
+    base_save(NULL, 0); tmount(); tv_setup(STASH); tv_load(); tv_deposit(1, 100, X, 40); put_d2s(NULL, 0, NULL, 0);
+    CHECK(h_fs_Commit("save") == RES_OK && file_has(save, STASH ".swvault", X, 40) == 1, "X 存进编年史、已落盘 | X stored in the Chronicle and persisted");
+    tv_withdraw(1, 100); put_d2s(NULL, 0, NULL, 0); CHECK(h_fs_Commit("save") == RES_OK, "取出 X 后卖掉（哪个存档里都没有）：这次提交证明不了 | X withdrawn and sold (in no save): this commit cannot prove it");
+    tv_deposit(1, 7, Y, 40); put_d2s(NULL, 0, NULL, 0); int np, dd, nv, nd;
+    CHECK(h_fs_Commit("save") == RES_OK && file_has(save, STASH ".swvault", Y, 40) == 1, "另一格的 Y 不等 X：这次提交就进 .swvault | Y in another cell does not wait for X: it reaches .swvault at this commit");
+    tv_state(&np, &dd, &nv, &nd); CHECK(np == 1 && file_has(save, STASH ".swvault", X, 40) == 1, "X 仍待落盘（等「第二次提交、过 10 秒」） | X is still pending (waiting for \"the second commit and 10 seconds\")");
+    tv_age_all(11); put_d2s(NULL, 0, NULL, 0); CHECK(h_fs_Commit("save") == RES_OK && file_has(save, STASH ".swvault", X, 40) == 0, "过了 10 秒：X 从 .swvault 去掉 | after 10 seconds: X leaves .swvault");
+    // 同一格守先后：存入 Z（它还在背包 = 存档里还有）、紧接着又取出，取出等存入那条 | order within a cell: store Z (still in the save) and withdraw it again right away; the withdraw waits behind the store
+    uint8_t Z[40]; for (int i = 0; i < 40; i++) Z[i] = (uint8_t)(0x30 + 3 * i); tv_deposit(1, 9, Z, 40); tv_withdraw(1, 9); put_d2s(Z, 40, NULL, 0);
+    CHECK(h_fs_Commit("save") == RES_OK, "提交 | commit"); tv_state(&np, &dd, &nv, &nd); CHECK(np == 2, "同一格的两条都等（%d 条）：取出排在没证明的存入后面 | both entries of the cell wait (%d): the withdraw is behind the unproven store", np, np);
+    int r0 = g_nsave_req; tv_resave(100); int r1 = g_nsave_req; tv_resave(120); int r2 = g_nsave_req; tv_resave(151); int r3 = g_nsave_req;
+    CHECK(r1 == r0 + 1 && r2 == r1 && r3 == r2 + 1, "有待落盘：第 100 拍请存盘、120 拍不请（不到 2 秒）、151 拍再请 | pending: a save is requested at tick 100, not at 120 (under 2 seconds), again at 151");
+}
+// ---- F-SAVE-15：收进囊按「之后序列化的角色档」指纹证明 | F-SAVE-15: a stow is proven by the fingerprint of a character file serialized afterwards
+static void c_pouch_fp(void) {
+    base_save(R, 14); tmount(); tp_setup("Joe"); tp_stow(0x31307220, R, 14);   // 收的这一刻工作目录里的角色档 = 背包里有 R 的那份（指纹 h0） | the character file in the work directory at the stow = the one with R in the inventory (fingerprint h0)
+    g_stamp++; put_d2s(R, 14, NULL, 0); CHECK(h_fs_Commit("save") == RES_OK, "收之后一颗同种符文落到同一格，游戏存盘（字节里还有 R） | after the stow an identical rune lands in the same cell and the game saves (R's bytes are still there)");
+    CHECK(file_has(save, "Joe/Joe.swpouch", R, 14) == 1 && file_has(save, "Joe/Joe.d2s", R, 14) == 1, "照样证明：囊里一颗、背包一颗，共 2 颗 | proven anyway: one in the pouch, one in the inventory, 2 in all");
+    // 放到背包：放好的那一串之前就在（同格同种），指纹没变不算，下一次存盘才算 | release: the placed bitstream was there before (same rune in the same cell); with an unchanged fingerprint it does not count, the next save does
+    uint8_t b[64]; size_t k = d2s(b, R2, 14, NULL, 0); { char p[1400]; snprintf(p, sizeof p, "%s/Joe/Joe.d2s", work); putb(p, b, k); }
+    tp_release(R2, 14, 9); uint32_t ids[4]; CHECK(h_fs_Commit("save") == RES_OK && tp_take_ready(ids, 4) == 0, "放之后还没序列化（指纹没变）：不算证明 | not yet serialized after the release (same fingerprint): not proven");
+    g_stamp++; put_d2s(R2, 14, NULL, 0); CHECK(h_fs_Commit("save") == RES_OK && tp_take_ready(ids, 4) == 1 && ids[0] == 9, "放之后的存盘：证明 | a save after the release: proven");
+    // 有在途的存盘：不记指纹，只按字节 | a save in flight: no fingerprint, bytes only
+    tg_set_inflight(1); tp_stow(0x31307220, R, 14); tg_set_inflight(0); g_stamp++; put_d2s(R, 14, NULL, 0); int nu, nud, nup, ud;
+    CHECK(h_fs_Commit("save") == RES_OK && (tp_state(&nu, &nud, &nup, &ud), nup == 1), "在途时收的：没有指纹、字节还在 → 不证明 | stowed with a save in flight: no fingerprint and the bytes are still there -> not proven");
+}
+// ---- F-SAVE-15 / F-SAVE-2：被拒的提交把工作目录克隆回更早的已提交版，记下的指纹作废 | F-SAVE-15 / F-SAVE-2: a refused commit reclones the work directory back to an older committed version, so recorded fingerprints are dropped
+static void c_fp_dropped(void) {
+    setenv("DM_TEST_FS_FAIL", "write:2:28", 1);
+    base_save(R, 14); tmount(); tp_setup("Joe"); g_stamp++; put_d2s(R, 14, NULL, 0);   // 第 1 次写：一份还没提交的角色档（背包里还有 R） | write 1: a character file not yet committed (R still in the inventory)
+    tp_stow(0x31307220, R, 14); gwrite("save:/" STASH "/" STASH ".d2i", (const uint8_t *)"S2", 2);   // 第 2 次写注入失败 | write 2 fails by injection
+    CHECK(h_fs_Commit("save") != RES_OK, "提交被拒，工作目录回到已提交版（另一份收之前的角色档） | refused, the work directory goes back to the committed version (another pre-stow character file)");
+    CHECK(h_fs_Commit("save") == RES_OK && file_has(save, "Joe/Joe.swpouch", R, 14) != 1, "下一次提交（游戏没重写角色档）：指纹不同也不算证明，R 还在背包里就不进囊 | the next commit (no rewrite by the game): a different fingerprint no longer proves it; R is still in the inventory, so it is not put in the pouch");
+    g_stamp++; put_d2s(NULL, 0, NULL, 0); CHECK(h_fs_Commit("save") == RES_OK && file_has(save, "Joe/Joe.swpouch", R, 14) == 1, "游戏存了收之后的角色档：证明 | the game saved a post-stow character file: proven");
+}
+static void c_pages_fp_dropped(void) {
+    setenv("DM_TEST_FS_FAIL", "write:2:28", 1);
+    pages_base(); g_stamp++; put_d2s(A, 30, NULL, 0);   // 第 1 次写：一份还没提交的翻页前角色档 | write 1: a pre-turn character file not yet committed
+    tg_flip(0, 1, A, 30, Bb, 30); gwrite("save:/" STASH "/" STASH ".d2i", (const uint8_t *)"S2", 2);
+    CHECK(h_fs_Commit("save") != RES_OK, "提交被拒，工作目录回到已提交版（另一份翻页前的角色档） | refused, the work directory goes back to the committed version (another pre-turn character file)");
+    CHECK(h_fs_Commit("save") == RES_OK, "下一次提交（游戏没重写角色档） | the next commit (no rewrite by the game)");
+    char p[1400]; snprintf(p, sizeof p, "%s/Joe/Joe.swpage", save); int sa, cur, pend; tg_file_has(p, A, 30, &sa, &cur, &pend);
+    CHECK(pend == 1 && file_has(save, "Joe/Joe.d2s", A, 30) == 1, "格里还是 A：带待定记录落盘，不当成翻页后 | the grid still holds A: persisted with the pending record, not taken for after the turn");
+    put_d2s(Bb, 30, NULL, 0); CHECK(h_fs_Commit("save") == RES_OK, "翻页后的存盘 | a post-turn save"); pages_after("翻页后的存盘 | a post-turn save");
+}
 static const struct { const char *name; void (*fn)(void); } k_cases[] = {
     { "refused_vault", c_refused_vault }, { "refused_crosshook", c_refused_crosshook }, { "refused_pouch", c_refused_pouch }, { "refused_pages", c_refused_pages },
     { "release_waits", c_release_waits }, { "poison_skips", c_poison_skips }, { "pages_write_fail", c_pages_write_fail }, { "stuck_new", c_stuck_new },
     { "relaunch", c_relaunch }, { "prev_sync", c_prev_sync }, { "mutations", c_mutations }, { "high_fd", c_high_fd }, { "settings", c_settings },
+    { "death_keeps", c_death_keeps }, { "new_session", c_new_session }, { "deleted_char", c_deleted_char }, { "vault_cells", c_vault_cells },
+    { "pouch_fp", c_pouch_fp }, { "fp_dropped", c_fp_dropped }, { "pages_fp_dropped", c_pages_fp_dropped },
 };
 int main(int argc, char **argv) {
     init_items(); const char *tmp = getenv("TMPDIR"); int bad = 0, total = 0;

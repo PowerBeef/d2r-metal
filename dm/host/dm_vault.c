@@ -12,7 +12,8 @@
 //   取出：任一角色档或共享仓库档里已有那件 → 并进（原先只看当前角色的 .d2s：取出后、证明前放进共享仓库或卖掉，就永远对不上，侧文件不更新，重进后那件又回到编年史 = 复制）；
 //   取出后第二次提交起、且已过 10 秒仍哪都没有 → 那件已离开（卖掉 / 丢下 / 用掉），也并进（不无限期挂着）。依据：存取后马上请存盘，下一拍就序列化；
 //   序列化在存取之前、提交在存取之后的那一次至多一次（定时存盘的序列化与写盘之间夹着存取，角色档由另一条线程写）。
-// 前一条没证明，后面的都等（次序：交换时旧件先取出、新件后存入）。侧文件与角色档在同一次提交里原子换入；提交前被杀，重启时工作目录从已提交版重新克隆，两边一起回到上一次。
+// 同一格（类型 + 行号）里前一条没证明，这一格后面的都等（次序：交换时旧件先取出、新件后存入）；别的格各证各的——原先只要队首没证明全队都等，
+// 取出后卖掉 / 镶进去的那件要等「第二次提交、过 10 秒」，排在它后面的存入就哪都没落盘（F-SAVE-17）。有待落盘的，服务端拍每 2 秒再请一次存盘（同百宝囊）。侧文件与角色档在同一次提交里原子换入；提交前被杀，重启时工作目录从已提交版重新克隆，两边一起回到上一次。
 // 提交前钩子只暂记（侧文件按「盘上状态 + 这次证明的」写），提交结果钩子 vault_post 报成了才并进盘上状态；没成（被拒 / 克隆失败）就回到待落盘，下次提交重新核对。
 // 进局读侧文件时再兜一道：侧文件里某件的字节已出现在原版存档里（已取出），就从编年史里去掉（只会去重，不会凭空少）。
 // 格式（小端）：'SWVT' u16 版本 1 u16 条数；每条 u8 类型（0 套装件 / 1 暗金）u8 保留 u16 行号 u16 位流长 + 位流（游戏自己写存档时那件物品的字节，含孔里的）。
@@ -30,7 +31,8 @@
 //   withdraw: any character save or shared stash save already has that item → merge (previously only the current character's .d2s was checked: if after withdraw and before proof it was put into the shared stash or sold, it could never be matched, the sidecar file was not updated, and after re-entering the item was back in the chronicle = duplication);
 //   from the second commit after a withdraw on, with 10 seconds passed and it still nowhere → that item has left (sold / dropped / used up), merge as well (do not leave it hanging indefinitely). Basis: a save is requested right after a store / withdraw and serialization happens on the next tick;
 //   there is at most one commit whose serialization was before the store / withdraw and whose commit was after it (the store / withdraw falls between a timed save's serialization and its disk write, with the character save written by another thread).
-// If an earlier entry is not proven, all later ones wait (order: in a swap the old item is withdrawn first, the new item stored after). The sidecar file and the character save are swapped in atomically in the same commit; if killed before commit, on restart the working directory is re-cloned from the committed version and both sides go back to the previous state together.
+// If an earlier entry for the same cell (type + row number) is not proven, the later ones for that cell wait (order: in a swap the old item is withdrawn first, the new item stored after); other cells are proven independently -- before, an unproven head of the queue held up the whole queue,
+// a withdrawn item sold / socketed before the next save waits for "the second commit and 10 seconds", and a store queued behind it was persisted nowhere (F-SAVE-17). While anything is pending, the server tick requests a save again every 2 seconds (as the pouch does). The sidecar file and the character save are swapped in atomically in the same commit; if killed before commit, on restart the working directory is re-cloned from the committed version and both sides go back to the previous state together.
 // The pre-commit hook only stages (the sidecar file is written as "on-disk state + what was proven this time"); only when the commit outcome hook vault_post reports success are they merged into the on-disk state; otherwise (refused / clone failed) they go back to pending and are checked again at the next commit.
 // One more safety net when reading the sidecar file on join: if an item's bytes in the sidecar file already appear in the original saves (already withdrawn), it is removed from the chronicle (this only deduplicates, never loses items out of nowhere).
 // Format (little-endian): 'SWVT' u16 version 1 u16 entry count; per entry u8 type (0 set item / 1 unique) u8 reserved u16 row number u16 bitstream length + bitstream (the bytes of that item as the game itself writes it in a save, including socketed ones).
@@ -242,13 +244,27 @@ static void item_dump(uint8_t *b, uint64_t player) {
         uint64_t u = ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0), uid & 0x7f, uid, 0);
         snprintf(who, sizeof who, "附属单位 %u（类 %u）", uid, *(uint8_t *)(en + 0xa)); item_dump_list(b, u, who); }
 }
-void dm_vault_tick(uint64_t G, uint64_t player, uint8_t *b) {   // 服务端拍（diag.c hud_tick）；不在局内 player 为 0 | Server tick (hud_tick in diag.c); player is 0 when not in a run
-    static uint64_t lastp;
-    if (!player) { lastp = 0; g_loaded = 0; return; }
-    { static int done; const char *e = getenv("DM_TEST_ITEM_DUMP"); if (e && !done && *(uint32_t *)(G + 0x170) >= (uint32_t)atoi(e)) { done = 1; item_dump(b, player); } }
-    if (player != lastp) { lastp = player; pthread_mutex_lock(&g_vmu); const char *nm = vault_name(b); g_loaded = nm != NULL; if (nm) { strlcpy(g_vname, nm, sizeof g_vname); vault_load(nm); } else vault_clear(); pthread_mutex_unlock(&g_vmu); atomic_fetch_add(&g_vgen, 1); }   // 进局（换了玩家单位）读一次 | Read once on entering a run (the player unit changed)
+// 有待落盘的（或盘上状态待写）就每 2 秒再请一次存盘（F-SAVE-17）；tq = 这一拍的拍数 | While anything is pending (or the on-disk state is waiting to be written), request a save again every 2 seconds (F-SAVE-17); tq = this tick's number
+static void vault_resave(uint32_t tq) {
+    static uint32_t last; pthread_mutex_lock(&g_vmu); int np = g_loaded ? g_npend + g_ddirty : 0; pthread_mutex_unlock(&g_vmu);
+    if (np && tq - last >= 50) { last = tq; int s = getenv("DM_TEST_VAULT_NOSAVE") ? -9 : dm_request_save(); LOG("编年史仓库：还有 %d 条待落盘，再请一次存盘 → %d", np, s); }
+}
+// 服务端拍（diag.c hud_tick）；这一拍没有受控玩家（不在局内 / 正在死）player 为 0，当没有这一拍：原先死亡那几拍在这里关掉提交前钩子，再按「换了玩家单位」重读侧文件，
+// 存进去还没证明的那件就哪都没有了（F-SAVE-1）。现在只在换了一局（dm_sess_new）或换了角色时重读，钩子一直开着
+// Server tick (hud_tick in diag.c); player is 0 on ticks without a controlled player (not in a run / dying), and such a tick counts as no tick at all: before, the dying ticks disabled the pre-commit hook here and the side file was reread on "the player unit changed",
+// so an item stored but not yet proven was then nowhere (F-SAVE-1). Now it is reread only on a new session (dm_sess_new) or a different character, and the hook stays enabled
+static dm_sess g_vss; static char g_vwho[64];   // 服务端拍自己用：这一局、这个角色 | used by the server tick only: this session, this character
+static int vault_enter(uint64_t G, uint32_t tq, const char *who, const char *nm) {   // 换了一局或换了角色才重读侧文件（nm = 这类角色的共享仓库名，没有为 NULL），返回 1 = 重读了 | reread the side file only on a new session or a different character (nm = this kind of character's shared stash name, NULL if none); returns 1 = reread
+    if (!dm_sess_new(&g_vss, G, tq) && !strcmp(who, g_vwho)) return 0;
+    strlcpy(g_vwho, who, sizeof g_vwho); pthread_mutex_lock(&g_vmu); g_loaded = nm != NULL; if (nm) { strlcpy(g_vname, nm, sizeof g_vname); vault_load(nm); } else vault_clear(); pthread_mutex_unlock(&g_vmu); atomic_fetch_add(&g_vgen, 1); return 1; }
+void dm_vault_tick(uint64_t G, uint64_t player, uint8_t *b) {
+    if (!player) return;
+    uint32_t tq = *(uint32_t *)(G + 0x170); uint64_t pd = *(uint64_t *)(player + 0x10);
+    { static int done; const char *e = getenv("DM_TEST_ITEM_DUMP"); if (e && !done && tq >= (uint32_t)atoi(e)) { done = 1; item_dump(b, player); } }
+    vault_enter(G, tq, pd ? (const char *)pd : "", vault_name(b));
     { uint32_t dq = atomic_exchange(&g_desc_req, 0); if (dq) { pthread_mutex_lock(&g_vmu); vault_desc(b, G, player, dq); pthread_mutex_unlock(&g_vmu); } }
-    { static uint32_t last; uint32_t t = *(uint32_t *)(G + 0x170); if (atomic_load(&g_vretry) && t - last >= 250) { last = t; LOG("编年史仓库：侧文件上次没写成，再请一次存盘 → %d", dm_request_save()); } }
+    { static uint32_t last; uint32_t t = tq; if (atomic_load(&g_vretry) && t - last >= 250) { last = t; LOG("编年史仓库：侧文件上次没写成，再请一次存盘 → %d", dm_request_save()); } }
+    vault_resave(tq);
     // 待落盘队列快满（一次交换要记取出 + 存入两条）：这一拍先不做存取，请求原样留着（存放按钮本来就等上一件被取走，dm_vault_put_pending），请游戏存盘；
     // 提交时队首得到证明、队列腾出来，下一拍再做。原先满了照做存取、只是不记：那件已从物品栏摘下，侧文件却永远不会写它，重进后消失
     // The pending-write queue is nearly full (one swap has to record two entries, withdraw + deposit): this tick does no deposit / withdraw yet, the request is kept as is (the deposit button waits for the previous piece to be taken away anyway, dm_vault_put_pending), and the game is asked to save;
@@ -281,11 +297,14 @@ static void vault_pre_commit(const char *wd) {
         dm_blob bl[64]; int nb = dm_save_blobs(wd, g_vname, bl, 64), done = 0; uint64_t cno = dm_fs_commit_count() + 1; double t = now_s();
         memcpy(g_dx, g_d, sizeof(ventry) * (size_t)g_nd); g_ndx = g_nd;
         for (int i = 0; i < g_npend; i++) g_pend[i].stg = 0;
-        for (int i = 0; i < g_npend; i++) { vpend *p = &g_pend[i]; int have = dm_blobs_have(bl, nb, p->data, p->len), ok = 0; const char *why = "";
+        uint32_t held[VPEND]; int nheld = 0;   // 这一遍里前面有没证明的那几格（类型 << 16 | 行号）：同一格后面的等 | cells (type << 16 | row) with an earlier unproven entry in this pass: later entries for the same cell wait
+        for (int i = 0; i < g_npend; i++) { vpend *p = &g_pend[i]; uint32_t key = (uint32_t)p->kind << 16 | p->idx; int wait = 0; for (int j = 0; j < nheld; j++) wait |= held[j] == key;
+            if (wait) continue;
+            int have = dm_blobs_have(bl, nb, p->data, p->len), ok = 0; const char *why = "";
             int late = cno >= p->made + 2 && t - (double)p->t >= 10;   // 存取后第二次提交起、且过了 10 秒：这次提交的原版存档一定是存取之后序列化的 | From the second commit after the store / withdraw on, and more than 10 seconds later: the original save in this commit was definitely serialized after the store / withdraw
             if (p->put) { if (!have) { ok = 1; why = "存入：原版存档里已没有那件"; } else if (late && cno >= p->made + 3) { ok = 2; why = "【红】存入：存入后好几次提交原版存档里那件还在（存入没生效？），不并进、编年史里也去掉"; } }
             else { if (have) { ok = 1; why = "取出：原版存档里已有那件"; } else if (late) { ok = 1; why = "取出：之后的存档里哪都没有那件（卖掉 / 丢下 / 用掉）"; } }
-            if (!ok) { LOG("编年史仓库：提交前核对 —— 第 %d 条待落盘（%s %s %d）还没证明（这次提交 #%llu，记下于 #%llu 之后），这次及后面的都等", i + 1, p->put ? "存入" : "取出", p->kind ? "暗金" : "套装件", p->idx, (unsigned long long)cno, (unsigned long long)p->made); break; }
+            if (!ok) { LOG("编年史仓库：提交前核对 —— 第 %d 条待落盘（%s %s %d）还没证明（这次提交 #%llu，记下于 #%llu 之后），同一格后面的等", i + 1, p->put ? "存入" : "取出", p->kind ? "暗金" : "套装件", p->idx, (unsigned long long)cno, (unsigned long long)p->made); if (nheld < VPEND) held[nheld++] = key; continue; }
             int di = dxfind(p->kind, p->idx);
             if (ok == 1 && p->put) { if (di >= 0) { g_dx[di].data = p->data; g_dx[di].len = p->len; } else if (g_ndx < VMAX) g_dx[g_ndx++] = (ventry){ p->kind, p->idx, p->len, p->data }; }
             else if (ok == 1) { if (di >= 0 && g_dx[di].len >= 16 && !memcmp(g_dx[di].data + 8, p->data + 8, (size_t)p->n)) g_dx[di] = g_dx[--g_ndx]; }

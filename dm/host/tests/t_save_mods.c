@@ -19,6 +19,10 @@ void tv_withdraw(int kind, int idx) {   // withdraw()：记一条取出、内存
 void tv_age_all(double secs) { pthread_mutex_lock(&g_vmu); for (int i = 0; i < g_npend; i++) g_pend[i].t -= (uint64_t)secs; pthread_mutex_unlock(&g_vmu); }
 void tv_state(int *npend, int *ddirty, int *nv, int *nd) { pthread_mutex_lock(&g_vmu); *npend = g_npend; *ddirty = g_ddirty; *nv = g_nv; *nd = g_nd; pthread_mutex_unlock(&g_vmu); }
 int tv_mem_has(int kind, int idx) { pthread_mutex_lock(&g_vmu); int r = vfind(kind, idx) >= 0; pthread_mutex_unlock(&g_vmu); return r; }
+int tv_enter(uint64_t G, uint32_t tq, const char *who) { return vault_enter(G, tq, who, g_vname[0] ? g_vname : "ModernSharedStashSoftCoreV2"); }   // 服务端拍进局那一行（共享仓库名照游戏给的） | the run-entry line of the server tick (shared stash name as the game gives it)
+void tv_tick0(void) { dm_vault_tick(0, 0, NULL); }   // 没有受控玩家的一拍（正在死 / 不在局内） | a tick without a controlled player (dying / not in a run)
+void tv_resave(uint32_t tq) { vault_resave(tq); }
+int tv_loaded(void) { pthread_mutex_lock(&g_vmu); int r = g_loaded; pthread_mutex_unlock(&g_vmu); return r; }
 #endif
 
 #ifdef MOD_POUCH
@@ -26,14 +30,17 @@ int tv_mem_has(int kind, int idx) { pthread_mutex_lock(&g_vmu); int r = vfind(ki
 void tp_setup(const char *ch) { pthread_mutex_lock(&g_umu); strlcpy(g_uchar, ch, sizeof g_uchar); pouch_load(); g_uload = 1; pthread_mutex_unlock(&g_umu); }
 void tp_stow(uint32_t code, const uint8_t *bits, int len) {   // pouch_put() 的记账：囊里多一件、记一条「收」（证据 = 背包里那一串，要「没有」） | pouch_put() bookkeeping: one more in the pouch, one "stow" entry (evidence = that inventory bitstream, must be absent)
     pthread_mutex_lock(&g_umu); uitem u = { code, (uint16_t)len, { 0 } }; memcpy(u.bits, bits, (size_t)len);
-    g_u[g_nu++] = u; upend *p = &g_up[g_nup++]; memset(p, 0, sizeof *p); p->put = 1; p->it = u; p->plen = (uint16_t)len; memcpy(p->pb, bits, (size_t)len); pouch_pub();
+    g_u[g_nu++] = u; upend *p = &g_up[g_nup++]; memset(p, 0, sizeof *p); p->put = 1; p->it = u; p->plen = (uint16_t)len; memcpy(p->pb, bits, (size_t)len); p->h0 = pend_fp(); pouch_pub();
     pthread_mutex_unlock(&g_umu); }
 void tp_release(const uint8_t *placed, int plen, uint32_t nid) {   // pouch_take() 的记账：囊里最后一件放到背包，证据 = 放好后那一串，要「有」 | pouch_take() bookkeeping: the last pouch item goes to the inventory, evidence = the bitstream after placing, must be present
     pthread_mutex_lock(&g_umu); uitem u = g_u[g_nu - 1]; upend *p = &g_up[g_nup++]; memset(p, 0, sizeof *p); p->put = 0; p->it = u; p->nid = nid;
-    p->plen = (uint16_t)plen; memcpy(p->pb, placed, (size_t)plen); g_nu--; pouch_pub(); pthread_mutex_unlock(&g_umu); }
+    p->plen = (uint16_t)plen; memcpy(p->pb, placed, (size_t)plen); p->h0 = pend_fp(); g_nu--; pouch_pub(); pthread_mutex_unlock(&g_umu); }
 int tp_take_ready(uint32_t *ids, int max) {   // 服务端拍取「已证明、等发 0x63」的新物品 id | the server tick takes the new item ids "proven, waiting for 0x63"
     pthread_mutex_lock(&g_umu); int n = g_nready < max ? g_nready : max; memcpy(ids, g_ready, sizeof(uint32_t) * (size_t)n); g_nready = 0; pthread_mutex_unlock(&g_umu); return n; }
 void tp_state(int *nu, int *nud, int *nup, int *udirty) { pthread_mutex_lock(&g_umu); *nu = g_nu; *nud = g_nud; *nup = g_nup; *udirty = g_udirty; pthread_mutex_unlock(&g_umu); }
+int tp_enter(uint64_t G, uint32_t tq, const char *name) { pthread_mutex_lock(&g_umu); int r = pouch_enter(G, tq, name); pthread_mutex_unlock(&g_umu); return r; }   // 服务端拍进局那一行 | the run-entry line of the server tick
+void tp_tick0(void) { dm_pouch_srv_tick(NULL, 0, 0); }   // 没有受控玩家的一拍 | a tick without a controlled player
+int tp_hook_on(void) { pthread_mutex_lock(&g_umu); int r = g_uload; pthread_mutex_unlock(&g_umu); return r; }
 #endif
 
 #ifdef MOD_PAGES
@@ -49,6 +56,12 @@ void tg_flip(int from, int to, const uint8_t *A, int al, const uint8_t *B, int b
     { const char *wd = dm_save_workdir(); size_t dn = 0; uint8_t *d = wd ? d2s_read(wd, &dn) : NULL; g_pH0 = d ? dm_fnv64(d, dn) : 0; free(d); }
     g_pcur = to; g_ppend = 1; pthread_mutex_unlock(&g_pmu); }
 void tg_state(int *ppend, int *pdirty, int *pmore, int *pcur) { pthread_mutex_lock(&g_pmu); *ppend = g_ppend; *pdirty = g_pdirty; *pmore = g_pmore; *pcur = g_pcur; pthread_mutex_unlock(&g_pmu); }
+// 服务端拍进局那一行（侧文件里不能有待定记录：落定要读游戏的物品栏，这里没有游戏） | the run-entry line of the server tick (the side file must not hold a pending record: settling it reads the game's inventory, and there is no game here)
+int tg_enter(uint64_t G, uint32_t tq, const char *name) { pthread_mutex_lock(&g_pmu); int r = pages_enter(G, tq, name, "ModernSharedStashSoftCoreV2", NULL, 0); pthread_mutex_unlock(&g_pmu); return r; }
+void tg_tick0(void) { dm_pages_tick(0, 0, NULL); }
+int tg_hook_on(void) { pthread_mutex_lock(&g_pmu); int r = g_pload; pthread_mutex_unlock(&g_pmu); return r; }
+void tg_set_inflight(int on) { g_ser_infl = on; g_ser_tq = 0; g_tq_now = 1; }   // 造「有在途的存盘」（dm_ser_state() = 1） | stage "a save is in flight" (dm_ser_state() = 1)
+void tg_dirty(void) { pthread_mutex_lock(&g_pmu); g_pdirty = 1; pthread_mutex_unlock(&g_pmu); }
 // 读一份 .swpage：返回这串位流在不在某个页槽里（slot_out = 第几个槽，0 起；-1 = 不在），cur_out = 头里的当前页、pend_out = 头里的待定标志 | read a .swpage: returns whether this bitstream is in some page slot (slot_out = which slot, 0-based; -1 = none), cur_out = current page in the header, pend_out = pending flag in the header
 int tg_file_has(const char *path, const uint8_t *bits, int len, int *slot_out, int *cur_out, int *pend_out) {
     FILE *f = fopen(path, "rb"); if (!f) return -1; uint8_t h[8]; if (fread(h, 1, 8, f) != 8) { fclose(f); return -2; } *cur_out = h[5]; *pend_out = h[6]; int hit = 0; *slot_out = -1;

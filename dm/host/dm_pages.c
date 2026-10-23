@@ -22,6 +22,7 @@
 #include <pthread.h>
 #include <dirent.h>
 #include <errno.h>
+#include <sys/stat.h>
 #include "dm.h"
 
 #define VBYTES 1024   // 单件位流上限（含孔里的） | Upper limit of a single item's bitstream (including socketed ones)
@@ -155,6 +156,11 @@ static uint8_t *d2s_read(const char *wd, size_t *n) {   // 工作目录里本角
     char cp[1400]; snprintf(cp, sizeof cp, "%s/%s/%s.d2s", wd, g_pchar, g_pchar); FILE *f = fopen(cp, "rb"); uint8_t *d = NULL; *n = 0; if (!f) return NULL;
     fseek(f, 0, SEEK_END); long L = ftell(f); fseek(f, 0, SEEK_SET); d = L > 0 && L < (16 << 20) ? malloc((size_t)L) : NULL; *n = d ? fread(d, 1, (size_t)L, f) : 0; fclose(f);
     if (!*n) { free(d); d = NULL; } return d; }
+// 这一拍是不是新的一局：G 换了、或拍数往回走（游戏每开一局从头数拍）。只在有受控玩家的拍上调：死亡那几拍没有受控玩家、不调，同一局接着数；
+// 保存并退出后进的下一局（不管是不是同一个角色）拍数从头数起，比上一局最后看到的小。各模块据此只在换了一局或换了角色时重读侧文件（F-SAVE-1）
+// Whether this tick belongs to a new game session: G changed, or the tick count went backwards (the game counts ticks from zero in every session). Called only on ticks with a controlled player: the dying ticks have none and are skipped, so the same session keeps counting;
+// the session entered after Save and Exit (same character or not) counts ticks from zero again, below the last one seen. The modules use it to reread their side files only on a new session or a different character (F-SAVE-1)
+int dm_sess_new(dm_sess *s, uint64_t G, uint32_t tq) { int fresh = !s->seen || s->G != G || tq < s->tq; s->G = G; s->tq = tq; s->seen = 1; return fresh; }
 int dm_pages_cur(void) { return atomic_load(&g_pcur_pub); }   // 界面读：当前第几页（0 起） | UI read: the current page number (0-based)
 int dm_pages_count(void) { return PGN; }
 void dm_pages_request_flip(int dir) { atomic_store(&g_preq, dir < 0 ? -1 : 1); }
@@ -271,6 +277,9 @@ static void pages_pre_commit(const char *wd) {   // 提交前钩子（持 g_pmu 
       if (kill && g_pmade && dm_fs_commit_count() + 1 == g_pmade + (uint64_t)kill) { LOG("DM_TEST_PG_KILL：翻页后第 %d 次提交前结束进程（%s）", kill, g_ppend ? "翻页待定" : "翻页已落定"); fflush(stderr); _exit(9); } }
     g_pstaged = 0;
     if (!g_pload || !g_pchar[0] || (!g_ppend && !g_pdirty)) return;
+    // 钩子在主菜单上也开着（F-SAVE-1）：这个角色已不在存档里（在主菜单删掉了），它没落盘的翻页 / 页槽就不必再写，也别让写不成拒掉删角色那次提交
+    // The hook stays enabled on the main menu too (F-SAVE-1): if this character is no longer in the save (deleted on the main menu), its unsettled turn / page slots need not be written, and a failed write must not refuse the commit that deletes the character
+    { char cd[1200]; struct stat st; snprintf(cd, sizeof cd, "%s/%s", wd, g_pchar); if (stat(cd, &st)) { LOG("个人仓库：角色 %s 已不在存档里（删掉了）→ 丢掉它没落盘的翻页 / 页槽", g_pchar); pages_clear(); g_pload = 0; return; } }
     if (!g_ppend) { if (pages_save(wd, 0) == 0) { g_pstaged = 1; g_pstg_gen = g_ploadgen; LOG("个人仓库：进局后改过的页槽（去重 / 落定上次的翻页）随这次提交写下，等提交结果"); } return; }   // 写不成就下次再写：已提交的那份照样能落定，不必拒绝 | if it cannot be written, write it next time: the committed copy still settles correctly, no need to refuse
     // 只看这次要提交的本角色档里的个人仓库格：搬出页快照（A）与目标页快照（B）每件带位置的完整位流（简单物品也算）是否都在。
     // 位置在位流里，同一格只放得下一件，所以别处（共享仓库 / 别的角色 / 背包）有同字节的复制品不影响判断。
@@ -307,7 +316,10 @@ static void pages_pre_commit(const char *wd) {   // 提交前钩子（持 g_pmu 
 static void pages_post(int ok) {
     pthread_mutex_lock(&g_pmu);
     if (g_pstaged && g_pstg_gen == g_ploadgen && ok) { if (g_pstaged == 2) { g_ppend = 0; pend_clear(); g_pmore = 0; LOG("个人仓库：这次提交成了 → 翻页落定（当前第 %d 页）", g_pcur + 1); } g_pdirty = 0; }
-    else if (!ok && g_pload && (g_ppend || g_pdirty)) { g_pmore = 1; if (g_pstaged) LOG("【红】个人仓库：这次提交没成 → %s，下次提交重新核对", g_pstaged == 2 ? "翻页仍待定" : "页槽仍待写"); }
+    else if (!ok && g_pload && (g_ppend || g_pdirty)) { g_pmore = 1; if (g_pstaged) LOG("【红】个人仓库：这次提交没成 → %s，下次提交重新核对", g_pstaged == 2 ? "翻页仍待定" : "页槽仍待写");
+        // 被拒的提交会把工作目录从已提交版重新克隆：里面的角色档可能换成了比翻页时那份更早的（翻页前的另一份），「≠ g_pH0 = 翻页后」就不成立了。指纹作废，之后只按格判
+        // A refused commit reclones the work directory from the committed version: its character file may now be an older one than the copy at the turn (another pre-turn copy), so "!= g_pH0 means after the turn" no longer holds. Drop the fingerprint and judge by the grid only from now on
+        if (g_ppend && g_pH0) { g_pH0 = 0; LOG("个人仓库：翻页时记的角色档指纹作废（工作目录可能已回到更早的已提交版），之后只按格判"); } }
     g_pstaged = 0;
     pthread_mutex_unlock(&g_pmu);
 }
@@ -334,11 +346,18 @@ static void pg_sock_test(uint64_t G, uint64_t player, uint8_t *b, uint32_t tq) {
         ((void (*)(uint64_t, int))(b + 0x5ca8a0))(g, 0); }   // 镶不上：这件没孔，换下一件（宝石已摘下，测试用，不放回） | Cannot socket: this item has no sockets, try the next one (the gem is already removed; test only, not put back)
     LOG("镶孔测试：背包里没有能镶的装备（%d 件装备、%d 颗宝石）", nq, ng);
 }
-void dm_pages_tick(uint64_t G, uint64_t player, uint8_t *b) {   // 服务端拍（diag.c hud_tick）；不在局内 player 为 0 | Server tick (hud_tick in diag.c); player is 0 when not in a run
-    static uint64_t lp; if (!player) { lp = 0; g_pload = 0; return; }
-    uint32_t tq = *(uint32_t *)(G + 0x170);
-    if (player != lp) { lp = player; uint64_t pd = *(uint64_t *)(player + 0x10); pthread_mutex_lock(&g_pmu); strlcpy(g_pchar, pd ? (const char *)pd : "", sizeof g_pchar);
-        { const char *sn = dm_stash_name(b); strlcpy(g_pstash, sn ? sn : "", sizeof g_pstash); } pages_load(b, player); g_pload = 1; pthread_mutex_unlock(&g_pmu); }
+// 服务端拍（diag.c hud_tick）；这一拍没有受控玩家（不在局内 / 正在死）player 为 0。没有受控玩家的拍当没有这一拍：原先死亡那几拍在这里关掉提交前钩子，
+// 再按「换了玩家单位」重读侧文件，没证明完的翻页就丢了（F-SAVE-1）。现在只在换了一局（dm_sess_new）或换了角色时重读，钩子一直开着，死亡那几拍里的提交照样核对
+// Server tick (hud_tick in diag.c); player is 0 on ticks without a controlled player (not in a run / dying). Such a tick counts as no tick at all: before, the dying ticks disabled the pre-commit hook here
+// and the side file was reread on "the player unit changed", so an unproven page turn was lost (F-SAVE-1). Now it is reread only on a new session (dm_sess_new) or a different character, the hook stays enabled, and commits during the dying ticks are still checked
+static dm_sess g_pss;
+static int pages_enter(uint64_t G, uint32_t tq, const char *nm, const char *stash, uint8_t *b, uint64_t player) {   // 换了一局或换了角色才重读侧文件，返回 1 = 重读了（持 g_pmu 调） | reread the side file only on a new session or a different character; returns 1 = reread (called holding g_pmu)
+    if (!dm_sess_new(&g_pss, G, tq) && g_pload && !strcmp(nm, g_pchar)) return 0;
+    strlcpy(g_pchar, nm, sizeof g_pchar); strlcpy(g_pstash, stash ? stash : "", sizeof g_pstash); pages_load(b, player); g_pload = 1; return 1; }
+void dm_pages_tick(uint64_t G, uint64_t player, uint8_t *b) {
+    if (!player) return;
+    uint32_t tq = *(uint32_t *)(G + 0x170); uint64_t pd = *(uint64_t *)(player + 0x10);
+    pthread_mutex_lock(&g_pmu); pages_enter(G, tq, pd ? (const char *)pd : "", dm_stash_name(b), b, player); pthread_mutex_unlock(&g_pmu);
     { pthread_mutex_lock(&g_pmu);
       { static uint64_t pv, tick_seq; uint64_t v = *(uint64_t *)(G + 0x5800), w = dm_fs_d2s_wseq();   // [G+0x5800] 变成真时刻 = 游戏序列化了（请存盘时我们拨成 1） | [G+0x5800] became a real time = the game serialized (we set it to 1 when requesting a save)
         if (v != pv) { if (v > 1 && pv) { g_ser_sec = dm_user_clock(); g_ser_infl = !(w > tick_seq); g_ser_seq = dm_seq_next(); g_ser_tq = tq; } pv = v; }   // 从 0 变过来是进局开始计时，不是序列化 | A change from 0 is the game starting its timer on entry, not a serialization
