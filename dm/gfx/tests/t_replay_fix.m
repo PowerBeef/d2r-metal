@@ -1,5 +1,5 @@
-// 回放层几处修正的回归（真实 Metal 回放，闭式期望，不依赖游戏）：预编扫描不改剪裁、换格式清除的视图留到提交跑完、出图槽等本槽上次的命令缓冲真正跑完才复用。
-// Regression tests for several replay fixes (real Metal replay, closed-form expectations, no dependence on the game): the prediction scan keeps the scissor, a format-changing clear view is kept until the submit has run, a present slot is reused only after its previous command buffer has really finished.
+// 回放层几处修正的回归（真实 Metal 回放，闭式期望，不依赖游戏）：预编扫描不改剪裁、换格式清除的视图留到提交跑完、顶点流 14 不被零属性槽盖掉、出图槽等本槽上次的命令缓冲真正跑完才复用。
+// Regression tests for several replay fixes (real Metal replay, closed-form expectations, no dependence on the game): the prediction scan keeps the scissor, a format-changing clear view is kept until the submit has run, vertex stream 14 is not overwritten by the zero-attribute slot, a present slot is reused only after its previous command buffer has really finished.
 #include "../nvn/nvn_mtl.m"
 #include <pthread.h>
 static CAMetalLayer *t_layer;   // 出图那一例才建（其余各例与别的单测一样没有图层） | Created only for the present case (the other cases have no layer, like the other unit tests)
@@ -66,6 +66,14 @@ static void clear_view_case(void) {
     uint8_t px[256]; readback(&t, px); int ok = 0; for (int i = 0; i < 64; i++) { uint32_t v; memcpy(&v, px + 4 * i, 4); ok += v == 0x11223344u; }
     EXPECT("换格式清除：64 个纹素都是清除值 | format-changing clear: all 64 texels hold the clear value", 64, ok);
 }
+// F-GFX-11：NVN 顶点流 s 绑在 Metal 顶点缓冲 16 + s；零属性缓冲原先固定在 30，盖掉流 14
+// F-GFX-11: NVN vertex stream s is bound at Metal vertex buffer 16 + s; the zero-attribute buffer used to sit at 30 and overwrote stream 14
+static void stream14_case(void) {
+    prog_t pg; prog(&pg, vs_attr(), fs_red()); tex_t a = tex(8, NVN_FORMAT_RGBA8); uint8_t px[256];
+    float *vb = (float *)pool_mem(4096); const float tri[12] = {-1, -1, 0, 1, 3, -1, 0, 1, -1, 3, 0, 1}; memcpy(vb, tri, sizeof tri);
+    chain c = chain_new(); set_rt(&c, &a, NULL); clear_color(&c, 0, 0, 0, 1); ds_off(&c); vertex_stream(&c, 14, vb, 48); bind_prog(&c, &pg); draw_cmd(&c); exec(&c);
+    readback(&a, px); EXPECT("顶点流 14：位置取自流 14，全屏三角画满 | stream 14: positions come from stream 14, the fullscreen triangle covers all", 64, count_px(px, 255, 0, 0));
+}
 // F-GFX-2：显示节拍合并旧帧时把票号直接推到「本帧 − 1」，在途的上一帧也被算成做完；出图槽（Metal 4 的命令分配器）复用前要等本槽上次的命令缓冲真正完成。
 // 这里让 GPU 队列先等一个事件，票 1 的命令缓冲就一直在途；照合并的写法把 g_pq_done 推到 3，再出票 4（与票 1 同槽）：事件发出之前它不能返回
 // F-GFX-2: when the display link merges old frames it bumps the ticket straight to "this frame - 1", so an in-flight earlier frame is counted as done too; a present slot (a Metal 4 command allocator) may be reused only after that slot's previous command buffer has really completed.
@@ -95,5 +103,5 @@ static void present_slot_case(void) {
 }
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init(); lib_init();
-    scissor_case(); clear_view_case(); present_slot_case();
+    scissor_case(); clear_view_case(); stream14_case(); present_slot_case();
     printf("== %d 项，失败 %d ==\n", count, fail); return fail != 0; } }

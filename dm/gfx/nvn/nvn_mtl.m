@@ -1829,7 +1829,8 @@ void ts_after(void);
 // On TBDR every attachment is written back to memory in full when the pass ends; Switch (Maxwell immediate-mode rendering) has no such cost. If an attachment is cleared in full before being read, the write-back is redundant (DontCare).
 // For the decision see mtl_sub_index / sdx_decide; only what can be proven within the same submission is accepted, and anything still undecided at the end of the submission is always written back.
 typedef struct { uint64_t ser, bytes; uint32_t lv, sl; int idx; uint8_t depth, state, ridx, drawn, why, load, wrote, wwhy; const char *wkey; int wslot; } sd_att;   // depth：0 颜色 1 深度 2 模板（深度模板合一的贴图两部分分开判）   // state 0 未定 1 需要 2 多余；idx：颜色附件序号，深度为 -1 | depth: 0 color 1 depth 2 stencil (the two parts of a combined depth-stencil texture are decided separately)   // state 0 undecided 1 needed 2 redundant; idx: color attachment index, -1 for depth
-static sd_att g_sd[9]; static int g_nsd;
+enum { SD_MAX = 10 };   // 一个通道最多 8 颜色 + 深度 + 模板（深度模板合一的贴图两部分各占一项；原先定 9，第 10 项写出界） | At most 8 colors + depth + stencil per pass (the two parts of a combined depth-stencil texture take one entry each; it used to be 9 and the 10th entry was written out of bounds)
+static sd_att g_sd[SD_MAX]; static int g_nsd;
 // 子项开关 g_tbdr_sub（位掩码，登记进同进程交替测量的变量表）：总开关开着时逐项关掉一项，量每项花的翻译 CPU 与省的 GPU，找净亏的子项。同样每次提交开头锁存
 // Sub-item switch g_tbdr_sub (bitmask, registered in the variable table for in-process alternating measurement): with the master switch on, disable one item at a time to measure each item's translation CPU cost and GPU savings, and find net-loss items. Likewise latched at the start of each submit
 enum { TB_SDX = 1, TB_HOIST = 2, TB_DEFER = 4, TB_FUSE = 8, TB_DS = 16, TB_UDC = 32, TB_ALL = 63 };   // 写回前瞻（提交预扫描索引 + 跨提交账本）/ 纯清除通道提前 / 同目标续用 / 可读 tile 合并 / 深度模板按需挂 / 没写的附件不写回 | Write-back lookahead (per-submit prescan index + cross-submit ledger) / pure-clear pass hoisting / same-target reuse / readable tile merging / depth-stencil attached on demand / unwritten attachments not written back
@@ -2695,6 +2696,9 @@ static void state_reset(void) {
     S.st_vmask[0] = S.st_vmask[1] = S.st_wmask[0] = S.st_wmask[1] = 0xff; S.dr[1] = 1;
 }
 
+// 缺失属性读的零缓冲所在的顶点缓冲槽：在顶点缓冲区段（16 + 流）之下、参数缓冲（0）之上；原先放在 30，与流 14 撞槽、被零缓冲盖掉
+// Vertex buffer slot of the zero buffer that missing attributes read: below the vertex buffer range (16 + stream) and above the argument buffer (0); it used to sit at 30, colliding with stream 14, which the zero buffer then overwrote
+enum { VB_ZERO = 15 };
 static MTLVertexFormat vfmt(int f) {
     switch (f) {
         case 0x01: return MTLVertexFormatUCharNormalized; case 0x02: return MTLVertexFormatCharNormalized; case 0x03: return MTLVertexFormatUChar; case 0x04: return MTLVertexFormatChar;
@@ -2771,11 +2775,14 @@ static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvS
         // a >= S.nattr 时 k.attr[a] 保持 memset 的 0，vfmt(0) 为 Invalid，走同一回退分支且 fmt 非 0 的 RED_ONCE 条件不成立。
         // When a >= S.nattr, k.attr[a] keeps the 0 from memset, vfmt(0) is Invalid, the same fallback branch is taken and the RED_ONCE condition of fmt being non-0 does not hold.
         if (a < 16 && k->attr[a].fmt && vf == MTLVertexFormatInvalid) RED_ONCE(15, "顶点属性格式 %#x 未映射", k->attr[a].fmt);
+        // NVN 流 s 绑在 Metal 顶点缓冲 16 + s，表只有 31 项（0–30）：流 15 及以上没有槽（Metal 会在自己的设置里中止进程），按缺失属性读 0
+        // NVN stream s is bound at Metal vertex buffer 16 + s and the table has only 31 entries (0-30): stream 15 and above have no slot (Metal would abort the process in its own setter), so the attribute is read as missing (0)
+        if (vf != MTLVertexFormatInvalid && k->attr[a].stream >= 15) { RED_ONCE(60, "顶点流 %d 超出 Metal 顶点缓冲表（缓冲号 16 + 流须 ≤ 30），该属性按缺失读 0", (int)k->attr[a].stream); vf = MTLVertexFormatInvalid; }
         if (vf == MTLVertexFormatInvalid) {
             int ct = rf->v[v].ct;
             vd.attributes[loc].format = ct == NVN_CT_UINT ? MTLVertexFormatUInt4 : ct == NVN_CT_INT ? MTLVertexFormatInt4 : MTLVertexFormatFloat4;
-            vd.attributes[loc].offset = 0; vd.attributes[loc].bufferIndex = 30;
-            vd.layouts[30].stride = 16; vd.layouts[30].stepFunction = MTLVertexStepFunctionConstant; vd.layouts[30].stepRate = 0;
+            vd.attributes[loc].offset = 0; vd.attributes[loc].bufferIndex = VB_ZERO;
+            vd.layouts[VB_ZERO].stride = 16; vd.layouts[VB_ZERO].stepFunction = MTLVertexStepFunctionConstant; vd.layouts[VB_ZERO].stepRate = 0;
             continue;
         }
         int st = k->attr[a].stream;
@@ -3354,14 +3361,14 @@ static int ds_scan(const uint8_t *p, ds_st *ds, int depth) {
 // Different levels / layers of the same texture are decided separately (a downsample chain writes level k and reads level k−1); a sampler binding counts as a read of the whole texture (conservative)
 static const uint8_t *g_exec_cur;   // 回放中当前这条操作（含） | The op currently being replayed (inclusive)
 static void sd_need(sd_att *t, int why) { if (!t->state) { t->state = 1; t->why = (uint8_t)why; } }   // why：1 绘制作贴图读 2 作附件先画后清 3 拷贝 4 清贴图 5 扫到末尾未定 6 无起点 / 索引不可用 | why: 1 a draw reads it as a texture 2 as an attachment, drawn before cleared 3 copy 4 texture clear 5 scanned to the end undecided 6 no start point / index unavailable
-static int sdx_decide(uint8_t st[9]);   // 写回前瞻判定（索引见 mtl_sub_index） | Store lookahead decision (for the index see mtl_sub_index)
+static int sdx_decide(uint8_t st[SD_MAX]);   // 写回前瞻判定（索引见 mtl_sub_index） | Store lookahead decision (for the index see mtl_sub_index)
 static void sd_finish(void) {
     if (!g_nsd) return;
     if (!tbdr_on()) {   // 优化全关：一律写回 | All optimizations off: always write back
         for (int i = 0; i < g_nsd; i++) { sd_att *t = &g_sd[i];
             if (t->depth == 1) [g_enc setDepthStoreAction:MTLStoreActionStore]; else if (t->depth == 2) [g_enc setStencilStoreAction:MTLStoreActionStore]; else [g_enc setColorStoreAction:MTLStoreActionStore atIndex:(NSUInteger)t->idx]; }
         g_nsd = 0; return; }
-    uint8_t nst[9];
+    uint8_t nst[SD_MAX];
     if (sdx_decide(nst)) { for (int i = 0; i < g_nsd; i++) if (nst[i] == 2) g_sd[i].state = 2; else sd_need(&g_sd[i], nst[i] >> 2); }
     else for (int i = 0; i < g_nsd; i++) sd_need(&g_sd[i], 6);   // 列表外结束的通道 / 索引不可用：一律写回 | Pass ended outside the list / index unavailable: always write back
     for (int i = 0; i < g_nsd; i++) {
@@ -3406,7 +3413,7 @@ static void sd_finish(void) {
 static int attr_read(int a, const p_draw *dw, const p_draw_idx *di, float P[64][4]) {
     int n = dw ? dw->count : di->count;
     if (n < 1 || n > 64 || (dw && dw->first < 0) || (di && (di->itype < 1 || di->itype > 2))) return 6;
-    if (a < 0 || a >= S.nattr || S.attr[a].stream >= 16) return 7;
+    if (a < 0 || a >= S.nattr || S.attr[a].stream >= 15) return 7;   // 流 15 起渲染时按缺失读 0（见 pso_desc），证明也不用它 | From stream 15 on, rendering reads the attribute as missing (see pso_desc), so the proof does not use it either
     va_st at = S.attr[a]; vs_st sm = S.stream[at.stream]; NVNbufferRange vb = S.vbuf[at.stream];
     MTLVertexFormat vf = vfmt(at.fmt); int nc = vf == MTLVertexFormatFloat2 ? 2 : vf == MTLVertexFormatFloat3 ? 3 : vf == MTLVertexFormatFloat4 ? 4 : 0;
     if (!nc || !sm.stride || sm.divisor || !vb.address) return 8;
@@ -3441,6 +3448,8 @@ static int first_draw_covers(int i, id<MTLTexture> t, NSUInteger level) {
                      S.has_vp, vp, R.has_sc, sc, (long)MAX(t.width >> level, 1), (long)MAX(t.height >> level, 1));
 }
 
+// 下标一律两头查（命令内存在游戏手里，录制侧的检查不能当保证）：负的阶段 / 槽 / 起始号与越上界一样整条不执行
+// Indices are checked at both ends (the command memory is in the game's hands, so the record-side checks are no guarantee): a negative stage / slot / first index is skipped as a whole, like one past the upper bound
 static int state_op(uint32_t op, const void *a) {
     switch (op) {
         case OP_SCISSOR: R.sc = *(const p_scissor *)a; R.has_sc = 1; break;
@@ -3461,12 +3470,12 @@ static int state_op(uint32_t op, const void *a) {
         }
         case OP_BIND_VATTR: { const p_bind_vattr *b = a; if (S.nattr != b->n || memcmp(S.attr, b->st, 4 * b->n)) { memcpy(S.attr, b->st, 4 * b->n); S.nattr = b->n; g_pso_dirty = 1; } break; }
         case OP_BIND_VSTREAM: { const p_bind_vstream *b = a; if (S.nstream != b->n || memcmp(S.stream, b->st, 8 * b->n)) { memcpy(S.stream, b->st, 8 * b->n); S.nstream = b->n; g_pso_dirty = 1; } break; }
-        case OP_BIND_VBUF: { const p_bind_vbuf *b = a; memcpy(&S.vbuf[b->first], b->r, sizeof *b->r * b->n); break; }
-        case OP_BIND_UBO: { const p_bind_buf *b = a; if (b->stage < 6 && b->index < 16 && memcmp(&S.ubo[b->stage][b->index], b, sizeof *b)) { S.ubo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
-        case OP_BIND_SSBO: { const p_bind_buf *b = a; if (b->stage < 6 && b->index < 16 && memcmp(&S.ssbo[b->stage][b->index], b, sizeof *b)) { S.ssbo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
-        case OP_BIND_TEX: { const p_bind_handles *b = a; if (b->stage < 6 && b->first + b->n <= 128 && memcmp(&S.tex[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.tex[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } break; }
-        case OP_BIND_SAMP: { const p_bind_handles *b = a; if (b->stage < 6 && b->first + b->n <= 128 && memcmp(&S.samp[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.samp[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } break; }
-        case OP_BIND_IMG: { const p_bind_handles *b = a; if (b->stage < 6 && b->first >= 0 && b->first + b->n <= 32) { if (memcmp(&S.img[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.img[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } } else RED_ONCE(31, "图像槽越界 阶段 %d 起 %d 数 %d", b->stage, b->first, b->n); break; }
+        case OP_BIND_VBUF: { const p_bind_vbuf *b = a; if (b->first >= 0 && b->n >= 0 && b->first + b->n <= 16) memcpy(&S.vbuf[b->first], b->r, sizeof *b->r * b->n); break; }
+        case OP_BIND_UBO: { const p_bind_buf *b = a; if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16 && memcmp(&S.ubo[b->stage][b->index], b, sizeof *b)) { S.ubo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
+        case OP_BIND_SSBO: { const p_bind_buf *b = a; if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16 && memcmp(&S.ssbo[b->stage][b->index], b, sizeof *b)) { S.ssbo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
+        case OP_BIND_TEX: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128 && memcmp(&S.tex[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.tex[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } break; }
+        case OP_BIND_SAMP: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128 && memcmp(&S.samp[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.samp[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } break; }
+        case OP_BIND_IMG: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 32) { if (memcmp(&S.img[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.img[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } } else RED_ONCE(31, "图像槽越界 阶段 %d 起 %d 数 %d", b->stage, b->first, b->n); break; }
         case OP_STENCIL: {
             const p_stencil *b = a;
             if (b->which != 2) g_dss_dirty = 1;
@@ -3474,7 +3483,7 @@ static int state_op(uint32_t op, const void *a) {
             break;
         }
         case OP_POLY_OFFSET: S.po = *(const p_poly_offset *)a; break;
-        case OP_VIEWPORTS: { const p_viewports *b = a; for (int i = 0; i < b->n; i++) memcpy(S.vp[b->first + i], b->v[i], 16); S.has_vp = 1; break; }
+        case OP_VIEWPORTS: { const p_viewports *b = a; if (b->first < 0 || b->n < 0 || b->first + b->n > 16) break; for (int i = 0; i < b->n; i++) memcpy(S.vp[b->first + i], b->v[i], 16); S.has_vp = 1; break; }
         case OP_DEPTH_RANGE: { const p_depth_range *b = a; S.dr[0] = b->n; S.dr[1] = b->f; break; }
         case OP_BLEND_COLOR: memcpy(S.blend_color, ((const p_blend_color *)a)->rgba, 16); break;
         case OP_COPY_STRIDE: S.copy_stride = ((const p_copy_stride *)a)->stride; break;
@@ -3758,7 +3767,7 @@ static void sdx_walk(const uint8_t *p, int depth) {
                 if ((c->stencil_mask & 0xff) == 0xff) sdx_ev_add((sdx_ev){seq, g_pp_rtseq, r->depth->serial, p, lv, sl, SDX_CLEAR, 2, !r->has_dview, 0});
                 break; }
             case OP_BIND_TEX: case OP_BIND_IMG: { const p_bind_handles *b = a; int base = h.op == OP_BIND_IMG ? 128 : 0, lim = h.op == OP_BIND_IMG ? 32 : 128;
-                if (b->stage < 6 && b->first >= 0 && b->first + b->n <= lim) for (int k = 0; k < b->n; k++) g_pp_slot[b->stage][base + b->first + k] = h_ser(b->h[k]);
+                if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->first + b->n <= lim) for (int k = 0; k < b->n; k++) g_pp_slot[b->stage][base + b->first + k] = h_ser(b->h[k]);
                 break; }
             case OP_BIND_PROGRAM: g_pp_prog = ((const p_bind_program *)a)->prog; break;
             case OP_DRAW: case OP_DRAW_IDX: case OP_DISPATCH: {
@@ -3814,7 +3823,7 @@ static void sdx_seq(const uint8_t *p) {   // mtl_exec 每条操作：序号与�
     if (g_exec_seq >= g_sdx_nop || g_sdx_op[g_exec_seq] != p) { RED_ONCE(40, "写回前瞻索引与回放顺序不符（序号 %u / %u），本次提交余下通道一律写回", g_exec_seq, g_sdx_nop); g_sdx_ok = 0; return; }
     g_exec_seq++;
 }
-static int sdx_decide(uint8_t st[9]) {   // st[i]：2 多余；否则 why << 2（需要的原因，同 sd_need）。返回 0 = 索引不可用 | st[i]: 2 redundant; otherwise why << 2 (the reason it is needed, same as sd_need). Returns 0 = index unavailable
+static int sdx_decide(uint8_t st[SD_MAX]) {   // st[i]：2 多余；否则 why << 2（需要的原因，同 sd_need）。返回 0 = 索引不可用 | st[i]: 2 redundant; otherwise why << 2 (the reason it is needed, same as sd_need). Returns 0 = index unavailable
     if (!g_sdx_ok || !g_exec_cur || !g_exec_seq || g_sdx_op[g_exec_seq - 1] != g_exec_cur) return 0;
     uint32_t P = g_exec_seq - 1;
     for (int i = 0; i < g_nsd; i++) { const sd_att *t = &g_sd[i]; st[i] = 5 << 2;
@@ -4846,7 +4855,7 @@ frz_plain:;
       FX_SET(5, !memcmp(g_enc_fx.db, d, sizeof d), memcpy(g_enc_fx.db, d, sizeof d), enc_r_depth_bias(en, d[0], d[1], d[2])); }
     FX_SET(6, !memcmp(g_enc_fx.bc, S.blend_color, sizeof g_enc_fx.bc), memcpy(g_enc_fx.bc, S.blend_color, sizeof g_enc_fx.bc), enc_r_blend_color(en, S.blend_color[0], S.blend_color[1], S.blend_color[2], S.blend_color[3]));
     #undef FX_SET
-    for (int s_ = 0; s_ < 16; s_++) {
+    for (int s_ = 0; s_ < 15; s_++) {   // 流 15 没有 Metal 槽（见 VB_ZERO 与 pso_desc），不绑 | Stream 15 has no Metal slot (see VB_ZERO and pso_desc) and is not bound
         if (!S.vbuf[s_].address) continue;
         void *mb; uint64_t mo;
         uint64_t gpu;
@@ -4854,7 +4863,7 @@ frz_plain:;
     }
     static id<MTLBuffer> zero; if (!zero) { zero = [g_dev newBufferWithLength:64 options:MTLResourceStorageModeShared]; res_add(zero); }
     static uint64_t zero_gpu; if (!zero_gpu) zero_gpu = zero.gpuAddress;
-    enc_r_vbuf(en, 30, zero_gpu);
+    enc_r_vbuf(en, VB_ZERO, zero_gpu);
     if (pr->sh[0]) encode_args(en, pr->sh[0], 0, 1);
     if (pr->sh[1]) encode_args(en, pr->sh[1], 1, 0);
     // 参数绑定在登记表锁内捕获实际资源；资格判断到绑定期间有版本变化，则在任何GPU draw前切开重试。

@@ -3,11 +3,17 @@
 //   gfxuse （线程）DM_GFXUSE 开关第一次出图时才在出图线程上写，提交线程同时在读
 //   rtrange（线程）DM_NVN_RT_RANGE 开关懒读：预热线程与翻译线程都在 shader_load 里第一次读写它
 //   bloom  （地址）泛光 1/4 起点记下的是登记表里那一项的地址，登记表扩容搬家后截取时读到已释放的内存
+//   fx9    （未定义）写回前瞻表 9 项，8 颜色 + 深度 + 模板 = 10 项
+//   fx19   （未定义）游戏给的负下标（视口 / 顶点缓冲的起始号、阶段号、槽号）在录制与回放两侧都要挡住
+//   fx11   顶点流 15 在 Metal 自己的描述符设置里中止进程（缓冲号 31 越界）
 // Regression tests for replay defects that only a sanitizer makes visible (built twice: the ThreadSanitizer t_replay_tsan and the AddressSanitizer + UndefinedBehaviorSanitizer t_replay_asan; any report exits non-0):
 //   treg   (thread) while the game thread grows / rewrites the texture registration table, the readers on the translation thread (the store lookahead's subresource test, the zero-source skip's view test) read it without the lock
 //   gfxuse (thread) the DM_GFXUSE switch is written on the present thread at the first present, while the submit thread reads it
 //   rtrange (thread) the DM_NVN_RT_RANGE switch is read lazily: the warm-up thread and the translation thread both read and write it for the first time in shader_load
 //   bloom  (address) the bloom 1/4 start remembered the address of the table entry; after the table grows and moves, the capture reads freed memory
+//   fx9    (undefined) the store lookahead table has 9 entries, 8 colors + depth + stencil = 10
+//   fx19   (undefined) negative indices from the game (first viewport / vertex buffer, stage, slot) must be stopped on both the record and the replay side
+//   fx11   vertex stream 15 aborts the process inside Metal's own descriptor setter (buffer index 31 out of range)
 #include "../nvn/nvn_mtl.m"
 #include "../nvn/hle_nvn.c"
 #include <pthread.h>
@@ -81,5 +87,42 @@ int main(int argc, char **argv) { @autoreleasepool { setvbuf(stdout, NULL, _IONB
         hh = (uint64_t)c2.p; mtl_sub_index(&hh, 1); mtl_exec(c2.p);
         EXPECT("泛光：原生截取画成 | bloom: the native capture was drawn", 2, g_bloomq.state);
         EXPECT("泛光：提交完成 | bloom: submit done", 1, mtl_wait(mtl_sub_commit(), 5000000000ull));
-    } else { fprintf(stderr, "用法 | usage: t_replay_san treg|gfxuse|rtrange|bloom\n"); return 2; }
+    } else if (!strcmp(mode, "fx9")) {
+        prog_t pg; prog(&pg, 8403, shader(@"v", 0), shader(@"red", 1));
+        static tex_t col[8]; for (int i = 0; i < 8; i++) col[i] = tex(8, NVN_FORMAT_RGBA8); static tex_t ds; ds = tex(8, NVN_FORMAT_DEPTH32F_STENCIL8);
+        chain c = chain_new(); p_set_rt r = {.n = 8}; for (int i = 0; i < 8; i++) r.color[i] = &col[i]; r.depth = &ds; emit(&c, OP_SET_RT, &r, sizeof r);
+        p_viewports v = {.n = 1}; v.v[0][2] = v.v[0][3] = 8; emit(&c, OP_VIEWPORTS, &v, sizeof v); p_scissor sc = {0, 0, 8, 8}; emit(&c, OP_SCISSOR, &sc, sizeof sc);
+        for (int i = 0; i < 8; i++) { p_clear_color x = {.index = i, .mask = 15, .rgba = {0, 0, 0, 1}}; emit(&c, OP_CLEAR_COLOR, &x, sizeof x); }
+        p_clear_ds cd = {1.0f, 1, 0, 0xff}; emit(&c, OP_CLEAR_DS, &cd, sizeof cd);
+        ds_st dss = {1, 1, NVN_DEPTH_FUNC_ALWAYS, 1, NVN_STENCIL_FUNC_ALWAYS, NVN_STENCIL_FUNC_ALWAYS, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_REPLACE, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_REPLACE};
+        p_bind_state x = {.kind = 5}; memcpy(x.bytes, &dss, sizeof dss); emit(&c, OP_BIND_STATE, &x, sizeof x);
+        p_bind_program bp = {&pg, 3}; emit(&c, OP_BIND_PROGRAM, &bp, sizeof bp); p_draw dw = {NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3}; emit(&c, OP_DRAW, &dw, sizeof dw);
+        tex_t other = tex(8, NVN_FORMAT_RGBA8); p_set_rt r2 = {.n = 1}; r2.color[0] = &other; emit(&c, OP_SET_RT, &r2, sizeof r2);   // 10 个附件的通道在命令流里结束 | The 10-attachment pass ends inside the command stream
+        exec(&c); EXPECT("10 个附件的通道：写回前瞻收尾 | 10-attachment pass: store lookahead finished", 1, mtl_wait(mtl_sub_commit(), 5000000000ull));
+    } else if (!strcmp(mode, "fx19")) {
+        // 录制侧：负的起始号不录 | Record side: a negative first index is not recorded
+        static uint8_t mem[65536] __attribute__((aligned(4096))); pool_t pool = {.mem = mem, .size = sizeof mem}; mtl_pool_add(mem, sizeof mem);
+        NVNcommandBuffer cb; h_nvnCommandBufferInitialize(&cb, NULL); h_nvnCommandBufferAddCommandMemory(&cb, (const NVNmemoryPool *)&pool, 0, sizeof mem); h_nvnCommandBufferBeginRecording(&cb);
+        float vp[4] = {0, 0, 8, 8}; NVNbufferRange rg = {0x1000, 64};
+        h_nvnCommandBufferSetViewports(&cb, -1, 1, vp); h_nvnCommandBufferBindVertexBuffers(&cb, -1, 1, &rg);
+        const uint8_t *p = (const uint8_t *)h_nvnCommandBufferEndRecording(&cb); int bad = 0;
+        for (int guard = 0; guard < 1000; guard++) { op_hdr oh; memcpy(&oh, p, sizeof oh); if (oh.op == OP_END) break; if (oh.op == OP_JUMP) { memcpy(&p, p + 8, 8); continue; } bad += oh.op == OP_VIEWPORTS || oh.op == OP_BIND_VBUF; p += oh.size; }
+        EXPECT("录制侧：起始号为负的视口 / 顶点缓冲不录 | record side: viewports / vertex buffers with a negative first index are not recorded", 0, bad);
+        // 回放侧：命令内存是游戏的，回放照样不信下标 | Replay side: the command memory belongs to the game, so the replay does not trust the indices either
+        state_reset();
+        p_bind_buf u = {.stage = -1, .index = 0, .addr = 0x1000, .size = 16}; state_op(OP_BIND_UBO, &u);
+        p_bind_buf sb = {.stage = 0, .index = -3, .addr = 0x1000, .size = 16}; state_op(OP_BIND_SSBO, &sb);
+        p_bind_handles th = {.stage = 0, .first = -2, .n = 1}; th.h[0] = 5; state_op(OP_BIND_TEX, &th); state_op(OP_BIND_SAMP, &th);
+        p_bind_handles ih = {.stage = -1, .first = 0, .n = 1}; ih.h[0] = 5; state_op(OP_BIND_IMG, &ih);
+        p_viewports v = {.first = -1, .n = 1}; state_op(OP_VIEWPORTS, &v);
+        p_bind_vbuf b = {.first = -1, .n = 1}; b.r[0].address = 0x2000; b.r[0].size = 64; state_op(OP_BIND_VBUF, &b);
+        EXPECT("回放侧：负下标全部挡住（消毒器无报告）| replay side: every negative index is stopped (no sanitizer report)", 1, 1);
+    } else if (!strcmp(mode, "fx11")) {
+        NvShader *vs = shader(@"va", 0); vs->rf.nv = 1; vs->rf.v[0].loc = 0; vs->rf.v[0].nvn = 0; vs->rf.v[0].ct = NVN_CT_FLOAT; NvShader *fs = shader(@"red", 1);
+        int streams[] = {14, 15, 20};
+        for (int q = 0; q < 3; q++) { pso_key k; memset(&k, 0, sizeof k); k.cfmt[0] = MTLPixelFormatRGBA8Unorm; k.samples = 1; k.chmask = 0xffffffff;
+            k.attr[0].fmt = 0x2E; k.attr[0].stream = streams[q]; if (streams[q] < 16) k.stream[streams[q]].stride = 16;
+            MTLRenderPipelineDescriptor *d = pso_desc(&k, vs, fs, nil, 0); NSError *e = nil; id ps = d ? [g_dev newRenderPipelineStateWithDescriptor:d error:&e] : nil;
+            char n[128]; snprintf(n, sizeof n, "顶点流 %d：管线建得出、进程不中止 | stream %d: the pipeline builds and the process does not abort", streams[q], streams[q]); EXPECT(n, 1, ps != nil); }
+    } else { fprintf(stderr, "用法 | usage: t_replay_san treg|gfxuse|rtrange|bloom|fx9|fx19|fx11\n"); return 2; }
     printf("== %s：%d 项，失败 %d ==\n", mode, count, fail); return fail != 0; } }
