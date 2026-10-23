@@ -86,7 +86,7 @@ static uint64_t find_unit(uint64_t G, int type, uint32_t id, int cls) {   // 服
 // 原版系统提示：聊天栏一行「[游戏] …」+ 系统提示框（首领连战、刷怪积分牌 dm_kills.c 共用）。只许服务端线程调（同首领连战）
 // Original-game system notification: one chat bar line 「[游戏] …」([Game] ...) + the system notification box (shared by the boss rush and the kill board dm_kills.c). May only be called from the server thread (same as the boss rush)
 void dm_game_notice(uint8_t *main_base, const char *text) {
-    B = main_base; static char line[200]; strlcpy(line, text, sizeof line);
+    B = main_base; static char line[512]; strlcpy(line, text, sizeof line);   // 512：俄语的 iCloud 共享仓库冲突提示 234 字节，原先 200 字节的缓冲把它截在半个字上（dm_i18n.py BYTE_LIMITS 核） | 512: the Russian iCloud shared-stash conflict notice is 234 bytes, and the former 200-byte buffer cut it off in the middle of a character (checked by dm_i18n.py BYTE_LIMITS)
     static uint64_t txt[3], who[6], o1[8], o2[8], o3[8], o4[8];
     size_t n = strlen(line); txt[0] = (uint64_t)(uintptr_t)line; txt[1] = n; txt[2] = 0x8000000000000000ull | n;
     const uint8_t *g = B + 0x2d52c88; memset(who, 0, sizeof who); *(uint32_t *)who = *(const uint32_t *)g; who[1] = *(const uint64_t *)(g + 8); who[2] = *(const uint64_t *)(g + 16); who[3] = 0x8000000000000000ull | who[2];

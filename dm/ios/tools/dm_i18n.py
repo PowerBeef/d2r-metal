@@ -35,6 +35,18 @@ EN_LIMITS = (
     (r'dmRiftHud(Title)', 4), (r'dmRiftHud(Done|Late|Guard)', 18), (r'dmRiftHud(Next|Same|Kill|Goal)', 26),
     (r'dmKbRiftUnlock', 9), (r'dmKbRift(Best|Total)', 16),
 )
+# 宿主把整串抄进定长缓冲区的键：各语言 UTF-8 字节数（不含结尾的 0）的上限。超了会被截断；其中 g_hint 的缓冲区地址直接换进了游戏的串表，
+# 原先俄语「捡起（按住鉴定）」正好 48 字节、缓冲区 48 字节，结尾的「)」丢了、串表里的长度还按 48 算。只管原样整串抄进去的，带占位符拼出来的不在这里
+# Keys whose whole string the host copies into a fixed-size buffer: the limit on the UTF-8 byte length (without the trailing 0) in every language. Longer ones are truncated; the g_hint buffer address is swapped straight into the game's string table,
+# and the Russian "Pick Up (hold to identify)" used to be exactly 48 bytes in a 48-byte buffer: the closing ")" was lost and the length in the string table still said 48. Only strings copied whole are listed here, not ones assembled with placeholders
+BYTE_LIMITS = (
+    (r'dmPadHintDeposit|dmPadLegIdentify', 127),                                      # dm_padmode.c g_hint[].ours[128]
+    (r'dmPadLeg(Prev|Next|Diff|Sort|View)|dmRiftBtn(Cont|Start|Resel|Abandon)', 47),   # dm_padmode.c g_lg[].text[48]（dm_padmode_legend 的条目 | entries of dm_padmode_legend）
+    (r'dmRiftGam(Uni|Set|AfterEn|UniAfter|SetAfter)', 39),                            # dm_rift_ui.c ln[][40]
+    (r'dmStoreFull', 159),                                                             # dm_pouch.c g_notice[160]
+    (r'dmCloudMerge(Back|Full)', 255),                                                 # dm_cloudmerge.c g_notice[256]
+    (r'dmSkillCapLocked|dmElyToaGround|dmCloudConflict|dmMercSlotLocked', 511),        # dm_bossrush.c dm_game_notice line[512]
+)
 # 键只许字母数字：布局里「@键」的解析遇到 _ 就断（@dmCustom_auto_mana 显示成「丢失字符串_auto_mana」，Mac 上的 iOS 包实测）
 # 英文界面下也要写汉字的键（自定义页语言那一行：切错语言的人得看得懂）。只许用在指定了全球字体 BlizzardGlobal 的文字控件上——英文界面缺省字体没有汉字
 # Keys may only contain letters and digits: the layout's "@key" parsing stops at _ (@dmCustom_auto_mana was shown as "missing string_auto_mana", measured in the iOS package on a Mac)
@@ -55,6 +67,9 @@ def rows():
             lim = next((n for pat, n in EN_LIMITS if re.fullmatch(pat, k)), None)   # 字数闸（见 EN_LIMITS；西语 / 俄语 / 韩语同一栏同一上限）
             for nm, t in (('英文', en), ('西语', es), ('拉美西语', mx), ('俄语', ru), ('韩语', ko)):
                 if lim is not None and len(FMT.sub('000', t).split('\n')[0]) > lim: raise SystemExit('dm_i18n：%s 的%s「%s」%d 个字符，超过这一栏的上限 %d（会顶框 / 被截断；压短，或给这一栏做专用的小字号控件）' % (k, nm, t, len(FMT.sub('000', t).split('\n')[0]), lim))
+            blim = next((n for pat, n in BYTE_LIMITS if re.fullmatch(pat, k)), None)   # 字节闸（见 BYTE_LIMITS） | byte gate (see BYTE_LIMITS)
+            for nm, t in (('中文', zh), ('英文', en), ('西语', es), ('拉美西语', mx), ('俄语', ru), ('韩语', ko)):
+                if blim is not None and len(t.encode()) > blim: raise SystemExit('dm_i18n：%s 的%s %d 字节，超过宿主定长缓冲区放得下的 %d 字节（见 BYTE_LIMITS；压短，或把那个缓冲区加大）' % (k, nm, len(t.encode()), blim))
             out.append((k, zh, en, es, mx, ru, ko))
     ks = [r[0] for r in out]
     if len(set(ks)) != len(ks): raise SystemExit('dm_i18n：键重复：%s' % sorted({k for k in ks if ks.count(k) > 1}))

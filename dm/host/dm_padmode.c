@@ -229,7 +229,7 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
 // for unidentified equipment the original game only hints "A Pick Up", and an entry added to the button legend would be overwritten when the
 // original game rebuilds it every frame from the item under the cursor, so the string it fetches is swapped instead)
 enum { HINT_VAULT, HINT_IDENT, NHINT };
-static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[48]; } g_hint[NHINT] = {
+static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[128]; } g_hint[NHINT] = {
     { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" }, { "ControllerPromptItemPickUpFromInventory", "dmPadLegIdentify" } };   // [0]「按住 Y」那半句、[1]「捡起」 | [0] the "hold Y" half of the sentence, [1] "Pick Up"
 void dm_padmode_vault_hint(int on) { atomic_store(&g_hint[HINT_VAULT].on, on ? 3 : 0); }   // 游戏主线程，页在屏上时每帧调（3 帧不调就算离开） | Game main thread; called every frame while the page is on screen (3 frames without a call counts as having left)
 void dm_padmode_ident_hint(int on) { atomic_store(&g_hint[HINT_IDENT].on, on ? 3 : 0); }   // 同上：光标停在未鉴定物品上时每帧调 | Same as above: called every frame while the cursor rests on an unidentified item
@@ -258,7 +258,11 @@ static void hint_pump(void) {
         // 我们这半句走中英表；串指针要常驻（换进串表的是这个缓冲区的地址），每次取来比一下、语言变了才改写缓冲区
         // Our half of the sentence goes through the Chinese-English table; the string pointer must stay resident (what is swapped into the string table
         // is the address of this buffer), so compare on every fetch and rewrite the buffer only when the language has changed
-        { const char *w = dm_str(g_b, g_hint[h].ours_key); if (w && strcmp(ours, w)) { if (*nodep && ((uint64_t *)(uintptr_t)(*nodep + 0x20))[0] == (uint64_t)(uintptr_t)ours) ((uint64_t *)(uintptr_t)(*nodep + 0x20))[1] = strlen(w); strlcpy(ours, w, sizeof g_hint[h].ours); } }
+        // 缓冲区 128 字节（俄语「捡起（按住鉴定）」正好 48 字节，原先的 48 字节缓冲放不下、每帧重抄，串表里的长度还按没截断的算）；dm_i18n.py 核这两个键的字节数。
+        // 串表里的长度按抄进来的实际长度写
+        // The buffer is 128 bytes (the Russian "Pick Up (hold to identify)" is exactly 48 bytes: the former 48-byte buffer could not hold it, it was copied again every frame, and the length in the string table was the untruncated one); dm_i18n.py checks the byte length of these two keys.
+        // The length in the string table is the length actually copied in
+        { const char *w = dm_str(g_b, g_hint[h].ours_key); if (w && strcmp(ours, w)) { strlcpy(ours, w, sizeof g_hint[h].ours); if (*nodep && ((uint64_t *)(uintptr_t)(*nodep + 0x20))[0] == (uint64_t)(uintptr_t)ours) ((uint64_t *)(uintptr_t)(*nodep + 0x20))[1] = strlen(ours); } }
         int on = g_cur && atomic_load(&g_hint[h].on) > 0; if (atomic_load(&g_hint[h].on) > 0) atomic_fetch_sub(&g_hint[h].on, 1);
         uint64_t nd = str_node((uint64_t)(uintptr_t)(g_b + 0x2d71030), g_hint[h].key, strlen(g_hint[h].key)); if (!nd) continue;
         uint64_t *v = (uint64_t *)(uintptr_t)(nd + 0x20);
