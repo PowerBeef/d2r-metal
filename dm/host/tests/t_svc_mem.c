@@ -4,6 +4,7 @@
 //   det5    MapMemory 查表与登记不是一步（F-CORE-5）：A 的 Map 停在 memcpy；B 另起线程 Map 同一目标。期望只有一个成功、表里一项
 //   phys    MapPhysicalMemory 给的页应是零（F-CORE-16）：映射、写满 0xA5、UnmapPhysicalMemory、再映射，数还剩几个 0xA5
 //   svc     ExitProcess（0x07）走宿主优雅退出、未实现的 SVC 回 NotImplemented 0x4201 并报一次红（F-CORE-12）
+//   query   QueryMemory 对模块按段回答、对别的宿主地址回一整块 Inaccessible（F-CORE-1）；照 SDK 的 GetExceptionInfo（sdk+0x3642e0）的走法走一遍，应几步内找到模块起点与 CodeData 末尾
 //   disjoint R / overlap R   压力（线程消毒版 make tsan 跑）：8 线程各映射自己的槽 R 轮；2 线程同时映射同一目标 R 轮
 // 不带参数 = 跑全部确定用例（make run）
 // Concurrency and semantics unit test of the memory SVCs (hle_svc.c): includes the real hle_svc.c, so it can read the map registry g_map / g_nmap.
@@ -12,6 +13,7 @@
 //   det5    MapMemory's lookup and record are not one step (F-CORE-5): A's Map parks in memcpy; B maps the same target on its own thread. Expected: exactly one success, one entry
 //   phys    pages from MapPhysicalMemory must be zero (F-CORE-16): map, fill with 0xA5, UnmapPhysicalMemory, map again, count the 0xA5 bytes left
 //   svc     ExitProcess (0x07) goes to the host's graceful exit, and an unimplemented SVC returns NotImplemented 0x4201 and reports red once (F-CORE-12)
+//   query   QueryMemory answers a module segment by segment and any other host address with one Inaccessible block (F-CORE-1); the walk of the SDK's GetExceptionInfo (sdk+0x3642e0) must find the module start and the end of CodeData in a few steps
 //   disjoint R / overlap R   stress (run by the ThreadSanitizer build, make tsan): 8 threads map their own slot for R rounds; 2 threads map the same target at once for R rounds
 // No argument = run all deterministic cases (make run)
 #include <string.h>
@@ -28,7 +30,10 @@ static void *t_memcpy(void *d, const void *s, size_t n);
 // ---- 宿主其余部分的桩 | stubs for the rest of the host ----
 module_t g_mod[MAX_MOD]; int g_nmod;
 struct dm_flags g_flag;
-module_t *module_of(const void *p) { (void)p; return NULL; }
+module_t *module_of(const void *p) {   // 同 loader.c | as loader.c
+    for (int i = 0; i < g_nmod; i++) if ((const uint8_t *)p >= g_mod[i].base && (const uint8_t *)p < g_mod[i].base + g_mod[i].size) return &g_mod[i];
+    return NULL;
+}
 int svc_thread(int num, uint64_t *regs) { (void)num; (void)regs; return 0; }
 uint64_t svc_host_call(int num, uint64_t *regs) { (void)num; (void)regs; return 0; }
 void hlecount_svc(int num) { (void)num; }
@@ -122,6 +127,64 @@ static void svcs(void) {
     printf("svc: unknown SVC 0x50 -> %#llx, again -> %#llx, red log lines %ld\n", a, b, g_red_logs - red0);
     CHECK(a == 0x4201 && b == 0x4201 && g_red_logs - red0 == 1, "svc: an unknown SVC must return NotImplemented 0x4201 and report red once");
 }
+// ---- query ----
+typedef struct { uint64_t base, size; uint32_t state, perm; } qinfo_t;
+static long g_nq;
+static qinfo_t q(uint64_t addr) { uint64_t mi[8] = {0}; uint64_t r[32] = {(uint64_t)mi, 0, addr}; svc_dispatch(6, r, 0); g_nq++; return (qinfo_t){mi[0], mi[1], ((uint32_t *)mi)[4], ((uint32_t *)mi)[6]}; }
+// 照 sdk+0x3642e0 的走法，只看 QueryMemory 的回答（无符号比较照抄）：1 = 找到模块，0 = pc 不在 Code/RX 里（没有异常信息），−1 = SDK 会中止，−2 = 查询超过上限
+// The walk of sdk+0x3642e0, looking only at QueryMemory's answers (unsigned comparisons as in the original): 1 = module found, 0 = pc not in Code/RX (no exception info), -1 = the SDK would abort, -2 = query limit exceeded
+static int exc_walk(uint64_t pc, uint64_t *mod, uint64_t *msize) {
+    const long cap = 200000; g_nq = 0;
+    qinfo_t i = q(pc);
+    if (i.perm != 5 || (i.state != 3 && i.state != 8)) return 0;
+    uint32_t st = i.state; uint64_t x21 = 0, a = pc; int found = 0;
+    for (;;) { if (g_nq > cap) return -2; i = q(a);
+        if (i.state != st || i.perm != 5) { if (!found) return -1; break; }
+        x21 = i.base; a = i.base - 1; found = 1; if (!(a <= pc)) break; }
+    *mod = x21; uint64_t x23 = 0; a = pc; found = 0;
+    for (;;) { if (g_nq > cap) return -2; i = q(a);
+        if (i.state != st) { if (!found) return -1; break; }
+        a = i.base + i.size; x23 = a - 1; found = 1; if (!(a >= pc)) break; }
+    uint32_t want = st == 3 ? 4 : 9; uint64_t start = x23 + 1; a = start; found = 0;
+    for (;;) { if (g_nq > cap) return -2; i = q(a);
+        if (i.state != want) { if (!found) return -1; break; }
+        a = i.base + i.size; x23 = a - 1; found = 1; if (!(a >= start)) break; }
+    *msize = x23 - x21 + 1; return 1;
+}
+static void query(void) {
+    // 两个首尾相接的模块，布局照产物（main：TEXT_END 0x1b786a0、RO_OFF 0x1b79000、DATA_OFF 0x2056000、键页 0x3214000、补丁区 0x3220000、大小 0x33dc000），地址放在宿主空间里一块没用的地方
+    // Two modules mapped end to end with the products' layout (main: TEXT_END 0x1b786a0, RO_OFF 0x1b79000, DATA_OFF 0x2056000, key page 0x3214000, patch area 0x3220000, size 0x33dc000), placed at an unused spot of the host address space
+    uint64_t b0 = 0x500000000000ull, sz0 = 0x33dc000, b1 = b0 + sz0, sz1 = 0xe80000;
+    g_mod[0] = (module_t){.name = "main", .base = (uint8_t *)b0, .size = sz0, .text_end = 0x1b786a0, .ro_off = 0x1b79000, .data_off = 0x2056000, .key_page_off = 0x3214000, .patch_off = 0x3220000};
+    g_mod[1] = (module_t){.name = "sdk", .base = (uint8_t *)b1, .size = sz1, .text_end = 0x58d930, .ro_off = 0x58e000, .data_off = 0xc15000, .key_page_off = 0xd34000, .patch_off = 0xd40000};
+    g_nmod = 2;
+    struct { const char *what; uint64_t a, base, size; uint32_t state, perm; } want[] = {
+        {"main text", b0 + 0x1234, b0, 0x1b79000, 3, 5}, {"main ro", b0 + 0x1b79000, b0 + 0x1b79000, 0x2056000 - 0x1b79000, 3, 1},
+        {"main data", b0 + 0x3000000, b0 + 0x2056000, 0x3214000 - 0x2056000, 4, 3}, {"main key page", b0 + 0x3214000, b0 + 0x3214000, 0xc000, 0x14, 1},
+        {"main patch area", b0 + 0x33db000, b0 + 0x3220000, 0x1bc000, 0x14, 5}, {"sdk text", b1, b1, 0x58e000, 3, 5},
+    };
+    for (unsigned k = 0; k < sizeof want / sizeof want[0]; k++) { qinfo_t i = q(want[k].a);
+        printf("query: %-16s -> +%#llx size %#llx state %#x perm %u\n", want[k].what, i.base - b0, i.size, i.state, i.perm);
+        CHECK(i.base == want[k].base && i.size == want[k].size && i.state == want[k].state && i.perm == want[k].perm, "query: %s", want[k].what); }
+    qinfo_t below = q(b0 - 1), above = q(0xffff000000000000ull);
+    printf("query: just below main -> state %#x, block ends at main %s; top of the address space -> state %#x, block reaches 2^64 %s\n",
+           below.state, below.base + below.size == b0 ? "yes" : "no", above.state, above.base + above.size == 0 ? "yes" : "no");
+    CHECK(below.state == 0x10 && below.perm == 0 && below.base + below.size == b0 && above.state == 0x10 && above.base + above.size == 0, "query: host addresses must be one Inaccessible block bounded by the known regions");
+    uint64_t mod = 0, msz = 0; int r;
+    r = exc_walk(b0 + 0x123450, &mod, &msz);
+    printf("query: GetExceptionInfo walk from main text -> %d after %ld queries: module +%#llx size %#llx (expect 1, +0, %#x)\n", r, g_nq, mod - b0, msz, 0x3214000);
+    CHECK(r == 1 && mod == b0 && msz == 0x3214000 && g_nq < 20, "query: walk from main text");
+    r = exc_walk(b1 + 0x3642e0, &mod, &msz);
+    printf("query: GetExceptionInfo walk from sdk text -> %d after %ld queries: module +%#llx (sdk +%#llx) size %#llx (expect 1, sdk +0, %#x)\n", r, g_nq, mod - b0, mod - b1, msz, 0xd34000);
+    CHECK(r == 1 && mod == b1 && msz == 0xd34000 && g_nq < 20, "query: walk from sdk text (the main patch area right before it must not count)");
+    r = exc_walk(b0 + 0x3221000, &mod, &msz);
+    printf("query: GetExceptionInfo walk from the main patch area -> %d after %ld queries (expect 0: no exception info)\n", r, g_nq);
+    CHECK(r == 0, "query: a patch-area pc has no exception info");
+    r = exc_walk(0x0000000180001000ull, &mod, &msz);
+    printf("query: GetExceptionInfo walk from a host address -> %d after %ld queries (expect 0)\n", r, g_nq);
+    CHECK(r == 0 && g_nq == 1, "query: a host pc has no exception info");
+    g_nmod = 0;
+}
 static barrier_t g_bar;
 static _Atomic long map_fail, unmap_fail, live_lost, after_not_free, rounds_done;
 static void *disjoint(void *p) {
@@ -179,6 +242,7 @@ int main(int argc, char **argv) {
     if (all || !strcmp(mode, "det5")) det5();
     if (all || !strcmp(mode, "phys")) phys();
     if (all || !strcmp(mode, "svc")) svcs();
+    if (all || !strcmp(mode, "query")) query();
     if (!strcmp(mode, "disjoint")) run_disjoint();
     if (!strcmp(mode, "overlap")) run_overlap();
     printf("t_svc_mem %s: %s\n", mode, g_fail ? "FAIL" : "OK");

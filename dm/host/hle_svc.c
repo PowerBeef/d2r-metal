@@ -130,6 +130,47 @@ static void map_add(uint64_t b, uint64_t n, uint64_t src, uint32_t st) {
 }
 static void map_del(int i) { g_map[i] = g_map[--g_nmap]; }
 
+// QueryMemory 对客体模块与地址空间以外的回答（下面 0x06 用）。
+// 模块照 Horizon 装 NSO 的样子分段回报（Atmosphère loader 按段设权限：text RX、ro R、data + bss RW；内核 SetProcessMemoryPermission 把可写的 Code 改成 CodeData）：
+//   [0, ro) Code/RX、[ro, data) Code/R、[data, 键页) CodeData/RW（含 bss 与凑 16 KiB 的空白）。
+// 装载器追加的键页（只读）与补丁区（只读 + 执行）真机上没有，回报成 GeneratedCode（Horizon 给运行时生成代码的状态），任何按模块走的查询都不把它们算进模块，
+// 下一个模块的 text 往回走也在这里停（模块在宿主里是首尾相接映射的，补丁区紧挨着下一个模块的 text）。
+// SDK 的 nn::ro::detail::GetExceptionInfo（sdk+0x3642e0，C++ 抛异常时找 eh_frame_hdr）从 pc 所在的 Code/RX 块往回走到模块起点、往前走过全部 Code 块，
+// 再要求紧接着是 CodeData，否则中止。原先这里对客体地址空间以外的每个地址都回报「它所在的 4 KiB Code/RX 页」：往回一页页走到 0（约百万次查询），
+// 往前也碰不到 CodeData，任何一次 throw 都变成中止。客体地址空间、模块与当前线程的宿主栈以外的宿主地址回报成一整块 Inaccessible（同 Horizon 对地址空间外的回答），按块走的循环一步就过去
+// QueryMemory's answers for the guest modules and for everything outside the guest address space (used by 0x06 below).
+// A module is reported segment by segment the way Horizon maps an NSO (Atmosphère's loader sets the permissions per segment: text RX, ro R, data + bss RW; the kernel's SetProcessMemoryPermission turns writable Code into CodeData):
+//   [0, ro) Code/RX, [ro, data) Code/R, [data, key page) CodeData/RW (bss and the padding to 16 KiB included).
+// The key page (read-only) and the patch area (read-only + execute) that the loader appends do not exist on the device; they are reported as GeneratedCode (Horizon's state for code generated at run time), so no module-walking query counts them as part of a module,
+// and a walk backwards from the next module's text stops there (the host maps the modules end to end, so a patch area sits right before the next module's text).
+// The SDK's nn::ro::detail::GetExceptionInfo (sdk+0x3642e0, which finds eh_frame_hdr when C++ throws) walks back from the Code/RX block holding pc to the module start and forward over all the Code blocks,
+// then requires CodeData right after, and aborts otherwise. Before, every address outside the guest address space was answered with "the 4 KiB Code/RX page holding it": the walk went back page by page to 0 (about a million queries)
+// and never met CodeData going forward, so any throw became an abort. Host addresses outside the guest address space, the modules and the current thread's host stack are now one Inaccessible block (as Horizon answers outside its address space), which a block-by-block walk passes in one step
+enum { MS_CODE = 0x03, MS_CODEDATA = 0x04, MS_INACCESSIBLE = 0x10, MS_GENERATEDCODE = 0x14 };
+static void query_module(const module_t *m, uint64_t addr, uint64_t *base, uint64_t *size, uint64_t *state, uint64_t *perm) {
+    uint64_t b = (uint64_t)m->base, off = addr - b, ro = m->ro_off, da = m->data_off, kp = m->key_page_off, po = m->patch_off, end = m->size;
+    if (!(ro && ro <= da && da <= kp && kp <= po && po <= end)) { *base = b; *size = end; *state = MS_CODE; *perm = 5; return; }   // 布局不全：整块当 Code/RX | incomplete layout: the whole module as Code/RX
+    if (off < ro)      { *base = b;      *size = ro;       *state = MS_CODE;          *perm = 5; }   // text RX
+    else if (off < da) { *base = b + ro; *size = da - ro;  *state = MS_CODE;          *perm = 1; }   // ro R
+    else if (off < kp) { *base = b + da; *size = kp - da;  *state = MS_CODEDATA;      *perm = 3; }   // data + bss RW
+    else if (off < po) { *base = b + kp; *size = po - kp;  *state = MS_GENERATEDCODE; *perm = 1; }   // 键页 R | key page R
+    else               { *base = b + po; *size = end - po; *state = MS_GENERATEDCODE; *perm = 5; }   // 补丁区 RX | patch area RX
+}
+// 宿主地址：从下面最近一个已知区（客体地址空间、模块、当前线程的宿主栈）的末尾，到上面最近一个的开头；上面没有就到地址空间顶（大小按 2^64 回绕）
+// A host address: from the end of the nearest known region below (guest address space, a module, the current thread's host stack) to the start of the nearest one above; with none above, up to the top of the address space (the size wraps at 2^64)
+static void query_outside(uint64_t addr, uint64_t stk_lo, uint64_t stk_hi, uint64_t *base, uint64_t *size) {
+    uint64_t lo = 0, hi = 0;
+    uint64_t rb[MAX_MOD + 2], re[MAX_MOD + 2]; int n = 0;
+    rb[n] = (uint64_t)g_as; re[n++] = (uint64_t)g_as + g_reserve;
+    rb[n] = stk_lo; re[n++] = stk_hi;
+    for (int i = 0; i < g_nmod && n < MAX_MOD + 2; i++) { rb[n] = (uint64_t)g_mod[i].base; re[n++] = (uint64_t)g_mod[i].base + g_mod[i].size; }
+    for (int i = 0; i < n; i++) {
+        if (re[i] <= addr && re[i] > lo) lo = re[i];
+        if (rb[i] > addr && (!hi || rb[i] < hi)) hi = rb[i];
+    }
+    *base = lo; *size = hi - lo;
+}
+
 int svc_thread(int num, uint64_t *regs);   // hle_thread.c：线程与同步类 | hle_thread.c: thread and synchronization kind
 
 uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
@@ -210,9 +251,15 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
             // so the main thread stack was recorded as one page. Whether the sp at init and a later sp share a page depends on the absolute position of the host stack top, which moves with the total length of environment variables / launch arguments (a different environment occasionally aborts at startup).
             // This Diablo build does not call GetCurrentStackInfo (main / subsdk0 do not import it and the SDK has no internal call site; the host reaches the main menu with 12 different environment padding lengths), so it was never hit; reporting "one page" is wrong in itself, so fix it anyway.
             uint64_t top = (uint64_t)pthread_get_stackaddr_np(pthread_self()), ssz = pthread_get_stacksize_np(pthread_self());
-            if (addr < top && addr >= top - ssz) { base = top - ssz; size = ssz; state = 0xB/*Stack*/; perm = 3; }
-            else { base=addr & ~0xFFFull; size=0x1000; state=3/*Code*/; perm=5; } }
+            const module_t *mo = module_of(a);
+            if (mo) query_module(mo, addr, &base, &size, &state, &perm);   // 客体模块按段（见 query_module） | a guest module, by segment (see query_module)
+            else if (addr < top && addr >= top - ssz) { base = top - ssz; size = ssz; state = 0xB/*Stack*/; perm = 3; }
+            else { query_outside(addr, top - ssz, top, &base, &size); state = MS_INACCESSIBLE; perm = 0; } }
         pthread_mutex_unlock(&g_map_lock);
+        // DM_SVC：每次查询的回答与调用点。门块先把调用方的 x29 / x30 压栈，dm_gate 再往下开 800 字节存寄存器，所以调用方的返回地址在 regs[101]
+        // DM_SVC: every query's answer and call site. The gate block first pushes the caller's x29 / x30, then dm_gate opens 800 bytes below for the registers, so the caller's return address is at regs[101]
+        if (g_flag.svc) { uint64_t clr = regs[101]; module_t *lm = module_of((void *)clr);
+            LOG("QueryMemory %#llx → %#llx+%#llx 状态 %#llx 权限 %llu（调用点 %s+%#llx）", addr, base, size, state, perm, lm ? lm->name : "?", lm ? clr - (uint64_t)lm->base : clr); }
         if (mi) { uint64_t *m=(uint64_t*)mi; m[0]=base; m[1]=size; ((uint32_t*)mi)[4]=state; ((uint32_t*)mi)[5]=0; ((uint32_t*)mi)[6]=perm; ((uint32_t*)mi)[7]=0; ((uint32_t*)mi)[8]=0; }
         regs[0] = 0; regs[1] = 0; return 0;
     }
