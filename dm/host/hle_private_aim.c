@@ -33,27 +33,37 @@ static int read_live(uint64_t a,void *out,size_t n) {
 // ---- 按住拖动时由手指方向选目标（缺省启用，半角 AIM_CONE_DEG；测试开关 DM_AIM_CONE=<半角度数> 可调，=0 关掉回到原生选目标） ----
 // 原生每帧按「距离 + 与移动摇杆方向 / 朝向的夹角」选怪（main+0x2f4320 / 0x2f8f90，±90°、20–22 格），右摇杆不参与，所以拖技能钮不改变打谁。
 // 这里在算施放方向的同一刻（本适配，早于游戏取目标）：手指方向的锥内有怪 → 把它写进「指定目标槽」（管理器 +0xd10，点击入口 0x4acec4 优先于自动选的）；
-// 锥内没怪 → 把当前技能手柄记录的 alwaysIgnoreTarget（记录 +0x18，旋风 / 传送原版就置位）临时置 1，游戏就按方向对位置放。右摇杆归零（点按不拖）时两处都恢复，原生不变。
+// 锥内没怪 → 把当前技能手柄记录的 alwaysIgnoreTarget（记录 +0x18，旋风 / 传送原版就置位）临时置 1，游戏就按方向对位置放。指定目标槽在下一次取手柄时清掉（只给这一次施放用），技能记录的标志在右摇杆归零（点按不拖）时恢复，原生不变。
 // 每次施放（按下沿与按住重放）都重新选：锁着的那只死了 / 走出锥，下一次施放就换锥内夹角最小的另一只，锥内没有了就对位置放。
 // ---- Target selection by finger direction during hold-and-drag (enabled by default, half angle AIM_CONE_DEG; adjustable with the test switch DM_AIM_CONE=<half angle in degrees>, =0 turns it off and returns to native target selection) ----
 // Natively a monster is selected every frame by "distance + angle to the move stick direction / facing" (main+0x2f4320 / 0x2f8f90, ±90°, 20–22 cells), the right stick takes no part, so dragging a skill button does not change who gets hit.
 // Here, at the same moment the cast direction is computed (this adaptation, earlier than the game fetching the target): a monster inside the finger direction cone → write it into the "designated target slot" (manager +0xd10, the click entry 0x4acec4 takes priority over the auto-selected one);
-// no monster in the cone → temporarily set alwaysIgnoreTarget of the current skill's controller record (record +0x18, already set for Whirlwind / Teleport in the original game) to 1, and the game casts at the position by direction. When the right stick returns to zero (tap without drag) both places are restored, native behavior unchanged.
+// no monster in the cone → temporarily set alwaysIgnoreTarget of the current skill's controller record (record +0x18, already set for Whirlwind / Teleport in the original game) to 1, and the game casts at the position by direction. The designated target slot is cleared at the next controller read (it serves only this cast), and the skill record's flag is restored when the right stick returns to zero (tap without drag), native behavior unchanged.
 // Every cast (press edge and hold recast) selects again: if the locked one died / walked out of the cone, the next cast switches to another one with the smallest angle in the cone, and casts at the position if none is left in the cone.
 #define AIM_CONE_DEG 30.0f
 #define AIM_CONE_MAX_DIST 22.0f
 static uint64_t g_cone_rec, g_cone_slot_mgr; static uint8_t g_cone_rec_was; static _Atomic int g_cone_set;
 static float cone_cos(void) { static float c = -2; if (c < -1.5f) { const char *e = getenv("DM_AIM_CONE"); float d = e ? (float)atof(e) : AIM_CONE_DEG; c = d > 0 ? cosf(d * 3.14159265f / 180.0f) : 2.0f; } return c; }   // 2 = 关掉 | 2 = off
 static int cone_unit_xy(uint64_t u, float *x, float *y) { uint64_t pp = 0; uint16_t a = 0, c = 0; if (!read_live(u + 0x38, &pp, 8) || !pp || !read_live(pp + 2, &a, 2) || !read_live(pp + 6, &c, 2)) return 0; *x = (float)a + 0.5f; *y = (float)c + 0.5f; return 1; }   // 会走动的单位（玩家 / 怪）：路径结构 +2 / +6 是整数格（+0 / +4 是 16.16 定点的低半） | units that walk (players / monsters): path struct +2 / +6 are integer cells (+0 / +4 are the low half of the 16.16 fixed point)
+// 指定目标槽只在这一次施放里有效：写进去的是怪的单位指针，游戏读它不核死活（main+0x4acec4 取出来直接读类别与路径）。
+// 读它的点击入口就在施放的同一个函数里、算完方向之后（按下沿 0x2b5b7c → 0x2b5c38 / 0x2b5c64，按住重放 0x2b3294 → 0x2b3328），
+// 所以到下一次取手柄时就用不着了，那时清掉（同 dm_world.c 只在调点击入口那一下前后写槽）；原先要等右摇杆归零或下一次施放才清，那只怪被释放后指针还留在槽里
+// The designated target slot is valid only for this one cast: what is written is the monster's unit pointer, and the game reads it without checking it is alive (main+0x4acec4 loads it and reads the type and path directly).
+// The click entry that reads it is in the same cast function, after the direction is computed (press edge 0x2b5b7c -> 0x2b5c38 / 0x2b5c64, hold recast 0x2b3294 -> 0x2b3328),
+// so by the next controller read it is no longer needed and is cleared then (as dm_world.c writes the slot only around its own call to the click entry); before, it stayed until the right stick returned to zero or the next cast, so a freed monster's pointer could remain in the slot
+static void cone_lock(uint64_t mgr, uint64_t unit) { *(uint64_t *)(mgr + 0xd10) = unit; g_cone_slot_mgr = mgr; }
+static void cone_unlock(void) { if (g_cone_slot_mgr) { *(uint64_t *)(g_cone_slot_mgr + 0xd10) = 0; g_cone_slot_mgr = 0; } }
 static void cone_restore(void) {
     if (g_cone_rec) { *(uint8_t *)(g_cone_rec + 0x18) = g_cone_rec_was; g_cone_rec = 0; }
-    if (g_cone_slot_mgr) { *(uint64_t *)(g_cone_slot_mgr + 0xd10) = 0; g_cone_slot_mgr = 0; }
+    cone_unlock();
     atomic_store(&g_cone_set, 0);
 }
-// 取手柄处每帧调（hle_hid.c）：右摇杆归零了就把动过的两处恢复（拖完之后没有再施放时，不能把指定目标留在槽里）
-// Called every frame at the controller read (hle_hid.c): once the right stick returns to zero, restore the two places that were changed (when there is no further cast after the drag ends, the designated target must not be left in the slot)
+// 取手柄处每帧调（hle_hid.c）：指定目标槽清掉（见上）；右摇杆归零了就把技能记录的标志也恢复（拖完之后没有再施放时，不能把它留着）
+// Called every frame at the controller read (hle_hid.c): the designated target slot is cleared (see above); once the right stick returns to zero the skill record's flag is restored too (when there is no further cast after the drag ends, it must not be left set)
 void dm_aim_cone_pump(void) {
-    if (!atomic_load(&g_cone_set)) return; int32_t rx = 0, ry = 0; dm_input_sampled_right(&rx, &ry);
+    if (!atomic_load(&g_cone_set)) return;
+    cone_unlock(); if (!g_cone_rec) { atomic_store(&g_cone_set, 0); return; }
+    int32_t rx = 0, ry = 0; dm_input_sampled_right(&rx, &ry);
     if (!(getenv("DM_TEST_AIM") || getenv("DM_TEST_AIM_AT")) && !rx && !ry) { cone_restore(); return; }
 }
 // 在客户端单位表里找手指方向锥内的怪：类别 1（main+0x2f7b7c）、可选中（0x464a70）、22 格内、夹角余弦 ≥ 门槛；取夹角最小的。out_n = 22 格内的怪总数（日志用）
@@ -147,7 +157,7 @@ void svc_private_skill_aim(uint64_t *regs) {
         if(cone_cos()<=1.0f) {   // 手指方向选目标 | target selection by finger direction
             cone_restore(); int nmon=0; float bc=0; float p0[2]={position[0],position[1]};
             uint64_t tgt=cone_pick(m,regs[1],p0,vec,cone_cos(),&nmon,&bc);
-            if(tgt){ *(uint64_t *)(mg+0xd10)=tgt; g_cone_slot_mgr=mg; }
+            if(tgt) cone_lock(mg,tgt);
             else if(rec){ g_cone_rec=rec; g_cone_rec_was=*(uint8_t *)(rec+0x18); *(uint8_t *)(rec+0x18)=1; }
             { static int dn=-1; static uint32_t lid, cnt; if(dn<0){ const char *e=getenv("DM_TEST_AIM_DROP"); dn=e?atoi(e):0; } if(dn>0&&tgt){ uint32_t id=*(uint32_t *)(tgt+8); cnt=id==lid?cnt+1:1; lid=id; if(cnt>=(uint32_t)dn&&g_cone_ndrop<8){ g_cone_dropped[g_cone_ndrop++]=id; LOG("瞄准测试：id %u 被锁满 %d 次，之后当它死了",id,dn); } } }
             atomic_store(&g_cone_set,1);

@@ -12,6 +12,7 @@ MOVIE_TEST_FLAGS ?= -O1
 run: \
 	$(B)/main.orig.bin \
 	$(B)/subsdk0.orig.bin \
+	$(B)/t_aim_cone \
 	$(B)/t_altstack \
 	$(B)/t_audio \
 	$(B)/t_audio_spsc \
@@ -112,6 +113,7 @@ run: \
 	$(B)/t_audio
 	$(B)/t_audio_spsc
 	$(B)/t_swkbd
+	$(B)/t_aim_cone
 	$(B)/t_altstack
 	$(B)/t_movie
 	$(B)/t_movie_loop
@@ -177,6 +179,8 @@ $(B)/t_audio_spsc_tsan: t_audio_spsc.c ../hle_audio.c ../hle.h ../dm.h | $(B)
 	clang -O1 -g -O1 -fsanitize=thread -Wno-unused-function -I.. -o $@ t_audio_spsc.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
 $(B)/t_swkbd: t_swkbd.c ../hle_swkbd.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_swkbd.c ../hle_swkbd.c
+$(B)/t_aim_cone: t_aim_cone.c ../hle_private_aim.c ../dm.h ../dm_input.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_aim_cone.c
 $(B)/t_movie_loop: t_movie_loop.c ../hle_movie.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_movie_loop.c
 $(B)/t_movie: t_movie.c ../hle_movie.c ../hle.h ../dm.h | $(B)

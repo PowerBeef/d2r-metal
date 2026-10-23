@@ -398,8 +398,8 @@ DM_TARGET	tools	tools/patch_nso.py	y
 DM_TARGET_LOG	host	host/hle_target.c	-
 DM_TEAM_ID	ios-tools	ios/project.yml	y
 DM_TEMP	android,harmony,host,ios,tvos	android/jni_android.c harmony/native/napi_ohos.c host/app_mac.m host/hle_fs.c …	y
-DM_TEST_AIM	host	host/hle_private_aim.c	-
-DM_TEST_AIM_AT	host	host/hle_private_aim.c	-
+DM_TEST_AIM	host	host/hle_private_aim.c host/tests/t_aim_cone.c	-
+DM_TEST_AIM_AT	host	host/hle_private_aim.c host/tests/t_aim_cone.c	-
 DM_TEST_AIM_DROP	host	host/hle_private_aim.c	-
 DM_TEST_ALONE_NOPAD	host	host/hle_hid.c	-
 DM_TEST_AUDIO_INTERRUPT	ios	ios/Sources/front_ios.m	-
