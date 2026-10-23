@@ -123,6 +123,7 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
 	python3 test_tbdr_budget.py
+	python3 test_ub_table.py
 .PHONY: run
 # 旧接口版那一遍（图形后端编译期开关 DM_NVN_M3=1，目标 macOS 15.0）：在旁边的 tests_m3 目录里用同一份测试源码另编另跑，不动这里的缺省产物。
 # 闸门（verify/accept.sh）两遍都跑，免得以后只测一边

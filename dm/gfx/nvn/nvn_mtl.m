@@ -762,14 +762,14 @@ static _Atomic uint64_t g_cur_frame;
 //   @set:<全局变量名>=<值>   进相时把这个 int 全局变量设成该值、出相时还原（按符号名找地址；真机上要用的开关须在下面的登记表里加一行）
 //   <片元着色器键前缀> 或 *   该相丢掉这些片元着色器的全部绘制（画面会错，只量「这类绘制值多少」；近乎空载的类别要单独成轮）
 // 读数：每相丢掉前 45 帧（过渡 + 上屏滞后），其余帧的实际上屏间隔（与 perf.txt 同源）均值与 16.7 / 25 / ≥33 ms 三档帧数，日志一行「UB 上屏」。
-// 出表：$DM_ROOT/run/ruler/ub_table.py；真机脚本：$DM_ROOT/run/ruler/ub_alt.sh。
+// 出表：gfx/tools/ub_table.py <宿主日志>（相邻基准相配对差 + 自助法 95% 区间，末行 RESULT {json}）。原来的真机脚本 ub_alt.sh 不在仓库里。
 // ---------- Same-process alternating measurement (DM_NVN_UB, off by default: without the environment variable the code below only adds one 'is it enabled' check) ----------
 // On a hot real device the system keeps adjusting power / frequency, and segment comparison (segments A and B each run for a minute) cannot resolve differences of <10%; within the same run, toggle by phase in turn and take differences of adjacent phase pairs, so the drift cancels.
 // DM_NVN_UB="name=item,item;name=item", one phase every DM_NVN_UB_N frames (default 180, minimum 60): even phases = baseline (nothing changed), odd phases take one category in turn. Each item of a category:
 //   @set:<global variable name>=<value>   on entering the phase set this int global variable to the value, on leaving restore it (address found by symbol name; switches to be used on a real device must have a line added to the registration table below)
 //   <fragment shader key prefix> or *   the phase drops all draws of these fragment shaders (the picture will be wrong; it only measures 'how much this kind of draw is worth'; a nearly idle category needs a round of its own)
 // Readings: each phase discards its first 45 frames (transition + present lag); for the remaining frames, the mean of the actual present interval (same source as perf.txt) and the frame counts in the three buckets 16.7 / 25 / ≥33 ms, one log line 「UB 上屏」(UB present).
-// Table output: $DM_ROOT/run/ruler/ub_table.py; real-device script: $DM_ROOT/run/ruler/ub_alt.sh.
+// Table output: gfx/tools/ub_table.py <host log> (paired difference to the adjacent baseline phases + bootstrap 95% interval, last line RESULT {json}). The old real-device script ub_alt.sh is not in the repo.
 static int g_ub_n = -1, g_ub_N = 180; static _Atomic int g_ub_cur = -1; static char g_ub_name[16][16], g_ub_keys[16][16][48]; static int g_ub_nk[16];
 static _Atomic int g_ubp_on, g_ubp_c[4]; static _Atomic uint64_t g_ubp_sum_us;
 uint64_t (*g_ub_sub_cpu_ns)(void), (*g_ub_sub_cyc)(void);   // hle_nvn.c 登记：翻译线程提交的累计 CPU 纳秒 / 周期（没登记时按 0） | Registered by hle_nvn.c: cumulative CPU nanoseconds / cycles of submissions from the translation thread (0 when not registered)
