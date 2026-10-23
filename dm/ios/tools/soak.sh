@@ -1,12 +1,12 @@
 #!/bin/bash
-# 真机局内浸泡（同 Mac 浸泡口径）：r17 + 术士存档可写副本 + cvd5 真值局的种子 / 固定时刻 + cvd5 回放进局；回放完（DM:ReplayDone）后先按 B 关闭传送点菜单（确认 ClosePanel:WaypointsPanelExpansion），再
+# 真机局内浸泡（同 Mac 浸泡口径）：当前产物（缺省 keypage）+ 术士存档可写副本 + cvd5 真值局的种子 / 固定时刻 + cvd5 回放进局；回放完（DM:ReplayDone）后先按 B 关闭传送点菜单（确认 ClosePanel:WaypointsPanelExpansion），再
 # 左摇杆按 左→上→右→下 各 8 秒循环走动到浸泡结束；DM_SOAK 每 60 秒一行，墙钟上限 35 分钟。
-# 用法：[DM_OUT=产物目录（缺省 r17）] [SOAK_IV=采样秒（缺省 60）] dm/ios/tools/soak.sh [分钟=35]     产物：$DM_ROOT/run/ios/soak/（soak.tsv、boot.txt、报告）
-# 判据：soak_report.py 四项（拍号增长、第 5 分钟后内存斜率、句柄 / 线程不变、帧时间 p95 前后段）+ 真机两项（每分钟温控档位与 footprint、p95 随时间）
-# Real device in-game soak (same basis as the Mac soak): r17 + writable copy of the warlock save + the seed / fixed time of the cvd5 ground truth run + cvd5 replay to enter the game; after the replay finishes (DM:ReplayDone) first press B to close the waypoint menu (confirming ClosePanel:WaypointsPanelExpansion), then
+# 用法：[DM_OUT=产物目录（缺省当前的 keypage 产物）] [SOAK_IV=采样秒（缺省 60）] dm/ios/tools/soak.sh [分钟=35]     产物：$DM_ROOT/run/ios/soak/（soak.tsv、boot.txt、报告）
+# 判据：tools/soak_report.py 四项（拍号增长、第 5 分钟后内存斜率、句柄 / 线程不变、帧时间 p95 前后段）+ 真机两项（每分钟温控档位与 footprint、p95 随时间）
+# Real device in-game soak (same basis as the Mac soak): the current build output (keypage by default) + writable copy of the warlock save + the seed / fixed time of the cvd5 ground truth run + cvd5 replay to enter the game; after the replay finishes (DM:ReplayDone) first press B to close the waypoint menu (confirming ClosePanel:WaypointsPanelExpansion), then
 # walk in a loop with the left stick left→up→right→down for 8 seconds each until the soak ends; one DM_SOAK line every 60 seconds, wall-clock limit 35 minutes.
-# Usage: [DM_OUT=build output dir (default r17)] [SOAK_IV=sampling seconds (default 60)] dm/ios/tools/soak.sh [minutes=35]     Output: $DM_ROOT/run/ios/soak/ (soak.tsv, boot.txt, report)
-# Criteria: soak_report.py's four items (tick number growth, memory slope after minute 5, handles / threads unchanged, frame time p95 first vs. second half) + two real device items (thermal state and footprint per minute, p95 over time)
+# Usage: [DM_OUT=build output dir (default: the current keypage build output)] [SOAK_IV=sampling seconds (default 60)] dm/ios/tools/soak.sh [minutes=35]     Output: $DM_ROOT/run/ios/soak/ (soak.tsv, boot.txt, report)
+# Criteria: tools/soak_report.py's four items (tick number growth, memory slope after minute 5, handles / threads unchanged, frame time p95 first vs. second half) + two real device items (thermal state and footprint per minute, p95 over time)
 set -u
 cd "$(dirname "$0")/.."
 source tools/local_env.sh && local_env_need DM_DEVICE || exit 1   # 本机设备配置（不进仓，见 dm/ios/local.env.example） | Local device configuration (not committed, see dm/ios/local.env.example)
@@ -36,7 +36,7 @@ while alive && [ $((SECONDS - s)) -lt $((MIN * 60 + 120)) ]; do sleep 60; done
 xcrun devicectl device copy from --device $D --domain-type appDataContainer --domain-identifier $B --source "Documents/soak_$RUN.tsv" --destination "$R/soak.tsv" > /dev/null 2>&1 || t "🔴 拉 soak.tsv 失败"
 xcrun devicectl device copy from --device $D --domain-type appDataContainer --domain-identifier $B --source Documents/boot.txt --destination "$R/boot.txt" > /dev/null 2>&1 || t "🔴 拉 boot.txt 失败"
 t "结束（墙钟 $(((SECONDS - s) / 60)) 分钟）"
-python3 "${DM_ROOT:-$HOME/dm-work}/run/platform/soak_report.py" "$R/soak.tsv" "$R/boot.txt"
+python3 tools/soak_report.py "$R/soak.tsv" "$R/boot.txt"   # 原先调工作区里一份不在仓里的脚本（$DM_ROOT/run/platform），现在用仓里的 | previously called a script in the workspace that was not in the repository ($DM_ROOT/run/platform); now the one in the repository
 echo "⑤ 每分钟温控档位 / footprint："
 python3 - "$R/soak.tsv" "$R/boot.txt" <<'PY'
 import sys, re
