@@ -12,8 +12,10 @@ BAD=$(git -C "$W" ls-files -- dm/ios/NativeHUD/v4 dm/ios/NativeHUD/mapgoal dm/io
 [ -z "$BAD" ] || { echo "HUDGEN 红：原版衍生的生成物进了仓库（应该构建时从游戏文件生成）："; echo "$BAD" | sed 's/^/  /'; exit 1; }
 R=${DM_ROMFS_SRC:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/RomFS}
 [ -f "$R/data/build_manifest.psv" ] || { echo "HUDGEN OK（入库检查）；生成检查跳过：这台机器没有游戏文件 $R"; exit 0; }
+# 日志也放进临时目录（原先写在它旁边的 $T.art.log / $T.log，退出时不删、一次留两个）；生成物单放 $T/out，按文件数核
+# The logs go inside the temporary folder too (they used to be $T.art.log / $T.log next to it, left behind on exit, two per run); the generated files go to $T/out on their own and are counted there
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-python3 "$I/tools/native_art/generate.py" "$R" > "$T.art.log" 2>&1 || { echo "HUDGEN 红：技能图集生成不通（底栏要用它）"; tail -3 "$T.art.log"; exit 1; }   # 底栏的技能图标取自技能图集（Sources/TouchArt，git 忽略）；干净的树里没有，先生成 | The bottom bar's skill icons come from the skill atlas (Sources/TouchArt, git-ignored); a clean tree has none, so generate it first
-python3 "$I/tools/gen_hud_v4.py" "$R" "$T" > "$T.log" 2>&1 || { echo "HUDGEN 红：gen_hud_v4.py 跑不通"; tail -3 "$T.log"; exit 1; }
-n=$(find "$T" -type f | wc -l | tr -d ' '); [ "$n" -ge 79 ] || { echo "HUDGEN 红：底部 UI v4 只生成了 $n 个文件（应 79）"; exit 1; }
-echo "HUDGEN OK：生成物没有入库；底部 UI v4 从游戏文件生成 $n 个文件$(grep -q '^没找到 PC' "$T.log" && echo '（Switch 素材放大版）')"
+python3 "$I/tools/native_art/generate.py" "$R" > "$T/art.log" 2>&1 || { echo "HUDGEN 红：技能图集生成不通（底栏要用它）"; tail -3 "$T/art.log"; exit 1; }   # 底栏的技能图标取自技能图集（Sources/TouchArt，git 忽略）；干净的树里没有，先生成 | The bottom bar's skill icons come from the skill atlas (Sources/TouchArt, git-ignored); a clean tree has none, so generate it first
+python3 "$I/tools/gen_hud_v4.py" "$R" "$T/out" > "$T/hud.log" 2>&1 || { echo "HUDGEN 红：gen_hud_v4.py 跑不通"; tail -3 "$T/hud.log"; exit 1; }
+n=$(find "$T/out" -type f | wc -l | tr -d ' '); [ "$n" -ge 79 ] || { echo "HUDGEN 红：底部 UI v4 只生成了 $n 个文件（应 79）"; exit 1; }
+echo "HUDGEN OK：生成物没有入库；底部 UI v4 从游戏文件生成 $n 个文件$(grep -q '^没找到 PC' "$T/hud.log" && echo '（Switch 素材放大版）')"
