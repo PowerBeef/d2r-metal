@@ -3075,7 +3075,7 @@ static inline int m3_use_seen(void *p, uint32_t u) {
 #endif
 static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, int metal_vertex) {
     if (!sh->ae) return 1;
-    uint64_t slots[NVN_REFL_MAXB] = {0};
+    uint64_t slots[NVN_REFL_MAXB];   // 只清本着色器参数块那么长（arg_len = 8 ×（最大序号 + 1），shader_load 核过）：上限放大后每次新编的清零量不变，复用路径不清 | Only clear as much as this shader's argument block (arg_len = 8 x (max index + 1), checked in shader_load): with the larger limit each new encode clears the same amount, and the reuse path clears nothing
     args_sync_dirty();
     if (!passdump() && !g_args_dirty[nvn_stage] && sh->ab_buf && sh->ab_pass == g_pass.serial && nvn_stage != 5) {
         bind_args(en, nvn_stage, metal_vertex, sh->ab_buf, sh->ab_gpu, sh->ab_off, sh->rf.abi);
@@ -3099,6 +3099,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
     static uint64_t bl_pass[6]; static int bl_all = -1; if (bl_all < 0) bl_all = getenv("DM_NVN_PASSDUMP_ALL") != NULL;   // 每次新编都记（否则只记每通道每阶段第一次） | Record on every new encode (otherwise only the first time per pass per stage)
     int bl = passdump() && (bl_all || bl_pass[nvn_stage] != g_stat_pass);
     if (bl) { bl_pass[nvn_stage] = g_stat_pass; PD("K %llu st%d key=%s nb=%d", g_stat_pass, nvn_stage, sh->key[0] ? sh->key : sh->builtin ? sh->builtin : "?", sh->rf.nb); }
+    memset(slots, 0, MIN(sh->arg_len ? sh->arg_len : sh->ae.encodedLength, sizeof slots));
     pthread_mutex_lock(&g_rmu);   // 贴图 / 采样器登记表可能正被游戏线程扩容或改写 | The texture / sampler registration tables may be being grown or rewritten by the game thread
     for (int i = 0; i < sh->rf.nb; i++) {
         const nvn_rbind *b = &sh->rf.b[i];

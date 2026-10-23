@@ -64,9 +64,13 @@ int main(void) { @autoreleasepool {
     {   int f1 = fail;
         NSDictionary *b1 = @{@"route": @"B", @"bindings": @[@{@"kind": @"foo", @"arg_id": @0, @"msl_name": @"x", @"msl_type": @"constant _16*"}]};
         NSDictionary *b2 = @{@"route": @"B", @"bindings": @[@{@"kind": @"tex", @"reg": [NSNull null], @"arg_id": @0, @"msl_name": @"fp_t_x", @"msl_type": @"texture2d<float>"}]};
+        NSDictionary *b3 = @{@"route": @"B", @"bindings": @[@{@"kind": @"cbuf", @"reg": @0, @"arg_id": @(NVN_REFL_MAXB), @"msl_name": @"fp_c3", @"msl_type": @"constant _16*"}]};
+        NSDictionary *b4 = @{@"route": @"B", @"bindings": @[@{@"kind": @"cbuf", @"reg": @0, @"arg_id": @(-1), @"msl_name": @"fp_c3", @"msl_type": @"constant _16*"}]};
         check("B 未知种类报失败", 1, nvn_refl_from_json(b1, &r, err, sizeof err) != 0);
         check("B 贴图没解出槽号报失败", 1, nvn_refl_from_json(b2, &r, err, sizeof err) != 0);
-        printf("%-60s %s\n", "B 负对照：未知种类 / 槽号缺失", fail == f1 ? "✓" : "✗");
+        check("B 参数序号 = 上限报失败（回放按序号写定长数组）", 1, nvn_refl_from_json(b3, &r, err, sizeof err) != 0);
+        check("B 参数序号为负报失败", 1, nvn_refl_from_json(b4, &r, err, sizeof err) != 0);
+        printf("%-60s %s\n", "B 负对照：未知种类 / 槽号缺失 / 参数序号越界", fail == f1 ? "✓" : "✗");
     }
     printf("== %d 项，失败 %d ==\n", n, fail);
     return fail != 0;

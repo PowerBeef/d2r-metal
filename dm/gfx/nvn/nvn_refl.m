@@ -31,6 +31,7 @@ int nvn_refl_from_json(NSDictionary *j, nvn_refl *o, char *err, int errlen) {
         for (NSDictionary *b in bs) {
             NSString *k = b[@"kind"]; nvn_rbind *r = &o->b[o->nb];
             id rg = b[@"reg"]; int reg = [rg isKindOfClass:[NSNumber class]] ? [rg intValue] : -1, aid = [b[@"arg_id"] intValue];
+            if (aid < 0 || aid >= NVN_REFL_MAXB) FAIL("B 绑定 %s 的参数序号 %d 越界（上限 %d）", [b[@"msl_name"] UTF8String], aid, NVN_REFL_MAXB);   // 回放按序号写定长数组（nvn_mtl.m encode_args slots） | The replay writes a fixed-length array by this index (nvn_mtl.m encode_args slots)
             r->aid = (uint16_t)aid; r->reg = reg < 0 ? 0 : (uint16_t)reg;
             if ([k isEqualToString:@"cbuf"]) r->kind = NVN_RB_CBUF;
             else if ([k isEqualToString:@"samp"]) r->kind = NVN_RB_SAMP;

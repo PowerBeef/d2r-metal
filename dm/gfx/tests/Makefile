@@ -20,6 +20,8 @@ t_deswz_gpu: t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../
 	clang $(CFLAGS) -fobjc-arc -o $@ t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../nvn/nvn_tex.c -framework Metal -framework Foundation
 t_refl: t_refl.m ../nvn/nvn_refl.m ../nvn/nvn_refl.h ../nvn/dmsh_chain.h
 	clang -O1 -g -Wall -fobjc-arc -o $@ t_refl.m ../nvn/nvn_refl.m -framework Metal -framework Foundation
+t_refl_lib: t_refl_lib.m ../nvn/nvn_refl.m ../nvn/nvn_refl.h ../nvn/dmsh_chain.h
+	clang -O1 -g -Wall -fobjc-arc -o $@ t_refl_lib.m ../nvn/nvn_refl.m -framework Metal -framework Foundation
 t_hmap: t_hmap.c ../nvn/nvn_hmap.h
 	clang -O1 -Wall -o $@ t_hmap.c
 t_cover: t_cover.c ../nvn/nvn_cover.h
@@ -81,6 +83,7 @@ run: \
 	t_present_crop \
 	t_pso_skey \
 	t_refl \
+	t_refl_lib \
 	t_reorder_chain \
 	t_rt_depth_ro \
 	t_rt_range \
@@ -100,6 +103,7 @@ run: \
 	./t_adaptive_pace
 	./t_completion_wait
 	./t_refl
+	./t_refl_lib
 	./t_hmap
 	./t_cover
 	./t_fuse_check
