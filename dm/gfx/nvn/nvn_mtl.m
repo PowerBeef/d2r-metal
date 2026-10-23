@@ -4036,7 +4036,7 @@ static void defer_env(void);
 static void defer_reset(void) { defer_clear_all(); g_defer_replaying = 0; defer_env(); }
 static void defer_apply_p_clear(void) {
     memset(R.clear_c, 0, sizeof R.clear_c); R.clear_d = R.clear_s = 0;
-    for (int j = 0; j < g_defer.q_rt.n; j++) { int i = g_defer.lmap[j]; if (i >= 0 && g_defer.clear_c[i]) { R.clear_c[j] = 1; R.cc[j] = g_defer.cc[i]; } }
+    for (int j = 0; j < g_defer.q_rt.n; j++) { int i = g_defer.lmap[j]; if (i < 8 && g_defer.clear_c[i]) { R.clear_c[j] = 1; R.cc[j] = g_defer.cc[i]; } }   // lmap 是 uint8_t、0xff = 没有对应：原先判 i >= 0 恒真，读到 clear_c[255]（UBSan 查出） | lmap is uint8_t with 0xff = no mapping: the old i >= 0 test was always true and read clear_c[255] (found by UBSan)
     if (g_defer.clear_d) { R.clear_d = 1; R.cd = g_defer.cd; } if (g_defer.clear_s) { R.clear_s = 1; R.cs = g_defer.cs; }
 }
 static int defer_begin_q(const uint8_t *op) {
@@ -4048,7 +4048,7 @@ static int defer_begin_q(const uint8_t *op) {
     for (int i = 0; i < 4 && !R.rt.depth; i++) { const defer_t *d = &g_defer_slots[i]; if (d->active && !d->at_q && d->q_op == op && d->q_rt.depth) { R.rt.depth = d->q_rt.depth; R.rt.dview = d->q_rt.dview; R.rt.has_dview = d->q_rt.has_dview; } }   // 任一组需要的深度模板都挂上（同 Q 各组深度已核相容） | Attach the depth-stencil needed by any group (the depths of groups with the same Q have been checked compatible)
     memset(R.clear_c, 0, sizeof R.clear_c); R.clear_d = R.clear_s = 0;
     for (int i = 0; i < 4; i++) { defer_t *d = &g_defer_slots[i]; if (!d->active || d->at_q || d->q_op != op) continue;
-        for (int j = 0; j < d->q_rt.n; j++) { int k = d->lmap[j]; if (k >= 0 && d->clear_c[k]) { R.clear_c[j] = 1; R.cc[j] = d->cc[k]; } }
+        for (int j = 0; j < d->q_rt.n; j++) { int k = d->lmap[j]; if (k < 8 && d->clear_c[k]) { R.clear_c[j] = 1; R.cc[j] = d->cc[k]; } }   // 同上：0xff = 没有对应 | as above: 0xff = no mapping
         if (d->clear_d) { R.clear_d = 1; R.cd = d->cd; } if (d->clear_s) { R.clear_s = 1; R.cs = d->cs; }
         d->at_q = 1; g_defer_natq++;
     }
