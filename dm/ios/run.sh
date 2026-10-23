@@ -6,7 +6,7 @@
 # The app targets both iPhone and iPad by default; for iPhone only: DM_DEVICE_FAMILY=1 ./run.sh build (device family is a build setting; this passes it to xcodebuild for you)
 # Outputs and logs go to $DM_ROOT/run/ios/ (not in the repo). On device, stopping is by bundle: --terminate-existing stops only this App.
 set -u
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 source tools/devlock.sh
 source tools/asc_env.sh
 source tools/local_env.sh   # 本机设备配置（不进仓，见 local.env.example）；出包不需要设备号，装机 / 启动时才核 | Local device configuration (not committed, see local.env.example); packaging does not need a device ID, it is only checked at install / launch
@@ -36,6 +36,9 @@ fi
 if [ "$1" = build ]; then
   # 生成：宿主源文件/头路径/框架（取自 dm/host/Makefile）+ 映像三段内嵌汇编与 -segprot + 装载表头/门表进 App 资源 dm/
   # Generate: host source files/header paths/frameworks (taken from dm/host/Makefile) + embedded assembly for the three image segments and -segprot + load table header/gate table into the App resources dm/
+  # 往 Gen 里拷的每一样都要核：原先不核，产物目录少了门表照样出包，装上后一个门都没登记、开局就死在「unknown gate」
+  # Every copy into Gen is checked: it used to be unchecked, so a build output directory without the gate tables still made a package, which then registered no gate at all and died at "unknown gate" right at startup
+  cpx() { cp "$@" || { t "🔴 拷贝失败：cp $*"; exit 1; }; }
   mkdir -p Gen; for x in Gen/* Gen/.[!.]*; do [ -e "$x" ] && [ "$x" != Gen/assets ] && rm -rf "$x"; done; mkdir -p Gen/dm   # 每次重建 Gen，但留着 Gen/assets：原版衍生资源有自己的输入指纹与锁（tools/gen_assets.py），删了会和并行读它的功能用例撞（accept 红） | Rebuild Gen every time but keep Gen/assets: assets derived from the original game have their own input fingerprint and lock (tools/gen_assets.py); deleting them would collide with functional cases reading them in parallel (accept fails)
   # 产品包不监听任何端口：`listen(` 全库只许 main.m 日志端口一处，且监听线程只在 DM_LOG_PORT 测试开关下起
   # The product package listens on no port: across the whole codebase `listen(` is allowed only at the log port in main.m, and the listening thread only starts under the DM_LOG_PORT test switch
@@ -47,17 +50,17 @@ if [ "$1" = build ]; then
   python3 tools/gen_assets.py "${DM_ROMFS_SRC:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/RomFS}" || { t "🔴 gen_assets 失败（见上）"; exit 1; }
   make -s -C ../host dm_vault_tab.h dm_hud_exp.h dm_bright_levels.inc ROMFS="${DM_ROMFS_SRC:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/RomFS}" || { t "🔴 宿主表头生成失败（见上）"; exit 1; }
   python3 tools/gen_build.py ../host Gen > Gen/dm.xcconfig || { t "🔴 gen_build 失败"; exit 1; }
-  F=$(python3 tools/gen_embed.py $OUT Gen/embed.S $MODS) || { t "🔴 gen_embed 失败"; exit 1; }
+  F=$(python3 tools/gen_embed.py "$OUT" Gen/embed.S $MODS) || { t "🔴 gen_embed 失败"; exit 1; }
   echo "OTHER_LDFLAGS = \$(inherited) \$(DM_FRAMEWORKS) $F $MOVIE_LDFLAGS" >> Gen/dm.xcconfig
-  for m in $MODS; do cp $OUT/$m.fixups.tsv $OUT/$m.gates.tsv Gen/dm/; done
+  for m in $MODS; do cpx "$OUT/$m.fixups.tsv" "$OUT/$m.gates.tsv" Gen/dm/; done
   # 启动块清单（缺省开预取：宿主到产物目录 = App 内 dm/ 找 bootlist.tsv）+ main.cuts.tsv（宿主据此核清单构建号）；产物没有就不带
   # Boot block list (prefetch on by default: the host looks for bootlist.tsv in the build output directory = dm/ inside the App) + main.cuts.tsv (the host uses it to check the list's build ID); not included if the build output lacks them
-  for f in bootlist.tsv main.cuts.tsv; do [ -f $OUT/$f ] && cp $OUT/$f Gen/dm/; done
+  for f in bootlist.tsv main.cuts.tsv; do [ ! -f "$OUT/$f" ] || cpx "$OUT/$f" Gen/dm/; done
   # 图形：着色器映射表（与 Mac 同一份）+ iOS 版 metallib 缓存（PC 链 iphoneos 目标，已编，覆盖映射表 6,938/6,938；APFS 克隆不占空间）
   # Graphics: shader mapping table (the same copy as on Mac) + iOS metallib cache (PC chain iphoneos target, already compiled, covers 6,938/6,938 of the mapping table; APFS clones take no space)
-  cp ../gfx/nvn/shader_map.tsv Gen/dm/   # 映射表（B 路线只用来查阶段） | Mapping table (route B only uses it to look up the stage)
-  cp ../gfx/nvn/pso_manifest.tsv Gen/dm/   # 预热种子清单（与映射表同目录） | Warm-up seed list (same directory as the mapping table)
-  cp ../gfx/nvn/c1_full.tsv Gen/dm/   # c1 运行时下标未证有界的着色器清单（与映射表同目录；缺失则全部 c1 独占 64 KiB 并报红） | List of shaders whose c1 runtime index is not proven bounded (same directory as the mapping table; if missing, every c1 gets an exclusive 64 KiB and a failure is reported)
+  cpx ../gfx/nvn/shader_map.tsv Gen/dm/   # 映射表（B 路线只用来查阶段） | Mapping table (route B only uses it to look up the stage)
+  cpx ../gfx/nvn/pso_manifest.tsv Gen/dm/   # 预热种子清单（与映射表同目录） | Warm-up seed list (same directory as the mapping table)
+  cpx ../gfx/nvn/c1_full.tsv Gen/dm/   # c1 运行时下标未证有界的着色器清单（与映射表同目录；缺失则全部 c1 独占 64 KiB 并报红） | List of shaders whose c1 runtime index is not proven bounded (same directory as the mapping table; if missing, every c1 gets an exclusive 64 KiB and a failure is reported)
   # 着色器：B 路线（Switch 原版翻译）iOS 版 <键>_b.metallib + <键>_b.json，缺失回放层报红、不回退。
   # 出包：J=10 IOSOUT=<本目录> python3 ../gfx/tools/dmsh_build.py $DM_ROOT/build/cache/dm/dmsh <Mac 缓存目录>（编译口径 tools/ios_metal.py）
   # 宿主只从 DM_MSL_DIR/b-<V>/ 加载（V = dm/gfx/nvn/dmsh_chain.h 的翻译链版本），App 内放成 msl/b-<V>/，只带当前版本
@@ -66,10 +69,10 @@ if [ "$1" = build ]; then
   # The host loads only from DM_MSL_DIR/b-<V>/ (V = the translation chain version in dm/gfx/nvn/dmsh_chain.h); inside the App it is placed as msl/b-<V>/, carrying only the current version
   MSL=${DM_MSL_IOS:-${DM_ROOT:-$HOME/dm-work}/build/ios/dmsh_b}; V=$(sed -n 's/^#define DMSH_CHAIN "\(.*\)"/\1/p' ../gfx/nvn/dmsh_chain.h)
   [ -n "$V" ] && [ -d "$MSL/b-$V" ] && ls "$MSL/b-$V" | grep -q "_b.metallib$" || { t "🔴 缺 iOS 版 B 着色器 $MSL/b-${V}（见上一行出包命令；V=${V}）"; exit 1; }
-  mkdir -p Gen/msl && cp -cR "$MSL/b-$V" Gen/msl/
+  mkdir -p Gen/msl && cpx -cR "$MSL/b-$V" Gen/msl/
   # 资源直接下载（直装包，Sources/asset_dl.m）：地址文件列表（仓库里的 asset_pointers.txt）+ 出包时的缺省下载根地址（DM_ASSET_BASE，tools/adhoc.sh 传隧道地址；没传就不带）
   # Direct asset download (direct-install package, Sources/asset_dl.m): URL file list (asset_pointers.txt in the repository) + the default download root URL at packaging time (DM_ASSET_BASE; tools/adhoc.sh passes the tunnel URL; omitted if not passed)
-  cp asset_pointers.txt Gen/dm/; if [ -n "${DM_ASSET_BASE:-}" ]; then echo "$DM_ASSET_BASE" > Gen/dm/asset_base.txt; else rm -f Gen/dm/asset_base.txt; fi   # 没给就删掉上次的：生成物只跟本次输入走（原先只写不删，同一棵树先出带地址的包、再出不带的会沿用旧地址） | if not given, delete the previous one: the generated file follows only this run's input (it used to be written but never deleted, so building a package with an address and then one without in the same tree kept the old address)
+  cpx asset_pointers.txt Gen/dm/; if [ -n "${DM_ASSET_BASE:-}" ]; then echo "$DM_ASSET_BASE" > Gen/dm/asset_base.txt; else rm -f Gen/dm/asset_base.txt; fi   # 没给就删掉上次的：生成物只跟本次输入走（原先只写不删，同一棵树先出带地址的包、再出不带的会沿用旧地址） | if not given, delete the previous one: the generated file follows only this run's input (it used to be written but never deleted, so building a package with an address and then one without in the same tree kept the old address)
   # 老机型补充包的自动下载根地址（DM_ASTC_PACK_BASE，<根>/manifest.json + <根>/data/…；没传 = 只能玩家用「文件」拷，见 Sources/asset_dl.m）
   # Root URL for automatic download of the Legacy Device Pack (DM_ASTC_PACK_BASE, <root>/manifest.json + <root>/data/...; not passed = players can only copy it with the Files app, see Sources/asset_dl.m)
   rm -f Gen/dm/astc_pack_base.txt; [ -n "${DM_ASTC_PACK_BASE:-}" ] && echo "$DM_ASTC_PACK_BASE" > Gen/dm/astc_pack_base.txt
@@ -137,7 +140,7 @@ if [ "$1" = build ]; then
   xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "$DEST" \
     -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} DM_BUILD_NUMBER=$BN ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
       grep -q 'no devices from which to generate a provisioning profile' "$R/build.log" && t "原因：这个团队名下还没有设备。把手机用数据线连上并解锁，在本机配置里填 DM_IOS_UDID、DM_FREE_ACCOUNT=1，再构建一次"; exit 1; }
-  codesign -d --entitlements :- $APP 2>/dev/null | plutil -p - ; t "构建完成"
+  codesign -d --entitlements :- "$APP" 2>/dev/null | plutil -p - ; t "构建完成"
   # DM_NOINSTALL 保持兼容；build 现在本来就只编译，不触碰设备。
   # DM_NOINSTALL is kept for compatibility; build now only compiles anyway and does not touch the device.
   t "构建完成"; exit 0
@@ -147,20 +150,20 @@ if [ "$1" = install ]; then
   # 装包只要二十来秒、不跑游戏：电量闸（防测试机在长时间跑局里没电）不拦装包，没配 UDID、本机缺工具、电量低都照常装；之后的真机局照旧过闸。DM_DEVBATTERY=1 时装包也过闸
   # Installing takes about twenty seconds and runs no game: the battery gate (which keeps test devices from running flat during long runs) does not block it, so a missing UDID, missing local tools or a low battery still install; device runs afterwards are gated as before. With DM_DEVBATTERY=1 installs are gated too
   [ "${DM_DEVBATTERY:-}" = 1 ] || DM_DEVBATTERY=0
-  devlock_acquire "${SMOKE_OWNER:-${ACCEPT_OWNER:-run.sh install}}"
+  devlock_acquire "${SMOKE_OWNER:-${ACCEPT_OWNER:-run.sh install}}" || exit 1   # 没取到锁（它已打【红】）就不碰手机 | Lock not taken (it already printed a red line): do not touch the phone
   trap devlock_release EXIT
-  xcrun devicectl device install app --device $D "$APP" > $R/install.log 2>&1 || { t "🔴 装机失败"; tail -5 $R/install.log; exit 1; }
+  xcrun devicectl device install app --device "$D" "$APP" > "$R/install.log" 2>&1 || { t "🔴 装机失败"; tail -5 "$R/install.log"; exit 1; }
   t "装机完成"; exit 0
 fi
 local_env_need DM_DEVICE || exit 1
-M=$1; CAP=${2:-60}; O=$R/out/$M.txt; rm -f $O
-devlock_acquire "${SMOKE_OWNER:-${ACCEPT_OWNER:-run.sh $M}}"
+M=$1; CAP=${2:-60}; O=$R/out/$M.txt; rm -f "$O"
+devlock_acquire "${SMOKE_OWNER:-${ACCEPT_OWNER:-run.sh $M}}" || exit 1
 trap devlock_release EXIT
-xcrun devicectl device process launch --device $D --terminate-existing $B -mode $M > $R/launch_$M.log 2>&1
-grep -q Launched $R/launch_$M.log || { t "🔴 启动失败"; tail -8 $R/launch_$M.log; exit 1; }
-pull(){ xcrun devicectl device copy from --device $D --domain-type appDataContainer --domain-identifier $B --source Documents/$M.txt --destination $O >/dev/null 2>&1; }
-alive(){ xcrun devicectl device info processes --device $D 2>/dev/null | grep -q "DmIOS.app/DmIOS"; }
+xcrun devicectl device process launch --device "$D" --terminate-existing "$B" -mode "$M" > "$R/launch_$M.log" 2>&1
+grep -q Launched "$R/launch_$M.log" || { t "🔴 启动失败"; tail -8 "$R/launch_$M.log"; exit 1; }
+pull(){ xcrun devicectl device copy from --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source "Documents/$M.txt" --destination "$O" >/dev/null 2>&1; }
+alive(){ xcrun devicectl device info processes --device "$D" 2>/dev/null | grep -q "DmIOS.app/DmIOS"; }
 s=$SECONDS; sleep 3
-while :; do pull; grep -q DONE $O 2>/dev/null && { t "$M 完成"; cat $O; exit 0; }
-  alive || { sleep 1; pull; t "$M 进程已退出"; cat $O 2>/dev/null; exit 0; }
-  [ $((SECONDS - s)) -gt $CAP ] && { t "🔴 $M 超 ${CAP}s"; cat $O 2>/dev/null; exit 1; }; sleep 3; done
+while :; do pull; grep -q DONE "$O" 2>/dev/null && { t "$M 完成"; cat "$O"; exit 0; }
+  alive || { sleep 1; pull; t "$M 进程已退出"; cat "$O" 2>/dev/null; exit 0; }
+  [ $((SECONDS - s)) -gt "$CAP" ] && { t "🔴 $M 超 ${CAP}s"; cat "$O" 2>/dev/null; exit 1; }; sleep 3; done
