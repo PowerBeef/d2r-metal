@@ -683,7 +683,9 @@ static void boot_prepare(void) {
         if ([fm fileExistsAtPath:sv] && ![fm removeItemAtPath:sv error:&e]) plog("boot: 删旧存档失败 %s", e.localizedDescription.UTF8String);
         else if (!strcmp(sf, "empty")) { [fm createDirectoryAtPath:sv withIntermediateDirectories:YES attributes:nil error:nil]; plog("boot: 本局从空存档起（Documents/save.test 已清空 = 首次启动；Documents/save 未动）"); }   // =empty：无存档（冒烟的触摸玩家路径：建角进局） | =empty: no save (the touch player path of the smoke test: create a character and enter a run)
         else if (![fm copyItemAtPath:ref toPath:sv error:&e]) plog("boot: 标准存档副本失败 %s", e.localizedDescription.UTF8String);
-        else if (writable(), access([sv stringByAppendingPathComponent:@"SharedStashSoftCoreV2.d2i"].fileSystemRepresentation, W_OK) != 0) plog("boot: 🔴 存档副本仍不可写");
+        // 抽查共享储藏箱文件可写；存档里没有这个文件（新版共享仓库是 ModernSharedStashSoftCoreV2 目录，本机 make_fixture.sh 做的存档就是这样）不算不可写
+        // Spot-check that the shared stash file is writable; a save without this file (the newer shared stash is the ModernSharedStashSoftCoreV2 directory, as in saves made locally by make_fixture.sh) does not count as unwritable
+        else if (writable(), !access([sv stringByAppendingPathComponent:@"SharedStashSoftCoreV2.d2i"].fileSystemRepresentation, F_OK) && access([sv stringByAppendingPathComponent:@"SharedStashSoftCoreV2.d2i"].fileSystemRepresentation, W_OK) != 0) plog("boot: 🔴 存档副本仍不可写");
         else plog("boot: 本局用标准存档 %s 新副本（Documents/save.test；Documents/save 未动）", rn.UTF8String);
     } else if (getenv("DM_SAVE_TEST")) {   // 测试用（冒烟的玩家路径那一步）：沿用上一局留下的 Documents/save.test，不重拷、不碰 Documents/save | For testing (the player-path step of the smoke test): reuse Documents/save.test left by the previous run; do not re-copy, do not touch Documents/save
         NSString *sv = [doc stringByAppendingPathComponent:@"save.test"];
