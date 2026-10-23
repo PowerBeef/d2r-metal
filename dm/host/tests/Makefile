@@ -19,6 +19,8 @@ run: \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
 	$(B)/t_doorspot \
+	$(B)/t_dump \
+	$(B)/t_dump_asan \
 	$(B)/t_fs \
 	$(B)/t_fs_case \
 	$(B)/t_hid_receipt \
@@ -109,6 +111,8 @@ run: \
 	$(B)/t_movie
 	$(B)/t_condvar
 	$(B)/t_condvar_old
+	$(B)/t_dump 2>/dev/null
+	ASAN_OPTIONS=detect_leaks=0 $(B)/t_dump_asan uaf 2>/dev/null
 	$(B)/t_svc_mem
 	$(B)/t_target_rank 2>/dev/null
 	$(B)/t_hud_dead
@@ -179,6 +183,10 @@ tsan: $(B)/t_audio_spsc_tsan $(B)/t_svc_mem_tsan
 	$(B)/t_svc_mem_tsan
 	$(B)/t_svc_mem_tsan disjoint 300
 	$(B)/t_svc_mem_tsan overlap 300
+$(B)/t_dump: t_dump.c ../hle_thread.c ../crash.c ../dm.h | $(B)
+	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_dump.c ../crash.c
+$(B)/t_dump_asan: t_dump.c ../hle_thread.c ../crash.c ../dm.h | $(B)
+	clang -O1 -g -fsanitize=address -Wall -Wno-unused-function -I.. -o $@ t_dump.c ../crash.c
 $(B)/t_svc_mem: t_svc_mem.c ../hle_svc.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -o $@ t_svc_mem.c
 $(B)/t_svc_mem_tsan: t_svc_mem.c ../hle_svc.c ../hle.h ../dm.h | $(B)

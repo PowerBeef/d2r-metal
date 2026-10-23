@@ -13,6 +13,8 @@
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
 #include <stdatomic.h>
+#include <stdarg.h>
+#include <errno.h>
 #include <time.h>
 
 static _Atomic uint64_t g_watch_last_ns;
@@ -77,6 +79,21 @@ static void *watchdog_main(void *arg) {
     }
     return NULL;
 }
+// 往定长缓冲里追加（满了就截断，不越界）| Append to a fixed buffer (truncated when full, never past the end)
+typedef struct { char *b; size_t n, cap; } crash_buf;
+__attribute__((format(printf, 2, 3))) static void cb_add(crash_buf *c, const char *fmt, ...) {
+    if (c->n + 1 >= c->cap) return;
+    va_list ap; va_start(ap, fmt); int k = vsnprintf(c->b + c->n, c->cap - c->n, fmt, ap); va_end(ap);
+    if (k > 0) c->n = c->n + (size_t)k < c->cap ? c->n + (size_t)k : c->cap - 1;
+}
+// 一个地址写成「 标签=模块+偏移」（不在客体模块里就用 dladdr 的符号，再不行打原值） | One address as " tag=module+offset" (outside the guest modules dladdr's symbol, else the raw value)
+static void cb_where(crash_buf *c, const char *tag, uint64_t a) {
+    module_t *m = module_of((void *)a);
+    Dl_info di;
+    if (m) cb_add(c, " %s%s%s+%#llx", tag, *tag ? "=" : "", m->name, a - (uint64_t)m->base);
+    else if (dladdr((void *)a, &di) && di.dli_sname) cb_add(c, " %s%s%s+%#lx", tag, *tag ? "=" : "", di.dli_sname, (unsigned long)(a - (uint64_t)di.dli_saddr));
+    else cb_add(c, " %s%s%#llx", tag, *tag ? "=" : "", a);
+}
 void crash_off(const char *tag, uint64_t a) {   // diag.c 也用 | Also used by diag.c
 #define off crash_off
 
@@ -86,8 +103,8 @@ void crash_off(const char *tag, uint64_t a) {   // diag.c 也用 | Also used by 
     else if (dladdr((void *)a, &di) && di.dli_sname) fprintf(stderr, " %s%s%s+%#lx", tag, *tag ? "=" : "", di.dli_sname, (unsigned long)(a - (uint64_t)di.dli_saddr));
     else fprintf(stderr, " %s%s%#llx", tag, *tag ? "=" : "", a);
 }
-// 帧指针回溯：x29 链 [fp]=上一帧 fp、[fp+8]=返回地址；只走 8 字节对齐、单调上升的帧
-// Frame pointer backtrace: x29 chain [fp]=previous frame's fp, [fp+8]=return address; only 8-byte aligned, monotonically increasing frames are walked
+// 帧指针回溯：x29 链 [fp]=上一帧 fp、[fp+8]=返回地址；只走 8 字节对齐、单调上升的帧。dm_backtrace 也在客体小栈上调（Break），逐段打、不占大缓冲；cb_backtrace 是崩溃路径用的缓冲版
+// Frame pointer backtrace: x29 chain [fp]=previous frame's fp, [fp+8]=return address; only 8-byte aligned, monotonically increasing frames are walked. dm_backtrace is also called on small guest stacks (Break), so it prints piece by piece without a big buffer; cb_backtrace is the buffered one for the crash path
 void dm_backtrace(uint64_t fp) {
     fprintf(stderr, "[dm] bt:");
     for (int i = 0; i < 32 && fp && !(fp & 7); i++) {
@@ -97,6 +114,22 @@ void dm_backtrace(uint64_t fp) {
         fp = nfp;
     }
     fputc('\n', stderr);
+}
+static void cb_backtrace(crash_buf *c, uint64_t fp) {
+    cb_add(c, "[dm] bt:");
+    for (int i = 0; i < 32 && fp && !(fp & 7); i++) {
+        uint64_t nfp = ((uint64_t *)fp)[0], ra = ((uint64_t *)fp)[1];
+        cb_where(c, "", ra);
+        if (nfp <= fp) break;
+        fp = nfp;
+    }
+    cb_add(c, "\n");
+}
+// 崩溃路径（on_crash）与现场导出标题行的输出：整段 write(2)，不经 stdio（出错的那一刻 stderr 的锁可能在别的线程手里） | Output of the crash path (on_crash) and of the state dump's header line: written whole with write(2), not through stdio (at the moment of the fault another thread may hold stderr's lock)
+static void cb_flush(crash_buf *c) {
+    const char *p = c->b; size_t n = c->n;
+    while (n) { ssize_t k = write(2, p, n); if (k < 0 && errno == EINTR) continue; if (k <= 0) break; p += k; n -= (size_t)k; }
+    c->n = 0; c->b[0] = 0;
 }
 // ---------- 缺页钩子（写保护脏页跟踪） ----------
 // on_crash 打印现场前按注册顺序调用；返回 1 = 已处理（直接返回、重执行出错指令），全部返回 0 才走崩溃路径。
@@ -131,7 +164,12 @@ void crash_set_dump_hook(void (*fn)(void)) { g_dump_hook = fn; }
 void crash_set_wait_dump(void (*fn)(void)) { g_wait_dump = fn; }
 // 按需导出现场（不退出）：iOS 包没有无进展看门狗，冒烟判红时经 DM_LOG_PORT 发 dump 触发——各客体线程在等什么 + 图形侧等待点，和看门狗打的是同一份
 // Dump the current state on demand (without exiting): the iOS app has no no-progress watchdog, so when the smoke test fails it sends dump through DM_LOG_PORT to trigger this -- what each guest thread is waiting on + the graphics-side wait points, the same thing the watchdog prints
-void crash_dump_now(const char *why) { fprintf(stderr, "[dm] 现场导出（%s）：拍 %u / 阶段 %s\n", why, atomic_load(&g_watch_tick), g_watch_stage[atomic_load(&g_watch_stage_idx)]); if (g_dump_hook) g_dump_hook(); if (g_wait_dump) g_wait_dump(); }
+void crash_dump_now(const char *why) {
+    char b[512]; crash_buf c = {b, 0, sizeof b}; b[0] = 0;
+    cb_add(&c, "[dm] 现场导出（%s）：拍 %u / 阶段 %s\n", why, atomic_load(&g_watch_tick), g_watch_stage[atomic_load(&g_watch_stage_idx)]); cb_flush(&c);
+    if (g_dump_hook) g_dump_hook();
+    if (g_wait_dump) g_wait_dump();
+}
 // ---------- crash.json（DM_CRASH_JSON=<路径>）：结构化现场，给脚本 / 代理读 ----------
 // 信号处理里只用异步信号安全的调用（open / write / close）、静态缓冲与手写的数字格式化，不用 printf / malloc / dladdr，所以在打日志现场之前先写（日志那段可能卡住）。
 // 内容：信号、si_code、出错地址、pc / lr / sp / fp 及其模块内偏移、x0–x28、帧指针回溯（每帧模块 + 偏移）、各客体模块的装载范围、宿主映像基址（atos -l 用）、看门狗记的最后拍号与阶段
@@ -180,12 +218,13 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
     }
     if (g_dm_event_crash_fn) { module_t *m = module_of((void *)UC_PC(uc)); g_dm_event_crash_fn(sig, UC_PC(uc), m ? m->name : NULL, m ? UC_PC(uc) - (uint64_t)m->base : 0, (uint64_t)si->si_addr); }   // 事件先出（现场打印可能卡住） | the event goes out first (printing the state may hang)
     crash_json(sig, si, uc);   // 结构化现场先落盘（异步信号安全） | the structured state is written first (async-signal-safe)
-    fprintf(stderr, "[dm] CRASH sig=%d", sig);
-    off("addr", (uint64_t)si->si_addr); off("pc", UC_PC(uc)); off("lr", UC_LR(uc));
-    fprintf(stderr, " sp=%#llx\n", UC_SP(uc));
-    for (int i = 0; i < 29; i++) fprintf(stderr, "x%d=%#llx%s", i, UC_X(uc, i), i % 6 == 5 ? "\n" : " ");
-    fprintf(stderr, "\n");
-    dm_backtrace(UC_FP(uc));
+    { char b[4096]; crash_buf c = {b, 0, sizeof b}; b[0] = 0;   // 信号备用栈 64 KiB | the signal alternate stack is 64 KiB
+      cb_add(&c, "[dm] CRASH sig=%d", sig);
+      cb_where(&c, "addr", (uint64_t)si->si_addr); cb_where(&c, "pc", UC_PC(uc)); cb_where(&c, "lr", UC_LR(uc));
+      cb_add(&c, " sp=%#llx\n", UC_SP(uc));
+      for (int i = 0; i < 29; i++) cb_add(&c, "x%d=%#llx%s", i, UC_X(uc, i), i % 6 == 5 ? "\n" : " ");
+      cb_add(&c, "\n"); cb_flush(&c);
+      cb_backtrace(&c, UC_FP(uc)); cb_flush(&c); }
     if (g_dump_hook) g_dump_hook();
     // 所有致命信号都恢复缺省处理再发一次：进程照旧按这个信号结束，系统的崩溃报告（.ips）照写（原先只 SIGABRT 这样，别的 _exit 掉、系统那边没有报告）；shell 看到的退出码仍是 128 + 信号
     // Every fatal signal restores the default action and is raised again: the process still ends by this signal and the system still writes its crash report (.ips) (previously only SIGABRT did this, the others _exit-ed with no system report); the exit code a shell sees is still 128 + signal

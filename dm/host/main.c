@@ -204,18 +204,21 @@ const char *__asan_default_options(void) { return "use_sigaltstack=0:detect_leak
 #if __has_feature(thread_sanitizer)
 // 线程消毒版宿主（make dmhost_tsan）内置的抑制表：只放查过、确认是有意为之的宿主侧竞争（客体内存整块另按良性竞争登记，见 dm.h DM_TSAN_GUEST）；新出现的竞争照报
 //   ① 记账计数器与诊断快照：单写者递增、只给日志 / 状态导出看，读到旧值无妨
-//   ② 现场导出（看门狗 / 崩溃 / 卡死时）：故意不拿锁读线程与提交状态，免得在死锁里再卡住
+//   ② 现场导出（看门狗 / 崩溃 / 卡死时）：客体线程表在线程锁 G 下抄一份（100 ms 拿不到 G 才不取锁抄），但每线程的 last_svc / last_lr / nsvc 由线程自己不取锁写、导出照抄；
+//      看门狗的阶段文字是双缓冲、拍线程随时改写；图形侧等待点导出（mtl_wait_state_dump）不取锁读提交状态。导出本身不再在别的线程被暂停时打印（hle_thread.c），这几处读到旧值只影响日志
 //   ③ fd 表：CloseFile 先清表项再 close，内核要等 close 之后才把同一个号给下一次 open，先后由系统调用定序（消毒器不建模）
 //   ④ 单写者发布：g_fence（提交线程独占递增、对齐 8 字节）、g_link（节拍线程建好对象后发布一次）、g_lastG（拍入口每拍重写的缓存，别的线程清零最多让 in_game 晚一拍）、g_layout_logged（只打一次的日志标记）；g_done（完成回调持锁单调写，别处不拿锁只问「栅栏到了没」，读到旧值只会当作还没到，偏保守）
 // Suppressions built into the ThreadSanitizer host (make dmhost_tsan): only host-side races that were reviewed and are intentional (guest memory as a whole is registered as a benign-race range instead, see DM_TSAN_GUEST in dm.h); new races are still reported
 //   (1) bookkeeping counters and diagnostic snapshots: single-writer increments read only by logs / state dumps, a stale value is harmless
-//   (2) state dumps (watchdog / crash / hang): they read thread and submission state without locks on purpose, so they cannot get stuck in a deadlock themselves
+//   (2) state dumps (watchdog / crash / hang): the guest thread list is copied under the thread lock G (without it only when G cannot be had within 100 ms), but each thread's last_svc / last_lr / nsvc
+//       are written by the thread itself without a lock and copied as they are; the watchdog's stage text is double-buffered and rewritten by the tick thread at any time; the graphics wait-point dump
+//       (mtl_wait_state_dump) reads submission state without locks. The dump itself no longer prints while another thread is suspended (hle_thread.c); a stale value in these reads only affects the log
 //   (3) fd tables: CloseFile clears the entries before close, and the kernel only hands the same number to the next open after that close, so the system calls order them (the sanitizer does not model that)
 //   (4) single-writer publication: g_fence (incremented only by the submit thread, aligned 8 bytes), g_link (published once by the display-link thread after building the object), g_lastG (a cache rewritten at every tick entry; another thread clearing it delays in_game by at most one tick), g_layout_logged (a log-once flag); g_done (written monotonically under the lock by the completion callback, read elsewhere without the lock only to ask "has this fence completed", and a stale value only reads as "not yet", the conservative side)
 const char *__tsan_default_suppressions(void);
 const char *__tsan_default_suppressions(void) {
     return "race:g_stat_*\nrace:g_bw_*\nrace:g_pkg_*\nrace:g_pass_full_rw\nrace:g_udc_saved_bytes\nrace:g_present_n\nrace:g_tkreads\nrace:g_bp_*\nrace:g_frame\n"
-           "race:svc_thread_dump\nrace:thr_bt\nrace:mtl_wait_state_dump\nrace:crash_dump_now\n"
+           "race:svc_thread_dump\nrace:mtl_wait_state_dump\nrace:crash_dump_now\n"
            "race:g_fmode\nrace:g_fd2s\nrace:g_fsave\nrace:g_hm\n"
            "race:g_fence\nrace:g_link\nrace:g_lastG\nrace:g_layout_logged\nrace:g_done\n";
 }
