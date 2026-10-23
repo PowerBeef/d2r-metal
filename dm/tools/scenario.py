@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # 场景运行器：按场景文件（dm/verify/scenarios/*.scn）一步一步驱动游戏（控制口 dm/verify/control_port.md），每步等它生效再走下一步，末尾按检查项判 OK / RED。
 # 场景文件是一行一步的文本，用的是触屏脚本的那套动作名（tap_ui、await_ui、walk_to、tap_unit、shot …），但不按时刻排，按顺序做；格式见 dm/verify/scenarios/README.md。
-#   后端：cli（Mac 命令行宿主，缺省）、ios-mac（Mac 上跑的 iOS 包，走日志端口）、device（真机：devicectl 拉起 + iproxy 转日志端口）
-#   用法：scenario.py run <场景文件>… [--backend cli|ios-mac|device] [--out 目录] [--headless]
+#   后端：cli（Mac 命令行宿主，缺省）、mac-app（玩家装的 Mac App，DM_APP_SUPPORT 隔开存档与日志）、ios-mac（Mac 上跑的 iOS 包，走日志端口）、device（真机：devicectl 拉起 + iproxy 转日志端口）
+#   用法：scenario.py run <场景文件>… [--backend cli|mac-app|ios-mac|device] [--out 目录] [--headless]
 #         scenario.py check <场景文件>…      只解析、不跑（语法 / 动作名 / 参数）
 #   每个场景打「SCENARIO <名> OK|RED …」判定行（dmtest.py 认得），末行 RESULT {json}；结果目录里有 host.log、events.ndjson、port.log、steps.tsv 与截图
 # Scenario runner: drives the game step by step from a scenario file (dm/verify/scenarios/*.scn) through the control port (dm/verify/control_port.md), waits for each step to take effect before the next, and judges OK / RED by the checks at the end.
 # A scenario file is text with one step per line, using the touch script's action names (tap_ui, await_ui, walk_to, tap_unit, shot ...), but run in order instead of by time; the format is in dm/verify/scenarios/README.md.
-#   Backends: cli (Mac command-line host, default), ios-mac (the iOS package running on a Mac, over the log port), device (real device: launched with devicectl, log port forwarded through iproxy)
-#   Usage: scenario.py run <scenario file>... [--backend cli|ios-mac|device] [--out dir] [--headless]
+#   Backends: cli (Mac command-line host, default), mac-app (the Mac App players install, saves and logs kept apart with DM_APP_SUPPORT), ios-mac (the iOS package running on a Mac, over the log port), device (real device: launched with devicectl, log port forwarded through iproxy)
+#   Usage: scenario.py run <scenario file>... [--backend cli|mac-app|ios-mac|device] [--out dir] [--headless]
 #          scenario.py check <scenario file>...   parse only, do not run (syntax / action names / arguments)
 #   Each scenario prints a "SCENARIO <name> OK|RED ..." verdict line (dmtest.py understands it), last line RESULT {json}; the result directory holds host.log, events.ndjson, port.log, steps.tsv and the screenshots
 import argparse
@@ -36,9 +36,9 @@ POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 
        'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': []}
 ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away')
-LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember')
+LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save')
 HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires')
-CHECKS = ('no_red', 'saved', 'exit', 'event', 'no_event')
+CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event')
 BAD = ('red', 'fatal', 'crash', 'watchdog')
 
 
@@ -77,16 +77,34 @@ def parse(path):
         if op in ('expect', 'expect_no') and not args: raise ScenarioError(f'{path}:{n}: {op} needs an event type')
         if op == 'sleep' and (not args or not re.fullmatch(r'[\d.]+', args[0])): raise ScenarioError(f'{path}:{n}: sleep needs seconds')
         if op == 'remember' and not args: raise ScenarioError(f'{path}:{n}: remember needs a state field')
+        if op == 'export_save' and (not args or not re.fullmatch(r'[a-z0-9_]+', args[0])): raise ScenarioError(f'{path}:{n}: export_save needs a name of a-z 0-9 _')
         steps.append(dict(op=op, args=args, kw=kw, line=raw.split('#')[0].strip(), n=n))
     return meta, steps, checks
 
 
 # ---------- 后端 | Backends ----------
+SAVES = os.path.join(DM, 'verify', 'scenarios', 'saves')   # 生成存档的场景：saves/<名>.scn 导出 save_ref_<名> | scenarios that generate saves: saves/<name>.scn exports save_ref_<name>
+
+
+def save_dir(name):
+    return name if os.path.isabs(name) else os.path.join(DM_ROOT, 'data', 'switch', f'save_ref_{name}', '0000000000000001', '0')
+
+
+def ensure_save(name, headless):
+    """场景要的存档不在、又有同名的生成场景：先在命令行宿主上跑它（生成的存档留在本机工作区，不入库）。 | When the save a scenario needs is missing and a generator scenario of the same name exists: run it on the CLI host first (the generated save stays in the local workspace, never committed)."""
+    if name in ('empty',) or os.path.isdir(save_dir(name)): return
+    gen = os.path.join(SAVES, f'{name}.scn')
+    if not os.path.exists(gen): return
+    print(f'存档 save_ref_{name} 不在，先跑生成场景 | save_ref_{name} missing, running its generator: {os.path.relpath(gen, DM)}', flush=True)
+    res, code = Runner(gen, 'cli', None, headless).go()
+    if code or not os.path.isdir(save_dir(name)): raise ScenarioError(f'generator {os.path.basename(gen)} did not produce save_ref_{name}: {res.get("reason")}')
+
+
 def prepare_save(meta, run):
     s = meta['save']
     dst = os.path.join(run, 'save')
     if s == 'empty': os.makedirs(dst, exist_ok=True); return dst
-    src = s if os.path.isabs(s) else os.path.join(DM_ROOT, 'data', 'switch', f'save_ref_{s}', '0000000000000001', '0')
+    src = save_dir(s)
     if not os.path.isdir(src): raise ScenarioError(f'save {s!r}: {src} not found (create it with dm/ios/tools/make_fixture.sh or name an existing save_ref_*)')
     shutil.copytree(src, dst)
     return dst
@@ -131,6 +149,38 @@ class CliBackend:
         if self.log: self.log.close()
     def shot_path(self, p): return p if os.path.isabs(p) else os.path.join(self.run, p)
     def event_file(self): return os.path.join(self.run, 'events.ndjson')
+    def log_file(self): return os.path.join(self.run, 'host.log')
+
+
+class MacAppBackend(CliBackend):
+    """Mac App（玩家装的那个包）：直接起包里的可执行文件当子进程，DM_APP_SUPPORT 指到结果目录里的 support/（存档副本、设置、日志都在那里，iCloud 不同步，
+    玩家的存档与日志不动），DM_APP_ROMFS 给资源。测试用的包缺省是 $DM_ROOT/out/macapp_test/D2R Mobile.app（没有就用 dm/tools/mac_app.sh 出一个；DM_MAC_APP 可另指）。
+    The Mac App (the package players install): its executable runs directly as a child process, with DM_APP_SUPPORT pointing at support/ in the result directory (the save copy, settings and logs live there, iCloud does not sync,
+    and the player's saves and logs are untouched) and DM_APP_ROMFS giving the resources. The test package defaults to $DM_ROOT/out/macapp_test/D2R Mobile.app (made with dm/tools/mac_app.sh when missing; DM_MAC_APP points elsewhere)."""
+    name = 'mac-app'
+
+    def start(self):
+        app = os.environ.get('DM_MAC_APP') or os.path.join(DM_ROOT, 'out', 'macapp_test', 'D2R Mobile.app')
+        if not os.path.isdir(app):
+            print(f'出测试用的 Mac App | building the test Mac App: {app}', flush=True)
+            p = subprocess.run(['bash', os.path.join(DM, 'tools', 'mac_app.sh'), os.path.dirname(app)], capture_output=True, text=True, check=False)
+            if p.returncode or not os.path.isdir(app): raise ScenarioError('mac_app.sh failed: ' + (p.stdout + p.stderr).strip()[-300:])
+        import plistlib   # noqa: PLC0415
+        with open(os.path.join(app, 'Contents', 'Info.plist'), 'rb') as f: exe = os.path.join(app, 'Contents', 'MacOS', plistlib.load(f).get('CFBundleExecutable', ''))
+        if not os.access(exe, os.X_OK): raise ScenarioError(f'no executable in {app}')
+        romfs = os.environ.get('DM_APP_ROMFS') or os.path.join(DM_ROOT, 'data', 'switch', '3.3.94012', 'Update')
+        sup = os.path.join(self.run, 'support'); os.makedirs(sup, exist_ok=True)
+        save = prepare_save(self.meta, self.run); shutil.move(save, os.path.join(sup, 'save'))
+        srv, port = dmctl.bind()
+        env = {k: v for k, v in os.environ.items() if k not in ('DM_SAVE', 'DM_TEMP', 'DM_ROMFS', 'DM_ROOT')}
+        env.update(DM_APP_SUPPORT=sup, DM_APP_ROMFS=romfs, DM_CTL_PORT=str(port), DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_AUDIO='0', DM_WATCH=str(self.meta['timeout'] + 60))
+        env.update(self.meta['env'])
+        self.log = open(os.path.join(self.run, 'launch.log'), 'wb')
+        self.proc = subprocess.Popen([exe], env=env, stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        try: return dmctl.Ctl(server=srv, connect_timeout=60, log=os.path.join(self.run, 'port.log'))
+        except OSError as e: self.stop(); raise ScenarioError(f'the Mac App did not connect to the control port: {e}') from e
+
+    def log_file(self): return os.path.join(self.run, 'support', 'Logs', 'host.log')
 
 
 class LaunchBackend:
@@ -184,6 +234,7 @@ class LaunchBackend:
         self.ended = True
     def shot_path(self, p): return p   # iOS：相对路径落在 App 的 Documents 下 | iOS: relative paths land under the App's Documents
     def event_file(self): return None
+    def log_file(self): return os.path.join(self.run, 'port.log')   # 日志端口收下来的整份日志 | the whole log received over the log port
 
 
 # ---------- 运行 | Running ----------
@@ -194,7 +245,7 @@ class Runner:
         stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         self.run = out or os.path.join(DM_ROOT, 'run', 'scenario', f"{self.meta['name']}_{backend_name}_{stamp}_{os.getpid()}")
         os.makedirs(self.run, exist_ok=True)
-        self.backend = CliBackend(self.meta, self.run, headless) if backend_name == 'cli' else LaunchBackend(backend_name, self.meta, self.run)
+        self.backend = CliBackend(self.meta, self.run, headless) if backend_name == 'cli' else MacAppBackend(self.meta, self.run, headless) if backend_name == 'mac-app' else LaunchBackend(backend_name, self.meta, self.run)
         self.c: dmctl.Ctl | None = None; self.prev_mark = -1; self.records: list[dict[str, Any]] = []
         self.vars: dict[str, Any] = {}   # remember 记下的值，后面的值里写 $名 或 $名+N / $名-N 引用 | values kept by remember, referenced later as $name or $name+N / $name-N
 
@@ -294,6 +345,16 @@ class Runner:
             raise ScenarioError(f'unexpected event: {json.dumps(e, ensure_ascii=False)}')
         if op == 'expect_state': return self.expect_state(kw)
         if op == 'sleep': time.sleep(float(st['args'][0])); return None
+        if op == 'export_save':   # export_save 名 [overwrite=1]：存盘并等提交，把这局已提交的存档拷成 save_ref_<名>（只命令行宿主） | export_save name [overwrite=1]: save and wait for the commit, then copy this run's committed save to save_ref_<name> (CLI host only)
+            if self.backend.name not in ('cli', 'mac-app'): raise ScenarioError('export_save works on the cli / mac-app backends only (the iOS backends use saves bundled at build time)')
+            src_save = os.path.join(self.run, 'support', 'save') if self.backend.name == 'mac-app' else os.path.join(self.run, 'save')
+            name = st['args'][0]; dst = save_dir(name)
+            if name == 'warlock' or (os.path.exists(dst) and str(kw.get('overwrite', '0')) != '1'): raise ScenarioError(f'save_ref_{name} exists (overwrite=1 to replace; warlock is never replaced)')
+            self.ctl('save_now', timeout=8)
+            tmp = dst + f'.tmp{os.getpid()}'; shutil.rmtree(tmp, ignore_errors=True)
+            shutil.copytree(src_save, tmp)
+            shutil.rmtree(dst, ignore_errors=True); os.makedirs(os.path.dirname(dst), exist_ok=True); os.rename(tmp, dst)
+            return f'save_ref_{name} written'
         if op == 'remember':   # remember 字段 [as=名]：把 state 的这个字段记下来 | remember field [as=name]: keep this state field
             st_now = self.cc.cmd('state'); f = st['args'][0] if st['args'] else ''
             if f not in st_now: raise ScenarioError(f'state has no field {f!r}')
@@ -316,6 +377,11 @@ class Runner:
                 allow = set(ck['kw'].get('allow', '').split(',')) - {''}
                 bad = [e for e in evs if e['ev'] in BAD and e.get('code') not in allow]
                 ok = not bad; why = json.dumps(bad[0], ensure_ascii=False)[:200] if bad else f'{len(evs)} events, none red'
+            elif op == 'no_red_log':   # 日志里的红标行（含不经 LOG 的 plog 等，事件流看不到）；allow = 放行的正则 | red-marker lines in the log (including plog and others that bypass LOG, which the event stream does not see); allow = a regex to let through
+                sys.path.insert(0, os.path.join(DM, 'verify')); import assertlib   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+                log = self.backend.log_file()
+                bad = assertlib.logred(log, [ck['kw']['allow']] if ck['kw'].get('allow') else []) if os.path.exists(log) else [(0, f'no log {os.path.basename(log)}')]
+                ok = not bad; why = f'{bad[0][0]}: {bad[0][1][:160]}' if bad else f'no red lines in {os.path.basename(log)}'
             elif op == 'saved':
                 n = sum(1 for e in evs if e['ev'] == 'save' and e.get('result') == 'commit'); ok = n > 0; why = f'{n} save commits'
             elif op.startswith('exit'):
@@ -374,7 +440,7 @@ class Runner:
 def main(argv):
     ap = argparse.ArgumentParser(prog='scenario.py', description='Run scenario files through the control port (dm/verify/scenarios/README.md).')
     sub = ap.add_subparsers(dest='cmd', required=True)
-    r = sub.add_parser('run'); r.add_argument('files', nargs='+'); r.add_argument('--backend', default='cli', choices=('cli', 'ios-mac', 'device'))
+    r = sub.add_parser('run'); r.add_argument('files', nargs='+'); r.add_argument('--backend', default='cli', choices=('cli', 'mac-app', 'ios-mac', 'device'))
     r.add_argument('--out'); r.add_argument('--headless', action='store_true')
     c = sub.add_parser('check'); c.add_argument('files', nargs='+')
     a = ap.parse_args(argv)
@@ -386,7 +452,9 @@ def main(argv):
         return 1 if bad else 0
     results, rc = [], 0
     for f in a.files:
-        try: res, code = Runner(f, a.backend, a.out if len(a.files) == 1 else None, a.headless).go()
+        try:
+            ensure_save(parse(f)[0]['save'], a.headless)
+            res, code = Runner(f, a.backend, a.out if len(a.files) == 1 else None, a.headless).go()
         except ScenarioError as e: res, code = dict(name=os.path.basename(f), verdict='RED', reason=str(e)), 1; print(f'SCENARIO {os.path.basename(f)} RED {e}')
         results.append(res); rc = max(rc, code)
     print('RESULT ' + json.dumps(dict(name='scenario', verdict='OK' if rc == 0 else 'RED', scenarios=[dict(name=r['name'], verdict=r['verdict'], reason=r.get('reason'), dir=r.get('dir')) for r in results]), ensure_ascii=False))

@@ -18,6 +18,7 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 | 后端 | 跑的是什么 | 控制 | 需要 |
 |---|---|---|---|
 | `cli`（缺省） | `dm/host/dmhost`，用场景存档的副本 | `DM_CTL_PORT`（宿主连运行器） | `./setup.sh` 跑完、游戏资源 |
+| `mac-app` | 玩家装的 Mac App（测试用副本 `$DM_ROOT/out/macapp_test`，没有就用 `dm/tools/mac_app.sh` 出；`DM_MAC_APP` 可另指），当子进程起 | `DM_CTL_PORT` | `DM_APP_SUPPORT` 指到结果目录：存档副本、设置、日志都在那里，iCloud 不同步，玩家自己的存档和日志不动 |
 | `ios-mac` | 本机上跑的 iOS 包（`.iosdd_mac/DmMacSmoke.app`，由 `dm/ios/tools/smoke_mac.sh` 构建） | 日志端口 | 与 Mac 冒烟同一把锁、同一个 iCloud 总闸、同样的新测试存档（`dm/ios/tools/scenario_launch.sh`） |
 | `device` | `dm/ios/local.env` 里那台设备上装着的 App | 经 `iproxy` 的日志端口 | 设备解锁着；设备锁 |
 
@@ -45,6 +46,8 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 | `expect_no <事件> [字段=值 …] [for=3]` | | `for` 秒内出现这个事件即红。 |
 | `expect_state 字段=值 … [timeout=5]` | 也可写 `字段>=n`、`字段<=n`、`字段!=v` | 反复读 `state`，直到每一条都成立。 |
 | `sleep <秒>`、`log <文字>` | | |
+| `remember <字段> [as=名]` | | 记下 `state` 的一个字段；后面的值可写 `$名`、`$名+N`、`$名-N`（如 `expect_state tick<=$tick+30`）。 |
+| `export_save <名> [overwrite=1]` | | `cli` / `mac-app`：存盘并等提交，把这局已提交的存档拷到 `$DM_ROOT/data/switch/save_ref_<名>/`（只在本机，不入库）。`warlock` 永不替换。 |
 | `enter_game [slot=0]` | | 从主菜单进局：主菜单上按 `X`，载入 `slot` 那个角色，等 `loading_done`。已在局内时什么都不做。 |
 | `open_pause`、`close_pause` | | `+` 开总面板，`L` 三次切到暂停页（`pause_open`）；`B` 关掉。 |
 | `background [for=3]` | | 进后台再回来：iOS 走与 `DM_TEST_BG` 相同的场景事件；Mac 上最小化再还原。 |
@@ -56,8 +59,13 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 | 检查 | 通过的条件 |
 |---|---|
 | `check no_red [allow=码,…]` | 没有 `red`、`fatal`、`crash`、`watchdog` 事件（列出的红标码除外）。 |
+| `check no_red_log [allow=正则]` | 游戏日志（`host.log` / `port.log`）里没有红标行（`【红】`、`🔴`、`FATAL`、`CRASH`、看门狗），连不经事件流的行（如 iOS 外壳的 `plog`）也算。`allow` 放行已知的那一行。 |
 | `check saved` | 至少提交过一次存档。 |
 | `check exit <码>` | 进程退出码（命令行宿主）。 |
 | `check event <事件> [字段=值 …]` / `check no_event …` | 出现过 / 没出现过这样的事件。 |
+
+## 生成的存档
+
+场景可以从另一个场景生成的存档起。`save <名>` 指的存档不在、而 `saves/<名>.scn` 在时，运行器先在命令行宿主上跑这个生成场景，它以 `export_save <名>` 结尾。例：`saves/belt_two_drunk.scn` 喝掉腰带里两瓶药、导出 `save_ref_belt_two_drunk`，`belt_persists.scn` 核新的一局读回来的腰带就是那样。iOS 后端用的是构建时打进 App 的存档，所以这类场景写 `requires cli`。
 
 触屏脚本的动作对得上步骤：`tap_ui`、`await ui`（`await_ui`）、`walk_to`、`tap_unit`、`shot`、`pad`（`press` / `stick`）。按时刻的手指行（`down` / `move` / `up`）留在 `DM_TOUCH_SCRIPT` 里，它们测的是触屏操作层本身。

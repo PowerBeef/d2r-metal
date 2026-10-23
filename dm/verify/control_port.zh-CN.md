@@ -30,13 +30,17 @@ English: [control_port.md](control_port.md)
 |---|---|---|---|
 | `ping` | | 看还活着没有。 | `pong` |
 | `help` | | 列出命令名。 | `cmds` |
-| `state` | | 快照。 | `in_game`、`tick`、`paused`、`panel`（最近打开、还没关的面板）、`level`、`hp`、`hp_max`、`mp`、`mp_max`、`area`（levels.txt 号）、`x`、`y`（格）、`dead`、`players`、`holding`（光标上的物品）、`ev_dropped` |
+| `state` | | 快照。 | `in_game`、`tick`、`paused`、`panel`（最近打开、还没关的面板）、`level`、`hp`、`hp_max`、`mp`、`mp_max`、`area`（levels.txt 号）、`x`、`y`（格）、`dead`、`players`、`holding`（光标上的物品）、`belt0`–`belt3`（腰带各列剩几瓶）、`portal`（回城次数）、`points`（未分配的属性 + 技能点）、`ev_dropped` |
 | `press` | `keys`（`A+B`，键名同 `DM_KEYS`）、`frames`（6）、`gap`（3） | 按住这些键 `frames` 个出图帧，再松开等 `gap` 帧。在取手柄处并进去，与脚本键同一套裁决。 | `frame`、`held_frames` |
 | `stick` | `x`、`y` ∈ [-1, 1]（上为正）、`frames`（30）、`keys` | 推左摇杆（可同时按键）。 | `frame`、`held_frames` |
 | `tap` | `x`、`y` ∈ [0, 1]（出图画面）、`hold`（3 帧） | 经 `dm_ui_touch` 点一下界面，与 `DM_KEYS` 的 `C<x>:<y>` 和真手指同一条路。 | |
 | `msg` | `spec` = `类别:动作[:参数]` | 往游戏发一条界面消息（同 `DM_KEYS` 的 `MSG:` 步），发出去才回执。 | |
 | `world_tap` | `x`、`y` ∈ [0, 1] | 点世界里那一处：像触屏点击一样走过去和那里的东西交互。 | `target`：`none`、`item`、`npc`、`object`、`exit` |
 | `walk_to` | `x`、`y`（格，同 `state`）、`timeout`（12 秒） | 用 `DM_TEST_WORLD_XY` 的路线规划走过去，到 2 格内算到。 | `arrived`、`x`、`y` |
+| `tap_ui` | `name`（`控件[@面板]`，`+` = 空格）、`timeout`（10 秒） | 等控件可见，点它的中心，同触屏脚本的 `tap_ui`。 | `x`、`y` |
+| `await_ui` | `name`、`timeout`（30 秒） | 只等控件可见。 | `x`、`y` |
+| `tap_unit` | `type`（1 怪 / NPC、2 物件、4 物品、5 出口）、`cls`（类号或 `any`）、`timeout`（10 秒） | 等这类单位出现在画面里，点它，同触屏脚本的 `tap_unit`。 | `x`、`y`、`target` |
+| `app` | `do`：`background`、`foreground`、`resign`、`active`、`minimize`、`restore`、`terminate` | 在主线程上走前端生命周期，与系统事件、`DM_TEST_BG` / `DM_TEST_MINI_AT` 同一批处理函数。Mac 上 `background` / `foreground` 就是最小化 / 还原，不支持 `resign` / `active`；`terminate` 照系统退出那样先存盘再退。 | |
 | `screenshot` | `path`、`frames`（1） | 第 `frames` 个出图帧之后把游戏输出写成 PNG。iOS 上相对路径落在 `Documents/` 下。 | `path` |
 | `ui_dump` | `want`（`@top` 或控件名） | 下一帧把界面控件树打进日志（`UIDUMP` 行，同 `DM_UI_DUMP`）。 | |
 | `pause` | | 冻结游戏拍（`DM_TICK_HOLD` 那种冻结）。要局内跑过拍、且开着控制通道。冻着超过 `DM_WATCH_STALL` 秒看门狗会判死。 | `tick` |

@@ -16,3 +16,4 @@ expect_state in_game=true dead=false
 quit
 check saved
 check no_red
+check no_red_log

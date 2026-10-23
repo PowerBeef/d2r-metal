@@ -1,7 +1,7 @@
 # 最小化冻结游戏时钟（第二阶段 112400c，Mac）：最小化 4 秒，还原后游戏拍只走了零头（不冻的话还原时一口气补跑约 100 拍，人站着挨打）
 # Minimize freezes the game clock (phase 2, 112400c, Mac): minimized for 4 s, after restoring the game has advanced only a few ticks (without the freeze it would catch up about 100 ticks in one burst on restore, the character standing still)
 name minimize_freezes_clock
-requires cli
+requires cli mac-app
 save warlock
 timeout 180
 
@@ -11,3 +11,4 @@ background for=4
 expect_state tick<=$tick+30 in_game=true
 quit
 check no_red
+check no_red_log

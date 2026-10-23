@@ -1,0 +1,15 @@
+# 生成存档：标准存档进局，十字键左 / 上各喝掉腰带第 1、2 列的一瓶，存盘后导出为 save_ref_belt_two_drunk（留在本机工作区，不入库）
+# Generates a save: enter a run on the standard save, drink one potion each from belt columns 1 and 2 with D-pad left / up, save and export as save_ref_belt_two_drunk (stays in the local workspace, never committed)
+name gen_belt_two_drunk
+save warlock
+timeout 180
+
+enter_game
+expect_state belt0=1 belt1=1
+press LEFT
+expect_state belt0=0
+press UP
+expect_state belt1=0
+export_save belt_two_drunk overwrite=1
+quit
+check no_red

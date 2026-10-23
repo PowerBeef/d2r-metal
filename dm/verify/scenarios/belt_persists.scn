@@ -1,0 +1,12 @@
+# 存档持久：从生成的存档（腰带前两列已喝空）进局，读回来的腰带与存盘时一致——存档事务提交的内容真的被下一局读到
+# Save persistence: entering a run from the generated save (belt columns 1 and 2 already drunk), the belt read back matches what was saved -- what the save transaction committed really is what the next run reads
+name belt_persists
+requires cli
+save belt_two_drunk
+timeout 180
+
+enter_game
+expect_state belt0=0 belt1=0 belt2=1 belt3=1
+quit
+check no_red
+check no_red_log

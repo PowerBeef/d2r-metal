@@ -10,3 +10,4 @@ stick 1 0 frames=30
 expect_state in_game=true dead=false
 quit
 check no_red
+check no_red_log

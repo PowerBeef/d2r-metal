@@ -14,8 +14,8 @@ DM_ANDROID_USER	android	android/docker/build.sh	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_autobuff.c host/dm_padmode.c host/front_mac.m	-
 DM_APP_POOL_ADD_MB	host	host/hle_svc.c	-
-DM_APP_ROMFS	host	host/app_mac.m host/front_mac.m	-
-DM_APP_SUPPORT	host	host/app_mac.m	-
+DM_APP_ROMFS	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	-
+DM_APP_SUPPORT	host	host/app_mac.m	y
 DM_APP_VERSION	harmony	harmony/native/gameperf_ohos.c	-
 DM_ASC_ENV	ios-tools	ios/tools/asc_env.sh	-
 DM_ASSETS_TEST	ios	ios/Sources/main.m	-
@@ -166,6 +166,7 @@ DM_LOG_PORT	host,ios	host/diag.c ios/Sources/main.m	y
 DM_LOG_TEE	ios	ios/Sources/main.m	-
 DM_LONGFRAME	gfx	gfx/nvn/hle_nvn.c	-
 DM_LOOTFILTER	host	host/dm_lootfilter.c	-
+DM_MAC_APP	tools	tools/scenario.py	y
 DM_MAC_BUILD	tools	tools/mac_app.sh	-
 DM_MAC_BUNDLE_ID	tools	tools/mac_app.sh	-
 DM_MAC_DEVICE_PROFILE	ios-tools	ios/tools/smoke_mac.sh ios/tools/touch_e2e_mac.sh	y
@@ -482,7 +483,7 @@ DM_TEST_MERC_EQUIP	host	host/dm_rift.c	-
 DM_TEST_MERC_HP	host	host/diag.c	-
 DM_TEST_MERC_KILL	host	host/diag.c	-
 DM_TEST_MERC_SLOTS	host	host/dm_rift.c	-
-DM_TEST_MINI_AT	host	host/front_mac.m	-
+DM_TEST_MINI_AT	host	host/front_mac.m	y
 DM_TEST_MONRES_LOG	host	host/diag.c	-
 DM_TEST_MON_HP	host	host/diag.c	-
 DM_TEST_MON_KILL	host	host/diag.c	-

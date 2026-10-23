@@ -30,13 +30,17 @@ A command is a flat JSON object: `{"id":<number or string>,"cmd":"<name>",<argum
 |---|---|---|---|
 | `ping` | | Liveness check. | `pong` |
 | `help` | | Lists the command names. | `cmds` |
-| `state` | | Snapshot. | `in_game`, `tick`, `paused`, `panel` (most recently opened, not yet closed panel), `level`, `hp`, `hp_max`, `mp`, `mp_max`, `area` (levels.txt id), `x`, `y` (cells), `dead`, `players`, `holding` (item on the cursor), `ev_dropped` |
+| `state` | | Snapshot. | `in_game`, `tick`, `paused`, `panel` (most recently opened, not yet closed panel), `level`, `hp`, `hp_max`, `mp`, `mp_max`, `area` (levels.txt id), `x`, `y` (cells), `dead`, `players`, `holding` (item on the cursor), `belt0`–`belt3` (potions left per belt column), `portal` (town portals), `points` (unspent stat + skill points), `ev_dropped` |
 | `press` | `keys` (`A+B`, names as in `DM_KEYS`), `frames` (6), `gap` (3) | Holds the buttons for `frames` presented frames, then waits `gap` released frames. Merged at the controller read with the same arbitration as script keys. | `frame`, `held_frames` |
 | `stick` | `x`, `y` in [-1, 1] (up is positive), `frames` (30), `keys` | Pushes the left stick (optionally with buttons). | `frame`, `held_frames` |
 | `tap` | `x`, `y` in [0, 1] of the rendered picture, `hold` (3 frames) | One UI tap through `dm_ui_touch`, the same path as `DM_KEYS` `C<x>:<y>` and a real finger. | |
 | `msg` | `spec` = `category:action[:argument]` | Sends one UI message into the game (as the `DM_KEYS` `MSG:` step); replies once it has gone out. | |
 | `world_tap` | `x`, `y` in [0, 1] | Taps that spot in the world: walks over and interacts with what is there, like a touch tap. | `target`: `none`, `item`, `npc`, `object`, `exit` |
 | `walk_to` | `x`, `y` (cells, as in `state`), `timeout` (12 s) | Walks there with the route planning of `DM_TEST_WORLD_XY`. Within 2 cells counts as arrived. | `arrived`, `x`, `y` |
+| `tap_ui` | `name` (`widget[@panel]`, `+` = space), `timeout` (10 s) | Waits until the widget is visible and taps its center, like the touch script's `tap_ui`. | `x`, `y` |
+| `await_ui` | `name`, `timeout` (30 s) | Only waits until the widget is visible. | `x`, `y` |
+| `tap_unit` | `type` (1 monster / NPC, 2 object, 4 item, 5 exit), `cls` (class number or `any`), `timeout` (10 s) | Waits until such a unit is on screen and taps it, like the touch script's `tap_unit`. | `x`, `y`, `target` |
+| `app` | `do`: `background`, `foreground`, `resign`, `active`, `minimize`, `restore`, `terminate` | Front-end lifecycle on the main thread, through the same handlers as the system events and `DM_TEST_BG` / `DM_TEST_MINI_AT`. On the Mac, `background` / `foreground` are minimize / restore and `resign` / `active` are not supported; `terminate` saves and quits as the system quit does. | |
 | `screenshot` | `path`, `frames` (1) | Writes a PNG of the game output after `frames` presented frames. On iOS a relative path lands under `Documents/`. | `path` |
 | `ui_dump` | `want` (`@top`, or a widget name) | Prints the UI widget tree into the log on the next frame (`UIDUMP` lines, as `DM_UI_DUMP`). | |
 | `pause` | | Freezes game ticks (the `DM_TICK_HOLD` freeze). Needs a run that has ticked with a control channel on. Frozen longer than `DM_WATCH_STALL`, the watchdog gives up. | `tick` |

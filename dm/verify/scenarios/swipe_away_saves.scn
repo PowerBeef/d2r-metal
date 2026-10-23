@@ -12,3 +12,4 @@ sleep 0.3
 system_quit
 check saved
 check no_red
+check no_red_log

@@ -100,6 +100,7 @@ int dm_app_bootstrap(int *argc, char ***argv) {
         NSString *sup = [[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@APP_NAME] copy];
         if (getenv("DM_APP_SUPPORT")) sup = @(getenv("DM_APP_SUPPORT"));   // 测试：存档等放到指定目录，不碰玩家那份 | Test: put saves and the rest in a given directory, leaving the player's own untouched
         NSString *logd = [[NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"Logs/" APP_NAME] copy];
+        if (getenv("DM_APP_SUPPORT")) logd = [sup stringByAppendingPathComponent:@"Logs"];   // 测试：日志也放进指定目录，玩家那份 host.log 不被轮转覆盖 | Test: logs go into the given directory too, so the player's host.log is not rotated away
         NSString *save = [sup stringByAppendingPathComponent:@"save"], *temp = [sup stringByAppendingPathComponent:@"temp"];
         for (NSString *d in @[sup, logd, save, temp]) [fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
         g_sup = sup;

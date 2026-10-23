@@ -9,4 +9,5 @@ expect_state in_game=true hp>=1 area=1
 screenshot in_game.png
 quit
 check no_red
+check no_red_log
 check exit 0

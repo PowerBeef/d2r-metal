@@ -11,3 +11,4 @@ close_pause
 expect_state in_game=true
 quit
 check no_red
+check no_red_log

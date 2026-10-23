@@ -14,3 +14,4 @@ expect panel act=ClosePanel name=PlayerInventoryExpansionLayout timeout=5
 expect_state panel!=PlayerInventoryExpansionLayout
 quit
 check no_red
+check no_red_log

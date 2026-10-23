@@ -66,7 +66,10 @@ run: \
 	python3 ../../tools/test_dmevents.py
 	python3 ../../tools/test_dmctl.py
 	python3 ../../tools/test_scenario.py
-	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn
+	python3 ../../tools/test_imgdiff.py
+	python3 ../../verify/test_assertlib.py
+	python3 ../../verify/touchcases/test_lib.py
+	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn ../../verify/scenarios/saves/*.scn
 	python3 ../../tools/test_switches.py
 	python3 ../../tools/switches.py check
 	$(B)/t_ctl

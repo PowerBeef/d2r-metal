@@ -12,3 +12,4 @@ system_quit
 check saved
 check exit 0
 check no_red
+check no_red_log
