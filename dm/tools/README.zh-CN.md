@@ -28,6 +28,7 @@ English: [README.md](README.md)
 | `save_txn_regress.sh` | 存档事务的确定性回归 |
 | `host_war13.sh` | 一个固定用例的宿主回放，逐拍与存档对拍 |
 | `l3reg.py`、`l3seg.sh`、`l3run.sh`、`test_l3reg.py` | 长时间运行的内存回归：按游戏拍数回归内存与句柄的增长斜率，外推到长局 |
+| `dmctl.py`、`test_dmctl.py` | 控制口客户端（[control_port.zh-CN.md](../verify/control_port.zh-CN.md)）：发命令、等事件，Python 或命令行都能用 |
 | `dmevents.py`、`test_dmevents.py` | 读取与判定 `DM_EVENTS` 事件流（[event_stream.zh-CN.md](../verify/event_stream.zh-CN.md)）：时间线摘要、按序期望事件、为什么红、等某个事件 |
 | `switches.py`、`test_switches.py` | `DM_*` 环境开关登记表：`gen` 扫源码生成 [dm/switches.tsv](../switches.tsv)（每个开关谁在读、文档里有没有）；`check` 在登记表过期或脚本设了没人读的开关时报红 |
 | `dmtest.py`、`test_dmtest.py` | 任一测试命令的统一结果外壳：输出原样转发，把判定行写成 `result.json`、可选的 JUnit XML 与末行 `RESULT {json}` |

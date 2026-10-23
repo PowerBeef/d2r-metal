@@ -51,6 +51,14 @@ static void put_str(buf_t *b, const char *s, size_t max) {   // JSON 串；max �
     puts_(b, "\"");
 }
 
+static char g_early[16384]; static size_t g_early_n;
+void dm_events_set_sink(void (*fn)(const char *line, size_t n)) {
+    pthread_mutex_lock(&g_mu);
+    g_dm_event_sink = fn;
+    for (size_t i = 0, j = 0; fn && j < g_early_n; j++) if (g_early[j] == '\n') { fn(g_early + i, j + 1 - i); i = j + 1; }
+    g_early_n = 0;
+    pthread_mutex_unlock(&g_mu);
+}
 static void head(buf_t *b, const char *ev) {
     uint64_t ms = (now_ns() - g_t0) / 1000000;   // 截到毫秒（与崩溃事件同一算法，序号与时刻一起单调） | truncated to milliseconds (same arithmetic as the crash event, so time is monotonic along with seq)
     putf(b, "{\"seq\":%u,\"t\":%llu.%03llu,\"ev\":", g_seq++, (unsigned long long)(ms / 1000), (unsigned long long)(ms % 1000));
@@ -61,16 +69,15 @@ static void flush(buf_t *b) {   // 持 g_mu 调 | called with g_mu held
     memcpy(b->p + b->n, "}\n", 2); b->n += 2;
     if (g_fd >= 0) { ssize_t w; do w = write(g_fd, b->p, b->n); while (w < 0 && errno == EINTR); }
     if (g_to_log) { flockfile(stderr); fputs("[dm] EV ", stderr); fwrite(b->p, 1, b->n, stderr); funlockfile(stderr); }
+    if (g_dm_event_sink) g_dm_event_sink(b->p, b->n);   // 控制口（dm_ctl.c） | the control port (dm_ctl.c)
+    else if (g_early_n + b->n <= sizeof g_early) { memcpy(g_early + g_early_n, b->p, b->n); g_early_n += b->n; }   // 出口装上之前的事件先留着（start 等），装上时交过去 | events before the outlet is installed (start etc.) are kept and handed over when it is
 #ifdef __APPLE__
     if (g_oslog) { b->p[b->n - 1] = 0; os_log(g_oslog, "%{public}s", b->p); }
 #endif
 }
 
-static void ev_fn(const char *ev, const char *sig, ...) {
-    char mem[2048]; buf_t b = {mem, 0, sizeof mem};
-    va_list ap; va_start(ap, sig);
-    pthread_mutex_lock(&g_mu);
-    head(&b, ev);
+static void fields(buf_t *b_, const char *sig, va_list ap) {   // 按签名写「,"名":值」 | writes ,"name":value per the signature
+#define b (*b_)
     for (const char *s = sig ? sig : ""; *s;) {
         while (*s == ' ') s++;
         const char *c = strchr(s, ':'); if (!c || !c[1]) break;
@@ -87,11 +94,25 @@ static void ev_fn(const char *ev, const char *sig, ...) {
         }
         s = c + 2;
     }
-out:
+out:;
+#undef b
+}
+static void ev_fn(const char *ev, const char *sig, ...) {
+    char mem[2048]; buf_t b = {mem, 0, sizeof mem};
+    va_list ap; va_start(ap, sig);
+    pthread_mutex_lock(&g_mu);
+    head(&b, ev);
+    fields(&b, sig, ap);
     va_end(ap);
     flush(&b);
     pthread_mutex_unlock(&g_mu);
 }
+size_t dm_json_fields(char *out, size_t cap, const char *sig, ...) {
+    buf_t b = {out, 0, cap}; if (cap < 4) { if (cap) out[0] = 0; return 0; }
+    va_list ap; va_start(ap, sig); fields(&b, sig, ap); va_end(ap);
+    out[b.n] = 0; return b.n;
+}
+void dm_json_str(char *out, size_t cap, const char *s) { buf_t b = {out, 0, cap}; if (cap < 4) { if (cap) out[0] = 0; return; } put_str(&b, s, cap); out[b.n] = 0; }
 
 // 日志钩子：整行先格式化进缓冲（长行另分配），一次写 stderr；带红标 / FATAL 的行另发 red / fatal 事件
 // Log hook: the whole line is first formatted into a buffer (long lines are allocated separately) and written to stderr at once; lines with a red marker / FATAL also emit a red / fatal event
@@ -144,9 +165,9 @@ static uint64_t start_t0(void) {   // 零点 = 进程创建时刻（同 main.c �
 static void ev_atexit(void) { ev_fn("exit", "why:s", "exit"); }
 static pthread_once_t g_once = PTHREAD_ONCE_INIT;
 static void init_once(void) {
-    const char *e = getenv("DM_EVENTS"), *ol = getenv("DM_EVENTS_OSLOG");
+    const char *e = getenv("DM_EVENTS"), *ol = getenv("DM_EVENTS_OSLOG"), *cp = getenv("DM_CTL_PORT");
     int want_os = ol && *ol && strcmp(ol, "0");
-    if ((!e || !*e) && !want_os) return;
+    if ((!e || !*e) && !want_os && !(cp && *cp)) return;   // 控制口要事件推给客户端：设了它也开（不写文件） | the control port pushes events to its client: setting it turns events on too (no file)
     g_t0 = start_t0();
     if (e && (!strcmp(e, "log") || !strcmp(e, "-"))) g_to_log = 1;
     else if (e && *e) {

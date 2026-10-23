@@ -145,6 +145,26 @@ static const struct { uint32_t mask; const char *name; } k_names[] = {
 // Left stick pseudo-keys (used only in scripts): while held the stick is pushed fully in that direction; the bits lie outside DM_BTN_* and do not enter the button bits
 enum { PK_LSL = 1u << 24, PK_LSR = 1u << 25, PK_LSU = 1u << 26, PK_LSD = 1u << 27, PK_MASK = 0xFu << 24, PK_TOUCH = 1u << 28, PK_MSG = 1u << 29, PK_CLICK = 1u << 30 };   // PK_CLICK：界面点击步（C<x>:<y>，经 dm_ui_touch = 与 iOS 前端真手指同一条注入鼠标消息的路）   // PK_TOUCH：触点步（T<x>:<y>，经 dm_touch_set） | PK_CLICK: UI click step (C<x>:<y>, via dm_ui_touch = the same injected mouse message path as a real finger on the iOS front end)   // PK_TOUCH: touch point step (T<x>:<y>, via dm_touch_set)
 static const struct { uint32_t mask; const char *name; } k_stick[] = {{PK_LSL, "LSL"}, {PK_LSR, "LSR"}, {PK_LSU, "LSU"}, {PK_LSD, "LSD"}};
+// 控制口的按键 / 摇杆（dm_ctl_cmds.c press / stick）：任一线程设，到第 g_ctl_until 个出图帧之前每次取手柄都并进去；键与脚本键走同一套裁决与过滤，摇杆与脚本摇杆伪键一样最后改写
+// Control-port buttons / stick (dm_ctl_cmds.c press / stick): set from any thread and merged into every controller read until present frame g_ctl_until; the buttons go through the same arbitration and filters as script keys, and the stick is applied last like the script stick pseudo-keys
+static _Atomic uint64_t g_ctl_btn, g_ctl_until; static _Atomic uint32_t g_ctl_stick;
+void dm_ctl_input(uint64_t buttons, int lx, int ly, int frames) {
+    atomic_store(&g_ctl_btn, buttons); atomic_store(&g_ctl_stick, (uint32_t)(uint16_t)(int16_t)lx | (uint32_t)(uint16_t)(int16_t)ly << 16);
+    atomic_store(&g_ctl_until, frames > 0 ? dm_guest_frame() + (uint64_t)frames : 0);
+}
+int dm_ctl_input_busy(void) { return dm_guest_frame() < atomic_load(&g_ctl_until); }
+// 键名（同 DM_KEYS：A B X Y LS RS L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN）用「+」或「,」连起来 → 按钮位；有不认识的名字返回 0、*bad 指向它
+// Key names (same as DM_KEYS: A B X Y LS RS L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN) joined by "+" or "," -> button bits; an unknown name returns 0 with *bad pointing at it
+uint64_t dm_key_mask(const char *names, const char **bad) {
+    uint64_t m = 0; const char *p = names;
+    while (p && *p) {
+        size_t n = strcspn(p, "+,"); int hit = 0;
+        for (size_t i = 0; i < sizeof k_names / sizeof k_names[0]; i++) if (strlen(k_names[i].name) == n && !strncmp(p, k_names[i].name, n)) { m |= k_names[i].mask; hit = 1; }
+        if (!hit) { if (bad) *bad = p; return 0; }
+        p += n; if (*p) p++;
+    }
+    return m;
+}
 #define KMAX 256
 static struct { uint32_t mask; uint64_t t0, t1; } g_keys[KMAX];
 static int g_nkeys;
@@ -404,6 +424,8 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     // stick has actually been pushed out (dm_gamepad.m), so a slightly drifting controller left lying aside never reaches here
     { uint64_t ax = atomic_load(&g_pad_axes); int16_t plx = (int16_t)ax, ply = (int16_t)(ax >> 16), prx = (int16_t)(ax >> 32), pry = (int16_t)(ax >> 48);
       if (!(s->lx || s->ly) && (plx || ply)) { s->lx = plx; s->ly = ply; } if (!(s->rx || s->ry) && (prx || pry)) { s->rx = prx; s->ry = pry; } }
+    int ctl_on = dm_guest_frame() < atomic_load(&g_ctl_until);   // 控制口按键（见 dm_ctl_input） | control-port buttons (see dm_ctl_input)
+    if (ctl_on) s->buttons |= atomic_load(&g_ctl_btn);
     { int dm_padmode_input_gate(uint64_t *); if (dm_padmode_input_gate(&s->buttons)) s->lx = s->ly = s->rx = s->ry = 0; }   // 手柄 / 触屏切换事务进行中：键和摇杆都不交给游戏；触发切换时按着的键松开前也不交（dm_padmode.c） | Controller / touch switch transaction in progress: neither keys nor sticks are handed to the game; keys held when the switch was triggered are not handed over either until released (dm_padmode.c)
     if (dm_pad_hook) dm_pad_hook(guest_ns(), &s->buttons, &s->lx, &s->ly, &s->rx, &s->ry);
     { uint64_t dm_runeword_pad_filter(uint64_t); s->buttons = dm_runeword_pad_filter(s->buttons); }   // 手柄模式符文之语清单开着时十字键 / A / B / L / R 归清单（dm_runeword.c） | While the runeword list is open in controller mode, the D-pad / A / B / L / R belong to the list (dm_runeword.c)
@@ -416,6 +438,7 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     { static uint64_t prev; if ((s->buttons & DM_BTN_L) && !(prev & DM_BTN_L)) { int n = atomic_fetch_add(&g_dm_l_presses, 1) + 1; if (n <= 3) LOG("取手柄处：「显示物品」键（L）交给了游戏，本进程第 %d 次", n); } prev = s->buttons; }   // 「显示物品」键（L）交给游戏的按下次数（首领掉落读数用，dm_bossrush.c） | number of presses of the 「显示物品」(Show Items) key (L) delivered to the game (used by the boss drop readout, dm_bossrush.c)
     if (km & PK_LSL) s->lx = -32767; if (km & PK_LSR) s->lx = 32767;   // 脚本摇杆伪键：推满（Horizon 摇杆 ±32767，上为正） | script stick pseudo-keys: push to full (Horizon stick ±32767, up is positive)
     if (km & PK_LSU) s->ly = 32767;  if (km & PK_LSD) s->ly = -32767;
+    if (ctl_on) { uint32_t st = atomic_load(&g_ctl_stick); int16_t cx = (int16_t)st, cy = (int16_t)(st >> 16); if (cx || cy) { s->lx = cx; s->ly = cy; atomic_store(&g_stick_ns, now_ns()); } }   // 控制口摇杆 | control-port stick
     s->attributes = ATTR_CONNECTED;
     atomic_store_explicit(&g_sampled_right,(uint32_t)s->rx|((uint64_t)(uint32_t)s->ry<<32),memory_order_release);
     receipt(s, id, style, km, read_start_ns);

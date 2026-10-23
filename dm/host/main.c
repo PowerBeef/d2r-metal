@@ -127,6 +127,7 @@ static void *keyrace_thread(void *unused);
 static void host_preload(int argc, char **argv) {
     g_t0_ns = proc_start_mono_ns();
     dm_events_init();   // DM_EVENTS 事件流（dm_events.h）；iOS 壳在 main() 里接好日志后已调过（这里不再生效） | DM_EVENTS event stream (dm_events.h); the iOS shell already called it in main() after connecting the log (no effect here then)
+    { void dm_ctl_init(void); dm_ctl_init(); }   // 控制口（dm_ctl.c）：登记命令；Mac 上设了 DM_CTL_PORT 就起监听 | control port (dm_ctl.c): registers the commands; on Mac starts the listener when DM_CTL_PORT is set
     flags_init();
     dm_prof_mark("⓪ 进程创建 → 宿主 main（dyld）");
     if (argc < 2) die("usage: dmhost <dir> [mod...] [-- 游戏参数...]");

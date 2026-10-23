@@ -418,6 +418,10 @@ static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄
       else if (!strcmp(n0, "FrontEndNavigation") && !strcmp(n1, "ToFrontEnd") && played) { back = 1; void crash_watch_pregame_again(void); crash_watch_pregame_again(); }
       else if (have_arg && !strcmp(nm, "MainMenuButtonRibbon") && !back) crash_watch_pregame_done(); }
     for (int k = 0, n = atomic_load(&g_nui_sub); k < n; k++) { char s0[24], s1[24]; g_ui_sub[k](uih_name(f[0], s0), uih_name(f[1], s1), have_arg ? nm : ""); }
+    if (!strcmp(n0, "PanelManager") && have_arg) {   // 长帧日志的上下文、控制口 state 的 panel：记最近打开且未关的面板（不开 DM_UIMSG 也记） | Context for the long-frame log and the control port's state panel: remember the most recently opened and not yet closed panel (recorded without DM_UIMSG too)
+        extern char g_lf_panel[48];
+        if (!strcmp(n1, "OpenPanel")) strlcpy(g_lf_panel, nm, sizeof g_lf_panel); else if (!strcmp(n1, "ClosePanel") && !strcmp(g_lf_panel, nm)) g_lf_panel[0] = 0;
+    }
     if (!g_ui_print) return;
     const char *cat = uih_name(f[0], b0), *act = uih_name(f[1], b1);
     pthread_mutex_lock(&g_uilock);
@@ -428,10 +432,6 @@ static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄
         if (act != b1) { fputs(",\"act\":", g_uifp); json_str(g_uifp, act); }
         if (in_game()) fprintf(g_uifp, ",\"tick\":%u", cur_tick());   // 局内带服务端当前拍号（触屏用例按拍对齐面板开关；uicmp 只比 cat_h/act_h/arg，不受影响） | In a run, include the server's current tick number (touch test cases align panel open/close by tick; uicmp only compares cat_h/act_h/arg and is unaffected)
         fputs("}\n", g_uifp); fflush(g_uifp);
-    }
-    if (!strcmp(cat, "PanelManager") && have_arg) {   // 长帧日志的上下文：记最近打开且未关的面板 | Context for the long-frame log: remember the most recently opened and not yet closed panel
-        extern char g_lf_panel[48];
-        if (!strcmp(act, "OpenPanel")) strlcpy(g_lf_panel, nm, sizeof g_lf_panel); else if (!strcmp(act, "ClosePanel") && !strcmp(g_lf_panel, nm)) g_lf_panel[0] = 0;
     }
     extern uint64_t g_t0_ns; uint64_t now_ns(void);
     static uint64_t last[2]; static char lastnm[65]; static unsigned rep;   // stderr 摘要：相邻相同合并计数 | stderr summary: adjacent identical lines are merged with a count
@@ -1591,7 +1591,30 @@ void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 �
     LOG("[perf] 温控 %d 3D %.2f 帧率 %.1f 三档 %u/%u/%u 丢弃 %u", dm_thermal_now(), dm_3d_scale_cur(), sum > 0 ? n * 1000.0 / sum : (f - f0) / ((now - t0) / 1e9), c16, c25, c33, disc);   // 同一行进 boot.txt（冒烟可核） | The same line goes into boot.txt (the smoke test can check it)
     c16 = c25 = c33 = disc = 0; sum = 0; t0 = now; f0 = f; cpu0 = cpu;
 }
+// 控制口 pause / resume / step（dm_ctl_cmds.c）：同 DM_TICK_HOLD 的冻结（下一拍时限拨到极远 + 客体时钟冻结），由命令解冻；冻着时 dm_server_tick 报 UINT64_MAX、按键脚本改按出图帧
+// 返回 0 成功；-1 还没有时限零点（局内至少跑过一拍、且开着控制通道才有）；-2 已被别的冻结占着（DM_TICK_HOLD / 读取画面冻结）
+// Control-port pause / resume / step (dm_ctl_cmds.c): the same freeze as DM_TICK_HOLD (next-tick deadline moved far away + guest clock frozen), released by a command; while frozen dm_server_tick reports UINT64_MAX and the key script counts presented frames
+// Returns 0 on success; -1 when there is no deadline origin yet (it exists only after at least one tick in a run with a control channel on); -2 when another freeze holds it (DM_TICK_HOLD / loading-screen freeze)
+static _Atomic int g_ctl_hold;
+int dm_ctl_tick_hold(int on) {
+    if (on) {
+        if (!g_hold_org_ok || !in_game()) return -1;
+        if (atomic_load(&g_ctl_hold)) return 0;
+        if (atomic_load(&g_holding)) return -2;
+        hold_freeze(); g_hold_t0 = now_ns(); atomic_store(&g_holding, 1); atomic_store(&g_ctl_hold, 1);
+        LOG("控制口：拍 %u 冻结", cur_tick()); DM_EV("tick_hold", "on:b", 1); return 0;
+    }
+    if (!atomic_exchange(&g_ctl_hold, 0)) return 0;
+    if (atomic_exchange(&g_holding, 0)) hold_unfreeze();
+    LOG("控制口：解冻（冻结 %.3f s，拍 %u）", (now_ns() - g_hold_t0) / 1e9, cur_tick()); DM_EV("tick_hold", "on:b", 0); return 0;
+}
+int dm_ctl_tick_held(void) { return atomic_load(&g_ctl_hold); }
+uint32_t dm_ctl_tick_now(void) { return cur_tick(); }
+// 截图写完的通知（dm_ctl_cmds.c screenshot 等它）：弱定义的指针，单测不链控制口也能编 | screenshot-written notification (dm_ctl_cmds.c screenshot waits for it): a weakly defined pointer, so unit tests without the control port still build
+__attribute__((weak)) void (*g_dm_ctl_shot_hook)(const char *path, int ok) = 0;
 void dm_shot_written(const char *path, int ok) {
+    DM_EV("shot", "path:s ok:b", path, ok);
+    if (g_dm_ctl_shot_hook) g_dm_ctl_shot_hook(path, ok);
     if (g_hold_tick && !strcmp(g_hold_ui, "SHOT") && atomic_load(&g_holding)) {
         static int udc_ab_shots;
         int ab = (getenv("DM_NVN_UDC_AB") && !strcmp(getenv("DM_NVN_UDC_AB"), "1")) || (getenv("DM_NVN_DEFER_AB") && !strcmp(getenv("DM_NVN_DEFER_AB"), "1")) || (getenv("DM_NVN_RULER") && !strcmp(getenv("DM_NVN_RULER"), "1"));   // 同进程 A/B/C：前三张截图都在冻结拍上 | Same-process A/B/C: the first three screenshots are all on frozen ticks
@@ -1765,7 +1788,8 @@ static void freeze_tick(uint64_t G) {   // 拍入口：定这一拍冻不冻，�
     else if (!want && frozen) { int nm = 0, hp = 0; uint32_t h = frz_snapshot(G, &nm, &hp); atomic_store(&g_dm_frozen, 0); frozen = 0; if (mtl_world_frozen) mtl_world_frozen(0); LOG("面板冻结：拍 %u 解冻（冻了 %u 次拍入口）；怪 %d 只 校验 %08x 玩家生命 %d", t, calls, nm, h, hp); }
     if (frozen) { calls++; uint32_t t1 = t - 1; memcpy((void *)(uintptr_t)(G + 0x170), &t1, 4); }
 }
-static void tick_gate_product(const uint64_t *regs) { g_lastG = regs[0]; players_apply(); hud_tick(regs[0]); freeze_tick(regs[0]); }   // 产品缺省的拍入口：只落地难度档、发布 HUD 数字 | The product default tick entry: only applies the difficulty level and publishes the HUD numbers
+static int g_ctl_track;   // 有控制通道（DM_CTL_PORT / DM_LOG_PORT）：产品拍入口也跟时限零点，控制口 pause / step 才换算得了 | a control channel is configured (DM_CTL_PORT / DM_LOG_PORT): the product tick entry also tracks the deadline origin, so control-port pause / step can convert it
+static void tick_gate_product(const uint64_t *regs) { g_lastG = regs[0]; players_apply(); hud_tick(regs[0]); freeze_tick(regs[0]); if (g_ctl_track) hold_track_origin(); }   // 产品缺省的拍入口：只落地难度档、发布 HUD 数字 | The product default tick entry: only applies the difficulty level and publishes the HUD numbers
 static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入本拍命令包，再取状态哈希 | Tick entry: first inject this tick's command packets, then take the state hash
     {   // 拍入口只在一条客体线程上跑：state_dump / ticks_hash 的 static 缓冲靠这一点不竞争。换线程即中止，别让输出悄悄写乱 | The tick entry runs on only one guest thread: the static buffers of state_dump / ticks_hash rely on this to be race-free. Abort if the thread changes, do not let the output silently get garbled
         static _Atomic uintptr_t owner; uintptr_t me = (uintptr_t)pthread_self(), exp = 0;
@@ -1977,6 +2001,7 @@ static void res_on_uimsg(const char *cat, const char *act, const char *arg) { (v
 void ticks_install(void) {
     const char *e = getenv("DM_TICKS"), *rp = getenv("DM_C2S_REPLAY"), *lg = getenv("DM_C2S_LOG"), *sp = getenv("DM_STATE");
     if (g_dm_event_fn) g_dm_event_tick_fn = ev_tick;
+    g_ctl_track = (getenv("DM_CTL_PORT") && *getenv("DM_CTL_PORT")) || (getenv("DM_LOG_PORT") && *getenv("DM_LOG_PORT"));
     const char *pn = getenv("DM_PLAYERS");
     if (pn && *pn) { dm_hud_request_players(atoi(pn)); LOG("DM_PLAYERS：起局请求档位 %d", dm_hud_requested_players()); }
     if ((e || rp || lg) && gate_obs_present(OBS_UIMSG)) { void uimsg_subscribe(void (*)(const char *, const char *, const char *)); uimsg_subscribe(res_on_uimsg); }

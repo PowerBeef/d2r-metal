@@ -55,6 +55,7 @@ DM_BUNDLE_NAME	harmony	harmony/native/gameperf_ohos.c	-
 DM_C2S_LOG	host,ios-tools	host/diag.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_C2S_REPLAY	host	host/diag.c host/dm_townwp.c	y
 DM_CLOUD_REAL	host,ios	host/app_mac.m ios/Sources/cloud_ios.m	-
+DM_CTL_PORT	host	host/diag.c host/dm_ctl.c host/dm_events.c	y
 DM_CUBE_PICKUP	host	host/diag.c	-
 DM_CUSTOM_TEST_ROWS	ios-tools	ios/tools/touch_layout.py	-
 DM_DBG	host	host/main.c	y
@@ -161,7 +162,7 @@ DM_LOCAL_ENV_FILE	ios-tools	ios/tools/local_env.sh	-
 DM_LOGICSELF_OUT	verify	verify/accept.sh	y
 DM_LOGICSELF_RUNROOT	verify	verify/logicself.sh	-
 DM_LOGICSELF_TRUTH	verify	verify/logicself.sh	y
-DM_LOG_PORT	ios	ios/Sources/main.m	y
+DM_LOG_PORT	host,ios	host/diag.c ios/Sources/main.m	y
 DM_LOG_TEE	ios	ios/Sources/main.m	-
 DM_LONGFRAME	gfx	gfx/nvn/hle_nvn.c	-
 DM_LOOTFILTER	host	host/dm_lootfilter.c	-
@@ -583,7 +584,7 @@ DM_TEST_WORLD_TAP2	host	host/dm_world.c	-
 DM_TEST_WORLD_TAP3	host	host/dm_world.c	-
 DM_TEST_WORLD_TAP4	host	host/dm_world.c	-
 DM_TEST_WORLD_TAP_SHOT	host	host/dm_world.c	-
-DM_TEST_WORLD_XY	host	host/dm_world.c	-
+DM_TEST_WORLD_XY	host	host/dm_world.c	y
 DM_TEST_WP_DUMP	host	host/dm_world.c	-
 DM_TEST_YAW_DUMP	host	host/dm_turnsmooth.c	-
 DM_TEST_YAW_MIN	host	host/dm_turnsmooth.c	-
@@ -624,7 +625,7 @@ DM_TV_SHOT_SECONDS	tvos	tvos/main.m	y
 DM_UDC_SELFTEST	gfx	gfx/nvn/nvn_mtl.m	-
 DM_UIMSG	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_UI_169	host	host/dm_uiscreen.c	-
-DM_UI_DUMP	host	host/dm_cursor.c	-
+DM_UI_DUMP	host	host/dm_cursor.c	y
 DM_UI_DUMP_AT	host	host/dm_cursor.c	-
 DM_UI_TAPS	host	host/hle_hid.c	-
 DM_UI_TAPS_AT	host	host/dm_cursor.c host/hle_hid.c	-

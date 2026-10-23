@@ -479,8 +479,13 @@ static void w_watch_step(uint8_t *b) {
 // DM_TEST_WORLD_LIST="<拍>[,<拍>…]" 到拍把当前载入的 NPC / 怪（类型 1）与物件（类型 2）的类号和格坐标列出来（各最多 60 个）。
 // Test switch (for setting up a test case, walk first to places that cannot be reached otherwise): DM_TEST_WORLD_XY="<tick>:<x>,<y>[;...]" after the tick walk there by cell coordinates (same route planning, sending the game's "run to point" segment by segment; move on to the next entry once within 2 cells or after 12 seconds without arriving);
 // DM_TEST_WORLD_LIST="<tick>[,<tick>...]" at the tick list the class numbers and cell coordinates of the currently loaded NPCs / monsters (type 1) and objects (type 2) (at most 60 each).
-static void w_test_xy_step(void) {
-    static struct { uint32_t at; int x, y, st; uint64_t until; } q[12]; static int n = -1, cur = -1; static uint32_t lt[8]; static int nl = -1; uint8_t *b = wb(); uint64_t pl = w_player(); if (!b || !pl) return;
+// 控制口 walk_to（dm_ctl_cmds.c）：任一线程登记一个格坐标，下一帧起按 DM_TEST_WORLD_XY 同一套路线规划走过去；结果 1 到了（2 格内）2 超时，0 进行中，-1 没有
+// Control-port walk_to (dm_ctl_cmds.c): any thread registers one cell coordinate, and from the next frame the player walks there with the same route planning as DM_TEST_WORLD_XY; result 1 arrived (within 2 cells), 2 timed out, 0 in progress, -1 none
+static _Atomic int g_cw_req, g_cw_res = -1; static _Atomic uint64_t g_cw_arg;   // x | y<<16 | 超时秒<<32 | x | y<<16 | timeout seconds<<32
+void dm_world_walk_cell(int x, int y, int timeout_s) { atomic_store(&g_cw_arg, (uint64_t)(uint16_t)x | (uint64_t)(uint16_t)y << 16 | (uint64_t)(uint32_t)timeout_s << 32); atomic_store(&g_cw_res, 0); atomic_store(&g_cw_req, 1); }
+int dm_world_walk_cell_result(void) { return atomic_load(&g_cw_res); }
+static void w_test_xy_step(void) {   // q[12] = 控制口的那一条 | q[12] = the control port's entry
+    static struct { uint32_t at; int x, y, st; uint64_t until; } q[13]; static int n = -1, cur = -1; static uint32_t lt[8]; static int nl = -1; uint8_t *b = wb(); uint64_t pl = w_player(); if (!b || !pl) return;
     if (n < 0) { n = 0; const char *e = getenv("DM_TEST_WORLD_XY"); char buf[400]; if (e) { strlcpy(buf, e, sizeof buf); for (char *sv, *t = strtok_r(buf, ";", &sv); t && n < 12; t = strtok_r(NULL, ";", &sv)) if (sscanf(t, "%u:%d,%d", &q[n].at, &q[n].x, &q[n].y) == 3) n++; } }
     if (nl < 0) { nl = 0; const char *e = getenv("DM_TEST_WORLD_LIST"); char buf[100]; if (e) { strlcpy(buf, e, sizeof buf); for (char *sv, *t = strtok_r(buf, ",", &sv); t && nl < 8; t = strtok_r(NULL, ",", &sv)) lt[nl++] = (uint32_t)atoi(t); } }
     uint32_t dm_cur_tick(void); uint32_t tk = dm_cur_tick(); int px = 0, py = 0; w_unit_xy(pl, &px, &py);
@@ -490,9 +495,12 @@ static void w_test_xy_step(void) {
                 for (int q = 0; q < 0x168 / 4; q++) k += snprintf(o + k, sizeof o - k, " %d", r[q]); if (k >= (int)sizeof o) k = (int)sizeof o - 1; LOG("物件表记录 cls %u（每格 4 字节，十进制）：%s", c, o); } } }
         for (int gt = 1; gt <= 5; gt += gt == 2 ? 3 : 1) { char o[1600]; int c2 = 0, cnt = 0; o[0] = 0; for (int k = 0; k < 128; k++) for (uint64_t c = *(uint64_t *)(b + 0x2d603a0 + gt * 0x400 + k * 8); c && cnt < 60; c = *(uint64_t *)(c + 0x158)) { int x = 0, y = 0; w_unit_xy(c, &x, &y); int sel = ((int (*)(uint64_t, int, int, int, int))(b + 0x464a70))(c, 0, 0, -1, -1) & 1, cat = ((int (*)(int, uint64_t, uint64_t))(b + 0x2f7b7c))(0x165, pl, c);
             c2 += snprintf(o + c2, sizeof o - c2, " c%u/模式%u%s(%d,%d)", *(uint32_t *)(c + 4), *(uint32_t *)(c + 0xc), !sel ? "/不可选" : cat == 2 ? "/物" : cat == 4 ? "/出口" : cat == 5 ? "/人" : cat ? "/别" : "/无类", x, y); if (c2 >= (int)sizeof o) c2 = (int)sizeof o - 1; cnt++; } LOG("  类型 %d：%s", gt, o); } }
+    if (atomic_exchange(&g_cw_req, 0)) { uint64_t g = atomic_load(&g_cw_arg); if (cur >= 0 && cur != 12) q[cur].st = 0;   // 控制口插队：打断进行中的那条（之后重走） | the control port jumps the queue: the entry in progress is interrupted (walked again later)
+        q[12].x = (int16_t)(g & 0xffff); q[12].y = (int16_t)(g >> 16 & 0xffff); q[12].st = 1; q[12].until = w_now_ns() + (g >> 32 ? g >> 32 : 12) * 1000000000ull; cur = 12; g_go.on = 0; g_go.n = g_go.i = 0;
+        LOG("控制口按坐标走：→ %d,%d（从 %d,%d）", q[12].x, q[12].y, px, py); }
     if (cur < 0) { for (int i = 0; i < n; i++) if (!q[i].st && tk >= q[i].at) { cur = i; q[i].st = 1; q[i].until = w_now_ns() + 12000000000ull; g_go.on = 0; g_go.n = g_go.i = 0; LOG("按坐标走：→ %d,%d（从 %d,%d）", q[i].x, q[i].y, px, py); break; } if (cur < 0) return; }
     int dx = abs(q[cur].x - px), dy = abs(q[cur].y - py); static uint64_t nf;
-    if ((dx <= 2 && dy <= 2) || w_now_ns() > q[cur].until) { LOG("按坐标走：%s，停在 %d,%d（目标 %d,%d）", dx <= 2 && dy <= 2 ? "到了" : "12 秒没到", px, py, q[cur].x, q[cur].y); q[cur].st = 2; cur = -1; return; }
+    if ((dx <= 2 && dy <= 2) || w_now_ns() > q[cur].until) { LOG("按坐标走：%s，停在 %d,%d（目标 %d,%d）", dx <= 2 && dy <= 2 ? "到了" : "到时没到", px, py, q[cur].x, q[cur].y); q[cur].st = 2; if (cur == 12) atomic_store(&g_cw_res, dx <= 2 && dy <= 2 ? 1 : 2); cur = -1; return; }
     while (g_go.i < g_go.n && abs((int)g_go.node[g_go.i][0] - px) <= 1 && abs((int)g_go.node[g_go.i][1] - py) <= 1) { g_go.i++; nf = 0; }
     uint64_t fr = dm_guest_frame(); if (fr < nf) return; nf = fr + 20;
     if (g_go.i >= g_go.n && !w_plan(b, pl, q[cur].x, q[cur].y)) return;

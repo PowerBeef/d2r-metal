@@ -111,3 +111,5 @@ host/loader.c	苹果	改写产物目标平台名，只进装载器的错误日�
 host/loader.c	安卓	同上
 host/loader.c	鸿蒙	同上
 host/dm_events.c	【红】	事件流按这个日志红标认 red 事件（只用来匹配日志行，不上屏）
+host/dm_ctl_cmds.c	控制口 dump	现场导出原因，只进日志
+host/dm_ctl_cmds.c	控制口 quit	优雅退出原因，只进日志（同 dm_host_shutdown 的其他调用处）

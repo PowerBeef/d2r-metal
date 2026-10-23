@@ -11,6 +11,7 @@
 // Each line: {"seq":number,"t":seconds since the process started,"ev":"type",...fields...[,"tick":in-run tick]}; types and fields are listed in dm/verify/event_stream.md.
 // Callers always go through the weakly defined function pointers below: when dm_events.c is not linked in (unit tests etc.) or DM_EVENTS is not set, the pointers are null and a call site only adds one check.
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 
 // 发一个事件。sig = 字段签名「名:型 名:型 …」，型 s 字符串（NULL 写 null）、d int、l long long、u unsigned long long、x 十六进制串、f double、b 真假（int）；值按签名顺序跟在后面。
@@ -29,6 +30,14 @@ __attribute__((weak)) void (*g_dm_event_crash_fn)(int sig, uint64_t pc, const ch
 // Source of the in-run tick (set by diag.c): returns the current tick, or -1 outside a run; once set, events in a run carry tick automatically
 __attribute__((weak)) long long (*g_dm_event_tick_fn)(void) = 0;
 
+// 事件的另一个出口（dm_ctl.c 设）：每行（含末尾换行）在写文件之后交给它；持着事件锁调，不能在里面再发事件
+// Another outlet for events (set by dm_ctl.c): each line (with its trailing newline) is handed to it after the file write; called with the event lock held, so it must not emit events itself
+__attribute__((weak)) void (*g_dm_event_sink)(const char *line, size_t n) = 0;
+void dm_events_set_sink(void (*fn)(const char *line, size_t n));   // 装出口：装上之前已发的事件（最多 16 KiB）先交给它 | installs the outlet: events already emitted before it (at most 16 KiB) are handed to it first
+// JSON 小工具（与事件同一套转义）：按签名写「,"名":值,…」到 out（返回长度）；写一个 JSON 串（带引号）
+// JSON helpers (same escaping as the events): write ",\"name\":value,..." per the signature into out (returns the length); write one JSON string (with quotes)
+size_t dm_json_fields(char *out, size_t cap, const char *sig, ...);
+void dm_json_str(char *out, size_t cap, const char *s);
 // 读 DM_EVENTS 等开关、开好输出、填上面的指针；可重复调（只生效一次）。要在起别的线程之前调
 // Reads DM_EVENTS and the other switches, opens the outputs and fills the pointers above; may be called repeatedly (takes effect once). Must be called before other threads start
 void dm_events_init(void);

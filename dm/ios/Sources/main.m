@@ -27,6 +27,7 @@ void dm_host_shutdown(const char *why);   // 宿主优雅退出（dm/host/hle_li
 #include "../../host/romfs_validate.h"
 #include "../../host/dm_i18n.h"
 #include "../../host/dm_events.h"
+#include "../../host/dm_ctl.h"
 static NSString *T(const char *k) { return @(dm_ui(k)); }   // 我们自己的界面文字（中英表 dm/i18n/ui_text.tsv，语言跟原版设置走） | our own UI text (Chinese-English string table dm/i18n/ui_text.tsv, language follows the original game's setting)
 #import <Network/Network.h>
 #include "dm_metal_cache_guard.h"
@@ -135,21 +136,32 @@ static void log_client_write(const char *p, size_t n) {
     }
     pthread_mutex_unlock(&g_log_client_mu);
 }
-static void *log_port_reader(void *arg) {   // 客户端发「quit」→ App 自行退出：下次拉起不用 devicectl --terminate-existing（实测它会拖住 37–120 s） | The client sends "quit" → the App exits by itself: the next launch does not need devicectl --terminate-existing (measured to stall for 37–120 s)
+static void ctl_reply(void *ctx, const char *line, size_t n) {   // 控制口回执（dm_ctl.c）：同步写回这条连接，与 quit 回执同锁、不插进转发中的半行 | control-port reply (dm_ctl.c): written back on this connection synchronously, under the same lock as the quit ack so it never lands inside a half-forwarded line
+    pthread_mutex_lock(&g_log_client_mu); write_all((int)(intptr_t)ctx, line, n); pthread_mutex_unlock(&g_log_client_mu);
+}
+static void log_port_line(int c, char *s) {
+    while (*s == ' ' || *s == '\t') s++;
+    size_t n = strlen(s); while (n && (s[n - 1] == '\r' || s[n - 1] == ' ')) s[--n] = 0;
+    if (*s == '{') { dm_ctl_handle(s, ctl_reply, (void *)(intptr_t)c); return; }   // 一行 JSON = 控制口命令（dm/verify/control_port.md） | a JSON line = a control-port command (dm/verify/control_port.md)
+    if (strstr(s, "dump")) { void crash_dump_now(const char *why); crash_dump_now("DM_LOG_PORT dump"); }   // 冒烟判红时先发 dump 留现场（logport.py snapshot_hang），再发 quit | When the smoke test fails, send dump first to keep the diagnostics (logport.py snapshot_hang), then send quit
+    if (strstr(s, "quit")) {
+        static const char ack[] = "DM_LOG_PORT：收到 quit，退出\n";
+        pthread_mutex_lock(&g_log_client_mu); write_all(c, ack, sizeof ack - 1); pthread_mutex_unlock(&g_log_client_mu);   // 同锁：不插进转发中的半行 | Same lock: do not insert into a half line being forwarded
+        fprintf(stderr, "%s", ack); dm_host_shutdown("DM_LOG_PORT quit"); _exit(0);
+    }
+}
+static void *log_port_reader(void *arg) {   // 客户端发「quit」→ App 自行退出：下次拉起不用 devicectl --terminate-existing（实测它会拖住 37–120 s）；以「{」开头的行是控制口命令 | The client sends "quit" → the App exits by itself: the next launch does not need devicectl --terminate-existing (measured to drag on for 37–120 s); lines starting with "{" are control-port commands
     // 收到即在同一连接上同步回执，客户端见到回执才关连接：iproxy 客户端一 EOF 就拆整条 usbmux 连接（iproxy.c 2.1.1），
     // 发完即关时 quit 可能随拆除丢失（冒烟残留进程的根因）。回执不走 tee 管道——_exit 会截断管道里没转发的行
     // On receipt, acknowledge synchronously on the same connection, and the client closes the connection only after seeing the ack: the iproxy client tears down the whole usbmux connection as soon as it sees EOF (iproxy.c 2.1.1),
     // so with send-then-close the quit can be lost in the teardown (root cause of leftover processes after the smoke test). The ack does not go through the tee pipe -- _exit would truncate lines in the pipe that have not been forwarded
-    int c = (int)(intptr_t)arg; char b[64], acc[16] = {0}; ssize_t r;
-    while ((r = read(c, b, sizeof b - 1)) > 0) {
-        b[r] = 0; size_t n = strlen(acc); char cat[sizeof acc + sizeof b]; memcpy(cat, acc, n); memcpy(cat + n, b, (size_t)r + 1);   // 跨块累积：quit 被拆成两次 read 也认 | Accumulate across chunks: quit is recognized even when split across two reads
-        if (strstr(cat, "dump")) { void crash_dump_now(const char *why); crash_dump_now("DM_LOG_PORT dump"); cat[0] = 0; }   // 冒烟判红时先发 dump 留现场（logport.py snapshot_hang），再发 quit | When the smoke test fails, send dump first to keep the diagnostics (logport.py snapshot_hang), then send quit
-        if (strstr(cat, "quit")) {
-            static const char ack[] = "DM_LOG_PORT：收到 quit，退出\n";
-            pthread_mutex_lock(&g_log_client_mu); write_all(c, ack, sizeof ack - 1); pthread_mutex_unlock(&g_log_client_mu);   // 同锁：不插进转发中的半行 | Same lock: do not insert into a half line being forwarded
-            fprintf(stderr, "%s", ack); dm_host_shutdown("DM_LOG_PORT quit"); _exit(0);
-        }
-        size_t m = strlen(cat), keep = m < sizeof acc - 1 ? m : sizeof acc - 1; memcpy(acc, cat + m - keep, keep); acc[keep] = 0;
+    int c = (int)(intptr_t)arg; char buf[8192]; size_t used = 0; ssize_t r;
+    while ((r = read(c, buf + used, sizeof buf - 1 - used)) > 0) {   // 按行切：命令被拆成两次 read 也认 | split by lines: a command split across two reads is still recognized
+        used += (size_t)r; buf[used] = 0;
+        char *s = buf, *nl;
+        while ((nl = strchr(s, '\n'))) { *nl = 0; log_port_line(c, s); s = nl + 1; }
+        used = strlen(s); memmove(buf, s, used + 1);
+        if (used == sizeof buf - 1) { log_port_line(c, buf); used = 0; }   // 超长无换行：当一行处理 | overlong without a newline: handled as one line
     }
     return NULL;
 }

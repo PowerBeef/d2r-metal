@@ -105,7 +105,7 @@ dm/verify/accept.sh [--fast|--full] [产物目录]
 - `rulegate.sh [拍数=400] [产物=rules]`：宿主用 `rules` 产物回放一局真值的输入，逐拍 6 格状态与真值的 `ticks.jsonl` 对拍（对拍脚本 `selfcmp.py` 属于模拟器驱动脚本那一组，不随仓库提供）。真值局目录由 `DM_RULE_TRUTH` 指定，须有 `meta.json`、`c2s.jsonl`、`ticks.jsonl`。开跑前先核产物是不是用当前的 `patch_nso.py` 出的，过期就拒跑。末行 `RULEGATE OK|RED`。
 - `logicself.sh [产物=touch] [拍数=230]`：产物与**它自己的基线**比。回放同一局真值输入，把逐拍的单位数与哈希同仓库里的 `logicself/touch.json` 比，用来发现「改了不该影响逻辑的东西，逻辑却变了」。真值局目录由 `DM_LOGICSELF_TRUTH` 指定（缺省 `$DM_ROOT/data/switch/truth_runs/cvd5`）。`LOGICSELF_REBASE=1` 重录基线：连跑两遍，两遍一致才写入。末行 `LOGICSELF OK|RED`。
 
-三种记录文件的格式各有一页：[tick_state_format.zh-CN.md](tick_state_format.zh-CN.md)、[command_packet_format.zh-CN.md](command_packet_format.zh-CN.md)、[ui_message_stream.zh-CN.md](ui_message_stream.zh-CN.md)。测试脚本读里程碑、存档、红标与崩溃用的事件流（`DM_EVENTS`）见 [event_stream.zh-CN.md](event_stream.zh-CN.md)。
+三种记录文件的格式各有一页：[tick_state_format.zh-CN.md](tick_state_format.zh-CN.md)、[command_packet_format.zh-CN.md](command_packet_format.zh-CN.md)、[ui_message_stream.zh-CN.md](ui_message_stream.zh-CN.md)。测试脚本读里程碑、存档、红标与崩溃用的事件流（`DM_EVENTS`）见 [event_stream.zh-CN.md](event_stream.zh-CN.md)；一步一步驱动正在跑的游戏的控制口（`DM_CTL_PORT`）见 [control_port.zh-CN.md](control_port.zh-CN.md)。
 
 内部的分支合并流程脚本不随仓库提供，外部贡献不需要它。
 

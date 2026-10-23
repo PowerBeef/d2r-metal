@@ -53,6 +53,9 @@ UTF-8, one object per line, terminated by `\n`, written with a single `write()` 
 | `quit` | `why` | Mac: the window / app quit path started. |
 | `quit_save` | `saved`, `commits`, `ms`, `paused` | Mac: the save wait before quitting finished. |
 | `shutdown` | `why` | `dm_host_shutdown` started (SIGTERM, iOS terminate / scene disconnect, Mac quit). |
+| `shot` | `path`, `ok` | A screenshot file was written (`DM_NVN_SHOT_UI`, the control port's `screenshot`). |
+| `tick_hold` | `on` | The control port froze (`pause`, `step`) or released game ticks. |
+| `ctl` | `state` (`connected`) | A control-port client connected (`DM_CTL_PORT`). |
 | `exit` | `why` (`exit`, `ticks_full`, `watchdog`, `shutdown`, `nnMain returned`), `code` | The process is about to end. Paths that use `_exit` emit it themselves; `exit()` goes through `atexit`. |
 
 Only lines that reach `LOG` / `MLOG` (and `die` / `MDIE`) become `red` / `fatal` events. A marker in a format string or in a `%s` argument both count. Lines printed another way, such as the iOS shell's `plog`, are not seen.

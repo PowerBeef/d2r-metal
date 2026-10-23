@@ -53,6 +53,9 @@ UTF-8，一行一个对象，以 `\n` 结尾；一次 `write()` 写出，多线�
 | `quit` | `why` | Mac：窗口 / App 退出流程开始。 |
 | `quit_save` | `saved`、`commits`、`ms`、`paused` | Mac：退出前等存盘结束。 |
 | `shutdown` | `why` | `dm_host_shutdown` 开始（SIGTERM、iOS 终止 / 场景断开、Mac 退出）。 |
+| `shot` | `path`、`ok` | 一张截图写完（`DM_NVN_SHOT_UI`、控制口 `screenshot`）。 |
+| `tick_hold` | `on` | 控制口冻结（`pause`、`step`）或放开了游戏拍。 |
+| `ctl` | `state`（`connected`） | 有控制口客户端连上（`DM_CTL_PORT`）。 |
 | `exit` | `why`（`exit`、`ticks_full`、`watchdog`、`shutdown`、`nnMain returned`）、`code` | 进程即将结束。走 `_exit` 的路径自己先发；`exit()` 经 `atexit` 发。 |
 
 只有经过 `LOG` / `MLOG`（以及 `die` / `MDIE`）的行才会变成 `red` / `fatal` 事件；标记写在格式串里或在 `%s` 参数里都算。用别的方式打的行（比如 iOS 外壳的 `plog`）看不到。
