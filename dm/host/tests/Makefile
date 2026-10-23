@@ -63,6 +63,8 @@ run: \
 	$(PY) test_mac_features.py
 	python3 ../../tools/test_dmtest.py
 	python3 ../../tools/test_dmevents.py
+	python3 ../../tools/test_switches.py
+	python3 ../../tools/switches.py check
 	$(B)/t_events
 	$(B)/t_rift_clock
 	$(B)/t_rift_next
