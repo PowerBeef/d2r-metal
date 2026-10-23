@@ -198,9 +198,13 @@ static int ext_SetDataSourceReader(void *self, void **reader, const char *path) 
     return ST_OK;
 }
 static int ext_GetTrackCount(void *self, int *n) { (void)self; *n = 0; return ST_OK; }   // 0 轨 ⇒ Setup 跳过选轨 | 0 tracks ⇒ Setup skips track selection
-static int ext_SeekTo(void *self, int64_t us, int mode) {   // 循环视频回开头：重新计一轮时长 | looping video back to the start: count one more round of the duration
+// 循环视频回开头：重新计一轮时长。接着上次到点的时刻续（不累积唤醒延迟）；上次到点已经过去一整轮以上（App 挂起 / 最小化时单调钟照走）就从现在起算，
+// 不然恢复时把错过的每一轮都背靠背补发一遍（周期 0.1 秒：挂起一小时要连发约 36000 轮）
+// Looping video back to the start: count one more round of the duration. It continues from the previous firing time (wake-up delay does not accumulate); if that firing is more than a whole round in the past (the monotonic clock keeps running while the App is suspended / minimized), count from now,
+// otherwise every missed round would be fired again back to back on resume (with a 0.1 s period, an hour's suspension meant some 36,000 rounds in a row)
+static int ext_SeekTo(void *self, int64_t us, int mode) {
     (void)us; (void)mode; mv_t *m = M(self);
-    pthread_mutex_lock(&g_lock); arm(m, (m->fired ? m->fired : mono_ns()) + m->dur_ns); m->last_pts_us = 0; pthread_mutex_unlock(&g_lock);
+    pthread_mutex_lock(&g_lock); int64_t now = mono_ns(); arm(m, (m->fired && now - m->fired <= m->dur_ns ? m->fired : now) + m->dur_ns); m->last_pts_us = 0; pthread_mutex_unlock(&g_lock);
     MVLOG("循环回开头");
     return ST_OK;
 }

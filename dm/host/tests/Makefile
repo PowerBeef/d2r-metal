@@ -34,6 +34,7 @@ run: \
 	$(B)/t_mac_overlay \
 	$(B)/t_modetx \
 	$(B)/t_movie \
+	$(B)/t_movie_loop \
 	$(B)/t_namegen \
 	$(B)/t_oe \
 	$(B)/t_padmap \
@@ -113,6 +114,7 @@ run: \
 	$(B)/t_swkbd
 	$(B)/t_altstack
 	$(B)/t_movie
+	$(B)/t_movie_loop
 	$(B)/t_condvar
 	$(B)/t_condvar_old
 	$(B)/t_dump 2>/dev/null
@@ -175,6 +177,8 @@ $(B)/t_audio_spsc_tsan: t_audio_spsc.c ../hle_audio.c ../hle.h ../dm.h | $(B)
 	clang -O1 -g -O1 -fsanitize=thread -Wno-unused-function -I.. -o $@ t_audio_spsc.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
 $(B)/t_swkbd: t_swkbd.c ../hle_swkbd.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_swkbd.c ../hle_swkbd.c
+$(B)/t_movie_loop: t_movie_loop.c ../hle_movie.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_movie_loop.c
 $(B)/t_movie: t_movie.c ../hle_movie.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_movie.c ../hle_movie.c
 $(B)/t_movie_real: t_movie_real.c ../hle_movie.c ../dm_movie_decode.c ../dm_movie_decode.h ../hle.h ../dm.h | $(B)
