@@ -63,8 +63,15 @@ export DM_PRESENT_HZ=0 DM_DETCLOCK=33333333
 [ -x "$BIN" ] || timeout 75s make -C "$ROOT/host" dmhost >/dev/null || { echo "【红】宿主编译失败" >&2; exit 2; }
 set +e
 timeout 100s "$BIN" "$OUT" main sdk > "$RUN/host.log" 2>&1
-rc=$?; [ "$rc" -eq 0 ] || { grep '【红】看门狗' "$RUN/host.log" | tail -1 >&2 || true; exit "$rc"; }
 host_status=$?
+# 宿主没正常结束（崩溃 / 看门狗 / 超时）：不跑断言，照样出 RED 判定行再退（原先直接 exit，判定行没打，host_status 也恒为 0）；退出码沿用宿主的
+# The host did not finish normally (crash / watchdog / timeout): skip the asserts but still print the RED verdict line before exiting (previously it exited straight away without the verdict line, and host_status was always 0); the exit code stays the host's
+if [ "$host_status" -ne 0 ]; then
+    grep '【红】看门狗' "$RUN/host.log" | tail -1 >&2 || true
+    echo "【红】touchchain ${CASE}：宿主退出码 ${host_status}，没跑断言；局目录：$RUN" >&2
+    echo "TOUCHCHAIN $CASE RED 用时 $((SECONDS - START)) 秒"
+    exit "$host_status"
+fi
 timeout 5s python3 "$CASE_DIR/assert.py" "$RUN"
 assert_status=$?
 # 与宿主状态探针的接口约定：每例局目录必须有宿主写的 state.jsonl（DM_STATE，首拍必写），缺了说明宿主没带状态探针，断言库读不到状态
