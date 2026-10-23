@@ -2,12 +2,16 @@
 // MapMemory / UnmapMemory 在查表与登记之间的那次 memcpy 换成 t_memcpy：能让选定的线程停在那里，排出确定的交错。
 //   det17   UnmapMemory 按过期下标删表项（F-CORE-17）：A 的 Unmap 停在 memcpy；B 另起线程 Unmap 别的栈；放开 A。期望活着的栈 C 仍在表里
 //   det5    MapMemory 查表与登记不是一步（F-CORE-5）：A 的 Map 停在 memcpy；B 另起线程 Map 同一目标。期望只有一个成功、表里一项
+//   phys    MapPhysicalMemory 给的页应是零（F-CORE-16）：映射、写满 0xA5、UnmapPhysicalMemory、再映射，数还剩几个 0xA5
+//   svc     ExitProcess（0x07）走宿主优雅退出、未实现的 SVC 回 NotImplemented 0x4201 并报一次红（F-CORE-12）
 //   disjoint R / overlap R   压力（线程消毒版 make tsan 跑）：8 线程各映射自己的槽 R 轮；2 线程同时映射同一目标 R 轮
 // 不带参数 = 跑全部确定用例（make run）
 // Concurrency and semantics unit test of the memory SVCs (hle_svc.c): includes the real hle_svc.c, so it can read the map registry g_map / g_nmap.
 // The memcpy MapMemory / UnmapMemory do between looking up the registry and recording in it is routed through t_memcpy, which can park a chosen thread there for deterministic interleavings.
 //   det17   UnmapMemory deletes its entry by a stale index (F-CORE-17): A's Unmap parks in memcpy; B unmaps another stack on its own thread; A is released. Expected: the live stack C is still registered
 //   det5    MapMemory's lookup and record are not one step (F-CORE-5): A's Map parks in memcpy; B maps the same target on its own thread. Expected: exactly one success, one entry
+//   phys    pages from MapPhysicalMemory must be zero (F-CORE-16): map, fill with 0xA5, UnmapPhysicalMemory, map again, count the 0xA5 bytes left
+//   svc     ExitProcess (0x07) goes to the host's graceful exit, and an unimplemented SVC returns NotImplemented 0x4201 and reports red once (F-CORE-12)
 //   disjoint R / overlap R   stress (run by the ThreadSanitizer build, make tsan): 8 threads map their own slot for R rounds; 2 threads map the same target at once for R rounds
 // No argument = run all deterministic cases (make run)
 #include <string.h>
@@ -31,8 +35,9 @@ void hlecount_svc(int num) { (void)num; }
 uint64_t dm_entropy64(void) { return 4; }
 void dm_backtrace(uint64_t fp) { (void)fp; }
 uint64_t guest_ns(void) { return 0; }
-static _Atomic long g_logs;
-static void quiet_log(const char *file, int line, const char *fmt, ...) { (void)file; (void)line; (void)fmt; atomic_fetch_add(&g_logs, 1); }
+static _Atomic long g_logs, g_red_logs; static char g_shutdown_why[64];
+static void quiet_log(const char *file, int line, const char *fmt, ...) { (void)file; (void)line; atomic_fetch_add(&g_logs, 1); if (strstr(fmt, "【红】")) atomic_fetch_add(&g_red_logs, 1); }
+void dm_host_shutdown(const char *why) { snprintf(g_shutdown_why, sizeof g_shutdown_why, "%s", why); }   // 真的会 _exit(0)；这里只记下来 | the real one _exit(0)s; here it is only recorded
 
 // macOS 没有 pthread_barrier_t：按代计数的小屏障 | macOS has no pthread_barrier_t: a small generation-counting barrier
 typedef struct { pthread_mutex_t m; pthread_cond_t c; int n, waiting; unsigned gen; } barrier_t;
@@ -99,6 +104,24 @@ static void det5(void) {
     reset_map();
 }
 
+static void phys(void) {
+    uint64_t a = (uint64_t)g_alias; const size_t n = 0x40000;
+    uint64_t r1 = svc(0x2C, a, n, 0); memset((void *)a, 0xA5, n);
+    uint64_t r2 = svc(0x2D, a, n, 0), r3 = svc(0x2C, a, n, 0);
+    size_t stale = 0; for (size_t i = 0; i < n; i++) stale += ((uint8_t *)a)[i] == 0xA5;
+    printf("phys: Map %#llx, fill 0xA5, Unmap %#llx, Map %#llx: %zu of %zu bytes still 0xA5 (Horizon: all 0)\n", r1, r2, r3, stale, n);
+    CHECK(!r1 && !r2 && !r3 && !stale, "phys: re-mapped pages must be zero");
+    svc(0x2D, a, n, 0);
+}
+static void svcs(void) {
+    long red0 = g_red_logs;
+    uint64_t r[32] = {0}; svc_dispatch(0x07, r, 0);
+    printf("svc: ExitProcess -> dm_host_shutdown(\"%s\")\n", g_shutdown_why);
+    CHECK(!strcmp(g_shutdown_why, "ExitProcess"), "svc: ExitProcess must shut the host down");
+    uint64_t a = svc(0x50, 1, 2, 3), b = svc(0x50, 1, 2, 3);
+    printf("svc: unknown SVC 0x50 -> %#llx, again -> %#llx, red log lines %ld\n", a, b, g_red_logs - red0);
+    CHECK(a == 0x4201 && b == 0x4201 && g_red_logs - red0 == 1, "svc: an unknown SVC must return NotImplemented 0x4201 and report red once");
+}
 static barrier_t g_bar;
 static _Atomic long map_fail, unmap_fail, live_lost, after_not_free, rounds_done;
 static void *disjoint(void *p) {
@@ -154,6 +177,8 @@ int main(int argc, char **argv) {
     int all = !strcmp(mode, "all");
     if (all || !strcmp(mode, "det17")) det17();
     if (all || !strcmp(mode, "det5")) det5();
+    if (all || !strcmp(mode, "phys")) phys();
+    if (all || !strcmp(mode, "svc")) svcs();
     if (!strcmp(mode, "disjoint")) run_disjoint();
     if (!strcmp(mode, "overlap")) run_overlap();
     printf("t_svc_mem %s: %s\n", mode, g_fail ? "FAIL" : "OK");

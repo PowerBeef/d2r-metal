@@ -108,7 +108,7 @@ enum { I_CoreMask=0, I_PriorityMask=1, I_AliasAddr=2, I_AliasSize=3, I_HeapAddr=
        I_AslrAddr=12, I_AslrSize=13, I_StackAddr=14, I_StackSize=15, I_SysResTotal=16, I_SysResUsed=17,
        I_ProgramId=18, I_InitProcIdRange=19, I_UserExcAddr=20, I_TotalNonSys=21, I_UsedNonSys=22, I_IsApplication=23 };
 
-static uint8_t g_seen[256];
+static _Atomic uint8_t g_seen[256];   // 未实现的 SVC 号各报一次 | each unimplemented SVC number is reported once
 
 // 已映射区间登记（MapMemory 栈、MapPhysicalMemory alias 页），QueryMemory 据此回报；SDK 靠它找空位
 // 查表 → 核对 → 改权限 / 搬内容 → 登记 / 删除整段持 g_map_lock，QueryMemory 扫表也持它（下面三个函数都要调用方持锁）。
@@ -219,8 +219,10 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
     case 0x2C: case 0x2D: {  // MapPhysicalMemory / UnmapPhysicalMemory(addr, size)：只许在 alias 区内（SDK 的 VammManager 用） | MapPhysicalMemory / UnmapPhysicalMemory(addr, size): only allowed inside the alias region (used by the SDK's VammManager)
         uint8_t *a = (uint8_t *)regs[0]; size_t size = regs[1];
         if (a < g_alias || a + size > g_alias + g_alias_cap) { LOG("SVC %#x 越出 alias 区 %p+%#zx", num, a, size); regs[0] = 0xD401; return 0; }
+        // 收回时整段换成新的匿名页（不可访问）：Horizon 再映射给的是清零的物理页，原先 MADV_FREE + PROT_NONE 在没有内存压力时把旧内容原样还回来
+        // Unmapping replaces the range with fresh anonymous pages (inaccessible): Horizon maps zeroed physical pages again, and the old MADV_FREE + PROT_NONE handed the old contents back unchanged whenever there was no memory pressure
         int rc = num == 0x2C ? mprotect(a, size, PROT_READ | PROT_WRITE)
-                             : (madvise(a, size, MADV_FREE), mprotect(a, size, PROT_NONE));
+                             : (mmap(a, size, PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) == MAP_FAILED ? -1 : 0);
         if (rc) die("SVC %#x mprotect %p+%#zx errno=%d", num, a, size, errno);
         if (g_flag.svc) LOG("%sPhysicalMemory %p+%#zx", num == 0x2C ? "Map" : "Unmap", a, size);
         regs[0] = 0; return 0;
@@ -262,8 +264,12 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         }
         regs[0] = 0; regs[1] = v; return 0;
     }
+    case 0x07:   // ExitProcess：游戏不调（enter_game / inventory / town_loop 的 SVC 计数里都没有）；真机上进程就此结束，这里走宿主的优雅退出 | ExitProcess: the game does not call it (absent from the SVC counts of enter_game / inventory / town_loop); on the device the process ends here, so take the host's graceful exit
+        dm_host_shutdown("ExitProcess"); regs[0] = 0; return 0;
     default:
-        if (!g_seen[num & 0xff]) { g_seen[num & 0xff] = 1; LOG("SVC %#x x0=%#llx x1=%#llx x2=%#llx (占位返回成功)", num, regs[0], regs[1], regs[2]); }
-        regs[0] = 0; return 0;
+        // 没实现的 SVC 回 NotImplemented（内核模块 1，描述 33），报一次红；原先回成功、输出寄存器原样不动，调用方拿着垃圾当结果
+        // An unimplemented SVC returns NotImplemented (kernel module 1, description 33) and reports red once; it used to return success with the output registers untouched, so the caller took garbage as the result
+        if (!atomic_exchange(&g_seen[num & 0xff], 1)) LOG("【红】SVC %#x x0=%#llx x1=%#llx x2=%#llx 未实现，回 NotImplemented 0x4201", num, regs[0], regs[1], regs[2]);
+        regs[0] = 0x4201; return 0;
     }
 }
