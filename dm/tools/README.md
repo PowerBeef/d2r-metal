@@ -28,6 +28,7 @@ Three kinds of things live here. The first you will use when following the front
 | `save_txn_regress.sh` | Determinism regression for save transactions |
 | `host_war13.sh` | Host replay of one fixed case, compared tick by tick and by save |
 | `l3reg.py`, `l3seg.sh`, `l3run.sh`, `test_l3reg.py` | Long-run memory regression: fits the growth of memory and handles against game ticks and extrapolates to a long session |
+| `scenario.py`, `test_scenario.py` | Scenario runner: plays the step-by-step scenarios in [dm/verify/scenarios](../verify/scenarios/README.md) through the control port on the CLI host, the iOS package on a Mac or a device, and judges them by events, state and checks |
 | `dmctl.py`, `test_dmctl.py` | Client for the control port ([control_port.md](../verify/control_port.md)): send commands, wait for events, from Python or the shell |
 | `dmevents.py`, `test_dmevents.py` | Reads and checks the `DM_EVENTS` event stream ([event_stream.md](../verify/event_stream.md)): timeline summary, expected event order, why a run went red, wait for an event |
 | `switches.py`, `test_switches.py` | Registry of the `DM_*` environment switches: `gen` writes [dm/switches.tsv](../switches.tsv) (who reads each switch, documented or not) from a scan of the sources; `check` fails when the registry is stale or a script sets a switch nothing reads |

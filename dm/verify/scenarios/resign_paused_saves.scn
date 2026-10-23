@@ -1,0 +1,16 @@
+# 暂停着失活也真存盘（第二阶段 4a0710f，iOS）：暂停菜单开着时游戏不走拍，原先「下一拍存」永远不存；现在失活时冻结世界、放开暂停存一次
+# Resigning while paused really saves (phase 2, 4a0710f, iOS): with the pause menu open the game does not tick, so the old "save on the next tick" never saved; now resigning freezes the world and releases the pause for one save
+name resign_paused_saves
+requires ios-mac device
+save warlock
+timeout 180
+
+enter_game
+open_pause
+app resign
+expect save result=commit timeout=6
+app active
+close_pause
+expect_state in_game=true
+quit
+check no_red

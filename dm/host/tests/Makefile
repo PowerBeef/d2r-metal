@@ -65,6 +65,8 @@ run: \
 	python3 ../../tools/test_dmtest.py
 	python3 ../../tools/test_dmevents.py
 	python3 ../../tools/test_dmctl.py
+	python3 ../../tools/test_scenario.py
+	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn
 	python3 ../../tools/test_switches.py
 	python3 ../../tools/switches.py check
 	$(B)/t_ctl

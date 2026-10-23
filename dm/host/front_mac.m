@@ -17,6 +17,7 @@ static void ui_rect_frac(double *fy, double *fh) { int x, y, w, h, rw = 0, rh = 
 __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn(ui_rect_frac); }   // 不开窗口的跑法（截图 / 闸门）也要生效，所以不放在建图层那里 | Must also take effect when running without a window (screenshots / gate checks), so it is not placed where the layer is created
 #include "front.h"
 #include "hle.h"
+#include "dm_ctl.h"
 #include <signal.h>
 
 void dm_touch_host_live_enable(void); void dm_touch_host_live(int op, float nx, float ny);   // touch_mac.c
@@ -76,6 +77,18 @@ static void app_quit(const char *why) {
     DM_EV("quit_save", "saved:b commits:u ms:f paused:b", n && asked, (unsigned long long)n, ms, froze);
     { int dm_cloud_flush_wait(double sec); dm_cloud_flush_wait(10); }   // 存盘之后把这一局传上 iCloud 再退（没开同步时立即返回） | after saving, upload this session to iCloud before quitting (returns immediately when sync is off)
     dm_host_shutdown(why);
+}
+// 控制口 app 命令（dm_ctl_cmds.c）：在主线程上做与 DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT 相同的动作。最小化与 DM_TEST_MINI_AT 一样临时给窗口加上可最小化（游戏窗口本身没有）；
+// background / foreground 在 Mac 上就是最小化 / 还原；resign / active 不支持（Mac 的失焦靠别的窗口抢走焦点）
+// The control port's app command (dm_ctl_cmds.c): on the main thread, the same actions as DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT. Like DM_TEST_MINI_AT, minimizing temporarily makes the window minimizable (the game window is not by itself);
+// background / foreground on the Mac are minimize / restore; resign / active are not supported (on the Mac, focus is lost by another window taking it)
+static int ctl_app(const char *w) {
+    if (!g_win) return -1;
+    int mini = !strcmp(w, "minimize") || !strcmp(w, "background"), rest = !strcmp(w, "restore") || !strcmp(w, "foreground");
+    if (!strcmp(w, "terminate")) { dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; }); return 0; }   // 走 applicationShouldTerminate → app_quit（存盘再退），不返回 | goes through applicationShouldTerminate -> app_quit (save, then quit), does not return
+    if (!mini && !rest) return -1;
+    dispatch_sync(dispatch_get_main_queue(), ^{ if (mini) { g_win.styleMask |= NSWindowStyleMaskMiniaturizable; [g_win miniaturize:nil]; } else [g_win deminiaturize:nil]; });
+    return 0;
 }
 static const char *ui(const char *k) { const char *dm_ui(const char *key); return dm_ui(k); }
 static void show_keys(void) { NSAlert *a = [NSAlert new]; a.messageText = @(ui("dmAppKeysTitle")); a.informativeText = @(ui("dmAppKeysText")); [a addButtonWithTitle:@(ui("dmAppOK"))]; [a runModal]; }
@@ -206,7 +219,7 @@ void front_run(void (*guest)(void)) {
         NSWindow *win = [[NSWindow alloc] initWithContentRect:r
                                                     styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
                                                       backing:NSBackingStoreBuffered defer:NO];
-        win.title = @"D2R Mobile"; win.restorable = NO; g_win = win;
+        win.title = @"D2R Mobile"; win.restorable = NO; g_win = win; g_dm_ctl_app_fn = ctl_app;
         NSView *v = win.contentView; g_view = v;
         v.wantsLayer = YES; v.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
         win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary; win.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); if (g_full) win.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);

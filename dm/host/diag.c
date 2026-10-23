@@ -388,7 +388,7 @@ static void ui_events(const char *cat, const char *act, const char *arg) {
         DM_EV("panel", "act:s name:s", act, arg);
         if (!strcmp(act, "OpenPanel") && !strcmp(arg, "MainMenuButtonRibbon")) DM_EV("main_menu", "");
         else if (!strcmp(act, "UnloadPanel") && !strcmp(arg, "LoadScreenPanel") && loading) { loading = 0; DM_EV("loading_done", ""); }
-        else if (!strcmp(act, "OpenPanel") && !strcmp(arg, "PauseLayout")) DM_EV("pause_open", "");
+        else if (!strcmp(act, "OpenPanel") && !strncmp(arg, "PauseLayout", 11)) DM_EV("pause_open", "name:s", arg);   // 局内暂停页叫 PauseLayoutGarden：按前缀认（同 logport.py 原先的子串） | the in-game pause page is called PauseLayoutGarden: matched by prefix (as logport.py's old substring did)
     }
 }
 static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄存器 | Observation gate callback: registers are read-only

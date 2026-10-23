@@ -1,0 +1,16 @@
+# 背包开关：＋ 打开背包，面板事件与 state 都看得到它，截一张图，B 关掉
+# Inventory open / close: + opens the inventory, both the panel event and state show it, take a screenshot, B closes it
+name inventory
+save warlock
+timeout 180
+
+enter_game
+press PLUS
+expect panel act=OpenPanel name=PlayerInventoryExpansionLayout timeout=5
+expect_state panel=PlayerInventoryExpansionLayout
+shot inventory.png
+press B
+expect panel act=ClosePanel name=PlayerInventoryExpansionLayout timeout=5
+expect_state panel!=PlayerInventoryExpansionLayout
+quit
+check no_red

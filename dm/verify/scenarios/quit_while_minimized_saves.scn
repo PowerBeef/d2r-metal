@@ -1,0 +1,15 @@
+# 最小化着退出也存盘（第二阶段 112400c，Mac）：先恢复图形与时钟再请存盘；修之前存盘总是超时
+# Quitting while minimized still saves (phase 2, 112400c, Mac): graphics and the clock are resumed before the save is requested; before the fix the save always timed out
+name quit_while_minimized_saves
+requires cli
+save warlock
+timeout 180
+
+enter_game
+stick 0 1 frames=30
+app minimize
+sleep 1
+system_quit
+check saved
+check exit 0
+check event quit_save saved=true

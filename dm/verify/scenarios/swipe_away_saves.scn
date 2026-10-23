@@ -1,0 +1,14 @@
+# 从多任务界面划掉也存盘（第二阶段 4a0710f，iOS）：只失活、没进后台就被结束——先失活、0.3 秒后终止回调（同 DM_TEST_TERM_AT 的顺序），终止前要等到存档提交
+# Swiping away from the app switcher still saves (phase 2, 4a0710f, iOS): ended while only inactive, never in the background -- resign, then the termination callback 0.3 s later (the order of DM_TEST_TERM_AT); a save must commit before it ends
+name swipe_away_saves
+requires ios-mac device
+save warlock
+timeout 180
+
+enter_game
+stick 0 1 frames=30
+app resign
+sleep 0.3
+system_quit
+check saved
+check no_red

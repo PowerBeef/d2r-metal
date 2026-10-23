@@ -1,0 +1,12 @@
+# 进后台再回来（Mac 上 = 最小化再还原；iOS 上 = 与 DM_TEST_BG 同一套场景事件）：回来后局还在、能走、没有红标
+# To the background and back (on the Mac = minimize then restore; on iOS = the same scene events as DM_TEST_BG): after returning the run is still there, the player can move, no red markers
+name background
+save warlock
+timeout 180
+
+enter_game
+background for=3
+stick 1 0 frames=30
+expect_state in_game=true dead=false
+quit
+check no_red

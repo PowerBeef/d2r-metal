@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+# 场景运行器：按场景文件（dm/verify/scenarios/*.scn）一步一步驱动游戏（控制口 dm/verify/control_port.md），每步等它生效再走下一步，末尾按检查项判 OK / RED。
+# 场景文件是一行一步的文本，用的是触屏脚本的那套动作名（tap_ui、await_ui、walk_to、tap_unit、shot …），但不按时刻排，按顺序做；格式见 dm/verify/scenarios/README.md。
+#   后端：cli（Mac 命令行宿主，缺省）、ios-mac（Mac 上跑的 iOS 包，走日志端口）、device（真机：devicectl 拉起 + iproxy 转日志端口）
+#   用法：scenario.py run <场景文件>… [--backend cli|ios-mac|device] [--out 目录] [--headless]
+#         scenario.py check <场景文件>…      只解析、不跑（语法 / 动作名 / 参数）
+#   每个场景打「SCENARIO <名> OK|RED …」判定行（dmtest.py 认得），末行 RESULT {json}；结果目录里有 host.log、events.ndjson、port.log、steps.tsv 与截图
+# Scenario runner: drives the game step by step from a scenario file (dm/verify/scenarios/*.scn) through the control port (dm/verify/control_port.md), waits for each step to take effect before the next, and judges OK / RED by the checks at the end.
+# A scenario file is text with one step per line, using the touch script's action names (tap_ui, await_ui, walk_to, tap_unit, shot ...), but run in order instead of by time; the format is in dm/verify/scenarios/README.md.
+#   Backends: cli (Mac command-line host, default), ios-mac (the iOS package running on a Mac, over the log port), device (real device: launched with devicectl, log port forwarded through iproxy)
+#   Usage: scenario.py run <scenario file>... [--backend cli|ios-mac|device] [--out dir] [--headless]
+#          scenario.py check <scenario file>...   parse only, do not run (syntax / action names / arguments)
+#   Each scenario prints a "SCENARIO <name> OK|RED ..." verdict line (dmtest.py understands it), last line RESULT {json}; the result directory holds host.log, events.ndjson, port.log, steps.tsv and the screenshots
+import argparse
+import datetime
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+from typing import Any
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+DM = os.path.normpath(os.path.join(HERE, '..'))
+sys.path.insert(0, HERE)
+import dmctl  # noqa: E402
+
+DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
+# 控制口命令的位置参数（其余用 名=值） | positional arguments of the control-port commands (the rest as name=value)
+POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
+       'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
+       'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
+       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': []}
+ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
+MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away')
+LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember')
+HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires')
+CHECKS = ('no_red', 'saved', 'exit', 'event', 'no_event')
+BAD = ('red', 'fatal', 'crash', 'watchdog')
+
+
+class ScenarioError(Exception):
+    pass
+
+
+def value(v):
+    return dmctl._value(v)   # noqa: SLF001 -- 同一套「true / 数 / 串」换算 | the same "true / number / string" conversion
+
+
+def parse(path):
+    """返回 (表头, 步骤, 检查)；步骤 = {op, args, kw, line, n}。 | Returns (header, steps, checks); a step = {op, args, kw, line, n}."""
+    meta: dict[str, Any] = dict(name=os.path.splitext(os.path.basename(path))[0], save='warlock', env={}, timeout=300, window=1, requires=[])
+    steps: list[dict[str, Any]] = []; checks: list[dict[str, Any]] = []
+    for n, raw in enumerate(open(path, encoding='utf-8'), 1):
+        try: tok = shlex.split(raw, comments=True)
+        except ValueError as e: raise ScenarioError(f'{path}:{n}: {e}') from e
+        if not tok: continue
+        op, rest = ALIAS.get(tok[0], tok[0]), tok[1:]
+        args = [t for t in rest if '=' not in t or t.startswith('=')]
+        kw = dict(t.split('=', 1) for t in rest if '=' in t and not t.startswith('='))
+        if op in HEADER:
+            if op == 'env': meta['env'].update(kw)
+            elif op == 'requires': meta['requires'] = args
+            elif op in ('timeout', 'window'): meta[op] = int(args[0]) if args else meta[op]
+            elif args: meta[op] = args[0]
+            continue
+        if op == 'check':
+            if not args or args[0] not in CHECKS and not args[0].startswith('exit'): raise ScenarioError(f'{path}:{n}: unknown check {args[:1]} (known: {", ".join(CHECKS)})')
+            checks.append(dict(op=args[0], args=args[1:], kw=kw, line=raw.strip(), n=n)); continue
+        if op not in POS and op not in MACROS and op not in LOCAL: raise ScenarioError(f'{path}:{n}: unknown step {op!r}')
+        if op in POS:
+            if len(args) > len(POS[op]): raise ScenarioError(f'{path}:{n}: {op} takes at most {len(POS[op])} positional arguments ({" ".join(POS[op])})')
+            kw = {**dict(zip(POS[op], args, strict=False)), **kw}; args = []
+        if op in ('expect', 'expect_no') and not args: raise ScenarioError(f'{path}:{n}: {op} needs an event type')
+        if op == 'sleep' and (not args or not re.fullmatch(r'[\d.]+', args[0])): raise ScenarioError(f'{path}:{n}: sleep needs seconds')
+        if op == 'remember' and not args: raise ScenarioError(f'{path}:{n}: remember needs a state field')
+        steps.append(dict(op=op, args=args, kw=kw, line=raw.split('#')[0].strip(), n=n))
+    return meta, steps, checks
+
+
+# ---------- 后端 | Backends ----------
+def prepare_save(meta, run):
+    s = meta['save']
+    dst = os.path.join(run, 'save')
+    if s == 'empty': os.makedirs(dst, exist_ok=True); return dst
+    src = s if os.path.isabs(s) else os.path.join(DM_ROOT, 'data', 'switch', f'save_ref_{s}', '0000000000000001', '0')
+    if not os.path.isdir(src): raise ScenarioError(f'save {s!r}: {src} not found (create it with dm/ios/tools/make_fixture.sh or name an existing save_ref_*)')
+    shutil.copytree(src, dst)
+    return dst
+
+
+class CliBackend:
+    """Mac 命令行宿主：控制端先占好监听口，宿主带 DM_CTL_PORT 连过来。 | Mac command-line host: the controller takes the listening socket first, and the host connects in with DM_CTL_PORT."""
+    name = 'cli'
+
+    def __init__(self, meta, run, headless):
+        self.meta, self.run, self.headless, self.proc, self.log = meta, run, headless, None, None
+
+    def start(self):
+        dmhost = os.path.join(DM, 'host', 'dmhost')
+        if subprocess.run(['make', '-s', '-C', os.path.join(DM, 'host'), 'dmhost'], capture_output=True, check=False).returncode or not os.access(dmhost, os.X_OK):
+            raise ScenarioError('host build failed (make -C dm/host dmhost)')
+        out = subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'touch'], capture_output=True, text=True, check=False).stdout.strip()
+        if not out or not os.path.isdir(out): raise ScenarioError('no rewrite output: run ./setup.sh first')
+        romfs = os.environ.get('DM_ROMFS') or os.path.join(DM_ROOT, 'data', 'switch', '3.3.94012', 'Update', 'RomFS')
+        if not os.path.isdir(romfs): raise ScenarioError(f'no game resources at {romfs} (set DM_ROMFS)')
+        os.makedirs(os.path.join(self.run, 'tmp'), exist_ok=True)
+        srv, port = dmctl.bind()
+        env = dict(os.environ, DM_ROMFS=romfs, DM_SAVE=prepare_save(self.meta, self.run), DM_TEMP=os.path.join(self.run, 'tmp'),
+                   DM_MSL_DIR=os.path.join(DM_ROOT, 'build', 'cache', 'metal_shader_cache'), DM_CTL_PORT=str(port),
+                   DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_WATCH=str(self.meta['timeout'] + 60))
+        if self.meta['window'] and not self.headless: env['DM_WINDOW'] = '1'
+        env.update(self.meta['env'])
+        self.log = open(os.path.join(self.run, 'host.log'), 'wb')
+        self.proc = subprocess.Popen([dmhost, out, 'main', 'sdk'], cwd=os.path.join(DM, 'host'), env=env, stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        try: return dmctl.Ctl(server=srv, connect_timeout=30, log=os.path.join(self.run, 'port.log'))
+        except OSError as e: self.stop(); raise ScenarioError(f'host did not connect to the control port: {e}') from e
+
+    def alive(self): return self.proc is not None and self.proc.poll() is None
+    def wait_exit(self, timeout):
+        try: return self.proc.wait(timeout) if self.proc else None
+        except subprocess.TimeoutExpired: return None
+    def kill(self):
+        if self.proc and self.proc.poll() is None: self.proc.kill(); self.proc.wait()
+    def exit_code(self): return self.proc.returncode if self.proc else None
+    def stop(self):
+        self.kill()
+        if self.log: self.log.close()
+    def shot_path(self, p): return p if os.path.isabs(p) else os.path.join(self.run, p)
+    def event_file(self): return os.path.join(self.run, 'events.ndjson')
+
+
+class LaunchBackend:
+    """iOS 包（Mac 上的 ios-mac / 真机 device）：dm/ios/tools/scenario_launch.sh 一个会话一个进程（设备锁跟着它走），带着冒烟的那套守卫拉起，
+    经日志端口控制；事件随日志（DM_EVENTS=log）。向它的标准输入发 alive / kill / stop，每条回一行。
+    The iOS package (ios-mac on a Mac / device): dm/ios/tools/scenario_launch.sh is one process per session (the device lock belongs to it) and launches with the smoke tests' guards;
+    control goes over the log port and events travel with the log (DM_EVENTS=log). alive / kill / stop are sent to its stdin, one reply line each."""
+
+    def __init__(self, name, meta, run):
+        self.name, self.meta, self.run, self.ended, self.p = name, meta, run, False, None
+
+    def _ask(self, cmd, timeout=60):
+        if not self.p or self.p.poll() is not None or not self.p.stdin or not self.p.stdout: return ''
+        try: self.p.stdin.write(cmd + '\n'); self.p.stdin.flush()
+        except OSError: return ''
+        end = time.time() + timeout
+        while time.time() < end:
+            line = self.p.stdout.readline()
+            if not line: return ''
+            if line.strip() in ('yes', 'no', 'done') or line.startswith('unknown'): return line.strip()
+            self.logf.write(line)
+        return ''
+
+    def start(self):
+        env = dict(os.environ, SCN_RUN=self.run, SCN_SAVE=self.meta['save'], SCN_ENV=' '.join(f'{k}={v}' for k, v in self.meta['env'].items()))
+        self.logf = open(os.path.join(self.run, 'launch.log'), 'a', encoding='utf-8')
+        self.p = subprocess.Popen(['bash', os.path.join(DM, 'ios', 'tools', 'scenario_launch.sh'), self.name], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.logf, text=True, env=env)
+        assert self.p.stdout is not None
+        port, lines = None, []
+        for line in self.p.stdout:   # 拿锁可能要排队：读到 PORT 或进程结束为止 | taking the lock may queue: read until PORT or the process ends
+            self.logf.write(line); lines.append(line.strip())
+            m = re.match(r'^PORT (\d+)$', line.strip())
+            if m: port = int(m.group(1)); break
+        if not port: self.stop(); raise ScenarioError(f'{self.name} launch failed: {lines[-1] if lines else "no output"} (see launch.log)')
+        return dmctl.Ctl(port, connect_timeout=90, log=os.path.join(self.run, 'port.log'))
+
+    def alive(self): return not self.ended and self._ask('alive', 30) == 'yes'
+    def wait_exit(self, timeout):
+        end = time.time() + timeout
+        while time.time() < end:
+            if not self.alive(): self.ended = True; return 0
+            time.sleep(0.5)
+        return None
+    def kill(self): self._ask('kill'); self.ended = True
+    def exit_code(self): return 0 if self.ended else None
+    def stop(self):
+        if self.p and self.p.poll() is None:
+            self._ask('stop', 60)
+            try: self.p.wait(10)
+            except subprocess.TimeoutExpired: self.p.kill()
+        self.ended = True
+    def shot_path(self, p): return p   # iOS：相对路径落在 App 的 Documents 下 | iOS: relative paths land under the App's Documents
+    def event_file(self): return None
+
+
+# ---------- 运行 | Running ----------
+class Runner:
+    def __init__(self, path, backend_name, out, headless):
+        self.path = path
+        self.meta, self.steps, self.checks = parse(path)
+        stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        self.run = out or os.path.join(DM_ROOT, 'run', 'scenario', f"{self.meta['name']}_{backend_name}_{stamp}_{os.getpid()}")
+        os.makedirs(self.run, exist_ok=True)
+        self.backend = CliBackend(self.meta, self.run, headless) if backend_name == 'cli' else LaunchBackend(backend_name, self.meta, self.run)
+        self.c: dmctl.Ctl | None = None; self.prev_mark = -1; self.records: list[dict[str, Any]] = []
+        self.vars: dict[str, Any] = {}   # remember 记下的值，后面的值里写 $名 或 $名+N / $名-N 引用 | values kept by remember, referenced later as $name or $name+N / $name-N
+
+    @property
+    def cc(self) -> dmctl.Ctl:   # 步骤里用：这时一定已连上 | used inside steps: always connected by then
+        assert self.c is not None
+        return self.c
+
+    def say(self, line):
+        print(line, flush=True)
+
+    # 步骤 | steps
+    def ctl(self, name, **kw):
+        if name == 'screenshot' and 'path' in kw: kw['path'] = self.backend.shot_path(kw['path'])
+        args: dict[str, Any] = {k: value(v) if not isinstance(v, (int, float, bool)) else v for k, v in kw.items()}
+        return self.cc.cmd(name, reply_timeout=float(kw.get('timeout', 0) or 0) + 120, **args)
+
+    def expect(self, ev, kw, after):
+        kw = dict(kw); t = float(kw.pop('timeout', 30))
+        return self.cc.wait_for(ev, timeout=t, after=after, **{k: value(v) for k, v in kw.items()})
+
+    def expect_state(self, kw):
+        kw = dict(kw); t = float(kw.pop('timeout', 5)); conds = []
+        for k, v in kw.items():   # 名=值；名 后面可带 > < >= <= !（如 hp>=1 写成 hp>=1 也行） | name=value; the name may end in > < >= <= ! (hp>=1 works as written)
+            m = re.fullmatch(r'(\w+)([<>!]?)', k)
+            if not m: raise ScenarioError(f'bad condition {k}={v}')
+            conds.append((m.group(1), m.group(2) + '=' if m.group(2) in ('<', '>', '!') else '=', value(v) if isinstance(v, str) else v))
+        def ok(st, f, op, v):
+            x = st.get(f)
+            if op == '=': return x == v or str(x) == str(v)
+            if op == '!=': return x != v and str(x) != str(v)
+            try: return x >= v if op == '>=' else x <= v
+            except TypeError: return False
+        end = time.time() + t
+        while True:
+            last = self.cc.cmd('state')
+            bad = [f'{f}{op}{v} (is {last.get(f)!r})' for f, op, v in conds if not ok(last, f, op, v)]
+            if not bad: return last
+            if time.time() > end: raise ScenarioError('state: ' + '; '.join(bad))
+            time.sleep(0.2)
+
+    def macro(self, op, kw):
+        if op == 'enter_game':
+            st = self.cc.cmd('state')
+            if st.get('in_game'): return 'already in a game'
+            self.cc.wait_for('main_menu', timeout=float(kw.get('timeout', 120)))
+            m = self.cc.mark(); self.ctl('press', keys='X')
+            self.cc.wait_for('panel', timeout=30, after=m, act='OpenPanel', name='CharacterSelectPanel'); time.sleep(1)
+            m = self.cc.mark(); self.ctl('msg', spec=f"CharacterSelect:LoadCharacter:{kw.get('slot', 0)}")
+            self.cc.wait_for('game_enter', timeout=60, after=m); self.cc.wait_for('loading_done', timeout=120, after=m)
+            return 'in game'
+        if op == 'open_pause':   # 局内 ＋ 开总面板，暂停页在默认页签左边第三个 | in a game + opens the combined panel; the pause page is the third tab left of the default
+            m = self.cc.mark(); self.ctl('press', keys='PLUS')
+            self.cc.wait_for('panel', timeout=10, after=m, act='OpenPanel', name='UISwitcher')
+            for _ in range(3): self.ctl('press', keys='L')
+            self.cc.wait_for('pause_open', timeout=10, after=m)
+            return 'pause menu open'
+        if op == 'close_pause':
+            m = self.cc.mark(); self.ctl('press', keys='B')
+            self.cc.wait_for('panel', timeout=10, after=m, act='ClosePanel', name='UISwitcher')
+            return 'closed'
+        if op == 'background':   # 回来以前台事件为准：Mac 是 restored（还原），iOS 是 active（激活） | back means the foreground event: restored on the Mac, active on iOS
+            self.ctl('app', do='background'); time.sleep(float(kw.get('for', 3)))
+            m = self.cc.mark(); self.ctl('app', do='foreground')
+            end = time.time() + 15
+            while not any(e['ev'] == 'app' and e.get('state') in ('restored', 'active') and e.get('seq', 0) > m for e in list(self.cc.events)):
+                if time.time() > end: raise ScenarioError('no foreground event (app state=restored / active) within 15 s')
+                time.sleep(0.1)
+            return 'background and back'
+        if op == 'system_quit':
+            self.ctl('app', do='terminate')
+            code = self.backend.wait_exit(float(kw.get('timeout', 15)))
+            if code is None: raise ScenarioError('process still running after terminate')
+            return f'exited {code}'
+        if op == 'swipe_away':   # 失活后直接杀进程（同在多任务界面划掉） | resign active, then kill the process outright (as swiping it away in the app switcher)
+            self.ctl('app', do='resign') if self.backend.name != 'cli' else None
+            time.sleep(float(kw.get('after', 0.5))); self.backend.kill()
+            return 'killed'
+        raise ScenarioError(f'unknown macro {op}')
+
+    def subst(self, v):
+        if not isinstance(v, str) or '$' not in v: return v
+        m = re.fullmatch(r'\$(\w+)([+-]\d+(?:\.\d+)?)?', v)
+        if not m or m.group(1) not in self.vars: raise ScenarioError(f'unknown variable in {v!r} (set it with remember)')
+        x = self.vars[m.group(1)]
+        return x + value(m.group(2)) if m.group(2) else x
+
+    def do(self, st):
+        op, kw = st['op'], {k: self.subst(v) for k, v in st['kw'].items()}
+        if op in POS: r = self.ctl(op, **kw); return {k: v for k, v in r.items() if k not in ('id', 'cmd', 'ok')}
+        if op in MACROS: return self.macro(op, kw)
+        if op == 'expect': return self.expect(st['args'][0], kw, self.prev_mark)
+        if op == 'expect_no':
+            kw = dict(kw); t = float(kw.pop('for', kw.pop('timeout', 3)))
+            try: e = self.cc.wait_for(st['args'][0], timeout=t, after=self.prev_mark, **{k: value(v) for k, v in kw.items()})
+            except TimeoutError: return 'not seen'
+            raise ScenarioError(f'unexpected event: {json.dumps(e, ensure_ascii=False)}')
+        if op == 'expect_state': return self.expect_state(kw)
+        if op == 'sleep': time.sleep(float(st['args'][0])); return None
+        if op == 'remember':   # remember 字段 [as=名]：把 state 的这个字段记下来 | remember field [as=name]: keep this state field
+            st_now = self.cc.cmd('state'); f = st['args'][0] if st['args'] else ''
+            if f not in st_now: raise ScenarioError(f'state has no field {f!r}')
+            self.vars[kw.get('as', f)] = st_now[f]; return f"{kw.get('as', f)} = {st_now[f]!r}"
+        if op == 'log': self.say('  # ' + ' '.join(st['args'])); return None
+        raise ScenarioError(f'unknown step {op}')
+
+    def events(self):
+        f = self.backend.event_file()
+        if f and os.path.exists(f):
+            import dmevents   # noqa: PLC0415
+            return dmevents.load(f)
+        return list(self.c.events) if self.c else []
+
+    def final_checks(self):
+        evs, out = self.events(), []
+        for ck in self.checks:
+            op, ok, why = ck['op'], True, ''
+            if op == 'no_red':
+                allow = set(ck['kw'].get('allow', '').split(',')) - {''}
+                bad = [e for e in evs if e['ev'] in BAD and e.get('code') not in allow]
+                ok = not bad; why = json.dumps(bad[0], ensure_ascii=False)[:200] if bad else f'{len(evs)} events, none red'
+            elif op == 'saved':
+                n = sum(1 for e in evs if e['ev'] == 'save' and e.get('result') == 'commit'); ok = n > 0; why = f'{n} save commits'
+            elif op.startswith('exit'):
+                want = int(ck['kw'].get('exit', ck['args'][0] if ck['args'] else 0) if op == 'exit' else op.split('=', 1)[1])
+                code = self.backend.exit_code(); ok = code == want; why = f'exit code {code} (want {want})'
+            elif op in ('event', 'no_event'):
+                ev = ck['args'][0] if ck['args'] else ''
+                hit = [e for e in evs if e['ev'] == ev and all(e.get(k) == value(v) or str(e.get(k)) == v for k, v in ck['kw'].items())]
+                ok = bool(hit) if op == 'event' else not hit; why = f'{len(hit)} matching {ev} events'
+            out.append(dict(check=ck['line'], ok=ok, detail=why))
+            self.say(f"CHECK {'✓' if ok else '✗'} {ck['line']} — {why}")
+        return out
+
+    def go(self):
+        t0 = time.time(); fail: dict[str, Any] | None = None; name = self.meta['name']
+        self.say(f'场景 | scenario {name}（{self.backend.name}，{len(self.steps)} 步 | steps）→ {self.run}')
+        if self.meta['requires'] and self.backend.name not in self.meta['requires']:
+            self.say(f"SCENARIO {name} SKIP 只在 {','.join(self.meta['requires'])} 上跑 | only runs on {','.join(self.meta['requires'])}")
+            return dict(name=name, verdict='SKIP', backend=self.backend.name, dir=self.run), 0
+        tsv = open(os.path.join(self.run, 'steps.tsv'), 'w', encoding='utf-8'); tsv.write('步 | step\t行 | line\t结果 | result\t秒 | s\t说明 | detail\n')
+        try:
+            self.c = self.backend.start()
+            deadline = t0 + self.meta['timeout']
+            for i, st in enumerate(self.steps, 1):
+                if time.time() > deadline: fail = dict(step=i, line=st['line'], reason=f"scenario timeout {self.meta['timeout']} s"); break
+                mark = self.cc.mark(); s = time.time()
+                try: r = self.do(st); ok, detail = True, r
+                except (ScenarioError, dmctl.CtlError, dmctl.BadEvent, TimeoutError, OSError) as e: ok, detail = False, str(e)
+                dt = time.time() - s
+                text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False) if detail else ''
+                self.say(f"STEP {i:>2} {'ok ' if ok else 'RED'} {dt:6.2f}s  {st['line']}" + (f'  → {text[:160]}' if text else ''))
+                tsv.write(f"{i}\t{st['line']}\t{'ok' if ok else 'RED'}\t{dt:.3f}\t{text[:300]}\n")
+                self.records.append(dict(step=i, line=st['line'], ok=ok, s=round(dt, 3), detail=text[:300]))
+                self.prev_mark = mark
+                if not ok: fail = dict(step=i, line=st['line'], reason=text); break
+        except ScenarioError as e:
+            fail = dict(step=0, line='start', reason=str(e))
+        finally:
+            tsv.close()
+            if self.backend.alive() and self.c:
+                try: self.c.cmd('quit', reply_timeout=5)
+                except (dmctl.CtlError, TimeoutError, OSError): pass
+                self.backend.wait_exit(10)
+            if self.c: self.c.close()
+            self.backend.stop()
+        checks = self.final_checks() if not fail or fail['step'] else []
+        bad_ck = [c for c in checks if not c['ok']]
+        verdict = 'OK' if not fail and not bad_ck else 'RED'
+        why = f"step {fail['step']} ({fail['line']}): {fail['reason'][:160]}" if fail else f'check: {bad_ck[0]["check"]} — {bad_ck[0]["detail"][:120]}' if bad_ck else f'{len(self.steps)} steps, {len(checks)} checks'
+        self.say(f'SCENARIO {name} {verdict} {why} 用时 {time.time() - t0:.0f} 秒')
+        res = dict(name=name, backend=self.backend.name, verdict=verdict, reason=why, failed=fail, steps=self.records, checks=checks, dir=self.run, elapsed_s=round(time.time() - t0, 1))
+        with open(os.path.join(self.run, 'result.json'), 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
+        return res, 0 if verdict == 'OK' else 1
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog='scenario.py', description='Run scenario files through the control port (dm/verify/scenarios/README.md).')
+    sub = ap.add_subparsers(dest='cmd', required=True)
+    r = sub.add_parser('run'); r.add_argument('files', nargs='+'); r.add_argument('--backend', default='cli', choices=('cli', 'ios-mac', 'device'))
+    r.add_argument('--out'); r.add_argument('--headless', action='store_true')
+    c = sub.add_parser('check'); c.add_argument('files', nargs='+')
+    a = ap.parse_args(argv)
+    if a.cmd == 'check':
+        bad = 0
+        for f in a.files:
+            try: meta, steps, checks = parse(f); print(f"SCENARIO-CHECK {meta['name']} OK {len(steps)} steps, {len(checks)} checks")
+            except ScenarioError as e: bad += 1; print(f'SCENARIO-CHECK {os.path.basename(f)} RED {e}')
+        return 1 if bad else 0
+    results, rc = [], 0
+    for f in a.files:
+        try: res, code = Runner(f, a.backend, a.out if len(a.files) == 1 else None, a.headless).go()
+        except ScenarioError as e: res, code = dict(name=os.path.basename(f), verdict='RED', reason=str(e)), 1; print(f'SCENARIO {os.path.basename(f)} RED {e}')
+        results.append(res); rc = max(rc, code)
+    print('RESULT ' + json.dumps(dict(name='scenario', verdict='OK' if rc == 0 else 'RED', scenarios=[dict(name=r['name'], verdict=r['verdict'], reason=r.get('reason'), dir=r.get('dir')) for r in results]), ensure_ascii=False))
+    return rc
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

@@ -17,3 +17,8 @@ const char *dm_ctl_get(const ctl_args *a, const char *k);
 double dm_ctl_num(const ctl_args *a, const char *k, double def);
 unsigned dm_ctl_dropped(void);                                   // 队列满丢掉的事件数 | events dropped because the queue was full
 unsigned dm_ctl_commands(void);
+// 前端生命周期钩子（front_mac.m / front_ios.m 设；控制口 app 命令调）：what = background / foreground / resign / active / minimize / restore / terminate，
+// 在主线程上走与系统事件、DM_TEST_BG / DM_TEST_MINI_AT 同一个处理函数；做完返回 0，这个前端不支持返回 -1
+// Front-end lifecycle hook (set by front_mac.m / front_ios.m; called by the control port's app command): what = background / foreground / resign / active / minimize / restore / terminate,
+// run on the main thread through the same handler as the system events and DM_TEST_BG / DM_TEST_MINI_AT; returns 0 when done, -1 when this front end does not support it
+__attribute__((weak)) int (*g_dm_ctl_app_fn)(const char *what) = 0;

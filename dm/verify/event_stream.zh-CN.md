@@ -40,7 +40,7 @@ UTF-8，一行一个对象，以 `\n` 结尾；一次 `write()` 写出，多线�
 | `main_menu` | | `PanelManager OpenPanel MainMenuButtonRibbon`（每次打开都发）。 |
 | `game_enter` | | `FrontEndNavigation ToGame`。 |
 | `loading_done` | | `game_enter` 之后读取画面卸下（`UnloadPanel LoadScreenPanel`）。 |
-| `pause_open` | | `OpenPanel PauseLayout`。 |
+| `pause_open` | `name` | `OpenPanel PauseLayout…`（局内那一页叫 `PauseLayoutGarden`）。 |
 | `game_leave` | | 进过局之后的 `FrontEndNavigation ToFrontEnd`。 |
 | `nav` | `to` | 任一 `FrontEndNavigation` 消息。 |
 | `panel` | `act`（`OpenPanel`、`ClosePanel`、`UnloadPanel` 等）、`name` | 任一带面板名的 `PanelManager` 消息。 |

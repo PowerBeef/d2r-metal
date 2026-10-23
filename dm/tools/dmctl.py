@@ -32,11 +32,17 @@ class BadEvent(RuntimeError):
         self.event = ev
 
 
+def bind(port=0, host='127.0.0.1'):
+    """先占一个监听口（port=0 由系统挑），返回 (socket, 端口)：起宿主之前调，再 Ctl(server=socket)。 | Take a listening socket first (port=0 lets the system pick) and return (socket, port): call before starting the host, then Ctl(server=socket)."""
+    srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); srv.bind((host, port)); srv.listen(1)
+    return srv, srv.getsockname()[1]
+
+
 class Ctl:
-    def __init__(self, port, host='127.0.0.1', log=None, connect_timeout=30.0, listen=False):
+    def __init__(self, port=0, host='127.0.0.1', log=None, connect_timeout=30.0, listen=False, server=None):
         end = time.time() + connect_timeout
-        if listen:   # Mac 宿主往这边连（它每 0.5 秒重试一次，谁先起都行） | the Mac host connects here (it retries every 0.5 s, so either side may start first)
-            srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); srv.bind((host, port)); srv.listen(1); srv.settimeout(connect_timeout)
+        if listen or server:   # Mac 宿主往这边连（它每 0.5 秒重试一次，谁先起都行）；server = 先用 bind() 占好的监听口 | the Mac host connects here (it retries every 0.5 s, so either side may start first); server = a listening socket taken earlier with bind()
+            srv = server or bind(port, host)[0]; srv.settimeout(connect_timeout)
             try: self.sock, _ = srv.accept()
             finally: srv.close()
         else:

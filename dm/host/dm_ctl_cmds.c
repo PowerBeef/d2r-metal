@@ -9,6 +9,7 @@
 
 #include "dm_cursor.h"
 #include "dm_world.h"
+#include "dm_uiscreen.h"
 #include <stdatomic.h>
 
 int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
@@ -111,6 +112,7 @@ static int cmd_tap(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     if (x < 0 || x > 1 || y < 0 || y > 1) ERR("x / y must be in [0, 1]");
     if (hold < 1 || hold > 600) ERR("hold must be 1-600 frames");
     if (dm_restart_busy()) ERR("one-key restart in progress: taps are dropped");
+    y = dm_ui_ny((float)y);   // 真实画面纵坐标 → 界面矩形（同 DM_UI_TAPS；界面占满屏时不变） | real-picture y -> the UI rectangle (as DM_UI_TAPS; unchanged when the UI fills the screen)
     dm_ui_touch(0, (float)x, (float)y);
     if (!wait_frames((uint64_t)hold, hold / 10.0 + 5)) { dm_ui_touch(3, (float)x, (float)y); ERR("frames are not advancing"); }
     dm_ui_touch(2, (float)x, (float)y); wait_frames(2, 5);
@@ -217,6 +219,49 @@ static int cmd_wait(const ctl_args *a, char *out, size_t cap, char *err, size_t 
     return 1;
 }
 
+// tap_ui name=控件名[@面板] [timeout=10]：等控件可见，点它的中心（同触屏脚本 tap_ui；名字里「+」= 空格） | tap_ui name=widget[@panel] [timeout=10]: wait until the widget is visible and tap its center (same as the touch script's tap_ui; "+" in the name = a space)
+// await_ui name=… [timeout=30]：只等它可见，回执带位置 | await_ui name=... [timeout=30]: only wait until it is visible; the reply carries the position
+static void ui_name(const ctl_args *a, char *out, size_t n) { const char *v = dm_ctl_get(a, "name"); strlcpy(out, v ? v : "", n); for (char *p = out; *p; p++) if (*p == '+') *p = ' '; }
+static int c_ui_seen(void *a) { float *xy = a; return dm_ui_watch_pos(&xy[0], &xy[1]); }
+static int watch_ui(const ctl_args *a, double def_timeout, float xy[2], char *err, size_t ecap) {
+    char name[64]; ui_name(a, name, sizeof name); if (!name[0]) ERR("missing name");
+    dm_ui_watch(name); int ok = wait_until(c_ui_seen, xy, dm_ctl_num(a, "timeout", def_timeout)); dm_ui_watch(NULL);
+    if (!ok) ERR("widget '%s' not visible", name);
+    return 1;
+}
+static int cmd_await_ui(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    float xy[2]; if (!watch_ui(a, 30, xy, err, ecap)) return 0;
+    dm_json_fields(out, cap, "x:f y:f", (double)xy[0], (double)xy[1]); return 1;
+}
+static int cmd_tap_ui(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    float xy[2]; if (!watch_ui(a, 10, xy, err, ecap)) return 0;
+    if (dm_restart_busy()) ERR("one-key restart in progress: taps are dropped");
+    dm_ui_touch(0, xy[0], xy[1]); wait_frames(3, 5); dm_ui_touch(2, xy[0], xy[1]); wait_frames(2, 5);   // 控件位置已在界面矩形里，直接给 dm_ui_touch | the widget position is already in the UI rectangle, given to dm_ui_touch as is
+    dm_json_fields(out, cap, "x:f y:f", (double)xy[0], (double)xy[1]); return 1;
+}
+// tap_unit type=1 cls=119 [timeout=10]：等这类单位出现在画面里，点它（同触屏脚本 tap_unit；type 1 怪 / NPC、2 物件、4 物品、5 出口） | tap_unit type=1 cls=119 [timeout=10]: wait until a unit of this kind is on screen and tap it (same as the touch script's tap_unit; type 1 monster / NPC, 2 object, 4 item, 5 exit)
+static int c_unit_seen(void *a) { float *xy = a; return dm_world_watch_pos(&xy[0], &xy[1]); }
+static int cmd_tap_unit(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *ts = dm_ctl_get(a, "type"), *cs = dm_ctl_get(a, "cls"); float xy[2];
+    if (!ts || !cs) ERR("missing type / cls");
+    dm_world_watch(atoi(ts), (uint32_t)(strcmp(cs, "any") ? strtoul(cs, NULL, 0) : 0xffffff));
+    int ok = wait_until(c_unit_seen, xy, dm_ctl_num(a, "timeout", 10)); dm_world_watch(-1, 0);
+    if (!ok) ERR("no unit type %s class %s on screen", ts, cs);
+    unsigned seq = dm_world_tap(xy[0], xy[1]);
+    if (!wait_until(c_tap_done, &seq, 3)) ERR("tap not handled within 3 s");
+    static const char *kind[] = {"none", "item", "npc", "object", "exit"}; int r = dm_world_tap_result(seq);
+    dm_json_fields(out, cap, "x:f y:f target:s", (double)xy[0], (double)xy[1], r >= 0 && r <= 4 ? kind[r] : "?");
+    return 1;
+}
+// app do=background|foreground|resign|active|minimize|restore|terminate：前端生命周期（见 dm_ctl.h g_dm_ctl_app_fn） | app do=...: front-end lifecycle (see g_dm_ctl_app_fn in dm_ctl.h)
+static int cmd_app(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *w = dm_ctl_get(a, "do"); (void)out; (void)cap;
+    if (!w) ERR("missing do");
+    if (!g_dm_ctl_app_fn) ERR("no front end to drive (headless host?)");
+    if (g_dm_ctl_app_fn(w)) ERR("'%s' is not supported by this front end", w);
+    return 1;
+}
+
 void dm_ctl_commands_init(void) {
     dm_ctl_register("state", cmd_state);
     dm_ctl_register("save_now", cmd_save_now);
@@ -234,4 +279,8 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("resume", cmd_resume);
     dm_ctl_register("step", cmd_step);
     dm_ctl_register("wait", cmd_wait);
+    dm_ctl_register("tap_ui", cmd_tap_ui);
+    dm_ctl_register("await_ui", cmd_await_ui);
+    dm_ctl_register("tap_unit", cmd_tap_unit);
+    dm_ctl_register("app", cmd_app);
 }

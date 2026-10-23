@@ -1,0 +1,13 @@
+# 暂停菜单：＋ 开总面板、L 三次切到暂停页（暂停页在默认页签左边第三个），截图，B 关回局内
+# Pause menu: + opens the combined panel, L three times moves to the pause page (third tab left of the default), screenshot, B back to the game
+name pause_menu
+save warlock
+timeout 180
+
+enter_game
+open_pause
+shot pause.png
+close_pause
+expect_state in_game=true
+quit
+check no_red

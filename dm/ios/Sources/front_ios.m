@@ -25,6 +25,7 @@ void dm_gamepad_start(void (*on_mode)(int pad)); void dm_gamepad_touched(void); 
 #include "../../host/dm_cursor.h"
 #include "../../host/dm_hud.h"
 #include "../../host/dm_world.h"
+#include "../../host/dm_ctl.h"
 #include "../../host/dm_uiscreen.h"
 #include "../../host/dm_actions.h"
 #include "../../host/dm_i18n.h"
@@ -1244,6 +1245,18 @@ void front_ios_final_save(void) {
     background_wait_save();
     { int dm_cloud_flush_wait(double sec); dm_cloud_flush_wait(2); }
 }
+void front_ios_focus_event(int ev);
+// 控制口 app 命令（dm_ctl_cmds.c）：在主线程上走与 DM_TEST_BG / 真场景事件同一个处理函数；进后台照 DM_TEST_BG 先停显示节拍 0.15 秒再发场景事件；terminate 同 applicationWillTerminate（先存盘再退）
+// The control port's app command (dm_ctl_cmds.c): on the main thread, the same handler as DM_TEST_BG / the real scene events; going to background stops the display link 0.15 s before the scene events as DM_TEST_BG does; terminate is like applicationWillTerminate (save, then quit)
+static int ctl_app(const char *w) {
+    void mtl_link_pause(int on); dispatch_queue_t mq = dispatch_get_main_queue();
+    if (!strcmp(w, "background")) { dispatch_sync(mq, ^{ LOG("前端：控制口进后台"); mtl_link_pause(1); }); usleep(150000); dispatch_sync(mq, ^{ front_ios_focus_event(0); front_ios_focus_event(1); }); return 0; }
+    if (!strcmp(w, "foreground")) { dispatch_sync(mq, ^{ LOG("前端：控制口回前台"); mtl_link_pause(0); front_ios_focus_event(2); front_ios_focus_event(3); }); return 0; }
+    if (!strcmp(w, "resign")) { dispatch_sync(mq, ^{ front_ios_focus_event(0); }); return 0; }
+    if (!strcmp(w, "active")) { dispatch_sync(mq, ^{ front_ios_focus_event(3); }); return 0; }
+    if (!strcmp(w, "terminate")) { dispatch_async(mq, ^{ front_ios_final_save(); dm_host_shutdown("控制口 terminate"); }); return 0; }
+    return -1;
+}
 // 场景生命周期（main.m 的 SceneDelegate 调）：0 失活 1 进后台 2 回前台 3 激活
 // Scene lifecycle (called by SceneDelegate in main.m): 0 resign active, 1 enter background, 2 return to foreground, 3 become active
 void front_ios_focus_event(int ev) {
@@ -1522,6 +1535,7 @@ void front_ios_lifecycle_install(void) {
     // 2 s after the end, print the audio device callback delta (should be > 0 with real sound output DM_AUDIO=1)
     // Test switch DM_TEST_BG=start seconds,duration seconds[;start seconds,duration seconds…]: simulate "enter background → return to foreground" inside the app (several groups can be queued) -- first pause the display link (mimicking the system stopping callbacks), then go through the same handler as the real scene events.
     // This verifies all of our own logic (dropping queued frames, graphics suspend / resume, guest clock freeze, audio, dynamic scale judgment pause, output resuming after return); it cannot verify the system side (surface reclamation, whether the system resumes callbacks)
+    g_dm_ctl_app_fn = ctl_app;   // 控制口 app 命令（经日志端口） | the control port's app command (over the log port)
     const char *tb = getenv("DM_TEST_BG"); double tb_at, tb_dur;
     for (const char *tp = tb; tp && sscanf(tp, "%lf,%lf", &tb_at, &tb_dur) == 2; tp = strchr(tp, ';') ? strchr(tp, ';') + 1 : NULL) {
         void mtl_link_pause(int on);

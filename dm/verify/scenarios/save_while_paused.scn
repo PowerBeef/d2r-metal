@@ -1,0 +1,18 @@
+# 暂停着存盘（第二阶段 1f84541：前端的存盘请求交给游戏线程去做）：暂停菜单开着时请存盘，要真的提交（冻结世界、临时放开暂停），
+# 之后暂停照旧、关掉菜单游戏照常，全程无红标
+# Saving while paused (phase 2, 1f84541: front-end save requests are carried out on the game thread): with the pause menu open, a save request must really commit (world frozen, pause released for the save),
+# then the pause is restored, the menu closes and the game carries on, with no red markers throughout
+name save_while_paused
+save warlock
+timeout 180
+
+enter_game
+open_pause
+save_now timeout=5
+expect save result=commit timeout=1
+close_pause
+stick 1 0 frames=20
+expect_state in_game=true dead=false
+quit
+check saved
+check no_red

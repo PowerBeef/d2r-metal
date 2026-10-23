@@ -40,7 +40,7 @@ UTF-8, one object per line, terminated by `\n`, written with a single `write()` 
 | `main_menu` | | `PanelManager OpenPanel MainMenuButtonRibbon` (every time it opens). |
 | `game_enter` | | `FrontEndNavigation ToGame`. |
 | `loading_done` | | The loading screen is unloaded after `game_enter` (`UnloadPanel LoadScreenPanel`). |
-| `pause_open` | | `OpenPanel PauseLayout`. |
+| `pause_open` | `name` | `OpenPanel PauseLayout…` (in a game the page is `PauseLayoutGarden`). |
 | `game_leave` | | `FrontEndNavigation ToFrontEnd` after a game. |
 | `nav` | `to` | Any `FrontEndNavigation` message. |
 | `panel` | `act` (`OpenPanel`, `ClosePanel`, `UnloadPanel`, …), `name` | Any `PanelManager` message that names a panel. |

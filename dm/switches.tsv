@@ -347,7 +347,7 @@ DM_RIFT_TEST_TOUR	host	host/dm_rift.c	-
 DM_RIFT_TEST_TP_NOROOM	host	host/dm_rift.c	-
 DM_RIFT_TEST_UNLOCK	host	host/dm_rift.c	-
 DM_RIFT_TIER	host	host/dm_rift.c	-
-DM_ROMFS	android,harmony,host,ios,tvos,verify	android/jni_android.c harmony/native/napi_ohos.c host/app_mac.m host/hle_fs.c …	y
+DM_ROMFS	android,harmony,host,ios,tools,tvos,verify	android/jni_android.c harmony/native/napi_ohos.c host/app_mac.m host/hle_fs.c …	y
 DM_ROMFS_OVERLAY	android,harmony,host,ios,tvos,verify	android/jni_android.c android/touch_android.c harmony/native/napi_ohos.c host/app_mac.m …	y
 DM_ROMFS_SKIP_LOCAL	ios	ios/Sources/main.m	-
 DM_ROMFS_SRC	android,host,ios-tools,tools,verify	android/tools/shell_apk.sh host/Makefile ios/run.sh ios/tests/Makefile …	y
@@ -406,7 +406,7 @@ DM_TEST_BA_TAP	ios	ios/Sources/main.m	-
 DM_TEST_BELTFILL_SWITCH	host	host/dm_actions.c	-
 DM_TEST_BELT_DRINK	host	host/dm_beltauto.c	-
 DM_TEST_BELT_NOPUT	host	host/dm_beltauto.c	-
-DM_TEST_BG	ios	ios/Sources/front_ios.m	-
+DM_TEST_BG	ios	ios/Sources/front_ios.m	y
 DM_TEST_BG_RELAUNCH	ios	ios/Sources/main.m	-
 DM_TEST_BINDTBL	host	host/dm_actions.c	-
 DM_TEST_BR_LOSE	host	host/dm_bossrush.c	-
