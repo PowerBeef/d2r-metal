@@ -628,7 +628,15 @@ static void ser_gate(void) {
     static int on = -1; static id<MTLEvent> ev; static uint64_t n;
     if (on < 0) { on = getenv("DM_NVN_PASSGPU_SERIAL") != NULL; if (on) { ev = [g_dev newEvent]; MLOG("DM_NVN_PASSGPU_SERIAL：通道串行化（测量用，耗时偏大）"); } }
     if (!on) return;
+#if DM_NVN_M3
+    // 老接口：建编码器前命令缓冲上没有开着的编码器（同一时刻只许一个），这里编信号 + 等待合法
+    // Older API: when an encoder is about to be created, no encoder is open on the command buffer (only one at a time is allowed), so encoding the signal + wait here is legal
+    n++; [(id<MTLCommandBuffer>)g_cb encodeSignalEvent:ev value:n]; [(id<MTLCommandBuffer>)g_cb encodeWaitForEvent:ev value:n];
+#else
+    // Metal 4：每个编码器开头本来就有一道全队列屏障（enc_r_begin / enc_c_begin / blit），通道不会重叠，这里不用再加
+    // Metal 4: every encoder already begins with a full queue barrier (enc_r_begin / enc_c_begin / blit), so passes never overlap and nothing needs to be added here
     (void)ev; (void)n;
+#endif
 }
 // Metal 4 保守屏障（第一版）：编码器开头一道消费者屏障（之前全部工作 → 本编码器），结束处一道生产者屏障（本编码器及之前 → 后续编码器）。
 // 只放开头不够：t_rt_range「通道 1 → 通道 2 → 拷贝」读回黑色，补上结束处屏障后 19/19。旧队列的编码器（上传 / 诊断 / 上屏）不走这里的屏障。
