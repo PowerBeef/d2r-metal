@@ -57,3 +57,5 @@ t_replay_tsan
 t_replay_tsan.dSYM/
 t_replay_asan
 t_replay_asan.dSYM/
+t_replay_fix
+t_replay_fix.dSYM/

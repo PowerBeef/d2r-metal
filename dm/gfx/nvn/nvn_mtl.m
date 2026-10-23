@@ -123,6 +123,9 @@ static int g_bloomq_i;
 static struct { int state; uint64_t s_ser, b0_ser, b1_ser, s_h, samp_h, b1_h; tex_t s_tex; float threshold, coeff_g, coeff_b; } g_bloomq;   // s_tex：起点那张源贴图的按值副本（原先存登记表项的地址，登记表扩容搬家后悬空） | s_tex: a by-value copy of the start's source texture (it used to store the address of the table entry, which dangled once the table grew and moved)
 static uint64_t g_bloomq_last_b0, g_bloomq_last_b1h, g_bloomq_last_b1s;   // 最近一次泛光 1/4 叠加改读：B0 序号 → B1 句柄（跨帧保留，见 2e2d6700a2569795 那支） | Most recent bloom 1/4 overlay read redirection: B0 serial → B1 handle (kept across frames, see the 2e2d6700a2569795 branch)
 static uint64_t g_present_alloc_fence[3];
+// 持 g_pq_mu：各出图槽上次的命令缓冲 GPU 已完成到的票号（完成回调写）。g_pq_done 不能用来判槽空不空：显示节拍合并旧帧时把它直接推到「本帧 − 1」，在途的更早一帧也被算成做完
+// Under g_pq_mu: per present slot, the ticket up to which the slot's command buffers have completed on the GPU (written by the completion callback). g_pq_done cannot tell whether a slot is free: when the display link merges old frames it bumps it straight to "this frame - 1", which also counts an earlier in-flight frame as done
+static uint64_t g_present_alloc_done[3];
 static pthread_mutex_t g_pq_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_pq_cv = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t g_link_cv = PTHREAD_COND_INITIALIZER;
@@ -3490,6 +3493,7 @@ static void rt_sub(const p_set_rt *r, int k, uint64_t *ser, int *lv, int *sl);
 static void pso_predict_rest(void) {
     if (!g_exec_next) return;
     static typeof(S) Ssave; memcpy(&Ssave, &S, sizeof S);
+    p_scissor sc0 = R.sc; int has_sc0 = R.has_sc;   // 状态重放里的 OP_SCISSOR 写 R.sc（剪裁不在 S 里），扫完一并恢复，否则眼前这次绘制用上后面的剪裁 | OP_SCISSOR in the state replay writes R.sc (the scissor is not in S); restore it after the scan too, otherwise the draw at hand uses a later scissor
     int pso_dirty = g_pso_dirty, dss_dirty = g_dss_dirty;
     uint32_t cf[8]; memcpy(cf, g_pass.cfmt, sizeof cf); uint32_t df = g_pass.dfmt, sf = g_pass.sfmt, samples = g_pass.samples, dfull = df, sfull = sf; int kicked0 = (int)g_pp_kicked, draws = 0;
     fz_cursor cur = {.p = g_exec_next};
@@ -3530,7 +3534,7 @@ static void pso_predict_rest(void) {
     (void)df; (void)sf;
     for (int i = 0; i < na; i++) pso_pend_kick(&qa[i].k, (__bridge NvShader *)qa[i].vs, (__bridge NvShader *)qa[i].fs);
     for (int i = 0; i < nb; i++) pso_pend_kick(&qb[i].k, (__bridge NvShader *)qb[i].vs, (__bridge NvShader *)qb[i].fs);
-    memcpy(&S, &Ssave, sizeof S); args_dirty_all(); g_pso_dirty = pso_dirty; g_dss_dirty = dss_dirty;
+    memcpy(&S, &Ssave, sizeof S); R.sc = sc0; R.has_sc = has_sc0; args_dirty_all(); g_pso_dirty = pso_dirty; g_dss_dirty = dss_dirty;
     static int logged; if (g_pp_kicked > (uint64_t)kicked0 && logged++ < 20) MLOG("并行预编：本次提交余下 %d 次绘制，丢给后台 %d 条管线", draws, (int)g_pp_kicked - kicked0);
 }
 
@@ -5324,6 +5328,7 @@ static void clear_tex(const p_clear_tex *c) {
         if (tex_need_pfv(t.pixelFormat, (MTLPixelFormat)vpf)) {
             id<MTLTexture> v = [t newTextureViewWithPixelFormat:(MTLPixelFormat)vpf];
             if (!v) { RED_ONCE(43, "清贴图建不出视图：格式 %lu → %u", (unsigned long)t.pixelFormat, vpf); return; }
+            defer_obj_unref(v);   // Metal 4 的命令缓冲不持有附件：视图留到本次提交跑完（同 attach()；与父贴图共用存储，不单独驻留） | A Metal 4 command buffer does not retain attachments: keep the view until this submit has run (as in attach(); it shares the parent's storage and is not made resident separately)
             t = v;
         }
     }
@@ -6212,9 +6217,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     if (!supplied) g_drawable_ns += now_ns() - dt0;
     if (!dr) return 0;
     int alloc_i = (int)(ticket % 3);
-    if (g_present_alloc_fence[alloc_i]) {
+    if (g_present_alloc_fence[alloc_i]) {   // 本槽上次的命令缓冲 GPU 真正做完才复用（重置分配器、改槽里的常量） | Reuse the slot only once its previous command buffer has really finished on the GPU (resetting the allocator, rewriting the slot's constants)
         pthread_mutex_lock(&g_pq_mu);
-        while (g_pq_done < g_present_alloc_fence[alloc_i]) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
+        while (g_present_alloc_done[alloc_i] < g_present_alloc_fence[alloc_i]) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
         pthread_mutex_unlock(&g_pq_mu);
     }
 #if DM_NVN_M3
@@ -6237,7 +6242,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 #if !DM_NVN_M3
         else mp_check(alloc_i, ticket);
 #endif
-        pthread_mutex_lock(&g_pq_mu); if (ticket > g_pq_done) g_pq_done = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
+        pthread_mutex_lock(&g_pq_mu); if (ticket > g_pq_done) g_pq_done = ticket; if (ticket > g_present_alloc_done[alloc_i]) g_present_alloc_done[alloc_i] = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
     }];
 #if !DM_NVN_M3
     CBUF buffers[] = {cb};
