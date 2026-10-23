@@ -1,18 +1,25 @@
 # 全线程采样（DM_SAMPLE=毫秒:*）汇总：按时间窗、可选线程，统计各线程在跑占比，及游戏函数（eh_frame 起点）自身 / 含子调用热点。
-# 用法：sampagg.py <日志> <起s> <止s> [线程句柄 0x…]   需要 build/cache/dm/out/3.3.94012-r2/{main,sdk}.orig.bin（原映像，按偏移解函数）
+# 用法：sampagg.py <日志> <起s> <止s> [线程句柄 0x…]   要原映像 {main,sdk}.orig.bin（按偏移解函数）：缺省放 $DM_ROOT/build/cache/dm/orig（DM_ORIG_DIR 可改），没有就用 nso.py 从游戏文件现解一份
 #   不给线程：列各线程样本数、在跑占比、自身热点前 3
 #   给线程：该线程在跑样本的自身热点、宿主帧、含子调用热点（等待类样本 = 最内层在系统等待函数，不计入在跑）
 # All-thread sampling (DM_SAMPLE=ms:*) summary: for a time window and an optional thread, reports each thread's running share and the self / inclusive hotspots of game functions (eh_frame starts).
-# Usage: sampagg.py <log> <start s> <end s> [thread handle 0x...]   Requires build/cache/dm/out/3.3.94012-r2/{main,sdk}.orig.bin (original images, functions resolved by offset)
+# Usage: sampagg.py <log> <start s> <end s> [thread handle 0x...]   Needs the original images {main,sdk}.orig.bin (functions resolved by offset): by default in $DM_ROOT/build/cache/dm/orig (DM_ORIG_DIR overrides); if missing they are unpacked from the game files with nso.py
 #   No thread given: lists each thread's sample count, running share and top 3 self hotspots
 #   Thread given: that thread's self hotspots among running samples, host frames, and inclusive hotspots (waiting samples = innermost frame is in a system wait function, not counted as running)
 import sys, re, bisect, subprocess, collections, os
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # 工作区根目录（游戏文件、产物、运行现场都在它下面） | Workspace root (game files, build outputs and run artifacts are all under it)
 log, lo, hi = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]); thr = int(sys.argv[4], 16) if len(sys.argv) > 4 else None
-ORIG = os.path.join(DM_ROOT, 'build/cache/dm/out/3.3.94012-r2')
-SDIS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sdis.py')
+# 原映像：原先写死 build/cache/dm/out/3.3.94012-r2（早已没有这一代产物、新产物目录也不放原映像），现改为单独的缓存目录，缺了按需从 ExeFS 解（nso.py）
+# Original images: previously hard-coded to build/cache/dm/out/3.3.94012-r2 (that build generation is long gone, and newer output directories do not hold original images); now a separate cache directory, unpacked from ExeFS on demand when missing (nso.py)
+HERE = os.path.dirname(os.path.abspath(__file__))
+ORIG = os.environ.get('DM_ORIG_DIR') or os.path.join(DM_ROOT, 'build/cache/dm/orig')
+NSO = os.environ.get('DM_NSO_DIR') or os.path.join(DM_ROOT, 'data/switch/3.3.94012/Update/ExeFS')
+SDIS = os.path.join(HERE, 'sdis.py')
 st = {}
 for m in ('main', 'sdk'):
+    if not os.path.exists(f'{ORIG}/{m}.orig.bin'):
+        os.makedirs(ORIG, exist_ok=True)
+        subprocess.run([sys.executable, os.path.join(HERE, 'nso.py'), os.path.join(NSO, m), f'{ORIG}/{m}.orig.bin'], check=True, stdout=subprocess.DEVNULL)
     sys.argv = ['x', f'{ORIG}/{m}.orig.bin', '--find', 'x']; g = {}
     exec(open(SDIS).read().split("if sys.argv[2] == '--sym'")[0], g); st[m] = (g['fn_starts'](), g['name'])
 WAIT = ('mach_wait_until', '__psynch_cvwait', '__semwait_signal', 'nanosleep', 'mach_msg2_trap', 'swtch_pri', '__psynch_mutexwait', 'block_inner', '__ulock_wait')
