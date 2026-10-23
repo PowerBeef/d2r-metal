@@ -48,6 +48,10 @@ static void mem_cb_empty(NVNcommandBuffer *c, NVNcommandBufferMemoryEvent ev, si
     (void)minsz; (void)data;
     if (ev == NVN_COMMAND_BUFFER_MEMORY_EVENT_OUT_OF_COMMAND_MEMORY) P(nvnCommandBufferAddCommandMemory)(c, NULL, 0, 0);
 }
+static int g_cb_pool_left;   // mem_cb_then_empty：还能从游戏池给几段，之后池就空了 | mem_cb_then_empty: how many more segments the game pool can give before it is empty
+static void mem_cb_then_empty(NVNcommandBuffer *c, NVNcommandBufferMemoryEvent ev, size_t minsz, void *data) {
+    if (g_cb_pool_left-- > 0) mem_cb(c, ev, minsz, data); else mem_cb_empty(c, ev, minsz, data);
+}
 static int hostseg_of(const void *p) {   // p 落在第几段宿主补段里（-1 = 不在） | Which host segment p lies in (-1 = none)
     for (int i = 0; i < HOSTSEG_MAX; i++) if (g_hostseg[i].mem && (const uint8_t *)p >= g_hostseg[i].mem && (const uint8_t *)p < g_hostseg[i].mem + HOSTSEG_SZ) return i;
     return -1;
@@ -505,6 +509,56 @@ int main(void) {
         EXPECT("9b 旧句柄不回放乙的录制（乙的目标仍是哨兵值）", 0xEEEEEEEE, w7100);
         EXPECT("9b 旧句柄也不回放甲当年的内容（甲的目标仍是哨兵值）", 0xEEEEEEEE, w7000);
         P(nvnCommandBufferFinalize)(&cbb);
+
+        // 9c. 拷命令（NVN 语义 = 拷贝）：录完后游戏复用源录制的内存（这里直接改写源里 uniform 更新的载荷），已拷进来的命令不受影响
+        // 9c. Copied commands (NVN semantics = a copy): after recording, the game reuses the source recording's memory (here the payload of the source's uniform update is rewritten directly); the commands already copied in are unaffected
+        P(nvnCommandBufferBeginRecording)(&cb);
+        for (int k = 0; k < 4; k++) d4[k] = 0x500 + k;
+        P(nvnCommandBufferUpdateUniformBuffer)(&cb, (NVNbufferAddress)(poolmem + 0x7200), 4096, 0, 16, d4);
+        NVNcommandHandle hsrc = P(nvnCommandBufferEndRecording)(&cb);
+        P(nvnCommandBufferBeginRecording)(&cb);
+        P(nvnCommandBufferCopyCommands)(&cb, 1, &hsrc);
+        NVNcommandHandle hdst = P(nvnCommandBufferEndRecording)(&cb);
+        int ncall = 0, nub = 0;
+        for (uint8_t *p = (uint8_t *)hsrc; p;) {   // 源录制：改写 uniform 更新载荷，模拟游戏复用这块命令内存 | Source recording: rewrite the uniform update payload, simulating the game reusing this command memory
+            op_hdr h; memcpy(&h, p, sizeof h);
+            if (h.op == OP_END) break;
+            if (h.op == OP_JUMP) { memcpy(&p, p + 8, 8); continue; }
+            if (h.op == OP_UPDATE_UB) memset(p + 24, 0xCD, 16);
+            p += h.size;
+        }
+        for (const uint8_t *p = (const uint8_t *)hdst; p;) {
+            op_hdr h; memcpy(&h, p, sizeof h);
+            if (h.op == OP_END) break;
+            if (h.op == OP_JUMP) { memcpy(&p, p + 8, 8); continue; }
+            ncall += h.op == OP_CALL; nub += h.op == OP_UPDATE_UB;
+            p += h.size;
+        }
+        EXPECT("9c 目标录制里没有引用源的 OP_CALL", 0, ncall);
+        EXPECT("9c 目标录制里有 1 条拷进来的 uniform 更新", 1, nub);
+        memset(poolmem + 0x7200, 0, 16);
+        P(nvnQueueSubmitCommands)(&q, 1, &hdst); P(nvnQueueFinish)(&q);
+        EXPECT("9c 源内存复用后，拷进来的更新仍是录制时的值", 1, words_eq(poolmem + 0x7200, 0x500, 4));
+
+        // 9e. 拷一份在宿主补段里的旧录制，拷到一半目标的游戏池用空、要宿主补段：源所在的段已满足回收条件，但拷的期间不得被回收、交给目标
+        // 9e. Copy an old recording lying in a host segment; halfway through, the destination's game pool runs dry and needs a host segment: the source's segment already meets the reclaim conditions, but it must not be reclaimed and handed to the destination during the copy
+        g_frame += 100;
+        NVNcommandBuffer cx, cy; P(nvnCommandBufferInitialize)(&cx, &dev); P(nvnCommandBufferSetMemoryCallback)(&cx, mem_cb_empty);
+        P(nvnCommandBufferBeginRecording)(&cx);
+        for (int i = 0; i < 24; i++) { for (int k = 0; k < 4; k++) d4[k] = 0x700 + 4 * i + k; P(nvnCommandBufferUpdateUniformBuffer)(&cx, (NVNbufferAddress)(poolmem + 0x7400), 4096, 16 * i, 16, d4); }
+        NVNcommandHandle hX = P(nvnCommandBufferEndRecording)(&cx); P(nvnCommandBufferFinalize)(&cx);
+        g_frame += 100;
+        g_cb_pool_left = 1;
+        P(nvnCommandBufferInitialize)(&cy, &dev); P(nvnCommandBufferSetMemoryCallback)(&cy, mem_cb_then_empty);
+        P(nvnCommandBufferBeginRecording)(&cy);                // 游戏池给一段 256 字节，拷 24 条时用空 | The game pool gives one 256-byte segment, which runs out while copying the 24 records
+        P(nvnCommandBufferCopyCommands)(&cy, 1, &hX);
+        NVNcommandHandle hY = P(nvnCommandBufferEndRecording)(&cy);
+        EXPECT("9e 源在宿主补段里、目标拷到一半换进宿主补段", 1, hostseg_of((const void *)hX) >= 0 && hostseg_of(CB(&cy)->cur) >= 0);
+        EXPECT("9e 目标领到的不是源所在的段", 1, hostseg_of(CB(&cy)->cur) != hostseg_of((const void *)hX));
+        memset(poolmem + 0x7400, 0, 0x200);
+        P(nvnQueueSubmitCommands)(&q, 1, &hY); P(nvnQueueFinish)(&q);
+        EXPECT("9e 拷来的 24 次更新全部生效", 1, words_eq(poolmem + 0x7400, 0x700, 96));
+        P(nvnCommandBufferFinalize)(&cy);
 
         // 9d. 宿主补段里录 uniform 更新再提交：回放从命令内存拷载荷，宿主补段不是内存池（原先在 mtl_sub_copy 里 MDIE 退出进程）
         // 9d. A uniform update recorded in a host segment, then submitted: the replay copies the payload from command memory, and a host segment is not a memory pool (this used to MDIE in mtl_sub_copy and end the process)

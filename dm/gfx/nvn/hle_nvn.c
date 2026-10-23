@@ -703,19 +703,21 @@ static int hostseg_stale(uint64_t h, uint64_t *mask) {
     if (c == 1 || c % 256 == 0) LOG("【红】NVN 命令内存：提交的录制落在已回收的宿主补段里（句柄 %#llx，累计 %llu 次），这次不回放", (unsigned long long)h, (unsigned long long)c);
     return 1;
 }
+static void hostseg_pin(uint64_t pm, int d) { for (int i = 0; i < HOSTSEG_MAX; i++) if (pm >> i & 1) g_hostseg[i].pins += d; }   // 持 g_hostseg_mu | Holds g_hostseg_mu
 // 提交入队前：剔掉作废的录制，钉住其余录制碰过的段；入队拿到提交号后记上、松开 | Before the submit is enqueued: drop void recordings and pin the segments the others touched; once enqueued with a submit number, record it and unpin
 static int hostseg_submit(uint64_t *h, int n, uint64_t *pinned) {
     uint64_t pm = 0, m; int k = 0;
     pthread_mutex_lock(&g_hostseg_mu);
     for (int i = 0; i < n; i++) if (!hostseg_stale(h[i], &m)) { pm |= m; h[k++] = h[i]; }
-    for (int i = 0; i < HOSTSEG_MAX; i++) if (pm >> i & 1) g_hostseg[i].pins++;
+    hostseg_pin(pm, 1);
     pthread_mutex_unlock(&g_hostseg_mu);
     *pinned = pm; return k;
 }
 static void hostseg_submitted(uint64_t pm, uint64_t sub) {
     uint64_t f = dm_nvn_frame_count();
     pthread_mutex_lock(&g_hostseg_mu);
-    for (int i = 0; i < HOSTSEG_MAX; i++) if (pm >> i & 1) { hostseg_t *s = &g_hostseg[i]; s->pins--; if (sub > s->sub) s->sub = sub; s->frame = f; }
+    hostseg_pin(pm, -1);
+    for (int i = 0; i < HOSTSEG_MAX; i++) if (pm >> i & 1) { hostseg_t *s = &g_hostseg[i]; if (sub > s->sub) s->sub = sub; s->frame = f; }
     pthread_mutex_unlock(&g_hostseg_mu);
 }
 NVN(nvnCommandBufferAddCommandMemory, void, NVNcommandBuffer *c, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
@@ -754,8 +756,29 @@ NVN(nvnCommandBufferEndRecording, NVNcommandHandle, NVNcommandBuffer *c) {
     return (NVNcommandHandle)o->begin;
 }
 NVN(nvnCommandBufferIsRecording, NVNboolean, const NVNcommandBuffer *c) { return ((const cmd_t *)c)->recording != 0; }
+// 拷命令（NVN 语义 = 拷贝，调用返回后游戏即可复用源的命令内存）：把源录制逐条原样拷进当前命令缓冲。原先只录一条 OP_CALL 引用源句柄、
+// 提交时就地执行源，游戏在这之间改写源内存就回放改写后的内容。记录与所在位置无关（载荷只存值、对象副本与客体地址），可整条照拷；
+// 源的 BEGIN / END 不拷，JUMP 跟过去；落在已回收宿主补段里的源报红、不拷；拷的期间钉住源碰过的宿主补段（目标补内存时不会把源所在的段回收重交）
+// Copy commands (NVN semantics = a copy; once the call returns the game may reuse the source's command memory): copy the source recording record by record, as-is, into the current command buffer. It used to record one OP_CALL referencing the source handle
+// and execute the source in place at submit, so a game rewriting the source memory in between had the rewritten content replayed. Records do not depend on where they sit (payloads hold only values, object snapshots and guest addresses), so whole records are copied;
+// the source's BEGIN / END are not copied, JUMPs are followed; a source lying in a reclaimed host segment is reported red and not copied; the host segments the source touched are pinned during the copy (so adding memory to the destination cannot reclaim and re-hand the source's segment)
 NVN(nvnCommandBufferCopyCommands, void, NVNcommandBuffer *c, int n, const NVNcommandHandle *h) {
-    for (int i = 0; i < n; i++) { uint8_t *p = cmd_alloc(CB(c), 16); put_hdr(p, OP_CALL, 16); memcpy(p + 8, &h[i], 8); }
+    for (int i = 0; i < n; i++) {
+        uint64_t m = 0;
+        if (atomic_load_explicit(&g_hostseg_ever, memory_order_relaxed)) {
+            pthread_mutex_lock(&g_hostseg_mu); int stale = hostseg_stale(h[i], &m); if (!stale) hostseg_pin(m, 1); pthread_mutex_unlock(&g_hostseg_mu);
+            if (stale) continue;
+        }
+        for (const uint8_t *p = (const uint8_t *)h[i];;) {
+            op_hdr r; memcpy(&r, p, sizeof r);
+            if (r.op == OP_END) break;
+            if (r.op == OP_JUMP) { memcpy(&p, p + 8, 8); continue; }
+            if (r.size < 8 || r.op >= OP_COUNT_) { LOG("【红】CopyCommands：源录制 %#llx 里有坏记录（命令 %u 长 %u），后面不拷", (unsigned long long)h[i], r.op, r.size); break; }
+            if (r.op != OP_BEGIN) { uint8_t *d = cmd_alloc(CB(c), r.size); memcpy(d + 8, p + 8, r.size - 8); put_hdr(d, r.op, r.size); }
+            p += r.size;
+        }
+        if (m) { pthread_mutex_lock(&g_hostseg_mu); hostseg_pin(m, -1); pthread_mutex_unlock(&g_hostseg_mu); }
+    }
 }
 NVN(nvnCommandBufferSignalEvent, void, NVNcommandBuffer *c, const NVNevent *e, NVNeventSignalMode m, NVNeventSignalLocation loc, int flags, uint32_t v) {
     (void)loc; (void)flags;
