@@ -70,13 +70,13 @@ static _Atomic uint64_t g_txn_first_ns;     // 本事务第一次存档写的时
 static _Atomic int g_save_poison;
 static void save_poison(int e) { int z = 0; atomic_compare_exchange_strong(&g_save_poison, &z, e ? e : EIO); }
 void dm_fs_save_poison(int e) { save_poison(e); }   // 提交前钩子用：旁路文件（编年史 / 百宝囊）没写成也算本事务写失败——照常提交的话，物品已不在角色档里、旁路文件里又没有 | for the pre-commit hook: a side file (Chronicle / pouch) that failed to write also counts as a write failure of this transaction -- if the commit went ahead as usual, the items would no longer be in the character save and would not be in the side file either
-// 缺省弱实现只记日志（Mac）；iOS 前端写同名强实现弹原生提示。在游戏线程调，前端自己切主线程
-// The default weak implementation only logs (Mac); the iOS front end provides a strong implementation of the same name that shows a native alert. Called on the game thread, the front end switches to the main thread itself
+// 缺省弱实现只记日志（命令行宿主等没有前端的）；iOS 与 Mac 前端（front_ios.m / front_mac.m）各写同名强实现弹原生提示。在游戏线程调，前端自己切主线程
+// The default weak implementation only logs (hosts without a front end, such as the command-line host); the iOS and Mac front ends (front_ios.m / front_mac.m) each provide a strong implementation of the same name that shows a native alert. Called on the game thread, the front end switches to the main thread itself
 __attribute__((weak)) void front_save_failed(int err) { LOG("front_save_failed(errno=%d)：前端未接（缺省弱实现）", err); }
 // 克隆 / 互换这一步失败（工作目录完好、进度只在工作目录里）也通知前端，但一段连续失败只通知一次：游戏几秒就提交一次，
-// iOS 前端每次调用都弹一个新提示框（叠在前一个上面）；成功提交一次就清零，下一段失败再通知。持 g_lock 时读写，通知在放锁之后、同一游戏线程
+// 前端每次调用都弹一次提示（iOS 叠一个新提示框在前一个上面，Mac 弹一个表单）；成功提交一次就清零，下一段失败再通知。持 g_lock 时读写，通知在放锁之后、同一游戏线程
 // A failure at the clone / swap step (the work directory is intact and the progress lives only there) is reported to the front end too, but only once per run of consecutive failures: the game commits every few seconds,
-// and the iOS front end shows a new alert (stacked on the previous one) for every call; one successful commit resets it, so the next run of failures is reported again. Read and written holding g_lock; the notification itself is sent after the lock is released, on the same game thread
+// and the front ends show an alert for every call (iOS stacks a new alert on the previous one, the Mac shows a sheet); one successful commit resets it, so the next run of failures is reported again. Read and written holding g_lock; the notification itself is sent after the lock is released, on the same game thread
 static int g_commit_fail_said;
 // 事务目录里的增删改失败（建文件 / 建目录 / 删 / 改名 / 写方式打开）也按写失败拒绝本事务，同 pwrite / ftruncate：游戏不看这些返回值，照常 Commit 就会把缺了一块的存档提交进去。
 // 「不存在」「已存在」是游戏拿来判断的正常回答（原版存档盘也这样回），不算；只有真的写不进去（盘满、权限、句柄用尽……）才算。txn = 这条客体路径落在事务式存档挂载上
