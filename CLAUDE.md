@@ -139,6 +139,22 @@ python3 dm/tools/switches.py check                                         # dm/
 - `switches.py gen` must run after adding a `getenv("DM_…")` or a doc mention, or `make -C dm/host/tests run` goes red.
 - Analysers with a `RESULT {json}` last line: `dm/ios/tools/soak_report.py` (soak), `dm/gfx/tools/ub_table.py` (`DM_NVN_UB` A/B phases).
 
+**Driving a running game (control port + scenarios):**
+
+```bash
+python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn [--backend cli|mac-app|ios-mac|device] [--headless]
+python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn       # parse only (also in the host suite)
+python3 dm/tools/dmctl.py --listen <port> state                     # one command to a host started with DM_CTL_PORT=<port>
+python3 dm/verify/assertlib.py logred <log> [--allow regex]         # red-marker guard (catches plog lines events miss)
+python3 dm/tools/imgdiff.py a.png b.png --max-mean 0.05            # perceptual screenshot diff (LDR-FLIP)
+```
+
+- The protocol is in `dm/verify/control_port.md` and the scenario format in `dm/verify/scenarios/README.md`.
+- On the Mac the host connects out to the controller (`DM_CTL_PORT`), because `ios/run.sh` allows only one `listen(` (the iOS log port). On iOS, commands go over `DM_LOG_PORT`.
+- `mac-app` runs a test copy (`$DM_ROOT/out/macapp_test`) with `DM_APP_SUPPORT` set. Never point scenarios at the player's real save folder.
+- `ios-mac` needs `.iosdd_mac/DmMacSmoke.app`; `dm/ios/tools/smoke_mac.sh 1` builds it. Saves for the iOS backends are the ones bundled at build time.
+- Generated saves (`export_save`, `scenarios/saves/*.scn`) stay in `$DM_ROOT/data/switch/save_ref_<name>/` and are never committed.
+
 **CLI host (Mac):**
 
 ```bash
