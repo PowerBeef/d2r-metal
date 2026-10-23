@@ -53,3 +53,7 @@ t_rt_srgb_view
 t_rt_srgb_view.dSYM/
 t_copy_pitch
 t_copy_pitch.dSYM/
+t_replay_tsan
+t_replay_tsan.dSYM/
+t_replay_asan
+t_replay_asan.dSYM/

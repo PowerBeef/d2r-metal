@@ -120,7 +120,7 @@ static id<MTLRenderPipelineState> g_bloomq_pso;
 static MTLPixelFormat g_bloomq_fmt;
 static id<MTLTexture> g_bloomq_view;
 static int g_bloomq_i;
-static struct { int state; uint64_t s_ser, b0_ser, b1_ser, s_h, samp_h, b1_h; const tex_t *s_tex; float threshold, coeff_g, coeff_b; } g_bloomq;
+static struct { int state; uint64_t s_ser, b0_ser, b1_ser, s_h, samp_h, b1_h; tex_t s_tex; float threshold, coeff_g, coeff_b; } g_bloomq;   // s_tex：起点那张源贴图的按值副本（原先存登记表项的地址，登记表扩容搬家后悬空） | s_tex: a by-value copy of the start's source texture (it used to store the address of the table entry, which dangled once the table grew and moved)
 static uint64_t g_bloomq_last_b0, g_bloomq_last_b1h, g_bloomq_last_b1s;   // 最近一次泛光 1/4 叠加改读：B0 序号 → B1 句柄（跨帧保留，见 2e2d6700a2569795 那支） | Most recent bloom 1/4 overlay read redirection: B0 serial → B1 handle (kept across frames, see the 2e2d6700a2569795 branch)
 static uint64_t g_present_alloc_fence[3];
 static pthread_mutex_t g_pq_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -327,6 +327,7 @@ static void udc_selftest(void) {
         MLOG("UDC自检 %s %s %lux%lu 首值 %08x 与首值不同 %lu / %lu", g_dev.name.UTF8String, depth ? "Depth32F_S8" : "RGBA8", (unsigned long)w, (unsigned long)h, px[0], (unsigned long)bad, (unsigned long)(w * h));
     }
 }
+static void use_init(void);
 static void mtl_init_once(void) {
     if (g_dev) return;
     const char *link = getenv("DM_PRESENT_LINK");
@@ -404,6 +405,7 @@ static void mtl_init_once(void) {
     g_nvn_deswz_gpu = nvn_deswz_gpu_init(g_dev) == 0;
     dm_res_report_register(mtl_res_counts);
     if (!g_nvn_deswz_gpu) MLOG("【红】显卡解排布初始化失败，预排布贴图回退 CPU");
+    use_init();   // DM_GFXUSE（诊断）：在任何出图 / 提交线程起来之前读开关 | DM_GFXUSE (diagnostic): read the switch before any present / submit thread starts
     MLOG("Metal 设备 %s", g_dev.name.UTF8String);
     udc_selftest();
 }
@@ -1581,29 +1583,33 @@ __attribute__((weak)) void dm_guest_frame_tick(void) {}   // hle_os.c 提供强�
 __attribute__((weak)) int dm_detclock_enabled(void) { return 0; }   // 同上：宿主 hle_os.c 提供强定义；图形单测不链宿主时确定性时钟视为关闭 | Same as above: the host's hle_os.c provides the strong definition; when graphics unit tests do not link the host, the deterministic clock is treated as off
 __attribute__((weak)) uint64_t guest_ns(void) { return 0; }          // 同上：仅在确定性时钟开启时被读，图形单测里不会走到 | Same as above: read only when the deterministic clock is on; never reached in graphics unit tests
 enum { USE_OFF, USE_WAIT, USE_REC, USE_DONE };
-static int g_use = -1; static FILE *g_use_f; static long g_use_f0, g_use_rows; static nvn_hmap g_use_seen = {.klen = 24};
+static _Atomic int g_use = USE_OFF; static FILE *g_use_f; static long g_use_f0, g_use_rows; static nvn_hmap g_use_seen = {.klen = 24};
 #define USE_FRAMES 30
 static void use_exit(void) {
     if (g_use == USE_WAIT) fprintf(stderr, "[dm] 【红】DM_GFXUSE 时间窗始终没开：dm_prof_ribbon_ns() = %llu（需 DM_BOOTPROF=1 且宿主含面板打点）\n", (unsigned long long)dm_prof_ribbon_ns());
     else if (g_use == USE_REC) fprintf(stderr, "[dm] 【红】DM_GFXUSE 只记了 %ld 帧（不足 %d）即退出，文件未完整\n", (long)atomic_load(&g_cur_frame) - g_use_f0, USE_FRAMES);
     if (g_use_f) fflush(g_use_f);
 }
+// 开关在建 Metal 设备时读一次（原先第一次出图时才在出图线程上读、写 g_use，提交线程的 use_rec 同时在读）；g_use 之后只由出图线程推进，读写都是原子的
+// The switch is read once while the Metal device is set up (it used to be read and g_use written on the present thread at the first present, while use_rec on the submit thread was reading it); afterwards only the present thread advances g_use, and all its reads and writes are atomic
+static void use_init(void) {
+    const char *e = getenv("DM_GFXUSE"); if (!e) return;
+    g_use_f = fopen(e, "w"); if (!g_use_f) { MLOG("【红】DM_GFXUSE 打不开 %s", e); return; }
+    fprintf(g_use_f, "kind\tguest_addr\tlen\tfirst_frame\ttex_id\tfmt\twxh\n"); fflush(g_use_f); g_use = USE_WAIT; atexit(use_exit);
+    MLOG("[gfxuse] 等面板事件：首次 OpenPanel MainMenuButtonRibbon 后 1 秒起记 %d 帧 → %s", USE_FRAMES, e);
+}
 static void use_tick(void) {   // 每次出图调用 | Called on every present
-    if (g_use < 0) { const char *e = getenv("DM_GFXUSE"); g_use = USE_OFF;
-        if (e) { g_use_f = fopen(e, "w"); if (!g_use_f) { MLOG("【红】DM_GFXUSE 打不开 %s", e); return; }
-            fprintf(g_use_f, "kind\tguest_addr\tlen\tfirst_frame\ttex_id\tfmt\twxh\n"); fflush(g_use_f); g_use = USE_WAIT; atexit(use_exit);
-            MLOG("[gfxuse] 等面板事件：首次 OpenPanel MainMenuButtonRibbon 后 1 秒起记 %d 帧 → %s", USE_FRAMES, e); } }
     long f = (long)atomic_load(&g_cur_frame);
     if (g_use == USE_WAIT) {
         uint64_t t = dm_prof_ribbon_ns();
         if (t && now_ns() - t >= 1000000000ull) { g_use = USE_REC; g_use_f0 = f; MLOG("[gfxuse] 开始记录：帧 %ld 起 %d 帧", f, USE_FRAMES); }
     } else if (g_use == USE_REC && f - g_use_f0 >= USE_FRAMES) {
-        g_use = USE_DONE; fclose(g_use_f); g_use_f = NULL;
+        g_use = USE_DONE; fflush(g_use_f);   // 不关文件：提交线程可能刚读到「在记」、正往里写（进程退出时 use_exit 再冲一次） | Do not close the file: the submit thread may have just read "recording" and be writing to it (use_exit flushes once more at process exit)
         MLOG("[gfxuse] 记录完成：帧 %ld–%ld，去重后 %ld 个区间", g_use_f0, f - 1, g_use_rows);
     }
 }
 static __attribute__((always_inline)) inline void use_rec(const char *kind, uint64_t addr, uint64_t len, int tid, const tex_t *t) {
-    if (g_use != USE_REC || !addr || !len) return;
+    if (atomic_load_explicit(&g_use, memory_order_relaxed) != USE_REC || !addr || !len) return;
     uint64_t k[3] = {addr, len, (uint64_t)(uint8_t)kind[0]};
     if (nvn_hm_get(&g_use_seen, k)) return;
     nvn_hm_put(&g_use_seen, k, (void *)1);
@@ -1850,7 +1856,9 @@ static int tbdr_env(void) { static int v = -1; if (v < 0) { const char *e = gete
 static int tbdr_on(void) { return tbdr_env() && g_tbdr_eff && !g_ruler_truth; }
 static int tb_sub(int bit) { return tbdr_on() && (g_tbdr_sub_eff & bit); }
 int dm_nvn_ruler_truth(void) { tbdr_on(); return g_ruler_truth; }   // 视觉尺子真值阶段（宿主侧的被测设置据此让开，如 3D 渲染比例） | Visual ruler ground-truth phase (host-side settings under test yield accordingly, e.g. the 3D render scale)
-static int rt_range_on(void) { static int v = -1; if (v < 0) { const char *e=getenv("DM_NVN_RT_RANGE"); v=e && !strcmp(e,"1"); } return v; }   // 窄候选，缺省关 | Narrow candidate, off by default
+// 预热线程（warm_start → shader_load）与翻译线程都会第一次调它：懒读的缓存值用原子读写（原先普通 static，线程消毒器报竞争）
+// Both the warm-up thread (warm_start → shader_load) and the translation thread may call it first: the lazily read cached value uses atomic loads / stores (it used to be a plain static, which ThreadSanitizer reported as a race)
+static int rt_range_on(void) { static _Atomic int v = -1; int x = atomic_load_explicit(&v, memory_order_relaxed); if (x < 0) { const char *e=getenv("DM_NVN_RT_RANGE"); x=e && !strcmp(e,"1"); atomic_store_explicit(&v, x, memory_order_relaxed); } return x; }   // 窄候选，缺省关 | Narrow candidate, off by default
 static uint64_t g_sd_dead_bytes, g_sd_n_dead, g_sd_n_all;
 // ---------- 跨提交附件有效性账本 ----------
 // 条目 = 子资源（贴图序号, 级, 层）+ 状态，跨提交存活：
@@ -2486,6 +2494,15 @@ static treg_t *g_treg; static int g_ntreg;
 // Lock-free copy of texture ID → serial (the replay hot path only needs the serial: store lookahead index, binding set of the clear-only hoist): texture IDs are 20 bits, fixed 1M entries (BSS, only touched pages are used),
 // release write at registration, relaxed atomic read on the reader side, without entering g_rmu (the former h_ser locked and unlocked on every lookup, thousands of times per frame in the camp)
 static _Atomic uint64_t g_tser[1 << 20];
+// 翻译线程要登记表项时在锁内按值拷出（游戏线程可能正扩容搬家 / 改写这一项）；没登记返回 0
+// When the translation thread needs a table entry it copies it out by value under the lock (the game thread may be growing and moving the table / rewriting this entry); returns 0 if not registered
+static int treg_copy(int tid, tex_t *t, view_t *v, int *has_v) {
+    pthread_mutex_lock(&g_rmu);
+    int ok = tid > 0 && tid < g_ntreg && g_treg[tid].ok;
+    if (ok) { *t = g_treg[tid].t; if (v) *v = g_treg[tid].v; if (has_v) *has_v = g_treg[tid].has_v; }
+    pthread_mutex_unlock(&g_rmu);
+    return ok;
+}
 static samp_par *g_sreg; static uint8_t *g_sreg_ok; static void **g_sview; static uint64_t *g_srid; static int g_nsreg;   // g_sview：采样器号 → MTLSamplerState（持有） | g_sview: sampler ID → MTLSamplerState (retained)
 void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
     int id_ = tid; if (id_ < 0) return;
@@ -3988,10 +4005,14 @@ static int defer_on(void) {
     if (g_defer_ab < 0) { g_defer_ab = 0; g_defer_ab_on = 0; }
     return tb_sub(TB_DEFER) && (g_defer_ab || g_defer_ab_on); }
 static int defer_handle_sub(uint64_t h, const p_set_rt *r, int k, int cover) {
-    int tid = (int)(h & 0xfffff); if (!tid || tid >= g_ntreg || !g_treg[tid].ok) return 0;
-    uint64_t ser; int lv, sl; rt_sub(r, k, &ser, &lv, &sl); if (!ser || g_treg[tid].t.serial != ser) return 0;
-    if (!g_treg[tid].has_v || !g_treg[tid].v.set_levels) return cover;
-    view_t v = g_treg[tid].v; int n = v.nlevels > 0 ? v.nlevels : 1;
+    int tid = (int)(h & 0xfffff); if (!tid) return 0;
+    uint64_t ser; int lv, sl; rt_sub(r, k, &ser, &lv, &sl);
+    // 先比无锁的序号副本（绑着的多半不是这张目标，不必每次进锁）；对上了再在锁内拷出登记表项（游戏线程可能正扩容搬家 / 改写它）
+    // Compare the lock-free serial copy first (most bound textures are not this target, so the lock need not be taken every time); on a match, copy the table entry out under the lock (the game thread may be growing and moving / rewriting it)
+    if (!ser || atomic_load_explicit(&g_tser[tid], memory_order_relaxed) != ser) return 0;
+    tex_t t; view_t v; int has_v = 0; if (!treg_copy(tid, &t, &v, &has_v) || t.serial != ser) return 0;
+    if (!has_v || !v.set_levels) return cover;
+    int n = v.nlevels > 0 ? v.nlevels : 1;
     return lv >= v.base_level && lv < v.base_level + n && (!v.set_layers || (sl >= v.min_layer && sl < v.min_layer + (v.nlayers > 0 ? v.nlayers : 1)));
 }
 static int defer_prog_hits(const prog_t *pg, uint64_t tex[6][128], uint64_t img[6][32], const p_set_rt *r, int color_only, int cover) {
@@ -4412,12 +4433,13 @@ static int zskip_fact_for(const char *key, zskip_fact *out) {
     return 0;
 }
 static int zskip_view_zero(int tid) {
-    if (!tid || tid >= g_ntreg || !g_treg[tid].ok) return 0;
-    treg_t *r = &g_treg[tid]; const tex_t *t = &r->t; int lv0 = r->has_v && r->v.set_levels ? r->v.base_level : 0;
-    int nl = r->has_v && r->v.set_levels && r->v.nlevels > 0 ? r->v.nlevels : 1;
-    int sl0 = r->has_v && r->v.set_layers ? r->v.min_layer : 0;
-    int ns = r->has_v && r->v.set_layers && r->v.nlayers > 0 ? r->v.nlayers : 1;
-    for (int l = 0; l < nl; l++) for (int s = 0; s < ns; s++) if (!zskip_has(t->serial, lv0 + l, sl0 + s)) return 0;
+    tex_t t; view_t v; int has_v = 0;
+    if (!treg_copy(tid, &t, &v, &has_v)) return 0;   // 登记表项在锁内拷出（游戏线程可能正改它） | The table entry is copied out under the lock (the game thread may be changing it)
+    int lv0 = has_v && v.set_levels ? v.base_level : 0;
+    int nl = has_v && v.set_levels && v.nlevels > 0 ? v.nlevels : 1;
+    int sl0 = has_v && v.set_layers ? v.min_layer : 0;
+    int ns = has_v && v.set_layers && v.nlayers > 0 ? v.nlayers : 1;
+    for (int l = 0; l < nl; l++) for (int s = 0; s < ns; s++) if (!zskip_has(t.serial, lv0 + l, sl0 + s)) return 0;
     return 1;
 }
 // 遮挡查询在计数时，被跳过的绘制本该贡献通过采样数：只有「下一次清零之前没有报告」才无关紧要。
@@ -4498,7 +4520,8 @@ static int fz_p2_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, uint8_
             {   // 采样的那个视图也得正好是附件那一张（原先只核附件是第 0 级第 0 层，没核着色器绑的视图——同一张贴图按第 k 级 / 第 k 层 / 换格式的视图采样时， | The sampled view must also be exactly the attachment itself (previously only the attachment being level 0 layer 0 was checked, not the view bound by the shader -- when the same texture is sampled through a view of level k / layer k / a changed format,
                 // 证明照样成立，采样会被改成读片上第 0 级 / 原格式，画面就错了）。视图起始级 / 层须为 0、格式须与附件实际格式相同，否则不合并
                 // the proof would still hold, the sampling would be changed to read on-tile level 0 / the original format, and the picture would be wrong). The view's starting level / layer must be 0 and its format must equal the attachment's actual format, otherwise do not merge
-                int tid_ = (int)(h & 0xfffff); void *tv_ = NULL; if (tid_) tex_fast_rid(tid_, &tv_); __unsafe_unretained id<MTLTexture> tv = (__bridge id<MTLTexture>)tv_;
+                // 视图缓存在登记表里：持 g_rmu 取，取到的视图强引用留着（游戏线程可能随即改写这一项） | The view cache lives in the registration table: fetch it under g_rmu and keep a strong reference to the view (the game thread may rewrite the entry right after)
+                int tid_ = (int)(h & 0xfffff); void *tv_ = NULL; pthread_mutex_lock(&g_rmu); if (tid_) tex_fast_rid(tid_, &tv_); id<MTLTexture> tv = (__bridge id<MTLTexture>)tv_; pthread_mutex_unlock(&g_rmu);
                 uint32_t apf_ = tv.parentTexture ? (uint32_t)tv.parentTexture.pixelFormat : (uint32_t)tv.pixelFormat; uint8_t swz_[4];
                 if (R.rt.has_cview[j] && R.rt.cview[j].set_format && !(nvn_fmt_to_mtl(R.rt.cview[j].format, &apf_, swz_) && apf_)) apf_ = 0;   // 附件按换格式视图挂：取那个格式；认不出就不合 | The attachment is attached through a format-changing view: take that format; if unrecognized, do not merge
                 MTLPixelFormat apf = (MTLPixelFormat)apf_;
@@ -4551,8 +4574,8 @@ static int bloomq_make_pipeline(MTLPixelFormat fmt) {
     g_bloomq_samp = [g_dev newSamplerStateWithDescriptor:sd]; return g_bloomq_samp != nil;
 }
 static int bloomq_capture(void) {
-    uint64_t ser; int lv, sl; if (!bloomq_target(&ser, &lv, &sl) || !g_bloomq.s_tex) return 0;
-    id<MTLTexture> base = tex_mtl(R.rt.color[0]), src = tex_mtl(g_bloomq.s_tex); if (!base || !src) return 0;
+    uint64_t ser; int lv, sl; if (!bloomq_target(&ser, &lv, &sl) || !g_bloomq.s_tex.serial) return 0;
+    id<MTLTexture> base = tex_mtl(R.rt.color[0]), src = tex_mtl(&g_bloomq.s_tex); if (!base || !src) return 0;
     id<MTLTexture> dst = base; if (lv || sl) { static id<MTLTexture> vb; static int vl, vs; if (vb != base || vl != lv || vs != sl) { defer_obj_release(g_bloomq_view);   /* 旧视图退役（原先直接被覆盖：留在驻留集里，连带钉住旧底图） | retire the old view (it used to be overwritten directly: it stayed in the residency set and pinned the old base texture with it) */ g_bloomq_view = [base newTextureViewWithPixelFormat:base.pixelFormat textureType:base.textureType levels:NSMakeRange(lv, 1) slices:NSMakeRange(sl, 1)]; if (g_bloomq_view) res_add(g_bloomq_view); vb = base; vl = lv; vs = sl; } dst = g_bloomq_view; }
     if (!dst || !bloomq_make_pipeline(dst.pixelFormat)) return 0;
     rp_end();
@@ -4696,15 +4719,15 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         if (!strncmp(f->key, "2938a5b71b8e21b2", 16)) {
             if (g_bloomq.state) bloomq_reset();
             if (bloomq_target(&tgt, &lv, &sl) && R.rt.color[0]) {
-                uint64_t h = 0; const tex_t *st = NULL; int cbuf = 0;
+                uint64_t h = 0; tex_t st = {0}; int has_st = 0, cbuf = 0;
                 for (int i = 0; i < f->rf.nb; i++) { nvn_rbind *b = &f->rf.b[i];
-                    if (b->kind == NVN_RB_TEX && b->reg < 128 && !h) { h = S.tex[1][b->reg]; int tid = (int)(h & 0xfffff); if (tid > 0 && tid < g_ntreg && g_treg[tid].ok) st = &g_treg[tid].t; }
+                    if (b->kind == NVN_RB_TEX && b->reg < 128 && !h) { h = S.tex[1][b->reg]; has_st = treg_copy((int)(h & 0xfffff), &st, NULL, NULL); }
                     if (b->kind == NVN_RB_SAMPT && b->reg < 128) g_bloomq.samp_h = S.tex[1][b->reg] >> 20;
                     if (b->kind == NVN_RB_SAMP && b->reg < 128) g_bloomq.samp_h = S.samp[1][b->reg] >> 20;
                     if (b->kind == NVN_RB_CBUF && !cbuf) cbuf = ubo_float(1, (uint16_t)(b->reg << 8), &g_bloomq.threshold);   // c7[0].x
                 }
-                if (h && st && cbuf && f->rf.c1_len >= sizeof(float) * 2) {
-                    float c1[2]; memcpy(c1, f->rf.c1, sizeof c1); g_bloomq.s_tex = st; g_bloomq.s_h = h; g_bloomq.s_ser = st->serial; g_bloomq.b0_ser = tgt; g_bloomq.coeff_g = c1[0]; g_bloomq.coeff_b = c1[1]; g_bloomq.state = 1;
+                if (h && has_st && cbuf && f->rf.c1_len >= sizeof(float) * 2) {
+                    float c1[2]; memcpy(c1, f->rf.c1, sizeof c1); g_bloomq.s_tex = st; g_bloomq.s_h = h; g_bloomq.s_ser = st.serial; g_bloomq.b0_ser = tgt; g_bloomq.coeff_g = c1[0]; g_bloomq.coeff_b = c1[1]; g_bloomq.state = 1;
                     { static int once; if (!once++) MLOG("泛光 1/4 起点：生效（S ser=%llu B0 ser=%llu）", (unsigned long long)g_bloomq.s_ser, (unsigned long long)g_bloomq.b0_ser); } PD("A %llu 泛光 1/4 起点 S=%llu B0=%llu", g_stat_pass, (unsigned long long)g_bloomq.s_ser, (unsigned long long)g_bloomq.b0_ser); R.clear_c[0] = 0;   // B0 整级不要了：挂起的清除也丢掉，否则会为它单开一个只清除的通道 | The whole B0 level is no longer needed: drop the pending clear too, otherwise a clear-only render pass would be opened just for it
                     return;
                 }
