@@ -175,6 +175,7 @@ uint64_t front_game_res(int docked) {
 }
 
 static NSPoint g_test_last;   // 合成鼠标脚本：上一条带坐标的指令落在视图里的点（dragto 从这里起拖） | synthetic mouse script: the point in the view where the last instruction with coordinates landed (dragto starts dragging from here)
+static int g_mouse_down;      // 这一笔左键的按下收了（落在画面里）：随后的拖动 / 抬起才交下去 | the press of this left-button gesture was taken (inside the picture): only then are its drags / release passed on
 static int g_wheel;   // 滚轮：+1 / −1 = 右摇杆向上 / 向下推一小会儿（原版手柄版用右摇杆滚列表） | Wheel: +1 / -1 = push the right stick up / down for a short while (the original gamepad UI scrolls lists with the right stick)
 static void push(void) {
     int32_t lx = (g_d - g_a) * 32767, ly = (g_w - g_s) * 32767;
@@ -249,7 +250,7 @@ void front_run(void (*guest)(void)) {
         [NSApp activateIgnoringOtherApps:YES];
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;   // 只吃游戏窗口的键；软键盘输入框等其他窗口照常收字 | Only swallow keys for the game window; other windows such as the software keyboard input box receive typing as usual
-            if (e.modifierFlags & NSEventModifierFlagCommand) return e;   // 带 ⌘ 的留给菜单（⌘Q、⌃⌘F） | Keys with ⌘ are left to the menu (⌘Q, ⌃⌘F)
+            if (e.modifierFlags & NSEventModifierFlagCommand) { if (e.type == NSEventTypeKeyUp) on_key(e, 0); return e; }   // 带 ⌘ 的按下留给菜单（⌘Q、⌃⌘F）；松开照样记上（按着 W 时按住 ⌘ 再松开 W，原先松开收不到、角色一直走） | Key presses with ⌘ are left to the menu (⌘Q, ⌃⌘F); releases are still recorded (releasing W while ⌘ was held used to be missed, and the character kept walking)
             if (!e.isARepeat) on_key(e, e.type == NSEventTypeKeyDown);
             return nil;   // 吃掉，免得系统提示音 | Swallow it to avoid the system beep
         }];
@@ -261,12 +262,13 @@ void front_run(void (*guest)(void)) {
             if (hover && getenv("DM_TEST_HOVER_LOG")) LOG("鼠标悬停输入：类型 %ld", (long)e.type);
             if (hover && !g_live) return e;
             if (e.type == NSEventTypeMouseExited) { dm_touch_host_live(3, -1, -1); return e; }
-            if (e.type == NSEventTypeLeftMouseUp) { if (g_live) dm_touch_host_live(2, 0, 0); else dm_touch_set(NULL, 0); return nil; }
+            if (e.type == NSEventTypeLeftMouseUp) { if (!g_mouse_down) return nil; g_mouse_down = 0; if (g_live) dm_touch_host_live(2, 0, 0); else dm_touch_set(NULL, 0); return nil; }
+            if (e.type == NSEventTypeLeftMouseDragged && !g_mouse_down) return nil;   // 按在黑边上没收的那一笔：拖动夹到画面边上会被当成按下，抬起就成了一下点击 | a gesture whose press on the black bars was not taken: a drag clamped to the picture edge would count as a press and its release as a click
             NSPoint p = [v convertPoint:e.locationInWindow fromView:nil]; NSRect gr = game_rect();
             if (hover && getenv("DM_TEST_HOVER_LOG")) LOG("鼠标悬停坐标：窗口 %.1f,%.1f 视图 %.1f,%.1f 画面 %.1f,%.1f %.1fx%.1f", e.locationInWindow.x, e.locationInWindow.y, p.x, p.y, gr.origin.x, gr.origin.y, gr.size.width, gr.size.height);
             if (gr.size.width <= 0 || gr.size.height <= 0) return e;
             float nx = (float)((p.x - gr.origin.x) / gr.size.width), ny = (float)(1.0 - (p.y - gr.origin.y) / gr.size.height);   // AppKit 视图原点在左下，触屏原点在左上 | The AppKit view origin is at bottom left, the touchscreen origin is at top left
-            if (e.type == NSEventTypeLeftMouseDown && (nx < 0 || nx > 1 || ny < 0 || ny > 1)) return nil;   // 按在黑边上：不算点 | Pressed on the black bars: not a click
+            if (e.type == NSEventTypeLeftMouseDown) { g_mouse_down = nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1; if (!g_mouse_down) return nil; }   // 按在黑边上：不算点 | Pressed on the black bars: not a click
             if (g_full && g_live) {   // 真全屏：状态机吃界面矩形里的归一化坐标（同 iOS 的游戏视图）。两步： | true full screen: the state machine takes normalised coordinates inside the interface rectangle (like the iOS game view). Two steps:
                 // ① 先换到「实际显示的那块」：游戏当前分辨率（前端 16:9、局内整屏）按比例居中放进游戏画面，与上屏同一口径（nvn_mtl.m present_encode：比例差 1% 内铺满）；
                 // ② 再换到界面矩形（局内贴底）。局内界面矩形外是 3D 世界，带符号交下去（点世界换回整屏，touch_mac.c）；不在局内时显示块外是黑边，不算点
@@ -277,7 +279,7 @@ void front_run(void (*guest)(void)) {
                     if (fabs(ga / ca - 1) >= 0.01) { if (ga > ca) { cw = ca / ga; cx = (1 - cw) / 2; } else { ch = ga / ca; cy = (1 - ch) / 2; } } }
                 float vx = (float)((nx - cx) / cw), vy = (float)((ny - cy) / ch);
                 double fy = 0, fh = 1; ui_rect_frac(&fy, &fh); float uy = fh > 0 ? (float)((vy - fy) / fh) : vy;
-                if (e.type == NSEventTypeLeftMouseDown && !dm_uiscreen_ingame() && (vx < 0 || vx > 1 || uy < 0 || uy > 1)) return nil;
+                if (e.type == NSEventTypeLeftMouseDown && !dm_uiscreen_ingame() && (vx < 0 || vx > 1 || uy < 0 || uy > 1)) { g_mouse_down = 0; return nil; }
                 dm_touch_host_live(hover ? 3 : e.type == NSEventTypeLeftMouseDown ? 0 : 1, vx, uy); return hover ? e : nil; }
             if (hover) { dm_touch_host_live(3, nx, ny); return e; }
             dm_touch t = {0, nx < 0 ? 0 : nx > 1 ? 1 : nx, ny < 0 ? 0 : ny > 1 ? 1 : ny};
