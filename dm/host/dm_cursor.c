@@ -2961,6 +2961,13 @@ static int has_character(const char *dir, int depth) {
         else if (depth < 3) { struct stat st; if (!stat(p, &st) && S_ISDIR(st.st_mode)) found = has_character(p, depth + 1); } }
     closedir(d); return found;
 }
+// 职业选择页每帧都要知道「有没有角色」（决定「返回」显不显示）：答案记 1 秒，页刚打开时重查。原先每帧把存档目录递归扫一遍（iOS 沙盒里文件调用更慢）
+// The class selection page needs "is there a character" on every frame (whether 「返回」(Back) is shown): the answer is kept for 1 second and checked again when the page has just opened. It used to scan the save directory recursively on every frame (file calls are slower in the iOS sandbox)
+static int has_character_cached(const char *dir, int fresh) {
+    static uint64_t at; static int last; uint64_t t = now_ns();
+    if (fresh || !at || t - at >= 1000000000ull) { at = t; last = has_character(dir, 0); }
+    return last;
+}
 static _Atomic uint64_t g_taps_base;   // DM_UI_TAPS_AT="动作:面板"（子串）：DM_UI_TAPS 的帧号从这条界面消息第一次出现起算 | DM_UI_TAPS_AT="action:panel" (substring): the frame numbers of DM_UI_TAPS count from the first occurrence of this UI message
 uint64_t dm_ui_taps_base(void) { return atomic_load(&g_taps_base); }
 static void rs_on_uimsg(const char *cat, const char *act, const char *arg);   // 一键重开（定义在 fe_send 之后） | one-tap restart (defined after fe_send)
@@ -3174,10 +3181,11 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
       uint64_t b = atomic_load(&g_taps_base), f0 = dm_guest_frame(); if (nd > 0 && b) for (int i = 0; i < nd; i++) if (!ds[i].done && f0 >= b + ds[i].fr) { ds[i].done = 1; if (ds[i].c[0] == '!') { void uimsg_emit(const char *, const char *, const char *); LOG("前端路径：只给订阅者补发 %s:%s %s（不进游戏）", ds[i].c + 1, ds[i].a, ds[i].g); uimsg_emit(ds[i].c + 1, ds[i].a, ds[i].g); } else fe_send(ds[i].c, ds[i].a, ds[i].g); } }   // 类别前加 ! = 只发给订阅者、不进游戏（造「消息上开着、游戏里没有」的现场用） | a ! before the category = sent only to subscribers, not into the game (for setting up the "open according to messages, absent in the game" scenario)
     rs_pump(); if (atomic_load(&g_rs) != RS_IDLE) return;   // 一键重开进行中：主菜单 / 选角页由它走，前端自动化不插手（不然主菜单上会按两次 X） | one-tap restart in progress: it handles the main menu / character select page and the front-end automation stays out (otherwise X would be pressed twice on the main menu)
     static uint64_t next; uint64_t fr = dm_guest_frame(); if (fr < next) return;
+    static int cc_was; int cc_fresh = atomic_load(&g_cc_open) && !cc_was; cc_was = atomic_load(&g_cc_open);
     if (atomic_load(&g_cc_open)) {   // 职业选择页的「返回」只在有存档（从选角页进来）时出现；无存档时这页就是首页 | 「返回」(Back) on the class selection page appears only when there are saves (entered from the character select page); with no saves this page is the home page
         module_t *m = main_module(); uint64_t root = 0; if (m) memcpy(&root, m->base + 0x2f05458, 8);
         uint64_t pn = root ? ui_find(root, "CharacterCreatePanel", 0) : 0, bk = pn ? ui_find(pn, "TouchBack", 0) : 0;
-        if (bk) { const char *sv = getenv("DM_SAVE"); uint8_t want = !sv || has_character(sv, 0);
+        if (bk) { const char *sv = getenv("DM_SAVE"); uint8_t want = !sv || has_character_cached(sv, cc_fresh);
             ui_show_ours(bk, want); }
     }
     { int nk = atomic_exchange(&g_fe_name_key, 0); if (nk) { fe_key(nk == 1 ? DM_BTN_PLUS : DM_BTN_B); next = fr + 8; LOG("前端路径：起名页点了「%s」→ %s", nk == 1 ? "创建" : "返回", nk == 1 ? "＋" : "B"); return; } }

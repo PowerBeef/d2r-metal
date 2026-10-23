@@ -4,9 +4,11 @@
 // and a press query arriving after a drop-point query and before the main thread answers must not be taken for a drop query (dm_ui_item_query). The sender at the controller read is simulated here with the real phase rules: phase 2 sends the press, phase 3 the release.
 #include "../dm_cursor.c"
 #include <time.h>
+#include <unistd.h>
 module_t g_mod[MAX_MOD]; int g_nmod;
 uint64_t dm_guest_frame(void) { return 100; }
-uint64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + t.tv_nsec; }
+static uint64_t g_fake_ns;   // 非 0 = 用这个钟（职业页的存档扫描缓存） | non-zero = use this clock (the class-page save scan cache)
+uint64_t now_ns(void) { if (g_fake_ns) return g_fake_ns; struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + t.tv_nsec; }
 int dm_padmode_busy(void) { return 0; }
 int dm_uiscreen_ingame(void) { return 1; }
 void dm_ui_rect(int *x, int *y, int *w, int *h) { *x = 0; *y = 0; *w = 2360; *h = 1326; }
@@ -112,8 +114,23 @@ static void drop_query(void) {
     CHECK(atomic_load(&g_drop_last) == -1 && atomic_load(&g_sn_new) == 1, "按下查询照旧作废上一次的落点与吸附 | the press query invalidates the previous drop result and snap as before");
 }
 
+static void class_page_scan(void) {
+    printf("职业选择页的「有没有角色」：记 1 秒、页刚打开时重查，不每帧扫存档目录 | \"is there a character\" on the class page: kept 1 s, rechecked when the page opens, not a scan of the save directory every frame\n");
+    char dir[256], sub[300], f[400]; snprintf(dir, sizeof dir, "%s/t_ui_taps_%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", getpid());
+    snprintf(sub, sizeof sub, "%s/a", dir); snprintf(f, sizeof f, "%s/joe.d2s", sub); mkdir(dir, 0755); mkdir(sub, 0755);
+    FILE *o = fopen(f, "w"); if (o) fclose(o);
+    g_fake_ns = 5000000000ull;
+    CHECK(has_character_cached(dir, 1) == 1, "页刚打开：扫一次，有角色 | page just opened: one scan, a character is there");
+    remove(f);
+    g_fake_ns += 500000000ull; CHECK(has_character_cached(dir, 0) == 1, "0.5 秒后：用记着的答案，不再扫 | 0.5 s later: the remembered answer is used, no new scan");
+    g_fake_ns += 600000000ull; CHECK(has_character_cached(dir, 0) == 0, "满 1 秒：重扫，角色没了 | after 1 s: scanned again, the character is gone");
+    o = fopen(f, "w"); if (o) fclose(o);
+    g_fake_ns += 1000000ull; CHECK(has_character_cached(dir, 1) == 1, "页重新打开：马上重查 | the page reopened: checked again at once");
+    remove(f); rmdir(sub); rmdir(dir); g_fake_ns = 0;
+}
+
 int main(void) {
-    speech_box(); taps(); drop_query();
+    speech_box(); taps(); drop_query(); class_page_scan();
     printf("== t_ui_taps %d 项，失败 %d | %d checks, %d failed ==\n", checks, fails, checks, fails);
     return fails != 0;
 }
