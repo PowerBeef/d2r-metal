@@ -23,7 +23,7 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
     - It is public: never force-push it, rebase it, or reset it to `upstream/main`.
     - Bigger work can use a short-lived local topic branch, merged into `main` when done.
   - **`up/<topic>` branches exist only for upstream PRs.** Each starts from `upstream/main` and receives cherry-picks from `main`.
-    - PRs opened before this workflow keep their old branch names: `fix/extract-split-nsp`, `fix/ios-install-battery-gate`, `feat/mac-default-icon`, `feat/mac-cursor-autohide`.
+    - The first PRs (#106–#109) were adopted into upstream v2.0.0 and their branches deleted.
 - **Commits on `main`:**
   - Keep one topic per commit (or a short series), so any of them can be cherry-picked on its own.
   - Code follows the upstream rules below even when it isn't meant for upstream yet, so it can be sent later without rework.
