@@ -8,7 +8,7 @@ export DM_DEVBATTERY=0 DEVBATTERY_DIR=$(mktemp -d)   # 锁单测不过电量闸�
 #  1. A holder that deliberately does not release (limit 6 seconds, with sleep descendants hanging inside) → terminated on time by its own watchdog, descendants cleaned up, lock released; the ticket queued behind then gets the lock
 #  2. A normal hold released after 3 seconds (limit 6 seconds) → not terminated, and the watchdog exits along with it
 #  3. Nested acquire (two levels in the same process + inherited by a child process) → no extra watchdog, no wrongful kill, lock released before the limit is reached
-set -u; H=$(cd "$(dirname "$0")" && pwd); T=$(mktemp -d); export DM_DEVLOCK_DIR=$T/device.lock DM_DEVLOCK_QUEUE=$T/device.queue DM_DEVLOCK_WD_LOG=$T/wd.log
+set -u; H=$(cd "$(dirname "$0")" && pwd); T=$(mktemp -d); export DM_DEVLOCK_DIR=$T/device.lock DM_DEVLOCK_QUEUE=$T/device.queue DM_DEVLOCK_WD_LOG=$T/wd.log DM_DEVLOCK_HIST=$T/hist.tsv   # 持锁记录也写临时目录，不进真的 devlock_hist.tsv | The lock hold log goes to the temporary folder as well, not into the real devlock_hist.tsv
 fail=0; ok(){ echo "  通：$*"; }; bad(){ echo "  🔴 不通：$*"; fail=1; }
 echo "1. 不放锁的持锁者"
 # 持锁者用独立的 bash 进程（devlock 按 $$ 认持锁者：子 shell 的 $$ 是外层脚本，那样看门狗会把整个自测连根终止）

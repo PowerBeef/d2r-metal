@@ -34,7 +34,14 @@ devlock_descendants() {
   for k in $kids; do devlock_descendants "$k"; echo "$k"; done
 }
 devlock_watchdog() {   # 在后台跑：$1 持锁 pid，$2 其启动时刻，$3 上限秒，$4 owner | Runs in the background: $1 holder pid, $2 its start time, $3 limit in seconds, $4 owner
-  local holder=$1 lst=$2 max=$3 owner=$4 me=${BASHPID:-$$} now started held victims v
+  # me = 看门狗自己的 pid。macOS 自带的 bash 3.2 没有 BASHPID，后台子 shell 里的 $$ 是持锁者：原先 me 落成持锁者，
+  # 「除去看门狗及其子孙」把持锁者的全部子孙都除掉了，只终止持锁者本身、它的子孙（sleep、devicectl…）成孤儿接着跑。
+  # 这里让 sh 替掉命令替换的那个子进程，它的父进程就是看门狗
+  # me = the watchdog's own pid. The bash 3.2 that ships with macOS has no BASHPID, and $$ in a background subshell is the holder: me used to end up as the holder,
+  # so "leave out the watchdog and its descendants" left out every descendant of the holder, only the holder itself was terminated and its descendants (sleep, devicectl...) kept running as orphans.
+  # Here sh replaces the command substitution's child process, so its parent is the watchdog
+  local holder=$1 lst=$2 max=$3 owner=$4 me now started held victims v
+  me=${BASHPID:-$(exec sh -c 'echo $PPID')}
   trap '' HUP
   while sleep 2; do
     [ "$(cat "$DEVLOCK_DIR/pid" 2>/dev/null)" = "$holder" ] || exit 0   # 已放锁 / 锁被换主 | Lock already released / lock changed owner
