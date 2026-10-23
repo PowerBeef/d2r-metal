@@ -144,6 +144,9 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
     fprintf(stderr, "\n");
     dm_backtrace(UC_FP(uc));
     if (g_dump_hook) g_dump_hook();
+    // abort()（die()、系统库里的断言、未接住的 ObjC 异常）：打完现场后恢复缺省处理再发一次，进程照旧按 SIGABRT 结束，系统那边的崩溃报告（.ips）也照写
+    // abort() (die(), an assertion in a system library, an uncaught ObjC exception): after printing the state, restore the default action and raise it again, so the process still ends by SIGABRT and the system still writes its crash report (.ips)
+    if (sig == SIGABRT) { signal(SIGABRT, SIG_DFL); raise(SIGABRT); }
     _exit(128 + sig);
 }
 // 信号备用栈是每线程的：每个客体线程起跑时都要调（栈溢出时才能在备用栈上打出现场）
@@ -183,4 +186,5 @@ void crash_install(void) {
         pthread_detach(th);
     }
     sigaction(SIGSEGV, &sa, 0); sigaction(SIGBUS, &sa, 0); sigaction(SIGILL, &sa, 0); sigaction(SIGTRAP, &sa, 0);
+    sigaction(SIGABRT, &sa, 0);   // die() 走 abort()：原先不接，FATAL 那行之后没有寄存器、回溯和线程现场 | die() goes through abort(): previously not caught, so a FATAL line came with no registers, backtrace or thread state
 }
