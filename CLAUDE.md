@@ -55,6 +55,21 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
   - Don't `git reset --hard` / `git checkout .` over them. Restoring them means re-running `./setup.sh`, which re-translates every shader (~10 min).
   - Switch branches with `git switch`; use `git stash` if needed.
   - The local clone may have a `.git/hooks/pre-commit` guard that refuses these files, `dm/ios/local.env`, `dm/ios/Gen/`, game, key and save file types, and anything over 2 MB.
+- **`gh` in a fork clone resolves the `upstream` remote first**, so a bare `gh pr …` (and any tool that calls it, such as an app's "create PR" button) targets jhaizhou-ops.
+  - Run `gh repo set-default PowerBeef/d2r-mobile` once per clone.
+  - Then pass `-R jhaizhou-ops/d2r-mobile` explicitly for anything aimed upstream.
+- **Worktrees and parallel sessions** (git worktrees, Claude Code `--worktree` or desktop worktree sessions):
+  - **A new worktree is missing local files:**
+    - The three `setup.sh` rewrites are tracked, so a worktree gets the committed versions. When the branch hasn't changed them, copy the main checkout's rewritten copies in. Otherwise run `./setup.sh` in the worktree.
+    - `dm/ios/local.env` and the three host headers generated from the RomFS (`dm/host/dm_vault_tab.h`, `dm_hud_exp.h`, `dm_bright_levels.inc`) are gitignored. Copy them, or regenerate the headers with `make -C dm/host <header> ROMFS=$DM_ROOT/data/switch/3.3.94012/Update/RomFS`.
+    - Claude Code copies the gitignored files listed in a `.worktreeinclude` at the repo root (`.gitignore` syntax) into the worktrees it creates.
+  - **Every checkout shares `$DM_ROOT`:**
+    - `$DM_ROOT/out/macapp` is the player's installed Mac App. From a worktree, build into another folder: `dm/tools/mac_app.sh <dir>`.
+    - Install on the phone (`run.sh install`) only from the main checkout on `main`.
+    - Windowed game runs steal each other's frames, so take the Mac game lock around them: `source dm/ios/tools/mlock.sh; mlock_acquire "<who> <what> ~N min"; trap mlock_release EXIT`. `smoke_mac.sh`, the touch cases and the `ios-mac` / `device` scenario backends already take it or the device lock. The `cli` and `mac-app` backends, `bench.py`, `explore.py` and `replay.py` don't.
+  - **Land worktree work on `main` from the main checkout:** merge the branch, then delete it.
+    - Claude Code's worktrees branch from `origin/main` by default, so push `main` first if a new worktree needs local commits.
+    - Two sessions never edit the same files.
 
 ## Rules the upstream repo enforces (CONTRIBUTING.md)
 
