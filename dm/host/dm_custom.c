@@ -124,6 +124,13 @@ int dm_custom_get(const char *key) {
 }
 int dm_custom_lang_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_lang_explicit) : -1; }
 int dm_custom_voice_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_voice_explicit) : -1; }
+// 「视频」页签上的两个切换框（dm_video.c 的帧率 / 掉帧时两行）读写这里的键 eco_fps / q3d：显示值 = 待定值，没改就是生效值；改了只记待定值，
+// 「应用 / 放弃」照自定义各行处理、存在 sw_custom.txt（存档里原来的值照用）。-1 = 撤掉待定值
+// The two selectors on the Video tab (the Frame Rate / Frame Drops rows of dm_video.c) read and write the keys eco_fps / q3d here: the value shown = the pending value, else the one in effect; a change only sets
+// the pending value, and Apply / Discard handle it as for the custom rows, saved in sw_custom.txt (values already saved carry over). -1 = drop the pending value
+int dm_custom_shown_value(const char *key) { load_once(); int i = key_index(key); if (i < 0) return 0; int p = atomic_load(&g_pend[i]); return p >= 0 ? p : atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : k_def[i]; }
+void dm_custom_set_pending(const char *key, int v) { int i = key_index(key); if (i > 0) atomic_store(&g_pend[i], v < 0 ? -1 : v); }
+int dm_custom_default(const char *key) { int i = key_index(key); return i >= 0 ? k_def[i] : 0; }
 int dm_fps_setting(void) { return dm_custom_get("eco_fps") ? 30 : 60; }   // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义） | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol)
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
@@ -141,6 +148,10 @@ static void save(void) {
 #define EXTRAS_PANEL "2extras_lay/ExtrasOptionsPanel"
 static _Atomic int g_shown;
 int dm_custom_shown(void) { return atomic_load(&g_shown); }
+// 此刻在屏上那张页上有哪几个自定义行（按键号的位）：「默认」只回这几行。Mac、iOS 的帧率 / 掉帧时在「视频」页签上，由 dm_video.c 自己回；安卓那张页上有全部的行
+// which custom rows the page on screen right now holds (one bit per key index): "Default" resets only those. On the Mac and iOS Frame Rate / Frame Drops are on the Video tab, and dm_video.c resets them; Android's page holds every row
+_Static_assert(NK <= 32, "g_page_keys holds one bit per key");
+static _Atomic uint32_t g_page_keys;
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     { void dm_video_on_uimsg(const char *cat, const char *act, const char *arg); dm_video_on_uimsg(cat, act, arg); }   // Mac 画面设置（dm_video.c） | Mac picture settings (dm_video.c)
     (void)arg; if (!cat || !act || strcmp(cat, "OptionsPanelMessage")) return;
@@ -149,7 +160,7 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
         for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd ? "画质优先" : "流畅优先", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
         if (ch) save(); }
     else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_repaint, 1); }
-    else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 2)) { for (int i = 1 + VOICE_ROW; i < NK; i++) atomic_store(&g_pend[i], k_def[i]); atomic_store(&g_repaint, 1); }   // 从 1 起（有配音行时从 2 起）：语言与单独配音那一格不归「默认」管
+    else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 2)) { uint32_t km = atomic_load(&g_page_keys); for (int i = 1 + VOICE_ROW; i < NK; i++) if (km >> i & 1) atomic_store(&g_pend[i], k_def[i]); atomic_store(&g_repaint, 1); }   // 从 1 起（有配音行时从 2 起）：语言与单独配音那一格不归「默认」管
 }
 
 // ---- 选项页上的勾选框
@@ -185,7 +196,7 @@ void dm_custom_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
     static dm_wref seen[NK];   // 每行最近见到的勾选框（带界面代号：重建后取到 0 = 页刚出现） | Most recently seen checkbox of each row (with UI generation: 0 after a rebuild = page just appeared)
     uint64_t sp = dm_ui_top(root, EXTRAS_PANEL); if (!sp || !*(uint8_t *)(sp + 0x50)) sp = dm_ui_top(root, "VideoOptionsPanel");   // 在屏上的那张：附加页，否则视频页 | the one on screen: the Extras page, otherwise the video page
-    if (!sp || !*(uint8_t *)(sp + 0x50)) { atomic_store(&g_shown, 0);   // 「自定义」页 = 借来的视频页（界面根的直接子，与设置页并列）。页不在屏上：没点「应用」的勾选作废（同原版不应用就离开），下次出现重摆 | The 「自定义」(Custom) page = the borrowed video page (a direct child of the UI root, alongside the settings page). Page not on screen: checkbox changes without tapping 「应用」(Apply) are discarded (same as leaving without applying in the original game), and it is laid out again the next time it appears
+    if (!sp || !*(uint8_t *)(sp + 0x50)) { atomic_store(&g_shown, 0); atomic_store(&g_page_keys, 0);   // 「自定义」页 = 借来的视频页（界面根的直接子，与设置页并列）。页不在屏上：没点「应用」的勾选作废（同原版不应用就离开），下次出现重摆 | The 「自定义」(Custom) page = the borrowed video page (a direct child of the UI root, alongside the settings page). Page not on screen: checkbox changes without tapping 「应用」(Apply) are discarded (same as leaving without applying in the original game), and it is laid out again the next time it appears
         int was = 0; for (int i = 0; i < NK; i++) was |= seen[i].w != 0;
         if (was) for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1);
         memset(seen, 0, sizeof seen); { void dm_video_pump(uint64_t sp); dm_video_pump(0); } return; }
@@ -205,12 +216,17 @@ void dm_custom_ui_pump(unsigned long long root) {
       uint64_t tw = 0, cw = 0; char nm[64];
       int dm_video_rows(uint64_t sp); void dm_video_row(uint64_t sp, int i, uint64_t *tw, uint64_t *cw); void dm_video_pad(uint64_t sp, int i, int dir);
       int nv = dm_video_rows(sp);   // Mac：页顶「显示」「图形」两节的行数（没有 = 0）；手柄行号先数这几行，自定义各行排在后面 | Mac: number of rows in the "Display" and "Graphics" sections at the top of the page (none = 0); controller row numbers count these first, the custom rows come after
-      int has_c = find_w(sp, "TouchCustom_lang_Text", 0) != 0, lo = 0, hi = nv + (has_c ? NK : 0);   // 这张页上有哪些行：画面设置在前、自定义在后（视频页只有前者，附加页只有后者） | which rows this page holds: picture settings first, custom after (the video page has only the former, the Extras page only the latter)
-      atomic_store(&g_shown, (nv > 0) | (has_c ? 2 : 0)); if (sel >= hi) sel = lo;
+      // 这张页上有哪些行：画面设置在前、自定义在后（视频页只有前者，附加页只有后者）。自定义行按页上实际有的排（ck = 键号）：Mac、iOS 的附加页上没有帧率 / 掉帧时（在视频页签上）
+      // which rows this page holds: picture settings first, custom after (the video page has only the former, the Extras page only the latter). Custom rows follow what the page really has (ck = key index): the Mac and iOS Extras page lacks Frame Rate / Frame Drops (they are on the Video tab)
+      int has_c = find_w(sp, "TouchCustom_lang_Text", 0) != 0, ck[NK], nc = 0; uint32_t km = 0;
+      if (has_c) for (int i = 0; i < NK; i++) { uint64_t w = 0; if (i) { snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]); w = find_w(sp, nm, 0); }
+          if (i == 0 || (w && *(uint8_t *)(w + 0x50))) { ck[nc++] = i; km |= 1u << i; } }
+      int lo = 0, hi = nv + nc;
+      atomic_store(&g_shown, (nv > 0) | (has_c ? 2 : 0)); atomic_store(&g_page_keys, km); if (sel >= hi) sel = lo;
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A | (sel < nv || (has_c && sel == nv) ? DM_BTN_LEFT | DM_BTN_RIGHT : 0));   // 左右只在画面设置行（切换框的上一项 / 下一项）与语言行（上一种 / 下一种）上收 | left / right are only taken on picture-setting rows (previous / next option of the selector) and on the language row (previous / next language)
           if (ev & DM_BTN_DOWN) sel = sel + 1 < hi ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > lo ? sel - 1 : lo;
           if (sel < nv) { dm_video_row(sp, sel, &tw, &cw); if (ev & (DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A)) dm_video_pad(sp, sel, ev & DM_BTN_LEFT ? -1 : ev & DM_BTN_RIGHT ? 1 : 2); }
-          else { int cs = sel - nv;   // 自定义行的键号 | key index of the custom row
+          else { int cs = ck[sel - nv];   // 自定义行的键号 | key index of the custom row
           snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[cs]); cw = find_w(sp, cs == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[cs]); tw = find_w(sp, nm, 0);   // 语言行：标签到最右那一格（滚到位时整行露出来） | Language row: from the label to the rightmost cell (so the whole row scrolls into view)
           // 页已摆好才收键：seen 记的是这一行的勾选框，语言行记第一格（见下面语言行那段；原先拿最后一格比，对不上，手柄在语言行上按 A 一直没反应）
           // keys count only once the page is set up: seen holds the row's checkbox, for the language row its first cell (see the language row below; comparing the last cell never matched, so A did nothing on that row)
@@ -230,7 +246,7 @@ void dm_custom_ui_pump(unsigned long long root) {
       // wholly inside the list box (scrolled away with the wheel or a drag, or just selected and still scrolling in), only has its x moved off screen: it is inside the scroll area, and a far-away y would enlarge the scrollable range
       { uint64_t hw[2] = { find_w(sp, "TouchCustomHiCar", 0), find_w(sp, "TouchCustomHiBox", 0) }, it = 0; int kind = 0;
         if (pad && cw && sel < nv) it = cw;
-        else if (pad && cw) { int cs = sel - nv; kind = 1;
+        else if (pad && cw) { int cs = ck[sel - nv]; kind = 1;
             if (cs == 0) { int p0 = atomic_load(&g_pend[0]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[0]); it = find_w(sp, k_lang_box[sh >= 0 && sh < LANG_N ? sh : 0], 0); }
             else it = rev_box(cs) && !TOGGLED(cw) ? find_w(sp, rev_box(cs), 0) : cw; }
         for (int k = 0; k < 2; k++) { uint64_t h = hw[k]; if (!h) continue; int32_t *r = (int32_t *)(h + 0x70), want[4] = { 99999, r[1], r[2], r[3] };

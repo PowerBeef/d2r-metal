@@ -408,6 +408,14 @@ dmVideo3DRes	3D 清晰度	3D Resolution	Resolución 3D		Разрешение 3D	
 dmVideoScale75	75%	75%	75%		75%	75%	「3D 清晰度」第一档（缺省）
 dmVideoScale85	85%	85%	85%		85%	85%	「3D 清晰度」第二档
 dmVideoScale100	100%	100%	100%		100%	100%	「3D 清晰度」第三档（原生）
+dmVideoFps	帧率	Frame Rate	Fotogramas		Частота кадров	프레임 속도	「图形」节「帧率」行的标签（Mac、iOS）：存的是自定义设置 eco_fps（touch_layout.py _VIDEO，dm_video.c）
+dmVideoFps60	60 帧	60 fps	60 fps		60 fps	60 fps	「帧率」第一项（缺省，eco_fps=0）
+dmVideoFps30	30 帧	30 fps	30 fps		30 fps	30 fps	「帧率」第二项：省电模式（eco_fps=1）。切换框只放得下约 14 个字符，「省电」写在悬停说明里
+dmVideoDrops	掉帧时	Frame Drops	Si caen los fps		При падении FPS	프레임 저하 시	「图形」节「掉帧时」行的标签（Mac、iOS）：存的是自定义设置 q3d（touch_layout.py _VIDEO，dm_video.c）
+dmVideoDropsLower	降低清晰度	Lower 3D Res	Bajar res. 3D		Снижать 3D	해상도 낮춤	「掉帧时」第一项（缺省，q3d=0）：掉帧时自动降低 3D 清晰度、之后再升回来（hle_oe.c 3D 比例控制）。切换框只放得下约 14 个字符
+dmVideoDropsKeep	保持清晰度	Keep 3D Res	Mantener res.		Держать 3D	해상도 유지	「掉帧时」第二项（q3d=1）：始终用设定的 3D 清晰度
+dmVideoFpsTip	30 帧是省电模式：更省电、机器更凉；60 帧更流畅。	30 fps is the power saver: it uses less power and runs cooler; 60 fps is smoother.	30 fps es el modo ahorro: gasta menos energía y calienta menos; 60 fps es más fluido.		30 fps — режим экономии: меньше расход и нагрев; 60 fps — плавнее.	30 fps는 절전 모드로 전력을 덜 쓰고 덜 뜨거워집니다. 60 fps가 더 부드럽습니다.	「帧率」行的悬停说明（Mac）
+dmVideoDropsTip	降低：掉帧时自动降低 3D 清晰度，让画面保持流畅；保持：始终用设定的 3D 清晰度。	Lower: when frames drop, the 3D resolution goes down to keep the game smooth; Keep: it stays as set.	Bajar: si caen los fps, la resolución 3D baja para que el juego siga fluido; Mantener: se queda como está.		«Снижать»: при падении FPS 3D-разрешение снижается ради плавности; «Держать»: остаётся заданным.	낮춤: 프레임이 떨어지면 3D 해상도를 낮춰 부드럽게 유지합니다. 유지: 정한 해상도를 그대로 둡니다.	「掉帧时」行的悬停说明（Mac）
 dmDoorRift	大秘境	Greater Rift	Grieta superior	Grieta mayor	Великий рифт	그레이터 리프트	城里大秘境传送门头顶的名牌（dm_rift.c dm_door_label）
 dmDoorRiftTown	回城	Return to Town	Volver a la ciudad		Портал в город	마을로	秘境图里回城门头顶的名牌（dm_rift.c dm_door_label）
 dmDoorBossRush	Boss 连战	Boss Rush	Ronda de jefes		Босс-раш	보스 러시	城里 Boss 连战门头顶的名牌（dm_bossrush.c dm_door_label）

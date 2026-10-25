@@ -1210,7 +1210,14 @@ _CUSTOM_ROWS = tuple((k, '@' + _custom_key(k)) for k in _CUSTOM_KEYS)
 # Dimensions are taken from the values the table lays out in the same widget tree: row height 180; text 1000×180; checkbox at x 1315 within the row, 70×70, vertically centered. Header row 180 (the gold divider line below it is placed for a 180 row height).
 # The first row is the language switch (also first in the host's key table), followed by the rows of _CUSTOM_KEYS; adding a row = adding a key to _CUSTOM_KEYS (and to k_keys in the host's dm_custom.c in the same order)
 _CUSTOM_TITLE_H, _CUSTOM_LINE_H = 180, 180
-_CUSTOM_ALL = (('lang', '@dmCustomLang'),) + _CUSTOM_ROWS
+_VIDEO_MAC = bool(os.environ.get('DM_OVERLAY_MAC'))
+_VIDEO_IOS = bool(os.environ.get('DM_OVERLAY_IOS')) and not _VIDEO_MAC
+# 「省电模式」（eco_fps）与「3D 画质」（q3d）是画面设置：Mac、iOS 上它们是「视频」页签「图形」一节的两个切换框（_VIDEO 的 fps / drops，宿主 dm_video.c 读写同一对键、存档不变），
+# 不在「附加」页上；安卓只有一张自定义页，照旧是勾选行。宿主按页上实际有的行上下选（dm_custom.c），键表 k_keys 仍是全部的键
+# Power saver (eco_fps) and 3D quality (q3d) are picture settings: on the Mac and iOS they are two selectors in the Video tab's Graphics section (fps / drops in _VIDEO; the host's dm_video.c reads and writes the same
+# two keys, so saved values carry over), not rows on the Extras page; Android has a single custom page and keeps them as checkbox rows there. The host moves through the rows a page really has (dm_custom.c); its key table k_keys still lists every key
+_VIDEO_TAB_KEYS = ('eco_fps', 'q3d') if _VIDEO_MAC or _VIDEO_IOS else ()
+_CUSTOM_ALL = (('lang', '@dmCustomLang'),) + tuple(r for r in _CUSTOM_ROWS if r[0] not in _VIDEO_TAB_KEYS)
 _CUSTOM_TEST_ROWS = int(os.environ.get('DM_CUSTOM_TEST_ROWS', '0'))   # 测试（造现场）：末尾多摆这么多行假行，验更多行时的滚动；产品不设 | test (test setup): append this many dummy rows at the end, to verify scrolling with more rows; not set in the product
 # 「3D 画质」（q3d）是单选的两项、每项下面一行说明小字，占两行高（_CUSTOM_Q3D_H）；其余各行一行高
 # "3D Quality" (q3d) is a radio with two options, each with a line of small description text below, taking two rows of height (_CUSTOM_Q3D_H); every other row is one row high
@@ -1229,21 +1236,23 @@ _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') els
 # A selector sends TouchVideoMessage:<key>, a category nothing in the game handles: a selector replaces the message's third part with its own value, so the checkboxes' harmless PanelManager:ClosePanel:<name> became ClosePanel with no name, which crashed (lookup of a NULL child name at main+0xb1ee2c). The host reads each selector's current choice and handles apply / discard / default. The Resolution row keeps a line below it,
 # where the host puts "Takes effect after restarting the game" while a change is waiting for a restart (like the language row's hint). There is mouse hover, so each row has an original-style hover description
 # iOS（DM_OVERLAY_IOS，dm/ios/run.sh 生成覆盖层时设；安卓共用生成器但不设）：只有「图形」一节，标题行就是它——3D 清晰度（75% / 85% / 100%）、图形预设、放大方式
-# （游戏的 3D 放大趟用不用 MetalFX）；没有显示模式与分辨率（手机按屏幕原生出图）。触屏没有悬停，不带悬停说明
+# （游戏的 3D 放大趟用不用 MetalFX）、帧率（60 / 30 省电）、掉帧时（降 / 保持 3D 清晰度）；没有显示模式与分辨率（手机按屏幕原生出图）。触屏没有悬停，不带悬停说明
 # iOS (DM_OVERLAY_IOS, set by dm/ios/run.sh when it generates the overlay; Android shares the generator but does not set it): only the "Graphics" section, which is the header row itself -- 3D Resolution (75% / 85% / 100%), Graphic Presets, Upscaling
-# (whether the game's 3D upscale pass uses MetalFX); no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
-_VIDEO_MAC = bool(os.environ.get('DM_OVERLAY_MAC'))
-_VIDEO_IOS = bool(os.environ.get('DM_OVERLAY_IOS')) and not _VIDEO_MAC
+# (whether the game's 3D upscale pass uses MetalFX), Frame Rate (60 / 30 power saver), Frame Drops (lower / keep the 3D resolution); no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
 # Mac 与 iOS 上这几行独占「视频」页签（页首标题 = 第一节的名字，在表格的标题行里）；自定义各行在第五个页签「附加」那一页（_EXTRAS_PANEL）
 # On the Mac and iOS these rows have the "Video" tab to themselves (the page title = the first section's name, in the table's title row); the custom rows are on the page of the fifth tab, "Extras" (_EXTRAS_PANEL)
 _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVideoModeTip'),
            ('res', '@ScreenResolution', ('dmVideoRes1600', 'dmVideoRes1920', 'dmVideoRes2560'), 'dmVideoResTip'),
            ('hdr', '@Graphics'),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), 'dmVideoPresetTip'),
-           ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX'), 'dmVideoUpscaleTip')) if _VIDEO_MAC else
+           ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX'), 'dmVideoUpscaleTip'),
+           ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), 'dmVideoFpsTip'),
+           ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
           (('res', '@dmVideo3DRes', ('dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), None),
-           ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX'), None)) if _VIDEO_IOS else ())
+           ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX'), None),
+           ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), None),
+           ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), None)) if _VIDEO_IOS else ())
 _VIDEO_H = _CUSTOM_LINE_H * len(_VIDEO)
 _CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
 _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
