@@ -5,7 +5,7 @@
 CFLAGS=-O1 -g -Wall -Wno-unused-function -I../nvn/include
 GFX=$(filter-out ../nvn/hle_nvn.c,$(sort $(wildcard ../nvn/*.c ../nvn/*.m ../nvn/*.S ../tex/*.c ../tex/*.m))) ../xtrace.c   # xtrace.c：hle_nvn.c 的系统时间线打点（苹果 os_signpost） | xtrace.c: the system timeline markers used by hle_nvn.c (os_signpost on Apple)
 GFX_H=$(wildcard ../nvn/*.h ../nvn/*.inc ../nvn/include/*.h ../tex/*.h)
-FW=-framework Metal -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
+FW=-framework Metal -framework MetalFX -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
 # 宿主 crash.c 一并链入：写保护单测走生产同一套缺页钩子
 # Host crash.c is linked in as well: the write-protect unit tests go through the same page-fault hook as production
 t_nvn: t_nvn.c ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)

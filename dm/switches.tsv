@@ -192,6 +192,7 @@ DM_MEM_CAP_GB	gfx	gfx/nvn/hle_nvn.c	-
 DM_MEM_STAT_ALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_MERC_POT	host	host/dm_actions.c	-
 DM_METAL_COLD	ios	ios/Sources/main.m	-
+DM_MFX	gfx	gfx/nvn/nvn_mtl.m	-
 DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
 DM_MOVIE_FFMPEG_PREFIX	ios-tools	ios/run.sh	y

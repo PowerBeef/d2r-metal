@@ -119,7 +119,7 @@ dm_bright_levels.inc: ../tools/gen_bright_levels.py ../ios/tools/touch_layout.py
 	$(NEED_ROMFS)
 	python3 ../tools/gen_bright_levels.py "$(ROMFS)" > $@.tmp && mv $@.tmp $@
 dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
-	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
+	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
 # 消毒器版宿主（调试用，不在缺省目标里）：make dmhost_asan（地址 + 未定义行为）/ dmhost_ubsan / dmhost_tsan；只插桩宿主代码，游戏程序不插桩。
 # 场景运行器经 SCN_DMHOST 用它：SCN_DMHOST=dm/host/dmhost_asan python3 dm/tools/scenario.py run …（dm/verify/debugging.md）
 # Sanitizer builds of the host (for debugging, not in the default targets): make dmhost_asan (address + undefined behaviour) / dmhost_ubsan / dmhost_tsan; only host code is instrumented, the game program is not.
@@ -130,8 +130,8 @@ SAN_asan=-fsanitize=address,undefined -mllvm -asan-stack=0
 SAN_ubsan=-fsanitize=undefined
 SAN_tsan=-fsanitize=thread
 dmhost_asan dmhost_ubsan dmhost_tsan: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
-	clang $(CFLAGS) $(SAN_$(@:dmhost_%=%)) -fno-omit-frame-pointer -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
+	clang $(CFLAGS) $(SAN_$(@:dmhost_%=%)) -fno-omit-frame-pointer -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
 # 旧接口版宿主（图形后端不用 Metal 4，目标 macOS 15.0）：同一棵树、同一份源码，只多一个编译开关；不在缺省目标里，要用时 make dmhost_m3
 # Older-API host (graphics backend without Metal 4, target macOS 15.0): the same tree and the same source, with just one more compile switch; not in the default targets, run make dmhost_m3 when needed
 dmhost_m3: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
-	clang $(CFLAGS_M3) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
+	clang $(CFLAGS_M3) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
