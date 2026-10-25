@@ -34,6 +34,7 @@
 #include <string.h>
 
 uint64_t dm_custom_find_w(uint64_t w, const char *name);
+int dm_custom_shown(void);
 int dm_custom_path(const char *name, char *p, size_t n);
 enum { K_MODE, K_RES, K_UP, NV };
 static const char *const k_keys[NV] = { "mode", "res", "up" };
@@ -124,7 +125,8 @@ void dm_video_on_uimsg(const char *cat, const char *act, const char *arg) {
         if (mode >= 0) front_video_fullscreen(mode);   // 显示模式当场切 | display mode switches at once
         atomic_store(&g_repaint, 1); }
     else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_repaint, 1); }
-    else if (!strcmp(act, "ResetToDefaults")) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i])); atomic_store(&g_repaint, 1); LOG("画面设置：默认 → 推荐值（点「应用」生效）"); }
+    // 「默认」只管当前页签那一节（「附加」页签上不动画面设置，同原版各页签各管各的） | Default covers only the current tab's section (on the "Extras" tab it leaves the picture settings alone, as each original tab covers its own)
+    else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 1)) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i])); atomic_store(&g_repaint, 1); LOG("画面设置：默认 → 推荐值（点「应用」生效）"); }
 }
 
 // ---- 页上的切换框

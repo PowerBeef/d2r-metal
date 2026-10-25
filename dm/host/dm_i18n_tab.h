@@ -101,6 +101,8 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomVoiceEnHint", "对话与过场使用英文语音；下次启动生效", "English dialogue and cutscenes; applies after restart", "Diálogos y escenas en inglés; se aplica al reiniciar", "Diálogos y escenas en inglés; se aplica al reiniciar", "Английские диалоги и ролики; после перезапуска", "대화와 시네마틱에 영어 음성; 재시작 후 적용" },
     { "dmTabGameSettings", "游戏设定", "Settings", "Ajustes", "Config.", "Опции", "설정" },
     { "dmTabCustom", "自定义", "Custom", "Extras", "Extras", "Своё", "사용자" },
+    { "dmTabExtras", "附加", "Extras", "Extras", "Extras", "Доп.", "부가" },
+    { "dmExtras", "附加功能", "Extras", "Extras", "Extras", "Дополнительно", "부가 기능" },
     { "dmChronRunewords", "符文之语", "Runewords", "P. rúnicas", "P. rúnicas", "Руны", "룬워드" },
     { "dmVaultPart0", "头盔", "Helms", "Yelmos", "Yelmos", "Шлемы", "투구" },
     { "dmVaultPart1", "盔甲", "Armor", "Armadura", "Armadura", "Броня", "갑옷" },

@@ -41,7 +41,7 @@ Double-click the App. The first launch asks you to choose the **game resource fo
 
 A key reference is then shown once; afterwards it is under Help in the menu bar.
 
-Language: the first launch follows the system language (Chinese systems start in Chinese, Spanish in Spanish, Russian in Russian, everything else in English). To change it: Options → Custom, the language switch in the first row → Accept All → close and reopen the App.
+Language: the first launch follows the system language (Chinese systems start in Chinese, Spanish in Spanish, Russian in Russian, everything else in English). To change it: Options → Extras, the language switch in the first row → Accept All → close and reopen the App.
 
 ## Keyboard ↔ gamepad
 
@@ -65,7 +65,7 @@ With a keyboard, the button prompts on screen (the hint bar at the bottom, skill
 
 A gamepad works as soon as it is connected, alongside the keyboard. The menu bar has View → Full Screen (⌃⌘F) and Quit (⌘Q). The window can be resized freely. In game the picture fills the window or screen at its own aspect ratio (on a 16:10 MacBook both windowed and full screen are filled, with the interface along the bottom, centred while a large panel is open); the front-end pages such as the main menu and character select stay 16:9 with bars above and below.
 
-**Picture settings** are on the **Video** tab, the first one under Options, in the **Display** and **Graphics** sections (the **Custom** section follows them). The Options pages have the same roomy rows as on iPhone, with **Apply**, **Default** and **Discard** buttons to click at the bottom; the keyboard and gamepad keys work as before.
+Options has five tabs: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**. **Picture settings** are on the **Video** tab, in the **Display** and **Graphics** sections; the features this port adds (language, auto-drink, light beams and the rest) are on **Extras**. **Default** resets only the tab you are on. The Options pages have the same roomy rows as on iPhone, with **Apply**, **Default** and **Discard** buttons to click at the bottom; the keyboard and gamepad keys work as before.
 - **Display Mode** (Windowed / Fullscreen) switches as soon as you press Apply, and the App opens that way next time. Switching with View → Full Screen (⌃⌘F) updates the setting too.
 - **Resolution** (1600 × 900 / 1920 × 1080 / 2560 × 1440) is the size the game renders at; on a screen narrower than 16:9 the height follows the screen. It takes effect the next time the App starts, and the page says so until then.
 - **Upscaling** (Standard / MetalFX) is how the picture is enlarged to the window or screen: Standard is a plain stretch, MetalFX is Apple's sharper upscaler (about 1.5 ms of GPU time per frame on an M-series Mac). It changes as soon as you press Apply.

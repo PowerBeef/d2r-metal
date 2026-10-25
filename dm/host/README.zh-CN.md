@@ -101,7 +101,7 @@ English: [README.md](README.md)
 
 | 文件 | 管什么 |
 |---|---|
-| `dm_custom.c`、`dm_custom.h` | 「选项 → 自定义」页：各项功能的开关统一在这里读写，各模块只调 `dm_custom_get` |
+| `dm_custom.c`、`dm_custom.h` | 本移植自己的选项页（Mac、iOS 上是「附加」，安卓上是「自定义」）：各项功能的开关统一在这里读写，各模块只调 `dm_custom_get` |
 | `dm_cloudsync.c` | iCloud 存档同步的核心：本地存档目录与一个云端目录之间的文件对比与搬运，不碰 iCloud 接口 |
 | `dm_unit.h` | 公共小函数：从一个单位读出它所在的关卡 |
 
