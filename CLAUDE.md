@@ -169,6 +169,12 @@ python3 dm/tools/imgdiff.py a.png b.png --max-mean 0.05            # perceptual 
 - `mac-app` runs a test copy (`$DM_ROOT/out/macapp_test`) with `DM_APP_SUPPORT` set. Never point scenarios at the player's real save folder.
 - `ios-mac` needs `.iosdd_mac/DmMacSmoke.app`; `dm/ios/tools/smoke_mac.sh 1` builds it. Saves for the iOS backends are the ones bundled at build time.
 - Generated saves (`export_save`, `scenarios/saves/*.scn`) stay in `$DM_ROOT/data/switch/save_ref_<name>/` and are never committed.
+- **Pointer steps and their paths:**
+  - `tap` goes straight to `dm_ui_touch`. It skips the Mac mouse path, and the game ignores plain clicks on console tabs, so switch tabs with `press ZR` / `ZL`.
+  - On the Mac App, `drag x0 y0 x1 y1` goes through the real mouse's gesture path (`dm_touch_host_live`); a zero-length `drag` is a mouse click. `wheel x y dy [precise] [view]` calls the same `dm_wheel_ui` as the App's scroll events.
+  - Options opened with `msg PanelManager:OpenPanel:SettingsPanel` in game don't count as a menu for the mouse code; open them as a player does, with `open_pause` then `tap_ui Settings`.
+  - Real mouse events for any Mac App build, including upstream ones without a control port: `DM_TEST_NSMOUSE=<file>` (`down` / `dragto` / `hover` / `key` lines), `DM_TEST_PRESENT_SHOT=<s>:<png>`, `DM_TEST_QUIT_AT=<s>`. Leave `DM_WATCH` unset there: its stall watchdog kills the front end after 15 s.
+- `ios-mac` keeps running the package `smoke_mac.sh 1` last built, not the `run.sh build` output: rebuild it after layout or host changes.
 
 **Performance:**
 
@@ -279,7 +285,7 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   - The host also compiles `dm/ios/Sources/dm_touch_controls.c`, `cloud_ios.m` and `dm_gamepad.m`, so edits there affect the Mac build too.
 - **Feature switches:**
   - Read them only through `dm_custom_get("<key>")`.
-  - The key order in `dm_custom.c` must match the Custom page rows (`touch_layout.py _CUSTOM_ROWS`).
+  - The key order in `dm_custom.c` must match the rows of the port's own page (Extras on the Mac and iOS, Custom on Android; `touch_layout.py _CUSTOM_ROWS`).
 - **Mode and UI rules:**
   - Touch-only or controller-only behaviour needs a row in `dm/host/dm_mode_items.h` (checked by `mode_scan.py`).
   - Writing to the original game's UI widgets is forbidden (`native_write_scan.py`).
@@ -291,6 +297,9 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   - Mac App: `~/Library/Logs/D2R Mobile/host.log`
   - iOS: `Documents/boot.txt`
   - iOS build: `$DM_ROOT/run/ios/build.log`
+- **Overlay files:** `casc_overlay.py` can replace any file but can add new ones only in a new folder directly under an existing directory (first character unlike every item there). Layouts the game should find in both input modes go in a new folder under the layout root, which both modes fall back to (see the Extras page).
+- **Weak symbols on Apple:** a `__attribute__((weak))` declaration of a function no target defines still fails to link on iOS. Give a weak default definition instead (as `dm_ctl_cmds.c` does for the Mac-only `dm_wheel_ui`).
+- **Flaky test:** `t_svc_mem` det5 is a timing test. It has failed inside the full host suite under load and then passed alone; rerun it before suspecting a change.
 - **Regenerate after editing:**
   - `patch_nso.py` or `dm/PRODUCT` → `dm/tools/product.sh build`
   - shader-chain sources or tools → `./setup.sh`, which re-registers the chain and re-translates
@@ -301,11 +310,15 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   - Its resource folder is stored as the `RomfsDir` default.
   - The pointer auto-hide delay is `CursorHideSeconds`.
   - Picture settings (Display Mode, Resolution, Graphic Presets, Upscaling) are on the Mac Options Video tab: layout `touch_layout.py` `_VIDEO` (`DM_OVERLAY_MAC`), logic `dm_video.c`, stored in `sw_video.txt` beside `sw_custom.txt` with a first-boot "recommended" copy (`front_mac.m` `front_video_firstboot`; the older `StartFullScreen` / `RenderScale` / `MetalFXUpscale` defaults only seed it once). Selectors are native `CarouselWidget`s: read `+0x7ec`, set through `main+0xab0c84`; their update message must not be `PanelManager:ClosePanel:<name>` (the selector replaces the third part, and a nameless ClosePanel crashes).
-  - Options tabs on the Mac and iOS: Video | Audio | Gameplay | Settings | Extras (`touch_layout.py` `_tabs5`). Video = the borrowed `VideoOptionsPanel` with only the picture rows; Extras = our own page `2extras_lay/ExtrasOptionsPanel` (`_EXTRAS_PANEL`, class `VideoOptionsPanel`), in a new folder under the layout root because `casc_overlay.py` can only add a new subdirectory under an existing directory, and both input modes fall back to the root. Android keeps one Custom page.
-  - Don't open a page by a case-variant of an existing name (e.g. `videooptionspanel`): the game creates a second instance that `ClosePanel` never closes, and two pages draw on top of each other. Other candidate pages crash (`LootFilterOptionsPanel`) or are something else (`OnlineGameSettingsPanel` = the online Game Creation window).
   - The game's own 3D upscale pass (`ps_upsample_p`, fragment key `52aac1f2306b8fc5`: bilinear + 5-tap sharpen + an R8 mask) is replaced by MetalFX when Upscaling is on (`nvn_mtl.m` `mfx3d_draw`; `DM_MFX3D=0/1` forces it). It only acts below 100% 3D scale, so on the Mac (3D 1.0) it is idle and on phones (3D 0.75) it is the main sharpness gain.
   - iOS gets the same Video tab with a Graphics section (overlay flag `DM_OVERLAY_IOS`, set only by `dm/ios/run.sh`; Android shares the generator without it): 3D Resolution 75 / 85 / 100% (live through `hle_oe.c` `s3_cfg`, which re-reads the setting each tick), Graphic Presets, Upscaling. First boot (`front_ios.m` `front_video_firstboot`) = 75% + MetalFX.
   - `DM_MFX=0/1` forces MetalFX for tests and logs present-pass GPU time; `DM_GAME_RES` still overrides the render size. A test copy (`DM_APP_SUPPORT`) starts from the original settings unless `DM_TEST_VIDEO_FIRSTBOOT=1`.
+- **Options page (Mac, iOS):**
+  - Tabs: Video | Audio | Gameplay | Settings | Extras (`touch_layout.py` `_tabs5`). Video = the borrowed `VideoOptionsPanel` with only the picture rows; Extras = our own page `2extras_lay/ExtrasOptionsPanel` (`_EXTRAS_PANEL`, class `VideoOptionsPanel`), in a new folder under the layout root because `casc_overlay.py` can only add a new subdirectory under an existing directory, and both input modes fall back to the root. Android keeps one Custom page.
+  - Don't open a page by a case-variant of an existing name (e.g. `videooptionspanel`): the game creates a second instance that `ClosePanel` never closes, and two pages draw on top of each other. Other candidate pages crash (`LootFilterOptionsPanel`) or are something else (`OnlineGameSettingsPanel` = the online Game Creation window).
+  - The host (`dm_custom.c`) runs its page code on whichever of the two pages is on screen; `dm_custom_shown()` tells "Default" which rows that page holds, so it resets only that tab. The controller selection follows the selected row only right after it changes (the Mac is always in controller mode, and following every frame undid each wheel scroll).
+  - The Mac App always runs the controller layouts, with the mouse on top as touch gestures. Its Options layouts take the touch row pitch (180), clickable Apply / Default / Discard and an off-screen key legend (`PAD_SETTINGS_MAC`, `pad_settings_legend`).
+  - Mac mouse paths (`touch_mac.c`): in game, presses go through the touch state machine; in the front end (`!in`) they go to `dm_ui_touch` as clicks, except that a vertical drag past 10 points scrolls and a sideways drag starting on a slider (`dm_ui_slider_at`) sets it. A press on a scroll bar (`dm_ui_scrollbar_at`) is never a click: it drags the thumb (`ui_drag_pump` kind 4, steering the list with wheel steps until `Indicator.y` sits under the pointer). The wheel sends the game's `MouseScroll` at the pointer (`dm_wheel_ui`); in game with no panel it still pushes the right stick.
 - **iOS:**
   - Reinstall over the app; deleting it wipes the 5.6 GB of resources and the saves.
   - The 18 resource archives can be pushed with `xcrun devicectl device copy to … --domain-type appDataContainer --destination 'Library/Application Support/romfs'`.
