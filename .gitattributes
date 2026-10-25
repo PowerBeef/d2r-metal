@@ -1,0 +1,4 @@
+# The READMEs are d2r-metal's own; keep them when merging upstream/main (needs: git config merge.ours.driver true)
+README.md merge=ours
+README.zh-CN.md merge=ours
+README.es.md merge=ours

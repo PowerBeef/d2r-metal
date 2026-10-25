@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is the `PowerBeef/d2r-mobile` fork of `jhaizhou-ops/d2r-mobile`.
+This is **d2r-metal**, the `PowerBeef/d2r-metal` fork of `jhaizhou-ops/d2r-mobile` (renamed from `PowerBeef/d2r-mobile` on 2026-10-25).
 - The project ports the Nintendo Switch build of Diablo II: Resurrected + Reign of the Warlock (1.0.34.0 = PC 3.3.94012) to iOS/macOS.
 - The game's own aarch64 code runs natively; only a few instructions are rewritten, and the graphics API is reimplemented on Metal.
 
@@ -14,6 +14,11 @@ Everything derived from the user's game files lives in the workspace `$DM_ROOT` 
 ## Fork workflow
 
 The fork develops on its own `main`. Changes worth sharing go upstream as cherry-picks.
+
+- **Platform scope: macOS and iOS only.**
+  - The fork targets Apple silicon, Metal 4, MetalFX and current Apple hardware.
+  - The Android, HarmonyOS and Vulkan code (`dm/android`, `dm/harmony`, `dm/gfx/vulkan`, their docs and switches) stays in the tree so upstream merges stay clean, but it isn't built, tested or maintained here. Shared-code changes may break it; don't delete it.
+  - When a change also fits upstream's platforms, keep it portable and offer it as an `up/<topic>` PR. Apple-only work stays `Upstream: fork-only` unless upstream would want it.
 
 - **Remotes:**
   - `origin` = the fork. `main` is its default branch.
@@ -29,10 +34,11 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
   - Code follows the upstream rules below even when it isn't meant for upstream yet, so it can be sent later without rework.
   - End each message with an `Upstream:` trailer. Put it on the line just above the attribution lines, in the same block with no blank line, so git reads it as a trailer:
     - `Upstream: candidate` may go upstream. It must not touch fork-only files.
-    - `Upstream: fork-only` stays here: this file, fork tooling, and the user's own preferences.
+    - `Upstream: fork-only` stays here: this file, fork tooling, the README, the D2R Metal branding, and the user's own preferences.
 - **Pulling upstream changes into `main`:**
   1. `git fetch upstream`
   2. `git switch main && git merge upstream/main`. Always merge, never rebase. On a conflict, `git merge --abort` and report; don't auto-resolve.
+     - The READMEs are the fork's own: `.gitattributes` marks `README*.md` `merge=ours`, so upstream's README edits are dropped silently. That needs `git config merge.ours.driver true` once per clone; without it those files conflict.
      - Maintainers adopt PRs by re-applying them, so a conflict can come from our own change in its adopted form. Upstream's version wins, after the user confirms.
   3. Rebase each open PR branch onto `upstream/main` and push it with `--force-with-lease`. This updates the open upstream PR.
   4. `git push origin main`, then rebuild the apps.
@@ -56,7 +62,7 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
   - Switch branches with `git switch`; use `git stash` if needed.
   - The local clone may have a `.git/hooks/pre-commit` guard that refuses these files, `dm/ios/local.env`, `dm/ios/Gen/`, game, key and save file types, and anything over 2 MB.
 - **`gh` in a fork clone resolves the `upstream` remote first**, so a bare `gh pr …` (and any tool that calls it, such as an app's "create PR" button) targets jhaizhou-ops.
-  - Run `gh repo set-default PowerBeef/d2r-mobile` once per clone.
+  - Run `gh repo set-default PowerBeef/d2r-metal` once per clone.
   - Then pass `-R jhaizhou-ops/d2r-mobile` explicitly for anything aimed upstream.
 - **Worktrees and parallel sessions** (git worktrees, Claude Code `--worktree` or desktop worktree sessions):
   - **A new worktree is missing local files:**
