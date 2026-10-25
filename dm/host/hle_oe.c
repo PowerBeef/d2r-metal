@@ -175,8 +175,8 @@ static int s3_max_level(float cfg, float floor) {
     int n = 0; for (int k = 0; k < S3_NLV; k++) if (g_s3_levels[k] < cfg - 1e-4f && g_s3_levels[k] >= floor - 1e-4f) n++;
     return n;
 }
-// 配置值：DM_3D_SCALE（0.5–1.0），缺省手机 0.75、Mac 宿主 1.0；读一次
-// Configured value: DM_3D_SCALE (0.5–1.0), default 0.75 on phones and 1.0 on the Mac host; read once
+// 配置值：DM_3D_SCALE（0.5–1.0，读一次），否则 iOS 选项页的「3D 清晰度」，再否则缺省手机 0.75、Mac 宿主 1.0
+// Configured value: DM_3D_SCALE (0.5–1.0, read once), else the iOS options page's "3D Resolution", else the default: 0.75 on phones, 1.0 on the Mac host
 __attribute__((weak)) float dm_video_scale3d(void) { return 0; }   // 宿主 dm_video.c 给强定义（手机选项页「3D 清晰度」）；单测不链它时恒 0 | the host's dm_video.c gives the strong definition (phone options page "3D Resolution"); 0 when a unit test does not link it
 static float s3_cfg(void) {   // 配置的 3D 比例：DM_3D_SCALE 定死；没给就按选项页（手机，点「应用」后 scale3d_tick 下一拍就换），再没有就平台缺省 | configured 3D scale: DM_3D_SCALE fixes it; otherwise the options page (phones; scale3d_tick switches on the next tick after "Apply"), otherwise the platform default
     static float env = -1;

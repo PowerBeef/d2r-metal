@@ -60,6 +60,9 @@ static void save_locked(void) {
     LOG("画面设置：存盘%s mode=%d res=%d up=%d（推荐 %d/%d/%d）", ok ? "" : "【红】失败", g_val[K_MODE], g_val[K_RES], g_val[K_UP], g_rec[K_MODE], g_rec[K_RES], g_rec[K_UP]);
 }
 static void load_once(void) {
+#ifndef __APPLE__
+    return;   // 安卓 / 鸿蒙的覆盖层没有这几行：不读不写 sw_video.txt，取值全为 0，3D 比例照旧按各自的缺省 | the Android / HarmonyOS overlays have none of these rows: sw_video.txt is never read or written, every value reads 0, and the 3D scale keeps each platform's own default
+#endif
     if (atomic_load(&g_loaded)) return;
     pthread_mutex_lock(&g_mu);
     char p[1100];
