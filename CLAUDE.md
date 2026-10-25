@@ -214,6 +214,7 @@ DM_BREAK_AT_TICK=<tick> ./dmhost … ; lldb -p <pid>; (lldb) command script impo
 - Shader validation crashes the Metal 4 host inside Metal (macOS 27); use `SCN_DMHOST=dm/host/dmhost_m3`.
 - `DM_BREAK_AT_TICK` waits on the tick thread: start the host by hand without `DM_WATCH` / `DM_WATCH_STALL`. In `lldb --batch`, commands after the trap go in `-k`, not `-o`.
 - Agents can drive the same lldb through `(lldb) protocol-server start MCP` + `xcrun lldb-mcp` (one MCP server at a time; delete stale `~/.lldb/lldb-mcp-<pid>.json`).
+  - With no server running when it starts, `lldb-mcp` starts its own lldb, which stays up and is reused. On Xcode 27.1 that lldb can't attach ("Bad file descriptor") unless `LLDB_EXE_PATH` points at a wrapper that gives it a stdin; `debugging.md` has the wrapper. Never `process launch` through `lldb-mcp`: it never returns and blocks that lldb until it's killed. Start the host yourself and attach.
 - `explore.py` uses only steps without assertions; `open_pause` / `close_pause` are assertions and go red on their own.
 - Replay needs the town spawn moved as when recording (`replay.py` sets `DM_TOWNWP_OFF=0`) and no tick-0 join lines in the packet file. Check with a positive control (drop input, expect a divergence) before trusting an "identical" result.
 
@@ -292,7 +293,7 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   - The host also compiles `dm/ios/Sources/dm_touch_controls.c`, `cloud_ios.m` and `dm_gamepad.m`, so edits there affect the Mac build too.
 - **Feature switches:**
   - Read them only through `dm_custom_get("<key>")`.
-  - The key order in `dm_custom.c` must match the rows of the port's own page (Extras on the Mac and iOS, Custom on Android; `touch_layout.py _CUSTOM_ROWS`).
+  - The key order in `dm_custom.c` `k_keys` must match `touch_layout.py _CUSTOM_ROWS`, the full list (`test_touch_layout_options.py` checks it). A page may leave rows out: Extras (Mac and iOS) drops the two the Video tab shows; Android's Custom page keeps them.
 - **Mode and UI rules:**
   - Touch-only or controller-only behaviour needs a row in `dm/host/dm_mode_items.h` (checked by `mode_scan.py`).
   - Writing to the original game's UI widgets is forbidden (`native_write_scan.py`).

@@ -86,7 +86,7 @@ Every change here is checked on real hardware, and the tools for that are in the
 
 - a **control port** to drive a running game step by step, and a **scenario runner** that plays scripted sessions on the command-line host, the Mac App, the iOS package on a Mac, or an iPhone ([dm/verify/control_port.md](dm/verify/control_port.md), [dm/verify/scenarios/README.md](dm/verify/scenarios/README.md));
 - an **event stream**, signposts and fixed-route **A/B benchmarks** with statistics, plus GPU frame capture;
-- **sanitizer builds** (ASan, UBSan, TSan), seeded **random exploration** with shrinking, and **replay** ([dm/verify/debugging.md](dm/verify/debugging.md)).
+- **sanitizer builds** (ASan, UBSan, TSan), seeded **random exploration** with shrinking, **replay**, and LLDB commands that show game addresses as module offsets, which a coding agent can drive through Xcode's LLDB MCP server ([dm/verify/debugging.md](dm/verify/debugging.md)).
 
 ## Everything from D2R Mobile
 
@@ -132,7 +132,7 @@ Run `./setup.sh` again after updating to a new commit. It also rewrites three fi
 ## How this fork works
 
 - `main` is the trunk. Upstream's `main` is merged in regularly, so its fixes and features arrive here too.
-- Changes that also fit upstream are sent back as pull requests, one topic per branch. Upstream adopted the first four in v2.0 (#106 – #109: split game packages, the iOS install battery check, the Mac App icon, pointer auto-hide); [#144](https://github.com/jhaizhou-ops/d2r-mobile/pull/144) (picture settings and MetalFX for the Mac and iOS) is open.
+- Changes that also fit upstream are sent back as pull requests, one topic per branch. Upstream adopted the first four in v2.0 (#106 – #109: split game packages, the iOS install battery check, the Mac App icon, pointer auto-hide); [#144](https://github.com/jhaizhou-ops/d2r-mobile/pull/144) (MetalFX, the picture settings and the rebuilt Options page for the Mac and iOS) is open.
 - Issues and pull requests about Apple platforms are welcome here. Code follows upstream's rules in [CONTRIBUTING.md](CONTRIBUTING.md), so it can be sent upstream later. A tour of the code is in [dm/README.md](dm/README.md).
 
 ## Legal
