@@ -119,6 +119,33 @@ static int cmd_tap(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     (void)out; (void)cap; return 1;
 }
 
+// wheel x y dy [precise=1] [view=720]：滚轮 / 触控板滚一下（出图画面归一化坐标；走 Mac 前端同一个 dm_wheel_ui：precise = 触控板点数，0 = 鼠标滚轮行数；view = 视图高几点）
+// wheel x y dy [precise=1] [view=720]: one wheel / trackpad scroll (coordinates normalized to the rendered picture; goes through dm_wheel_ui like the Mac front end: precise = trackpad points, 0 = mouse-wheel lines; view = view height in points)
+__attribute__((weak)) int dm_wheel_ui(float nx, float ny, double dy, int precise, double view_h) { (void)nx; (void)ny; (void)dy; (void)precise; (void)view_h; return -1; }   // Mac 前端（touch_mac.c）给强定义；别的平台 -1 = 没有滚轮 | the Mac front end (touch_mac.c) gives the strong definition; elsewhere -1 = no wheel
+static int cmd_wheel(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    double x = dm_ctl_num(a, "x", -1), y = dm_ctl_num(a, "y", -1), dy = dm_ctl_num(a, "dy", 0);
+    if (x < 0 || x > 1 || y < 0 || y > 1) ERR("x / y must be in [0, 1]");
+    int r = dm_wheel_ui((float)x, dm_ui_ny((float)y), dy, (int)dm_ctl_num(a, "precise", 1), dm_ctl_num(a, "view", 720));
+    if (r < 0) ERR("no wheel on this platform");
+    wait_frames(3, 5); dm_json_fields(out, cap, "ui:u", (unsigned long long)r); return 1;
+}
+// drag x0 y0 x1 y1 [frames=20]：按下、在这么多帧里直线拖到终点、抬起（同 tap 的 dm_ui_touch 注入：竖拖 = 滚列表、滚动条上拖 = 拖滑块、滑块上横拖 = 调值）
+// drag x0 y0 x1 y1 [frames=20]: press, drag in a straight line to the end point over that many frames, release (the same dm_ui_touch injection as tap: a vertical drag scrolls a list, a drag on a scroll bar drags its thumb, a sideways drag on a slider sets the value)
+__attribute__((weak)) void dm_touch_host_live(int op, float nx, float ny) { (void)op; (void)nx; (void)ny; }   // 同上：Mac 真鼠标的手势路（touch_mac.c）；别的平台没有 | as above: the Mac real mouse's gesture path (touch_mac.c); absent elsewhere
+__attribute__((weak)) int dm_touch_host_is_live(void) { return 0; }
+static int cmd_drag(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    double x0 = dm_ctl_num(a, "x0", -1), y0 = dm_ctl_num(a, "y0", -1), x1 = dm_ctl_num(a, "x1", -1), y1 = dm_ctl_num(a, "y1", -1); int n = (int)dm_ctl_num(a, "frames", 20);
+    if (x0 < 0 || x0 > 1 || y0 < 0 || y0 > 1 || x1 < 0 || x1 > 1 || y1 < 0 || y1 > 1) ERR("x0 / y0 / x1 / y1 must be in [0, 1]");
+    if (n < 2 || n > 600) ERR("frames must be 2-600");
+    if (dm_restart_busy()) ERR("one-key restart in progress: touches are dropped");
+    float ay = dm_ui_ny((float)y0), by = dm_ui_ny((float)y1);
+    void (*t)(int, float, float) = dm_touch_host_is_live() ? dm_touch_host_live : dm_ui_touch;   // Mac App 的真鼠标走手势状态机（touch_mac.c），同一条路测 | the Mac App's real mouse goes through the gesture state machine (touch_mac.c): test that same path
+    t(0, (float)x0, ay); wait_frames(2, 5);
+    for (int i = 1; i <= n; i++) { t(1, (float)(x0 + (x1 - x0) * i / n), ay + (by - ay) * i / n); if (!wait_frames(1, 5)) { t(2, (float)x1, by); ERR("frames are not advancing"); } }
+    wait_frames(3, 5); t(2, (float)x1, by); wait_frames(3, 5);
+    (void)out; (void)cap; return 1;
+}
+
 // msg spec="类别:动作:参数"：往游戏发一条界面消息（同 DM_KEYS 的 MSG:… 步，取手柄处发出），发出去才回执 | msg spec="category:action:argument": send one UI message into the game (same as DM_KEYS's MSG:... step, sent at the controller read), replying once it has gone out
 static int c_msg_sent(void *a) { (void)a; return !dm_ui_send_pending(); }
 static int cmd_msg(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
@@ -289,6 +316,8 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("press", cmd_press);
     dm_ctl_register("stick", cmd_stick);
     dm_ctl_register("tap", cmd_tap);
+    dm_ctl_register("wheel", cmd_wheel);
+    dm_ctl_register("drag", cmd_drag);
     dm_ctl_register("msg", cmd_msg);
     dm_ctl_register("world_tap", cmd_world_tap);
     dm_ctl_register("walk_to", cmd_walk_to);

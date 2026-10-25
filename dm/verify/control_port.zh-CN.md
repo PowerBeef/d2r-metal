@@ -34,6 +34,8 @@ English: [control_port.md](control_port.md)
 | `press` | `keys`（`A+B`，键名同 `DM_KEYS`）、`frames`（6）、`gap`（3） | 按住这些键 `frames` 个出图帧，再松开等 `gap` 帧。在取手柄处并进去，与脚本键同一套裁决。 | `frame`、`held_frames` |
 | `stick` | `x`、`y` ∈ [-1, 1]（上为正）、`frames`（30）、`keys` | 推左摇杆（可同时按键）。 | `frame`、`held_frames` |
 | `tap` | `x`、`y` ∈ [0, 1]（出图画面）、`hold`（3 帧） | 经 `dm_ui_touch` 点一下界面，与 `DM_KEYS` 的 `C<x>:<y>` 和真手指同一条路。 | |
+| `wheel` | `x`、`y` ∈ [0, 1]（出图画面）、`dy`、`precise`（1）、`view`（720） | 经 `dm_wheel_ui` 滚一下滚轮 / 触控板，与 Mac App 的滚动事件同一个函数：`precise=1` 是触控板点数，`0` 是鼠标滚轮行数；`view` 是视图高几点。`dy` 为正 = 内容往下。只有 Mac。 | `ui`（0 = 不在界面上，App 会改推右摇杆） |
+| `drag` | `x0`、`y0`、`x1`、`y1` ∈ [0, 1]（出图画面）、`frames`（20） | 按下、在 `frames` 帧里直线拖过去、抬起。Mac App 里走真鼠标的手势路（`dm_touch_host_live`），别处走 `dm_ui_touch`。 | |
 | `msg` | `spec` = `类别:动作[:参数]` | 往游戏发一条界面消息（同 `DM_KEYS` 的 `MSG:` 步），发出去才回执。 | |
 | `world_tap` | `x`、`y` ∈ [0, 1] | 点世界里那一处：像触屏点击一样走过去和那里的东西交互。 | `target`：`none`、`item`、`npc`、`object`、`exit` |
 | `walk_to` | `x`、`y`（格，同 `state`）、`timeout`（12 秒） | 用 `DM_TEST_WORLD_XY` 的路线规划走过去，到 2 格内算到。 | `arrived`、`x`、`y` |

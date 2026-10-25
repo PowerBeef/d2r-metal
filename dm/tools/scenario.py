@@ -33,7 +33,7 @@ import dmctl  # noqa: E402
 
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 # 控制口命令的位置参数（其余用 名=值） | positional arguments of the control-port commands (the rest as name=value)
-POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
+POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'wheel': ['x', 'y', 'dy', 'precise', 'view'], 'drag': ['x0', 'y0', 'x1', 'y1', 'frames'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
        'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind']}
