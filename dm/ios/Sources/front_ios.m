@@ -12,6 +12,7 @@ static volatile int g_dm_thermal = -1;
 int dm_thermal_now(void) { return g_dm_thermal; }   // 最近的温控档位（0 正常 / 1 微热 / 2 严重 / 3 危急；−1 = 未读）   // 最近一次读到的屏幕亮度（−1 = 未读） | Most recent thermal state (0 nominal / 1 fair / 2 serious / 3 critical; −1 = not read)   // Most recently read screen brightness (−1 = not read)
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
+#import <MetalFX/MetalFX.h>
 #include <signal.h>
 #include "front.h"
 #include "dm_input.h"
@@ -950,6 +951,14 @@ UIView *front_ios_view(CGRect frame) {
 }
 
 void *front_metal_layer(void) { return (__bridge void *)g_layer; }
+// 画面设置（dm_video.c）的平台钩子：MetalFX 能不能用（Metal 4 的 MetalFX 优先，旧接口的也算）；首次启动的推荐值 = 3D 清晰度 75%（原来的缺省）+ 能用就开 MetalFX。
+// Platform hooks for the picture settings (dm_video.c): whether MetalFX is available (Metal 4 MetalFX first, the older-API one also counts); recommended values on first boot = 3D resolution 75% (the previous default) + MetalFX when available
+int front_video_mfx_ok(void) { static int ok = -1; if (ok < 0) { id<MTLDevice> d = MTLCreateSystemDefaultDevice(); ok = d && ([MTLFXSpatialScalerDescriptor supportsMetal4FX:d] || [MTLFXSpatialScalerDescriptor supportsDevice:d]); } return ok; }
+int front_video_firstboot(int rec[3], int cur[3]) {
+    rec[0] = 0; rec[1] = 0; rec[2] = front_video_mfx_ok() ? 1 : 0; for (int i = 0; i < 3; i++) cur[i] = rec[i];
+    LOG("画面设置：首次启动 → 推荐 3D 清晰度 75%%、%s", rec[2] ? "MetalFX" : "标准（本机不支持 MetalFX）");
+    return 1;
+}
 // 主机档 = 屏幕原生像素（界面文字原生，3D 由游戏自带的渲染比例另缩，见 hle_oe.c scale3d_tick）：
 // iPhone 17 Pro Max → 2868x1320。掌机档仍按原版高度 720 × 屏幕比例（宽取 8 的倍数，1568x720），只在 DM_OPMODE=0 / 脚本切换时用到。
 // DM_GAME_RES=宽x高（主机模式；掌机按 720/900 同比）覆盖：DM_GAME_RES=1600x900 即原版 16:9 保底（负对照），DM_GAME_RES=1952x900 即早先的缺省

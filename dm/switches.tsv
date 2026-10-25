@@ -261,6 +261,7 @@ DM_OPMODE	host,ios-tools	host/hle_oe.c ios/TouchSmokeTests/TouchSmoke.swift	-
 DM_OPMODE_RUNROOT	verify	verify/opmode.sh	-
 DM_ORIG_DIR	tools	tools/sampagg.py	-
 DM_OUT	ios-tools,tools	ios/run.sh ios/tools/frame_cmp.sh ios/tools/pages.sh ios/tools/soak.sh …	y
+DM_OVERLAY_IOS	ios-tools	ios/tools/touch_layout.py	-
 DM_OVERLAY_MAC	ios-tools	ios/tools/gen_romfs_overlay.py ios/tools/touch_layout.py	-
 DM_PACE_ADAPT	gfx,harmony	gfx/nvn/hle_nvn.c harmony/native/napi_ohos.c	y
 DM_PANEL_FREEZE	host	host/diag.c host/dm_cursor.c	-

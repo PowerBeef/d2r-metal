@@ -177,12 +177,13 @@ static int s3_max_level(float cfg, float floor) {
 }
 // 配置值：DM_3D_SCALE（0.5–1.0），缺省手机 0.75、Mac 宿主 1.0；读一次
 // Configured value: DM_3D_SCALE (0.5–1.0), default 0.75 on phones and 1.0 on the Mac host; read once
-static float s3_cfg(void) {
-    static float cfg = -1;
-    if (cfg < 0) { const char *e = getenv("DM_3D_SCALE"); float v = DM_PHONE ? 0.75f : 1.0f;
-        if (e) { char *end; v = strtof(e, &end); if (end == e || *end || !(v >= 0.5f && v <= 1.0f)) die("DM_3D_SCALE 非法：%s（要求 0.5–1.0）", e); }
-        cfg = v; }
-    return cfg;
+__attribute__((weak)) float dm_video_scale3d(void) { return 0; }   // 宿主 dm_video.c 给强定义（手机选项页「3D 清晰度」）；单测不链它时恒 0 | the host's dm_video.c gives the strong definition (phone options page "3D Resolution"); 0 when a unit test does not link it
+static float s3_cfg(void) {   // 配置的 3D 比例：DM_3D_SCALE 定死；没给就按选项页（手机，点「应用」后 scale3d_tick 下一拍就换），再没有就平台缺省 | configured 3D scale: DM_3D_SCALE fixes it; otherwise the options page (phones; scale3d_tick switches on the next tick after "Apply"), otherwise the platform default
+    static float env = -1;
+    if (env < 0) { const char *e = getenv("DM_3D_SCALE"); env = 0;
+        if (e) { char *end; float v = strtof(e, &end); if (end == e || *end || !(v >= 0.5f && v <= 1.0f)) die("DM_3D_SCALE 非法：%s（要求 0.5–1.0）", e); env = v; } }
+    if (env > 0) return env;
+    float v = dm_video_scale3d(); return v >= 0.5f && v <= 1.0f ? v : DM_PHONE ? 0.75f : 1.0f;
 }
 #define S3_FLOOR_DEF 0.60f   // 待真机扫档（热机稳态最后 30 秒掉帧 ≤ 1%）定 | To be set by a device level sweep (dropped frames ≤ 1% in the last 30 s of warm steady state)
 // 纯函数控制器（单测 t_oe.c 直接喂序列）：level 0 = 配置值，越大越低。判据只认实际上屏：
@@ -302,11 +303,9 @@ void dm_3d_scale_hot(int hot) { (void)hot; }   // 过热不再直接降档（改
 static _Atomic float g_scale3d_cur = 1.0f;
 float dm_3d_scale_cur(void) { return atomic_load(&g_scale3d_cur); }
 static void scale3d_tick(void) {
-    static float want_cfg = -1, cur = 1.0f; static module_t *main;
-    if (want_cfg < 0) {
-        want_cfg = s3_cfg();
-        for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
-    }
+    static float cur = 1.0f; static module_t *main;
+    if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
+    float want_cfg = s3_cfg();   // 每拍读：手机选项页改了 3D 清晰度，下一拍就按新值重建 3D 目标 | read every tick: when the phone options page changes the 3D resolution, the 3D targets are rebuilt at the new value on the next tick
     // 动态档：0 = 配置值，k = 表里第 k 个低于配置值的比例
     // Dynamic level: 0 = configured value, k = the k-th table scale below the configured value
     int lv = atomic_load(&g_scale3d_level); float dyn = s3_level_scale(want_cfg, lv);
