@@ -197,15 +197,27 @@ static void test_live_queue(void) {
 
     live_reset(); test_in = 0; nops = 0;
     dm_touch_host_live(0, .20f, .20f);
-    for (int i = 0; i < 70; i++) dm_touch_host_live(1, .20f, .20f + i * .001f);
+    for (int i = 0; i < 70; i++) dm_touch_host_live(1, .20f, .20f + i * .0001f);   // 抖动量级（不到 10 点）：仍是一下点击，不成拖动 | jitter-sized (under 10 points): still a click, not a drag
     dm_touch_host_live(2, 0, 0);
     dm_touch_host_live(0, .50f, .50f); dm_touch_host_live(1, .50f, .51f); dm_touch_host_live(2, 0, 0);   // 队列还满着：这一笔放不下，整笔丢掉 | the queue is still full: this gesture does not fit and is dropped whole
     live_poll();
     int downs = 0, ups = 0; for (int i = 0; i < nops; i++) { downs += ops[i] == 0; ups += ops[i] == 2; }
     CHECK(nops > 2 && ops[0] == 0 && ops[nops - 1] == 2 && downs == 1 && ups == 1, "front end: the full queue still delivers press ... release, and the gesture that did not fit leaves no press behind");
-    CHECK(fabsf(op_y[nops - 1] - (.20f + 69 * .001f)) < .0001f, "front end: the release lands at the newest drag position, not at a stale one");
+    CHECK(fabsf(op_y[nops - 1] - (.20f + 69 * .0001f)) < .00001f, "front end: the release lands at the newest drag position, not at a stale one");
     nops = 0; dm_touch_host_live(0, .30f, .30f); dm_touch_host_live(2, 0, 0); live_poll();
     CHECK(nops == 2 && ops[0] == 0 && ops[1] == 2, "once drained, the next click goes through as usual");
+}
+
+// 前端页的拖动（同 iOS 前端）：纵向拖过 10 点 = 滚动，这一下作废、不点；横向拖不从滑块上起手 = 照旧是点击
+// Drags on front-end pages (as in the iOS front end): past 10 points vertically = scroll, and this press is voided without a click; a sideways drag not starting on a slider is still a click
+static void test_fe_drag(void) {
+    live_reset(); test_in = 0; nops = 0;
+    dm_touch_host_live(0, .40f, .40f); for (int i = 1; i <= 10; i++) dm_touch_host_live(1, .40f, .40f + i * .005f); dm_touch_host_live(2, 0, 0); live_poll();
+    int ups = 0, cancels = 0; for (int i = 0; i < nops; i++) { ups += ops[i] == 2; cancels += ops[i] == 3; }
+    CHECK(nops >= 2 && ops[0] == 0 && cancels == 1 && ups == 0, "front end: a vertical drag scrolls instead of clicking (the press is voided)");
+    nops = 0; dm_touch_host_live(0, .40f, .40f); for (int i = 1; i <= 10; i++) dm_touch_host_live(1, .40f + i * .005f, .40f); dm_touch_host_live(2, 0, 0); live_poll();
+    ups = cancels = 0; for (int i = 0; i < nops; i++) { ups += ops[i] == 2; cancels += ops[i] == 3; }
+    CHECK(nops >= 2 && ops[0] == 0 && ops[nops - 1] == 2 && ups == 1 && cancels == 0, "front end: a sideways drag off any slider is still a click");
 }
 
 int main(void) {
@@ -240,6 +252,7 @@ int main(void) {
     test_live_mouse();
     test_live_hover();
     test_live_queue();
+    test_fe_drag();
     printf("== touch host %d 项，失败 %d ==\n", checks, fails);
     return fails != 0;
 }
