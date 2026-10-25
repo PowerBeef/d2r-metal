@@ -266,10 +266,10 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
                 // 别处的横向拖照旧当点击。拖动交给宿主的界面连续手势（dm_ui_drag_*，dm_cursor.c ui_drag_pump）
                 // Drags (as the iOS front end, front_ios.m uiTouch): past 10 points vertically = scroll / drag a scroll bar's thumb, sideways starting on a slider = set its value (the front-end options page has sliders); neither clicks.
                 // A sideways drag anywhere else is still a click. Drags go to the host's continuous UI gestures (dm_ui_drag_*, dm_cursor.c ui_drag_pump)
-                static float fo_x, fo_y; static int fe_drag;
-                if (op == 0) { fo_x = px; fo_y = py; fe_drag = 0; }
+                static float fo_x, fo_y; static int fe_drag, fe_down;   // fe_down：这一笔有过按下（没有按下的拖动事件不算拖动，如按在黑边上再拖进画面） | fe_down: this gesture had a press (a drag event without one is not a drag, e.g. pressed on the black bars and dragged into the picture)
+                if (op == 0) { fo_x = px; fo_y = py; fe_drag = 0; fe_down = 1; } else if (op == 2) fe_down = 0;
                 if (fe_drag) { if (op == 1) dm_ui_drag_move(px, py); else if (op == 2) { dm_ui_drag_end(); fe_drag = 0; } atomic_store(&g_live.head, h + 1); continue; }
-                if (op == 1) { int dm_ui_fe_drag_ok(void), dm_ui_slider_at(float, float); float dx = fabsf(px - fo_x) * 2868, dy = fabsf(py - fo_y) * 1320, th = 10 * 1320.0f / 720;   // 10 点（界面高按 720 点算） | 10 points (with the UI 720 points high)
+                if (op == 1 && fe_down) { int dm_ui_fe_drag_ok(void), dm_ui_slider_at(float, float); float dx = fabsf(px - fo_x) * 2868, dy = fabsf(py - fo_y) * 1320, th = 10 * 1320.0f / 720;   // 10 点（界面高按 720 点算） | 10 points (with the UI 720 points high)
                     int k = dy > th && dy >= dx && dm_ui_fe_drag_ok() ? 1 : dx > th && dx > dy && dm_ui_slider_at(fo_x, fo_y) ? 2 : 0;
                     if (k) { dm_ui_touch(3, px, py); dm_ui_drag_begin(k, fo_x, fo_y, 44.0f / 1320); dm_ui_drag_move(px, py); fe_drag = k;
                         fprintf(stderr, "[dm] 鼠标：前端页%s拖（起手 %.3f,%.3f），这一下不点\n", k == 1 ? "纵向" : "横向（滑块上）", fo_x, fo_y); atomic_store(&g_live.head, h + 1); continue; } }

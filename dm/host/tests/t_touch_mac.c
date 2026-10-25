@@ -218,6 +218,9 @@ static void test_fe_drag(void) {
     nops = 0; dm_touch_host_live(0, .40f, .40f); for (int i = 1; i <= 10; i++) dm_touch_host_live(1, .40f + i * .005f, .40f); dm_touch_host_live(2, 0, 0); live_poll();
     ups = cancels = 0; for (int i = 0; i < nops; i++) { ups += ops[i] == 2; cancels += ops[i] == 3; }
     CHECK(nops >= 2 && ops[0] == 0 && ops[nops - 1] == 2 && ups == 1 && cancels == 0, "front end: a sideways drag off any slider is still a click");
+    nops = 0; for (int i = 1; i <= 10; i++) dm_touch_host_live(1, .40f, .40f + i * .005f); live_poll();
+    cancels = 0; for (int i = 0; i < nops; i++) cancels += ops[i] == 3;
+    CHECK(cancels == 0, "front end: drag events with no press before them start no scroll");
 }
 
 int main(void) {
