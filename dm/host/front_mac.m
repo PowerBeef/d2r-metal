@@ -249,6 +249,14 @@ void front_run(void (*guest)(void)) {
         screen_note();
         [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note(); }];
         [NSApp activateIgnoringOtherApps:YES];
+        // 启动即全屏：defaults write org.d2rmobile.mac StartFullScreen -bool YES（旧接口版的包标识是 org.d2rmobile.mac.m3），缺省关。
+        // 测试副本（DM_APP_SUPPORT）和全屏测试开关（DM_TEST_FULLSCREEN_AT）在时不理它：自动跑的局不占玩家的屏幕，来回切的时刻表也不被打乱。等运行循环转起来再切，窗口那时已上屏。
+        // Start in full screen: defaults write org.d2rmobile.mac StartFullScreen -bool YES (the older-API build's bundle ID is org.d2rmobile.mac.m3), off by default.
+        // Ignored by the test copy (DM_APP_SUPPORT) and with the full-screen test switch (DM_TEST_FULLSCREEN_AT): automated runs don't take over the player's screen and the toggle schedule stays intact. The switch waits for the run loop, when the window is on screen.
+        if (getenv("DM_APP") && !getenv("DM_APP_SUPPORT") && !getenv("DM_TEST_FULLSCREEN_AT") && [NSUserDefaults.standardUserDefaults boolForKey:@"StartFullScreen"]) {
+            LOG("窗口：启动即全屏（StartFullScreen） | window: starts in full screen (StartFullScreen)");
+            dispatch_async(dispatch_get_main_queue(), ^{ if (!(win.styleMask & NSWindowStyleMaskFullScreen)) [win toggleFullScreen:nil]; });
+        }
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;   // 只吃游戏窗口的键；软键盘输入框等其他窗口照常收字 | Only swallow keys for the game window; other windows such as the software keyboard input box receive typing as usual
             if (e.modifierFlags & NSEventModifierFlagCommand) { if (e.type == NSEventTypeKeyUp) on_key(e, 0); return e; }   // 带 ⌘ 的按下留给菜单（⌘Q、⌃⌘F）；松开照样记上（按着 W 时按住 ⌘ 再松开 W，原先松开收不到、角色一直走） | Key presses with ⌘ are left to the menu (⌘Q, ⌃⌘F); releases are still recorded (releasing W while ⌘ was held used to be missed, and the character kept walking)
