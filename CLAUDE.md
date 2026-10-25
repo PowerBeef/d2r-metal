@@ -300,6 +300,7 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   - It links to build outputs under `$DM_ROOT`; the bundle ID is `org.d2rmobile.mac` (`.m3` for the older-API build).
   - Its resource folder is stored as the `RomfsDir` default.
   - The pointer auto-hide delay is `CursorHideSeconds`.
+  - `StartFullScreen` (bool, off by default) opens the window in full screen; the test copy (`DM_APP_SUPPORT`) and `DM_TEST_FULLSCREEN_AT` ignore it.
 - **iOS:**
   - Reinstall over the app; deleting it wipes the 5.6 GB of resources and the saves.
   - The 18 resource archives can be pushed with `xcrun devicectl device copy to … --domain-type appDataContainer --destination 'Library/Application Support/romfs'`.
