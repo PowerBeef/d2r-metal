@@ -40,7 +40,7 @@ else:
         if name not in on_line and name not in both: red.append('dm_cursor.c 定义了 %s，但每帧那一行和「两种模式都跑」单子上都没有它' % name)
 
 # ---- 2 ----
-PADMODE = {'host/dm_cursor.c': 9, 'host/dm_custom.c': 2, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 2, 'host/hle_tact.c': 1}
+PADMODE = {'host/dm_cursor.c': 9, 'host/dm_custom.c': 1, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 2, 'host/hle_tact.c': 1}
 # host/dm_ctl_cmds.c 1：控制口 msg 命令（测试驱动，同 hle_hid.c 的 DM_KEYS MSG 步）——一次性的一条消息，两种模式照发，切换时没有要清的状态
 # host/dm_ctl_cmds.c 1: the control port's msg command (test-driven, like the DM_KEYS MSG step in hle_hid.c) -- a one-shot message sent as is in both modes, nothing to clean up on a switch
 AUTOKEY = {'host/dm_cursor.c': 38, 'host/dm_ctl_cmds.c': 1, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}

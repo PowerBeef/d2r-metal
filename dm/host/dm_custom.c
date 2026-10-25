@@ -175,6 +175,12 @@ static void set_toggle(uint64_t w, int on) {
     static const int32_t fr[2][4] = { { 0, 1, 3, 2 }, { 4, 5, 6, -1 } };
     *(uint8_t *)(w + 0xa88) = on != 0; memcpy((void *)(w + 0x6e8), fr[on != 0], sizeof fr[0]); *(int32_t *)(w + 0x610) = fr[on != 0][0];
 }
+// 列表框（各行在原版滚动区里，touch_layout.py _custom_page）：off = 已滚的量 = 内层视图（行容器的父控件）矩形 y 的相反数，vh = 框高 = 滚动区（再上一级）的高。只读这两个数，不写原版控件；返回滚动区（没有 = 0）
+// The list box (the rows sit in the original scroll area, touch_layout.py _custom_page): off = amount scrolled = minus the rect y of the inner view (the row container's parent), vh = box height = the scroll area's height (one level up). Only these two numbers are read, the original widgets are not written; returns the scroll area (0 = none)
+static uint64_t list_box(uint64_t sp, int *off, int *vh) {
+    uint64_t rw = find_w(sp, "TouchCustomRows", 0), view = rw ? *(uint64_t *)(rw + 0x30) : 0, sv = view ? *(uint64_t *)(view + 0x30) : 0; if (!sv) return 0;
+    *off = -*(int32_t *)(view + 0x74); *vh = *(int32_t *)(sv + 0x7c); if (*vh <= 0) *vh = 1260; return sv;
+}
 void dm_custom_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
     static dm_wref seen[NK];   // 每行最近见到的勾选框（带界面代号：重建后取到 0 = 页刚出现） | Most recently seen checkbox of each row (with UI generation: 0 after a rebuild = page just appeared)
@@ -189,45 +195,58 @@ void dm_custom_ui_pump(unsigned long long root) {
 #if VOICE_ROW
     if (atomic_load(&g_voice_explicit) < 0) atomic_store(&g_val[K_VOICE], voice_running());
 #endif
-    // 手柄模式：原版选项页的焦点只认表格里它自己的行，够不着我们的勾选框——十字键上下选行（原版手柄选中框 TouchCustomSel 框住这一行）、A 翻勾选（下面照「玩家点了」处理），其余键照旧归原版
+    // 手柄模式：原版选项页的焦点只认表格里它自己的行，够不着我们的勾选框——十字键上下选行（选中项亮原版的手柄高亮，见下）、A 翻勾选（下面照「玩家点了」处理），其余键照旧归原版
     // Controller mode: the original options page's focus only recognizes its own rows in the table and cannot reach our checkboxes. D-pad up/down selects a row
-    // (the original controller selection frame TouchCustomSel frames that row), A toggles the checkbox (handled below as "the player tapped it"), and all other
+    // (the selected item gets the game's controller highlight, see below), A toggles the checkbox (handled below as "the player tapped it"), and all other
     // buttons go to the original as before
     { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int sel; static dm_wref sel_sp; int pad = dm_padmode_current();
       { uint64_t cm = find_w(root, "ConfirmationModal", 1); if (cm && *(uint8_t *)(cm + 0x50)) pad = 0; }   // 原版「设定已更改，应用 / 放弃」确认框开着：键全还给它（实测：不让的话 A 落在我们这一行上、点不到「应用」） | The original "Settings changed, Apply / Discard" confirmation box is open: hand all keys back to it (measured: otherwise A lands on our row and "Apply" cannot be reached)
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
-      uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64];
+      uint64_t tw = 0, cw = 0; char nm[64];
       int dm_video_rows(uint64_t sp); void dm_video_row(uint64_t sp, int i, uint64_t *tw, uint64_t *cw); void dm_video_pad(uint64_t sp, int i, int dir);
       int nv = dm_video_rows(sp);   // Mac：页顶「显示」「图形」两节的行数（没有 = 0）；手柄行号先数这几行，自定义各行排在后面 | Mac: number of rows in the "Display" and "Graphics" sections at the top of the page (none = 0); controller row numbers count these first, the custom rows come after
       int has_c = find_w(sp, "TouchCustom_lang_Text", 0) != 0, lo = 0, hi = nv + (has_c ? NK : 0);   // 这张页上有哪些行：画面设置在前、自定义在后（视频页只有前者，附加页只有后者） | which rows this page holds: picture settings first, custom after (the video page has only the former, the Extras page only the latter)
       atomic_store(&g_shown, (nv > 0) | (has_c ? 2 : 0)); if (sel >= hi) sel = lo;
-      if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A | (sel < nv ? DM_BTN_LEFT | DM_BTN_RIGHT : 0));   // 左右只在画面设置行上收（切换框的上一项 / 下一项） | left / right are only taken on picture-setting rows (previous / next option of the selector)
+      if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A | (sel < nv || (has_c && sel == nv) ? DM_BTN_LEFT | DM_BTN_RIGHT : 0));   // 左右只在画面设置行（切换框的上一项 / 下一项）与语言行（上一种 / 下一种）上收 | left / right are only taken on picture-setting rows (previous / next option of the selector) and on the language row (previous / next language)
           if (ev & DM_BTN_DOWN) sel = sel + 1 < hi ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > lo ? sel - 1 : lo;
           if (sel < nv) { dm_video_row(sp, sel, &tw, &cw); if (ev & (DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A)) dm_video_pad(sp, sel, ev & DM_BTN_LEFT ? -1 : ev & DM_BTN_RIGHT ? 1 : 2); }
           else { int cs = sel - nv;   // 自定义行的键号 | key index of the custom row
-          snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[cs]); cw = find_w(sp, cs == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[cs]); tw = find_w(sp, nm, 0);   // 语言行：框住标签到最右那一格 | Language row: box from the label to the rightmost cell
-          if ((ev & DM_BTN_A) && cw && dm_wref_get(&seen[cs]) == cw) {
-              if (cs == K_VOICE || cs == K_Q3D || cs == K_TOUCH_SWAP) { int p0 = atomic_load(&g_pend[cs]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[cs]); atomic_store(&g_pend[cs], !sh); set_toggle(cw, !sh); { uint64_t z = find_w(sp, rev_box(cs), 0); if (z) set_toggle(z, sh); }
+          snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[cs]); cw = find_w(sp, cs == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[cs]); tw = find_w(sp, nm, 0);   // 语言行：标签到最右那一格（滚到位时整行露出来） | Language row: from the label to the rightmost cell (so the whole row scrolls into view)
+          // 页已摆好才收键：seen 记的是这一行的勾选框，语言行记第一格（见下面语言行那段；原先拿最后一格比，对不上，手柄在语言行上按 A 一直没反应）
+          // keys count only once the page is set up: seen holds the row's checkbox, for the language row its first cell (see the language row below; comparing the last cell never matched, so A did nothing on that row)
+          if ((ev & (DM_BTN_A | DM_BTN_LEFT | DM_BTN_RIGHT)) && cw && dm_wref_get(&seen[cs]) == (cs == 0 ? find_w(sp, k_lang_box[0], 0) : cw)) {
+              if (cs == 0) { int p0 = atomic_load(&g_pend[0]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[0]);   // 语言行是单选的五项：左右 = 上一种 / 下一种（到头停，同切换框），A 依次轮换；五个框当场摆好 | the language row is a five-way radio: left / right = previous / next (stopping at the ends, as a selector), A cycles; the five boxes are set on the spot
+                  int to = ev & DM_BTN_LEFT ? (sh > 0 ? sh - 1 : sh) : ev & DM_BTN_RIGHT ? (sh + 1 < LANG_N ? sh + 1 : sh) : (sh + 1) % LANG_N;
+                  if (to != sh) { atomic_store(&g_pend[0], to); for (int k = 0; k < LANG_N; k++) { uint64_t z = find_w(sp, k_lang_box[k], 0); if (z) set_toggle(z, k == to); }
+                      LOG("自定义设置：语言 → %s（手柄左右 / A 在五项间换；点「应用」生效）", k_lang_name[to]); } }
+              else if (!(ev & DM_BTN_A)) { }   // 别的行左右不收（见上），这里只剩 A | other rows do not take left / right (see above), only A is left here
+              else if (cs == K_VOICE || cs == K_Q3D || cs == K_TOUCH_SWAP) { int p0 = atomic_load(&g_pend[cs]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[cs]); atomic_store(&g_pend[cs], !sh); set_toggle(cw, !sh); { uint64_t z = find_w(sp, rev_box(cs), 0); if (z) set_toggle(z, sh); }
                   LOG("自定义设置：%s → %d（手柄 A 在两项间切换；点「应用」生效）",k_keys[cs],!sh); }
-              else if (cs == 0) { int p0 = atomic_load(&g_pend[0]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[0]), to = (sh + 1) % LANG_N; atomic_store(&g_pend[0], to);   // 语言行是单选的五项：A 依次轮换，四个框当场摆好
-                  for (int k = 0; k < LANG_N; k++) { uint64_t z = find_w(sp, k_lang_box[k], 0); if (z) set_toggle(z, k == to); }
-                  LOG("自定义设置：语言 → %s（手柄 A 在五项间轮换；点「应用」生效）", k_lang_name[to]); }
               else set_toggle(cw, !TOGGLED(cw)); } } }
-      if (dm) { int32_t *r = (int32_t *)(dm + 0x70), want[4] = { 99999, 0, r[2], r[3] };   /* 不用时只把 x 挪出屏：它在滚动区里，y 放远了会撑大可滚范围 | when unused only x is moved off screen: it is inside the scroll area, and a far-away y would enlarge the scrollable range */
-          if (dm_padmode_current() && tw && cw) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = t[1] < c[1] ? t[1] : c[1], bot = t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3];   // 框住整行：文字与勾选框两者的上下沿取并，再各放 10 单位（原先只按文字框的高度算，文字框比字矮，框成了横穿文字中线的一条） | Frame the whole row: take the union of the top and bottom edges of the text and the checkbox, then pad 10 units on each side (previously computed from the text box height only; the text box is shorter than the glyphs, so the frame became a strip cutting across the middle of the text)
-              want[0] = t[0] - 30; want[1] = top - 10; want[2] = c[0] + c[2] + 30 - want[0]; want[3] = bot - top + 20;
-              { static int lg; if (lg++ < 2) LOG("自定义设置：手柄选中框 文字框 %d,%d %dx%d 勾选框 %d,%d %dx%d → 框 %d,%d %dx%d", t[0], t[1], t[2], t[3], c[0], c[1], c[2], c[3], want[0], want[1], want[2], want[3]); } }
-          if (memcmp(r, want, sizeof want)) { memcpy(r, want, sizeof want); ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)dm + 0x10))(dm); } }
-      // 这页可以滚（各行在原版滚动区里，touch_layout.py _custom_page）：手柄选到列表框外的行时，让原版滚动区自己滚到位——发滚轮，每 4 帧一格，直到这一行整行在框内。
-      // 已滚的量 = 内层视图（行容器的父控件）矩形 y 的相反数；框高 = 滚动区（再上一级）的高。只读这两个数，不写原版控件
-      // This page can scroll (the rows are in the original scroll area, touch_layout.py _custom_page): when the controller selects a row outside the list box, let the original scroll area scroll into place by itself -- send wheel events, one notch every 4 frames, until the whole row is inside the box.
-      // Amount scrolled = the negative of the rect y of the inner view (the parent widget of the row container); box height = the height of the scroll area (one level further up). Only these two numbers are read; the original game's widgets are not written
+      // 选中项的高亮（同原版其余页签的手柄焦点：只亮那一个控件，不框整行）：切换框用原版 Carousel_Hover、勾选框用 CheckBox_Hover，原尺寸、居中摆在控件上，勾选框再上移 4（原版 focusIndicatorOffset）。
+      // 单选的行（语言、3D 画质等）亮此刻选中的那一项。不用的那张、或那一项没整个在列表框里（滚轮 / 拖动滚走了，或手柄刚选到、还在滚过来）时只把 x 挪出屏：它在滚动区里，y 放远了会撑大可滚范围
+      // Highlight of the selected item (as the game's own controller focus on the other tabs: only that control lights up, the row is not framed): the game's Carousel_Hover on selectors and CheckBox_Hover on checkboxes,
+      // native size, centred on the control, checkboxes 4 units higher (the game's focusIndicatorOffset). Radio rows (language, 3D quality, ...) light the option chosen right now. The unused image, or one whose item is not
+      // wholly inside the list box (scrolled away with the wheel or a drag, or just selected and still scrolling in), only has its x moved off screen: it is inside the scroll area, and a far-away y would enlarge the scrollable range
+      { uint64_t hw[2] = { find_w(sp, "TouchCustomHiCar", 0), find_w(sp, "TouchCustomHiBox", 0) }, it = 0; int kind = 0;
+        if (pad && cw && sel < nv) it = cw;
+        else if (pad && cw) { int cs = sel - nv; kind = 1;
+            if (cs == 0) { int p0 = atomic_load(&g_pend[0]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[0]); it = find_w(sp, k_lang_box[sh >= 0 && sh < LANG_N ? sh : 0], 0); }
+            else it = rev_box(cs) && !TOGGLED(cw) ? find_w(sp, rev_box(cs), 0) : cw; }
+        for (int k = 0; k < 2; k++) { uint64_t h = hw[k]; if (!h) continue; int32_t *r = (int32_t *)(h + 0x70), want[4] = { 99999, r[1], r[2], r[3] };
+            if (it && k == kind) { int32_t *c = (int32_t *)(it + 0x70); int w = r[2] > 0 ? r[2] : k ? 96 : 630, ht = r[3] > 0 ? r[3] : k ? 96 : 86, off, vh;   // 没量出图的大小时按原图（1 像素 = 2 单位） | before the image size is known, use the original image's (1 pixel = 2 units)
+                want[0] = c[0] + (c[2] - w) / 2; want[1] = c[1] + (c[3] - ht) / 2 - (k ? 4 : 0);
+                if (list_box(sp, &off, &vh) && (want[1] < off || want[1] + ht > off + vh)) want[0] = 99999;
+                { static int lg; if (lg++ < 2) LOG("自定义设置：手柄高亮 控件 %d,%d %dx%d → 图 %d,%d %dx%d", c[0], c[1], c[2], c[3], want[0], want[1], w, ht); } }
+            if (memcmp(r, want, sizeof want)) { memcpy(r, want, sizeof want); ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)h + 0x10))(h); } } }
+      // 这页可以滚（list_box）：手柄选到列表框外的行时，让原版滚动区自己滚到位——发滚轮，每 4 帧一格，直到这一行整行在框内
+      // This page can scroll (list_box): when the controller selects a row outside the list box, let the original scroll area scroll into place by itself -- send wheel events, one notch every 4 frames, until the whole row is inside the box
       // 只在选中行刚换过时跟（滚到这一行整行在框内就停）：Mac 一直是手柄模式，原先每 4 帧都拉回选中行，鼠标滚轮 / 拖动一滚就被拽回去
       // Follow only right after the selected row changed (and stop once the whole row is inside the box): the Mac is always in controller mode, and pulling back to the selected row every 4 frames undid each mouse-wheel scroll or drag
       static int psel = -1, follow; if (sel != psel) { psel = sel; follow = 1; }
-      if (pad && tw && cw && follow) { uint64_t rw = find_w(sp, "TouchCustomRows", 0), view = rw ? *(uint64_t *)(rw + 0x30) : 0, sv = view ? *(uint64_t *)(view + 0x30) : 0; static uint64_t lf; uint64_t dm_guest_frame(void); uint64_t f = dm_guest_frame();
+      if (pad && tw && cw && follow) { int off, vh; uint64_t sv = list_box(sp, &off, &vh); static uint64_t lf; uint64_t dm_guest_frame(void); uint64_t f = dm_guest_frame();
           if (sv && f - lf >= 4) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = (t[1] < c[1] ? t[1] : c[1]) - 10, bot = (t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3]) + 10;
-              int off = -*(int32_t *)(view + 0x74), vh = *(int32_t *)(sv + 0x7c); if (vh <= 0) vh = 1260; void dm_ui_wheel_on(uint64_t, int); if (sel == lo) top = 0;   /* 选回第一行：一直滚到最顶，把标题行露出来 | selection back on the first row: scroll all the way to the top so that the header row is revealed */
+              void dm_ui_wheel_on(uint64_t, int); if (sel == lo) top = 0;   /* 选回第一行：一直滚到最顶，把标题行露出来 | selection back on the first row: scroll all the way to the top so that the header row is revealed */
               if (top < off) { lf = f; dm_ui_wheel_on(sv, 1); } else if (bot > off + vh && bot - top <= vh) { lf = f; dm_ui_wheel_on(sv, -1); } else follow = 0; } } }   // 顶要钉住时整行放不下（选回第一行、行比框高）：只管顶，不再往下滚——原先上下来回滚，页面抖 | if the whole row cannot fit with the top pinned (selection back on the first row, or a row taller than the box): only keep the top, no scrolling down -- it used to scroll up and down and the page shook
     { uint64_t bx[LANG_N]; int ok = 1; for (int k = 0; k < LANG_N; k++) { bx[k] = find_w(sp, k_lang_box[k], 0); ok &= bx[k] && *(uint8_t *)(bx[k] + 0x50); }   // 语言行：四项单选，存一个键 lang（0 中 / 1 英 / 2 西 / 3 俄） | Language row: four-option radio, stores one key lang (0 Chinese / 1 English / 2 Spanish / 3 Russian)
       if (ok) { int pd0 = atomic_load(&g_pend[0]), shown = pd0 >= 0 ? pd0 : atomic_load(&g_val[0]), to = shown;

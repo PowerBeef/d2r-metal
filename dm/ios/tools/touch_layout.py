@@ -1289,7 +1289,7 @@ _CUSTOM_LANG_HINT = ''.join('        { "type": "TextBoxWidget", "name": "TouchCu
 # （原版标题页、队伍名等同样按控件指定它）。五项放不下左边的「语言」标签字（俄语界面真包截图量：English / Español / Русский 实宽约 166 / 178 / 188，
 # 文字框要比实宽多约 30 才不折行），所以这一行不写标签字，五个选项自己说明是选语言。每项勾选框在前、字在后：文字框比字宽出来的那一截落在两项之间当间隔，
 # 勾选框紧挨着自己的字（字在前时那一截落在字与自己的勾选框之间，勾选框看着像下一项的，真包截图）。
-# 标签控件 TouchCustom_lang_Text 仍在、不写字、横跨整行：宿主拿它定提示那句的横坐标、手柄选中框按它与最后一个勾选框取并框住整行
+# 标签控件 TouchCustom_lang_Text 仍在、不写字、横跨整行：宿主拿它定提示那句的横坐标，手柄选到这一行时按它与最后一个勾选框取并、把整行滚进列表框
 _LANG_OPTS = (('Zh', 'zh', 'dmCustomLangZh', 38, 131), ('En', 'en', 'dmCustomLangEnOpt', 249, 196), ('Es', 'es', 'dmCustomLangEsOpt', 525, 213),
               ('Ru', 'ru', 'dmCustomLangRuOpt', 818, 221), ('Ko', 'ko', 'dmCustomLangKoOpt', 1119, 166))   # （控件名后缀，勾选框后缀，文字键，勾选框 x，文字框宽）；字在勾选框右边 10，宽 = 实宽 + 30
 _LANG_ROW_W = 1385   # 到各行勾选框那一列的右沿（x 1315 + 70）
@@ -1307,10 +1307,10 @@ def _custom_lang_row():
     return label + ''.join(box('TouchCustom_lang_' + b, bx) + text('TouchCustomLang%s_Text' % n, bx + 80, w, k) for n, b, k, bx, w in _LANG_OPTS)   # 空字标签（见上）
 # 「3D 画质」（流畅优先（缺省，掉帧自动降 3D 比例）/ 画质优先（不自动降））：上下两项单选，每项标题下一行说明小字。
 # 存的是一个键 q3d（1 = 画质优先）：「画质优先」的勾选框叫 TouchCustom_q3d、「流畅优先」的叫 TouchCustom_q3d_smooth（它的反面），宿主 dm_custom.c 让两框互斥（同语言行）。
-# TouchCustom_q3d_Text 是空字、高度盖住两项的框：手柄选中框按「文字框与勾选框的上下沿取并」框住整行（dm_custom.c），所以用它把两项一起框进去
+# TouchCustom_q3d_Text 是空字、高度盖住两项的框：手柄选到这一行时宿主按「文字框与勾选框的上下沿取并」把整行滚进列表框（dm_custom.c），所以用它让两项一起露出来
 # "3D Quality" (Smoothness first (default, automatically lowers the 3D scale on frame drops) / Quality first (no automatic lowering)): a stacked two-option radio, each option with a line of small description text below its title.
 # It stores a single key q3d (1 = quality first): the "Quality first" checkbox is TouchCustom_q3d and the "Smoothness first" one is TouchCustom_q3d_smooth (its inverse); the host's dm_custom.c makes the two boxes mutually exclusive (like the language row).
-# TouchCustom_q3d_Text is an empty-text box tall enough to cover both options: the controller selection frame wraps the whole row by "the union of the top/bottom edges of the text box and the checkbox" (dm_custom.c), so it is used to frame both options together
+# TouchCustom_q3d_Text is an empty-text box tall enough to cover both options: when the controller selects the row, the host scrolls "the union of the top/bottom edges of the text box and the checkbox" into the list box (dm_custom.c), so both options come into view together
 def _custom_q3d_row(i, setting="q3d"):
     prefix = "TouchCustom_" + setting
     y = _CUSTOM_Y[i]; h = _CUSTOM_LINE_H
@@ -1357,10 +1357,14 @@ def _custom_page(text, kind=None):   # kind：'video'（Mac、iOS 的视频页�
            + title + '            ] },\n'
            + '            { "type": "Widget", "name": "TouchCustomRows", "fields": { "rect": { "x": 0, "y": 0, "width": %d, "height": %d } }, "children": [\n' % (1700 if _VIDEO_MAC else 1500, _CUSTOM_TITLE_H + _VIDEO_H if kind == 'video' else _CUSTOM_H)
            + rows +
-           # 手柄模式的选中框（同符文之语清单 TouchRwSel）：框住十字键选中的那一行，宿主摆（dm_custom.c）；触屏模式一直在屏外（只把 x 挪出去、y 留在内容范围内：滚动区按子控件的范围算内容高度，y 放到 99999 会把可滚范围撑到十万）。和各行在同一个容器里，跟着滚
-           # Selection frame in controller mode (same as TouchRwSel of the runeword list): frames the row selected with the D-pad, positioned by the host (dm_custom.c); always off-screen in touch mode (only x is moved out while y stays within the content range: the scroll area computes the content height from the extent of its child widgets, and a y of 99999 would stretch the scrollable range to a hundred thousand). It is in the same container as the rows and scrolls with them
-           '        { "type": "NineTileImageWidget", "name": "TouchCustomSel", "fields": { "rect": { "x": 99999, "y": 0, "width": 1000, "height": 100 }, "backgroundColor": [ 0, 0, 0, 0 ], '
-           '"filename": "Controller/PANEL/ControllerSelector/ControllerSelectorBorder", "tileScale": 0.5 } },\n'
+           # 手柄模式的高亮：同原版其余页签的手柄焦点，只亮选中的那个控件——切换框是原版 Carousel_Hover、勾选框是 CheckBox_Hover（_profileHD.json 的 Options*FocusIndicatorFilename），宿主摆（dm_custom.c）。
+           # 原先用整行金框（ControllerSelectorBorder 九宫格）：框比字往左出去 30，滚动区把它左边那条裁掉、只剩两个角，与其余页签的样子也不一样。
+           # 触屏模式一直在屏外（只把 x 挪出去、y 留在内容范围内：滚动区按子控件的范围算内容高度，y 放到 99999 会把可滚范围撑到十万）。和各行在同一个容器里、放在最后（画在控件上面，同原版），跟着滚
+           # Controller-mode highlight: like the game's own controller focus on the other tabs, only the selected control lights up -- the game's Carousel_Hover on a selector, CheckBox_Hover on a checkbox (Options*FocusIndicatorFilename in _profileHD.json), positioned by the host (dm_custom.c).
+           # It used to be a gold frame around the whole row (the ControllerSelectorBorder nine-tile): reaching 30 units left of the text, its left edge was clipped by the scroll area, leaving only two corners, and it did not look like the other tabs.
+           # Always off-screen in touch mode (only x is moved out while y stays within the content range: the scroll area computes the content height from the extent of its child widgets, and a y of 99999 would stretch the scrollable range to a hundred thousand). In the same container as the rows and last (drawn over the control, as in the game), so it scrolls with them
+           '        { "type": "ImageWidget", "name": "TouchCustomHiCar", "fields": { "rect": { "x": 99999, "y": 0 }, "filename": "Controller/HoverImages/Carousel_Hover" } },\n'
+           '        { "type": "ImageWidget", "name": "TouchCustomHiBox", "fields": { "rect": { "x": 99999, "y": 0 }, "filename": "Controller/HoverImages/CheckBox_Hover" } },\n'
            '            ] },\n        ] },\n'
            '    ]\n}\n')
     return out, len(_CUSTOM_ALL) + 2
