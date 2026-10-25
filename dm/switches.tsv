@@ -573,6 +573,7 @@ DM_TEST_VAULT_PART	host	host/dm_vault_ui.c	-
 DM_TEST_VAULT_PEND	host	host/dm_vault.c	-
 DM_TEST_VAULT_SAVE_FAIL	host	host/dm_vault.c	-
 DM_TEST_VAULT_SETS	host	host/dm_vault_ui.c	-
+DM_TEST_VIDEO_FIRSTBOOT	host	host/front_mac.m	-
 DM_TEST_VOICE	host	host/dm_custom.c	-
 DM_TEST_WALK_CAL	host	host/dm_world.c	-
 DM_TEST_WARP_DIAG	host	host/diag.c	-
