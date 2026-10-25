@@ -84,6 +84,16 @@ Xcode 的 LLDB 能提供模型上下文协议（MCP）服务，代理可以驱�
 
 同一时间只能有一个 lldb 提供 MCP 服务：多了的话 `lldb-mcp` 报「too many MCP servers running」退出。被杀掉的 lldb 会留下 `~/.lldb/lldb-mcp-<pid>.json`，过时的要删掉。
 
+`lldb-mcp` 只在启动时查找服务。那时如果一个都没有，它会自己起一个 lldb（`lldb -O 'protocol start MCP'`）：代理退出后它还在运行，下一个代理接着用，也算作那唯一的一个服务。Xcode 27.1 起的这个 lldb 的标准输入输出是关着的：能加载目标，但每次 `process attach` 都报「Bad file descriptor」失败。办法有两个：在代理启动前先自己起一个带服务的 lldb（第 1 步）；或者把 `LLDB_EXE_PATH` 指向一个包装脚本，给 `lldb-mcp` 起的 lldb 一个永不关闭的标准输入：
+
+```bash
+#!/bin/bash
+fifo=$(mktemp -u); mkfifo "$fifo"; exec 3<>"$fifo"; rm -f "$fifo"
+exec "$(xcrun --find lldb)" "$@" <&3 3<&- >>"${TMPDIR:-/tmp}/lldb-mcp-backend.log" 2>&1
+```
+
+用 `claude mcp add lldb -e LLDB_EXE_PATH=/path/to/wrapper -- xcrun lldb-mcp` 注册。之后代理用 `process attach -p <pid>` 附加，再用 `command script import <完整路径>/dm/tools/lldb/dm.py` 载入上面的命令。程序要自己启动再附加：经 `lldb-mcp` 执行 `process launch` 不会返回（有没有包装脚本都一样），之后的命令全被堵住，直到那个 lldb 被杀掉。要重新由自己的 lldb 提供服务，先停掉那个：`pkill -f 'lldb -O protocol start MCP'`。
+
 ## 消毒器构建
 
 ```bash
