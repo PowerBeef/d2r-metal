@@ -19,6 +19,7 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
   - The fork targets Apple silicon, Metal 4, MetalFX and current Apple hardware.
   - The Android, HarmonyOS and Vulkan code (`dm/android`, `dm/harmony`, `dm/gfx/vulkan`, their docs and switches) stays in the tree so upstream merges stay clean, but it isn't built, tested or maintained here. Shared-code changes may break it; don't delete it.
   - When a change also fits upstream's platforms, keep it portable and offer it as an `up/<topic>` PR. Apple-only work stays `Upstream: fork-only` unless upstream would want it.
+- **Branding:** the apps show "D2R Metal" (`mac_app.sh` `NAME`, the Mac window title, the iOS `CFBundleDisplayName`, player-facing strings). Everything player data hangs on keeps the old spelling: the bundle IDs, the Mac data folders (`APP_NAME` "D2R Mobile" in `app_mac.m`), the iOS "D2R Mobile Resources" folder, the `org.d2rmobile.*` IDs and the executable `D2RMobile`. Don't rename those.
 
 - **Remotes:**
   - `origin` = the fork. `main` is its default branch.
@@ -102,7 +103,7 @@ The Python version and the venv:
 ./setup.sh                            # venv, rewrite (product.sh build), shader translation; reruns skip done steps
 ./setup.sh <package>... <prod.keys>   # extract game files first (base and update may be separate packages)
 
-dm/tools/mac_app.sh                   # Mac App → $DM_ROOT/out/macapp/D2R Mobile.app (macOS 26+; DM_MAC_M3=1 for 15–25)
+dm/tools/mac_app.sh                   # Mac App → $DM_ROOT/out/macapp/D2R Metal.app (macOS 26+; DM_MAC_M3=1 for 15–25)
 cd dm/ios && DM_DEVICE_FAMILY=1 ./run.sh build && ./run.sh install   # iPhone; signing in dm/ios/local.env
 ```
 

@@ -45,10 +45,10 @@ The packaging tool accepts both shells with the same command. For A16 and earlie
 
 ```bash
 source ~/dm-work/build/cache/dm/venv/bin/activate
-DM_MAC_M3=1 dm/tools/mac_app.sh        # produces ~/dm-work/out/macapp/D2R Mobile M3.app
+DM_MAC_M3=1 dm/tools/mac_app.sh        # produces ~/dm-work/out/macapp/D2R Metal M3.app
 ```
 
-It recompiles the shader libraries for macOS 15 (about 3 minutes, the first time only) into the output directory. The older-API App is called "D2R Mobile M3" and has its own save and log directory, so it can sit next to the default App. Like the default App it runs only on the Mac that built it; **do not delete or move the output directory**, the recompiled shader libraries are in it.
+It recompiles the shader libraries for macOS 15 (about 3 minutes, the first time only) into the output directory. The older-API App is called "D2R Metal M3" and has its own save and log directory, so it can sit next to the default App. Like the default App it runs only on the Mac that built it; **do not delete or move the output directory**, the recompiled shader libraries are in it.
 
 ## How it differs from the default build
 

@@ -55,7 +55,7 @@ python3 dm/tools/astc_pack.py finalize "$D/pack"                   # 3 收尾：
 
 5. **装机**，和平常一样（`./run.sh install` 或用 Xcode）。
 
-6. **把贴图包放进手机**：在「文件」App 里打开「我的 iPhone → D2R Mobile」，把 `Legacy Device Pack` 这个文件夹**整个**拷进去，和游戏资源文件夹放在同一层。用 Finder 也可以（连上手机 → 文件 → D2R Mobile）。然后打开游戏。
+6. **把贴图包放进手机**：在「文件」App 里打开「我的 iPhone → D2R Metal」，把 `Legacy Device Pack` 这个文件夹**整个**拷进去，和游戏资源文件夹放在同一层。用 Finder 也可以（连上手机 → 文件 → D2R Mobile）。然后打开游戏。
 
 ## 要注意的
 

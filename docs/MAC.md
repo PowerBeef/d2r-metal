@@ -2,7 +2,7 @@
 
 简体中文: [MAC.zh-CN.md](MAC.zh-CN.md)
 
-On an Apple silicon Mac this project can be built into a native macOS App, `D2R Mobile.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (rifts, the trove, the chronicle, the Custom page and so on), using the original's gamepad interface.
+On an Apple silicon Mac this project can be built into a native macOS App, `D2R Metal.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (rifts, the trove, the chronicle, the Custom page and so on), using the original's gamepad interface.
 
 **Up front: these five things have not been operated by a person yet** — keyboard keys, a physical gamepad, the resource-folder dialog, ⌘Q and menu clicks, and how it feels in the hand. Where this page says "verified", it was run unattended: keys injected by a test script, the mouse through a test entry, quitting, full screen and resizing through test switches. If you try it, please open an Issue and tell us how it went.
 
@@ -12,8 +12,8 @@ Apple silicon (Intel Macs are not supported; see "[Which devices are supported](
 
 | Your system | How to build | Output |
 |---|---|---|
-| macOS 26 or later | Default: `dm/tools/mac_app.sh` | `D2R Mobile.app` |
-| macOS 15 – 25 | Older-API build: `DM_MAC_M3=1 dm/tools/mac_app.sh` | `D2R Mobile M3.app` |
+| macOS 26 or later | Default: `dm/tools/mac_app.sh` | `D2R Metal.app` |
+| macOS 15 – 25 | Older-API build: `DM_MAC_M3=1 dm/tools/mac_app.sh` | `D2R Metal M3.app` |
 
 The default build puts the graphics side on a graphics interface that only exists from macOS 26 on (Metal 4); on earlier systems it does not open (the system says the App cannot be used with this version of macOS). The older-API build is the same source and the same game with the graphics side using interfaces that older systems also have; its minimum is macOS 15.0. Details: [OLDER_SYSTEMS.md](OLDER_SYSTEMS.md).
 
@@ -27,7 +27,7 @@ dm/tools/mac_app.sh                  # macOS 26 or later
 DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
 ```
 
-The default build takes ten-odd seconds and produces `~/dm-work/out/macapp/D2R Mobile.app` (about 3 MB). The older-API build recompiles the shader libraries for macOS 15 the first time, which adds about 3–4 minutes, and produces `D2R Mobile M3.app`; it has its own save and log directories (with M3 in the name), so it can sit next to the default App. To put the output elsewhere, add an output directory after the command.
+The default build takes ten-odd seconds and produces `~/dm-work/out/macapp/D2R Metal.app` (about 3 MB). The older-API build recompiles the shader libraries for macOS 15 the first time, which adds about 3–4 minutes, and produces `D2R Mobile M3.app`; it has its own save and log directories (with M3 in the name), so it can sit next to the default App. To put the output elsewhere, add an output directory after the command.
 
 The App contains only our own program. The rewritten game program, the shader libraries and the UI overlay are all made from your game files; they stay in your working directory (`~/dm-work`) and the App only records where they are — so **the App runs only on the Mac that built it**. Please do not copy it to anyone, and do not delete or move the working directory (the shader libraries recompiled for the older-API build are in the output directory). Signing is local ad-hoc signing: no developer account and no device registration.
 
@@ -104,10 +104,10 @@ What it cannot do yet:
 
 ## Saves, logs and iCloud
 
-- Saves: `~/Library/Application Support/D2R Mobile/save`
+- Saves: `~/Library/Application Support/D2R Mobile/save` (the data folders keep the project's former name, so saves carry over from earlier builds)
 - Log: `~/Library/Logs/D2R Mobile/host.log` (the previous run is `host.prev.log`). When reporting a problem use Help → Share Log… in the menu bar: it packs these two logs and a version-information file into one archive and lets you choose where to save it; nothing is uploaded, no saves are included, and the user name in the logs is replaced with `~`.
 - No sound: at launch the log has a line `audio：输出设备「…」…，系统缺省输出「…」…` (the output device in use and the system default output; a mismatch is marked red), and on exit a line `声卡回调累计 N` — N = 0 means no sound was played this time. (These log lines are in Chinese.)
-- The older-API build (`D2R Mobile M3.app`) uses a separate pair of directories with M3 in the name.
+- The older-API build (`D2R Metal M3.app`) uses a separate pair of directories with M3 in the name.
 
 **iCloud save sync: off by default in an App you build from this repository; a paid developer account can turn it on.** The program has the same sync as on iPhone / iPad wired in, but it needs the App to carry the iCloud signing entitlement. By default the App is signed locally without it, so saves stay on this Mac, the log records one line saying iCloud is unavailable and only local saves are used, and the game runs as usual. With a paid developer account, download a Mac provisioning profile that carries iCloud, put the `.provisionprofile` into `~/dm-work/mac-sign` (or point `DM_MAC_SIGN_DIR` at its folder) and build with `DM_MAC_ICLOUD=1 dm/tools/mac_app.sh`: the script reads the team, bundle identifier and entitlements from the profile and signs with the matching certificate in your keychain. The bundle identifier in the profile decides the iCloud container, so a profile for your iOS App's identifier syncs with your iPhone / iPad. Contributed by [@xielh96](https://github.com/xielh96) ([#121](https://github.com/jhaizhou-ops/d2r-mobile/pull/121)). Without a paid account, bring your phone's progress over by importing it by hand as below.
 
@@ -118,7 +118,7 @@ Importing is a one-time manual copy: afterwards each side goes its own way and p
 **1. Find the save on the iPhone / iPad**
 
 - Quit the game completely on the phone / tablet first (swipe it away in the app switcher).
-- Open the built-in Files app → "On My iPhone" (or "On My iPad") → "D2R Mobile" → the `save` folder inside is the save.
+- Open the built-in Files app → "On My iPhone" (or "On My iPad") → "D2R Metal" → the `save` folder inside is the save.
 
 **2. Copy the whole `save` folder, do not pick files**
 

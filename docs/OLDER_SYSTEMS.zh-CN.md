@@ -45,10 +45,10 @@ DM_IOS_M3=1 ./run.sh build
 
 ```bash
 source ~/dm-work/build/cache/dm/venv/bin/activate
-DM_MAC_M3=1 dm/tools/mac_app.sh        # 产出 ~/dm-work/out/macapp/D2R Mobile M3.app
+DM_MAC_M3=1 dm/tools/mac_app.sh        # 产出 ~/dm-work/out/macapp/D2R Metal M3.app
 ```
 
-它会按 macOS 15 重新编译一份着色器库（大约 3 分钟，首次构建时才需要），并将结果放到输出目录中。旧接口版 App 名称为「D2R Mobile M3」，存档和日志目录也会单独分开，因此不会和默认构建混在一起。
+它会按 macOS 15 重新编译一份着色器库（大约 3 分钟，首次构建时才需要），并将结果放到输出目录中。旧接口版 App 名称为「D2R Metal M3」，存档和日志目录也会单独分开，因此不会和默认构建混在一起。
 
 ## 和默认构建有什么不同
 

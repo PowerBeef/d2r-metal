@@ -80,7 +80,7 @@ class MacBundleTest(unittest.TestCase):
         product = data/'product'
         output = self.root/'output'
         run('bash', dm/'tools/mac_app.sh', output, env=env)
-        app = output/'D2R Mobile.app'
+        app = output/'D2R Metal.app'
         res = app/'Contents/Resources'
         info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
         self.assertEqual(info['CFBundleIconFile'], 'AppIcon')
@@ -93,11 +93,11 @@ class MacBundleTest(unittest.TestCase):
             linked_env.pop(key)
         linked_env['DM_MAC_LINK'] = '1'
         run('bash', dm/'tools/mac_app.sh', self.root/'linked', env=linked_env)
-        linked_res = self.root/'linked/D2R Mobile.app/Contents/Resources'
+        linked_res = self.root/'linked/D2R Metal.app/Contents/Resources'
         self.assertIn('product=', (linked_res/'paths.txt').read_text())
         self.assertFalse((linked_res/'romfs').exists())
         self.assertFalse((linked_res/'product').exists())
-        self.assertNotIn('CFBundleIconFile', plistlib.loads((self.root/'linked/D2R Mobile.app/Contents/Info.plist').read_bytes()))
+        self.assertNotIn('CFBundleIconFile', plistlib.loads((self.root/'linked/D2R Metal.app/Contents/Info.plist').read_bytes()))
         self.assertFalse((linked_res/'AppIcon.icns').exists())
         missing_icon = subprocess.run(['bash', str(dm/'tools/mac_app.sh'), str(self.root/'no icon')],
                                       env=dict(linked_env, DM_MAC_ICON_SOURCE=str(self.root/'missing.png')), capture_output=True, text=True)
@@ -133,7 +133,7 @@ class MacBundleTest(unittest.TestCase):
             linked.pop(key)
         output = self.root/'linked output'
         run('bash', dm/'tools/mac_app.sh', output, env=linked)
-        app = output/'D2R Mobile.app'
+        app = output/'D2R Metal.app'
         info = (app/'Contents/Info.plist').read_bytes()
         overlay = output/'romfs_overlay.local'
         self.assertIn(f'romfs_overlay={overlay}', (app/'Contents/Resources/paths.txt').read_text())

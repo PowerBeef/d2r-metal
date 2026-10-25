@@ -1,5 +1,5 @@
 #!/bin/bash
-# 把 Mac 宿主包成能双击起的 macOS App：mac_app.sh [输出目录]   产出 <输出目录>/D2R Mobile.app（缺省 $DM_ROOT/out/macapp）
+# 把 Mac 宿主包成能双击起的 macOS App：mac_app.sh [输出目录]   产出 <输出目录>/D2R Metal.app（缺省 $DM_ROOT/out/macapp）
 # 包里有：宿主程序、改写后的游戏程序（产物目录，种类 DM_MAC_PRODUCT，缺省 touch）、有界面覆盖层就带上（DM_MAC_OVERLAY=<目录>）。
 # DM_MAC_LINK=1：不带派生物的出法——改写后的游戏程序、着色器库、界面覆盖层都是从游戏内容派生的，公开发布的包不能带；
 #   这样出的包里只有宿主程序和 Resources/paths.txt（各项指向本机构建产物的路径），只在构建它的这台机器上能跑。
@@ -12,7 +12,7 @@ OUT=${1:-$ROOT/out/macapp}; KIND=${DM_MAC_PRODUCT:-touch}; BID=${DM_MAC_BUNDLE_I
 P=$(bash "$HERE/product.sh" path "$KIND"); [ -f "$P/main.patched.bin" ] || { echo "🔴 没有产物 ${P}（先跑 product.sh build）"; exit 2; }
 # DM_MAC_M3=1：旧接口版（图形后端不用 Metal 4，最低系统 host/Makefile 的 MACOS_MIN_M3）。包名、显示名、包标识都带 M3，能和正式包并存；存档与日志目录也是另一个
 # DM_MAC_M3=1: older-API build (the graphics backend does not use Metal 4; minimum system is MACOS_MIN_M3 in host/Makefile). Package name, display name and bundle identifier all carry M3 so it can coexist with the regular package; the save and log directory is a separate one as well
-M3=${DM_MAC_M3:-}; NAME="D2R Mobile${M3:+ M3}"; [ -z "$M3" ] || BID=${DM_MAC_BUNDLE_ID:-org.d2rmobile.mac.m3}
+M3=${DM_MAC_M3:-}; NAME="D2R Metal${M3:+ M3}"; [ -z "$M3" ] || BID=${DM_MAC_BUNDLE_ID:-org.d2rmobile.mac.m3}
 # DM_MAC_ICLOUD=1：用付费开发者的 provisioning profile（带 iCloud 能力的 Mac profile）签名，出的 App 能 iCloud 同步存档。
 # 把 profile 放进签名目录（缺省 ~/dm-work/mac-sign，DM_MAC_SIGN_DIR 可换）即可：团队、包标识、entitlements、证书全从 profile 里读，
 # 签名身份按内嵌证书的 SHA-1 指纹在钥匙串精确匹配；包标识决定 iCloud 容器（iOS 包的 profile = 与手机同步，自定标识 = 两台 Mac 互同步）。

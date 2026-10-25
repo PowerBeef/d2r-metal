@@ -55,7 +55,7 @@ Afterwards `$D/pack` contains:
 
 5. **Install** as usual (`./run.sh install` or Xcode).
 
-6. **Put the pack on the phone**: in the Files app open "On My iPhone → D2R Mobile" and copy the **whole** `Legacy Device Pack` folder into it, at the same level as the game resource folder. Finder works too (connect the phone → Files → D2R Mobile). Then open the game.
+6. **Put the pack on the phone**: in the Files app open "On My iPhone → D2R Metal" and copy the **whole** `Legacy Device Pack` folder into it, at the same level as the game resource folder. Finder works too (connect the phone → Files → D2R Mobile). Then open the game.
 
 ## Things to know
 

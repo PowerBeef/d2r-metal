@@ -55,7 +55,7 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: D2R Mobile
+        CFBundleDisplayName: D2R Metal
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)         # 构建号（testflight.sh 传月日时分）；xcodegen 缺省写死 1，TestFlight 会当重复构建 | Build number (testflight.sh passes month-day-hour-minute); xcodegen hardcodes 1 by default, which TestFlight treats as a duplicate build
         CFBundleShortVersionString: $(MARKETING_VERSION)
         SWUpdateURL: $(DM_UPDATE_URL)                       # 新版本提示查的版本文件地址（Sources/dm_update.m）；出包脚本传，地址不进仓库。空 = 不查不提示 | URL of the version file checked for the new-version prompt (Sources/dm_update.m); passed by the packaging script, the URL is not committed to the repository. Empty = no check, no prompt
@@ -188,7 +188,7 @@ targets:
     info:
       path: Gen/tvos/Info.plist
       properties:
-        CFBundleDisplayName: D2R Mobile TV
+        CFBundleDisplayName: D2R Metal TV
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         GCSupportedGameControllers: [{ProfileName: ExtendedGamepad}]   # 只认扩展手柄；Siri 遥控器不是扩展手柄，玩不了 | Extended gamepads only; the Siri Remote is not an extended gamepad and cannot play

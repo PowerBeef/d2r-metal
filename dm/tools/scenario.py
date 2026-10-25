@@ -161,13 +161,13 @@ class CliBackend:
 
 class MacAppBackend(CliBackend):
     """Mac App（玩家装的那个包）：直接起包里的可执行文件当子进程，DM_APP_SUPPORT 指到结果目录里的 support/（存档副本、设置、日志都在那里，iCloud 不同步，
-    玩家的存档与日志不动），DM_APP_ROMFS 给资源。测试用的包缺省是 $DM_ROOT/out/macapp_test/D2R Mobile.app（没有就用 dm/tools/mac_app.sh 出一个；DM_MAC_APP 可另指）。
+    玩家的存档与日志不动），DM_APP_ROMFS 给资源。测试用的包缺省是 $DM_ROOT/out/macapp_test/D2R Metal.app（没有就用 dm/tools/mac_app.sh 出一个；DM_MAC_APP 可另指）。
     The Mac App (the package players install): its executable runs directly as a child process, with DM_APP_SUPPORT pointing at support/ in the result directory (the save copy, settings and logs live there, iCloud does not sync,
-    and the player's saves and logs are untouched) and DM_APP_ROMFS giving the resources. The test package defaults to $DM_ROOT/out/macapp_test/D2R Mobile.app (made with dm/tools/mac_app.sh when missing; DM_MAC_APP points elsewhere)."""
+    and the player's saves and logs are untouched) and DM_APP_ROMFS giving the resources. The test package defaults to $DM_ROOT/out/macapp_test/D2R Metal.app (made with dm/tools/mac_app.sh when missing; DM_MAC_APP points elsewhere)."""
     name = 'mac-app'
 
     def start(self):
-        app = os.environ.get('DM_MAC_APP') or os.path.join(DM_ROOT, 'out', 'macapp_test', 'D2R Mobile.app')
+        app = os.environ.get('DM_MAC_APP') or os.path.join(DM_ROOT, 'out', 'macapp_test', 'D2R Metal.app')
         if not os.path.isdir(app):
             print(f'出测试用的 Mac App | building the test Mac App: {app}', flush=True)
             p = subprocess.run(['bash', os.path.join(DM, 'tools', 'mac_app.sh'), os.path.dirname(app)], capture_output=True, text=True, check=False)
