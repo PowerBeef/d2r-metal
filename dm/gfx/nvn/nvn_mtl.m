@@ -750,7 +750,7 @@ static BENC blit(void) { blit_note(); rp_end();
     return g_blit; }
 #endif
 
-static size_t arena_alloc(size_t n, id<MTLBuffer> *buf);
+static size_t arena_alloc(size_t n, __strong id<MTLBuffer> *buf);   // 与定义同为 __strong（见定义处） | __strong like the definition (see there)
 #define ARENA_SZ (4u << 20)   // 参数区块一块的大小（arena_new） | Size of one argument block (arena_new)
 // stage：源不在任何内存池里时先把这 n 字节暂存进本次提交的参数区块，再从那里拷（只给 uniform 更新：载荷在命令内存里，
 // 游戏命令内存池用空时 hle_nvn.c 给的宿主补段不是内存池——原先在这里 MDIE 退出进程）。两套接口同一条路：参数区块在驻留集里（Metal 4），旧接口按缓冲对象拷
@@ -2659,7 +2659,9 @@ static NvArena *arena_new(void) {
 }
 void arena_begin(void) { if (!g_arenas) { g_arenas = [NSMutableArray array]; g_sub_arenas = [NSMutableArray array]; } g_cur_arena = nil; }
 void arena_commit(uint64_t fence) { for (NvArena *a in g_sub_arenas) { a->fence = fence; [g_arenas addObject:a]; } [g_sub_arenas removeAllObjects]; g_cur_arena = nil; }
-static size_t arena_alloc(size_t n, id<MTLBuffer> *buf) {
+// 输出参数写成 __strong：ARC 下不加修饰的 id * 是 __autoreleasing，每次调用（每次绘制两次）都把 arena 缓冲放进自动释放池
+// The out-parameter is __strong: an unqualified id * is __autoreleasing under ARC, which put the arena buffer in the autorelease pool at every call (twice per draw)
+static size_t arena_alloc(size_t n, __strong id<MTLBuffer> *buf) {
     n = (n + 255) & ~(size_t)255;
     if (!g_cur_arena || g_cur_arena->used + n > g_cur_arena->buf.length) {
         pthread_mutex_lock(&g_mu); g_cur_arena = arena_new(); pthread_mutex_unlock(&g_mu);
