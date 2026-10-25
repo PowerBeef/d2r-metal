@@ -1157,7 +1157,13 @@ def _settings_tabs(text):
     # 第四项「自定义」同理：原版串 KeyBindingTypeCustom 的西语「Personalizar」在页签里被截成「Persona…」（西语截图），页签用我们表里的短词（页面大标题仍用原版串）
     # The fourth item "Custom" likewise: the original string KeyBindingTypeCustom in Spanish "Personalizar" is truncated to "Persona…" in the tab (Spanish screenshot), so the tab uses the short word from our table (the page heading still uses the original string)
     new = new.replace('"@Controls"', '"@dmTabCustom"').replace('SettingsPanelMessage:CheckChanges:KeyBindingMenu', 'SettingsPanelMessage:CheckChanges:VideoOptionsPanel')
-    return new, n + k + 1
+    # 底部提示条：这份主机版布局自己也声明了 Legend（basedOn 写死的是原版路径 Controller/SettingsPanelHD.json，触屏模式也继承原版那份、不走下面挪走过的触屏副本），
+    # 字（「默认」「返回」）露在「应用 / 默认 / 放弃」三个按钮下面——在这份里也挪走
+    # Bottom legend: this console layout declares its own Legend too (its basedOn is the hard-coded original path Controller/SettingsPanelHD.json, so touch mode also inherits the original and not the touch copy moved away below),
+    # and its text (Default / Return) showed under the Apply / Default / Discard buttons -- moved away in this file as well
+    new, k2 = offscreen(new, types=('ButtonLegendWidget',))
+    if k2 != 1: raise SystemExit('touch_layout：主机版选项页提示条应为 1 个，找到 %d 个' % k2)
+    return new, n + k + k2 + 1
 def _drop_rows(*rows):
     """把选项表里的整行（TableRowWidget "Row <名>"）删掉：表格按剩下的行重排，不留空行。每个名字必须恰好删到一行。 | Delete whole rows (TableRowWidget "Row <name>") from the options table: the table re-lays out the remaining rows and leaves no empty row. Each name must delete exactly one row."""
     def fn(text):
