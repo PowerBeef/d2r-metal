@@ -16,8 +16,10 @@ int dm_thermal_now(void) { return g_dm_thermal; }   // 最近的温控档位（0
 #include <signal.h>
 #include "front.h"
 #include "dm_input.h"
-void dm_gamepad_start(void (*on_mode)(int pad)); void dm_gamepad_touched(void);   // dm_gamepad.m
+void dm_gamepad_start(void (*on_mode)(int pad)); void dm_gamepad_touched(void); void dm_gamepad_on_press(void (*fn)(void));   // dm_gamepad.m
 #include "hle.h"
+#include "dm_vkbd_ui.h"
+static void vkbd_where(dm_vkbd_host *h); static void alert_handoff_pad(void);   // 手柄屏幕键盘画在哪 / 系统输入框开着时手柄有按键（见 front_text_input） | where the on-screen controller keyboard draws / a controller press while the system input box is open (see front_text_input)
 #import "DmTouchOverlay.h"
 #include "dm_touch_native_art.h"
 #include "dm_actions.h"
@@ -148,7 +150,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     self.isAccessibilityElement=YES; self.accessibilityIdentifier=@"dm_touch_surface"; self.accessibilityLabel=SWT("dmA11ySurface");
     dm_tc_init(&_controls,f.size.width,f.size.height); _controls.mouse_click_mode=1;   // 功能页里非物品区的点按走界面鼠标点击 | Taps outside the item area in function pages go through UI mouse clicks
     _overlay=[[DmTouchOverlay alloc] initWithFrame:self.bounds]; _overlay.controls=&_controls; _overlay.hidden=YES;   // 启动即前端页面：进局（读取画面撤下）才显示 | Front-end page right at launch: shown only after entering a run (loading screen removed)
-    [self addSubview:_overlay]; _info=[[UIView alloc] initWithFrame:self.bounds]; _info.userInteractionEnabled=NO; _info.hidden=YES; [self addSubview:_info]; g_touch_view=self; dm_gamepad_start(pad_mode_changed);
+    [self addSubview:_overlay]; _info=[[UIView alloc] initWithFrame:self.bounds]; _info.userInteractionEnabled=NO; _info.hidden=YES; [self addSubview:_info]; g_touch_view=self; dm_gamepad_start(pad_mode_changed); dm_gamepad_on_press(alert_handoff_pad); dm_vkbd_ui_set_host(vkbd_where);
     _rsCover=[[DmSwallowView alloc] initWithFrame:self.bounds]; _rsCover.backgroundColor=UIColor.blackColor; _rsCover.hidden=YES; _rsCover.userInteractionEnabled=YES;   // 开的时候挂到窗口上（restartCover） | Attached to the window when turned on (restartCover)
     { extern void (*g_dm_restart_cover_hook)(int); g_dm_restart_cover_hook=restart_cover_hook; }
     _navigation=0; [self navigationMode:atomic_load(&g_touch_navigation)];
@@ -157,6 +159,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 - (void)safeAreaInsetsDidChange { [super safeAreaInsetsDidChange]; [self setNeedsLayout]; }
 - (void)layoutSubviews {
     [super layoutSubviews];
+    dm_vkbd_ui_relayout();   // 屏幕键盘跟着画面走（转屏、iPhone Duo 展开 / 折叠） | the on-screen keyboard follows the picture (rotation, iPhone Duo unfold / fold)
     CAMetalLayer *l=(CAMetalLayer *)self.layer;
     if(l==g_layer) l.drawableSize=CGSizeMake(self.bounds.size.width*l.contentsScale,self.bounds.size.height*l.contentsScale);   // 真全屏（iPad）时出图层挂在外层容器上，不是这一层 | In true fullscreen (iPad) the present layer hangs on the outer container, not this layer
     UIEdgeInsets si=self.safeAreaInsets; static CGFloat sl=-1,sr=-1,sb=-1; BOOL safeChanged=(si.left!=sl || si.right!=sr || si.bottom!=sb);   // 安全区变了（首次布局 / 转屏）也要重排控件 | A safe area change (first layout / rotation) also requires re-laying out the widgets
@@ -506,6 +509,9 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
 - (void)touchesBegan:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e {
     (void)e;
     [self sweepEndedSlots];
+    // 手柄屏幕键盘开着时碰屏幕 = 改用触屏：收起它、换成系统输入框（已打的字带过去），这一下不交给游戏
+    // Touching the screen while the on-screen controller keyboard is open = turning to touch: it closes and the system input box takes over (keeping what was typed); this touch does not go to the game
+    if(dm_vkbd_ui_active()) { if(!_swallow) _swallow=[NSHashTable weakObjectsHashTable]; for(UITouch *t in ts) [_swallow addObject:t]; dm_vkbd_ui_handoff(); dm_gamepad_touched(); return; }
     // 手柄模式下碰屏幕 = 回触屏模式（dm_gamepad.m），这一下只做这一件事：此刻屏上是手柄版界面，触屏控件还没显示出来（布局重载要几十帧），
     // 照常往下走的话，落点正好在看不见的回城钮 / 技能钮位置就会直接回城、放技能，面板态还会对手柄版面板发点击。
     // Touching the screen in controller mode = back to touch mode (dm_gamepad.m), and this touch does that one thing only: at this moment the
@@ -1019,13 +1025,19 @@ void front_run(void (*guest)(void)) {
     guest();
 }
 
-// 软键盘输入框（front.h）：主线程弹 UIAlertController + 文本框，客体线程阻塞到确定 / 取消。无窗口（非 boot 模式）不弹，返回 -1
+// 软键盘输入框（front.h）：用手柄玩时走手柄屏幕键盘（dm_vkbd_ui.m）；否则主线程弹 UIAlertController + 文本框，客体线程阻塞到确定 / 取消。无窗口（非 boot 模式）不弹，返回 -1。
+// 两种可来回换，打了的字带过去：屏幕键盘开着时碰屏幕 → 换成系统输入框；系统输入框开着时手柄有按键 → 换成屏幕键盘
 // 测试脚本驱动真输入对话框用（触点脚本的 type / alert 两个动作）：当前弹着的对话框与它的结束回调。产品路径不读这两个量。
-// Software keyboard input box (front.h): the main thread presents a UIAlertController + text field, and the guest thread blocks until OK / Cancel. With no window (non-boot mode) nothing is presented and -1 is returned
+// Software keyboard input box (front.h): when played with a controller, the on-screen controller keyboard (dm_vkbd_ui.m); otherwise the main thread presents a UIAlertController + text field, and the guest thread blocks until OK / Cancel. With no window (non-boot mode) nothing is presented and -1 is returned.
+// The two hand over to each other, keeping what was typed: touching the screen while the on-screen keyboard is open → the system input box; a controller press while the system input box is open → the on-screen keyboard
 // For test scripts driving the real input dialog (the type / alert actions of the touch script): the dialog currently shown and its completion callback. The product path does not read these two.
 static UIAlertController *g_text_alert; static void (^g_text_alert_finish)(int);
-int front_text_input(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap) {
-    if (!g_layer) return -1;
+static void vkbd_where(dm_vkbd_host *h) { DmMetalView *v = g_touch_view; h->layer = (__bridge void *)v.layer; h->pic = v.bounds; h->y_up = 0; h->scale = UIScreen.mainScreen.nativeScale; }   // 画在游戏视图上（真全屏时它就是界面矩形） | drawn on the game view (in true fullscreen it is the UI rectangle)
+static void alert_handoff_pad(void) {   // dm_gamepad.m 的按键回调（主线程）：系统输入框开着时手柄有按键 → 关掉它、换成屏幕键盘 | dm_gamepad.m's press callback (main thread): a controller press while the system input box is open → close it and hand over to the on-screen keyboard
+    if (!g_text_alert) return;
+    UIAlertController *a = g_text_alert; void (^fin)(int) = g_text_alert_finish; [a dismissViewControllerAnimated:NO completion:nil]; if (fin) fin(2);
+}
+static int text_alert(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap) {   // 系统输入框：1 确定 / 0 取消 / 2 换成屏幕键盘（out 是已打的字） | the system input box: 1 OK / 0 cancel / 2 hand over to the on-screen keyboard (out holds what was typed)
     NSString *t = title && *title ? @(title) : SWT("dmInputTitle");
     NSString *msg = [NSString stringWithFormat:@"%s%s%s", sub ? sub : "", sub && *sub && guide && *guide ? "\n" : "", guide ? guide : ""];
     extern int g_swkbd_name_panel; int name_rule = g_swkbd_name_panel;   // 建角起名：按游戏的角色名规则拦（hle_swkbd.c 头注） | Naming at character creation: enforce the game's character name rules (hle_swkbd.c header comment)
@@ -1091,12 +1103,12 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
                 tf.text = [tf.text substringWithRange:keep];
             }] forControlEvents:UIControlEventEditingChanged];
         }];
-        void (^finish)(int) = ^(int ok) { UIAlertController *sa = wa; g_text_alert = nil; g_text_alert_finish = nil; if (ok) text = sa.textFields.firstObject.text;   // 弱引用对话框：按钮回调 → finish → 对话框 → 按钮 是个环，对话框每弹一次留一个 | weak reference to the dialog: button callback -> finish -> dialog -> button is a cycle, leaving one dialog behind every time it is shown
+        void (^finish)(int) = ^(int ok) { UIAlertController *sa = wa; g_text_alert = nil; g_text_alert_finish = nil; if (ok) text = sa.textFields.firstObject.text;   // ok：1 确定 / 0 取消 / 2 换成屏幕键盘 | ok: 1 OK / 0 cancel / 2 hand over to the on-screen keyboard   // 弱引用对话框：按钮回调 → finish → 对话框 → 按钮 是个环，对话框每弹一次留一个 | weak reference to the dialog: button callback -> finish -> dialog -> button is a cycle, leaving one dialog behind every time it is shown
             // 名字留空点确定 = 随机取名：我们自己抽一个（dm_namegen.c，约 1.8 万种、与已有角色重名就再抽），当作玩家输入的名字返回，走游戏原本的起名校验；只填进名字框不自动接受（同原版「随机名字」键，玩家看到再点创建）。
             // 原先发原版「随机名字」键，那是按职业在 12 个名字里依次轮，容易撞
             // Leaving the name empty and tapping OK = random naming: we draw one ourselves (dm_namegen.c, about 18,000 variants; redraw if it collides with an existing character), return it as the name the player typed, and go through the game's original name validation; it is only filled into the name field and not auto-accepted (same as the original game's 「随机名字」(Random Name) key: the player sees it and then taps create).
             // Previously we sent the original game's 「随机名字」(Random Name) key, which cycles through 12 names per class in order and collides easily
-            if (ok && name_rule && !text.length) { char nm[32]; if (dm_name_gen(nm, sizeof nm, dm_name_taken)) { text = @(nm); extern _Atomic int g_fe_name_no_accept; atomic_store(&g_fe_name_no_accept, 1); LOG("起名：随机名 → 名字框「%s」（名字留空点确定）", nm); } else { ok = 0; LOG("起名：随机名 → 名字框「」【红】（已有同名角色，试满 64 次仍重名），名字框不动"); } }   // 日志句式同宿主 dm_actions.c，uireg two_names 按它判 | Log wording is the same as the host's dm_actions.c; uireg two_names judges by it
+            if (ok == 1 && name_rule && !text.length) { char nm[32]; if (dm_name_blank_random(nm, sizeof nm)) text = @(nm); else ok = 0; }   // dm_vkbd_ui.m（屏幕键盘、Mac 表单同一个） | dm_vkbd_ui.m (the same one as the on-screen keyboard and the Mac sheet)
             r = ok; dispatch_semaphore_signal(done); };
         g_text_alert = a; g_text_alert_finish = [finish copy];
         [a addAction:[UIAlertAction actionWithTitle:SWT("dmCancel") style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) { (void)x; finish(0); }]];
@@ -1138,7 +1150,17 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
     dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
     if (!r) return 0;
     snprintf(out, out_cap, "%s", text.UTF8String ? text.UTF8String : "");
-    return 1;
+    return r;
+}
+int front_text_input(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap) {
+    if (!g_layer) return -1;
+    char cur[1024]; snprintf(cur, sizeof cur, "%s", initial ? initial : "");
+    for (int pad = dm_vkbd_wanted();; pad = !pad) {
+        int r = pad ? dm_vkbd_input(title, cur, max_chars, out, out_cap) : text_alert(title, sub, guide, cur, max_chars, out, out_cap);
+        if (r != 2) return r;
+        snprintf(cur, sizeof cur, "%s", out);
+        LOG("前端：输入框——%s（带过去「%s」）", pad ? "碰了屏幕，屏幕键盘换成系统输入框" : "手柄有按键，系统输入框换成屏幕键盘", cur);
+    }
 }
 
 // ---- 生命周期 / 过热 / 音频会话 → host（hle.h：dm_focus_set / dm_set_opmode / dm_audio_suspend）----
@@ -1223,6 +1245,7 @@ static void background_wait_save(void) {
     // 系统输入框（数量框 / 起名框）开着：游戏那边在等它、客体时钟冻着（hle_swkbd），拍不走就存不了。先按「取消」关掉（游戏那边的输入框保持原值），再请存盘
     // The system input box (quantity / name box) is open: the game is waiting for it and the guest clock is frozen (hle_swkbd), so no tick runs and nothing can be saved. Close it with "Cancel" first (the game's own input box keeps its value), then ask for the save
     if (g_text_alert) { UIAlertController *a = g_text_alert; void (^fin)(int) = g_text_alert_finish; [a dismissViewControllerAnimated:NO completion:nil]; if (fin) fin(0); LOG("前端：进后台——系统输入框开着，按取消关掉再存盘"); }
+    if (dm_vkbd_ui_cancel()) LOG("前端：进后台——手柄屏幕键盘开着，按取消收起再存盘");
     uint64_t n = 0; int froze = 0; double ms = 0;
     mtl_present_discard(1);
     dm_save_wait(2.5, &n, &froze, &ms);   // 游戏停着（暂停菜单开着）时冻住世界、临时放开暂停存这一次，存完写回（diag.c） | If the game is stopped (pause menu open), freeze the world and temporarily release the pause for this one save, then write it back (diag.c)

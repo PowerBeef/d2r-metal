@@ -1,49 +1,22 @@
 // 秘境爬塔左侧任务栏：放在左边并缩小，布局参考暗黑 3 右侧任务栏，倒计时条和整体风格按暗黑 2。
 // 尺寸数字照设计稿：设计稿按 Mac 窗口 2 倍像素画（游戏区 1334×614），
 // 这里以 u = 游戏区高 / 614 为单位换算。数据由 dm/host/dm_rift.c 出（dm_rift_hud），前端每帧调（front_ios.m tickTouchControls）。
-// 字：原版 BlizzardGlobal——运行时从资源包读出来注册（不进仓库、不进 App 包）；读不到就用系统粗体。
-//   资源包读法同 dm/ios/tools/touch_layout.py read_layout：data/build_manifest.psv 按路径后缀找行 → 第 7 列编码键（第 10、11 字节 = 数据档号，12–16 = 偏移）、
-//   第 8 列原始长度、第 9 列编码（n 原样 / z 整块 zlib / 其余 BLTE 分块：每块首字节 N 原样、Z = zlib）。
+// 字：原版 BlizzardGlobal——运行时从资源包读出来（dm_vkbd_ui.m dm_game_font，不进仓库、不进 App 包）；读不到就用系统粗体。
 // Left-side quest bar for the rift tower climb: placed on the left and shrunk; the layout follows Diablo 3's right-side quest bar, the countdown bar and overall style follow Diablo 2.
 // Size numbers follow the design mock: the mock is drawn at 2x pixels of the Mac window (game area 1334×614),
 // and here everything is converted with u = game area height / 614 as the unit. Data comes from dm/host/dm_rift.c (dm_rift_hud); the front end calls it every frame (front_ios.m tickTouchControls).
-// Font: the original game's BlizzardGlobal -- read from the asset pack at runtime and registered (not in the repository, not in the App bundle); if it cannot be read, use the system bold font.
-//   The asset pack is read the same way as dm/ios/tools/touch_layout.py read_layout: find the row in data/build_manifest.psv by path suffix → column 7 is the encoding key (bytes 10 and 11 = data archive number, 12–16 = offset),
-//   column 8 the raw length, column 9 the encoding (n as-is / z whole-block zlib / otherwise BLTE chunks: first byte of each chunk N as-is, Z = zlib).
+// Font: the original game's BlizzardGlobal -- read from the asset pack at runtime (dm_vkbd_ui.m dm_game_font; not in the repository, not in the App bundle); if it cannot be read, use the system bold font.
 #import <UIKit/UIKit.h>
 #include "dm_i18n.h"
 #import <CoreText/CoreText.h>
+#include "dm_vkbd_ui.h"
 #include "../../host/dm_rift.h"
 
-static NSData *zinflate(const uint8_t *p, size_t n, size_t cap) {   // zlib（带 2 字节头）→ 原文；Foundation 的 Zlib 算法是裸 deflate，跳过头 | zlib (with 2-byte header) → plaintext; Foundation's Zlib algorithm is raw deflate, so skip the header
-    (void)cap; if (n < 2) return nil; return [[NSData dataWithBytes:p + 2 length:n - 2] decompressedDataUsingAlgorithm:NSDataCompressionAlgorithmZlib error:nil];
-}
-static NSData *romfs_file(NSString *suffix) {
-    const char *root = getenv("DM_ROMFS"); if (!root) return nil;
-    NSString *data = [@(root) stringByAppendingPathComponent:@"data"], *psv = [NSString stringWithContentsOfFile:[data stringByAppendingPathComponent:@"build_manifest.psv"] encoding:NSUTF8StringEncoding error:nil];
-    for (NSString *line in [psv componentsSeparatedByString:@"\n"]) { NSArray<NSString *> *f = [line componentsSeparatedByString:@"|"];
-        if (f.count < 11 || [line hasPrefix:@"#"] || ![f[9].lowercaseString hasSuffix:suffix]) continue;
-        NSString *ek = f[6]; if (ek.length < 32) return nil; uint8_t k[16]; for (int i = 0; i < 16; i++) k[i] = (uint8_t)strtol([[ek substringWithRange:NSMakeRange(i * 2, 2)] UTF8String], NULL, 16);
-        uint64_t off = 0; for (int i = 11; i < 16; i++) off = off << 8 | k[i]; long rawlen = f[7].longLongValue;
-        NSFileHandle *h = [NSFileHandle fileHandleForReadingAtPath:[data stringByAppendingPathComponent:[NSString stringWithFormat:@"%02d-%08d.data", k[9], k[10]]]]; if (!h) return nil;
-        [h seekToFileOffset:off]; NSData *raw = [h readDataOfLength:rawlen]; [h closeFile]; const uint8_t *r = raw.bytes; if ((long)raw.length != rawlen) return nil;
-        if ([f[8] isEqualToString:@"n"]) return raw;
-        if ([f[8] isEqualToString:@"z"]) return zinflate(r, raw.length, 64 << 20);
-        uint32_t hs = (uint32_t)r[4] << 24 | r[5] << 16 | r[6] << 8 | r[7], nch = (uint32_t)r[9] << 16 | r[10] << 8 | r[11], pos = hs; NSMutableData *o = [NSMutableData data];
-        for (uint32_t i = 0; i < nch; i++) { const uint8_t *e = r + 12 + i * 24; uint32_t es = (uint32_t)e[0] << 24 | e[1] << 16 | e[2] << 8 | e[3], ds = (uint32_t)e[4] << 24 | e[5] << 16 | e[6] << 8 | e[7];
-            if (pos + es > raw.length) return nil; const uint8_t *b = r + pos;
-            if (b[0] == 'N') [o appendBytes:b + 1 length:es - 1]; else { NSData *d = zinflate(b + 1, es - 1, ds); if (!d) return nil; [o appendData:d]; } pos += es; }
-        return o; }
-    return nil;
-}
-static UIFont *d2font(CGFloat size) {   // 原版 BlizzardGlobal（中文、数字都是它） | The original game's BlizzardGlobal (used for both Chinese text and digits)
-    static NSString *name; static int tried;
-    if (!tried) { tried = 1; NSData *d = romfs_file(@"/hd/ui/fonts/blizzardglobal-v5_81.ttf");
-        CGDataProviderRef p = d ? CGDataProviderCreateWithCFData((__bridge CFDataRef)d) : NULL; CGFontRef f = p ? CGFontCreateWithDataProvider(p) : NULL;
-        if (f && CTFontManagerRegisterGraphicsFont(f, NULL)) name = (__bridge_transfer NSString *)CGFontCopyPostScriptName(f);
-        if (f) CGFontRelease(f); if (p) CGDataProviderRelease(p);
-        NSLog(@"[秘境] 任务栏字体：%@", name ?: @"读不到原版 BlizzardGlobal，用系统粗体"); }
-    return (name ? [UIFont fontWithName:name size:size] : nil) ?: [UIFont boldSystemFontOfSize:size];
+static UIFont *d2font(CGFloat size) {   // 原版 BlizzardGlobal（中文、数字都是它；dm_vkbd_ui.m 从资源包读）；按字号缓存 | The original game's BlizzardGlobal (used for both Chinese text and digits; read from the asset pack by dm_vkbd_ui.m); cached per size
+    static NSMutableDictionary<NSNumber *, UIFont *> *cache; if (!cache) cache = [NSMutableDictionary dictionary];
+    UIFont *f = cache[@(size)]; if (f) return f;
+    CTFontRef ct = dm_game_font(size); f = ct ? (__bridge_transfer UIFont *)ct : [UIFont boldSystemFontOfSize:size];   // CTFont 与 UIFont 免费桥接 | CTFont is toll-free bridged with UIFont
+    cache[@(size)] = f; return f;
 }
 static UIColor *rgb(int r, int g, int b, CGFloat a) { return [UIColor colorWithRed:r / 255.0 green:g / 255.0 blue:b / 255.0 alpha:a]; }
 static CATextLayer *text_layer(void) { CATextLayer *t = [CATextLayer layer]; t.contentsScale = UIScreen.mainScreen.scale; t.shadowOpacity = 0.86; t.shadowOffset = CGSizeMake(1, 1); t.shadowRadius = 0; t.shadowColor = UIColor.blackColor.CGColor; return t; }
