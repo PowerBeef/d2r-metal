@@ -114,10 +114,14 @@ static void layout_game(void) {
 // 暂停菜单 / 大秘境面板开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
 // Quit (close window / Cmd-Q / menu): if a game is running, first ask the game to do one of its own saves and wait for the save commit (same as the iOS shell going to the background), at most 3 s, then shut down in order.
 // When the pause menu / Greater Rift panel is open the game does not tick: freeze the world and temporarily release the pause for this one save (diag.c dm_save_wait, the same function as iOS going to the background); on the loading screen wait until in game before asking. If there is still no commit after 3 s, log "quit without saving" as is
+static int text_input_cancel(void);
 static void app_quit(const char *why) {
     static int once; if (once++) return;
     { uint64_t dm_audio_render_calls(void); LOG("窗口：退出（%s）；声卡回调累计 %llu（0 = 这次没出声）", why, (unsigned long long)dm_audio_render_calls()); }
     DM_EV("quit", "why:s", why);
+    // 数量 / 起名输入框开着：先按「取消」关掉，放走等它的键盘线程、解冻客体时钟，下面才存得了盘（见 front_text_input）
+    // A quantity / name input box is open: answer "Cancel" first to release the keyboard thread waiting on it and unfreeze the guest clock, so the save below can happen (see front_text_input)
+    if (text_input_cancel()) LOG("窗口：退出时输入框开着 → 先按取消关掉，再存盘");
     int dm_ingame_now(void); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
     int dm_cloud_flush_wait(double sec);
     if (!dm_ingame_now() && !dm_uiscreen_ingame()) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
@@ -509,13 +513,27 @@ void front_run(void (*guest)(void)) {
     }
 }
 
-// 软键盘输入框（front.h）：主线程弹 NSAlert + 文本框，客体线程同步等结果。无窗口模式不弹（返回 -1，调用方按取消）
-// Software keyboard input box (front.h): the main thread shows an NSAlert + text field and the guest thread waits synchronously for the result. Not shown in windowless mode (returns -1, the caller treats it as cancel)
+// 软键盘输入框（front.h）：主线程弹 NSAlert + 文本框，客体线程（游戏的键盘线程）等信号量拿结果。无窗口模式不弹（返回 -1，调用方按取消）。
+// 框开着时退出（app_quit）先按「取消」放走键盘线程：开着的框冻着客体时钟（hle_swkbd.c），不放走一拍也走不了、存不了盘。这时模态循环还压在栈上，
+// 所以结果直接交给等的那边，不等 runModal 返回（同 iOS 壳 background_wait_save 关掉输入框）。
+// Software keyboard input box (front.h): the main thread shows an NSAlert + text field; the guest thread (the game's keyboard thread) waits on a semaphore for the result. Not shown in windowless mode (returns -1, the caller treats it as cancel).
+// A quit while the box is up (app_quit) first answers "Cancel" to release the keyboard thread: the open box freezes the guest clock (hle_swkbd.c), so otherwise no tick runs and nothing can be saved. The modal loop is still on the stack then,
+// so the result goes straight to the waiting side instead of waiting for runModal to return (as the iOS shell's background_wait_save closes the input box).
+@interface DmTextReq : NSObject { @public dispatch_semaphore_t sem; int done, ok; NSString *text; } @end
+@implementation DmTextReq @end
+static DmTextReq *g_text_req;   // 只在主线程读写：屏上那个输入框的请求 | read and written on the main thread only: the request of the box on screen
+static void text_req_finish(DmTextReq *q, int ok, NSString *text) {   // 主线程；只交一次结果 | main thread; the result is handed over once
+    if (q->done) return;
+    q->done = 1; q->ok = ok; q->text = text; dispatch_semaphore_signal(q->sem);
+}
+static int text_input_cancel(void) {   // 主线程：有开着的输入框就按「取消」交结果、让模态循环回到事件循环时收场；返回 1 = 有 | main thread: if an input box is open, hand over "Cancel" and let the modal loop end once it gets back to the event loop; returns 1 if there was one
+    DmTextReq *q = g_text_req; if (!q || q->done) return 0;
+    text_req_finish(q, 0, nil); [NSApp stopModalWithCode:NSAlertSecondButtonReturn]; return 1;
+}
 int front_text_input(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap) {
     if (!g_layer) return -1;
-    __block int r = 0;
-    __block NSString *text = nil;
-    dispatch_sync(dispatch_get_main_queue(), ^{
+    DmTextReq *q = [DmTextReq new]; q->sem = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_main_queue(), ^{
         NSAlert *a = [NSAlert new];
         a.messageText = title && *title ? @(title) : @"输入";
         NSString *info = [NSString stringWithFormat:@"%s%s%s", sub ? sub : "", sub && *sub && guide && *guide ? "\n" : "", guide ? guide : ""];
@@ -529,13 +547,16 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
         // 弹框出来后光标要在输入框里：只指定「初始第一响应者」不生效（实测弹出后第一响应者是弹框自己，要先点一下输入框才能打字），等模态循环转起来再显式指定一次
         // The cursor must be in the input field once the dialog appears: specifying only the "initial first responder" does not work (measured: after it appears the first responder is the dialog itself, and the field has to be clicked before typing), so it is specified explicitly once more after the modal loop starts running
         CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ [a.window makeFirstResponder:f]; });
-        r = [a runModal] == NSAlertFirstButtonReturn;
+        g_text_req = q;
+        NSModalResponse m = [a runModal];
+        if (g_text_req == q) g_text_req = nil;
         [g_win makeKeyAndOrderFront:nil];   // 弹框关掉后把游戏窗口显式设回键窗口（系统通常自己会还，保险） | after the dialog closes, explicitly make the game window key again (the system usually returns it by itself; this is for safety)
-        text = f.stringValue;
+        text_req_finish(q, m == NSAlertFirstButtonReturn, f.stringValue);   // 退出时已按取消交过结果的，这里不再交 | if the quit already handed over "Cancel", nothing more is handed over here
     });
-    if (!r) return 0;
+    dispatch_semaphore_wait(q->sem, DISPATCH_TIME_FOREVER);
+    if (!q->ok) return 0;
     (void)max_chars;                              // 截断按 UTF-16 单元在 hle_swkbd.c 统一做 | Truncation is done uniformly in hle_swkbd.c in UTF-16 units
-    snprintf(out, out_cap, "%s", text.UTF8String);
+    snprintf(out, out_cap, "%s", q->text.UTF8String);
     return 1;
 }
 
