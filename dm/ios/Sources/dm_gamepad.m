@@ -102,7 +102,10 @@ void dm_gamepad_reset(void) {   // 前端：失活 / 进后台 / 来电 | Front 
 // 测试（触点脚本 pad / pad2 / padoff / padoff2 步）：没有实体手柄时走同一条路，只少了 GameController 回调那一层。n = 1 或 2：两个虚拟手柄
 // Test (touch script pad / pad2 / padoff / padoff2 steps): without a physical controller the same path is taken, minus only the GameController callback
 // layer. n = 1 or 2: two virtual controllers
-void dm_gamepad_inject_n(int n, uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry) { put((const void *)(intptr_t)(n == 2 ? 2 : 1), b, lx, ly, rx, ry, DM_GLYPH_PAD); }
+void dm_gamepad_inject_n(int n, uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
+    static int g = -1; if (g < 0) { const char *e = getenv("DM_TEST_PAD_GLYPH"); g = e && atoi(e) >= 0 && atoi(e) < DM_GLYPH_N ? atoi(e) : DM_GLYPH_PAD; }   // 测试：虚拟手柄当成哪种手柄（键帽样式，同 DM_TEST_GLYPH 的编号：0 Switch / 2 Xbox / 3 PlayStation） | test: which kind of controller the virtual one counts as (key cap style, numbered as DM_TEST_GLYPH: 0 Switch / 2 Xbox / 3 PlayStation)
+    put((const void *)(intptr_t)(n == 2 ? 2 : 1), b, lx, ly, rx, ry, g);
+}
 void dm_gamepad_drop_n(int n) { LOG("手柄：断开（虚拟手柄 %d）", n == 2 ? 2 : 1); drop((const void *)(intptr_t)(n == 2 ? 2 : 1)); }
 void dm_gamepad_inject(uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry) { dm_gamepad_inject_n(1, b, lx, ly, rx, ry); }
 static int is_xbox(GCController *c) { return [c.extendedGamepad isKindOfClass:[GCXboxGamepad class]] || [c.productCategory ?: @"" containsString:@"Xbox"]; }

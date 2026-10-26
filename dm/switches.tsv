@@ -508,6 +508,7 @@ DM_TEST_PACK_MANIFEST	ios	ios/Sources/main.m	-
 DM_TEST_PADMODE	host	host/dm_padmode.c	-
 DM_TEST_PADMODE_LANG_RESET	host	host/dm_padmode.c	-
 DM_TEST_PADMODE_READ	host	host/dm_padmode.c	-
+DM_TEST_PAD_GLYPH	ios	ios/Sources/dm_gamepad.m	-
 DM_TEST_PG_GO	host	host/dm_pages.c	-
 DM_TEST_PG_KILL	host	host/dm_pages.c	-
 DM_TEST_PG_LOG	host	host/dm_pages.c	-
