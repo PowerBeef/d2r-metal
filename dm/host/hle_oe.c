@@ -239,6 +239,13 @@ static int scale3d_ctl_step(scale3d_ctl *c, double iv_ms, uint64_t now) {   // �
     else c->good_run = 0;
     return c->level;
 }
+// 配置值变了（手机选项页「3D 清晰度」点了「应用」）：最深一档按新配置值和下限重算，回到 0 档（新配置值）并停判 3 秒——
+// 档位是相对配置值数的，旧的最深档套在新配置上会越过下限（100% → 75% 时能降到 0.50）或降不够（75% → 100% 时最低只到 0.85）。
+// The configured value changed (the phone options page's "3D Resolution" was applied): recompute the deepest level from the new value and the floor, go back to level 0 (the new value) and pause judging for 3 s.
+// Levels count down from the configured value, so the old deepest level applied to a new value goes past the floor (100% → 75% could drop to 0.50) or not far enough (75% → 100% only reached 0.85).
+static void scale3d_ctl_retarget(scale3d_ctl *c, float cfg, float floor, uint64_t now) {
+    c->max_level = s3_max_level(cfg, floor); c->level = 0; c->last_up = 0; c->need_good = 0; scale3d_ctl_hold(c, now, 3 * S3_SEC);
+}
 // 画质设置（做界面，这里给接口）：0 = 流畅优先（缺省，掉帧就自动降 3D 比例）；1 = 画质优先（不自动降，保持配置值）。档位名与缺省值等
 // Quality setting (UI to be built; this provides the interface): 0 = smoothness first (default; automatically lowers the 3D scale on frame drops); 1 = quality first (no automatic lowering, keeps the configured value). Level names, defaults, etc.
 static _Atomic int g_3d_quality_mode;
@@ -277,16 +284,18 @@ static void s3g_feed(double iv_ms) {
         LOG("3D 比例控制（按 GPU 耗时）：帧 %.1f ms、GPU %.1f ms → %s到第 %d 档（3D 比例 %.2f）", fr, g, lv > old ? "降" : "升", lv, lv ? cfg * g_s3g_mult[lv - 1] : cfg); }
 }
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
-    static scale3d_ctl c; static int on = -1; static long inj0 = -1, inj1 = -1;
+    static scale3d_ctl c; static int on = -1; static long inj0 = -1, inj1 = -1; static float fl, cfg_at;   // cfg_at：c.max_level 按哪个配置值算的 | cfg_at: the configured value c.max_level was computed for
     if (on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
         if (j) { inj0 = atol(j); inj1 = strchr(j, '-') ? atol(strchr(j, '-') + 1) : inj0; }
-        const char *fe = getenv("DM_3D_SCALE_FLOOR"); float fl = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
-        c.max_level = s3_max_level(s3_cfg(), fl);
-        LOG("3D 比例控制：%s，配置 %.2f，下限 %.2f（第 %d 档）", on ? "开" : "关", s3_cfg(), s3_level_scale(s3_cfg(), c.max_level), c.max_level); }
+        const char *fe = getenv("DM_3D_SCALE_FLOOR"); fl = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
+        cfg_at = s3_cfg(); c.max_level = s3_max_level(cfg_at, fl);
+        LOG("3D 比例控制：%s，配置 %.2f，下限 %.2f（第 %d 档）", on ? "开" : "关", cfg_at, s3_level_scale(cfg_at, c.max_level), c.max_level); }
     if (!on) return;
     if (s3g_on() && atomic_load(&g_3d_quality_mode) != 1) { s3g_feed(iv_ms); return; }
     if (atomic_load(&g_3d_quality_mode) == 1) { if (c.level) { c.level = 0; LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); return; }
     uint64_t now = now_ns();
+    { float cfg = s3_cfg(); if (cfg != cfg_at) { scale3d_ctl_retarget(&c, cfg, fl, now); atomic_store(&g_scale3d_level, 0);   // 选项页换了 3D 清晰度：档位按新值重算 | the options page changed the 3D resolution: levels recomputed for the new value
+        LOG("3D 比例控制：配置 %.2f → %.2f，回到配置值，下限 %.2f（第 %d 档）", cfg_at, cfg, s3_level_scale(cfg, c.max_level), c.max_level); cfg_at = cfg; } }
     if (atomic_exchange(&g_scale3d_resumed, 0)) scale3d_ctl_hold(&c, now, 3 * S3_SEC);
     { static int was; int in = dm_ingame_now();   // 不在局内（菜单 / 读取）不判；刚进局的 20 秒也不判（进局头十几秒的慢帧是装载，不是 GPU 吃紧） | not judged outside a run (menu / loading); not judged in the first 20 seconds of a run either (slow frames in the first ten-odd seconds of a run are loading, not GPU pressure)
       if (!in) { was = 0; scale3d_ctl_hold(&c, now, S3_SEC); return; }
