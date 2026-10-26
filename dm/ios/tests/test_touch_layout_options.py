@@ -42,7 +42,9 @@ for voice in (False, True):
     keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
     assert keys == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)
     assert ('voice' in keys) == voice
-    defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
+    defaults = [x.strip() for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]   # 缺省值可以是平台式子（q3d：!DM_PHONE = Mac 画质优先、手机流畅优先） | a default may be a platform expression (q3d: !DM_PHONE = quality first on the Mac, smoothness first on phones)
+    assert all(re.fullmatch(r'-?\d+|!?DM_PHONE', x) for x in defaults), defaults
+    defaults = [int(x) if re.fullmatch(r'-?\d+', x) else x for x in defaults]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
 os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
 host = host_src
