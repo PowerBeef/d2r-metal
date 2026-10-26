@@ -2,7 +2,7 @@
 
 English: [LEGACY_DEVICES.md](LEGACY_DEVICES.md)
 
-iPhone 14 系列、iPhone 15 / 15 Plus 以及更早的机型可以玩，只是多一步（各机型的情况见首页「[支持哪些设备](../README.zh-CN.md#支持哪些设备)」）：要用你自己的游戏文件做一份**老机型贴图包**，放进手机。这一页从头讲到尾。
+iPhone 14 系列、iPhone 15 / 15 Plus 以及更早的机型可以玩，只是多一步（各机型的情况见首页「[支持哪些设备](../README.md#which-devices-are-supported)」（英文））：要用你自己的游戏文件做一份**老机型贴图包**，放进手机。这一页从头讲到尾。
 
 ## 为什么要多这一步
 

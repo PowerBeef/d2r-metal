@@ -2,9 +2,9 @@
 
 简体中文: [MAC.zh-CN.md](MAC.zh-CN.md)
 
-On an Apple silicon Mac this project can be built into a native macOS App, `D2R Metal.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (rifts, the trove, the chronicle, the Custom page and so on), using the original's gamepad interface.
+On an Apple silicon Mac this project can be built into a native macOS App, `D2R Metal.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (rifts, the trove, the chronicle, the Extras page and so on), using the original's gamepad interface.
 
-**Up front: these five things have not been operated by a person yet** — keyboard keys, a physical gamepad, the resource-folder dialog, ⌘Q and menu clicks, and how it feels in the hand. Where this page says "verified", it was run unattended: keys injected by a test script, the mouse through a test entry, quitting, full screen and resizing through test switches. If you try it, please open an Issue and tell us how it went.
+**How it has been tried**: the App is played on an M6 Mac with the keyboard, the mouse and an Xbox Wireless Controller, windowed and in full screen, and quit from the menu and the Dock. Where this page says "verified" without more, the check was an unattended run: keys and mouse events injected by a test script, quitting, full screen and resizing through test switches. What nobody has tried by hand yet is listed under [Known shortcomings](#known-shortcomings); if you try one of those, please open an Issue and tell us how it went.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ dm/tools/mac_app.sh                  # macOS 26 or later
 DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
 ```
 
-The default build takes ten-odd seconds and produces `~/dm-work/out/macapp/D2R Metal.app` (about 3 MB). The older-API build recompiles the shader libraries for macOS 15 the first time, which adds about 3–4 minutes, and produces `D2R Mobile M3.app`; it has its own save and log directories (with M3 in the name), so it can sit next to the default App. To put the output elsewhere, add an output directory after the command.
+The default build takes ten-odd seconds and produces `~/dm-work/out/macapp/D2R Metal.app` (about 3 MB). The older-API build recompiles the shader libraries for macOS 15 the first time, which adds about 3–4 minutes, and produces `D2R Metal M3.app`; it has its own save and log directories (with M3 in the name), so it can sit next to the default App. To put the output elsewhere, add an output directory after the command.
 
 The App contains only our own program. The rewritten game program, the shader libraries and the UI overlay are all made from your game files; they stay in your working directory (`~/dm-work`) and the App only records where they are — so **the App runs only on the Mac that built it**. Please do not copy it to anyone, and do not delete or move the working directory (the shader libraries recompiled for the older-API build are in the output directory). Signing is local ad-hoc signing: no developer account and no device registration.
 
@@ -41,7 +41,7 @@ Double-click the App. The first launch asks you to choose the **game resource fo
 
 A key reference is then shown once; afterwards it is under Help in the menu bar.
 
-Language: the first launch follows the system language (Chinese systems start in Chinese, Spanish in Spanish, Russian in Russian, everything else in English). To change it: Options → Extras, the language switch in the first row → Accept All → close and reopen the App.
+Language: the first launch follows the system language (Chinese systems start in Chinese, Spanish in Spanish, Russian in Russian, everything else in English). To change it: Options → Extras, the language switch in the first row → Apply → close and reopen the App.
 
 ## Keyboard ↔ gamepad
 
@@ -61,18 +61,28 @@ With a keyboard, the button prompts on screen (the hint bar at the bottom, skill
 | ZL / ZR | Z / C |
 | Left stick press / right stick press | F / G |
 
-**Creating a character, start to finish**: on the main menu press `=` (or click "New Character") → choose a class with the arrow keys and press Return (or click that class's figure) → on the mode page press Return or Space → on the naming page press Return to open the input box, type, Return → press Return once more to create.
+**Creating a character, start to finish**: on the main menu press `=` (or click "New Character") → choose a class with the arrow keys and press Return (or click that class's figure) → on the mode page press Return or Space → on the naming page press Return to open the text box, type, Return → press Return once more to create. With a gamepad, A on the naming page brings up the on-screen keyboard instead (see below).
+
+### Typing names and amounts
+
+When the game asks for text — a character name, an amount of gold to drop or move, a Chronicle search — what appears depends on what you are playing with:
+
+- **Keyboard and mouse**: a text box slides down from the top of the game window as a sheet. Type, then Return (or click OK); Esc or Cancel backs out.
+- **Gamepad**: an on-screen keyboard appears over the lower part of the picture, drawn in the game's style with its own fonts. D-pad or left stick moves, A types the highlighted key, B deletes (on an empty box it cancels), X switches between lower case, one capital and caps lock, Y types a space, + confirms and − cancels. The hint line at the bottom names the buttons of the controller you are using (Switch letters, Xbox letters by position, or PlayStation symbols). The amount keyboard is a number pad with Half and Max.
+- **Switching midway**: press a key or click while the on-screen keyboard is up and it hands over to the sheet with what you typed; press a gamepad button while the sheet is up and the on-screen keyboard comes back, also keeping the text.
+- **The game's rules apply in both**: a name is 2 – 15 letters (or Chinese characters) with at most one `-` or `_`, not at either end, and OK stays greyed until it fits; an empty name gets a random one, as with the game's own button. An amount can't go above what you have.
+- While either is open the game waits, as on the Switch; quitting the App answers Cancel first, so the save still goes through.
 
 A gamepad works as soon as it is connected, alongside the keyboard. The menu bar has View → Full Screen (⌃⌘F) and Quit (⌘Q). The window can be resized freely. In game the picture fills the window or screen at its own aspect ratio (on a 16:10 MacBook both windowed and full screen are filled, with the interface along the bottom, centred while a large panel is open); the front-end pages such as the main menu and character select stay 16:9 with bars above and below.
 
 Options has five tabs: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**. **Picture settings** are on the **Video** tab, in the **Display** and **Graphics** sections; the features this port adds (language, auto-drink, light beams and the rest) are on **Extras**. **Default** resets only the tab you are on. The Options pages have the same roomy rows as on iPhone, with **Apply**, **Default** and **Discard** buttons to click at the bottom; the keyboard and gamepad keys work as before.
 - **Display Mode** (Windowed / Fullscreen) switches as soon as you press Apply, and the App opens that way next time. Switching with View → Full Screen (⌃⌘F) updates the setting too.
 - **Resolution** (1600 × 900 / 1920 × 1080 / 2560 × 1440) is the size the game renders at; on a screen narrower than 16:9 the height follows the screen. It takes effect the next time the App starts, and the page says so until then.
-- **Upscaling** (Standard / MetalFX) is how the picture is enlarged to the window or screen: Standard is a plain stretch, MetalFX is Apple's sharper upscaler (about 1.5 ms of GPU time per frame on an M-series Mac). It changes as soon as you press Apply.
+- **Upscaling** (Standard / MetalFX) is how the picture is enlarged to the window or screen: Standard is a plain stretch, MetalFX is Apple's sharper upscaler. On an M6 with a 2560 × 1440 screen the enlarge step takes about 1.4 ms of GPU time per frame from 1600 × 900 and 1.8 ms from 1920 × 1080, against 0.3 ms for the plain stretch. It changes as soon as you press Apply.
 - **Frame Rate** (60 fps / 30 fps): 30 fps is the power saver mode. It changes as soon as you press Apply.
-- **Frame Drops** (Lower 3D Res / Keep 3D Res): with *Lower*, the game lowers its 3D resolution on its own when frames drop and brings it back up afterwards; *Keep* always renders at the full resolution.
+- **Frame Drops** (Lower 3D Res / Keep 3D Res): with *Lower*, the game lowers its 3D resolution on its own when frames drop and brings it back up afterwards; *Keep* always renders at the full resolution. The Mac defaults to *Keep*: its GPU has headroom, and its rare drops are short stutters a lower 3D resolution doesn't fix (phones default to *Lower*).
 - **Graphic Presets**: *Recommended* is what the App picked for this Mac the first time it started: full screen, the highest resolution up to three quarters of the screen's width (2560 × 1440 only on Pro, Max and Ultra chips), and MetalFX when the picture is enlarged. *Performance* is 1600 × 900 and *Quality* 2560 × 1440, both with MetalFX. Choosing a preset fills in the rows; changing a row shows which preset matches, or *Custom*.
-- **Default** at the bottom of the panel puts the Display rows, Graphic Presets and Upscaling back to Recommended, Frame Rate to 60 fps and Frame Drops to Lower 3D Res; press Apply to keep it.
+- **Default** at the bottom of the panel puts the Display rows, Graphic Presets and Upscaling back to Recommended, Frame Rate to 60 fps and Frame Drops to Keep 3D Res; press Apply to keep it.
 - The settings live in `sw_video.txt` next to the App's saves (Frame Rate and Frame Drops with the Extras options in `sw_custom.txt`). Delete `sw_video.txt` to have the App work out Recommended again.
 
 The mouse pointer hides itself after it has rested over the game window for 3 seconds (handy when playing with the keyboard or a gamepad) and comes back the moment the mouse moves. It never hides over the menu bar, other windows or a dialog. To change the delay: `defaults write org.d2rmobile.mac CursorHideSeconds -float 5` (seconds; `0` turns it off; the older-API build uses `org.d2rmobile.mac.m3`), then restart the App.
@@ -122,7 +132,7 @@ Importing is a one-time manual copy: afterwards each side goes its own way and p
 
 **2. Copy the whole `save` folder, do not pick files**
 
-It holds one folder per character (folder name = character name), a few shared-stash files and a `Settings` folder (game settings including the interface language — after copying, the Mac's game settings become the phone's). The data of the features we added (the extra personal stash pages, the pouch, rift records, the chronicle vault and so on) is in this folder too. The switches on the Custom page are not in it; each device keeps its own.
+It holds one folder per character (folder name = character name), a few shared-stash files and a `Settings` folder (game settings including the interface language — after copying, the Mac's game settings become the phone's). The data of the features we added (the extra personal stash pages, the pouch, rift records, the chronicle vault and so on) is in this folder too. The switches on the Extras page are not in it; each device keeps its own.
 
 AirDrop, a cable (the Files tab in Finder) or iCloud Drive all work for getting it to the Mac.
 
@@ -149,10 +159,9 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 
 ## Known shortcomings
 
-- The five things from the top have not been operated by a person: keyboard keys, a physical gamepad, the resource-folder dialog, ⌘Q and menu clicks, how it feels in the hand. The key mapping was written from the key-code table.
+- Not tried by hand yet: the resource-folder dialog on a fresh install, and PlayStation or Switch controllers on the Mac (an Xbox Wireless Controller is what has been used).
 - Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class, and the trove's auto-placement under mouse drags, are unverified. There is no right-click skill as on PC.
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
-- "Prompts switch back to gamepad letters when a gamepad is used" was verified by simulation; no physical gamepad has been connected.
 - The free town portal on ZR + Space of a gamepad is not there.
 - The quest bar on the left in rifts is not there.
 - An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud").
