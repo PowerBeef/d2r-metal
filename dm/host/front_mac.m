@@ -19,6 +19,8 @@ __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn
 #include "front.h"
 #include "hle.h"
 #include "dm_ctl.h"
+#include "../ios/Sources/dm_vkbd_ui.h"
+#include "../ios/Sources/dm_vkbd.h"
 #include <signal.h>
 #include <stdatomic.h>
 
@@ -104,24 +106,29 @@ static NSRect game_rect(void) {
     else if (w > h * g_aspect) w = round(h * g_aspect); else h = round(w / g_aspect);
     return NSMakeRect(floor((b.width - w) / 2), floor((b.height - h) / 2), w, h);
 }
+static void vkbd_where(dm_vkbd_host *h) {   // 手柄屏幕键盘画在视图层上、游戏画面里（视图层坐标向上增） | the on-screen controller keyboard is drawn on the view layer, inside the game picture (view layer coordinates grow upward)
+    h->layer = (__bridge void *)g_view.layer; h->pic = NSRectToCGRect(game_rect()); h->y_up = 1; h->scale = g_win.backingScaleFactor > 0 ? g_win.backingScaleFactor : 2;
+}
 static void layout_game(void) {
     NSRect r = game_rect(); if (NSEqualRects(r, g_layer.frame)) return;
     CGFloat sc = g_view.window.backingScaleFactor ?: 2;   // 画布跟着改：作为子层的 CAMetalLayer 改 frame 不会自己改 drawableSize，原先进全屏后一直用窗口态的画布放大显示（发糊） | the canvas follows: a CAMetalLayer used as a sublayer does not change its drawableSize when its frame changes, so after going full screen it used to keep the windowed canvas and scale it up (blurry)
     [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = sc; g_layer.drawableSize = CGSizeMake(round(r.size.width * sc), round(r.size.height * sc)); [CATransaction commit];
+    dm_vkbd_ui_relayout();   // 屏幕键盘跟着画面走 | the on-screen keyboard follows the picture
     LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
 }
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
 // 暂停菜单 / 大秘境面板开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
 // Quit (close window / Cmd-Q / menu): if a game is running, first ask the game to do one of its own saves and wait for the save commit (same as the iOS shell going to the background), at most 3 s, then shut down in order.
 // When the pause menu / Greater Rift panel is open the game does not tick: freeze the world and temporarily release the pause for this one save (diag.c dm_save_wait, the same function as iOS going to the background); on the loading screen wait until in game before asking. If there is still no commit after 3 s, log "quit without saving" as is
-static int text_input_cancel(void);
+static int text_input_cancel(void), text_input_up(void);
+static void text_input_handoff_pad(void), text_input_test(NSString *text, int ok);
 static void app_quit(const char *why) {
     static int once; if (once++) return;
     { uint64_t dm_audio_render_calls(void); LOG("窗口：退出（%s）；声卡回调累计 %llu（0 = 这次没出声）", why, (unsigned long long)dm_audio_render_calls()); }
     DM_EV("quit", "why:s", why);
-    // 数量 / 起名输入框开着：先按「取消」关掉，放走等它的键盘线程、解冻客体时钟，下面才存得了盘（见 front_text_input）
-    // A quantity / name input box is open: answer "Cancel" first to release the keyboard thread waiting on it and unfreeze the guest clock, so the save below can happen (see front_text_input)
-    if (text_input_cancel()) LOG("窗口：退出时输入框开着 → 先按取消关掉，再存盘");
+    // 数量 / 起名输入框（或手柄屏幕键盘）开着：先按「取消」关掉，放走等它的键盘线程、解冻客体时钟，下面才存得了盘（见 front_text_input）
+    // A quantity / name input box (or the on-screen controller keyboard) is open: answer "Cancel" first to release the keyboard thread waiting on it and unfreeze the guest clock, so the save below can happen (see front_text_input)
+    if (text_input_cancel() || dm_vkbd_ui_cancel()) LOG("窗口：退出时输入框开着 → 先按取消关掉，再存盘");
     int dm_ingame_now(void); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
     int dm_cloud_flush_wait(double sec);
     if (!dm_ingame_now() && !dm_uiscreen_ingame()) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
@@ -289,6 +296,7 @@ void front_run(void (*guest)(void)) {
         g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         g_layer.contentsScale = win.backingScaleFactor;
         [v.layer addSublayer:g_layer]; layout_game();
+        dm_vkbd_ui_set_host(vkbd_where);
         [win center];
         g_live = getenv("DM_APP") || getenv("DM_TOUCH_LIVE"); if (g_live) dm_touch_host_live_enable();
         if (g_live) {
@@ -302,7 +310,7 @@ void front_run(void (*guest)(void)) {
           NSMenuItem *fs = [add(ui("dmAppMenuView")) addItemWithTitle:@(ui("dmAppFullscreen")) action:@selector(toggleFullScreen:) keyEquivalent:@"f"]; fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
           { NSMenu *hm = add(ui("dmAppMenuHelp")); [[hm addItemWithTitle:@(ui("dmAppKeysTitle")) action:@selector(keys:) keyEquivalent:@""] setTarget:ctl]; [[hm addItemWithTitle:@(ui("dmAppShareLog")) action:@selector(share:) keyEquivalent:@""] setTarget:ctl]; }
           NSApp.mainMenu = bar; }
-        { void dm_gamepad_start(void (*on_mode)(int pad)); dm_gamepad_start(NULL); }   // 手柄（与 iOS 壳共用 ios/Sources/dm_gamepad.m）：连上即用，与键盘并存 | Gamepad (ios/Sources/dm_gamepad.m, shared with the iOS shell): works as soon as it is connected, alongside the keyboard
+        { void dm_gamepad_start(void (*on_mode)(int pad)), dm_gamepad_on_press(void (*fn)(void)); dm_gamepad_start(NULL); dm_gamepad_on_press(text_input_handoff_pad); }   // 手柄（与 iOS 壳共用 ios/Sources/dm_gamepad.m）：连上即用，与键盘并存 | Gamepad (ios/Sources/dm_gamepad.m, shared with the iOS shell): works as soon as it is connected, alongside the keyboard
         [win makeKeyAndOrderFront:nil];
         screen_note();
         [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note(); }];
@@ -317,6 +325,14 @@ void front_run(void (*guest)(void)) {
         }
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;   // 只吃游戏窗口的键；软键盘输入框等其他窗口照常收字 | Only swallow keys for the game window; other windows such as the software keyboard input box receive typing as usual
+            if (dm_vkbd_ui_active() && !(e.modifierFlags & NSEventModifierFlagCommand)) {   // 手柄屏幕键盘开着时键盘有输入：回车 = 确定、Esc = 取消，别的键把这一下记进去（打的字、退格）再收起屏幕键盘、换成表单；松开照交给游戏，之前按着的键不会卡住 | keyboard input while the on-screen keyboard is open: Return = OK, Esc = cancel, any other key is applied (typed character, backspace), then the on-screen keyboard closes and the sheet takes over; releases still go to the game so keys held before are not left stuck
+                if (e.type == NSEventTypeKeyUp) { on_key(e, 0); return nil; }
+                unsigned short kc = e.keyCode;
+                if (kc == 36 || kc == 76 || kc == 53) { dm_vkbd_ui_key(kc == 53 ? DM_VKBD_KEY_CANCEL : DM_VKBD_KEY_OK, NULL); return nil; }
+                if (kc == 51) dm_vkbd_ui_key(DM_VKBD_KEY_BACK, NULL); else if (kc < 123 || kc > 126) dm_vkbd_ui_key(DM_VKBD_KEY_TEXT, e.characters.UTF8String);
+                dm_padmode_request_glyph(DM_GLYPH_KBD); dm_vkbd_ui_handoff();
+                return nil;
+            }
             if (e.modifierFlags & NSEventModifierFlagCommand) { if (e.type == NSEventTypeKeyUp) on_key(e, 0); return e; }   // 带 ⌘ 的按下留给菜单（⌘Q、⌃⌘F）；松开照样记上（按着 W 时按住 ⌘ 再松开 W，原先松开收不到、角色一直走） | Key presses with ⌘ are left to the menu (⌘Q, ⌃⌘F); releases are still recorded (releasing W while ⌘ was held used to be missed, and the character kept walking)
             if (!e.isARepeat) on_key(e, e.type == NSEventTypeKeyDown);
             return nil;   // 吃掉，免得系统提示音 | Swallow it to avoid the system beep
@@ -325,6 +341,10 @@ void front_run(void (*guest)(void)) {
         // Left clicks reuse single-point touch; Mac App button-free hover only submits coordinates using the same window / full-screen conversion, without synthesizing clicks.
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp | NSEventMaskMouseMoved | NSEventMaskMouseExited handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;
+            if (dm_vkbd_ui_active() && e.type != NSEventTypeLeftMouseUp) {   // 手柄屏幕键盘开着时鼠标点了：收起屏幕键盘、换成表单；悬停 / 拖动不交给游戏 | a mouse click while the on-screen keyboard is open: it closes and the sheet takes over; hover / drags do not go to the game
+                if (e.type == NSEventTypeLeftMouseDown) dm_vkbd_ui_handoff();
+                return e.type == NSEventTypeLeftMouseDown || e.type == NSEventTypeLeftMouseDragged ? nil : e; }
+            if (text_input_up() && e.type != NSEventTypeLeftMouseUp) return e;   // 输入框表单开着：按下 / 拖动 / 悬停交还系统（点不进游戏窗口），抬起照收，免得之前按下的那一下收不回 | input box sheet open: presses / drags / hover go back to the system (the game window takes no clicks); a release is still taken so an earlier press is not left held
             BOOL hover = e.type == NSEventTypeMouseMoved || e.type == NSEventTypeMouseExited;
             if (hover && getenv("DM_TEST_HOVER_LOG")) LOG("鼠标悬停输入：类型 %ld", (long)e.type);
             if (hover && !g_live) return e;
@@ -353,12 +373,13 @@ void front_run(void (*guest)(void)) {
         // Right click = gamepad B (back / close panel); wheel = over the UI, the original wheel at the pointer (touch_mac.c dm_wheel_ui); in game with no panel open, push the right stick up or down for 0.12 s. Only wired in App form (tests of the command-line host are unaffected)
         if (g_live) {
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown | NSEventMaskRightMouseUp handler:^NSEvent *(NSEvent *e) {
-                if (e.window != win) return e;
+                if (e.type == NSEventTypeRightMouseDown && e.window == win && dm_vkbd_ui_active()) { dm_vkbd_ui_handoff(); return nil; }   // 同左键：换成表单 | as the left button: hand over to the sheet
+                if (e.window != win || (text_input_up() && e.type == NSEventTypeRightMouseDown)) return e;   // 输入框开着不按 B，松开照收 | no B press while the input box is open; the release is still taken
                 if (e.type == NSEventTypeRightMouseDown) g_btn |= DM_BTN_B; else g_btn &= ~(uint64_t)DM_BTN_B;
                 push(); return nil;
             }];
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel handler:^NSEvent *(NSEvent *e) {
-                if (e.window != win || e.scrollingDeltaY == 0) return e;
+                if (e.window != win || e.scrollingDeltaY == 0 || text_input_up() || dm_vkbd_ui_active()) return e;
                 NSPoint p = [v convertPoint:e.locationInWindow fromView:nil]; NSRect gr = game_rect();
                 if (gr.size.width > 0 && gr.size.height > 0) {
                     float nx = (float)((p.x - gr.origin.x) / gr.size.width), ny = (float)(1.0 - (p.y - gr.origin.y) / gr.size.height), ux = nx, uy = ny;
@@ -371,10 +392,10 @@ void front_run(void (*guest)(void)) {
                 return nil;
             }];
             // 指针自动隐藏：鼠标指针停在游戏窗口里不动一段时间就藏起来（用键盘 / 手柄玩时不挡画面）。用 setHiddenUntilMouseMoves，鼠标一动系统自己显示回来，没有隐藏 / 显示的计数要配对。
-            // 计时器只挂在缺省运行循环模式上：菜单、拖动改窗口大小、模态对话框（键位对照、起名输入框）期间都不触发。只在 App 在前台、游戏窗口是主窗口、指针在窗口内容区里、没按着鼠标键时隐藏。
+            // 计时器只挂在缺省运行循环模式上：菜单、拖动改窗口大小、模态对话框（键位对照）期间都不触发。只在 App 在前台、游戏窗口是键窗口（输入框表单开着时键窗口是表单）、指针在窗口内容区里、没按着鼠标键时隐藏。
             // 时长：defaults write org.d2rmobile.mac CursorHideSeconds -float <秒>（旧接口版的包标识是 org.d2rmobile.mac.m3；0 = 关），缺省 3 秒
             // Pointer auto-hide: the mouse pointer hides after it rests over the game window for a while (so it doesn't cover the picture while you play with keyboard / controller). It uses setHiddenUntilMouseMoves: the system shows it again on the next mouse movement, so there is no hide / unhide count to balance.
-            // The timer is scheduled only in the default run loop mode: it does not fire during menus, window resizing or modal dialogs (key map, name input). It hides only while the App is frontmost, the game window is key, the pointer is inside the window's content area and no mouse button is held.
+            // The timer is scheduled only in the default run loop mode: it does not fire during menus, window resizing or modal dialogs (key map). It hides only while the App is frontmost, the game window is key (while the input box sheet is up the sheet is key), the pointer is inside the window's content area and no mouse button is held.
             // Duration: defaults write org.d2rmobile.mac CursorHideSeconds -float <seconds> (the older-API build's bundle ID is org.d2rmobile.mac.m3; 0 = off), default 3 seconds
             { id pref = [NSUserDefaults.standardUserDefaults objectForKey:@"CursorHideSeconds"];   // 手写的设置可能是任何类型：只认数字或数字字符串，数组、日期等当没设 | a hand-written default can be any type: only a number or numeric string counts, an array, date etc. is treated as unset
               double idle = [pref respondsToSelector:@selector(doubleValue)] ? [pref doubleValue] : 3.0;
@@ -400,11 +421,19 @@ void front_run(void (*guest)(void)) {
                   double at = [it substringToIndex:c.location].doubleValue; NSString *path = [it substringFromIndex:c.location + 1];
                   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                       NSSize vb = v.bounds.size; NSRect gr = game_rect(); double fy = 0, fh = 1; ui_rect_frac(&fy, &fh);
-                      mtl_grab_next_present(^(CGImageRef img) { if (!img) { LOG("【红】DM_TEST_PRESENT_SHOT：%s 没取到", path.UTF8String); return; }
+                      CGRect kr; CGImageRef kimg = dm_vkbd_ui_snapshot(&kr);   // 屏幕键盘是画面上面的层、不在上屏图里：叠上去，截图才是玩家看到的 | the on-screen keyboard is a layer above the picture, not in the presented image: composite it so the shot is what the player sees
+                      mtl_grab_next_present(^(CGImageRef img0) { if (!img0) { LOG("【红】DM_TEST_PRESENT_SHOT：%s 没取到", path.UTF8String); if (kimg) CGImageRelease(kimg); return; }
+                          CGImageRef img = CGImageRetain(img0);
+                          if (kimg) { size_t W = CGImageGetWidth(img0), H = CGImageGetHeight(img0); double s = W / gr.size.width;
+                              CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB); CGContextRef c = CGBitmapContextCreate(NULL, W, H, 8, 0, cs, (CGBitmapInfo)kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little); CGColorSpaceRelease(cs);
+                              if (c) { CGContextDrawImage(c, CGRectMake(0, 0, W, H), img0); CGContextDrawImage(c, CGRectMake(kr.origin.x * s, H - (kr.origin.y + kr.size.height) * s, kr.size.width * s, kr.size.height * s), kimg);
+                                  CGImageRelease(img); img = CGBitmapContextCreateImage(c); CGContextRelease(c); }
+                              CGImageRelease(kimg); }
                           CGImageDestinationRef d = CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], (__bridge CFStringRef)@"public.png", 1, NULL);
                           if (d) { CGImageDestinationAddImage(d, img, NULL); CGImageDestinationFinalize(d); CFRelease(d); }
-                          LOG("DM_TEST_PRESENT_SHOT：%s %zux%zu（内容区 %.0fx%.0f，游戏画面 %.0fx%.0f 在 (%.0f,%.0f)，界面矩形纵向 %.3f 高 %.3f，%s）", path.UTF8String, CGImageGetWidth(img), CGImageGetHeight(img),
-                              vb.width, vb.height, gr.size.width, gr.size.height, gr.origin.x, gr.origin.y, fy, fh, dm_uiscreen_ingame() ? "局内" : "局外"); }); }); } }
+                          LOG("DM_TEST_PRESENT_SHOT：%s %zux%zu（内容区 %.0fx%.0f，游戏画面 %.0fx%.0f 在 (%.0f,%.0f)，界面矩形纵向 %.3f 高 %.3f，%s%s）", path.UTF8String, CGImageGetWidth(img), CGImageGetHeight(img),
+                              vb.width, vb.height, gr.size.width, gr.size.height, gr.origin.x, gr.origin.y, fy, fh, dm_uiscreen_ingame() ? "局内" : "局外", kimg ? "，叠了屏幕键盘" : "");
+                          CGImageRelease(img); }); }); } }
           // DM_TEST_NSMOUSE=<文件>：合成真正的系统鼠标事件（NSEvent）投进 App 的事件队列，走与真人点击同一条分发路（事件监视器 → 换算 → 状态机），不经测试入口。
           // 每行「秒 down|move|up|hover x,y」，x,y 是内容区里的点（左上角为原点；窗口缺省 1280×720），时刻自窗口建好起算。
           // 坐标后可带锚点「@c」「@b」：按 1280×720 写的 y 换算到实际内容区高度——@c 上下居中的界面（前端页、大面板）加 (高 − 720) / 2，@b 贴底的（局内 HUD）加 (高 − 720)；
@@ -414,10 +443,50 @@ void front_run(void (*guest)(void)) {
           // An anchor "@c" / "@b" may follow the coordinates: a y written for 1280x720 is converted to the actual content height - @c for vertically centered UI (front-end pages, large panels) adds (height - 720) / 2, @b for bottom-anchored UI (in-game HUD) adds (height - 720);
           // none = as is (top-anchored). In true full screen the window aspect follows the screen (1280x803 on a 16:10 screen), so the same script works at both aspects
           if ((e = getenv("DM_TEST_NSMOUSE"))) { NSString *txt = [NSString stringWithContentsOfFile:@(e) encoding:NSUTF8StringEncoding error:nil]; NSTimeInterval t0 = NSProcessInfo.processInfo.systemUptime; int n = 0;
-              dispatch_queue_t tq = dispatch_queue_create("dm.test.nsevent", DISPATCH_QUEUE_SERIAL);   // 不排在主队列上：我们自己的弹框是在主队列的一个块里跑模态循环的，那期间主队列上别的块不执行，事件就投不进弹框 | not queued on the main queue: our own dialog runs its modal loop inside a block on the main queue, during which other blocks on the main queue do not execute, so events could not be delivered into the dialog
+              dispatch_queue_t tq = dispatch_queue_create("dm.test.nsevent", DISPATCH_QUEUE_SERIAL);   // 不排在主队列上：模态弹框（如键位对照）在主队列的一个块里跑模态循环，那期间主队列上别的块不执行，事件就投不进弹框 | not queued on the main queue: a modal dialog (such as the key map) runs its modal loop inside a block on the main queue, during which other blocks on the main queue do not execute, so events could not be delivered into the dialog
               for (NSString *ln in [txt componentsSeparatedByString:@"\n"]) { double sec, x = 0, y = 0; char op[8];
                   if (sscanf(ln.UTF8String, "%lf %7s %lf,%lf", &sec, op, &x, &y) < 2 || ln.UTF8String[0] == '#') continue; n++;
                   const char *at = strchr(ln.UTF8String, '@'); double anc = at && at[1] == 'c' ? 0.5 : at && at[1] == 'b' ? 1 : 0;   // 锚点（见上）：在投事件那一刻按当时的内容区高度换算 | Anchor (see above): converted using the content area height at the moment the event is posted
+                  if (!strcmp(op, "sheet")) {   // 「秒 sheet ok|cancel [字]」：往开着的输入框表单里填这些字（不写 = 空）再按确定 / 取消（text_input_test） | "<seconds> sheet ok|cancel [text]": fill the open input sheet with this text (omitted = empty), then press OK / Cancel (text_input_test)
+                      char how[16] = "", txt[64] = ""; sscanf(ln.UTF8String, "%*lf %*7s %15s %63s", how, txt); NSString *t = @(txt); int ok = !strcmp(how, "ok");
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ text_input_test(t, ok); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
+                      continue; }
+                  if (!strcmp(op, "skey")) {   // 「秒 skey <键码> [字]」：合成一次键盘按下 / 松开，直接交给 App 的事件分发（[NSApp sendEvent:]，走事件监视器，同真键盘按在游戏窗口上），不靠 App 在前台 | "<seconds> skey <key code> [chars]": synthesize one key press / release and hand it straight to the App's event dispatch ([NSApp sendEvent:], through the event monitors, like a real key on the game window), without needing the App in front
+                      char kcs[16] = "", chs[32] = ""; sscanf(ln.UTF8String, "%*lf %*7s %15s %31s", kcs, chs); unsigned short kc = (unsigned short)atoi(kcs); NSString *chars = @(chs);
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+                          LOG("DM_TEST_NSMOUSE：%.2f 秒 skey %d「%s」", NSProcessInfo.processInfo.systemUptime - t0, kc, chars.UTF8String);
+                          for (int dn = 1; dn >= 0; dn--) [NSApp sendEvent:[NSEvent keyEventWithType:dn ? NSEventTypeKeyDown : NSEventTypeKeyUp location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber context:nil characters:chars charactersIgnoringModifiers:chars isARepeat:NO keyCode:kc]]; });
+                          CFRunLoopWakeUp(CFRunLoopGetMain()); });
+                      continue; }
+                  if (!strcmp(op, "pads")) {   // 「秒 pads 键,键,…」：虚拟手柄依次按这些键，每下 0.1 秒、间隔 0.15 秒，自己掐时（一条一条排定时会被系统合并成同一刻） | "<seconds> pads key,key,...": the virtual controller presses these in turn, 0.1 s each with 0.15 s gaps, timed by itself (one scheduled line per press gets merged into the same instant by the system)
+                      char arg[512] = ""; sscanf(ln.UTF8String, "%*lf %*7s %511s", arg); NSString *all = @(arg); NSArray<NSString *> *list = [all componentsSeparatedByString:@","];
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{
+                          void dm_gamepad_inject(uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry); uint64_t dm_key_mask(const char *names, const char **bad);
+                          LOG("DM_TEST_NSMOUSE：%.2f 秒 pads %s（%lu 下）", NSProcessInfo.processInfo.systemUptime - t0, all.UTF8String, (unsigned long)list.count);
+                          for (NSString *k in list) { const char *bad = NULL; uint64_t m = dm_key_mask(k.UTF8String, &bad); if (!m) { LOG("DM_TEST_NSMOUSE：不认识的手柄键 %s", k.UTF8String); continue; }
+                              CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ dm_gamepad_inject(m, 0, 0, 0, 0); }); CFRunLoopWakeUp(CFRunLoopGetMain()); usleep(100000);
+                              CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ dm_gamepad_inject(0, 0, 0, 0, 0); }); CFRunLoopWakeUp(CFRunLoopGetMain()); usleep(150000); } });
+                      continue; }
+                  if (!strcmp(op, "pad") || !strcmp(op, "navpad") || !strcmp(op, "nav")) {
+                      // 「秒 pad <键>」：虚拟手柄按 0.1 秒（键名同控制口 press：A B X Y LS RS L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN，可用 + 连），走 dm_gamepad 同一条路（屏幕键盘开着时归它），不靠 App 在前台；
+                      // 「秒 navpad <键>」同 pad，但输入框 / 屏幕键盘开着时跳过；「秒 nav <键码>」把这个键直接交给游戏的键盘处理（同真键盘按在游戏窗口上，但不靠 App 在前台），输入框开着时也跳过。
+                      // 带游戏到起名页用 nav / navpad：读取快慢不一，多排几下也不怕，框一弹出来后面的就不按了
+                      // "<seconds> pad <buttons>": a virtual controller press for 0.1 s (names as the control port's press: A B X Y LS RS L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN, joined with +), through the same dm_gamepad path (owned by the on-screen keyboard while it is open), without needing the App in front;
+                      // "<seconds> navpad <buttons>" is like pad but skipped while an input box / the on-screen keyboard is open; "<seconds> nav <key code>" hands the key straight to the game's keyboard handling (like a real key on the game window, without needing the App in front), also skipped while an input box is open.
+                      // nav / navpad bring the game to the naming page: loading speed varies, so extra presses are harmless; once the box is up the rest are not pressed
+                      char arg[32] = ""; sscanf(ln.UTF8String, "%*lf %*7s %31s", arg);
+                      int nav = op[0] == 'n', pad = strcmp(op, "nav") != 0; unsigned short kc = (unsigned short)atoi(arg); uint64_t m = 0;
+                      if (pad) { uint64_t dm_key_mask(const char *names, const char **bad); const char *bad = NULL; if (!(m = dm_key_mask(arg, &bad))) { LOG("DM_TEST_NSMOUSE：不认识的手柄键 %s", arg); continue; } }
+                      NSString *what = [NSString stringWithFormat:@"%s %s", op, arg];
+                      void (^perform)(void (^)(void)) = ^(void (^b)(void)) { CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, b); CFRunLoopWakeUp(CFRunLoopGetMain()); };
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ perform(^{
+                          if (nav && (text_input_up() || dm_vkbd_ui_active())) { LOG("DM_TEST_NSMOUSE：%.2f 秒 %s 跳过（输入框开着）", NSProcessInfo.processInfo.systemUptime - t0, what.UTF8String); return; }
+                          LOG("DM_TEST_NSMOUSE：%.2f 秒 %s", NSProcessInfo.processInfo.systemUptime - t0, what.UTF8String);
+                          void dm_gamepad_inject(uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry);
+                          NSEvent *(^kev)(NSEventType) = ^(NSEventType t) { return [NSEvent keyEventWithType:t location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:kc]; };
+                          if (pad) dm_gamepad_inject(m, 0, 0, 0, 0); else on_key(kev(NSEventTypeKeyDown), 1);
+                          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), tq, ^{ perform(^{ if (pad) dm_gamepad_inject(0, 0, 0, 0, 0); else on_key(kev(NSEventTypeKeyUp), 0); }); }); }); });
+                      continue; }
                   if (!strcmp(op, "key") || !strcmp(op, "type")) {   // 「秒 key <键码>」：合成一次真正的键盘按下 / 0.08 秒后松开（键码 = 苹果的虚拟键码，如回车 36、Tab 48、J 38）；「秒 type <字>」：逐字打字。 | "<seconds> key <key code>": synthesise a real key press / release 0.08 s later (key code = Apple virtual key code, e.g. Return 36, Tab 48, J 38); "<seconds> type <text>": type character by character.
                       // 都投给当时的键窗口（真键盘就是这样：弹着输入框时进输入框），并记一行键窗口是不是游戏窗口
                       // All are posted to the key window at that moment (which is what a real keyboard does: into the input field while it is shown), and one line records whether the key window is the game window
@@ -467,8 +536,8 @@ void front_run(void (*guest)(void)) {
           // 游戏窗口本来不带「可最小化」（没有黄色按钮、没有 ⌘M）：这个开关只在测试时给窗口加上，验上面的最小化处理
           // DM_TEST_TERMINATE_AT=<seconds>: go through one system quit ([NSApp terminate:], same as Quit in the Dock); DM_TEST_MINI_AT=<seconds>[;<seconds>...]: toggle minimize at each time (back and forth).
           // The game window is not minimizable by itself (no yellow button, no Cmd-M): this switch adds that only for the test, to check the minimize handling above
-          // 退出走主线程运行循环的公共模式（不排主队列）：输入框的模态循环跑在主队列的一个块里，那时主队列不走，真的「程序坞退出」却照样进来
-          // The quit goes through the main run loop's common modes (not the main queue): the input box's modal loop runs inside a main-queue block, during which the main queue does not run, yet a real "Quit in the Dock" still comes in
+          // 退出走主线程运行循环的公共模式（不排主队列）：模态弹框（如键位对照）的模态循环跑在主队列的一个块里，那时主队列不走，真的「程序坞退出」却照样进来
+          // The quit goes through the main run loop's common modes (not the main queue): a modal dialog's (such as the key map's) modal loop runs inside a main-queue block, during which the main queue does not run, yet a real "Quit in the Dock" still comes in
           if ((e = getenv("DM_TEST_TERMINATE_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
               CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ [NSApp terminate:nil]; }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
           if ((e = getenv("DM_TEST_MINI_AT"))) win.styleMask |= NSWindowStyleMaskMiniaturizable;
@@ -516,51 +585,106 @@ void front_run(void (*guest)(void)) {
     }
 }
 
-// 软键盘输入框（front.h）：主线程弹 NSAlert + 文本框，客体线程（游戏的键盘线程）等信号量拿结果。无窗口模式不弹（返回 -1，调用方按取消）。
-// 框开着时退出（app_quit）先按「取消」放走键盘线程：开着的框冻着客体时钟（hle_swkbd.c），不放走一拍也走不了、存不了盘。这时模态循环还压在栈上，
-// 所以结果直接交给等的那边，不等 runModal 返回（同 iOS 壳 background_wait_save 关掉输入框）。
-// Software keyboard input box (front.h): the main thread shows an NSAlert + text field; the guest thread (the game's keyboard thread) waits on a semaphore for the result. Not shown in windowless mode (returns -1, the caller treats it as cancel).
-// A quit while the box is up (app_quit) first answers "Cancel" to release the keyboard thread: the open box freezes the guest clock (hle_swkbd.c), so otherwise no tick runs and nothing can be saved. The modal loop is still on the stack then,
-// so the result goes straight to the waiting side instead of waiting for runModal to return (as the iOS shell's background_wait_save closes the input box).
-@interface DmTextReq : NSObject { @public dispatch_semaphore_t sem; int done, ok; NSString *text; } @end
-@implementation DmTextReq @end
+// 软键盘输入框（front.h）：用手柄玩时走手柄屏幕键盘（dm_vkbd_ui.m）；否则主线程在游戏窗口上弹 NSAlert 表单 + 文本框（标题缺省、按钮走字符串表），客体线程（游戏的键盘线程）等信号量拿结果。无窗口模式不弹（返回 -1，调用方按取消）。
+// 表单不开模态循环：主队列照走，表单开着时游戏窗口的鼠标 / 滚轮不交给游戏（键盘本来就进键窗口 = 表单）。
+// 两种可来回换，打了的字带过去：屏幕键盘开着时键盘按键 / 鼠标点击 → 收起换成表单；表单开着时手柄按键 → 关掉换成屏幕键盘（text_input_handoff_pad）。
+// 框开着时退出（app_quit）先按「取消」放走键盘线程：开着的框冻着客体时钟（hle_swkbd.c），不放走一拍也走不了、存不了盘（同 iOS 壳 background_wait_save 关掉输入框）。
+// Software keyboard input box (front.h): when played with a controller, the on-screen controller keyboard (dm_vkbd_ui.m); otherwise the main thread shows an NSAlert sheet + text field on the game window (default title and buttons from the string table); the guest thread (the game's keyboard thread) waits on a semaphore for the result. Not shown in windowless mode (returns -1, the caller treats it as cancel).
+// A sheet runs no modal loop: the main queue keeps running, and while the sheet is up the game window's mouse / wheel input is not passed to the game (typing already goes to the key window = the sheet).
+// The two hand over to each other, keeping what was typed: a key press / mouse click while the on-screen keyboard is open → it closes and the sheet takes over; a controller press while the sheet is open → it closes and the on-screen keyboard takes over (text_input_handoff_pad).
+// A quit while the box is up (app_quit) first answers "Cancel" to release the keyboard thread: the open box freezes the guest clock (hle_swkbd.c), so otherwise no tick runs and nothing can be saved (as the iOS shell's background_wait_save closes the input box).
+@interface DmTextReq : NSObject <NSTextFieldDelegate> { @public dispatch_semaphore_t sem; int done, ok, kind, num_max; NSString *text; NSAlert *alert; } @end
+@implementation DmTextReq
+// 同 iOS 系统输入框，打字时就按游戏规则拦：起名只留英文字母 / 汉字、- 与 _ 合计一个、UTF-8 合计 15 字节，不合规则（太短、首尾是 - _）时「确定」置灰；
+// 数量框只留数字、超过上限当场改成上限。输入法还在组字时不动，上屏后再量
+// As the iOS system input box, the game's rules are enforced while typing: naming keeps only English letters / Chinese characters, one - or _ in total, 15 UTF-8 bytes, and greys out "OK" while the name breaks a rule (too short, starts or ends with - _);
+// the quantity box keeps only digits and turns a value over the limit into the limit on the spot. Nothing changes while an input method is still composing; it is measured after commit
+- (void)controlTextDidChange:(NSNotification *)n {
+    NSTextField *f = n.object; if ([(NSTextView *)f.currentEditor hasMarkedText]) return;
+    NSString *x = f.stringValue; NSMutableString *o = [NSMutableString string];
+    if (kind == DM_VKBD_NUM) { long long v = 0;
+        for (NSUInteger i = 0; i < x.length && o.length < 10; i++) { unichar c = [x characterAtIndex:i]; if (c >= '0' && c <= '9') { [o appendFormat:@"%C", c]; v = v * 10 + (c - '0'); } }
+        if (v > num_max) [o setString:[NSString stringWithFormat:@"%d", num_max]]; }
+    else if (kind == DM_VKBD_NAME) { int dash = 0; NSUInteger bytes = 0;
+        for (NSUInteger i = 0; i < x.length; i++) { unichar c = [x characterAtIndex:i]; NSUInteger nb = 0;
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) nb = 1;
+            else if ((c == '-' || c == '_') && !dash) { nb = 1; dash = 1; }
+            else if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF)) nb = 3;   // 中日韩统一表意文字（基本区 + 扩展 A） | CJK Unified Ideographs (basic block + Extension A)
+            if (!nb || bytes + nb > 15) continue;
+            [o appendFormat:@"%C", c]; bytes += nb; } }
+    else return;
+    if (![o isEqualToString:x]) f.stringValue = o;
+    if (kind == DM_VKBD_NAME) alert.buttons.firstObject.enabled = dm_vkbd_name_check(o.UTF8String) == DM_VKBD_HINT_NONE;   // 留空也能确定 = 随机取名 | OK also works when empty = random name
+}
+@end
 static DmTextReq *g_text_req;   // 只在主线程读写：屏上那个输入框的请求 | read and written on the main thread only: the request of the box on screen
-static void text_req_finish(DmTextReq *q, int ok, NSString *text) {   // 主线程；只交一次结果 | main thread; the result is handed over once
+enum { SHEET_TO_PAD = 1100 };   // 表单收起的返回码：换成屏幕键盘 | sheet return code: hand over to the on-screen keyboard
+static void text_req_finish(DmTextReq *q, int ok, NSString *text) {   // 主线程；只交一次结果（ok：1 确定 / 0 取消 / 2 换成屏幕键盘） | main thread; the result is handed over once (ok: 1 OK / 0 cancel / 2 hand over to the on-screen keyboard)
     if (q->done) return;
     q->done = 1; q->ok = ok; q->text = text; dispatch_semaphore_signal(q->sem);
 }
-static int text_input_cancel(void) {   // 主线程：有开着的输入框就按「取消」交结果、让模态循环回到事件循环时收场；返回 1 = 有 | main thread: if an input box is open, hand over "Cancel" and let the modal loop end once it gets back to the event loop; returns 1 if there was one
-    DmTextReq *q = g_text_req; if (!q || q->done) return 0;
-    text_req_finish(q, 0, nil); [NSApp stopModalWithCode:NSAlertSecondButtonReturn]; return 1;
+static int text_input_up(void) { return g_text_req != nil; }   // 主线程：输入框在屏上 | main thread: the input box is on screen
+static void text_input_test(NSString *text, int ok) {   // 测试（DM_TEST_NSMOUSE 的 sheet）：往开着的表单里填字（照打字时的规则过一遍）、按确定 / 取消，不靠 App 在前台 | test (DM_TEST_NSMOUSE sheet): fill the open sheet (passed through the same rules as typing) and press OK / Cancel, without needing the App in front
+    DmTextReq *q = g_text_req; if (!q || q->done) { LOG("DM_TEST_NSMOUSE：sheet——没有开着的表单"); return; }
+    NSTextField *f = (NSTextField *)q->alert.accessoryView; f.stringValue = text;
+    [q controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:f]];
+    NSButton *b = q->alert.buttons[ok ? 0 : 1];
+    LOG("DM_TEST_NSMOUSE：sheet 填「%s」→「%s」，确定%s，按%s", text.UTF8String, f.stringValue.UTF8String, q->alert.buttons[0].enabled ? "可按" : "置灰", ok ? "确定" : "取消");
+    if (b.enabled) [b performClick:nil];
 }
-int front_text_input(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap) {
-    if (!g_layer) return -1;
+static void text_input_handoff_pad(void) {   // dm_gamepad.m 的按键回调（主线程）：表单开着时手柄有按键 → 换成屏幕键盘 | dm_gamepad.m's press callback (main thread): a controller press while the sheet is open → hand over to the on-screen keyboard
+    DmTextReq *q = g_text_req; if (q && !q->done) [g_win endSheet:q->alert.window returnCode:SHEET_TO_PAD];
+}
+static int text_input_cancel(void) {   // 主线程：有开着的输入框就按「取消」交结果并收起表单；返回 1 = 有 | main thread: if an input box is open, hand over "Cancel" and close the sheet; returns 1 if there was one
+    DmTextReq *q = g_text_req; if (!q || q->done) return 0;
+    text_req_finish(q, 0, nil); [g_win endSheet:q->alert.window returnCode:NSAlertSecondButtonReturn]; return 1;
+}
+static int text_sheet(const char *title, const char *sub, const char *guide, const char *initial, char *out, int out_cap) {   // 表单：1 确定 / 0 取消 / 2 换成屏幕键盘（out 是已打的字） | the sheet: 1 OK / 0 cancel / 2 hand over to the on-screen keyboard (out holds what was typed)
     DmTextReq *q = [DmTextReq new]; q->sem = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
+        extern int g_swkbd_name_panel, g_swkbd_numeric_max; q->num_max = g_swkbd_numeric_max; q->kind = q->num_max >= 0 ? DM_VKBD_NUM : g_swkbd_name_panel ? DM_VKBD_NAME : DM_VKBD_TEXT;
         NSAlert *a = [NSAlert new];
-        a.messageText = title && *title ? @(title) : @"输入";
+        a.messageText = title && *title ? @(title) : @(ui(q->kind == DM_VKBD_NAME ? "dmNameTitle" : q->kind == DM_VKBD_NUM ? "dmQtyTitle" : "dmInputTitle"));
         NSString *info = [NSString stringWithFormat:@"%s%s%s", sub ? sub : "", sub && *sub && guide && *guide ? "\n" : "", guide ? guide : ""];
+        if (q->kind == DM_VKBD_NAME) info = info.length ? [info stringByAppendingFormat:@"\n%s", ui("dmNameRule")] : @(ui("dmNameRule"));
+        if (q->kind == DM_VKBD_NUM) info = [NSString stringWithFormat:@"0 – %d", q->num_max];
         a.informativeText = info;
-        [a addButtonWithTitle:@"确定"]; [a addButtonWithTitle:@"取消"];
+        [a addButtonWithTitle:@(ui("dmConfirm"))]; [a addButtonWithTitle:@(ui("dmCancel"))];
+        a.buttons[1].keyEquivalent = @"\033";   // Esc = 「取消」（系统只给英文标题「Cancel」自动配 Esc） | Esc = "Cancel" (the system assigns Esc automatically only to the English title "Cancel")
         NSTextField *f = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 300, 24)];
         f.stringValue = initial ? @(initial) : @"";
-        if (guide && *guide) f.placeholderString = @(guide);
+        if (q->kind == DM_VKBD_NAME) f.placeholderString = @(ui("dmNameBlankRandom")); else if (guide && *guide) f.placeholderString = @(guide);
+        f.delegate = q;
         a.accessoryView = f; [a layout]; a.window.initialFirstResponder = f;
         f.target = a.buttons.firstObject; f.action = @selector(performClick:);   // 在输入框里按回车 = 点「确定」（明确接上，不靠系统把回车转给缺省按钮） | pressing Return in the input field = clicking "OK" (wired explicitly, not relying on the system forwarding Return to the default button)
-        // 弹框出来后光标要在输入框里：只指定「初始第一响应者」不生效（实测弹出后第一响应者是弹框自己，要先点一下输入框才能打字），等模态循环转起来再显式指定一次
-        // The cursor must be in the input field once the dialog appears: specifying only the "initial first responder" does not work (measured: after it appears the first responder is the dialog itself, and the field has to be clicked before typing), so it is specified explicitly once more after the modal loop starts running
-        CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ [a.window makeFirstResponder:f]; });
-        g_text_req = q;
-        NSModalResponse m = [a runModal];
-        if (g_text_req == q) g_text_req = nil;
-        [g_win makeKeyAndOrderFront:nil];   // 弹框关掉后把游戏窗口显式设回键窗口（系统通常自己会还，保险） | after the dialog closes, explicitly make the game window key again (the system usually returns it by itself; this is for safety)
-        text_req_finish(q, m == NSAlertFirstButtonReturn, f.stringValue);   // 退出时已按取消交过结果的，这里不再交 | if the quit already handed over "Cancel", nothing more is handed over here
+        g_text_req = q; q->alert = a;
+        [q controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:f]];   // 带过来的字（屏幕键盘交过来的）也按规则量一次 | text carried over (handed over by the on-screen keyboard) is checked by the rules once too
+        [a beginSheetModalForWindow:g_win completionHandler:^(NSModalResponse m) {
+            if (g_text_req == q) g_text_req = nil;
+            text_req_finish(q, m == NSAlertFirstButtonReturn ? 1 : m == SHEET_TO_PAD ? 2 : 0, f.stringValue);   // 退出时已按取消交过结果的，这里不再交 | if the quit already handed over "Cancel", nothing more is handed over here
+        }];
+        // 表单出来后光标要在输入框里：只指定「初始第一响应者」不保险（模态框时实测第一响应者是弹框自己，要先点一下输入框才能打字），显式指定一次
+        // The cursor must be in the input field once the sheet appears: specifying only the "initial first responder" is not reliable (measured with the modal dialog: the first responder was the dialog itself, and the field had to be clicked before typing), so it is specified explicitly once
+        [a.window makeFirstResponder:f];
+        LOG("前端：输入框已弹出（游戏窗口上的表单，%s）", a.window.visible ? "在屏上" : "还没上屏：窗口最小化着或另一个表单还开着");
     });
     dispatch_semaphore_wait(q->sem, DISPATCH_TIME_FOREVER);
     if (!q->ok) return 0;
-    (void)max_chars;                              // 截断按 UTF-16 单元在 hle_swkbd.c 统一做 | Truncation is done uniformly in hle_swkbd.c in UTF-16 units
     snprintf(out, out_cap, "%s", q->text.UTF8String);
-    return 1;
+    if (q->ok == 1 && q->kind == DM_VKBD_NAME && !*out && !dm_name_blank_random(out, out_cap)) return 0;   // 名字留空确定 = 随机取名（同屏幕键盘、iOS） | name left empty and confirmed = random name (as the on-screen keyboard and iOS)
+    return q->ok;
+}
+int front_text_input(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap) {
+    if (!g_layer || !g_win) return -1;
+    // 用手柄玩：游戏画面上的屏幕键盘（dm_vkbd_ui.m）；用键盘鼠标：表单。中途换了设备就换另一种，已打的字带过去。截断按 UTF-16 单元在 hle_swkbd.c 统一做
+    // Played with a controller: the on-screen keyboard over the game picture (dm_vkbd_ui.m); with keyboard and mouse: the sheet. Switching devices midway switches to the other, keeping what was typed. Truncation is done uniformly in hle_swkbd.c in UTF-16 units
+    char cur[1024]; snprintf(cur, sizeof cur, "%s", initial ? initial : "");
+    for (int pad = dm_vkbd_wanted();; pad = !pad) {
+        int r = pad ? dm_vkbd_input(title, cur, max_chars, out, out_cap) : text_sheet(title, sub, guide, cur, out, out_cap);
+        if (r != 2) return r;
+        snprintf(cur, sizeof cur, "%s", out);
+        LOG("前端：输入框——%s（带过去「%s」）", pad ? "键盘 / 鼠标有输入，屏幕键盘换成表单" : "手柄有按键，表单换成屏幕键盘", cur);
+    }
 }
 
 // 存档没写进去（front.h；宿主 hle_fs.c 在游戏线程调，盖过那里只记日志的弱实现）：同 iOS 壳，告诉玩家「存储空间不足，进度未保存」，只通知、不改存档流程。

@@ -82,6 +82,7 @@ static int g_app;   // Mac App 形态 | the overlay carries keyboard key caps; t
 #endif
 void dm_padmode_request_glyph(int g) { if (g < 0 || g >= DM_GLYPH_N || !g_glyph_have[g]) g = DM_GLYPH_PAD; atomic_store(&g_glyph_want, g); }   // 前端（任意线程）：键盘有输入 → 键盘，实体手柄有输入 → 按它的类型。覆盖层没有那套就用原版键帽。这里不立输入冻结：换键帽要等面板都关了才起（见 glyph_swap_ok），等的时候玩家照常操作；事务起的那一帧才冻结 | Front end (any thread): keyboard input -> keyboard, physical controller input -> by its type. Without that set in the overlay the original glyphs are used. No input freeze here: the glyph swap waits until all panels are closed (see glyph_swap_ok), the player keeps playing meanwhile; input freezes only on the frame the transaction starts
 int dm_padmode_kbd(void) { return g_glyph == DM_GLYPH_KBD; }
+int dm_padmode_glyph_want(void) { return atomic_load(&g_glyph_want); }   // 最近一次明确输入来自哪种设备（还没换上的也算；屏幕键盘据此决定弹不弹、提示条写哪套键名） | which kind of device the latest clear input came from (counts even before the swap is applied; the on-screen keyboard uses it to decide whether to appear and which button names its legend shows)
 // 只换键帽的重载只在「没有面板开着」时起：重载布局会把开着的页重建一遍，设置页的勾选框会全显示成未勾、还多出「全部接受」（实测），
 // 所以局内要 HUD 在屏、游戏没停（暂停菜单 / 设置页 / 借壳的页）、手势层认的面板一个没开；前端要删除 / 选项 / 起名 / 确认框都没开。等到条件满足的那一帧再换
 // The reload that only swaps key caps starts only when "no panel is open": reloading the layout rebuilds any open page, and the checkboxes of the settings page would all show as unchecked with an extra "Accept All" appearing (measured),

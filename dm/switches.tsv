@@ -554,6 +554,7 @@ DM_TEST_STASH_TOPUP	host	host/dm_elysium.c	-
 DM_TEST_STAT	host	host/diag.c	-
 DM_TEST_STAT_LOG	host	host/diag.c	-
 DM_TEST_STORE	host	host/dm_pouch.c	-
+DM_TEST_SWKBD_KIND	host	host/hle_swkbd.c	-
 DM_TEST_SWKBD_LAG_MS	host	host/hle_swkbd.c	-
 DM_TEST_TAKE_LOG	host	host/dm_actions.c	-
 DM_TEST_TERMINATE_AT	host	host/front_mac.m	-
@@ -641,6 +642,7 @@ DM_UI_TAPS_AT	host	host/dm_cursor.c host/hle_hid.c	-
 DM_UI_YPOS	host	host/dm_uiscreen.c	-
 DM_UPDATE_URL	ios-tools	ios/project.yml	-
 DM_VCACHE	verify	verify/structck.py	-
+DM_VKBD	ios	ios/Sources/dm_vkbd_ui.m	-
 DM_VK_INLINE_CS	gfx	gfx/tools/dmsh_vk.py	-
 DM_VK_TRACE_ATTACHMENTS	gfx	gfx/vulkan/engine/xbg_game.cpp	-
 DM_WATCH	host,ios-tools	host/crash.c ios/TouchSmokeTests/TouchSmoke.swift	y

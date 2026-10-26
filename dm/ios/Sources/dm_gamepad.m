@@ -20,6 +20,10 @@
 //   · 游戏取手柄处（hle_hid.c fill）：触屏摇杆有值就用触屏的，否则用手柄的。
 // 多个手柄：每个手柄各存各的键和摇杆，交给游戏的是合起来的——键取或、每根摇杆取推得最远的那个。断开一个只拿掉它那一份，别的手柄按着的键不丢。
 // 失活 / 进后台 / 来电（前端 front_ios_focus_event → dm_gamepad_reset）：所有手柄的键和摇杆清零。回调只在值变化时来，按着键切走、在后台松开，回来不会补一次「松开」。
+// 屏幕键盘（dm_vkbd_ui.m）开着时手柄归它：dm_gamepad_capture(1) 之后合起来的键和左摇杆只给它读（dm_gamepad_captured），游戏收到的是全松开；
+// 收起时还按着的键（比如按「确定」的那一下）不交给游戏，直到松开——不然键盘一关游戏就收到一次按下。
+// While the on-screen keyboard (dm_vkbd_ui.m) is open the controllers belong to it: after dm_gamepad_capture(1) the merged buttons and left stick are only for it to read (dm_gamepad_captured), and the game sees everything released;
+// buttons still held when it closes (such as the press that chose "OK") are kept from the game until released, otherwise the game would get one press the moment the keyboard closes.
 #import <GameController/GameController.h>
 #include "dm_input.h"
 #include "dm_padmap.h"
@@ -27,6 +31,8 @@
 
 static void (*g_on_mode)(int pad);
 static int g_pad_mode, g_need_center;
+static int g_capture; static uint64_t g_cap_b, g_swallow; static int32_t g_cap_lx, g_cap_ly;
+static void (*g_on_press)(void);   // 前端：手柄有新按键（屏幕键盘没占着时；前端的输入框据此换成屏幕键盘） | front end: a new controller press (while the on-screen keyboard does not own the controllers; the front end's input box hands over to the on-screen keyboard on it)   // 屏幕键盘占用中；合起来的键 / 左摇杆原值；收起后还没松开的键 | on-screen keyboard owns the controllers; merged buttons / raw left stick; buttons not yet released since it closed
 void dm_padmode_request(int pad);   // 宿主 dm_padmode.c：布局换成原版手柄版 / 触屏版 | Host dm_padmode.c: switch the layouts to the original controller version / the touch version
 static void set_mode(int pad) { if (g_pad_mode == pad) return; g_pad_mode = pad; dm_padmode_request(pad); LOG("手柄：%s", pad ? "手柄有输入 → 手柄模式" : "碰了屏幕 / 手柄断开 → 触屏模式"); if (g_on_mode) g_on_mode(pad); }
 int dm_gamepad_mode(void) { return g_pad_mode; }
@@ -51,7 +57,11 @@ static void apply(void) {
     on[0] = stick_on(on[0], ax[0], ax[1]); on[1] = stick_on(on[1], ax[2], ax[3]);
     if (!on[0] && !on[1]) g_need_center = 0;   // 碰过屏幕后摇杆回过中了：之后再推出来算数 | The stick has returned to center since the screen was touched: pushing it out again from now on counts
     if ((b & ~prev_b) || ((on[0] || on[1]) && !g_need_center)) { dm_padmode_request_glyph(g_glyph); set_mode(1); }   // 先报键帽样式再要手柄版：同一次切换里就换成这只手柄的键帽（Mac App 上也是从键盘键帽换回手柄键帽） | Report the glyph style before asking for the controller layout, so the same switch already uses this controller's glyphs (on the Mac App this is also the switch from keyboard glyphs back to controller glyphs)
+    if ((b & ~prev_b) && g_on_press && !g_capture) g_on_press();
     prev_b = b;
+    g_cap_b = b; g_cap_lx = ax[0]; g_cap_ly = ax[1];
+    if (g_capture) { dm_pad_set(0, 0, 0, 0, 0); return; }
+    g_swallow &= b; b &= ~g_swallow;
     if (!g_pad_mode || !on[0]) ax[0] = ax[1] = 0; if (!g_pad_mode || !on[1]) ax[2] = ax[3] = 0;   // 触屏模式不交摇杆；手柄模式下没推出来的给 0 | Sticks are not delivered in touch mode; in controller mode a stick that is not pushed out gives 0
     // ZR：原版六个技能格之一。这一格空着（没绑技能）时按它 = 免费回城（手柄玩家也免费回城，与触屏回城钮一致）；绑了技能就整颗交还原版（不再整颗占用）。
     // 想把回城放在别的键上：原版选技能界面「综合技能」里有回城技能可绑（宿主进局时挂上的，dm_freetp.c），那条走原版自己的施放，不经这里。
@@ -78,6 +88,12 @@ static void drop(const void *who) {   // 这个手柄没了：只拿掉它那一
     for (int k = 0; k < NSLOT; k++) if (g_s[k].who) return;
     set_mode(0);
 }
+void dm_gamepad_capture(int on) {   // 前端主线程：屏幕键盘开 / 关 | front end main thread: on-screen keyboard opens / closes
+    if (!on && g_capture) g_swallow = g_cap_b;
+    g_capture = on; apply();
+}
+void dm_gamepad_on_press(void (*fn)(void)) { g_on_press = fn; }
+void dm_gamepad_captured(uint64_t *b, int32_t *lx, int32_t *ly) { *b = g_cap_b; *lx = g_cap_lx; *ly = g_cap_ly; }   // 主线程 | main thread
 void dm_gamepad_touched(void) { if (g_pad_mode) { g_need_center = 1; set_mode(0); apply(); } }   // 前端：碰了屏幕。摇杆此刻偏着的话要先回中才重新接管 | Front end: the screen was touched. If a stick is deflected right now it must return to center before taking over again
 void dm_gamepad_reset(void) {   // 前端：失活 / 进后台 / 来电 | Front end: resign active / enter background / incoming call
     int any = 0; for (int i = 0; i < NSLOT; i++) if (g_s[i].who) { any |= g_s[i].b != 0 || g_s[i].ax[0] || g_s[i].ax[1] || g_s[i].ax[2] || g_s[i].ax[3]; g_s[i].b = 0; memset(g_s[i].ax, 0, sizeof g_s[i].ax); }
