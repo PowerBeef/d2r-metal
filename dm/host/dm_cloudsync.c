@@ -109,7 +109,7 @@ static cs_rich rich_of(const cs_file *f) {
 #ifdef CS_HAVE_STASH_SEED
         if (f->size == sizeof g_stash_seed && !memcmp(f->data, g_stash_seed, sizeof g_stash_seed)) { r.chron = FRESH_CHRON; return r; }   // 预置：0 件、新建大小 | seed: 0 items, freshly-created size
 #endif
-        for (uint32_t o = 0; o + 68 <= f->size && !memcmp(f->data + o, "\x55\xaa\x55\xaa", 4); ) { uint32_t ln; memcpy(&ln, f->data + o + 16, 4); if (ln < 68 || o + ln > f->size) break;
+        for (uint32_t o = 0; o + 68 <= f->size && !memcmp(f->data + o, "\x55\xaa\x55\xaa", 4); ) { uint32_t ln; memcpy(&ln, f->data + o + 16, 4); if (ln < 68 || ln > f->size - o) break;
             if (!memcmp(f->data + o + 64, "JM", 2)) { uint16_t c; uint32_t g; memcpy(&c, f->data + o + 66, 2); memcpy(&g, f->data + o + 12, 4); r.items += c; r.gold += g; } else r.chron += (int)ln; o += ln; } }
     else if (L > 8 && !strcmp(f->path + L - 8, ".swvault")) { r.kind = 2; if (f->size >= 8 && !memcmp(f->data, "SWVT", 4)) { uint16_t c; memcpy(&c, f->data + 6, 2); r.vault = c; } }
     return r;
@@ -123,7 +123,7 @@ static cs_rich rich_of(const cs_file *f) {
 // +76 8 bytes of 0, from +84 (A + B + C) records ordered by group, 10 bytes each (u32 table index, u16, u32 time = minutes since 1970); segment length = 84 + 10 × count + 64 (the last 64 bytes are not written by the game and are zero).
 // Merge: entries in src with no same index in the same group of dst are appended to the end of that group in dst (the game ignores in-group order; it reads into a hash table); for entries in both, the earlier time is taken. Returns the number added, -1 = unrecognized format (untouched)
 static int chron_seg(const uint8_t *d, uint32_t n, uint32_t *at, uint32_t *len) {   // 找编年史段：1 = 找到 | Find the Chronicle segment: 1 = found
-    for (uint32_t o = 0; o + 84 <= n && !memcmp(d + o, "\x55\xaa\x55\xaa", 4); ) { uint32_t ln; memcpy(&ln, d + o + 16, 4); if (ln < 68 || o + ln > n) return 0;
+    for (uint32_t o = 0; o + 84 <= n && !memcmp(d + o, "\x55\xaa\x55\xaa", 4); ) { uint32_t ln; memcpy(&ln, d + o + 16, 4); if (ln < 68 || ln > n - o) return 0;
         if (!memcmp(d + o + 64, "\xc0\xed\xea\xc0", 4)) { uint16_t v, a, b, c; memcpy(&v, d + o + 68, 2); memcpy(&a, d + o + 70, 2); memcpy(&b, d + o + 72, 2); memcpy(&c, d + o + 74, 2);
             if (v != 1 || ln != 84u + 10u * (uint32_t)(a + b + c) + 64u) return 0; *at = o; *len = ln; return 1; }
         o += ln; }

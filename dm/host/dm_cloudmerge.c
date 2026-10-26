@@ -80,7 +80,7 @@ typedef struct { long long gold; int chron, items, bad; } d2i_sum;
 static uint8_t *B;
 static d2i_sum d2i_split(uint64_t G, const uint8_t *d, uint32_t n, cm_list *out) {
     d2i_sum s = {0};
-    for (uint32_t o = 0; o + 68 <= n && !memcmp(d + o, "\x55\xaa\x55\xaa", 4); ) { uint32_t ln, g; memcpy(&ln, d + o + 16, 4); if (ln < 68 || o + ln > n) { s.bad++; break; }
+    for (uint32_t o = 0; o + 68 <= n && !memcmp(d + o, "\x55\xaa\x55\xaa", 4); ) { uint32_t ln, g; memcpy(&ln, d + o + 16, 4); if (ln < 68 || ln > n - o) { s.bad++; break; }
         memcpy(&g, d + o + 12, 4);
         if (!memcmp(d + o + 64, "JM", 2)) { uint16_t c; memcpy(&c, d + o + 66, 2); s.gold += g; uint32_t p = o + 68;
             for (int i = 0; i < c; i++) { int used = 0, socks = 0; uint64_t it = out && p < o + ln ? dm_item_make_n(B, G, 0, d + p, (int)(o + ln - p), &socks, &used) : 0;

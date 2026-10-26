@@ -1,12 +1,14 @@
 // iCloud 同步核心单测（秒级）：dm_cloudsync.c。两个本地目录当两台设备、一个本地目录当云端；期望都是按「后写覆盖先写」手推的，不跑被测实现得出。
 // iCloud sync core unit test (takes seconds): dm_cloudsync.c. Two local directories act as two devices and one local directory as the cloud; all expectations are derived by hand from "later write overwrites earlier write", not obtained by running the implementation under test.
 #include <dirent.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <unistd.h>
 int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const char *statef, int allow_down, uint64_t now_ms, int (*ready)(const char *unit));
 int dm_cloud_conflict_take(void);
@@ -297,6 +299,24 @@ int main(void) {
       CHECK(S8("A8", 1) == 1 && !strcmp(chron_str("A8"), "1@100 2@150 3@300 4@400 5@500"), "㉒③ A 后写赢、启动时上传：本机先并进云端的 5 → 实为 %s", chron_str("A8"));
       CHECK(S8("N8", 1) == 1 && !strcmp(chron_str("N8"), "1@100 2@150 3@300 4@400 5@500"), "㉒③ N 启动拿到五条，实为 %s", chron_str("N8"));
       #undef S8
+    }
+    // ㉓ 损坏的共享仓库档：第二段的段长 0xFFFFFFBC 让 32 位的「起点 68 + 段长」绕回 0。旧判法（o + ln > 大小）照放，o 加上段长又回到 0，
+    //    逐段扫描（rich_of / chron_seg）死循环、同步卡死在 100% CPU。在子进程里跑、5 秒闹钟：同步得照常结束
+    // ㉓ Corrupted shared stash: the second segment's length 0xFFFFFFBC makes the 32-bit "start 68 + length" wrap to 0. The old check (o + ln > size) let it through, o plus the length went back to 0,
+    //    and the segment walk (rich_of / chron_seg) looped forever with sync stuck at 100% CPU. Run in a child process with a 5-second alarm: sync must finish normally
+    { static uint8_t b[136]; uint32_t l1 = 68, l2 = 0xFFFFFFBCu;
+      memcpy(b, "\x55\xaa\x55\xaa", 4); memcpy(b + 16, &l1, 4); memcpy(b + 64, "JM", 2); b[66] = 1;
+      memcpy(b + 68, "\x55\xaa\x55\xaa", 4); memcpy(b + 68 + 16, &l2, 4);
+      const char *devs[2] = { "W9", "X9" };
+      put_d2i("X9", 2, 300, 9100); CHECK(dsync("X9", 0, 9100000) >= 0, "㉓ 准备：X 先把一份正常的共享仓库传上云");   // 第二台带着坏档来时走并编年史那条路（chron_seg） | the second device then arrives with the corrupted file and takes the chronicle-merge path (chron_seg)
+      for (int k = 0; k < 2; k++) {
+          put_bin(devs[k], "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", b, sizeof b, 9200 + k);
+          pid_t pid = fork();
+          if (!pid) { alarm(5); dsync(devs[k], 1, 9200000 + (uint64_t)k * 1000); _exit(0); }
+          int st = 0; waitpid(pid, &st, 0);
+          CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0, "㉓ %s 带着段长绕回的坏仓库档同步：5 秒内照常结束（实为%s）", devs[k],
+                WIFSIGNALED(st) ? (WTERMSIG(st) == SIGALRM ? "卡死被闹钟杀掉" : "被信号杀掉") : "异常退出");
+      }
     }
     printf("t_cloudsync: %d 项，%d 失败\n", checks, fails);
     return fails != 0;
