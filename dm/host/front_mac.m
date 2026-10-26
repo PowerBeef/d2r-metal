@@ -467,7 +467,10 @@ void front_run(void (*guest)(void)) {
           // 游戏窗口本来不带「可最小化」（没有黄色按钮、没有 ⌘M）：这个开关只在测试时给窗口加上，验上面的最小化处理
           // DM_TEST_TERMINATE_AT=<seconds>: go through one system quit ([NSApp terminate:], same as Quit in the Dock); DM_TEST_MINI_AT=<seconds>[;<seconds>...]: toggle minimize at each time (back and forth).
           // The game window is not minimizable by itself (no yellow button, no Cmd-M): this switch adds that only for the test, to check the minimize handling above
-          if ((e = getenv("DM_TEST_TERMINATE_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; });
+          // 退出走主线程运行循环的公共模式（不排主队列）：输入框的模态循环跑在主队列的一个块里，那时主队列不走，真的「程序坞退出」却照样进来
+          // The quit goes through the main run loop's common modes (not the main queue): the input box's modal loop runs inside a main-queue block, during which the main queue does not run, yet a real "Quit in the Dock" still comes in
+          if ((e = getenv("DM_TEST_TERMINATE_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+              CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ [NSApp terminate:nil]; }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
           if ((e = getenv("DM_TEST_MINI_AT"))) win.styleMask |= NSWindowStyleMaskMiniaturizable;
           if ((e = getenv("DM_TEST_MINI_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (win.miniaturized) [win deminiaturize:nil]; else [win miniaturize:nil]; }); }
