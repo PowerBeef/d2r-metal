@@ -39,7 +39,7 @@ static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0 };   // 缺省值：省电模式（30 帧）缺省关、3D 画质缺省流畅优先（q3d=0），换组默认在传送门左侧，其余缺省开（voice 的缺省不用：读盘时按当前语言定、「默认」不管它）
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, !DM_PHONE, 1, 1, 0 };   // 缺省值：省电模式（30 帧）缺省关；3D 画质手机缺省流畅优先（q3d=0）、Mac 缺省画质优先（q3d=1：桌面 GPU 余量大，60 帧下掉帧多半是 CPU 卡顿，降 3D 清晰度帮不上）；换组默认在传送门左侧，其余缺省开（voice 的缺省不用：读盘时按当前语言定、「默认」不管它） | defaults: power saver (30 fps) off; 3D quality smoothness first on phones (q3d=0) and quality first on the Mac (q3d=1: a desktop GPU has headroom, and at 60 fps drops are mostly CPU hitches that a lower 3D resolution does not help); the group swap sits left of the portal; everything else on (voice's default is unused: it follows the current language on load, and "Default" leaves it alone)
 // q3d（3D 画质）：0 = 流畅优先（掉帧就自动降 3D 比例）、1 = 画质优先（不自动降）。生效 = 调 hle_oe.c 的 dm_3d_quality_mode_set，读盘与点「应用」时当场调，下一帧控制器就按新档走。
 // 页上是上下两项单选（同语言行）：TouchCustom_q3d 是「画质优先」那格（勾上 = 1），TouchCustom_q3d_smooth 是它的反面
 // q3d (3D quality): 0 = smoothness first (automatically lowers the 3D scale on frame drops), 1 = quality first (no automatic lowering). Applied by calling hle_oe.c's dm_3d_quality_mode_set, immediately on load and on tapping "Apply", so the controller follows the new setting from the next frame.
