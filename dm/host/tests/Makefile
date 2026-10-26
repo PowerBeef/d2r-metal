@@ -84,6 +84,7 @@ run: \
 	python3 ../../tools/test_bench.py
 	python3 ../../tools/test_boothist.py
 	python3 ../../tools/test_guestsyms.py
+	python3 ../../tools/re/test_nso2elf.py
 	python3 ../../tools/test_tickdiff.py
 	python3 ../../tools/test_explore.py
 	python3 ../../tools/scenario.py check ../../verify/bench/*.scn

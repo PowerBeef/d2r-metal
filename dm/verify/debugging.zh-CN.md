@@ -40,6 +40,8 @@ python3 dm/tools/guestsyms.py lookup main+0x455aa4 sdk+0x2b0470
 
 `crashlog.py` 以及别的打 `模块+偏移` 的地方都能用这张表。
 
+- **引擎函数名**来自引擎分析库（有的话；[dm/tools/re](../tools/re/README.zh-CN.md)）：`main` 的一份私有 Ghidra 工程，带本机查询服务（`re.sh serve`、`re.sh q decompile main+0x…`）。它的导出 `$DM_ROOT/re/export/main.names.tsv` 给动态符号表没起名的函数起名，用在本表的查询、`crashlog.py`、`dm bt` 和 `sampagg.py` 里。它的输出只留在本机。
+
 ## 调试器
 
 ### 停在某一拍

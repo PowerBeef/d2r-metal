@@ -40,6 +40,8 @@ python3 dm/tools/guestsyms.py lookup main+0x455aa4 sdk+0x2b0470
 
 `crashlog.py` and anything else that prints `module+offset` can use this table.
 
+- **Engine names** come from the engine-analysis database when it exists ([dm/tools/re](../tools/re/README.md)): a private Ghidra project of `main` with a local query server (`re.sh serve`, `re.sh q decompile main+0x…`). Its export `$DM_ROOT/re/export/main.names.tsv` names the functions the dynamic symbols leave unnamed, in this table's lookups, `crashlog.py`, `dm bt` and `sampagg.py`. Its output stays on your machine.
+
 ## The debugger
 
 ### Stopping at a tick
