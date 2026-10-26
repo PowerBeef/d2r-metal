@@ -5,6 +5,9 @@
 #   ③ 改写规则：产物里的 main.cuts / obs / params.tsv → 书签（类别 dm-rewrite），提醒这里的原代码在运行时被换掉或被观察。
 #   ④ 已知布局：dm/host/dm_widget.h 的控件虚表 → 标签 vt_<类>，控件基类与各类专有字段、dm_unit.h 与 dm/verify/tick_state_format.md 的单位链 → 结构体（类别 /dm）。
 #   ⑤ 名字表 $DM_ROOT/re/names.tsv（偏移 名字 可信度 来源）：函数起点改函数名，别处加标签；可信度写进注释。
+#   ⑥ 反射表 $DM_ROOT/re/export/reflect.json（reflect.py）：每个类一个结构体（/dm/reflect，含父类字段，字段名 = 布局 JSON 里的名字），
+#      类型描述符 type_<类>、类型对象虚表 vt_Type_<类>、工厂 <类>_Create、只登记一个类的取类型函数 <类>_GetType；
+#      消息频道与各频道动作做成 8 字节枚举（值 = 名字的 FNV-1a 64），$DM_ROOT/re/enums.tsv 里的枚举（如 ControllerAction）做成 4 字节枚举。
 #   用法（由 re.sh seed 调用；工程不能被别的进程打开）：seed.py [--dry-run]
 # Writes what the repository already knows into the engine-analysis database (the Ghidra project); safe to rerun: the same result is not written twice, and hand-given names (USER_DEFINED) are never touched.
 #   ① NVN: every lookup slot in dm/gfx/nvn/nvn_slots.tsv -> label pfn_<name>, typed as the matching function pointer from nvn.h (a plain pointer when it cannot be parsed).
@@ -12,6 +15,9 @@
 #   ③ Rewrite rules: main.cuts / obs / params.tsv from the build output -> bookmarks (category dm-rewrite), a reminder that the original code here is replaced or observed at run time.
 #   ④ Known layouts: the widget vtables in dm/host/dm_widget.h -> labels vt_<class>; the widget base class and per-class fields, and the unit chain from dm_unit.h and dm/verify/tick_state_format.md -> structures (category /dm).
 #   ⑤ The name table $DM_ROOT/re/names.tsv (offset name confidence source): renames the function at a function start, adds a label elsewhere; the confidence goes into a comment.
+#   ⑥ The reflection table $DM_ROOT/re/export/reflect.json (reflect.py): one structure per class (/dm/reflect, parent fields included, field names = the names in layout JSON),
+#      type descriptors type_<Class>, type-object vtables vt_Type_<Class>, factories <Class>_Create, getters that register a single class <Class>_GetType;
+#      message channels and each channel's actions become 8-byte enums (value = FNV-1a 64 of the name), the enums in $DM_ROOT/re/enums.tsv (e.g. ControllerAction) 4-byte enums.
 #   Usage (called by re.sh seed; the project must not be open in another process): seed.py [--dry-run]
 import argparse
 import os
@@ -28,6 +34,8 @@ import ghidra_db  # noqa: E402
 MENTION = re.compile(r'\bmain\+0x([0-9a-f]{3,})\b')
 PRODUCT_OUT = ghidra_db.DM_ROOT / 'build/cache/dm/out'
 NAMES = ghidra_db.RE / 'names.tsv'
+REFLECT = ghidra_db.RE / 'export' / 'reflect.json'
+ENUMS = ghidra_db.RE / 'enums.tsv'
 TAG = '[dm] '
 
 # 控件：基类字段（所有控件共有）与各类专有字段，(偏移, 名字, 类型名)；类型名用 Ghidra 内建类型
@@ -121,7 +129,7 @@ class Seeder:
     def __init__(self, program, dry):
         from ghidra.program.model.symbol import SourceType
         self.p, self.dry, self.ST = program, dry, SourceType
-        self.stats = {}
+        self.stats, self.skip = {}, set()
 
     def bump(self, k): self.stats[k] = self.stats.get(k, 0) + 1
 
@@ -129,6 +137,7 @@ class Seeder:
 
     def name(self, off, name, kind):
         """函数起点改函数名，否则加主标签；手工名字不动，同名跳过。 | Renames the function at a function start, otherwise adds a primary label; hand-given names are left alone, the same name is skipped."""
+        if off in self.skip: return
         st = self.p.getSymbolTable(); at = self.a(off)
         f = self.p.getFunctionManager().getFunctionAt(at)
         cur = f.getSymbol() if f else st.getPrimarySymbol(at)
@@ -243,6 +252,113 @@ class Seeder:
                 if ln.strip() and not ln.startswith(('#', 'name\t'))]
 
 
+def fnv1a64(s):
+    h = 0xcbf29ce484222325
+    for b in s.encode(): h = ((h ^ b) * 0x100000001b3) & 0xffffffffffffffff
+    return h
+
+
+def ident(name):
+    """类名 → 标识符（A::B → A__B，其余非字母数字换成 _）。 | Class name -> identifier (A::B -> A__B, other non-alphanumerics become _)."""
+    return ''.join(c if c.isalnum() or c == '_' else '_' for c in (name or '').replace('::', '__'))
+
+
+def reflect_classes():
+    if not REFLECT.exists(): return [], []
+    import json
+    d = json.loads(REFLECT.read_text(encoding='utf-8'))
+    return d.get('classes', []), d.get('enums', [])
+
+
+def enum_rows():
+    """{枚举名: [(名字, 值)]}，取自 $DM_ROOT/re/enums.tsv。 | {enum name: [(name, value)]} from $DM_ROOT/re/enums.tsv."""
+    out = {}
+    if not ENUMS.exists(): return out
+    for line in ENUMS.read_text(encoding='utf-8').splitlines():
+        if line.startswith('#') or not line.strip(): continue
+        e, n, v = line.split('\t')[:3]
+        out.setdefault(e, []).append((n, int(v, 0)))
+    return out
+
+
+def seed_reflection(s, program):
+    """⑥：反射类 → 结构体与名字；枚举。 | ⑥: reflected classes -> structures and names; enums."""
+    from ghidra.program.model.data import (ArrayDataType, BooleanDataType, ByteDataType, CategoryPath, DataTypeConflictHandler,
+                                           EnumDataType, FloatDataType, IntegerDataType, StructureDataType)
+    classes, enums = reflect_classes()
+    if not classes: return
+    dtm = program.getDataTypeManager(); cat = CategoryPath('/dm/reflect')
+    by = {c['name']: c for c in classes}
+    def chain(c):   # 父类在前，子类覆盖同偏移字段 | parents first, a subclass overrides a field at the same offset
+        out, seen, cur = {}, set(), c
+        stack = []
+        while cur is not None and cur['name'] not in seen:
+            seen.add(cur['name']); stack.append(cur); cur = by.get(cur['parent'])
+        for k in reversed(stack):
+            for f in k['fields']: out[f['offset']] = f
+        return [out[o] for o in sorted(out)]
+    # 先给每个类一个空结构体，字段类型才引用得到 | an empty structure per class first, so field types can refer to them
+    if not s.dry:
+        for c in classes:
+            if dtm.getDataType(cat, ident(c['name'])) is None: dtm.addDataType(StructureDataType(cat, ident(c['name']), 0, dtm), DataTypeConflictHandler.KEEP_HANDLER)
+    scalar = {0: IntegerDataType.dataType, 1: BooleanDataType.dataType, 2: FloatDataType.dataType, 5: IntegerDataType.dataType}
+    def element(f):
+        stride = f['flags'] & 0xffffffff
+        if f['kind'] in scalar and scalar[f['kind']].getLength() == stride: return scalar[f['kind']]
+        if f['kind'] == 4 and f['type'] in by:
+            t = dtm.getDataType(cat, ident(f['type']))
+            if t is not None and t.getLength() == stride: return t
+        return ArrayDataType(ByteDataType.dataType, max(stride, 1), 1)
+    changed = 0
+    # 两遍：第一遍定下每个结构体的大小，第二遍字段才能用上别的类的结构体（大小对得上时），一次跑完就是定点
+    # two passes: the first fixes every structure's size, so in the second a field can use another class's structure (when the sizes match); one run then reaches the fixed point
+    for c in classes * 2:
+        if s.dry: continue
+        st = StructureDataType(cat, ident(c['name']), 0, dtm)
+        fields = chain(c)
+        if not fields: continue
+        def size(f):
+            n = f['flags'] >> 32
+            return (f['flags'] & 0xffffffff) * (1 if n == 0xffffffff else max(n, 1))
+        st.growStructure(max(f['offset'] + size(f) for f in fields))
+        for f in fields:
+            n = f['flags'] >> 32; el = element(f)
+            dt = el if n == 0xffffffff else ArrayDataType(el, max(n, 1), el.getLength())
+            try: st.replaceAtOffset(f['offset'], dt, dt.getLength(), ident(f['name']), f"kind {f['kind']}" + (f", type {f['type']}" if f['type'] else ''))
+            except Exception: s.bump('reflect: field overlaps skipped')   # noqa: BLE001 -- 少数字段重叠（联合体式的布局） | a few fields overlap (union-like layouts)
+        old = dtm.getDataType(cat, ident(c['name']))
+        if old is not None and old.isEquivalent(st): continue
+        dtm.addDataType(st, DataTypeConflictHandler.REPLACE_HANDLER); changed += 1
+    s.stats['reflect: structure writes'] = changed
+    # 名字：描述符、类型对象虚表、工厂、取类型函数 | names: descriptor, type-object vtable, factory, getter
+    getters, factories = {}, {}
+    mem = program.getMemory()
+    for c in classes:
+        getters.setdefault(c['getter'], []).append(c)
+        if c['desc_vtable'] is not None:
+            f = mem.getLong(ghidra_db.addr(program, c['desc_vtable'] + 0x10)) - ghidra_db.BASE
+            if 0 <= f < 0x1b786a0 and program.getFunctionManager().getFunctionAt(ghidra_db.addr(program, f)) is not None: factories.setdefault(f, []).append(c)
+    for c in classes:
+        n = ident(c['name'])
+        if c['desc'] is not None: s.name(c['desc'], f'type_{n}', 'reflect')
+        if c['desc_vtable'] is not None: s.name(c['desc_vtable'], f'vt_Type_{n}', 'reflect')
+        if len(getters[c['getter']]) == 1: s.name(c['getter'], f'{n}_GetType', 'reflect')
+    for f, cs in factories.items():   # 只给专属一个类的工厂起名（几个类共用的工厂不起，免得来回改名） | name only factories that belong to one class (shared ones stay unnamed, to avoid renaming back and forth)
+        if len(cs) == 1: s.name(f, f"{ident(cs[0]['name'])}_Create", 'reflect')
+    # 枚举 | enums
+    def make_enum(name, size, items):
+        if s.dry or not items: return
+        e = EnumDataType(CategoryPath('/dm/enums'), ident(name), size, dtm)
+        for k, v in items:
+            try: e.add(ident(k), v)
+            except Exception: pass   # noqa: BLE001 -- 重名或重值 | duplicate name or value
+        old = dtm.getDataType(CategoryPath('/dm/enums'), ident(name))
+        if old is None or not old.isEquivalent(e): dtm.addDataType(e, DataTypeConflictHandler.REPLACE_HANDLER); s.bump('enums changed')
+    for e in enums:
+        make_enum('MsgChannel' if e['name'] == 'MessageChannels' else f"Msg_{e['name']}", 8, [(v, fnv1a64(v)) for v in e['values'] if v])
+    for name, items in enum_rows().items(): make_enum(name, 4, items)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dry-run', action='store_true')
@@ -262,7 +378,11 @@ def main():
             s.structs()
             for off, kind, text in rewrite_rules(): s.bookmark(off, kind, text)
             notes = {off: rows[:8] for off, rows in source_comments().items()}
-            for off, name, conf, src in names_table():
+            table = names_table()
+            s.skip = {off for off, *_ in table}   # names.tsv 的地址归它管，反射名不碰 | names.tsv owns its addresses; reflection names leave them alone
+            seed_reflection(s, program)
+            s.skip = set()
+            for off, name, conf, src in table:
                 s.name(off, name, 'names.tsv')
                 notes.setdefault(off, []).insert(0, f'name {name}: confidence {conf}; {src}')
             for off, rows in sorted(notes.items()): s.comment(off, rows)   # 每个地址只写一次，整段 [dm] 一起换 | each address written once, the whole [dm] block replaced together

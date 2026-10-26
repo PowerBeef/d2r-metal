@@ -294,6 +294,7 @@ DM_REQUIRE_PC_ART	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	-
 DM_REQUIRE_SAVES	ios-tools	ios/run.sh	-
 DM_RES_CENSUS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RES_CHECK	gfx	gfx/nvn/nvn_mtl.m	-
+DM_RE_PORT	tools	tools/re/q.py tools/re/re.sh	y
 DM_RIFT_GROW_DM100	host	host/dm_rift.c	-
 DM_RIFT_GROW_DM_FROM	host	host/dm_rift.c	-
 DM_RIFT_GROW_FROM	host	host/dm_rift.c	-

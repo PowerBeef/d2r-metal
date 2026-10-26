@@ -2,6 +2,7 @@
 # 引擎分析库的总入口：环境（Java 25、Ghidra 12.2、$DM_ROOT/re/venv）、工程锁、查询服务的起停。产物全在 $DM_ROOT/re，不入库。
 #   setup     建 $DM_ROOT/re 与 Python 3.13 venv（pyghidra 取 Ghidra 自带的、pyghidra-mcp 定版）
 #   convert   游戏 ExeFS 的 main → re/in/main.elf（nso2elf.py）
+#   reflect   引擎反射表（类、字段、枚举）→ re/export/reflect.json（reflect.py，用项目 venv 的 unicorn，不碰工程）
 #   import | analyze | baseline | check | seed | export   → ghidra_db.py / seed.py / export.py（要求查询服务没在跑：工程同一时刻只能有一个进程打开）
 #   serve [--index] | stop | status   查询服务 pyghidra-mcp（serve.py；127.0.0.1:${DM_RE_PORT:-8000}，唯一持有工程的进程）
 #   q …       查询服务的命令行客户端（q.py：反编译 / 交叉引用 / 改名 / 注释，地址一律写 main+0x…）
@@ -9,6 +10,7 @@
 # Entry point for the engine-analysis database: environment (Java 25, Ghidra 12.2, $DM_ROOT/re/venv), the project lock, starting and stopping the query server. All output stays in $DM_ROOT/re, never committed.
 #   setup     creates $DM_ROOT/re and the Python 3.13 venv (pyghidra from Ghidra's own bundle, pyghidra-mcp at a pinned version)
 #   convert   the game's ExeFS main -> re/in/main.elf (nso2elf.py)
+#   reflect   the engine's reflection tables (classes, fields, enums) -> re/export/reflect.json (reflect.py, with unicorn from the project venv; does not touch the project)
 #   import | analyze | baseline | check | seed | export   -> ghidra_db.py / seed.py / export.py (the query server must not be running: only one process can open the project at a time)
 #   serve [--index] | stop | status   the pyghidra-mcp query server (serve.py; 127.0.0.1:${DM_RE_PORT:-8000}, the only process that holds the project)
 #   q ...     command-line client for the query server (q.py: decompile / xrefs / rename / comment, addresses always written main+0x...)
@@ -53,6 +55,9 @@ case "$cmd" in
     ;;
   convert)
     "$PY" -I "$HERE/nso2elf.py" "$DM_ROOT/data/switch/3.3.94012/Update/ExeFS/main" "$RE/in/main.elf"
+    ;;
+  reflect)
+    "$DM_ROOT/build/cache/dm/venv/bin/python" -I "$HERE/reflect.py" "$@"
     ;;
   import|analyze|baseline|check)
     need_free; "$PY" -I "$HERE/ghidra_db.py" "$cmd" "$@"
@@ -111,5 +116,5 @@ EOF
     ls -1t "$RE"/snap/main-*.gzf | tail -n +3 | while read -r old; do rm -f "$old"; done
     echo "SNAP OK $out ($(du -h "$out" | cut -f1))"
     ;;
-  *) die "usage: re.sh setup|convert|import|analyze|baseline|check|seed|export|serve|stop|status|snap|q" ;;
+  *) die "usage: re.sh setup|convert|reflect|import|analyze|baseline|check|seed|export|serve|stop|status|snap|q" ;;
 esac

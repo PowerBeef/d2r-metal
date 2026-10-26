@@ -21,7 +21,8 @@ dm/tools/re/re.sh import      # 导入工程；每个 .eh_frame 起点建函数�
 dm/tools/re/re.sh check       # 重定位、重定位后字节、text 字节、eh_frame 函数 → CHECK OK
 dm/tools/re/re.sh analyze     # Ghidra 自动分析，含 Decompiler Parameter ID（很久：放后台跑）
 dm/tools/re/re.sh baseline    # 每个函数反编译一遍 → log/decomp_baseline.json
-dm/tools/re/re.sh seed        # 仓库已知的东西（见下）
+dm/tools/re/re.sh reflect     # 引擎自己的类 / 字段 / 枚举登记 → export/reflect.json（reflect.py）
+dm/tools/re/re.sh seed        # 仓库已知的东西，加上反射表（见下）
 dm/tools/re/re.sh export      # 名字与类型导成文本，提交进本机历史
 dm/tools/re/re.sh snap        # .gzf 快照（只留最近两份）
 ```
@@ -44,6 +45,8 @@ dm/tools/re/re.sh q comment main+0x… "它做什么"
 dm/tools/re/re.sh stop        # SIGINT：服务存盘后关工程
 ```
 
+`DM_RE_PORT` 让服务与客户端改用别的端口（缺省 8000）。
+
 在主检出的 Claude Code 会话里，同一个服务就是一个 MCP 服务：`claude mcp add --transport http -s local ghidra http://127.0.0.1:8000/mcp`。worktree 会话和子代理用 `re.sh q`。
 
 ## `seed` 写些什么
@@ -54,7 +57,8 @@ dm/tools/re/re.sh stop        # SIGINT：服务存盘后关工程
 - 每条提到 `main+0x…` 的源码注释，作为该地址上以 `[dm]` 开头的前置注释。
 - 改写规则（构建产物的 `main.cuts/obs/params.tsv`），作为 `dm-rewrite` 书签。
 - `dm/host/dm_widget.h` 的控件虚表，名为 `vt_<类>`；以及 `/dm` 下的结构体：控件基类与各类专有字段、单位 → 路径 → 房间 → 关卡这条链（`dm_unit.h`、`dm/verify/tick_state_format.md`）。
-- 人工整理的名字表 `$DM_ROOT/re/names.tsv`：`偏移<TAB>名字<TAB>可信度<TAB>来源`，一行一个名字，`#` 起的行是注释。可信度为 `high`、`medium` 或 `low`。
+- 人工整理的名字表 `$DM_ROOT/re/names.tsv`：`偏移<TAB>名字<TAB>可信度<TAB>来源`，一行一个名字，`#` 起的行是注释。可信度为 `high`、`medium` 或 `low`。它压过其余一切来源。
+- `reflect.py` 得到的引擎反射表。游戏把界面类、数据类连同父类与字段表（布局 JSON 用的名字及字节偏移）登记进自己的反射系统；`reflect.py` 在 CPU 模拟器（Unicorn，项目 venv）里逐个跑这些登记，再把表读回来。`seed` 把它们做成 `/dm/reflect` 下每类一个结构体（含父类字段）、`type_<类>` 描述符、`vt_Type_<类>`、`<类>_Create` 工厂和 `<类>_GetType` 取类型函数，并把消息频道及各频道的动作做成 `/dm/enums` 下的枚举（值 = 游戏拿来比较的 FNV-1a 64 哈希）。值由代码建表的枚举放在 `$DM_ROOT/re/enums.tsv`（`枚举<TAB>名字<TAB>值<TAB>来源`）。
 
 ## 名字去哪
 
@@ -67,7 +71,8 @@ dm/tools/re/re.sh stop        # SIGINT：服务存盘后关工程
 | `re.sh` | 总入口：环境、工程锁、服务起停 |
 | `nso2elf.py`、`test_nso2elf.py` | NSO → ELF；用手工拼的 NSO 做单测（不读游戏文件） |
 | `ghidra_db.py` | `import`、`analyze`、`baseline`、`check` |
-| `seed.py` | 把仓库里的已知信息写进工程 |
+| `reflect.py` | 用模拟执行提取引擎的反射登记（类、字段、枚举） |
+| `seed.py` | 把仓库里的已知信息与反射表写进工程 |
 | `export.py` | 名字与类型导成文本，提交进本机历史 |
 | `serve.py` | 不建启动索引地起 pyghidra-mcp |
 | `q.py` | 查询服务的命令行客户端 |

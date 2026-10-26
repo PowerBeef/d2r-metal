@@ -58,8 +58,9 @@ def main():
             c = conf.get(off - lo) or ('analysis' if src == 'analysis' else 'high')
             rows.append((off - lo, name, kind, c, src))
         dtm = program.getDataTypeManager()
-        cat = dtm.getCategory(CategoryPath('/dm'))
-        types = list(cat.getDataTypes()) if cat else []
+        def walk(cat):   # /dm 及其子类别（/dm/reflect、/dm/enums） | /dm and its subcategories (/dm/reflect, /dm/enums)
+            return [] if cat is None else list(cat.getDataTypes()) + [t for sub in cat.getCategories() for t in walk(sub)]
+        types = walk(dtm.getCategory(CategoryPath('/dm')))
         w = FileWriter(str(OUT / 'types.h'))
         try: DataTypeWriter(dtm, w).write(types, TaskMonitor.DUMMY)
         finally: w.close()

@@ -21,7 +21,8 @@ dm/tools/re/re.sh import      # into the project; a function at each .eh_frame s
 dm/tools/re/re.sh check       # relocations, relocated bytes, text bytes, eh_frame functions → CHECK OK
 dm/tools/re/re.sh analyze     # Ghidra auto-analysis incl. Decompiler Parameter ID (long: run in the background)
 dm/tools/re/re.sh baseline    # decompile every function once → log/decomp_baseline.json
-dm/tools/re/re.sh seed        # what the repo already knows (below)
+dm/tools/re/re.sh reflect     # the engine's own class / field / enum registrations → export/reflect.json (reflect.py)
+dm/tools/re/re.sh seed        # what the repo already knows, plus the reflection tables (below)
 dm/tools/re/re.sh export      # names and types as text, committed to the local history
 dm/tools/re/re.sh snap        # a .gzf snapshot (the last two are kept)
 ```
@@ -44,6 +45,8 @@ dm/tools/re/re.sh q comment main+0x… "what it does"
 dm/tools/re/re.sh stop        # SIGINT: the server saves, then closes the project
 ```
 
+`DM_RE_PORT` moves the server and the client off port 8000.
+
 In a main-checkout Claude Code session the same server is an MCP server: `claude mcp add --transport http -s local ghidra http://127.0.0.1:8000/mcp`. Worktree sessions and subagents use `re.sh q`.
 
 ## What `seed` writes
@@ -54,7 +57,8 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 - Every source comment that mentions `main+0x…`, as a `[dm]` pre-comment at that address.
 - The rewrite rules (`main.cuts/obs/params.tsv` of the build output) as `dm-rewrite` bookmarks.
 - The widget vtables of `dm/host/dm_widget.h` as `vt_<Class>`, and structures under `/dm`: the widget base and per-class fields, and the unit → path → room → level chain (`dm_unit.h`, `dm/verify/tick_state_format.md`).
-- The curated name table `$DM_ROOT/re/names.tsv`: `offset<TAB>name<TAB>confidence<TAB>source`, one row per name, `#` for comments. Confidence is `high`, `medium` or `low`.
+- The curated name table `$DM_ROOT/re/names.tsv`: `offset<TAB>name<TAB>confidence<TAB>source`, one row per name, `#` for comments. Confidence is `high`, `medium` or `low`. It wins over every other source.
+- The engine's reflection tables from `reflect.py`. The game registers its UI and data classes with their parent class and a table of fields (the names layout JSON uses, with byte offsets); `reflect.py` runs each registration in a CPU emulator (Unicorn, project venv) and reads the tables back. `seed` turns them into one structure per class under `/dm/reflect` (parent fields included), `type_<Class>` descriptors, `vt_Type_<Class>`, `<Class>_Create` factories and `<Class>_GetType` getters, and makes the message channels and each channel's actions into enums under `/dm/enums` (values = the FNV-1a 64 hashes the game compares against). Enums whose values the game builds in code go in `$DM_ROOT/re/enums.tsv` (`enum<TAB>name<TAB>value<TAB>source`).
 
 ## Where the names go
 
@@ -67,7 +71,8 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 | `re.sh` | Entry point: environment, project lock, server start / stop |
 | `nso2elf.py`, `test_nso2elf.py` | NSO → ELF; unit test on a hand-built NSO (no game files) |
 | `ghidra_db.py` | `import`, `analyze`, `baseline`, `check` |
-| `seed.py` | Writes the repo's knowledge into the project |
+| `reflect.py` | Extracts the engine's reflection registrations (classes, fields, enums) by emulation |
+| `seed.py` | Writes the repo's knowledge and the reflection tables into the project |
 | `export.py` | Names and types as text, local history commit |
 | `serve.py` | Starts pyghidra-mcp without the startup index |
 | `q.py` | Command-line client of the server |
