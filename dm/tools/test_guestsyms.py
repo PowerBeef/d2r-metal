@@ -1,6 +1,7 @@
 """guestsyms.py 与 crashlog.py 的单测：手工拼一个小模块映像（MOD0、两个 FDE 的 .eh_frame_hdr、一个动态符号），合成 crash.json；不读游戏文件。 | Unit tests for guestsyms.py and crashlog.py: a hand-built small module image (MOD0, an .eh_frame_hdr with two FDEs, one dynamic symbol) and a synthetic crash.json; no game files are read."""
 import io
 import json
+import os
 import contextlib
 from pathlib import Path
 import struct
@@ -34,6 +35,12 @@ def image():
 
 
 class GuestsymsTest(unittest.TestCase):
+    def setUp(self):
+        guestsyms._RE_NAMES = {}   # noqa: SLF001 -- 不读本机真实的引擎分析库导出 | do not read this machine's real engine-analysis export
+
+    def tearDown(self):
+        guestsyms._RE_NAMES = None   # noqa: SLF001
+
     def test_functions_and_dynsyms(self):
         img = image()
         self.assertEqual(guestsyms.functions(img), [(0x800, 0x40), (0x900, 0x80)])
@@ -49,6 +56,26 @@ class GuestsymsTest(unittest.TestCase):
             self.assertEqual(guestsyms.lookup('sdk+0x10'), '')
         finally:
             guestsyms._TABLE = None   # noqa: SLF001
+
+    def test_lookup_re_names(self):
+        guestsyms._TABLE = {'main': [(0x800, 0x40, '', ''), (0x900, 0x80, 'foo()', ''), (0xa00, 0x10, '', '')]}   # noqa: SLF001
+        guestsyms._RE_NAMES = {'main': {0x800: ('PanelManager_Open', 'high'), 0x900: ('ignored', 'high'), 0xa00: ('maybe_x', 'low')}}   # noqa: SLF001
+        try:
+            self.assertEqual(guestsyms.lookup('main+0x804'), 'PanelManager_Open+0x4')
+            self.assertEqual(guestsyms.lookup('main+0x900'), 'foo()+0x0')      # 动态符号名优先 | the dynamic-symbol name wins
+            self.assertEqual(guestsyms.lookup('main+0xa04'), 'maybe_x (low)+0x4')
+        finally:
+            guestsyms._TABLE = guestsyms._RE_NAMES = None   # noqa: SLF001
+
+    def test_re_names_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            old, guestsyms.DM_ROOT, guestsyms._RE_NAMES = guestsyms.DM_ROOT, d, None   # noqa: SLF001
+            try:
+                os.makedirs(os.path.join(d, 're', 'export'))
+                Path(guestsyms.re_names_path('main')).write_text('# x\noffset\tname\tkind\tconfidence\tsource\n0x800\tf_a\tfunction\thigh\tseed\n0x2f05458\tg_ui_root\tlabel\thigh\tseed\n', encoding='utf-8')
+                self.assertEqual(guestsyms.re_names(), {'main': {0x800: ('f_a', 'high')}})
+            finally:
+                guestsyms.DM_ROOT, guestsyms._RE_NAMES = old, None   # noqa: SLF001
 
     def test_crashlog_show(self):
         guestsyms._TABLE = {'main': [(0x800, 0x40, 'bar', '')]}   # noqa: SLF001

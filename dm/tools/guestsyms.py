@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # 客体（游戏程序）符号表：把「main+0x5b9290」这类偏移换成「它落在哪个函数里、那个函数叫什么 / 源码注释怎么说它」。
 #   函数边界取自各模块的 .eh_frame（展开表的 FDE：起点 + 长度），名字取自动态符号表（sdk 等模块导出的名字），说明取自源码注释里提到「模块+0x偏移」的那几行。
+#   查名字时还看引擎分析库的导出 $DM_ROOT/re/export/<模块>.names.tsv（dm/tools/re/export.py；有就用，没有照旧）：动态符号表没有名字的函数用它的名字，可信度不是 high 的在名字后标出。
 #   build [--product 产物目录]   生成 $DM_ROOT/build/cache/dm/symbols/<产物名>.tsv（由游戏程序推出来的数据：只放本机缓存，不入库）
 #   lookup <模块+0x偏移>…        打印每个地址所在的函数、函数内偏移、名字与注释
 #   作为模块：lookup_many([...]) → {地址: 说明}（crashlog.py 用）
 # Guest (game program) symbol table: turns an offset like "main+0x5b9290" into "which function it falls in, what that function is called / what the source comments say about it".
 #   Function boundaries come from each module's .eh_frame (the unwind table's FDEs: start + length), names from the dynamic symbol table (the names exported by sdk and other modules), notes from the source-comment lines that mention "module+0xoffset".
+#   Lookups also read the engine-analysis database's export $DM_ROOT/re/export/<module>.names.tsv (dm/tools/re/export.py; used when present, otherwise nothing changes): a function with no dynamic-symbol name takes its name from there, marked with its confidence unless that is high.
 #   build [--product build output dir]   generate $DM_ROOT/build/cache/dm/symbols/<product name>.tsv (data derived from the game program: kept in the local cache only, never committed)
 #   lookup <module+0xoffset>...          print, for each address, the function it falls in, the offset into it, the name and the notes
 #   As a module: lookup_many([...]) -> {address: description} (used by crashlog.py)
@@ -30,6 +32,29 @@ def product_dir(p=None):
 
 def table_path(prod):
     return os.path.join(DM_ROOT, 'build', 'cache', 'dm', 'symbols', os.path.basename(prod.rstrip('/')) + '.tsv')
+
+
+def re_names_path(mod):
+    return os.path.join(DM_ROOT, 're', 'export', f'{mod}.names.tsv')
+
+
+_RE_NAMES = None
+
+
+def re_names():
+    """{模块: {函数起点: (名字, 可信度)}}：引擎分析库导出的函数名（只取 kind = function）。 | {module: {function start: (name, confidence)}}: function names exported from the engine-analysis database (kind = function only)."""
+    global _RE_NAMES   # noqa: PLW0603 -- 进程内只读一次 | read once per process
+    if _RE_NAMES is not None: return _RE_NAMES
+    _RE_NAMES = {}
+    for mod in MODULES:
+        p = re_names_path(mod)
+        if not os.path.exists(p): continue
+        with open(p, encoding='utf-8') as f:
+            for line in f:
+                if line.startswith(('#', 'offset\t')): continue
+                c = line.rstrip('\n').split('\t')
+                if len(c) >= 4 and c[2] == 'function': _RE_NAMES.setdefault(mod, {})[int(c[0], 16)] = (c[1], c[3])
+    return _RE_NAMES
 
 
 def functions(img):
@@ -139,6 +164,8 @@ def lookup(where):
     off = int(m.group(2), 16); i = bisect.bisect_right(fns, (off, 1 << 62)) - 1
     if i < 0 or off >= fns[i][0] + fns[i][1]: return ''
     s, _, name, notes = fns[i]
+    if not name and (rn := re_names().get(m.group(1), {}).get(s)):
+        name = rn[0] + ('' if rn[1] == 'high' else f' ({rn[1]})')
     label = name or f'fn_{s:x}'
     return f'{label}+{off - s:#x}' + (f'  [{notes}]' if notes else '')
 

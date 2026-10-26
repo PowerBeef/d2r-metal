@@ -15,6 +15,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ORIG = os.environ.get('DM_ORIG_DIR') or os.path.join(DM_ROOT, 'build/cache/dm/orig')
 NSO = os.environ.get('DM_NSO_DIR') or os.path.join(DM_ROOT, 'data/switch/3.3.94012/Update/ExeFS')
 SDIS = os.path.join(HERE, 'sdis.py')
+sys.path.insert(0, HERE)
+import guestsyms  # noqa: E402 -- 引擎分析库导出的函数名（re_names） | function names exported from the engine-analysis database (re_names)
 st = {}
 for m in ('main', 'sdk'):
     if not os.path.exists(f'{ORIG}/{m}.orig.bin'):
@@ -29,7 +31,10 @@ def fnof(f):
     if not mm: return None
     s, _ = st[mm.group(1)]; off = int(mm.group(2), 16); return f'{mm.group(1)}+{s[bisect.bisect_right(s, off) - 1]:#x}'
 def dm(fn):
-    mod, a = fn.split('+'); r = st[mod][1](int(a, 16))
+    mod, a = fn.split('+')
+    rn = guestsyms.re_names().get(mod, {}).get(int(a, 16))   # 先用引擎分析库的名字，再退回动态符号 | the engine-analysis name first, then fall back to the dynamic symbols
+    if rn: return (rn[0] + ('' if rn[1] == 'high' else f' ({rn[1]})'))[:70]
+    r = st[mod][1](int(a, 16))
     return subprocess.run(['xcrun', 'c++filt', r], capture_output=True, text=True).stdout.strip()[:70]
 per = collections.defaultdict(lambda: [0, 0, collections.Counter()]); selfc = collections.Counter(); incl = collections.Counter(); host = collections.Counter(); waitat = collections.Counter(); n = 0
 for i, l in enumerate(lines):
