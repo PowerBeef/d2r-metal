@@ -55,6 +55,8 @@ English: [control_port.md](control_port.md)
 | `crash` | `kind`：`segv`、`abort`、`trap` | 在控制口线程上故意让宿主崩（测崩溃这一路：事件、`crash.json`、`.ips`、判红）。 | |
 | `engine` | | 整份引擎快照（`dm_engine.c`）：面板栈（带 `active`、`priority`）、`focus_panel`、`focus`、`hover`、`cursor_mode`、`cursor_state`、`save` {`busy`、`pending`、`containers`、`mounted`、`dirty`}、最近 48 个手柄动作 `actions` 与 48 条界面消息 `messages`（连着同一条折成一条，`n`）。场景运行器在第一个红事件或失败的步时存成 `engine.json`。 | 同左 |
 | `fault` | `op`：`arm`（`point`、`skip` 0、`count` 1）、`delay`（`ms`）、`list` | 存档测试故障：`arm` 跑着时加一个 `DM_TEST_FS_FAILAT` 点（`mountclone`、`reclone`、`guestname`、`renameback`、`guestopen`）；`delay` 让下一次存档事务第一次写前停 `ms` 毫秒（同 `DM_TEST_SAVE_DELAY`，只一次）。停顿别超过约 8 秒：一个任务卡得更久，游戏的异步任务池会用光任务内存、崩在任务池的入队函数（main+0x14f0590）。 | `faults` [{`point`、`skip`、`count`、`seen`、`fired`}] |
+| `fe` | `line` =「秒 动作 参数」 | 一行前端测试输入，语法同 `DM_TEST_NSMOUSE`（`pad`、`pads`、`navpad`、`nav`、`skey`、`key`、`type`、`sheet`、`down` / `move` / `up` / `hover`、`dragto`、`dbl`、`unit`），走与真输入同一条前端路：虚拟手柄与屏幕键盘（`dm_gamepad`）、事件监视器、Mac 输入表单。`press` 只到游戏取手柄处。秒自此刻起算，排好就回执。只 Mac 前端（开窗的 `cli`、`mac-app`）。 | |
+| `inputmode` | `mode`（`touch`、`controller`）、`glyph`（`switch`、`keyboard`、`xbox`、`playstation`） | 请求切手柄 / 触屏布局与键帽样式，同前端看到输入换了时调的那两个（`dm_padmode.c`）。切换要几帧，做完发 `padmode` 事件。要界面覆盖层（场景 `env DM_ROMFS_OVERLAY=auto`）。 | |
 | `quit` | `save`（0） | 先回执，再优雅退出（`dm_host_shutdown`）。`save=1` 时先像 Mac 关窗那样存一次。 | `saved` |
 
 `state.tick` 与事件的 `tick` 是服务端拍号；`frames` 数的是出图帧，进局之前在前端也一直走。

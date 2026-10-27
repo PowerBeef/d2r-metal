@@ -101,6 +101,37 @@ static int cmd_fault(const ctl_args *a, char *out, size_t cap, char *err, size_t
     return 1;
 }
 
+// fe line="秒 动作 参数"：一行前端测试输入（同 DM_TEST_NSMOUSE：虚拟手柄 pad / pads / navpad、键 nav / skey / key / type、输入框表单 sheet、真鼠标 down / move / up / hover / dragto / dbl、点单位 unit），
+// 走与真输入同一条前端路（虚拟手柄与屏幕键盘、事件监视器、表单），不像 press 只到游戏取手柄处。秒自此刻起算，排好就回执（不等它做完）；只 Mac 前端
+// fe line="seconds action arguments": one line of front-end test input (as DM_TEST_NSMOUSE: virtual controller pad / pads / navpad, keys nav / skey / key / type, the input sheet sheet, real mouse down / move / up / hover / dragto / dbl, unit taps),
+// going through the same front-end path as real input (virtual controller and on-screen keyboard, event monitors, the sheet), unlike press, which only reaches the game's controller read. Seconds count from now; replies once scheduled (not when done); Mac front end only
+static int cmd_fe(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *l = dm_ctl_get(a, "line"); (void)out; (void)cap;
+    if (!l || !*l) ERR("missing line (\"<seconds> <action> <arguments>\")");
+    if (!g_dm_ctl_fe_fn) ERR("no front end to drive (headless host, or not the Mac front end)");
+    int r = g_dm_ctl_fe_fn(l);
+    if (r < 0) ERR("the window is not built yet");
+    if (r == 0) ERR("line not understood: %s", l);
+    return 1;
+}
+
+// inputmode mode=touch|controller、glyph=switch|keyboard|xbox|playstation（可只给一个）：请求切手柄 / 触屏布局与键帽样式，同前端看到输入换了时调的那两个（dm_padmode.c）；
+// 切换是事务、要几帧，做完发 padmode 事件。宿主得带界面覆盖层（场景 env DM_ROMFS_OVERLAY=auto），没有覆盖层时请求不起作用
+// inputmode mode=touch|controller, glyph=switch|keyboard|xbox|playstation (either may be given alone): request the controller / touch layout and the key cap style, through the same two calls the front ends make when the input changes (dm_padmode.c);
+// the switch is a transaction taking a few frames and emits a padmode event when done. The host needs the UI overlay (scenario env DM_ROMFS_OVERLAY=auto); without it requests have no effect
+void dm_padmode_request(int pad);
+void dm_padmode_request_glyph(int g);
+static int cmd_inputmode(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *m = dm_ctl_get(a, "mode"), *g = dm_ctl_get(a, "glyph"); (void)out; (void)cap;
+    if (!m && !g) ERR("give mode=touch|controller and/or glyph=switch|keyboard|xbox|playstation");
+    static const char *const gl[] = { "switch", "keyboard", "xbox", "playstation" }; int k = -1;
+    if (g) { for (int i = 0; i < 4; i++) if (!strcmp(g, gl[i])) k = i; if (k < 0) ERR("glyph must be switch, keyboard, xbox or playstation"); }
+    if (m && strcmp(m, "touch") && strcmp(m, "controller")) ERR("mode must be touch or controller");
+    if (k >= 0) dm_padmode_request_glyph(k);
+    if (m) dm_padmode_request(!strcmp(m, "controller"));
+    return 1;
+}
+
 static int cmd_dump(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {   // 把各线程在等什么导进日志（同日志端口的 dump） | dump what each thread is waiting on into the log (same as the log port's dump)
     (void)a; (void)out; (void)cap; (void)err; (void)ecap; crash_dump_now("控制口 dump"); return 1;
 }
@@ -383,6 +414,8 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("save_now", cmd_save_now);
     dm_ctl_register("engine", cmd_engine);
     dm_ctl_register("fault", cmd_fault);
+    dm_ctl_register("fe", cmd_fe);
+    dm_ctl_register("inputmode", cmd_inputmode);
     dm_ctl_register("dump", cmd_dump);
     dm_ctl_register("quit", cmd_quit);
     dm_ctl_register("press", cmd_press);

@@ -38,6 +38,7 @@ Header lines (anywhere in the file):
 | `timeout <s>` | Limit for the whole scenario (default 300). |
 | `window 0` | Run the CLI host without a window. |
 | `requires <backend> …` | Skip on other backends. |
+| `env DM_ROMFS_OVERLAY=auto` | `cli`: generate the iOS package's UI overlay into the run folder (about 3 s) and run with it, as `touchchain.sh` does; the controller / touch switch (`inputmode`) and the touch pages need it. |
 
 Steps:
 

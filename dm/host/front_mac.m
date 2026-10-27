@@ -148,6 +148,9 @@ static void app_quit_finish(const char *why, int ingame) {   // 后台线程 | b
     dm_host_shutdown(why);
 }
 static int text_input_cancel(void), text_input_up(void);
+// 控制口 fe 命令（dm_ctl_cmds.c）：把一行测试输入交给上面 DM_TEST_NSMOUSE 的行解释（窗口建好后才有）；任意线程调 | the control port's fe command (dm_ctl_cmds.c): hands one test-input line to the DM_TEST_NSMOUSE line interpreter (exists once the window is built); callable from any thread
+static int (^g_fe_line)(NSString *);
+static int fe_line_c(const char *line) { int (^f)(NSString *) = g_fe_line; return f ? f(@(line)) : -1; }
 static void text_input_handoff_pad(void), text_input_test(NSString *text, int ok);
 static void app_quit(const char *why) {   // 主线程 | main thread
     static int once; if (once++) return;
@@ -495,22 +498,22 @@ void front_run(void (*guest)(void)) {
           // Each line is "seconds down|move|up|hover x,y", where x,y is a point in the content area (origin at top-left; window default 1280x720), timed from when the window is created.
           // An anchor "@c" / "@b" may follow the coordinates: a y written for 1280x720 is converted to the actual content height - @c for vertically centered UI (front-end pages, large panels) adds (height - 720) / 2, @b for bottom-anchored UI (in-game HUD) adds (height - 720);
           // none = as is (top-anchored). In true full screen the window aspect follows the screen (1280x803 on a 16:10 screen), so the same script works at both aspects
-          if ((e = getenv("DM_TEST_NSMOUSE"))) { NSString *txt = [NSString stringWithContentsOfFile:@(e) encoding:NSUTF8StringEncoding error:nil]; NSTimeInterval t0 = NSProcessInfo.processInfo.systemUptime; int n = 0;
+          { NSTimeInterval t0 = NSProcessInfo.processInfo.systemUptime;   // 测试输入的行解释（同一套给 DM_TEST_NSMOUSE 文件与控制口 fe 命令）：一行 =「秒 动作 参数」，秒自此刻起算；返回 1 = 排好、0 = 不认识 | the test-input line interpreter (shared by the DM_TEST_NSMOUSE file and the control port's fe command): one line = "seconds action arguments", seconds counted from now; returns 1 = scheduled, 0 = not understood
               dispatch_queue_t tq = dispatch_queue_create("dm.test.nsevent", DISPATCH_QUEUE_SERIAL);   // 不排在主队列上：模态弹框（如键位对照）在主队列的一个块里跑模态循环，那期间主队列上别的块不执行，事件就投不进弹框 | not queued on the main queue: a modal dialog (such as the key map) runs its modal loop inside a block on the main queue, during which other blocks on the main queue do not execute, so events could not be delivered into the dialog
-              for (NSString *ln in [txt componentsSeparatedByString:@"\n"]) { double sec, x = 0, y = 0; char op[8];
-                  if (sscanf(ln.UTF8String, "%lf %7s %lf,%lf", &sec, op, &x, &y) < 2 || ln.UTF8String[0] == '#') continue; n++;
+              int (^fe_line)(NSString *) = ^int(NSString *ln) { double sec, x = 0, y = 0; char op[8];
+                  if (sscanf(ln.UTF8String, "%lf %7s %lf,%lf", &sec, op, &x, &y) < 2 || ln.UTF8String[0] == '#') return 0;
                   const char *at = strchr(ln.UTF8String, '@'); double anc = at && at[1] == 'c' ? 0.5 : at && at[1] == 'b' ? 1 : 0;   // 锚点（见上）：在投事件那一刻按当时的内容区高度换算 | Anchor (see above): converted using the content area height at the moment the event is posted
                   if (!strcmp(op, "sheet")) {   // 「秒 sheet ok|cancel [字]」：往开着的输入框表单里填这些字（不写 = 空）再按确定 / 取消（text_input_test） | "<seconds> sheet ok|cancel [text]": fill the open input sheet with this text (omitted = empty), then press OK / Cancel (text_input_test)
                       char how[16] = "", txt[64] = ""; sscanf(ln.UTF8String, "%*lf %*7s %15s %63s", how, txt); NSString *t = @(txt); int ok = !strcmp(how, "ok");
                       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ text_input_test(t, ok); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
-                      continue; }
+                      return 1; }
                   if (!strcmp(op, "skey")) {   // 「秒 skey <键码> [字]」：合成一次键盘按下 / 松开，直接交给 App 的事件分发（[NSApp sendEvent:]，走事件监视器，同真键盘按在游戏窗口上），不靠 App 在前台 | "<seconds> skey <key code> [chars]": synthesize one key press / release and hand it straight to the App's event dispatch ([NSApp sendEvent:], through the event monitors, like a real key on the game window), without needing the App in front
                       char kcs[16] = "", chs[32] = ""; sscanf(ln.UTF8String, "%*lf %*7s %15s %31s", kcs, chs); unsigned short kc = (unsigned short)atoi(kcs); NSString *chars = @(chs);
                       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
                           LOG("DM_TEST_NSMOUSE：%.2f 秒 skey %d「%s」", NSProcessInfo.processInfo.systemUptime - t0, kc, chars.UTF8String);
                           for (int dn = 1; dn >= 0; dn--) [NSApp sendEvent:[NSEvent keyEventWithType:dn ? NSEventTypeKeyDown : NSEventTypeKeyUp location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber context:nil characters:chars charactersIgnoringModifiers:chars isARepeat:NO keyCode:kc]]; });
                           CFRunLoopWakeUp(CFRunLoopGetMain()); });
-                      continue; }
+                      return 1; }
                   if (!strcmp(op, "pads")) {   // 「秒 pads 键,键,…」：虚拟手柄依次按这些键，每下 0.1 秒、间隔 0.15 秒，自己掐时（一条一条排定时会被系统合并成同一刻） | "<seconds> pads key,key,...": the virtual controller presses these in turn, 0.1 s each with 0.15 s gaps, timed by itself (one scheduled line per press gets merged into the same instant by the system)
                       char arg[512] = ""; sscanf(ln.UTF8String, "%*lf %*7s %511s", arg); NSString *all = @(arg); NSArray<NSString *> *list = [all componentsSeparatedByString:@","];
                       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{
@@ -519,7 +522,7 @@ void front_run(void (*guest)(void)) {
                           for (NSString *k in list) { const char *bad = NULL; uint64_t m = dm_key_mask(k.UTF8String, &bad); if (!m) { LOG("DM_TEST_NSMOUSE：不认识的手柄键 %s", k.UTF8String); continue; }
                               CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ dm_gamepad_inject(m, 0, 0, 0, 0); }); CFRunLoopWakeUp(CFRunLoopGetMain()); usleep(100000);
                               CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ dm_gamepad_inject(0, 0, 0, 0, 0); }); CFRunLoopWakeUp(CFRunLoopGetMain()); usleep(150000); } });
-                      continue; }
+                      return 1; }
                   if (!strcmp(op, "pad") || !strcmp(op, "navpad") || !strcmp(op, "nav")) {
                       // 「秒 pad <键>」：虚拟手柄按 0.1 秒（键名同控制口 press：A B X Y LS RS L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN，可用 + 连），走 dm_gamepad 同一条路（屏幕键盘开着时归它），不靠 App 在前台；
                       // 「秒 navpad <键>」同 pad，但输入框 / 屏幕键盘开着时跳过；「秒 nav <键码>」把这个键直接交给游戏的键盘处理（同真键盘按在游戏窗口上，但不靠 App 在前台），输入框开着时也跳过。
@@ -529,7 +532,7 @@ void front_run(void (*guest)(void)) {
                       // nav / navpad bring the game to the naming page: loading speed varies, so extra presses are harmless; once the box is up the rest are not pressed
                       char arg[32] = ""; sscanf(ln.UTF8String, "%*lf %*7s %31s", arg);
                       int nav = op[0] == 'n', pad = strcmp(op, "nav") != 0; unsigned short kc = (unsigned short)atoi(arg); uint64_t m = 0;
-                      if (pad) { uint64_t dm_key_mask(const char *names, const char **bad); const char *bad = NULL; if (!(m = dm_key_mask(arg, &bad))) { LOG("DM_TEST_NSMOUSE：不认识的手柄键 %s", arg); continue; } }
+                      if (pad) { uint64_t dm_key_mask(const char *names, const char **bad); const char *bad = NULL; if (!(m = dm_key_mask(arg, &bad))) { LOG("DM_TEST_NSMOUSE：不认识的手柄键 %s", arg); return 0; } }
                       NSString *what = [NSString stringWithFormat:@"%s %s", op, arg];
                       void (^perform)(void (^)(void)) = ^(void (^b)(void)) { CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, b); CFRunLoopWakeUp(CFRunLoopGetMain()); };
                       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ perform(^{
@@ -539,7 +542,7 @@ void front_run(void (*guest)(void)) {
                           NSEvent *(^kev)(NSEventType) = ^(NSEventType t) { return [NSEvent keyEventWithType:t location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:kc]; };
                           if (pad) dm_gamepad_inject(m, 0, 0, 0, 0); else on_key(kev(NSEventTypeKeyDown), 1);
                           dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), tq, ^{ perform(^{ if (pad) dm_gamepad_inject(0, 0, 0, 0, 0); else on_key(kev(NSEventTypeKeyUp), 0); }); }); }); });
-                      continue; }
+                      return 1; }
                   if (!strcmp(op, "key") || !strcmp(op, "type")) {   // 「秒 key <键码>」：合成一次真正的键盘按下 / 0.08 秒后松开（键码 = 苹果的虚拟键码，如回车 36、Tab 48、J 38）；「秒 type <字>」：逐字打字。 | "<seconds> key <key code>": synthesise a real key press / release 0.08 s later (key code = Apple virtual key code, e.g. Return 36, Tab 48, J 38); "<seconds> type <text>": type character by character.
                       // 都投给当时的键窗口（真键盘就是这样：弹着输入框时进输入框），并记一行键窗口是不是游戏窗口
                       // All are posted to the key window at that moment (which is what a real keyboard does: into the input field while it is shown), and one line records whether the key window is the game window
@@ -549,12 +552,12 @@ void front_run(void (*guest)(void)) {
                               NSWindow *kw = NSApp.keyWindow; id fr = kw.firstResponder; BOOL ok = [NSApp sendAction:@selector(insertText:) to:nil from:chars];
                               LOG("DM_TEST_NSMOUSE：%.2f 秒打字「%s」（键窗口%s，第一响应者 %s，%s）", NSProcessInfo.processInfo.systemUptime - t0, chars.UTF8String, kw == win ? "是游戏窗口" : kw ? "是弹框" : "没有", fr ? NSStringFromClass([fr class]).UTF8String : "无", ok ? "有人收" : "没人收"); });
                               CFRunLoopWakeUp(CFRunLoopGetMain()); });
-                          continue; }
+                          return 1; }
                       for (NSUInteger ci = 0; ci < (ty ? chars.length : 1); ci++) { NSString *one = ty ? [chars substringWithRange:NSMakeRange(ci, 1)] : chars; double at = sec + ci * 0.15;
                           for (int dn = 1; dn >= 0; dn--) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((at + (dn ? 0 : 0.08)) * NSEC_PER_SEC)), tq, ^{ NSWindow *kw = NSApp.keyWindow;
                               if (dn) LOG("DM_TEST_NSMOUSE：%.2f 秒投 键盘 %s%s（键窗口%s）", NSProcessInfo.processInfo.systemUptime - t0, ty ? "字 " : "键码 ", ty ? one.UTF8String : [NSString stringWithFormat:@"%d", (int)x].UTF8String, kw == win ? "是游戏窗口" : kw ? "是别的窗口（弹框）" : "没有：App 里没有键窗口");
                               [NSApp postEvent:[NSEvent keyEventWithType:dn ? NSEventTypeKeyDown : NSEventTypeKeyUp location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:(kw ?: win).windowNumber context:nil characters:one charactersIgnoringModifiers:one isARepeat:NO keyCode:ty ? 0 : (unsigned short)x] atStart:NO]; }); }
-                      continue; }
+                      return 1; }
                   if (!strcmp(op, "unit") || !strcmp(op, "unith")) {   // 「秒 unit <类型>,<类号>」：盯住这类单位（类号 16777214 = 敌对且可选中的怪、16777215 = 任意），它一在画面里就在它身体框中心投一次真正的鼠标点击；unith = 按住 2.5 秒才抬起 | "<seconds> unit <type>,<class>": watch for units of this kind (class 16777214 = hostile and selectable monster, 16777215 = any) and post one real mouse click at the centre of its body box as soon as it is on screen; unith = hold for 2.5 seconds before releasing
                       double hold = !strcmp(op, "unith") ? 2.5 : 0.1;
                       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ void dm_world_watch(int, uint32_t); int dm_world_watch_pos(float *, float *); float nx = 0, ny = 0; int ok = 0;
@@ -564,7 +567,7 @@ void front_run(void (*guest)(void)) {
                           LOG("DM_TEST_NSMOUSE：%.2f 秒 unit %d,%u 在画面 (%.3f,%.3f) → 投按下，%.1f 秒后抬起", NSProcessInfo.processInfo.systemUptime - t0, (int)x, (unsigned)y, nx, ny, hold);
                           for (int dn = 1; dn >= 0; dn--) { if (!dn) usleep((useconds_t)(hold * 1e6));
                               [NSApp postEvent:[NSEvent mouseEventWithType:dn ? NSEventTypeLeftMouseDown : NSEventTypeLeftMouseUp location:pt modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber context:nil eventNumber:0 clickCount:1 pressure:dn ? 1 : 0] atStart:NO]; } });
-                      continue; }
+                      return 1; }
                   if (!strcmp(op, "dbl") || !strcmp(op, "dragto")) {   // 「秒 dbl x,y」：同一点连点两下（间隔 0.15 秒，时刻自己掐，不靠两条定时——定时有零点几秒的误差，凑不出双击）； | "<seconds> dbl x,y": click the same point twice (0.15 s apart, timed by itself rather than by two scheduled lines - scheduling is off by a few tenths of a second and cannot produce a double click);
                       // 「秒 dragto x,y」：从上一条 down 的位置拖到这里（0.6 秒里匀速 12 步）再抬起，前面要先有一条 down
                       // "<seconds> dragto x,y": drag from the position of the previous down to here (12 even steps within 0.6 s) and release; a down must come before it
@@ -575,14 +578,17 @@ void front_run(void (*guest)(void)) {
                           LOG("DM_TEST_NSMOUSE：%.2f 秒 %s 内容区 (%.0f,%.0f)", NSProcessInfo.processInfo.systemUptime - t0, dbl ? "双击" : "拖到", to.x, v.bounds.size.height - to.y);
                           if (dbl) { for (int i = 0; i < 2; i++) { [NSApp postEvent:mk(NSEventTypeLeftMouseDown, to, i + 1) atStart:NO]; usleep(60000); [NSApp postEvent:mk(NSEventTypeLeftMouseUp, to, i + 1) atStart:NO]; usleep(150000); } }
                           else { for (int i = 1; i <= 12; i++) { [NSApp postEvent:mk(NSEventTypeLeftMouseDragged, NSMakePoint(from.x + (to.x - from.x) * i / 12, from.y + (to.y - from.y) * i / 12), 1) atStart:NO]; usleep(50000); } usleep(200000); [NSApp postEvent:mk(NSEventTypeLeftMouseUp, to, 1) atStart:NO]; } });
-                      continue; }
+                      return 1; }
                   NSEventType ty = !strcmp(op, "hover") ? NSEventTypeMouseMoved : !strcmp(op, "down") ? NSEventTypeLeftMouseDown : !strcmp(op, "up") ? NSEventTypeLeftMouseUp : NSEventTypeLeftMouseDragged; int has = !strcmp(op, "up") ? 0 : 1;
                   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ static NSPoint last;
                       if (has) { last = NSMakePoint(x, v.bounds.size.height - (y + anc * (v.bounds.size.height - 720))); g_test_last = last; }   // 内容区的点 → 窗口坐标（原点左下） | point in the content area -> window coordinates (origin at bottom-left)
                       NSEvent *ev = [NSEvent mouseEventWithType:ty location:[v convertPoint:last toView:nil] modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber context:nil eventNumber:0 clickCount:1 pressure:ty == NSEventTypeLeftMouseUp ? 0 : 1];
                       LOG("DM_TEST_NSMOUSE：%.2f 秒投 %s 内容区 (%.0f,%.0f)（窗口%s是主窗口，App %s在前台，背板缩放 %.1f）", NSProcessInfo.processInfo.systemUptime - t0, ty == NSEventTypeMouseMoved ? "悬停" : ty == NSEventTypeLeftMouseDown ? "按下" : ty == NSEventTypeLeftMouseUp ? "抬起" : "拖动", last.x, v.bounds.size.height - last.y, win.isKeyWindow ? "" : "不", NSApp.isActive ? "" : "不", win.backingScaleFactor);
-                      [NSApp postEvent:ev atStart:NO]; }); }
-              LOG("DM_TEST_NSMOUSE：%d 条排好", n); }
+                      [NSApp postEvent:ev atStart:NO]; }); return 1; };
+              g_fe_line = fe_line; g_dm_ctl_fe_fn = fe_line_c;
+              if ((e = getenv("DM_TEST_NSMOUSE"))) { NSString *txt = [NSString stringWithContentsOfFile:@(e) encoding:NSUTF8StringEncoding error:nil]; int n = 0;
+                  for (NSString *ln in [txt componentsSeparatedByString:@"\n"]) n += fe_line(ln);
+                  LOG("DM_TEST_NSMOUSE：%d 条排好", n); } }
           if ((e = getenv("DM_TEST_SHARELOG"))) { NSString *to = @(e); dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSString *er = share_logs(to); LOG("DM_TEST_SHARELOG：第 8 秒打包到 %s → %s", to.lastPathComponent.UTF8String, er ? er.UTF8String : "OK"); }); }   // 测试：不弹存储面板，第 8 秒直接把压缩包写到这个路径 | test: no save panel, write the archive directly to this path at second 8
           if ((e = getenv("DM_TEST_QUIT_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ app_quit("DM_TEST_QUIT_AT"); });
           // DM_TEST_TERMINATE_AT=<秒>：走一次系统退出（[NSApp terminate:]，同程序坞「退出」）；DM_TEST_MINI_AT=<秒>[;<秒>…]：每个时刻切一次最小化（来回切）。

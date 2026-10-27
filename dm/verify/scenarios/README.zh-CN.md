@@ -37,6 +37,7 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 | `env K=V …` | 给游戏另加的环境变量。 |
 | `timeout <秒>` | 整个场景的上限（缺省 300）。 |
 | `window 0` | 命令行宿主不开窗。 |
+| `env DM_ROMFS_OVERLAY=auto` | `cli`：把 iOS 包那份界面覆盖层生成到结果目录（约 3 秒）再带着跑，同 `touchchain.sh`；手柄 / 触屏切换（`inputmode`）与触屏页要它。 |
 | `requires <后端> …` | 别的后端上跳过。 |
 
 步骤：

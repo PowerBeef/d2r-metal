@@ -22,3 +22,8 @@ unsigned dm_ctl_commands(void);
 // Front-end lifecycle hook (set by front_mac.m / front_ios.m; called by the control port's app command): what = background / foreground / resign / active / minimize / restore / terminate,
 // run on the main thread through the same handler as the system events and DM_TEST_BG / DM_TEST_MINI_AT; returns 0 when done, -1 when this front end does not support it
 __attribute__((weak)) int (*g_dm_ctl_app_fn)(const char *what) = 0;
+// 前端测试输入（front_mac.m 设；控制口 fe 命令调）：一行同 DM_TEST_NSMOUSE 的「秒 动作 参数」（pad / pads / navpad / nav / skey / sheet / key / type / down / move / up / hover / dragto / dbl / unit），秒自此刻起算；
+// 返回 1 = 排好、0 = 不认识这一行、-1 = 窗口还没建
+// Front-end test input (set by front_mac.m; called by the control port's fe command): one line in DM_TEST_NSMOUSE's "seconds action arguments" form (pad / pads / navpad / nav / skey / sheet / key / type / down / move / up / hover / dragto / dbl / unit), seconds counted from now;
+// returns 1 = scheduled, 0 = the line was not understood, -1 = the window is not built yet
+__attribute__((weak)) int (*g_dm_ctl_fe_fn)(const char *line) = 0;

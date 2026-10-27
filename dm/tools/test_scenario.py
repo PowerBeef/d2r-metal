@@ -92,7 +92,7 @@ class ScenarioTest(unittest.TestCase):
     def test_run_ok_with_macro_and_expects(self):
         res, code, host = self.run_scn('enter_game\nexpect_state in_game=true hp>=1\npress PLUS\nexpect panel act=OpenPanel name=PlayerInventoryExpansionLayout timeout=2\ncheck no_red\ncheck event loading_done\n')
         self.assertEqual((code, res['verdict']), (0, 'OK'), res)
-        self.assertEqual([g['cmd'] for g in host.got][:3], ['state', 'press', 'msg'])
+        self.assertEqual([g['cmd'] for g in host.got][:4], ['state', 'state', 'press', 'msg'])   # 第二个 state：看选角页是不是已经开着 | the second state: whether character select is already open
         self.assertTrue(os.path.exists(self.dir / 'out' / 'steps.tsv'))
 
     def test_failed_command_and_failed_expect_are_red(self):
