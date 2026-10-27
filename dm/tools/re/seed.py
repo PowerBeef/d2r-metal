@@ -10,6 +10,7 @@
 #      消息频道与各频道动作做成 8 字节枚举（值 = 名字的 FNV-1a 64），$DM_ROOT/re/enums.tsv 里的枚举（如 ControllerAction）做成 4 字节枚举。
 #   ⑦ 数据表 $DM_ROOT/re/export/tables.json（tables.py）：每张表一个记录结构体 txt_<表>（/dm/tables，字段 = 列名，标志位并成一个 u32 并在注释里列位），
 #      表根对象结构体 DataTables（每张表的记录指针与行数），三个表根指针（[main+0x2d64a18 + 版本 × 16]，版本 1–3）标成 g_tables_v1..v3 并带类型。
+#   ⑧ 批量起名 $DM_ROOT/re/names_auto.tsv（autoname.py）里 high / medium 的行，排在 names.tsv 之后（names.tsv 的地址与手工名不碰）。
 #   用法（由 re.sh seed 调用；工程不能被别的进程打开）：seed.py [--dry-run]
 # Writes what the repository already knows into the engine-analysis database (the Ghidra project); safe to rerun: the same result is not written twice, and hand-given names (USER_DEFINED) are never touched.
 #   ① NVN: every lookup slot in dm/gfx/nvn/nvn_slots.tsv -> label pfn_<name>, typed as the matching function pointer from nvn.h (a plain pointer when it cannot be parsed).
@@ -22,6 +23,7 @@
 #      message channels and each channel's actions become 8-byte enums (value = FNV-1a 64 of the name), the enums in $DM_ROOT/re/enums.tsv (e.g. ControllerAction) 4-byte enums.
 #   ⑦ The data tables $DM_ROOT/re/export/tables.json (tables.py): one record structure txt_<table> per table (/dm/tables, fields = column names, flag bits merged into a u32 listed in its comment),
 #      the table root structure DataTables (each table's record pointer and row count), and the three root pointers ([main+0x2d64a18 + version × 16], versions 1-3) named g_tables_v1..v3 and typed.
+#   (8) The high / medium rows of the bulk names $DM_ROOT/re/names_auto.tsv (autoname.py), after names.tsv (addresses in names.tsv and hand names are left alone).
 #   Usage (called by re.sh seed; the project must not be open in another process): seed.py [--dry-run]
 import argparse
 import os
@@ -267,6 +269,17 @@ class Seeder:
                 if ln.strip() and not ln.startswith(('#', 'name\t'))]
 
 
+def auto_names():
+    """$DM_ROOT/re/names_auto.tsv（autoname.py）→ [(偏移, 名字, 可信度, 来源, 依据)]。 | $DM_ROOT/re/names_auto.tsv (autoname.py) -> [(offset, name, confidence, source, evidence)]."""
+    f = ghidra_db.RE / 'names_auto.tsv'
+    if not f.exists(): return []
+    out = []
+    for line in f.read_text(encoding='utf-8').splitlines():
+        p = line.split('\t')
+        if len(p) >= 5 and p[0].startswith('0x'): out.append((int(p[0], 16), p[1], p[2], p[3], p[4]))
+    return out
+
+
 def fnv1a64(s):
     h = 0xcbf29ce484222325
     for b in s.encode(): h = ((h ^ b) * 0x100000001b3) & 0xffffffffffffffff
@@ -468,6 +481,11 @@ def main():
             for off, name, conf, src in table:
                 s.name(off, name, 'names.tsv')
                 notes.setdefault(off, []).insert(0, f'name {name}: confidence {conf}; {src}')
+            pinned = {off for off, *_ in table}
+            for off, name, conf, src, why in auto_names():   # ⑧ 批量起名（names.tsv 的地址不碰） | (8) bulk names (addresses in names.tsv are left alone)
+                if off in pinned or conf not in ('high', 'medium'): continue
+                s.name(off, name, 'autoname')
+                notes.setdefault(off, []).insert(0, f'auto name {name}: confidence {conf}; {src}: {why}')
             for off, rows in sorted(notes.items()): s.comment(off, rows)   # 每个地址只写一次，整段 [dm] 一起换 | each address written once, the whole [dm] block replaced together
         if not a.dry_run: program.save('dm seed', TaskMonitor.DUMMY)
         for k in sorted(s.stats): print(f'  {k}: {s.stats[k]}')

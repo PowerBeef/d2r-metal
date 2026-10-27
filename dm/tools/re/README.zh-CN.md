@@ -23,7 +23,8 @@ dm/tools/re/re.sh analyze     # Ghidra 自动分析，含 Decompiler Parameter I
 dm/tools/re/re.sh baseline    # 每个函数反编译一遍 → log/decomp_baseline.json
 dm/tools/re/re.sh reflect     # 引擎自己的类 / 字段 / 枚举登记 → export/reflect.json（reflect.py）
 dm/tools/re/re.sh tables      # 数据表的列与各表挂在哪 → export/tables.json（tables.py；要跑游戏：先停查询服务）
-dm/tools/re/re.sh seed        # 仓库已知的东西，加上反射表与数据表（见下）
+dm/tools/re/re.sh autoname    # 批量起名候选 → $DM_ROOT/re/names_auto.tsv（autoname.py；打印覆盖率）
+dm/tools/re/re.sh seed        # 仓库已知的东西，加上反射表、数据表与批量名字（见下）
 dm/tools/re/re.sh export      # 名字与类型导成文本，提交进本机历史
 dm/tools/re/re.sh snap        # .gzf 快照（只留最近两份）
 ```
@@ -62,6 +63,8 @@ dm/tools/re/re.sh stop        # SIGINT：服务存盘后关工程
 - `reflect.py` 得到的引擎反射表。游戏把界面类、数据类连同父类与字段表（布局 JSON 用的名字及字节偏移）登记进自己的反射系统；`reflect.py` 在 CPU 模拟器（Unicorn，项目 venv）里逐个跑这些登记，再把表读回来。`seed` 把它们做成 `/dm/reflect` 下每类一个结构体（含父类字段）、`type_<类>` 描述符、`vt_Type_<类>`、`<类>_Create` 工厂和 `<类>_GetType` 取类型函数，并把消息频道及各频道的动作做成 `/dm/enums` 下的枚举（值 = 游戏拿来比较的 FNV-1a 64 哈希）。值由代码建表的枚举放在 `$DM_ROOT/re/enums.tsv`（`枚举<TAB>名字<TAB>值<TAB>来源`）。
 - `tables.py` 得到的数据表。游戏启动时按一份列描述把每张 excel 表读成定长记录数组；列描述是读表函数调用方栈上的数组，每项 0x20 字节：名字、种类、长度或位号、记录内偏移、查找链接或回调。这些数组只在调用期间存在，所以 `tables.py` 从运行中的游戏取：lldb 起无窗口 CLI 宿主，在读表函数（`main+0x4d9040`）入口整份抄下列描述，在它的分配点（`main+0x4d96b0`）记记录数组与行数，总读表函数返回时（`main+0x2410e0`）在三个表根对象（`[main+0x2d64a28/a38/a48]`）里找各记录数组。游戏把每张表读两遍，两个数据版本各一遍（读表标志 2 与 3）。`seed` 据此在 `/dm/tables` 下给每张表建一个记录结构体（`txt_<表>`，字段按列名，标志位并成一个 `u32`、注释里列出各位，查找列注明查的是哪张表），给表根对象建 `DataTables` 结构体（各表的记录指针与行数，外加 `+0x15c0` 处合并后的物品表），并把三个表根指针（`[main+0x2d64a18 + 版本 × 16]`，数据版本 1–3，同 `G+0x106` 与单位 `+0x1bd`；版本 1 与版本 2 共用一个表根）标成带类型的 `g_tables_v1..v3`。约一分钟；查询服务开着时拒跑。
 
+- `autoname.py` 产出的批量起名候选 `$DM_ROOT/re/names_auto.tsv`，只写标 `high` 或 `medium` 的行，排在 `names.tsv` 之后（它的地址与手工名一律不碰）。`autoname.py` 给还没名字的函数机械地推名字：只有这一个函数引用的「类::方法」串（`类__方法`）、库代码断言里的源文件路径（`<库>_<文件>_<偏移>`）、整个函数只是一条跳到有名函数的分支（`j_<名字>`）、只被一张已知虚表引用的槽（`<类>_vf<槽号>`，虚表来自 `vt_<类>` 标签、库代码留着的 C++ 类型信息，以及每个反射类的工厂存进对象的那张；游戏代码没有类型信息，工厂取了几张虚表的只列为 `low`）、数据表回调（`TxtCb_<表>_<列>`），以及逐个读过的客户端命令包处理函数（`$DM_ROOT/re/notes/c2s_labels.tsv`）。只包一个有名函数的短包装标 `low`，只列出来供复核、不写。`seed` 之前先看一遍这个文件；它会打印起名覆盖率的前后对比。
+
 ## 名字去哪
 
 `export` 写出 `$DM_ROOT/re/export/main.names.tsv`（偏移、名字、种类、可信度、来源）与 `types.h`。`dm/tools/guestsyms.py` 发现这个名字文件就读它，于是 `crashlog.py`、lldb 里的 `dm where` / `dm bt` 和 `sampagg.py` 都显示引擎函数名；可信度不是 `high` 的名字后面带括号注明。
@@ -75,7 +78,8 @@ dm/tools/re/re.sh stop        # SIGINT：服务存盘后关工程
 | `ghidra_db.py` | `import`、`analyze`、`baseline`、`check` |
 | `reflect.py` | 用模拟执行提取引擎的反射登记（类、字段、枚举） |
 | `tables.py` | 从运行中的游戏（lldb）记下数据表的列描述与记录数组 |
-| `seed.py` | 把仓库里的已知信息、反射表与数据表写进工程 |
+| `autoname.py` | 从字符串、跳板、虚表、数据表回调与命令包处理函数推批量起名候选 |
+| `seed.py` | 把仓库里的已知信息、反射表、数据表与采纳的批量名字写进工程 |
 | `export.py` | 名字与类型导成文本，提交进本机历史 |
 | `serve.py` | 不建启动索引地起 pyghidra-mcp |
 | `q.py` | 查询服务的命令行客户端 |

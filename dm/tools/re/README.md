@@ -23,7 +23,8 @@ dm/tools/re/re.sh analyze     # Ghidra auto-analysis incl. Decompiler Parameter 
 dm/tools/re/re.sh baseline    # decompile every function once → log/decomp_baseline.json
 dm/tools/re/re.sh reflect     # the engine's own class / field / enum registrations → export/reflect.json (reflect.py)
 dm/tools/re/re.sh tables      # the data tables' columns and where each table hangs → export/tables.json (tables.py; runs the game: server stopped)
-dm/tools/re/re.sh seed        # what the repo already knows, plus the reflection and data tables (below)
+dm/tools/re/re.sh autoname    # bulk naming candidates → $DM_ROOT/re/names_auto.tsv (autoname.py; prints coverage)
+dm/tools/re/re.sh seed        # what the repo already knows, plus the reflection and data tables and the bulk names (below)
 dm/tools/re/re.sh export      # names and types as text, committed to the local history
 dm/tools/re/re.sh snap        # a .gzf snapshot (the last two are kept)
 ```
@@ -62,6 +63,8 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 - The engine's reflection tables from `reflect.py`. The game registers its UI and data classes with their parent class and a table of fields (the names layout JSON uses, with byte offsets); `reflect.py` runs each registration in a CPU emulator (Unicorn, project venv) and reads the tables back. `seed` turns them into one structure per class under `/dm/reflect` (parent fields included), `type_<Class>` descriptors, `vt_Type_<Class>`, `<Class>_Create` factories and `<Class>_GetType` getters, and makes the message channels and each channel's actions into enums under `/dm/enums` (values = the FNV-1a 64 hashes the game compares against). Enums whose values the game builds in code go in `$DM_ROOT/re/enums.tsv` (`enum<TAB>name<TAB>value<TAB>source`).
 - The data tables from `tables.py`. At startup the game reads each excel table into an array of fixed-size records, driven by a column array on the reader's caller's stack: 0x20-byte entries of name, kind, length or bit number, offset in the record, and a link or callback. Those arrays exist only during the call, so `tables.py` takes them from the running game: lldb starts the headless CLI host, breaks at the table reader (`main+0x4d9040`) to copy the whole column array, at its allocation point (`main+0x4d96b0`) for the record array and row count, and when the master loader returns (`main+0x2410e0`) looks for each record array in the three table root objects (`[main+0x2d64a28/a38/a48]`). The game reads every table twice, once per data version (loader flags 2 and 3). `seed` turns this into one record structure per table under `/dm/tables` (`txt_<table>`, fields named after the columns, flag bits merged into one `u32` whose comment lists the bits, lookups commented with the table they look up), a `DataTables` structure for the root objects (each table's record pointer and row count, plus the merged item table at `+0x15c0`) and the three root pointers (`[main+0x2d64a18 + version × 16]`, data versions 1–3 as in `G+0x106` and unit `+0x1bd`; version 1 shares version 2's root) as typed `g_tables_v1..v3`. About a minute; it refuses while the query server is up.
 
+- The bulk naming candidates `$DM_ROOT/re/names_auto.tsv` from `autoname.py`, rows marked `high` or `medium` only, after `names.tsv` (its addresses and hand names are never touched). `autoname.py` derives names mechanically for functions still unnamed: a `Class::Method` string only that function references (`Class__Method`), a library source-file path in its asserts (`<library>_<file>_<offset>`), a whole function that is one branch to a named one (`j_<name>`), a slot only one known vtable references (`<Class>_vf<slot>`, from `vt_<Class>` labels, the C++ type info that library code keeps, and the vtable each reflected class's factory stores; game code has no type info, and a factory that takes several vtables is only listed as `low`), a data-table callback (`TxtCb_<table>_<column>`), and the client command packet handlers read one by one (`$DM_ROOT/re/notes/c2s_labels.tsv`). Short wrappers around one named function are listed as `low` for review and not written. Review the file before `seed`; it prints naming coverage before and after.
+
 ## Where the names go
 
 `export` writes `$DM_ROOT/re/export/main.names.tsv` (offset, name, kind, confidence, source) and `types.h`. `dm/tools/guestsyms.py` reads the names file when it exists, so `crashlog.py`, `dm where` / `dm bt` in lldb and `sampagg.py` show engine function names; a name whose confidence is not `high` carries it in brackets.
@@ -75,7 +78,8 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 | `ghidra_db.py` | `import`, `analyze`, `baseline`, `check` |
 | `reflect.py` | Extracts the engine's reflection registrations (classes, fields, enums) by emulation |
 | `tables.py` | Records the data tables' column arrays and record arrays from the running game (lldb) |
-| `seed.py` | Writes the repo's knowledge, the reflection tables and the data tables into the project |
+| `autoname.py` | Bulk naming candidates from strings, thunks, vtables, table callbacks and packet handlers |
+| `seed.py` | Writes the repo's knowledge, the reflection and data tables and the accepted bulk names into the project |
 | `export.py` | Names and types as text, local history commit |
 | `serve.py` | Starts pyghidra-mcp without the startup index |
 | `q.py` | Command-line client of the server |
