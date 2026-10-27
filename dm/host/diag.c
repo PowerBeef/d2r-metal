@@ -1515,7 +1515,7 @@ static void hold_unfreeze(void) {
 }
 static void hold_release(const char *why) {
     if (!atomic_exchange(&g_holding, 0)) return;
-    uint32_t last = (uint32_t)g_rplast;                // 冻结期间最后一次拍入口的拍号 = 暂停（存盘 / 截图）拍 | Tick number of the last tick entry during the freeze = the pause (save / screenshot) tick
+    uint32_t last = g_rp ? (uint32_t)g_rplast : cur_tick();   // 冻结期间最后一次拍入口的拍号 = 暂停（存盘 / 截图）拍；没有回放时 g_rplast 不走，取当前拍号 | Tick number of the last tick entry during the freeze = the pause (save / screenshot) tick; without a replay g_rplast does not move, so take the current tick
     hold_unfreeze();
     LOG("DM_TICK_HOLD：「%s」→ 解冻（冻结 %.3f s）；冻结拍 %u（目标 %u）%s；下一拍时限 %u → %u", why, (now_ns() - g_hold_t0) / 1e9, last, g_hold_tick,
         last == g_hold_tick ? "" : "【红】不等", g_hold_dl0 + 40, g_hold_dl1);
