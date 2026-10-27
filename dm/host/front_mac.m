@@ -131,6 +131,9 @@ static void app_quit(const char *why) {
     // 数量 / 起名输入框（或手柄屏幕键盘）开着：先按「取消」关掉，放走等它的键盘线程、解冻客体时钟，下面才存得了盘（见 front_text_input）
     // A quantity / name input box (or the on-screen controller keyboard) is open: answer "Cancel" first to release the keyboard thread waiting on it and unfreeze the guest clock, so the save below can happen (see front_text_input)
     if (text_input_cancel() || dm_vkbd_ui_cancel()) LOG("窗口：退出时输入框开着 → 先按取消关掉，再存盘");
+    // iCloud 启动同步还在做（窗口先出来了，游戏还在等它，见 main.c cloud_boot_start）：它在改存档目录，做完再退，最多 20 秒
+    // The iCloud boot sync is still running (the window came up first and the game is waiting for it, see main.c cloud_boot_start): it is changing the save directory, so let it finish before quitting, at most 20 s
+    { int dm_cloud_boot_wait(double max_s); dm_cloud_boot_wait(20); }
     int dm_ingame_now(void); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
     int dm_cloud_flush_wait(double sec);
     if (!dm_ingame_now() && !dm_uiscreen_ingame()) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
