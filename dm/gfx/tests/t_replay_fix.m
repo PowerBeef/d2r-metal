@@ -142,6 +142,9 @@ static void treg_view_case(void) {
     EXPECT("释放贴图：号仍登记着 | texture released: the IDs stay registered", 1, g_treg[1501].ok && g_treg[1502].ok);
     EXPECT("释放贴图：本次提交完成前视图还活着 | texture released: the view stays alive until this submission completes", 1, wv != nil);
     @autoreleasepool { chain c = chain_new(); exec(&c); commit(); defer_drain(); res_commit(); }   // 跑完一次（空）提交 | run one (empty) submission to completion
+    // 延后释放按「完成回调记下的已完成提交号」放：回调在别的线程，可能比 commit() 返回晚一点点（原先当场就查，偶尔差这一下而报红）；最多等 1 秒
+    // Deferred releases go by the completed-submission number the completion handler records: the handler runs on another thread and can land just after commit() returns (checking at once used to fail now and then by that much); wait up to 1 s
+    for (int i = 0; i < 200 && wv != nil; i++) { @autoreleasepool { defer_drain(); } usleep(5000); }
     EXPECT("释放贴图：提交完成后视图释放 | texture released: the view is released once the submission completes", 0, wv != nil);
 }
 // F-GFX-17：遮挡查询的「通过采样数」= 自清零以来各通道槽之和，可跨提交；后一次提交不能复用还被记着槽的可见性缓冲，
