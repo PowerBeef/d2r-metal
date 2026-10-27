@@ -153,6 +153,17 @@ CUTS = {'db0507f36b84200ac05f75d76ed5026f': [
     (0x5d8040, 'a005fe97', '411100d4', '玩家进局取出生点调用点 bl 0x5596c0 → svc #0x8a：宿主原样代调，进局在城镇时出生点换成小站旁（hle.h SVC_HOST_JOIN_SPAWN）', '仅宿主'),
     (0x5d8400, 'b004fe97', '611100d4', '进局给尸体取落点调用点 bl 0x5596c0 → svc #0x8b：同上，尸体与人取同一个点（hle.h SVC_HOST_JOIN_CORPSE）', '仅宿主'),
     (0x11f0914, '77100094', '811000d4', '段读取 0x11f07d0 逐块解码 bl 0x11f4af0(ctx, 块, 长度) → svc #0x84：同上（hle.h SVC_HOST_GRANNY_B）', '仅宿主'),
+    # 存档写失败后不再永远不提交（仅宿主）：存档任务 0xe0bb64 写某个文件失败（写方式打开 / 建文件 / 截断失败，盘满时真会发生）后，
+    # 0xe0c04c 记一笔日志就跳到 0xe0c0b0，跳过了它自己的「卸下」块 0xe0c06c–0xe0c0ac（挂载模式回 1、清挂载路径、清「写入排队」）；
+    # 这个存档目录从此一直算「挂着」，0xe00dd8 恒真，本进程再也不调 Commit——游戏不重试、不提示，宿主的存档失败提示（只在 Commit 时发）也不会出现，之后的进度全都存不下来。
+    # 改成失败后也走卸下块：写失败的那个文件仍是「待写」，下次存档重写；本次 Commit 照常调，宿主按事务拒绝（有写失败）并提示玩家，下一次存档照常提交。
+    # 卸下块原本就是成功路径的收尾（一次日志调用 + 几条存储），不新增同步原语或对外副作用；DM_TEST_FS_FAILAT=guestopen 实测：改前注入一次失败后再也没有提交，改后见 t_fs / 场景
+    # A failed save write no longer stops all later commits (host only): when the save job 0xe0bb64 fails to write a file (open for writing / create / truncate failing, which really happens on a full disk),
+    # 0xe0c04c logs it and jumps to 0xe0c0b0, skipping its own "unmount" block 0xe0c06c-0xe0c0ac (mount mode back to 1, mount path cleared, "write queued" cleared);
+    # that save directory then counts as "mounted" for good, 0xe00dd8 stays true, and this process never calls Commit again -- the game neither retries nor tells anyone, the host's save-failed alert (sent only at Commit) never appears, and all later progress is lost.
+    # Now the failure path also runs the unmount block: the file that failed stays "to be written" and is rewritten at the next save; this Commit is called as usual, the host refuses it per transaction (a write failed) and alerts the player, and the next save commits as usual.
+    # The unmount block is the success path's own epilogue (one log call + a few stores), adding no synchronization primitive or external side effect; measured with DM_TEST_FS_FAILAT=guestopen: before, one injected failure meant no commit ever again
+    (0xe0c04c, '19000014', '08000014', '存档任务写失败分支 b 0xe0c0b0（跳过卸下块）→ b 0xe0c06c（照成功路径卸下：挂载模式 1、清写入排队），之后的 Commit 不再被永远挡住', '仅宿主'),
 ]}
 # ---- 已登记观测门：{NSO 构建号: [(偏移, 编号, 原指令字, 理由)]}。编号与宿主 hle.h 的 OBS_* 一致；
 # 原指令须与位置无关（不得 PC 相对 / 分支 / 涉 x18·tpidr），离线断言；宿主未挂回调时门块进出一次即返回 ----

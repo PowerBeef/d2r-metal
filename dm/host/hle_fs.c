@@ -124,9 +124,11 @@ static const char *envdir(const char *var, const char *rel, char *buf, size_t n)
 }
 
 // 测试注入 DM_TEST_FS_FAILAT=<点>[:<次数>][,…]：存档事务里写失败收场的几步（mountclone 挂载时克隆工作目录、reclone 提交被拒后重新克隆、
-// guestname 改名后写客体名、renameback 改名回退）前 <次数> 次（缺省 1）按 ENOSPC 失败，验「不退出、已提交版本不变、下次提交照常」（tests/t_fs.c）
+// guestname 改名后写客体名、renameback 改名回退）前 <次数> 次（缺省 1）按 ENOSPC 失败，验「不退出、已提交版本不变、下次提交照常」（tests/t_fs.c）；
+// guestopen = 游戏在事务存档上写方式打开文件（模拟盘满时打开失败；游戏存档任务对它的处理见 patch_nso.py 剪口 0xe0c04c）
 // Test injection DM_TEST_FS_FAILAT=<point>[:<count>][,...]: the steps of a save transaction that end in a failed write (mountclone = clone the work directory at mount, reclone = reclone after a refused commit,
-// guestname = write the guest name after a rename, renameback = rename rollback) fail with ENOSPC for the first <count> times (default 1), to check "no exit, committed version unchanged, next commit works" (tests/t_fs.c)
+// guestname = write the guest name after a rename, renameback = rename rollback) fail with ENOSPC for the first <count> times (default 1), to check "no exit, committed version unchanged, next commit works" (tests/t_fs.c);
+// guestopen = the game opening a file for writing on the transactional save (an open failing on a full disk; how the game's save job handles it: patch_nso.py cut 0xe0c04c)
 static int dm_fs_test_fail(const char *pt) {
     static char spec[256]; static int cnt[8]; const char *e = getenv("DM_TEST_FS_FAILAT"); if (!e || !e[0]) return 0;
     if (strcmp(spec, e)) { strlcpy(spec, e, sizeof spec); memset(cnt, 0, sizeof cnt); }   // 换了一组注入就从头数 | A new set of injections starts counting from zero
@@ -722,6 +724,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
     if (!host_path_ex(path, hp, sizeof hp, &ro, 0)) { int e = errno; if (wr) { t_wopen_failed_txn = txn_mount(path) ? (e ? e : EIO) : 0; txn_fail(path, e); } errno = e; return err_res("path", path); }
     if (wr) RW();
     int fd = open(hp, wr ? ((mode & MODE_READ) ? O_RDWR : O_WRONLY) : O_RDONLY);
+    if (fd >= 0 && wr && txn_mount(path) && dm_fs_test_fail("guestopen")) { close(fd); fd = -1; }   // 测试注入：写方式打开按盘满失败 | test injection: the open for writing fails as on a full disk
     if (fd < 0) { int e = errno; if (wr) { t_wopen_failed_txn = txn_mount(path) ? (e ? e : EIO) : 0; txn_fail(path, e); } errno = e; return err_res("open", hp); }
     struct stat st; fstat(fd, &st);
     if (S_ISDIR(st.st_mode)) { close(fd); return RES_PATH_NOT_FOUND; }

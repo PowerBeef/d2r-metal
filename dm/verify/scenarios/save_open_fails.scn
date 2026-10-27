@@ -1,0 +1,13 @@
+# 存档写方式打开失败一次（模拟盘满，DM_TEST_FS_FAILAT=guestopen）：游戏不再永远停止提交（patch_nso.py 剪口 0xe0c04c）。
+# 第一次失败发生在选角页（游戏重写角色档），那次事务被宿主拒绝并提示；进局后两次存盘都要照常提交。改之前这里一次提交都等不到。
+# One failed open for writing on the save (a full disk simulated with DM_TEST_FS_FAILAT=guestopen): the game no longer stops committing for good (patch_nso.py cut 0xe0c04c).
+# The failure happens at character select (the game rewrites the character file); the host refuses that transaction and alerts; both saves in the run must then commit as usual. Before the fix no commit ever came.
+name save_open_fails
+save warlock
+timeout 200
+env DM_TEST_FS_FAILAT=guestopen:1
+enter_game
+save_now timeout=8
+sleep 2
+save_now timeout=8
+quit
