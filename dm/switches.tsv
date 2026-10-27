@@ -57,7 +57,7 @@ DM_DBG_COVER	host	host/dm_cursor.c	-
 DM_DBG_FE_SEND	host	host/dm_cursor.c	-
 DM_DERIVED	android,harmony,host	android/app/src/main/java/com/xiaoboluo/d2r/DmActivity.java harmony/native/napi_ohos.c host/dm_derived_rt.h	-
 DM_DESWIZZLE_LIB	ios-tools	ios/tools/dxt5.py ios/tools/romfs_art.py	y
-DM_DETCLOCK	gfx,host,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c verify/golden.py	y
+DM_DETCLOCK	gfx,host,tools,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c tools/lookbook.py …	y
 DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	-
 DM_DEVBATTERY	ios-tools	ios/run.sh ios/tools/devlock.sh	-
 DM_DEVBATTERY_APP_MAX_AGE_S	ios-tools	ios/tools/devbattery.sh	-
@@ -218,6 +218,7 @@ DM_NVN_ROUTE	verify	verify/shotgate.sh	-
 DM_NVN_RT_RANGE	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_rt_depth_ro.m gfx/tests/t_rt_range.m	-
 DM_NVN_RULER	gfx,host	gfx/nvn/nvn_mtl.m host/diag.c	y
 DM_NVN_RULER_NEG	gfx	gfx/nvn/nvn_mtl.m	y
+DM_NVN_SAMPHIST	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_SHMAP	gfx,host,ios,tvos	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m tvos/main.m	y
 DM_NVN_SHOT	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SHOT_OUT	gfx	gfx/nvn/nvn_mtl.m	y

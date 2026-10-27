@@ -2643,6 +2643,26 @@ static MTLSamplerAddressMode wrapm(int w) {
         case 6: return MTLSamplerAddressModeMirrorRepeat; }
     return MTLSamplerAddressModeRepeat;
 }
+}
+// 诊断开关 DM_NVN_SAMPHIST=1：游戏实际要的采样器参数分布（缩小 / 放大 / mip 过滤、各向异性、LOD 偏移与钳位、比较、环绕），每出现一种新组合记一行，
+// 每建 64 个采样器打一次各组合的个数。用来定纹理过滤覆盖该管哪些采样器（画质计划 R3）。在 g_rmu 下调，不另加锁
+// Diagnostic switch DM_NVN_SAMPHIST=1: the distribution of sampler parameters the game actually asks for (min / mag / mip filter, anisotropy, LOD bias and
+// clamps, compare, wrap); one line per new combination, and the count of every combination after each 64 samplers created. Used to decide which samplers a
+// texture-filtering override may touch (picture plan R3). Called under g_rmu, no lock of its own
+static void samp_hist(int sid, const samp_par *p) {
+    static int on = -1, n, made; static struct { samp_par k; int count, first; } t[128];
+    if (on < 0) { const char *e = getenv("DM_NVN_SAMPHIST"); on = e && *e && *e != '0'; }
+    if (!on) return;
+    samp_par k = *p; memset(k.border, 0, sizeof k.border);
+    int i = 0; while (i < n && memcmp(&t[i].k, &k, sizeof k)) i++;
+    if (i == n && n < 128) { t[n].k = k; t[n].count = 0; t[n].first = sid; n++;
+        MLOG("采样器组合 #%d（首见 %d）：min %u mag %u（mip %s）各向异性 %.1f LOD 偏移 %.2f 钳位 %.1f..%.1f 比较 %u/%u 环绕 %u %u %u", i, sid, k.minf, k.magf,
+             k.minf <= 1 ? "无" : k.minf <= 3 ? "最近" : "线性", k.aniso, k.lod_bias, k.lod_min, k.lod_max, k.cmp_mode, k.cmp_func, k.ws, k.wt, k.wr); }
+    if (i < n) t[i].count++;
+    if (++made % 64 == 0) { char o[1024]; size_t L = 0; o[0] = 0;
+        for (int j = 0; j < n && L < sizeof o - 16; j++) L += (size_t)snprintf(o + L, sizeof o - L, " #%d×%d", j, t[j].count);
+        MLOG("采样器组合：已建 %d 个，%d 种：%s", made, n, o); }
+}
 static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Caller holds g_rmu
     if (sid < 0 || sid >= g_nsreg || !g_sreg_ok[sid]) { RED_ONCE(12, "采样器号 %d 未登记", sid); return nil; }
     if (g_sview[sid]) return (__bridge id<MTLSamplerState>)g_sview[sid];
@@ -2659,6 +2679,7 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     d.supportArgumentBuffers = YES;
     id<MTLSamplerState> s = [g_dev newSamplerStateWithDescriptor:d];
     if (s) { g_sview[sid] = (void *)CFBridgingRetain(s); g_srid[sid] = s.gpuResourceID._impl; }
+    samp_hist(sid, &p);
     return s;
 }
 static inline __attribute__((always_inline)) void *samp_fast(int sid) {
