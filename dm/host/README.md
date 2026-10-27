@@ -78,7 +78,6 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 | `dm_video.c` | The picture settings on the Options Video tab (Mac: Display Mode, Resolution, Graphic Presets, Upscaling; iOS: 3D Resolution, Graphic Presets, Upscaling; both: Frame Rate and Frame Drops), stored in `sw_video.txt` with a first-launch Recommended copy. Frame Rate and Frame Drops hold the custom keys `eco_fps` / `q3d`, saved in `sw_custom.txt` through `dm_custom.c` |
 | `dm_pages.c` | Personal stash pages 2–5: the items of the other pages are kept in a side file in the character's directory, and page turning happens inside the server tick |
 | `dm_pouch.c` | The pouch and "Deposit": runes and gems picked up in the field go into the pouch without taking inventory cells, and are stored away when you open the stash back in town |
-| `dm_runeword.c` | The runeword helper: long-press a socketed base to list the runewords it can make, and socket them in one tap once you have the runes |
 
 ### Convenience features
 

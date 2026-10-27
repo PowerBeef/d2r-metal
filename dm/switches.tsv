@@ -446,13 +446,6 @@ DM_TEST_RESIGN	ios	ios/Sources/front_ios.m	-
 DM_TEST_RSTICK	host	host/hle_hid.c	-
 DM_TEST_RS_HOLD	host	host/dm_cursor.c	-
 DM_TEST_RS_WRONGSEL	host	host/dm_cursor.c	-
-DM_TEST_RW_DESC	host	host/dm_runeword.c	-
-DM_TEST_RW_FAIL	host	host/dm_runeword.c	-
-DM_TEST_RW_GO	host	host/dm_runeword.c	-
-DM_TEST_RW_LIST	host	host/dm_runeword.c	-
-DM_TEST_RW_LVDUMP	host	host/dm_runeword.c	-
-DM_TEST_RW_OPEN	host	host/dm_runeword.c	-
-DM_TEST_RW_SOCKETS	host	host/dm_runeword.c	-
 DM_TEST_SAFE_L	ios	ios/Sources/dm_update.m ios/Sources/front_ios.m	-
 DM_TEST_SAFE_R	ios	ios/Sources/front_ios.m	-
 DM_TEST_SAVE_AT	host,verify	host/diag.c verify/golden.py	y

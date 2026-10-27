@@ -40,7 +40,7 @@ else:
         if name not in on_line and name not in both: red.append('dm_cursor.c 定义了 %s，但每帧那一行和「两种模式都跑」单子上都没有它' % name)
 
 # ---- 2 ----
-PADMODE = {'host/dm_cursor.c': 9, 'host/dm_custom.c': 1, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 2, 'host/hle_tact.c': 1}
+PADMODE = {'host/dm_cursor.c': 9, 'host/dm_custom.c': 1, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 2, 'host/hle_tact.c': 1}
 # host/dm_ctl_cmds.c 1：控制口 msg 命令（测试驱动，同 hle_hid.c 的 DM_KEYS MSG 步）——一次性的一条消息，两种模式照发，切换时没有要清的状态
 # host/dm_ctl_cmds.c 1: the control port's msg command (test-driven, like the DM_KEYS MSG step in hle_hid.c) -- a one-shot message sent as is in both modes, nothing to clean up on a switch
 # host/dm_cursor.c 第 39 处：dm_settings_back_filter 的 fe_send（选项页返回 = 「放弃」）——只在「放弃」下挂着返回键图标时起（Mac 覆盖层，Mac App 一直是手柄版布局）；按一下发一条、没有跨帧状态，切换时没有要清的

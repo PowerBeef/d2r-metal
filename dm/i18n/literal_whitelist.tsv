@@ -54,11 +54,6 @@ host/diag.c	=菜单	状态行，只进日志
 host/diag.c	截图写盘	截图日志
 host/diag.c	=完成	截图日志
 host/diag.c	=失败	截图日志
-host/dm_runeword.c	@job_stop	合成中止原因，只进日志
-host/dm_runeword.c	@list_close	清单关闭原因，只进日志
-host/dm_runeword.c	@job_readback	合成结果，只进日志
-host/dm_runeword.c	储藏箱格	符文来源位置，只进日志
-host/dm_runeword.c	背包格	符文来源位置，只进日志
 host/dm_vault_ui.c	@vu_guard	控件守卫的日志标签
 ios/Sources/main.m	@dm_host_shutdown	退出原因，只进日志
 ios/Sources/main.m	DM_LOG_PORT	日志端口回执

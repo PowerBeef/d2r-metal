@@ -45,7 +45,6 @@ run: \
 	$(B)/t_loader_weak \
 	$(B)/t_map_diag \
 	$(B)/t_romfs_validate \
-	$(B)/t_rwlv \
 	$(B)/t_save_hooks \
 	$(B)/t_scrub \
 	$(B)/t_svc_mem \
@@ -101,7 +100,6 @@ run: \
 	$(B)/t_loader_weak
 	$(B)/t_map_diag
 	$(B)/t_textbox
-	$(B)/t_rwlv
 	$(B)/t_touch
 	$(B)/t_hid_script 2>/dev/null
 	$(B)/t_hid_receipt 2>/dev/null
@@ -158,8 +156,6 @@ $(B)/t_scrub: t_scrub.c ../dm_scrub.c ../dm_scrub.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_scrub.c ../dm_scrub.c
 $(B)/t_video: t_video.c ../dm_video.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_video.c ../dm_video.c
-$(B)/t_rwlv: t_rwlv.c ../dm_rwlv_core.c ../dm_rwlv_core.h | $(B)
-	clang -O1 -Wall -Werror -o $@ t_rwlv.c ../dm_rwlv_core.c
 $(B)/t_widget: t_widget.c ../dm_widget.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_widget.c
 $(B)/t_unit_level: t_unit_level.c ../dm_unit.h | $(B)

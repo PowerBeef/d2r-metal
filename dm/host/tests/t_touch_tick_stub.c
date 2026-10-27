@@ -13,7 +13,6 @@ void dm_update_pump(void) {}      // 选角页构建号与新版本提示（dm_u
 void dm_num_set(int n) { (void)n; }
 void dm_actions_pump(void) {}
 uint64_t dm_swapskill_filter(uint64_t b) { return b; }   // 副手组技能（dm_actions.c）：不压键 | swap-set skill (dm_actions.c): does not suppress keys
-uint64_t dm_runeword_pad_filter(uint64_t b) { return b; }   // 手柄模式符文之语清单（dm_runeword.c）：不吃键 | Runeword list in controller mode (dm_runeword.c): swallow no buttons
 uint64_t dm_padmode_page_filter(uint64_t b) { return b; }   // 手柄模式我们自己的页（dm_padmode.c）：不吃键 | Our own pages in controller mode (dm_padmode.c): swallow no buttons
 int dm_padmode_input_gate(uint64_t *b) { (void)b; return 0; }   // 手柄 / 触屏切换事务的输入闸（dm_padmode.c）：没在切 | Input gate of the controller / touch switch transaction (dm_padmode.c): not switching
 int dm_padmode_current(void) { return 0; }   // 手柄 / 触屏模式（dm_padmode.c）：触屏 | Controller / touch mode (dm_padmode.c): touch
@@ -84,8 +83,4 @@ int dm_held_stow_result(void) { return -1; }
 void dm_test_swap_held(void) {}
 int dm_held_pending(void) { return 0; }
 void uimsg_emit(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }
-int dm_runeword_long_press(const void *ci) { (void)ci; return 0; }   // 符文之语助手（dm_runeword.c）的桩 | stub for the runeword helper (dm_runeword.c)
-int dm_runeword_list_open(void) { return 0; }
-void dm_runeword_button(const char *name) { (void)name; }
-void dm_runeword_list_close(void) {}
 uint64_t dm_padmode_legend_click(float nx, float ny) { (void)nx; (void)ny; return 0; } int dm_padmode_hud_click(float nx, float ny, uint64_t *b) { (void)nx; (void)ny; (void)b; return 0; } int dm_padmode_legend_has(uint32_t g) { (void)g; return 0; } int dm_game_paused(void) { return 0; }   // 鼠标点按键提示条（dm_padmode.c）：这些单测不带游戏映像，给空桩 | mouse click on the key-hint bar (dm_padmode.c): these unit tests carry no game image, so an empty stub is given

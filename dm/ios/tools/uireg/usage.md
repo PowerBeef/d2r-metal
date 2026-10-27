@@ -105,7 +105,6 @@ A run name is the first argument of `G("…")` in `uireg.py`; below they are gro
 | `g`, `h` | Skill binding; the `综合技能` (general skills) page of the skill tree |
 | `i`, `f`, `q`, `bdm` | Mercenary: hiring and reviving, inventory drag and drop with a mercenary, double-tapping a belt potion to feed the mercenary |
 | `j`, `k` | Socketing; making one runeword |
-| `rw1`, `rw2`, `rwp`, `rwd` | Runeword list: opening by long press, paging and details, one-tap crafting |
 | `m`, `n`, `p`, `ra` | Merchant page: dragging onto the merchant panel to sell, long press on the shelf to buy in bulk, long press on a potion to refill the belt, repair all |
 | `me1`–`me4` | Two-row / three-row / four-row dialogue menus when different characters face the same NPC |
 | `sl1`, `sl2`, `sl3` | Imbuing, adding sockets, personalizing. `sl2` and `sl3` are marked in the script comments as drafts that have not actually been run yet |

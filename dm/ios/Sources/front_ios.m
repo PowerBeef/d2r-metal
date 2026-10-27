@@ -1430,11 +1430,6 @@ static void touch_script_start(void) {
     // Skip the remaining wait (regression speed-up): script times are hard-coded, so waits like entering a run / walking / waiting for a test switch to bring the character into place have to be budgeted for the slowest case.
     // "await pos [x y r]" = once the player state is readable (and, if coordinates are given, the player has walked within this radius), set the script clock to 0.3 seconds before the next step; "walk_to … skip" = do the same on arrival. If the wait is not satisfied, proceed at the original time, behaving as if it were not written.
     __block int aw_on=0, aw_x=0, aw_y=0, aw_r=0, aw_tick=0, wk_skip=0;
-    // 「await rw [超时秒=30]」= 等符文之语一键合成结束（宿主记完「成型读回」那一行、计数加一）就把脚本时钟拨到下一步前 0.3 秒；超时记红照原时刻走。
-    // 判据按事件不按秒：读回由宿主在结束那一刻自己打，后面紧跟「note 结束」就是看到读回才收局，墙钟兜底 = 超时
-    // "await rw [timeout seconds=30]" = once the runeword one-tap crafting finishes (the host has logged the 「成型读回」(formed readback) line and incremented the counter), set the script clock to 0.3 seconds before the next step; on timeout log a failure line and proceed at the original time.
-    // The criterion is event-based, not second-based: the readback is printed by the host itself at the moment of finishing, so a 「note 结束」(note end) right after it means the run is closed only after seeing the readback; wall-clock backstop = timeout
-    __block int awr_on=0, awr_base=0, awr_tick=0; __block double awr_dead=0;
     // 「await ui <控件名>[@<面板名>] [超时秒=30]」= 等这个界面控件可见（同 tap_ui 的观察：dm_ui_watch / dm_ui_watch_pos）就把脚本时钟拨到下一步前 0.3 秒，不点；
     // 超时记红照原时刻走。用在「测试开关按进程秒打开的面板」后面紧跟的点按（rwd：清单开得晚，点名字按秒等会落空）。与 tap_ui 共用一个观察槽：两者别同时挂
     // "await ui <widget name>[@<panel name>] [timeout seconds=30]" = once this UI widget is visible (same watch as tap_ui: dm_ui_watch / dm_ui_watch_pos), set the script clock to 0.3 seconds before the next step, without tapping;
@@ -1450,9 +1445,6 @@ static void touch_script_start(void) {
             else { double sx=dx-dy, sy=(dx+dy)/2, m=hypot(sx,sy); if(m<1e-6) m=1; [g_touch_view scriptPhase:@"move" slot:15 at:[NSString stringWithFormat:@"@joy+%d,%d",(int)lround(sx/m*40),(int)lround(sy/m*40)]]; } }
         if(aw_on && (++aw_tick%12)==0) { dm_hud_info h; dm_hud_get(&h);
             if(h.valid && h.area>0 && h.hp_max>0 && (!aw_r || hypot(aw_x-h.x,aw_y-h.y)<=aw_r)) { aw_on=0; LOG("[script] await pos：区域 %d (%d,%d)",h.area,h.x,h.y); skip_wait("await pos 等到了"); } }
-        if(awr_on && (++awr_tick%12)==0) { int dm_runeword_done_count(void); int c=dm_runeword_done_count();
-            if(c>awr_base) { awr_on=0; LOG("[script] await rw：一键合成结束（第 %d 次）",c); skip_wait("await rw 等到了"); }
-            else if(now>=awr_dead) { awr_on=0; LOG("[script] 【红】await rw 超时：一键合成没结束"); } }
         if(aui_on && (++aui_tick%12)==0) { float nx=0, ny=0;
             if(dm_ui_watch_pos(&nx,&ny)) { aui_on=0; dm_ui_watch(NULL); LOG("[script] await ui %s：控件出现了",aui_name.UTF8String); skip_wait("await ui 等到了"); }
             else if(now>=aui_dead) { aui_on=0; dm_ui_watch(NULL); LOG("[script] 【红】await ui %s 超时：控件没出现",aui_name.UTF8String); } }
@@ -1496,7 +1488,6 @@ static void touch_script_start(void) {
             // e.g. tap_ui SkillButton3+2,0@SkillsTreePanel. Tapping by name is unaffected by screen aspect / the top shift in true fullscreen (raw coordinates measured at 16:9 on a real device missed the skill tree by 134 units)
             else if([op isEqualToString:@"tap_ui"] && f.count>=3) { ui_name=[f[2] stringByReplacingOccurrencesOfString:@"+" withString:@" "]; dm_ui_watch(ui_name.UTF8String); ui_on=1; ui_tick=0; ui_dead=now+(f.count>3?[f[3] doubleValue]:10); }
             else if([op isEqualToString:@"await"] && f.count>=4 && [f[2] isEqualToString:@"ui"]) { aui_name=[f[3] stringByReplacingOccurrencesOfString:@"+" withString:@" "]; dm_ui_watch(aui_name.UTF8String); aui_on=1; aui_tick=0; aui_dead=now+(f.count>4?[f[4] doubleValue]:30); }
-            else if([op isEqualToString:@"await"] && f.count>=3 && [f[2] isEqualToString:@"rw"]) { int dm_runeword_done_count(void); awr_on=1; awr_tick=0; awr_base=dm_runeword_done_count(); awr_dead=now+(f.count>3?[f[3] doubleValue]:30); }
             else if([op isEqualToString:@"await"] && f.count>=3 && [f[2] isEqualToString:@"pos"]) { aw_on=1; aw_tick=0; aw_r=f.count>=6?[f[5] intValue]:0; aw_x=f.count>=6?[f[3] intValue]:0; aw_y=f.count>=6?[f[4] intValue]:0; }
             else if([op isEqualToString:@"pad"] && f.count>=3) { void dm_gamepad_inject(uint64_t,int32_t,int32_t,int32_t,int32_t); uint64_t m=strtoull([f[2] UTF8String],NULL,0);   // pad <按键位（同 dm_input.h）> [lx ly rx ry]：模拟手柄（没有实体手柄时测手柄路径） | pad <button bits (same as dm_input.h)> [lx ly rx ry]: simulated controller (tests the controller path without a physical controller)
                 dm_gamepad_inject(m,f.count>3?[f[3] intValue]:0,f.count>4?[f[4] intValue]:0,f.count>5?[f[5] intValue]:0,f.count>6?[f[6] intValue]:0); LOG("[script] pad %#llx",(unsigned long long)m); }
@@ -1522,7 +1513,7 @@ static void touch_script_start(void) {
         // 原先排完最后一步就停，最后一步是 tap_ui 时那一下永远不点，也没有超时红（暂停页 Exit、TouchStashRight 都静悄悄没点）
         // When the last few steps are actions like tap_ui / tap_unit / walk_to / await that "hang waiting and only land in a later tick", wait until they land or time out before stopping the timer:
         // previously the timer stopped as soon as the last step was scheduled, so when the last step was tap_ui that tap never happened, with no timeout failure either (pause page Exit and TouchStashRight were both silently not tapped)
-        if(next>=steps.count && !ui_on && !tu_on && !wk_on && !aw_on && !awr_on && !aui_on && !tu_up) { LOG("[script] 全部 %d 步执行完（%.2fs）",(int)steps.count,now); [tm invalidate]; }
+        if(next>=steps.count && !ui_on && !tu_on && !wk_on && !aw_on && !aui_on && !tu_up) { LOG("[script] 全部 %d 步执行完（%.2fs）",(int)steps.count,now); [tm invalidate]; }
     }];
     timer.tolerance=0; [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
     LOG("[script] 已排 %d 步（%s）",n,e);

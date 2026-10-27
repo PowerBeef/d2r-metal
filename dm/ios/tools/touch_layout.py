@@ -444,89 +444,6 @@ def _inv_touch(hint):   # hint 已不用：底部手势提示字去掉（手势�
         s, n = offscreen(s)
         return s, n
     return fn
-# 符文之语助手清单：物品栏面板下的一组原版控件，全摆在屏幕外、字是空的；
-# 长按匹配底材时宿主（dm/host/dm_runeword.c）写字、量宽、摆位置，「一键合成」按钮只在符文齐且此刻可取用的那几行挪回来。
-# 每个符文之语两行：名字（金）+ 需要等级（灰）一行；符文串一行，每枚符文一个文字框（「#13 夏」），缺的那枚换成红色那一份。
-# 原版文字框不认行内颜色码（真机：U+E07E 显示成「*」）、也不换行不裁剪，所以一种颜色一个控件；符文框开 fitToText，宿主按游戏量出的宽度（+0x78）逐个往右排，保证不出底板、不压按钮。
-# 全部包在一个容器 TouchRwBox 里：直接挂物品栏下会让面板直接子控件过 256 个，安全阀的面板巡检（dm_cursor.c ui_panel_heal，子控件数 > 256 判不可见）
-# 就把开着的物品栏判成「屏上没面板」补发 ClosePanel（真机 y2–y6 四局）。容器不设 rect，子控件坐标仍按物品栏面板算。
-# 底板 = 半透明深色矩形（同原版说明框的观感）；按钮 = 难度选择框那颗原版按钮图（FrontEnd_ButtonMed）。按钮发 PanelManager:ClosePanel:TouchRwGo<行号>（空操作，宿主当信号收）
-# Runeword helper list: a group of original-game widgets under the inventory panel, all placed off screen with empty text;
-# on a long press that matches a base item the host (dm/host/dm_runeword.c) writes the text, measures widths and places them, and the 「一键合成」(Craft) button is moved back only for the rows whose runes are complete and available right now.
-# Two lines per runeword: name (gold) + required level (gray) on one line; the rune string on one line, one text box per rune (「#13 夏」(#13 Shael)), with a missing rune replaced by its red copy.
-# The original game's text box does not honor inline color codes (real device: U+E07E shows as '*'), and neither wraps nor clips, so there is one widget per color; rune boxes enable fitToText, and the host lays them out to the right one by one using the width measured by the game (+0x78), making sure they do not leave the backing or cover the button.
-# Everything is wrapped in one container TouchRwBox: hanging them directly under the inventory would push the panel's direct child widgets past 256, and the safety valve's panel patrol (dm_cursor.c ui_panel_heal, more than 256 child widgets is judged invisible)
-# would then judge the open inventory as 'no panel on screen' and send an extra ClosePanel (four real-device runs y2-y6). The container has no rect, and child widget coordinates are still relative to the inventory panel.
-# Backing = semi-transparent dark rectangle (same look as the original game's tooltip); button = the original-game button image from the difficulty selection box (FrontEnd_ButtonMed). The button sends PanelManager:ClosePanel:TouchRwGo<row number> (a no-op that the host receives as a signal)
-_RW_N = 15
-def _rw_text(name, w, size, color, h='left', fit=False, ht=56):
-    return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": %d, "height": %d }, "text": "", %s'
-            '"style": { "pointSize": %d, "fontColor": { "r": %d, "g": %d, "b": %d, "a": 255 }, "alignment": { "h": "%s", "v": "center" } } } },\n') % ((name, w, ht, '"fitToText": true, ' if fit else '', size) + color + (h,))
-_RW = ('        { "type": "Widget", "name": "TouchRwBox", "children": [\n'
-       + '        { "type": "RectangleWidget", "name": "TouchRwBg", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1125, "height": 400 }, "color": [ 0.055, 0.055, 0.055, 0.92 ] } },\n'
-       + _rw_text('TouchRwTitle', 1125, 38, (235, 235, 235), 'center')
-       # 翻页一排（一页放不下时宿主才挪回来）：照搬键鼠版仓库页 StashNavigation 的两颗箭头与页码字（同图、同帧号、同字样式），点击改发空操作消息给宿主
-       # Paging row (the host moves it back only when one page is not enough): copied from the two arrows and page number text of StashNavigation on the keyboard-and-mouse stash page (same images, same frame numbers, same text style), with taps changed to send a no-op message to the host
-       + ''.join('        { "type": "ButtonWidget", "name": "TouchRwPg%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 64, "height": 64 }, "filename": "PANEL\\\\Stash\\\\Stash_%sArrow", '
-                 '"normalFrame": 0, "pressedFrame": 2, "hoveredFrame": 1, "disabledFrame": 3, "onClickMessage": "PanelManager:ClosePanel:TouchRwPg%s" } },\n' % (k, a, k) for k, a in (('Prev', 'Left'), ('Next', 'Right')))
-       # 条目之间的分隔线（每个符文之语之间隔一行）：包里没有虚线素材，用原版暂停菜单列表的分隔线图 PauseMenu/Divider_Medium，调暗不抢字
-       # Divider lines between entries (one line between each runeword): the package has no dashed-line asset, so the original game's pause menu list divider image PauseMenu/Divider_Medium is used, dimmed so it does not compete with the text
-       + ''.join('        { "type": "ImageWidget", "name": "TouchRwSep%d", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 1.25 }, "filename": "PauseMenu\\\\Divider_Medium", "transparency": 0.35 } },\n' % k for k in range(7))
-       + '        { "type": "TextBoxWidget", "name": "TouchRwPage", "fields": { "text": "", "rect": { "x": 99999, "y": 99999, "width": 230, "height": 64 }, '
-         '"style": { "fontColor": "$PanelTitleColor", "pointSize": "$MediumFontSize", "alignment": { "v": "center", "h": "center" }, "spacing": "$MinimumSpacing", "dropShadow": "$DefaultDropShadow" } } },\n'
-       # 每行的控件（15 行 × 名字 / 等级 / 12 枚符文 / 灰字 / 按钮 = 240 个）另包一层容器 TouchRwRows：全挂在 TouchRwBox 下会过 256 个，
-       # 交互层与触点脚本按名字找控件的遍历（子控件数 > 256 当不可见）就找不到它们（加了 TouchRwHint 后 257 个，tap_ui TouchRwGo0 全部找不到）
-       # The widgets of each row (15 rows × name / level / 12 runes / gray text / button = 240) are wrapped in another container TouchRwRows: hanging them all under TouchRwBox would exceed 256,
-       # and the traversal by which the interaction layer and touch point scripts find widgets by name (more than 256 child widgets counts as invisible) would then not find them (257 after adding TouchRwHint, and tap_ui TouchRwGo0 could find none of them)
-       + '        { "type": "Widget", "name": "TouchRwRows", "children": [\n'
-       + ''.join(_rw_text('TouchRwName%d' % i, 520, 36, (199, 179, 119), fit=True, ht=46) + _rw_text('TouchRwLv%d' % i, 300, 28, (160, 160, 160), fit=True, ht=40)
-                 + ''.join(_rw_text('TouchRwR%d_%d%s' % (i, j, c), 300, 30, col, fit=True, ht=40) for j in range(6) for c, col in (('w', (235, 235, 235)), ('r', (255, 90, 90))))
-                 # 底材在共享仓库（原版不能直接镶）时按钮那一格换成一行灰字：原版说明框的灰 $FontColorGray
-                 # When the base item is in the shared stash (the original game cannot socket it directly) the button cell is replaced with a line of gray text: the gray of the original game's tooltip, $FontColorGray
-                 + ('        { "type": "TextBoxWidget", "name": "TouchRwHint%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 400, "height": 40 }, "text": "@dmRwHint", "fitToText": true, '
-                    '"style": { "pointSize": 28, "fontColor": "$FontColorGray", "alignment": { "h": "left", "v": "center" } } } },\n') % i
-                 + ('        { "type": "ButtonWidget", "name": "TouchRwGo%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 408, "scale": 0.75 }, "filename": "FrontEnd/HD/Final/FrontEnd_ButtonMed", "hoveredFrame": 3, '
-                    '"textString": "@dmRwGo", "textColor": "$LightButtonTextColor", "text/style": "$StyleFEButtonText", "onClickMessage": "PanelManager:ClosePanel:TouchRwGo%d" } },\n') % (i, i)
-                 for i in range(_RW_N))
-       + '        ] },\n'
-       # 手柄模式的选中框：原版手柄选中框（同编年史仓库格子的金框），框住十字键选中的那一行；触屏模式一直在屏外
-       # Selection frame in controller mode: the original controller selection frame (same as the gold frame on Chronicle vault cells), framing the row selected with
-       # the D-pad; always off-screen in touch mode
-       + '        { "type": "NineTileImageWidget", "name": "TouchRwSel", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1000, "height": 100 }, "backgroundColor": [ 0, 0, 0, 0 ], '
-         '"filename": "Controller/PANEL/ControllerSelector/ControllerSelectorBorder", "tileScale": 0.5 } },\n'
-       # 符文之语详情（点暗金色的名字显示该符文之语的属性）：放在最后（画在最上层）。属性文字是游戏自己生成的原版说明（宿主 rw_desc，同编年史），
-       # 文字框样式照抄原版物品说明框（_profilehd.json TooltipStyle：白字、提示框字号、居中、行序倒排、处理 | 字符）；页式：清单底板里换成详情，左上角原版仓库左箭头 +「返回」
-       # 字号：原版提示框字号（手柄版 42）一屏放不下长的（全表 99 条最长 24 行）；两份文字框，32 号放得下就用它，放不下换 22 号（宿主按量出的高挑）
-       # Runeword details (tapping the unique-gold name shows that runeword's properties): placed last (drawn on the top layer). The property text is the original game's description generated by the game itself (host rw_desc, same as the chronicle),
-       # and the text box style is copied from the original game's item tooltip (_profilehd.json TooltipStyle: white text, tooltip font size, centered, reversed line order, handling of the | character); page style: the details replace the list inside the list backing, with the original game's stash left arrow + 「返回」(Back) at the top left
-       # Font size: the original game's tooltip font size (42 in the controller layout) cannot fit the long ones on one screen (longest of all 99 entries in the table is 24 lines); two text boxes, use size 32 if it fits and switch to size 22 if not (the host picks by the measured height)
-       + ''.join('        { "type": "TextBoxWidget", "name": "TouchRwDesc%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1000, "height": 600 }, "text": "", "fitToText": true, '
-                 '"style": { "fontColor": "$FontColorWhite", "pointSize": %d, "alignment": { "h": "center", "v": "top" }, "options": { "pipeCharacterBehavior": "handle", "newlineHandling": "reversed" } } } },\n' % (k, pt)
-                 for k, pt in (('', 32), ('S', 22)))
-       + '        { "type": "ButtonWidget", "name": "TouchRwBack", "fields": { "rect": { "x": 99999, "y": 99999, "width": 64, "height": 64 }, "filename": "PANEL\\\\Stash\\\\Stash_LeftArrow", '
-         '"normalFrame": 0, "pressedFrame": 2, "hoveredFrame": 1, "disabledFrame": 3, "onClickMessage": "PanelManager:ClosePanel:TouchRwBack" } },\n'
-       + _rw_text('TouchRwBackTxt', 300, 34, (199, 179, 119), fit=True, ht=64).replace('"text": "",', '"text": "@Return",')
-       + ('        { "type": "ButtonWidget", "name": "TouchRwDetGo", "fields": { "rect": { "x": 99999, "y": 99999, "width": 408, "scale": 0.75 }, "filename": "FrontEnd/HD/Final/FrontEnd_ButtonMed", "hoveredFrame": 3, '
-          '"textString": "@dmRwGo", "textColor": "$LightButtonTextColor", "text/style": "$StyleFEButtonText", "onClickMessage": "PanelManager:ClosePanel:TouchRwDetGo" } },\n')
-       + '        ] },\n')
-def _rw_children_check():
-    """清单控件各层容器的直接子控件数都要 ≤ 256：交互层 / 触点脚本 / 安全阀遍历面板树时，子控件数 > 256 的容器当不可见（踩到过两次）。 | The number of direct child widgets of each container level of the list widget must be ≤ 256: when the interaction layer / touch point script / safety valve traverse the panel tree, a container with more than 256 child widgets is treated as invisible (hit twice)."""
-    import json
-    t = '{"c":[' + _RW.replace('        ] },\n', ']},').rstrip().rstrip(',') + ']}'
-    def walk(w, path):
-        ch = w.get('children', [])
-        if len(ch) > 256: raise SystemExit('touch_layout：符文之语清单容器 %s 直接子控件 %d 个，超过 256' % (path, len(ch)))
-        for c in ch: walk(c, path + '/' + c.get('name', '?'))
-    walk(json.loads(re.sub(r',(\s*[}\]])', r'\1', t)), '')
-def _inv_rw(s):
-    _rw_children_check()
-    s, n = offscreen(s)
-    i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    return s[:i].rstrip(' ') + _RW + '    ' + s[i:], n + 1
-def pad_inv_rw(s):   # 手柄版物品栏（原版布局，不挪任何东西）+ 符文之语清单控件：手柄模式按住对比键打开同一份清单（gen_romfs_overlay.py 手柄版布局） | Controller inventory (original layout, nothing moved) + runeword list widgets: in controller mode holding the compare button opens the same list (gen_romfs_overlay.py controller layouts)
-    _rw_children_check()
-    i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    return s[:i].rstrip(' ') + _RW + '    ' + s[i:]
 # 技能绑定页（技能树里给技能键配技能的框，两排各六格）：格下原来是手柄键图标（已整体透明），换成屏幕上技能键的名字。
 # 格 1–6 = A B Y X R ZR；触摸技能键 = 攻击(A) F1(B) F2(X) F3(Y) F4(R)（dm_touch_controls.c skill[]），第二套 F5–F8。第 3、4 格对调位置，屏上顺序就是 F1 F2 F3 F4。
 # 第 6 格（ZR）触摸下没有对应的技能键，不标字。
@@ -713,7 +630,7 @@ PRESENT = {
     'controller/buttonbindingmodalhd.json': _bind_touch,
     'youdiedmodalhd.json': lambda s: offscreen(s, types=(), names=('SubText',)),   # 死亡画面第二行「按 ＋ 继续。」（＋ = 手柄键图标）：下面就有「继续」按钮，这句不要（点一下能完成的提示直接去掉） | Second line of the death screen 「按 ＋ 继续。」(Press + to continue.) (+ = controller key icon): there is a 「继续」(Continue) button right below, so this sentence is dropped (hints for something done with one tap are removed outright)
     'controller/controlleroverlayhd.json': _overlay_touch,
-    'controller/console/switch/playerinventoryexpansionlayouthd.json': _inv_rw,   # 物品栏 + 符文之语清单控件（见 _RW） | Inventory + runeword list widgets (see _RW)
+    'controller/console/switch/playerinventoryexpansionlayouthd.json': lambda s: offscreen(s),   # 物品栏：手柄键位提示挪走 | Inventory: the controller button prompts are moved away
     'controller/playerinventoryexpansionlayouthd.json': _inv_touch(False),
 }
 # 字号（先用大字号）：产品走主机档 _profileConsoleHD（小 26 / 中 28 / 中大 32），前端按钮字在 2868×1320 上约 1.1 毫米高。

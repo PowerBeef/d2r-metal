@@ -272,7 +272,3 @@ void dm_held_stow(void) {}
 int dm_held_stow_result(void) { return -1; }
 int dm_held_pending(void) { return 0; }
 void uimsg_emit(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }
-int dm_runeword_long_press(const void *ci) { (void)ci; return 0; }   // 符文之语助手（dm_runeword.c）的桩 | stub for the runeword helper (dm_runeword.c)
-int dm_runeword_list_open(void) { return 0; }
-void dm_runeword_button(const char *name) { (void)name; }
-void dm_runeword_list_close(void) {}

@@ -197,7 +197,7 @@ void dm_cursor_apply(uint64_t *buttons, int32_t *lx, int32_t *ly) {
     // Equipment comparison (single tap on equipment = its own description + the equipped item side by side, with no added gesture and no added button): the original game is 'hold to compare', and touch has no key to hold --
     // while a panel with an item area is open, the compare bit stays on (dm_item_compare, without going through controller keys and without flipping tabs), so when the tooltip appears it brings the equipped item of the same slot side by side; turned off when the panel closes
     { module_t *cm = main_module(); static int cmp = -1; int want = cm ? free_cursor_page(cm) : 0; atomic_store(&g_free_pub, want);
-      int dm_padmode_current(void); int c = want && !dm_padmode_current(); if (c != cmp) { cmp = c; dm_item_compare(c); } }   // 手柄模式照原版：按住对比键才对比（符文之语清单也靠这一位认「按住对比键」） | Controller mode follows the original: compare only while the compare button is held (the runeword list also relies on this bit to detect "compare button held")
+      int dm_padmode_current(void); int c = want && !dm_padmode_current(); if (c != cmp) { cmp = c; dm_item_compare(c); } }   // 手柄模式照原版：按住对比键才对比 | Controller mode follows the original: compare only while the compare button is held
     if ((*buttons & DM_BTN_A) && atomic_load(&g_a_wait)) atomic_store(&g_a_wait, now_ns());   // A 还按着：兜底的 0.3 秒从松开那一刻起算 | A is still held: the fallback's 0.3 seconds are counted from the moment of release
 }
 static dm_wref g_down; static _Atomic uint64_t g_origin_xy;   // 按下那次命中的物品区控件；最近一次「拿起」的物品原位中心（位 63 = 有效，x | y << 32 的低 31 位） | Item-area widget hit by that press; center of the original position of the most recently 'picked up' item (bit 63 = valid, low 31 bits of x | y << 32)
@@ -1077,23 +1077,6 @@ static int swaptab_hit(uint64_t root, int x, int y); int dm_swapskill_wset(void)
 // Previously each entry clamped the coordinates back to [0,1] before judging, so tapping the world above the panel became tapping the panel's top row (tabs, the top-right close), and on the Mac "iPad" app one tap switched tabs.
 // The entry records it in this variable (asynchronous queries carry it to the main thread via g_iq_out), and it applies only to the classification that immediately follows.
 static int g_cls_out;
-// 符文之语清单（dm/host/dm_runeword.c）：长按带孔底材 → 打开清单（1 = 是匹配的底材、已打开）；清单开着时点清单外 → 关
-// Runeword list (dm/host/dm_runeword.c): long press on a socketed base → open the list (1 = it is a matching base and the list opened); while the list is open, a tap outside it → close
-int dm_runeword_long_press(const dm_cursor_item_info *ci);
-int dm_runeword_list_open(void);   // 清单开着 = 1 | List open = 1
-void dm_runeword_list_close(void);
-void dm_runeword_button(const char *name);   // 清单里点中的控件（名字前缀 TouchRw）：宿主按名字决定做什么（按钮执行、名字开详情、底板 / 文字不动） | The widget hit in the list (name prefix TouchRw): the host decides what to do by name (buttons execute, names open details, backing / text do nothing)
-// 符文之语清单（控件都在物品栏面板下的 TouchRwBox 容器里，名字前缀 TouchRw）：点中哪个可见控件。返回 0 = 不在清单上，1 = 在清单上，*btn = 点中的最上层那个控件名
-// （同层后画的在上：按钮 / 详情框压在底板上，两个都中时取后面那个）
-// Runeword list (its widgets are all in the TouchRwBox container under the inventory panel, name prefix TouchRw): which visible widget is hit. Returns 0 = not on the list, 1 = on the list, *btn = name of the topmost widget hit
-// (within a layer later-drawn is on top: buttons / the detail box sit on the backing, and when both are hit the later one is taken)
-static int rw_hit(uint64_t w, uint64_t xy, int dep, const char **btn) {
-    if (!w || dep > 5 || !*(uint8_t *)(w + 0x50)) return 0; const char *nm = *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "";
-    int r = 0; if (!strncmp(nm, "TouchRw", 7) && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, xy) & 1)) { *btn = nm; r = 1; }
-    uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return r;
-    for (uint64_t i = 0; i < n; i++) if (rw_hit(*(uint64_t *)(ch + 8 * i), xy, dep + 1, btn)) r = 1;
-    return r;
-}
 // 我们自己的控件（名字以 Touch 开头）改可见：+0x50 可见、+0x51 收点击，两个都写。不是我们的控件就报红、不写（规则：不写原版控件；静态扫 tests/native_write_scan.py 只许在这类函数里写这两个字节）
 // Change visibility of our own widgets (names starting with Touch): +0x50 visible, +0x51 receives clicks, both written. If it is not our widget, report a failure and do not write (rule: no writes to the original game's widgets; the static scan tests/native_write_scan.py only allows writing these two bytes in functions of this kind)
 static void ui_show_ours(uint64_t w, int on) {
@@ -1161,14 +1144,6 @@ static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size
     { uint64_t ip = ui_find(root, "ImbueItemsPanel", 0), tc = ip && *(uint8_t *)(ip + 0x50) ? ui_find(ip, "TouchClose", 1) : 0;
       if (tc && *(uint8_t *)(tc + 0x50) && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)tc + 0x48))(tc, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) {
           g_inside_owner = ""; atomic_store(&g_bd_hit, 0); atomic_store(&g_close_down, 0); snprintf(hit, hn, "单件任务槽面板的关闭钮（按面板外算）"); return 3; } }
-    if (dm_runeword_list_open()) {   // 符文之语清单开着（dm_runeword.c）：点清单上任何地方都吃掉、交给宿主按控件名处理；点清单外关清单并吃掉 | Runeword list open (dm_runeword.c): a tap anywhere on the list is swallowed and handed to the host to handle by widget name; a tap outside the list closes the list and is swallowed
-        // 一律不发鼠标点击（同技能树 I / II 页签）：清单压在物品格上，发鼠标点击的话游戏自己的分发先给了底下的格子
-        // （第 2 页的左箭头落在腰带格上，鼠标点击发了、箭头没收到，页没翻）——点清单绝不能落成点物品
-        // Never send a mouse click (same as the skill tree I / II tabs): the list sits on top of item cells, and with a mouse click the game's own dispatch gives it to the cell underneath first
-        // (the left arrow of page 2 lands on a belt cell: the mouse click was sent, the arrow did not get it, and the page did not flip) - a tap on the list must never turn into a tap on an item
-        const char *bn = NULL; int rw = rw_hit(ui_find(root, "PlayerInventoryExpansionLayout", 0), (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32), 1, &bn);
-        if (rw && bn) { dm_runeword_button(bn); snprintf(hit, hn, "符文之语清单 %s（宿主处理，不发鼠标点击）", bn); return 6; }
-        if (!rw) { dm_runeword_list_close(); snprintf(hit, hn, "符文之语清单外 → 关清单"); return 6; } }
     if (swaptab_hit(root, x, y)) { atomic_store(&g_swaptab_tap, 1); snprintf(hit, hn, "技能树 I / II 页签 → 换武器"); return 6; }   // 吃掉这一下，不发鼠标点击 | Swallow this tap, no mouse click sent
     { uint64_t bk = ui_panel(root, "BankExpansionLayout"), tabs = bk && *(uint8_t *)(bk + 0x50) ? ui_find(bk, "BankTabs", 0) : 0;   // 个人页（页签 0）上的左右箭头 = 翻个人仓库页（dm_pages.c）；共享页照旧交给游戏；第六页「编年史」不用这两个原版箭头（被盖板压着，翻页条是它自己的控件，点按在 dm_vault_ui_tap 里收） | The left / right arrows on the personal page (tab 0) = turn personal stash pages (dm_pages.c); shared pages are left to the game as before; the sixth page 「编年史」(Chronicle) does not use these two original arrows (they are under the cover; the page bar is its own widget, and taps are handled in dm_vault_ui_tap)
       if (tabs && TAB_SEL(tabs) == 0) for (int k = 0; k < 2; k++) { uint64_t t = ui_find(bk, k ? "TouchStashRight" : "TouchStashLeft", 0);
@@ -1532,7 +1507,6 @@ static void ui_long_pump(void) {   // 主线程：按游戏自己的悬停对象
     if (ci.container == DM_ITEM_AT_STASH && ci.stack > 0) { void dm_stash_take(int); dm_stash_take(3); LOG("界面长按：高级仓库里的一叠 %s（%d 件）→ 取 3 件到背包", ci.code, ci.stack); return; }   // 原版手柄「按住 = 移动 3 个」，件数不变 | The original controller's "hold = move 3"; the count is unchanged
     if (!strcmp(ci.code, "box") && ci.container == DM_ITEM_AT_INVENTORY && (dm_ui_panel_state() & DM_PS_BANK)) { atomic_store(&g_cube_side_req, 1); LOG("界面长按：储藏箱开着，魔盒（id %u）→ 并排打开", ci.id); return; }   // 与双击同一个入口（魔盒并排） | the same entry as the double-tap (cube side by side)
     if (ci.container == DM_ITEM_AT_INVENTORY && ci.belt_room) { dm_belt_put(ci.id); LOG("界面长按：背包里的 %s（id %u）→ 腰带", ci.code, ci.id); }
-    else if (dm_runeword_long_press(&ci)) { g_fb_nudge = 1; LOG("界面长按：%s → 符文之语清单（光标送停靠点，不挂说明框）", ci.code); }   // 匹配的带孔底材（dm_runeword.c 判）。光标还停在底材上会挂出原版说明框、压住清单第二行：同兜底装上后那条路，下一帧送到屏幕左缘停靠点 | A matching socketed base (judged by dm_runeword.c). With the cursor still on the base the original game's tooltip box would show and cover the second row of the list: same path as after a fallback equip, send it to the parking point at the left edge of the screen on the next frame
     else LOG("界面长按：%s（id %u，位置 %d，可进腰带 %d，腰带有位 %d）不动", ci.code, ci.id, ci.container, ci.beltable, ci.belt_room);
 }
 static _Atomic uint64_t g_shelf_box, g_shelf_pt, g_shelf_vp; static _Atomic unsigned g_shelf_seq;

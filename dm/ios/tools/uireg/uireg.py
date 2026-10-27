@@ -54,7 +54,7 @@ BASE="DM_SAVE_FRESH=warlock DM_GAME_SEED=0x12345678 DM_FIXED_TIME=1790000000 DM_
 # until only the one run that specifically verifies "this feature turned off" remains. The reason comes from real runs in both profiles (with
 # the spawn point on, the first tap of these runs hits nothing and everything after it fails in turn).
 OLD_SPAWN={
- "n":"点阿卡拉的屏幕坐标","p":"点阿卡拉的屏幕坐标","b":"点瓦瑞夫 / 恰西的屏幕坐标","top":"iPad 档：开箱子、走到阿卡拉旁的点位","i":"iPad 档：点卡夏雇佣菜单的点位","pg2":"点箱子","rw2":"点箱子","vt1":"点箱子","vf1":"开箱","rw1":"长按物品栏里的软帽后清单落点","j":"背包拖放的落点（物品给在脚下的次序）","k":"背包拖放的落点","pk":"箱子选择框边缘的屏幕坐标","g4":"点凯恩的屏幕坐标",}
+ "n":"点阿卡拉的屏幕坐标","p":"点阿卡拉的屏幕坐标","b":"点瓦瑞夫 / 恰西的屏幕坐标","top":"iPad 档：开箱子、走到阿卡拉旁的点位","i":"iPad 档：点卡夏雇佣菜单的点位","pg2":"点箱子","vt1":"点箱子","vf1":"开箱","j":"背包拖放的落点（物品给在脚下的次序）","k":"背包拖放的落点","pk":"箱子选择框边缘的屏幕坐标","g4":"点凯恩的屏幕坐标",}
 if os.environ.get("UIREG_EXTRA_ENV"): BASE+=" "+os.environ["UIREG_EXTRA_ENV"].strip()   # 每局都加的环境变量（空格分隔的 K=V），如某条分支的核对开关 | environment variables added to every run (space-separated K=V), such as the verification switch of some branch
 SAVE_TIME_MIN=1800000000   # 手柄选人的局若要固定时钟，取不早于它的值（标准存档里角色的时间戳都早于它） | If a controller-selection run wants a fixed clock, use a value no earlier than this (the timestamps of the characters in the standard save are all earlier than it)
 WHO_ROW={1:"joe",2:"Warlock",3:"joebao",4:"法师"}   # 标准存档选角页自上而下四行的角色名 | Character names of the four rows, top to bottom, on the standard save's character select page
@@ -1038,46 +1038,6 @@ def groups():
     g.item("数量框点取消","关框",r"ClosePanel DropGoldModal"); g.tap(P(375,200),1.5); g.shot()
     g.item("点右上角关闭 close","箱子关、加宽还原",r"ClosePanel BankExpansionLayout[\s\S]*储藏箱加宽：关|储藏箱加宽：关[\s\S]*ClosePanel BankExpansionLayout"); g.at("tap_ui close@BankExpansionLayout 3",2.0); g.shot()
     gs.append(g)
-    # ---- 符文之语助手：rw1 长按开清单 / 点外关 / 同一落点再长按（不许整理背包）/ 一键合成；rw2 符文在符文页、箱子关着与开着 ----
-    # 现场同 k 局（固定种子）：只开物品栏时背包软帽 (376,228) 1 孔、(318,267) 2 孔、(395,267) 2 孔；四号符文 (308,238)、三号 (308,219)。四号 + 三号 = 「天底」。
-    # 储藏箱开着时（rw1 物品表实测）：两枚符文在背包格 (3,0) / (3,1)，2 孔软帽左上在 (7,2)；储藏箱视图背包格中心 x = 424.5 + 19.55 列、y = 227 + 19.5 行
-    # ---- Runeword helper: rw1 long-press opens the list / tap outside closes / long-press again at the same spot (must not sort the inventory) / one-tap craft; rw2 runes on the rune page, stash closed and open ----
-    # Same setup as run k (fixed seed): with only the inventory panel open, inventory caps (376,228) 1 socket, (318,267) 2 sockets, (395,267) 2 sockets; rune no. 4 (308,238), no. 3 (308,219). No. 4 + no. 3 = 「天底」(Nadir).
-    # With the stash open (measured from the rw1 item table): the two runes are in inventory cells (3,0) / (3,1), the top-left of the 2-socket cap is at (7,2); inventory cell centers in the stash view are x = 424.5 + 19.55 × column, y = 227 + 19.5 × row
-    RWE="DM_TEST_GIVE=cap:2:7,r04:2:1,r03:2:1@60 DM_TEST_GIVE_INV=1"
-    LISTOK=r"符文之语：长按[^\n]*→ 清单 [1-9]\d* 行"
-    def anyl(p): return lambda s,b: ("通：" if re.search(p,b+s) else "不通：")+"整局日志"
-    # rw1：背包里符文齐——长按 1 孔软帽不开清单；长按 2 孔软帽开清单；点清单外关；再长按、点「一键合成」成型，两枚符文离开背包
-    # rwlv 局：清单里的「需要等级」取底材的需求等级，不是物品等级（线上缺陷：塔盔需求 59、物品等级 79，清单整页显示 79）。
-    # 现场：背包里 7 顶塔盔（uhm，白装孔数随机但逐局相同），长按其中带孔的一顶；2 孔塔盔的首行是「知识」（欧特 21 + 索尔 27）→ max(59, 27) = 59
-    # rw1: all runes in the inventory - a long press on a 1-socket Cap does not open the list; a long press on a 2-socket Cap opens it; a tap outside the list closes it; long press again and tap "Craft" to make it, and the two runes leave the inventory
-    # rwlv run: "required level" in the list takes the base item's required level, not its item level (reported defect: the Spired Helm requires 59 with item level 79, and the whole page of the list showed 79).
-    # Scene: 7 Spired Helms in the inventory (uhm; socket counts of white items are random but the same every run), long press one with sockets; the first row for a 2-socket Spired Helm is Lore (Ort 21 + Sol 27) -> max(59, 27) = 59
-    g=G("rwlv","DM_TEST_GIVE=uhm:2:7@60 DM_TEST_GIVE_INV=1"); g.sect("rwlv",0); g.enter(); g.wait(2.0); g.tap("@menu",1.4)
-    g.item("长按背包里带孔的塔盔","弹清单，需要等级 59（看截图：每行都是 59）",r"长按 uhm[^\n]*需要等级 59",r"长按 uhm[^\n]*需要等级 79|【红】符文之语"); g.hold(395,267); g.wait(1.0); g.shot()
-    g.item("点清单外","清单关掉",r"清单外 → 关清单|清单关闭"); g.tap(P(120,200),1.5); g.shot()
-    gs.append(g)
-    g=G("rw1",RWE+" DM_TEST_RW_LIST=75"); g.sect("rw1",0); g.enter(); g.wait(2.0); g.tap("@menu",1.4)
-    g.item("背包布局","软帽、符文在 k 局同样的位置（看截图）",None); g.shot()
-    g.item("长按 1 孔软帽","不开清单（1 孔帽子没有能做的符文之语）",None,LISTOK); g.hold(376,228); g.wait(1.0); g.shot()
-    g.item("长按 2 孔软帽","弹清单：天底那一行有「一键合成」（看截图：名字、需要等级、符文编号与数量）",LISTOK); g.hold(395,267); g.wait(1.0); g.shot()
-    g.item("点清单外（左边游戏画面）","清单关掉",r"清单外 → 关清单|清单关闭"); g.tap(P(120,200),1.5); g.shot()
-    g.item("同一落点再长按 2 孔软帽、点第一行「一键合成」","再开清单（不是整理背包）、成型：两颗进孔、标志带 0x04000000",r"清单 [1-9]\d* 行[\s\S]*一键合成成型",r"【红】符文之语|整理背包"); g.hold(395,267); g.wait(1.0); g.at("tap_ui TouchRwGo0 3",4.0); g.shot()
-    g.item("两枚符文原来的格子","都空了",("spot","empty",(304,245))); g.shot()
-    g.item("单击那顶软帽","说明第一行是「天底」（看截图）",None); g.tap(P(395,267),1.5); g.shot()
-    g.item("读回","物品表里有 1 件符文之语物品、孔里 2 颗",anyl(r"DM_TEST_RW_LIST：符文之语物品[^\n]*孔里 2 颗")); g.t=max(g.t,80.0); g.shot()
-    gs.append(g)
-    # rw2：符文放进储藏箱符文页——箱子关着时长按：清单写「符文页」、没有按钮；箱子开着时长按：有「一键合成」，点了先从符文页取件再镶，成型
-    # rw2: runes placed in the stash rune page - long-press with the stash closed: the list says 「符文页」(rune page) and there is no button; long-press with the stash open: there is 「一键合成」(Craft), tapping it first takes the items from the rune page and then sockets them, formed
-    g=G("rw2",RWE); g.sect("rw2",0); g.enter(); g.wait(2.0)
-    g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 3",3.0); g.tap(P(148,53),1.5); g.shot()
-    g.item("符文页开着双击背包里两枚符文","各进符文页自己那一格：背包少 2 格",None); g.clr(); g.shot(); g.dbl(483.2,227); g.wait(1.0); g.dbl(483.2,246.5); g.wait(1.0); g.clr(); g.shot()
-    g.tap(P(654.5,17),1.5); g.tap("@menu",1.4)
-    g.item("箱子关着、只开物品栏长按 2 孔软帽","清单写「符文页 1」、没有「一键合成」、没有红字（看截图）",LISTOK); g.hold(395,267); g.wait(1.0); g.shot()
-    g.tap(P(120,200),1.2); g.tap(P(615,17),1.5)
-    g.item("开箱子、长按物品栏里的 2 孔软帽","这次有「一键合成」",LISTOK); g.at("tap_unit 2 267 3",3.0); g.hold(561.4,266); g.wait(1.0); g.shot()
-    g.item("点「一键合成」","先从符文页取件、再镶，成型",r"从符文页(?:取 1 颗|成叠拿起)[\s\S]*一键合成成型",r"【红】符文之语"); g.at("tap_ui TouchRwGo0 3",5.0); g.shot()
-    gs.append(g)
     # ---- 腰带空格双击补满：物品栏腰带长按不动、空格双击补满所有空格（只认药水、卷轴不进）、有药格双击使用；bdm 带佣兵底栏双击喂佣兵 ----
     # 只开物品栏时腰带四格中心（667 基准）：(294,197) (320,197) (346,197) (371,197)（q 局第 3 格 346 同）
     # ---- Double-tap an empty belt slot to fill: long-pressing the belt in the inventory panel does nothing, double-tapping an empty slot fills all empty slots (potions only, scrolls do not go in), double-tapping a slot with a potion uses it; bdm with a mercenary, double-tap on the bottom bar feeds the mercenary ----
@@ -1235,26 +1195,6 @@ def groups():
     g.item("点右箭头","第 2/4 页（看截图）",None); g.tap(P(226.4,280.6),1.5); g.shot()
     g.item("点左箭头","回第 1/4 页（看截图）",None); g.tap(P(147.8,280.4),1.5); g.shot()
     g.item("点底部盖板","什么都不发、不冒原版说明（看截图）",lambda s,b: ("不通：" if re.search(r"OpenPanel TooltipsPanel|Cube|魔盒|转化",s) else "通：")+"盖板"); g.tap(P(179.3,306.4),1.5); g.shot()
-    gs.append(g)
-    # rwp：符文之语清单分页 / 详情——15 枚符文 + 两件布甲，开关直接开清单、显示 3 孔
-    # rwp: runeword list paging / details - 15 runes + two quilted armors, the switch opens the list directly and shows 3 sockets
-    RWOK=lambda s,b: ("通：" if re.search(r"排版自检",b+s) and not re.search(r"出底板 [1-9]|重叠 [1-9]|出框 [1-9]",b+s) else "不通：")+"排版自检（整局）"
-    g=G("rwp","DM_TEST_GIVE=r01:2:1,r02:2:1,r03:2:1,r04:2:1,r05:2:1,r06:2:1,r07:2:1,r08:2:1,r09:2:1,r10:2:1,r11:2:1,r12:2:1,r13:2:1,r14:2:1,r15:2:1,qui:2:2@80 DM_TEST_GIVE_INV=1 DM_TEST_RW_OPEN=26:qui DM_TEST_RW_SOCKETS=3"); g.sect("rwp",0); g.enter(); g.wait(2.0); g.tap("@menu",1.4)
-    g.t=max(g.t,45.0)
-    g.item("清单打开（第 1 页）","第 1/2 页，每页 ≤ 8 条、条目间分隔线（看截图）",RWOK); g.shot()
-    g.item("点下一页","「翻页 Next → 第 2/2 页（第 9–15 个）」",r"翻页 Next → 第 2/2 页（第 9–15 个）",r"【红】"); g.at("tap_ui TouchRwPgNext 3",2.0); g.shot()
-    g.item("点第 14 条名字（谜团）","「详情「谜团」」→「详情自检 … 出框 0、重叠 0」（看截图）",r"详情「谜团」[\s\S]*详情自检「谜团」[^\n]*出框 0、重叠 0",r"【红】"); g.at("tap_ui TouchRwName13 3",2.0); g.shot()
-    g.item("点返回","「收起详情」、回到清单",r"收起详情",r"【红】"); g.at("tap_ui TouchRwBack 3",2.0); g.shot()
-    g.item("点上一页","「翻页 Prev → 第 1/2 页」",r"翻页 Prev → 第 1/2 页",r"【红】"); g.at("tap_ui TouchRwPgPrev 3",2.0); g.shot()
-    g.item("整局排版自检","每条出底板 0、重叠 0",RWOK)
-    gs.append(g)
-    # rwd：详情里的一键合成——两枚符文 + 9 顶软帽，开关开第一顶能做的软帽的清单，点第 1 条名字进详情，点详情里的「一键合成」
-    # rwd: one-tap craft inside the details - two runes + 9 caps, the switch opens the list for the first cap that can be made, tap the name of entry 1 to enter the details, tap 「一键合成」(Craft) in the details
-    g=G("rwd","DM_TEST_GIVE=r04:2:1,r03:2:1,cap:2:9@80 DM_TEST_GIVE_INV=1 DM_TEST_RW_OPEN=26:cap"); g.sect("rwd",0); g.enter(); g.wait(2.0); g.tap("@menu",1.4)
-    g.at("await ui TouchRwName0 40",40.0)   # 清单由 DM_TEST_RW_OPEN 按进程秒打开：等清单第 1 行名字出现就拨钟到下一步（按事件，40 秒是墙钟兜底） | the list is opened by DM_TEST_RW_OPEN on process seconds: once the name in row 1 of the list appears, advance the clock to the next step (by event, 40 seconds is the wall-clock fallback)
-    g.item("点第 1 条名字进详情","详情（看截图）",r"详情「"); g.at("tap_ui TouchRwName0 3",2.0); g.shot()
-    g.item("点详情里的一键合成","「一键合成成型」；宿主在结束那一刻读回：2 孔、孔里 2 颗、标志带 0x04000000",lambda s,b: ("通：" if re.search(r"一键合成成型[^\n]*标志 0x4",b+s) and re.search(r"成型读回（成型）[^\n]*2 孔、孔里 2 颗[^\n]*标志 0x4",b+s) else "不通：")+"成型与读回")
-    g.at("await rw 25",0.1); g.at("tap_ui TouchRwDetGo 3",25.0); g.shot()   # 按事件收：await rw 等到宿主记完「成型读回」就拨钟到截图、随后「note 结束」；25 秒是墙钟兜底（原先按 DM_TEST_RW_LIST=44 进程秒读回，await pos 一跳就落在局外） | collected by event: await rw waits until the host has logged 「成型读回」(formed readback), then advances the clock to the screenshot, followed by 「note 结束」(note end); 25 seconds is the wall-clock fallback (it used to read back at DM_TEST_RW_LIST=44 process seconds, and one jump of await pos landed it outside the run)
     gs.append(g)
     # dc 局（补的覆盖缺口）：野外死亡 → 点原版死亡画面的「继续」→ 复活回城。整表原先没有任何一局走这条玩家路径，
     #   秘境图里死亡后点继续崩溃（线上出过）就漏在这里。这局是普通野外的基线；秘境里的死亡 → 继续另有专项。

@@ -28,10 +28,6 @@ dmStoreLeft	，%d 件留在背包	, %d left in inventory	, %d siguen en el inven
 dmStoreFull	这一格已放满，物品留在原处	That stack is full. Item left where it is.	Esa pila está llena. El objeto se queda donde está.		Этот стак полон. Предмет остался на месте.	해당 칸이 가득 참. 아이템은 제자리에 둡니다.	存放提示：高级仓库那一格叠满 99，物品留在背包 / 仓库页
 dmPouchTitle	百宝囊	Pouch	Zurrón		Сумка	주머니	百宝囊清单标题
 dmPouchEmpty	（空）	(empty)	(vacío)		(пусто)	(비어 있음)	百宝囊清单：空
-dmRwTitle	%s · %d 孔 · 可做的符文之语	%s · Socketed (%d) · Runewords	%s · Con huecos (%d) · Palabras rúnicas	%s · Engarzado (%d) · Palabras rúnicas	%s · С гнездами (%d) · Рунные слова	%s · 홈 %d · 가능한 룬워드	符文之语清单标题（dm_runeword.c；%s = 底材名）；英文用原版词：item-modifiers[Socketable]「Socketed (%i)」、ui[Runewords]
-dmRwLevel	需要等级 %d	Required Level: %d	Nivel requerido: %d		Требуемый уровень: %d	필요 레벨: %d	符文之语清单每行的需要等级；英文 = 原版 item-modifiers[ItemStats1p]「Required Level: %d」
-dmRwHint	先移到个人仓库或背包	Move out of shared stash first	Sácalo antes del alijo compartido	Sácalo antes del Arcón compartido	Сначала выньте из общего тайника	먼저 공유 창고에서 꺼내세요	符文之语清单：底材在共享仓库时的灰字
-dmRwGo	一键合成	Craft	Crear		Создать	합성	符文之语清单每行 / 详情页的合成按钮
 dmPauseShareLog	分享诊断日志	Share Diagnostics	Compartir diagnóstico		Поделиться диагностикой	진단 로그 공유	暂停菜单按钮
 dmCustomDropLight	高价值掉落光柱	Light beam on valuable drops	Haz de luz en botín valioso		Луч света на ценных дропах	고가치 드롭 광기둥	自定义页开关
 dmCustomMapMark	小地图标注出入口、小站与任务终点	Automap: exits, waypoints, quests	Mapa: salidas, transportadores, búsquedas	Automapa: salidas, traslocadores, gestas	Карта: выходы, точки пути, квесты	자동맵: 출구, 웨이포인트, 퀘스트	自定义页开关；英文用原版词 keybinds[CfgAutoMap]「Automap」、objects[Waypoint]

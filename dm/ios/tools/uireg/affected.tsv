@@ -12,10 +12,8 @@ dm/ios/tools/gen_romfs_overlay.py	*
 dm/i18n/*	*
 dm/ios/tools/dm_i18n.py	*
 dm/host/dm_i18n*	*
-dm/ios/tools/annot_strings.py	k j rw1 rw2 vt1
-dm/host/dm_textbox*	k j rw1 rw2 vt1
-dm/host/dm_rwlv*	k j rw1 rw2 rwp rwd d rwlv
-dm/host/dm_runeword*	k j rw1 rw2 rwp rwd d rwlv
+dm/ios/tools/annot_strings.py	k j vt1
+dm/host/dm_textbox*	k j vt1
 dm/host/dm_vault*	vf1 vf2 vt1 pg1 pg2 c s sb t u d cb
 dm/host/dm_pages*	pg1 pg2 vt1 c s sb
 dm/ios/tools/wide_stash.py	vf1 vf2 vt1 pg1 pg2 c s sb t u d cb
@@ -50,12 +48,12 @@ dm/host/dm_custom*	e
 dm/host/hle_charname*	e
 dm/host/dm_namegen*	e
 dm/host/dm_textinput*	e vt1
-dm/host/dm_cursor*	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 rw1 bd
-dm/host/hle_touch*	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 rw1 bd
-dm/host/touch_mac.c	a c j s sb pg2 vt1 rw1
-dm/ios/tools/touch_layout.py	a c f g h j k m n p q s t u sb cb sl1 me1 me2 pg2 vt1 vf1 vf2 rw1 rw2 bd pk
+dm/host/dm_cursor*	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 bd
+dm/host/hle_touch*	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 bd
+dm/host/touch_mac.c	a c j s sb pg2 vt1
+dm/ios/tools/touch_layout.py	a c f g h j k m n p q s t u sb cb sl1 me1 me2 pg2 vt1 vf1 vf2 bd pk
 dm/ios/Sources/dm_sharelog.m	shl
-dm/ios/Sources/front_ios.m	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 rw1 bd pk
+dm/ios/Sources/front_ios.m	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 bd pk
 dm/ios/Sources/*	a e pk rf2
 dm/ios/NativeHUD/*	a f pk bd g q
 dm/host/diag.c	-

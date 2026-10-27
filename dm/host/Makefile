@@ -59,8 +59,6 @@ SRC=\
 	dm_potpick.c \
 	dm_pouch.c \
 	dm_cloudmerge.c \
-	dm_runeword.c \
-	dm_rwlv_core.c \
 	dm_scrub.c \
 	dm_staterep.m \
 	dm_textbox.c \
