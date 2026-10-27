@@ -1,0 +1,24 @@
+# 基线路线（golden.py）：出南门进血腥荒野，点怪打几下（触屏点怪 = 走过去攻击），停手后存盘。战斗走服务端的随机数，回放逐拍相同说明种子、时钟与命令包都对得上
+# Baseline route (golden.py): out of the south gate into the Blood Moor, tap monsters a few times (a touch tap on a monster = walk over and attack), then stop and save. Combat uses the server's random numbers, so a tick-identical replay means the seed, clock and packets all line up
+name golden_fight
+save warlock
+env DM_GAME_SEED=305419896
+timeout 240
+
+enter_game
+sleep 2
+walk_to 5789 4495 timeout=20
+walk_to 5791 4523 timeout=25
+expect_state area=2 timeout=10
+walk_to 5791 4560 timeout=25
+walk_to 5791 4600 timeout=25
+tap_unit 1 any timeout=20
+sleep 2
+tap_unit 1 any timeout=20
+sleep 2
+tap_unit 1 any timeout=20
+sleep 3
+save_now timeout=8
+sleep 1
+quit
+check no_red

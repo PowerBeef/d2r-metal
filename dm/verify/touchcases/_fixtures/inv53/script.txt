@@ -1,0 +1,12 @@
+# 夹具（touch_fixture.sh 用）：开背包，把 (9,3) 格的物品（术士存档起手的卷轴）拖到 (5,3)；之后 DM_TEST_SAVE_AT 让游戏存一次盘，导出成 save_ref_touch_inv53。
+# 物品格 (5,3) 心点 1478,1003，列距 85，(9,3) 心点 1818,1003；放下时指针要比格心低 40（同 inv_drag：拿着的物品画在指针上方）
+# Fixture (for touch_fixture.sh): open the inventory and drag the item in slot (9,3) (a scroll the Warlock save starts with) to (5,3); then DM_TEST_SAVE_AT has the game save once and the save is exported as save_ref_touch_inv53.
+# Slot (5,3) center 1478,1003, column pitch 85, (9,3) center 1818,1003; to drop, the pointer goes 40 below the slot center (as inv_drag: the held item is drawn above the pointer)
+1.0 down 0 1690,1241
+1.1 up 0
+2.0 down 0 1818,1003
+2.2 move 0 1760,1003
+2.5 move 0 1660,1003
+2.8 move 0 1560,1003
+3.1 move 0 1478,1043
+3.5 up 0

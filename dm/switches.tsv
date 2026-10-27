@@ -65,7 +65,7 @@ DM_DBG_COVER	host	host/dm_cursor.c	-
 DM_DBG_FE_SEND	host	host/dm_cursor.c	-
 DM_DERIVED	android,harmony,host	android/app/src/main/java/com/xiaoboluo/d2r/DmActivity.java harmony/native/napi_ohos.c host/dm_derived_rt.h	-
 DM_DESWIZZLE_LIB	ios-tools	ios/tools/gen_widestash_art.py ios/tools/romfs_art.py	y
-DM_DETCLOCK	gfx,host	gfx/nvn/hle_nvn.c host/hle_os.c host/tests/t_rift_clock.c host/touch_mac.c	y
+DM_DETCLOCK	gfx,host,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/tests/t_rift_clock.c host/touch_mac.c …	y
 DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	-
 DM_DEVBATTERY	ios-tools	ios/run.sh ios/tools/devlock.sh	-
 DM_DEVBATTERY_APP_MAX_AGE_S	ios-tools	ios/tools/devbattery.sh	-
@@ -542,7 +542,7 @@ DM_TEST_RW_OPEN	host	host/dm_runeword.c	-
 DM_TEST_RW_SOCKETS	host	host/dm_runeword.c	-
 DM_TEST_SAFE_L	ios	ios/Sources/dm_update.m ios/Sources/front_ios.m	-
 DM_TEST_SAFE_R	ios	ios/Sources/front_ios.m	-
-DM_TEST_SAVE_AT	host	host/diag.c	y
+DM_TEST_SAVE_AT	host,verify	host/diag.c verify/golden.py	y
 DM_TEST_SAVE_DELAY	host	host/hle_fs.c	y
 DM_TEST_SCREEN	ios	ios/Sources/front_ios.m	-
 DM_TEST_SCREEN_ASPECT	host	host/front_mac.m	-

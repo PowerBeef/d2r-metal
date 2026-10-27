@@ -1,0 +1,21 @@
+# 基线路线（golden.py）：营地里走一圈，出南门进血腥荒野，站定后存盘。固定存档与地图种子；录下的命令包与逐拍状态是逻辑基线，存档是存档基线
+# Baseline route (golden.py): a loop inside the camp, out of the south gate into the Blood Moor, then stand still and save. Fixed save and map seed; the recorded packets and per-tick state are the logic baseline, the save is the save baseline
+name golden_walk
+save warlock
+env DM_GAME_SEED=305419896
+timeout 240
+
+enter_game
+sleep 2
+walk_to 5789 4470 timeout=20
+walk_to 5762 4413 timeout=20
+walk_to 5789 4495 timeout=20
+walk_to 5791 4523 timeout=25
+expect_state area=2 timeout=10
+walk_to 5791 4560 timeout=25
+sleep 1
+save_now timeout=8
+sleep 1
+quit
+check no_red
+check save_pairs

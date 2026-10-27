@@ -1,0 +1,22 @@
+# 基线路线（golden.py）：进局喝掉腰带第 1、2 列各一瓶，开关物品栏，站定后存盘：存档里腰带与物品的变化是存档基线要盯的
+# Baseline route (golden.py): drink one potion each from belt columns 1 and 2, open and close the inventory, then stand still and save: the belt and item changes in the save are what the save baseline watches
+name golden_belt
+save warlock
+env DM_GAME_SEED=305419896
+timeout 180
+
+enter_game
+sleep 1
+press LEFT
+expect_state belt0=0
+press UP
+expect_state belt1=0
+press PLUS
+expect_state panels~=PlayerInventoryExpansionLayout
+press B
+sleep 1
+save_now timeout=8
+sleep 1
+quit
+check no_red
+check save_pairs

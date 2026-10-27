@@ -1,0 +1,17 @@
+# 触屏用例的野外前缀（golden.py prefix）：从原版出生点（DM_TOWNWP_OFF=1，同原版录制）直接出南门进血腥荒野，站定。
+# 录下的命令包就是 touchcases 里 prefix 文件指的 prefix_wild_warlock；前缀用例只跑 720 拍，路线要在约 600 拍内走完
+# The wilderness prefix for the touch cases (golden.py prefix): from the original spawn point (DM_TOWNWP_OFF=1, as in original recordings) straight out of the south gate into the Blood Moor, then stand still.
+# The recorded packets are the prefix_wild_warlock that the touch cases' prefix files name; prefix cases run only 720 ticks, so the route must finish within about 600 ticks
+name golden_prefix_wild
+save warlock
+env DM_GAME_SEED=305419896 DM_TOWNWP_OFF=1
+timeout 180
+
+enter_game
+walk_to 5789 4495 timeout=20
+walk_to 5791 4523 timeout=25
+expect_state area=2 timeout=10
+walk_to 5791 4545 timeout=20
+sleep 1
+quit
+check no_red
