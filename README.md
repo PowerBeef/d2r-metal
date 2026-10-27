@@ -110,8 +110,9 @@ The Mac guide — keys, mouse, saves, iCloud and moving saves over from an iPhon
 - A refused or failed save no longer loses the stash, vault or pouch side files, and you are told ([7f0a328](https://github.com/PowerBeef/d2r-metal/commit/7f0a328)).
 - A death or a busy cell no longer drops pouch, vault or page records ([0a14be4](https://github.com/PowerBeef/d2r-metal/commit/0a14be4)).
 - A damaged shared stash can no longer hang iCloud sync ([5bfed70](https://github.com/PowerBeef/d2r-metal/commit/5bfed70)).
+- One failed save-file open (a full disk, for example) no longer stops every later save until the game restarts: that save is refused and you are told, and the next one commits ([715ed80](https://github.com/PowerBeef/d2r-metal/commit/715ed80)).
 
-These came out of a full audit of the port (111 findings) and a later bug hunt with sanitizers, Metal validation and static analysis.
+These came out of a full audit of the port (111 findings), a later bug hunt with sanitizers, Metal validation and static analysis, and a study of how the game itself saves.
 
 ## Everything from D2R Mobile
 
@@ -181,11 +182,14 @@ A tour of the code is in [dm/README.md](dm/README.md).
 
 ### Built to be measured
 
-The tools used to check every change are in the repository:
+The tools used to check every change are in the repository. One command runs them in tiers, from a few seconds of source checks to a long run on demand: `dm/verify/fork_gate.sh` ([dm/verify/FORK_GATE.md](dm/verify/FORK_GATE.md)).
 
 - a **control port** to drive a running game, and a **scenario runner** that plays scripted sessions on the command-line host, the Mac App, the iOS app on a Mac, or an iPhone ([dm/verify/control_port.md](dm/verify/control_port.md), [dm/verify/scenarios/README.md](dm/verify/scenarios/README.md));
-- an **event stream**, signposts, fixed-route **A/B benchmarks** with statistics, and GPU frame capture;
-- **sanitizer builds** (ASan, UBSan, TSan), seeded **random exploration** with shrinking, **replay**, and LLDB commands that show game addresses as module offsets, which a coding agent can drive through Xcode's LLDB MCP server ([dm/verify/debugging.md](dm/verify/debugging.md)).
+- **checks that read the game's own state**: the panels on screen, the focused widget, the controller actions as the game names them, and the save system, where a save that never commits is a failure; every scripted session also checks that its saved game would load;
+- **baselines recorded from this fork's own build**, not from an emulator: three routes replay tick for tick on both Metal renderers, the replayed saves match the recorded ones byte for byte, each check proves it can fail, and key screens are compared per renderer;
+- **save fault tests** (a full disk at different moments, a quit in the middle of a save), a **playtest bot** that plays like a player and checks invariants after every action, and long **soak** runs;
+- an **event stream**, signposts, fixed-route **A/B benchmarks** with statistics, regression checks against a kept build, sampled profiles that attribute time per game thread and function and list what ran during each stalled frame, and GPU frame capture;
+- **sanitizer builds** (ASan, UBSan, TSan), seeded **random exploration** with shrinking, **replay**, and LLDB commands that show game addresses as module offsets and read the game's panels, focus and saves, which a coding agent can drive through Xcode's LLDB MCP server ([dm/verify/debugging.md](dm/verify/debugging.md)).
 
 ### How this fork works
 
