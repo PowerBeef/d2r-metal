@@ -1529,7 +1529,8 @@ void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb, int heap_
 void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads) { *uploads = g_pkg_uploads; *reuploads = g_pkg_reuploads; }
 uint64_t mtl_pkg_miss(void) { return g_pkg_miss; }
 static void mp_lut_forget(uint64_t ser);
-void mtl_tex_release(tex_t *t) { if (t->serial) { mp_lut_forget(t->serial); serial_del(t->serial); } }
+static void treg_forget(uint64_t ser);
+void mtl_tex_release(tex_t *t) { if (t->serial) { mp_lut_forget(t->serial); serial_del(t->serial); treg_forget(t->serial); } }
 
 // ---------- 渲染通道：SetRenderTargets 开新通道；通道里第一条命令之前的清除并进 load 动作 ----------
 // ---------- Render passes: SetRenderTargets opens a new pass; clears before the first command in the pass are folded into the load action ----------
@@ -2541,6 +2542,20 @@ void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
     if (g_treg[id_].view) { defer_obj_unref((__bridge id)g_treg[id_].view); CFRelease(g_treg[id_].view); g_treg[id_].view = NULL; g_treg[id_].view_id = g_treg[id_].view_rid = 0; }
     g_treg[id_].ok = t != NULL; if (t) g_treg[id_].t = *t; g_treg[id_].has_v = v != NULL; if (v) g_treg[id_].v = *v;
     if (id_ < (1 << 20)) atomic_store_explicit(&g_tser[id_], t ? t->serial : 0, memory_order_release);
+    pthread_mutex_unlock(&g_rmu);
+}
+// 游戏释放贴图（mtl_tex_release）时，放掉登记着它的各贴图号缓存的视图：视图（或基贴图本身）是 CFBridgingRetain 持有的，原先要等这个号被重新登记才放，
+// 号一直不再用的话，已经退役（移出驻留集）的贴图连同显存一直被钉着。号仍登记着（描述符还在池里），以后真被用到时照常重建视图。
+// 按无锁序号副本 g_tser 扫（每项 8 字节，一万多项约 0.1 MB），只在有视图的项上动手；放引用走 defer_obj_unref（在途的提交还可能读它，不动驻留集）
+// When the game releases a texture (mtl_tex_release), drop the views cached for the texture IDs registered with it: the view (or the base texture itself) is held by CFBridgingRetain and used to be released only when that ID was registered again,
+// so an ID never used again kept the already retired texture (out of the residency set) and its memory pinned. The ID stays registered (the descriptor is still in the pool), and a later real use rebuilds the view as usual.
+// The scan goes over the lock-free serial copy g_tser (8 bytes per entry, about 0.1 MB for some ten thousand entries) and only touches entries holding a view; the reference is dropped with defer_obj_unref (submissions in flight may still read it; the residency set is left alone)
+static uint64_t g_treg_forgot;   // 累计放掉的视图数（持 g_rmu；资源计数行末尾） | cumulative views dropped (under g_rmu; at the end of the resource-count line)
+static void treg_forget(uint64_t ser) {
+    pthread_mutex_lock(&g_rmu);
+    int n = g_ntreg < (1 << 20) ? g_ntreg : (1 << 20);
+    for (int i = 0; i < n; i++) if (atomic_load_explicit(&g_tser[i], memory_order_relaxed) == ser && g_treg[i].view) {
+        defer_obj_unref((__bridge id)g_treg[i].view); CFRelease(g_treg[i].view); g_treg[i].view = NULL; g_treg[i].view_id = g_treg[i].view_rid = 0; g_treg_forgot++; }
     pthread_mutex_unlock(&g_rmu);
 }
 void mtl_reg_samp(int sid, const samp_par *sp) {
@@ -5788,9 +5803,10 @@ void mtl_res_counts(uint32_t tick, const char *why) {
     mtl_res_count c;
     mtl_res_snapshot(&c);
     int dl, du; uint64_t da; nvn_dirty_slot_stats(&dl, &du, &da);
-    LOG("[nvn] 资源计数 拍 %u %s：渲染管线 %u 计算管线 %u 着色器 %u 深度模板 %u view非空 %u view槽 %u 存活贴图 %u 内存池存活 %u 内存池累计 %llu 采样器view非空 %u 脏页区间存活 %d 脏页区间累计 %llu c1缓冲 %u c1字节 %llu c1实际 %llu",
+    pthread_mutex_lock(&g_rmu); uint64_t vd = g_treg_forgot; pthread_mutex_unlock(&g_rmu);
+    LOG("[nvn] 资源计数 拍 %u %s：渲染管线 %u 计算管线 %u 着色器 %u 深度模板 %u view非空 %u view槽 %u 存活贴图 %u 内存池存活 %u 内存池累计 %llu 采样器view非空 %u 脏页区间存活 %d 脏页区间累计 %llu c1缓冲 %u c1字节 %llu c1实际 %llu 释放贴图放掉view累计 %llu",
         tick, why, c.pso, c.cps, c.shaders, c.dss, c.view_nonnull, c.view_slots, c.live_tex,
-        c.pools, (unsigned long long)c.pool_adds, c.sview_nonnull, dl, (unsigned long long)da, c.c1_bufs, (unsigned long long)c.c1_alloc, (unsigned long long)c.c1_data);
+        c.pools, (unsigned long long)c.pool_adds, c.sview_nonnull, dl, (unsigned long long)da, c.c1_bufs, (unsigned long long)c.c1_alloc, (unsigned long long)c.c1_data, (unsigned long long)vd);
 }
 // 按请求截图（DM_NVN_SHOT_UI 用）：dm_gfx_shot_at(k, 路径) = 在当前出图帧之后第 k 帧截图；每帧出图时检查到期请求
 // Screenshot on request (used by DM_NVN_SHOT_UI): dm_gfx_shot_at(k, path) = take a screenshot at the kth frame after the current present frame; due requests are checked at every frame's present
