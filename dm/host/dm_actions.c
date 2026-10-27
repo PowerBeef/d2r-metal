@@ -661,6 +661,7 @@ void dm_actions_pump(void) {
                   if (put) { struct { uint32_t slot; uint8_t fixed; } tgt = {0, 0}; ((void (*)(uint64_t, uint64_t, uint8_t, int, void *))(b + 0x3c1cd0))(put, pl, 0, 1, &tgt); bf_done++; bf_left--; bf_next = fr + 6; }
                   else res = bf_done ? "腰带满了 / 背包里没有能进腰带的药了" : "原版判定现在不能装（腰带满 / 手上有东西 / 没有能进腰带的），没调"; }
               else { uint8_t pay[0x20] = {0}; *(uint32_t *)(pay + 0x10) = 4; pay[0x19] = 1; uint64_t msg[3] = { 0x4ae067c6248b6042ull, 0x1e439768f7dd4594ull, (uint64_t)(uintptr_t)pay };
+                  // 临时把焦点管理器的焦点控件（+0x190）设成腰带、清界面根的「输入已被消费」位（+0xb8），让腰带把这条手柄动作当成自己的；调完马上原样放回 | temporarily set the focus manager's focused widget (+0x190) to the belt and clear the UI root's "input consumed" flag (+0xb8), so the belt treats this controller action as its own; both are restored right after the call
                   uint64_t of = *(uint64_t *)(fh + 0x190); uint8_t oh = *(uint8_t *)(root + 0xb8); *(uint64_t *)(fh + 0x190) = bw; *(uint8_t *)(root + 0xb8) = 0;
                   ((void (*)(uint64_t, uint64_t *))(b + 0x3911d8))(bw, msg); *(uint64_t *)(fh + 0x190) = of; *(uint8_t *)(root + 0xb8) = oh; bf_done++; bf_left--; bf_next = fr + 6; }
               if (res || !bf_left) { LOG("腰带补满：调了原版自动装入 %d 次，停（%s）", bf_done, res ? res : "到 16 次上限"); bf_left = 0; } } }

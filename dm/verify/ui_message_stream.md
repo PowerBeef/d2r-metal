@@ -10,6 +10,8 @@ Every change in the game's UI (opening a panel, closing a panel, switching pages
 - At entry: `x0` = the bus object, `x1` → the message header `{+0x00 u64 category hash, +0x08 u64 action hash, +0x10 u64 payload pointer}`.
 - The hash is FNV-1a 64 (offset basis `0xcbf29ce484222325`, multiplier `0x100000001b3`), computed byte by byte over the original string. Example: `PanelManager` = `0x7127a406e0b6452c`.
 - The same virtual function occasionally has non-message calls (`x1` is not a readable pointer): these are not output.
+- The header has one more field: `+0x18 u8` = 1 when the payload is a C string (the third part of a `Category:Action:Argument` message), 0 when it is a binary payload (a selector's value, an input event). Messages are delivered synchronously, with no queue: a handler may send another message before returning, so the stream is in call order (a nested message comes before the rest of its parent's handling).
+- Message strings in layout files (`onClickMessage`, `onUpdateMessage`, …) are hashed when the layout loads, through the game's own name lists: the category must be one of its message channels and the action one of that channel's actions. **An unknown category or action becomes hash 0.** A button sends its click message only when both hashes are non-zero, so a click message with an unknown name is silently never sent; a selector still sends its update message, with category hash 0 (this is what the overlay's `TouchVideoMessage:<key>` selectors do).
 
 ## One line of JSON per message
 
