@@ -1300,6 +1300,20 @@ static int ctl_app(const char *w) {
     if (!strcmp(w, "terminate")) { dispatch_async(mq, ^{ front_ios_final_save(); dm_host_shutdown("控制口 terminate"); }); return 0; }
     return -1;
 }
+// 失活（控制中心 / 通知中心拉下来、来电横幅、多任务界面）到再激活之间停掉两条显示节拍：出图节拍（nvn_mtl.m mtl_link_pause）和触屏控件那条（DmRateHint，每拍重画控件与秘境任务栏）。
+// 原先失活时照常每拍出图、重画控件，画面被盖着也一直在耗电。停了以后游戏线程照走（失活存盘要它走拍）：取图等不到节拍时按自己的超时（约两拍）走、出图丢掉，
+// 与系统在后台停节拍时同一条兜底路径（mtl_present_wait；失活中不记红）。进后台照旧另外挂起图形
+// Between resigning active (Control Center / Notification Center pulled down, an incoming-call banner, the app switcher) and becoming active again, stop both display links: the present link (nvn_mtl.m mtl_link_pause) and the touch-controls one (DmRateHint, which redraws the controls and the rift quest bar every tick).
+// It used to keep presenting and redrawing the controls every tick while inactive, spending power on a covered picture. Once stopped, the game thread keeps running (the resign save needs its ticks): the drawable wait times out on its own (about two ticks) and the present is dropped,
+// the same fallback path as when the system stops the link in the background (mtl_present_wait; nothing is reported red while inactive). Entering the background still suspends graphics separately as before
+// 在 Mac 上跑的 iOS 包不停：那里「失活」= 窗口不在最前，画面照样看得见、游戏照样在跑
+// Not stopped for the iOS package running on a Mac: there "inactive" = the window is not frontmost, and the picture is still visible with the game still running
+static void links_pause(int on) {
+    void mtl_link_pause(int on);
+    if (NSProcessInfo.processInfo.isiOSAppOnMac) return;
+    if (on) { mtl_link_pause(1); g_rate_link.paused = YES; LOG("前端：失活，停出图与触屏控件的显示节拍"); }
+    else { g_rate_link.paused = NO; mtl_link_pause(0); LOG("前端：激活，放开显示节拍"); }
+}
 // 场景生命周期（main.m 的 SceneDelegate 调）：0 失活 1 进后台 2 回前台 3 激活
 // Scene lifecycle (called by SceneDelegate in main.m): 0 resign active, 1 enter background, 2 return to foreground, 3 become active
 void front_ios_focus_event(int ev) {
@@ -1308,7 +1322,7 @@ void front_ios_focus_event(int ev) {
     { static const char *st[] = {"resign", "background", "foreground", "active"}; DM_EV("app", "state:s", st[ev]); }   // 事件流（dm_events.h） | event stream (dm_events.h)
     { void dm_game_state_background(int); if (ev == 1) dm_game_state_background(1); else if (ev == 2) dm_game_state_background(0); }   // 游戏状态（diag.c，系统 StateReporting） | game state (diag.c, the system's StateReporting)   // 两个读数：核对后台那段没算进游戏时间、回来后声卡回调继续涨 | Two readings: to check that the background period was not counted into game time and that audio device callbacks keep increasing after return
     switch (ev) {
-        case 0: [g_touch_view cancelControls]; { void dm_gamepad_reset(void); dm_gamepad_reset(); } dm_focus_set(2); resign_save(); break;   // 手柄的键和摇杆一并清零：按着键切走、在后台松开，回来不会补「松开」 | Controller buttons and sticks are zeroed as well: if a button is held while switching away and released in the background, no "release" is delivered on return
+        case 0: [g_touch_view cancelControls]; { void dm_gamepad_reset(void); dm_gamepad_reset(); } dm_focus_set(2); links_pause(1); resign_save(); break;   // 手柄的键和摇杆一并清零：按着键切走、在后台松开，回来不会补「松开」 | Controller buttons and sticks are zeroed as well: if a button is held while switching away and released in the background, no "release" is delivered on return
         // 进后台：客体时钟一并冻结（等效 Switch 挂起）——否则游戏线程挡在提交处、墙钟照走，回来时游戏内时间一下跳过整段后台时长（补拍 / 动画 / 冷却全跟着跳）
         // Entering background: the guest clock is frozen as well (equivalent to Switch suspend) -- otherwise the game thread is blocked at submission while the wall clock keeps running, and on return in-game time jumps over the whole background duration at once (catch-up ticks / animations / cooldowns all jump with it)
         case 1: dm_focus_set(3); dm_ui_lifecycle(1); g_audio_bg = 1; audio_apply(); g_in_bg = 1;
@@ -1317,7 +1331,7 @@ void front_ios_focus_event(int ev) {
             guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); break;   // 挂起返回前在途 GPU 已清空 | In-flight GPU work is already drained before the suspend returns
         case 2: dm_ui_lifecycle(0); { void dm_update_foreground(void); dm_update_foreground(); void dm_cloud_foreground(void); dm_cloud_foreground(); }   // 回前台时人若停在选角页，重查一次新版本（dm/host/dm_update.c；局内不查） | If the player is on the character select page when returning to foreground, check for a new version once more (dm/host/dm_update.c; not checked in a run)
             { void dm_3d_scale_resumed(void); dm_3d_scale_resumed(); } dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); g_in_bg = 0; g_audio_bg = g_audio_intr = 0; audio_apply(); dm_focus_set(2); break;   // 回前台一律当打断已过：进后台时系统自己会发一次「被打断」（真机实测），却不保证回来时补发「结束」；会话若真还被占，启动声卡失败不致命、激活时重试 | Returning to foreground always treats the interruption as over: when entering background the system itself sends one "interrupted" (measured on a real device) but does not guarantee an "ended" on return; if the session is really still occupied, failing to start the audio device is not fatal and is retried on activation
-        case 3: dm_focus_set(1); audio_apply(); { int e = atomic_exchange(&g_save_failed_err, 0); if (e) front_save_failed(e); } break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
+        case 3: links_pause(0); dm_focus_set(1); audio_apply(); { int e = atomic_exchange(&g_save_failed_err, 0); if (e) front_save_failed(e); } break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
     }
 }
 
