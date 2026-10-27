@@ -137,8 +137,9 @@ class CliBackend:
             dmhost = os.path.join(DM, 'host', 'dmhost')
             if subprocess.run(['make', '-s', '-C', os.path.join(DM, 'host'), 'dmhost'], capture_output=True, check=False).returncode or not os.access(dmhost, os.X_OK):
                 raise ScenarioError('host build failed (make -C dm/host dmhost)')
-        out = subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'touch'], capture_output=True, text=True, check=False).stdout.strip()
-        if not out or not os.path.isdir(out): raise ScenarioError('no rewrite output: run ./setup.sh first')
+        # SCN_PRODUCT=<产物目录>：另指一份改写产物（比较改写变体，如画质档位），不动真产物；缺省 touch | SCN_PRODUCT=<output dir>: point at another rewrite output (to compare rewrite variants such as the quality level) without touching the real one; default touch
+        out = os.environ.get('SCN_PRODUCT') or subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'touch'], capture_output=True, text=True, check=False).stdout.strip()
+        if not out or not os.path.isdir(out): raise ScenarioError('no rewrite output: run ./setup.sh first' if not os.environ.get('SCN_PRODUCT') else f'SCN_PRODUCT {out} is not a directory')
         romfs = os.environ.get('DM_ROMFS') or os.path.join(DM_ROOT, 'data', 'switch', '3.3.94012', 'Update', 'RomFS')
         if not os.path.isdir(romfs): raise ScenarioError(f'no game resources at {romfs} (set DM_ROMFS)')
         os.makedirs(os.path.join(self.run, 'tmp'), exist_ok=True)
