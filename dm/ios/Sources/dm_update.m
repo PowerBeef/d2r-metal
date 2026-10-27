@@ -3,7 +3,7 @@
 //   ① 把自己的构建号（CFBundleVersion，与日志头「构建」同一个数）交给宿主，选角页左下角常显；
 //   ② 选角页出现（启动、从局里退回来、回前台）时在后台取一次版本文件（这是我们自己加的唯一一处联网，只读一个小文件，单次 10 秒超时、失败隔几秒重试共 3 次，不挡启动与进局；同一时刻只有一个查询在途）；
 //      启动后第一次一律查，之后上次查到起 1 小时内不再联网（dm_update_rules.h；刷图一局一两分钟就回一次选角页，原先每回都联网）；没查到的不算，下次照查；
-//   ③ 玩家点了「更新」→ 把版本文件里的安装链接交给系统打开（系统安装，整包覆盖，存档与资源不动）。
+//   ③ 玩家点了「更新」→ 把版本文件里的安装链接交给系统打开（系统安装，整包覆盖，存档与资源不动）；链接只认版本文件所在的主机或它的子域（dm_update_host_ok），别处的当格式不对。
 // 版本文件地址不在仓库里：出包脚本写进 Info.plist 的 SWUpdateURL（tools/adhoc.sh 传 DM_UPDATE_URL）。没有这个键、或构建号不是大于 1 的整数
 // （开发签名包是 1）→ 不联网、不提示。不比自己新：画面上什么都不出；没网 / 超时 / 地址失效 / 格式不对：选角页构建号右边出一行失败提示（dm_update_fail：没有无线数据许可 → 提示去设置里允许；其余 → 提示去浏览器打开版本文件所在的站点），这次启动取到了就撤掉。
 // 版本文件 latest.json（UTF-8）四个字段：{"build": 10051432, "note": "一句话 ≤ 24 个汉字", "urgent": false, "install_url": "…"}，缺字段或类型不对 = 格式不对。
@@ -16,7 +16,7 @@
 //   ① Hand our own build number (CFBundleVersion, the same number as 「构建」(Build) in the log header) to the host, always shown at the bottom-left of the character select page;
 //   ② When the character select page appears (launch, returning from a run, returning to the foreground), fetch the version file once in the background (this is the only network access we added ourselves; it reads one small file, 10-second timeout per attempt, retries a few seconds after a failure for 3 attempts in total, does not block launch or entering a run; only one query is in flight at any moment);
 //      the first check after launch always runs, after that there is no network access within 1 hour of the last successful fetch (dm_update_rules.h; a farming run returns to character select every minute or two, and it used to go online every time); a failed fetch does not count and the next visit checks again;
-//   ③ The player tapped 「更新」(Update) → hand the install link from the version file to the system to open (system install, whole-package overwrite, saves and assets untouched).
+//   ③ The player tapped 「更新」(Update) → hand the install link from the version file to the system to open (system install, whole-package overwrite, saves and assets untouched); the link is accepted only on the version file's host or a subdomain of it (dm_update_host_ok), anything else counts as a bad format.
 // The version file address is not in the repository: the packaging script writes it into SWUpdateURL in Info.plist (tools/adhoc.sh passes DM_UPDATE_URL). Without this key, or when the build number is not an integer greater than 1
 // (dev-signed builds are 1) → no network access, no notice. Not newer than ours: nothing appears on screen; no network / timeout / dead address / bad format: a failure notice line appears to the right of the build number on the character select page (dm_update_fail: no wireless data permission → tell the player to allow it in Settings; otherwise → tell the player to open in a browser the site that serves the version file), removed once a fetch succeeds during this launch.
 // The version file latest.json (UTF-8) has four fields: {"build": 10051432, "note": "one sentence, ≤ 24 Chinese characters", "urgent": false, "install_url": "..."}; a missing field or wrong type = bad format.
@@ -61,14 +61,28 @@ static void upd_net_why(void) {
 
 // 版本文件 → 要不要提示。返回 nil = 提示（out 填好），否则是不提示的原因（进日志）
 // Version file → whether to show a notice. Returns nil = show it (out is filled in); otherwise the reason for not showing it (goes to the log)
-static NSString *upd_parse(NSData *d, int *build, NSString **note, int *urgent, NSString **install) {
+// 安装链接实际要去的主机：https 取主机；itms-services 取 url= 参数里那个 https 清单地址的主机；别的 nil
+// The host an install link really goes to: the host for https; for itms-services, the host of the https manifest address in the url= parameter; nil otherwise
+static NSString *upd_link_host(NSURL *u) {
+    NSString *sch = u.scheme.lowercaseString;
+    if ([sch isEqualToString:@"https"]) return u.host;
+    if ([sch isEqualToString:@"itms-services"]) for (NSURLQueryItem *q in [NSURLComponents componentsWithURL:u resolvingAgainstBaseURL:NO].queryItems)
+        if ([q.name isEqualToString:@"url"]) { NSURL *m = q.value ? [NSURL URLWithString:q.value] : nil; return [m.scheme.lowercaseString isEqualToString:@"https"] ? m.host : nil; }
+    return nil;
+}
+static NSString *upd_parse(NSData *d, NSString *vurl, int *build, NSString **note, int *urgent, NSString **install) {
     NSDictionary *j = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
     if (![j isKindOfClass:NSDictionary.class]) return @"格式不对：不是 JSON 对象";
     NSNumber *b = j[@"build"], *u = j[@"urgent"]; NSString *n = j[@"note"], *i = j[@"install_url"];
     if (![b isKindOfClass:NSNumber.class] || ![u isKindOfClass:NSNumber.class] || ![n isKindOfClass:NSString.class] || ![i isKindOfClass:NSString.class]) return @"格式不对：四个字段缺了或类型不对";
     if (!(b.doubleValue >= 1 && b.doubleValue < 2e9) || b.doubleValue != b.intValue) return @"格式不对：build 不是正整数";
-    NSString *sch = [NSURL URLWithString:i].scheme.lowercaseString;
+    NSURL *iu = [NSURL URLWithString:i]; NSString *sch = iu.scheme.lowercaseString;
     if (![sch isEqualToString:@"https"] && ![sch isEqualToString:@"itms-services"]) return @"格式不对：install_url 不是 https / itms-services 链接";
+    // 链接只认版本文件所在的主机（或它的子域）；版本文件是本机文件（测试开关 DM_TEST_UPDATE_URL=file://…）时没有主机可比，不核
+    // The link is accepted only on the version file's host (or a subdomain of it); when the version file is a local file (test switch DM_TEST_UPDATE_URL=file://...) there is no host to compare with, so it is not checked
+    NSString *lh = upd_link_host(iu); NSURL *vu = [NSURL URLWithString:vurl];
+    if (!lh.length) return @"格式不对：install_url 里没有 https 主机（itms-services 要带 url=https://…）";
+    if (![vu.scheme.lowercaseString isEqualToString:@"file"] && !dm_update_host_ok(lh.UTF8String, vu.host.UTF8String)) return [NSString stringWithFormat:@"不认：install_url 的主机 %@ 不是版本文件所在的 %@（或它的子域）", lh, vu.host ?: @"（无）"];
     n = [[n componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet] componentsJoinedByString:@" "];
     if (n.length > 24) n = [n substringWithRange:[n rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, 24)]];   // 说明只有一行的位置：超过 24 个字截掉 | The note has room for only one line: truncate beyond 24 characters
     *build = b.intValue; *note = n; *urgent = u.boolValue; *install = i; return nil;
@@ -109,7 +123,7 @@ static void upd_fetch(int n) {
         if (e) why = [NSString stringWithFormat:@"取不到：%@", e.localizedDescription];
         else if ([r isKindOfClass:NSHTTPURLResponse.class] && [(NSHTTPURLResponse *)r statusCode] != 200) why = [NSString stringWithFormat:@"取不到：HTTP %ld", (long)[(NSHTTPURLResponse *)r statusCode]];
         else if (d.length > 4096) why = @"格式不对：超过 4096 字节";
-        else why = upd_parse(d, &build, &note, &urgent, &install);
+        else why = upd_parse(d, us, &build, &note, &urgent, &install);
         if (!e && d.length && d.length <= 4096) {   // 远程退回画法：版本文件里 "render_safe": true → 本局退回原画法；没有这个字段 = 新画法 | Remote fallback of the drawing method: "render_safe": true in the version file → this run falls back to the old drawing method; without this field = the new drawing method
             NSDictionary *j = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil]; NSNumber *rs = [j isKindOfClass:NSDictionary.class] ? j[@"render_safe"] : nil;
             extern int g_dm_rt_ab; if ([rs isKindOfClass:NSNumber.class] && rs.boolValue) { if (g_dm_rt_ab) { g_dm_rt_ab = 0; plog("画法：版本文件 render_safe = true → 本局退回原画法"); } }
