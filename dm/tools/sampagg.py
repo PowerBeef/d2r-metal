@@ -34,6 +34,8 @@ def dm(fn):
     mod, a = fn.split('+')
     rn = guestsyms.re_names().get(mod, {}).get(int(a, 16))   # 先用引擎分析库的名字，再退回动态符号 | the engine-analysis name first, then fall back to the dynamic symbols
     if rn: return (rn[0] + ('' if rn[1] == 'high' else f' ({rn[1]})'))[:70]
+    g = guestsyms.lookup(fn).split('  [')[0]   # 符号表的函数名（无名时 fn_<起点>），免得退回「最近的导出名 + 大偏移」 | the symbol table's function name (fn_<start> when unnamed), instead of "nearest export + huge offset"
+    if g: return (g[:-4] if g.endswith('+0x0') else g)[:70]
     r = st[mod][1](int(a, 16))
     return subprocess.run(['xcrun', 'c++filt', r], capture_output=True, text=True).stdout.strip()[:70]
 per = collections.defaultdict(lambda: [0, 0, collections.Counter()]); selfc = collections.Counter(); incl = collections.Counter(); host = collections.Counter(); waitat = collections.Counter(); n = 0
