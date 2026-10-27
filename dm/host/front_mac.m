@@ -13,6 +13,8 @@
 #include "dm.h"
 #include "dm_input.h"
 #include "dm_uiscreen.h"
+#include "dm_scrub.h"
+#include <pwd.h>
 void mtl_set_ui_rect_fn(void (*fn)(double *y, double *h));
 static void ui_rect_frac(double *fy, double *fh) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); if (dm_screen_real(&rw, &rh) && rh > 0) { *fy = (double)y / rh; *fh = (double)h / rh; } }   // 同 front_ios.m：界面矩形的纵向位置与高（占画面高的比例） | Same as front_ios.m: vertical position and height of the UI rectangle (as fractions of the frame height)
 __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn(ui_rect_frac); }   // 不开窗口的跑法（截图 / 闸门）也要生效，所以不放在建图层那里 | Must also take effect when running without a window (screenshots / gate checks), so it is not placed where the layer is created
@@ -156,11 +158,32 @@ static int ctl_app(const char *w) {
 }
 static const char *ui(const char *k) { const char *dm_ui(const char *key); return dm_ui(k); }
 static void show_keys(void) { NSAlert *a = [NSAlert new]; a.messageText = @(ui("dmAppKeysTitle")); a.informativeText = @(ui("dmAppKeysText")); [a addButtonWithTitle:@(ui("dmAppOK"))]; [a runModal]; }
+// 分享日志的脱敏规则（dm_scrub.c，同 iOS 的 dm_sharelog.m）：家目录 → ~、显示器型号 → <display>、挂着的盘名、登录名 / 全名 / 主机名、
+// 不是本项目自己的包名（org.d2rmobile.*）时的包名，以及存档里的角色名 → <char1> …；路径里的 UUID、/var/folders 与 .d2s 文件名按形状换（见 dm_scrub.c）
+// Scrubbing rules of the shared log (dm_scrub.c, as iOS's dm_sharelog.m): home directory -> ~, display models -> <display>, mounted disk names, login / full / host name,
+// the bundle ID when it is not the project's own (org.d2rmobile.*), and the character names in the save -> <char1> ...; UUIDs in paths, /var/folders and .d2s file names go by shape (see dm_scrub.c)
+static dm_scrub *share_scrubber(NSString *home) {
+    dm_scrub *s = dm_scrub_new(); if (!s) return NULL;
+    struct passwd *pw = getpwuid(getuid());
+    dm_scrub_add(s, home.fileSystemRepresentation, "~", 1); if (pw && pw->pw_dir) dm_scrub_add(s, pw->pw_dir, "~", 1);
+    { const char *sv = getenv("DM_SAVE"); if (sv) dm_scrub_add_chars(s, sv); }
+    for (NSScreen *sc in NSScreen.screens) { CGDirectDisplayID id_ = [sc.deviceDescription[@"NSScreenNumber"] unsignedIntValue]; NSString *nm = sc.localizedName;
+        if (nm.length >= 2) dm_scrub_add(s, nm.UTF8String, CGDisplayIsBuiltin(id_) ? "<built-in display>" : "<display>", 0); }
+    for (NSURL *u in [NSFileManager.defaultManager mountedVolumeURLsIncludingResourceValuesForKeys:nil options:0] ?: @[]) if ([u.path hasPrefix:@"/Volumes/"]) dm_scrub_add(s, u.path.fileSystemRepresentation, "/Volumes/<volume>", 0);
+    NSString *bid = NSBundle.mainBundle.bundleIdentifier;
+    if (bid.length && ![bid hasPrefix:@"org.d2rmobile."]) { dm_scrub_add(s, bid.UTF8String, "<bundle-id>", 1); dm_scrub_add(s, [bid stringByReplacingOccurrencesOfString:@"." withString:@"~"].UTF8String, "<bundle-id>", 1); }
+    if (pw && pw->pw_name && strlen(pw->pw_name) >= 3) dm_scrub_add(s, pw->pw_name, "<user>", 1);
+    NSString *full = NSFullUserName(); if (full.length >= 3) dm_scrub_add(s, full.UTF8String, "<user>", 1);
+    char hn[256] = ""; if (!gethostname(hn, sizeof hn - 1) && strlen(hn) >= 3) {   // 主机名（Mac-mini-de-Patrice.local）与它去掉 .local、连字符换空格的样子（多半就是电脑名） | host name (Mac-mini-de-Patrice.local) and its form without .local and with spaces for hyphens (usually the computer name)
+        dm_scrub_add(s, hn, "<computer>", 1); char *dot = strstr(hn, ".local"); if (dot) *dot = 0; dm_scrub_add(s, hn, "<computer>", 1);
+        for (char *p = hn; *p; p++) if (*p == '-') *p = ' '; dm_scrub_add(s, hn, "<computer>", 1); }
+    return s;
+}
 // 帮助 → 分享日志…：把本次与上一次的日志（~/Library/Logs/D2R Mobile/host.log、host.prev.log）和一份版本信息打成一个压缩包，弹系统的存储面板让玩家选位置（缺省桌面），存好后在访达里选中它。
-// 不上传、不发邮件；包里只有这三份文件——不放存档、不放 iCloud 目录里的任何东西。日志里的家目录前缀一律换成 ~（同 iOS 的分享日志 dm_sharelog.m scrub_home：不把用户名带出去）。
+// 不上传、不发邮件；包里只有这三份文件——不放存档、不放 iCloud 目录里的任何东西。三份都先脱敏（share_scrubber：家目录、角色名、显示器、盘名……），洗不了的那份不放。
 // to 非空 = 测试（DM_TEST_SHARELOG）：不弹面板，直接写到这个路径。返回 nil 成功，否则是失败原因
 // Help -> Share Log...: pack the logs of this run and the previous one (~/Library/Logs/D2R Mobile/host.log, host.prev.log) and a version-information file into one archive, show the system save panel for the player to choose a location (Desktop by default), and select it in Finder once saved.
-// Nothing is uploaded or mailed; the archive contains only these three files - no saves, nothing from the iCloud directory. The home-directory prefix in the logs is always replaced with ~ (same as the iOS share-log dm_sharelog.m scrub_home: the user name is not carried out).
+// Nothing is uploaded or mailed; the archive contains only these three files - no saves, nothing from the iCloud directory. All three are scrubbed first (share_scrubber: home directory, character names, displays, disk names...); a file that cannot be scrubbed is left out.
 // to non-empty = test (DM_TEST_SHARELOG): no panel, write directly to this path. Returns nil on success, otherwise the reason for failure
 static NSString *share_logs(NSString *to) {
     NSFileManager *fm = NSFileManager.defaultManager; NSString *home = NSHomeDirectory(), *logd = [home stringByAppendingPathComponent:@"Library/Logs/D2R Mobile"];
@@ -169,16 +192,14 @@ static NSString *share_logs(NSString *to) {
     NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dm_share_%d", getpid()]], *dir = [tmp stringByAppendingPathComponent:name];
     [fm removeItemAtPath:tmp error:nil]; if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil]) return @"mkdir";
     fflush(stderr);
-    NSData *hb = [home dataUsingEncoding:NSUTF8StringEncoding]; NSData *tilde = [@"~" dataUsingEncoding:NSUTF8StringEncoding];
-    NSData *(^scrub)(NSData *) = ^NSData *(NSData *d) { if (!d || hb.length < 2) return d; NSMutableData *o = [NSMutableData dataWithCapacity:d.length]; NSRange all = NSMakeRange(0, d.length), r;
-        while ((r = [d rangeOfData:hb options:0 range:all]).location != NSNotFound) { [o appendData:[d subdataWithRange:NSMakeRange(all.location, r.location - all.location)]]; [o appendData:tilde]; all = NSMakeRange(NSMaxRange(r), d.length - NSMaxRange(r)); }
-        [o appendData:[d subdataWithRange:all]]; return o; };
-    int n = 0; for (NSString *f in @[@"host.log", @"host.prev.log"]) { NSData *d = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:f] options:NSDataReadingMappedIfSafe error:nil]; if (d) { [scrub(d) writeToFile:[dir stringByAppendingPathComponent:f] atomically:YES]; n++; } }
+    dm_scrub *sc = share_scrubber(home); if (!sc) { [fm removeItemAtPath:tmp error:nil]; return @"scrub"; }
+    NSData *(^scrub)(NSData *) = ^NSData *(NSData *d) { size_t on = 0; char *o = d ? dm_scrub_run(sc, d.bytes, d.length, &on) : NULL; return o ? [NSData dataWithBytesNoCopy:o length:on freeWhenDone:YES] : nil; };   // 洗不了（内存不够）= nil：那份不放 | cannot scrub (out of memory) = nil: that file is left out
+    int n = 0; for (NSString *f in @[@"host.log", @"host.prev.log"]) { NSData *d = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:f] options:NSDataReadingMappedIfSafe error:nil]; if (d && [scrub(d) writeToFile:[dir stringByAppendingPathComponent:f] atomically:YES]) n++; }
     NSString *bt = [NSString stringWithContentsOfFile:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"build.txt"] encoding:NSUTF8StringEncoding error:nil] ?: @"";
     char hw[64] = "?"; size_t hn = sizeof hw; sysctlbyname("hw.model", hw, &hn, NULL, 0); NSProcessInfo *pi = NSProcessInfo.processInfo;
     NSString *info = [NSString stringWithFormat:@"%@\nD2R Metal (macOS) %@ (%@)\n%@\n%@\nmacOS %@\n%@  %.0f GB\n%@\n", @(ui("dmAppShareInfo")), ver, build, inf[@"CFBundleIdentifier"] ?: @"", [bt stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],
         pi.operatingSystemVersionString, @(hw), pi.physicalMemory / 1073741824.0, [NSLocale.preferredLanguages componentsJoinedByString:@","]];
-    [[scrub([info dataUsingEncoding:NSUTF8StringEncoding]) copy] writeToFile:[dir stringByAppendingPathComponent:@"info.txt"] atomically:YES];
+    [scrub([info dataUsingEncoding:NSUTF8StringEncoding]) writeToFile:[dir stringByAppendingPathComponent:@"info.txt"] atomically:YES]; dm_scrub_free(sc);
     NSString *zip = [tmp stringByAppendingPathComponent:[name stringByAppendingString:@".zip"]];
     NSTask *t = [NSTask new]; t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/ditto"]; t.arguments = @[@"-c", @"-k", @"--keepParent", dir, zip]; NSError *err = nil;
     if (![t launchAndReturnError:&err]) { [fm removeItemAtPath:tmp error:nil]; return err.localizedDescription ?: @"ditto"; } [t waitUntilExit];

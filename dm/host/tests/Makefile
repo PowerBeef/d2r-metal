@@ -53,6 +53,7 @@ run: \
 	$(B)/t_romfs_validate \
 	$(B)/t_rwlv \
 	$(B)/t_save_hooks \
+	$(B)/t_scrub \
 	$(B)/t_svc_mem \
 	$(B)/t_swkbd \
 	$(B)/t_target_rank \
@@ -141,6 +142,7 @@ run: \
 	$(B)/t_widget
 	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_scrub
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
 	$(PY) movie_cut.py $(B)/main.orig.bin $(B)/subsdk0.orig.bin
 	$(PY) oe_notify.py $(B)/main.orig.bin
@@ -156,6 +158,8 @@ $(B)/t_hud_dead: t_hud_dead.c ../dm_hud.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_hud_dead.c
 $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_textbox.c ../dm_textbox_core.c
+$(B)/t_scrub: t_scrub.c ../dm_scrub.c ../dm_scrub.h | $(B)
+	clang -O1 -Wall -Werror -o $@ t_scrub.c ../dm_scrub.c
 $(B)/t_rwlv: t_rwlv.c ../dm_rwlv_core.c ../dm_rwlv_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_rwlv.c ../dm_rwlv_core.c
 $(B)/t_doorspot: t_doorspot.c ../dm_doorspot.h | $(B)
