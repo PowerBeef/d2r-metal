@@ -907,6 +907,19 @@ UIView *front_ios_view(CGRect frame) {
 }
 
 void *front_metal_layer(void) { return (__bridge void *)g_layer; }
+// 「色彩」（dm_video.c color）：准确 = 出图层标 sRGB（游戏写的就是 sRGB 编码的字节），系统按屏幕色域（iPhone / iPad 是 P3）配色；鲜艳 = 不标（原先的样子）。
+// 画面字节不变，只改合成器怎么解释。iOS 的推荐值暂按原先（front_video_rec 用 dm_video.c 的弱定义 = 0）：要先在真机上看过。DM_COLORSPACE=srgb|none 定死
+// "Colour" (color in dm_video.c): Accurate = the present layer is tagged sRGB (the game writes sRGB-encoded bytes) and the system colour-matches it to the screen's gamut (P3 on iPhone / iPad); Vivid = untagged
+// (the old look). The picture bytes are unchanged; only how the compositor reads them changes. The iOS recommendation stays the old look for now (front_video_rec is dm_video.c's weak definition = 0) until it has been
+// seen on a device. DM_COLORSPACE=srgb|none fixes it
+static void layer_color_ios(int accurate) {   // 主线程 | main thread
+    const char *e = getenv("DM_COLORSPACE"); if (e && *e) accurate = !strcmp(e, "srgb");
+    if (!g_layer) return;
+    CGColorSpaceRef cs = accurate ? CGColorSpaceCreateWithName(kCGColorSpaceSRGB) : NULL;
+    g_layer.colorspace = cs; if (cs) CGColorSpaceRelease(cs);
+    LOG("画面：色彩%s（出图层的色彩空间 %s） | picture: colour %s (present layer colour space %s)", accurate ? "准确" : "鲜艳", accurate ? "sRGB" : "不标", accurate ? "Accurate" : "Vivid", accurate ? "sRGB" : "untagged");
+}
+void front_video_color(int accurate) { dispatch_async(dispatch_get_main_queue(), ^{ layer_color_ios(accurate); }); }   // 应用 / 读盘（任何线程） | Apply / load (any thread)
 // 画面设置（dm_video.c）的平台钩子：MetalFX 能不能用（旧接口的 MetalFX 或 Metal 4 的都算）；首次启动的推荐值 = 3D 清晰度 75%（原来的缺省）+ 能用就开 MetalFX。
 // supportsMetal4FX: 要 iOS 26 起才有：旧接口版（DM_NVN_M3，部署到 iOS 18）不编它，Metal 4 版也按 @available 判过再调——老系统上直接调是找不到方法，首次启动即崩。
 // Platform hooks for the picture settings (dm_video.c): whether MetalFX is available (the older-API MetalFX or the Metal 4 one both count); recommended values on first boot = 3D resolution 75% (the previous default) + MetalFX when available.

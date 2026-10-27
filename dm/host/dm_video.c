@@ -136,6 +136,7 @@ static void load_once(void) {
             LOG("画面设置：%s 缺 / 越界的键 %s → 只补这几个（其余照读）", p, mk); }
         { char rs[160]; strlcpy(rs, vals_str(r), sizeof rs); LOG("画面设置：%s %s %s，推荐 %s", first ? "首次启动定推荐值" : miss ? "读盘（补过缺的键）" : "读盘", p, vals_str(v), rs); }
         if (miss || bump) save_locked();   // 补齐 / 换了推荐的整份写回 | write the completed / updated file back
+        if (v[K_COLOR] == 1) front_video_color(1);   // 存着「准确」：交给前端标出图层（前端建层时设置目录可能还不知道，见 front_ios.m） | "Accurate" is stored: hand it to the front end for the present layer (the front end may not know the settings directory when it creates the layer, see front_ios.m)
     }
     pthread_mutex_unlock(&g_mu);
 }

@@ -866,8 +866,11 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), 'dmVideoFpsTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
           (('res', '@dmVideo3DRes', ('dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),
+           ('color', '@dmVideoColor', ('dmVideoColorVivid', 'dmVideoColorAccurate'), None),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), None),
            ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX'), None),
+           ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), None),
+           ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), None),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), None),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), None)) if _VIDEO_IOS else ())
 _VIDEO_H = _CUSTOM_LINE_H * len(_VIDEO)
