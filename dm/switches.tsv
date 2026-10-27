@@ -158,7 +158,6 @@ DM_LOGICSELF_TRUTH	verify	verify/logicself.sh	y
 DM_LOG_PORT	host,ios	host/diag.c ios/Sources/main.m	y
 DM_LOG_TEE	ios	ios/Sources/main.m	-
 DM_LONGFRAME	gfx	gfx/nvn/hle_nvn.c	-
-DM_LOOTFILTER	host	host/dm_lootfilter.c	-
 DM_MAC_APP	tools	tools/scenario.py	y
 DM_MAC_BUILD	tools	tools/mac_app.sh	-
 DM_MAC_BUNDLE_ID	tools	tools/mac_app.sh	-
@@ -398,8 +397,6 @@ DM_TEST_LINK_STALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_LIVE	host	host/touch_mac.c	-
 DM_TEST_LKEY_CLASH	ios	ios/Sources/front_ios.m	-
 DM_TEST_LOADSCREEN_DELAY_MS	host	host/diag.c	-
-DM_TEST_LOOTDUMP	host	host/dm_lootfilter.c	-
-DM_TEST_LOOT_BOW	host	host/dm_lootfilter.c	-
 DM_TEST_MAP_FULL	host	host/diag.c	-
 DM_TEST_MAP_MARK_CHECK	host	host/dm_world.c	-
 DM_TEST_MEMWARN	ios	ios/Sources/main.m	-

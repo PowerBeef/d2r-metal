@@ -22,7 +22,6 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomQ3dSmoothHint", "掉帧时自动降低 3D 画面清晰度", "Lowers 3D resolution when frames drop", "Baja la resolución 3D si caen los fotogramas", "Baja la resolución 3D si caen los fotogramas", "Снижает 3D-разрешение при просадке FPS", "프레임 하락 시 3D 해상도 자동 낮춤" },
     { "dmCustomQ3dQuality", "画质优先", "Quality first", "Calidad primero", "Calidad primero", "Качество важнее", "화질 우선" },
     { "dmCustomQ3dQualityHint", "始终保持设定的 3D 清晰度", "Always keeps the set 3D resolution", "Mantiene siempre la resolución 3D elegida", "Mantiene siempre la resolución 3D elegida", "Всегда держит заданное 3D-разрешение", "설정한 3D 해상도 항상 유지" },
-    { "dmCustomLootFilter", "掉落过滤（噩梦起自动隐藏杂物）", "Loot Filter (auto, Nightmare+)", "Filtro de botín (auto, Pesadilla+)", "Filtro de botín (auto, Pesadilla+)", "Фильтр лута (авто, Кошмар+)", "루트 필터 (악몽부터 자동)" },
     { "dmCustomLang", "语言", "Language", "Idioma", "Idioma", "Язык", "언어" },
     { "dmCustomLangZh", "中文", "中文", "中文", "中文", "中文", "中文" },
     { "dmCustomLangEnOpt", "English", "English", "English", "English", "English", "English" },

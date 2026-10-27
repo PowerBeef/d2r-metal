@@ -506,12 +506,12 @@ def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=()):
         return s, n
     return fn
 # 手柄版暂停菜单（「难度挂暂停菜单」）：原版布局 + 我们的功能行，放原版路径（gen_romfs_overlay.py 手柄版布局）；触屏插回的关闭钮不带。
-# 行 = 游戏难度 / 保存并退出 / 一键重开 / 选项 / 编年史（经典版没有）/ 分享诊断日志；帮助、战利品过滤器、消息记录照的裁定不留。
+# 行 = 游戏难度 / 保存并退出 / 一键重开 / 选项 / 编年史（经典版没有）/ 分享诊断日志；帮助、消息记录照的裁定不留，战利品过滤器不留是因为它的设置页（LootFilterOptionsPanel）在本移植里一开就崩。
 #   「选项」固定在第四行（y 653）：原版手柄版开暂停菜单时自由光标在屏幕正中、压着哪行哪行高亮，直接按确认就点它——正中那行只许是按了没后果的。
 #   「游戏难度：N」= 按一下人数档 +1（8 之后回 1），当前档位写在这一行上。
 # 按钮图高 120 单位：带编年史那版七行在原版首末两行之间（278–1028）等距 125；经典版原底图只放得下四行，换用带编年史那版的底图（同尺寸），同一套行距排前六行（少编年史那行，后一行上移）
 # Gamepad pause menu ("difficulty hangs on the pause menu"): the original layout + our feature rows, placed at the original path (gamepad layout in gen_romfs_overlay.py); the close button inserted for touch is not included.
-# Rows = Game Difficulty / Save and Exit / Quick Restart / Options / Chronicle (absent in the classic version) / Share Diagnostics; Help, Loot Filter and Message Log are not kept, as ruled.
+# Rows = Game Difficulty / Save and Exit / Quick Restart / Options / Chronicle (absent in the classic version) / Share Diagnostics; Help and Message Log are not kept, as ruled, and Loot Filter is not kept because its settings page (LootFilterOptionsPanel) crashes as soon as it opens in this port.
 #   "Options" is fixed on the fourth row (y 653): when the original gamepad UI opens the pause menu the free cursor is at the centre of the screen and highlights whichever row it rests on, and pressing confirm straight away activates it -- the centre row may only be one whose press has no consequence.
 #   "Game Difficulty: N" = one press raises the player-count setting by 1 (back to 1 after 8), with the current setting shown on this row.
 # Button image height is 120 units: in the version with the Chronicle, seven rows are spaced evenly by 125 between the original first and last rows (278–1028); the classic version's own background only fits four rows, so the background of the Chronicle version (same size) is used and the first six rows are laid out with the same spacing (without the Chronicle row, the following row moves up)
@@ -648,11 +648,11 @@ PRESENT = {
     'chroniclebaselistpanelhd.json': _chronicle_no_search,
     'dropdownlistcontentshd.json': _dropdown_rows,
     'chroniclepanelhd.json': lambda s: (lambda a: (lambda b: (b[0], a[1] + b[1]))(_chronicle_tabs(a[0])))(_chronicle_touch(s)),
-    # 战利品过滤器去掉、编年史保留、消息记录不要；另加第四个「分享诊断日志」（占原「消息记录」按钮）。
+    # 战利品过滤器去掉（它的设置页在本移植里一开就崩）、编年史保留、消息记录不要；另加第四个「分享诊断日志」（占原「消息记录」按钮）。
     # 暂停菜单 = 选项 / 保存并退出 / 编年史 / 分享诊断日志（中心距仍 240，四个落在原版六个的上下两端之内）；
     # 带佣兵页签的角色用的经典版没有编年史 = 选项 / 保存并退出 / 分享诊断日志（底图只放得下原版四个的跨度，中心距 225，正好铺满原版首末两个的位置）
     # 加「一键重开」后五个 / 四个按钮在原来首尾之间等距：带编年史那版中心距 180，经典版 150
-    # Loot filter removed, chronicle kept, message log dropped; a fourth button 「分享诊断日志」(Share Diagnostics) is added (taking the place of the original 「消息记录」(Message Log) button).
+    # Loot filter removed (its settings page crashes as soon as it opens in this port), chronicle kept, message log dropped; a fourth button 「分享诊断日志」(Share Diagnostics) is added (taking the place of the original 「消息记录」(Message Log) button).
     # Pause menu = Options / Save and Exit / Chronicle / Share Diagnostics (center spacing still 240; the four fall within the top and bottom ends of the original six);
     # the classic version used by characters with a mercenary tab has no chronicle = Options / Save and Exit / Share Diagnostics (the background image only fits the span of the original four; center spacing 225, exactly filling the positions of the original first and last)
     # After adding 「一键重开」(Quick Restart) the five / four buttons are spaced evenly between the original first and last: center spacing 180 for the version with chronicle, 150 for the classic version
@@ -814,7 +814,7 @@ def _drop_rows(*rows):
 # 视频页的表格整个换成我们的行：分节标题 + 每个开关一行原版勾选框（照「游戏」页「自动拾取金币」那一行的字段）。控件名 TouchCustom_<键>，
 # 宿主 dm_custom.c 读勾没勾、按应用 / 放弃 / 默认处理。勾选框的消息发一条无害的 ClosePanel，游戏不认
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'eco_fps', 'q3d', 'loot_filter', 'touch_swap_above')
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'eco_fps', 'q3d', 'touch_swap_above')
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines

@@ -13,7 +13,6 @@ int dm_custom_get(const char *k) { (void)k; return 1; }
 uint64_t dm_guest_frame(void) { return 0; }
 int dm_ui_panel_state(void) { return 0; }
 void dm_game_notice(uint8_t *b, const char *t) { (void)b; (void)t; }
-int dm_lootfilter_hidden(uint8_t *b, uint64_t it) { (void)b; (void)it; return 0; }
 const char *dm_str(uint8_t *b, const char *k) { (void)b; return k; }
 const char *dm_untag(const char *s) { return s; }
 int dm_ui_top_chk_on(void) { return 0; }

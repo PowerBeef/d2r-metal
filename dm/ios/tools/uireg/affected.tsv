@@ -15,7 +15,6 @@ dm/host/dm_i18n*	*
 dm/ios/tools/annot_strings.py	k j
 dm/host/dm_textbox*	k j
 dm/host/dm_potpick*	bd bdm p q b
-dm/host/dm_lootfilter*	bd bdm p q b
 dm/host/dm_beltauto*	ba bd bdm p q b
 dm/host/dm_townwp*	*
 dm/host/dm_unit.h	dc wp tp

@@ -63,9 +63,6 @@ static void pick_send(uint8_t *b, uint64_t it, uint32_t id, int x, int y, int px
 }
 
 void dm_potpick_step(uint8_t *b) {
-    // 掉落过滤（dm_lootfilter.c）借这个每帧入口：按难度切当前配置；测试读数（缺省不做事）
-    // The loot filter (dm_lootfilter.c) borrows this per-frame entry: switches the current profile by difficulty; test readout (does nothing by default)
-    if (b) { void dm_lootfilter_pump(uint8_t *, uint64_t); void dm_lootfilter_test_dump(uint8_t *); dm_lootfilter_pump(b, ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c))); dm_lootfilter_test_dump(b); }
     static int env = -2; if (env == -2) { const char *e = getenv("DM_POT_PICK"); env = e ? e[0] != '0' : -1; }   // 测试强制：DM_POT_PICK=0 关 / 其余开，优先于自定义页 | Test override: DM_POT_PICK=0 off / anything else on; takes priority over the customization page
     if (!b || !(env >= 0 ? env : dm_custom_get("pot_pick"))) return;
     static uint64_t next; uint64_t fr = dm_guest_frame(); if (fr < next) return;
@@ -84,7 +81,6 @@ void dm_potpick_step(uint8_t *b) {
         if (*(uint32_t *)(it + 0xc) != 3) continue;   // 地上 | On the ground
         uint64_t ip = *(uint64_t *)(it + 0x38); if (!ip) continue; int x = *(int32_t *)(ip + 0x10), y = *(int32_t *)(ip + 0x14);
         if (abs(x - px) > PICK_R || abs(y - py) > PICK_R) continue;
-        { int dm_lootfilter_hidden(uint8_t *, uint64_t); if (dm_lootfilter_hidden(b, it)) continue; }   // 被原版掉落过滤藏着的（屏上没名字）不自动捡 | items hidden by the game's loot filter (no name on screen) are not auto-picked
         int (*is)(uint64_t, int) = (int (*)(uint64_t, int))(b + 0x574bc0);
         if (!(is(it, 77) || is(it, 78)) || !(((int (*)(uint64_t))(b + 0x3c1b28))(it) & 1)) continue;   // 回复 hpot 77（恢复药 rpot 的父类型也是它）/ 法力 mpot 78 | Healing hpot 77 (also the parent type of the rejuvenation potion rpot) / mana mpot 78
         uint32_t id = *(uint32_t *)(it + 8); int seen = 0;

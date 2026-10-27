@@ -20,7 +20,6 @@ dmCustomQ3dSmooth	流畅优先	Smoothness first	Fluidez primero		Плавнос�
 dmCustomQ3dSmoothHint	掉帧时自动降低 3D 画面清晰度	Lowers 3D resolution when frames drop	Baja la resolución 3D si caen los fotogramas		Снижает 3D-разрешение при просадке FPS	프레임 하락 시 3D 해상도 자동 낮춤	流畅优先下面的说明小字
 dmCustomQ3dQuality	画质优先	Quality first	Calidad primero		Качество важнее	화질 우선	自定义页「3D 画质」单选的第二项（q3d=1）
 dmCustomQ3dQualityHint	始终保持设定的 3D 清晰度	Always keeps the set 3D resolution	Mantiene siempre la resolución 3D elegida		Всегда держит заданное 3D-разрешение	설정한 3D 해상도 항상 유지	画质优先下面的说明小字
-dmCustomLootFilter	掉落过滤（噩梦起自动隐藏杂物）	Loot Filter (auto, Nightmare+)	Filtro de botín (auto, Pesadilla+)		Фильтр лута (авто, Кошмар+)	루트 필터 (악몽부터 자동)	自定义页开关；Loot Filter 是原版过滤器的英文名
 dmCustomLang	语言	Language	Idioma		Язык	언어	自定义页语言那一行的标签：每种界面写自己语言的一个词（四个选项一排放不下两个词）
 dmCustomLangZh	中文	中文	中文		中文	中文	语言行的选项一（两种界面都写「中文」，同上用全球字体）
 dmCustomLangEnOpt	English	English	English		English	English	语言行的选项二

@@ -33,20 +33,20 @@ static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "eco_fps", "q3d", "loot_filter", "touch_swap_above" };   // 顺序 = 自定义页从上到下的行序（touch_layout.py _CUSTOM_ROWS）：手柄在这页按这个顺序上下选行 | Order = row order of the Custom page from top to bottom (touch_layout.py _CUSTOM_ROWS): the controller selects rows up/down on this page in this order
+    "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "eco_fps", "q3d", "touch_swap_above" };   // 顺序 = 自定义页从上到下的行序（touch_layout.py _CUSTOM_ROWS）：手柄在这页按这个顺序上下选行 | Order = row order of the Custom page from top to bottom (touch_layout.py _CUSTOM_ROWS): the controller selects rows up/down on this page in this order
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 1, 0, !DM_PHONE, 1, 0 };   // 缺省值：省电模式（30 帧）缺省关；3D 画质手机缺省流畅优先（q3d=0）、Mac 缺省画质优先（q3d=1：桌面 GPU 余量大，60 帧下掉帧多半是 CPU 卡顿，降 3D 清晰度帮不上）；换组默认在传送门左侧，其余缺省开（voice 的缺省不用：读盘时按当前语言定、「默认」不管它） | defaults: power saver (30 fps) off; 3D quality smoothness first on phones (q3d=0) and quality first on the Mac (q3d=1: a desktop GPU has headroom, and at 60 fps drops are mostly CPU hitches that a lower 3D resolution does not help); the group swap sits left of the portal; everything else on (voice's default is unused: it follows the current language on load, and "Default" leaves it alone)
+    1, 1, 1, 1, 1, 1, 0, !DM_PHONE, 0 };   // 缺省值：省电模式（30 帧）缺省关；3D 画质手机缺省流畅优先（q3d=0）、Mac 缺省画质优先（q3d=1：桌面 GPU 余量大，60 帧下掉帧多半是 CPU 卡顿，降 3D 清晰度帮不上）；换组默认在传送门左侧，其余缺省开（voice 的缺省不用：读盘时按当前语言定、「默认」不管它） | defaults: power saver (30 fps) off; 3D quality smoothness first on phones (q3d=0) and quality first on the Mac (q3d=1: a desktop GPU has headroom, and at 60 fps drops are mostly CPU hitches that a lower 3D resolution does not help); the group swap sits left of the portal; everything else on (voice's default is unused: it follows the current language on load, and "Default" leaves it alone)
 // q3d（3D 画质）：0 = 流畅优先（掉帧就自动降 3D 比例）、1 = 画质优先（不自动降）。生效 = 调 hle_oe.c 的 dm_3d_quality_mode_set，读盘与点「应用」时当场调，下一帧控制器就按新档走。
 // 页上是上下两项单选（同语言行）：TouchCustom_q3d 是「画质优先」那格（勾上 = 1），TouchCustom_q3d_smooth 是它的反面
 // q3d (3D quality): 0 = smoothness first (automatically lowers the 3D scale on frame drops), 1 = quality first (no automatic lowering). Applied by calling hle_oe.c's dm_3d_quality_mode_set, immediately on load and on tapping "Apply", so the controller follows the new setting from the next frame.
 // On the page it is a stacked two-option radio (like the language row): TouchCustom_q3d is the "Quality first" cell (checked = 1), TouchCustom_q3d_smooth is its inverse
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
 #define K_Q3D (8 + VOICE_ROW)
-#define K_TOUCH_SWAP (10 + VOICE_ROW)
+#define K_TOUCH_SWAP (9 + VOICE_ROW)
 void dm_3d_quality_mode_set(int mode);
 static const char *rev_box(int i) { return i == K_VOICE ? "TouchCustom_voice_zh" : i == K_Q3D ? "TouchCustom_q3d_smooth" : i == K_TOUCH_SWAP ? "TouchCustom_touch_swap_above_near" : NULL; }   // 单选行「反面那一项」的勾选框 | Checkbox of the radio row's "inverse option"
 static _Atomic int g_val[NK];        // 已生效：1 开 / 0 关 | In effect: 1 on / 0 off
