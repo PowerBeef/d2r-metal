@@ -186,10 +186,10 @@ static const struct { const char *name; int side; void (*enter)(void), (*leave)(
 #undef X
 };
 static void items_run(int side, int leave) { for (unsigned i = 0; i < sizeof k_items / sizeof *k_items; i++) { if (k_items[i].side != 2 && k_items[i].side != side) continue; void (*f)(void) = leave ? k_items[i].leave : k_items[i].enter; if (f) f(); } }
-// 我们自己的页在手柄模式下接管按键（自定义页、积分牌…；原版的焦点导航不认识我们加的控件）：页在屏上时每帧声明要哪些键（dm_padmode_page_keys，游戏主线程），
+// 我们自己的页在手柄模式下接管按键（自定义页、编年史仓库页…；原版的焦点导航不认识我们加的控件）：页在屏上时每帧声明要哪些键（dm_padmode_page_keys，游戏主线程），
 // 取手柄处（hle_hid.c fill）把这些键扣下不交给原版、按下沿攒给页（dm_padmode_page_keys 的返回值）。页不再声明（3 帧）就失效；失效时还按着的键松开前仍不交给原版。同一时刻只有一页在屏上
 // 页接管了的键还想让原版照常收到一次短按时（如编年史仓库页的 Y：短按仍是原版的「丢弃」，按住才是我们的「存入」）：dm_padmode_page_pulse 让取手柄处替玩家按几次采样
-// Our own pages take over keys in controller mode (custom page, kill board...; the original focus navigation does not know the widgets we
+// Our own pages take over keys in controller mode (custom page, Chronicle vault page...; the original focus navigation does not know the widgets we
 // added): while a page is on screen it declares every frame which keys it wants (dm_padmode_page_keys, game main thread),
 // and where the controller is read (hle_hid.c fill) those keys are withheld from the original game and their press edges are accumulated for
 // the page (the return value of dm_padmode_page_keys). Once the page stops declaring (3 frames) the takeover lapses; keys still held when it
@@ -394,7 +394,7 @@ uint64_t dm_padmode_legend_click(float nx, float ny) {
 int dm_padmode_hud_click(float nx, float ny, uint64_t *btn) {
     extern module_t g_mod[]; extern int g_nmod; uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
     if (!b || !g_cur) return 0; int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c); uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)); if (!root || W <= 0 || H <= 0) return 0;
-    if (*(volatile uint8_t *)(b + 0x2d5ff51) | *(volatile uint8_t *)(b + 0x2d5ff67)) return 0;   // 游戏停着（暂停菜单、大秘境选层页这类借壳的面板开着——手势层的面板名单认不到后者）：HUD 不认，免得点技能格变成在那一页上按 A | the game is stopped (pause menu, or a panel borrowing another shell such as the Greater Rift level-selection page is open - the gesture layer's panel list does not recognise the latter): the HUD is not recognised, so a click on a skill slot does not turn into pressing A on that page
+    if (*(volatile uint8_t *)(b + 0x2d5ff51) | *(volatile uint8_t *)(b + 0x2d5ff67)) return 0;   // 游戏停着（暂停菜单、借壳的面板开着——手势层的面板名单认不到后者；原先的大秘境选层页就是一例）：HUD 不认，免得点技能格变成在那一页上按 A | the game is stopped (pause menu, or a panel borrowing another shell, as the former Greater Rift level-selection page did is open - the gesture layer's panel list does not recognise the latter): the HUD is not recognised, so a click on a skill slot does not turn into pressing A on that page
     uint64_t hud = pm_find(root, "HUDPanel", 5); if (!hud || !*(uint8_t *)(uintptr_t)(hud + 0x50) || !*(uint8_t *)(uintptr_t)(hud + 0x51)) return 0;   // pm_find 的第三个参数是起始深度：只看根的直接子面板 | the third argument of pm_find is the starting depth: look only at the direct child panels of the root
     uint64_t xy = (uint64_t)(uint32_t)(nx * W) | ((uint64_t)(uint32_t)(ny * H) << 32), ch = rd8(hud + 0x58), n = rd8(hud + 0x60);
     static const struct { const char *nm; uint64_t btn; } km[] = { { "SkillButton1", DM_BTN_A }, { "SkillButton2", DM_BTN_B }, { "SkillButton3", DM_BTN_Y }, { "SkillButton4", DM_BTN_X }, { "SkillButton5", DM_BTN_R }, { "SkillButton6", DM_BTN_ZR },
@@ -510,7 +510,7 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
     if (atomic_load(&g_want) >= 0 && atomic_load(&g_want) != g_cur) atomic_store(&g_freeze, 1);
     LOG("手柄 / 触屏布局：切到%s版——完成（%llu 帧，两次重建里 %d 次靠超时）", g_cur ? "原版手柄" : "触屏", (unsigned long long)(frame - g_tx_from), g_tx.timeouts);
     DM_EV("padmode", "mode:s glyph:s frames:u timeouts:d", g_cur ? "controller" : "touch", k_glyph_name[g_glyph], (unsigned long long)(frame - g_tx_from), g_tx.timeouts);   // 场景据此等切换做完（控制口 inputmode） | scenarios wait for the switch to finish on this (the control port's inputmode)
-    if (g_cur) {   // 切到手柄版时记一行六个技能格各绑的技能号（第二组 = 按着 ZL）：面 → 格表 main+0x2d13cbc（6 × {逻辑键, 普通格, 替代格}）、格 → 技能表 main+0x2d5f0c0（每格 28 字节，武器第二组在 +16 格），读法同 dm_freetp.c | On switching to the controller layout, log one line with the skill number bound to each of the six skill slots (second set = ZL held): face button -> slot table main+0x2d13cbc (6 x {logical key, normal slot, alternate slot}), slot -> skill table main+0x2d5f0c0 (28 bytes per slot, the second weapon set is at +16 slots), read the same way as dm_freetp.c
+    if (g_cur) {   // 切到手柄版时记一行六个技能格各绑的技能号（第二组 = 按着 ZL）：面 → 格表 main+0x2d13cbc（6 × {逻辑键, 普通格, 替代格}）、格 → 技能表 main+0x2d5f0c0（每格 28 字节，武器第二组在 +16 格） | On switching to the controller layout, log one line with the skill number bound to each of the six skill slots (second set = ZL held): face button -> slot table main+0x2d13cbc (6 x {logical key, normal slot, alternate slot}), slot -> skill table main+0x2d5f0c0 (28 bytes per slot, the second weapon set is at +16 slots)
         int dm_swapskill_wset(void); int bank = dm_swapskill_wset() ? 16 : 0; char o[240]; size_t L = 0; o[0] = 0;
         static const struct { uint32_t lg; const char *nm; } face[6] = { { 0x2000, "A" }, { 0x1000, "B" }, { 0x8000, "X" }, { 0x4000, "Y" }, { 0x200, "R" }, { 0x800, "ZR" } };
         for (int f = 0; f < 6; f++) for (int i = 0; i < 6; i++) { uint32_t lg, sl[2], id[2] = { 0xffffffffu, 0xffffffffu }; memcpy(&lg, b + 0x2d13cbc + 12 * i, 4); memcpy(sl, b + 0x2d13cbc + 12 * i + 4, 8); if (lg != face[f].lg) continue;

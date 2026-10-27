@@ -1258,8 +1258,8 @@ int dm_request_save(void) {
     { void dm_engine_save_requested(void); dm_engine_save_requested(); }   // 存盘卡住的计时从这里起（dm_engine.c） | the stuck-save timer starts here (dm_engine.c)
     return 1;
 }
-// 游戏是不是停着（暂停菜单 / 大秘境选层页这类开着：同上两个界面状态字节）。不在局内返回 0
-// Whether the game is stopped (pause menu / Greater Rift level-selection page and the like open: the same two UI state bytes as above). Returns 0 when not in a game
+// 游戏是不是停着（暂停菜单这类开着：同上两个界面状态字节）。不在局内返回 0
+// Whether the game is stopped (pause menu and the like open: the same two UI state bytes as above). Returns 0 when not in a game
 int dm_game_paused(void) { uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b && in_game() && (*(volatile uint8_t *)(b + 0x2d5ff51) | *(volatile uint8_t *)(b + 0x2d5ff67)); }
 // 测试用：按 id 取服务端物品单位（物品表 G+0x2e30，128 桶、next=+0x158）；不在局内 / 没找到返回 0
 // For tests: get a server item unit by id (item table G+0x2e30, 128 buckets, next=+0x158); returns 0 when not in a run / not found
@@ -1758,11 +1758,11 @@ static void save_unpause_end(void) {
     atomic_store(&g_bgsave, 0); atomic_store(&g_dm_frozen, 0);
     LOG("停着存盘：恢复原版暂停、解冻（怪 / 佣兵 %d 个，快照 %08x，玩家生命 %d）", nm, h, hp);
 }
-// 前端要进程马上可能没了之前（iOS 进后台、Mac 退出）请游戏存一次盘并等提交：游戏停着（暂停菜单 / 大秘境面板开着）就先冻住世界、
+// 前端要进程马上可能没了之前（iOS 进后台、Mac 退出）请游戏存一次盘并等提交：游戏停着（暂停菜单这类开着）就先冻住世界、
 // 临时放开原版暂停让拍走起来执行这次存盘，等完写回暂停、解冻——玩家回来时世界与暂停都和离开前一样。等到「出现过存档提交、之后 0.2 秒没有新的提交」
 // （角色与共享箱是两个容器，可能分两次），最多 max_s 秒；还没进局（读取画面）就每 20 ms 再试，进了局再请。返回 1 = 请到了存盘。
 // *commits = 期间存档提交次数，*froze = 是否冻结放开过暂停，*ms = 用时。在前端主线程调（游戏拍在客体线程照跑）
-// Before the process may go away at any moment (iOS going to the background, quitting on Mac), the front end asks the game to save once and waits for the commit. If the game is stopped (pause menu / Greater Rift panel open), it first freezes the world,
+// Before the process may go away at any moment (iOS going to the background, quitting on Mac), the front end asks the game to save once and waits for the commit. If the game is stopped (pause menu or the like open), it first freezes the world,
 // temporarily releases the original pause so ticks run and perform this save, and after waiting writes the pause back and unfreezes, so when the player returns both the world and the pause are as they left them. It waits until "a save commit has happened and no new commit for 0.2 s"
 // (character and shared stash are two containers and may commit separately), at most max_s seconds; before entering a game (loading screen) it retries every 20 ms and asks once in game. Returns 1 = the save was requested.
 // *commits = number of save commits in the meantime, *froze = whether it froze and released the pause, *ms = time taken. Called on the front end's main thread (game ticks keep running on the guest thread)

@@ -2688,14 +2688,14 @@ static void ui_panel_heal_open(uint64_t ch, uint64_t n) {
         ui_panel_note("OpenPanel", nm); uimsg_emit("PanelManager", "OpenPanel", nm); keep[k] = 0; }
     for (int i = 0; i < 8; i++) if (!keep[i]) seen[i].name[0] = 0;   // 不再可见 / 已记上 / 已补发：计数从头来 | No longer visible / already recorded / already re-sent: the count starts over
 }
-// 编年史的子页（三个原版列表页、我们的积分牌 / 仓库页）：切页签时游戏发 ChroniclePanelMessage:ToggleChildPanel:<页> 并替它发 OpenPanel <页>，关编年史时却只关
-// ChroniclePanel 自己、不替子页发关——子页在界面消息上一直「开着」，前端 1.5 秒里仍当面板态，最后靠安全阀报红清掉（手柄模式在积分牌页按 B 关编年史实跑）。
+// 编年史的子页（三个原版列表页、我们的仓库页）：切页签时游戏发 ChroniclePanelMessage:ToggleChildPanel:<页> 并替它发 OpenPanel <页>，关编年史时却只关
+// ChroniclePanel 自己、不替子页发关——子页在界面消息上一直「开着」，前端 1.5 秒里仍当面板态，最后靠安全阀报红清掉（实跑发现于手柄模式在当时的积分牌页按 B 关编年史）。
 // 记下见过的子页名；编年史关了，下一帧替还开着的子页补发 ClosePanel（在消息回调之外发）。
-// Child pages of the Chronicle (the three original list pages, our kill board / vault pages): when switching tabs the game sends
+// Child pages of the Chronicle (the three original list pages, our vault page): when switching tabs the game sends
 // ChroniclePanelMessage:ToggleChildPanel:<page> and sends OpenPanel <page> on its behalf, but when the Chronicle is closed it only closes
 // ChroniclePanel itself and sends no close for the child page -- in terms of UI messages the child page stays "open", the front end still
-// treats it as panel state for 1.5 seconds, and in the end the safety valve reports a failure and clears it (real run: in controller mode, pressing B
-// on the kill board page to close the Chronicle).
+// treats it as panel state for 1.5 seconds, and in the end the safety valve reports a failure and clears it (found in a real run: in controller mode, pressing B
+// on the former kill board page to close the Chronicle).
 // Record the child page names seen; once the Chronicle is closed, send the missing ClosePanel on the next frame for child pages still open
 // (sent outside the message callback).
 static char g_chr_child[8][48]; static _Atomic int g_chr_closed;

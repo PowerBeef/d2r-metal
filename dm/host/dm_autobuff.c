@@ -82,8 +82,8 @@ static int swap_gives(uint8_t *b, uint64_t pl, int skill) {
         it = *(uint64_t *)(d + 0xb0); }
     return 0;
 }
-// 周围 r 格内有没有活着的敌对怪（客户端单位表；敌对 = 原版分类 main+0x2f7b7c(0x165, 玩家, 单位) == 1，同秘境认击杀的读法）。返回最近那只的距离，没有 = -1
-// Is there a living hostile monster within r tiles (client unit table; hostile = the game's classification main+0x2f7b7c(0x165, player, unit) == 1, the same reading Greater Rifts use to credit kills). Returns the distance to the nearest one, none = -1
+// 周围 r 格内有没有活着的敌对怪（客户端单位表；敌对 = 原版分类 main+0x2f7b7c(0x165, 玩家, 单位) == 1）。返回最近那只的距离，没有 = -1
+// Is there a living hostile monster within r tiles (client unit table; hostile = the game's classification main+0x2f7b7c(0x165, player, unit) == 1). Returns the distance to the nearest one, none = -1
 static int enemy_near(uint8_t *b, uint64_t pl, int r) {
     uint64_t pp = *(uint64_t *)(pl + 0x38); if (!pp) return 0; int px = *(uint16_t *)(pp + 2), py = *(uint16_t *)(pp + 6), best = -1;
     for (int k = 0; k < 128; k++) for (uint64_t u = *(uint64_t *)(b + 0x2d603a0 + 1 * 0x400 + k * 8); u; u = *(uint64_t *)(u + 0x158)) {

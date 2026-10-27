@@ -122,9 +122,9 @@ static void layout_game(void) {
     LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
 }
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
-// 暂停菜单 / 大秘境面板开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
+// 暂停菜单这类开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
 // Quit (close window / Cmd-Q / menu): if a game is running, first ask the game to do one of its own saves and wait for the save commit (same as the iOS shell going to the background), at most 3 s, then shut down in order.
-// When the pause menu / Greater Rift panel is open the game does not tick: freeze the world and temporarily release the pause for this one save (diag.c dm_save_wait, the same function as iOS going to the background); on the loading screen wait until in game before asking. If there is still no commit after 3 s, log "quit without saving" as is
+// When the pause menu or the like is open the game does not tick: freeze the world and temporarily release the pause for this one save (diag.c dm_save_wait, the same function as iOS going to the background); on the loading screen wait until in game before asking. If there is still no commit after 3 s, log "quit without saving" as is
 // 等的那几步（iCloud 启动同步最多 20 秒、存盘最多 3.5 秒、iCloud 上传最多 10 秒、收尾最多 1.5 秒）不在主线程上：原先整段堵着主线程，
 // 慢的时候窗口卡住、出彩球，系统也当它没响应。现在主线程只做非它不可的几步（关输入框、读窗口状态、最小化着就先恢复），其余交给后台线程，结束时 _exit。
 // 存盘的保证不变：游戏自己的存盘本来就在游戏线程上做、出图走显示节拍线程，都不靠主线程；退出一开始就记下 g_quitting，之后失焦不再告诉游戏（原先主线程堵着，失焦也到不了游戏），

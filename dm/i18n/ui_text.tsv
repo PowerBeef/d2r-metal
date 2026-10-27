@@ -69,7 +69,7 @@ dmTabGameSettings	游戏设定	Settings	Ajustes	Config.	Опции	설정	触屏
 dmTabCustom	自定义	Custom	Extras		Своё	사용자	选项页第四个页签「自定义」（touch_layout.py 页签条）：原版 KeyBindingTypeCustom 的西语 Personalizar 放不进页签，换我们的短词；中英与原版同字
 dmTabExtras	附加	Extras	Extras		Доп.	부가	选项页第五个页签「附加」（touch_layout.py 页签条，Mac 与 iOS）：打开同一张借来的视频页，宿主只显示「附加」一节（dm_custom.c）；页签宽 266，各语言取短词
 dmExtras	附加功能	Extras	Extras		Дополнительно	부가 기능	「附加」页签里那一节的标题（touch_layout.py TouchExtrasHdr）：本移植加的功能（语言、自动喝药、掉落光柱……）
-dmChronRunewords	符文之语	Runewords	P. rúnicas		Руны	룬워드	编年史第三个页签（touch_layout.py _chronicle_killboard）：原版 Runewords 的西语 Palabras rúnicas 在 320 宽页签里被截断，换我们的短写；中英与原版同字
+dmChronRunewords	符文之语	Runewords	P. rúnicas		Руны	룬워드	编年史第三个页签（touch_layout.py _chronicle_tabs）：原版 Runewords 的西语 Palabras rúnicas 在 320 宽页签里被截断，换我们的短写；中英与原版同字
 dmVaultPart0	头盔	Helms	Yelmos		Шлемы	투구	编年史暗金页部位页签（wide_stash.py）
 dmVaultPart1	盔甲	Armor	Armadura		Броня	갑옷	编年史暗金页部位页签（wide_stash.py）
 dmVaultPart2	盾牌与手套	Shields\n& Gloves	Escudos\ny guantes		Щиты\nи перчатки	방패와\n장갑	编年史暗金页部位页签（wide_stash.py）

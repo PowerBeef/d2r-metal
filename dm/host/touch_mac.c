@@ -20,9 +20,9 @@ uint64_t guest_ns(void);
 uint32_t dm_cur_tick(void);
 int dm_loadscreen_down(void);
 int dm_game_paused(void);
-// 拍号：脚本回放按服务端拍（确定性）；真鼠标（App 形态）按墙钟折成每秒 30 拍——暂停菜单 / 设置页 / 大秘境面板开着时游戏停拍，
+// 拍号：脚本回放按服务端拍（确定性）；真鼠标（App 形态）按墙钟折成每秒 30 拍——暂停菜单 / 设置页开着时游戏停拍，
 // 按服务端拍的话鼠标事件排在队里不处理，这些页一下都点不进去
-// Tick number: script playback goes by server ticks (deterministic); a real mouse (App form) converts wall clock into 30 ticks per second - the game stops ticking while the pause menu / settings page / Greater Rift panel is open,
+// Tick number: script playback goes by server ticks (deterministic); a real mouse (App form) converts wall clock into 30 ticks per second - the game stops ticking while the pause menu / settings page is open,
 // and with server ticks the mouse events would sit in the queue unprocessed, so nothing on those pages could be clicked
 static int g_live_on;
 int dm_touch_host_is_live(void) { return g_live_on; }   // 真鼠标模式（Mac App）：dm_cursor.c 据此在手柄版界面下也跑触屏的物品手势泵 | real-mouse mode (Mac App): based on this dm_cursor.c runs the touch layout's item gesture pumps under the gamepad interface as well
@@ -92,11 +92,11 @@ static void touch_uimsg(const char *cat, const char *act, const char *arg) {
     dm_tc_set_panel_state(dm_ui_panel_state());
     int navigation = dm_tc_navigation(&scene, cat, act, arg);
     // 面板模式与 iOS 同一个量：面板开合栈（宿主 dm_hud_stack_msg）与算式（dm_tc_panel_mode）两端共用。栈里还开着非常驻面板就算面板态——
-    // 大秘境确认页这类借壳面板不在手势层的名单里，原先 Mac 上它开着时界面不居中（iPad 居中）。
+    // 借壳的面板不在手势层的名单里（原先的大秘境确认页就是一例），Mac 上它开着时界面不居中（iPad 居中）。
     // 用途只有一个：真全屏（16:10 的 Mac，front_mac.m）下面板态界面整块移到正中、关掉回落贴底（iPad 的做法）；没开真全屏时宿主不动。
     // 手势层自己的导航态（下面 dm_tc_set_navigation_mode）仍按 navigation，鼠标的点击分流不变
     // Panel mode is the same quantity as on iOS: the panel stack (host dm_hud_stack_msg) and the formula (dm_tc_panel_mode) are shared by both ends. While a non-resident panel is still open in the stack, it is panel mode.
-    // Borrowed panels such as the Greater Rift confirmation page are not on the gesture layer's list, so before, with one of them open, the UI was not centered on Mac (it was on iPad).
+    // Borrowed panels are not on the gesture layer's list (the former Greater Rift confirmation page was one), so with one of them open, the UI was not centered on Mac (it was on iPad).
     // It has only one use: in true fullscreen (16:10 Macs, front_mac.m), panel-mode UI moves as a whole to the center and drops back to the bottom when closed (the iPad behavior); without true fullscreen the host does nothing.
     // The gesture layer's own navigation state (dm_tc_set_navigation_mode below) still follows navigation, and mouse click routing is unchanged
     { int dm_hud_stack_msg(const char *, const char *); static int blocked;
@@ -250,9 +250,9 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
               else if (hk == 1) { eat = 1; hold = 1; g_live_btn = hb; g_live_btn_until = touch_cur_tick() + 30 * 600; }
               else if (hk == 2) { eat = 1; hold = 0; }
               // 右上角小地图（同 iOS 壳）：点它顶上区域名那一条（矩形高的 1/4）= 切到全屏地图；全屏地图开着时点 HUD 以外的任何地方 = 回到小地图。只在没有面板开着时认：
-              // 手势层按名单认面板，大秘境选层页这类借壳的面板不在名单里（它右上角的关闭 X 正落在地名条的范围内，点 X 变成了切地图），所以再加两条——游戏没停着、这一点不在任何面板里
+              // 手势层按名单认面板，借壳的面板不在名单里（原先的大秘境选层页就是一例：它右上角的关闭 X 正落在地名条的范围内，点 X 变成了切地图），所以再加两条——游戏没停着、这一点不在任何面板里
               // Top-right minimap (same as the iOS shell): clicking the area-name strip at its top (1/4 of the rectangle's height) = switch to the full-screen map; with the full-screen map open, clicking anywhere outside the HUD = back to the minimap. Recognised only when no panel is open:
-              // the gesture layer recognises panels by a list, and panels that borrow another shell, such as the Greater Rift level-selection page, are not on it (its close X at the top right falls exactly within the area-name strip, so clicking X turned into switching the map), hence two more conditions - the game is not stopped, and this point is not inside any panel
+              // the gesture layer recognises panels by a list, and panels that borrow another shell are not on it (the former Greater Rift level-selection page was one: its close X at the top right falls exactly within the area-name strip, so clicking X turned into switching the map), hence two more conditions - the game is not stopped, and this point is not inside any panel
               else if (op == 0 && in && !g_touch.state.navigation_mode && !dm_game_paused() && dm_ui_item_at_now(px, py) != 0) { int dm_ui_minimap_rect(float r[4]), dm_ui_map_is_full(void); void dm_ui_map_full(int on); float mr[4];
                   if (dm_ui_map_is_full()) { dm_ui_map_full(0); eat = 1; hold = 0; fprintf(stderr, "[dm] 鼠标：全屏地图开着，点一下 → 回到小地图\n"); }
                   else if (dm_ui_minimap_rect(mr)) { float band = (mr[3] - mr[1]) / 4; if (band < 0.042f) band = 0.042f; if (band > (mr[3] - mr[1]) * 0.4f) band = (mr[3] - mr[1]) * 0.4f;
@@ -387,8 +387,8 @@ apply_input:
             if (g_touch.state.item_tap_seq != its) dm_ui_item_tap();
             if (g_touch.state.use_seq != us) dm_ui_use_item();
             if (g_touch.state.world_tap_seq != wt) { unsigned dm_world_tap(float, float); float wx = g_touch.state.world_tap_x / 2868, wy = g_touch.state.world_tap_y / 1320;
-                // 真鼠标：手势层认为没有面板开着（它按名单认面板，大秘境选层页这类借壳的面板不在名单里），这一下却落在某个面板里 → 发界面点击，不当点世界
-                // Real mouse: the gesture layer believes no panel is open (it recognises panels by a list, and panels that borrow another shell, such as the Greater Rift level-selection page, are not on it), yet this click lands inside some panel -> send a UI click instead of a world click
+                // 真鼠标：手势层认为没有面板开着（它按名单认面板，借壳的面板不在名单里），这一下却落在某个面板里 → 发界面点击，不当点世界
+                // Real mouse: the gesture layer believes no panel is open (it recognises panels by a list, and panels that borrow another shell are not on it), yet this click lands inside some panel -> send a UI click instead of a world click
                 if (g_live_on && dm_ui_item_at_now(wx, wy) == 0) { dm_ui_touch(0, wx, wy); dm_ui_touch(2, wx, wy); }
                 else if (g_live_on) { unsigned dm_world_click(float, float); float sy = ui_y_to_screen(wy); g_lm.tap_seq = dm_world_click(wx, sy); g_lm.tap_x = wx; g_lm.tap_y = sy; } else dm_world_tap(wx, ui_y_to_screen(wy)); }   // 真鼠标：记下这一笔，答案是「没有目标」就改成走到那一点 | real mouse: remember this click, and if the answer is "no target" turn it into walking to that point
             if (g_touch.state.mouse_click_seq != mc) { float nx = g_touch.state.mouse_click_x / 2868, ny = g_touch.state.mouse_click_y / 1320; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
