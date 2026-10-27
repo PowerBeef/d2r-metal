@@ -19,6 +19,8 @@ Internally the game is split into two halves, client and server: the client turn
   | 0x6f | 5 | Progress: the progress value reported by the client is written to +0x6c0 of the client structure (e.g. "new area finished loading" after a teleport) | Injected from the file |
   | 0x6a / 0x6b / 0x6e | | Discarded by default | — |
 
+Every command packet's meaning and exact length, in our own words, is in [c2s_opcodes.tsv](c2s_opcodes.tsv) (read by `dm/tools/c2s.py`): the dispatcher checks no length; each handler checks its own and refuses (or stops the game on) a mismatch. Movement (0x01–0x04) carries a path in this build: 210 bytes, 214 with a target unit.
+
 ## One line of JSON per packet (in call order)
 
 ```

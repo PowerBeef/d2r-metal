@@ -19,6 +19,8 @@ English: [command_packet_format.md](command_packet_format.md)
   | 0x6f | 5 | 进度：客户端上报的进度值写进客户端结构 +0x6c0（如传送后「新区域加载完成」） | 按文件注入 |
   | 0x6a / 0x6b / 0x6e | | 默认丢弃 | — |
 
+每种命令包的意思与确切长度（我们自己的话）见 [c2s_opcodes.tsv](c2s_opcodes.tsv)（`dm/tools/c2s.py` 读它）：分派函数不查长度，每个处理函数自己查，对不上就拒收（或让游戏停下）。这一版的移动包（0x01–0x04）带路径：210 字节，带目标单位的 214 字节。
+
 ## 每条一行 JSON（按调用先后）
 
 ```

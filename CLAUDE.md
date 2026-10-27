@@ -215,6 +215,7 @@ python3 dm/tools/scenario.py run … --metal-validation api|lint|shader|all     
 python3 dm/tools/explore.py run --seed N --episodes K [--dmhost …]                  # random play; a red run is shrunk to minimal_<k>.scn
 python3 dm/tools/replay.py record <scn> && python3 dm/tools/replay.py check <dir> --dmhost A --dmhost B   # same input on two builds → first divergent tick
 python3 dm/tools/tickdiff.py a/ticks.jsonl b/ticks.jsonl                             # first divergent tick between two DM_TICKS records
+python3 dm/tools/c2s.py summary|near <recording> [tick]                              # recorded client packets labelled (dm/verify/c2s_opcodes.tsv), lengths checked
 DM_BREAK_AT_TICK=<tick> ./dmhost … ; lldb -p <pid>; (lldb) command script import dm/tools/lldb/dm.py   # dm modules|where|bt|break|tick|ui|focus|saves|unit <id>
 ```
 

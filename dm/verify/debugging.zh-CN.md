@@ -181,9 +181,11 @@ python3 dm/tools/explore.py gen --seed 21 --steps 40      # 打出一局的操�
 python3 dm/tools/replay.py record dm/verify/bench/town_loop.scn                  # → $DM_ROOT/run/replay/town_loop_4242/
 python3 dm/tools/replay.py check ~/dm-work/run/replay/town_loop_4242 --dmhost dm/host/dmhost --dmhost dm/host/dmhost_asan
 python3 dm/tools/tickdiff.py a/ticks.jsonl b/ticks.jsonl                          # 任意两份 DM_TICKS 记录
+python3 dm/tools/c2s.py summary ~/dm-work/run/replay/town_loop_4242               # 按种类数包、带标签、核对长度
+python3 dm/tools/c2s.py near ~/dm-work/run/replay/town_loop_4242 300 --span 5     # 拍 295–300 里的包
 ```
 
-`tickdiff.py` 报出两份记录第一个不同的拍，以及哪几格状态不同（玩家、怪物、物件、飞行物、物品、种子）。两边都带逐单位明细时，还说出是哪几个单位、哪些字段：`player id 1 cls 1: mode 3→5, yf 65437→32768`。`host_savecmp.sh` 原先调用的比对脚本不在仓库里，现在改用它。
+`tickdiff.py` 报出两份记录第一个不同的拍，以及哪几格状态不同（玩家、怪物、物件、飞行物、物品、种子）。两边都带逐单位明细时，还说出是哪几个单位、哪些字段：`player id 1 cls 1: mode 3→5, yf 65437→32768`。`host_savecmp.sh` 原先调用的比对脚本不在仓库里，现在改用它。`replay.py check` 找到不同时，还会列出它之前五拍里录到的包，标签取自 `dm/verify/c2s_opcodes.tsv`（写「run to a map location」而不是 `0x03`）。`c2s.py summary` 按种类给一份录制里的包计数，定长包长度不对就标红：游戏里每个处理函数都自己校验确切长度，表里记的就是这些长度。
 
 确定性需要什么、工具怎么处理：
 

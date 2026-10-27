@@ -26,6 +26,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import c2s        # noqa: E402  # pyright: ignore[reportMissingImports]
 import scenario   # noqa: E402  # pyright: ignore[reportMissingImports]
 import tickdiff   # noqa: E402  # pyright: ignore[reportMissingImports]
 
@@ -113,6 +114,8 @@ def main(argv):
             print(f"  {name}: " + (f"{d['common']} 拍逐拍相同 | ticks identical" if ok else
                                     f"第一个不同的拍 | first divergent tick {f.get('tick')}：{', '.join(f.get('slots') or []) or '-'}" if f else f"只比到 {d['common']} 拍 | only {d['common']} ticks compared"))
             for line in (f.get('units') or [])[:10]: print(f'    {line}')
+            if f.get('tick') is not None:   # 那几拍里录到的命令包，带人话标签（c2s.py） | the command packets recorded in those ticks, with plain-language labels (c2s.py)
+                for line in c2s.near(c2s.load(rec), f['tick'], 5): print(f'    包 | packet {line}')
             results.append(dict(host=name, verdict='OK' if ok else 'RED', common=d['common'], first=d['first']))
         print(f"REPLAY {'RED' if bad else 'OK'} {len(hosts) - bad}/{len(hosts)} 个宿主与录制逐拍相同 | hosts match the recording tick by tick")
         print('RESULT ' + json.dumps(dict(name='replay-check', verdict='RED' if bad else 'OK', recording=rec, hosts=results), ensure_ascii=False))

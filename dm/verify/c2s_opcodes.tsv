@@ -1,0 +1,111 @@
+# 客户端发给服务端的命令包：包号 → 我们自己的话写的标签与长度（处理函数实际校验的；var = 变长，? = 未知）。c2s.py 读它。
+# 命令包 cmd 走 main+0x6e5b40 的处理表（main+0x20a4190），每个处理函数自己校验长度；系统类消息 sys 走 main+0x6310b0（见 command_packet_format.md）。
+# Client-to-server command packets: number -> label in our own words and length (as the handler checks it; var = variable, ? = unknown). Read by c2s.py.
+# Command packets (cmd) go through the handler table of main+0x6e5b40 (main+0x20a4190), each handler checking its own length; system-class messages (sys) go through main+0x6310b0 (see command_packet_format.md).
+class	opcode	label	length
+cmd	0x01	walk to a map location	210
+cmd	0x02	walk to a unit	214
+cmd	0x03	run to a map location	210
+cmd	0x04	run to a unit	214
+cmd	0x05	use left skill at a location	5
+cmd	0x06	use left skill on a unit	9
+cmd	0x07	left skill on a unit, standing still	9
+cmd	0x08	left skill at a location, with path	210
+cmd	0x09	left skill on a unit, with path	214
+cmd	0x0a	left skill on unit, path, standing still	214
+cmd	0x0b	basic attack at a location	5
+cmd	0x0c	use right skill at a location	5
+cmd	0x0d	use right skill on a unit	9
+cmd	0x0e	right skill on a unit, standing still	9
+cmd	0x0f	right skill at a location, with path	210
+cmd	0x10	right skill on a unit, with path	214
+cmd	0x11	right skill on unit, path, standing still	214
+cmd	0x12	basic attack on a unit	9
+cmd	0x13	take items from a player corpse	9
+cmd	0x14	swap cursor item with shared stash item	21
+cmd	0x16	pick up an item from the ground	17
+cmd	0x17	drop the cursor item on the ground	5
+cmd	0x18	put cursor item into a storage grid	17
+cmd	0x19	lift a stored item onto the cursor	17
+cmd	0x1a	equip the cursor item to a body slot	9
+cmd	0x1b	equip in hand, other hand item to cursor	13
+cmd	0x1c	take a worn item onto the cursor	9
+cmd	0x1d	swap cursor item with a worn item	13
+cmd	0x1e	equip two-hander, freeing both hands	21
+cmd	0x1f	swap cursor item with a stored item	21
+cmd	0x20	transmute the cube contents	var
+cmd	0x21	merge the cursor stack into another stack	21
+cmd	0x22	re-lay belt or cube contents after a swap	var
+cmd	0x23	put the cursor item in a belt slot	9
+cmd	0x24	lift a belt item, column shifts down	24
+cmd	0x25	swap cursor item with a belt item	13
+cmd	0x26	use an item (drink, read, open)	36
+cmd	0x27	move gold to or from the stash	17
+cmd	0x28	insert the cursor item into a socket	21
+cmd	0x29	put a scroll into its tome	21
+cmd	0x2a	drop the cursor item into the cube	21
+cmd	0x2b	update a trade offer to another player	var
+cmd	0x2c	complete an item trade between players	var
+cmd	0x2d	basic attack on a unit, standing still	9
+cmd	0x2e	NPC quest reward applied to an item	21
+cmd	0x2f	start talking to an NPC	5
+cmd	0x30	stop talking to an NPC	5
+cmd	0x31	choose an NPC dialog or quest topic	8
+cmd	0x32	buy an item from a vendor	24
+cmd	0x33	sell an item to a vendor	24
+cmd	0x34	identify all items through an NPC	21
+cmd	0x35	repair items at a vendor	16
+cmd	0x36	hire a mercenary	17
+cmd	0x37	travel to another act through an NPC	9
+cmd	0x38	open an NPC trade or gamble menu	9
+cmd	0x39	reset stat and skill points	5
+cmd	0x3a	spend stat points	5
+cmd	0x3b	spend a skill point	5
+cmd	0x3c	select the left or right skill	9
+cmd	0x3d	play a character voice line	3
+cmd	0x3e	ask for a quest status refresh	1
+cmd	0x3f	resurrect after dying	1
+cmd	0x40	step through a level exit	5
+cmd	0x41	operate an object (chest, door, shrine)	13
+cmd	0x42	move along a stick direction	7
+cmd	0x43	ask the server to resend a unit position	9
+cmd	0x44	clear an NPC's new-message flag	5
+cmd	0x45	put cursor item into a shared stash page	13
+cmd	0x46	lift a shared stash item onto the cursor	13
+cmd	0x47	drop gold on the ground	9
+cmd	0x48	assign a skill to a hotkey	9
+cmd	0x49	switch from walking to running	1
+cmd	0x4a	switch from running to walking	1
+cmd	0x4b	travel by waypoint	5
+cmd	0x4c	acknowledge a completed quest	3
+cmd	0x4d	let an NPC resume its routine	5
+cmd	0x4e	auto-sort a storage page	var
+cmd	0x4f	party action toward another player	6
+cmd	0x50	swap weapon sets	30
+cmd	0x51	equip or swap a mercenary item from cursor	17
+cmd	0x52	revive the mercenary at an NPC	13
+cmd	0x53	move a stored item into the belt	21
+cmd	0x54	move a stored item to another page	21
+cmd	0x55	move a stored item to a shared page	29
+cmd	0x56	equip a stored item into an empty slot	21
+cmd	0x57	equip stored item, other hand item stored	29
+cmd	0x58	unequip a worn item into storage	21
+cmd	0x59	swap a stored item with a worn one	29
+cmd	0x5a	equip stored two-hander, both hands stored	37
+cmd	0x5b	equip the mercenary from a storage cell	25
+cmd	0x5c	drop a stored item on the ground	17
+cmd	0x5d	move several stored potions into the belt	98
+cmd	0x5e	move a belt item into storage	33
+cmd	0x5f	pick a ground item straight into the cube	25
+cmd	0x60	equip stored belt, re-laying its potions	var
+cmd	0x61	store an opaque client data block	var
+cmd	0x62	ignored (handler does nothing)	?
+cmd	0x63	move an item to the stash	25
+cmd	0x65	toggle a collection completion reward effect	13
+sys	0x67	create a game	401
+sys	0x68	ask to join a game	85
+sys	0x69	leave the game	1
+sys	0x6c	character save data chunk	var
+sys	0x6d	heartbeat	13
+sys	0x6f	loading progress report	5
+sys	0x70	drop the client from its game	?
