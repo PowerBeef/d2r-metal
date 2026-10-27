@@ -12,9 +12,14 @@
 #include "dm_vkbd_ui.h"
 #include "../../host/dm_rift.h"
 
-static UIFont *d2font(CGFloat size) {   // 原版 BlizzardGlobal（中文、数字都是它；dm_vkbd_ui.m 从资源包读）；按字号缓存 | The original game's BlizzardGlobal (used for both Chinese text and digits; read from the asset pack by dm_vkbd_ui.m); cached per size
+// 原版 BlizzardGlobal（中文、数字都是它；dm_vkbd_ui.m 从资源包读）；按字号缓存。
+// 第一次要字时字体还没读：在后台线程上读（扫资源包清单 + 解压字体，不放在主线程这一帧里），读好之前先用系统粗体、不进缓存，读好后的那一帧起换成原版字
+// The original game's BlizzardGlobal (used for both Chinese text and digits; read from the asset pack by dm_vkbd_ui.m); cached per size.
+// The first time a font is wanted it has not been read yet: it is read on a background thread (scanning the asset pack manifest + decompressing the font, kept out of this main-thread frame); until then the system bold font is used and not cached, and from the frame after it is ready the original font is used
+static UIFont *d2font(CGFloat size) {
     static NSMutableDictionary<NSNumber *, UIFont *> *cache; if (!cache) cache = [NSMutableDictionary dictionary];
     UIFont *f = cache[@(size)]; if (f) return f;
+    if (!dm_game_font_ready()) { dm_game_font_preload(); return [UIFont boldSystemFontOfSize:size]; }
     CTFontRef ct = dm_game_font(size); f = ct ? (__bridge_transfer UIFont *)ct : [UIFont boldSystemFontOfSize:size];   // CTFont 与 UIFont 免费桥接 | CTFont is toll-free bridged with UIFont
     cache[@(size)] = f; return f;
 }

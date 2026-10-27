@@ -18,6 +18,8 @@ targets:
     sources:
       - Sources
       - Assets.xcassets               # App 图标（1024²、不透明；TestFlight 上传必需） | App icon (1024², opaque; required for TestFlight upload)
+      - path: PrivacyInfo.xcprivacy   # 隐私清单（须说明原因的接口；TestFlight / App Store 收包时核，ITMS-91053） | Privacy manifest (required-reason APIs; checked on TestFlight / App Store upload, ITMS-91053)
+        buildPhase: resources
       - path: Gen/assets/NativeHUD/v4/hud_v4_ui     # 底部 UI v4 的 UIKit 素材（run.sh build 由 tools/gen_hud_v4.py 从游戏文件生成：几何、字形、难度数字、选择条格子） | UIKit art for bottom UI v4 (generated from game files by tools/gen_hud_v4.py during run.sh build: geometry, glyphs, difficulty digits, selection bar cells)
         type: folder
         buildPhase: resources

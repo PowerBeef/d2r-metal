@@ -25,6 +25,7 @@ static void vkbd_where(dm_vkbd_host *h); static void alert_handoff_pad(void);   
 #include "dm_actions.h"
 #include <stdatomic.h>
 #include "dm_touch_game_state.h"
+#include "dm_awake.h"
 #include "../../host/dm_cursor.h"
 #include "../../host/dm_hud.h"
 #include "../../host/dm_world.h"
@@ -1299,6 +1300,20 @@ static int ctl_app(const char *w) {
     if (!strcmp(w, "terminate")) { dispatch_async(mq, ^{ front_ios_final_save(); dm_host_shutdown("控制口 terminate"); }); return 0; }
     return -1;
 }
+// 失活（控制中心 / 通知中心拉下来、来电横幅、多任务界面）到再激活之间停掉两条显示节拍：出图节拍（nvn_mtl.m mtl_link_pause）和触屏控件那条（DmRateHint，每拍重画控件与秘境任务栏）。
+// 原先失活时照常每拍出图、重画控件，画面被盖着也一直在耗电。停了以后游戏线程照走（失活存盘要它走拍）：取图等不到节拍时按自己的超时（约两拍）走、出图丢掉，
+// 与系统在后台停节拍时同一条兜底路径（mtl_present_wait；失活中不记红）。进后台照旧另外挂起图形
+// Between resigning active (Control Center / Notification Center pulled down, an incoming-call banner, the app switcher) and becoming active again, stop both display links: the present link (nvn_mtl.m mtl_link_pause) and the touch-controls one (DmRateHint, which redraws the controls and the rift quest bar every tick).
+// It used to keep presenting and redrawing the controls every tick while inactive, spending power on a covered picture. Once stopped, the game thread keeps running (the resign save needs its ticks): the drawable wait times out on its own (about two ticks) and the present is dropped,
+// the same fallback path as when the system stops the link in the background (mtl_present_wait; nothing is reported red while inactive). Entering the background still suspends graphics separately as before
+// 在 Mac 上跑的 iOS 包不停：那里「失活」= 窗口不在最前，画面照样看得见、游戏照样在跑
+// Not stopped for the iOS package running on a Mac: there "inactive" = the window is not frontmost, and the picture is still visible with the game still running
+static void links_pause(int on) {
+    void mtl_link_pause(int on);
+    if (NSProcessInfo.processInfo.isiOSAppOnMac) return;
+    if (on) { mtl_link_pause(1); g_rate_link.paused = YES; LOG("前端：失活，停出图与触屏控件的显示节拍"); }
+    else { g_rate_link.paused = NO; mtl_link_pause(0); LOG("前端：激活，放开显示节拍"); }
+}
 // 场景生命周期（main.m 的 SceneDelegate 调）：0 失活 1 进后台 2 回前台 3 激活
 // Scene lifecycle (called by SceneDelegate in main.m): 0 resign active, 1 enter background, 2 return to foreground, 3 become active
 void front_ios_focus_event(int ev) {
@@ -1307,16 +1322,24 @@ void front_ios_focus_event(int ev) {
     { static const char *st[] = {"resign", "background", "foreground", "active"}; DM_EV("app", "state:s", st[ev]); }   // 事件流（dm_events.h） | event stream (dm_events.h)
     { void dm_game_state_background(int); if (ev == 1) dm_game_state_background(1); else if (ev == 2) dm_game_state_background(0); }   // 游戏状态（diag.c，系统 StateReporting） | game state (diag.c, the system's StateReporting)   // 两个读数：核对后台那段没算进游戏时间、回来后声卡回调继续涨 | Two readings: to check that the background period was not counted into game time and that audio device callbacks keep increasing after return
     switch (ev) {
-        case 0: [g_touch_view cancelControls]; { void dm_gamepad_reset(void); dm_gamepad_reset(); } dm_focus_set(2); resign_save(); break;   // 手柄的键和摇杆一并清零：按着键切走、在后台松开，回来不会补「松开」 | Controller buttons and sticks are zeroed as well: if a button is held while switching away and released in the background, no "release" is delivered on return
+        case 0: [g_touch_view cancelControls]; { void dm_gamepad_reset(void); dm_gamepad_reset(); } dm_focus_set(2); links_pause(1); resign_save(); break;   // 手柄的键和摇杆一并清零：按着键切走、在后台松开，回来不会补「松开」 | Controller buttons and sticks are zeroed as well: if a button is held while switching away and released in the background, no "release" is delivered on return
         // 进后台：客体时钟一并冻结（等效 Switch 挂起）——否则游戏线程挡在提交处、墙钟照走，回来时游戏内时间一下跳过整段后台时长（补拍 / 动画 / 冷却全跟着跳）
         // Entering background: the guest clock is frozen as well (equivalent to Switch suspend) -- otherwise the game thread is blocked at submission while the wall clock keeps running, and on return in-game time jumps over the whole background duration at once (catch-up ticks / animations / cooldowns all jump with it)
-        case 1: dm_focus_set(3); dm_ui_lifecycle(1); g_audio_bg = 1; audio_apply(); g_in_bg = 1;
+        // 先向系统要后台收尾时间、再做事：下面等存盘（最多约 6 秒）+ 传 iCloud + 清空在途 GPU，原先要到 dm_cloud_flush 里才要，前面那段只有进后台回调本身那几秒，
+        // 存盘一慢就可能超时被系统结束。这段做完（挂起图形返回）就交还；iCloud 上传另有自己的收尾时间（cloud_ios.m）
+        // Ask the system for background completion time first, then do the work: waiting for the save below (up to about 6 seconds) + the iCloud upload + draining in-flight GPU work used to ask only inside dm_cloud_flush, so everything before it had only the few seconds of the enter-background callback itself,
+        // and a slow save could run out of time and get the app ended by the system. It is handed back once this is done (the graphics suspend has returned); the iCloud upload has its own completion time (cloud_ios.m)
+        case 1: { __block UIBackgroundTaskIdentifier bt = UIBackgroundTaskInvalid;
+            bt = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"dm.background" expirationHandler:^{ LOG("【红】前端：进后台收尾时间到，系统叫停"); [UIApplication.sharedApplication endBackgroundTask:bt]; bt = UIBackgroundTaskInvalid; }];
+            dm_focus_set(3); dm_ui_lifecycle(1); g_audio_bg = 1; audio_apply(); g_in_bg = 1;
             background_wait_save();   // 进后台先让游戏存一次盘并等提交完成，再挂起：手机上切出去后进程随时可能被系统回收，原版 5 分钟才自动存一次 | On entering background, first have the game save once and wait for the commit to finish, then suspend: on a phone the process may be reclaimed by the system at any time after switching away, and the original game only auto-saves every 5 minutes
             { void dm_cloud_flush(int); dm_cloud_flush(1); }   // iCloud：局内攒下的存档（含刚才这次）切后台时传掉，用系统给的后台收尾时间（cloud_ios.m）。放在存盘之后：放前面的话刚才那次提交在收尾时间之外传 | iCloud: the saves accumulated in the run (including the one just made) are uploaded on going to background, within the background time the system grants (cloud_ios.m). Placed after the save: placed before it, the commit just made would be uploaded outside that time
-            guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); break;   // 挂起返回前在途 GPU 已清空 | In-flight GPU work is already drained before the suspend returns
+            guest_clock_freeze_for(1, 1); dm_gfx_suspend(1);   // 挂起返回前在途 GPU 已清空 | In-flight GPU work is already drained before the suspend returns
+            if (bt != UIBackgroundTaskInvalid) { [UIApplication.sharedApplication endBackgroundTask:bt]; bt = UIBackgroundTaskInvalid; }
+            break; }
         case 2: dm_ui_lifecycle(0); { void dm_update_foreground(void); dm_update_foreground(); void dm_cloud_foreground(void); dm_cloud_foreground(); }   // 回前台时人若停在选角页，重查一次新版本（dm/host/dm_update.c；局内不查） | If the player is on the character select page when returning to foreground, check for a new version once more (dm/host/dm_update.c; not checked in a run)
             { void dm_3d_scale_resumed(void); dm_3d_scale_resumed(); } dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); g_in_bg = 0; g_audio_bg = g_audio_intr = 0; audio_apply(); dm_focus_set(2); break;   // 回前台一律当打断已过：进后台时系统自己会发一次「被打断」（真机实测），却不保证回来时补发「结束」；会话若真还被占，启动声卡失败不致命、激活时重试 | Returning to foreground always treats the interruption as over: when entering background the system itself sends one "interrupted" (measured on a real device) but does not guarantee an "ended" on return; if the session is really still occupied, failing to start the audio device is not fatal and is retried on activation
-        case 3: dm_focus_set(1); audio_apply(); { int e = atomic_exchange(&g_save_failed_err, 0); if (e) front_save_failed(e); } break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
+        case 3: links_pause(0); dm_focus_set(1); audio_apply(); { int e = atomic_exchange(&g_save_failed_err, 0); if (e) front_save_failed(e); } break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
     }
 }
 
@@ -1509,7 +1532,20 @@ static void touch_script_start(void) {
 
 void front_ios_lifecycle_install(void) {
     front_game_res(1);   // 主线程先读屏幕尺寸并缓存（客体线程初始化时才取值，UIScreen 只该在主线程用） | Read and cache the screen size on the main thread first (the value is only fetched when the guest thread initializes, and UIScreen should only be used on the main thread)
-    UIApplication.sharedApplication.idleTimerDisabled = YES;   // 游戏期间不自动锁屏（锁屏即进后台：浸泡 / 长局会被打断） | No auto-lock during the game (locking the screen means going to background: soak / long runs would be interrupted)
+    // 屏幕常亮：只在真正在玩（局内、没开暂停页）时不让系统自动变暗 / 锁屏，菜单、选角、暂停页、读取画面交还给系统（判断见 dm_awake.h）。
+    // 原先整个会话都常亮（为浸泡 / 长局：锁屏即进后台）；测试开关 DM_SOAK、DM_SAVE_FRESH（自动化真机跑都带）照旧整局常亮。每 2 秒看一次，变了才写、记一行
+    // Keep-awake: the system is kept from dimming / locking only while actually playing (in a run, the pause page not open); menus, character select, the pause page and loading screens hand back to the system (decision in dm_awake.h).
+    // It used to stay awake for the whole session (for soaks / long runs: locking means going to the background); the test switches DM_SOAK and DM_SAVE_FRESH (every automated device run sets one) keep the whole session awake as before. Checked every 2 seconds, written and logged only on change
+    { int keep = getenv("DM_SOAK") || getenv("DM_SAVE_FRESH"); double t_up = now_ns() / 1e9; __block double last_play = t_up; __block int last = -1;
+      void (^check)(void) = ^{ int dm_ingame_now(void), dm_game_paused(void); uint64_t dm_gamepad_last_input_ns(void);
+          double now = now_ns() / 1e9, pad = dm_gamepad_last_input_ns() / 1e9; int in = dm_ingame_now(), pz = in && dm_game_paused(), play = in && !pz;
+          if (play) last_play = now;
+          int want = dm_awake_want(keep, in, pz, now, last_play, pad), why = dm_awake_want(0, in, pz, now, last_play, pad);
+          if (want == last) return;
+          last = want; UIApplication.sharedApplication.idleTimerDisabled = want;
+          LOG("前端：屏幕常亮 %s（%s）", want ? "开" : "关，交还系统自动锁屏", keep ? "测试开关 DM_SOAK / DM_SAVE_FRESH：整局常亮" : play ? "局内在玩" : why && now - last_play < DM_AWAKE_GRACE_S && in ? "暂停页开着，宽限中" : why && now - last_play < DM_AWAKE_GRACE_S ? "不在局内，宽限中" : why ? "手柄刚有输入，宽限中" : in ? "暂停页开着" : "不在局内"); };
+      check();
+      NSTimer *tm = [NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *t) { (void)t; check(); }]; tm.tolerance = 1; }
     { uint64_t mtl_present_count(void); void front_ios_heat_start(uint64_t (*)(void), int); front_ios_heat_start(mtl_present_count, 1); }   // DM_HEAT 发热归因 | DM_HEAT heat attribution
     // 亮度：每 2 s 读一次（宿主每 300 帧上屏行带出）；测试开关 DM_BRIGHTNESS=0–1 时偏差 > 0.01 即重设——启动早期只设一次会被忽略 / 被自动亮度改回（M1 读回 0.35）
     // Brightness: read once every 2 s (carried by the host's every-300-frames present line); with test switch DM_BRIGHTNESS=0–1, reset whenever the deviation > 0.01 -- setting it only once early in launch gets ignored / reverted by auto-brightness (M1 read back 0.35)

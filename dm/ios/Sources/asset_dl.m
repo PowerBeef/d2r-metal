@@ -195,7 +195,9 @@ static NSString *dl_sha256(NSString *path) {
         [self pump]; });
 }
 - (void)report:(int64_t)done note:(NSString *)note { void (^p)(int64_t, int64_t, NSString *) = self.onProgress; int64_t t = self.total; if (p) dispatch_async(dispatch_get_main_queue(), ^{ p(done, t, note); }); }
-- (void)finish:(NSString *)err { self.running = 0; void (^d)(NSString *) = self.onDone; self.onDone = nil; plog("assets: 直接下载结束：%s", err ? err.UTF8String : "全部到齐"); if (d) dispatch_async(dispatch_get_main_queue(), ^{ d(err); }); }
+// 结束（到齐或出错）时把 5 秒一次的掉速检查停掉：原先一直留着，到齐后进了游戏也每 5 秒醒一次（只看 running 就返回）；再 run 时重建
+// On finishing (complete or failed) stop the 5-second slowdown check: it used to stay, waking every 5 seconds even after everything arrived and the game started (only to see running = 0 and return); run creates it again
+- (void)finish:(NSString *)err { self.running = 0; if (self.watch) { dispatch_source_cancel(self.watch); self.watch = nil; } void (^d)(NSString *) = self.onDone; self.onDone = nil; plog("assets: 直接下载结束：%s", err ? err.UTF8String : "全部到齐"); if (d) dispatch_async(dispatch_get_main_queue(), ^{ d(err); }); }
 // 找到第一个没到齐的文件，给它起（或接回）一个分段任务。只在 self.q 上跑
 // Find the first incomplete file and start (or reattach) a ranged task for it. Runs only on self.q
 - (void)pump {

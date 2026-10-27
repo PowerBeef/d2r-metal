@@ -374,7 +374,7 @@ DM_RULE_RUNROOT	verify	verify/rulegate.sh	-
 DM_RULE_TRUTH	verify	verify/rulegate.sh	y
 DM_SAMPLE	host	host/diag.c	y
 DM_SAVE	android,gfx,harmony,host,ios,tvos	android/jni_android.c gfx/nvn/nvn_mtl.m harmony/native/napi_ohos.c host/app_mac.m …	y
-DM_SAVE_FRESH	ios,ios-tools	ios/Sources/main.m ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
+DM_SAVE_FRESH	ios,ios-tools	ios/Sources/front_ios.m ios/Sources/main.m ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_SAVE_KEY	ios-tools	ios/tools/save_key.sh ios/tools/smoke_mac.sh	-
 DM_SAVE_TEST	ios	ios/Sources/main.m	y
 DM_SAVE_THROTTLE	host	host/main.c	-

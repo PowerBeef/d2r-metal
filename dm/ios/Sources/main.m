@@ -1120,6 +1120,7 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
         if (self.poll) { plog("assets: 系统说可用但校验没过：%s", why); }
         [self say:[NSString stringWithFormat:T("dmDlNotReady"), @(why)]]; [self showBtn:self.retry]; return; }
     started = 1; if (self.poll) { dispatch_source_cancel(self.poll); self.poll = nil; }
+    if (self.netmon) { nw_path_monitor_cancel(self.netmon); self.netmon = nil; }   // 资源齐了就不再守网络：原先进了游戏还一直开着，每次网络变化都回调 | assets are complete, so stop watching the network: it used to stay on into the game, calling back on every network change
     plog("assets: 资源就绪，就地起宿主");
     g_need_assets = 0;
     self.view = front_ios_view(self.view.window.windowScene.coordinateSpace.bounds);
