@@ -94,6 +94,7 @@ def main():
             o = off(f.getEntryPoint())
             return o not in pinned and (DEFAULT_NAME.match(f.getName()) or prev.get(o) == f.getName()) and f.getSymbol().getSource() != SourceType.USER_DEFINED
         named = {off(f.getEntryPoint()): f.getName() for f in funcs if not free(f)}
+        unnamed = {off(f.getEntryPoint()) for f in funcs if DEFAULT_NAME.match(f.getName())}   # 现在还是缺省名的（上次本工具给的名字不算新增） | still default-named now (names this tool gave last time are not new)
         total, before = len(funcs), sum(1 for f in funcs if not DEFAULT_NAME.match(f.getName()))
         def propose(o, name, conf, src, why):
             if o in named or o in rows: return
@@ -205,7 +206,7 @@ def main():
         fo.write('# 批量起名候选（autoname.py）：由游戏程序推出，只放本机，不入库 | bulk naming candidates (autoname.py): derived from the game program, local only, never committed\n')
         fo.write('offset\tname\tconfidence\tsource\tevidence\n')
         for o, n, c, s, w in out: fo.write(f'{o:#x}\t{n}\t{c}\t{s}\t{w}\n')
-    applied = sum(1 for r in out if r[2] in ('high', 'medium'))
+    applied = sum(1 for r in out if r[2] in ('high', 'medium') and r[0] in unnamed)
     for k in sorted(stats): print(f'  {k}: {stats[k]}')
     print(f'  coverage: {before}/{total} functions named ({100 * before / total:.1f}%) → {before + applied} ({100 * (before + applied) / total:.1f}%) once seed writes the high / medium rows')
     print('AUTONAME OK', AUTO)
