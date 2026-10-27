@@ -1,0 +1,22 @@
+# 局内游戏状态（dm_hud）：身上 / 箱内金币按测试开关设好后读得出来，物品链有物品且 id 不重复，服务端有活着的怪（营地 NPC）；
+# 保存并退出再进局后金币原样、物品件数不变、id 仍不重复——存档与读回不丢不复制物品
+# In-run game state (dm_hud): gold on the character / in the stash reads back as the test switches set it, the item chain holds items with no repeated id, the server has live monsters (camp NPCs);
+# after Save and Exit and rejoining, the gold is unchanged, the item count is the same and ids are still unique -- saving and loading neither loses nor copies items
+name game_state
+save warlock
+env DM_TEST_GOLD=1234 DM_TEST_STAT=15=5000
+timeout 240
+
+enter_game
+expect_state gold=1234 gold_stash=5000 items>=1 item_dups=0 monsters>=1 timeout=10
+remember items
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+sleep 1
+enter_game
+expect_state in_game=true gold=1234 gold_stash=5000 items=$items item_dups=0 timeout=10
+quit
+check no_red
+check saves_valid

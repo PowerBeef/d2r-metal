@@ -57,9 +57,9 @@ static int cmd_state(const ctl_args *a, char *out, size_t cap, char *err, size_t
     (void)a; (void)err; (void)ecap;
     dm_hud_info h; dm_hud_get(&h);
     char panel[48]; strlcpy(panel, g_lf_panel, sizeof panel);
-    size_t n = dm_json_fields(out, cap, "in_game:b tick:u paused:b panel:s level:d hp:d hp_max:d mp:d mp_max:d area:d x:d y:d dead:b players:d holding:d belt0:d belt1:d belt2:d belt3:d portal:d points:d exp_permille:d quest_unread:b ev_dropped:u",
+    size_t n = dm_json_fields(out, cap, "in_game:b tick:u paused:b panel:s level:d hp:d hp_max:d mp:d mp_max:d area:d x:d y:d dead:b players:d holding:d belt0:d belt1:d belt2:d belt3:d portal:d points:d exp_permille:d quest_unread:b gold:d gold_stash:d items:d item_dups:d monsters:d ev_dropped:u",
                    h.valid, (unsigned long long)(h.valid ? dm_cur_tick() : 0), h.valid && dm_game_paused(), panel[0] ? panel : NULL, h.level, h.hp, h.hp_max, h.mp, h.mp_max,
-                   h.area, h.x, h.y, h.dead, h.players, h.holding, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.points, h.exp_permille, h.quest_unread, (unsigned long long)dm_ctl_dropped());
+                   h.area, h.x, h.y, h.dead, h.players, h.holding, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.points, h.exp_permille, h.quest_unread, h.gold, h.gold_stash, h.items, h.item_dups, h.monsters, (unsigned long long)dm_ctl_dropped());
     if (n < cap) dm_engine_state_json(out + n, cap - n);
     return 1;
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # 试玩机器人：按种子从一张「玩家意图」表里抽一串（开关总面板翻页签、暂停页、喝腰带、营地里走、出城打几下再回来、保存并退出再进局、站一会儿），
 # 每个意图只走玩家走得到的路（按键、走路、点世界；不发 msg、不碰已知会崩的页：无名 ClosePanel、LootFilterOptionsPanel、大小写变体的页名），
-# 展开成场景交给场景运行器跑（dm/tools/scenario.py）。意图之间查不变量：拍在走（没暂停时）、面板栈正常（HUD 在、该关的关了）、有面板时焦点不为空；
+# 展开成场景交给场景运行器跑（dm/tools/scenario.py）。意图之间查不变量：拍在走（没暂停时）、面板栈正常（HUD 在、该关的关了）、有面板时焦点不为空、物品 id 不重复、金币在上限内；
 # 收尾查：没有红、没有 save_stuck、已提交的存档合法（运行器每局都查）。红了先重跑看能不能复现，再按意图做增量调试（explore.py 的 ddmin）缩到最短。
 #   playbot.py run [--seed N] [--episodes K] [--intents N] [--save 存档] [--dmhost 宿主] [--window] [--no-shrink] [--budget 次数]
 #   playbot.py soak --minutes M [--seed N] [--window]   一局跑 M 分钟（开 DM_SOAK），收尾用 dm/ios/tools/soak_report.py 的四条判据（拍、内存斜率、句柄 / 线程、帧时间）
@@ -9,7 +9,7 @@
 #   作为模块：plan(种子, 个数) 抽意图，expand(意图串) 展开成场景步（单测用）
 # Playtest bot: draws a seeded sequence from a table of "player intents" (open the combined panel and flip tabs, the pause page, drink from the belt, walk around the camp, leave town to fight briefly and come back, save and exit then rejoin, stand still),
 # each intent taking only paths a player can take (buttons, walking, world taps; no msg steps and none of the pages known to crash: a nameless ClosePanel, LootFilterOptionsPanel, case-variant page names),
-# expanded into a scenario for the scenario runner (dm/tools/scenario.py). Between intents it checks invariants: ticks advance (when not paused), the panel stack is sane (HUD present, closed panels gone), focus is not null while a panel is open;
+# expanded into a scenario for the scenario runner (dm/tools/scenario.py). Between intents it checks invariants: ticks advance (when not paused), the panel stack is sane (HUD present, closed panels gone), focus is not null while a panel is open, no item id repeats, gold stays within its caps;
 # at the end: nothing red, no save_stuck, a valid committed save (the runner checks that every run). When red, it reruns to see whether it reproduces, then shrinks by intent with delta debugging (explore.py's ddmin).
 #   playbot.py run [--seed N] [--episodes K] [--intents N] [--save save] [--dmhost host] [--window] [--no-shrink] [--budget runs]
 #   playbot.py soak --minutes M [--seed N] [--window]   one run of M minutes (with DM_SOAK), judged at the end by dm/ios/tools/soak_report.py's four criteria (ticks, memory slope, handles / threads, frame time)
@@ -75,8 +75,9 @@ INTENTS = (
     (20, 'tabs', _tabs), (10, 'pause', _pause), (8, 'belt', _belt), (20, 'walk', _walk),
     (8, 'leave_town', lambda r: _leave_town(r)), (6, 'fight', lambda r: _leave_town(r, True)), (4, 'save_reload', _save_reload), (10, 'idle', _idle),
 )
-# 两个意图之间：拍在走（0.5 秒 ≥ 5 拍；没暂停）、HUD 在面板栈上、没有焦点（面板都关了） | between two intents: ticks advance (≥ 5 ticks in 0.5 s; not paused), the HUD is on the panel stack, no focus (all panels closed)
-HEARTBEAT = ['remember tick', 'sleep 0.5', 'expect_state tick>=$tick+5 paused=false panels~=HUDPanel focus_panel=None timeout=5']
+# 两个意图之间：拍在走（0.5 秒 ≥ 5 拍；没暂停）、HUD 在面板栈上、没有焦点（面板都关了）；物品 id 不重复，金币在上限内（身上 ≤ 99 级的 990000，箱内 ≤ 2500000）
+# between two intents: ticks advance (≥ 5 ticks in 0.5 s; not paused), the HUD is on the panel stack, no focus (all panels closed); no repeated item id, gold within the caps (on the character ≤ 990000 at level 99, stash ≤ 2500000)
+HEARTBEAT = ['remember tick', 'sleep 0.5', 'expect_state tick>=$tick+5 paused=false panels~=HUDPanel focus_panel=None item_dups=0 gold<=990000 gold_stash<=2500000 timeout=5']
 
 
 def plan(seed, n):

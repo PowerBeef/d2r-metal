@@ -735,6 +735,7 @@ static int state_item_cmp(const void *a, const void *b) {
     if (u->id != v->id) return u->id < v->id ? -1 : 1;
     return u->ord < v->ord ? -1 : u->ord > v->ord;
 }
+static int u32_cmp(const void *a, const void *b) { uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b; return x < y ? -1 : x > y; }
 static int state_read_item(uint64_t u, state_item *it, size_t ord, uint64_t *next) {   // 物品单位 → 一项；d+0xb0 = 链表下一件 | Item unit → one entry; d+0xb0 = next item in the list
     uint32_t id = 0, cls = 0, mode = 0, x = 0, y = 0; uint64_t d = 0, pp = 0; uint8_t page = 0;
     if (!tk_rd(u + 8, &id, 4) || !tk_rd(u + 4, &cls, 4) || !tk_rd(u + 0xC, &mode, 4) || !tk_rd(u + 0x10, &d, 8) || !d) return 0;
@@ -874,6 +875,7 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
         if (mm) { int (*get)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(mm->base + 0x5b9290);
             h.hp = get(player, 6, 0) >> 8; h.hp_max = get(player, 7, 0) >> 8; h.mp = get(player, 8, 0) >> 8; h.mp_max = get(player, 9, 0) >> 8; }
         uint32_t sp = 0, kp = 0, pm = 0; stat_read(player, 4, &sp); stat_read(player, 5, &kp); h.points = (int)(sp + kp);
+        if (mm) { int (*get)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(mm->base + 0x5b9290); h.gold = get(player, 14, 0); h.gold_stash = get(player, 15, 0); }   // 身上金币 stat 14、箱内金币 stat 15 | gold on the character stat 14, gold in the stash stat 15
         if (tk_rd(player + 0xC, &pm, 4)) h.dead = dm_hud_player_mode_dead(pm);   // 单位 +0xC = 动画模式（dm_hud.h） | Unit +0xC = animation mode (dm_hud.h)
         // 手上物品：这里是服务端玩家，只作诊断；h.holding 由 dm_hud_get 取客户端的真值（dm_hud.c）。两端持续不一致（服务端光标挂着、客户端手上空了）记红行：
         // 卡死就是这样——服务端还挂着放进仓库的魔盒，原先拿服务端这一份当「手上有东西」，拖放收尾链一遍遍按返回关面板
@@ -895,18 +897,27 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
             h.exp_permille = hi > lo && xp > lo ? (int)((uint64_t)(xp - lo) * 1000 / (hi - lo)) : 0;
             if (h.exp_permille > 1000) h.exp_permille = 1000;
         }
-        state_item it;
+        state_item it; uint32_t ids[1024]; int ni = 0;
         if (tk_rd(inv + 0x10, &u, 8))
             for (unsigned k = 0; u && k < 1024 && state_read_item(u, &it, 0, &next); k++) {
                 if (it.mode == 2) h.belt[it.x % 4]++;                       // 腰带物品 x = 0..15，列 = x % 4（与 LEFT/UP/RIGHT/DOWN 对应） | Belt items x = 0..15, column = x % 4 (matching LEFT/UP/RIGHT/DOWN)
                 if (it.cls == CLS_TSC) h.portal++;
                 if (it.cls == CLS_TBK) { uint32_t q = 0; if (stat_read(u, 70, &q)) h.portal += (int)q; }   // stat 70 = quantity
+                ids[ni++] = it.id;
                 u = next;
             }
+        // 物品链（身上、腰带、箱子、魔盒、穿着的都在这一条里）的件数，与重复的物品 id 数：id 是服务端唯一编号，重复 = 物品被复制或链表坏了
+        // Items in the chain (on the character, belt, stash, cube and worn all live in this one list) and the number of repeated item ids: ids are unique server numbers, a repeat = a duplicated item or a broken list
+        h.items = ni; qsort(ids, (size_t)ni, sizeof ids[0], u32_cmp);
+        for (int i = 1; i < ni; i++) h.item_dups += ids[i] == ids[i - 1];
         h.valid = 1;
     }
     module_t *main = main_mod(); uint32_t pl = 0;
     if (main) { void *obj = players_obj(main); if (obj && tk_rd((uint64_t)obj + 0xc, &pl, 4)) h.players = (int)pl; }
+    // 活着的怪（含城里的 NPC 与佣兵）：服务端怪物表 G+0x2630，128 桶，下一只 +0x158；模式 0 = 正在死、12 = 已死
+    // Live monsters (town NPCs and mercenaries included): the server monster table G+0x2630, 128 buckets, next +0x158; mode 0 = dying, 12 = dead
+    if (h.valid) for (int b = 0; b < 128; b++) { uint64_t m = 0; if (!tk_rd(G + 0x2630 + 8 * b, &m, 8)) continue;
+        for (int k = 0; m && k < 4096; k++) { uint32_t mode = 0; if (tk_rd(m + 0xC, &mode, 4) && mode != 0 && mode != 12) h.monsters++; if (!tk_rd(m + 0x158, &m, 8)) break; } }
     static int logged;
     g_player_unit = player; { uint8_t gv; extern _Atomic int g_dm_game_ver; if (tk_rd(G + 0x106, &gv, 1)) atomic_store(&g_dm_game_ver, gv); }   // 房间初始化要的数据版本参数（dm_world.c 小地图标出小站与出入口用） | Data version parameter needed for room initialization (used by dm_world.c to mark waypoints and entrances/exits on the minimap)
     { uint32_t tq = 0; static int once; const char *tg = getenv("DM_TEST_GOLD"); if (tg && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= 30 && !once++) ((void (*)(uint64_t, int, int, int))(main->base + 0x5bc1f0))(player, 14, atoi(tg), 0); }   // 测试开关 DM_TEST_GOLD=<数>：进局第 30 拍把身上金币设成该数（验金币数量框用；标准存档金币为 0，数量弹窗开不出来） | Test switch DM_TEST_GOLD=<amount>: at tick 30 after joining the run set the gold on person to that amount (for verifying the gold amount box; the standard save has 0 gold, so the amount popup cannot be opened)
@@ -1058,7 +1069,7 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     cube_diag_tick(G, player);   // 合成读数 | Transmute readout
     if (main && player) seek_tp_step(G, player, main);
     if (main && h.valid) h.quest_unread = *(volatile uint8_t *)(main->base + 0x2d5ff58) != 0;   // 任务提示：收到任务更新包时游戏置 1（0x306cfc），原版只在点 HUD 任务提示按钮时清（0xbbe6ec） | Quest hint: the game sets it to 1 when a quest update packet arrives (0x306cfc); the original game only clears it when the HUD quest hint button is tapped (0xbbe6ec)
-    dm_hud_info ha = h, hb = g_hud; ha.x = ha.y = hb.x = hb.y = 0;   // 坐标每步都变，不算「变化」（否则走几步就把 200 行记满） | Coordinates change on every step and do not count as a "change" (otherwise a few steps would fill up the 200 lines)
+    dm_hud_info ha = h, hb = g_hud; ha.x = ha.y = hb.x = hb.y = ha.monsters = hb.monsters = 0;   // 坐标每步都变、怪数随刷怪与击杀变，不算「变化」（否则走几步就把 200 行记满） | Coordinates change on every step and the monster count with every spawn and kill: neither counts as a "change" (otherwise a few steps would fill up the 200 lines)
     if (memcmp(&ha, &hb, sizeof ha) && logged < 200) { logged++;   // 只在变化时记一行（前 200 次）：真机 / Mac 核对读数 | Log a line only on change (first 200 times): readout for cross-checking real device / Mac
         LOG("dm_hud：区域 %d (%d,%d) Lv %d 经验 %d‰ 生命 %d/%d 法力 %d/%d 腰带 %d/%d/%d/%d 回城 %d 人数档 %d 点数 %d 新任务 %d%s%s", h.area, h.x, h.y, h.level, h.exp_permille, h.hp, h.hp_max, h.mp, h.mp_max, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.players, h.points, h.quest_unread, h.dead ? " 已死亡" : "", h.valid ? "" : "（未读到玩家）"); }
     g_hud = h; dm_hud_publish(&h);
