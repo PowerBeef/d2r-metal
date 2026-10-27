@@ -1844,7 +1844,7 @@ static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回�
             }
         }
         pthread_mutex_unlock(&g_pg_mu);
-        free(ps);
+        free(t); free(ps);   // t：本次解析的时间戳表（原先漏放，开 DM_NVN_PASSGPU 时每次提交漏一份） | t: this resolve's timestamp table (it used to be leaked, one per submission with DM_NVN_PASSGPU on)
     }];
 }
 void ts_after(void);
