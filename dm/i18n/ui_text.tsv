@@ -30,19 +30,6 @@ dmPouchTitle	百宝囊	Pouch	Zurrón		Сумка	주머니	百宝囊清单标题
 dmPouchEmpty	（空）	(empty)	(vacío)		(пусто)	(비어 있음)	百宝囊清单：空
 dmRwTitle	%s · %d 孔 · 可做的符文之语	%s · Socketed (%d) · Runewords	%s · Con huecos (%d) · Palabras rúnicas	%s · Engarzado (%d) · Palabras rúnicas	%s · С гнездами (%d) · Рунные слова	%s · 홈 %d · 가능한 룬워드	符文之语清单标题（dm_runeword.c；%s = 底材名）；英文用原版词：item-modifiers[Socketable]「Socketed (%i)」、ui[Runewords]
 dmRwLevel	需要等级 %d	Required Level: %d	Nivel requerido: %d		Требуемый уровень: %d	필요 레벨: %d	符文之语清单每行的需要等级；英文 = 原版 item-modifiers[ItemStats1p]「Required Level: %d」
-dmBrPrefix	首领连战  %s	Boss Rush  %s	Ronda de jefes  %s		Босс-раш  %s	보스 러시  %s	首领连战所有提示的前缀（dm_bossrush.c）
-dmBrDoneThisGame	本局已完成，下局再来	Already completed this game. Try again next game	Ya completada en esta partida. Vuelve a intentarlo en la siguiente		В этой игре уже пройдено. Попробуйте в следующей	이번 게임에서 이미 완료. 다음 게임에 다시 시도	首领连战：本局打过了
-dmBrToChamber	前 5 关完成，进门前往世界之石大殿	First 5 stages done. Enter the portal to the Worldstone Chamber	5 primeras fases superadas. Entra en el portal a la Cámara de la Piedra del Mundo	5 primeras fases superadas. Entra al portal a la Cámara de la Piedra Ecuménica	5 этапов пройдено. Войдите в портал в Чертог Мирового камня	앞 5단계 완료. 월드스톤 방으로 가는 포탈 입장	首领连战：前 5 关完成
-dmBrAllDone	全部完成	All stages complete	Todas las fases superadas		Все этапы пройдены	전 단계 완료	首领连战：全部完成
-dmBrStage	第 %d / %d 关：%s%s	Stage %d / %d: %s%s	Fase %d / %d: %s%s		Этап %d / %d: %s%s	단계 %d / %d: %s%s	首领连战：开打第几关（%s = 首领名、恐怖地带后缀）
-dmBrTerror	（恐怖地带）	 (Terror Zone)	 (Zona de terror)		 (Зона ужаса)	 (공포 지대)	首领连战第 6–10 关后缀
-dmBrAndariel	安达莉尔	Andariel	Andariel		Андариэль	안다리엘	首领连战首领名
-dmBrDuriel	督瑞尔	Duriel	Duriel		Дюриэль	두리엘	首领连战首领名
-dmBrMephisto	墨菲斯托	Mephisto	Mefisto		Мефисто	메피스토	首领连战首领名
-dmBrDiablo	迪亚波罗	Diablo	Diablo		Диабло	디아블로	首领连战首领名
-dmBrBaal	巴尔	Baal	Baal		Баал	바알	首领连战首领名
-dmBrDiabloClone	暗黑迪亚波罗	Diablo Clone	Clon de Diablo		Клон Диабло	디아블로 클론	首领连战第 11 关（怪物 333）
-dmBrUbers	超级墨菲斯托、超级迪亚波罗、超级巴尔	Uber Mephisto, Uber Diablo, Uber Baal	Uber Mefisto, Uber Diablo, Uber Baal		Убер-Мефисто, Убер-Диабло, Убер-Баал	우버 메피스토, 우버 디아블로, 우버 바알	首领连战第 12 关
 dmBlissTitle	极乐世界	Elysium	Elíseo		Элизиум	엘리시움	建角页「极乐世界」勾选标题（touch_layout.py）
 dmBlissDesc	暗金 ×5、套装 ×3、符文 ×5；Boss 永远按首次击败掉落。	Unique ×5, Set ×3, Runes ×5; bosses always drop as on first kill.	Únicos ×5, conjuntos ×3, runas ×5; los jefes siempre sueltan botín de primera muerte.		Уник. ×5, сет ×3, руны ×5; боссы всегда дропают как при первом убийстве.	유니크 ×5, 세트 ×3, 룬 ×5; 보스는 항상 첫 처치처럼 드롭.	建角页「极乐世界」说明
 dmRwHint	先移到个人仓库或背包	Move out of shared stash first	Sácalo antes del alijo compartido	Sácalo antes del Arcón compartido	Сначала выньте из общего тайника	먼저 공유 창고에서 꺼내세요	符文之语清单：底材在共享仓库时的灰字
@@ -279,7 +266,6 @@ dmVideoDropsLower	降低清晰度	Lower 3D Res	Bajar res. 3D		Снижать 3D	
 dmVideoDropsKeep	保持清晰度	Keep 3D Res	Mantener res.		Держать 3D	해상도 유지	「掉帧时」第二项（q3d=1）：始终用设定的 3D 清晰度
 dmVideoFpsTip	30 帧是省电模式：更省电、机器更凉；60 帧更流畅。	30 fps is the power saver: it uses less power and runs cooler; 60 fps is smoother.	30 fps es el modo ahorro: gasta menos energía y calienta menos; 60 fps es más fluido.		30 fps — режим экономии: меньше расход и нагрев; 60 fps — плавнее.	30 fps는 절전 모드로 전력을 덜 쓰고 덜 뜨거워집니다. 60 fps가 더 부드럽습니다.	「帧率」行的悬停说明（Mac）
 dmVideoDropsTip	降低：掉帧时自动降低 3D 清晰度，让画面保持流畅；保持：始终用设定的 3D 清晰度。	Lower: when frames drop, the 3D resolution goes down to keep the game smooth; Keep: it stays as set.	Bajar: si caen los fps, la resolución 3D baja para que el juego siga fluido; Mantener: se queda como está.		«Снижать»: при падении FPS 3D-разрешение снижается ради плавности; «Держать»: остаётся заданным.	낮춤: 프레임이 떨어지면 3D 해상도를 낮춰 부드럽게 유지합니다. 유지: 정한 해상도를 그대로 둡니다.	「掉帧时」行的悬停说明（Mac）
-dmDoorBossRush	Boss 连战	Boss Rush	Ronda de jefes		Босс-раш	보스 러시	城里 Boss 连战门头顶的名牌（dm_bossrush.c dm_door_label）
 dmAndroidName	D2R Mobile	D2R Mobile	D2R Mobile		D2R Mobile	D2R Mobile	安卓启动器应用名称 | Android launcher name
 dmAndroidPermission	需要「所有文件访问」权限，才能读取 Download/S2X/D2R Mobile/data 里的游戏资源。\n点屏幕打开设置，允许后返回。	Allow all files access to read your game resources in Download/S2X/D2R Mobile/data.\nTap to open Settings, allow access, then return.	Permite el acceso a todos los archivos para leer los recursos del juego en Download/S2X/D2R Mobile/data.\nToca para abrir Ajustes, permite el acceso y vuelve.		Разрешите доступ ко всем файлам, чтобы читать ресурсы игры в Download/S2X/D2R Mobile/data.\nНажмите, чтобы открыть настройки, разрешите доступ и вернитесь.	Download/S2X/D2R Mobile/data에 있는 게임 리소스를 읽으려면 모든 파일 접근 권한을 허용하세요.\n탭하여 설정을 열고 접근을 허용한 뒤 돌아오세요.	安卓权限提示 | Android file access prompt
 dmAndroidStorage	应用资源目录暂不可用，请重新打开应用。	App storage is unavailable. Please reopen the app.	El almacenamiento de la app no está disponible. Vuelve a abrir la app.		Хранилище приложения недоступно. Откройте приложение заново.	앱 저장소를 사용할 수 없습니다. 앱을 다시 여세요.	安卓启动失败 | Android startup failure

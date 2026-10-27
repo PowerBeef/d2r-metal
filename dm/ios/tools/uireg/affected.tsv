@@ -27,7 +27,6 @@ dm/host/dm_lootfilter*	bd bdm p q b
 dm/host/dm_autobuff*	bd bdm p q b
 dm/host/dm_beltauto*	ba bd bdm p q b
 dm/host/dm_elysium*	v v2
-dm/host/dm_bossrush*	bd
 dm/host/dm_townwp*	*
 dm/host/dm_unit.h	dc wp tp
 dm/host/dm_pouch*	t u s sb vt1 c sa

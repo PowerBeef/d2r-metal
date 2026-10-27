@@ -13,7 +13,6 @@
 #include <stdatomic.h>
 #include "dm_cursor.h"
 #include <math.h>
-_Atomic int g_dm_l_presses;
 
 enum { NPAD_HANDHELD = 0x20 };
 enum { STYLE_FULLKEY = 1u << 0, STYLE_HANDHELD = 1u << 1 };
@@ -436,7 +435,6 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
       if (tset > 0) { held = (s->buttons & 0xf) ? held + 1 : 0; if (held > tdelay) { s->rx = trx; s->ry = tryy; } } }
     if (s->lx || s->ly || (km & PK_MASK & ~(uint64_t)PK_TOUCH)) atomic_store(&g_stick_ns, now_ns());   // 玩家的摇杆（前端 / 脚本伪键）最近一次非零；光标改写的摇杆不算 | the last time the player's stick (front end / script pseudo-keys) was non-zero; a stick rewritten by the cursor does not count
     dm_cursor_apply(&s->buttons, &s->lx, &s->ly);   // 指针目标：本次采样内按原版光标位置改写左摇杆 / A（见 dm_cursor.h） | pointer target: within this sample, rewrite the left stick / A according to the original game's cursor position (see dm_cursor.h)
-    { static uint64_t prev; if ((s->buttons & DM_BTN_L) && !(prev & DM_BTN_L)) { int n = atomic_fetch_add(&g_dm_l_presses, 1) + 1; if (n <= 3) LOG("取手柄处：「显示物品」键（L）交给了游戏，本进程第 %d 次", n); } prev = s->buttons; }   // 「显示物品」键（L）交给游戏的按下次数（首领掉落读数用，dm_bossrush.c） | number of presses of the 「显示物品」(Show Items) key (L) delivered to the game (used by the boss drop readout, dm_bossrush.c)
     if (km & PK_LSL) s->lx = -32767; if (km & PK_LSR) s->lx = 32767;   // 脚本摇杆伪键：推满（Horizon 摇杆 ±32767，上为正） | script stick pseudo-keys: push to full (Horizon stick ±32767, up is positive)
     if (km & PK_LSU) s->ly = 32767;  if (km & PK_LSD) s->ly = -32767;
     if (ctl_on) { uint32_t st = atomic_load(&g_ctl_stick); int16_t cx = (int16_t)st, cy = (int16_t)(st >> 16); if (cx || cy) { s->lx = cx; s->ly = cy; atomic_store(&g_stick_ns, now_ns()); } }   // 控制口摇杆 | control-port stick

@@ -7,7 +7,6 @@
 #include "dm_cursor.h"
 #include "dm_hud_exp.h"
 #include "dm_elysium.h"
-#include "dm_bossrush.h"
 #include <TargetConditionals.h>
 #include <fcntl.h>
 #include <dirent.h>
@@ -830,13 +829,13 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     uint64_t player = 0, inv = 0, u = 0, next = 0;
     // 受控玩家 = 客户端自己记的本地玩家单位号那个单位（main+0x2d20e4c 本地玩家槽号 → main+0x2d60380[槽号] 单位号，原版 0x45f9d0 同口径），
     // 且模式 ≠ 0、坐标 ≠ (0,0)。原先只按「玩家表里第一个模式 ≠ 0 且有坐标的单位」取：角色死过一次后地上留着尸体（也是玩家类单位、模式 17、有坐标），
-    // 再死的那几拍里真玩家模式是 0（正在死），取到的就成了尸体——首领连战 / 秘境 / 免费回城 / 个人仓库 / 编年史 / 百宝囊全都把尸体当成「换了玩家」重新初始化一遍，
-    // 等真玩家变成模式 17 又换回来再初始化一遍（宿主实测：首领连战里第二次死亡那一刻日志连出两轮各模块的进局行，连战进度清零）。
+    // 再死的那几拍里真玩家模式是 0（正在死），取到的就成了尸体——个人仓库 / 编年史 / 百宝囊等全都把尸体当成「换了玩家」重新初始化一遍，
+    // 等真玩家变成模式 17 又换回来再初始化一遍（宿主实测：当时的首领连战里第二次死亡那一刻日志连出两轮各模块的进局行，连战进度清零）。
     // 认出了单位号就只认它：它正在死的那几拍这一拍没有受控玩家（和没有尸体时第一次死一样），绝不退到别的玩家类单位。读不到单位号（还没进局）才照旧扫
     // Controlled player = the unit whose unit id is the local player unit id the client itself records (main+0x2d20e4c local player slot number → main+0x2d60380[slot number] unit id, same convention as the original game's 0x45f9d0),
     // with mode ≠ 0 and coordinates ≠ (0,0). Previously it was taken only as "the first unit in the player table with mode ≠ 0 and with coordinates": after the character has died once a corpse stays on the ground (also a player-class unit, mode 17, with coordinates),
-    // and during the few ticks of dying again the real player's mode is 0 (dying), so what got taken was the corpse -- boss rush / rift / free town portal / personal stash / Chronicle / pouch all treated the corpse as "the player changed" and re-initialized once,
-    // and when the real player became mode 17 it switched back and they initialized once more (measured on the host: at the moment of the second death in a boss rush the log showed two rounds in a row of every module's run-entry lines, and the boss rush progress was reset to zero).
+    // and during the few ticks of dying again the real player's mode is 0 (dying), so what got taken was the corpse -- the personal stash / Chronicle / pouch and others all treated the corpse as "the player changed" and re-initialized once,
+    // and when the real player became mode 17 it switched back and they initialized once more (measured on the host: at the moment of the second death in a boss rush, a since-removed mode, the log showed two rounds in a row of every module's run-entry lines, and the boss rush progress was reset to zero).
     // Once the unit id is known, only that unit is accepted: during the few ticks it is dying there is no controlled player this tick (the same as a first death with no corpse), and it never falls back to another player-class unit. Only when the unit id cannot be read (not in a run yet) does it scan as before
     uint32_t lid = local_player_id();
     for (int b = 0; b < 128 && !player; b++) {
@@ -1059,7 +1058,6 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
       if (main && player && !shown && dm_cloud_conflict_take()) { shown = 1; dm_game_notice((uint8_t *)main->base, dm_str((uint8_t *)main->base, "dmCloudConflict")); LOG("iCloud 同步：弹了共享仓库收进收件箱的提示"); } }
     { int dm_cloud_char_conflict_take(char *, size_t); char nm[256], msg[400];   // iCloud 首次同步遇到同名角色、用了云端那份（dm_cloudsync.c）：进局后提示一次 | iCloud first sync met a character with the same name and used the cloud copy (dm_cloudsync.c): one notice after entering a run
       if (main && player && dm_cloud_char_conflict_take(nm, sizeof nm)) { snprintf(msg, sizeof msg, dm_str((uint8_t *)main->base, "dmCloudCharConflict"), nm); dm_game_notice((uint8_t *)main->base, msg); LOG("iCloud 同步：弹了同名角色用云端那份的提示（%s）", nm); } }
-    if (main && player) DM_PROF(1, "s.bossrush", dm_bossrush_tick(G, player, (uint8_t *)main->base));   // 首领连战（dm_bossrush.c） | Boss rush (dm_bossrush.c)
     { void dm_pages_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.pages", dm_pages_tick(G, player, (uint8_t *)main->base)); }   // 个人仓库 2–5 页（dm_pages.c）；这一拍没有受控玩家（不在局内 / 正在死）player 为 0，个人仓库 / 编年史 / 百宝囊都当没有这一拍，只在换了一局或换了角色时重读（F-SAVE-1） | Personal stash pages 2–5 (dm_pages.c); player is 0 on ticks without a controlled player (not in a run / dying), which the personal stash / Chronicle / pouch treat as no tick, rereading only on a new session or a different character (F-SAVE-1)
     { void dm_vault_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.vault", dm_vault_tick(G, player, (uint8_t *)main->base)); }
     { void dm_autobuff_srv_tick(uint8_t *, uint64_t, uint64_t); if (main && player) DM_PROF(1, "s.autobuff", dm_autobuff_srv_tick((uint8_t *)main->base, G, player)); }   // 增益技能自动补：放主线程点名的技能 | Buff auto-recast: cast the skill named by the main thread
@@ -1234,10 +1232,9 @@ static void c2s_obs(const uint64_t *regs) {
     if (regs[1] && tk_rd(regs[1] + 8, &uid, 4)) hu = 1;
     uint8_t b[512]; uint32_t n = len < 512 ? len : 512; if (!tk_rd(regs[2], b, n)) n = 0;
     if (n >= 1 && b[0] == 0x20) cube_diag_req(regs[0], regs[1], b, n);   // 合成读数 | Transmute readout
-    dm_bossrush_c2s(regs[0], regs[1], b, n);
     { void dm_pouch_c2s(uint64_t *); dm_pouch_c2s((uint64_t *)(uintptr_t)regs); }   // 珍宝匣：符文 / 宝石 / 材料拖进共享页时改道进高级仓库（dm_pouch.c；会换掉 x2 / x3 指向的包） | Trove: runes / gems / materials dragged into the shared tab are rerouted into the advanced stash tabs (dm_pouch.c; replaces the packet x2 / x3 point to)
-    { void dm_shoprefresh_c2s(uint64_t, uint64_t, const uint8_t *, uint32_t); dm_shoprefresh_c2s(regs[0], regs[1], b, n); }   // 商人交易页「刷新货架」（dm_shoprefresh.c）   // 首领连战：玩家点了连战的门（门只是外观，换关由 dm_bossrush.c 做） | Vendor trade page 「刷新货架」(Refresh Stock) (dm_shoprefresh.c)   // Boss rush: the player tapped the boss rush door (the door is appearance only; the level change is done by dm_bossrush.c)
-    if (!g_c2sfp) return;                       // 门在产品里常挂（首领连战要看），没开 DM_C2S_LOG 时不记 | The gate is usually installed in the product (boss rush needs it); nothing is logged when DM_C2S_LOG is not on
+    { void dm_shoprefresh_c2s(uint64_t, uint64_t, const uint8_t *, uint32_t); dm_shoprefresh_c2s(regs[0], regs[1], b, n); }   // 商人交易页「刷新货架」（dm_shoprefresh.c）
+    if (!g_c2sfp) return;                       // 门在产品里常挂（百宝囊、合成读数等要看），没开 DM_C2S_LOG 时不记 | The gate is always installed in the product (the pouch, the transmute readout and others need it); nothing is logged when DM_C2S_LOG is off
     // 诊断开关 DM_TEST_WARP_DIAG=1（只读）：收到「与出口砖交互」包（0x40 [砖 id]）这一刻，把服务端处理函数 main+0x6dbea0 的判定逐项读出来记一行——点了出口不进时看是哪一项拒的（全部拒绝都不回包）。
     // 判定顺序：当前动作能否被打断 main+0x6c5730(游戏, 玩家, 2, 0, 0)（0 = 放行）→ 砖对应的出口可用 main+0x5592f0(砖)（非 0 = 放行）→ 距离 main+0x5c7050(玩家, 砖)（查表距离，≤4 才当场换，>4 什么都不做）。
     // Diagnostic switch DM_TEST_WARP_DIAG=1 (read-only): at the moment an "interact with exit tile" packet (0x40 [tile id]) is received, read out each check of the server handler main+0x6dbea0 and log one line -- to see which check refused when tapping an exit does not go in (no refusal sends a reply packet).
@@ -2101,8 +2098,8 @@ void ticks_install(void) {
     // The product default must hook the tick entry too: the numbers on the UIKit bottom bar (level / experience / belt / return to town / difficulty level) and applying the difficulty bar are all done at the tick entry (players_apply / hud_tick).
     // Previously it was hooked only with DM_TICKS / DM_STATE / DM_C2S_* -- every test case has them, but a player launching by tapping the icon did not: the scene column of perf.txt was all 「菜单」(menu), the bottom bar did not show, and tapping the difficulty bar had no effect.
     // Without test variables a slim version is hooked (doing only these two things); with them, it is replaced by the full version below
-    if (gate_obs_present(OBS_C2S)) gate_obs_set(OBS_C2S, c2s_obs);   // 首领连战要看「点了哪个单位」的命令包；DM_C2S_LOG 记包也走这个回调 | Consecutive boss fights need to see the command packet for "which unit was clicked"; DM_C2S_LOG packet logging also goes through this callback
-    else LOG("【红】产物没有命令分派观测门 OBS_C2S：首领连战的门点了不换关");
+    if (gate_obs_present(OBS_C2S)) gate_obs_set(OBS_C2S, c2s_obs);   // 百宝囊、合成读数要看客户端命令包；DM_C2S_LOG 记包也走这个回调 | The pouch and the transmute readout need the client command packets; DM_C2S_LOG packet logging also goes through this callback
+    else LOG("【红】产物没有命令分派观测门 OBS_C2S：百宝囊改道与合成读数不工作");
     if (gate_obs_present(OBS_TICK)) gate_obs_set(OBS_TICK, tick_gate_product);
     else LOG("【红】产物没有拍入口观测门 OBS_TICK：底栏数字 / 难度条 / 动态 3D 比例（dm_ingame_now）都不工作");
     { module_t *tm = main_mod(); void dm_textbox_install(uint8_t *); if (tm) dm_textbox_install((uint8_t *)tm->base); }   // 普通文字框里的注释颜色码（dm_textbox.c，观测门 14） | Annotation color codes in ordinary text boxes (dm_textbox.c, observation gate 14)

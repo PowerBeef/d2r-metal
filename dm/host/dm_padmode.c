@@ -6,7 +6,7 @@
 //   · 切换：改写前缀后让游戏重载布局——只对 GetOperationMode 报另一个运行模式、推一次运行模式通知，几帧后报回原值再推一次（hle_oe.c dm_oe_ui_opmode）。
 //     原版收到运行模式变化会按当前前缀重建全部面板；手柄样式与性能模式不动，所以不弹「重新连接控制器」、出图分辨率不变（宿主实测）。
 // 字符串：手柄说法 ↔ 触摸说法（「按 A 使用」→「双击使用」等 25 条）也按模式换。覆盖层不改字符串文件，旁路表 touch_strings.tsv（gen_romfs_overlay.py）给 键 / 原文校验 / 触摸说法；
-//   当前语言串表（main+0x2d71030，节点 {+0 下一个, +8 键, +0x10 键长, +0x20 串, +0x28 串长}，见 dm_bossrush.c）里按键找到节点，触屏模式把串指针换成触摸说法、手柄模式换回原值。
+//   当前语言串表（main+0x2d71030，节点 {+0 下一个, +8 键, +0x10 键长, +0x20 串, +0x28 串长}）里按键找到节点，触屏模式把串指针换成触摸说法、手柄模式换回原值。
 //   原文校验（SHA-1 前 8 位）对不上的不换（非简中语言、原包换版本）；切语言时原版重装串表、节点全换，每 30 帧核一次、节点变了重认。
 // 只读数据段宿主可写（loader.c 只封代码区与补丁区），串的原值逐个核对，对不上不写（游戏版本不对）。
 // Two sets of UI layouts, controller / touch (controller support P2: connecting a controller automatically returns to the original controller UI, touching the
@@ -26,7 +26,7 @@
 // Strings: controller wording ↔ touch wording ("Press A to use" → "Double-tap to use" and so on, 25 entries) is also switched by mode. The overlay does not
 // modify the string files; the sidecar table touch_strings.tsv (gen_romfs_overlay.py) gives key / source checksum / touch wording;
 //   the node is found by key in the current language's string table (main+0x2d71030, node {+0 next, +8 key, +0x10 key length, +0x20 string, +0x28 string
-//   length}, see dm_bossrush.c); touch mode swaps the string pointer to the touch wording and controller mode swaps the original value back.
+//   length}); touch mode swaps the string pointer to the touch wording and controller mode swaps the original value back.
 //   Entries whose source checksum (first 8 hex digits of SHA-1) does not match are not swapped (non-Simplified-Chinese languages, a different version of
 //   the original package); on a language switch the original reloads the string table and all nodes change, so check every 30 frames and re-identify
 //   when a node has changed.
@@ -114,7 +114,7 @@ static void str_load(void) {   // 开机读旁路表 | Read the sidecar table at
     if (g_nstr == NSTR && fgets(line, sizeof line, f)) LOG("【红】手柄 / 触屏布局：touch_strings.tsv 超过 %d 条，后面的没读（调大 NSTR）", NSTR);
     fclose(f); LOG("手柄 / 触屏布局：触摸说法 %d 条（touch_strings.tsv）", g_nstr);
 }
-static uint64_t str_node(uint64_t map, const char *key, size_t n) {   // 串表里键为 key 的节点（同 dm_bossrush.c loc_has） | The node in the string table whose key is key (same as loc_has in dm_bossrush.c)
+static uint64_t str_node(uint64_t map, const char *key, size_t n) {   // 串表里键为 key 的节点 | The node in the string table whose key is key
     uint64_t cnt = rd8(map), bk = rd8(map + 8); if (!cnt || !bk || (cnt & (cnt - 1))) return 0;
     uint64_t h[4] = {0}; ((void (*)(uint64_t *, const char *, uint64_t, int))(g_b + 0x1b6e1e0))(h, key, n, 0);   // 出参 16 字节 | Output parameter is 16 bytes
     for (uint64_t nd = rd8(bk + 8 * (h[0] & (cnt - 1))); nd; nd = rd8(nd)) if (rd8(nd + 0x10) == n && !memcmp((const void *)(uintptr_t)rd8(nd + 8), key, n)) return nd;

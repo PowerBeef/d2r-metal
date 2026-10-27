@@ -45,7 +45,6 @@ DM_BC_THREADS	gfx	gfx/vulkan/engine/xbg_texture.c	-
 DM_BC_VERIFY	gfx	gfx/vulkan/engine/xbg_texture.c	-
 DM_BINDING_DIAG	ios	ios/Sources/dm_touch_game_bridge.c	-
 DM_BOOTPROF	gfx,host,ios	gfx/nvn/nvn_mtl.m host/main.c ios/Sources/bootprof_ios.m	y
-DM_BOSSRUSH_TZ	host	host/dm_bossrush.c	-
 DM_BREAK_AT_TICK	host	host/diag.c	y
 DM_BRIGHTNESS	ios	ios/Sources/front_ios.m	-
 DM_BRIGHT_K	host	host/dm_bright.c	y
@@ -360,8 +359,6 @@ DM_TEST_BELT_NOPUT	host	host/dm_beltauto.c	-
 DM_TEST_BG	ios	ios/Sources/front_ios.m	y
 DM_TEST_BG_RELAUNCH	ios	ios/Sources/main.m	-
 DM_TEST_BINDTBL	host	host/dm_actions.c	-
-DM_TEST_BR_LOSE	host	host/dm_bossrush.c	-
-DM_TEST_BR_WARP132	host	host/dm_bossrush.c	-
 DM_TEST_BUFF_DROP	host	host/dm_autobuff.c	-
 DM_TEST_BUFF_DUMP	host	host/dm_autobuff.c	-
 DM_TEST_BUFF_LEARN	host	host/dm_autobuff.c	-

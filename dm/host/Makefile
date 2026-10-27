@@ -39,7 +39,6 @@ SRC=\
 	dm_actions.c \
 	dm_autobuff.c \
 	dm_beltauto.c \
-	dm_bossrush.c \
 	dm_bright.c \
 	dm_cloudsync.c \
 	dm_ctl.c \
