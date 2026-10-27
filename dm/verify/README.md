@@ -123,7 +123,7 @@ Companion tools: `hostshot.sh` (starts one host and takes one screenshot), `shot
 
 Each case is a pair of files under `touchcases/<name>/`:
 
-- `script.txt`: the touch-point script (at which moment, which finger, pressed or lifted where), handed to the host's touch front end via `DM_TOUCH_SCRIPT`.
+- `script.txt`: the touch-point script (at which moment, which finger, pressed or lifted where), handed to the host's touch front end via `DM_TOUCH_SCRIPT`. A `<seconds> players <N>` line instead requests player setting N through the game's own `/players` path (a case uses it to bring up the game's notice).
 - `assert.py`: the assertions. It reads the four records the host writes in the run directory — per-tick state `ticks.jsonl`, command packets `c2s.jsonl`, UI messages `uimsg.jsonl`, state probes `state.jsonl` — and judges whether this touch produced the result it should (whether an item moved, whether a certain command packet was sent, whether a panel opened). The common functions are in `assertlib.py` (cases still `import lib`, a shim in `touchcases/`), tested by `touchcases/test_lib.py` and `test_assertlib.py`; it also reads the event stream and has the log red-marker guard (`python3 dm/verify/assertlib.py logred <log> [--allow regex]`), the sanitizer-report scan (`sanitizers <log>`) and the Metal validation summary (`metal <log> [--lint]`; [debugging.md](debugging.md)).
 
 Optional files: `prefix` (one line, the path of a prefix directory; this segment of ground-truth input is replayed first, taking the character to a location such as the wilderness before starting), `ticks` (one line, the total tick count for this case), `pending` (a case with this file is not run but is listed; the first line gives the reason).

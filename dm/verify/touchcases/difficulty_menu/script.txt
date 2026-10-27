@@ -1,7 +1,6 @@
-# 改难度后游戏弹系统通知「游戏难度设为 N…」（停 10 秒）。通知还开着时点红十字（功能键）必须打开功能页，不被通知吃掉（r28 剪口，真机发现）
-0.5 down 0 1090,1241
-0.6 up 0
-1.5 down 0 1810,1051
-1.6 up 0
+# 改人数档后游戏弹系统通知「游戏难度设为 N…」（停 5 秒）。通知还开着时点红十字（功能键）必须打开功能页，不被通知吃掉（r28 剪口，真机发现）
+# After the player setting changes the game shows its system notice "Game difficulty set to N..." (5 seconds). Tapping the red cross (function key) while it is up must open the function page, not be eaten by the notice (the r28 cut, found on a device)
+# 「秒 players N」走原版 /players 路径改档（touch_mac.c），坐标 = 2868×1320 效果图像素 | "<s> players N" changes the setting through the game's /players path (touch_mac.c); coordinates are 2868×1320 mockup pixels
+1.5 players 8
 4.0 down 0 1690,1241
 4.1 up 0

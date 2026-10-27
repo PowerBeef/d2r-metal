@@ -19,17 +19,11 @@ REPL={'data/hd/global/ui/panel/hud_02/bugbtn.sprite':'base.sprite',            #
       'data/hd/global/ui/panel/hud_02/front_panel.sprite':'close.sprite',       # 借用路径：局内面板外框右上角的关闭按钮图（NativeHUD/touch/close.png，gen_close_btn.py） | Borrowed path: the close button image at the top-right corner of the in-game panel outer frame (NativeHUD/touch/close.png, gen_close_btn.py)
       'data/global/ui/layouts/controller/hudpanelhd.json':os.path.join(V4,'hud.json')}
 with tempfile.TemporaryDirectory() as t:
-    # 系统通知框（如改难度后的「游戏难度设为 N…」）：左边 = 七格行最左格（难度格）左外沿，右边 = 最右格（红十字）右外沿，停留 5 秒；高度不动，纵向比原版上移 100 单位（原位 y=-500 压住底栏上方「Lv · 经验」那行）
-    # （原版宽 1200 单位居中屏幕、停 10 秒）。几何从 hud_v4_ui/ui.json 的七格算，不手写：布局 1 单位 = 屏高/2160（gen_hud_v4.py 实测），框锚点在屏幕水平中心。
-    # 落点按真机量（界面按游戏内部分辨率画，落到 2868 宽屏幕上约 1.8 px 一格取整）：边框亮线两侧各有 1 px 暗边，宽度两边各放 1 px；
-    # 中心再左移 1 单位才落到左亮线 x=973、右外沿 x=1807（= 七格外沿 973 / 1807）。四档实测
-    # System notification box (e.g. 「游戏难度设为 N…」(Game difficulty set to N...) after changing difficulty): left edge = left outer edge of the leftmost slot of the seven-slot row (difficulty slot), right edge = right outer edge of the rightmost slot (red cross), stays 5 seconds; height unchanged, vertically moved up 100 units from the original game (the original position y=-500 covers the "Lv · experience" line above the bottom bar)
-    # (the original game's is 1200 units wide, centered on screen, staying 10 seconds). Geometry is computed from the seven slots in hud_v4_ui/ui.json, not hand-written: 1 layout unit = screen height/2160 (measured in gen_hud_v4.py), the box anchor is at the horizontal center of the screen.
-    # Placement is measured on a real device (the UI is drawn at the game's internal resolution, landing on the 2868-wide screen rounded at about 1.8 px per cell): the border's bright line has a 1 px dark edge on each side, so the width is extended 1 px on each side;
-    # the center is then moved 1 more unit left to land on left bright line x=973, right outer edge x=1807 (= seven-slot outer edges 973 / 1807). Measured on four profiles
-    ui=json.load(open(os.path.join(V4,'hud_v4_ui','ui.json'))); ref_w,ref_h=ui['ref']; k=2160/ref_h
-    x0,x1=ui['slots'][0][0]-1,ui['slots'][-1][2]+1
-    nw=round((x1-x0)*k); nx=round(((x0+x1)/2-ref_w/2)*k)-1
+    # 系统通知框（如改人数档后的「游戏难度设为 N…」）：原版的宽度与水平位置（1200 单位、居中屏幕），停留 5 秒（原版 10 秒）；高度不动，停靠高度见下。
+    # 先前左右两边对齐底栏格行外沿；底栏去掉难度格成了五格、行窄了 120 像素，框照原版宽度，长一点的提示不会多折一行
+    # System notification box (e.g. "Game difficulty set to N..." after the player setting changes): the original game's width and horizontal position (1200 units, centered on screen), stays 5 seconds (the original 10); height unchanged, docking height below.
+    # Its edges used to line up with the bottom bar's slot row; with the difficulty slot gone the row has five slots and is 120 pixels narrower, so the box keeps the original width and a longer notice doesn't wrap one more line
+    nw,nx=1200,0
     # 系统提示框：整份自己写、不继承原版那份——原版带一个铺满的 Confirm 按钮（继承来的子控件删不掉），提示在屏上时它接住功能键和点击：
     # 按功能键 / 点它压着的地方都只是把提示关掉（面板开不了、下面的格子点不到）。触屏上提示到点自己消失，不要这个按钮
     # 停靠高度 y −790（原版 −500；先前为让开经验条提到 −600，仍压着底栏上方那行「生命 / 法力」数值——数值位数多时字伸进框里，触屏版那行更高、直接叠在框中间）：

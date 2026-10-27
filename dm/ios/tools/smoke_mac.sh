@@ -141,8 +141,8 @@ run_stage() {
       || { [ -z "$(pids)" ] && { sleep 2; echo "玩家路径：open 失败（$(tail -1 "$RUN/player_launch.txt" | cut -c1-80)），重试一次"; open_diag 玩家路径; open -n "$W" $DEVP $CGA --env DM_SAVE_TEST=1 --env DM_LOG_PORT="$port" --env DM_UIMSG=1 --env DM_EVENTS=log --env "DM_KEYS=$KP" >> "$RUN/player_launch.txt" 2>&1; }; }
     pr=$(python3 "$TOOLS/logport.py" player "$port" "$RUN/player.txt" "$main_menu_timeout" 35 20)
     au_real=$(grep -c 'audio::OpenAudioOut .*真出声' "$RUN/player.txt" 2>/dev/null); au_null=$(grep -c 'audio::OpenAudioOut .*静音接收端' "$RUN/player.txt" 2>/dev/null)
-    # 产品缺省必须读得到受控玩家（UIKit 底栏数字与难度条靠它；曾经拍入口只在带测试变量时才挂，玩家路径下一直没有）
-    # Product defaults must be able to read the controlled player (the UIKit bottom bar numbers and difficulty bar rely on it; the tick entry used to be hooked only when test variables were set, so it was always missing on the player path)
+    # 产品缺省必须读得到受控玩家（UIKit 底栏数字靠它；曾经拍入口只在带测试变量时才挂，玩家路径下一直没有）
+    # Product defaults must be able to read the controlled player (the UIKit bottom bar numbers rely on it; the tick entry used to be hooked only when test variables were set, so it was always missing on the player path)
     hud_ok=$(LC_ALL=C grep -a 'dm_hud：' "$RUN/player.txt" 2>/dev/null | LC_ALL=C grep -a -v -c '未读到玩家')
     # 玩家路径日志不许有红行（产品缺省路径上的常驻红行 = 没人看的告警；曾经每次启动有 14 条面板栈假红）
     # The player path log must have no failure lines (a permanent failure line on the product default path = an alarm nobody looks at; there used to be 14 false panel-stack failures at every launch)

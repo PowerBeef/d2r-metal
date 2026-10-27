@@ -1,17 +1,17 @@
-"""底部 UI v4 的几何与素材（效果图脚本 make_bottom_ui_v4.py、六格版 make_bottom_ui_v4_6.py 搬进仓库：只留 gen_hud_v4.py 用到的几何量、石条 / 格子 / 雕像与字效，
+"""底部 UI v4 的几何与素材（效果图脚本 make_bottom_ui_v4.py、六格版 make_bottom_ui_v4_6.py 搬进仓库，现为去掉难度格的五格：只留 gen_hud_v4.py 用到的几何量、石条 / 格子 / 雕像与字效，
 去掉效果图的演示底图、抠球液、存图与自检表）。几何全部由常量算出，与效果图同一套数。
 素材来源（构建时从玩家自己的游戏文件读，仓库里不放原版的图）：
   ② PC 版 D2R 的解包目录（环境变量 DM_PC_DATA，缺省 $DM_ROOT/data/assets-src/raw，下面是 hd/global/ui/...）：原版 2 倍图（v31 原始 RGBA），出的图与现行逐字节一致；
   ① 找不到 PC 版文件：用 Switch 版 RomFS 里的同名精灵图（半分辨率）放大到 PC 尺寸，会略糊。
 字体两种都从 RomFS 取（hd/ui/fonts，与 PC 版逐字节相同）。
-Geometry and assets of bottom UI v4 (the mockup script make_bottom_ui_v4.py and the six-slot version make_bottom_ui_v4_6.py moved into the repo: keeping only the geometry values, stone strip / slots / statues and text effects that gen_hud_v4.py uses,
+Geometry and assets of bottom UI v4 (the mockup script make_bottom_ui_v4.py and the six-slot version make_bottom_ui_v4_6.py moved into the repo, now five slots with the difficulty slot removed: keeping only the geometry values, stone strip / slots / statues and text effects that gen_hud_v4.py uses,
 dropping the mockup's demo background, orb liquid cutout, image saving and self-check table). Geometry is computed entirely from constants, the same set of numbers as the mockup.
 Asset sources (read at build time from the player's own game files; the repo holds no images from the original game):
   ② Unpacked directory of PC D2R (environment variable DM_PC_DATA, default $DM_ROOT/data/assets-src/raw, with hd/global/ui/... beneath it): the original 2× images (v31 raw RGBA); the resulting images are byte-identical to the current ones;
   ① PC files not found: the same-named sprites in the Switch RomFS (half resolution) are upscaled to PC size, slightly blurry.
 In both cases the fonts are taken from the RomFS (hd/ui/fonts, byte-identical to the PC version)."""
 import os, struct
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import romfs_art
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # 工作区根目录（游戏文件、产物、运行现场都在它下面） | Workspace root (game files, build outputs and run artifacts are all under it)
@@ -50,7 +50,7 @@ class Source:
 
 
 def load(src, VAR='C'):
-    """算出 v4 的几何与素材，返回一个命名空间字典（gen_hud_v4.py 用其中的 bar / slot / slots / L / R / 球心 / 经验条 / 文字基线 / fit / metal …）。 | Computes v4's geometry and assets, returns a namespace dict (gen_hud_v4.py uses its bar / slot / slots / L / R / orb centers / experience bar / text baseline / fit / metal ...)."""
+    """算出 v4 的几何与素材，返回一个命名空间字典（gen_hud_v4.py 用其中的 bar / slot / slots / L / R / 球心 / 经验条 / 文字基线 / fit …）。 | Computes v4's geometry and assets, returns a namespace dict (gen_hud_v4.py uses its bar / slot / slots / L / R / orb centers / experience bar / text baseline / fit ...)."""
     fp = src.img('front_panel'); lvl = src.img('levelupbutton').crop((0, 0, 124, 121))
     W, H = 2868, 1320
     # ---- 规格（px；1pt = 3px）----
@@ -60,15 +60,15 @@ def load(src, VAR='C'):
     TILE = (1673, 277, 1792, 391)    # 原版格图只取金框本体（外沿实测 x3–121、y15–128） | From the original game's slot image take only the gold frame itself (outer edge measured x3–121, y15–128)
     SH = round(DM * (TILE[3] - TILE[1]) / (TILE[2] - TILE[0]))
     B = 12; EXT = 60; BH = 156       # 条边 4pt、两端伸进球下 20pt、条高 = 球径 | Strip border 4pt, both ends extend 20pt under the orbs, strip height = orb diameter
-    XC = 1390                        # 两球中线 | Centerline between the two orbs
-    N = 6; SLOTS_W = N * DM + (N - 1) * (P - DM)   # 六格（回城挪到右侧技能钮上方的圆钮，底栏去掉回城格；原七格 834） | Six slots (town portal moved to the round button above the right-side skill buttons, the town portal slot removed from the bottom bar; originally seven slots, 834)
+    XC = 1450                        # 两球中线 = 五格行中线：去掉最左的难度格后腰带与十字留在原位（格心 1210 + 120×格号，原六格中线 1390），左球随条左端右移 120 | Centerline between the two orbs = the five-slot row's centerline: with the leftmost difficulty slot gone the belt and cross stay where they were (slot centers 1210 + 120 × index; the six-slot centerline was 1390) and the left orb moves right 120 with the strip's left end
+    N = 5; SLOTS_W = N * DM + (N - 1) * (P - DM)   # 五格：腰带四列 + 十字（回城挪到右侧技能钮上方的圆钮、难度格去掉；原七格 834、六格 714） | Five slots: the four belt columns + the cross (town portal moved to the round button above the right-side skill buttons, the difficulty slot removed; originally seven slots 834, then six 714)
     SX0 = XC - SLOTS_W // 2; SY0 = H - BH + (BH - SH) // 2
     BAR_X0 = SX0 - B; BAR_X1 = SX0 + SLOTS_W + B
     SAFE = 0.09                      # 图标安全边距（内框每边 9%） | Icon safe margin (9% of the inner frame on each side)
     BADGE = 26                       # 角标字号（瓶数 / 张数 / Lv） | Badge font size (bottle count / scroll count / Lv)
     out = Image.new('RGBA', (W, H))  # 效果图的演示底图不要：几何只用到文字度量与雕像透明度，不读底图像素 | The mockup's demo background is dropped: geometry only uses text metrics and statue alpha, and reads no background pixels
-    # ---- 石条 + 七格（同一格图逐像素复制）----
-    # ---- Stone strip + seven slots (the same slot image copied pixel for pixel) ----
+    # ---- 石条 + 五格（同一格图逐像素复制）----
+    # ---- Stone strip + five slots (the same slot image copied pixel for pixel) ----
     STONE = (690, 330, 1170, 388); EDGE = (690, 276, 1170, 288)   # front_panel 左侧长凹槽：暗石内壁（二维纹理）+ 灰石边带；平铺不拉伸，不含任何石饰 | front_panel's long left groove: dark stone inner wall (2D texture) + gray stone edge band; tiled without stretching, containing no stone ornaments
     BW_ = BAR_X1 - BAR_X0 + 2 * EXT; bar = Image.new('RGBA', (BW_, BH))
     tile = fp.crop(STONE); edge = fp.crop(EDGE)
@@ -108,19 +108,7 @@ def load(src, VAR='C'):
         cx = slots[i][0] + IX0 + IW / 2; cy = slots[i][1] + IY0 + IH / 2
         ns['layer'].alpha_composite(im, (round(cx - im.width / 2), round(cy - im.height / 2)))
     pc = src.img
-    exo = lambda s: src.font('exocetblizzardot-medium.otf', s)
     num = lambda s: src.font('blizzardglobal-v5_81.ttf', s)   # 角标与 Lv：原版界面字体等高数字 | Badge and Lv: lining figures in the original game's UI font
-    def metal(t, size):           # 原版标题字效：暗金竖向渐变 + 细深描边 + 轻斜面（左上高光、右下暗影） | The original game's title text effect: dark gold vertical gradient + thin dark outline + light bevel (upper-left highlight, lower-right shadow)
-        f = exo(size); pad = size // 4; W0, H0 = size * len(t) + 2 * pad, size * 2
-        m = Image.new('L', (W0, H0)); ImageDraw.Draw(m).text((pad, pad), t, font=f, fill=255)
-        a = np.array(m).astype(float) / 255; ys = np.where(a.max(1) > 0)[0]; y0, y1 = ys.min(), ys.max()
-        g = np.zeros((H0, W0, 3)); top = np.array([236, 206, 140]); bot = np.array([120, 84, 36])
-        for y in range(H0): t_ = min(1, max(0, (y - y0) / max(1, y1 - y0))); g[y, :] = top * (1 - t_) + bot * t_
-        hi = np.roll(np.roll(a, -2, 0), -2, 1); sh = np.roll(np.roll(a, 3, 0), 3, 1)
-        rgb = g * a[..., None]; rgb += np.clip(a - hi, 0, 1)[..., None] * np.array([255, 240, 200]) * 0.6; rgb *= (1 - 0.45 * np.clip(a - sh, 0, 1))[..., None]
-        ol = np.array(m.filter(ImageFilter.MaxFilter(5))).astype(float) / 255
-        out_ = np.zeros((H0, W0, 4)); out_[..., :3] = rgb + (1 - a)[..., None] * np.array([28, 18, 8]); out_[..., 3] = np.maximum(a, ol) * 255
-        return Image.fromarray(np.clip(out_, 0, 255).astype('uint8'), 'RGBA')
     _r = prep(pc('greater_healing_potion')); _k = BOX / max(_r.size); ns['REF_G'] = ((_r.width * _k) * (_r.height * _k)) ** 0.5
     # ---- 两侧雕像（PC 定稿原图，按 K 缩放），球心 = 定稿布局 HealthBall(260,65)+174 / ManaBall(24,65)+174 ----
     # ---- Statues on both sides (final PC original images, scaled by K), orb center = final layout HealthBall(260,65)+174 / ManaBall(24,65)+174 ----
@@ -129,8 +117,8 @@ def load(src, VAR='C'):
     BR = round(174 * K)              # 球半径 78 | Orb radius 78
     LX = BAR_X0 + 6 - round(608 * K); RX = BAR_X1 - 6 - round(24 * K)
     LBC = (LX + round(434 * K), H - L.height + round(239 * K)); RBC = (RX + round(198 * K), H - R.height + round(239 * K))
-    # ---- 经验条：两端对齐七格外沿 ----
-    # ---- Experience bar: both ends aligned to the outer edges of the seven slots ----
+    # ---- 经验条：两端对齐五格外沿 ----
+    # ---- Experience bar: both ends aligned to the outer edges of the five slots ----
     EX0, EX1 = slots[0][0], slots[-1][2]; EY = H - BH - 12
     # ---- 生命 / 法力：小一号，紧贴球顶（基线：不压雕像、与经验条留 ≥6）----
     # ---- Life / mana: one size smaller, tight against the orb top (baseline: not overlapping the statue, leaving ≥6 from the experience bar) ----
@@ -149,5 +137,5 @@ def load(src, VAR='C'):
     while not ok_at(YB): YB -= 1
     ns.update(W=W, H=H, DM=DM, SH=SH, EXT=EXT, BH=BH, BAR_X0=BAR_X0, BADGE=BADGE, BOX=BOX, IX0=IX0, IX1=IX1, IY0=IY0, IY1=IY1,
               bar=bar, slot=slot, slots=slots, L=L, R=R, LX=LX, RX=RX, LBC=LBC, RBC=RBC, BR=BR, EX0=EX0, EX1=EX1, EY=EY, YB=YB,
-              lvl=lvl, prep=prep, fit=fit, pc=pc, num=num, metal=metal, layer=Image.new('RGBA', (W, H)))
+              lvl=lvl, prep=prep, fit=fit, pc=pc, num=num, layer=Image.new('RGBA', (W, H)))
     return ns

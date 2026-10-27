@@ -7,7 +7,7 @@ extern "C" {
 
 enum { DM_TC_MAX_TOUCH = 16, DM_TC_COUNT = 12 };
 enum {
-    DM_TC_NONE = -1, DM_TC_JOYSTICK = -2, DM_TC_SWAP = -3, DM_TC_DIFF = -4,   /* DIFF：难度格 / 选择条占用的手指，不发按键 | DIFF: a finger captured by the difficulty cell / selector bar; sends no key */
+    DM_TC_NONE = -1, DM_TC_JOYSTICK = -2, DM_TC_SWAP = -3, DM_TC_HELD = -4,   /* HELD：被底栏手势占用的手指（点展开腰带的上面几排、点别处收腰带），不发按键 | HELD: a finger captured by a bottom-bar gesture (a tap on the expanded belt's upper rows, a tap elsewhere that collapses the belt); sends no key */
     DM_TC_EDGE = -5,   /* 屏幕底边归系统的那一条里起手的手指：不当摇杆，松手也不当点地 | A finger that started in the strip along the bottom edge of the screen that belongs to the system: not treated as the stick, and its release is not treated as a ground tap */
     DM_TC_MAIN = 0,
     DM_TC_SKILL1, DM_TC_SKILL2, DM_TC_SKILL3, DM_TC_SKILL4,
@@ -22,8 +22,6 @@ typedef struct {
     float joy_x, joy_y, joy_radius;   /* 没按时底盘的显示位置（静止位）与底盘半径 | where the base is shown while not pressed (rest position), and the base radius */
     float joy_zone_r, joy_zone_t, joy_min_x, joy_max_y;   /* 起摇杆区的右界与上界（左与下到屏幕边）；按下后底盘圆心的夹回界：x 不小于、y 不大于（只为底盘整圈画在屏内：屏幕边 + 半径 + 8） | right and upper bounds of the stick-start zone (left and bottom reach the screen edges); clamp bounds for the base centre once pressed: x not less than, y not greater than (only so that the whole base is drawn on screen: screen edge + radius + 8) */
     dm_tc_target swap;   /* 技能组切换键：本地开关，不直接发按键 | Skill set switch key: a local toggle; does not send a key directly */
-    dm_tc_target diff;   /* 底部 UI v4 第 0 格难度：点开 / 收起 1–8 选择条，不发按键 | Bottom UI v4 cell 0 difficulty: tap to open / collapse the 1–8 selector bar; sends no key */
-    dm_tc_target pick[8];   /* 选择条 8 格（第 i 格 = 人数档 i+1），在七格上方 | The selector bar's 8 cells (cell i = player-count level i+1), above the seven cells */
 } dm_tc_layout;
 typedef struct {
     int active, target;
@@ -112,8 +110,6 @@ typedef struct {
     double last_tap_s; float last_tap_x, last_tap_y;
     double stash_x_check_s; float stash_x_x, stash_x_y; unsigned stash_x_id;   /* 开着箱子双击背包物品先发了 X：到这个时刻那件还在光标下（游戏没收这下 X）就退回按住 Y | With the stash open, double-tapping an inventory item sent X first: if at this time the item is still under the cursor (the game did not accept that X), fall back to hold Y */
     uint64_t pointer_pending_button; double pointer_pending_hold;
-    /* 难度：diff_open = 选择条展开；diff_request = 刚选中的人数档（1–8），前端交给宿主 dm_hud_request_players 后清零 | Difficulty: diff_open = selector bar expanded; diff_request = the player-count level just selected (1–8), cleared after the front end hands it to the host's dm_hud_request_players */
-    int diff_open, diff_request;
     /* 腰带展开（原版键鼠「显示腰带」的那几排，手柄版没有入口）：身上的腰带多于 1 排时，在腰带格上向上滑 = 展开、向下滑 / 点别处 = 收起，
        展开后点上面几排的药 = 喝。belt_rows / belt_open 由前端每次触摸前按宿主读数写入；belt_request 前端取走后清零：
        1 展开，2 收起，0x100 | 排 << 4 | 列 = 喝那一格（排 1–3 = 底排之上第几排）

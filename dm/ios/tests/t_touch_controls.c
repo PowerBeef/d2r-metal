@@ -41,9 +41,9 @@ static void layout_at(float w, float h) {
         CHECK(hypotf(l.target[i].x-l.target[0].x,l.target[i].y-l.target[0].y)>=96*k);
         CHECK(hypotf(l.target[i].x-l.target[0].x,l.target[i].y-l.target[0].y)<=100*k);
     }
-    /* 底部 UI v4 六格（第 0 格难度）：腰带四列 → 第 1–4 格，功能入口 → 第 5 格；效果图 2868×1320 里格心 x = 1090 + 120×格号、y = 1241.5、
+    /* 底部 UI v4 五格：腰带四列 → 第 0–3 格，功能入口 → 第 4 格；效果图 2868×1320 里格心 x = 1210 + 120×格号、y = 1241.5、
        格半宽 57，按屏高换算、以屏宽中线（效果图 1434）居中。
-       Bottom UI v4 six cells (cell 0 is difficulty): the four belt columns → cells 1–4, function entry → cell 5; in the 2868×1320 mockup the cell center x = 1090 + 120 × cell number, y = 1241.5,
+       Bottom UI v4 five cells: the four belt columns → cells 0–3, function entry → cell 4; in the 2868×1320 mockup the cell center x = 1210 + 120 × cell number, y = 1241.5,
               cell half-width 57, converted by screen height and centered on the screen-width center line (mockup 1434). */
     const int order[5] = {DM_TC_BELT1, DM_TC_BELT2, DM_TC_BELT3, DM_TC_BELT4, DM_TC_MENU};
     float u = h/1320;
@@ -51,26 +51,11 @@ static void layout_at(float w, float h) {
         dm_tc_target t=l.target[order[c]];
         NEAR(t.r,57*u,0.001);
         NEAR(t.y,1241.5*u,0.001);
-        NEAR(t.x,w/2+(1090+120*(c+1)-1434)*u,0.01);
+        NEAR(t.x,w/2+(1210+120*c-1434)*u,0.01);
     }
     /* 回城钮（不在底栏）：技能弧最上面那颗（技能四）正上方的圆钮，同半径、间距 12 | Town portal button (not in the bottom bar): the round button directly above the topmost one on the skill arc (skill four), same radius, gap 12 */
     { dm_tc_target p=l.target[DM_TC_PORTAL], s4=l.target[DM_TC_SKILL4];
       NEAR(p.r,26*k,0.001); NEAR(p.x,s4.x,0.001); NEAR(p.y,s4.y-s4.r-12*k-p.r,0.001); }
-}
-/* 难度格：第 0 格 = 腰带第 1 格左邻一个格距；点开选择条，选第 8 格 → diff_request=8 并收起；选择期间不发任何按键 | Difficulty cell: cell 0 = one cell pitch to the left of belt cell 1; tap to open the selector strip, select cell 8 → diff_request=8 and collapse; no key is sent during selection */
-static void difficulty_picker(void) {
-    dm_tc_state s; dm_tc_init(&s,956,440);
-    dm_tc_layout *l=&s.layout; float pitch=440.0f*120/1320;
-    NEAR(l->diff.x,l->target[DM_TC_BELT1].x-pitch,0.01); NEAR(l->diff.y,l->target[DM_TC_BELT1].y,0.01);
-    NEAR(l->pick[7].x-l->pick[0].x,7*pitch,0.01); CHECK(l->pick[0].y+l->pick[0].r<l->diff.y-l->diff.r);
-    NEAR((l->pick[3].x+l->pick[4].x)/2,l->width/2+(1390-1434)*440.0f/1320,0.01);   /* 选择条中线 = 两球中线（效果图 1390） | Selector strip center line = the center line between the two orbs (mockup 1390) */
-    dm_tc_begin(&s,0,l->diff.x,l->diff.y); CHECK(s.diff_open==1 && s.buttons==0); dm_tc_end(&s,0); CHECK(s.buttons==0);
-    dm_tc_begin(&s,0,l->pick[7].x,l->pick[7].y); CHECK(s.diff_request==8 && s.diff_open==0 && s.buttons==0); dm_tc_end(&s,0);
-    s.diff_request=0;
-    dm_tc_begin(&s,0,l->diff.x,l->diff.y); dm_tc_end(&s,0); CHECK(s.diff_open==1);
-    press(&s,0,DM_TC_BELT2); CHECK(s.diff_open==0 && s.diff_request==0 && s.buttons==0); dm_tc_end(&s,0);   /* 点别处：收起并照常处理（腰带按下不再即喝，松手后等单双击，见 belt_tap） | Tap elsewhere: collapses and is handled as usual (a belt press no longer drinks immediately; it waits for single / double tap after release, see belt_tap) */
-    dm_tc_begin(&s,0,l->diff.x,l->diff.y); dm_tc_end(&s,0); dm_tc_set_navigation_mode(&s,1); CHECK(s.diff_open==0);
-    dm_tc_begin(&s,0,l->diff.x,l->diff.y); CHECK(s.diff_open==0);   /* 导航模式（功能页）不理难度格 | Navigation mode (function page) ignores the difficulty cell */
 }
 static void layout_667(void) { layout_at(667,375); }
 static void layout_812(void) { layout_at(812,375); }
@@ -638,7 +623,7 @@ static void belt_single_double(void) {
     }
 }
 int main(void) {
-    RUN(layout_667); RUN(layout_812); RUN(layout_956); RUN(layout_1024); RUN(layout_ipad169); RUN(layout_pixels); RUN(small_layout); RUN(difficulty_picker);
+    RUN(layout_667); RUN(layout_812); RUN(layout_956); RUN(layout_1024); RUN(layout_ipad169); RUN(layout_pixels); RUN(small_layout);
     RUN(hit_edges); RUN(key_hold_and_ownership); RUN(two_fingers_same_key); RUN(joystick_deadzone); RUN(joystick_clamp_956);
     RUN(joystick_axes); RUN(joystick_plus_skills); RUN(no_auto_handoff); RUN(background_no_key);
     RUN(circles_before_joystick); RUN(cancel_and_resize); RUN(deferred_skill_vs_belt); RUN(held_skill2_vs_belt); RUN(belt_single_double); RUN(no_ui_drag_outside_modal); RUN(invalid_slots_and_repeated_begin); RUN(all_slots_hold); RUN(enabled_targets); RUN(ui_scene_messages);

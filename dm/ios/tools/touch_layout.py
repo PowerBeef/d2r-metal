@@ -1053,9 +1053,9 @@ def _modal_prompt(old, new):
 PRESENT['confirmationmodalhd.json'] = _modal_prompt('"rect": { "x": 78, "y": 85, "width": 1076, "height": 170 },', '"rect": { "x": 78, "y": 28, "width": 1076, "height": 264 },')
 PRESENT['dismissablemodalhd.json'] = _modal_prompt('"rect": { "x": 140, "y": 70, "width": 966, "height": 212 },', '"rect": { "x": 140, "y": 28, "width": 966, "height": 264 },')
 PRESENT['controller/settingspanelhd.json'] = _settings_no_legend
-# 去掉的项：语言只留简中、手柄专用、联网、离线人数（只留底栏难度格一个入口）
+# 去掉的项：语言只留简中、手柄专用、联网。离线人数档（OfflineDifficultyScaling）照原版留着：改人数档走游戏自己的这一行
 # 英文版：r34 起原版切语言不再剪；「语言」分节与「文字语言」一行仍藏，等我们自己的文字进中英表（第二阶段）一起放出（切到英文看到一半中文不行）
-# Removed items: language keeps only Simplified Chinese, controller-only items, online, offline player count (only the difficulty cell in the bottom bar remains as the single entry)
+# Removed items: language keeps only Simplified Chinese, controller-only items, online. The offline player setting (OfflineDifficultyScaling) stays as in the game: the player count is changed on the game's own row
 # English version: since r34 the original game's language switch is no longer cut; the 「语言」(Language) section and the 「文字语言」(Text Language) row stay hidden until our own text enters the Chinese-English table (phase two) and are released together (switching to English and seeing half Chinese is not acceptable)
 PRESENT['soundoptionspanelhd.json'] = _drop_rows('LanguageOptions', 'VoiceLanguage', 'TextLanguage', 'Controller Feedback')
 PRESENT['gameplayoptionspanelhd.json'] = _drop_rows('AutoPartyInvite', 'ItemHotkeyTooltipAppender', 'ChatFontSize', 'ChatBackground', 'Controller Options', 'ControllerCursorSpeed',
@@ -1070,10 +1070,10 @@ PRESENT['gameplayoptionspanelhd.json'] = _drop_rows('AutoPartyInvite', 'ItemHotk
                                                     # Color Blind 「校准」(Calibrate): tapping it opens the full-page 「色盲校准」(Color Blind Calibration), where outside the page / the top-right corner / 「关闭」(Close) / 「保存并关闭」(Save and Close) all do not respond to taps, so the only way out is a force quit.
                                                     # This row has only the two characters 「色盲」(Color Blind) plus this button, so the whole row is removed (colorblind mode and strength are both on that page, and the settings table has no other colorblind row)
                                                     'ColorBlindCalibration')
-PRESENT['onlinegameoptionspanelhd.json'] = _drop_rows('OfflineDifficultyScaling', 'OfflineSettingsEffectNote')
-# 手柄模式的三份选项页（放在原路径，手柄模式加载；触屏那份由生成器挪到触屏这边）：原版删去两种模式都不支持的行——语言、联机、聊天、键鼠热键提示、离线人数档，
+PRESENT['onlinegameoptionspanelhd.json'] = _drop_rows()   # 只去悬停说明，行一行不少 | only the hover tooltips go, every row stays
+# 手柄模式的三份选项页（放在原路径，手柄模式加载；触屏那份由生成器挪到触屏这边）：原版删去两种模式都不支持的行——语言、联机、聊天、键鼠热键提示，
 # 和大字体模式（一应用就换成另一套布局档，再碰屏切回触屏会坏）。手柄模式比触屏多留的行见下
-# The three options pages for controller mode (placed at the original path and loaded by controller mode; the touch copy is moved to the touch side by the generator): the original with the rows that neither mode supports removed -- language, online, chat, keyboard-and-mouse hotkey hints, offline /players setting,
+# The three options pages for controller mode (placed at the original path and loaded by controller mode; the touch copy is moved to the touch side by the generator): the original with the rows that neither mode supports removed -- language, online, chat, keyboard-and-mouse hotkey hints,
 # and large font mode (applying it swaps in another set of layout profiles, and touching the screen to switch back to touch then breaks). The rows controller mode keeps beyond touch are listed below
 PAD_ROOT = {
     'soundoptionspanelhd.json': _drop_rows('LanguageOptions', 'VoiceLanguage', 'TextLanguage', 'Controller Feedback'),
@@ -1083,7 +1083,7 @@ PAD_ROOT = {
     # Not restored: vibration (the host does not support vibration; it is an empty implementation in hle_hid.c), controller feedback and cursor speed (the value changed but no effect was measured: in panels the controller cursor snaps cell by cell), separate binding for weapon swap (not verified)
     'gameplayoptionspanelhd.json': _drop_rows('AutoPartyInvite', 'ItemHotkeyTooltipAppender', 'ChatFontSize', 'ChatBackground', 'ShowParty', 'ShowNames', 'ShowRoomName', 'LowVisionMode',
                                               'ControllerCursorSpeed', 'ControllerWeaponSwapSeparateBindings', 'ControllerRumbleEnabled'),
-    'onlinegameoptionspanelhd.json': _drop_rows('OfflineDifficultyScaling', 'OfflineSettingsEffectNote'),
+    'onlinegameoptionspanelhd.json': _drop_rows(),
 }
 def build_pad_root(romfs, outdir):
     repl = {}

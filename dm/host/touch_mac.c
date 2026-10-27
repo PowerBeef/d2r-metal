@@ -29,7 +29,7 @@ int dm_touch_host_is_live(void) { return g_live_on; }   // 真鼠标模式（Mac
 static uint32_t touch_cur_tick(void) { return g_live_on ? (uint32_t)(now_ns() / 33333333ull) : dm_cur_tick(); }
 
 typedef struct { uint64_t beat; int op, slot; float x, y; } touch_event;
-enum { TOUCH_DOWN, TOUCH_MOVE, TOUCH_UP };
+enum { TOUCH_DOWN, TOUCH_MOVE, TOUCH_UP, TOUCH_PLAYERS };
 enum { START_BEATS = 60, LATE_LIMIT_BEATS = 125, LATE_LIMIT_FAST_BEATS = 2000, TICKS_PER_SECOND = 25 };   // 快进（DM_DETCLOCK）下拍跑在加载前面，读取画面几百拍才撤，时限另给   // 读取画面晚撤可顺延，ToGame 后 125 拍（5 s 游戏时间；负载下最晚实测第 67 拍撤，用例共跑 240 拍）仍未撤报红 | in fast-forward (DM_DETCLOCK) ticks run ahead of loading and the loading screen takes hundreds of ticks to come down, so a separate limit is given   // a late loading screen may postpone the start; still up 125 ticks after ToGame (5 s game time; latest measured under load is tick 67, the case runs 240 ticks in total) is reported as a failure
 
 static struct {
@@ -160,9 +160,11 @@ static void touch_init(uint64_t now) {
         if (!strcmp(op, "down")) e->op = TOUCH_DOWN;
         else if (!strcmp(op, "move")) e->op = TOUCH_MOVE;
         else if (!strcmp(op, "up")) e->op = TOUCH_UP;
+        else if (!strcmp(op, "players")) e->op = TOUCH_PLAYERS;   // 「秒 players N」：请求人数档 N（原版 /players 路径，下一拍落地），用例借它弹出游戏自己的系统通知 | "<s> players N": request player setting N (the game's /players path, applied on the next tick); cases use it to bring up the game's own notice
         else continue;
-        if (e->op != TOUCH_UP && fields != 5) { fprintf(stderr, "[dm] DM_TOUCH_SCRIPT 忽略坏行：%s", line); continue; }
-        if (e->op != TOUCH_UP) { e->x = x; e->y = y; }
+        int point = e->op == TOUCH_DOWN || e->op == TOUCH_MOVE;
+        if (point && fields != 5) { fprintf(stderr, "[dm] DM_TOUCH_SCRIPT 忽略坏行：%s", line); continue; }
+        if (point) { e->x = x; e->y = y; }
         g_touch.count++;
     }
     fclose(f);
@@ -356,6 +358,7 @@ apply_input:
     }
     while (g_touch.next < g_touch.count && g_touch.event[g_touch.next].beat <= g_touch.beat) {
         touch_event *e = &g_touch.event[g_touch.next++];
+        if (e->op == TOUCH_PLAYERS) { dm_hud_request_players(e->slot); continue; }
         if (e->slot < 0 || e->slot >= DM_TC_MAX_TOUCH) continue;
         if (e->op == TOUCH_DOWN) { dm_tc_begin(&g_touch.state, e->slot, e->x, e->y); if (g_touch.state.navigation_mode && e->slot == g_touch.state.pointer_slot) dm_tc_pointer_item(&g_touch.state, dm_ui_item_at_now(e->x / 2868, e->y / 1320)); }
         else if (e->op == TOUCH_MOVE) {
@@ -394,7 +397,6 @@ apply_input:
             if (g_touch.state.mouse_click_seq != mc) { float nx = g_touch.state.mouse_click_x / 2868, ny = g_touch.state.mouse_click_y / 1320; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
         }
     }
-    if (g_touch.state.diff_request) { dm_hud_request_players(g_touch.state.diff_request); g_touch.state.diff_request = 0; }   // 难度选择条选中档位 → 下一拍走原版路径 | a level is selected on the difficulty selector bar -> take the original game's path on the next tick
     dm_tc_tick(&g_touch.state, (double)g_touch.beat / 30.0);
     if (g_touch.state.pulse_button && !g_touch.pulse_end_beat) {
         g_touch.pulse_end_beat = g_touch.beat + 4;

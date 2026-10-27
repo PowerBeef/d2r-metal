@@ -58,26 +58,22 @@ void dm_tc_layout_make(dm_tc_layout *l, float width, float height) {
     const uint64_t skill[4]={DM_BTN_B,DM_BTN_X,DM_BTN_Y,DM_BTN_R};
     for(int i=0;i<4;i++)
         l->target[DM_TC_SKILL1+i]=(dm_tc_target){main_x+dx[i]*k,main_y+dy[i]*k,26*k,skill[i]};
-    /* 底栏 = 底部 UI v4 六格（NativeHUD/v4，游戏 HUD 按屏高缩放、以屏幕中线居中，所以按屏高换算）：
-       效果图 2868×1320 里格心 x = 1090 + 120×格号、y = 1241.5、格宽 114；第 0 格难度，1–4 腰带四列，5 功能入口（PLUS）。
+    /* 底栏 = 底部 UI v4 五格（NativeHUD/v4，游戏 HUD 按屏高缩放、以屏幕中线居中，所以按屏高换算）：
+       效果图 2868×1320 里格心 x = 1210 + 120×格号、y = 1241.5、格宽 114；0–3 腰带四列，4 功能入口（PLUS）。
        回城不在底栏（离药水太近易误触）：改为技能弧最上面那颗（技能四）正上方的圆钮，同半径、间距 12，点下按原版手柄的回城键（绑了回城技能 / 书 / 卷轴的那一格，front_ios.m 给），身上没有书和卷轴时不画、不按。
-       Bottom bar = the six cells of bottom UI v4 (NativeHUD/v4; the game HUD scales by screen height and is centered on the screen centerline, so convert by screen height):
-              in the 2868×1320 mock, cell center x = 1090 + 120×cell index, y = 1241.5, cell width 114; cell 0 difficulty, 1–4 the four belt columns, 5 the function entry (PLUS).
+       Bottom bar = the five cells of bottom UI v4 (NativeHUD/v4; the game HUD scales by screen height and is centered on the screen centerline, so convert by screen height):
+              in the 2868×1320 mock, cell center x = 1210 + 120×cell index, y = 1241.5, cell width 114; 0–3 the four belt columns, 4 the function entry (PLUS).
               Town portal is not in the bottom bar (too close to the potions, easy to hit by mistake): it is instead a round button directly above the topmost one on the skill arc (skill four), same radius, gap 12; on tap it presses the original game's town portal key (the slot bound to the town portal skill / tome / scroll, set by front_ios.m), and with no tome or scroll carried it is neither drawn nor pressed. */
     /* 腰带四列对十字键：左 = 第 1 列、上 = 第 2 列、下 = 第 3 列、右 = 第 4 列（原版实测：按「右」第 4 列减、按「下」第 3 列减；首版把后两个写反了，真机才撞到） | The four belt columns map to the D-pad: left = column 1, up = column 2, down = column 3, right = column 4 (measured in the original game: pressing "right" decrements column 4, pressing "down" decrements column 3; the first version had the last two swapped, which was only hit on a real device) */
     const uint64_t bottom[5] = {DM_BTN_LEFT, DM_BTN_UP, DM_BTN_DOWN, DM_BTN_RIGHT, DM_BTN_PLUS};
-    const int cell[5] = {1, 2, 3, 4, 5};
     float u = l->height / 1320.0f;
     for (int i = 0; i < 5; ++i)
-        l->target[DM_TC_BELT1+i] = (dm_tc_target){l->width/2+(1090+120*cell[i]-1434)*u, 1241.5f*u, 57*u, bottom[i]};
+        l->target[DM_TC_BELT1+i] = (dm_tc_target){l->width/2+(1210+120*i-1434)*u, 1241.5f*u, 57*u, bottom[i]};
     { const dm_tc_target *s4 = &l->target[DM_TC_SKILL4]; l->target[DM_TC_PORTAL] = (dm_tc_target){s4->x, s4->y-s4->r-12*k-26*k, 26*k, 0}; }
     // 小尺寸平板窗口：传送门放在技能三上方，避开右上角地图按钮。
     // Small tablet windows: put the portal above skill 3, clear of the top-right map control.
     if (g_tall_scale && height<340)
         l->target[DM_TC_PORTAL]=(dm_tc_target){main_x-34*k,main_y-156*k,26*k,0};
-    /* 第 0 格难度与选择条：选择条 8 格同格宽、格距 120，中线对齐两球中线（效果图 1390），格心 y = 1051.5（七格之上、避开数值文字） | Cell 0 difficulty and the selector bar: the selector bar has 8 cells of the same cell width, cell pitch 120, centerline aligned with the centerline between the two orbs (mock 1390), cell center y = 1051.5 (above the seven cells, clear of the value text) */
-    l->diff = (dm_tc_target){l->width/2+(1090-1434)*u, 1241.5f*u, 57*u, 0};
-    for (int i = 0; i < 8; ++i) l->pick[i] = (dm_tc_target){l->width/2+(1390+(i-3.5f)*120-1434)*u, 1051.5f*u, 57*u, 0};
     l->target[DM_TC_MAP] = (dm_tc_target){l->width-30*k, 30*k, 22*k, DM_BTN_MINUS};
     // 默认换组键沿传送门外弧向左排布，保持到主技能的半径不变。
     // Default: continue the portal's outer arc to its left, preserving the radius around the primary.
@@ -319,7 +315,7 @@ static void pointer_drag_begin(dm_tc_state *s, dm_tc_finger *f) {
 }
 
 void dm_tc_cancel_all(dm_tc_state *s) {
-    ++s->gesture_epoch; s->portal_pending=s->portal_phase=0; s->diff_open=0;
+    ++s->gesture_epoch; s->portal_pending=s->portal_phase=0;
     memset(s->finger, 0, sizeof(s->finger));
     for (int i = 0; i < DM_TC_MAX_TOUCH; ++i) s->finger[i].target = DM_TC_NONE;
     s->joy_slot = DM_TC_NONE;
@@ -459,17 +455,6 @@ void dm_tc_begin_at(dm_tc_state *s, int slot, float x, float y, double now_s) {
     if (slot < 0 || slot >= DM_TC_MAX_TOUCH || s->finger[slot].active || !isfinite(x) || !isfinite(y)) return;
     s->last_time_s = now_s;
     dm_tc_finger *f = &s->finger[slot];
-    if (!s->navigation_mode) {   /* 难度：点第 0 格开 / 收选择条；展开时点某格 = 选档并收起，点别处只收起、照常处理 | Difficulty: tapping cell 0 opens / collapses the selector bar; when expanded, tapping a cell = select that level and collapse; tapping elsewhere only collapses and is then handled as usual */
-        const dm_tc_target *d = &s->layout.diff;
-        int on_diff = d->r > 0 && hypotf(x-d->x, y-d->y) <= d->r, pick = -1;
-        for (int i = 0; s->diff_open && i < 8; ++i) if (hypotf(x-s->layout.pick[i].x, y-s->layout.pick[i].y) <= s->layout.pick[i].r) pick = i;
-        if (on_diff || pick >= 0) {
-            if (pick >= 0) s->diff_request = pick + 1;
-            s->diff_open = on_diff ? !s->diff_open : 0;
-            *f = (dm_tc_finger){.active=1, .target=DM_TC_DIFF, .x=x, .y=y}; update(s); return;
-        }
-        s->diff_open = 0;
-    }
     int hit = dm_tc_hit(&s->layout, x, y);
     if (!s->navigation_mode && s->belt_open && s->belt_rows > 1) {   /* 腰带展开着：点上面几排 = 喝那一格；点腰带以外 = 只收起 | Belt expanded: tapping the upper rows = drink that cell; tapping outside the belt = only collapse */
         float u = s->layout.height / 1320.0f;   /* 展开的几排是游戏自己画的：列与底排对齐，排距 162、第一排比底排高 165（效果图单位；真机 2868×1320 实量，行距由 gen_hud_v4.py 的 bpy 定，改那边要一起改） | The expanded rows are drawn by the game itself: columns align with the bottom row, row pitch 162, the first row is 165 above the bottom row (mock units; measured on a real device at 2868×1320; the row spacing is set by bpy in gen_hud_v4.py, and changing it there requires changing it here too) */
@@ -477,11 +462,11 @@ void dm_tc_begin_at(dm_tc_state *s, int slot, float x, float y, double now_s) {
             const dm_tc_target *t = &s->layout.target[DM_TC_BELT1+c];
             if (fabsf(x - t->x) <= 60*u && fabsf(y - (t->y - (165.0f + 162.0f*(r-1))*u)) <= 53.75f*u) {
                 belt_fire(s, 0x100 | r << 4 | c);   /* 按下就喝那一格 | drink that cell on press */
-                *f = (dm_tc_finger){.active=1, .target=DM_TC_DIFF, .x=x, .y=y}; update(s); return;
+                *f = (dm_tc_finger){.active=1, .target=DM_TC_HELD, .x=x, .y=y}; update(s); return;
             }
         }
         if (hit < DM_TC_BELT1 || hit > DM_TC_BELT4) {   /* 点别处：只收腰带，这一下不再做别的（不走路、不点世界、不按键） | Tap elsewhere: only collapse the belt; this tap does nothing else (no walking, no world tap, no key press) */
-            s->belt_request = 2; *f = (dm_tc_finger){.active=1, .target=DM_TC_DIFF, .x=x, .y=y}; update(s); return;
+            s->belt_request = 2; *f = (dm_tc_finger){.active=1, .target=DM_TC_HELD, .x=x, .y=y}; update(s); return;
         }
     }
     if (hit == DM_TC_SWAP) {

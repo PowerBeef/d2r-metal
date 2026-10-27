@@ -2,26 +2,26 @@
 
 中文：[README.zh-CN.md](README.zh-CN.md)
 
-The strip at the bottom of the screen in game: life orb, mana orb, belt, town portal, feature entry, experience bar. Most of it is not UI drawn by the shell itself but widgets of the game's original HUD (the always-present in-game UI), rearranged.
+The strip at the bottom of the screen in game: life orb, mana orb, belt, feature entry, experience bar. Most of it is not UI drawn by the shell itself but widgets of the game's original HUD (the always-present in-game UI), rearranged.
 
 ## Arrangement
 
 From left to right:
 
-Stick area → statue holding the life orb → seven slots → statue holding the mana orb → skill area
+Stick area → statue holding the life orb → five slots → statue holding the mana orb → skill area
 
-The seven slots in the middle are, in order: difficulty (tapping it opens a selection strip of 1–8), four belt slots, town portal, feature entry (opens feature pages such as the inventory). Above the seven slots is the experience bar.
+The five slots in the middle are, in order: four belt slots and the feature entry (the red cross; opens feature pages such as the inventory). Above the five slots is the experience bar. Town portal is a round button above the skill arc, drawn by the shell. The player count (difficulty) is set on the game's own row in Options, as in the original.
 
 ## How it is done
 
 No mod is used; it goes through the overlay RomFS (a small set of assets generated at build time and shipped with the app, which the game checks first when reading files; see "Overlay RomFS" in [../README.md](../README.md)). Two things are replaced in the overlay:
 
-- **The gamepad HUD layout**. The original layout has the structural patch kept in the repository, `../tools/touchrectv1_patch.json`, applied to it (for the patch format see `../tools/layout_patch.py`), and is then arranged into the layout above by `../tools/gen_hud_v4.py`. For the original widgets only position and scale are changed: the life orb, mana orb and belt are as before; town portal uses the original sixth skill button, and the feature entry uses the original `升级` (Level Up) button. The original experience bar is moved off screen and is instead drawn by the shell according to the new geometry.
-- **One base image**: the stone strip, the seven slot frames and the statues on both sides, with the orb centres cut out so that the orb liquid the game itself draws shows through. The base image is written to an old texture path the game no longer reads, registered in `dm/data/casc_overlay/borrowed_paths.tsv`.
+- **The gamepad HUD layout**. The original layout has the structural patch kept in the repository, `../tools/touchrectv1_patch.json`, applied to it (for the patch format see `../tools/layout_patch.py`), and is then arranged into the layout above by `../tools/gen_hud_v4.py`. For the original widgets only position and scale are changed: the life orb, mana orb and belt are as before; the original sixth skill button stays only so its binding can be read, hidden under the feature entry, which uses the original `升级` (Level Up) button. The original experience bar is moved off screen and is instead drawn by the shell according to the new geometry.
+- **One base image**: the stone strip, the five slot frames and the statues on both sides, with the orb centres cut out so that the orb liquid the game itself draws shows through. The base image is written to an old texture path the game no longer reads, registered in `dm/data/casc_overlay/borrowed_paths.tsv`.
 
-In the skill area on the right, the game's five original skill buttons still occupy their places in the layout, and the skill circles the shell draws with UIKit are stacked on top of them (`../Sources/DmTouchOverlay.m`). The experience bar, the difficulty number and the selection strip are also drawn by this layer, with art and geometry generated at build time.
+In the skill area on the right, the game's five original skill buttons still occupy their places in the layout, and the skill circles the shell draws with UIKit are stacked on top of them (`../Sources/DmTouchOverlay.m`). The experience bar, the level text, the belt counts and the feature entry's two states are also drawn by this layer, with art and geometry generated at build time.
 
-What a finger tap on these widgets counts as is decided by the layout in `../Sources/dm_touch_controls.c` (`dm_tc_layout_make`): it converts the tap areas onto the same set of seven slots according to the screen height, aligned with the picture.
+What a finger tap on these widgets counts as is decided by the layout in `../Sources/dm_touch_controls.c` (`dm_tc_layout_make`): it converts the tap areas onto the same five slots according to the screen height, aligned with the picture.
 
 ## What is in this directory
 

@@ -257,7 +257,7 @@ DM_PC_DATA	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	y
 DM_PERFHINT	harmony	harmony/native/front_ohos.c	-
 DM_PERF_FILE	harmony,host	harmony/native/gameperf_ohos.c host/diag.c	-
 DM_PIN_FAST	harmony	harmony/native/front_ohos.c	-
-DM_PLAYERS	host	host/diag.c	-
+DM_PLAYERS	host	host/diag.c	y
 DM_POSCHK	host	host/diag.c	y
 DM_POT_PICK	host	host/dm_beltauto.c host/dm_potpick.c	-
 DM_PRELOAD	host	host/main.c	-
