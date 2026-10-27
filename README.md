@@ -66,12 +66,16 @@ The Mac also uses the game's own PC options the Switch build leaves off: SMAA an
 
 Full frames from the same build and the same spot; only the setting changed. Click one for full size.
 
-**Mac, 2560 × 1440 screen.** Left: the original 1600 × 900, stretched. Right: 1920 × 1080 enlarged with MetalFX (the earlier Recommended; Native output looks sharper still).
+**Mac, 2560 × 1440 screen, full screen.** Left: the original 1600 × 900, stretched, with the game's FXAA. Right: D2R Metal's Recommended on an M6: the interface at the screen's native 2560 × 1440, the 3D world at 75% enlarged by MetalFX, SMAA and 16x texture filtering.
 
-<table><tr><th>Original</th><th>D2R Metal</th></tr><tr>
-<td><img width="440" alt="Mac, 1600 × 900, plain stretch" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/3a-mac-original-1600-standard.jpg" /></td>
-<td><img width="440" alt="Mac, 1920 × 1080 with MetalFX" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/3b-mac-improved-1920-metalfx.jpg" /></td>
+<table><tr><th>Original</th><th>D2R Metal Recommended</th></tr><tr>
+<td><img width="440" alt="Mac, 1600 × 900 stretched, FXAA" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/11a-mac-original-1600.jpg" /></td>
+<td><img width="440" alt="Mac, native 2560 × 1440 interface, 3D at 75% with MetalFX, SMAA, 16x filtering" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/11b-mac-recommended-native.jpg" /></td>
 </tr></table>
+
+The same two frames at 1:1 pixels: interface text, the waypoint and ground, name labels and the character.
+
+<p align="center"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/12-mac-detail-1to1.jpg" width="100%" alt="1:1 crops of the two frames: interface text, waypoint and ground, labels and fence, character"></p>
 
 **iPhone 17 Pro, 2622 × 1206.** Both with the 3D world at 75%. Left: the game's own upscale. Right: MetalFX.
 
@@ -80,19 +84,22 @@ Full frames from the same build and the same spot; only the setting changed. Cli
 <td><img width="440" alt="iPhone 17 Pro, 3D at 75% with MetalFX" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/7b-iphone-improved-75-metalfx.jpg" /></td>
 </tr></table>
 
-It costs about 1 ms of GPU time per frame on a Mac and about 0.6 ms on an iPhone 17 Pro, which still holds 60 fps (details under *For developers*, below).
+On the M6 the Mac's Recommended takes about the same GPU time per frame as the earlier 1920 × 1080 + MetalFX setup, about 8 ms of the 16.7 ms a 60 fps frame allows, because the plain 1:1 present replaces the full-frame MetalFX pass and rendering passes now overlap on the GPU. On an iPhone 17 Pro MetalFX costs about 0.6 ms and it still holds 60 fps (details under *For developers*, below).
 
 ## Settings in the game's own Options
 
 Options has five tabs on both platforms: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**, all drawn with the game's own selectors, checkboxes and text.
 
-- **Video**: on the Mac, Display Mode, Resolution (1600 × 900 to 2560 × 1440), Graphic Presets and Upscaling (Standard / MetalFX); on iPhone and iPad, 3D Resolution (75 / 85 / 100%), Graphic Presets and Upscaling. Both have **Frame Rate** (60 fps, or 30 to save power) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
-- **Recommended** is worked out at first launch: on a Mac, full screen at the highest resolution that suits its screen and chip, with MetalFX whenever the picture is enlarged; on iPhone and iPad, 3D at 75% with MetalFX.
+- **Video**: on the Mac, Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets, 3D Resolution (100 down to 50%) and Upscaling (Standard / MetalFX); on iPhone and iPad, 3D Resolution (75 / 85 / 100%), Color, Graphic Presets and Upscaling. Both have **Anti-Aliasing** (the game's FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Frame Rate** (60 fps, or 30 to save power) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
+- **Recommended** is worked out for the device: on a Mac, full screen at Native with the 3D resolution chosen for its chip, MetalFX, SMAA, 16x filtering and Accurate color; on iPhone and iPad, 3D at 75% with MetalFX (the new picture options are off there until they have been measured on a phone).
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
 - Apply, Discard and Default work like the game's own option pages; Default resets only the tab you are on.
 
 <p align="center">
-  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/2-mac-upscaling-changed.jpg" width="49%" alt="The Mac Video tab: Display, Graphics, Frame Rate and Frame Drops">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/13-mac-video-tab-native.jpg" width="49%" alt="The Mac Video tab at Recommended: Fullscreen, Native, Accurate color, Recommended preset, 3D Resolution 75%">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/14-mac-video-tab-graphics.jpg" width="49%" alt="The Mac Video tab's Graphics rows: MetalFX, SMAA, 16x filtering, Frame Rate and Frame Drops">
+</p>
+<p align="center">
   <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/10-mac-settings-player-count.jpg" width="49%" alt="The Settings tab with the game's own Offline Difficulty Scaling row">
 </p>
 
@@ -179,7 +186,7 @@ Run `./setup.sh` again after updating to a new commit. It also rewrites three fi
 
 1. An offline step rewrites a few instructions in the game's aarch64 program so it can run as an ordinary process (no code is generated at run time, which iOS forbids).
 2. A native host loads it, provides the Switch system services it calls, and runs it on the device's CPU.
-3. The game's NVN graphics calls are replayed on Metal 4 (or the older Metal API), with its shaders translated offline to Metal.
+3. The game's NVN graphics calls are replayed on Metal 4, with its shaders translated offline to Metal.
 
 A tour of the code is in [dm/README.md](dm/README.md).
 
@@ -192,7 +199,8 @@ A tour of the code is in [dm/README.md](dm/README.md).
 
 - **Mac, MetalFX at the last step**: M6 (12 GPU cores), 2560 × 1440 screen, character select. Enlarging the same 1600 × 900 picture costs 0.28 ms of GPU time with a plain stretch and 1.38 ms with MetalFX; edge sharpness goes from 235 to 569. At 1920 × 1080 with MetalFX (Recommended on that Mac) enlarging costs 1.78 ms, the whole frame about 13.7 ms, inside the 16.7 ms of 60 fps, and edge sharpness reaches 754 ([4ac0543](https://github.com/PowerBeef/d2r-metal/commit/4ac0543)).
 - **iPhone, MetalFX on the 3D world**: iPhone 17 Pro, 3D at 75% (1967 × 905 inside a 2622 × 1206 frame). Steady 60 fps; median GPU time per frame 11.65 → 12.28 ms (+0.6 ms); edge sharpness 404 → 728 with the same colours ([7c2f892](https://github.com/PowerBeef/d2r-metal/commit/7c2f892)).
-- Not measured yet: battery and heat with MetalFX on phones over long sessions.
+- **Mac, Recommended on the M6** (2560 × 1440 screen, town route, 6 + 6 alternating runs): native output with the 3D at 75% + MetalFX takes about the same GPU time per frame as 1920 × 1080 + MetalFX (game frame 6.1 → 7.5 ms, present 1.7–2.1 → 0.3–0.4 ms); the game's SMAA adds about 0.5 ms and 16x filtering about 0.2 ms; letting rendering passes overlap saves 0.54 ms (−8.5%); skipping repeated state binds cuts bind records by 57% and the replay thread's instructions by 13%. Picture-neutral changes are checked against tick-identical replays and pixel comparisons.
+- Not measured yet: battery and heat with MetalFX on phones over long sessions, and the new picture options on an iPhone.
 
 </details>
 
@@ -203,7 +211,7 @@ The tools used to check every change are in the repository. One command runs the
 
 - a **control port** to drive a running game, and a **scenario runner** that plays scripted sessions on the command-line host, the Mac App, the iOS app on a Mac, or an iPhone ([control_port.md](dm/verify/control_port.md), [scenarios](dm/verify/scenarios/README.md));
 - **checks that read the game's own state**: the panels on screen, the focused widget, the controller actions as the game names them, and the save system, where a save that never commits is a failure; every scripted session also checks that its saved game would load;
-- **baselines recorded from this fork's own build**: three routes replay tick for tick on both Metal renderers, the replayed saves match the recorded ones byte for byte, and key screens are compared per renderer;
+- **baselines recorded from this fork's own build**: three routes replay tick for tick, the replayed saves match the recorded ones byte for byte, and key screens are compared;
 - **save fault tests** (a full disk at different moments, a quit in the middle of a save), a **playtest bot** that checks invariants after every action, and long **soak** runs;
 - **A/B benchmarks** with statistics, regression checks against a kept build, sampled profiles per game thread and function, and GPU frame capture;
 - **sanitizer builds** (ASan, UBSan, TSan), seeded **random exploration** with shrinking, **replay**, and LLDB commands that read the game's panels, focus and saves ([debugging.md](dm/verify/debugging.md)).
