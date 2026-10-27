@@ -1,4 +1,5 @@
 # The READMEs are d2r-metal's own; keep them when merging upstream/main (needs: git config merge.ours.driver true)
-README.md merge=ours
-README.zh-CN.md merge=ours
-README.es.md merge=ours
+# Anchored to the repository root: without the leading slash the rule also matched every README in sub-folders (dm/verify/README.md, ...), which would silently drop upstream's edits to those docs
+/README.md merge=ours
+/README.zh-CN.md merge=ours
+/README.es.md merge=ours
