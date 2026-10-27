@@ -22,6 +22,12 @@ dm/android/.cxx/
 *.jks
 *.p12
 *.pfx
+*.p8
+*.mobileprovision
+*.provisionprofile
+# Switch 密钥文件（./setup.sh 解包游戏时用） | Switch key files (used by ./setup.sh to extract the game)
+prod.keys
+title.keys
 /private/
 /artifacts/
 dm/android/local.env
