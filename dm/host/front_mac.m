@@ -65,11 +65,11 @@ static void render_setup(void) {
 }
 int front_video_running_res(void) { return g_render_tier; }
 int front_video_mfx_ok(void) { static int ok = -1; if (ok < 0) ok = [MTLFXSpatialScalerDescriptor supportsDevice:MTLCreateSystemDefaultDevice()] ? 1 : 0; return ok; }
-// 首次启动的推荐值（dm_video.c 读不到 rec_* 时调，启动时在主线程）：全屏；分辨率取「不超过主屏像素宽的 3/4」的最高一档，2560 那档只给 Pro / Max / Ultra
+// 首次启动的推荐值（dm_video.c 读到的 sw_video.txt 缺键或越界时调，只取缺的那几个，启动时在主线程）：全屏；分辨率取「不超过主屏像素宽的 3/4」的最高一档，2560 那档只给 Pro / Max / Ultra
 // 显卡（名字里带；M6 实测 1920 出图 + MetalFX 每帧约 13.7 ms，2560 约 14.5 ms，60 帧只有 16.7 ms）；出图比画布小又支持 MetalFX 就开 MetalFX。
 // 旧版偏好（StartFullScreen / RenderScale / MetalFXUpscale）设过的当作当前值接着用。测试副本（DM_APP_SUPPORT）缺省全按原版（窗口、1600、标准），
 // 自动跑的局才稳定；DM_TEST_VIDEO_FIRSTBOOT=1 让测试也走真推荐
-// Recommended values on first boot (called by dm_video.c when it finds no rec_*, on the main thread at launch): full screen; resolution = the highest tier not wider than 3/4 of the main screen's pixel width, the 2560 tier only for
+// Recommended values on first boot (called by dm_video.c when sw_video.txt lacks a key or has one out of range, only the missing ones are used, on the main thread at launch): full screen; resolution = the highest tier not wider than 3/4 of the main screen's pixel width, the 2560 tier only for
 // Pro / Max / Ultra GPUs (going by the name; on an M6 a 1920 render + MetalFX took about 13.7 ms per frame and 2560 about 14.5 ms, against 16.7 ms at 60 fps); MetalFX on when the render is smaller than the canvas and MetalFX is supported.
 // Values from the older preferences (StartFullScreen / RenderScale / MetalFXUpscale) carry over as the current values when set. The test copy (DM_APP_SUPPORT) defaults to the original throughout (windowed, 1600, standard)
 // so automated runs stay stable; DM_TEST_VIDEO_FIRSTBOOT=1 makes a test take the real recommendation

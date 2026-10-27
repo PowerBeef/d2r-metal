@@ -1,6 +1,6 @@
 // 画面设置：Mac 选项页顶上「显示」「图形」两节（布局 touch_layout.py _VIDEO），存在自定义设置旁的 sw_video.txt。
 // 三个值：mode（0 窗口 / 1 全屏）、res（出图宽档 0 = 1600 / 1 = 1920 / 2 = 2560）、up（0 标准拉伸 / 1 MetalFX），另存一份「推荐」rec_*。
-// 首次启动（文件里没有 rec_*）按这台 Mac 定推荐值并当作当前值（前端 front_video_firstboot：屏幕像素宽、显卡核数、MetalFX 支持；旧版偏好 StartFullScreen /
+// 首次启动（文件里一个键都没有；只缺 / 越界个别键时只补那几个，见 load_once）按这台 Mac 定推荐值并当作当前值（前端 front_video_firstboot：屏幕像素宽、显卡核数、MetalFX 支持；旧版偏好 StartFullScreen /
 // RenderScale / MetalFXUpscale 设过的接着用）。「图形预设」是推导出来的：三项都等于推荐 = 推荐；分辨率 + 放大方式等于性能档 / 品质档 = 那一档；都不是 = 自定义。
 // 页上照原版选项页的语义：切换框改的是待定值，「应用」才生效并存盘（显示模式当场切、放大方式下一帧起、分辨率下次启动——行下提示「重启游戏后生效」），
 // 「放弃」丢掉待定值，「默认」待定值回推荐值。「有改动」位与自定义页合在一起（dm_custom.c 按 dm_video_dirty 一并点亮「应用」）。
@@ -8,7 +8,7 @@
 // 设当前项走原版 main+0xab0c84(控件, 序号)（按个数钳、跳过不可选的项、按当前语言换上这一项的字）。读写前核虚表与选项个数。
 // Picture settings: the "Display" and "Graphics" sections at the top of the Mac options page (layout touch_layout.py _VIDEO), stored in sw_video.txt next to the custom settings.
 // Three values: mode (0 windowed / 1 full screen), res (render width tier 0 = 1600 / 1 = 1920 / 2 = 2560), up (0 standard stretch / 1 MetalFX), plus a stored "recommended" copy rec_*.
-// On first boot (no rec_* in the file) the recommendation is worked out for this Mac and becomes the current value (front end front_video_firstboot: screen pixel width, GPU cores, MetalFX support; values from the
+// On first boot (no key at all in the file; when only some keys are missing / out of range only those are filled, see load_once) the recommendation is worked out for this Mac and becomes the current value (front end front_video_firstboot: screen pixel width, GPU cores, MetalFX support; values from the
 // older preferences StartFullScreen / RenderScale / MetalFXUpscale carry over when set). "Graphic Presets" is derived: all three equal to the recommendation = Recommended; resolution + upscaling equal to the
 // Performance / Quality tier = that tier; otherwise = Custom.
 // On the page it follows the original options page: a selector changes a pending value, only "Apply" makes it take effect and saves (display mode switches at once, upscaling from the next frame, resolution at the next
@@ -76,20 +76,26 @@ static void load_once(void) {
     pthread_mutex_lock(&g_mu);
     char p[1100];
     if (!atomic_load(&g_loaded) && dm_custom_path("sw_video.txt", p, sizeof p)) {
-        int v[NV] = { 0, 0, 0 }, r[NV] = { -1, -1, -1 }; FILE *f = fopen(p, "r"); char ln[64];
+        // 逐键读：缺的、越界的那一个键才按首次启动的值补，其余照读到的用。原先任一 rec_* 缺 / 越界就整份当首次启动，玩家设好的三项全被推荐值盖掉
+        // Read key by key: only a missing or out-of-range key is filled from the first-boot values, the rest keep what was read. Before, one missing / out-of-range rec_* treated the whole file as a first boot and the recommendation overwrote all three of the player's settings
+        int v[NV] = { -1, -1, -1 }, r[NV] = { -1, -1, -1 }; FILE *f = fopen(p, "r"); char ln[64];
         while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int x = atoi(eq + 1), rec = !strncmp(ln, "rec_", 4);
             for (int i = 0; i < NV; i++) if (!strcmp(rec ? ln + 4 : ln, k_keys[i]) && x >= 0 && x < k_n[i]) { if (rec) r[i] = x; else v[i] = x; } }
         if (f) fclose(f);
-        int first = r[0] < 0 || r[1] < 0 || r[2] < 0;
-        if (first) {   // 首次启动：定推荐值（前端没有 = 原版：窗口、1600、标准） | first boot: work out the recommendation (no front end = the original: windowed, 1600, standard)
+        int miss = 0, first = 1; for (int i = 0; i < NV; i++) { miss |= (v[i] < 0) << i | (r[i] < 0) << (i + NV); first &= v[i] < 0 && r[i] < 0; }   // first = 一个键都没读到（真首次启动） | first = not a single key read (a real first boot)
+        if (miss) {   // 定推荐值（前端没有 = 原版：窗口、1600、标准），只补缺的键 | work out the recommendation (no front end = the original: windowed, 1600, standard), filling only the missing keys
             int rec[3] = { 0, 0, 0 }, cur[3] = { 0, 0, 0 };
             if (!front_video_firstboot(rec, cur)) memcpy(cur, rec, sizeof cur);
-            for (int i = 0; i < NV; i++) { r[i] = rec[i] >= 0 && rec[i] < k_n[i] ? rec[i] : 0; v[i] = cur[i] >= 0 && cur[i] < k_n[i] ? cur[i] : r[i]; }
+            for (int i = 0; i < NV; i++) { int rv = rec[i] >= 0 && rec[i] < k_n[i] ? rec[i] : 0, had_r = r[i] >= 0;
+                if (r[i] < 0) r[i] = rv;
+                if (v[i] < 0) v[i] = had_r ? r[i] : cur[i] >= 0 && cur[i] < k_n[i] ? cur[i] : r[i]; }   // 当前值缺：有存着的推荐就回推荐，都缺才按首次启动的当前值（含旧版偏好） | current value missing: back to the stored recommendation if there is one, the first-boot current value (with older preferences) only when both are missing
         }
         for (int i = 0; i < NV; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_rec[i], r[i]); }
         atomic_store(&g_loaded, 1);
-        LOG("画面设置：%s %s mode=%d res=%d up=%d，推荐 %d/%d/%d", first ? "首次启动定推荐值" : "读盘", p, v[0], v[1], v[2], r[0], r[1], r[2]);
-        if (first) save_locked();
+        if (miss && !first) { char mk[64] = ""; for (int i = 0; i < 2 * NV; i++) if (miss >> i & 1) snprintf(mk + strlen(mk), sizeof mk - strlen(mk), "%s%s%s", mk[0] ? " " : "", i >= NV ? "rec_" : "", k_keys[i % NV]);
+            LOG("画面设置：%s 缺 / 越界的键 %s → 只补这几个（其余照读）", p, mk); }
+        LOG("画面设置：%s %s mode=%d res=%d up=%d，推荐 %d/%d/%d", first ? "首次启动定推荐值" : miss ? "读盘（补过缺的键）" : "读盘", p, v[0], v[1], v[2], r[0], r[1], r[2]);
+        if (miss) save_locked();   // 补齐的整份写回 | write the completed file back
     }
     pthread_mutex_unlock(&g_mu);
 }

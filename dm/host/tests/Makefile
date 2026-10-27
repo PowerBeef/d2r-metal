@@ -65,6 +65,7 @@ run: \
 	$(B)/t_ui_taps \
 	$(B)/t_unimpl \
 	$(B)/t_unit_level \
+	$(B)/t_video \
 	$(B)/t_widget
 	python3 native_write_scan.py --selftest ..
 	python3 widget_cache_scan.py --selftest ..
@@ -143,6 +144,7 @@ run: \
 	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_scrub
+	TMPDIR="$(abspath $(B))" $(B)/t_video 2>/dev/null
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
 	$(PY) movie_cut.py $(B)/main.orig.bin $(B)/subsdk0.orig.bin
 	$(PY) oe_notify.py $(B)/main.orig.bin
@@ -160,6 +162,8 @@ $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_textbox.c ../dm_textbox_core.c
 $(B)/t_scrub: t_scrub.c ../dm_scrub.c ../dm_scrub.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_scrub.c ../dm_scrub.c
+$(B)/t_video: t_video.c ../dm_video.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_video.c ../dm_video.c
 $(B)/t_rwlv: t_rwlv.c ../dm_rwlv_core.c ../dm_rwlv_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_rwlv.c ../dm_rwlv_core.c
 $(B)/t_doorspot: t_doorspot.c ../dm_doorspot.h | $(B)
