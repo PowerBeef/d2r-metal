@@ -590,6 +590,7 @@ static void tbdr_latch(void);
 static void pso_pend_age(void);
 static void mfx3d_sub_begin(void);
 static void aniso_latch(void);
+static void bar_stats(void);
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
     pso_pend_age();   // 并行预编：回收过期没人领的预测槽 | parallel precompile: recycle stale untaken prediction slots
@@ -598,6 +599,7 @@ void mtl_sub_begin(void) {
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
     defer_drain();
     aniso_latch();   // 「各向异性过滤」换档：在这里换掉已建的采样器 | "Anisotropic Filtering" changed: swap out the samplers built so far here
+    bar_stats();   // 通道间屏障的计数，每 3600 次提交一行 | pass-barrier counts, one line every 3600 submissions
     defer_reset();
     warm_claim();
     if (g_cb) MDIE("提交重入");
@@ -681,15 +683,56 @@ static inline void m3_rbuf(id<MTLRenderCommandEncoder> e, int vertex, NSUInteger
     if (vertex) [e setVertexBuffer:b offset:off atIndex:i]; else [e setFragmentBuffer:b offset:off atIndex:i];
 }
 #else
-static inline void m4_end(id e) {
-    if ([e conformsToProtocol:@protocol(MTL4CommandEncoder)]) [(id<MTL4CommandEncoder>)e barrierAfterStages:MTLStageAll beforeQueueStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+extern int g_bar_lv;
+static inline void m4_end(id e) {   // 结尾屏障：第 1 档起渲染编码器不再挡之后的顶点阶段；计算 / 拷贝编码器照旧整道（之后的顶点靠它等拷贝与计算，见 bar_r_begin） | end barrier: from level 1 render encoders no longer hold back later vertex stages; compute / copy encoders keep the full one (later vertex stages wait for copies and compute through it, see bar_r_begin)
+    if ([e conformsToProtocol:@protocol(MTL4CommandEncoder)]) {
+        MTLStages before = MTLStageAll;
+        if (g_bar_lv > 0 && [e conformsToProtocol:@protocol(MTL4RenderCommandEncoder)]) before &= ~(MTLStageVertex | MTLStageObject | MTLStageMesh);
+        [(id<MTL4CommandEncoder>)e barrierAfterStages:MTLStageAll beforeQueueStages:before visibilityOptions:MTL4VisibilityOptionDevice]; }
     [e endEncoding];
 }
 #endif
 #if DM_NVN_M3
 static inline RENC enc_r_begin(RPD *d) { return [g_cb renderCommandEncoderWithDescriptor:d]; }
+static void bar_stats(void) {}   // 旧接口靠系统自动跟踪依赖，没有通道间屏障 | the older API relies on automatic hazard tracking and has no pass barriers
 #else
-static inline RENC enc_r_begin(RPD *d) { RENC e = [g_cb renderCommandEncoderWithDescriptor:d]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_vt atStages:MTLRenderStageVertex]; [e setArgumentTable:g_ft atStages:MTLRenderStageFragment]; return e; }
+// 通道间屏障（画质计划第 5 阶段，DM_NVN_BARRIER；g_bar_lv 供 DM_NVN_UB 同进程交替）：
+//   0 = 原先：每个编码器开头「之前全部阶段 → 本通道全部阶段」、结尾「本通道全部阶段 → 之后全部阶段」，GPU 上各通道一个接一个跑完。
+//   1 = 渲染通道开头只挡片元 / tile 等（之前的全部阶段；附件的读写都在片元），顶点阶段不另等：计算与拷贝编码器（可能写顶点缓冲、uniform）结尾照旧整道，
+//       之后的顶点阶段经它等到这些拷贝（以及更早的一切）。实测要点：顶点阶段在通道开头「只等之前的计算与拷贝阶段」也把重叠全吃掉了，所以不在开头等。
+//       顶点阶段在三种情况下也等之前的全部阶段：这次绘制的顶点着色器读贴图（可能是前面通道刚画的附件）或写内存——绘制前补一道（bar_draw）；
+//       前面有片元 / 顶点着色器写过存储缓冲或可写贴图（g_bar_vhz）——下一个渲染通道开头就用整道。渲染编码器结尾的屏障不再挡之后的顶点阶段。
+//       计算、拷贝编码器与宿主自己插的通道开头照旧整道；MetalFX 经围栏等它的拷贝趟。这样下一通道的顶点阶段能和上一通道的片元重叠（TBDR 上片元是大头）。
+//       全放开的探针量得上限：town_loop 每帧 GPU −0.5 ms（−8%）
+// Barriers between passes (picture plan phase 5, DM_NVN_BARRIER; g_bar_lv for DM_NVN_UB in-process alternation):
+//   0 = as before: each encoder starts with "all earlier stages → all stages of this pass" and ends with "all stages of this pass → all later stages", so passes run one after another on the GPU.
+//   1 = a render pass's start holds back only fragment / tile and the like (until every earlier stage; attachment loads and stores happen in fragment), and the vertex stage waits for nothing more: compute
+//       and copy encoders (which may write vertex buffers and uniforms) still end with the full barrier, so later vertex stages wait for those copies (and everything before them) through it. Measured:
+//       making vertex wait at the pass's start for "only earlier compute and copy stages" also ate the whole overlap, so it doesn't wait there. The vertex stage also waits for every earlier stage in three cases: this draw's vertex shader reads textures (possibly an attachment an earlier pass just drew) or
+//       writes memory -- one more barrier before the draw (bar_draw); an earlier fragment / vertex shader wrote a storage buffer or writable texture (g_bar_vhz) -- the next render pass starts with the full
+//       one. The barrier at a render encoder's end no longer holds back later vertex stages. Compute and copy encoders and the host's own passes still start with the full barrier; MetalFX waits for its copy pass
+//       through a fence. So the next pass's vertex stage can overlap the previous pass's fragment work (the bulk on a TBDR GPU). An unsafe probe with everything open measured the ceiling: GPU -0.5 ms
+//       (-8 %) per frame on town_loop
+static int g_bar_vhz, g_enc_vfree;   // g_bar_vhz：有片元 / 顶点写过存储内存、还没被整道顶点屏障盖住；g_enc_vfree：当前渲染编码器的顶点阶段没等前面的片元 | g_bar_vhz: a fragment / vertex shader wrote storage memory not yet covered by a full vertex barrier; g_enc_vfree: the current render encoder's vertex stage did not wait for earlier fragment work
+static uint64_t g_bar_nfree, g_bar_nfull, g_bar_nlazy, g_bar_ntex, g_bar_nvw, g_bar_nwr;   // 计数：顶点放开 / 整道开头 / 绘制前补的 | counts: vertex left open / full at the start / added before a draw
+#define BAR_VTX (MTLStageVertex | MTLStageObject | MTLStageMesh)
+static inline int bar_lv(void) {
+    if (g_bar_lv < 0) { const char *e = getenv("DM_NVN_BARRIER"); g_bar_lv = e && *e ? atoi(e) : 1;
+        MLOG("通道间屏障：第 %d 档（0 = 整道、1 = 顶点只等计算与拷贝） | pass barriers: level %d (0 = full, 1 = vertex waits only for compute and copies)", g_bar_lv, g_bar_lv); }
+    return g_bar_lv;
+}
+static void bar_stats(void) {
+    if (g_bar_lv > 0 && g_sub_serial % 600 == 0) MLOG("通道间屏障：顶点放开 %llu、整道开头 %llu、绘制前补 %llu（读贴图 %llu / 顶点写内存 %llu）、写内存的绘制 %llu（累计） | pass barriers: vertex open %llu, full at start %llu, added before a draw %llu (texture reads %llu / vertex writes %llu), draws writing memory %llu (total)",
+        (unsigned long long)g_bar_nfree, (unsigned long long)g_bar_nfull, (unsigned long long)g_bar_nlazy, (unsigned long long)g_bar_ntex, (unsigned long long)g_bar_nvw, (unsigned long long)g_bar_nwr,
+        (unsigned long long)g_bar_nfree, (unsigned long long)g_bar_nfull, (unsigned long long)g_bar_nlazy, (unsigned long long)g_bar_ntex, (unsigned long long)g_bar_nvw, (unsigned long long)g_bar_nwr);
+}
+static inline void bar_r_begin(id<MTL4RenderCommandEncoder> e) {
+    if (bar_lv() <= 0) { [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_enc_vfree = 0; return; }
+    [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll & ~BAR_VTX visibilityOptions:MTL4VisibilityOptionDevice];
+    if (g_bar_vhz) { [e barrierAfterQueueStages:MTLStageAll beforeStages:BAR_VTX visibilityOptions:MTL4VisibilityOptionDevice]; g_bar_vhz = 0; g_enc_vfree = 0; g_bar_nfull++; }
+    else { g_enc_vfree = 1; g_bar_nfree++; }   // 顶点不另等：之前的计算 / 拷贝结尾的整道屏障已经挡着它 | vertex waits for nothing more: the full barrier at the end of earlier compute / copy passes already holds it
+}
+static inline RENC enc_r_begin(RPD *d) { RENC e = [g_cb renderCommandEncoderWithDescriptor:d]; bar_r_begin(e); [e setArgumentTable:g_vt atStages:MTLRenderStageVertex]; [e setArgumentTable:g_ft atStages:MTLRenderStageFragment]; return e; }
 #endif
 static inline void enc_r_end(id e) { m4_end(e); }
 static inline void enc_r_pso(RENC e, id<MTLRenderPipelineState> p) { [e setRenderPipelineState:p]; }
@@ -828,9 +871,10 @@ void mtl_ub_present(double iv) {   // 出图线程每帧调一次：实际上屏
 int g_fx_dedup = 1;
 int g_la_cache = 1;   // 每次绘制的反射摘要 / 全零事实表 / 全零集合删除这三处按对象缓存（udc_note_draw、zskip_can_draw）；0 = 每次现算（同进程交替测量对照用）   // 渲染编码器固定功能状态同值不重发（draw 里的 FX_SET）；0 = 每次绘制照发（同进程交替测量对照用） | Per-object caching for the per-draw reflection summary / all-zero fact table / all-zero set removal (udc_note_draw, zskip_can_draw); 0 = computed every time (for in-process alternating measurement comparison)   // Render encoder fixed-function state not resent if unchanged (FX_SET in draw); 0 = sent on every draw (for in-process alternating measurement comparison)
 int g_blit_bar = 1;   // Metal 4 复用拷贝编码器时的屏障（blit()）；0 = 不设，只供同进程交替量开销（数据可能乱序） | Barrier when reusing the blit encoder on Metal 4 (blit()); 0 = not set, only for measuring overhead with in-process alternation (data may be reordered)
+int g_bar_lv = -1;   // 通道间屏障档（见 bar_r_begin；旧接口不用） | pass-barrier level (see bar_r_begin; unused by the older API)
 static int *ub_var(const char *nm) {
-    extern int g_bloom_q, g_dm_present_link, g_tbdr_rt, g_blit_bar, g_sdx_attdedup, g_tbdr_sub, g_aniso;
-    static const struct { const char *n; int *p; } t[] = { {"g_bloom_q", &g_bloom_q}, {"g_dm_present_link", &g_dm_present_link}, {"g_frz_on", &g_frz_on}, {"g_fx_dedup", &g_fx_dedup}, {"g_la_cache", &g_la_cache}, {"g_tbdr_rt", &g_tbdr_rt}, {"g_blit_bar", &g_blit_bar}, {"g_sdx_attdedup", &g_sdx_attdedup}, {"g_tbdr_sub", &g_tbdr_sub}, {"g_aniso", &g_aniso} };
+    extern int g_bloom_q, g_dm_present_link, g_tbdr_rt, g_blit_bar, g_sdx_attdedup, g_tbdr_sub, g_aniso, g_bar_lv;
+    static const struct { const char *n; int *p; } t[] = { {"g_bloom_q", &g_bloom_q}, {"g_dm_present_link", &g_dm_present_link}, {"g_frz_on", &g_frz_on}, {"g_fx_dedup", &g_fx_dedup}, {"g_la_cache", &g_la_cache}, {"g_tbdr_rt", &g_tbdr_rt}, {"g_blit_bar", &g_blit_bar}, {"g_sdx_attdedup", &g_sdx_attdedup}, {"g_tbdr_sub", &g_tbdr_sub}, {"g_aniso", &g_aniso}, {"g_bar_lv", &g_bar_lv} };
     for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(nm, t[i].n)) return t[i].p;
     return dlsym(RTLD_DEFAULT, nm);
 }
@@ -2268,7 +2312,7 @@ static void shmap_load(void) {
     warm_start();
 }
 
-@interface NvShader : NSObject { @public id<MTLFunction> fn; nvn_refl rf; id<MTLArgumentEncoder> ae; NSUInteger arg_len; int stage, range_ro; const char *builtin; uint64_t logged; char key[24]; id<MTLBuffer> c1buf; uint64_t c1_gpu; size_t c1off;
+@interface NvShader : NSObject { @public id<MTLFunction> fn; nvn_refl rf; uint8_t memf; id<MTLArgumentEncoder> ae; NSUInteger arg_len; int stage, range_ro; const char *builtin; uint64_t logged; char key[24]; id<MTLBuffer> c1buf; uint64_t c1_gpu; size_t c1off;
     // 上次编好的参数缓冲
     // The argument buffer encoded last time
     id<MTLBuffer> ab_buf; uint64_t ab_gpu; size_t ab_off; uint64_t ab_pass;
@@ -4817,6 +4861,34 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
     for (int i = 0; i < g_gh.n; i++) free(g_gh.c[i].S_); g_gh.n = 0;
 }
 static int mfx3d_draw(NvShader *f);   // 见定义处（MetalFX 换掉游戏的 3D 放大趟） | see the definition (MetalFX replaces the game's 3D upscale pass)
+// 着色器碰内存的方式（按反射算一次）：1 读贴图（含类型化缓冲、可写贴图）、2 读存储缓冲、4 写内存（可写贴图、可写存储缓冲）；0x80 = 已算
+// How a shader touches memory (worked out once from its reflection): 1 reads textures (incl. typed buffers and writable textures), 2 reads storage buffers, 4 writes memory (writable textures, writable storage buffers); 0x80 = done
+enum { MF_TEX = 1, MF_BUF = 2, MF_WRITE = 4 };
+static uint8_t sh_memf(NvShader *sh) {
+    if (!sh) return 0;
+    if (!(sh->memf & 0x80)) { uint8_t f = 0;
+        for (int i = 0; i < sh->rf.nb && i < NVN_REFL_MAXB; i++) { const nvn_rbind *b = &sh->rf.b[i];
+            if (b->kind == NVN_RB_TEX || b->kind == NVN_RB_TBUF || b->kind == NVN_RB_SAMPT) f |= MF_TEX;
+            else if (b->kind == NVN_RB_IMG) f |= MF_TEX | MF_WRITE;
+            else if (b->kind == NVN_RB_SBUFP) f |= MF_BUF | (b->rw ? MF_WRITE : 0); }
+        sh->memf = f | 0x80; }
+    return sh->memf & 0x7f;
+}
+// 绘制前（第 1 档）：顶点着色器读贴图或写内存而本编码器的顶点阶段没等前面的片元 → 补一道「之前全部 → 顶点」；有着色器写内存 → 之后的渲染通道开头用整道
+// Before a draw (level 1): the vertex shader reads textures or writes memory while this encoder's vertex stage did not wait for earlier fragment work → add "every earlier stage → vertex"; a shader writes
+// memory → later render passes start with the full barrier
+static inline void bar_draw(RENC en, NvProg *pr) {
+#if !DM_NVN_M3
+    if (g_bar_lv <= 0) return;
+    uint8_t vf = sh_memf(pr->sh[0]), w = vf & MF_WRITE;
+    for (int i = 1; i < 6; i++) w |= sh_memf(pr->sh[i]) & MF_WRITE;
+    if (g_enc_vfree && (vf & (MF_TEX | MF_WRITE))) { [en barrierAfterQueueStages:MTLStageAll beforeStages:BAR_VTX visibilityOptions:MTL4VisibilityOptionDevice]; g_enc_vfree = 0; g_bar_nlazy++;
+        if (vf & MF_TEX) g_bar_ntex++; else g_bar_nvw++; }
+    if (w) { g_bar_vhz = 1; g_bar_nwr++; }
+#else
+    (void)en; (void)pr;
+#endif
+}
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
@@ -4993,6 +5065,7 @@ frz_plain:;
     static id<MTLBuffer> zero; if (!zero) { zero = [g_dev newBufferWithLength:64 options:MTLResourceStorageModeShared]; res_add(zero); }
     static uint64_t zero_gpu; if (!zero_gpu) zero_gpu = zero.gpuAddress;
     enc_r_vbuf(en, VB_ZERO, zero_gpu);
+    bar_draw(en, pr);
     if (pr->sh[0]) encode_args(en, pr->sh[0], 0, 1);
     if (pr->sh[1]) encode_args(en, pr->sh[1], 1, 0);
     // 参数绑定在登记表锁内捕获实际资源；资格判断到绑定期间有版本变化，则在任何GPU draw前切开重试。
