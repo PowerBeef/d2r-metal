@@ -587,8 +587,10 @@ static int tbdr_on(void);
 
 static uint64_t g_sub_serial;   // 第几次提交（并行预编「每次提交只预测一次」用） | Submission index (used by the parallel precompile's 'predict only once per submission')
 static void tbdr_latch(void);
+static void pso_pend_age(void);
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
+    pso_pend_age();   // 并行预编：回收过期没人领的预测槽 | parallel precompile: recycle stale untaken prediction slots
     tbdr_latch();
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
     defer_drain();
@@ -2846,18 +2848,40 @@ static void pso_key_fill(pso_key *k, NvShader *vs, NvShader *fs, const uint32_t 
 // ---- Parallel precompile: pipelines met for the first time used to be compiled synchronously one by one on the submit thread; 9 misses in a row in one frame = 284 ms (heavy scene on a real device).
 // Now: on the first pipeline miss in a submission, scan ahead once along the remaining commands (replaying state only, no drawing) and kick all the normal-pass pipelines that will also miss later to the background to compile in parallel;
 // when the submit thread reaches that draw it only waits for 'the remaining time not yet compiled'. The compiled pipelines are identical to synchronously compiled ones (same descriptor). Pipeline keys of merged passes / specialized fragments depend on the planning result at replay time, are not predicted, and are compiled synchronously as before.
+// 槽位回收：预测按「每种可能的深度 / 模板挂法」各丢一条，猜错的那几条和没走到的绘制永远没人领；原先只有领用才腾槽，384 个槽被它们占满后，并行预编在整个进程余下的时间里都不再生效。
+// 现在每条记下丢出时的提交序号：每次提交开头，把 PSO_PEND_AGE 次提交以前丢出、已编完却没人领的丢掉（pso_pend_age）；丢新预测时表满，先回收更早提交里最老的一条已编完的。
+// 还在后台编的那条不动（后台块编完按槽号写回）。计数 g_pp_aged（回收）/ g_pp_full（表满没丢）记进 DM_BOOTPROF 那一行。
+// Slot recycling: the prediction kicks one key per possible depth / stencil attach mode, and the wrong guesses and draws never reached are never taken; slots used to be freed only by a take, so once those filled all 384 slots the parallel precompile stopped working for the rest of the process.
+// Now each entry records the submission serial it was kicked in: at the start of every submission, entries kicked PSO_PEND_AGE or more submissions ago that finished compiling but were never taken are dropped (pso_pend_age); when a new prediction finds the table full, the oldest finished entry from an earlier submission is recycled first.
+// An entry still compiling in the background is left alone (the background block writes back by slot index). The counters g_pp_aged (recycled) / g_pp_full (not kicked, table full) go into the DM_BOOTPROF line.
 #define PSO_PEND_MAX 384
-static struct { pso_key k; id<MTLRenderPipelineState> ps; int used, done; } g_pp[PSO_PEND_MAX];
+#define PSO_PEND_AGE 8   // 丢出后过这么多次提交仍没人领就回收：预测只覆盖本次提交余下的绘制，多留几次提交给隔一两帧才走到的同一绘制 | recycle when still untaken this many submissions after the kick: a prediction only covers the rest of its own submission, and a few more submissions leave room for the same draw reached a frame or two later
+static struct { pso_key k; id<MTLRenderPipelineState> ps; uint64_t ser; int used, done; } g_pp[PSO_PEND_MAX];   // ser：丢出时的提交序号 | ser: submission serial at the kick
 static pthread_mutex_t g_pp_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_pp_cv = PTHREAD_COND_INITIALIZER;
-static uint64_t g_pp_submit_mark, g_pp_kicked, g_pp_taken;   // 本次提交是否已预测过（按提交序号）；累计丢出 / 领用条数 | Whether this submission has already been predicted (by submission serial); cumulative kicked / taken counts
+static uint64_t g_pp_submit_mark, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full;   // 本次提交是否已预测过（按提交序号）；累计丢出 / 领用 / 过期回收 / 表满没丢的条数 | Whether this submission has already been predicted (by submission serial); cumulative kicked / taken / recycled as stale / not kicked because the table was full counts
+static int g_pp_live;   // 表里占着的槽数（只在提交线程上改，持 g_pp_mu） | Slots in use (changed only on the submit thread, under g_pp_mu)
 static void pso_predict_rest(void);
 static int pso_pend_find(const pso_key *k) { for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && !memcmp(&g_pp[i].k, k, sizeof *k)) return i; return -1; }
+static void pso_pend_age(void) {   // 提交开头（提交线程）调：回收过期没人领的预测 | Called at the start of a submission (submit thread): recycle stale untaken predictions
+    if (!g_pp_live) return;
+    int n = 0;
+    pthread_mutex_lock(&g_pp_mu);
+    for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && g_pp[i].done && g_sub_serial - g_pp[i].ser >= PSO_PEND_AGE) { g_pp[i].ps = nil; g_pp[i].used = 0; g_pp_live--; n++; }
+    g_pp_aged += (uint64_t)n;
+    pthread_mutex_unlock(&g_pp_mu);
+    static int logged; if (n && logged++ < 5) MLOG("并行预编：回收 %d 条过期没人领的预测（累计丢出 %llu / 领用 %llu / 回收 %llu / 表满没丢 %llu） | parallel precompile: recycled %d stale untaken predictions (kicked / taken / recycled / not kicked, table full)",
+        n, (unsigned long long)g_pp_kicked, (unsigned long long)g_pp_taken, (unsigned long long)g_pp_aged, (unsigned long long)g_pp_full, n);
+}
 static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // 提交线程调：没在缓存、没在表里才丢 | Called by the submit thread: kick only if it is neither in the cache nor in the table
     if (hm_get_id(&g_pso, k)) return;
     pthread_mutex_lock(&g_pp_mu);
     int at = pso_pend_find(k), slot = -1;
     if (at < 0) for (int i = 0; i < PSO_PEND_MAX; i++) if (!g_pp[i].used) { slot = i; break; }
-    if (at < 0 && slot >= 0) { g_pp[slot].k = *k; g_pp[slot].ps = nil; g_pp[slot].done = 0; g_pp[slot].used = 1; }
+    if (at < 0 && slot < 0) {   // 表满：回收更早提交里最老的一条已编完的；全是本次提交的或都还在编，就不丢 | Table full: recycle the oldest finished entry from an earlier submission; if all are from this submission or still compiling, do not kick
+        for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].done && g_pp[i].ser < g_sub_serial && (slot < 0 || g_pp[i].ser < g_pp[slot].ser)) slot = i;
+        if (slot >= 0) { g_pp[slot].ps = nil; g_pp[slot].used = 0; g_pp_live--; g_pp_aged++; } else g_pp_full++;
+    }
+    if (at < 0 && slot >= 0) { g_pp[slot].k = *k; g_pp[slot].ps = nil; g_pp[slot].ser = g_sub_serial; g_pp[slot].done = 0; g_pp[slot].used = 1; g_pp_live++; }
     pthread_mutex_unlock(&g_pp_mu);
     if (at >= 0 || slot < 0) return;
     MTLRenderPipelineDescriptor *d = pso_desc(k, vs, fs, nil, 0); g_pp_kicked++;
@@ -2869,7 +2893,7 @@ static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // �
 static id<MTLRenderPipelineState> pso_pend_take(const pso_key *k) {   // 提交线程调：表里有就等它编完并取走；没有返回 nil | Called by the submit thread: if it is in the table, wait for it to finish compiling and take it; otherwise return nil
     pthread_mutex_lock(&g_pp_mu);
     int at = pso_pend_find(k); id<MTLRenderPipelineState> ps = nil;
-    if (at >= 0) { while (!g_pp[at].done) pthread_cond_wait(&g_pp_cv, &g_pp_mu); ps = g_pp[at].ps; g_pp[at].ps = nil; g_pp[at].used = 0; }
+    if (at >= 0) { while (!g_pp[at].done) pthread_cond_wait(&g_pp_cv, &g_pp_mu); ps = g_pp[at].ps; g_pp[at].ps = nil; g_pp[at].used = 0; g_pp_live--; }
     pthread_mutex_unlock(&g_pp_mu);
     return ps;
 }
@@ -6455,10 +6479,10 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     if (bootprof() && (g_present_n == 1 || g_present_n % 120 == 0)) {
         if (g_present_n == 1) g_bp_first_present = bp_now() - g_bp_t0;
         MLOG("[bootprof] t=%.3f s 出图第 %llu 次：metallib 载入 %llu 个 / %.1f ms；管线创建 %llu 个 / %.1f ms（均在提交线程同步）；预热领用 着色器 %llu / 渲染管线 %llu / 计算管线 %llu；"
-             "贴图上传 %.1f MB / %llu 张首传 + %llu 次重传 / %.1f ms；首帧出图 t=%.3f s", (bp_now() - g_bp_t0) / 1e9, g_present_n,
+             "贴图上传 %.1f MB / %llu 张首传 + %llu 次重传 / %.1f ms；首帧出图 t=%.3f s；并行预编 丢出 %llu / 领用 %llu / 过期回收 %llu / 表满没丢 %llu / 在表 %d", (bp_now() - g_bp_t0) / 1e9, g_present_n,
              g_bp_lib_n, g_bp_lib_ns / 1e6, g_bp_pso_n, g_bp_pso_ns / 1e6, g_warm_claim_shaders, g_warm_claim_rps, g_warm_claim_cps,
              g_bp_up_bytes / 1048576.0, g_pkg_uploads, g_pkg_reuploads,
-             g_up_total_ns / 1e6, g_bp_first_present / 1e9);
+             g_up_total_ns / 1e6, g_bp_first_present / 1e9, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full, g_pp_live);
     }
     PD("X ser=%llu", t->serial);
     id<MTLTexture> src = tex_mtl(t);
