@@ -22,7 +22,8 @@ dm/tools/re/re.sh check       # relocations, relocated bytes, text bytes, eh_fra
 dm/tools/re/re.sh analyze     # Ghidra auto-analysis incl. Decompiler Parameter ID (long: run in the background)
 dm/tools/re/re.sh baseline    # decompile every function once → log/decomp_baseline.json
 dm/tools/re/re.sh reflect     # the engine's own class / field / enum registrations → export/reflect.json (reflect.py)
-dm/tools/re/re.sh seed        # what the repo already knows, plus the reflection tables (below)
+dm/tools/re/re.sh tables      # the data tables' columns and where each table hangs → export/tables.json (tables.py; runs the game: server stopped)
+dm/tools/re/re.sh seed        # what the repo already knows, plus the reflection and data tables (below)
 dm/tools/re/re.sh export      # names and types as text, committed to the local history
 dm/tools/re/re.sh snap        # a .gzf snapshot (the last two are kept)
 ```
@@ -56,9 +57,10 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 - Every NVN function-pointer slot from `dm/gfx/nvn/nvn_slots.tsv` as `pfn_<name>`, typed from `nvn.h` when it parses.
 - Every source comment that mentions `main+0x…`, as a `[dm]` pre-comment at that address.
 - The rewrite rules (`main.cuts/obs/params.tsv` of the build output) as `dm-rewrite` bookmarks.
-- The widget vtables of `dm/host/dm_widget.h` as `vt_<Class>`, and structures under `/dm`: the widget base and per-class fields, and the unit → path → room → level chain (`dm_unit.h`, `dm/verify/tick_state_format.md`).
+- The widget vtables of `dm/host/dm_widget.h` as `vt_<Class>`, and structures under `/dm`: the widget base and per-class fields, the unit → path → room → level chain (`dm_unit.h`, `dm/verify/tick_state_format.md`), and the game object with its five unit hash tables, the inventory and the item data (the reading notes in `dm/host/diag.c`).
 - The curated name table `$DM_ROOT/re/names.tsv`: `offset<TAB>name<TAB>confidence<TAB>source`, one row per name, `#` for comments. Confidence is `high`, `medium` or `low`. It wins over every other source.
 - The engine's reflection tables from `reflect.py`. The game registers its UI and data classes with their parent class and a table of fields (the names layout JSON uses, with byte offsets); `reflect.py` runs each registration in a CPU emulator (Unicorn, project venv) and reads the tables back. `seed` turns them into one structure per class under `/dm/reflect` (parent fields included), `type_<Class>` descriptors, `vt_Type_<Class>`, `<Class>_Create` factories and `<Class>_GetType` getters, and makes the message channels and each channel's actions into enums under `/dm/enums` (values = the FNV-1a 64 hashes the game compares against). Enums whose values the game builds in code go in `$DM_ROOT/re/enums.tsv` (`enum<TAB>name<TAB>value<TAB>source`).
+- The data tables from `tables.py`. At startup the game reads each excel table into an array of fixed-size records, driven by a column array on the reader's caller's stack: 0x20-byte entries of name, kind, length or bit number, offset in the record, and a link or callback. Those arrays exist only during the call, so `tables.py` takes them from the running game: lldb starts the headless CLI host, breaks at the table reader (`main+0x4d9040`) to copy the whole column array, at its allocation point (`main+0x4d96b0`) for the record array and row count, and when the master loader returns (`main+0x2410e0`) looks for each record array in the three table root objects (`[main+0x2d64a28/a38/a48]`). The game reads every table twice, once per data version (loader flags 2 and 3). `seed` turns this into one record structure per table under `/dm/tables` (`txt_<table>`, fields named after the columns, flag bits merged into one `u32` whose comment lists the bits, lookups commented with the table they look up), a `DataTables` structure for the root objects (each table's record pointer and row count, plus the merged item table at `+0x15c0`) and the three root pointers (`[main+0x2d64a18 + version × 16]`, data versions 1–3 as in `G+0x106` and unit `+0x1bd`; version 1 shares version 2's root) as typed `g_tables_v1..v3`. About a minute; it refuses while the query server is up.
 
 ## Where the names go
 
@@ -72,7 +74,8 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 | `nso2elf.py`, `test_nso2elf.py` | NSO → ELF; unit test on a hand-built NSO (no game files) |
 | `ghidra_db.py` | `import`, `analyze`, `baseline`, `check` |
 | `reflect.py` | Extracts the engine's reflection registrations (classes, fields, enums) by emulation |
-| `seed.py` | Writes the repo's knowledge and the reflection tables into the project |
+| `tables.py` | Records the data tables' column arrays and record arrays from the running game (lldb) |
+| `seed.py` | Writes the repo's knowledge, the reflection tables and the data tables into the project |
 | `export.py` | Names and types as text, local history commit |
 | `serve.py` | Starts pyghidra-mcp without the startup index |
 | `q.py` | Command-line client of the server |

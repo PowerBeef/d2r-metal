@@ -22,7 +22,8 @@ dm/tools/re/re.sh check       # 重定位、重定位后字节、text 字节、e
 dm/tools/re/re.sh analyze     # Ghidra 自动分析，含 Decompiler Parameter ID（很久：放后台跑）
 dm/tools/re/re.sh baseline    # 每个函数反编译一遍 → log/decomp_baseline.json
 dm/tools/re/re.sh reflect     # 引擎自己的类 / 字段 / 枚举登记 → export/reflect.json（reflect.py）
-dm/tools/re/re.sh seed        # 仓库已知的东西，加上反射表（见下）
+dm/tools/re/re.sh tables      # 数据表的列与各表挂在哪 → export/tables.json（tables.py；要跑游戏：先停查询服务）
+dm/tools/re/re.sh seed        # 仓库已知的东西，加上反射表与数据表（见下）
 dm/tools/re/re.sh export      # 名字与类型导成文本，提交进本机历史
 dm/tools/re/re.sh snap        # .gzf 快照（只留最近两份）
 ```
@@ -56,9 +57,10 @@ dm/tools/re/re.sh stop        # SIGINT：服务存盘后关工程
 - `dm/gfx/nvn/nvn_slots.tsv` 里每个 NVN 函数指针槽，名为 `pfn_<名字>`，`nvn.h` 解析得了就带上函数类型。
 - 每条提到 `main+0x…` 的源码注释，作为该地址上以 `[dm]` 开头的前置注释。
 - 改写规则（构建产物的 `main.cuts/obs/params.tsv`），作为 `dm-rewrite` 书签。
-- `dm/host/dm_widget.h` 的控件虚表，名为 `vt_<类>`；以及 `/dm` 下的结构体：控件基类与各类专有字段、单位 → 路径 → 房间 → 关卡这条链（`dm_unit.h`、`dm/verify/tick_state_format.md`）。
+- `dm/host/dm_widget.h` 的控件虚表，名为 `vt_<类>`；以及 `/dm` 下的结构体：控件基类与各类专有字段、单位 → 路径 → 房间 → 关卡这条链（`dm_unit.h`、`dm/verify/tick_state_format.md`），以及游戏对象（含五张单位哈希表）、物品栏与物品数据（`dm/host/diag.c` 的读法注释）。
 - 人工整理的名字表 `$DM_ROOT/re/names.tsv`：`偏移<TAB>名字<TAB>可信度<TAB>来源`，一行一个名字，`#` 起的行是注释。可信度为 `high`、`medium` 或 `low`。它压过其余一切来源。
 - `reflect.py` 得到的引擎反射表。游戏把界面类、数据类连同父类与字段表（布局 JSON 用的名字及字节偏移）登记进自己的反射系统；`reflect.py` 在 CPU 模拟器（Unicorn，项目 venv）里逐个跑这些登记，再把表读回来。`seed` 把它们做成 `/dm/reflect` 下每类一个结构体（含父类字段）、`type_<类>` 描述符、`vt_Type_<类>`、`<类>_Create` 工厂和 `<类>_GetType` 取类型函数，并把消息频道及各频道的动作做成 `/dm/enums` 下的枚举（值 = 游戏拿来比较的 FNV-1a 64 哈希）。值由代码建表的枚举放在 `$DM_ROOT/re/enums.tsv`（`枚举<TAB>名字<TAB>值<TAB>来源`）。
+- `tables.py` 得到的数据表。游戏启动时按一份列描述把每张 excel 表读成定长记录数组；列描述是读表函数调用方栈上的数组，每项 0x20 字节：名字、种类、长度或位号、记录内偏移、查找链接或回调。这些数组只在调用期间存在，所以 `tables.py` 从运行中的游戏取：lldb 起无窗口 CLI 宿主，在读表函数（`main+0x4d9040`）入口整份抄下列描述，在它的分配点（`main+0x4d96b0`）记记录数组与行数，总读表函数返回时（`main+0x2410e0`）在三个表根对象（`[main+0x2d64a28/a38/a48]`）里找各记录数组。游戏把每张表读两遍，两个数据版本各一遍（读表标志 2 与 3）。`seed` 据此在 `/dm/tables` 下给每张表建一个记录结构体（`txt_<表>`，字段按列名，标志位并成一个 `u32`、注释里列出各位，查找列注明查的是哪张表），给表根对象建 `DataTables` 结构体（各表的记录指针与行数，外加 `+0x15c0` 处合并后的物品表），并把三个表根指针（`[main+0x2d64a18 + 版本 × 16]`，数据版本 1–3，同 `G+0x106` 与单位 `+0x1bd`；版本 1 与版本 2 共用一个表根）标成带类型的 `g_tables_v1..v3`。约一分钟；查询服务开着时拒跑。
 
 ## 名字去哪
 
@@ -72,7 +74,8 @@ dm/tools/re/re.sh stop        # SIGINT：服务存盘后关工程
 | `nso2elf.py`、`test_nso2elf.py` | NSO → ELF；用手工拼的 NSO 做单测（不读游戏文件） |
 | `ghidra_db.py` | `import`、`analyze`、`baseline`、`check` |
 | `reflect.py` | 用模拟执行提取引擎的反射登记（类、字段、枚举） |
-| `seed.py` | 把仓库里的已知信息与反射表写进工程 |
+| `tables.py` | 从运行中的游戏（lldb）记下数据表的列描述与记录数组 |
+| `seed.py` | 把仓库里的已知信息、反射表与数据表写进工程 |
 | `export.py` | 名字与类型导成文本，提交进本机历史 |
 | `serve.py` | 不建启动索引地起 pyghidra-mcp |
 | `q.py` | 查询服务的命令行客户端 |

@@ -8,6 +8,8 @@
 #   ⑥ 反射表 $DM_ROOT/re/export/reflect.json（reflect.py）：每个类一个结构体（/dm/reflect，含父类字段，字段名 = 布局 JSON 里的名字），
 #      类型描述符 type_<类>、类型对象虚表 vt_Type_<类>、工厂 <类>_Create、只登记一个类的取类型函数 <类>_GetType；
 #      消息频道与各频道动作做成 8 字节枚举（值 = 名字的 FNV-1a 64），$DM_ROOT/re/enums.tsv 里的枚举（如 ControllerAction）做成 4 字节枚举。
+#   ⑦ 数据表 $DM_ROOT/re/export/tables.json（tables.py）：每张表一个记录结构体 txt_<表>（/dm/tables，字段 = 列名，标志位并成一个 u32 并在注释里列位），
+#      表根对象结构体 DataTables（每张表的记录指针与行数），三个表根指针（[main+0x2d64a18 + 版本 × 16]，版本 1–3）标成 g_tables_v1..v3 并带类型。
 #   用法（由 re.sh seed 调用；工程不能被别的进程打开）：seed.py [--dry-run]
 # Writes what the repository already knows into the engine-analysis database (the Ghidra project); safe to rerun: the same result is not written twice, and hand-given names (USER_DEFINED) are never touched.
 #   ① NVN: every lookup slot in dm/gfx/nvn/nvn_slots.tsv -> label pfn_<name>, typed as the matching function pointer from nvn.h (a plain pointer when it cannot be parsed).
@@ -18,6 +20,8 @@
 #   ⑥ The reflection table $DM_ROOT/re/export/reflect.json (reflect.py): one structure per class (/dm/reflect, parent fields included, field names = the names in layout JSON),
 #      type descriptors type_<Class>, type-object vtables vt_Type_<Class>, factories <Class>_Create, getters that register a single class <Class>_GetType;
 #      message channels and each channel's actions become 8-byte enums (value = FNV-1a 64 of the name), the enums in $DM_ROOT/re/enums.tsv (e.g. ControllerAction) 4-byte enums.
+#   ⑦ The data tables $DM_ROOT/re/export/tables.json (tables.py): one record structure txt_<table> per table (/dm/tables, fields = column names, flag bits merged into a u32 listed in its comment),
+#      the table root structure DataTables (each table's record pointer and row count), and the three root pointers ([main+0x2d64a18 + version × 16], versions 1-3) named g_tables_v1..v3 and typed.
 #   Usage (called by re.sh seed; the project must not be open in another process): seed.py [--dry-run]
 import argparse
 import os
@@ -35,6 +39,7 @@ MENTION = re.compile(r'\bmain\+0x([0-9a-f]{3,})\b')
 PRODUCT_OUT = ghidra_db.DM_ROOT / 'build/cache/dm/out'
 NAMES = ghidra_db.RE / 'names.tsv'
 REFLECT = ghidra_db.RE / 'export' / 'reflect.json'
+TABLES = ghidra_db.RE / 'export' / 'tables.json'
 ENUMS = ghidra_db.RE / 'enums.tsv'
 TAG = '[dm] '
 
@@ -55,11 +60,17 @@ WIDGETS = {   # 类名 → (dm_widget.h 的虚表常量名, 专有字段) | clas
     'CarouselWidget': ('DM_VT_CAROUSEL', [(0x7d8, 'choosable', 'byte[16]'), (0x7e8, 'count', 'dword'), (0x7ec, 'current', 'dword')]),
     'ButtonWidget': ('DM_VT_BUTTON', [(0x610, 'cur_frame', 'dword'), (0x6e8, 'frames', 'dword[4]')]),
 }
-# 单位链（dm_unit.h、tick_state_format.md；字段名借经典 D2 的叫法） | Unit chain (dm_unit.h, tick_state_format.md; field names borrowed from classic D2)
+# 单位链（dm_unit.h、tick_state_format.md；字段名借经典 D2 的叫法）；游戏对象 G、物品栏、物品数据（dm/host/diag.c 的读法注释）
+# Unit chain (dm_unit.h, tick_state_format.md; field names borrowed from classic D2); the game object G, inventory and item data (the reading notes in dm/host/diag.c)
 UNIT_TYPES = {
     'Unit': [(0x0, 'type', 'dword'), (0x4, 'class_id', 'dword'), (0x8, 'unit_id', 'dword'), (0xc, 'mode', 'dword'),
              (0x10, 'type_data', 'pointer'), (0x18, 'act', 'byte'), (0x28, 'seed_lo', 'dword'), (0x2c, 'seed_hi', 'dword'),
-             (0x38, 'path', 'Path *'), (0x88, 'stats', 'StatList *'), (0x158, 'hash_next', 'Unit *')],
+             (0x38, 'path', 'Path *'), (0x88, 'stats', 'StatList *'), (0x90, 'inventory', 'Inventory *'), (0x158, 'hash_next', 'Unit *')],
+    'Game': [(0x104, 'difficulty', 'byte'), (0x106, 'data_version', 'byte'), (0x170, 'tick', 'dword'), (0x1a8, 'seed', 'qword'),
+             (0x2230, 'players', 'Unit *[128]'), (0x2630, 'monsters', 'Unit *[128]'), (0x2a30, 'objects', 'Unit *[128]'),
+             (0x2e30, 'items', 'Unit *[128]'), (0x3230, 'missiles', 'Unit *[128]')],
+    'Inventory': [(0x0, 'signature', 'dword'), (0x10, 'first_item', 'Unit *'), (0x40, 'cursor_item', 'Unit *')],
+    'ItemData': [(0x0, 'quality', 'dword'), (0x18, 'flags', 'dword'), (0x55, 'page', 'byte'), (0xb0, 'next_item', 'Unit *')],
     'Path': [(0x0, 'x_frac', 'word'), (0x2, 'x', 'word'), (0x4, 'y_frac', 'word'), (0x6, 'y', 'word'), (0x20, 'room', 'Room *')],
     'Room': [(0x18, 'room_ex', 'RoomEx *'), (0x48, 'next', 'Room *')],
     'RoomEx': [(0x90, 'level', 'Level *')],
@@ -175,6 +186,10 @@ class Seeder:
             if tname.endswith('*') and tname[:-1].strip() in UNIT_TYPES:
                 base = dtm.getDataType(cat, tname[:-1].strip())
                 return PointerDataType(base, dtm)
+            m = re.fullmatch(r'(\w+ \*)\[(\d+)\]', tname)   # 单位指针数组（单位哈希表） | arrays of unit pointers (the unit hash tables)
+            if m and m.group(1)[:-1].strip() in UNIT_TYPES:
+                from ghidra.program.model.data import ArrayDataType
+                el = resolve(m.group(1)); return ArrayDataType(el, int(m.group(2)), el.getLength())
             return DataTypeParser(dtm, dtm, None, DataTypeParser.AllowedDataTypes.ALL).parse(tname)
         def define(name, fields, size=None):
             s = StructureDataType(cat, name, 0, dtm)
@@ -359,6 +374,73 @@ def seed_reflection(s, program):
     for name, items in enum_rows().items(): make_enum(name, 4, items)
 
 
+def seed_tables(s, program):
+    """⑦：数据表 → 记录结构体、表根结构体、表根指针。 | ⑦: data tables -> record structures, the root structure, the root pointers."""
+    if not TABLES.exists(): return
+    import json
+    from ghidra.program.model.data import (ArrayDataType, ByteDataType, CategoryPath, CharDataType, DataTypeConflictHandler, DataUtilities,
+                                           IntegerDataType, PointerDataType, ShortDataType, StructureDataType, UnsignedIntegerDataType)
+    d = json.loads(TABLES.read_text(encoding='utf-8'))
+    tables = [t for t in d.get('tables', []) if t.get('columns') and t.get('rec_size')]
+    by = {t['name']: t for t in tables}   # 两套数据各读一遍：取后读的那份（列更全） | each data set reads every table once: keep the later load (it has every column)
+    slots = {}                            # 表根内偏移 → 表名（三个表根同一布局） | offset in a root -> table name (all three roots share one layout)
+    for t in tables:
+        for sl in t.get('slots', []):
+            r, off = sl['at'].split('+')
+            if r.startswith('root'): slots.setdefault(int(off, 16), (t['name'], sl['next_u32'] == t['rows']))
+    link = {o + 0x18: n for o, (n, _) in slots.items()}   # 查找列的 +0x18 指向被查表槽位后 0x18 处的索引对象 | a lookup column's +0x18 points at the index object 0x18 past the looked-up table's slot
+    if s.dry: s.stats['tables: would define'] = len(by); return
+    dtm = program.getDataTypeManager(); cat = CategoryPath('/dm/tables')
+    width = {1: ByteDataType.dataType, 2: ShortDataType.dataType, 4: IntegerDataType.dataType}
+    changed = 0
+    for name, t in sorted(by.items()):
+        st = StructureDataType(cat, f'txt_{ident(name)}', t['rec_size'], dtm)
+        flags = {}
+        for c in t['columns']:
+            kind = c['kind']
+            if kind in (29, 30):   # 标志位：按所在 u32 归组 | flag bits: grouped by the u32 they live in
+                flags.setdefault(c['offset'] + 4 * (c['len'] >> 5), []).append(f"bit {c['len'] & 31}{' (inverted)' if kind == 30 else ''}: {c['name']}")
+                continue
+            if kind == 1: dt = ArrayDataType(CharDataType.dataType, max(c['len'], 1), 1)
+            else:
+                w = {2: 4, 3: 2, 4: 1, 5: 1, 6: 1, 7: 1, 8: 4, 9: 4, 10: 4, 11: 4, 12: 1, 13: 1, 14: 2, 15: 2, 16: 1, 17: 2, 18: 4, 19: 3, 20: 5,
+                     21: 4, 22: 2, 23: 1, 24: 2, 25: 4}.get(kind, 0)
+                if not w: continue   # 回调类的列不占记录字段 | callback columns take no record field
+                dt = width.get(w) or ArrayDataType(ByteDataType.dataType, w, 1)
+            note = c['type'] + (f" -> {link[int(c['callback'].split('+')[1], 16)]}" if c['callback'].startswith('root') and int(c['callback'].split('+')[1], 16) in link else '')
+            try: st.replaceAtOffset(c['offset'], dt, dt.getLength(), ident(c['name']), note)
+            except Exception: s.bump('tables: field overlaps skipped')   # noqa: BLE001
+        for off, bits in sorted(flags.items()):
+            try: st.replaceAtOffset(off, UnsignedIntegerDataType.dataType, 4, f'flags_{off:x}', '; '.join(sorted(bits, key=lambda b: int(b.split()[1].rstrip(':')))))
+            except Exception: s.bump('tables: flag words overlapping a field')   # noqa: BLE001
+        old = dtm.getDataType(cat, st.getName())
+        if old is None or not old.isEquivalent(st): dtm.addDataType(st, DataTypeConflictHandler.REPLACE_HANDLER); changed += 1
+    s.stats['tables: record structures written'] = changed
+    root = StructureDataType(CategoryPath('/dm'), 'DataTables', 0x2700, dtm)
+    for off, (name, counted) in sorted(slots.items()):
+        rec = dtm.getDataType(cat, f'txt_{ident(name)}')
+        try:
+            root.replaceAtOffset(off, PointerDataType(rec, dtm), 8, ident(name), 'record array')
+            if counted: root.replaceAtOffset(off + 8, IntegerDataType.dataType, 4, f'{ident(name)}_count', 'rows')
+        except Exception: s.bump('tables: root slot overlaps skipped')   # noqa: BLE001
+    items = dtm.getDataType(cat, 'txt_weapons')   # 三张物品表（同一记录布局）拼成的一张 | the one table built from the three item tables (one record layout)
+    if items is not None and 0x15c0 not in slots:
+        root.replaceAtOffset(0x15c0, PointerDataType(items, dtm), 8, 'items', 'weapons + armor + misc, merged'); root.replaceAtOffset(0x15c8, IntegerDataType.dataType, 4, 'items_count', 'rows')
+    old = dtm.getDataType(CategoryPath('/dm'), 'DataTables')
+    if old is None or not old.isEquivalent(root): dtm.addDataType(root, DataTypeConflictHandler.REPLACE_HANDLER); s.bump('tables: DataTables written')
+    ptr = PointerDataType(dtm.getDataType(CategoryPath('/dm'), 'DataTables'), dtm)
+    st = program.getSymbolTable()
+    for key, label in (('root0', 'g_tables_v1'), ('root1', 'g_tables_v2'), ('root2', 'g_tables_v3')):   # 数据版本 1–3（G+0x106、单位 +0x1bd） | data versions 1-3 (G+0x106, unit +0x1bd)
+        if key not in d.get('roots', {}): continue
+        off = int(d['roots'][key].replace('main+', ''), 16)
+        for old in list(st.getSymbols(s.a(off))):   # 本步以前起的旧名去掉 | drop names this step gave earlier
+            if old.getName().startswith('g_tables_') and old.getName() != label and old.getSource() != s.ST.USER_DEFINED: old.delete()
+        s.name(off, label, 'tables')
+        cur = program.getListing().getDataAt(s.a(off))
+        if cur is None or not cur.getDataType().isEquivalent(ptr):
+            DataUtilities.createData(program, s.a(off), ptr, -1, DataUtilities.ClearDataMode.CLEAR_ALL_CONFLICT_DATA); s.bump('tables: root pointers typed')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dry-run', action='store_true')
@@ -381,6 +463,7 @@ def main():
             table = names_table()
             s.skip = {off for off, *_ in table}   # names.tsv 的地址归它管，反射名不碰 | names.tsv owns its addresses; reflection names leave them alone
             seed_reflection(s, program)
+            seed_tables(s, program)
             s.skip = set()
             for off, name, conf, src in table:
                 s.name(off, name, 'names.tsv')
