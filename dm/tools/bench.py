@@ -47,7 +47,8 @@ PRESENT = ('mean_ms', 'p50_ms', 'p95_ms', 'p99_ms', 'max_ms', 'slow_share', 'fps
 # 逐帧计时（DM_NVN_TSV 的 @ 行，hle_nvn.c）：帧间隔 / 出帧工作 / NVN 调用 / GPU / 翻译录制 / 翻译提交 / 出帧线程 CPU / 取图等待。苹果上帧率常被垂直同步钉死，这些不受刷新率量化，A/B 主要看它们
 # Per-frame timing (the @ rows of DM_NVN_TSV, hle_nvn.c): frame interval / frame work / NVN calls / GPU / translation record / translation submit / frame-thread CPU / image-acquire wait. On Apple platforms the frame rate is often pinned by vsync; these are not quantized by the refresh rate, and A/B mainly looks at them
 SERIES = ('frame_ms', 'work_ms', 'nvn_ms', 'gpu_ms', 'rec_ms', 'submit_ms', 'cpu_ms', 'wait_ms', 'draws', 'binds', 'cmdmem_cb',   # draws / binds / cmdmem_cb 是逐帧计数（条 / 次） | draws / binds / cmdmem_cb are per-frame counts
-          'proc_cpu_ms', 'sub_cpu_ms', 'pso_new', 'lib_new', 'rt_load_mb')   # 全进程 CPU / 翻译线程提交 CPU / 本帧同步建管线数 / 建着色器库数 / 渲染目标读回量 | whole-process CPU / translation-thread submit CPU / pipelines and shader libraries built synchronously this frame / render-target load traffic
+          'proc_cpu_ms', 'sub_cpu_ms', 'pso_new', 'lib_new', 'rt_load_mb',   # 全进程 CPU / 翻译线程提交 CPU / 本帧同步建管线数 / 建着色器库数 / 渲染目标读回量 | whole-process CPU / translation-thread submit CPU / pipelines and shader libraries built synchronously this frame / render-target load traffic
+          'bindskip')   # 录制时滤掉的重复状态绑定（条 / 帧，hle_nvn.c bshadow） | repeated state binds filtered while recording (per frame, hle_nvn.c bshadow)
 STATS = ('mean', 'p50', 'p95', 'p99')
 METRICS = tuple(f'present.{m}' for m in PRESENT) + tuple(f'{s}.{t}' for s in SERIES for t in STATS)
 SLOW_MS = 20.8   # 超过这个算慢帧（60 Hz 下两个刷新以上，同 perf.txt 的档） | above this a frame is slow (more than two refreshes at 60 Hz, as the perf.txt buckets)
@@ -437,6 +438,7 @@ def main(argv):
     b.add_argument('--a-env', default=''); b.add_argument('--b-env', default=''); b.add_argument('--a-host'); b.add_argument('--b-host'); b.add_argument('--metric', default='nvn_ms.p50', choices=METRICS)
     b.add_argument('--out'); b.add_argument('--cool', type=float, default=120)
     s = sub.add_parser('show'); s.add_argument('file')
+    s.add_argument('--metric', action='append', default=[], help='ab.json：按这些指标重比 A / B（可多给，或逗号分隔）| ab.json: compare A / B again on these metrics (repeat or comma-separate)')
     pr = sub.add_parser('profile'); pr.add_argument('route'); pr.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); pr.add_argument('--ms', type=int, default=4)
     pr.add_argument('--hitch-ms', type=float, default=25); pr.add_argument('--host'); pr.add_argument('--cool', type=float, default=120)
     bl = sub.add_parser('baseline'); bl.add_argument('op', choices=('save',)); bl.add_argument('--host')
@@ -450,7 +452,14 @@ def main(argv):
     if a.cmd == 'profile': return cmd_profile(a)
     if a.cmd == 'baseline': return cmd_baseline(a)
     if a.cmd == 'regress': return cmd_regress(a)
-    with open(a.file, encoding='utf-8') as f: show(json.load(f))
+    with open(a.file, encoding='utf-8') as f: res = json.load(f)
+    if res.get('schema') == 'bench-ab/1':   # 一次 A / B 的各遍都存着全部指标：换指标重比不必重跑 | an A / B keeps every metric of every run: comparing on another metric needs no rerun
+        ms = [m for x in (a.metric or ['nvn_ms.p50,cpu_ms.p50,gpu_ms.p50,proc_cpu_ms.p50']) for m in x.split(',') if m]
+        bad = [m for m in ms if m not in METRICS]
+        if bad: print(f'🔴 不认识的指标 | unknown metrics: {bad}'); return 2
+        for m in ms: compare(res['reps'], m)
+        return 0
+    show(res)
     return 0
 
 
