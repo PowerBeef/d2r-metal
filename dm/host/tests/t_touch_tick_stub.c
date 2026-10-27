@@ -17,7 +17,7 @@ uint64_t dm_runeword_pad_filter(uint64_t b) { return b; }   // 手柄模式符�
 uint64_t dm_padmode_page_filter(uint64_t b) { return b; }   // 手柄模式我们自己的页（dm_padmode.c）：不吃键 | Our own pages in controller mode (dm_padmode.c): swallow no buttons
 int dm_padmode_input_gate(uint64_t *b) { (void)b; return 0; }   // 手柄 / 触屏切换事务的输入闸（dm_padmode.c）：没在切 | Input gate of the controller / touch switch transaction (dm_padmode.c): not switching
 int dm_padmode_current(void) { return 0; }   // 手柄 / 触屏模式（dm_padmode.c）：触屏 | Controller / touch mode (dm_padmode.c): touch
-uint64_t dm_padmode_page_keys(uint64_t m) { (void)m; return 0; } void dm_padmode_legend_hide(const char *l, int a) { (void)l; (void)a; } int dm_padmode_busy(void) { return 0; } uint64_t dm_padmode_page_held(void) { return 0; } void dm_padmode_page_pulse(uint64_t m) { (void)m; } void dm_padmode_ident_hint(int on) { (void)on; } void dm_padmode_legend(int a, const char *t) { (void)a; (void)t; } const char *dm_str(uint8_t *b, const char *k) { (void)b; return k; }   // 手柄页键 / 提示条 / 取串的桩（个人仓库手柄翻页用，触屏下不走） | Stubs for controller page keys / button legend / string fetch (used by controller paging of the personal stash, not reached under touch)
+uint64_t dm_padmode_page_keys(uint64_t m) { (void)m; return 0; } void dm_padmode_legend_hide(const char *l, int a) { (void)l; (void)a; } int dm_padmode_busy(void) { return 0; } uint64_t dm_padmode_page_held(void) { return 0; } void dm_padmode_page_pulse(uint64_t m) { (void)m; } void dm_padmode_legend(int a, const char *t) { (void)a; (void)t; } const char *dm_str(uint8_t *b, const char *k) { (void)b; return k; }   // 手柄页键 / 提示条 / 取串的桩（个人仓库手柄翻页用，触屏下不走） | Stubs for controller page keys / button legend / string fetch (used by controller paging of the personal stash, not reached under touch)
 int dm_swapskill_wset(void) { return -1; }
 int dm_pages_cur(void) { return 0; } int dm_pages_count(void) { return 5; } void dm_pages_request_flip(int d) { (void)d; }   // 个人仓库多页（dm_pages.c）桩 | stubs for the multi-page personal stash (dm_pages.c)
 void dm_vault_ui_flip(int dir) { (void)dir; }
@@ -84,7 +84,6 @@ int dm_held_stow_result(void) { return -1; }
 void dm_test_swap_held(void) {}
 int dm_held_pending(void) { return 0; }
 void uimsg_emit(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }
-void dm_item_identify_free(unsigned id) { (void)id; }   // 免费鉴定（dm_actions.c）的桩 | stub for free identify (dm_actions.c)
 int dm_runeword_long_press(const void *ci) { (void)ci; return 0; }   // 符文之语助手（dm_runeword.c）的桩 | stub for the runeword helper (dm_runeword.c)
 int dm_runeword_list_open(void) { return 0; }
 void dm_runeword_button(const char *name) { (void)name; }

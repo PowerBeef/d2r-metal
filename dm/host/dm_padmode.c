@@ -198,9 +198,9 @@ static void items_run(int side, int leave) { for (unsigned i = 0; i < sizeof k_i
 // a short press is still the original "Drop", only a hold is our "Deposit"): dm_padmode_page_pulse makes the controller read press it for the
 // player for a few samples
 static _Atomic uint64_t g_pg_mask, g_pg_ev, g_pg_frame, g_pg_held, g_pg_pulse; static _Atomic int g_pg_pulse_n;
-// 同一帧里可以有不止一处声明（如储藏箱个人页的 L / R 翻页，加上光标停在未鉴定物品上时的按住 A 鉴定）：同一帧的声明按位并起来，各取各声明的那几个键的按下沿、互不拿走别人的
-// There can be more than one declaration in the same frame (e.g. L / R paging on the personal stash page, plus hold A to identify while the
-// cursor rests on an unidentified item): declarations of the same frame are ORed together bitwise, and each takes the press edges of only the
+// 同一帧里可以有不止一处声明（如储藏箱个人页的 L / R 翻页，加上同一帧里别处声明的键）：同一帧的声明按位并起来，各取各声明的那几个键的按下沿、互不拿走别人的
+// There can be more than one declaration in the same frame (e.g. L / R paging on the personal stash page, plus keys declared elsewhere in the
+// same frame): declarations of the same frame are ORed together bitwise, and each takes the press edges of only the
 // keys it declared, without taking anyone else's
 uint64_t dm_padmode_page_keys(uint64_t mask) {   // 声明本帧要接管这些键，返回其中自上次取之后按下过的 | Declare that these keys are taken over this frame; returns those among them that were pressed since the last fetch
     uint64_t f = dm_guest_frame(); if (atomic_exchange(&g_pg_frame, f) == f) atomic_fetch_or(&g_pg_mask, mask); else atomic_store(&g_pg_mask, mask);
@@ -217,23 +217,16 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
 }
 // 编年史仓库页开着时（手柄模式）把原版「按住 Y」那半句提示的字换成我们实际做的事：原版在储藏箱各页对背包物品的提示是「丢弃（按住移动到私人储藏箱）」，
 // 第六页上按住 Y 被我们接管成存入编年史仓库（dm_vault_ui.c）。这半句只写「存入」：原版那条本来就超宽、在限宽里滚动（截图对照），写短到不滚，人就在编年史页上。换法同上面的手柄 / 触屏说法：只换当前语言串表里这个键的串指针，离开那一页换回
-// 同一个换法现在有两条（一张小表）：编年史页的「存入」，和光标停在未鉴定物品上时把「捡起」换成「捡起（按住鉴定）」（手柄按住 A = 免费鉴定，dm_cursor.c；
-// 原版对未鉴定装备只提示「A 捡起」，往提示条里加条目会被原版每帧按光标下的物品重建盖掉，所以换它取的那条串）
 // While the Chronicle vault page is open (controller mode), replace the text of the original "hold Y" half of the hint with what we actually do:
 // on every stash page the original hint for an inventory item is "Drop (hold to move to private stash)",
 // and on the sixth page holding Y is taken over by us to deposit into the Chronicle vault (dm_vault_ui.c). This half only says "Deposit": the
 // original string is already too wide and scrolls within the width limit (compared against screenshots), so it is kept short enough not to
 // scroll, and the player is on the Chronicle page anyway. The swap works like the controller / touch wording above: only the string pointer of
 // this key in the current language's string table is swapped, and it is swapped back on leaving that page
-// The same swap now has two entries (one small table): "Deposit" on the Chronicle page, and replacing "Pick Up" with
-// "Pick Up (hold to identify)" while the cursor rests on an unidentified item (controller hold A = free identify, dm_cursor.c;
-// for unidentified equipment the original game only hints "A Pick Up", and an entry added to the button legend would be overwritten when the
-// original game rebuilds it every frame from the item under the cursor, so the string it fetches is swapped instead)
-enum { HINT_VAULT, HINT_IDENT, NHINT };
+enum { HINT_VAULT, NHINT };
 static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[128]; } g_hint[NHINT] = {
-    { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" }, { "ControllerPromptItemPickUpFromInventory", "dmPadLegIdentify" } };   // [0]「按住 Y」那半句、[1]「捡起」 | [0] the "hold Y" half of the sentence, [1] "Pick Up"
+    { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" } };   // 「按住 Y」那半句 | the "hold Y" half of the sentence
 void dm_padmode_vault_hint(int on) { atomic_store(&g_hint[HINT_VAULT].on, on ? 3 : 0); }   // 游戏主线程，页在屏上时每帧调（3 帧不调就算离开） | Game main thread; called every frame while the page is on screen (3 frames without a call counts as having left)
-void dm_padmode_ident_hint(int on) { atomic_store(&g_hint[HINT_IDENT].on, on ? 3 : 0); }   // 同上：光标停在未鉴定物品上时每帧调 | Same as above: called every frame while the cursor rests on an unidentified item
 // 切语言：原版把串表整张清空重装（SetLanguage，diag.c 的观测门在清空之前、游戏主线程调这里）。换串表与上面的提示小表都靠「节点地址变了」认重装，
 // 新节点要是正好分配在旧地址上就认不出：记着的原文指针已被原版释放——手柄模式会把悬空指针写回串表，触屏模式会把旧语言的触摸说法写进新语言的表（原文校验被跳过）。
 // 所以重装之前先收手：此刻指着我们缓冲区的节点写回原文（原版释放的是它自己的串），记的节点 / 原文全清，重装后下一轮按新节点重新认、重新过校验。
@@ -259,9 +252,9 @@ static void hint_pump(void) {
         // 我们这半句走中英表；串指针要常驻（换进串表的是这个缓冲区的地址），每次取来比一下、语言变了才改写缓冲区
         // Our half of the sentence goes through the Chinese-English table; the string pointer must stay resident (what is swapped into the string table
         // is the address of this buffer), so compare on every fetch and rewrite the buffer only when the language has changed
-        // 缓冲区 128 字节（俄语「捡起（按住鉴定）」正好 48 字节，原先的 48 字节缓冲放不下、每帧重抄，串表里的长度还按没截断的算）；dm_i18n.py 核这两个键的字节数。
+        // 缓冲区 128 字节（原先的 48 字节缓冲放不下长一点的译文：每帧重抄，串表里的长度还按没截断的算）；dm_i18n.py 核这个键的字节数。
         // 串表里的长度按抄进来的实际长度写
-        // The buffer is 128 bytes (the Russian "Pick Up (hold to identify)" is exactly 48 bytes: the former 48-byte buffer could not hold it, it was copied again every frame, and the length in the string table was the untruncated one); dm_i18n.py checks the byte length of these two keys.
+        // The buffer is 128 bytes (the former 48-byte buffer could not hold a longer translation: it was copied again every frame, and the length in the string table was the untruncated one); dm_i18n.py checks the byte length of this key.
         // The length in the string table is the length actually copied in
         { const char *w = dm_str(g_b, g_hint[h].ours_key); if (w && strcmp(ours, w)) { strlcpy(ours, w, sizeof g_hint[h].ours); if (*nodep && ((uint64_t *)(uintptr_t)(*nodep + 0x20))[0] == (uint64_t)(uintptr_t)ours) ((uint64_t *)(uintptr_t)(*nodep + 0x20))[1] = strlen(ours); } }
         int on = g_cur && atomic_load(&g_hint[h].on) > 0; if (atomic_load(&g_hint[h].on) > 0) atomic_fetch_sub(&g_hint[h].on, 1);

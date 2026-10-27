@@ -1459,14 +1459,6 @@ int dm_ui_tap_box(void) { return atomic_load(&g_tap_box); }
 // "Whether it can go into the stacking tab" is not judged here: item data +0x9c is always 0 for loose items in the inventory (it is the count of a stack in the stash, local probe), and where the game's own check lives was not found -
 // leave it to the game: pressing X on a non-stackable item does nothing in the original game (the button legend has no X entry either), so after sending X, checking whether the item is still there tells
 static _Atomic uint32_t g_cur_stack_id;
-// 未鉴定物品双击 = 免费鉴定（只有未鉴定的时候双击是鉴定，各页都先判这一条，已鉴定照原双击规则）。
-// 光标此刻指着的是我方（背包 / 箱子 / 方块 / 身上）一件未鉴定物品 → 发布它的 id；触摸层双击时先看它
-// Double tap on an unidentified item = free identify (double tap means identify only while unidentified; every page checks this rule first, and identified items follow the usual double-tap rules).
-// The cursor is currently on one of our own (inventory / stash / cube / equipped) unidentified items → publish its id; the touch layer checks it first on a double tap
-static _Atomic uint32_t g_hover_unid;
-uint32_t dm_ui_hover_unid(void) { return atomic_load(&g_hover_unid); }
-static _Atomic uint32_t g_ident_req;
-void dm_ui_identify_hovered(void) { atomic_store(&g_ident_req, atomic_load(&g_hover_unid)); }
 uint32_t dm_ui_cur_stack_id(void) { return atomic_load(&g_cur_stack_id); }
 // 这次按下的成叠格里那一叠有几件：按下命中成叠格后，手柄光标落到那一格上时读一次（光标物品在储藏箱里且叠数 > 0）。
 // 拖出跟手图据此决定原格压不压暗——还有剩余就不压暗（剩下的那叠看得见），只有 1 件才压暗。-1 = 还没读到（按下就甩走，光标没来得及落上去）
@@ -1479,25 +1471,6 @@ static void ui_target_pump(module_t *m, uint64_t fr) {   // 主线程，每帧 |
     int tg = dm_item_targeting() != 0; atomic_store(&g_targeting_pub, tg);
     static uint64_t check_at; int tap = atomic_exchange(&g_tap_req, 0);
     if (tap) { dm_cursor_item_info bi; atomic_store(&g_tap_box, dm_cursor_item(&bi) && !strcmp(bi.code, "box")); }   // 刚单击的这件是不是魔盒（开着箱子时双击魔盒 = 打开，前端据此分流） | Whether the item just tapped is the cube (with the stash open, double tap on the cube = open; the front end branches on this)
-    { dm_cursor_item_info ui; int c = dm_cursor_item(&ui) ? ui.container : 0;
-      atomic_store(&g_hover_unid, c && ui.unid && (c == DM_ITEM_AT_INVENTORY || c == DM_ITEM_AT_STASH || c == DM_ITEM_AT_CUBE || c == DM_ITEM_AT_EQUIP) ? ui.id : 0);
-      // 手柄模式：光标停在未鉴定物品上按住 A 0.5 秒 = 免费鉴定（触屏是双击）。原版 A = 短按捡起、按住使用，未鉴定的装备没有「使用」；
-      // 这时接管 A：短按照旧还给原版（替玩家按一下），按住才鉴定。手上拿着东西时不接管（A 是放下 / 交换）。
-      // 提示：原版对未鉴定装备的提示条只有「A 捡起」，把它取的那条串换成「捡起（按住鉴定）」（dm_padmode.c 的换串小表，离开这件物品就换回）
-      // Controller mode: with the cursor resting on an unidentified item, holding A for 0.5 seconds = free identify (on touch it is a double tap).
-      // In the original game A = short press to pick up, hold to use, and unidentified equipment has no "use";
-      // here A is taken over: a short press is handed back to the original game as before (pressed once for the player), and only a hold identifies.
-      // No takeover while something is held on the cursor (A is put down / swap).
-      // Hint: the original button legend for unidentified equipment only has "A Pick Up"; the string it fetches is swapped for
-      // "Pick Up (hold to identify)" (the small string swap table in dm_padmode.c; swapped back on leaving this item)
-      { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t), dm_padmode_page_held(void); void dm_padmode_page_pulse(uint64_t), dm_padmode_ident_hint(int);
-        static uint64_t t0; static int fired; uint32_t hu = atomic_load(&g_hover_unid); dm_hud_info hh; dm_hud_get(&hh);
-        if (dm_padmode_current() && hu && !(hh.valid && hh.holding)) { uint64_t ev = dm_padmode_page_keys(DM_BTN_A), now = now_ns(); int held = (dm_padmode_page_held() & DM_BTN_A) != 0; dm_padmode_ident_hint(1);
-            if (ev & DM_BTN_A) { t0 = now; fired = 0; }
-            if (held && t0 && !fired && now - t0 >= 500000000ull) { fired = 1; atomic_store(&g_ident_req, hu); LOG("免费鉴定：手柄按住 A 0.5 秒，光标下未鉴定物品 id %u → 鉴定", hu); }
-            if (!held && t0) { if (!fired) { dm_padmode_page_pulse(DM_BTN_A); LOG("免费鉴定：手柄短按 A → 还给原版（捡起）"); } t0 = 0; } }
-        else t0 = 0; }
-      uint32_t rq = atomic_exchange(&g_ident_req, 0); if (rq) { void dm_item_identify_free(uint32_t); dm_item_identify_free(rq); } }
     if (dm_ui_panel_state() & DM_PS_BANK) { dm_cursor_item_info ci; atomic_store(&g_cur_stack_id, dm_cursor_item(&ci) && ci.container == DM_ITEM_AT_INVENTORY ? ci.id : 0); } else atomic_store(&g_cur_stack_id, 0);   // 刚单击的这件是不是魔盒（开着箱子时双击魔盒 = 打开，前端据此分流） | Whether the item just tapped is the cube (with the stash open, double tap on the cube = open; the front end branches on this)
     if (tap && !tg && dm_vendor_repair_mode()) { dm_cursor_item_info ri; if (dm_cursor_item(&ri)) { dm_item_repair(ri.id); LOG("界面修理：修理态下单击 %s（id %u）→ 修理", ri.code, ri.id); } }   // 商人页修理态（点了修理钮）：单击物品 = 修它；退出仍是再点修理钮（原版） | Vendor page repair mode (the repair button was tapped): single tap on an item = repair it; exiting is still tapping the repair button again (as in the original game)
     if (!tg) { check_at = 0; return; }
@@ -3441,7 +3414,7 @@ void dm_ui_cache_mode_leave(void) {
     g_nmv = 0; dm_wref_set(&g_down, 0); dm_wref_set(&g_slot, 0); dm_wref_set(&g_bd_hit_ref, 0); dm_wref_set(&g_click, 0); dm_wref_set(&g_tab_ref, 0); atomic_store(&g_tab_have, 0); ut_reset();
     // 在途的触摸请求（触屏专属的泵切到手柄后不再跑，留着会在切回触屏时突然落地）和保持中的悬停 / 没发完的指针事件
     // In-flight touch requests (the touch-only pumps no longer run after switching to the controller, and leaving them would make them land suddenly on switching back to touch) plus a held hover / pointer events not yet fully sent
-    atomic_store(&g_wtap, 0); atomic_store(&g_buy_at, 0); atomic_store(&g_tap_req, 0); atomic_store(&g_use_req, 0); atomic_store(&g_long_req, 0); atomic_store(&g_ident_req, 0);
+    atomic_store(&g_wtap, 0); atomic_store(&g_buy_at, 0); atomic_store(&g_tap_req, 0); atomic_store(&g_use_req, 0); atomic_store(&g_long_req, 0);
     atomic_store(&g_dg_kind, 0); atomic_store(&g_bd_state, 0); atomic_store(&g_swaptab_tap, 0); atomic_store(&g_mercpg, 0);
     atomic_store(&g_up_hold, 0); atomic_store(&g_up_r, atomic_load(&g_up_w));
 }

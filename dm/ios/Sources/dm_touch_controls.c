@@ -302,8 +302,6 @@ static _Atomic int g_tap_box;   /* 最近一次单击的物品是魔盒（前端
 void dm_tc_set_tap_box(int on) { atomic_store(&g_tap_box, on != 0); }
 static _Atomic unsigned g_cur_stack;
 void dm_tc_set_cur_stack(unsigned id) { atomic_store(&g_cur_stack, id); }
-static _Atomic unsigned g_hover_unid;
-void dm_tc_set_hover_unid(unsigned id) { atomic_store(&g_hover_unid, id); }
 static _Atomic int g_imbue_open;   /* 单件任务槽面板开着（灌魔 / 打孔 / 个性化 / 古墓底座，同一个 ImbueItemsPanel） | Single-item quest slot panel open (imbue / socket / personalize / tomb pedestal, all the same ImbueItemsPanel) */
 static _Atomic int g_cube_open;   /* 赫拉迪克方块页开着：双击 = 按住 Y（原版「移到另一侧」：背包 → 方块 / 方块 → 背包），不是「使用 / 装备」 | Horadric Cube page open: double tap = hold Y (the original game's "move to the other side": inventory → cube / cube → inventory), not "use / equip" */
 static _Atomic int g_vault_open;   /* 储藏箱开在第六页「编年史」：双击背包物品 = 存进编年史仓库（走 use_seq，宿主 ui_use_pump 判页），不发原版「按住 Y」——那一页游戏当魔盒页 | Stash open on page six 「编年史」(Chronicle): double-tapping an inventory item = store it in the Chronicle vault (goes through use_seq; the host's ui_use_pump determines the page); do not send the original game's "hold Y" -- the game treats that page as the cube page */
@@ -608,8 +606,7 @@ void dm_tc_end_at(dm_tc_state *s, int slot, double now_s) {
             else if (s->pointer_item) {   /* 物品区：单击只移光标（游戏自己出说明）；紧接着在同一处再点一下 = 按住 A / Y | Item area: a single tap only moves the cursor (the game shows the tooltip itself); another tap at the same spot right after = hold A / Y */
                 float ox = done.aim_origin_x, oy = done.aim_origin_y;
                 int dbl = now_s - s->last_tap_s < DM_TC_DOUBLE_TAP_S && hypotf(ox - s->last_tap_x, oy - s->last_tap_y) <= 2 * DM_TC_POINTER_MOVE_PT * scale_for(&s->layout);
-                if (dbl) { if (atomic_load(&g_hover_unid) && !s->pointer_stack && !s->pointer_shop) ++s->ident_seq;   /* 未鉴定物品：双击 = 免费鉴定（各页都先判；商人货架上的货不算我方物品，宿主也不发布） | Unidentified item: double tap = free identify (checked first on every page; goods on the vendor shelf are not our items, and the host does not publish them either) */
-                    else if (s->pointer_stack) ++s->stack_take_seq;   /* 成叠格：取 1 件（原版短按 Y；这里不按键，按住 0.6 秒会变成「移动 3 个」） | Stacked cell: take 1 (short press Y in the original game; no key is pressed here, since holding for 0.6 seconds would become "move 3") */
+                if (dbl) { if (s->pointer_stack) ++s->stack_take_seq;   /* 成叠格：取 1 件（原版短按 Y；这里不按键，按住 0.6 秒会变成「移动 3 个」） | Stacked cell: take 1 (short press Y in the original game; no key is pressed here, since holding for 0.6 seconds would become "move 3") */
                     else if (atomic_load(&g_imbue_open)) pointer_pulse_btn(s, ox, oy, 2, DM_BTN_Y, 1.3);   /* 单件任务槽面板：原版对背包物品按住 Y = 放进槽（宿主读数：约 1.3 秒）；不能当「使用」——否则在古墓底座前双击法杖会被装到手上 | Single-item quest slot panel: in the original game holding Y on an inventory item = put it into the slot (host reading: about 1.3 seconds); it must not be treated as "use" -- otherwise double-tapping the staff in front of the tomb pedestal would equip it in hand */
                     else if (atomic_load(&g_bank_open) && !atomic_load(&g_tap_box) && !atomic_load(&g_vault_open)) {
                         /* 背包里的物品：先发原版的 X（移动到堆叠栏）。能堆叠的（符文 / 宝石 / 材料）游戏收下、进堆叠格；不能堆叠的游戏对 X 不做任何事，0.4 秒后它还在光标下就退回按住 Y。

@@ -377,15 +377,14 @@ apply_input:
                 else if (f->pointer_dragged) { int dk = dm_ui_drop_at_now(f->x / 2868, (f->y - DM_TC_POINTER_LIFT_PT) / 1320, f->y / 1320); float dx, dy;
                     if ((dk == 5 && dm_ui_drop_point(&dx, &dy)) || (dk == 0 && dm_ui_origin_point(&dx, &dy))) dm_tc_pointer_release_at(&g_touch.state, dx * 2868, dy * 1320);
                     else { if (dk == 7) { dm_shop_sell_cursor(); dk = 0; } dm_tc_pointer_release(&g_touch.state, dk); } } }   // 7 = 松在商人货架上：卖；随后那下「放回原处」只在没卖掉时起作用 | 7 = released on the vendor's shelf: sell; the following "put back in place" only takes effect if it was not sold
-            dm_tc_set_tap_box(dm_ui_tap_box()); dm_tc_set_cur_stack(dm_ui_cur_stack_id()); dm_tc_set_hover_unid(dm_ui_hover_unid());
+            dm_tc_set_tap_box(dm_ui_tap_box()); dm_tc_set_cur_stack(dm_ui_cur_stack_id());
             { dm_hud_info hi; dm_hud_get(&hi); dm_tc_set_holding(&g_touch.state, hi.valid && hi.holding); }
             unsigned wt = g_touch.state.world_tap_seq;
-            unsigned mc = g_touch.state.mouse_click_seq; unsigned tt=g_touch.state.tab_tap_seq; unsigned us = g_touch.state.use_seq; unsigned ids = g_touch.state.ident_seq; unsigned lps = g_touch.state.long_press_seq; unsigned its = g_touch.state.item_tap_seq;
+            unsigned mc = g_touch.state.mouse_click_seq; unsigned tt=g_touch.state.tab_tap_seq; unsigned us = g_touch.state.use_seq; unsigned lps = g_touch.state.long_press_seq; unsigned its = g_touch.state.item_tap_seq;
             dm_tc_end(&g_touch.state, e->slot);
             if (g_touch.state.tab_tap_seq != tt) dm_ui_tab_go();
             if (g_touch.state.long_press_seq != lps) dm_ui_long_press();
             if (g_touch.state.item_tap_seq != its) dm_ui_item_tap();
-            if (g_touch.state.ident_seq != ids) dm_ui_identify_hovered();
             if (g_touch.state.use_seq != us) dm_ui_use_item();
             if (g_touch.state.world_tap_seq != wt) { unsigned dm_world_tap(float, float); float wx = g_touch.state.world_tap_x / 2868, wy = g_touch.state.world_tap_y / 1320;
                 // 真鼠标：手势层认为没有面板开着（它按名单认面板，大秘境选层页这类借壳的面板不在名单里），这一下却落在某个面板里 → 发界面点击，不当点世界

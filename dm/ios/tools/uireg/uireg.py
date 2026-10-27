@@ -1186,13 +1186,14 @@ def groups():
     g.item("重进同一个角色","进局；载入个人仓库侧文件",r"个人仓库：\S+ 当前第 1 页，另外几页共 1 件"); g.ui("ListItem2@CharacterSelectPanel",1.3); g.tap(P(333,336),12.0); g.shot()
     g.item("开箱翻到第 2 页","第 2 页那张卷轴还在（看截图）",r"个人仓库：第 1 → 2 页"); g.at("tap_unit 2 267 3",3.0); g.at("tap_ui TouchStashRight@BankExpansionLayout 3",2.0); g.shot()
     gs.append(g)
-    # vt1：60 级术士给一顶暗金软帽（背包右上 2×2，中心 591.9,236.3）→ 开箱 → 第六页签「编年史」(278.5,53) → 双击帽子存入 → 单击格子 (96.7,113.3) 出说明 → 拖回背包 → 搜「帽」→ 保存退出重进 → 再开第六页
-    # vt1: give a level 60 warlock a unique cap (inventory top right 2×2, center 591.9,236.3) → open the stash → sixth tab 「编年史」(Chronicle) (278.5,53) → double-tap the cap to deposit it → single-tap the cell (96.7,113.3) to show the description → drag it back to the inventory → search 「帽」(cap) → save, exit and re-enter → open the sixth page again
+    # vt1：60 级术士给一顶暗金软帽（背包右上 2×2，中心 591.9,236.3；只开物品栏时 413,236）→ 开物品栏，用存档里原有的鉴定卷轴 (423,265) 鉴定它（编年史仓库只收已鉴定的）→ 关物品栏 → 开箱 → 第六页签「编年史」(278.5,53) → 双击帽子存入 → 单击格子 (96.7,113.3) 出说明 → 拖回背包 → 搜「帽」→ 保存退出重进 → 再开第六页
+    # vt1: give a level 60 warlock a unique cap (inventory top right 2×2, center 591.9,236.3; 413,236 with only the inventory open) → open the inventory, identify it with the identify scroll already in the save (423,265) (the Chronicle vault accepts only identified items) → close the inventory → open the stash → sixth tab 「编年史」(Chronicle) (278.5,53) → double-tap the cap to deposit it → single-tap the cell (96.7,113.3) to show the description → drag it back to the inventory → search 「帽」(cap) → save, exit and re-enter → open the sixth page again
     VE="DM_TEST_STAT=12=60 DM_TEST_GIVE=cap:7:1@60 DM_TEST_GIVE_INV=1 DM_KBD=帽"
     g=G("vt1",VE); g.sect("vt1",0); g.enter(); g.wait(2.0)
+    g.item("开物品栏，双击鉴定卷轴后点帽子","鉴定（游戏自己的卷轴鉴定）",r"界面鉴定：单击 cap"); g.tap("@menu",1.1); g.dbl(423,265); g.tap(P(413,236),1.5); g.tap(P(654.5,17),1.2)
     g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 3",3.0); g.shot()
     g.item("点第六页签「编年史」","切到编年史仓库页（看截图：暗金格、部位下拉、档次勾选、搜索）",r"编年史仓库：进第六页"); g.tap(P(181,53),1.5); g.shot()
-    g.item("双击背包里的暗金帽子","存入：「→ 存进编年史仓库」「存入 …」",r"存进编年史仓库[\s\S]*编年史仓库：存入",r"【红】编年史仓库"); g.dbl(591.9,236.3); g.wait(2.0); g.dbl(591.9,236.3); g.wait(2.0); g.shot()   # 测试给的暗金未鉴定：第一下双击是免费鉴定，第二下才存入 | the unidentified unique given by the test: the first double-tap is a free identify, only the second one deposits it
+    g.item("双击背包里的暗金帽子","存入：「→ 存进编年史仓库」「存入 …」",r"存进编年史仓库[\s\S]*编年史仓库：存入",r"【红】编年史仓库"); g.dbl(591.9,236.3); g.wait(2.0); g.shot()
     g.item("单击仓库格子","出这件的说明框（看截图）",None); g.tap(P(94.7,156.4),1.5); g.shot()
     g.item("说明框开着点「共享」页签","只收框、页签不切（vaultui2：框外任何地方只收框）",lambda s,b: ("不通：切了页签" if re.search(r"界面页签：切",s) else "通：没切页签")); g.tap(P(105.9,53),1.5); g.shot()
     g.item("从格子拖回背包","取出：「拖到背包格 … → 取出」「取出 … → 背包」",r"编年史仓库：[^\n]+ 拖到背包格[^\n]*→ 取出[\s\S]*取出 [^\n]*→ 背包",r"【红】编年史仓库"); g.dragp((94.7,156.4),(454.4,276.3)); g.wait(1.5); g.shot()

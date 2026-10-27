@@ -438,7 +438,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
         int dm_drop_haptic_take(void); int t = dm_drop_haptic_take();
         if (t >= 1 && t <= 3) { static UIImpactFeedbackGenerator *g[4]; if (!g[t]) g[t] = [[UIImpactFeedbackGenerator alloc] initWithStyle:t == 1 ? UIImpactFeedbackStyleHeavy : t == 2 ? UIImpactFeedbackStyleMedium : UIImpactFeedbackStyleLight];
             [g[t] impactOccurred]; LOG("掉落震动：前端震第 %d 档", t); } }
-    dm_tc_set_tap_box(dm_ui_tap_box()); dm_tc_set_cur_stack(dm_ui_cur_stack_id()); dm_tc_set_hover_unid(dm_ui_hover_unid());
+    dm_tc_set_tap_box(dm_ui_tap_box()); dm_tc_set_cur_stack(dm_ui_cur_stack_id());
     { dm_hud_info hi; dm_hud_get(&hi); dm_tc_set_holding(&_controls,hi.valid && hi.holding && !dm_ui_targeting()); }   // 鉴定态下游戏的「手上物品」是那张卷轴 / 那本书，但它没在手上：不算拿着 | In identify mode the game's "item in hand" is that scroll / tome, but it is not actually in hand: not counted as holding
     if(_itemAsked && _controls.navigation_mode && _controls.pointer_slot>=0) { int ir=dm_ui_item_result(_itemSeq); if(ir>=0) { _itemAsked=NO; _itemKind=ir; dm_tc_pointer_item(&_controls,ir); } }   // 命中答案一出来就告诉手势层（物品区才驱动手柄光标、才算拖放） | Tell the gesture layer as soon as the hit answer arrives (only the item area drives the controller cursor and counts as drag and drop)
     if(_pendEnd) {   // 挂着的抬起：判类与松手落点的答案都回了就结束这根手指；0.25 秒还不回就照旧按没答上处理 | Pending lift: end this finger once both the classification and the release drop-point answers are back; if still not back after 0.25 seconds, handle as no answer as before
@@ -639,7 +639,7 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
             _relAsked=NO;
             if(_controls.navigation_mode && _controls.pointer_slot==i && _itemAsked) { _itemAsked=NO; dm_tc_pointer_item(&_controls,dm_ui_item_result(_itemSeq)); [self bindTapSync]; }   // 松手时还没告诉过：现在取（没答上 = 按别处处理） | Not yet told at release: fetch now (no answer = handle as elsewhere)
             unsigned wt=_controls.world_tap_seq;
-            unsigned mc=_controls.mouse_click_seq; unsigned tt=_controls.tab_tap_seq; unsigned us=_controls.use_seq; unsigned ids=_controls.ident_seq; unsigned sts=_controls.stack_take_seq; unsigned lps=_controls.long_press_seq; unsigned its=_controls.item_tap_seq;
+            unsigned mc=_controls.mouse_click_seq; unsigned tt=_controls.tab_tap_seq; unsigned us=_controls.use_seq; unsigned sts=_controls.stack_take_seq; unsigned lps=_controls.long_press_seq; unsigned its=_controls.item_tap_seq;
             BOOL dragged=_uiDragOn && _controls.pointer_slot==i;
             if(_uiDragOn && _controls.pointer_slot==i) { _uiDragOn=NO; dm_ui_drag_end(); }
             BOOL wasPtr=_controls.pointer_slot==i; unsigned tm=_controls.tap_move_seq;
@@ -658,14 +658,13 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
             if(_controls.long_press_seq!=lps) dm_ui_long_press();   // 物品区长按（松手时才算）= 补充到腰带 | Long press in the item area (counted only on release) = refill to the belt
             if(_controls.item_tap_seq!=its) dm_ui_item_tap();   // 物品区单击：鉴定态下 = 鉴定这件（宿主判，不在鉴定态什么都不做） | Single tap in the item area: in identify mode = identify this item (the host decides; does nothing when not in identify mode)
             if(_controls.stack_take_seq!=sts) { dm_stash_take(1); LOG("前端：双击高级仓库里的一叠 → 取 1 件"); }
-            if(_controls.ident_seq!=ids) dm_ui_identify_hovered();   // 物品区双击未鉴定物品 = 免费鉴定（宿主走游戏自己的鉴定函数） | Double tap on an unidentified item in the item area = free identify (the host calls the game's own identify function)
             if(_controls.use_seq!=us) dm_ui_use_item();   // 物品区双击 = 使用 / 购买 / 装备（宿主按光标下物品走原生入口） | Double tap in the item area = use / buy / equip (the host goes through the native entry for the item under the cursor)
             if(_controls.world_tap_seq!=wt && self.bounds.size.width>0) { float wx,wy; world_norm(self,_controls.world_tap_x,_controls.world_tap_y,&wx,&wy); dm_ui_world_tap((float)(_controls.world_tap_x/self.bounds.size.width),(float)(_controls.world_tap_y/self.bounds.size.height),wx,wy); }   // 游戏态点世界：点目标 = 交互，点空地不发令 | World tap in game mode: tapping a target = interact; tapping empty ground issues no command
             // 单纯点了一件物品（没拖、没触发使用 / 鉴定 / 取一件 / 长按）：光标留在它上面，说明框一直在，点别处 / 点另一件 / 关面板才收——同下面的技能图标。
             // 原先一律松手后 2.8 秒收，玩家读长说明读到一半框没了、要再点一次。拖放、使用之后光标停在落点上的那种仍按 2.8 秒收（不然放完东西说明框一直盖着）
             // A plain tap on an item (no drag, no use / identify / take-one / long press triggered): the cursor stays on it and the description stays up until a tap elsewhere / on another item / the panel closes - same as the skill icons below.
             // It used to be put away 2.8 seconds after release in every case, so a player reading a long description lost it halfway and had to tap again. When the cursor rests on the drop point after a drag or a use, it is still put away after 2.8 seconds (otherwise the description would keep covering things after an item is placed)
-            BOOL itemTap=_controls.item_tap_seq!=its && !dragged && _controls.use_seq==us && _controls.ident_seq==ids && _controls.stack_take_seq==sts && _controls.long_press_seq==lps && _controls.mouse_click_seq==mc;
+            BOOL itemTap=_controls.item_tap_seq!=its && !dragged && _controls.use_seq==us && _controls.stack_take_seq==sts && _controls.long_press_seq==lps && _controls.mouse_click_seq==mc;
             if(wasPtr && _controls.navigation_mode) _tipUntil=(_controls.tap_move_seq!=tm || itemTap) ? -1 : _controls.last_time_s+(_controls.mouse_click_seq!=mc ? 0.05 : 2.8);   // 点的是技能图标 / 属性「+」（选中待确认）：光标留在上面，原版高亮和说明框一直在，点别处 / 点另一个 / 关面板才收   // 说明框：松手后 2.8 秒自己收（游戏的说明框要点后约 0.8 秒才出来，实测；留约 2 秒看）；点的是空处 / 普通按钮 = 立即收 | Tapped a skill icon / stat "+" (selected, awaiting confirmation): the cursor stays on it and the original game's highlight and tooltip stay until tapping elsewhere / tapping another / closing the panel   // Tooltip: closes by itself 2.8 seconds after release (the game's tooltip takes about 0.8 seconds after the tap to appear, measured; leaving about 2 seconds to read); tapped empty space / an ordinary button = close immediately
             if(_controls.mouse_click_seq!=mc && self.bounds.size.width>0) { float nx=_controls.mouse_click_x/self.bounds.size.width, ny=_controls.mouse_click_y/self.bounds.size.height; dm_ui_touch(0,nx,ny); dm_ui_touch(2,nx,ny); }   // 非物品区点按 = 界面鼠标点击 | Tap outside the item area = UI mouse click
             break; }

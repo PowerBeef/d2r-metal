@@ -1025,20 +1025,6 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     // 副手组技能（dm_actions.c）：发布服务端记的当前武器组 [[玩家+0x10]+0xf0]+0x5a0（换武器包尾要带它，服务端 0x6de790 比对）
     // Off-hand set skills (dm_actions.c): publish the current weapon set as recorded by the server [[player+0x10]+0xf0]+0x5a0 (the weapon swap packet must carry it at the end; the server's 0x6de790 compares it)
     { void dm_swapskill_srv_wset(int); uint64_t pd = 0, q = 0; uint8_t w = 0; if (player && tk_rd(player + 0x10, &pd, 8) && pd && tk_rd(pd + 0xf0, &q, 8) && q && tk_rd(q + 0x5a0, &w, 1)) dm_swapskill_srv_wset(w); }
-    // 免费鉴定（未鉴定物品双击，触摸层 → dm_actions.c dm_item_identify_free 记下物品 id）：在服务端拍里调游戏自己的鉴定函数
-    // main+0x78acf0(游戏, 服务端玩家, 服务端物品)——鉴定卷轴 / 书在服务端走的那个（misc.txt pSpell 表 0x20ad7e8 第 1 项），凯恩「鉴定全部」最后也调它：
-    // 已鉴定返回 0；否则经 0x64c5f0 置 [物品数据+0x18] |= 0x10 并自己广播物品更新（0x9c / 0x9d）。不扣卷轴（扣数是外层 0x786410 的事）、不查位置、不要 NPC
-    // 测试开关 DM_TEST_IDENT_FREE=<拍>:<物品 id>[+<物品 id>…]（造现场用：编年史要鉴定过才记「发现」）：到拍起每拍一件走下面同一条免费鉴定（队列只有一格）
-    // Free identify (double-tap on an unidentified item, touch layer → dm_actions.c dm_item_identify_free records the item id): in the server tick, call the game's own identify function
-    // main+0x78acf0(game, server player, server item) -- the one identify scrolls / tomes use on the server (misc.txt pSpell table 0x20ad7e8 entry 1), which Cain's 「鉴定全部」(Identify All) also ends up calling:
-    // returns 0 if already identified; otherwise via 0x64c5f0 sets [item data+0x18] |= 0x10 and broadcasts the item update itself (0x9c / 0x9d). No scroll is consumed (consuming is the outer 0x786410's job), no position check, no NPC needed
-    // Test switch DM_TEST_IDENT_FREE=<tick>:<item id>[+<item id>...] (for test setup: the chronicle only records 「发现」(discovered) for identified items): from that tick on, one item per tick goes through the same free identify below (the queue has only one slot)
-    { static int at = -1, ni, ki; static uint32_t iids[8]; uint32_t tq = 0;
-      if (at < 0) { const char *e = getenv("DM_TEST_IDENT_FREE"), *c = e ? strchr(e, ':') : NULL; at = c ? atoi(e) : 0; for (char *q; c && ni < 8; c = *q == '+' ? q : NULL) { iids[ni++] = (uint32_t)strtoul(c + 1, &q, 10); } }
-      if (at > 0 && ki < ni && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= (uint32_t)at) { void dm_item_identify_free(uint32_t); dm_item_identify_free(iids[ki]); LOG("测试 DM_TEST_IDENT_FREE：拍 %u 鉴定物品 id %u", tq, iids[ki]); ki++; } }
-    { uint32_t dm_item_identify_free_take(void); uint64_t dm_diag_srv_item(uint32_t); uint32_t fid = main && player ? dm_item_identify_free_take() : 0;
-      if (fid) { uint64_t si = dm_diag_srv_item(fid); int r = si ? ((int (*)(uint64_t, uint64_t, uint64_t))(main->base + 0x78acf0))(G, player, si) : -1;
-          LOG("免费鉴定：物品 id %u → %s", fid, r < 0 ? "服务端找不到这件，没调" : r ? "已调原版鉴定（服务端置已鉴定并广播更新）" : "原版判已鉴定，没变"); } }
     // 测试开关 DM_TEST_GIVE=<物品码>[:品质[:件数]][,…][@拍]：到拍（缺省 40）在玩家脚边地上生成物品（造现场用：洗点道具、未鉴定装备、成叠的宝石符文等）。
     // 走游戏自己的「按物品码在某单位旁边掉一件」main+0x7c0b20(游戏, 单位, 物品码, 品质)（任务奖励用的那个：查码表、在单位旁找空地、物品等级取游戏的、调通用生成函数 0x656780）。
     // 品质：2 普通（缺省）、4 魔法、5 套装、6 稀有、7 暗金；0 = 让游戏按品质比例表自己掷

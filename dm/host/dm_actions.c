@@ -78,11 +78,6 @@ void dm_item_unequip(uint32_t id) { if (id) atomic_store(&g_unequip, id); }
 void dm_test_equip(int what) { atomic_store(&g_test_eq, what); }   // 测试：1 = 装备背包里第一件能穿的，2 = 卸下身上第一件，3 = 对背包里第一件穿不了的调装备（应只播错误音） | test: 1 = equip the first wearable item in the inventory, 2 = unequip the first item worn, 3 = call equip on the first unwearable item in the inventory (should only play the error sound)
 static _Atomic uint32_t g_ident; static _Atomic int g_tcancel, g_test_ident;
 void dm_item_identify(uint32_t id) { if (id) atomic_store(&g_ident, id); }
-// 免费鉴定（未鉴定物品双击）：走游戏服务端自己的鉴定函数（地址待读码），不自己改标志位
-// Free identify (double-tap on an unidentified item): goes through the game server's own identify function (address to be read from the code); does not modify the flag bits itself
-static _Atomic uint32_t g_ident_free;
-void dm_item_identify_free(uint32_t id) { if (id) atomic_store(&g_ident_free, id); }
-uint32_t dm_item_identify_free_take(void) { return atomic_exchange(&g_ident_free, 0); }   // 服务端拍取走（diag.c） | taken by the server tick (diag.c)
 void dm_item_target_cancel(void) { atomic_store(&g_tcancel, 1); }
 static _Atomic uint32_t g_repair;
 static _Atomic int g_bfill;

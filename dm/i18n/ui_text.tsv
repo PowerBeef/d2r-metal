@@ -200,7 +200,6 @@ dmPadLegView	查看 / 取出	View / Withdraw	Ver / Retirar		Смотреть / �
 dmPadLegPrev	上一页	Previous Page	Página anterior		Предыдущая	이전	同上；英文 = 原版 ui[NPCPreviousPage]
 dmPadLegNext	下一页	Next Page	Página siguiente		Следующая	다음	同上；英文 = 原版 ui[NPCNextPage]
 dmPadHintDeposit	存入	Deposit	Depositar		Внести	보관	编年史页「按住 Y」那半句（dm_padmode.c）；英文 = 原版 ui[strGoldDeposit]
-dmPadLegIdentify	捡起（按住鉴定）	Pick Up (Hold to Identify)	Recoger (mantén: identificar)	Recolectar (mantén: identificar)	Взять (держать — опознать)	감정	手柄模式光标在未鉴定物品上时，原版提示条 A 那条的「捡起」换成这句（dm_padmode.c 换串小表）；写法照原版「捡起(按住使用)」；英文：拟
 dmPadDiffLine	游戏难度：%d	Game Difficulty: %d	Dificultad de la partida: %d	Dificultad de partida: %d	Сложность игры: %d	게임 난이도: %d	手柄版暂停菜单的难度行（dm_padmode.c）；英文 = 原版 ui[OptionsMenuGameDifficulty]「Game Difficulty」
 dmAppQuit	退出 D2R Metal	Quit D2R Metal	Salir de D2R Metal		Выйти из D2R Metal	종료	Mac App 菜单栏（host/front_mac.m）
 dmAppOK	好	OK	Aceptar		ОК	확인	Mac App 提示框的按钮（host/app_mac.m，下同）

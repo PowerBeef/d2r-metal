@@ -202,7 +202,6 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmPadLegPrev", "上一页", "Previous Page", "Página anterior", "Página anterior", "Предыдущая", "이전" },
     { "dmPadLegNext", "下一页", "Next Page", "Página siguiente", "Página siguiente", "Следующая", "다음" },
     { "dmPadHintDeposit", "存入", "Deposit", "Depositar", "Depositar", "Внести", "보관" },
-    { "dmPadLegIdentify", "捡起（按住鉴定）", "Pick Up (Hold to Identify)", "Recoger (mantén: identificar)", "Recolectar (mantén: identificar)", "Взять (держать — опознать)", "감정" },
     { "dmPadDiffLine", "游戏难度：%d", "Game Difficulty: %d", "Dificultad de la partida: %d", "Dificultad de partida: %d", "Сложность игры: %d", "게임 난이도: %d" },
     { "dmAppQuit", "退出 D2R Metal", "Quit D2R Metal", "Salir de D2R Metal", "Salir de D2R Metal", "Выйти из D2R Metal", "종료" },
     { "dmAppOK", "好", "OK", "Aceptar", "Aceptar", "ОК", "확인" },
