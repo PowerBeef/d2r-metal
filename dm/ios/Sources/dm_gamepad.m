@@ -25,6 +25,7 @@
 // While the on-screen keyboard (dm_vkbd_ui.m) is open the controllers belong to it: after dm_gamepad_capture(1) the merged buttons and left stick are only for it to read (dm_gamepad_captured), and the game sees everything released;
 // buttons still held when it closes (such as the press that chose "OK") are kept from the game until released, otherwise the game would get one press the moment the keyboard closes.
 #import <GameController/GameController.h>
+#include <stdatomic.h>
 #include "dm_input.h"
 #include "dm_padmap.h"
 #include "hle.h"
@@ -78,9 +79,13 @@ static void apply(void) {
       prev = b; if (mine) b &= ~(uint64_t)DM_BTN_ZR; if (!(b & DM_BTN_ZR) && !(prev & DM_BTN_ZR)) mine = 0; }
     dm_pad_set(b, ax[0], ax[1], ax[2], ax[3]);
 }
+// 最近一次手柄明确输入的时刻（now_ns）：系统的自动锁屏只认触屏，手柄操作不重置它，前端据此在菜单里多亮一会儿（front_ios.m 屏幕常亮）
+// When the latest clear controller input happened (now_ns): the system's auto-lock only counts touches and controller use does not reset it, so the front end keeps the screen on a while longer in menus from this (front_ios.m keep-awake)
+static _Atomic uint64_t g_last_input_ns;
+uint64_t dm_gamepad_last_input_ns(void) { return atomic_load(&g_last_input_ns); }
 static void put(const void *who, uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry, int glyph) {
     int i = slot_of(who, 1); if (i < 0) return;
-    if ((b & ~g_s[i].b) || hypot(lx, ly) >= 0.25 * DM_STICK_MAX || hypot(rx, ry) >= 0.25 * DM_STICK_MAX) g_glyph = glyph;   // 这只手柄有明确输入：键帽跟它的类型 | This controller gave clear input: the glyphs follow its type
+    if ((b & ~g_s[i].b) || hypot(lx, ly) >= 0.25 * DM_STICK_MAX || hypot(rx, ry) >= 0.25 * DM_STICK_MAX) { g_glyph = glyph; atomic_store(&g_last_input_ns, now_ns()); }   // 这只手柄有明确输入：键帽跟它的类型，并记下时刻 | This controller gave clear input: the glyphs follow its type, and the time is recorded
     g_s[i].b = b; g_s[i].ax[0] = lx; g_s[i].ax[1] = ly; g_s[i].ax[2] = rx; g_s[i].ax[3] = ry; g_s[i].glyph = glyph; apply();
 }
 static void drop(const void *who) {   // 这个手柄没了：只拿掉它那一份；一个手柄都不剩才回触屏模式 | This controller is gone: remove only its share; return to touch mode only when no controller is left

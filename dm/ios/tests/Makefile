@@ -11,7 +11,7 @@ HAVE_BINDING_FIXTURES := $(and $(wildcard fixtures/native_binding/mapping.bin),$
 fixture_test = $(if $(HAVE_BINDING_FIXTURES),./$(1) $(BINDING_FIXTURES),@echo "跳过 $(1)：没有夹具 $(BINDING_FIXTURES)（公开仓库不带，要自己从运行中的游戏抓，见 fixtures/native_binding/README）")
 
 .PHONY: all run test clean
-all: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_vkbd $(METAL_CACHE_TARGET)
+all: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_vkbd t_awake $(METAL_CACHE_TARGET)
 run: test
 $(TARGET): t_touch_controls.c $(wildcard ../Sources/dm_touch_controls.[ch]) ../../host/dm_input.h
 	$(CC) $(CFLAGS) -I../Sources t_touch_controls.c ../Sources/dm_touch_controls.c -lm -o $@
@@ -42,11 +42,14 @@ t_joy_travel: t_joy_travel.c ../Sources/dm_touch_controls.c ../Sources/dm_touch_
 	$(CC) $(CFLAGS) -I../Sources t_joy_travel.c ../Sources/dm_touch_controls.c -lm -o $@
 t_vkbd: t_vkbd.c ../Sources/dm_vkbd.c ../Sources/dm_vkbd.h ../../host/dm_input.h
 	$(CC) $(CFLAGS) -I../Sources t_vkbd.c ../Sources/dm_vkbd.c -o $@
+t_awake: t_awake.c ../Sources/dm_awake.h
+	$(CC) $(CFLAGS) -I../Sources t_awake.c -o $@
 t_metal_cache_guard: t_metal_cache_guard.c ../Sources/dm_metal_cache_guard.c ../Sources/dm_metal_cache_guard.h
 	$(CC) $(CFLAGS) -I../Sources t_metal_cache_guard.c ../Sources/dm_metal_cache_guard.c -o $@
-test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_vkbd $(METAL_CACHE_TARGET)
+test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_vkbd t_awake $(METAL_CACHE_TARGET)
 	./$(METAL_CACHE_TARGET)
 	./t_vkbd
+	./t_awake
 	./$(TARGET)
 	./t_skill_aim
 	./t_joy_travel
@@ -69,4 +72,4 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_vkbd 
 	python3 test_skill_aim_front.py
 	python3 test_touch_receipt.py --source ../Sources/front_ios.m
 clean:
-	rm -f $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_vkbd $(METAL_CACHE_TARGET)
+	rm -f $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_vkbd t_awake $(METAL_CACHE_TARGET)

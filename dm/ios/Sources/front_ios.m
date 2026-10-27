@@ -25,6 +25,7 @@ static void vkbd_where(dm_vkbd_host *h); static void alert_handoff_pad(void);   
 #include "dm_actions.h"
 #include <stdatomic.h>
 #include "dm_touch_game_state.h"
+#include "dm_awake.h"
 #include "../../host/dm_cursor.h"
 #include "../../host/dm_hud.h"
 #include "../../host/dm_world.h"
@@ -1509,7 +1510,20 @@ static void touch_script_start(void) {
 
 void front_ios_lifecycle_install(void) {
     front_game_res(1);   // 主线程先读屏幕尺寸并缓存（客体线程初始化时才取值，UIScreen 只该在主线程用） | Read and cache the screen size on the main thread first (the value is only fetched when the guest thread initializes, and UIScreen should only be used on the main thread)
-    UIApplication.sharedApplication.idleTimerDisabled = YES;   // 游戏期间不自动锁屏（锁屏即进后台：浸泡 / 长局会被打断） | No auto-lock during the game (locking the screen means going to background: soak / long runs would be interrupted)
+    // 屏幕常亮：只在真正在玩（局内、没开暂停页）时不让系统自动变暗 / 锁屏，菜单、选角、暂停页、读取画面交还给系统（判断见 dm_awake.h）。
+    // 原先整个会话都常亮（为浸泡 / 长局：锁屏即进后台）；测试开关 DM_SOAK、DM_SAVE_FRESH（自动化真机跑都带）照旧整局常亮。每 2 秒看一次，变了才写、记一行
+    // Keep-awake: the system is kept from dimming / locking only while actually playing (in a run, the pause page not open); menus, character select, the pause page and loading screens hand back to the system (decision in dm_awake.h).
+    // It used to stay awake for the whole session (for soaks / long runs: locking means going to the background); the test switches DM_SOAK and DM_SAVE_FRESH (every automated device run sets one) keep the whole session awake as before. Checked every 2 seconds, written and logged only on change
+    { int keep = getenv("DM_SOAK") || getenv("DM_SAVE_FRESH"); double t_up = now_ns() / 1e9; __block double last_play = t_up; __block int last = -1;
+      void (^check)(void) = ^{ int dm_ingame_now(void), dm_game_paused(void); uint64_t dm_gamepad_last_input_ns(void);
+          double now = now_ns() / 1e9, pad = dm_gamepad_last_input_ns() / 1e9; int in = dm_ingame_now(), pz = in && dm_game_paused(), play = in && !pz;
+          if (play) last_play = now;
+          int want = dm_awake_want(keep, in, pz, now, last_play, pad), why = dm_awake_want(0, in, pz, now, last_play, pad);
+          if (want == last) return;
+          last = want; UIApplication.sharedApplication.idleTimerDisabled = want;
+          LOG("前端：屏幕常亮 %s（%s）", want ? "开" : "关，交还系统自动锁屏", keep ? "测试开关 DM_SOAK / DM_SAVE_FRESH：整局常亮" : play ? "局内在玩" : why && now - last_play < DM_AWAKE_GRACE_S && in ? "暂停页开着，宽限中" : why && now - last_play < DM_AWAKE_GRACE_S ? "不在局内，宽限中" : why ? "手柄刚有输入，宽限中" : in ? "暂停页开着" : "不在局内"); };
+      check();
+      NSTimer *tm = [NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *t) { (void)t; check(); }]; tm.tolerance = 1; }
     { uint64_t mtl_present_count(void); void front_ios_heat_start(uint64_t (*)(void), int); front_ios_heat_start(mtl_present_count, 1); }   // DM_HEAT 发热归因 | DM_HEAT heat attribution
     // 亮度：每 2 s 读一次（宿主每 300 帧上屏行带出）；测试开关 DM_BRIGHTNESS=0–1 时偏差 > 0.01 即重设——启动早期只设一次会被忽略 / 被自动亮度改回（M1 读回 0.35）
     // Brightness: read once every 2 s (carried by the host's every-300-frames present line); with test switch DM_BRIGHTNESS=0–1, reset whenever the deviation > 0.01 -- setting it only once early in launch gets ignored / reverted by auto-brightness (M1 read back 0.35)
