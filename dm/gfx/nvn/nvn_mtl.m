@@ -2563,8 +2563,30 @@ void mtl_prog_release(prog_t *p) { if (p->serial) serial_del(p->serial); }
 // 登记时快照整个贴图对象（NVN 语义：描述符已写进池）；view：该号对应的 MTLTexture（视图或基贴图，CFBridgingRetain 持有）及取得时的序号表 / 客体写代号
 // ---------- Descriptor pool: texture ID / sampler ID → object ----------
 // At registration the whole texture object is snapshotted (NVN semantics: the descriptor has been written into the pool); view: the MTLTexture for that ID (a view or the base texture, held via CFBridgingRetain) and the serial-table / guest-write generations at the time it was obtained
-typedef struct { tex_t t; int ok; view_t v; int has_v; void *view; uint64_t view_id, view_rid, view_ser, view_dirty; } treg_t;
+typedef struct { tex_t t; int ok; view_t v; int has_v; void *view; uint64_t view_id, view_rid, view_ser, view_dirty; int tv_next; uint8_t tv_in; } treg_t;
 static treg_t *g_treg; static int g_ntreg;
+// 持视图的贴图号按所登记贴图的序号挂进散列桶（桶头 g_tvh = 贴图号 + 1，同桶沿 tv_next；均持 g_rmu），释放贴图时 treg_forget 只走一个桶。
+// 原先每次释放都扫全表（一万多项）：退出这一局时一帧释放约 1,800 张，宿主里共约 8 ms
+// Texture IDs holding a view are filed in hash buckets by the serial of the registered texture (bucket head g_tvh = ID + 1, the rest of the bucket through tv_next; all under g_rmu), so treg_forget walks one bucket on a texture release.
+// Every release used to scan the whole table (over ten thousand entries): leaving a game releases about 1,800 textures in one frame, about 8 ms in the host
+#define TV_HBITS 14
+static int g_tvh[1 << TV_HBITS];
+static inline unsigned tv_hash(uint64_t ser) { return (unsigned)((ser * 0x9E3779B97F4A7C15ull) >> (64 - TV_HBITS)); }
+static void tv_link(int tid) {
+    treg_t *rp = &g_treg[tid]; if (rp->tv_in) return;
+    unsigned h = tv_hash(rp->t.serial); rp->tv_next = g_tvh[h]; g_tvh[h] = tid + 1; rp->tv_in = 1;
+}
+static void tv_unlink(int tid) {
+    treg_t *rp = &g_treg[tid]; if (!rp->tv_in) return;
+    int *pp = &g_tvh[tv_hash(rp->t.serial)];
+    while (*pp && *pp != tid + 1) pp = &g_treg[*pp - 1].tv_next;
+    if (*pp) *pp = rp->tv_next;
+    rp->tv_next = 0; rp->tv_in = 0;
+}
+static void treg_view_drop(int tid) {   // 放掉这个号缓存的视图（延后到在途提交做完） | drop the view cached for this ID (deferred until the submissions in flight finish)
+    treg_t *rp = &g_treg[tid]; if (!rp->view) return;
+    tv_unlink(tid); defer_obj_unref((__bridge id)rp->view); CFRelease(rp->view); rp->view = NULL; rp->view_id = rp->view_rid = 0;
+}
 // 贴图号 → 序号的无锁副本（回放热路径只要序号：写回前瞻索引、纯清除前提的绑定集合）：贴图号 20 位，固定 1M 项（BSS，只占碰过的页），
 // 登记时 release 写、读端 relaxed 原子读，不进 g_rmu（原 h_ser 每次查表加解锁，营地每帧数千次）
 // Lock-free copy of texture ID → serial (the replay hot path only needs the serial: store lookahead index, binding set of the clear-only hoist): texture IDs are 20 bits, fixed 1M entries (BSS, only touched pages are used),
@@ -2585,23 +2607,22 @@ void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
     pthread_mutex_lock(&g_rmu);
     if (id_ >= g_ntreg) { int n = id_ + 1024; g_treg = realloc(g_treg, n * sizeof *g_treg); memset(g_treg + g_ntreg, 0, (n - g_ntreg) * sizeof *g_treg); g_ntreg = n; }
     g_reg_gen++;
-    if (g_treg[id_].view) { defer_obj_unref((__bridge id)g_treg[id_].view); CFRelease(g_treg[id_].view); g_treg[id_].view = NULL; g_treg[id_].view_id = g_treg[id_].view_rid = 0; }
+    treg_view_drop(id_);
     g_treg[id_].ok = t != NULL; if (t) g_treg[id_].t = *t; g_treg[id_].has_v = v != NULL; if (v) g_treg[id_].v = *v;
     if (id_ < (1 << 20)) atomic_store_explicit(&g_tser[id_], t ? t->serial : 0, memory_order_release);
     pthread_mutex_unlock(&g_rmu);
 }
 // 游戏释放贴图（mtl_tex_release）时，放掉登记着它的各贴图号缓存的视图：视图（或基贴图本身）是 CFBridgingRetain 持有的，原先要等这个号被重新登记才放，
 // 号一直不再用的话，已经退役（移出驻留集）的贴图连同显存一直被钉着。号仍登记着（描述符还在池里），以后真被用到时照常重建视图。
-// 按无锁序号副本 g_tser 扫（每项 8 字节，一万多项约 0.1 MB），只在有视图的项上动手；放引用走 defer_obj_unref（在途的提交还可能读它，不动驻留集）
+// 只走该序号的散列桶（tv_link）；放引用走 defer_obj_unref（在途的提交还可能读它，不动驻留集）
 // When the game releases a texture (mtl_tex_release), drop the views cached for the texture IDs registered with it: the view (or the base texture itself) is held by CFBridgingRetain and used to be released only when that ID was registered again,
 // so an ID never used again kept the already retired texture (out of the residency set) and its memory pinned. The ID stays registered (the descriptor is still in the pool), and a later real use rebuilds the view as usual.
-// The scan goes over the lock-free serial copy g_tser (8 bytes per entry, about 0.1 MB for some ten thousand entries) and only touches entries holding a view; the reference is dropped with defer_obj_unref (submissions in flight may still read it; the residency set is left alone)
+// Only that serial's hash bucket is walked (tv_link); the reference is dropped with defer_obj_unref (submissions in flight may still read it; the residency set is left alone)
 static uint64_t g_treg_forgot;   // 累计放掉的视图数（持 g_rmu；资源计数行末尾） | cumulative views dropped (under g_rmu; at the end of the resource-count line)
 static void treg_forget(uint64_t ser) {
     pthread_mutex_lock(&g_rmu);
-    int n = g_ntreg < (1 << 20) ? g_ntreg : (1 << 20);
-    for (int i = 0; i < n; i++) if (atomic_load_explicit(&g_tser[i], memory_order_relaxed) == ser && g_treg[i].view) {
-        defer_obj_unref((__bridge id)g_treg[i].view); CFRelease(g_treg[i].view); g_treg[i].view = NULL; g_treg[i].view_id = g_treg[i].view_rid = 0; g_treg_forgot++; }
+    for (int i = g_tvh[tv_hash(ser)]; i;) { int tid = i - 1; i = g_treg[tid].tv_next;   // 先取下一个：放掉时本项摘链 | take the next one first: dropping unlinks this entry
+        if (g_treg[tid].t.serial == ser && g_treg[tid].view) { treg_view_drop(tid); g_treg_forgot++; } }
     pthread_mutex_unlock(&g_rmu);
 }
 void mtl_reg_samp(int sid, const samp_par *sp) {
@@ -2636,7 +2657,7 @@ static id<MTLTexture> tex_by_id(int tid) {   // 调用方持 g_rmu | Caller hold
     if (v) {   // 序号表或客体内存有过变动：核基贴图是否被重传换新，换了则视图作废 | The serial table or guest memory has changed: check whether the base texture was re-uploaded and replaced; if so the view is invalidated
         id<MTLTexture> cur = tex_mtl(&rp->t);
         if (cur == v || v.parentTexture == cur) { rp->view_ser = sg; rp->view_dirty = dg; return v; }
-        defer_obj_unref(v); CFRelease(rp->view); rp->view = NULL; rp->view_rid = 0; v = nil;
+        treg_view_drop(tid); v = nil;
     }
     treg_t r = *rp; if (!r.has_v) memset(&r.v, 0, sizeof r.v);   // 没登记视图时 v 可能是上一次登记留下的 | Without a registered view, v may be left over from an earlier registration
     id<MTLTexture> base = tex_mtl(&rp->t);
@@ -2670,7 +2691,7 @@ static id<MTLTexture> tex_by_id(int tid) {   // 调用方持 g_rmu | Caller hold
                    : [base newTextureViewWithPixelFormat:(MTLPixelFormat)pf textureType:tt levels:NSMakeRange(l0, nl) slices:NSMakeRange(s0, ns)];
         if (!v) { RED_ONCE(11, "贴图视图建不出 id %d", tid); v = base; }
     }
-    rp->view = (void *)CFBridgingRetain(v); rp->view_rid = v.gpuResourceID._impl; rp->view_ser = sg; rp->view_dirty = dg;
+    rp->view = (void *)CFBridgingRetain(v); rp->view_rid = v.gpuResourceID._impl; rp->view_ser = sg; rp->view_dirty = dg; tv_link(tid);
     return v;
 }
 // 热路径取对象：表里有效就直接返回表持有的指针（不经 ARC 的 retain / autorelease），否则走慢路建 / 校验。调用方持 g_rmu。

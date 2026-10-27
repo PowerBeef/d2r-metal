@@ -147,6 +147,34 @@ static void treg_view_case(void) {
     for (int i = 0; i < 200 && wv != nil; i++) { @autoreleasepool { defer_drain(); } usleep(5000); }
     EXPECT("释放贴图：提交完成后视图释放 | texture released: the view is released once the submission completes", 0, wv != nil);
 }
+// 视图缓存的散列桶（tv_link）：同一个桶里的三张贴图从链中、链尾、链头各放一张，每次只放掉自己那个号；
+// 号改登记成别的贴图后，释放旧贴图不碰它，释放新贴图才放
+// Hash buckets of the view cache (tv_link): three textures in one bucket released from the middle, the tail and the head of the chain, each release dropping only its own ID;
+// once an ID is registered to another texture, releasing the old texture leaves it alone and releasing the new one drops it
+static void treg_bucket_case(void) {
+    uint64_t ser[3]; int k = 0; unsigned h0 = tv_hash(20000);
+    for (uint64_t s = 20000; k < 3 && s < 20000 + (1u << 22); s++) if (tv_hash(s) == h0) ser[k++] = s;
+    EXPECT("散列桶：找到同桶的三个序号 | buckets: three serials in one bucket found", 3, k);
+    if (k < 3) return;
+    tex_t t[3]; for (int i = 0; i < 3; i++) { t[i] = tex(8, NVN_FORMAT_RGBA8); t[i].serial = ser[i]; mtl_reg_tex(1601 + i, &t[i], NULL); }
+    @autoreleasepool { pthread_mutex_lock(&g_rmu); for (int i = 0; i < 3; i++) (void)tex_by_id(1601 + i); pthread_mutex_unlock(&g_rmu); }
+    EXPECT("散列桶：三个号都缓存了视图 | buckets: all three IDs cache a view", 1, g_treg[1601].view && g_treg[1602].view && g_treg[1603].view);
+    static const int order[3] = {1, 0, 2};   // 链是 1603 → 1602 → 1601：先中间、再链尾、最后链头 | the chain is 1603 → 1602 → 1601: middle first, then the tail, then the head
+    for (int j = 0; j < 3; j++) {
+        int i = order[j]; uint64_t f0 = g_treg_forgot; mtl_tex_release(&t[i]);
+        int left = 0; for (int m = 0; m < 3; m++) left += g_treg[1601 + m].view != NULL;
+        char what[160]; snprintf(what, sizeof what, "散列桶：放第 %d 张只放它自己的号 | buckets: release %d drops only its own ID", j + 1, j + 1);
+        EXPECT(what, 1, g_treg_forgot - f0 == 1 && !g_treg[1601 + i].view && left == 2 - j);
+    }
+    EXPECT("散列桶：桶空了 | buckets: the bucket is empty", 0, g_tvh[h0]);
+    tex_t u = tex(8, NVN_FORMAT_RGBA8), w = tex(8, NVN_FORMAT_RGBA8);
+    mtl_reg_tex(1604, &u, NULL); @autoreleasepool { pthread_mutex_lock(&g_rmu); (void)tex_by_id(1604); pthread_mutex_unlock(&g_rmu); }
+    mtl_reg_tex(1604, &w, NULL); @autoreleasepool { pthread_mutex_lock(&g_rmu); (void)tex_by_id(1604); pthread_mutex_unlock(&g_rmu); }
+    uint64_t f1 = g_treg_forgot; mtl_tex_release(&u);
+    EXPECT("改登记：释放旧贴图不动这个号 | re-registered: releasing the old texture leaves the ID alone", 1, g_treg[1604].view != NULL && g_treg_forgot == f1);
+    mtl_tex_release(&w);
+    EXPECT("改登记：释放新贴图放掉它 | re-registered: releasing the new texture drops it", 1, g_treg[1604].view == NULL && g_treg_forgot == f1 + 1);
+}
 // F-GFX-17：遮挡查询的「通过采样数」= 自清零以来各通道槽之和，可跨提交；后一次提交不能复用还被记着槽的可见性缓冲，
 // 报告要读的缓冲在那次提交的完成回调读完之前也不能复用。先做的一段让 GPU 队列先等事件，B、C 两次提交都排着；B 的完成回调先等 C 在 GPU 上做完再求和（环从空着开始，C 若可复用 A 的缓冲就会挑中它）
 // F-GFX-17: "samples passed" = the sum of the per-pass slots since the reset, which can span submits; a later submit must not reuse a visibility buffer whose slots are still on record,
@@ -225,5 +253,5 @@ static void present_slot_case(void) {
 }
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init(); lib_init();
-    scissor_case(); clear_view_case(); stencil_mask_case(); stream14_case(); swizzle_case(); pending_vb_case(); lut_case(); treg_view_case(); vis_ring_case(); m3_table_case(); present_slot_case();
+    scissor_case(); clear_view_case(); stencil_mask_case(); stream14_case(); swizzle_case(); pending_vb_case(); lut_case(); treg_view_case(); treg_bucket_case(); vis_ring_case(); m3_table_case(); present_slot_case();
     printf("== %d 项，失败 %d ==\n", count, fail); return fail != 0; } }
