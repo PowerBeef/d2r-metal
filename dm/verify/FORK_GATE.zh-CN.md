@@ -83,6 +83,14 @@ python3 dm/verify/golden.py list
 - 做的时候发现：「保存并退出」后 `state.in_game` 一直是真（HUD 读数只在走拍时更新）；命令行宿主上 `DM_OE_SCRIPT` 的 `@ingame` 与 `DM_TEST_LANG` 悄悄不起作用。都修了；每个场景现在都要求一个证明切换真的发生了的事件。
 - 没覆盖：局内切语言（语言在挂存档时生效）。
 
+## 能说明时间花在哪的基准
+
+- **路线**（`dm/verify/bench/`）：`town_loop`、`combat`（在血腥荒野里 `tap_unit` 打怪）、`ui_heavy`（面板与页签）、`rejoin`（保存并退出再进局）。
+- **`nvn.tsv` 新的逐帧计数：** `@binds`（录下的绑定命令：纹理、采样器、缓冲、程序、状态）与 `@cmdmem_cb`（游戏补命令内存的回调）；`bench.py` 连同 `@draws` 按段报。数*重复*绑定要每个命令缓冲的影子状态，属于 s38 那项工作。
+- **`bench.py profile`：** 采样跑一遍（`DM_SAMPLE=4:*`，每条客体线程一行 `SAMPLE-THR` 给名字）：按段、按线程角色出在跑占比与最热的函数（引擎名字）；每个超过 25 ms 的帧列出那段时间里在跑什么。
+- **`bench.py baseline save` / `regress`：** 对留下来的旧宿主按 ABBA 比；只有显著变慢才红；每次比较都记账本。
+- `long` 跑四条路线、一次采样归因和回归（没留基线时为 ⚪）。
+
 ## 触屏用例与夹具存档
 
 触屏用例从 `save_ref_warlock`（或 `DM_TOUCH_SAVE`）起跑。有几例是照上游的夹具存档写的：背包 (5,3) 格有物品、(8,0) 是赫拉迪克方块。对起跑状态的检查是**前提**（`lib.precondition`）：存档里没有用例要的东西时，这一例判 ⚪ 不可用（`assert.py` 退出码 3，`touchchain.sh` 退出码 3）而不是红，其余检查不算数。缺前缀录制的用例同样判 ⚪。

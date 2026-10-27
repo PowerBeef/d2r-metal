@@ -83,6 +83,14 @@ python3 dm/verify/golden.py list
 - Found while building them: `state.in_game` stayed true after Save and Exit (HUD readings only refresh on ticks); `DM_OE_SCRIPT`'s `@ingame` trigger and `DM_TEST_LANG` silently did nothing on the CLI host. All fixed; each scenario now requires an event proving its switch happened.
 - Not covered: a language switch during play (the language applies when the save is mounted).
 
+## Benchmarks that explain the time
+
+- **Routes** (`dm/verify/bench/`): `town_loop`, `combat` (`tap_unit` fights in the Blood Moor), `ui_heavy` (panels and tabs), `rejoin` (Save and Exit, then rejoin).
+- **New per-frame counters** in `nvn.tsv`: `@binds` (bind commands recorded: textures, samplers, buffers, programs, state) and `@cmdmem_cb` (the game's out-of-command-memory callbacks); `bench.py` reports them per segment with `@draws`. Counting *redundant* binds needs per-command-buffer shadow state and belongs to the s38 work.
+- **`bench.py profile`**: one sampled run (`DM_SAMPLE=4:*`, with a `SAMPLE-THR` line naming each guest thread): per segment and thread role, the running share and the hottest functions under their engine names; every frame over 25 ms with what was running during it.
+- **`bench.py baseline save` / `regress`**: ABBA against a kept copy of an earlier host; red only on a significant slowdown; the ledger keeps every comparison.
+- `long` runs the four routes, one profile and the regression (⚪ without a saved baseline).
+
 ## Touch cases and fixture saves
 
 The touch cases start from `save_ref_warlock` (or `DM_TOUCH_SAVE`). Some were written against upstream's fixture save: an item in inventory slot (5,3), the Horadric Cube at (8,0). The checks on the starting state are **preconditions** (`lib.precondition`): when the save doesn't have what the case needs, the case is ⚪ unavailable (`assert.py` exit code 3, `touchchain.sh` exit code 3) instead of red, and the other checks don't count. A case whose prefix recording is missing is ⚪ the same way.

@@ -37,8 +37,9 @@ fi
 
 # 跑一步：dmtest.py 包住命令，记 名字 / 结论 / 秒数 / 不可用条数 | run one step: dmtest.py wraps the command; record name / verdict / seconds / unavailable count
 step() {   # step <名字 | name> <超时秒 | timeout s> -- <命令 | command…>
-  local name=$1 to=$2; shift 3; local s=$SECONDS d="$OUT/$name"
-  python3 "$DM/tools/dmtest.py" --name "$name" --out "$d" --junit "$d/junit.xml" --timeout "$to" -- "$@" > "$d.console" 2>&1
+  local name=$1 to=$2; shift 3; local s=$SECONDS d="$OUT/$name" rco=()
+  case $name in unit_*) rco=(--rc-only);; esac   # 测试套：退出码就是结论（套里的负向用例自己会打 RED 行） | test suites: the exit code is the verdict (their negative cases print RED lines)
+  python3 "$DM/tools/dmtest.py" --name "$name" --out "$d" --junit "$d/junit.xml" --timeout "$to" ${rco[@]+"${rco[@]}"} -- "$@" > "$d.console" 2>&1
   local rc=$? v; case $rc in 0) v=OK;; 1) v=RED;; *) v=ERROR;; esac
   local un; un=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("unavailable", [])))' "$d/result.json" 2>/dev/null || echo 0)
   printf '%s\t%s\t%s\t%s\n' "$name" "$v" "$((SECONDS - s))" "$un" >> "$STEPS"
@@ -117,7 +118,9 @@ for tier in "${TIERS[@]}"; do
     ;;
   long)
     lock_on 120
-    step long_bench 3600 -- python3 "$DM/tools/bench.py" run "$DM/verify/bench/town_loop.scn" --reps 3
+    for r in town_loop combat ui_heavy rejoin; do step "long_bench_$r" 1800 -- python3 "$DM/tools/bench.py" run "$DM/verify/bench/$r.scn" --reps 3; done   # 先跑：机器还凉 | first: the machine is still cool
+    step long_profile 900 -- python3 "$DM/tools/bench.py" profile "$DM/verify/bench/combat.scn"   # 采样归因 + 卡顿 | sampled attribution + hitches
+    step long_regress 2400 -- bash -c 'python3 "$DM/tools/bench.py" regress "$DM/verify/bench/town_loop.scn" --reps 6; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # 对留存基线（bench.py baseline save）；没有基线为 ⚪ | against the kept baseline (bench.py baseline save); none = ⚪
     step long_playbot 3600 -- python3 "$DM/tools/playbot.py" run --seed 1 --episodes 4 --intents 15   # 试玩机器人：玩家意图 + 不变量（dm/tools/playbot.py） | the playtest bot: player intents + invariants (dm/tools/playbot.py)
     step long_soak 3600 -- python3 "$DM/tools/playbot.py" soak --minutes 30 --seed 2   # Mac 浸泡：soak_report.py 的四条判据 | Mac soak: soak_report.py's four criteria
     for san in asan ubsan; do
