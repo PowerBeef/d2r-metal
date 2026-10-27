@@ -147,7 +147,7 @@ def main():
     sys.path.insert(0, os.path.join(IOS, 'tools')); import shell_stubs
     say('数据表：经验 %d、技能索引 %d' % shell_stubs.data(DM, os.path.join(stage, 'dm', 'derived.tsv')))
     hud = os.path.join(IOS, 'Gen', 'assets', 'NativeHUD')
-    for d, src in (('hud_v4_ui', os.path.join(hud, 'v4', 'hud_v4_ui')), ('mapgoal', os.path.join(hud, 'mapgoal'))):
+    for d, src in (('hud_v4_ui', os.path.join(hud, 'v4', 'hud_v4_ui')),):
         if d + '/' in manifest: shutil.copytree(src, os.path.join(stage, d))
     ta = os.path.join(IOS, 'Sources', 'TouchArt')
     for f in sorted(os.listdir(ta)):

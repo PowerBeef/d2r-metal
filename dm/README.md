@@ -187,7 +187,7 @@ The `dm_*.c` files are features and touch adaptations added on top of the origin
 
 ## Generating assets from your game files
 
-The repository contains no images, tables or text derived from the original game files (the right-hand panel of character select, the minimap goal, the skill atlas, the bottom UI, the experience table and so on). They are made on the spot at build time from **your own game files**, and the outputs do not go into git.
+The repository contains no images, tables or text derived from the original game files (the right-hand panel of character select, the skill atlas, the bottom UI, the experience table and so on). They are made on the spot at build time from **your own game files**, and the outputs do not go into git.
 
 **Which files are needed**
 
@@ -213,7 +213,6 @@ When game files are missing, a one-sentence message says directly which director
 | Output | Location (not in git) | Generation script (under `dm/ios/tools/`) |
 |---|---|---|
 | Right-hand panel of character select | `dm/ios/Gen/assets/NativeHUD/touch/` | `gen_fe_rightpanel.py` |
-| Minimap goal marker | `dm/ios/Gen/assets/NativeHUD/mapgoal/` | `gen_map_goal_art.py` |
 | Bottom UI (background and layout) | `dm/ios/Gen/assets/NativeHUD/v4/` | `gen_hud_v4.py` (geometry in `hud_v4_design.py`; layout = original layout + `touchrectv1_patch.json`) |
 | Skill atlas, skill index | `dm/ios/Sources/TouchArt/dm_native_*.png`, `dm/ios/Sources/dm_touch_native_art.c` | `native_art/generate.py` (checks the originals against `dm/ios/Sources/TouchArt/native_art_manifest.json`) |
 | Experience table | `dm/host/dm_hud_exp.h` | `gen_hud_exp.py` (called by `dm/host/Makefile`) |

@@ -12,7 +12,6 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmUpdButton", "更新", "Update", "Actualizar", "Actualizar", "Обновить", "업데이트" },
     { "dmPauseShareLog", "分享诊断日志", "Share Diagnostics", "Compartir diagnóstico", "Compartir diagnóstico", "Поделиться диагностикой", "진단 로그 공유" },
     { "dmCustomDropLight", "高价值掉落光柱", "Light beam on valuable drops", "Haz de luz en botín valioso", "Haz de luz en botín valioso", "Луч света на ценных дропах", "고가치 드롭 광기둥" },
-    { "dmCustomMapMark", "小地图标注出入口、小站与任务终点", "Automap: exits, waypoints, quests", "Mapa: salidas, transportadores, búsquedas", "Automapa: salidas, traslocadores, gestas", "Карта: выходы, точки пути, квесты", "자동맵: 출구, 웨이포인트, 퀘스트" },
     { "dmCustomItemNotes", "物品注释与旧译名（重启后生效）", "Item notes (Chinese/Spanish only, restart)", "Notas de objetos (reinicia)", "Notas de objetos (reinicia)", "Пометки к предметам (кит./исп., рестарт)", "아이템 주석 (중/스페인어, 재시작)" },
     { "dmCustomIcloud", "iCloud 同步存档（重启后生效）", "iCloud save sync (after restart)", "Sincronía iCloud (tras reiniciar)", "Sincronía iCloud (tras reiniciar)", "Синхронизация iCloud (рестарт)", "iCloud 저장 동기화 (재시작 후)" },
     { "dmCustomPotPick", "腰带有空位时自动拾取能放进去的药水", "Auto-pick potions into belt", "Recoger pociones al cinturón", "Recolectar pociones al cinturón", "Зелья в пояс автоматически", "벨트에 물약 자동 줍기" },

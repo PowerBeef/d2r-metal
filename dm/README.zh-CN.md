@@ -187,7 +187,7 @@ DM_ROMFS=<Update/RomFS 目录> DM_SAVE=<存档目录> DM_TEMP=<临时目录> DM_
 
 ## 从你的游戏文件生成资源
 
-仓库里不放任何从原版游戏文件衍生出来的图片、表格和文字（选角右侧面板、小地图终点、技能图集、底部 UI、经验表等）。它们在构建时从**你自己的游戏文件**现做出来，产物不进 git。
+仓库里不放任何从原版游戏文件衍生出来的图片、表格和文字（选角右侧面板、技能图集、底部 UI、经验表等）。它们在构建时从**你自己的游戏文件**现做出来，产物不进 git。
 
 **要哪些文件**
 
@@ -213,7 +213,6 @@ DM_ROMFS=<Update/RomFS 目录> DM_SAVE=<存档目录> DM_TEMP=<临时目录> DM_
 | 产物 | 位置（不进 git） | 生成脚本（`dm/ios/tools/` 下） |
 |---|---|---|
 | 选角右侧面板 | `dm/ios/Gen/assets/NativeHUD/touch/` | `gen_fe_rightpanel.py` |
-| 小地图终点标记 | `dm/ios/Gen/assets/NativeHUD/mapgoal/` | `gen_map_goal_art.py` |
 | 底部 UI（底图与布局） | `dm/ios/Gen/assets/NativeHUD/v4/` | `gen_hud_v4.py`（几何在 `hud_v4_design.py`，布局 = 原版布局 + `touchrectv1_patch.json`） |
 | 技能图集、技能索引 | `dm/ios/Sources/TouchArt/dm_native_*.png`、`dm/ios/Sources/dm_touch_native_art.c` | `native_art/generate.py`（按 `dm/ios/Sources/TouchArt/native_art_manifest.json` 核原件） |
 | 经验表 | `dm/host/dm_hud_exp.h` | `gen_hud_exp.py`（由 `dm/host/Makefile` 调用） |

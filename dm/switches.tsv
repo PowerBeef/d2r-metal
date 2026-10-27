@@ -174,7 +174,6 @@ DM_MAC_UPDATE_URL	tools	tools/mac_app.sh	-
 DM_MAC_VERSION	tools	tools/mac_app.sh	-
 DM_MAGENTA_PROBE_OFF	gfx	gfx/nvn/nvn_mtl.m	-
 DM_MALLOCDIAG	ios	ios/Sources/mallocdiag_ios.m	-
-DM_MAP_MARK	host	host/dm_world.c	-
 DM_MEMSTAT	host	host/memstat.m	-
 DM_MEMSTAT_DUMP	host	host/memstat.m	-
 DM_MEM_CAP_GB	gfx	gfx/nvn/hle_nvn.c	-
@@ -398,7 +397,6 @@ DM_TEST_LIVE	host	host/touch_mac.c	-
 DM_TEST_LKEY_CLASH	ios	ios/Sources/front_ios.m	-
 DM_TEST_LOADSCREEN_DELAY_MS	host	host/diag.c	-
 DM_TEST_MAP_FULL	host	host/diag.c	-
-DM_TEST_MAP_MARK_CHECK	host	host/dm_world.c	-
 DM_TEST_MEMWARN	ios	ios/Sources/main.m	-
 DM_TEST_MERC_HP	host	host/diag.c	-
 DM_TEST_MERC_KILL	host	host/diag.c	-

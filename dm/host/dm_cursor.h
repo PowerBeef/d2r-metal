@@ -122,4 +122,3 @@ void dm_ui_text_entered(const char *text);   // 系统键盘返回时调：text 
 int dm_lat_on(void);
 #define DM_LAT(fmt, ...) do { if (dm_lat_on()) LOG("LAT %llu " fmt, (unsigned long long)(now_ns() / 1000000), ##__VA_ARGS__); } while (0)
 void dm_ui_hand_idle(int idle);                  // 触摸前端每拍报：没有手指、没有在发 / 排着的键与光标请求 = 1（手上物品守门用，dm_cursor.c hand_guard） | Reported by the touch front end every tick: no fingers, no keys or cursor requests being sent / queued = 1 (used by the held-item guard, dm_cursor.c hand_guard)
-int dm_ui_map_geom(float *cell);   // 地图几何：返回 0 没开 / 1 微缩 / 2 全屏，*cell = 每格像素（真实画面像素，任意线程） | Map geometry: returns 0 not open / 1 minimap / 2 full screen, *cell = pixels per cell (real picture pixels, any thread)

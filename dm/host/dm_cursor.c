@@ -2253,22 +2253,6 @@ static void ui_safe_pump(module_t *m, uint64_t root, uint64_t fr) {
     if (h) { int32_t x0 = *(int32_t *)(h + 0x70); mv_offset(MV_SAFE, h, 0, -u, 0); if (*(int32_t *)(h + 0x70) != x0) LOG("安全区：信息栏 x %d → %d", x0, *(int32_t *)(h + 0x70)); }
 
 }
-// 小地图任务终点（dm_world.c dm_map_goals）用的地图几何：地图开没开、全屏还是微缩、每格像素。每格像素照游戏自己的算法（同 ui_map_center：0x413280–0x413298），
-// 单位是真实画面像素；地图上的世界格 (x, y) 画在 玩家所在点 + ((Δx−Δy)×1.6, (Δx+Δy)×0.8) × 每格像素（宿主峡谷 4 组墓口拟合，误差 ≤3%）。
-// 开没开看 AutoMap 控件可见位（+0x50）；全屏 / 微缩看 [main+0x2d5c748]（0 = 全屏，同 ui_map_pump）；微缩地图的玩家点在小地图框中心、缩放用另一档（+0x15ac）。主线程每帧写一次
-// Map geometry used for the minimap quest goals (dm_world.c dm_map_goals): whether the map is open, fullscreen or mini, and pixels per cell. Pixels per cell follows the game's own algorithm (same as ui_map_center: 0x413280–0x413298),
-// in real screen pixels; world cell (x, y) on the map is drawn at the player's point + ((Δx−Δy)×1.6, (Δx+Δy)×0.8) × pixels per cell (fitted on the host from 4 sets of tomb entrances in the canyon, error ≤3%).
-// Open or not is read from the AutoMap widget's visible flag (+0x50); fullscreen / mini from [main+0x2d5c748] (0 = fullscreen, same as ui_map_pump); the mini map's player point is at the center of the minimap frame and its zoom uses the other level (+0x15ac). Written once per frame by the main thread
-static _Atomic uint64_t g_mapgeom;   // 高 32 位 = 模式（0 没开 / 1 微缩 / 2 全屏），低 32 位 = 每格像素（float 的位） | High 32 bits = mode (0 not open / 1 mini / 2 fullscreen), low 32 bits = pixels per cell (bits of a float)
-static void ui_map_geom_pump(module_t *m, uint64_t root) {
-    uint64_t am = ui_panel(root, "AutoMap"); int mode = 0; float cell = 0;
-    if (am && *(uint64_t *)am == (uint64_t)m->base + 0x20c58a0 && *(uint8_t *)(am + 0x50)) {
-        mode = *(volatile int32_t *)(m->base + 0x2d5c748) == 0 ? 2 : 1;
-        float q = ceilf(((float (*)(uint64_t))(m->base + 0x390b38))(am) * *(float *)(am + (mode == 2 ? 0x15a8 : 0x15ac)) * 8) / 8; if (q < 0.125f) q = 0.125f;   // 全屏 / 微缩各一档缩放（0xc0df58 / 0xc0de54；实测 1.0 / 0.5） | One zoom level each for fullscreen / mini (0xc0df58 / 0xc0de54; measured 1.0 / 0.5)
-        cell = q * *(float *)(m->base + 0x2d5e918); }
-    uint32_t cb; memcpy(&cb, &cell, 4); atomic_store(&g_mapgeom, (uint64_t)mode << 32 | cb);
-}
-int dm_ui_map_geom(float *cell) { uint64_t v = atomic_load(&g_mapgeom); uint32_t cb = (uint32_t)v; memcpy(cell, &cb, 4); return (int)(v >> 32); }
 // 顶部首领血条的百分比（接在血条右边同一行，取整）。布局覆盖层把手柄版挂在目标头顶的血条挪到了顶部，并在条右边加了空字的 TouchBossPct
 // （dm/ios/tools/touch_layout.py _boss_bar_top）；这里每帧把进度条控件（HealthBarWidget，虚表 main+0x2089650）自己的比例 +0x154 写成「NN%」——
 // 与条同一个数（游戏已按整百分比截断：客户端生命 126/128 = 98.4% → 0.98），不另算。面板没开 / 控件不在（Mac 宿主跑原版布局）什么都不做。
@@ -2614,7 +2598,7 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 //   触屏专属（带 if (tm)）：请求全部来自触摸手势——点世界 / 佣兵头像、长按取物、双击使用、点货买、拖放、点技能绑定、副手组页签、开佣兵页。
 //     手柄模式与切换事务进行中不跑；在途的请求由切换清理作废（dm_ui_cache_mode_leave）。
 //   两种模式都跑：ui_target_pump（鉴定目标，含手柄按住 A）、ui_item_pump（命中查询，宿主自己也问）、ui_ptr_pump（指针事件，宿主合成的点击也走）、
-//     ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_stash_arrows_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center（屏幕几何，与输入方式无关）、ui_boss_pct_pump、ui_npcdlg_pump、
+//     ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_stash_arrows_pump / ui_minimap_pump / ui_map_pump / ui_map_center（屏幕几何，与输入方式无关）、ui_boss_pct_pump、ui_npcdlg_pump、
 //     mv_audit_pump、ui_watch_pump、ui_panel_heal、ui_panel_state_pump、rs_pump（一键重开，在前端泵里调）、dm_engine_pump（引擎快照，只读，dm_engine.c）
 // 物品说明框停靠（观测门 OBS_TOOLTIP，挂在说明框面板的「提交一条说明」函数入口 main+0xb0d560(面板, 文字, 目标矩形左上 x2, 目标矩形宽高 x3, 样式, 文字 2)）。
 // 说明框是即时式的：悬停着的控件每帧重新提交、画完就清，宿主在自己的时机读面板里的记录数一直是 0，所以只能在提交那一刻改输入。
@@ -2631,7 +2615,7 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 //   Touch only (with if (tm)): requests all come from touch gestures: tapping the world / mercenary portrait, long-press to pick up, double-tap to use, tap to buy, drag and drop, tapping to bind a skill, the off-hand set tab, opening the mercenary page.
 //     Not run in gamepad mode or while a switch transaction is in progress; requests in flight are cancelled by the switch cleanup (dm_ui_cache_mode_leave).
 //   Run in both modes: ui_target_pump (identify target, including holding A on the gamepad), ui_item_pump (hit queries, the host asks too), ui_ptr_pump (pointer events, host-synthesized clicks go through it as well),
-//     ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_stash_arrows_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center (screen geometry, independent of input method), ui_boss_pct_pump, ui_npcdlg_pump,
+//     ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_stash_arrows_pump / ui_minimap_pump / ui_map_pump / ui_map_center (screen geometry, independent of input method), ui_boss_pct_pump, ui_npcdlg_pump,
 //     mv_audit_pump, ui_watch_pump, ui_panel_heal, ui_panel_state_pump, rs_pump (one-tap restart, called from the front end pump), dm_engine_pump (the engine snapshot, read-only, dm_engine.c)
 // Item description box docking (observation gate OBS_TOOLTIP, on the entry of the description panel's "submit one description" function main+0xb0d560(panel, text, target rect top-left x2, target rect size x3, style, text 2)).
 // The description box is immediate-mode: the hovered widget resubmits it every frame and it is cleared after drawing, so when the host reads the panel at its own time the record count is always 0; the input can only be changed at the moment of submission.
@@ -2728,7 +2712,7 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
                 else fix = 0; }
             if (th) { ui_auto_key(th); tnext = fr + 8; } } } }
     { module_t *pm = main_module(); uint64_t proot = 0; if (pm) { memcpy(&proot, pm->base + 0x2f05458, 8); int32_t pw = *(int32_t *)(pm->base + 0x211da38), phh = *(int32_t *)(pm->base + 0x211da3c);
-        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } if (atomic_load(&g_uidump_req)) { ui_dump(proot, 0, g_uidump_want, 0, pm); atomic_store(&g_uidump_req, 0); } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_stash_arrows_pump(proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); mv_audit_pump(proot, fr); dm_engine_pump(proot); } } }
+        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } if (atomic_load(&g_uidump_req)) { ui_dump(proot, 0, g_uidump_want, 0, pm); atomic_store(&g_uidump_req, 0); } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_stash_arrows_pump(proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); mv_audit_pump(proot, fr); dm_engine_pump(proot); } } }
     ut_promote();   // 在途的那下发完了：接上排着的下一下 | the click in flight is done: take up the next one waiting
     if (atomic_load(&g_fe_name_open) && atomic_load(&g_ut_phase) == 2) {   // 起名页：点输入框（底板 / 文本框）= 重新弹系统键盘，不发鼠标点击 | naming page: tapping the input box (backplate / text box) = pop up the system keyboard again, no mouse click is sent
         module_t *nm = main_module(); uint64_t nroot = 0; if (nm) memcpy(&nroot, nm->base + 0x2f05458, 8); uint64_t pn = nroot ? ui_find(nroot, "CharacterCreateNamePanel", 0) : 0;

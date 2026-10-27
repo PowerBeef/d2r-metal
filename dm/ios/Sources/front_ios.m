@@ -136,8 +136,6 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     BOOL _padMode, _feMode;   // 手柄模式 / 前端页面：两者任一成立就藏触屏控件层 | Controller mode / front-end page: the touch controls layer is hidden if either holds
     UIView *_rsCover;   // 一键重开期间的黑屏（宿主 dm_cursor.c 经 g_dm_restart_cover_hook 开关）：盖在窗口最上层（整屏，含真全屏的留边），不露主菜单，吞掉这段时间的触点 | Black screen during one-tap restart (toggled by the host's dm_cursor.c via g_dm_restart_cover_hook): covers the top of the window (whole screen, including the true-fullscreen margins), does not reveal the main menu, and swallows touch points during this period
     int _navigation;
-    CALayer *_mgLabel[12], *_mgMark[12];   // 小地图任务终点：每个终点一个名牌 / 符号层 + 一个灰十字层（mapGoalSync） | Minimap quest goals: one nameplate / symbol layer + one grey cross layer per goal (mapGoalSync)
-    NSMutableDictionary<NSString *,UIImage *> *_mgImg;
     uint64_t _modifierPublishEndNS,_modifierPublishEpoch;
     uint64_t _touchEventSeq,_touchReceiptSeq,_touchPublishedEventSeq; // 仅 DM_TOUCH_CONTROL_LOG 开启时推进 | Advanced only when DM_TOUCH_CONTROL_LOG is on
     UITouch *_pendEnd; double _pendEndTime,_pendWall; BOOL _pendFire,_finalAsked;   // 松手了但宿主的答案还没回：这根手指的「抬起」先挂着（见 finishTouches） | Released but the host's answer is not back yet: this finger's "lift" is held pending (see finishTouches)
@@ -385,53 +383,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     if(have && !_ghostDim && (_itemKind!=8 || dm_ui_stack_left()==1)) { _ghostDim=[[UIView alloc] initWithFrame:CGRectMake(r[0]*z.width,r[1]*z.height,(r[2]-r[0])*z.width,(r[3]-r[1])*z.height)];
         _ghostDim.backgroundColor=[UIColor colorWithWhite:0 alpha:.82]; _ghostDim.userInteractionEnabled=NO; [self addSubview:_ghostDim]; }
 }
-// 小地图任务终点（宿主 dm_world.c 找终点、dm_cursor.c 给地图几何）：
-//   七个墓的真墓口 = 任务日志的塔拉夏符号；其余终点 = 原版地图名牌（深底名字）+ 下面的灰十字（原版地图上 NPC 就这么标）；
-//   在地图可见范围外 = 同一种名牌只写名字，贴着那个方向的边（全屏地图避开底栏和右下技能区，小地图贴小地图框）。素材全取原版资源（tools/gen_map_goal_art.py）。
-// 换算：地图上世界格 (x, y) 在 玩家点 + ((Δx−Δy)×1.6, (Δx+Δy)×0.8) × 每格像素；玩家点在全屏地图 = 玩家脚底的画面位置，在小地图 = 小地图框中心。
-// 面板开着（导航态）不画——右上小地图那时也收起。层不带隐式动画，位置每帧随玩家走动更新。
-// Minimap quest goals (the host's dm_world.c finds the goals, dm_cursor.c provides the map geometry):
-//   the real tomb entrance among the seven tombs = the Tal Rasha symbol from the quest log; other goals = the original game's map nameplate (name on a dark base) + a grey cross below it (this is how the original game's map marks NPCs);
-//   outside the map's visible range = the same nameplate with the name only, against the edge in that direction (the fullscreen map avoids the bottom bar and the bottom-right skill area, the minimap sticks to the minimap frame). All art is taken from the original game's assets (tools/gen_map_goal_art.py).
-// Conversion: world cell (x, y) on the map is at player point + ((Δx−Δy)×1.6, (Δx+Δy)×0.8) × pixels per cell; the player point on the fullscreen map = the on-screen position of the player's feet, on the minimap = the center of the minimap frame.
-// Not drawn while a panel is open (navigation mode) -- the top-right minimap is collapsed then too. Layers have no implicit animation; positions update every frame as the player walks.
-- (UIImage *)mgImage:(NSString *)name {
-    UIImage *im=_mgImg[name]; if(im) return im; if(!_mgImg) _mgImg=[NSMutableDictionary dictionary];
-    im=[UIImage imageWithContentsOfFile:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[@"mapgoal/" stringByAppendingString:name]]];
-    if(im) _mgImg[name]=im; return im;
-}
-- (void)mapGoalSync {
-    static int old=-1; if(old<0) { int dm_custom_get(const char *key); old=dm_custom_get("item_notes")!=0; }   // 旧译名开关重启生效，启动读一次（名牌字跟游戏显示的一致） | The old translation names switch takes effect on restart; read once at launch (nameplate text matches what the game shows)
-    dm_map_goal_view v; float cell=0; int mode=dm_ui_map_geom(&cell), n=dm_map_goals(&v); int rw=0,rh=0; dm_screen_real(&rw,&rh);
-    CGRect wr=world_rect(self); float mm[4]; BOOL haveMini=dm_ui_minimap_rect(mm);
-    BOOL show=mode && n>0 && !_navigation && !_info.hidden && rw>0 && cell>0 && (mode==2 || haveMini);
-    [CATransaction begin]; [CATransaction setDisableActions:YES];
-    CGSize z=self.bounds.size; CGFloat k=wr.size.width/rw, c=cell*k, H=wr.size.height, lh=H*0.0236, sh=H*0.085*(mode==1?0.6:1);   // 名牌高（原版名牌字高约屏高 1/53）、符号高（的大小） | Nameplate height (the original game's nameplate glyph height is about 1/53 of screen height), symbol height (its size)
-    CGPoint o; CGRect area;
-    if(mode==2) { o=CGPointMake(wr.origin.x+v.sx*wr.size.width, wr.origin.y+v.sy*wr.size.height); area=CGRectMake(wr.origin.x+wr.size.width*0.04, wr.origin.y+H*0.06, wr.size.width*0.92, H*0.72); }
-    else { area=CGRectMake(mm[0]*z.width, mm[1]*z.height, (mm[2]-mm[0])*z.width, (mm[3]-mm[1])*z.height); o=CGPointMake(CGRectGetMidX(area),CGRectGetMidY(area)); area=CGRectInset(area,area.size.width*0.06,area.size.height*0.08); }
-    for(int i=0;i<12;i++) {
-        if(!_mgLabel[i]) { _mgLabel[i]=[CALayer layer]; _mgMark[i]=[CALayer layer]; for(CALayer *l in @[_mgLabel[i],_mgMark[i]]) { l.contentsGravity=kCAGravityResizeAspect; l.hidden=YES; [_info.layer addSublayer:l]; } }
-        if(!show || i>=n) { _mgLabel[i].hidden=YES; _mgMark[i].hidden=YES; continue; }
-        int dx=v.x[i]-v.px, dy=v.y[i]-v.py; CGPoint p=CGPointMake(o.x+(dx-dy)*1.6*c, o.y+(dx+dy)*0.8*c);
-        BOOL inside=CGRectContainsPoint(area,p) && !(mode==2 && p.x>wr.origin.x+wr.size.width*0.72 && p.y>wr.origin.y+H*0.45);   // 全屏地图右下是技能区 | The bottom right of the fullscreen map is the skill area
-        int art=v.art[i], sym=art>=64; UIImage *lab=nil, *mark=nil;
-        if(inside && sym) mark=[self mgImage:[NSString stringWithFormat:@"sym_%d.png",art-64]];
-        else { int id=sym ? 0 : art; int lg=dm_lang_group(); lab=lg!=DM_LG_ZH ? [self mgImage:[NSString stringWithFormat:@"label_%d_%s.png",id,lg==DM_LG_ES?"es":lg==DM_LG_MX?"mx":lg==DM_LG_RU?"ru":lg==DM_LG_KO?"ko":"en"]] : (old && dm_lang_index()==8 ? [self mgImage:[NSString stringWithFormat:@"label_%d_old.png",id]] : nil);   // 简中 / 繁体用中文，西语用原版 esES / esMX 名字，俄语用原版 ruRU 名字，其余英文名牌，其余原版 enUS 名牌；旧译名只跟简中（注释一系只写 zhCN） | Simplified / Traditional Chinese use Chinese, Spanish uses the original esES / esMX names, Russian uses the original ruRU names, everything else the original enUS name plates; old names follow only Simplified Chinese (the annotation family writes only zhCN)
-            lab=lab ?: [self mgImage:[NSString stringWithFormat:@"label_%d.png",id]]; if(inside) mark=[self mgImage:@"cross.png"]; }
-        if(!inside) {   // 画面外：沿 玩家点 → 终点 的方向收到可见范围边上（全屏地图再让开右下技能区），只写名字 | Off-screen: clamp along the player point → goal direction to the edge of the visible range (the fullscreen map additionally avoids the bottom-right skill area), name only
-            CGFloat tx=p.x>o.x ? (CGRectGetMaxX(area)-o.x)/(p.x-o.x) : p.x<o.x ? (CGRectGetMinX(area)-o.x)/(p.x-o.x) : 1e9, ty=p.y>o.y ? (CGRectGetMaxY(area)-o.y)/(p.y-o.y) : p.y<o.y ? (CGRectGetMinY(area)-o.y)/(p.y-o.y) : 1e9, t=MIN(tx,ty);
-            p=CGPointMake(o.x+(p.x-o.x)*t, o.y+(p.y-o.y)*t);
-            if(mode==2 && p.x>wr.origin.x+wr.size.width*0.72 && p.y>wr.origin.y+H*0.45) p.y=wr.origin.y+H*0.45; }
-        CGFloat lw=lab ? lh*lab.size.width/lab.size.height : 0, cw=lh*1.4, ch=cw*18/34;
-        if(lab) { _mgLabel[i].contents=(id)lab.CGImage; _mgLabel[i].frame=CGRectMake(p.x-lw/2, (mark ? p.y-ch/2-2-lh : p.y-lh/2), lw, lh); _mgLabel[i].hidden=NO; } else _mgLabel[i].hidden=YES;
-        if(mark) { CGFloat mw=sym ? sh*mark.size.width/mark.size.height : cw, mh=sym ? sh : ch; _mgMark[i].contents=(id)mark.CGImage; _mgMark[i].frame=CGRectMake(p.x-mw/2, p.y-mh/2, mw, mh); _mgMark[i].hidden=NO; } else _mgMark[i].hidden=YES;
-    }
-    [CATransaction commit];
-    static int lm=-1, ln=-1, lc; int m2=show ? mode : 0; if((m2!=lm || n!=ln) && lc<40) { lm=m2; ln=n; lc++; LOG("小地图终点：%s %d 个（地图 %d，每格 %.2f 像素 = %.2f 点）", show ? "画" : "不画", n, mode, cell, c); }
-}
 - (void)tickTouchControls:(double)now {
-    [self mapGoalSync];
     { int dm_padmode_busy(void); BOOL hide=_feMode || _padMode || dm_padmode_busy(); if(_overlay.hidden!=hide) _overlay.hidden=hide; }   // 手柄 → 触屏切换事务还没完成（界面还在重建）时触屏控件层先不露出来（dm_padmode.c） | While the controller → touch switch transaction is not yet complete (the UI is still rebuilding) the touch control layer is not revealed yet (dm_padmode.c)
     {   // 高价值掉落震动（宿主 dm_drophaptic.c 判档）：1 重 / 2 中 / 3 轻 | High-value drop haptics (the host's dm_drophaptic.c decides the level): 1 heavy / 2 medium / 3 light
         int dm_drop_haptic_take(void); int t = dm_drop_haptic_take();

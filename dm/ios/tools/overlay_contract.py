@@ -56,7 +56,7 @@ SOURCE_INPUTS = tuple(sorted((
     "dm/ios/tools/dm_i18n.py",
     "dm/ios/tools/dxt5.py",
     "dm/ios/tools/drop_light.py", "dm/ios/tools/kbd_glyphs.py",
-    "dm/ios/tools/gen_fe_rightpanel.py", "dm/ios/tools/gen_map_goal_art.py",
+    "dm/ios/tools/gen_fe_rightpanel.py",
     "dm/ios/tools/gen_close_btn.py",
     "dm/ios/tools/annot_strings.py", "dm/ios/tools/annot_ranges.py",
     "dm/ios/tools/annot_drop.py", "dm/ios/tools/annot_world.py",
