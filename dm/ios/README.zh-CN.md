@@ -158,7 +158,7 @@ cp local.env.example local.env
 
 前提：`../../setup.sh` 已跑完（改写后的程序与 iOS 版着色器库就绪），本机配置里填了 `DM_TEAM_ID` 与 `DM_BUNDLE_ID`。
 
-`build` 依次做：从游戏文件生成原版衍生资源（`tools/gen_assets.py`，输入没变就跳过）→ 生成宿主的三个表文件（`dm_vault_tab.h`、`dm_hud_exp.h`、`dm_bright_levels.inc`） → `gen_build.py`、`gen_embed.py` → 拷着色器库与各张清单进 `Gen/` → 生成覆盖层 → `xcodegen generate` → `xcodebuild`（Release，自动签名）。这些步骤调用 `python3`，要在 `setup.sh` 建的 Python 环境里跑（Pillow、numpy 等装在里面）：先执行 `source ~/dm-work/build/cache/dm/venv/bin/activate`（设了 `DM_ROOT` 就把 `~/dm-work` 换成它）。构建日志在 `$DM_ROOT/run/ios/build.log`，App 在 `<派生数据目录>/Build/Products/Release-iphoneos/DmIOS.app`。
+`build` 依次做：从游戏文件生成原版衍生资源（`tools/gen_assets.py`，输入没变就跳过）→ 生成宿主的两个表文件（`dm_hud_exp.h`、`dm_bright_levels.inc`） → `gen_build.py`、`gen_embed.py` → 拷着色器库与各张清单进 `Gen/` → 生成覆盖层 → `xcodegen generate` → `xcodebuild`（Release，自动签名）。这些步骤调用 `python3`，要在 `setup.sh` 建的 Python 环境里跑（Pillow、numpy 等装在里面）：先执行 `source ~/dm-work/build/cache/dm/venv/bin/activate`（设了 `DM_ROOT` 就把 `~/dm-work` 换成它）。构建日志在 `$DM_ROOT/run/ios/build.log`，App 在 `<派生数据目录>/Build/Products/Release-iphoneos/DmIOS.app`。
 
 `install` 与按模式启动会先取设备锁（`tools/devlock.sh`，锁目录 `$DM_ROOT/run/ios/device.lock`），保证同一时刻只有一个脚本在操作手机。
 

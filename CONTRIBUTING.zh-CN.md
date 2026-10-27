@@ -51,7 +51,7 @@ English: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 | 位置 | 是什么 |
 |---|---|
-| `dm/host/dm_vault_tab.h`、`dm/host/dm_hud_exp.h`、`dm/host/dm_bright_levels.inc` | 由游戏的数据表生成的表头（`dm/host/Makefile` 构建时生成） |
+| `dm/host/dm_hud_exp.h`、`dm/host/dm_bright_levels.inc` | 由游戏的数据表生成的表头（`dm/host/Makefile` 构建时生成） |
 | `dm/ios/Gen/` | iOS 包的生成物：由游戏文件做出的界面图、内嵌的游戏程序、覆盖层 |
 | `dm/ios/Sources/TouchArt/dm_native_*.png`、`dm/ios/Sources/dm_touch_native_art.c` | 技能图集与技能索引 |
 | `dm/ios/DmIOS.xcodeproj/`、`dm/ios/Sources/Info.plist`、`dm/ios/Sources/DmIOS.entitlements`、`dm/ios/RomfsDownloader/` 下的 `Info.plist` 与 `RomfsDownloader.entitlements` | 由 `dm/ios/project.yml` 生成的工程与配置 |

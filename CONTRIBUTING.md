@@ -51,7 +51,7 @@ The following are generated at build time and are already listed in the `.gitign
 
 | Path | What it is |
 |---|---|
-| `dm/host/dm_vault_tab.h`, `dm/host/dm_hud_exp.h`, `dm/host/dm_bright_levels.inc` | Headers generated from the game's data tables (by `dm/host/Makefile` at build time) |
+| `dm/host/dm_hud_exp.h`, `dm/host/dm_bright_levels.inc` | Headers generated from the game's data tables (by `dm/host/Makefile` at build time) |
 | `dm/ios/Gen/` | Generated parts of the iOS package: UI images made from the game files, the embedded game program, the overlay |
 | `dm/ios/Sources/TouchArt/dm_native_*.png`, `dm/ios/Sources/dm_touch_native_art.c` | The skill atlas and skill index |
 | `dm/ios/DmIOS.xcodeproj/`, `dm/ios/Sources/Info.plist`, `dm/ios/Sources/DmIOS.entitlements`, and `Info.plist` and `RomfsDownloader.entitlements` under `dm/ios/RomfsDownloader/` | The project and configuration generated from `dm/ios/project.yml` |

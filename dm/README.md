@@ -183,11 +183,11 @@ Usage is `dmhost <build output directory> [module…] [-- game arguments…]`. `
 
 **In-game features**
 
-The `dm_*.c` files are features and touch adaptations added on top of the original game; the comment at the top of each file explains what it does and which addresses in the game it relies on. For example `dm_cursor.c`, `dm_world.c`, `dm_actions.c` (touch selection, interacting with the world, buying/selling and spending points), `dm_hud.c` (the numbers on the bottom interface), `dm_vault.c` and `dm_vault_ui.c` (the Chronicle vault), `dm_pouch.c` (the pouch), `dm_cloudsync.c` (iCloud save sync), `dm_custom.c` (the switches for these features). The addresses in the files are all offsets into the original 3.3.94012 image.
+The `dm_*.c` files are features and touch adaptations added on top of the original game; the comment at the top of each file explains what it does and which addresses in the game it relies on. For example `dm_cursor.c`, `dm_world.c`, `dm_actions.c` (touch selection, interacting with the world, buying/selling and spending points), `dm_hud.c` (the numbers on the bottom interface), `dm_cloudsync.c` (iCloud save sync), `dm_custom.c` (the switches for these features). The addresses in the files are all offsets into the original 3.3.94012 image.
 
 ## Generating assets from your game files
 
-The repository contains no images, tables or text derived from the original game files (the widened stash, the pouch frame, the right-hand panel of character select, the minimap goal, the skill atlas, the bottom UI, the Chronicle vault table, the experience table and so on). They are made on the spot at build time from **your own game files**, and the outputs do not go into git.
+The repository contains no images, tables or text derived from the original game files (the right-hand panel of character select, the minimap goal, the skill atlas, the bottom UI, the experience table and so on). They are made on the spot at build time from **your own game files**, and the outputs do not go into git.
 
 **Which files are needed**
 
@@ -203,7 +203,7 @@ The repository contains no images, tables or text derived from the original game
 
 - Build the iOS package: `cd dm/ios && ./run.sh build`. It automatically runs `tools/gen_assets.py` and the host table header generation at the start; there is no need to run them separately.
 - Generate assets only: `python3 dm/ios/tools/gen_assets.py [<Update/RomFS>]`. Nothing is regenerated if the inputs have not changed.
-- Mac host: `make -C dm/host`. The three missing generated files (`dm_vault_tab.h`, `dm_hud_exp.h`, `dm_bright_levels.inc`) are generated automatically according to `DM_ROMFS_SRC`.
+- Mac host: `make -C dm/host`. The two missing generated files (`dm_hud_exp.h`, `dm_bright_levels.inc`) are generated automatically according to `DM_ROMFS_SRC`.
 - iOS unit tests: `make -C dm/ios/tests test`. The missing skill index is generated automatically.
 
 When game files are missing, a one-sentence message says directly which directory to put them in. These commands call `python3` and must be run inside the Python environment created by `setup.sh` (Pillow, numpy and the rest are installed there; for versions see [../docs/DEPENDENCIES.md](../docs/DEPENDENCIES.md)): run `source ~/dm-work/build/cache/dm/venv/bin/activate` first (if you set `DM_ROOT`, use it in place of `~/dm-work`).
@@ -212,13 +212,11 @@ When game files are missing, a one-sentence message says directly which director
 
 | Output | Location (not in git) | Generation script (under `dm/ios/tools/`) |
 |---|---|---|
-| Widened stash background, Chronicle page cover | `dm/ios/Gen/assets/NativeHUD/widestash/` | `gen_widestash_art.py`, `gen_vault_cover.py` |
-| Pouch frame | `dm/ios/Gen/assets/NativeHUD/pouch/` | `gen_pouch_art.py` |
 | Right-hand panel of character select | `dm/ios/Gen/assets/NativeHUD/touch/` | `gen_fe_rightpanel.py` |
 | Minimap goal marker | `dm/ios/Gen/assets/NativeHUD/mapgoal/` | `gen_map_goal_art.py` |
 | Bottom UI (background and layout) | `dm/ios/Gen/assets/NativeHUD/v4/` | `gen_hud_v4.py` (geometry in `hud_v4_design.py`; layout = original layout + `touchrectv1_patch.json`) |
 | Skill atlas, skill index | `dm/ios/Sources/TouchArt/dm_native_*.png`, `dm/ios/Sources/dm_touch_native_art.c` | `native_art/generate.py` (checks the originals against `dm/ios/Sources/TouchArt/native_art_manifest.json`) |
-| Chronicle vault table, experience table | `dm/host/dm_vault_tab.h`, `dm/host/dm_hud_exp.h` | `gen_vault_table.py`, `gen_hud_exp.py` (called by `dm/host/Makefile`) |
+| Experience table | `dm/host/dm_hud_exp.h` | `gen_hud_exp.py` (called by `dm/host/Makefile`) |
 | Level day/night table (used by 3D picture brightening) | `dm/host/dm_bright_levels.inc` | `dm/tools/gen_bright_levels.py` (also called by `dm/host/Makefile`) |
 
 The original game text used by item annotations is read from the game's string tables at build time; the repository stores none of it. The old-translation table and the one-line-comment table are not shipped with the repository; you can supply your own, in the format described under `dm/ios/tools/annot/`. Without them these two steps are skipped automatically and the rest of the annotations work as usual.

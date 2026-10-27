@@ -2,7 +2,7 @@
 
 简体中文: [MAC.zh-CN.md](MAC.zh-CN.md)
 
-On an Apple silicon Mac this project can be built into a native macOS App, `D2R Metal.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (the trove, the chronicle, the Extras page and so on), using the original's gamepad interface.
+On an Apple silicon Mac this project can be built into a native macOS App, `D2R Metal.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (the Extras page, the loot filter, minimap guidance and so on), using the original's gamepad interface.
 
 **How it has been tried**: the App is played on an M6 Mac with the keyboard, the mouse and an Xbox Wireless Controller, windowed and in full screen, and quit from the menu and the Dock. Where this page says "verified" without more, the check was an unattended run: keys and mouse events injected by a test script, quitting, full screen and resizing through test switches. What nobody has tried by hand yet is listed under [Known shortcomings](#known-shortcomings); if you try one of those, please open an Issue and tell us how it went.
 
@@ -132,7 +132,7 @@ Importing is a one-time manual copy: afterwards each side goes its own way and p
 
 **2. Copy the whole `save` folder, do not pick files**
 
-It holds one folder per character (folder name = character name), a few shared-stash files and a `Settings` folder (game settings including the interface language — after copying, the Mac's game settings become the phone's). The data of the features we added (the extra personal stash pages, the pouch, the chronicle vault and so on) is in this folder too. The switches on the Extras page are not in it; each device keeps its own.
+It holds one folder per character (folder name = character name), a few shared-stash files and a `Settings` folder (game settings including the interface language — after copying, the Mac's game settings become the phone's). The switches on the Extras page are not in it; each device keeps its own.
 
 AirDrop, a cable (the Files tab in Finder) or iCloud Drive all work for getting it to the Mac.
 
@@ -160,7 +160,7 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 ## Known shortcomings
 
 - Not tried by hand yet: the resource-folder dialog on a fresh install, and PlayStation or Switch controllers on the Mac (an Xbox Wireless Controller is what has been used).
-- Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class, and the trove's auto-placement under mouse drags, are unverified. There is no right-click skill as on PC.
+- Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class is unverified. There is no right-click skill as on PC.
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
 - An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud").
 - The older-API build was played on macOS 15 by one player in our test group (Mac mini M4, macOS 15.7, using a package built elsewhere); building it from this repository on a Mac running macOS 15 has not been operated by a person.

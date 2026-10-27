@@ -183,11 +183,11 @@ DM_ROMFS=<Update/RomFS 目录> DM_SAVE=<存档目录> DM_TEMP=<临时目录> DM_
 
 **游戏内功能**
 
-`dm_*.c` 是在原版之上加的功能和触摸适配，每个文件开头的注释说明它做什么、依据游戏里的哪些地址。例如 `dm_cursor.c`、`dm_world.c`、`dm_actions.c`（触摸点选、与世界交互、买卖与加点）、`dm_hud.c`（底部界面上的数字）、`dm_vault.c` 与 `dm_vault_ui.c`（编年史仓库）、`dm_pouch.c`（百宝囊）、`dm_cloudsync.c`（iCloud 存档同步）、`dm_custom.c`（这些功能的开关）。文件里的地址都是 3.3.94012 原映像的偏移。
+`dm_*.c` 是在原版之上加的功能和触摸适配，每个文件开头的注释说明它做什么、依据游戏里的哪些地址。例如 `dm_cursor.c`、`dm_world.c`、`dm_actions.c`（触摸点选、与世界交互、买卖与加点）、`dm_hud.c`（底部界面上的数字）、`dm_cloudsync.c`（iCloud 存档同步）、`dm_custom.c`（这些功能的开关）。文件里的地址都是 3.3.94012 原映像的偏移。
 
 ## 从你的游戏文件生成资源
 
-仓库里不放任何从原版游戏文件衍生出来的图片、表格和文字（加宽储藏箱、百宝囊框、选角右侧面板、小地图终点、技能图集、底部 UI、编年史仓库表、经验表等）。它们在构建时从**你自己的游戏文件**现做出来，产物不进 git。
+仓库里不放任何从原版游戏文件衍生出来的图片、表格和文字（选角右侧面板、小地图终点、技能图集、底部 UI、经验表等）。它们在构建时从**你自己的游戏文件**现做出来，产物不进 git。
 
 **要哪些文件**
 
@@ -203,7 +203,7 @@ DM_ROMFS=<Update/RomFS 目录> DM_SAVE=<存档目录> DM_TEMP=<临时目录> DM_
 
 - 出 iOS 包：`cd dm/ios && ./run.sh build`。开头自动跑 `tools/gen_assets.py` 与宿主表头生成，不用单独跑。
 - 只生成资源：`python3 dm/ios/tools/gen_assets.py [<Update/RomFS>]`。输入没变就不重出。
-- Mac 宿主：`make -C dm/host`。缺的三个生成文件（`dm_vault_tab.h`、`dm_hud_exp.h`、`dm_bright_levels.inc`）按 `DM_ROMFS_SRC` 自动生成。
+- Mac 宿主：`make -C dm/host`。缺的两个生成文件（`dm_hud_exp.h`、`dm_bright_levels.inc`）按 `DM_ROMFS_SRC` 自动生成。
 - iOS 单测：`make -C dm/ios/tests test`。缺的技能索引自动生成。
 
 缺游戏文件时会直接报一句说明要放哪个目录。这几条命令调用 `python3`，要在 `setup.sh` 建的 Python 环境里跑（Pillow、numpy 等装在里面，版本见 [../docs/DEPENDENCIES.zh-CN.md](../docs/DEPENDENCIES.zh-CN.md)）：先执行 `source ~/dm-work/build/cache/dm/venv/bin/activate`（设了 `DM_ROOT` 就把 `~/dm-work` 换成它）。
@@ -212,13 +212,11 @@ DM_ROMFS=<Update/RomFS 目录> DM_SAVE=<存档目录> DM_TEMP=<临时目录> DM_
 
 | 产物 | 位置（不进 git） | 生成脚本（`dm/ios/tools/` 下） |
 |---|---|---|
-| 加宽储藏箱底图、编年史页盖板 | `dm/ios/Gen/assets/NativeHUD/widestash/` | `gen_widestash_art.py`、`gen_vault_cover.py` |
-| 百宝囊框 | `dm/ios/Gen/assets/NativeHUD/pouch/` | `gen_pouch_art.py` |
 | 选角右侧面板 | `dm/ios/Gen/assets/NativeHUD/touch/` | `gen_fe_rightpanel.py` |
 | 小地图终点标记 | `dm/ios/Gen/assets/NativeHUD/mapgoal/` | `gen_map_goal_art.py` |
 | 底部 UI（底图与布局） | `dm/ios/Gen/assets/NativeHUD/v4/` | `gen_hud_v4.py`（几何在 `hud_v4_design.py`，布局 = 原版布局 + `touchrectv1_patch.json`） |
 | 技能图集、技能索引 | `dm/ios/Sources/TouchArt/dm_native_*.png`、`dm/ios/Sources/dm_touch_native_art.c` | `native_art/generate.py`（按 `dm/ios/Sources/TouchArt/native_art_manifest.json` 核原件） |
-| 编年史仓库表、经验表 | `dm/host/dm_vault_tab.h`、`dm/host/dm_hud_exp.h` | `gen_vault_table.py`、`gen_hud_exp.py`（由 `dm/host/Makefile` 调用） |
+| 经验表 | `dm/host/dm_hud_exp.h` | `gen_hud_exp.py`（由 `dm/host/Makefile` 调用） |
 | 关卡昼夜表（3D 画面加亮用） | `dm/host/dm_bright_levels.inc` | `dm/tools/gen_bright_levels.py`（同样由 `dm/host/Makefile` 调用） |
 
 物品注释用到的游戏原文在构建时现读游戏字符串表，仓库里不存原文。旧译名对照表与点评表不随仓库提供，可以自备，格式见 `dm/ios/tools/annot/` 下的说明；没有时这两步自动不做，其余注释照常。

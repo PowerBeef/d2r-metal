@@ -41,9 +41,9 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
   2. `git switch main && git merge upstream/main`. Always merge, never rebase. On a conflict, `git merge --abort` and report; don't auto-resolve.
      - The READMEs are the fork's own: `.gitattributes` marks `README*.md` `merge=ours`, so upstream's README edits are dropped silently. That needs `git config merge.ours.driver true` once per clone; without it those files conflict.
      - Maintainers adopt PRs by re-applying them, so a conflict can come from our own change in its adopted form. Upstream's version wins, after the user confirms.
-     - **Removed upstream features stay removed.** On 2026-10-27 the fork deleted upstream features that change the game's rules or economy, or play part of it for the player: the Greater Rift (with its extra mercenary slots and skill cap 40), Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify, the vendor's Refresh Stock, auto-drink, mercenary auto-feed and auto-recast buffs.
-       - Upstream changes to their deleted files come back as modify/delete conflicts: `dm/host/dm_rift*`, `dm_doorspot.h`, `dm_bossrush*`, `dm_elysium*`, `dm_kills.c`, `dm_freetp.c`, `dm_shoprefresh.c`, `dm_autobuff.c`, `dm/ios/Sources/dm_rift_hud.m`, `dm/ios/tools/merc_slots.py`, `gen_merc_art.py` and their tests. Resolve those with `git rm` without asking, and finish the merge.
-       - In shared files, drop upstream hunks that only re-add hooks, strings, switches, layout entries or gates for them (auto-drink and auto-feed lived in `dm_actions.c`; their Extras keys were `auto_mana`, `merc_pot` and `auto_buff`). Any other conflict is still aborted and reported.
+     - **Removed upstream features stay removed.** On 2026-10-27 the fork deleted upstream features that change the game's rules or economy, or play part of it for the player: the Greater Rift (with its extra mercenary slots and skill cap 40), Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify, the vendor's Refresh Stock, auto-drink, mercenary auto-feed and auto-recast buffs; then the Runeword helper and the extra storage (14-column stash with personal pages 2–5, Trove, Pouch with auto-stash and Deposit, Chronicle vault).
+       - Upstream changes to their deleted files come back as modify/delete conflicts: `dm/host/dm_rift*`, `dm_doorspot.h`, `dm_bossrush*`, `dm_elysium*`, `dm_kills.c`, `dm_freetp.c`, `dm_shoprefresh.c`, `dm_autobuff.c`, `dm_runeword.c`, `dm_rwlv_core.*`, `dm_pages.c`, `dm_pouch.c`, `dm_vault.c`, `dm_vault_ui.c`, `dm/ios/Sources/dm_rift_hud.m`, `dm/ios/tools/merc_slots.py`, `gen_merc_art.py`, `wide_stash.py`, `gen_widestash_art.py`, `gen_trove_art.py`, `pouch_layout.py`, `gen_pouch_art.py`, `gen_vault_table.py`, `gen_vault_cover.py` and their tests. Resolve those with `git rm` without asking, and finish the merge.
+       - In shared files, drop upstream hunks that only re-add hooks, strings, switches, layout entries or gates for them (auto-drink and auto-feed lived in `dm_actions.c`; the removed Extras keys are `auto_mana`, `merc_pot`, `auto_buff`, `gem_pick` and `store_btn`; the stash must stay 10 columns, so `inventory.bin` is never patched again). Any other conflict is still aborted and reported.
        - Their gate numbers stay retired: OBS 15, 16, 17 and 22 (`OBS_MAX` stays 23) and svc 0x89, 0x8c, 0x8d and 0x8e. Never reuse them.
   3. Rebase each open PR branch onto `upstream/main` and push it with `--force-with-lease`. This updates the open upstream PR.
   4. `git push origin main`, then rebuild the apps.
@@ -72,7 +72,7 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
 - **Worktrees and parallel sessions** (git worktrees, Claude Code `--worktree` or desktop worktree sessions):
   - **A new worktree is missing local files:**
     - The three `setup.sh` rewrites are tracked, so a worktree gets the committed versions. When the branch hasn't changed them, copy the main checkout's rewritten copies in. Otherwise run `./setup.sh` in the worktree.
-    - `dm/ios/local.env` and the three host headers generated from the RomFS (`dm/host/dm_vault_tab.h`, `dm_hud_exp.h`, `dm_bright_levels.inc`) are gitignored. Copy them, or regenerate the headers with `make -C dm/host <header> ROMFS=$DM_ROOT/data/switch/3.3.94012/Update/RomFS`.
+    - `dm/ios/local.env` and the two host headers generated from the RomFS (`dm/host/dm_hud_exp.h`, `dm_bright_levels.inc`) are gitignored. Copy them, or regenerate the headers with `make -C dm/host <header> ROMFS=$DM_ROOT/data/switch/3.3.94012/Update/RomFS`.
     - Claude Code copies the gitignored files listed in a `.worktreeinclude` at the repo root (`.gitignore` syntax) into the worktrees it creates.
   - **Every checkout shares `$DM_ROOT`:**
     - `$DM_ROOT/out/macapp` is the player's installed Mac App. From a worktree, build into another folder: `dm/tools/mac_app.sh <dir>`.
@@ -294,7 +294,7 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   1. `Sources/dm_touch_controls.c` (pure C) classifies the touch.
   2. Touch, cursor and input state are published.
   3. The host applies them when the game reads input (`hle_hid.c`, `dm_cursor.c`).
-- **Features are `dm/host/dm_*.c`:** world taps, vault, pouch, padmode, custom settings, and so on.
+- **Features are `dm/host/dm_*.c`:** world taps, padmode, custom settings, the iCloud merge, and so on.
 - **The romfs overlay** (`ios/tools/gen_romfs_overlay.py`) stores only diffs: layout patches and string-table entries by key. The host checks it before the game's RomFS.
 - **iOS packaging:**
   - `gen_embed.py` embeds the patched images.

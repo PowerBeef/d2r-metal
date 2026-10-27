@@ -19,8 +19,8 @@ Mac (Apple silicon) · iPhone and iPad · Game: Switch release 1.0.34.0 with Rei
 - **A real Mac game.** Full screen, mouse wheel and trackpad scrolling, keyboard and controller, saves on quit.
 - **Type with a controller.** When the game asks for a name or an amount, an in-game keyboard appears; type on the keyboard or click and it steps aside for a regular text box.
 - **Saves you can trust.** Quitting, minimizing or a failed write no longer loses progress.
-- **Built on D2R Mobile:** touch controls, controller support, the Chronicle stash, the loot filter and more.
-- **The game as shipped.** Upstream additions that change its rules or economy are left out: the Greater Rift, Boss Rush, Elysium mode, the Kill Board, free town portals, free identify and vendor restocks on demand.
+- **Built on D2R Mobile:** touch controls, controller support, the loot filter, minimap guidance and more.
+- **The game as shipped.** Upstream additions that change its rules, economy or storage, or play it for you, are left out: the Greater Rift, Boss Rush, Elysium mode, the Kill Board, free town portals, free identify, vendor restocks on demand, auto-drink and buff recasting, and the extra stash space (wide stash, extra pages, Trove, Pouch, Chronicle vault).
 
 ## Mac and iPhone / iPad at a glance
 
@@ -108,8 +108,6 @@ The Mac guide — keys, mouse, saves, iCloud and moving saves over from an iPhon
 
 - The Mac App saves on every system quit and treats minimizing like iOS going to the background ([112400c](https://github.com/PowerBeef/d2r-metal/commit/112400c)); quitting with a name or gold box open still saves ([a8714ad](https://github.com/PowerBeef/d2r-metal/commit/a8714ad)).
 - Save requests from the menus are carried out on the game thread ([1f84541](https://github.com/PowerBeef/d2r-metal/commit/1f84541)).
-- A refused or failed save no longer loses the stash, vault or pouch side files, and you are told ([7f0a328](https://github.com/PowerBeef/d2r-metal/commit/7f0a328)).
-- A death or a busy cell no longer drops pouch, vault or page records ([0a14be4](https://github.com/PowerBeef/d2r-metal/commit/0a14be4)).
 - A damaged shared stash can no longer hang iCloud sync ([5bfed70](https://github.com/PowerBeef/d2r-metal/commit/5bfed70)).
 - One failed save-file open (a full disk, for example) no longer stops every later save until the game restarts: that save is refused and you are told, and the next one commits ([715ed80](https://github.com/PowerBeef/d2r-metal/commit/715ed80)).
 
@@ -117,9 +115,9 @@ These came out of a full audit of the port (111 findings), a later bug hunt with
 
 ## What comes from D2R Mobile
 
-Upstream's port is here and kept in sync: the original program running unchanged (every class, Runeword and drop rule as shipped), touch controls rebuilt for fingers, controller support, the Chronicle stash, Trove and Pouch, the loot filter, the Runeword helper and minimap guidance, and five languages (English, Chinese, Spanish, Russian and Korean). Upstream's [README](https://github.com/jhaizhou-ops/d2r-mobile#readme) shows them with screenshots.
+Upstream's port is here and kept in sync: the original program running unchanged (every class, Runeword and drop rule as shipped), touch controls rebuilt for fingers, controller support, the loot filter and minimap guidance, and five languages (English, Chinese, Spanish, Russian and Korean). Upstream's [README](https://github.com/jhaizhou-ops/d2r-mobile#readme) shows them with screenshots.
 
-Upstream features that change the game's rules or economy, or play part of it for you, are removed here, so the game plays as shipped: the Greater Rift (with its six extra mercenary slots and the skill cap of 40), the Endgame Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify, the vendor's Refresh Stock button, auto-drink, mercenary auto-feed and auto-recast buffs. Identifying takes a scroll, a tome or Cain again, a town portal costs a scroll or a tome charge, vendors restock as the game decides, and potions and buffs are yours to use. Saves made with those features load normally.
+Upstream features that change the game's rules or economy, or play part of it for you, are removed here, so the game plays as shipped: the Greater Rift (with its six extra mercenary slots and the skill cap of 40), the Endgame Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify, the vendor's Refresh Stock button, auto-drink, mercenary auto-feed, auto-recast buffs, the Runeword helper, and the extra storage: the 14-column stash with four extra personal pages, the Trove, the Pouch (with its auto-stash and Deposit button) and the Chronicle vault. Identifying takes a scroll, a tome or Cain again, a town portal costs a scroll or a tome charge, vendors restock as the game decides, potions and buffs are yours to use, and the stash is the game's own 10 columns. Saves made with those features still load, but nothing is migrated: items kept in the extra columns, pages, Pouch or vault are not carried over.
 
 **This repository contains and distributes no game content**: no game program, art, text, data table or shader. Everything is generated on your own machine from your own files ([docs/GAME_FILES.md](docs/GAME_FILES.md); the interface information the port relies on is listed in [docs/DERIVED.md](docs/DERIVED.md)).
 

@@ -15,7 +15,7 @@ English: [README.md](README.md)
 
 | 文件 | 管什么 |
 |---|---|
-| `Makefile` | 编出 Mac 宿主 `dmhost`。`hle_*.c` 与图形层的源文件按通配纳入，新增文件不用改它；缺的三份表（`dm_vault_tab.h`、`dm_hud_exp.h`、`dm_bright_levels.inc`）从你的游戏文件现生成，不进仓库 |
+| `Makefile` | 编出 Mac 宿主 `dmhost`。`hle_*.c` 与图形层的源文件按通配纳入，新增文件不用改它；缺的两份表（`dm_hud_exp.h`、`dm_bright_levels.inc`）从你的游戏文件现生成，不进仓库 |
 | `hle_target.c` | 触屏点按时自动选怪的先后：首领、精英、普通。接在原版手柄选目标的比较函数上，原版的资格、射程、视线检查照旧 |
 | `hle_private_aim.c` | 拖动技能键瞄准：把右摇杆在屏幕上的方向换算成游戏世界里的方向 |
 | `touch_mac.c`、`touch_mac.h` | Mac 宿主上的触摸前端：按触点脚本（`DM_TOUCH_SCRIPT`）逐拍送触点，[dm/verify](../verify/README.zh-CN.md) 的触摸功能用例靠它跑；Mac App 里真鼠标（点、拖、滚动条滑块）与滚轮 / 触控板（`dm_wheel_ui`）也走它 |
@@ -23,7 +23,7 @@ English: [README.md](README.md)
 | `stash_seed.h` | 第一次生成共享仓库时用的预置内容。公开仓库不带这个文件（它是游戏生成的一份存档的字节）：不在就不预置 |
 | `dm_derived_rt.h` | 只在不含游戏内容的「壳」里用：由游戏文件生成的几张表不编进代码，运行时从安装包里读，见 [docs/NO_XCODE.zh-CN.md](../../docs/NO_XCODE.zh-CN.md) |
 
-另外，`diag.c` 除了诊断，还是每个服务端拍的入口：`dm_vault.c`、`dm_pages.c` 等要在服务端拍里做的事由它调用。
+另外，`diag.c` 除了诊断，还是每个服务端拍的入口：`dm_cloudmerge.c` 等要在服务端拍里做的事由它调用。
 
 ## 游戏内功能（`dm_*`）
 
@@ -73,11 +73,7 @@ English: [README.md](README.md)
 
 | 文件 | 管什么 |
 |---|---|
-| `dm_vault.c` | 编年史仓库的服务端一半：已鉴定的暗金与套装的存入、取出 |
-| `dm_vault_ui.c` | 编年史仓库的界面：储藏箱的第六个页签 |
 | `dm_video.c` | 选项「视频」页签上的画面设置（Mac：显示模式、分辨率、图形预设、放大方式；iOS：3D 清晰度、图形预设、放大方式；两边都有帧率和掉帧时），存在 `sw_video.txt`，另记一份首次启动定的「推荐」。帧率和掉帧时两行存的是自定义键 `eco_fps` / `q3d`，经 `dm_custom.c` 存在 `sw_custom.txt` |
-| `dm_pages.c` | 个人仓库第 2–5 页：另外几页的物品存在角色目录的侧文件里，翻页在服务端拍里做 |
-| `dm_pouch.c` | 百宝囊与「存放」：野外的符文、宝石收进囊里不占背包格，回城开储藏箱时自动存好 |
 
 ### 省心功能
 

@@ -15,7 +15,7 @@ Every file opens with a comment saying what it does and what that is based on. A
 
 | File | What it does |
 |---|---|
-| `Makefile` | Builds the Mac host `dmhost`. `hle_*.c` and the graphics-layer sources are picked up by wildcard, so adding a file needs no change here; the three missing tables (`dm_vault_tab.h`, `dm_hud_exp.h`, `dm_bright_levels.inc`) are generated from your game files and are not in the repository |
+| `Makefile` | Builds the Mac host `dmhost`. `hle_*.c` and the graphics-layer sources are picked up by wildcard, so adding a file needs no change here; the two missing tables (`dm_hud_exp.h`, `dm_bright_levels.inc`) are generated from your game files and are not in the repository |
 | `hle_target.c` | Auto-target priority for touch taps: bosses, then elites, then normal monsters. Hooks the comparison function of the original controller targeting; the original eligibility, range and line-of-sight checks still apply |
 | `hle_private_aim.c` | Aiming by dragging a skill button: converts the right stick's on-screen direction into a direction in the game world |
 | `touch_mac.c`, `touch_mac.h` | The touch front end of the Mac host: feeds touch points tick by tick from a touch script (`DM_TOUCH_SCRIPT`); the touch cases in [dm/verify](../verify/README.md) run on it. In the Mac App it also takes the real mouse (clicks, drags, scroll-bar thumbs) and the wheel / trackpad (`dm_wheel_ui`) |
@@ -23,7 +23,7 @@ Every file opens with a comment saying what it does and what that is based on. A
 | `stash_seed.h` | The preset content used the first time the shared stash is created. Not shipped in the public repository (it is the bytes of a save the game generated): without it nothing is seeded |
 | `dm_derived_rt.h` | Used only in the "shell" that contains no game content: the tables generated from game files are not compiled in but read from the install package at run time; see [docs/NO_XCODE.md](../../docs/NO_XCODE.md) |
 
-Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: work that `dm_vault.c`, `dm_pages.c` and others must do inside a server tick is called from there.
+Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: work that `dm_cloudmerge.c` and others must do inside a server tick is called from there.
 
 ## In-game features (`dm_*`)
 
@@ -73,11 +73,7 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 
 | File | What it does |
 |---|---|
-| `dm_vault.c` | The server half of the Chronicle vault: depositing and withdrawing identified unique and set items |
-| `dm_vault_ui.c` | The Chronicle vault's UI: the sixth tab of the stash |
 | `dm_video.c` | The picture settings on the Options Video tab (Mac: Display Mode, Resolution, Graphic Presets, Upscaling; iOS: 3D Resolution, Graphic Presets, Upscaling; both: Frame Rate and Frame Drops), stored in `sw_video.txt` with a first-launch Recommended copy. Frame Rate and Frame Drops hold the custom keys `eco_fps` / `q3d`, saved in `sw_custom.txt` through `dm_custom.c` |
-| `dm_pages.c` | Personal stash pages 2–5: the items of the other pages are kept in a side file in the character's directory, and page turning happens inside the server tick |
-| `dm_pouch.c` | The pouch and "Deposit": runes and gems picked up in the field go into the pouch without taking inventory cells, and are stored away when you open the stash back in town |
 
 ### Convenience features
 
