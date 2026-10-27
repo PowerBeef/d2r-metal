@@ -338,24 +338,12 @@ INGAME = {
     # 两颗修理按钮：键鼠版的位置（169,1277 / 877,1277）是照键鼠版底图的凹槽定的；手柄版面板用另一张底图（Controller/Panel/Vendor/V2/VendorForge_BG，摆在 -2,100），
     # 凹槽在别处——原样搬过来按钮就歪在凹槽左下角外沿。按手柄版底图量：两个凹槽在底图里是 x 72–212 / 440–580、y 542–632 像素（1 像素 = 2 单位），
     # 中心换到面板坐标 = (282,1274) / (1018,1274)；按钮图 58 像素 = 116 单位见方 → 左上角 (224,1216) / (960,1216)
-    # 交易页只留一颗修理：「全部修理」挪到左格；单件修理去掉（物品上本来就能单件修），空出的右格放「刷新货架」（同赌博页刷新钮的位置与原图）。
-    # 刷新钮借单件修理那颗控件 button_repair：面板打开函数 0x409b90 按名字只在交易 / 修理页显示它，正好是刷新钮该出现的时机；图 / 音 / 说明换成赌博页刷新钮的原版值，
-    # 点击发空操作消息 PanelManager:ClosePanel:TouchShopRefresh，宿主 dm_shoprefresh.c 照赌博刷新的写法再发一次「打开交易」并置这个商人的待刷新标志（原版货单机制重刷）
+    # 与键鼠版同格：「修理」在左格、「全部修理」在右格
     # The two repair buttons: the keyboard-and-mouse positions (169,1277 / 877,1277) are set to the notches of the keyboard-and-mouse background image; the controller-layout panel uses a different background image (Controller/Panel/Vendor/V2/VendorForge_BG, placed at -2,100),
     # whose notches are elsewhere -- moved over as-is the buttons sit skewed outside the lower-left edge of the notches. Measured on the controller-layout background image: the two notches are at x 72–212 / 440–580, y 542–632 pixels in the image (1 pixel = 2 units),
     # centers converted to panel coordinates = (282,1274) / (1018,1274); the button image is 58 pixels = 116 units square → top-left corners (224,1216) / (960,1216)
-    # The trade page keeps only one repair button: 「全部修理」(Repair All) moves to the left cell; single-item repair is removed (items can already be repaired individually on the item itself), and the freed right cell holds 「刷新货架」(Refresh Stock) (same position and original image as the gamble page refresh button).
-    # The refresh button borrows the single-item repair widget button_repair: the panel open function 0x409b90 shows it by name only on the trade / repair page, which is exactly when the refresh button should appear; image / sound / description are replaced with the original-game values of the gamble page refresh button,
-    # and the tap sends the no-op message PanelManager:ClosePanel:TouchShopRefresh; the host dm_shoprefresh.c, written the same way as the gamble refresh, sends 'open trade' once more and sets this vendor's pending-refresh flag (re-rolled by the original game's stock list mechanism)
-    'controller/vendorpanellayouthd.json': ('vendorpanellayouthd.json', [('button_repair', None, '"rect": { "x": 960, "y": 1216 }, "filename": "PANEL\\\\Vendors\\\\Gambling_Refresh_Button", "sound": "cursor_gamble_refresh_hd", "tooltipString": "@refresh", "onClickMessage": "PanelManager:ClosePanel:TouchShopRefresh"'),
-        # 不修理的商人（基德、阿卡拉…）不显示 button_repair：同一颗刷新钮再挂一份，名字用 button_blank——面板打开函数 0x409b90 按名字找它，
-        # 在「不修理」的交易页与赌博页显示（面板模式 +0x168：0 交易不修理 / 1 交易会修理 / 2 赌博；button_repair 只在 1、button_refresh 只在 2、button_blank 在 ≠ 1）。
-        # 赌博页上它与原版 button_refresh 叠在同一处、同一张图；排在 button_refresh 前面（在下层），点击落到原版那颗；万一落到它，宿主按赌博页发原版的赌博刷新
-        # Vendors that do not repair (Gheed, Akara...) do not show button_repair: one more copy of the same refresh button is attached, named button_blank -- the panel open function 0x409b90 finds it by name
-        # and shows it on 'non-repair' trade pages and on the gamble page (panel mode +0x168: 0 trade without repair / 1 trade with repair / 2 gamble; button_repair only in 1, button_refresh only in 2, button_blank in ≠ 1).
-        # On the gamble page it overlaps the original game's button_refresh at the same spot with the same image; it is ordered before button_refresh (on the lower layer) so taps land on the original one; if a tap does land on it, the host sends the original game's gamble refresh based on being on the gamble page
-        ('button_refresh', 'button_blank', '"rect": { "x": 960, "y": 1216 }, "onClickMessage": "PanelManager:ClosePanel:TouchShopRefresh"'),
-        ('button_repair_all', None, '"rect": { "x": 224, "y": 1216 }'),
+    # Same cells as in the keyboard-and-mouse layout: 「修理」(Repair) on the left, 「全部修理」(Repair All) on the right
+    'controller/vendorpanellayouthd.json': ('vendorpanellayouthd.json', [('button_repair', None, '"rect": { "x": 224, "y": 1216 }'), ('button_repair_all', None, '"rect": { "x": 960, "y": 1216 }'),
         # 赌博页的「刷新货架」：原版手柄靠一个手柄动作键（option3，面板消息处理 0x409338 → 0x409614）刷新，触摸下没有入口；键鼠版这颗按钮发的 VendorPanelMessage:RefreshAll
         # 走的是同一段刷新（0x408e78）。搬回来，位置同「全部修理」（键鼠版里两者就是同一个位置，按页互斥显示：面板打开函数 0x409b90 只在赌博页显示它、只在修理页显示两颗修理）
         # 「刷新货架」(Refresh Stock) on the gamble page: the original game's controller refreshes through a controller action key (option3, panel message handler 0x409338 → 0x409614), and there is no entry under touch; the VendorPanelMessage:RefreshAll sent by this button in the keyboard-and-mouse layout
@@ -1171,13 +1159,6 @@ def _widget_block(s, name):
     if not m: raise SystemExit('touch_layout：键鼠版布局里没有控件 ' + name)
     return s[m.start():_block_end(s, m.start()) + 1]
 
-# 手柄版商人页的「刷新货架」钮（不占键，光标移上去按 A，同原版手柄界面点别的按钮）：就是上面触屏版那颗——同一位置、同一张原版图、同一条消息，
-# 两个名字各挂一份的原因也同上（会修理的商人显示 button_repair、不修理的显示 button_blank）。手柄版不搬「全部修理」（原版手柄是按住左摇杆）、赌博页刷新（原版手柄有自己的键）
-# The "refresh the shop stock" button on the controller vendor page (takes no key; move the cursor onto it and press A, like clicking any other
-# button in the original controller UI): it is the very same button as the touch one above -- same position, same original image, same message,
-# and it is attached once under each of two names for the same reason as above (vendors that repair show button_repair, those that do not show
-# button_blank). The controller layout does not carry over "Repair All" (hold the left stick on the original controller scheme) or the gamble
-# page refresh (the original controller scheme has its own key)
 # Mac App 的手柄版选项页：同触屏插回「应用 / 默认 / 放弃」与右上角 X（鼠标要点得到；宿主处理同触屏，dm_cursor.c），底部键位提示条挪走（按钮就摆在它那条带上）
 # The Mac App's controller options page: like touch, insert Apply / Default / Discard and the top-right X back (a mouse has to be able to click them; the host handles them as for touch, dm_cursor.c), and move the bottom key legend away (the buttons sit on its band)
 PAD_SETTINGS_MAC = {'controller/console/settingspanelhd.json': INGAME['controller/console/settingspanelhd.json']}
@@ -1208,7 +1189,6 @@ def pad_settings_button_glyphs(s):
     try: _json.loads(re.sub(r',(\s*[}\]])', r'\1', re.sub(r'(?m)^\s*//[^\n]*|(?<=[,{\[\s])//[^\n]*', '', re.sub(r'/\*[\s\S]*?\*/', '', s))))   # 同 build_ingame 的合法性检查 | the same validity check as build_ingame
     except ValueError as e: raise SystemExit('touch_layout：Mac 选项页加键位图标后不是合法布局（%s）' % e)
     return s
-PAD_VENDOR = {'controller/vendorpanellayouthd.json': ('vendorpanellayouthd.json', [INGAME['controller/vendorpanellayouthd.json'][1][0], INGAME['controller/vendorpanellayouthd.json'][1][1]])}
 def build_ingame(romfs, outdir, spec=None, present=True, pre=None):   # present=False：不套触屏的摆放变换（给手柄版布局插按钮用）；pre = {路径: 文本变换}，插按钮前先套 | present=False: do not apply the touch placement transform (used for inserting buttons into the controller layout); pre = {path: text transform}, applied before the buttons are inserted
     """局内面板插回原生按钮。返回 ({包内逻辑路径(小写): 本地文件}, 插了几个)。 | Insert native buttons back into the in-game panels. Returns ({logical path in package (lowercase): local file}, number inserted)."""
     repl = {}; total = 0

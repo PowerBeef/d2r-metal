@@ -959,9 +959,7 @@ static uint64_t ui_find(uint64_t w, const char *name, int dep);
 // Buttons the snap must not snap to: a wrong tap has heavy consequences (losing changes, spending gold, leaving the game, deleting a character). A finger landing within 3.5 mm beside them no longer counts as a hit; only the body itself counts;
 // bodies smaller than 44 points (iPhone profile: screen height 375 points) are extended to 44 points square, so that small buttons do not become hard to tap. The name Confirm is shared by all confirmation dialogs, and counts only while the delete-character confirmation dialog is open
 static int snap_guarded(uint64_t root, const char *nm) {
-    static const char *const k[] = { "CancelButton", "DefaultButton", "convert", "button_repair_all", "button_repair", "button_refresh", "button_blank", "Exit", "TouchRestart" };
-    // 商人页的 button_repair 在我们的布局里就是「刷新货架」（借单件修理那颗控件，touch_layout.py），与 button_blank / button_refresh 同一颗钮
-    // On the vendor page button_repair is 「刷新货架」(Refresh Stock) in our layout (borrowing the repair-single-item widget, touch_layout.py), the same button as button_blank / button_refresh
+    static const char *const k[] = { "CancelButton", "DefaultButton", "convert", "button_repair_all", "button_repair", "button_refresh", "Exit", "TouchRestart" };
     if (!nm) return 0; for (unsigned i = 0; i < sizeof k / sizeof *k; i++) if (!strcmp(nm, k[i])) return 1;
     if (!strcmp(nm, "Confirm")) { uint64_t dm = ui_find(root, "DeleteCharacterModal", 0); return dm && *(uint8_t *)(dm + 0x50); }
     return 0;

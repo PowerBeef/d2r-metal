@@ -105,7 +105,6 @@ with tempfile.TemporaryDirectory() as t:
     lp,lt=touch_layout.read_layout(romfs,'controller/console/charactercreatepanelhd.json')
     for nm,x0,x1 in touch_layout.CLASS_STRIPS: lt=touch_layout.set_rect(lt,nm,x0,450,x1-x0,1300)
     o=os.path.join(tpad,'pad_charcreate.json'); open(o,'w',encoding='utf-8').write(lt); PR[lp.lower()]=o
-    PR.update(touch_layout.build_ingame(romfs,tpad,touch_layout.PAD_VENDOR,present=False)[0])   # 手柄版商人页：刷新货架钮 | Controller layout vendor page: the refresh shop stock button
     lp,lt=touch_layout.read_layout(romfs,'controller/console/mainmenupanelhd.json'); o=os.path.join(tpad,'pad_mainmenu.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_mainmenu(lt)); PR[lp.lower()]=o   # 手柄版主菜单：构建号与新版本提示 | Controller layout main menu: build number and new version notice
     lp,lt=touch_layout.read_layout(romfs,'controller/console/mainmenubuttonribbonhd.json'); o=os.path.join(tpad,'pad_ribbon.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_ribbon(lt, movies=os.environ.get('MOVIE_FFMPEG')=='1')); PR[lp.lower()]=o   # 手柄版主菜单按钮栏；不解码过场时拿掉「电影动画」
     lp,lt=touch_layout.read_layout(romfs,'controller/hudmonsterhealthhd.json'); o=os.path.join(tpad,'pad_bosspct.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_boss_pct(lt)); PR[lp.lower()]=o   # 手柄版怪物血条：加百分比 | Controller layout monster health bar: add the percentage
@@ -191,10 +190,10 @@ with tempfile.TemporaryDirectory() as t:
     PADROOT=touch_layout.build_pad_root(romfs,tpad); PADROOT_KEYS={k[len(LAY):] for k in PADROOT}   # 三份选项页：原路径放手柄那份，触屏那份挪到触屏这边 | The three options pages: the controller copy goes at the original path, the touch copy moves to the touch side
     UNSHARE=('confirmationmodalhd.json','dismissablemodalhd.json','helpbuttonpanelhd.json','npcdialogpanelhd.json','youdiedmodalhd.json')   # 只该给触屏的：挪到触屏这边（见 emit） | Touch-only ones: moved to the touch side (see emit)
     PADLAY={k:v for k,v in PR.items() if touch_path(k)}   # 手柄版只取布局（数据表、图与触屏版同一份） | The controller version takes only layouts (data tables and images are the same copy as the touch version)
-    # 手柄专用清单：手柄模式下不是原版字节的布局就这几份，一份不许多、一份不许少（改上面某一行时把相邻一行整行替掉过，商人页的刷新钮就从包里掉了）
-    # Controller-only list: these are the only layouts that are not original bytes in controller mode, not one more and not one fewer (once, when a line above was edited, the adjacent line was replaced whole, and the vendor page's refresh button dropped out of the package)
+    # 手柄专用清单：手柄模式下不是原版字节的布局就这几份，一份不许多、一份不许少（改上面某一行时把相邻一行整行替掉过，有一页就从包里掉了）
+    # Controller-only list: these are the only layouts that are not original bytes in controller mode, not one more and not one fewer (once, when a line above was edited, the adjacent line was replaced whole, and a page dropped out of the package)
     PAD_PAGES=('controller/bankexpansionlayouthd.json','controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/switch/playerinventoryexpansionlayouthd.json','controller/console/videooptionspanelhd.json',
-               'controller/controlleroverlayhd.json','controller/hudmonsterhealthhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json','controller/vendorpanellayouthd.json')+(('controller/settingspanelhd.json',) if os.environ.get('DM_OVERLAY_MAC') else ())
+               'controller/controlleroverlayhd.json','controller/hudmonsterhealthhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json')+(('controller/settingspanelhd.json',) if os.environ.get('DM_OVERLAY_MAC') else ())
     if sorted(k[len(LAY):] for k in PADLAY)!=sorted(PAD_PAGES): raise SystemExit('gen_romfs_overlay：手柄专用布局与清单 PAD_PAGES 不一致：多 %s，少 %s' % (sorted(set(k[len(LAY):] for k in PADLAY)-set(PAD_PAGES)), sorted(set(PAD_PAGES)-set(k[len(LAY):] for k in PADLAY))))
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data
         repl=to_touch(repl); repl.update(PADLAY); repl.update(EXTRAS)   # 「附加」页（新目录，两种模式同一份） | the "Extras" page (a new folder, the same file for both modes)

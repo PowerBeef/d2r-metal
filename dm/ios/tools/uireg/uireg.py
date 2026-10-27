@@ -759,10 +759,10 @@ def groups():
     g.item("再长按红药（腰带已补满）","买 1 瓶进背包：金币减少、背包多 1 格、腰带不变",("inv",1,both(gold('-'),belt(0)))); lp(g,284,196)
     g.item("点右上角 X","关商人页（腰带看截图）",r"ClosePanel VendorPanelLayout"); g.tap(P(615,17)); g.shot()
     gs.append(g)
-    # ra 局：商人页「全部修理」（单件修理钮去掉、不补，交易页只留全部修理，挪到左格；右格是刷新货架）。
+    # ra 局：商人页「全部修理」（原版布局：左格单件修理、右格全部修理）。
     # 现场：标准存档第 4 行 88 级法师，左手盾耐久 85/86（身上另有两件也不满：23/24、11/12），全部修理一次修完、不出确认框。
     # 判据：金币减少（三件的修理费合计，不止盾的 117）；盾耐久读 DM_TEST_DUR 的记录行——拍数写到一局跑不到的远处，只借它记数、不压耐久。这个法师见过恰西，点她第一下就出菜单
-    # ra run: 「全部修理」(Repair All) on the vendor page (the single-item repair button is removed and not replaced, the trade page keeps only Repair All, moved to the left cell; the right cell is refresh shelf).
+    # ra run: 「全部修理」(Repair All) on the vendor page (the original layout: single-item repair in the left cell, Repair All in the right one).
     # Setup: level 88 sorceress in row 4 of the standard save, left-hand shield durability 85/86 (two other equipped items are also not full: 23/24, 11/12), Repair All repairs everything in one go, with no confirmation box.
     # Criterion: gold decreases (the total repair cost of the three items, not just the shield's 117); shield durability is read from the DM_TEST_DUR record line - the tick number is set far beyond what one run can reach, borrowing it only to record the value, not to lower durability. This sorceress has met Charsi, so the first tap on her brings up the menu
     RE="DM_TEST_WORLD_GO=near2:1:c154@200 DM_TEST_STAT_LOG=14 DM_TEST_DUR=1@999999999"
@@ -770,9 +770,9 @@ def groups():
         g.enter(4); g.arrive(5776,4433,10,60.0); g.at("tap_unit 1 154 3",5.0)
         g.item("恰西三行菜单点「交易或修复」","进商人页",r"OpenPanel VendorPanelLayout"); g.at(f"tap_unit 1 154 2 +{MENU['trade3m']}",2.5); g.shot()
     g=G("ra",RE); g.sect("repall",0); charsi(g)
-    g.item("交易页布局","左格全部修理、右格刷新货架、没有单件修理（看截图）",None); g.clr(); g.shot()
-    g.item("点左格「全部修理」","全修：金币减少、盾耐久 86 / 86",both(gold('-'),dur(86))); g.tap(P(104,306),3.0); g.shot()
-    g.item("再点一次全部修理","都满了：不再扣钱",gold(0)); g.tap(P(104,306),3.0); g.shot()
+    g.item("交易页布局","左格修理、右格全部修理，同原版（看截图）",None); g.clr(); g.shot()
+    g.item("点右格「全部修理」","全修：金币减少、盾耐久 86 / 86",both(gold('-'),dur(86))); g.at("tap_ui button_repair_all@VendorPanelLayout 3",3.0); g.shot()
+    g.item("再点一次全部修理","都满了：不再扣钱",gold(0)); g.at("tap_ui button_repair_all@VendorPanelLayout 3",3.0); g.shot()
     g.item("点右上角 X","关商人页",r"ClosePanel VendorPanelLayout"); g.tap(P(615,17)); g.shot()
     gs.append(g)
     # q 局：佣兵页开着双击药水 = 喂佣兵；佣兵页关着双击药水 = 玩家自己喝。同一个 88 级法师（玩家生命 713/809 不满，佣兵 2142/2142 满）。
@@ -1291,15 +1291,6 @@ def groups():
     g.item("触屏摇杆右推","人走了一段（前后两次位置不同）",lambda s,b: (lambda a,c: ("通：" if a and c and a[-1]!=c[-1] else "不通：")+f"推之前 {a[-1:]}，之后 {c[-1:]}")(_od_xy(b),_od_xy(s))); g.at("down 0 @joy",.3); g.at("move 0 @joy+40,0",1.2); g.at("up 0",1.0); g.at("pos",.5); g.shot()
     g.item("推摇杆切到手柄版，再按 ＋ 开物品栏、B 关","切到原版手柄版、物品栏开了又关（触屏模式下第一下手柄键只切界面、不执行，所以先推摇杆切过去）",r"(?=[\s\S]*切到原版手柄版)(?=[\s\S]*OpenPanel PlayerInventoryExpansionLayout)"); g.at("pad 0 0 32767",.6); g.at("pad 0",1.6); g.at("pad 0x400",.2); g.at("pad 0",1.5); g.shot(); g.at("pad 0x2",.2); g.at("pad 0",1.1)
     g.item("再碰屏幕空地","切回触屏版；整局没有「覆盖层没有 ctrl_touch 标记」",lambda s,b: ("通：" if "切到触屏版" in s and "覆盖层没有 ctrl_touch 标记" not in b+s else "不通：")+"这一步「切到触屏版」%d 行；整局缺标记 %d 行"%(s.count("切到触屏版"),(b+s).count("覆盖层没有 ctrl_touch 标记"))); g.tap(P(520,120),3.0); g.shot()
-    gs.append(g)
-    # pvb 局：手柄版商人页有刷新货架钮（一笔改动把它的覆盖件从生成清单里替掉过，整表没有一局看手柄版商人页，全通也没拦住）。
-    # 进店同 ra 局（88 级法师点恰西），店开着注入右摇杆切手柄版看截图；iPhone 档再把光标挪到钮上按 A 判换货（光标比例是 16:9 画面的，别的档只看截图）。
-    # Run pvb: the controller-style vendor page has the refresh-stock button (one change once replaced its overlay entry in the generated list; no run in the full table looked at the controller-style vendor page, so an all-green table did not catch it).
-    # Enters the shop the same way as run ra (level-88 sorceress taps Charsi); with the shop open, a right-stick input switches to the controller style and the screenshot is checked; on the iPhone profile the cursor is then moved onto the button and A is pressed to check the stock changed (the cursor ratios are for a 16:9 picture, so other profiles only check the screenshot).
-    g=G("pvb","DM_TEST_WORLD_GO=near2:1:c154@200 DM_TEST_GOLD=1300"); g.sect("padshop",0); charsi(g)
-    g.item("店开着注入手柄右摇杆","切到手柄版、商人页还在，货架左下有刷新货架钮（看截图）",r"手柄：手柄有输入 → 手柄模式",r"CRASH|Terminating app"); g.at("pad 0 0 0 32767 0",.5); g.at("pad 0",2.5); g.at("padcur 0.414 0.790",1.5); g.shot()
-    if MODE=="iphone":
-        g.item("光标在刷新钮上按 A","货架换货",r"商人刷新：点了",r"CRASH|Terminating app"); g.at("pad 0x1",.2); g.at("pad 0",2.8); g.shot()
     gs.append(g)
     # psel0–3：手柄在角色列表里逐行选人，进局的必须是高亮的那一行（标准存档自上而下 joe / Warlock / joebao / 法师）。只用 pad 步：推右摇杆切手柄版 → X 开列表 → 十字键下 N 次 → A 选定 → A 进入游戏 → A 过难度。
     # psel0–3: the controller selects a character row by row in the character list, and the one that enters the run must be the highlighted row (standard save, top to bottom joe / Warlock / joebao / 法师). Only pad steps are used: push the right stick to switch to the controller layout → X opens the list → D-pad down N times → A selects → A enters the game → A passes the difficulty.
