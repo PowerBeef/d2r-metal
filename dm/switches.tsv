@@ -146,7 +146,7 @@ DM_IOS_UDID	ios-tools	ios/run.sh ios/tools/devbattery.sh ios/tools/lifecycle.sh 
 DM_IOS_WATCH	ios-tools	ios/tools/frame_cmp.sh	-
 DM_IPAD_FULL	harmony,ios	harmony/native/front_ohos.c ios/Sources/front_ios.m	-
 DM_KBD	host	host/hle_swkbd.c host/tests/t_swkbd.c	-
-DM_KEYS	host,ios-tools,verify	host/dm_cursor.c host/hle_hid.c host/tests/t_hid_receipt.c host/tests/t_hid_script.c …	y
+DM_KEYS	host,ios-tools,verify	host/diag.c host/dm_cursor.c host/hle_hid.c host/tests/t_hid_receipt.c …	y
 DM_LANG	android,harmony,host	android/jni_android.c harmony/native/napi_ohos.c host/app_mac.m host/dm_i18n.c …	-
 DM_LAT_LOG	host	host/dm_cursor.c	-
 DM_LOADHASH	host	host/loader.c	-

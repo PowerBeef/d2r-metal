@@ -1411,13 +1411,14 @@ static uint64_t unit_by_id(uint64_t G, uint32_t id) {   // 玩家表 G+0x2230：
     }
     return 0;
 }
+static void tick_msg(uint32_t tick) {   // 合成 UI 消息「DM:Tick:<拍号>#」（见 c2s_inject） | synthetic UI message "DM:Tick:<tick>#" (see c2s_inject)
+    char a[16]; snprintf(a, sizeof a, "%u#", tick);
+    for (int i = 0, n = atomic_load(&g_nui_sub); i < n; i++) g_ui_sub[i]("DM", "Tick", a);
+}
 static void c2s_inject(uint64_t G) {
     uint32_t tick; if (!tk_rd(G + 0x170, &tick, 4) || tick == g_rplast) return;
     g_rplast = tick;
-    {   // 合成 UI 消息「DM:Tick:<拍号>#」：DM_KEYS 可按拍号触发（如真值局后存盘退出从游玩段末拍起按键）；# 防前缀误配 | Synthetic UI message "DM:Tick:<tick>#": DM_KEYS can trigger by tick number (e.g. after a ground-truth run, the save-and-exit keys start from the last tick of the play segment); # guards against prefix mismatches
-        char a[16]; snprintf(a, sizeof a, "%u#", tick);
-        for (int i = 0, n = atomic_load(&g_nui_sub); i < n; i++) g_ui_sub[i]("DM", "Tick", a);
-    }
+    tick_msg(tick);   // DM_KEYS 可按拍号触发（如真值局后存盘退出从游玩段末拍起按键）；# 防前缀误配 | DM_KEYS can trigger by tick number (e.g. after a ground-truth run, press keys from the last tick of the play segment); # avoids prefix mismatches
     while (g_irp < g_nrp && g_rp[g_irp].tick < tick) { LOG("【红】DM_C2S_REPLAY：第 %zu 条拍号 %u 已过（当前 %u），丢弃", g_irp + 1, g_rp[g_irp].tick, tick); g_irp++; }
     static void (*disp)(uint64_t, uint64_t, uint64_t, uint32_t);
     if (!disp) { module_t *m = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) m = &g_mod[i];
@@ -1846,13 +1847,20 @@ static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入�
     // 负载高时客户端加载慢、服务端拍照走：出过一次 NPC 页读取画面拍 85 才撤，拍 84 的 A 在撤屏当拍按下、游戏不认，对话面板没开（按键到点才冻结救不了这一下）
     // Runs that take screenshots by tick number (DM_TICK_HOLD=E:SHOT): if at tick 5 of the run the loading screen has not been taken down yet, freeze until it is taken down (dm_hold_for_loadscreen), so that the tick timeline afterwards all falls after the client has finished loading.
     // Under high load the client loads slowly while server ticks keep going: it happened once that the loading screen of an NPC page was only taken down at tick 85, the A of tick 84 was pressed on the very tick the screen came down, the game did not accept it, and the dialogue panel did not open (freezing only when the key is due cannot save this one)
-    { int dm_loadscreen_up(void); if (g_hold_tick && !strcmp(g_hold_ui, "SHOT") && cur_tick() == 5 && dm_loadscreen_up()) dm_hold_for_loadscreen(); }
+    // 局内换图（DM_TEST_GOTO_LEVEL、小站）同理：截图拍之前任何一拍读取画面开着，都冻结到它撤下（8 秒兜底放行，见 dm_hold_for_loadscreen），换图后的时间线也落在加载完之后
+    // The same for in-run map changes (DM_TEST_GOTO_LEVEL, waypoints): at any tick before the screenshot tick with a loading screen up, freeze until it is taken down (8-second fallback, see dm_hold_for_loadscreen), so the timeline after a map change also starts after loading
+    { int dm_loadscreen_up(void); uint32_t t = cur_tick(); if (g_hold_tick && !strcmp(g_hold_ui, "SHOT") && t >= 5 && t < g_hold_tick && dm_loadscreen_up()) dm_hold_for_loadscreen(); }
     if (g_hold_tick && g_pos_bad && !strcmp(g_hold_ui, "SHOT") && cur_tick() == g_hold_tick) { static int o2; if (!o2++) LOG("DM_TICK_HOLD：坐标核对不一致，不截图也不冻结"); }
     else if (g_hold_tick) { uint32_t t = cur_tick(); if (t == g_hold_tick) { static int once; if (!once++) {
         hold_freeze();
         g_hold_t0 = now_ns(); atomic_store(&g_holding, 1); LOG("DM_TICK_HOLD：拍 %u 冻结客体时钟，等「%s」", t, g_hold_ui);
         pthread_t th; if (!pthread_create(&th, NULL, hold_guard, NULL)) pthread_detach(th); } } }
     if (g_rp) c2s_inject(regs[0]);
+    else {   // 没有回放时：DM_KEYS / DM_NVN_SHOT_UI 写了「DM:Tick:」才发拍号消息（画质对照集按拍号冻结截图用，lookbook.py） | without a replay: tick messages only when DM_KEYS / DM_NVN_SHOT_UI mention "DM:Tick:" (the look set's screenshots at a frozen tick, lookbook.py)
+        static int want = -1; static uint32_t last = UINT32_MAX;
+        if (want < 0) { const char *k = getenv("DM_KEYS"), *u = getenv("DM_NVN_SHOT_UI"); want = (k && strstr(k, "DM:Tick:")) || (u && strstr(u, "DM:Tick:")); }
+        if (want) { uint32_t t = cur_tick(); if (t != last) { last = t; tick_msg(t); } }
+    }
     if (g_spfp) state_dump(regs);
     if (g_tkfp) ticks_hash(regs);
     { void dm_bright_server_tick(uint64_t G); dm_bright_server_tick(regs[0]); }   // 3D 画面加亮的测试开关 DM_TEST_DAYTIME（dm_bright.c） | The test switch DM_TEST_DAYTIME for 3D picture brightening (dm_bright.c)
