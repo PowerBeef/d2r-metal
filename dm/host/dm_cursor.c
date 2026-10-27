@@ -1656,10 +1656,17 @@ static void ui_ptr_pump(module_t *m, uint64_t root, int width, int height) {
 static _Atomic int g_dg_kind, g_dg_kreq; static _Atomic uint64_t g_dg_o, g_dg_c;   // g_dg_kreq = 这次拖动要的种类（松手后也留着：一下快点在主线程看到之前就已松开） | g_dg_kreq = the kind this drag asked for (kept after release: a quick click may be over before the main thread sees it)
  static _Atomic unsigned g_dg_seq; static _Atomic uint32_t g_dg_tol;
 static uint64_t dg_pack(float nx, float ny) { nx = nx < 0 ? 0 : nx > 1 ? 1 : nx; ny = ny < 0 ? 0 : ny > 1 ? 1 : ny; return ((uint64_t)(uint32_t)(nx * 65535 + .5f) << 16) | (uint32_t)(ny * 65535 + .5f); }
-void dm_ui_drag_begin(int kind, float ox, float oy, float tol_ny) {
+// g_dg_ptr：这一笔来自 Mac 指针（鼠标 / 触控板，touch_mac.c 走 dm_ui_drag_begin_ptr）。滚动条上起手的纵向拖：指针一律拖滑块（按在滑槽上 = 滑块跳过去）；
+// 触屏（iOS、脚本触点）只有按在滑块本身上才拖滑块——手指粗、滚动条窄，贴着列表右边往上划本想滚内容，原先一碰到滑槽就成了拖滑块，方向反过来
+// g_dg_ptr: this gesture comes from the Mac pointer (mouse / trackpad; touch_mac.c uses dm_ui_drag_begin_ptr). A vertical drag starting on a scroll bar: the pointer always drags the thumb (pressing the track = the thumb jumps there);
+// touch (iOS, scripted touches) drags the thumb only when the press is on the thumb itself -- fingers are wide and the bar is thin, so a swipe up along the list's right edge meant to scroll the content used to become a thumb drag as soon as it touched the track, in the reverse direction
+static _Atomic int g_dg_ptr;
+static void dg_begin(int kind, float ox, float oy, float tol_ny, int ptr) {
     uint64_t o = dg_pack(ox, oy); atomic_store(&g_dg_o, o); atomic_store(&g_dg_c, o); atomic_store(&g_dg_tol, (uint32_t)((tol_ny < 0 ? 0 : tol_ny > 0.5f ? 0.5f : tol_ny) * 65535));
-    atomic_store(&g_dg_kind, kind == 2 ? 2 : 1); atomic_store(&g_dg_kreq, kind == 2 ? 2 : 1); atomic_fetch_add(&g_dg_seq, 1);
+    atomic_store(&g_dg_ptr, ptr); atomic_store(&g_dg_kind, kind == 2 ? 2 : 1); atomic_store(&g_dg_kreq, kind == 2 ? 2 : 1); atomic_fetch_add(&g_dg_seq, 1);
 }
+void dm_ui_drag_begin(int kind, float ox, float oy, float tol_ny) { dg_begin(kind, ox, oy, tol_ny, 0); }
+void dm_ui_drag_begin_ptr(int kind, float ox, float oy, float tol_ny) { dg_begin(kind, ox, oy, tol_ny, 1); }
 void dm_ui_drag_move(float x, float y) { if (atomic_load(&g_dg_kind)) atomic_store(&g_dg_c, dg_pack(x, y)); }
 void dm_ui_drag_end(void) { atomic_store(&g_dg_kind, 0); }
 static _Atomic uint32_t g_dg_lift;   // 前端报的物品图抬起量（屏高的比例 × 65535）：iOS 40 点 × 控件缩放、Mac 触点脚本 40 / 1320，同各自拖放落点 | The item image lift reported by the front end (fraction of screen height × 65535): iOS 40 pt × widget scale, Mac touch point script 40 / 1320, same as each one's drag-drop drop point
@@ -1721,6 +1728,7 @@ static void ui_drag_pump(module_t *m, uint64_t root, int W, int H) {
                     for (a = oy, b = H - 1; a < b;) { int mid = (a + b + 1) / 2; if (dg_hit(bar, x, mid)) a = mid; else b = mid - 1; } g_th.bot = a;
                     if (g_th.bot - g_th.top < 16) continue;
                     double sc1 = (double)(g_th.bot - g_th.top + 1) / len; int p = (int)((oy - g_th.top) / sc1);
+                    if (!atomic_load(&g_dg_ptr) && !(p >= iy && p <= iy + ih)) { static int nt; if (nt++ < 3) LOG("界面拖动：触屏起手 (%d,%d) 在滚动条的滑槽上、不在滑块上 → 照旧滚内容", ox, oy); continue; }   // 触屏只认按在滑块上（见 g_dg_ptr） | touch only grabs a press on the thumb (see g_dg_ptr)
                     dm_wref_set(&g_th.bar, bar); dm_wref_set(&g_th.ind, ind); g_th.len = len; g_th.grab = p >= iy && p <= iy + ih ? p - iy : ih / 2; g_th.x = x - W / 12; g_th.last = iy; g_th.wait = 0; g_th.k = 0; g_th.rel = 30; kind = 4;
                     LOG("界面拖动：起手 (%d,%d) 在滚动条上 → 拖滑块（滑槽 y %d–%d，%d 单位，滑块 y %d 高 %d，%s）", ox, oy, g_th.top, g_th.bot, len, iy, ih, p >= iy && p <= iy + ih ? "按在滑块上" : "按在滑槽上：滑块先跳到指针处"); } }
             if (kind == 1) { static int once; if (!once++) LOG("界面拖动：首例纵向拖 → 在起手位置 (%d,%d) 发滚轮，每 %d 像素一格", ox, oy, UI_SCROLL_STEP(H)); } }
