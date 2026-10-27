@@ -32,6 +32,7 @@ English: [README.md](README.md)
 | `guestsyms.py`、`test_guestsyms.py` | 游戏程序的符号表（`.eh_frame` 函数、动态符号、源码注释说明），放本机构建缓存 |
 | `explore.py`、`test_explore.py` | 自动探索：经场景运行器按种子乱按，把红了的一局缩成最短的场景（[debugging.zh-CN.md](../verify/debugging.zh-CN.md)） |
 | `replay.py` | 录下一局场景的命令包与逐拍状态，在各宿主构建上回放，找第一个不同的拍 |
+| `playbot.py`、`test_playbot.py` | 试玩机器人：按种子抽玩家意图（面板、暂停页、腰带、走路、出城打怪、保存退出再进），只走玩家的路，意图之间查不变量，红了按意图缩短；`soak` 跑一整段长局，用 `soak_report.py` 判（[dm/verify/FORK_GATE.zh-CN.md](../verify/FORK_GATE.zh-CN.md)） |
 | `tickdiff.py`、`test_tickdiff.py` | 两份 `DM_TICKS` 记录第一个不同的拍，及不同的格、单位和字段 |
 | `lldb/dm.py` | LLDB 命令 `dm`（`modules`、`where`、`bt`、`break`、`tick`）：游戏地址换成模块偏移与客体函数（[debugging.zh-CN.md](../verify/debugging.zh-CN.md)） |
 | `gpucap.py` | GPU 截帧与摘要、实时 Metal 读数、Metal HUD（包装 `gpucapture`、`gpudebug --json`、`metalperftrace`） |

@@ -92,6 +92,7 @@ run: \
 	python3 ../../verify/test_golden.py
 	python3 ../../tools/test_tickdiff.py
 	python3 ../../tools/test_explore.py
+	python3 ../../tools/test_playbot.py
 	python3 ../../tools/scenario.py check ../../verify/bench/*.scn
 	python3 ../../verify/test_assertlib.py
 	python3 ../../verify/touchcases/test_lib.py

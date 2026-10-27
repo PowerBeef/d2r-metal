@@ -32,6 +32,7 @@ Three kinds of things live here. The first you will use when following the front
 | `guestsyms.py`, `test_guestsyms.py` | Symbol table for the game program (`.eh_frame` functions, dynamic symbols, source-comment notes), kept in the local build cache |
 | `explore.py`, `test_explore.py` | Automatic exploration: seeded random play through the scenario runner, shrinking a red run to a minimal scenario ([debugging.md](../verify/debugging.md)) |
 | `replay.py` | Records a scenario run's command packets and per-tick state, replays them on host builds and finds the first divergent tick |
+| `playbot.py`, `test_playbot.py` | Playtest bot: seeded player intents (panels, pause page, belt, walking, leaving town to fight, save and rejoin) on player paths only, invariants between them, shrinking by intent; `soak` runs one long session judged by `soak_report.py` ([dm/verify/FORK_GATE.md](../verify/FORK_GATE.md)) |
 | `tickdiff.py`, `test_tickdiff.py` | First divergent tick between two `DM_TICKS` records, with the slots, units and fields that differ |
 | `lldb/dm.py` | LLDB command `dm` (`modules`, `where`, `bt`, `break`, `tick`): game addresses as module offsets and guest functions ([debugging.md](../verify/debugging.md)) |
 | `gpucap.py` | GPU frame capture and summary, live Metal stats and the Metal HUD (wraps `gpucapture`, `gpudebug --json`, `metalperftrace`) |

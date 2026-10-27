@@ -255,7 +255,7 @@ DM_NVN_VIEW_CONTINUE	gfx	gfx/tests/t_rt_range.m	-
 DM_NVN_XV	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_ZSKIP	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_zskip.m	-
 DM_OCCL	host	host/front_mac.m	-
-DM_OE_SCRIPT	host	host/hle_oe.c host/tests/t_oe.c	-
+DM_OE_SCRIPT	host	host/diag.c host/hle_oe.c host/tests/t_oe.c	y
 DM_OPENGTX	harmony	harmony/native/front_ohos.c	-
 DM_OPMODE	host,ios-tools	host/hle_oe.c ios/TouchSmokeTests/TouchSmoke.swift	-
 DM_OPMODE_RUNROOT	verify	verify/opmode.sh	-
@@ -356,7 +356,7 @@ DM_RIFT_TEST_TP_NOROOM	host	host/dm_rift.c	-
 DM_RIFT_TEST_UNLOCK	host	host/dm_rift.c	-
 DM_RIFT_TIER	host	host/dm_rift.c	-
 DM_ROMFS	android,harmony,host,ios,tools,tvos,verify	android/jni_android.c harmony/native/napi_ohos.c host/app_mac.m host/hle_fs.c …	y
-DM_ROMFS_OVERLAY	android,harmony,host,ios,tvos,verify	android/jni_android.c android/touch_android.c harmony/native/napi_ohos.c host/app_mac.m …	y
+DM_ROMFS_OVERLAY	android,harmony,host,ios,tools,tvos,verify	android/jni_android.c android/touch_android.c harmony/native/napi_ohos.c host/app_mac.m …	y
 DM_ROMFS_SKIP_LOCAL	ios	ios/Sources/main.m	-
 DM_ROMFS_SRC	android,host,ios-tools,tools,verify	android/tools/shell_apk.sh host/Makefile ios/run.sh ios/tests/Makefile …	y
 DM_ROMFS_TEST_CLEAN	ios	ios/Sources/main.m	-
@@ -473,7 +473,7 @@ DM_TEST_KILL	host	host/diag.c	-
 DM_TEST_KILL_AT	host	host/dm_cloudmerge.c host/hle_fs.c	-
 DM_TEST_KILL_DROP	host	host/dm_kills.c	-
 DM_TEST_LAG	host	host/diag.c	y
-DM_TEST_LANG	host	host/dm_custom.c	-
+DM_TEST_LANG	host	host/dm_custom.c	y
 DM_TEST_LEAK	host,tools	host/diag.c tools/l3seg.sh	-
 DM_TEST_LEAK_GPU	gfx,tools	gfx/nvn/nvn_mtl.m tools/l3seg.sh	-
 DM_TEST_LEGEND	host	host/dm_padmode.c	-
@@ -503,7 +503,7 @@ DM_TEST_NOTICE	host	host/dm_pouch.c	-
 DM_TEST_NO_BC	gfx,ios	gfx/nvn/nvn_mtl.m ios/Sources/main.m	y
 DM_TEST_NO_DL_BASE	ios	ios/Sources/asset_dl.m ios/Sources/main.m	-
 DM_TEST_NO_METAL3	ios	ios/Sources/main.m	-
-DM_TEST_NSMOUSE	host	host/front_mac.m	-
+DM_TEST_NSMOUSE	host	host/front_mac.m	y
 DM_TEST_OBJREC	host	host/dm_world.c	-
 DM_TEST_OE_FOCUS_FIRST	host	host/hle_oe.c	-
 DM_TEST_OVERLAY_STALE_MS	ios	ios/Sources/DmTouchOverlay.m	-

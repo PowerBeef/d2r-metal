@@ -1,0 +1,30 @@
+# 局内切手柄 / 触屏布局与键帽样式（自给的 accept ⑩ 替代，外加键帽）：每次切换都要做完（padmode 事件）、没有靠超时的重建，切完拍照走、能开关暂停页、没有红标
+# Switching the controller / touch layout and the key cap style during a run (a self-contained replacement for accept ⑩, plus key caps): every switch must finish (padmode event) with no rebuild that needed the timeout, ticks keep running, the pause page opens and closes, no red markers
+name input_mode_switch
+save warlock
+env DM_ROMFS_OVERLAY=auto
+timeout 240
+
+enter_game
+inputmode mode=controller
+expect padmode mode=controller timeouts=0 timeout=20
+remember tick
+sleep 1
+expect_state tick>=$tick+10 in_game=true
+open_pause
+close_pause
+inputmode glyph=xbox
+expect padmode glyph=Xbox timeouts=0 timeout=20
+inputmode glyph=playstation
+expect padmode glyph=PlayStation timeouts=0 timeout=20
+inputmode glyph=switch
+expect padmode glyph=Switch timeouts=0 timeout=20
+inputmode mode=touch
+expect padmode mode=touch timeouts=0 timeout=20
+stick 1 0 frames=30
+remember tick
+sleep 1
+expect_state tick>=$tick+10 in_game=true dead=false
+quit
+check no_red
+check no_red_log

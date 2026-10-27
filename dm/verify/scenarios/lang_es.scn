@@ -1,0 +1,31 @@
+# 语言扫一遍（西班牙文）：游戏语言当作在选项页选了 es（DM_TEST_LANG=2），宿主提示用 es；进局后把总面板的页签都翻一遍、开关暂停页，焦点与面板栈正常、没有红标
+# Language sweep (es): the game language as if es had been chosen on the options page (DM_TEST_LANG=2), host dialogs in es; in a run flip through every tab of the combined panel and open and close the pause page; focus and the panel stack stay sane, no red markers
+name lang_es
+save warlock
+env DM_TEST_LANG=2 DM_LANG=es
+timeout 180
+
+enter_game
+press PLUS
+expect_state panels~=UISwitcher focus_panel!=None timeout=5
+press R
+sleep 0.4
+press R
+sleep 0.4
+press R
+sleep 0.4
+press R
+sleep 0.4
+press R
+sleep 0.4
+expect_state panels~=UISwitcher timeout=5
+press B
+expect_state focus_panel=None timeout=5
+open_pause
+close_pause
+expect_state panels~=HUDPanel paused=false
+quit
+check no_red
+check no_red_log
+check event language name=esES
+check actions seq=pause,cycleRight,cycleRight,cycleRight,cycleRight,cycleRight,back
