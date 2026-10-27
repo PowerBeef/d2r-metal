@@ -183,7 +183,7 @@ DM_ROMFS=<Update/RomFS 目录> DM_SAVE=<存档目录> DM_TEMP=<临时目录> DM_
 
 **游戏内功能**
 
-`dm_*.c` 是在原版之上加的功能和触摸适配，每个文件开头的注释说明它做什么、依据游戏里的哪些地址。例如 `dm_cursor.c`、`dm_world.c`、`dm_actions.c`（触摸点选、与世界交互、买卖与加点）、`dm_hud.c`（底部界面上的数字）、`dm_vault.c` 与 `dm_vault_ui.c`（编年史仓库）、`dm_pouch.c`（百宝囊）、`dm_rift.c`（秘境）、`dm_cloudsync.c`（iCloud 存档同步）、`dm_custom.c`（这些功能的开关）。文件里的地址都是 3.3.94012 原映像的偏移。
+`dm_*.c` 是在原版之上加的功能和触摸适配，每个文件开头的注释说明它做什么、依据游戏里的哪些地址。例如 `dm_cursor.c`、`dm_world.c`、`dm_actions.c`（触摸点选、与世界交互、买卖与加点）、`dm_hud.c`（底部界面上的数字）、`dm_vault.c` 与 `dm_vault_ui.c`（编年史仓库）、`dm_pouch.c`（百宝囊）、`dm_cloudsync.c`（iCloud 存档同步）、`dm_custom.c`（这些功能的开关）。文件里的地址都是 3.3.94012 原映像的偏移。
 
 ## 从你的游戏文件生成资源
 

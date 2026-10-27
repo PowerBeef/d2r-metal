@@ -2,7 +2,7 @@
 
 简体中文: [MAC.zh-CN.md](MAC.zh-CN.md)
 
-On an Apple silicon Mac this project can be built into a native macOS App, `D2R Metal.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (rifts, the trove, the chronicle, the Extras page and so on), using the original's gamepad interface.
+On an Apple silicon Mac this project can be built into a native macOS App, `D2R Metal.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (the trove, the chronicle, the Extras page and so on), using the original's gamepad interface.
 
 **How it has been tried**: the App is played on an M6 Mac with the keyboard, the mouse and an Xbox Wireless Controller, windowed and in full screen, and quit from the menu and the Dock. Where this page says "verified" without more, the check was an unattended run: keys and mouse events injected by a test script, quitting, full screen and resizing through test switches. What nobody has tried by hand yet is listed under [Known shortcomings](#known-shortcomings); if you try one of those, please open an Issue and tell us how it went.
 
@@ -97,7 +97,7 @@ What it can do now:
 - **Click a target in the world** (NPC, chest, waypoint, item on the ground): the character walks over and interacts. With a panel open, a click outside it only closes the panel.
 - **Items take the mouse now**: a click selects and shows the description; a double click = use / put on / take off (a potion in the belt = drink, the cube = open, a vendor's goods = buy); press and drag = pick up, release = put down (move between cells, equip, into the stash / cube, into the inventory = buy, onto the vendor's shelf = sell), with the item image right on the pointer; press and hold on an empty cell = tidy this page.
 - **Click the bottom row**: a skill icon = use that skill (the same as pressing the key shown under it), a potion cell = drink it, the middle button = open the inventory group of pages, the run / walk button = toggle.
-- **Click the interface**: buttons, checkboxes and tabs in panels (including the in-page tabs of the skill tree), the pause menu, the settings pages, and "Start" and the close X on the rift level-selection page.
+- **Click the interface**: buttons, checkboxes and tabs in panels (including the in-page tabs of the skill tree), the pause menu and the settings pages.
 - **Click a key hint at the bottom**: clicking an entry presses that key.
 - **Click a figure when creating a character**: the class you click is selected.
 - **Top-right minimap**: opens automatically on entering a game; Tab toggles it; clicking the area name at its top switches to the full-screen map, and another click returns.
@@ -132,7 +132,7 @@ Importing is a one-time manual copy: afterwards each side goes its own way and p
 
 **2. Copy the whole `save` folder, do not pick files**
 
-It holds one folder per character (folder name = character name), a few shared-stash files and a `Settings` folder (game settings including the interface language — after copying, the Mac's game settings become the phone's). The data of the features we added (the extra personal stash pages, the pouch, rift records, the chronicle vault and so on) is in this folder too. The switches on the Extras page are not in it; each device keeps its own.
+It holds one folder per character (folder name = character name), a few shared-stash files and a `Settings` folder (game settings including the interface language — after copying, the Mac's game settings become the phone's). The data of the features we added (the extra personal stash pages, the pouch, the chronicle vault and so on) is in this folder too. The switches on the Extras page are not in it; each device keeps its own.
 
 AirDrop, a cable (the Files tab in Finder) or iCloud Drive all work for getting it to the Mac.
 
@@ -153,7 +153,7 @@ Verified: on a Mac, a save placed in the save directory laid out as in step 4 sh
 
 ## Quitting and saving
 
-Closing the window, ⌘Q and Quit in the menu all save before quitting, in any state: in game, with the pause menu open, with a panel open, on the loading screen and with the rift panel open were each verified with one run. It waits at most 3 seconds; if saving has not finished by then, the log records a line saying it quit without saving.
+Closing the window, ⌘Q and Quit in the menu all save before quitting, in any state: in game, with the pause menu open, with a panel open, and on the loading screen were each verified with one run. It waits at most 3 seconds; if saving has not finished by then, the log records a line saying it quit without saving.
 
 After a forced quit or a crash, the system's "reopen windows?" dialog no longer comes up to block the game window on the next launch.
 
@@ -162,7 +162,5 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 - Not tried by hand yet: the resource-folder dialog on a fresh install, and PlayStation or Switch controllers on the Mac (an Xbox Wireless Controller is what has been used).
 - Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class, and the trove's auto-placement under mouse drags, are unverified. There is no right-click skill as on PC.
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
-- The free town portal on ZR + Space of a gamepad is not there.
-- The quest bar on the left in rifts is not there.
 - An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud").
 - The older-API build was played on macOS 15 by one player in our test group (Mac mini M4, macOS 15.7, using a package built elsewhere); building it from this repository on a Mac running macOS 15 has not been operated by a person.

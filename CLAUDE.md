@@ -41,6 +41,10 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
   2. `git switch main && git merge upstream/main`. Always merge, never rebase. On a conflict, `git merge --abort` and report; don't auto-resolve.
      - The READMEs are the fork's own: `.gitattributes` marks `README*.md` `merge=ours`, so upstream's README edits are dropped silently. That needs `git config merge.ours.driver true` once per clone; without it those files conflict.
      - Maintainers adopt PRs by re-applying them, so a conflict can come from our own change in its adopted form. Upstream's version wins, after the user confirms.
+     - **Removed upstream features stay removed.** On 2026-10-27 the fork deleted seven upstream features that change the game's rules or economy: the Greater Rift (with its extra mercenary slots and skill cap 40), Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify and the vendor's Refresh Stock.
+       - Upstream changes to their deleted files come back as modify/delete conflicts: `dm/host/dm_rift*`, `dm_doorspot.h`, `dm_bossrush*`, `dm_elysium*`, `dm_kills.c`, `dm_freetp.c`, `dm_shoprefresh.c`, `dm/ios/Sources/dm_rift_hud.m`, `dm/ios/tools/merc_slots.py`, `gen_merc_art.py` and their tests. Resolve those with `git rm` without asking, and finish the merge.
+       - In shared files, drop upstream hunks that only re-add hooks, strings, switches, layout entries or gates for them. Any other conflict is still aborted and reported.
+       - Their gate numbers stay retired: OBS 15, 16, 17 and 22 (`OBS_MAX` stays 23) and svc 0x89, 0x8c, 0x8d and 0x8e. Never reuse them.
   3. Rebase each open PR branch onto `upstream/main` and push it with `--force-with-lease`. This updates the open upstream PR.
   4. `git push origin main`, then rebuild the apps.
 - **Sending commits upstream:**
@@ -290,7 +294,7 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   1. `Sources/dm_touch_controls.c` (pure C) classifies the touch.
   2. Touch, cursor and input state are published.
   3. The host applies them when the game reads input (`hle_hid.c`, `dm_cursor.c`).
-- **Features are `dm/host/dm_*.c`:** world taps, rift, vault, pouch, padmode, custom settings, and so on.
+- **Features are `dm/host/dm_*.c`:** world taps, vault, pouch, padmode, custom settings, and so on.
 - **The romfs overlay** (`ios/tools/gen_romfs_overlay.py`) stores only diffs: layout patches and string-table entries by key. The host checks it before the game's RomFS.
 - **iOS packaging:**
   - `gen_embed.py` embeds the patched images.

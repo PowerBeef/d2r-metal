@@ -183,7 +183,7 @@ Usage is `dmhost <build output directory> [module…] [-- game arguments…]`. `
 
 **In-game features**
 
-The `dm_*.c` files are features and touch adaptations added on top of the original game; the comment at the top of each file explains what it does and which addresses in the game it relies on. For example `dm_cursor.c`, `dm_world.c`, `dm_actions.c` (touch selection, interacting with the world, buying/selling and spending points), `dm_hud.c` (the numbers on the bottom interface), `dm_vault.c` and `dm_vault_ui.c` (the Chronicle vault), `dm_pouch.c` (the pouch), `dm_rift.c` (the rift), `dm_cloudsync.c` (iCloud save sync), `dm_custom.c` (the switches for these features). The addresses in the files are all offsets into the original 3.3.94012 image.
+The `dm_*.c` files are features and touch adaptations added on top of the original game; the comment at the top of each file explains what it does and which addresses in the game it relies on. For example `dm_cursor.c`, `dm_world.c`, `dm_actions.c` (touch selection, interacting with the world, buying/selling and spending points), `dm_hud.c` (the numbers on the bottom interface), `dm_vault.c` and `dm_vault_ui.c` (the Chronicle vault), `dm_pouch.c` (the pouch), `dm_cloudsync.c` (iCloud save sync), `dm_custom.c` (the switches for these features). The addresses in the files are all offsets into the original 3.3.94012 image.
 
 ## Generating assets from your game files
 

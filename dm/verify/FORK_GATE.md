@@ -72,7 +72,7 @@ python3 dm/verify/golden.py list
 - **Logic:** each route is replayed with the recorded packets (`replay.py`) and compared tick by tick (`tickdiff.py`). The replay also asks for a save at the recorded tick (`DM_TEST_SAVE_AT`), and `savecmp.py` compares that save with the recorded one (checksums self-consistent, times checked against their run's window, everything else byte for byte).
 - **Negative control:** every check also replays the route with the client packets from the middle one onward dropped; it must diverge, or the comparison is blind and the check is red. (Dropping a single move isn't enough: the next packets re-target the same spot.)
 - **Screens:** `cube` is ⚪ (the Warlock save has no Horadric Cube); `newchar` catches a black transition frame, so it only proves that frame is stable.
-- **Rebaseline** after a deliberate change to what the routes see: the town spawn move (`dm_townwp.c`), the player count, rift or custom-setting defaults, picture settings.
+- **Rebaseline** after a deliberate change to what the routes see: the town spawn move (`dm_townwp.c`), the player count, custom-setting defaults, picture settings.
 - `full` runs both checks; with no baselines they are ⚪.
 
 ## Playtesting and wider coverage

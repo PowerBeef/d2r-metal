@@ -68,12 +68,6 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 
 | File | What it does |
 |---|---|
-| `dm_rift.c`, `dm_rift.h` | The Rift: the portal, picking maps, progress, the guardian, the timer and how many floors a clear is worth |
-| `dm_rift_ui.c` | The Rift panel, built from original widgets |
-| `dm_doorspot.h` | Where the two doors appear when a Rift floor is settled: guaranteed to be on a cell the player can walk to. Pure algorithm |
-| `dm_bossrush.c`, `dm_bossrush.h` | Boss rush |
-| `dm_elysium.c`, `dm_elysium.h` | Elysium mode: a per-character switch chosen at character creation; on entering a game it changes data tables in memory, and restores the original values on leaving |
-| `dm_kills.c` | The kill board: per character and per difficulty, the kill count, first-kill time and fastest time for each boss |
 
 ### Stash and items
 
@@ -94,9 +88,7 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 | `dm_beltauto.c` | Refills the belt with potions when the inventory is opened |
 | `dm_dropfilter.c` | The light beam and landing sound for high-value drops |
 | `dm_drophaptic.c` | Haptic feedback when a high-value item lands, in three strengths |
-| `dm_freetp.c` | Free town portal: reuses the original town portal skill directly |
 | `dm_townwp.c` | Entering a game, or a quick restart, puts you next to the town waypoint |
-| `dm_shoprefresh.c` | "Refresh Stock" on the merchant trade page; calls only the original stock mechanism |
 
 ### Settings, saves and small shared pieces
 

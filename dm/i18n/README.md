@@ -27,7 +27,7 @@ The lookup interface is in `dm/host/dm_i18n.h`.
    - No language column may be empty (except `Español MX`), and none but the Chinese may contain Chinese characters (the language row of the Custom page is the one exception, see `EN_HAS_ZH`).
    - Placeholders (`%d`, `%s` and so on) must match the Chinese column in number, order and type, and the number of line breaks must match the English column.
    - For a line break, write the two characters `\n`.
-   - Some keys (the Rift panel, Rift messages and others) have a length limit on the English; exceeding it reports what the limit is. The limits are `EN_LIMITS` in `dm_i18n.py`. Character count is only an approximation, so new English wording still needs a look at a screenshot to see that it stays inside its box.
+   - A key can be given a length limit on the English (`EN_LIMITS` in `dm_i18n.py`, empty at present); exceeding it reports what the limit is. Character count is only an approximation, so new English wording still needs a look at a screenshot to see that it stays inside its box.
    - The "where used" column is not checked by any script. Existing rows say which screen the text appears on, which file uses it, and what each placeholder stands for; do the same.
 
 2. Regenerate the header and commit it together with the table:

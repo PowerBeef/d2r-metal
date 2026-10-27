@@ -19,7 +19,8 @@ Mac (Apple silicon) · iPhone and iPad · Game: Switch release 1.0.34.0 with Rei
 - **A real Mac game.** Full screen, mouse wheel and trackpad scrolling, keyboard and controller, saves on quit.
 - **Type with a controller.** When the game asks for a name or an amount, an in-game keyboard appears; type on the keyboard or click and it steps aside for a regular text box.
 - **Saves you can trust.** Quitting, minimizing or a failed write no longer loses progress.
-- **Everything from D2R Mobile:** touch controls, controller support, the Greater Rift, Boss Rush, Elysium mode and more.
+- **Built on D2R Mobile:** touch controls, controller support, the Chronicle stash, the loot filter and more.
+- **The game as shipped.** Upstream additions that change its rules or economy are left out: the Greater Rift, Boss Rush, Elysium mode, the Kill Board, free town portals, free identify and vendor restocks on demand.
 
 ## Mac and iPhone / iPad at a glance
 
@@ -114,9 +115,11 @@ The Mac guide — keys, mouse, saves, iCloud and moving saves over from an iPhon
 
 These came out of a full audit of the port (111 findings), a later bug hunt with sanitizers, Metal validation and static analysis, and a study of how the game itself saves.
 
-## Everything from D2R Mobile
+## What comes from D2R Mobile
 
-All of upstream's work is here and kept in sync: the original program running unchanged (every class, Runeword and drop rule as shipped), touch controls rebuilt for fingers, controller support, the Greater Rift, the Endgame Boss Rush, Elysium mode and the Kill Board, the Chronicle stash, Trove and Pouch, auto-drink, the loot filter, the Runeword helper and minimap guidance, and five languages (English, Chinese, Spanish, Russian and Korean). Upstream's [README](https://github.com/jhaizhou-ops/d2r-mobile#readme) shows them with screenshots.
+Upstream's port is here and kept in sync: the original program running unchanged (every class, Runeword and drop rule as shipped), touch controls rebuilt for fingers, controller support, the Chronicle stash, Trove and Pouch, auto-drink, the loot filter, the Runeword helper and minimap guidance, and five languages (English, Chinese, Spanish, Russian and Korean). Upstream's [README](https://github.com/jhaizhou-ops/d2r-mobile#readme) shows them with screenshots.
+
+Seven upstream features that change the game's rules or economy are removed here, so the game plays as shipped: the Greater Rift (with its six extra mercenary slots and the skill cap of 40), the Endgame Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify and the vendor's Refresh Stock button. Identifying takes a scroll, a tome or Cain again, a town portal costs a scroll or a tome charge, and vendors restock as the game decides. Saves made with those features load normally.
 
 **This repository contains and distributes no game content**: no game program, art, text, data table or shader. Everything is generated on your own machine from your own files ([docs/GAME_FILES.md](docs/GAME_FILES.md); the interface information the port relies on is listed in [docs/DERIVED.md](docs/DERIVED.md)).
 

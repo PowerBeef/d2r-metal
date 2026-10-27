@@ -68,12 +68,6 @@ English: [README.md](README.md)
 
 | 文件 | 管什么 |
 |---|---|
-| `dm_rift.c`、`dm_rift.h` | 秘境：进门、抽图、进度、守护者、计时与层数结算 |
-| `dm_rift_ui.c` | 秘境面板，用原版控件搭 |
-| `dm_doorspot.h` | 秘境结算处两扇门落在哪：保证落在玩家走得到的格上。纯算法 |
-| `dm_bossrush.c`、`dm_bossrush.h` | 首领连战 |
-| `dm_elysium.c`、`dm_elysium.h` | 极乐世界模式：建角时勾选的按角色开关，进局时改内存里的数据表，退局写回原值 |
-| `dm_kills.c` | 刷怪积分牌：按角色、按难度记首领的击杀次数、首杀时刻与最快用时 |
 
 ### 仓库与物品
 
@@ -94,9 +88,7 @@ English: [README.md](README.md)
 | `dm_beltauto.c` | 打开背包时自动把药水补进腰带 |
 | `dm_dropfilter.c` | 高价值掉落的光柱与落地音 |
 | `dm_drophaptic.c` | 高价值物品落地时的震动，分三档 |
-| `dm_freetp.c` | 免费回城：直接复用原版的回城技能 |
 | `dm_townwp.c` | 进局与一键重开时落在城镇传送小站旁 |
-| `dm_shoprefresh.c` | 商人交易页的「刷新货架」，只调原版的货单机制 |
 
 ### 设置、存档与公共小件
 
