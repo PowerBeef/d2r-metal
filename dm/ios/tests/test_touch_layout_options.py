@@ -64,6 +64,7 @@ def page_nodes(text):
     return found
 all_keys = [k for k, _ in layout._CUSTOM_ROWS]
 assert 'TouchCustom_eco_fps' in nodes and 'TouchCustom_q3d' in nodes and [k for k, _ in layout._CUSTOM_ALL][1:] == all_keys
+page_rows = {}
 for flag in ('DM_OVERLAY_MAC', 'DM_OVERLAY_IOS'):
     os.environ[flag] = '1'; layout = importlib.reload(layout)
     video = page_nodes(layout._custom_page(FAKE, 'video')[0]); extras = page_nodes(layout._custom_page(FAKE, 'extras')[0])
@@ -72,8 +73,15 @@ for flag in ('DM_OVERLAY_MAC', 'DM_OVERLAY_IOS'):
         assert w['type'] == 'CarouselWidget' and w['fields']['states'] == states, (flag, row, w)
     assert not {'TouchCustom_eco_fps', 'TouchCustom_q3d', 'TouchCustom_q3d_smooth'} & set(extras), flag
     assert [k for k, _ in layout._CUSTOM_ALL][1:] == [k for k in all_keys if k not in ('eco_fps', 'q3d')], flag
+    page_rows[flag] = [r[0] for r in layout._VIDEO if r[0] != 'hdr']
     os.environ.pop(flag); layout = importlib.reload(layout)
+# 宿主按 dm_video.c k_rows 的顺序认页上的行（手柄上下、第几行）：每个平台页上的行必须是 k_rows 按原顺序挑出的一部分；fps / drops 是自定义设置的键
+# The host walks the page's rows in dm_video.c k_rows order (controller up / down, row numbers): each platform's page rows must be k_rows in the same order with some left out; fps / drops are custom settings keys
 video_src = (root / 'host/dm_video.c').read_text()
-assert re.search(r'k_rows\[NR\] = \{ "mode", "res", "preset", "upscale", "fps", "drops" \}', video_src)
-assert re.search(r'k_row_ckey\[NR\] = \{ 0, 0, 0, 0, "eco_fps", "q3d" \}', video_src)
+k_rows = re.findall(r'"(\w+)"', re.search(r'k_rows\[NR\] = \{([^}]*)\}', video_src).group(1))
+ckey = re.findall(r'(0|"\w+")', re.search(r'k_row_ckey\[NR\] = \{([^}]*)\}', video_src).group(1))
+assert len(ckey) == len(k_rows) and dict(zip(k_rows, ckey))['fps'] == '"eco_fps"' and dict(zip(k_rows, ckey))['drops'] == '"q3d"', (k_rows, ckey)
+for flag, rows in page_rows.items():
+    it = iter(k_rows); assert all(r in it for r in rows), (flag, rows, k_rows)
+assert page_rows['DM_OVERLAY_MAC'] == k_rows, page_rows['DM_OVERLAY_MAC']   # Mac 页上全有 | the Mac page has every row
 print('PASS touch layout options: generated radio pair, labels, defaults, host order (default and MOVIE_FFMPEG=1), scrolling row extent, and Frame Rate / Frame Drops on the Mac and iOS Video tab')

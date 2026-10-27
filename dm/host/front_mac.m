@@ -92,6 +92,29 @@ int front_video_firstboot(int rec[3], int cur[3]) {
     LOG("画面设置：首次启动 主屏 %.0f 像素宽、显卡 %s → 推荐 全屏 / %d / %s%s", px, gpu.UTF8String, k_render_w[t], rec[2] ? "MetalFX" : "标准", legacy ? "；旧版偏好设过的接着用" : "");
     return 1;
 }
+// 之后加的画质键的推荐值（dm_video.c 读盘缺这个键时问）：Mac App 上是 SMAA、16× 各向异性、准确色彩。命令行宿主（没有 DM_APP）与测试副本照原版（0），
+// 自动跑的局、金样与基准不变
+// Recommendations for the picture keys added later (asked by dm_video.c when the file lacks the key): SMAA, 16x anisotropy and accurate colour in the Mac App. The CLI host (no DM_APP) and test copies keep
+// the original (0), so automated runs, golden baselines and benchmarks stay as they were
+int front_video_rec(const char *key) {
+    if (!getenv("DM_APP") || (getenv("DM_APP_SUPPORT") && !getenv("DM_TEST_VIDEO_FIRSTBOOT"))) return 0;
+    if (!strcmp(key, "aa")) return 1;
+    if (!strcmp(key, "aniso")) return 3;
+    if (!strcmp(key, "color")) return 1;
+    return -1;
+}
+// 「色彩」：准确 = 层标 sRGB（游戏写的就是 sRGB 编码的字节），系统把它配到屏幕的色域；鲜艳 = 不标（原先的样子：宽色域屏把 sRGB 原色当屏幕原色，偏艳）。
+// 画面字节不变（截图、比对照旧），只改合成器怎么解释。DM_COLORSPACE=srgb|none 定死（测试、对照）
+// "Colour": Accurate = the layer is tagged sRGB (the game writes sRGB-encoded bytes) and the system maps it to the panel's gamut; Vivid = untagged (the old look: wide-gamut panels take the sRGB primaries as their own,
+// more saturated). The picture bytes are unchanged (captures and comparisons as before); only how the compositor reads them changes. DM_COLORSPACE=srgb|none fixes it (tests, comparisons)
+static void layer_color(int accurate) {   // 主线程 | main thread
+    const char *e = getenv("DM_COLORSPACE"); if (e && *e) accurate = !strcmp(e, "srgb");
+    if (!g_layer) return;
+    CGColorSpaceRef cs = accurate ? CGColorSpaceCreateWithName(kCGColorSpaceSRGB) : NULL;
+    g_layer.colorspace = cs; if (cs) CGColorSpaceRelease(cs);
+    LOG("画面：色彩%s（层的色彩空间 %s） | picture: colour %s (layer colour space %s)", accurate ? "准确" : "鲜艳", accurate ? "sRGB" : "不标", accurate ? "Accurate" : "Vivid", accurate ? "sRGB" : "untagged");
+}
+void front_video_color(int accurate) { dispatch_async(dispatch_get_main_queue(), ^{ layer_color(accurate); }); }   // 选项页点了应用（游戏线程） | Apply on the options page (game thread)
 void front_video_fullscreen(int on) {   // 选项页「显示模式」点了应用：当场切（游戏线程调，切到主线程做） | "Display Mode" applied on the options page: switch at once (called on the game thread, done on the main thread)
     dispatch_async(dispatch_get_main_queue(), ^{ NSWindow *w = g_win; if (w && ((w.styleMask & NSWindowStyleMaskFullScreen) != 0) != (on != 0)) [w toggleFullScreen:nil]; });
 }
@@ -351,6 +374,7 @@ void front_run(void (*guest)(void)) {
         g_layer.device = MTLCreateSystemDefaultDevice();
         g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         g_layer.contentsScale = win.backingScaleFactor;
+        layer_color(dm_video_get("color") == 1);
         [v.layer addSublayer:g_layer]; layout_game();
         dm_vkbd_ui_set_host(vkbd_where);
         [win center];

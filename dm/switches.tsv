@@ -49,6 +49,7 @@ DM_BUNDLE_NAME	harmony	harmony/native/gameperf_ohos.c	-
 DM_C2S_LOG	host,ios-tools	host/diag.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_C2S_REPLAY	host	host/diag.c host/dm_townwp.c	y
 DM_CLOUD_REAL	host,ios	host/app_mac.m ios/Sources/cloud_ios.m	-
+DM_COLORSPACE	host	host/front_mac.m	-
 DM_CRASH_JSON	host	host/crash.c	y
 DM_CTL_PORT	host	host/diag.c host/dm_ctl.c host/dm_events.c	y
 DM_CUBE_PICKUP	host	host/diag.c	-

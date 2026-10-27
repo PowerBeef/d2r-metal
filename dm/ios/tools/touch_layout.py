@@ -837,13 +837,15 @@ _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') els
 # Mac App（DM_OVERLAY_MAC）：这一页顶上先放「显示」「图形」两节画面设置（宿主 dm_video.c），再接「自定义」一节。
 # 照原版主机版视频页 / 电脑版图形页的样子：分节标题（原版标题字样 + 金色分隔线）、每行左边标签、右边原版的左右切换框（CarouselWidget，
 # 与主机版「图形模式」同一组字段，摆在第二栏正中：x 1000 + (700 − 596) / 2）。标签和选项尽量用原版串（显示 / 显示模式 / 窗口 / 全屏 / 分辨率 /
-# 图形 / 图形预设 / 性能 / 品质 / 自定义），游戏有几种语言就有几种；原版没有的（放大方式、MetalFX、标准、推荐、各档分辨率）在中英表里。
+# 图形 / 图形预设 / 性能 / 品质 / 自定义 / 抗锯齿 / FXAA / SMAA / 各向异性过滤 / 4× 8× 16×，后几个是游戏电脑版选项的串），游戏有几种语言就有几种；原版没有的（放大方式、MetalFX、标准、推荐、各档分辨率、
+# 色彩 / 鲜艳 / 准确、各向异性的「原版」）在中英表里。
 # 切换框的消息发 TouchVideoMessage:<键>，游戏里没人认这一类：切换框会拿自己的值替换消息的第三段，勾选框那条无害的 PanelManager:ClosePanel:<名> 就成了不带名字的 ClosePanel（main+0xb1ee2c 按空名字找子控件，崩）。宿主读切换框的当前项，按应用 / 放弃 / 默认处理。「分辨率」下面留一行，
 # 改了没重启时宿主把「重启游戏后生效」挪进来（同语言行的提示）。有鼠标悬停，所以各行带原版式的悬停说明
 # Mac App (DM_OVERLAY_MAC): this page first gets two sections of picture settings, "Display" and "Graphics" (host dm_video.c), followed by the "Custom" section.
 # Modeled on the original console video page / PC graphics page: section headers (original heading style + gold divider), a label on the left of each row and the original left/right selector (CarouselWidget,
 # the same fields as the console "Graphics Mode", centered in the second column: x 1000 + (700 - 596) / 2) on the right. Labels and choices use original strings where they exist (Display / Display Mode / Windowed / Fullscreen / Resolution /
-# Graphics / Graphic Presets / Performance / Quality / Custom), so they come in every language the game has; the ones the game lacks (Upscaling, MetalFX, Standard, Recommended, the resolution tiers) are in the string table.
+# Graphics / Graphic Presets / Performance / Quality / Custom / Anti-Aliasing / FXAA / SMAA / Anisotropic Filtering / 4x 8x 16x, the last few from the game's PC options), so they come in every language the game has;
+# the ones the game lacks (Upscaling, MetalFX, Standard, Recommended, the resolution tiers, Color / Vivid / Accurate, anisotropy's "Original") are in the string table.
 # A selector sends TouchVideoMessage:<key>, a category nothing in the game handles: a selector replaces the message's third part with its own value, so the checkboxes' harmless PanelManager:ClosePanel:<name> became ClosePanel with no name, which crashed (lookup of a NULL child name at main+0xb1ee2c). The host reads each selector's current choice and handles apply / discard / default. The Resolution row keeps a line below it,
 # where the host puts "Takes effect after restarting the game" while a change is waiting for a restart (like the language row's hint). There is mouse hover, so each row has an original-style hover description
 # iOS（DM_OVERLAY_IOS，dm/ios/run.sh 生成覆盖层时设；安卓共用生成器但不设）：只有「图形」一节，标题行就是它——3D 清晰度（75% / 85% / 100%）、图形预设、放大方式
@@ -854,9 +856,12 @@ _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') els
 # On the Mac and iOS these rows have the "Video" tab to themselves (the page title = the first section's name, in the table's title row); the custom rows are on the page of the fifth tab, "Extras" (_EXTRAS_PANEL)
 _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVideoModeTip'),
            ('res', '@ScreenResolution', ('dmVideoRes1600', 'dmVideoRes1920', 'dmVideoRes2560'), 'dmVideoResTip'),
+           ('color', '@dmVideoColor', ('dmVideoColorVivid', 'dmVideoColorAccurate'), 'dmVideoColorTip'),
            ('hdr', '@Graphics'),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), 'dmVideoPresetTip'),
            ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX'), 'dmVideoUpscaleTip'),
+           ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), 'OptionsMenuAntiAliasingTooltip'),
+           ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), 'OptionsMenuAnisotropicFilteringTooltip'),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), 'dmVideoFpsTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
           (('res', '@dmVideo3DRes', ('dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),

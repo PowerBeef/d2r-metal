@@ -26,6 +26,14 @@
 // Only the rows the page actually has are handled (dm_video_rows lists the selectors it finds)
 // On both platforms the Graphics section ends with Frame Rate (60 / 30 power saver) and Frame Drops (lower / keep the 3D resolution): their values live in the custom settings (eco_fps / q3d, read and written by
 // dm_custom.c, saved in sw_custom.txt), and this file only drives the selectors -- pending values, Apply and Discard go through the custom settings; the graphic presets leave them alone, and "Default" puts them back to their defaults (60 fps, lower)
+// Mac 另有三行画质（画质计划第 1 阶段）：「抗锯齿」aa（0 FXAA = 原版 / 1 SMAA，游戏自己电脑版的那一档：宿主 hle_oe.c aa_tick 写渲染器的档位字节）、
+// 「各向异性过滤」aniso（0 原版 / 1 4× / 2 8× / 3 16×，nvn_mtl.m 采样器覆盖）、「色彩」color（0 鲜艳 = 原先不标色彩空间，宽色域屏把 sRGB 当屏幕原色撑开 / 1 准确 = 层标 sRGB 交给系统配色）。
+// 三项都点应用即生效、都算进「推荐」；值 0 都是原先的样子，所以测试副本、命令行宿主、手机（页上没有这几行）一概不变。旧文件没有这几个键：读盘时按前端 front_video_rec 补
+// The Mac has three more picture rows (picture plan phase 1): "Anti-Aliasing" aa (0 FXAA = the original / 1 SMAA, the game's own PC setting: the host's hle_oe.c aa_tick writes the renderer's mode byte),
+// "Anisotropic Filtering" aniso (0 original / 1 4x / 2 8x / 3 16x, the sampler override in nvn_mtl.m) and "Colour" color (0 Vivid = no colour space on the layer as before, so wide-gamut panels stretch sRGB to
+// the panel's primaries / 1 Accurate = the layer is tagged sRGB and the system colour-matches it).
+// All three take effect on Apply and count towards "Recommended"; value 0 is always the old look, so test copies, the CLI host and phones (whose page lacks these rows) are unchanged. Older files lack these keys: loading fills
+// them from the front end's front_video_rec
 #include "hle.h"
 #include "dm.h"
 #include "dm_cursor.h"
@@ -40,18 +48,19 @@
 uint64_t dm_custom_find_w(uint64_t w, const char *name);
 int dm_custom_shown(void);
 int dm_custom_path(const char *name, char *p, size_t n);
-enum { K_MODE, K_RES, K_UP, NV };
-static const char *const k_keys[NV] = { "mode", "res", "up" };
-static const int k_n[NV] = { 2, 3, 2 };
-#define NR 6
-static const char *const k_rows[NR] = { "mode", "res", "preset", "upscale", "fps", "drops" };   // 页上的行序 | row order on the page
-static const int k_row_n[NR] = { 2, 3, 4, 2, 2, 2 };
-static const int k_row_key[NR] = { K_MODE, K_RES, -1, K_UP, -2, -2 };   // -1 = 图形预设（推导）；-2 = 自定义设置里的键（k_row_ckey） | -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
-static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, "eco_fps", "q3d" };   // 切换框第 0 / 1 项 = 键值 0 / 1（60 帧 / 30 帧；降低 / 保持） | selector options 0 / 1 = key values 0 / 1 (60 / 30 fps; lower / keep)
+enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, NV };   // 新键只往后加（存盘按名字，旧文件缺的键读盘时补） | new keys go at the end (saved by name; keys an older file lacks are filled at load)
+static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color" };
+static const int k_n[NV] = { 2, 3, 2, 2, 4, 2 };
+#define NR 9
+static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "upscale", "aa", "aniso", "fps", "drops" };   // 页上的行序（页上没有的行跳过） | row order on the page (rows the page lacks are skipped)
+static const int k_row_n[NR] = { 2, 3, 2, 4, 2, 2, 4, 2, 2 };
+static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_UP, K_AA, K_ANISO, -2, -2 };   // -1 = 图形预设（推导）；-2 = 自定义设置里的键（k_row_ckey） | -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
+static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, "eco_fps", "q3d" };   // 切换框第 0 / 1 项 = 键值 0 / 1（60 帧 / 30 帧；降低 / 保持） | selector options 0 / 1 = key values 0 / 1 (60 / 30 fps; lower / keep)
 int dm_custom_shown_value(const char *key); void dm_custom_set_pending(const char *key, int v); int dm_custom_default(const char *key);
 static _Atomic int g_crows;   // 页上有的自定义键行（按行号的位）：「默认」只回这几行 | the custom-key rows the page has (one bit per row): "Default" resets only those
 enum { P_REC, P_PERF, P_QUAL, P_CUSTOM };
-static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
+static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
+_Static_assert(NV == 6, "g_pend 的初值个数 | g_pend initialiser count");
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // 读盘 / 存盘：前端主线程（启动、全屏切换）与游戏线程（应用）都会写 | load / save: written by both the front end's main thread (launch, full-screen changes) and the game thread (Apply)
 
 // 前端提供（Mac：front_mac.m）；别的平台没有这一节，用这里的弱定义 | Provided by the front end (Mac: front_mac.m); other platforms have no such section and use the weak definitions here
@@ -59,14 +68,23 @@ __attribute__((weak)) int front_video_firstboot(int rec[3], int cur[3]) { (void)
 __attribute__((weak)) void front_video_fullscreen(int on) { (void)on; }
 __attribute__((weak)) int front_video_running_res(void) { return -1; }
 __attribute__((weak)) int front_video_mfx_ok(void) { return 0; }
+__attribute__((weak)) int front_video_rec(const char *key) { (void)key; return -1; }   // front_video_firstboot 之后的键的推荐值；-1 = 没有（取 0，原先的样子） | recommendation for keys after front_video_firstboot's three; -1 = none (0, the old look)
+__attribute__((weak)) void front_video_color(int accurate) { (void)accurate; }   // 「色彩」点了应用 | "Colour" applied
 
+static const char *vals_str(const int *v) {   // 「mode=1 res=1 …」：日志用（非线程安全的静态缓冲，只在 g_mu 下或启动时用） | "mode=1 res=1 ...": for logs (static buffer, not thread-safe; only used under g_mu or at launch)
+    static char b[160]; size_t L = 0; b[0] = 0;
+    for (int i = 0; i < NV && L < sizeof b; i++) L += (size_t)snprintf(b + L, sizeof b - L, "%s%s=%d", i ? " " : "", k_keys[i], v[i]);
+    return b;
+}
 static void save_locked(void) {
     char p[1100], t[1120]; if (!dm_custom_path("sw_video.txt", p, sizeof p)) { LOG("【红】画面设置：设置目录还不知道，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
     for (int i = 0; ok && i < NV; i++) ok = fprintf(f, "%s=%d\nrec_%s=%d\n", k_keys[i], atomic_load(&g_val[i]), k_keys[i], atomic_load(&g_rec[i])) > 0;
     if (f) ok = fclose(f) == 0 && ok;
     if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名（同 sw_custom.txt） | write a temporary file, then rename (as sw_custom.txt)
-    LOG("画面设置：存盘%s mode=%d res=%d up=%d（推荐 %d/%d/%d）", ok ? "" : "【红】失败", g_val[K_MODE], g_val[K_RES], g_val[K_UP], g_rec[K_MODE], g_rec[K_RES], g_rec[K_UP]);
+    int v[NV], r[NV]; for (int i = 0; i < NV; i++) { v[i] = atomic_load(&g_val[i]); r[i] = atomic_load(&g_rec[i]); }
+    char rs[160]; strlcpy(rs, vals_str(r), sizeof rs);
+    LOG("画面设置：存盘%s %s（推荐 %s）", ok ? "" : "【红】失败", vals_str(v), rs);
 }
 static void load_once(void) {
 #ifndef __APPLE__
@@ -78,23 +96,25 @@ static void load_once(void) {
     if (!atomic_load(&g_loaded) && dm_custom_path("sw_video.txt", p, sizeof p)) {
         // 逐键读：缺的、越界的那一个键才按首次启动的值补，其余照读到的用。原先任一 rec_* 缺 / 越界就整份当首次启动，玩家设好的三项全被推荐值盖掉
         // Read key by key: only a missing or out-of-range key is filled from the first-boot values, the rest keep what was read. Before, one missing / out-of-range rec_* treated the whole file as a first boot and the recommendation overwrote all three of the player's settings
-        int v[NV] = { -1, -1, -1 }, r[NV] = { -1, -1, -1 }; FILE *f = fopen(p, "r"); char ln[64];
+        int v[NV], r[NV]; for (int i = 0; i < NV; i++) v[i] = r[i] = -1;
+        FILE *f = fopen(p, "r"); char ln[64];
         while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int x = atoi(eq + 1), rec = !strncmp(ln, "rec_", 4);
             for (int i = 0; i < NV; i++) if (!strcmp(rec ? ln + 4 : ln, k_keys[i]) && x >= 0 && x < k_n[i]) { if (rec) r[i] = x; else v[i] = x; } }
         if (f) fclose(f);
         int miss = 0, first = 1; for (int i = 0; i < NV; i++) { miss |= (v[i] < 0) << i | (r[i] < 0) << (i + NV); first &= v[i] < 0 && r[i] < 0; }   // first = 一个键都没读到（真首次启动） | first = not a single key read (a real first boot)
         if (miss) {   // 定推荐值（前端没有 = 原版：窗口、1600、标准），只补缺的键 | work out the recommendation (no front end = the original: windowed, 1600, standard), filling only the missing keys
-            int rec[3] = { 0, 0, 0 }, cur[3] = { 0, 0, 0 };
-            if (!front_video_firstboot(rec, cur)) memcpy(cur, rec, sizeof cur);
+            int rec[NV] = { 0 }, cur[NV] = { 0 };   // 前三个键前端一起定（front_video_firstboot），之后的键一个个问（front_video_rec，当前值 = 推荐） | the front end sets the first three together (front_video_firstboot), later keys one by one (front_video_rec, current = recommended)
+            if (!front_video_firstboot(rec, cur)) memcpy(cur, rec, 3 * sizeof cur[0]);
+            for (int i = 3; i < NV; i++) { int x = front_video_rec(k_keys[i]); rec[i] = cur[i] = x >= 0 && x < k_n[i] ? x : 0; }
             for (int i = 0; i < NV; i++) { int rv = rec[i] >= 0 && rec[i] < k_n[i] ? rec[i] : 0, had_r = r[i] >= 0;
                 if (r[i] < 0) r[i] = rv;
                 if (v[i] < 0) v[i] = had_r ? r[i] : cur[i] >= 0 && cur[i] < k_n[i] ? cur[i] : r[i]; }   // 当前值缺：有存着的推荐就回推荐，都缺才按首次启动的当前值（含旧版偏好） | current value missing: back to the stored recommendation if there is one, the first-boot current value (with older preferences) only when both are missing
         }
         for (int i = 0; i < NV; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_rec[i], r[i]); }
         atomic_store(&g_loaded, 1);
-        if (miss && !first) { char mk[64] = ""; for (int i = 0; i < 2 * NV; i++) if (miss >> i & 1) snprintf(mk + strlen(mk), sizeof mk - strlen(mk), "%s%s%s", mk[0] ? " " : "", i >= NV ? "rec_" : "", k_keys[i % NV]);
+        if (miss && !first) { char mk[128] = ""; for (int i = 0; i < 2 * NV; i++) if (miss >> i & 1) snprintf(mk + strlen(mk), sizeof mk - strlen(mk), "%s%s%s", mk[0] ? " " : "", i >= NV ? "rec_" : "", k_keys[i % NV]);
             LOG("画面设置：%s 缺 / 越界的键 %s → 只补这几个（其余照读）", p, mk); }
-        LOG("画面设置：%s %s mode=%d res=%d up=%d，推荐 %d/%d/%d", first ? "首次启动定推荐值" : miss ? "读盘（补过缺的键）" : "读盘", p, v[0], v[1], v[2], r[0], r[1], r[2]);
+        { char rs[160]; strlcpy(rs, vals_str(r), sizeof rs); LOG("画面设置：%s %s %s，推荐 %s", first ? "首次启动定推荐值" : miss ? "读盘（补过缺的键）" : "读盘", p, vals_str(v), rs); }
         if (miss) save_locked();   // 补齐的整份写回 | write the completed file back
     }
     pthread_mutex_unlock(&g_mu);
@@ -104,6 +124,8 @@ int dm_video_get(const char *key) {   // 生效值；设置目录还不知道时
     return 0;
 }
 int dm_video_upscale(void) { return dm_video_get("up"); }
+int dm_video_aa_mode(void) { return dm_video_get("aa") == 1 ? 2 : 1; }   // 游戏渲染器的抗锯齿档位字节（hle_oe.c aa_tick 每拍读）：1 FXAA（原版）/ 2 SMAA 1x | the game renderer's AA mode byte (read every tick by aa_tick in hle_oe.c): 1 FXAA (original) / 2 SMAA 1x
+int dm_video_aniso(void) { static const int k[4] = { 0, 4, 8, 16 }; int a = dm_video_get("aniso"); return a >= 0 && a < 4 ? k[a] : 0; }   // 提交开头读（nvn_mtl.m aniso_latch）；0 = 原版 | read at the start of each submission (nvn_mtl.m aniso_latch); 0 = the original
 float dm_video_scale3d(void) {   // 手机：3D 清晰度（hle_oe.c s3_cfg 每拍读；> 0 才算数）；别的平台 0 = 不管 | phone: the 3D resolution (read every tick by s3_cfg in hle_oe.c; only > 0 counts); other platforms 0 = not ours
     static const float k[3] = { 0.75f, 0.85f, 1.0f };
     if (!DM_PHONE) return 0; load_once(); if (!atomic_load(&g_loaded)) return 0;
@@ -116,27 +138,37 @@ void dm_video_fullscreen_note(int on) {   // 玩家用菜单 / ⌃⌘F 切了全
 }
 static int shown(int k) { int p = atomic_load(&g_pend[k]); return p >= 0 ? p : atomic_load(&g_val[k]); }
 static int perf_up(void) { return DM_PHONE ? 0 : front_video_mfx_ok() ? 1 : 0; }   // 性能档的放大方式：手机 = 标准（省电），Mac = MetalFX（它很便宜） | Performance's upscaling: phone = Standard (saves power), Mac = MetalFX (cheap there)
+// 性能 / 品质档各键的值（t 0 = 性能，1 = 品质）；-1 = 这一档不管这个键。抗锯齿、各向异性只在 Mac 上归档管（手机页上没有这两行，档位不该暗改它们）
+// Each key's value in the Performance / Quality presets (t 0 = Performance, 1 = Quality); -1 = the preset leaves this key alone. Anti-aliasing and anisotropy belong to the presets on the Mac only (the phone page has no such rows,
+// so a preset must not change them behind the player's back)
+static int tier_of(int k, int t) {
+    switch (k) {
+    case K_RES: return t ? 2 : 0;
+    case K_UP: return t ? (front_video_mfx_ok() ? 1 : 0) : perf_up();
+    case K_AA: return DM_PHONE ? -1 : t;
+    case K_ANISO: return DM_PHONE ? -1 : t ? 3 : -1;
+    default: return -1;
+    }
+}
 static int preset_of(void) {
-    int m = shown(K_MODE), r = shown(K_RES), u = shown(K_UP), pu = front_video_mfx_ok() ? 1 : 0;
-    if (m == g_rec[K_MODE] && r == g_rec[K_RES] && u == g_rec[K_UP]) return P_REC;
-    if (r == 0 && u == perf_up()) return P_PERF;
-    if (r == 2 && u == pu) return P_QUAL;
+    int rec = 1; for (int k = 0; k < NV; k++) rec &= shown(k) == atomic_load(&g_rec[k]);
+    if (rec) return P_REC;
+    for (int t = 0; t < 2; t++) { int m = 1; for (int k = 0; k < NV; k++) { int x = tier_of(k, t); if (x >= 0) m &= shown(k) == x; } if (m) return t ? P_QUAL : P_PERF; }
     return P_CUSTOM;
 }
-static void apply_preset(int p) {   // 选了某档：改待定值（推荐 = 三项全回推荐；性能 / 品质只管分辨率与放大方式） | a preset was chosen: change pending values (Recommended = all three back to the recommendation; Performance / Quality set only resolution and upscaling)
-    int pu = front_video_mfx_ok() ? 1 : 0;
+static void apply_preset(int p) {   // 选了某档：改待定值（推荐 = 全部回推荐；性能 / 品质只管 tier_of 列的键） | a preset was chosen: change pending values (Recommended = everything back to the recommendation; Performance / Quality only the keys tier_of lists)Quality set only resolution and upscaling)
     if (p == P_REC) for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i]));
-    else if (p == P_PERF) { atomic_store(&g_pend[K_RES], 0); atomic_store(&g_pend[K_UP], perf_up()); }
-    else if (p == P_QUAL) { atomic_store(&g_pend[K_RES], 2); atomic_store(&g_pend[K_UP], pu); }
+    else if (p == P_PERF || p == P_QUAL) for (int k = 0; k < NV; k++) { int x = tier_of(k, p == P_QUAL); if (x >= 0) atomic_store(&g_pend[k], x); }
 }
 int dm_video_dirty(void) { int d = 0; for (int i = 0; i < NV; i++) { int p = atomic_load(&g_pend[i]); d |= p >= 0 && p != atomic_load(&g_val[i]); } return d; }
 void dm_video_on_uimsg(const char *cat, const char *act, const char *arg) {
     (void)arg; if (!cat || !act || strcmp(cat, "OptionsPanelMessage")) return;
     load_once(); if (!atomic_load(&g_loaded)) return;
-    if (!strcmp(act, "AcceptChanges")) { int ch = 0, mode = -1;
-        for (int i = 0; i < NV; i++) { int p = atomic_exchange(&g_pend[i], -1); if (p >= 0 && p != atomic_load(&g_val[i])) { atomic_store(&g_val[i], p); ch = 1; if (i == K_MODE) mode = p; } }
+    if (!strcmp(act, "AcceptChanges")) { int ch = 0, mode = -1, color = -1;
+        for (int i = 0; i < NV; i++) { int p = atomic_exchange(&g_pend[i], -1); if (p >= 0 && p != atomic_load(&g_val[i])) { atomic_store(&g_val[i], p); ch = 1; if (i == K_MODE) mode = p; if (i == K_COLOR) color = p; } }
         if (ch) { pthread_mutex_lock(&g_mu); save_locked(); pthread_mutex_unlock(&g_mu); }
         if (mode >= 0) front_video_fullscreen(mode);   // 显示模式当场切 | display mode switches at once
+        if (color >= 0) front_video_color(color);   // 色彩当场换（抗锯齿、各向异性由各自读设置的地方下一帧接上） | colour changes at once (anti-aliasing and anisotropy follow from where they read the setting, next frame)
         atomic_store(&g_repaint, 1); }
     else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_repaint, 1); }
     // 「默认」只管当前页签那一节（「附加」页签上不动画面设置，同原版各页签各管各的） | Default covers only the current tab's section (on the "Extras" tab it leaves the picture settings alone, as each original tab covers its own)
