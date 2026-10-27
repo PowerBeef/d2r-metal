@@ -83,22 +83,6 @@ static uint64_t find_unit(uint64_t G, int type, uint32_t id, int cls) {   // 服
     return 0;
 }
 
-// 原版系统提示：聊天栏一行「[游戏] …」+ 系统提示框（首领连战、刷怪积分牌 dm_kills.c 共用）。只许服务端线程调（同首领连战）
-// Original-game system notification: one chat bar line 「[游戏] …」([Game] ...) + the system notification box (shared by the boss rush and the kill board dm_kills.c). May only be called from the server thread (same as the boss rush)
-void dm_game_notice(uint8_t *main_base, const char *text) {
-    B = main_base; static char line[512]; strlcpy(line, text, sizeof line);   // 512：俄语的 iCloud 共享仓库冲突提示 234 字节，原先 200 字节的缓冲把它截在半个字上（dm_i18n.py BYTE_LIMITS 核） | 512: the Russian iCloud shared-stash conflict notice is 234 bytes, and the former 200-byte buffer cut it off in the middle of a character (checked by dm_i18n.py BYTE_LIMITS)
-    static uint64_t txt[3], who[6], o1[8], o2[8], o3[8], o4[8];
-    size_t n = strlen(line); txt[0] = (uint64_t)(uintptr_t)line; txt[1] = n; txt[2] = 0x8000000000000000ull | n;
-    const uint8_t *g = B + 0x2d52c88; memset(who, 0, sizeof who); *(uint32_t *)who = *(const uint32_t *)g; who[1] = *(const uint64_t *)(g + 8); who[2] = *(const uint64_t *)(g + 16); who[3] = 0x8000000000000000ull | who[2];
-    memset(o1, 0, sizeof o1); memset(o2, 0, sizeof o2); memset(o3, 0, sizeof o3); memset(o4, 0, sizeof o4);
-    ((void (*)(uint64_t, void *, int, int, void *, void *, void *, void *, uint64_t, uint64_t))(B + 0xab2ab0))((uint64_t)(uintptr_t)(B + 0x2e3d7d0), txt, 4, 0, who, o1, o2, o3, (uint64_t)(uintptr_t)o4, 0);
-    // 系统提示框（切难度生效时那个框）：界面消息 {NotificationMessage, SystemNotification}（FNV-1a 64）交给 0x3d8b74(文字, 消息)——
-    // 升级 / 任务更新的提示框也走这一句（0xab5c40、0x306d54）；文字是 UTF-8 串，同 0x7f5630 取出的本地化串
-    // System notification box (the box shown when a difficulty switch takes effect): the UI message {NotificationMessage, SystemNotification} (FNV-1a 64) is handed to 0x3d8b74(text, message) --
-    // the level-up / quest-update notification boxes also go through this call (0xab5c40, 0x306d54); the text is a UTF-8 string, same as the localized string fetched by 0x7f5630
-    { static uint64_t msg[4]; msg[0] = 0xd106c9eabf113da5ull; msg[1] = 0x8fa6af1ab5b75b23ull; msg[2] = 0; msg[3] = 1;
-      ((void (*)(const char *, void *))(B + 0x3d8b74))(line, msg); }
-}
 // 我们建的门的名牌（秘境门「大秘境」、首领连战门「Boss 连战」，不改原版字符串表里通用的「传送门」）。
 //   名牌：客户端取物件表记录（数据表根 +0x1548，每条 0x168）+0x42 的串键（342 / 298 都是 "portal"）→ 0x7f5630 取本地化串（0x442bc0 内 0x4447f8）。
 //   取串查的表：[main+0x2d71098] 为 0 时 main+0x2d71030（当前语言），否则 main+0x2d70ff0（英文）；表 {+0 桶数（2 的幂）, +8 桶数组}，桶里直接是首节点，
@@ -304,20 +288,8 @@ void dm_bossrush_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     R.last_t = t;
     int lv = unit_level(player); uint64_t room = unit_room(player); if (!lv || !room) return;
     boss_drop_watch(G, t);
-    // 测试开关 DM_TEST_WARP_LV=<拍>:<关卡号>（造现场用，亮度对比截图）：到这一拍照原版王座门的做法 0x634000(游戏, 玩家, 关卡, 11) 把人送进这个关卡，一局一次
-    // Test switch DM_TEST_WARP_LV=<tick>:<level id> (for setting up a scenario, brightness comparison screenshots): at this tick send the player into this level the way the original game's Throne door does, 0x634000(game, player, level, 11), once per run
-    { static int at = -1, wl; if (at < 0) { const char *e = getenv("DM_TEST_WARP_LV"); at = 0; if (e && sscanf(e, "%d:%d", &at, &wl) != 2) at = 0; }
-      if (at > 0 && t >= (uint32_t)at && lv != wl) { at = 0; LOG("测试 DM_TEST_WARP_LV：拍 %u 从关卡 %d 进 %d", t, lv, wl); ((void (*)(uint64_t, uint64_t, int, int))(B + 0x634000))(G, player, wl, 11); return; } }
     if (R.eligible < 0) { R.eligible = eligible(G, player); R.total = *(uint8_t *)(uintptr_t)(G + 0x104) == 2 ? 12 : 10;
         LOG("首领连战：本局%s资格（难度 %u，共 %d 关）", R.eligible ? "有" : "没有", *(uint8_t *)(uintptr_t)(G + 0x104), R.total); }
-    // 测试开关 DM_TEST_SPAWN=<拍>:<类号>:<dx>,<dy>（造现场用）：到拍在玩家格 + (dx, dy) 附近找空地刷一只怪（同连战刷首领：0x7160d0 找空地、0x7ce630 刷）。
-    // 首领顶部血条复现用（远处 / 画面边上的首领）
-    // Test switch DM_TEST_SPAWN=<tick>:<class id>:<dx>,<dy> (for setting up a scenario): at the tick, find open ground near player cell + (dx, dy) and spawn one monster (same as boss rush boss spawning: 0x7160d0 finds open ground, 0x7ce630 spawns).
-    // Used to reproduce the boss top health bar (bosses far away / at the edge of the screen)
-    { static int st = -1, at, cls, dx, dy; if (st < 0) { const char *e = getenv("DM_TEST_SPAWN"); st = e && sscanf(e, "%d:%d:%d,%d", &at, &cls, &dx, &dy) == 4 ? 0 : 1; }
-      if (!st && t >= (uint32_t)at) { st = 1; int x = 0, y = 0; unit_xy(player, &x, &y); int32_t pos[2] = { x + dx, y + dy }; uint64_t rr = free_spot(G, room, pos);
-          uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(B + 0x7ce630))(G, rr, 1, cls, pos[0], pos[1], 1, 0, 0x10) : 0;
-          LOG("DM_TEST_SPAWN：拍 %u 在 %d,%d（玩家 %d,%d）刷类号 %d → %s", t, pos[0], pos[1], x, y, cls, u ? "成" : "败"); } }
     if (!R.eligible) return;
     dm_door_label(B, G, DOOR_OBJ, "dmDoorBossRush", lv == LV_TOWN);
 

@@ -81,9 +81,9 @@ cp "$D/boot.txt" "$O/boot.txt" 2>/dev/null; [ -f "$D/pwc2s.jsonl" ] && mv "$D/pw
 # 真实 iCloud 闸：本该不同步的局出现了同步动作 = 连了真云端，这一局作废
 # Real iCloud gate: a sync action appearing in a run that should not sync = it connected to the real cloud, and this run is void
 cloud_guard_check "$O/boot.txt" || { BAD=1; echo "【红】这一局出现了 iCloud 同步动作，结果作废，立刻核云端目录" | tee "$O/fail.txt"; }; cloud_guard_clean "$D"
-# 换存档的局：进局后日志里的角色名（宿主每次进局都打「刷怪积分牌：「<角色名>」…」）必须是换进来那份存档里的角色，不是 = 挂的不是换进去的那份
-# Save-swap runs: the character name in the log after entering the run (the host prints 「刷怪积分牌：「<角色名>」…」(kill board: "<character name>"...) on every run entry) must be the character in the swapped-in save; if it is not = the save mounted is not the one swapped in
-if [ -n "${PW_SAVE:-}" ]; then WHO=$(LC_ALL=C sed -n 's/.*刷怪积分牌：「\([^」]*\)」.*/\1/p' "$O/boot.txt" 2>/dev/null | tail -1)
+# 换存档的局：进局后日志里的角色名（宿主每次进局都打「进局角色：「<角色名>」」，diag.c）必须是换进来那份存档里的角色，不是 = 挂的不是换进去的那份
+# Save-swap runs: the character name in the log after entering the run (the host prints 「进局角色：「<角色名>」」(character entering the run: "<character name>", diag.c) on every run entry) must be the character in the swapped-in save; if it is not = the save mounted is not the one swapped in
+if [ -n "${PW_SAVE:-}" ]; then WHO=$(LC_ALL=C sed -n 's/.*进局角色：「\([^」]*\)」.*/\1/p' "$O/boot.txt" 2>/dev/null | tail -1)
   if [ -n "$WHO" ] && [ ! -f "$C/$PW_SAVE/$WHO/$WHO.d2s" ]; then BAD=1; echo "【红】换存档没生效：进局的角色「${WHO}」不在 ${PW_SAVE} 里，这一局不算" | tee "$O/fail.txt"; fi; fi
 for f in "$D/${RID}"_*; do [ -f "$f" ] && mv "$f" "$O/$(basename "$f" | sed "s/^${RID}_//")"; done
 echo "计时：拷包 0 排锁 $((T_C - T_B)) 起包 $((T_D - T_C)) 运行 $((T_E - T_D)) 收尾 $(( $(date +%s) - T_E )) 启动次数 $TRY" | tee "$O/timing.txt"

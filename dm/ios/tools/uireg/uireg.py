@@ -385,11 +385,11 @@ def run(g):
     try: tm=open(f"{d}/timing.txt").read().strip()
     except OSError: tm="计时：没取到"
     # 进局的角色必须是脚本选的那一行（2026-10-12：手柄选人进的不是高亮的角色，各局判据只数了「选了一次、进了局」，没核进的是谁）。
-    # 宿主每次进局都打「刷怪积分牌：「<角色名>」…」；只核这一局第一次进局。
+    # 宿主每次进局都打「进局角色：「<角色名>」」（diag.c）；只核这一局第一次进局。
     # The character that enters the run must be the row the script selected (2026-10-12: selecting with the controller entered a character other than the highlighted one, and each run's criterion only counted "selected once, entered a run" without checking who entered).
-    # The host prints 「刷怪积分牌：「<角色名>」…」(kill board: "<character name>"...) on every run entry; only the first run entry of this run is checked.
+    # The host prints 「进局角色：「<角色名>」」(character entering the run: "<character name>", diag.c) on every run entry; only the first run entry of this run is checked.
     if g.who:
-        m=re.findall(r"刷怪积分牌：「([^」]+)」",log)
+        m=re.findall(r"进局角色：「([^」]+)」",log)
         rows.append((g.run,"（整局）该出现进局角色",f"进局的是选的那一行的角色「{g.who}」",(f"通：{m[0]}" if m and m[0]==g.who else f"不通：进的是「{m[0]}」" if m else "不通：日志里读不到进局角色"),""))
     return rows,wall,cap,red,tm
 def groups():

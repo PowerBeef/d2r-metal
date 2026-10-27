@@ -1119,6 +1119,14 @@ static void ui_move_ours(uint64_t w, int x) {   // 我们自己的控件（Touch
     if (!nm || strncmp(nm, "Touch", 5)) { static int lg; if (lg++ < 8) LOG("【红】界面：要挪的控件「%s」不是我们的，不写", nm ? nm : "?"); return; }
     int32_t *r = (int32_t *)(w + 0x70); if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w); }
 }
+// 编年史页签条右端的触屏关闭 X（布局 touch_layout.py _chronicle_touch 的 TouchCloseBox，两种模式共用这份布局）：手柄模式挪到屏外（手柄按 B 关），
+// 触屏模式放回布局里的位置（x = -998）。游戏主线程每帧调（dm_actions.c）
+// The touch close X at the right end of the Chronicle tab bar (TouchCloseBox in layout touch_layout.py _chronicle_touch; both modes share this layout): moved off screen in controller mode (the controller closes with B),
+// put back at its layout position (x = -998) in touch mode. Called every frame on the game main thread (dm_actions.c)
+void dm_chronicle_closex(uint64_t root) {
+    int dm_padmode_current(void); uint64_t cp = root ? ui_find(root, "ChroniclePanel", 0) : 0, cx = cp ? ui_find(cp, "TouchCloseBox", 0) : 0;
+    if (cx) ui_move_ours(cx, dm_padmode_current() ? 99999 : -998);
+}
 #define PG_REACH 112   // 个人仓库翻页箭头的外圈（布局单位，自箭头命中框边缘起） | outer ring of the personal stash page-flip arrows (layout units, from the edge of the arrow's hit box)
 static int pg_personal(uint64_t root) {   // 储藏箱开着且停在个人页（页签 0） | the stash is open and on the personal page (tab 0)
     uint64_t bk = ui_panel(root, "BankExpansionLayout"), tabs = bk && *(uint8_t *)(bk + 0x50) ? ui_find(bk, "BankTabs", 0) : 0; return tabs && TAB_SEL(tabs) == 0;

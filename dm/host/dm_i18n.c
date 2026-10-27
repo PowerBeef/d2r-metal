@@ -5,6 +5,8 @@
 //   · 生成 dm_i18n_tab.h（本文件编进去）：游戏画不到的地方（UIKit 弹框、资源下载页、分享文件名、底栏字形）按 dm_lang_group() 取。
 // 语言：游戏设过（SetLanguage 观测门）就以它为准；之前（资源下载页、进前端前）读存档 Settings/Settings.json 的 "Language"；
 //   没有设置文件 = 首次安装，按 iOS 系统语言（dm_sys_lang）。
+// 原版系统提示 dm_game_notice 用到的游戏地址：聊天栏追加 main+0xab2ab0（对象 main+0x2e3d7d0，发言人 main+0x2d52c88），系统提示框 main+0x3d8b74；取串 main+0x7f5630
+// Game addresses used by the original-game notification dm_game_notice: chat bar append main+0xab2ab0 (object main+0x2e3d7d0, speaker main+0x2d52c88), notification box main+0x3d8b74; string lookup main+0x7f5630
 #include "dm_i18n.h"
 #include "dm_i18n_tab.h"
 #include <TargetConditionals.h>
@@ -95,4 +97,21 @@ const char *dm_str(uint8_t *b, const char *key) {
     struct { const char *k; uint64_t n; } s = { key, strlen(key) };
     const char *r = ((const char *(*)(void *))(b + 0x7f5630))(&s);
     return r && *r && strcmp(r, key) ? r : dm_ui(key);   // 覆盖层里没有这个键（不该发生）就退回编译期表 | if the overlay lacks this key (should not happen), fall back to the compile-time table
+}
+
+// 原版系统提示：聊天栏一行「[游戏] …」+ 系统提示框（iCloud 冲突、百宝囊存放等共用）。只许服务端线程调：两个原版函数都不加锁，这里的缓冲也是静态的
+// Original-game system notification: one chat bar line 「[游戏] …」([Game] ...) + the system notification box (shared by the iCloud conflict notices, the pouch deposit, etc.). Server thread only: neither original function locks, and the buffers here are static
+void dm_game_notice(uint8_t *main_base, const char *text) {
+    uint8_t *B = main_base; static char line[512]; strlcpy(line, text, sizeof line);   // 512：俄语的 iCloud 共享仓库冲突提示 234 字节，原先 200 字节的缓冲把它截在半个字上（dm_i18n.py BYTE_LIMITS 核） | 512: the Russian iCloud shared-stash conflict notice is 234 bytes, and the former 200-byte buffer cut it off in the middle of a character (checked by dm_i18n.py BYTE_LIMITS)
+    static uint64_t txt[3], who[6], o1[8], o2[8], o3[8], o4[8];
+    size_t n = strlen(line); txt[0] = (uint64_t)(uintptr_t)line; txt[1] = n; txt[2] = 0x8000000000000000ull | n;
+    const uint8_t *g = B + 0x2d52c88; memset(who, 0, sizeof who); *(uint32_t *)who = *(const uint32_t *)g; who[1] = *(const uint64_t *)(g + 8); who[2] = *(const uint64_t *)(g + 16); who[3] = 0x8000000000000000ull | who[2];
+    memset(o1, 0, sizeof o1); memset(o2, 0, sizeof o2); memset(o3, 0, sizeof o3); memset(o4, 0, sizeof o4);
+    ((void (*)(uint64_t, void *, int, int, void *, void *, void *, void *, uint64_t, uint64_t))(B + 0xab2ab0))((uint64_t)(uintptr_t)(B + 0x2e3d7d0), txt, 4, 0, who, o1, o2, o3, (uint64_t)(uintptr_t)o4, 0);
+    // 系统提示框（切难度生效时那个框）：界面消息 {NotificationMessage, SystemNotification}（FNV-1a 64）交给 0x3d8b74(文字, 消息)——
+    // 升级 / 任务更新的提示框也走这一句（0xab5c40、0x306d54）；文字是 UTF-8 串，同 0x7f5630 取出的本地化串
+    // System notification box (the box shown when a difficulty switch takes effect): the UI message {NotificationMessage, SystemNotification} (FNV-1a 64) is handed to 0x3d8b74(text, message) --
+    // the level-up / quest-update notification boxes also go through this call (0xab5c40, 0x306d54); the text is a UTF-8 string, same as the localized string fetched by 0x7f5630
+    { static uint64_t msg[4]; msg[0] = 0xd106c9eabf113da5ull; msg[1] = 0x8fa6af1ab5b75b23ull; msg[2] = 0; msg[3] = 1;
+      ((void (*)(const char *, void *))(B + 0x3d8b74))(line, msg); }
 }

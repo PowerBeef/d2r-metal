@@ -284,10 +284,6 @@ static void fmt_thousands(char *o, size_t cap, long v) { char t[32]; int n = snp
     for (int i = 0; i < n && j + 2 < cap; i++) { if (i && (n - i) % 3 == 0) o[j++] = ','; o[j++] = t[i]; k++; } o[j] = 0; (void)k; }
 void dm_kills_ui_pump(void) {
     uint8_t *b = kb_base(); uint64_t bw = b ? kb_board() : 0; if (!bw) return;
-    // 编年史页签条右端的触屏关闭 X（布局 touch_layout.py _chronicle_touch 的 TouchCloseBox，两种模式共用这份布局）：手柄模式挪到屏外（手柄按 B 关），触屏模式放回布局里的位置
-    // The touch close X at the right end of the Chronicle tab bar (TouchCloseBox in layout touch_layout.py _chronicle_touch; both modes share this layout):
-    // moved off-screen in controller mode (the controller closes with B), put back at its layout position in touch mode
-    { int dm_padmode_current(void); uint64_t root = *(uint64_t *)(b + 0x2f05458), cp = root ? dm_ui_top(root, "ChroniclePanel") : 0, cx = cp ? kb_find(cp, "TouchCloseBox", 1) : 0; if (cx) kb_rect(cx, dm_padmode_current() ? 99999 : -998, 256, -1); }
     int on = atomic_load(&g_kb_on); kb_body(bw, on); if (!on) return;   // 打开编年史时那两条消息比面板挂上界面树早、回调里够不着它：这里每帧对齐一次 | When the chronicle opens, those two messages arrive before the panel is attached to the UI tree, so the callback cannot reach it: align once per frame here
     if (!B) B = b;
     // 手柄模式：原版编年史面板的焦点不认识这一页的控件——十字键上下 = 列表滚动、左右 = 上 / 下一幕、X = 难度筛选轮换（全部 → 普通 → 噩梦 → 地狱）、Y = 排序轮换

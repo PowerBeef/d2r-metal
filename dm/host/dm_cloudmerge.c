@@ -3,7 +3,7 @@
 // 这里在局内把本机那份里「云端没有的」物品和金币还给玩家：
 //   物品：开着储藏箱、人在箱子旁时逐件建进当前角色的背包（同百宝囊「放到背包」：读位流建物品 0x5793a0 + 0x6564e0 → 原版找空位 0x55f620
 //         → 读档放物品 0x6f1940 → 通知客户端 0x642f70），玩家自己拖进仓库；背包放不下就停，提示一次，下次开箱接着放。
-//   金币：加到共享页的金币属性 15（每页上限 250 万），照原版存取金币那条路通知客户端（dm_elysium.c stash_gold_notify）；放不下的留到下次。
+//   金币：加到共享页的金币属性 15（每页上限 250 万），照原版存取金币那条路通知客户端（本文件 dm_stash_gold_notify）；放不下的留到下次。
 // 挑哪些（去重）：mine.pack 里当前这一类共享仓库档（dm_stash_name：标准 / 专家 × 毁灭之王 / 资料片）逐页拆成单件位流（游戏自己的读位流函数，
 //   编年史仓库侧文件 <仓库名>.swvault 里的件本来就是单件位流，一起算；还回来的同样放进背包，玩家自己再存进编年史仓库），
 //   孔里镶的跟着母件），与云端（= 现在服务端共享页 + 高级仓库里的物品，原版写位流）按「位流去掉位置字段」比：
@@ -20,7 +20,7 @@
 // Here, in game, the items and gold in the local copy that "the cloud does not have" are returned to the player:
 //   Items: with the stash open and the player next to it, created one by one into the current character's inventory (same as pouch "put into inventory": create item from bitstream 0x5793a0 + 0x6564e0 → original free-slot search 0x55f620
 //         → place item on load 0x6f1940 → notify client 0x642f70); the player drags them into the stash. Stops when the inventory is full, shows a notice once, and continues on the next stash open.
-//   Gold: added to the shared page gold stat 15 (2.5 million cap per page), notifying the client via the original gold deposit path (dm_elysium.c stash_gold_notify); what does not fit waits for next time.
+//   Gold: added to the shared page gold stat 15 (2.5 million cap per page), notifying the client via the original gold deposit path (dm_stash_gold_notify in this file); what does not fit waits for next time.
 // What to pick (dedup): the shared stash file of the current type in mine.pack (dm_stash_name: standard / expert × Lord of Destruction / expansion) is split page by page into single-item bitstreams (the game's own bitstream read function;
 //   items in the Chronicle stash side file <stash name>.swvault are already single-item bitstreams and are counted too; returned ones also go into the inventory and the player stores them into the Chronicle stash again),
 //   socketed items follow their parent), and compared against the cloud (= items now in the server shared pages + advanced stash, bitstreams written the original way) by "bitstream with position fields stripped":
@@ -49,7 +49,33 @@
 const char *dm_save_workdir(void); const char *dm_stash_name(uint8_t *b); int dm_request_save(void); uint64_t dm_fs_commit_count(void);
 int dm_item_write(uint8_t *b, uint64_t it, uint8_t *buf); uint64_t dm_item_make_n(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out, int *bytes_out);
 void *dm_memfind(const uint8_t *h, size_t hn, const uint8_t *n, size_t nn); void dm_game_notice(uint8_t *main_base, const char *text); int dm_ui_panel_state(void);
-int dm_stash_pages(uint64_t G, uint64_t player, uint64_t pg[8], uint32_t id[8]); void dm_stash_gold_notify(uint8_t *b, uint64_t G, uint64_t player, uint32_t uid, int value); uint64_t dm_unit_inv(uint64_t u);
+// 玩家物品栏对象（换手位时取 +0x98），签名 0x01020304 才算；玩家能用的共享页单位；改仓库金币后通知客户端
+// The player's inventory object (+0x98 while the hands are swapped), valid only with signature 0x01020304; the shared page units the player can use; notifying the client after changing stash gold
+static uint64_t dm_unit_inv(uint64_t u) { uint64_t a0 = *(uint64_t *)(u + 0xa0), i = a0 && *(int32_t *)(a0 + 8) && *(uint64_t *)(u + 0x98) ? *(uint64_t *)(u + 0x98) : *(uint64_t *)(u + 0x90); return i && *(uint32_t *)i == 0x01020304 ? i : 0; }
+static int dm_stash_pages(uint64_t G, uint64_t player, uint64_t pg[8], uint32_t id[8]) {   // 玩家能用的共享页单位，按链表次序 | Shared page units the player can use, in linked-list order
+    uint64_t pi = dm_unit_inv(player); int n = 0;
+    for (uint64_t e = pi ? *(uint64_t *)(pi + 0x68) : 0; e && n < 8; e = *(uint64_t *)(e + 0x10)) { if (!*(uint8_t *)(e + 9) || *(uint8_t *)(e + 0xa)) continue;
+        uint32_t i = *(uint32_t *)e; uint64_t u = *(uint64_t *)(G + 0x2230 + 8 * (i & 0x7f)); while (u && *(uint32_t *)(u + 8) != i) u = *(uint64_t *)(u + 0x158);
+        if (u && *(uint32_t *)u == 0 && u != player && dm_unit_inv(u)) { pg[n] = u; id[n++] = i; } }
+    return n;
+}
+// 把某个仓库单位的金币新值告诉客户端：照原版存取金币处理函数（包 0x27，main+0x6d7fb0）改完属性后的那一段（0x6d8390–0x6d8484）——
+// 连接对象 = [[玩家+0x10]+0xf0]，发送口 = 全局对象 main+0x2d7f3d8 的虚函数 +0x28(对象, 连接号 [连接], {包头, 包尾})；
+// 先按它的条件补一个拍号包 2d [u32 连接+0x6c0]（连接 +0x6c4 记着上次发过的拍号），再发 20 [u32 属性号 15][u32 单位 id][u32 新值]。
+// 只改服务端属性不发这个包，当局箱子界面上金币还是旧数（mini 实测显示 0），要等下次进局才对
+// Tell the client the new gold value of a stash unit: follows the section (0x6d8390–0x6d8484) after the attribute change in the original game's deposit / withdraw gold handler (packet 0x27, main+0x6d7fb0) --
+// connection object = [[player+0x10]+0xf0], send port = virtual function +0x28 of the global object main+0x2d7f3d8 (object, connection number [connection], {packet head, packet tail});
+// first, under its condition, add a tick number packet 2d [u32 connection+0x6c0] (connection +0x6c4 records the tick number last sent), then send 20 [u32 stat number 15][u32 unit id][u32 new value].
+// If only the server-side stat is changed without sending this packet, the gold in the stash UI still shows the old number for the current run (measured on the second Mac: shows 0) and is only right on the next run entry
+static void dm_stash_gold_notify(uint8_t *b, uint64_t G, uint64_t player, uint32_t uid, int value) {
+    uint64_t pd = *(uint64_t *)(player + 0x10), cn = pd ? *(uint64_t *)(pd + 0xf0) : 0; if (!cn) return;
+    uint64_t obj = (uint64_t)(uintptr_t)(b + 0x2d7f3d8); void (*send)(uint64_t, uint32_t, void *) = (void *)(uintptr_t)*(uint64_t *)(*(uint64_t *)obj + 0x28); struct { uint8_t *a, *z; } rg;
+    uint32_t seq = *(uint32_t *)(cn + 0x6c0); *(uint32_t *)(G + 0x19050) = 1;
+    if (*(uint32_t *)(cn + 0x6c4) != seq) { uint64_t g2 = *(uint64_t *)(cn + 0x2e0); int busy = g2 && *(uint32_t *)(g2 + 0x19050) != 0;
+        if (!(*(int32_t *)(cn + 0x99c) >= 1 && *(uint8_t *)(cn + 0x9a4) && !busy)) { uint8_t p2[5] = { 0x2d }; memcpy(p2 + 1, &seq, 4); *(uint32_t *)(cn + 0x6c4) = seq; rg.a = p2; rg.z = p2 + 5; send(obj, *(uint32_t *)cn, &rg); } }
+    uint8_t pk[13] = { 0x20 }; uint32_t st = 15; memcpy(pk + 1, &st, 4); memcpy(pk + 5, &uid, 4); memcpy(pk + 9, &value, 4); rg.a = pk; rg.z = pk + 13; send(obj, *(uint32_t *)cn, &rg);
+    *(uint32_t *)(G + 0x19050) = 0;
+}
 int dm_cloud_pack_each(const char *path, void (*cb)(const char *rel, const uint8_t *d, uint32_t n, void *ctx), void *ctx);
 
 #if __has_include("stash_seed.h")   // 新设备共享仓库的预置（公开仓库不带：没有就当预置金币 0） | Preset shared stash for new devices (not in the public repository: if absent, preset gold is 0)

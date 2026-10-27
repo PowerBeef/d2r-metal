@@ -919,16 +919,32 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     if (h.valid) for (int b = 0; b < 128; b++) { uint64_t m = 0; if (!tk_rd(G + 0x2630 + 8 * b, &m, 8)) continue;
         for (int k = 0; m && k < 4096; k++) { uint32_t mode = 0; if (tk_rd(m + 0xC, &mode, 4) && mode != 0 && mode != 12) h.monsters++; if (!tk_rd(m + 0x158, &m, 8)) break; } }
     static int logged;
+    // 每局第一次读到受控玩家时记一行角色名（新的一局 = G 变了或拍号倒退）：dm/ios/tools/uireg 的选人核对、run_mac.sh 的换存档核对读这一行
+    // Log the character name once per run, when the controlled player is first read (a new run = G changed or the tick number went back): read by the character-selection check of dm/ios/tools/uireg and the save-swap check of run_mac.sh
+    { static uint64_t rg; static uint32_t rt; uint32_t tq = 0; uint64_t pd = 0; char nm[64] = "";
+      if (player && tk_rd(G + 0x170, &tq, 4)) { if (G != rg || tq < rt) { if (tk_rd(player + 0x10, &pd, 8) && pd && tk_rd(pd, nm, sizeof nm - 1) && nm[0]) { nm[sizeof nm - 1] = 0; LOG("进局角色：「%s」", nm); rg = G; } } rt = tq; } }
     g_player_unit = player; { uint8_t gv; extern _Atomic int g_dm_game_ver; if (tk_rd(G + 0x106, &gv, 1)) atomic_store(&g_dm_game_ver, gv); }   // 房间初始化要的数据版本参数（dm_world.c 小地图标出小站与出入口用） | Data version parameter needed for room initialization (used by dm_world.c to mark waypoints and entrances/exits on the minimap)
     { uint32_t tq = 0; static int once; const char *tg = getenv("DM_TEST_GOLD"); if (tg && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= 30 && !once++) ((void (*)(uint64_t, int, int, int))(main->base + 0x5bc1f0))(player, 14, atoi(tg), 0); }   // 测试开关 DM_TEST_GOLD=<数>：进局第 30 拍把身上金币设成该数（验金币数量框用；标准存档金币为 0，数量弹窗开不出来） | Test switch DM_TEST_GOLD=<amount>: at tick 30 after joining the run set the gold on person to that amount (for verifying the gold amount box; the standard save has 0 gold, so the amount popup cannot be opened)
     // 测试开关 DM_TEST_GOTO_LEVEL=<拍>:<关卡>[;<拍>:<关卡>…]（造现场用）：到拍调原版换关 main+0x634000(游戏, 玩家, 关卡, 11)——王座进世界之石大殿那一下（0x755d38），
     // 可跨幕、不要求开过那一幕的小站（新建的标准术士也能进；小站传送 0x6aaea0 对没开那幕的角色会断言 main+0x6ab2d8）。小地图终点逐图核对用
     // Test switch DM_TEST_GOTO_LEVEL=<tick>:<level>[;<tick>:<level>...] (for test setup): at the tick call the original game's level change main+0x634000(game, player, level, 11) -- the one used going from the Throne into the Worldstone Chamber (0x755d38);
     // it can cross acts and does not require that act's waypoint to have been activated (a freshly created standard Warlock can enter too; waypoint travel 0x6aaea0 asserts at main+0x6ab2d8 for a character that has not unlocked that act). Used for checking minimap goals map by map
-    { static char q[300]; static int init; uint32_t tq = 0; if (!init) { init = 1; const char *e = getenv("DM_TEST_GOTO_LEVEL"); if (e) strlcpy(q, e, sizeof q); }
+    { static char q[300]; static int init; uint32_t tq = 0; if (!init) { init = 1; const char *e = getenv("DM_TEST_GOTO_LEVEL"); if (!e) e = getenv("DM_TEST_WARP_LV"); if (e) strlcpy(q, e, sizeof q); }
       if (q[0] && main && player && tk_rd(G + 0x170, &tq, 4)) { unsigned at = 0, to = 0; int nn = 0;
           if (sscanf(q, "%u:%u%n", &at, &to, &nn) >= 2 && tq >= at) { const char *rest = q + nn + (q[nn] == ';'); memmove(q, rest, strlen(rest) + 1);
               ((void (*)(uint64_t, uint64_t, int, int))(main->base + 0x634000))(G, player, (int)to, 11); LOG("DM_TEST_GOTO_LEVEL：拍 %u 换到关卡 %u", tq, to); } } }
+    // DM_TEST_WARP_LV=<拍>:<关卡> 是上面的旧名（首领连战删掉时并进来；docs/android-notes 里的复现命令还用它）
+    // DM_TEST_WARP_LV=<tick>:<level> is the old name of the switch above (merged in when the boss rush was removed; the reproduction commands in docs/android-notes still use it)
+    // 测试开关 DM_TEST_SPAWN=<拍>:<类号>:<dx>,<dy>（造现场用）：到拍在玩家格 + (dx, dy) 附近找空地刷一只怪——原版找空地 main+0x7160d0(游戏, 房间, 坐标, 3, 0x400, &房间, 4, 100)、
+    // 原版刷怪 main+0x7ce630(游戏, 房间, 1, 类号, x, y, 1, 0, 0x10)（远处 / 画面边上的首领顶部血条复现用）
+    // Test switch DM_TEST_SPAWN=<tick>:<class>:<dx>,<dy> (for test setup): at the tick, find open ground near the player cell + (dx, dy) and spawn one monster -- the original free-spot search main+0x7160d0(game, room, coords, 3, 0x400, &room, 4, 100),
+    // the original spawn main+0x7ce630(game, room, 1, class, x, y, 1, 0, 0x10) (for reproducing the boss top health bar with bosses far away / at the screen edge)
+    { static int st = -1, at, cls, dx, dy; uint32_t tq = 0; if (st < 0) { const char *e = getenv("DM_TEST_SPAWN"); st = e && sscanf(e, "%d:%d:%d,%d", &at, &cls, &dx, &dy) == 4 ? 0 : 1; }
+      uint64_t pp = 0, room = 0; uint16_t c[4] = {0};
+      if (!st && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= (uint32_t)at && tk_rd(player + 0x38, &pp, 8) && pp && tk_rd(pp, c, 8) && tk_rd(pp + 0x20, &room, 8) && room) { st = 1;
+          int32_t pos[2] = { c[1] + dx, c[3] + dy }; uint64_t rr = 0; ((void (*)(uint64_t, uint64_t, int32_t *, int, int, uint64_t *, int, int))(main->base + 0x7160d0))(G, room, pos, 3, 0x400, &rr, 4, 100);
+          uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(main->base + 0x7ce630))(G, rr, 1, cls, pos[0], pos[1], 1, 0, 0x10) : 0;
+          LOG("DM_TEST_SPAWN：拍 %u 在 %d,%d（玩家 %d,%d）刷类号 %d → %s", tq, pos[0], pos[1], c[1], c[3], cls, u ? "成" : "败"); } }
     // 测试开关 DM_TEST_MAP_FULL=<拍>：到拍切到全屏地图（同触摸点小地图，dm_ui_map_full；要小地图本来开着）
     // Test switch DM_TEST_MAP_FULL=<tick>: at the tick switch to the full-screen map (same as tapping the minimap by touch, dm_ui_map_full; the minimap must already be open)
     { static int at = -1; uint32_t tq = 0; if (at < 0) { const char *e = getenv("DM_TEST_MAP_FULL"); at = e ? atoi(e) : 0; }
