@@ -1,48 +1,66 @@
-# D2R Metal
-
-**Diablo II: Resurrected with the Reign of the Warlock expansion, running natively on Apple silicon Macs, iPhones and iPads.**
-
 <p align="center">
-  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/3b-mac-improved-1920-metalfx.jpg" width="100%" alt="The game in full screen on a Mac with a 2560 × 1440 screen: rendered at 1920 × 1080 and enlarged with MetalFX">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/banner-hero.jpg" width="100%" alt="D2R Metal: Diablo II: Resurrected and Reign of the Warlock, the game as it shipped, running natively on Apple silicon Macs, iPhones and iPads">
 </p>
 
-This is the game's own program — the Nintendo Switch release, from files you own — running directly on Apple hardware, with its graphics redrawn through Metal. It is not an emulator, cloud gaming or streaming, and it plays fully offline.
+<p align="center">
+  <img alt="macOS 15 and later" src="https://img.shields.io/badge/macOS-15%2B-a07638?style=for-the-badge&labelColor=1a110d">
+  <img alt="iOS and iPadOS 18 and later" src="https://img.shields.io/badge/iOS%20%2F%20iPadOS-18%2B-a07638?style=for-the-badge&labelColor=1a110d">
+  <img alt="Metal 4 and MetalFX" src="https://img.shields.io/badge/Metal%204-MetalFX-7a1d12?style=for-the-badge&labelColor=1a110d">
+  <img alt="Plays offline" src="https://img.shields.io/badge/plays-offline-7a1d12?style=for-the-badge&labelColor=1a110d">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-5a4a3a?style=for-the-badge&labelColor=1a110d">
+</p>
 
-D2R Metal is a fork of [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile) by [@jhaizhou-ops](https://github.com/jhaizhou-ops), who built the port itself. This fork focuses on Apple platforms only and adds a sharper picture through MetalFX, picture settings inside the game's own Options, a Mac App that behaves like a Mac game, an on-screen keyboard for controller players, and safer saves. Changes that suit upstream are sent back to it.
+<p align="center"><b>Diablo II: Resurrected with Reign of the Warlock, the way it shipped,<br>running natively on Apple silicon Macs, iPhones and iPads.</b></p>
 
-Mac (Apple silicon) · iPhone and iPad · Game: Switch release 1.0.34.0 with Reign of the Warlock (PC 3.3.94012) · MIT license · **Bring your own game files**
+This is the game's own program, the Nintendo Switch release, built from files you own and run directly on Apple hardware, with its graphics redrawn through Metal. It is not an emulator, cloud gaming or streaming, and it plays fully offline.
 
-## Highlights
+<p align="center">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/banner-plaques.jpg" width="100%" alt="22 additions left out to stay close to the original. As shipped: rules, drops, economy, skills and stash. Native: Apple silicon, Metal 4, MetalFX. Offline: your own game files, no game servers.">
+</p>
 
-- **A sharper picture.** MetalFX, Apple's edge-aware upscaler, enlarges the picture instead of a plain stretch.
-- **Picture settings in the game's Options.** Resolution, full screen, upscaling, frame rate — on a Video tab drawn with the game's own selectors.
-- **A real Mac game.** Full screen, mouse wheel and trackpad scrolling, keyboard and controller, saves on quit.
-- **Type with a controller.** When the game asks for a name or an amount, an in-game keyboard appears; type on the keyboard or click and it steps aside for a regular text box.
-- **Saves you can trust.** Quitting, minimizing or a failed write no longer loses progress.
-- **Built on D2R Mobile:** touch controls, controller support, minimap guidance and more.
-- **The game as shipped.** Upstream additions that change its rules, economy or storage, or play it for you, are left out: the Greater Rift, Boss Rush, Elysium mode, the Kill Board, free town portals, free identify, vendor restocks on demand, auto-drink and buff recasting, the difficulty loot filter, the minimap marks, the bottom bar's difficulty selector, and the extra stash space (wide stash, extra pages, Trove, Pouch, Chronicle vault).
+## The game as it shipped
 
-## Mac and iPhone / iPad at a glance
+> **D2R Metal changes the platform, not the game.**
 
-| | Mac | iPhone / iPad |
+D2R Metal is a fork of [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile) by [@jhaizhou-ops](https://github.com/jhaizhou-ops), who did the hard part: getting the game itself to run on Apple hardware, with touch controls, controller support and five languages. D2R Mobile also offers its own additions on top of the game, such as new endgame modes, town conveniences, automation, extra storage and map aids, for players who want them.
+
+D2R Metal takes a different path and stays as close as it can to the game Blizzard shipped: the same rules, drop rates, economy and stash. Its own work goes into how that game runs and looks on Apple hardware.
+
+| What D2R Metal works on | What it keeps as the game shipped |
+|---|---|
+| Graphics redrawn through Metal 4, sharpened with MetalFX | Skills, their caps and every class |
+| A Mac App that behaves like a Mac game | Drop rates, loot and what vendors stock |
+| Touch controls and controller support | Identifying, portals, repairs and gambling at their usual price |
+| An in-game keyboard for controller players | The stash: the game's own 10 columns and tabs |
+| Saves that survive quitting, the background and a full disk | The automap, with nothing added to it |
+| Picture settings inside the game's own Options | Difficulty: the game's own Players setting |
+
+### Where D2R Metal differs from D2R Mobile
+
+To stay close to the original, this fork leaves out 22 of D2R Mobile's additions. They are left out of the code rather than switched off, so the game underneath is the original:
+
+| Area | In D2R Mobile | In D2R Metal, as in the original game |
 |---|---|---|
-| Picture drawn at | 1600 × 900 to 2560 × 1440 | The screen's full resolution |
-| 3D world | Same as the picture | 75, 85 or 100% |
-| MetalFX enlarges | The whole picture | The 3D world |
-| First launch | Full screen, sized for your screen | 3D at 75% |
-| When frames drop | Keeps the 3D resolution | Lowers it for a while |
-| Controls | Keyboard, mouse, trackpad, controller | Touch, controller |
-| Saves | On quit and when minimized | When sent to the background |
-| System | macOS 26 (15 – 25: older-API build) | iOS 26 (18 – 25: older-API build) |
+| Endgame | Greater Rift (with six extra mercenary slots, a skill cap of 40 and a Hell gambling bonus) · Boss Rush · Elysium mode · Kill Board | The game's own Acts, Terror Zones and skill cap |
+| Town services | Free Town Portal · free identify · vendors' Refresh Stock | A scroll or a tome charge; a scroll, a tome or Cain; vendors restock as the game decides |
+| Automation | Auto-drink · mercenary auto-feed · auto-recast buffs · rune and gem auto-stash · Runeword helper | Potions, buffs, runes and recipes are handled by hand |
+| Loot | A loot filter set by difficulty | Drops shown as the game shows them |
+| Storage | 14-column stash with four extra personal pages · Trove · Pouch · Deposit button · Chronicle vault | The game's own stash: 10 columns, one personal page, five shared pages and the gem, material and rune tabs |
+| Map and interface | Minimap marks (exits, waypoints, quest goals) · a difficulty selector in the iPhone bottom bar · a Game Difficulty row in the controller pause menu | The automap fills in as you explore; the player count is set on **Options → Settings → Offline Difficulty Scaling** |
+| Game code | Two side effects of a community offline fix: Druid skills right after a shapeshift, and the Warlock's summons walking without their running animation | The game's own code; only the part of the fix that lets it run offline is kept |
 
-The picture rows are settings you can change in Options; the details are below.
+Saves from D2R Mobile load here; items kept in its extra stash space (the wider columns, extra pages, Pouch or vault) don't carry over.
+
+Some of D2R Mobile's conveniences are kept. On the **Extras** tab of Options, each one a switch: light beams on valuable drops, item notes, potion pickup and belt refill, and a buzz on valuable drops (iPhone). Always on: a new game starts beside the town's waypoint, and the pause menu has **Quick Restart** (save, exit and rejoin with the same character and difficulty).
+
+<p align="center"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/divider.png" width="400" alt=""></p>
 
 ## A sharper picture with MetalFX
 
-The two platforms enlarge different things, and D2R Metal puts MetalFX on both:
+MetalFX is Apple's edge-aware upscaler. D2R Metal puts it where each platform enlarges the picture:
 
-- **Mac**: the whole game is drawn below your screen's resolution and enlarged to the window or screen at the last step. Upstream uses a plain stretch; here MetalFX does it ([4ac0543](https://github.com/PowerBeef/d2r-metal/commit/4ac0543)).
-- **iPhone / iPad**: the interface is drawn at the screen's full resolution, but the 3D world is drawn at 75% and scaled back up by the game's own pass (a bilinear stretch with light sharpening). MetalFX replaces that pass ([7c2f892](https://github.com/PowerBeef/d2r-metal/commit/7c2f892)).
+- **Mac**: the whole game is drawn below your screen's resolution and enlarged at the last step, with MetalFX in place of a plain stretch.
+- **iPhone / iPad**: the interface is drawn at the screen's full resolution, but the 3D world is drawn at 75% and scaled back up by the game's own pass (a bilinear stretch with light sharpening). MetalFX replaces that pass.
 
 Full frames from the same build and the same spot; only the setting changed. Click one for full size.
 
@@ -60,79 +78,64 @@ Full frames from the same build and the same spot; only the setting changed. Cli
 <td><img width="440" alt="iPhone 17 Pro, 3D at 75% with MetalFX" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/7b-iphone-improved-75-metalfx.jpg" /></td>
 </tr></table>
 
-What it costs is measured in [For developers](#measured-on-apple-hardware): about 1 ms of GPU time per frame on a Mac, about 0.6 ms on an iPhone 17 Pro, which still holds 60 fps.
+It costs about 1 ms of GPU time per frame on a Mac and about 0.6 ms on an iPhone 17 Pro, which still holds 60 fps (details under *For developers*, below).
 
-## Picture settings in the game's Options
+## Settings in the game's own Options
 
-Options has five tabs on both platforms: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**. The Video tab holds the picture settings, drawn with the game's own selectors and text:
+Options has five tabs on both platforms: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**, all drawn with the game's own selectors, checkboxes and text.
 
-- **Mac**: Display Mode (Windowed / Fullscreen), Resolution (1600 × 900 / 1920 × 1080 / 2560 × 1440), Graphic Presets, Upscaling (Standard / MetalFX), Frame Rate, Frame Drops.
-- **iPhone / iPad**: 3D Resolution (75% / 85% / 100%, applied immediately), Graphic Presets, Upscaling, Frame Rate, Frame Drops.
-- **Frame Rate**: 60 fps, or 30 fps to save power and run cooler.
-- **Frame Drops**: *Lower 3D Res* lets the game draw the 3D world at a lower resolution while frames are dropping and bring it back afterwards; *Keep 3D Res* never lowers it. Phones default to Lower; the Mac defaults to Keep, since its GPU has headroom and its rare drops are short stutters a lower resolution doesn't fix ([b0891c8](https://github.com/PowerBeef/d2r-metal/commit/b0891c8)).
-- **Recommended** is worked out at first launch. On a Mac: full screen, the highest resolution up to three quarters of the screen's width (2560 × 1440 only on Pro, Max and Ultra chips), and MetalFX whenever the picture is enlarged. On iPhone and iPad: 3D at 75% with MetalFX.
-- Apply, Discard and Default work like the game's own option pages, and Default resets only the tab you are on.
+- **Video**: on the Mac, Display Mode, Resolution (1600 × 900 to 2560 × 1440), Graphic Presets and Upscaling (Standard / MetalFX); on iPhone and iPad, 3D Resolution (75 / 85 / 100%), Graphic Presets and Upscaling. Both have **Frame Rate** (60 fps, or 30 to save power) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
+- **Recommended** is worked out at first launch: on a Mac, full screen at the highest resolution that suits its screen and chip, with MetalFX whenever the picture is enlarged; on iPhone and iPad, 3D at 75% with MetalFX.
+- **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
+- Apply, Discard and Default work like the game's own option pages; Default resets only the tab you are on.
 
 <p align="center">
   <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/2-mac-upscaling-changed.jpg" width="49%" alt="The Mac Video tab: Display, Graphics, Frame Rate and Frame Drops">
-  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/4-mac-extras-tab.jpg" width="49%" alt="The Extras tab with the game's own checkbox highlight">
-</p>
-<p align="center">
-  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/6-ios-video-and-extras.jpg" width="98%" alt="The iOS Video and Extras tabs">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/10-mac-settings-player-count.jpg" width="49%" alt="The Settings tab with the game's own Offline Difficulty Scaling row">
 </p>
 
-## On the Mac
+## Mac and iPhone / iPad
 
-- **Full screen** at launch when Display Mode says so; View → Full Screen (⌃⌘F) updates the setting.
-- **Mouse wheel and trackpad** scroll the game's lists; drag scroll bars and sliders; click Apply, Default and Discard.
-- **Keyboard and controller** move a highlight that looks like the game's own, on the new Video and Extras tabs too.
-- **Typing with a controller**: naming a character, entering an amount of gold or searching the Chronicle brings up an in-game keyboard, drawn in the game's style with the game's own fonts. The D-pad or stick moves, A types, B deletes, X switches case, + confirms; the button hints match your Switch, Xbox or PlayStation controller. Names follow the game's rule, an empty name picks a random one, and the gold pad has Half and Max ([03a0bda](https://github.com/PowerBeef/d2r-metal/commit/03a0bda)).
-- **Typing with the keyboard**: the text box is a sheet on the game window, in your language, with the same name and amount rules. Press a key or click while the on-screen keyboard is up and it hands over to the sheet, keeping what you typed; press a controller button and it comes back.
-- **Saves** on every quit, including from the Dock, at logout and with a text box still open; minimizing is treated like an iPhone going to the background.
-- Clicks on the black bars around the picture no longer reach the game, and a key released while ⌘ is held no longer leaves your character walking.
+| | Mac | iPhone / iPad |
+|---|---|---|
+| Controls | Keyboard, mouse, trackpad, controller | Touch, controller |
+| Picture drawn at | 1600 × 900 to 2560 × 1440 | The screen's full resolution, 3D at 75–100% |
+| MetalFX enlarges | The whole picture | The 3D world |
+| When frames drop | Keeps the 3D resolution | Lowers it for a while |
+| Saves | On every quit and when minimized | When sent to the background |
+| System | macOS 26 (15–25: older-API build) | iOS 26 (18–25: older-API build) |
+
+**On the Mac**, it behaves like a Mac game: full screen at launch (View → Full Screen updates the setting), the mouse wheel and trackpad scroll the game's lists, scroll bars and sliders drag, and keyboard and controller move a highlight drawn like the game's own. The Mac guide, with keys, saves, iCloud and moving saves over from an iPhone, is [docs/MAC.md](docs/MAC.md).
+
+**Typing with a controller**: naming a character or entering an amount of gold brings up an in-game keyboard in the game's own style and fonts, with button hints for Switch, Xbox or PlayStation controllers. Press a key, click or touch the screen and it steps aside for a regular text box, keeping what you typed (on iPhone and iPad it is built but not yet tried on a device).
 
 <p align="center">
   <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/8-mac-controller-keyboard.jpg" width="100%" alt="Naming a character with a controller on the Mac: the in-game keyboard under the game's name box">
 </p>
 
-The Mac guide — keys, mouse, saves, iCloud and moving saves over from an iPhone — is [docs/MAC.md](docs/MAC.md).
-
-## On iPhone and iPad
-
-- **Touch controls** rebuilt for fingers, and **controllers** with Xbox and PlayStation button prompts (from D2R Mobile).
-- **3D Resolution** (75 / 85 / 100%) and MetalFX on the Video tab, applied as soon as you press Apply.
-- **Saves** when the app goes to the background, so swiping it away doesn't lose progress.
-- The on-screen controller keyboard is in the iPhone and iPad app too (touching the screen switches to the system text box); it has been built but not yet tried on a device.
-
 ## Saves you can trust
 
-- The Mac App saves on every system quit and treats minimizing like iOS going to the background ([112400c](https://github.com/PowerBeef/d2r-metal/commit/112400c)); quitting with a name or gold box open still saves ([a8714ad](https://github.com/PowerBeef/d2r-metal/commit/a8714ad)).
-- Save requests from the menus are carried out on the game thread ([1f84541](https://github.com/PowerBeef/d2r-metal/commit/1f84541)).
-- A damaged shared stash can no longer hang iCloud sync ([5bfed70](https://github.com/PowerBeef/d2r-metal/commit/5bfed70)).
-- One failed save-file open (a full disk, for example) no longer stops every later save until the game restarts: that save is refused and you are told, and the next one commits ([715ed80](https://github.com/PowerBeef/d2r-metal/commit/715ed80)).
+- The Mac App saves on every quit, including from the Dock, at logout and with a text box still open; minimizing is treated like an iPhone going to the background.
+- The iPhone app saves when it goes to the background, so swiping it away doesn't lose progress.
+- A failed save (a full disk, for example) is refused with a message, and the next one commits; before, one failure silently stopped every later save.
+- A damaged shared stash can no longer hang iCloud sync.
 
-These came out of a full audit of the port (111 findings), a later bug hunt with sanitizers, Metal validation and static analysis, and a study of how the game itself saves.
+These came out of a full audit of the port, a bug hunt with sanitizers and Metal validation, and a study of how the game itself saves.
 
-## What comes from D2R Mobile
-
-Upstream's port is here and kept in sync: the original program running unchanged (every class, Runeword and drop rule as shipped), touch controls rebuilt for fingers, controller support and minimap guidance, and five languages (English, Chinese, Spanish, Russian and Korean). Upstream's [README](https://github.com/jhaizhou-ops/d2r-mobile#readme) shows them with screenshots.
-
-Upstream features that change the game's rules or economy, or play part of it for you, are removed here, so the game plays as shipped: the Greater Rift (with its six extra mercenary slots and the skill cap of 40), the Endgame Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify, the vendor's Refresh Stock button, auto-drink, mercenary auto-feed, auto-recast buffs, the loot filter set by difficulty, the Runeword helper, and the extra storage: the 14-column stash with four extra personal pages, the Trove, the Pouch (with its auto-stash and Deposit button) and the Chronicle vault. The minimap marks (exits, waypoints and quest goals drawn on every map) are gone too, and so are two byte patches from the community offline fix that changed game logic (Druid skills right after a shapeshift, the Warlock's summons walking without their running animation). The iPhone bottom bar no longer carries a difficulty selector: the player count is set on the game's own Offline Difficulty Scaling row in Options, as on the Mac. Identifying takes a scroll, a tome or Cain again, a town portal costs a scroll or a tome charge, vendors restock as the game decides, potions and buffs are yours to use, and the stash is the game's own 10 columns. Saves made with those features still load, but nothing is migrated: items kept in the extra columns, pages, Pouch or vault are not carried over.
-
-**This repository contains and distributes no game content**: no game program, art, text, data table or shader. Everything is generated on your own machine from your own files ([docs/GAME_FILES.md](docs/GAME_FILES.md); the interface information the port relies on is listed in [docs/DERIVED.md](docs/DERIVED.md)).
+<p align="center"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/divider.png" width="400" alt=""></p>
 
 ## Which devices are supported
 
-The graphics layer needs Metal 3, so the minimum is an **A14 or M1 chip**. A17 Pro means iPhone 15 Pro and later and iPhone 16 and later; A14 – A16 covers the iPhone 12 to 14 families and the iPhone 15 / 15 Plus.
+The graphics layer needs Metal 3, so the minimum is an **A14 or M1 chip**.
 
 | Device | Plays? | What you need |
 |---|---|---|
-| Mac, M1 or later | Yes | macOS 26, or 15 – 25 with the [older-API build](docs/OLDER_SYSTEMS.md) |
-| iPhone / iPad, A17 Pro or M chip | Yes | iOS 26, or 18 – 25 with the older-API build |
-| iPhone / iPad, A14 – A16 | Yes | Also a [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
+| Mac, M1 or later | Yes | macOS 26, or 15–25 with the [older-API build](docs/OLDER_SYSTEMS.md) |
+| iPhone / iPad, A17 Pro or M chip | Yes | iOS 26, or 18–25 with the older-API build |
+| iPhone / iPad, A14–A16 | Yes | Also a [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
 | A13 and older, Intel Macs | No | — |
 
-Devices with 4 GB of memory run, but tightly. Apple TV, Android and HarmonyOS versions exist in [upstream](https://github.com/jhaizhou-ops/d2r-mobile); this fork doesn't build or test them.
+A17 Pro means iPhone 15 Pro and later and iPhone 16 and later; A14–A16 covers the iPhone 12 to 14 families and the iPhone 15 / 15 Plus. Devices with 4 GB of memory run, but tightly. Apple TV, Android and HarmonyOS versions exist in [upstream](https://github.com/jhaizhou-ops/d2r-mobile); this fork doesn't build or test them.
 
 ## Getting started
 
@@ -142,30 +145,35 @@ You need **the files of the game you bought**: the Switch release of Diablo II: 
 
 There are no prebuilt downloads: you build the apps on your Mac.
 
-1. Put your game files in the workspace (default `~/dm-work`, or set `DM_ROOT`):
+1. **Put your game files in the workspace** (default `~/dm-work`, or set `DM_ROOT`):
 
    ```
    ~/dm-work/data/switch/3.3.94012/Update/ExeFS/    main, sdk, subsdk0
    ~/dm-work/data/switch/3.3.94012/Update/RomFS/    data/…
    ```
 
-2. Prepare the workspace. This checks your tools, rewrites the game program and translates the game's shaders to Metal; the first run takes a while. `./setup.sh check` reports what is missing and what to run next.
+2. **Prepare the workspace.** This checks your tools, rewrites the game program and translates the game's shaders to Metal; the first run takes a while. `./setup.sh check` reports what is missing and what to run next.
 
    ```bash
    ./setup.sh
    source ~/dm-work/build/cache/dm/venv/bin/activate
    ```
 
-3. Build the app.
+3. **Build the app.**
 
-   - **Mac**: `dm/tools/mac_app.sh` produces `~/dm-work/out/macapp/D2R Metal.app` (macOS 15 – 25: `DM_MAC_M3=1 dm/tools/mac_app.sh`). No developer account needed. See [docs/MAC.md](docs/MAC.md).
+   - **Mac**: `dm/tools/mac_app.sh` produces `~/dm-work/out/macapp/D2R Metal.app` (macOS 15–25: `DM_MAC_M3=1 dm/tools/mac_app.sh`). No developer account needed. See [docs/MAC.md](docs/MAC.md).
    - **iPhone / iPad**: copy `dm/ios/local.env.example` to `dm/ios/local.env` and set your signing details (`DM_TEAM_ID`, `DM_BUNDLE_ID`; with a free Apple ID also `DM_FREE_ACCOUNT=1` and `DM_IOS_UDID`), then `cd dm/ios && ./run.sh build && ./run.sh install`. On first launch the app asks for the game resource folder ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
 
 Run `./setup.sh` again after updating to a new commit. It also rewrites three files that depend on your local tools (`dm/gfx/tools/dmsh_chain.lock`, `dm/gfx/nvn/dmsh_chain.h`, `dm/gfx/nvn/c1_full.tsv`); that is expected, don't commit them. The full dependency list is in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
+**This repository contains and distributes no game content**: no game program, art, text, data table or shader. Everything is generated on your own machine from your own files; the interface information the port relies on is listed in [docs/DERIVED.md](docs/DERIVED.md).
+
+<p align="center"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/divider.png" width="400" alt=""></p>
+
 ## For developers
 
-### How it works
+<details>
+<summary><b>How it works</b></summary>
 
 1. An offline step rewrites a few instructions in the game's aarch64 program so it can run as an ordinary process (no code is generated at run time, which iOS forbids).
 2. A native host loads it, provides the Switch system services it calls, and runs it on the device's CPU.
@@ -173,39 +181,50 @@ Run `./setup.sh` again after updating to a new commit. It also rewrites three fi
 
 A tour of the code is in [dm/README.md](dm/README.md).
 
-### Measured on Apple hardware
+</details>
 
-"Edge sharpness" below is the edge variance of the whole captured frame: a single number for how much contrast its edges have. Higher is crisper; it only compares frames of the same scene.
+<details>
+<summary><b>Measured on Apple hardware</b></summary>
 
-- **Mac, MetalFX at the last step** — M6 (12 GPU cores), 2560 × 1440 screen, character select. Enlarging the same 1600 × 900 picture costs 0.28 ms of GPU time with a plain stretch and 1.38 ms with MetalFX; edge sharpness goes from 235 to 569. At 1920 × 1080 with MetalFX (Recommended on that Mac) enlarging costs 1.78 ms, the whole frame about 13.7 ms — inside the 16.7 ms of 60 fps — and edge sharpness reaches 754 ([4ac0543](https://github.com/PowerBeef/d2r-metal/commit/4ac0543)).
-- **iPhone, MetalFX on the 3D world** — iPhone 17 Pro, 3D at 75% (1967 × 905 inside a 2622 × 1206 frame). Steady 60 fps; median GPU time per frame 11.65 → 12.28 ms (+0.6 ms); edge sharpness 404 → 728 with the same colours ([7c2f892](https://github.com/PowerBeef/d2r-metal/commit/7c2f892)).
+"Edge sharpness" below is the edge variance of the whole captured frame: one number for how much contrast its edges have. Higher is crisper; it only compares frames of the same scene.
+
+- **Mac, MetalFX at the last step**: M6 (12 GPU cores), 2560 × 1440 screen, character select. Enlarging the same 1600 × 900 picture costs 0.28 ms of GPU time with a plain stretch and 1.38 ms with MetalFX; edge sharpness goes from 235 to 569. At 1920 × 1080 with MetalFX (Recommended on that Mac) enlarging costs 1.78 ms, the whole frame about 13.7 ms, inside the 16.7 ms of 60 fps, and edge sharpness reaches 754 ([4ac0543](https://github.com/PowerBeef/d2r-metal/commit/4ac0543)).
+- **iPhone, MetalFX on the 3D world**: iPhone 17 Pro, 3D at 75% (1967 × 905 inside a 2622 × 1206 frame). Steady 60 fps; median GPU time per frame 11.65 → 12.28 ms (+0.6 ms); edge sharpness 404 → 728 with the same colours ([7c2f892](https://github.com/PowerBeef/d2r-metal/commit/7c2f892)).
 - Not measured yet: battery and heat with MetalFX on phones over long sessions.
 
-### Built to be measured
+</details>
+
+<details>
+<summary><b>Built to be measured</b></summary>
 
 The tools used to check every change are in the repository. One command runs them in tiers, from a few seconds of source checks to a long run on demand: `dm/verify/fork_gate.sh` ([dm/verify/FORK_GATE.md](dm/verify/FORK_GATE.md)).
 
-- a **control port** to drive a running game, and a **scenario runner** that plays scripted sessions on the command-line host, the Mac App, the iOS app on a Mac, or an iPhone ([dm/verify/control_port.md](dm/verify/control_port.md), [dm/verify/scenarios/README.md](dm/verify/scenarios/README.md));
+- a **control port** to drive a running game, and a **scenario runner** that plays scripted sessions on the command-line host, the Mac App, the iOS app on a Mac, or an iPhone ([control_port.md](dm/verify/control_port.md), [scenarios](dm/verify/scenarios/README.md));
 - **checks that read the game's own state**: the panels on screen, the focused widget, the controller actions as the game names them, and the save system, where a save that never commits is a failure; every scripted session also checks that its saved game would load;
-- **baselines recorded from this fork's own build**, not from an emulator: three routes replay tick for tick on both Metal renderers, the replayed saves match the recorded ones byte for byte, each check proves it can fail, and key screens are compared per renderer;
-- **save fault tests** (a full disk at different moments, a quit in the middle of a save), a **playtest bot** that plays like a player and checks invariants after every action, and long **soak** runs;
-- an **event stream**, signposts, fixed-route **A/B benchmarks** with statistics, regression checks against a kept build, sampled profiles that attribute time per game thread and function and list what ran during each stalled frame, and GPU frame capture;
-- **sanitizer builds** (ASan, UBSan, TSan), seeded **random exploration** with shrinking, **replay**, and LLDB commands that show game addresses as module offsets and read the game's panels, focus and saves, which a coding agent can drive through Xcode's LLDB MCP server ([dm/verify/debugging.md](dm/verify/debugging.md)).
+- **baselines recorded from this fork's own build**: three routes replay tick for tick on both Metal renderers, the replayed saves match the recorded ones byte for byte, and key screens are compared per renderer;
+- **save fault tests** (a full disk at different moments, a quit in the middle of a save), a **playtest bot** that checks invariants after every action, and long **soak** runs;
+- **A/B benchmarks** with statistics, regression checks against a kept build, sampled profiles per game thread and function, and GPU frame capture;
+- **sanitizer builds** (ASan, UBSan, TSan), seeded **random exploration** with shrinking, **replay**, and LLDB commands that read the game's panels, focus and saves ([debugging.md](dm/verify/debugging.md)).
 
-### How this fork works
+</details>
 
-- `main` is the trunk. Upstream's `main` is merged in regularly, so its fixes and features arrive here too.
-- Changes that also fit upstream are sent back as pull requests, one topic per branch. Upstream adopted the first four in v2.0 (#106 – #109: split game packages, the iOS install battery check, the Mac App icon, pointer auto-hide); [#144](https://github.com/jhaizhou-ops/d2r-mobile/pull/144) (MetalFX, the picture settings and the rebuilt Options page for the Mac and iOS) is open.
+<details>
+<summary><b>How this fork works</b></summary>
+
+- `main` is the trunk. Upstream's `main` is merged in regularly, so its fixes arrive here too; the additions listed above stay out of this fork.
+- Changes that also fit upstream are sent back as pull requests, one topic per branch. Upstream adopted the first four in v2.0 (#106–#109); [#144](https://github.com/jhaizhou-ops/d2r-mobile/pull/144) (MetalFX, the picture settings and the rebuilt Options page) is open.
 - Android and HarmonyOS code stays in the tree only so upstream changes merge cleanly; it isn't built or tested here.
 - Issues and pull requests about Apple platforms are welcome. Code follows upstream's rules in [CONTRIBUTING.md](CONTRIBUTING.md), so it can be sent upstream later.
 
+</details>
+
 ## Legal
 
-**You must own the game, including the Reign of the Warlock expansion.** This is an independent, non-commercial project. It is not affiliated with, endorsed by, or sponsored by Blizzard Entertainment, Nintendo or Apple. Diablo and Blizzard Entertainment are trademarks of Blizzard Entertainment, Inc.; Nintendo Switch is a trademark of Nintendo; Apple, Mac, iPhone, iPad, Metal and MetalFX are trademarks of Apple Inc. Use it only with a copy of the game that you own.
+**You must own the game, including the Reign of the Warlock expansion.** This is an independent, non-commercial project. It is not affiliated with, endorsed by, or sponsored by Blizzard Entertainment, Nintendo or Apple. Diablo and Blizzard Entertainment are trademarks of Blizzard Entertainment, Inc.; Nintendo Switch is a trademark of Nintendo; Apple, Mac, iPhone, iPad, Metal and MetalFX are trademarks of Apple Inc. Use it only with a copy of the game that you own. The banner, plaques and ornaments on this page are original artwork made for this project; they use no art from the game.
 
 ## Acknowledgements
 
-D2R Metal exists because of **[D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)** by [@jhaizhou-ops](https://github.com/jhaizhou-ops) and its contributors; their acknowledgements, including the community authors of the Android and HarmonyOS ports, are in upstream's README.
+D2R Metal exists because of **[D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)** by [@jhaizhou-ops](https://github.com/jhaizhou-ops) and its contributors, who built the port: the original program running unchanged, touch controls, controller support and five languages. Their acknowledgements, including the community authors of the Android and HarmonyOS ports, are in upstream's README.
 
 The project stands on the open-source work below. Thank you to its authors and maintainers.
 
