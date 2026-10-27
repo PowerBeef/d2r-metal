@@ -66,7 +66,7 @@ The script assumes that the character select list of this save has four characte
 | 1 | Level 76 Paladin | `i`, `me1`, `me2`, `sl1`, `rf1` |
 | 2 | Level 1 Warlock (this row is selected by default) | Most runs |
 | 3 | Another character | `e` (only selects it on the character select page), `wd1` |
-| 4 | Level 88 Sorceress, with a mercenary | `f`, `q`, `tp`, `cb`, `pg1`, `bdm`, `rf2`, `me3` |
+| 4 | Level 88 Sorceress, with a mercenary | `f`, `q`, `tp`, `cb`, `bdm`, `rf2`, `me3` |
 
 Many tap positions and criteria also depend on things these characters already have (scrolls in the inventory, equipment worn, stash contents, waypoints already opened).
 
@@ -84,7 +84,6 @@ The runs below do not use the standard save but swap in a dedicated save instead
 | `save.rg_act4done` | `g1`–`g4` | A character that has completed Act IV |
 | `save.rg_act4` | `ex` | A character in Act IV with the waypoint opened |
 | `save.rg_joejoe` | `tb`, `dz` | A character in Act II; the script goes from the waypoint in town to the Canyon of the Magi; `dz` also needs the quest staff in the inventory |
-| `save.sl_player` | `vf1` | A character with items in both the personal stash and the shared stash |
 
 Where to put them: place the save directory under the `Data` directory of this app's container on the Mac (at the same level as `Documents`); the directory must be writable. Before such a run starts, `run_mac.sh` moves the existing `Documents/save` in the container aside and puts in a copy of the dedicated save, then moves it back when the run is finished; should it fail to move it back, it reports red and states where the original save is.
 
@@ -113,8 +112,6 @@ A run name is the first argument of `G("…")` in `uireg.py`; below they are gro
 | `pk`, `g1`–`g4`, `ex`, `tb`, `tp`, `dz` | Tapping things in the world: the tappable range of a chest, the upper, middle and lower sections of a portal, exits, the town portal, the quest pedestal (most need dedicated saves) |
 | `wp` | Entering the game lands next to the town waypoint |
 | `rf1`–`rf3` | One-tap restart from the pause menu, restarting three times in a row per run |
-| `pg1`, `pg2` | Paging through the personal stash |
-| `vt1`, `vf1`, `vf2` | The sixth tab of the stash (the collection page added by the shell): deposit, withdraw, search, switching back and forth between tabs |
 | `wd1`, `wd2` | No-progress watchdog: no false positive when returning to the front end and sitting idle; it still triggers when nothing moves at all after launch |
 | `dc` | Death in the wild → tap `继续` (Continue) on the death screen → revive in town |
 | `top` | Exists only in the `ipadfull` profile: the minimap and area name at the true top of the screen, and the title bars of the panels |

@@ -555,7 +555,7 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
             // 界面连续手势（上下拖 = 滚动、按住滑块横拖）：手势层定型后把起手点与当前点交给宿主；认滑块时上下放宽 44 点（约 7 毫米，手指粗细）
             // Continuous UI gestures (vertical drag = scroll, hold a slider and drag horizontally): once the gesture layer has settled the type, give the start point and current point to the host; when recognizing a slider allow 44 points of vertical slack (about 7 mm, a finger's width)
             if(_controls.navigation_mode && _controls.pointer_slot==i && _controls.finger[i].ui_drag && self.bounds.size.width>0) { CGSize z=self.bounds.size; dm_tc_finger *f=&_controls.finger[i];
-                if(!_uiDragOn) { _uiDragOn=YES; dm_ui_drag_lift((float)(DM_TC_POINTER_LIFT_PT*dm_tc_scale_for_size(z.width,z.height)/z.height)); dm_ui_drag_begin(f->ui_drag,(float)(f->aim_origin_x/z.width),(float)(f->aim_origin_y/z.height),(float)(44.0/z.height)); }
+                if(!_uiDragOn) { _uiDragOn=YES; dm_ui_drag_begin(f->ui_drag,(float)(f->aim_origin_x/z.width),(float)(f->aim_origin_y/z.height),(float)(44.0/z.height)); }
                 dm_ui_drag_move((float)(p.x/z.width),(float)(p.y/z.height)); }
             // 拖放中：问落点（物品抬在手指上方）是不是物品区，松手时用最近一次的回答
             // During drag and drop: ask whether the drop point (the item is lifted above the finger) is an item area; on release use the most recent answer

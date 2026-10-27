@@ -56,7 +56,7 @@ DM_DBG	host	host/main.c	y
 DM_DBG_COVER	host	host/dm_cursor.c	-
 DM_DBG_FE_SEND	host	host/dm_cursor.c	-
 DM_DERIVED	android,harmony,host	android/app/src/main/java/com/xiaoboluo/d2r/DmActivity.java harmony/native/napi_ohos.c host/dm_derived_rt.h	-
-DM_DESWIZZLE_LIB	ios-tools	ios/tools/romfs_art.py	y
+DM_DESWIZZLE_LIB	ios-tools	ios/tools/dxt5.py ios/tools/romfs_art.py	y
 DM_DETCLOCK	gfx,host,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c verify/golden.py	y
 DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	-
 DM_DEVBATTERY	ios-tools	ios/run.sh ios/tools/devlock.sh	-
@@ -350,7 +350,6 @@ DM_TEST_BG	ios	ios/Sources/front_ios.m	y
 DM_TEST_BG_RELAUNCH	ios	ios/Sources/main.m	-
 DM_TEST_BINDTBL	host	host/dm_actions.c	-
 DM_TEST_C2S	host	host/dm_actions.c	-
-DM_TEST_CLOCK_AT	host	host/dm_pages.c	-
 DM_TEST_CM_KEYS	host	host/dm_cloudmerge.c	-
 DM_TEST_COVER	host	host/front_mac.m	-
 DM_TEST_CURSOR	host	host/hle_hid.c	-
@@ -374,7 +373,6 @@ DM_TEST_GOTO_LEVEL	host	host/diag.c	-
 DM_TEST_GUEST_RETURN	host	host/main.c	-
 DM_TEST_HAND_GUARD	host	host/dm_cursor.c	-
 DM_TEST_HID_STALL_MS	host	host/hle_hid.c	-
-DM_TEST_HOLDY	host	host/dm_pouch.c	-
 DM_TEST_HOVER_LOG	host	host/dm_cursor.c host/front_mac.m host/touch_mac.c	-
 DM_TEST_HP1	host	host/diag.c	-
 DM_TEST_ICLOUD_DIR	ios	ios/Sources/cloud_ios.m	-
@@ -383,7 +381,6 @@ DM_TEST_ICLOUD_MIGRATE_KILL	ios	ios/Sources/cloud_ios.m	-
 DM_TEST_ICLOUD_OFF	ios	ios/Sources/cloud_ios.m	-
 DM_TEST_ICLOUD_ROOT	ios	ios/Sources/cloud_ios.m	-
 DM_TEST_ICLOUD_SUB	ios	ios/Sources/cloud_ios.m	-
-DM_TEST_ITEM_DUMP	host	host/dm_vault.c	-
 DM_TEST_JOY_ISO	ios	ios/Sources/front_ios.m	-
 DM_TEST_KBD_TYPE	ios	ios/Sources/front_ios.m	-
 DM_TEST_KEYRACE	host	host/main.c	-
@@ -413,7 +410,6 @@ DM_TEST_MONRES_LOG	host	host/diag.c	-
 DM_TEST_MON_HP	host	host/diag.c	-
 DM_TEST_MON_KILL	host	host/diag.c	-
 DM_TEST_NOTE_PANEL_Y	host	host/dm_cursor.c	-
-DM_TEST_NOTICE	host	host/dm_pouch.c	-
 DM_TEST_NO_BC	gfx,ios	gfx/nvn/nvn_mtl.m ios/Sources/main.m	y
 DM_TEST_NO_DL_BASE	ios	ios/Sources/asset_dl.m ios/Sources/main.m	-
 DM_TEST_NO_METAL3	ios	ios/Sources/main.m	-
@@ -427,18 +423,9 @@ DM_TEST_PADMODE	host	host/dm_padmode.c	-
 DM_TEST_PADMODE_LANG_RESET	host	host/dm_padmode.c	-
 DM_TEST_PADMODE_READ	host	host/dm_padmode.c	-
 DM_TEST_PAD_GLYPH	ios	ios/Sources/dm_gamepad.m	-
-DM_TEST_PG_GO	host	host/dm_pages.c	-
-DM_TEST_PG_KILL	host	host/dm_pages.c	-
-DM_TEST_PG_LOG	host	host/dm_pages.c	-
-DM_TEST_PG_NOSAVE	host	host/dm_pages.c	-
-DM_TEST_PG_SOCK	host	host/dm_pages.c	-
-DM_TEST_PG_TAKE	host	host/dm_pages.c	-
-DM_TEST_PICK	host	host/dm_pouch.c	-
 DM_TEST_POS_LOG	host	host/diag.c	-
 DM_TEST_POTPICK_BURST	host	host/dm_potpick.c	-
 DM_TEST_POTPICK_FROM	host	host/dm_potpick.c	-
-DM_TEST_POUCH_NOSAVE	host	host/dm_pouch.c	-
-DM_TEST_POUCH_SAVE_FAIL	host	host/dm_pouch.c host/tests/t_save_hooks.c	-
 DM_TEST_PRESENT_RGB	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_PRESENT_SHOT	host	host/front_mac.m	-
 DM_TEST_QUIT_AT	host	host/front_mac.m	-
@@ -460,10 +447,8 @@ DM_TEST_SKILL_ADD	host	host/dm_actions.c	-
 DM_TEST_SPAWN	host	host/diag.c	-
 DM_TEST_SS_ALT	host	host/dm_actions.c	-
 DM_TEST_SS_REJECT	host	host/dm_actions.c	-
-DM_TEST_STACK99	host	host/dm_pouch.c	-
 DM_TEST_STAT	host	host/diag.c	-
 DM_TEST_STAT_LOG	host	host/diag.c	-
-DM_TEST_STORE	host	host/dm_pouch.c	-
 DM_TEST_SWKBD_KIND	host	host/hle_swkbd.c	-
 DM_TEST_SWKBD_LAG_MS	host	host/hle_swkbd.c	-
 DM_TEST_TAKE_LOG	host	host/dm_actions.c	-
@@ -481,11 +466,6 @@ DM_TEST_UPDATE_OPEN	ios	ios/Sources/dm_update.m	-
 DM_TEST_UPDATE_URL	host,ios	host/app_mac.m ios/Sources/dm_update.m	-
 DM_TEST_UP_LEAK	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_UP_LOST	gfx	gfx/nvn/nvn_mtl.m	-
-DM_TEST_VAULT_NOSAVE	host	host/dm_vault.c	-
-DM_TEST_VAULT_PART	host	host/dm_vault_ui.c	-
-DM_TEST_VAULT_PEND	host	host/dm_vault.c	-
-DM_TEST_VAULT_SAVE_FAIL	host	host/dm_vault.c	-
-DM_TEST_VAULT_SETS	host	host/dm_vault_ui.c	-
 DM_TEST_VIDEO_FIRSTBOOT	host	host/front_mac.m	-
 DM_TEST_VOICE	host	host/dm_custom.c	-
 DM_TEST_WALK_CAL	host	host/dm_world.c	-

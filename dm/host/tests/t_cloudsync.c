@@ -44,7 +44,6 @@ static void put_d2i(const char *dev, int items, int chron, long sec) {
     memcpy(b + 68, "\x55\xaa\x55\xaa", 4); memcpy(b + 68 + 16, &l2, 4); b[68 + 64] = 0xc0;
     put_bin(dev, "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", b, 68 + l2, sec);
 }
-static void put_vault(const char *dev, int n, long sec) { uint8_t b[8] = { 'S', 'W', 'V', 'T', 1, 0, (uint8_t)n, 0 }; put_bin(dev, "save/ModernSharedStashSoftCoreV2.swvault", b, 8, sec); }
 static int inbox_n(const char *dev) { char d[1024]; path(d, dev, "save/_cloudinbox"); DIR *dp = opendir(d); struct dirent *e; int n = 0; while (dp && (e = readdir(dp))) n += e->d_name[0] != '.'; if (dp) closedir(dp); return n; }
 static int inbox_has(const char *dev, const char *f) {   // 收件箱里有没有哪个条目带这个文件 | whether any inbox entry carries this file
     char d[1024]; path(d, dev, "save/_cloudinbox"); DIR *dp = opendir(d); struct dirent *e; int k = 0; struct stat st;
@@ -166,12 +165,12 @@ int main(void) {
     { char s3[1024], c3[1024], b3[1024], t3[1024]; snprintf(c3, sizeof c3, "%s/cloud3", R); mkdir(c3, 0755);
       #define S3(dev, down) (path(s3, dev, "save"), path(b3, dev, "bak"), path(t3, dev, "state"), dm_cloud_sync(s3, c3, b3, t3, down, 0, NULL))
       #define D2I "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i"
-      put_d2i("G", 5, 300, 1000); put_vault("G", 3, 1000);
+      put_d2i("G", 5, 300, 1000);
       CHECK(S3("G", 0) == 1, "⑫ 云端为空：G 首次同步上传共享仓库");
       dm_cloud_conflict_take();
       put_d2i("H", 0, 148, 5000);   // H 新装：游戏刚建的空共享仓库，时刻比云端新 | H freshly installed: the empty shared stash the game just created, with a timestamp newer than the cloud's
       CHECK(S3("H", 0) == 0 && d2i_items("H", D2I) == 0, "⑪ 新设备运行中首次同步：不传不改（不能拿空仓库盖云端）");
-      CHECK(S3("H", 1) == 1 && d2i_items("H", D2I) == 5 && get("H", "save/ModernSharedStashSoftCoreV2.swvault"), "⑪ 新设备启动首次同步：以云端为准，拿到 5 件与编年史仓库");
+      CHECK(S3("H", 1) == 1 && d2i_items("H", D2I) == 5, "⑪ 新设备启动首次同步：以云端为准，拿到 5 件");
       CHECK(count_bak("H", "_stash-") == 1, "⑪ 新设备本来那份空仓库进备份");
       CHECK(!dm_cloud_conflict_take() && inbox_n("H") == 0, "⑪ 本机那份是新建空档：不进收件箱、不提示");
       put_d2i("G", 6, 400, 6000); CHECK(S3("G", 0) == 1, "⑭ G 编年史变长（400）照常上传");
@@ -181,7 +180,7 @@ int main(void) {
       CHECK(!dm_cloud_conflict_take(), "⑬ 运行中不提示（不再永久拦）");
       CHECK(S3("G", 1) == 0 && d2i_items("G", D2I) == 6, "⑬ 云端没被盖：G 仍是 6 件");
       CHECK(S3("H", 1) == 1 && d2i_items("H", D2I) == 6, "⑬ H 启动：云端为现行版，拿回 6 件");
-      CHECK(inbox_n("H") == 1 && dm_cloud_conflict_take() == 1, "⑬ 本机那份共享仓库空了、但编年史仓库侧文件还有 3 件：进收件箱、提示一次");
+      CHECK(inbox_n("H") == 0 && !dm_cloud_conflict_take(), "⑬ 本机那份是空的新建大小（0 件、编年史 148）：不进收件箱、不提示");
       put_d2i("H", 7, 500, 7500); CHECK(S3("H", 0) == 1, "⑮ H 正常玩：编年史 500 上传");
       put_d2i("G", 6, 450, 7600);   // G 没同步到 H 的 500 就自己写了 450（两边都改，G 后写） | G wrote 450 itself without having synced H's 500 (both sides changed, G wrote later)
       CHECK(S3("G", 0) == 0, "⑮ G 运行中要拿编年史 450 盖云端的 500：分叉，运行中不动");
@@ -189,10 +188,8 @@ int main(void) {
       CHECK(inbox_n("G") == 1 && inbox_has("G", "mine.pack") && inbox_has("G", "base.pack"), "⑮ G 本机那份（6 件、450）进收件箱，带上次同步的基准（6 件、400）");
       CHECK(dm_cloud_conflict_take() == 1, "⑮ 收进收件箱：进局提示一次");
       CHECK(S3("G", 1) == 0 && inbox_n("G") == 1, "⑮ 再启动：一致、无动作、不再收（不是永久状态）");
-      { char p3[1024]; path(p3, "H", "save/ModernSharedStashSoftCoreV2.swvault"); unlink(p3); } put_d2i("H", 7, 500, 8000);
-      CHECK(S3("H", 0) == 0 && !dm_cloud_conflict_take(), "⑬ 编年史仓库侧文件没了（云端有 3 件）：分叉，运行中不动");
-      put_vault("H", 0, 8100); put_d2i("H", 0, 500, 8100);
-      CHECK(S3("H", 0) == 1 && !dm_cloud_conflict_take(), "⑯ 正常玩法：共享仓库物品取空、编年史仓库取空（文件还在，0 件），编年史没变短——照常上传");
+      put_d2i("H", 0, 500, 8100);
+      CHECK(S3("H", 0) == 1 && !dm_cloud_conflict_take(), "⑯ 正常玩法：共享仓库物品取空，编年史没变短——照常上传");
       // ⑰ rf3 那个形状：云端专家仓库 2 件、编年史还是新建的 148；本机这份被换成游戏新建的空档（0 件、148），状态记录还在、云端没变 = 走「只本机改了」的上传
       // (17) That rf3 shape: cloud hardcore stash has 2 items and the chronicle is still the freshly created 148; the local copy was replaced by the empty file the game freshly creates (0 items, 148), the state record is still there and the cloud is unchanged = takes the "only local changed" upload
       { char cd[1024]; snprintf(cd, sizeof cd, "%s/cloud4", R); mkdir(cd, 0755);

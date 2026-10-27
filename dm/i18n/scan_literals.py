@@ -16,8 +16,8 @@ CJK = re.compile(r'[　-〿一-鿿＀-￯]')
 SINK = {'LOG', 'LOGV', 'plog', 'NSLog', 'fprintf', 'printf', 'die', 'HLE_FORCE', 'HLE_WEAK', 'HLE_STUB', 'dprintf', 'dm_prof_mark', 'perror', 'puts',
         'SystemExit', 'print', 'Exception', 'RuntimeError', 'ValueError', 'AssertionError', 'warn', 'log', 'dm_log', 'boot_log', 'SMOKE', '_Static_assert', 'static_assert'}
 C_FILES = ['host/*.c', 'host/*.m', 'ios/Sources/*.m', 'ios/Sources/*.c']
-PY_FILES = ['ios/tools/touch_layout.py', 'ios/tools/wide_stash.py', 'ios/tools/pouch_layout.py', 'ios/tools/gen_romfs_overlay.py', 'ios/tools/drop_light.py',
-            'ios/tools/gen_hud_v4.py', 'ios/tools/gen_map_goal_art.py', 'ios/tools/touch_strings.py', 'ios/tools/gen_close_btn.py', 'ios/tools/gen_vault_cover.py']
+PY_FILES = ['ios/tools/touch_layout.py', 'ios/tools/gen_romfs_overlay.py', 'ios/tools/drop_light.py',
+            'ios/tools/gen_hud_v4.py', 'ios/tools/gen_map_goal_art.py', 'ios/tools/touch_strings.py', 'ios/tools/gen_close_btn.py']
 
 def strip_c(s):
     """去注释，字面量原位保留；返回 [(起点, 字面量文本)] 与去注释后的全文（注释换成等长空格，下标不变）。 | Strip comments while keeping literals in place; returns [(start, literal text)] and the full text with comments removed (comments are replaced by spaces of equal length, so indices do not change)."""

@@ -81,7 +81,7 @@ const char *dm_stash_name(uint8_t *b) {
 //   A false 'in flight' only waits longer, which is safe; a false 'not in flight' would need the previous save's character file to finish exactly in this tick while this one is not yet written - saves are seconds apart and writes take milliseconds, so not in the same tick.
 // g_ser_sec: user clock second of the tick where the last serialization was seen; if a save happened earlier in the same second, defer the turn to the next second (only guards against a byte-identical save later in the same second; compared for equality, so clock changes cannot stall it for long)
 static int g_ser_infl; static uint64_t g_ser_seq; static int64_t g_ser_sec = -1; static uint32_t g_ser_tq, g_tq_now;
-int64_t dm_user_clock(void); int dm_user_clock_fixed(void); uint64_t dm_seq_next(void); uint64_t dm_fs_d2s_wseq(void);   // hle_time.c / hle_fs.c
+int64_t dm_user_clock(void); uint64_t dm_seq_next(void); uint64_t dm_fs_d2s_wseq(void);   // hle_time.c / hle_fs.c
 // 给 iCloud 并回：0 = 没有在途的存盘（放件时可记指纹）；1 = 在途、50 拍内（等）；2 = 在途超过 50 拍还没见写完（不等了，这次拿不到「放好后序列化」的事实，只认在存档里找到）
 // For the iCloud merge: 0 = no save in flight (a fingerprint can be taken at placement); 1 = in flight, within 50 ticks (wait); 2 = in flight for more than 50 ticks with no finished write seen (stop waiting; the 'serialized after placing' fact is not available this time, only 'found in the saves' counts)
 int dm_ser_state(void) { return !g_ser_infl ? 0 : g_tq_now - g_ser_tq < 50 ? 1 : 2; }

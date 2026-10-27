@@ -59,7 +59,7 @@ run: \
 	$(B)/t_unimpl \
 	$(B)/t_unit_level \
 	$(B)/t_video \
-	$(B)/t_widestash_restore \
+	$(B)/t_mv_restore \
 	$(B)/t_widget
 	python3 native_write_scan.py --selftest ..
 	python3 widget_cache_scan.py --selftest ..
@@ -129,7 +129,7 @@ run: \
 	$(B)/t_namegen
 	$(B)/t_minimap_lift
 	TMPDIR="$(abspath $(B))" $(B)/t_ui_taps
-	$(B)/t_widestash_restore
+	$(B)/t_mv_restore
 	$(B)/t_modetx
 	$(B)/t_padmap
 	$(B)/t_unit_level
@@ -166,8 +166,8 @@ $(B)/t_minimap_lift: t_minimap_lift.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_minimap_lift.c
 $(B)/t_ui_taps: t_ui_taps.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_ui_taps.c
-$(B)/t_widestash_restore: t_widestash_restore.c ../dm_cursor.c ../dm_cursor.h | $(B)
-	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_widestash_restore.c
+$(B)/t_mv_restore: t_mv_restore.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_mv_restore.c
 $(B)/t_modetx: t_modetx.c ../dm_modetx.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_modetx.c
 $(B)/t_namegen: t_namegen.c ../dm_namegen.c | $(B)
@@ -229,9 +229,8 @@ $(B)/t_fs_case: t_fs_case.c ../hle_fs.c ../hle.h ../dm.h ../dm_i18n.c | $(B)
 # 存档钩子单测带 ASan + UBSan：三个模块各编一个目标文件（静态量互不冲突），驱动直接包含 hle_fs.c
 # The save hook unit test is built with ASan + UBSan: one object file per module (their statics do not clash), and the driver includes hle_fs.c directly
 SAVE_CF = -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wno-unused-function -I..
-$(B)/t_save_hooks: t_save_hooks.c t_save_mods.c t_save_stub.c ../hle_fs.c ../dm_vault.c ../dm_pouch.c ../dm_pages.c ../dm_savebits.c ../hle.h ../dm.h | $(B)
-	for m in VAULT POUCH PAGES; do clang $(SAVE_CF) -DMOD_$$m -c -o $(B)/t_save_mod_$$m.o t_save_mods.c || exit 1; done
-	clang $(SAVE_CF) -o $@ t_save_hooks.c t_save_stub.c $(B)/t_save_mod_VAULT.o $(B)/t_save_mod_POUCH.o $(B)/t_save_mod_PAGES.o
+$(B)/t_save_hooks: t_save_hooks.c t_save_stub.c ../hle_fs.c ../hle.h ../dm.h | $(B)
+	clang $(SAVE_CF) -o $@ t_save_hooks.c t_save_stub.c
 $(B)/t_romfs_validate: t_romfs_validate.c ../romfs_validate.c ../romfs_validate.h ../dm_i18n.c ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_romfs_validate.c ../romfs_validate.c ../dm_i18n.c
 

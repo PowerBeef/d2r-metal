@@ -684,7 +684,6 @@ void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at th
     { void dm_potpick_step(uint8_t *); DM_PROF(0, "w.potpick", dm_potpick_step(b)); }   // 药水自动拾取（dm_potpick.c） | automatic potion pickup (dm_potpick.c)
     { void dm_padmode_step(uint8_t *, uint64_t); DM_PROF(0, "w.padmode", dm_padmode_step(b, dm_guest_frame())); }   // 手柄 / 触屏布局切换（dm_padmode.c） | Controller / touch layout switching (dm_padmode.c)
     { void dm_beltauto_step(uint8_t *); DM_PROF(0, "w.beltauto", dm_beltauto_step(b)); }   // 开背包自动补腰带（dm_beltauto.c） | Auto-refill the belt when the inventory opens (dm_beltauto.c)
-    { void dm_pouch_step(uint8_t *); DM_PROF(0, "w.pouch", dm_pouch_step(b)); }   // 百宝囊 / 存放（dm_pouch.c） | pouch / deposit (dm_pouch.c)
     if (g_release_at && dm_guest_frame() >= g_release_at) { g_release_at = 0; uint64_t pl = w_player(); if (pl) { atomic_store(&g_dm_move_allow_until_ns, w_now_ns() + 500000000ull); ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, 2, g_rel_x, g_rel_y, 0); } }
     DM_PROF(0, "w.go", w_go_step());
     DM_PROF(0, "w.tile_retry", w_tile_retry_step());

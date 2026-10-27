@@ -4,13 +4,13 @@
 #                野外类（DrlgType 3）取 LvlTypes 本关卡类型的图块目录 → 该目录下预设 json 的 biomeFilename，多数票；迷宫类（DrlgType 1）不用（规则里一律 k=4）。
 #   随不随昼夜：biome 的 _day 与 _night 画面配置（hd/env/vis）去掉 name / id 后内容是否相同。
 # 用法：gen_bright_levels.py <原版 RomFS（Update）> > dm/host/dm_bright_levels.inc
-# 构建时由 dm/host/Makefile 调，直接读玩家自己的游戏文件；生成的表不进仓库（同 dm_vault_tab.h、dm_hud_exp.h）。
+# 构建时由 dm/host/Makefile 调，直接读玩家自己的游戏文件；生成的表不进仓库（同 dm_hud_exp.h）。
 # Generates dm/host/dm_bright_levels.inc: each level id → whether the original game's picture follows day and night (the "indoor" criterion for 3D picture brightening). Everything is derived from the original game's data, no maps are listed by hand:
 #   A level's biome: for preset levels (DrlgType 2) take this level's preset files in LvlPrest → biomeFilename of hd/env/preset/<path>.json, majority vote;
 #                for wilderness levels (DrlgType 3) take the tile directory of this level's type in LvlTypes → biomeFilename of the preset json files under that directory, majority vote; maze levels (DrlgType 1) are not used (the rule gives them k=4 across the board).
 #   Whether it follows day and night: whether the biome's _day and _night picture configs (hd/env/vis) have the same content after removing name / id.
 # Usage: gen_bright_levels.py <original game RomFS (Update)> > dm/host/dm_bright_levels.inc
-# Called by dm/host/Makefile at build time, reading the player's own game files directly; the generated table is not committed to the repo (same as dm_vault_tab.h, dm_hud_exp.h).
+# Called by dm/host/Makefile at build time, reading the player's own game files directly; the generated table is not committed to the repo (same as dm_hud_exp.h).
 import csv, io, json, os, re, sys, collections
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'ios', 'tools'))
 import touch_layout

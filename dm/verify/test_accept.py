@@ -73,8 +73,8 @@ class AcceptTests(unittest.TestCase):
     def test_m3_shotgate_runs_only_when_graphics_touched(self):
         # ⑪ 旧接口版画面闸门按改动范围触发：碰图形层 / 宿主图形前端文件就跑，碰不到就跳过并写明（期望值按规则手写）
         # The older-API picture gate (step 11) is triggered by the scope of the change: it runs when graphics-layer / host graphics and front-end files are touched, and is skipped with a note otherwise (expected values written by hand from the rule)
-        for ch, want in (('dm/gfx/nvn/nvn_mtl.m', '旧接口版画面闸门 跑'), ('dm/host/front_mac.m dm/host/dm_pouch.c', '旧接口版画面闸门 跑'),
-                         ('dm/host/Makefile', '旧接口版画面闸门 跑'), ('dm/host/dm_pouch.c dm/host/hle_fs.c', '旧接口版画面闸门 本次改动不涉及，跳过'),
+        for ch, want in (('dm/gfx/nvn/nvn_mtl.m', '旧接口版画面闸门 跑'), ('dm/host/front_mac.m dm/host/dm_potpick.c', '旧接口版画面闸门 跑'),
+                         ('dm/host/Makefile', '旧接口版画面闸门 跑'), ('dm/host/dm_potpick.c dm/host/hle_fs.c', '旧接口版画面闸门 本次改动不涉及，跳过'),
                          ('dm/ios/Sources/main.m docs/x.md', '旧接口版画面闸门 本次改动不涉及，跳过')):
             r = self.run_accept('/fixture/out', ACCEPT_SCOPE_CH=ch, ACCEPT_SCOPE_ONLY='1')
             self.assertIn(want, r.stdout, ch)

@@ -93,10 +93,10 @@ def main():
     run([PY, os.path.join(IOS, 'tools', 'gen_assets.py'), romfs], cwd=IOS, env={'DM_ROMFS_SRC': romfs}, log=os.path.join(stage, 'gen_assets.log'), what='生成界面素材')
     gen = os.path.join(stage, 'gen'); os.makedirs(gen)
     run([PY, os.path.join(IOS, 'tools', 'native_art', 'generate.py'), romfs, '--output-dir', gen], what='生成技能图标')
-    for name, gen_py in (('dm_vault_tab.h', 'gen_vault_table.py'), ('dm_hud_exp.h', 'gen_hud_exp.py')):
+    for name, gen_py in (('dm_hud_exp.h', 'gen_hud_exp.py'),):
         with open(os.path.join(gen, name), 'w', encoding='utf-8') as f: f.write(run([PY, os.path.join(IOS, 'tools', gen_py), romfs], what='生成 ' + name))
     sys.path.insert(0, os.path.join(IOS, 'tools')); import shell_stubs
-    say('数据表：经验 %d、部位 %d、仓库条目 %d、套装 %d、技能索引 %d' % shell_stubs.data(None, os.path.join(stage, 'derived.tsv'), gen))
+    say('数据表：经验 %d、技能索引 %d' % shell_stubs.data(None, os.path.join(stage, 'derived.tsv'), gen))
 
     # 三、覆盖层（触屏布局、界面底图）+ 技能图集与 HUD 小图，最后写清单（App 启动时逐文件核对）
     # 3. Overlay (touch layout, UI base art) + skill atlases and small HUD images, then write the manifest (the App checks it file by file at startup)

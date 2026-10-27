@@ -48,10 +48,10 @@ static pthread_mutex_t g_path_lock = PTHREAD_MUTEX_INITIALIZER;
 static void path_unlock(pthread_mutex_t **m) { pthread_mutex_unlock(*m); }
 #define PATH_LOCK() pthread_mutex_t *path_guard __attribute__((cleanup(path_unlock))) = &g_path_lock; pthread_mutex_lock(path_guard)
 static uint8_t g_fmode[65536];              // fd → 打开方式 | fd → open mode
-// 角色档写完的先后（个人仓库翻页 / iCloud 并回判「这份角色档是不是某一刻之后序列化的」用）：写方式打开的 *.d2s 关闭、或改名成 *.d2s 时取一个全局单调序号。
-// 只当「写完」的先后用，不当「序列化」的先后用——角色档由另一条线程写，序列化在前、写盘在后中间可以夹着服务端拍上的动作（dm_vault.c 文件头）
-// Order in which character files finished writing (used by personal stash page turns / iCloud merge to tell whether a character file was serialized after a given moment): a global monotonic number is taken when a *.d2s opened for writing is closed, or when a file is renamed to *.d2s.
-// Use it only for the order of finished writes, not the order of serialization: the character file is written by another thread, and actions on the server tick can fall between serialization and the write (see the header of dm_vault.c)
+// 角色档写完的先后（iCloud 并回判「这份角色档是不是某一刻之后序列化的」用）：写方式打开的 *.d2s 关闭、或改名成 *.d2s 时取一个全局单调序号。
+// 只当「写完」的先后用，不当「序列化」的先后用——角色档由另一条线程写，序列化在前、写盘在后中间可以夹着服务端拍上的动作
+// Order in which character files finished writing (used by the iCloud merge to tell whether a character file was serialized after a given moment): a global monotonic number is taken when a *.d2s opened for writing is closed, or when a file is renamed to *.d2s.
+// Use it only for the order of finished writes, not the order of serialization: the character file is written by another thread, and actions on the server tick can fall between serialization and the write
 static uint8_t g_fd2s[65536]; static _Atomic uint64_t g_seq, g_d2s_wseq;
 uint64_t dm_seq_next(void) { return atomic_fetch_add(&g_seq, 1) + 1; }
 uint64_t dm_fs_d2s_wseq(void) { return atomic_load(&g_d2s_wseq); }
@@ -599,7 +599,7 @@ HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv；存档 �
     { const char *e = getenv("DM_TOUCH_DEFAULTS"); if (g_dm_mount_seed_hook && (e ? strcmp(e, "0") != 0 : DM_PHONE)) g_dm_mount_seed_hook(dd); }
     return mount_ex(name, dd, 0, 1);
 }
-void (*g_dm_pre_commit_hook[5])(const char *workdir);   // 提交前调（工作目录）：宿主旁路文件按工作目录里的存档内容核对后再写（[0] 个人仓库多页 dm_pages.c、[2] 百宝囊 dm_pouch.c、[1] 编年史仓库 dm_vault.c、[3] 空（原先大秘境用）、[4] iCloud 收件箱并回 dm_cloudmerge.c） | Called before commit (working directory): host side files are checked against the save content in the working directory before being written ([0] personal stash multi-page dm_pages.c, [2] pouch dm_pouch.c, [1] Chronicle stash dm_vault.c, [3] empty (the removed Greater Rift used it), [4] iCloud inbox merge dm_cloudmerge.c)
+void (*g_dm_pre_commit_hook[5])(const char *workdir);   // 提交前调（工作目录）：宿主旁路文件按工作目录里的存档内容核对后再写（[0]–[3] 空（原先个人仓库多页、编年史仓库、百宝囊、大秘境用）、[4] iCloud 收件箱并回 dm_cloudmerge.c） | Called before commit (working directory): host side files are checked against the save content in the working directory before being written ([0]–[3] empty (formerly the personal stash pages, the Chronicle stash, the pouch and the Greater Rift), [4] iCloud inbox merge dm_cloudmerge.c)
 void (*g_dm_save_commit_hook)(const char *commit_dir);   // 存档提交成功后调（已提交目录）；iOS 的 iCloud 同步设它，宿主为空 | called after a save commit succeeds (committed directory); the iOS iCloud sync sets it, NULL on the host
 // 提交结果钩子（与提交前钩子同下标）：每次 Commit 在同一次调用里、持着存档锁报一次这次提交成没成。
 //   ok = 1：工作目录已原子换入，提交前钩子这次写进工作目录的旁路文件已落盘，钩子把这次核对通过的那些定下来（记成已落盘）；

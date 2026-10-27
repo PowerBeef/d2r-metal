@@ -81,14 +81,12 @@ with tempfile.TemporaryDirectory() as t:
     TS=touch_strings.build_sidecar(romfs)
     import dm_i18n; si,nsi=dm_i18n.build(romfs,t,REPL); REPL.update(si)   # 我们自己的界面文字（中英表 dm/i18n/ui_text.tsv）追加进原版 ui.json，布局写 @键、宿主按键取串 | our own UI text (Chinese-English string table dm/i18n/ui_text.tsv) is appended to the original ui.json; layouts write @key and the host looks strings up by key
     import drop_light; dl,dls=drop_light.build(romfs,t,REPL); REPL.update(dl)   # 掉落光的带光模型变体（新增路径，常驻；宿主运行时按规则 / 开关改指，dm_dropfilter.c） | Lit model variants for drop lights (new paths, always present; the host repoints at runtime by rule / switch, dm_dropfilter.c)
-    import pouch_layout; pl,pls=pouch_layout.build(romfs,t,REPL); REPL.update(pl)   # 百宝囊框与「存放」按钮（物品栏，叠在触摸布局之后） | Pouch box and 「存放」(Deposit) button (inventory, stacked after the touch layout)
-    import wide_stash; ws,wss=wide_stash.build(romfs,t,REPL); REPL.update(ws)
-    # 手柄版布局：手柄模式读原版路径上的布局（触屏版挪进了触屏目录，见下面 TDIR）。我们的功能改动两种模式都要——百宝囊框与「存放」、
-    # 储藏箱 14 列（数据表已是 14 列，布局只有 10 列时第 11–14 列的物品看不到）与宽外框、编年史仓库页签——所以按同一套功能模块在原版布局上再出一份，放在原版路径；触屏改动不带
+    REPL.update(touch_layout.build_side_titles(romfs,t,REPL))   # 魔盒并排时的两个标题（外框，叠在触摸布局之后） | the two titles while the cube is side by side (outer frame, stacked after the touch layout)
+    # 手柄版布局：手柄模式读原版路径上的布局（触屏版挪进了触屏目录，见下面 TDIR）。我们的功能改动两种模式都要——暂停菜单的难度行、选项页、魔盒并排标题——
+    # 所以按同一套功能模块在原版布局上再出一份，放在原版路径；触屏改动不带
     # Controller layouts: controller mode reads the layouts at the original paths (the touch version was moved into the touch directories, see TDIR below). Our
-    # feature changes are needed in both modes: the pouch frame and "Deposit",
-    # the 14-column stash (the data table already has 14 columns; with a 10-column layout the items in columns 11 to 14 are invisible) with its wide frame,
-    # and the Chronicle vault tab. So another copy is generated on top of the original layouts with the same set of feature modules and placed at the
+    # feature changes are needed in both modes: the pause menu difficulty row, the Options pages and the cube side-by-side titles.
+    # So another copy is generated on top of the original layouts with the same set of feature modules and placed at the
     # original paths; touch changes are not included
     tpad=os.path.join(t,'pad'); os.makedirs(tpad); PR={}
     for rel,gd in (('controller/pauselayoutgardenhd.json',1),('controller/pauselayouthd.json',0)):   # 手柄版暂停菜单：一键重开 / 切换难度 / 存放 / 分享诊断日志 | Controller pause menu: one-tap restart / change difficulty / Deposit / Share Diagnostics
@@ -114,7 +112,7 @@ with tempfile.TemporaryDirectory() as t:
         for k,f in touch_layout.build_ingame(romfs,tpad,touch_layout.PAD_SETTINGS_MAC,present=False,pre={'controller/console/settingspanelhd.json':touch_layout.pad_settings})[0].items():
             txt=open(f,encoding='utf-8').read(); open(f,'w',encoding='utf-8').write(touch_layout.pad_settings_button_glyphs(txt)); PR[k]=f   # 三个按钮各挂原版键位图标 | each of the three buttons gets the original game's button icon
         lp,lt=touch_layout.read_layout(romfs,'controller/settingspanelhd.json'); o=os.path.join(tpad,'pad_settings_legend.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_settings_legend(lt)); PR[lp.lower()]=o
-    PR.update(pouch_layout.build(romfs,tpad,PR)[0]); PR.update(wide_stash.build(romfs,tpad,PR)[0])   # 储藏箱 10 → 14 列（编年史仓库第 1 步）：表、底图、宽外框、布局；要在触摸布局之后（储藏箱 / 外框布局叠在那份上） | Stash 10 → 14 columns (chronicle vault step 1): table, base image, wide outer frame, layout; must come after the touch layout (the stash / outer frame layout stacks on that copy)
+    PR.update(touch_layout.build_side_titles(romfs,tpad,PR))   # 魔盒并排时的两个标题（手柄版外框） | the two titles while the cube is side by side (controller outer frame)
     # 选项页第五个页签「附加」的那一页（Mac、iOS，touch_layout._EXTRAS_PANEL）：布局根下的新目录 2extras_lay/，手柄与触屏两种模式都落到这一份
     # The page of the Options page's fifth tab, "Extras" (Mac, iOS, touch_layout._EXTRAS_PANEL): a new folder 2extras_lay/ under the layout root, which both controller and touch modes fall back to
     EXTRAS={}
@@ -191,7 +189,7 @@ with tempfile.TemporaryDirectory() as t:
     PADLAY={k:v for k,v in PR.items() if touch_path(k)}   # 手柄版只取布局（数据表、图与触屏版同一份） | The controller version takes only layouts (data tables and images are the same copy as the touch version)
     # 手柄专用清单：手柄模式下不是原版字节的布局就这几份，一份不许多、一份不许少（改上面某一行时把相邻一行整行替掉过，有一页就从包里掉了）
     # Controller-only list: these are the only layouts that are not original bytes in controller mode, not one more and not one fewer (once, when a line above was edited, the adjacent line was replaced whole, and a page dropped out of the package)
-    PAD_PAGES=('controller/bankexpansionlayouthd.json','controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/switch/playerinventoryexpansionlayouthd.json','controller/console/videooptionspanelhd.json',
+    PAD_PAGES=('controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/videooptionspanelhd.json',
                'controller/controlleroverlayhd.json','controller/hudmonsterhealthhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json')+(('controller/settingspanelhd.json',) if os.environ.get('DM_OVERLAY_MAC') else ())
     if sorted(k[len(LAY):] for k in PADLAY)!=sorted(PAD_PAGES): raise SystemExit('gen_romfs_overlay：手柄专用布局与清单 PAD_PAGES 不一致：多 %s，少 %s' % (sorted(set(k[len(LAY):] for k in PADLAY)-set(PAD_PAGES)), sorted(set(PAD_PAGES)-set(k[len(LAY):] for k in PADLAY))))
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data

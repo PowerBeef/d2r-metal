@@ -44,12 +44,12 @@ int main(int argc, char **argv) {
         atomic_store(&g_dm_lang, 1); expect("游戏切到 deDE（按英文）", dm_ui("dmConfirm"), "OK");
         atomic_store(&g_dm_lang, 2); expect("游戏切到 esES（西语）", dm_ui("dmConfirm"), "Aceptar");
         atomic_store(&g_dm_lang, 10); expect("游戏切到 esMX（拉美西语，这条没有单独的拉美写法 = 同西语）", dm_ui("dmConfirm"), "Aceptar");
-        expect("游戏切到 esMX：有拉美写法的条目取拉美写法（储藏箱 Arcón）", strstr(dm_ui("dmStoreStash"), "Arcón") ? "有" : "没有", "有");
-        atomic_store(&g_dm_lang, 2); expect("游戏切到 esES：同一条取西班牙写法（储藏箱 Alijo）", strstr(dm_ui("dmStoreStash"), "Alijo") ? "有" : "没有", "有");
+        expect("游戏切到 esMX：有拉美写法的条目取拉美写法（拾取 Recolectar）", strstr(dm_ui("dmCustomPotPick"), "Recolectar") ? "有" : "没有", "有");
+        atomic_store(&g_dm_lang, 2); expect("游戏切到 esES：同一条取西班牙写法（拾取 Recoger）", strstr(dm_ui("dmCustomPotPick"), "Recoger") ? "有" : "没有", "有");
         atomic_store(&g_dm_lang, 7); expect("游戏切到 ruRU（俄语）", dm_ui("dmConfirm"), "ОК");
-        expect("游戏切到 ruRU：表里的条目按俄语取（储藏箱 Тайник）", strstr(dm_ui("dmStoreStash"), "Тайник") ? "有" : "没有", "有");
+        expect("游戏切到 ruRU：表里的条目按俄语取（药水 Зелья）", strstr(dm_ui("dmCustomPotPick"), "Зелья") ? "有" : "没有", "有");
         atomic_store(&g_dm_lang, 5); expect("游戏切到 koKR（韩语）", dm_ui("dmConfirm"), "확인");
-        expect("游戏切到 koKR：表里的条目按韩语取（储藏箱 창고）", strstr(dm_ui("dmStoreStash"), "창고") ? "有" : "没有", "有");
+        expect("游戏切到 koKR：表里的条目按韩语取（药水 물약）", strstr(dm_ui("dmCustomPotPick"), "물약") ? "有" : "没有", "有");
         expect("表里没有的键原样返回", dm_ui("dmNoSuchKey"), "dmNoSuchKey"); }
     else { fprintf(stderr, "用法：t_i18n en|zh|none|sysen|syses|systw|sysru|sysko|tags|game\n"); return 2; }
     return fails ? 1 : 0;

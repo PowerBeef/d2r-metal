@@ -19,5 +19,3 @@ const char *dm_untag(const char *s) { return s; }
 int dm_ui_top_chk_on(void) { return 0; }
 void dm_ui_top_chk(uint64_t r, const char *n, uint64_t g) { (void)r; (void)n; (void)g; }
 int64_t dm_user_clock(void) { return 0; }
-int dm_user_clock_fixed(void) { return 1; }
-void dm_test_clock_shift(int64_t d) { (void)d; }

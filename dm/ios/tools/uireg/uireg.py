@@ -54,7 +54,7 @@ BASE="DM_SAVE_FRESH=warlock DM_GAME_SEED=0x12345678 DM_FIXED_TIME=1790000000 DM_
 # until only the one run that specifically verifies "this feature turned off" remains. The reason comes from real runs in both profiles (with
 # the spawn point on, the first tap of these runs hits nothing and everything after it fails in turn).
 OLD_SPAWN={
- "n":"点阿卡拉的屏幕坐标","p":"点阿卡拉的屏幕坐标","b":"点瓦瑞夫 / 恰西的屏幕坐标","top":"iPad 档：开箱子、走到阿卡拉旁的点位","i":"iPad 档：点卡夏雇佣菜单的点位","pg2":"点箱子","vt1":"点箱子","vf1":"开箱","j":"背包拖放的落点（物品给在脚下的次序）","k":"背包拖放的落点","pk":"箱子选择框边缘的屏幕坐标","g4":"点凯恩的屏幕坐标",}
+ "n":"点阿卡拉的屏幕坐标","p":"点阿卡拉的屏幕坐标","b":"点瓦瑞夫 / 恰西的屏幕坐标","top":"iPad 档：开箱子、走到阿卡拉旁的点位","i":"iPad 档：点卡夏雇佣菜单的点位","j":"背包拖放的落点（物品给在脚下的次序）","k":"背包拖放的落点","pk":"箱子选择框边缘的屏幕坐标","g4":"点凯恩的屏幕坐标",}
 if os.environ.get("UIREG_EXTRA_ENV"): BASE+=" "+os.environ["UIREG_EXTRA_ENV"].strip()   # 每局都加的环境变量（空格分隔的 K=V），如某条分支的核对开关 | environment variables added to every run (space-separated K=V), such as the verification switch of some branch
 SAVE_TIME_MIN=1800000000   # 手柄选人的局若要固定时钟，取不早于它的值（标准存档里角色的时间戳都早于它） | If a controller-selection run wants a fixed clock, use a value no earlier than this (the timestamps of the characters in the standard save are all earlier than it)
 WHO_ROW={1:"joe",2:"Warlock",3:"joebao",4:"法师"}   # 标准存档选角页自上而下四行的角色名 | Character names of the four rows, top to bottom, on the standard save's character select page
@@ -268,11 +268,11 @@ def stay(s,before):   # 人不离开原地：本段第一条与最后一条 pos 
     p=re.findall(r"pos 区域 (\d+ \(\d+,\d+\))",s)
     if len(p)<2: return "未判：没有两条坐标读数"
     return f"通：坐标不变 {p[0]}" if p[0]==p[-1] else f"不通：{p[0]} → {p[-1]}"
-# 储藏箱加宽（10 → 14 列，挪面板乘面板缩放）后储藏箱开着时：储藏箱一侧比原版 x −39（个人页签 62.5、共享 106.5、个人页第 0 列 60）、
-# 物品栏一侧 +38.5（背包第 0 列 424.5）、关闭钮 654.5、取金币钮 187.5；宝石 / 材料 / 符文 / 魔盒四页回到原版位置。这几局（与 top / v 局开箱那几步）的点位都按这个量过
-# After the stash widening (10 → 14 columns, the panel shift multiplied by the panel scale), with the stash open: the stash side is x −39 from the original game (personal tab 62.5, shared 106.5, personal page column 0 at 60),
-# the inventory panel side is +38.5 (inventory column 0 at 424.5), close button 654.5, withdraw gold button 187.5; the four pages gems / materials / runes / cube are back at the original game's positions. The tap positions of these runs (and of the stash-opening steps of the top / v runs) were all measured this way
-WIDE=("c","d","t","u","s","sa")
+# 原先储藏箱加宽（10 → 14 列）后，储藏箱一侧比原版 x −39、物品栏一侧 +38.5（背包第 0 列 424.5），c / d / t / u / s 几局的储藏箱点位是按那时量的（见 REMEASURE）
+# The stash widening (10 → 14 columns) used to shift the stash side by x −39 and the inventory side by +38.5 (inventory column 0 at 424.5); the stash tap points of runs c / d / t / u / s were measured then (see REMEASURE)
+WIDE=()   # 加宽删掉了（2026-10-27）：clr() / INV_X0 都按原版位置 | the widening was removed (2026-10-27): clr() / INV_X0 use the original positions
+# 这几局的储藏箱点位是按加宽 + 珍宝匣量的，删掉以后要在 iOS 包上按原版储藏箱重量；整表跑时先跳过（点名跑照跑，好重量） | the stash tap points of these runs were measured on the widened stash + Trove; once removed they must be re-measured on the iOS package against the original stash. Skipped in full-table runs until then (still run when named, for re-measuring)
+REMEASURE=("c","d","t","u","s")
 def run(g):
     global INV_X0; INV_X0=424.5 if g.run in WIDE else 386.0   # 背包占格的读法跟着物品栏右移 | the inventory occupancy reading follows the inventory panel's shift to the right
     script="\n".join(g.L)+f"\n{g.t+1.0:.2f} note 结束\n"; cap=int(g.t)+6; tag=f"{os.environ.get('UIREG_TAG') or 'ur'}_{MODE}_{g.run}"   # 起局脚本见到「note 结束」就收，cap 只是上限 | the run launcher script stops as soon as it sees 「note 结束」(note end); cap is only an upper limit
@@ -547,19 +547,6 @@ def groups():
     g.item("长按成叠格","取 3 件",r"取多件：.*取 3："); g.hold(201,81); g.shot()
     g.item("从成叠格拖到背包","取 1 件",r"取多件：.*取 1："); g.dragp((201,81),(488.5,297)); g.shot()
     g.item("从成叠格拖到面板下方松手","不取",r"拖放落点|界面命中",r"取多件"); g.dragp((201,81),(333,372)); g.shot()
-    gs.append(g)
-    # sa 局：往个人页 / 共享页里存符文自动进高级仓库（珍宝匣存入，dm_pouch.c）。同 d 局的存档与开头：珍宝匣页符文那一叠 12 个，每次双击取 1 个到背包（落在背包右上角那格），
-    # 再把它拖进个人页 / 共享页的格子，或开着箱子双击它。判据读宿主日志：个人页 = 落下后服务端代发原版「移到仓库」；共享页 = 收包处改道（放回背包原格再发）；双击 = 原版「移动到堆叠栏」
-    # Run sa: runes stored into the personal page / shared page go into the advanced stash automatically (trove deposit, dm_pouch.c). Same save and opening as run d: the stack of 12 runes on the trove page, each double-tap takes 1 into the backpack (it lands in the top-right backpack cell),
-    # then drag it into a cell of the personal page / shared page, or double-tap it with the stash open. The criteria read the host log: personal page = after the drop the server sends the original "move to stash" on its behalf; shared page = rerouted at packet receive (put back into its backpack cell and sent again); double-tap = the original "move to stacking tab"
-    g=G("sa","DM_TEST_WORLD_GO=near2:2:c267@200 DM_C2S_LOG=pwc2s.jsonl",save=os.environ.get("UIREG_STACK_SAVE") or "save.pw_rune_stack"); g.sect("stashauto",0); g.t=3.5; g.tap(P(333,336),1.6); g.at("await pos"); g.t=max(g.t,13.0); g.at("note 进局",1.5)
-    g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.arrive(5808,4443,3,24.0); g.at("tap_unit 2 267 3",3.0); g.shot()
-    g.item("珍宝匣页双击符文那一叠","取 1 件到背包",r"取多件：.*取 1："); g.tap(P(148,53)); g.dbl(201,81); g.shot()
-    g.item("切到个人页，把背包里那颗符文拖进个人页格子","落下后自动转进珍宝匣，个人页不留",r"珍宝匣：仓库页里新落下的物品[\s\S]*珍宝匣：物品 id \d+ 已从仓库页转进高级仓库",r"2 秒还在仓库页"); g.tap(P(62,53)); g.dragp((600.5,227),(81,237)); g.wait(2.5); g.shot()
-    g.item("珍宝匣页再取 1 件","到背包（那一叠还是 12 个：上一步拖进个人页的那颗回来了）",r"叠数 12 取 1："); g.tap(P(148,53)); g.dbl(201,81); g.shot()
-    g.item("切到共享页，把它拖进共享页格子","收包处改道：放回背包原格、下一拍进珍宝匣；共享页不留",r"珍宝匣：r01[^\n]*拖进共享页 → 改成放回背包格[\s\S]*珍宝匣：物品 id \d+ 已回到背包 → 原版移到仓库",r"留在背包"); g.tap(P(106,53)); g.dragp((600.5,227),(81,237)); g.wait(2.5); g.shot()
-    g.item("珍宝匣页再取 1 件","到背包（那一叠还是 12 个：上一步拖进共享页的那颗也回来了）",r"叠数 12 取 1："); g.tap(P(148,53)); g.dbl(201,81); g.shot()
-    g.item("开着箱子双击背包里的那颗符文","原版「移动到堆叠栏」：背包少 1 格（回到珍宝匣那一叠）",("inv",-1)); g.dbl(600.5,246.5); g.wait(2.0); g.shot()
     gs.append(g)
     # t 局：背包里带着魔盒时从符文页那一叠取件——双击 / 长按 / 拖三种手法。判据读截图的背包占格（魔盒本身占 4 格，取出的符文要多占格；占格增量 = 叠数减量，就没有东西进了魔盒），叠数认取件时读到的游戏值
     # t run: with the cube in the inventory, take items from that stack on the rune page - three gestures: double-tap / long-press / drag. The criterion reads the inventory cell occupancy from the screenshot (the cube itself takes 4 cells, and runes taken out must take additional cells; cell increase = stack count decrease means nothing went into the cube), and the stack count trusts the game value read at take time
@@ -885,7 +872,7 @@ def groups():
         g.item("开设置页","标题栏连在面板上（看截图）",r"OpenPanel SettingsPanel"); g.tap(P(551,17)); g.at("tap_ui Settings@PauseLayoutGarden 3",1.8); g.shot()
         g.tap(P(420,345),1.8); g.tap(P(615,17),1.5)
         g.item("开箱子","标题栏连在面板上（看截图）",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 3",3.0); g.shot()
-        g.tap(P(654.5,17),1.5)   # 储藏箱加宽后箱子开着时关闭钮在 660 | after the stash widening, the close button is at 660 when the stash is open
+        g.at("tap_ui close@BankExpansionLayout 3",1.5)   # 按控件名点关闭钮，不靠坐标 | tap the close button by widget name, not by coordinates
         # 阿卡拉在营地另一头：让测试开关从出生点把人带过去（游戏自己寻路），再点她。首次对话是连着两段讲话，说完对话就结束，要再点一次才出菜单
         # Akara is at the other end of the camp: let the test switch take the player there from the spawn point (the game pathfinds by itself), then tap her. The first conversation is two speeches in a row, and the conversation ends once they finish; one more tap is needed to bring up the menu
         g.item("从出生点走到阿卡拉旁","游戏自己寻路走到",r"\[script\] await pos：区域 1",r"走不过去"); g.arrive(5874,4422,4,60.0); g.shot()
@@ -1026,7 +1013,7 @@ def groups():
     # sb run: tap every stash button one by one (run in both iPhone mode and iPad mode). All tapped by widget name, independent of coordinates
     g=G("sb","DM_TEST_GIVE=r01:2:1@60 DM_TEST_GIVE_INV=1 DM_TEST_GOLD=1300"+" DM_TEST_WORLD_GO=near2:2:c267@200"); g.sect("sbtn",0); g.enter(); g.wait(2.0)
     g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.arrive(5808,4443,3,24.0); g.at("tap_unit 2 267 3",3.0); g.shot()
-    for k,nm in [(1,"共享"),(2,"珍宝匣"),(5,"编年史"),(2,"珍宝匣"),(0,"个人")]:   # 珍宝匣合页后页签条只剩四个：个人 / 共享 / 珍宝匣（原宝石页签 Image2）/ 编年史（Image5，左移两格）；材料 / 符文页签挪出屏不再点 | after the Trove merge the tab bar has only four tabs: Personal / Shared / Trove (the former gems tab Image2) / Chronicle (Image5, shifted left two slots); the materials / runes tabs are off screen and no longer tapped
+    for k,nm in [(1,"共享"),(2,"宝石"),(3,"材料"),(4,"符文"),(0,"个人")]:   # 原版五个页签：个人 / 共享 / 宝石 / 材料 / 符文 | the original five tabs: personal / shared / gems / materials / runes
         g.item(f"点页签 Image{k}（{nm}）","切页",r"界面页签：切 [+-]\d+ 页"); g.at(f"tap_ui Image{k}@BankExpansionLayout 3",1.5); g.shot()
     g.at("tap_ui Image1@BankExpansionLayout 3",1.5)
     g.item("共享页点右箭头","翻到第 2 页",r"SharedStashRight"); g.at("tap_ui TouchStashRight@BankExpansionLayout 3",1.5); g.shot()
@@ -1036,7 +1023,7 @@ def groups():
     g.at("tap_ui Image0@BankExpansionLayout 3",1.5)
     g.item("点物品栏金币钮（存入）","弹数量框",r"OpenPanel DropGoldModal"); g.at("tap_ui gold_button@PlayerInventoryExpansionLayout 3",1.5); g.shot()
     g.item("数量框点取消","关框",r"ClosePanel DropGoldModal"); g.tap(P(375,200),1.5); g.shot()
-    g.item("点右上角关闭 close","箱子关、加宽还原",r"ClosePanel BankExpansionLayout[\s\S]*储藏箱加宽：关|储藏箱加宽：关[\s\S]*ClosePanel BankExpansionLayout"); g.at("tap_ui close@BankExpansionLayout 3",2.0); g.shot()
+    g.item("点右上角关闭 close","箱子关",r"ClosePanel BankExpansionLayout"); g.at("tap_ui close@BankExpansionLayout 3",2.0); g.shot()
     gs.append(g)
     # ---- 腰带空格双击补满：物品栏腰带长按不动、空格双击补满所有空格（只认药水、卷轴不进）、有药格双击使用；bdm 带佣兵底栏双击喂佣兵 ----
     # 只开物品栏时腰带四格中心（667 基准）：(294,197) (320,197) (346,197) (371,197)（q 局第 3 格 346 同）
@@ -1110,92 +1097,6 @@ def groups():
     g=G("wd2",WD); g.sect("wd2",0); g.t=3.5
     g.item("启动后什么都不点","按原设计判死：「【红】看门狗：第 N 秒起无进展」",r"【红】看门狗：第 \d+ 秒起无进展"); g.wait(40.0)
     gs.append(g)
-    # ---- 个人仓库 2–5 页：pg1 88 法师开关翻走翻回、前后逐件比；pg2 术士触摸点个人页左右箭头、保存退出重进 ----
-    # ---- Personal stash pages 2–5: pg1 level 88 sorceress, the test switch pages away and back, compare item by item before and after; pg2 warlock taps the personal page left/right arrows by touch, save, exit and re-enter ----
-    def pglog(log,tick):   # DM_TEST_PG_LOG 在某拍打出的那批（物品码, 格, 孔里件数） | the batch printed by DM_TEST_PG_LOG at a given tick (item code, cell, number of items in sockets)
-        rows=re.findall(r"个人仓库读数：拍 %d (\S+) 格 (\d+),(\d+) 孔里 (\d+) 件"%tick,log); return sorted(rows)
-    def same(t0,t1):
-        def f(s,b):
-            a=pglog(b+s,t0); c=pglog(b+s,t1)
-            if not a: return "未判：拍 %d 没有读数"%t0
-            return ("通：" if a==c else "不通：")+f"拍 {t0} {len(a)} 件 / 拍 {t1} {len(c)} 件"+("，逐件（码、格、孔里件数）相同" if a==c else f"；不同：{sorted(set(a)^set(c))[:6]}")
-        return f
-    # pg1：88 法师（个人页满仓 90 件）——开关翻到第 2 页再翻回，前后逐件比
-    # pg1: level 88 sorceress (personal page full with 90 items) - the switch flips to page 2 and back, compare item by item before and after
-    g=G("pg1","DM_TEST_PG_LOG=150,700 DM_TEST_PG_GO=300:+1,500:-1"); g.sect("pg1",0); g.enter(4); g.t=max(g.t,24.0)
-    g.item("翻到第 2 页（开关在拍 300 翻，早于本项记号，判整局）","「第 1 → 2 页，搬出 N 件」",lambda s,b: ("通：" if re.search(r"个人仓库：第 1 → 2 页，搬出 \d+ 件",b+s) and not re.search(r"【红】个人仓库",b+s) else "不通：")+"整局日志"); g.t=max(g.t,30.0); g.shot()
-    g.item("翻回第 1 页","「第 2 → 1 页 … 放回 N 件」",r"个人仓库：第 2 → 1 页",r"【红】个人仓库"); g.t=max(g.t,38.0); g.shot()
-    g.item("翻走翻回后","个人仓库格里逐件（码 / 格 / 孔里件数）与翻前相同",same(150,700)); g.t=max(g.t,44.0)
-    gs.append(g)
-    # pg2：术士，个人页上用触摸点左右箭头——卷轴双击进第 1 页 → 右箭头到第 2 页（空）→ 双击另一张卷轴进第 2 页 → 左箭头回第 1 页 → 保存退出重进 → 开箱看第 1 页、再翻到第 2 页
-    # pg2: warlock, tap the left/right arrows by touch on the personal page - double-tap a scroll into page 1 → right arrow to page 2 (empty) → double-tap another scroll into page 2 → left arrow back to page 1 → save, exit and re-enter → open the stash and look at page 1, then flip to page 2
-    g=G("pg2","DM_STATE=pwstate.jsonl"); g.sect("pg2",0); g.enter(); g.wait(2.0)
-    g.item("点箱子","开储藏箱（个人页，底下页码「第 1/5 页」，看截图）",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 3",3.0); g.shot()
-    g.item("个人页开着双击背包里的卷轴","进个人页第 1 页（看截图）",None); g.dbl(600.5,266); g.wait(1.5); g.clr(); g.shot()
-    g.item("个人页点右箭头","翻到第 2 页：「个人仓库：第 1 → 2 页」、不发共享页翻页",r"个人仓库：第 1 → 2 页",r"SharedStashRight|【红】个人仓库"); g.at("tap_ui TouchStashRight@BankExpansionLayout 3",2.0); g.shot()
-    g.item("第 2 页双击背包里另一张卷轴","进第 2 页（看截图）",None); g.dbl(600.5,285.5); g.wait(1.5); g.clr(); g.shot()
-    g.item("点左箭头","回第 1 页",r"个人仓库：第 2 → 1 页",r"SharedStashLeft|【红】个人仓库"); g.at("tap_ui TouchStashLeft@BankExpansionLayout 3",2.0); g.shot()
-    g.item("第 1 页再点左箭头","不回绕：不翻",lambda s,b: ("不通：翻了" if re.search(r"个人仓库：第 1 → \d+ 页",s) else "通：没翻")); g.at("tap_ui TouchStashLeft@BankExpansionLayout 3",2.0); g.shot()
-    g.item("点「共享」页签再点右箭头","共享页照旧发 SharedStashRight、页码各显各的（看截图）",r"SharedStashRight"); g.at("tap_ui Image1@BankExpansionLayout 3",1.5); g.at("tap_ui TouchStashRight@BankExpansionLayout 3",2.0); g.shot()
-    g.at("tap_ui Image0@BankExpansionLayout 3",1.5); g.tap(P(654.5,17),1.5)
-    g.item("保存并退出","回选角页",r"FrontEndNavigation ToFrontEnd"); g.tap("@menu"); g.tap(P(551,17)); g.at("tap_ui Exit@PauseLayoutGarden 3",5.0); g.shot()
-    g.item("重进同一个角色","进局；载入个人仓库侧文件",r"个人仓库：\S+ 当前第 1 页，另外几页共 1 件"); g.ui("ListItem2@CharacterSelectPanel",1.3); g.tap(P(333,336),12.0); g.shot()
-    g.item("开箱翻到第 2 页","第 2 页那张卷轴还在（看截图）",r"个人仓库：第 1 → 2 页"); g.at("tap_unit 2 267 3",3.0); g.at("tap_ui TouchStashRight@BankExpansionLayout 3",2.0); g.shot()
-    gs.append(g)
-    # vt1：60 级术士给一顶暗金软帽（背包右上 2×2，中心 591.9,236.3；只开物品栏时 413,236）→ 开物品栏，用存档里原有的鉴定卷轴 (423,265) 鉴定它（编年史仓库只收已鉴定的）→ 关物品栏 → 开箱 → 第六页签「编年史」(278.5,53) → 双击帽子存入 → 单击格子 (96.7,113.3) 出说明 → 拖回背包 → 搜「帽」→ 保存退出重进 → 再开第六页
-    # vt1: give a level 60 warlock a unique cap (inventory top right 2×2, center 591.9,236.3; 413,236 with only the inventory open) → open the inventory, identify it with the identify scroll already in the save (423,265) (the Chronicle vault accepts only identified items) → close the inventory → open the stash → sixth tab 「编年史」(Chronicle) (278.5,53) → double-tap the cap to deposit it → single-tap the cell (96.7,113.3) to show the description → drag it back to the inventory → search 「帽」(cap) → save, exit and re-enter → open the sixth page again
-    VE="DM_TEST_STAT=12=60 DM_TEST_GIVE=cap:7:1@60 DM_TEST_GIVE_INV=1 DM_KBD=帽"
-    g=G("vt1",VE); g.sect("vt1",0); g.enter(); g.wait(2.0)
-    g.item("开物品栏，双击鉴定卷轴后点帽子","鉴定（游戏自己的卷轴鉴定）",r"界面鉴定：单击 cap"); g.tap("@menu",1.1); g.dbl(423,265); g.tap(P(413,236),1.5); g.tap(P(654.5,17),1.2)
-    g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 3",3.0); g.shot()
-    g.item("点第六页签「编年史」","切到编年史仓库页（看截图：暗金格、部位下拉、档次勾选、搜索）",r"编年史仓库：进第六页"); g.tap(P(181,53),1.5); g.shot()
-    g.item("双击背包里的暗金帽子","存入：「→ 存进编年史仓库」「存入 …」",r"存进编年史仓库[\s\S]*编年史仓库：存入",r"【红】编年史仓库"); g.dbl(591.9,236.3); g.wait(2.0); g.shot()
-    g.item("单击仓库格子","出这件的说明框（看截图）",None); g.tap(P(94.7,156.4),1.5); g.shot()
-    g.item("说明框开着点「共享」页签","只收框、页签不切（vaultui2：框外任何地方只收框）",lambda s,b: ("不通：切了页签" if re.search(r"界面页签：切",s) else "通：没切页签")); g.tap(P(105.9,53),1.5); g.shot()
-    g.item("从格子拖回背包","取出：「拖到背包格 … → 取出」「取出 … → 背包」",r"编年史仓库：[^\n]+ 拖到背包格[^\n]*→ 取出[\s\S]*取出 [^\n]*→ 背包",r"【红】编年史仓库"); g.dragp((94.7,156.4),(454.4,276.3)); g.wait(1.5); g.shot()
-    g.item("再双击存回去","存入",r"编年史仓库：存入",r"【红】编年史仓库"); g.dbl(454.4,236.3); g.wait(2.0); g.shot()
-    g.item("点搜索框（输入「帽」）","列表只剩帽子类（看截图）",None); g.tap(P(226,78),3.0); g.shot()
-    g.tap(P(654.5,17),1.5)
-    g.item("保存并退出","回选角页",r"FrontEndNavigation ToFrontEnd"); g.tap("@menu"); g.tap(P(551,17)); g.at("tap_ui Exit@PauseLayoutGarden 3",5.0); g.shot()
-    g.item("重进同一个角色","进局；编年史仓库读入 1 件",r"编年史仓库：\S+ 读入 1 件"); g.ui("ListItem2@CharacterSelectPanel",1.3); g.tap(P(333,336),12.0); g.shot()
-    g.item("开箱第六页","那顶帽子还在格子里；普通 / 优异 / 精英三个框全勾，同第一次打开（看截图，对照 vt1_02）",r"编年史仓库：进第六页"); g.at("tap_unit 2 267 3",3.0); g.tap(P(181,53),1.5); g.shot()
-    gs.append(g)
-    # vf1：编年史独立页面修复回归（曾出现切到编年史页后装备不显示）。用一份真实玩家存档的副本（只在测试机容器里，不进仓库；第一行那个角色：个人页 3 件、共享页 1 满页、金币）——6 页签来回切；编年史页关箱再开；编年史页先关箱再退出、重进第一行
-    # vf1: regression for the chronicle standalone page fix (equipment once did not show after switching to the chronicle page). Uses a copy of a real player save (only in the test device's container, not in the repository; the character in the first row: 3 items on the personal page, 1 full shared page, gold) - switch back and forth across the 6 tabs; on the chronicle page close the stash and reopen it; on the chronicle page close the stash first, then exit and re-enter the first row
-    def ent(g): g.t=max(g.t,3.5); g.tap(P(333,336),1.6); g.tap(P(333,157),1.0); g.at("await pos"); g.t=max(g.t,13.0); g.at("note 进局",1.5); g.wait(2.0)
-    g=G("vf1","DM_TEST_ITEM_DUMP=1500",save="save.sl_player"); g.sect("vf1",0); ent(g)
-    g.item("开箱","个人页：3 件、金币框、页码（看截图）",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 3",3.0); g.clr(); g.shot()
-    g.item("个人 → 编年史","编年史页",r"进第六页"); g.tap(P(181,53),1.5); g.shot()
-    g.item("编年史 → 共享","共享页满页物品、金币（看截图）",r"界面页签"); g.tap(P(105.9,53),1.5); g.clr(); g.shot()
-    g.item("共享 → 宝石","宝石页（看截图）",r"界面页签"); g.tap(P(148.8,53),1.5); g.clr(); g.shot()
-    g.item("宝石 → 编年史","编年史页",r"进第六页"); g.tap(P(181,53),1.5); g.shot()
-    g.item("编年史 → 个人","个人页 3 件、金币框、页码都在（看截图，对照第 1 张）",r"界面页签"); g.tap(P(62.5,53),1.5); g.clr(); g.shot()
-    g.item("个人 → 共享","共享页满页物品还在（看截图，对照第 3 张）",r"界面页签"); g.tap(P(105.9,53),1.5); g.clr(); g.shot()
-    g.tap(P(181,53),1.5)
-    g.item("停在编年史页关箱","箱子关了",r"ClosePanel BankExpansionLayout|CloseAll|ClosePanel"); g.tap(P(654.5,16.7),1.5); g.shot()
-    g.item("再开箱","开箱（看截图停在哪页）",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 3",3.0); g.clr(); g.shot()
-    g.item("点个人","个人页 3 件都在（看截图）",None); g.tap(P(62.5,53),1.5); g.clr(); g.shot()
-    g.item("点共享","共享页满页还在（看截图）",None); g.tap(P(105.9,53),1.5); g.clr(); g.shot()
-    g.tap(P(181,53),1.5); g.tap(P(654.5,16.7),1.5)
-    g.item("编年史页关箱后退出","回选角页",r"FrontEndNavigation ToFrontEnd"); g.tap("@menu"); g.tap(P(551,17)); g.at("tap_ui Exit@PauseLayoutGarden 3",5.0); g.shot()
-    g.item("重进第一行","进局",None); g.t+=0.5; ent(g); g.shot()
-    g.item("开箱","个人页 3 件都在（看截图）",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 3",3.0); g.clr(); g.shot()
-    g.item("点共享","共享页满页还在（看截图）",None); g.tap(P(105.9,53),1.5); g.clr(); g.shot()
-    gs.append(g)
-    # vf2：术士背包有魔盒——编年史页点 / 拖底部盖板那块，没有输入落到魔盒；两排部位页签、左右箭头、盖板
-    # vf2: the warlock's inventory has the Horadric Cube - on the chronicle page tap / drag the bottom cover plate area, and no input lands on the cube; two rows of body-slot tabs, left/right arrows, cover plate
-    g=G("vf2","DM_TEST_STAT=12=60 DM_TEST_GIVE=box:2:1@60 DM_TEST_GIVE_INV=1 DM_TEST_ITEM_DUMP=1400"+" DM_TEST_WORLD_GO=near2:2:c267@200"); g.sect("vf2",0); g.enter(); g.wait(2.0)
-    g.item("开箱","个人页（背包里有魔盒，看截图）",r"OpenPanel BankExpansionLayout"); g.arrive(5808,4443,3,24.0); g.at("tap_unit 2 267 3",3.0); g.shot()
-    g.item("点编年史","编年史页，没有魔盒容器 / 转化钮露出（看截图）",r"进第六页"); g.tap(P(181,53),1.5); g.shot()
-    g.item("点原魔盒格那块","没打开魔盒、没有输入落到魔盒",r"界面命中",r"OpenPanel \S*Cube|魔盒|Transmute|转化"); g.tap(P(179.3,306.4),1.0); g.shot()
-    g.item("从原魔盒格那块拖出去","同上，魔盒不动",r"界面命中",r"OpenPanel \S*Cube|魔盒|Transmute|转化"); g.drag(P(179.3,306.4),P(300,250)); g.shot()
-    g.item("点部位页签「鞋子与腰带」","列表换成鞋子与腰带、选中帧带菱形（看截图）",None); g.tap(P(209.6,95.3),1.5); g.shot()
-    g.item("点部位页签「法杖与法器」（第二排）","列表换成法杖与法器（看截图）",None); g.tap(P(279.1,117.2),1.5); g.shot()
-    g.item("点部位页签「头盔」","头盔，第 1/4 页（看截图）",None); g.tap(P(70.5,95.3),1.5); g.shot()
-    g.item("点右箭头","第 2/4 页（看截图）",None); g.tap(P(226.4,280.6),1.5); g.shot()
-    g.item("点左箭头","回第 1/4 页（看截图）",None); g.tap(P(147.8,280.4),1.5); g.shot()
-    g.item("点底部盖板","什么都不发、不冒原版说明（看截图）",lambda s,b: ("不通：" if re.search(r"OpenPanel TooltipsPanel|Cube|魔盒|转化",s) else "通：")+"盖板"); g.tap(P(179.3,306.4),1.5); g.shot()
-    gs.append(g)
     # dc 局（补的覆盖缺口）：野外死亡 → 点原版死亡画面的「继续」→ 复活回城。整表原先没有任何一局走这条玩家路径，
     #   秘境图里死亡后点继续崩溃（线上出过）就漏在这里。这局是普通野外的基线；秘境里的死亡 → 继续另有专项。
     #   第 150 拍换到鲜血荒地（尸体留在野外）、第 450 拍 DM_TEST_KILL 走原版死亡流程；复活后人要在城里、生命回满、底栏读的是本人（喝一瓶腰带药读数跟着变）
@@ -1240,6 +1141,7 @@ def groups():
 allrows=[]; T0=time.time(); notes=[]
 for g in groups():
     if ONLY and g.run not in ONLY: continue
+    if not ONLY and g.run in REMEASURE: print(f"跳过 {g.run}：储藏箱点位待按原版重量（REMEASURE） | skipping {g.run}: stash tap points to be re-measured against the original stash (REMEASURE)"); continue
     if LETTERBOX and not ONLY and g.run in ("d","g","h","j","k","t","u","v","v2","m","n","p","ra","q","pk","g1","g2","g3","g4","ex","tb","tp"): continue   # 成叠取件、技能绑定是纯逻辑，留边档不跑（点名要跑仍可以） | stack pickup and skill binding are pure logic, not run in letterbox mode (can still be run when named explicitly)
     rows,wall,cap,red,tm=run(g); allrows+=rows; notes.append(f"局 {g.run}：墙钟 {wall:.0f} 秒（脚本上限 {cap}）；{tm}；日志【红】{red} 行"); print("# "+notes[-1],flush=True)
 real=[r for r in allrows if not r[1].startswith("（整局）") or r[1].startswith("（整局）不该出现") or r[1].startswith("（整局）该出现")]   # 整局的禁词 / 必有词两行计入通与不通 | the two whole-run rows (forbidden words / required words) count toward pass and fail

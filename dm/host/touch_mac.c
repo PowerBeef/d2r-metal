@@ -368,7 +368,7 @@ apply_input:
             // 界面连续手势（同 iOS 前端 front_ios.m）：手势层定型后把起手点与当前点交给宿主；起拖时报一次物品图的抬起量（同上面拖放落点的 DM_TC_POINTER_LIFT_PT / 1320）
             // Continuous UI gestures (same as the iOS front end front_ios.m): once the gesture layer has settled the gesture, hand the start point and current point to the host; when a drag starts report the lift amount of the item image once (same as DM_TC_POINTER_LIFT_PT / 1320 of the drag-and-drop landing point above)
             dm_tc_finger *f = &g_touch.state.finger[e->slot];
-            if (g_touch.state.navigation_mode && e->slot == g_touch.state.pointer_slot && f->ui_drag) { if (!g_touch.ui_drag_on) { g_touch.ui_drag_on = 1; dm_ui_drag_lift(DM_TC_POINTER_LIFT_PT / 1320); dm_ui_drag_begin_ptr(f->ui_drag, f->aim_origin_x / 2868, f->aim_origin_y / 1320, 44.0f / 1320); }
+            if (g_touch.state.navigation_mode && e->slot == g_touch.state.pointer_slot && f->ui_drag) { if (!g_touch.ui_drag_on) { g_touch.ui_drag_on = 1; dm_ui_drag_begin_ptr(f->ui_drag, f->aim_origin_x / 2868, f->aim_origin_y / 1320, 44.0f / 1320); }
                 dm_ui_drag_move(e->x / 2868, e->y / 1320); } }
         else {
             if (g_touch.ui_drag_on && e->slot == g_touch.state.pointer_slot) { g_touch.ui_drag_on = 0; dm_ui_drag_end(); }   // 松手前告诉手势层这根手指是否落在物品区（这里就在游戏主线程，直接问） | before release tell the gesture layer whether this finger landed on an item area (this is already the game main thread, so ask directly)

@@ -186,20 +186,20 @@ static const struct { const char *name; int side; void (*enter)(void), (*leave)(
 #undef X
 };
 static void items_run(int side, int leave) { for (unsigned i = 0; i < sizeof k_items / sizeof *k_items; i++) { if (k_items[i].side != 2 && k_items[i].side != side) continue; void (*f)(void) = leave ? k_items[i].leave : k_items[i].enter; if (f) f(); } }
-// 我们自己的页在手柄模式下接管按键（自定义页、编年史仓库页…；原版的焦点导航不认识我们加的控件）：页在屏上时每帧声明要哪些键（dm_padmode_page_keys，游戏主线程），
+// 我们自己的页在手柄模式下接管按键（自定义页、主菜单的更新钮…；原版的焦点导航不认识我们加的控件）：页在屏上时每帧声明要哪些键（dm_padmode_page_keys，游戏主线程），
 // 取手柄处（hle_hid.c fill）把这些键扣下不交给原版、按下沿攒给页（dm_padmode_page_keys 的返回值）。页不再声明（3 帧）就失效；失效时还按着的键松开前仍不交给原版。同一时刻只有一页在屏上
-// 页接管了的键还想让原版照常收到一次短按时（如编年史仓库页的 Y：短按仍是原版的「丢弃」，按住才是我们的「存入」）：dm_padmode_page_pulse 让取手柄处替玩家按几次采样
-// Our own pages take over keys in controller mode (custom page, Chronicle vault page...; the original focus navigation does not know the widgets we
+// 页接管了的键还想让原版照常收到一次短按时：dm_padmode_page_pulse 让取手柄处替玩家按几次采样
+// Our own pages take over keys in controller mode (custom page, the main menu update button...; the original focus navigation does not know the widgets we
 // added): while a page is on screen it declares every frame which keys it wants (dm_padmode_page_keys, game main thread),
 // and where the controller is read (hle_hid.c fill) those keys are withheld from the original game and their press edges are accumulated for
 // the page (the return value of dm_padmode_page_keys). Once the page stops declaring (3 frames) the takeover lapses; keys still held when it
 // lapses are still not handed to the original game until released. Only one page is on screen at any moment
-// When a page still wants the original game to receive one normal short press of a key it has taken over (e.g. Y on the Chronicle vault page:
-// a short press is still the original "Drop", only a hold is our "Deposit"): dm_padmode_page_pulse makes the controller read press it for the
+// When a page still wants the original game to receive one normal short press of a key it has taken over:
+//: dm_padmode_page_pulse makes the controller read press it for the
 // player for a few samples
 static _Atomic uint64_t g_pg_mask, g_pg_ev, g_pg_frame, g_pg_held, g_pg_pulse; static _Atomic int g_pg_pulse_n;
-// 同一帧里可以有不止一处声明（如储藏箱个人页的 L / R 翻页，加上同一帧里别处声明的键）：同一帧的声明按位并起来，各取各声明的那几个键的按下沿、互不拿走别人的
-// There can be more than one declaration in the same frame (e.g. L / R paging on the personal stash page, plus keys declared elsewhere in the
+// 同一帧里可以有不止一处声明（如一页的方向键，加上同一帧里别处声明的键）：同一帧的声明按位并起来，各取各声明的那几个键的按下沿、互不拿走别人的
+// There can be more than one declaration in the same frame (e.g. one page's direction keys, plus keys declared elsewhere in the
 // same frame): declarations of the same frame are ORed together bitwise, and each takes the press edges of only the
 // keys it declared, without taking anyone else's
 uint64_t dm_padmode_page_keys(uint64_t mask) {   // 声明本帧要接管这些键，返回其中自上次取之后按下过的 | Declare that these keys are taken over this frame; returns those among them that were pressed since the last fetch
@@ -215,23 +215,11 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
     if (m) { atomic_fetch_or(&g_pg_ev, down & m); atomic_store(&g_pg_held, bt & m); eat |= bt & m; return (bt & ~m) | pulse; }
     atomic_store(&g_pg_ev, 0); atomic_store(&g_pg_held, 0); eat &= bt; return (bt & ~eat) | pulse;
 }
-// 编年史仓库页开着时（手柄模式）把原版「按住 Y」那半句提示的字换成我们实际做的事：原版在储藏箱各页对背包物品的提示是「丢弃（按住移动到私人储藏箱）」，
-// 第六页上按住 Y 被我们接管成存入编年史仓库（dm_vault_ui.c）。这半句只写「存入」：原版那条本来就超宽、在限宽里滚动（截图对照），写短到不滚，人就在编年史页上。换法同上面的手柄 / 触屏说法：只换当前语言串表里这个键的串指针，离开那一页换回
-// While the Chronicle vault page is open (controller mode), replace the text of the original "hold Y" half of the hint with what we actually do:
-// on every stash page the original hint for an inventory item is "Drop (hold to move to private stash)",
-// and on the sixth page holding Y is taken over by us to deposit into the Chronicle vault (dm_vault_ui.c). This half only says "Deposit": the
-// original string is already too wide and scrolls within the width limit (compared against screenshots), so it is kept short enough not to
-// scroll, and the player is on the Chronicle page anyway. The swap works like the controller / touch wording above: only the string pointer of
-// this key in the current language's string table is swapped, and it is swapped back on leaving that page
-enum { HINT_VAULT, NHINT };
-static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[128]; } g_hint[NHINT] = {
-    { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" } };   // 「按住 Y」那半句 | the "hold Y" half of the sentence
-void dm_padmode_vault_hint(int on) { atomic_store(&g_hint[HINT_VAULT].on, on ? 3 : 0); }   // 游戏主线程，页在屏上时每帧调（3 帧不调就算离开） | Game main thread; called every frame while the page is on screen (3 frames without a call counts as having left)
-// 切语言：原版把串表整张清空重装（SetLanguage，diag.c 的观测门在清空之前、游戏主线程调这里）。换串表与上面的提示小表都靠「节点地址变了」认重装，
+// 切语言：原版把串表整张清空重装（SetLanguage，diag.c 的观测门在清空之前、游戏主线程调这里）。换串表靠「节点地址变了」认重装，
 // 新节点要是正好分配在旧地址上就认不出：记着的原文指针已被原版释放——手柄模式会把悬空指针写回串表，触屏模式会把旧语言的触摸说法写进新语言的表（原文校验被跳过）。
 // 所以重装之前先收手：此刻指着我们缓冲区的节点写回原文（原版释放的是它自己的串），记的节点 / 原文全清，重装后下一轮按新节点重新认、重新过校验。
 // Language switch: the original game clears the whole string table and reloads it (SetLanguage; the observation gate in diag.c calls here
-// before the clear, on the game main thread). Both the string table swap and the small hint table above detect a reload by "the node address
+// before the clear, on the game main thread). The string table swap detects a reload by "the node address
 // changed",
 // so a new node that happens to be allocated at the old address goes undetected: the recorded original text pointer has already been freed by
 // the original game -- controller mode would write a dangling pointer back into the string table, and touch mode would write the old
@@ -243,26 +231,7 @@ void dm_padmode_lang_reset(void) {
     int back = 0;
     for (int i = 0; i < g_nstr; i++) { if (g_str[i].node && g_str[i].orig) { uint64_t *v = (uint64_t *)(uintptr_t)(g_str[i].node + 0x20); if (v[0] == (uint64_t)(uintptr_t)g_str[i].val) { v[0] = g_str[i].orig; v[1] = g_str[i].olen; back++; } }
         g_str[i].node = g_str[i].orig = g_str[i].olen = 0; }
-    for (int h = 0; h < NHINT; h++) { if (g_hint[h].node) { uint64_t *v = (uint64_t *)(uintptr_t)(g_hint[h].node + 0x20); if (v[0] == (uint64_t)(uintptr_t)g_hint[h].ours) { v[0] = g_hint[h].orig; v[1] = g_hint[h].olen; back++; } }
-        g_hint[h].node = g_hint[h].orig = g_hint[h].olen = 0; }
     if (g_have) LOG("手柄 / 触屏布局：串表要重装（切语言）→ %d 条写回原文，记的节点清空，重装后重新认", back);
-}
-static void hint_pump(void) {
-    for (int h = 0; h < NHINT; h++) { uint64_t *nodep = &g_hint[h].node; char *ours = g_hint[h].ours;
-        // 我们这半句走中英表；串指针要常驻（换进串表的是这个缓冲区的地址），每次取来比一下、语言变了才改写缓冲区
-        // Our half of the sentence goes through the Chinese-English table; the string pointer must stay resident (what is swapped into the string table
-        // is the address of this buffer), so compare on every fetch and rewrite the buffer only when the language has changed
-        // 缓冲区 128 字节（原先的 48 字节缓冲放不下长一点的译文：每帧重抄，串表里的长度还按没截断的算）；dm_i18n.py 核这个键的字节数。
-        // 串表里的长度按抄进来的实际长度写
-        // The buffer is 128 bytes (the former 48-byte buffer could not hold a longer translation: it was copied again every frame, and the length in the string table was the untruncated one); dm_i18n.py checks the byte length of this key.
-        // The length in the string table is the length actually copied in
-        { const char *w = dm_str(g_b, g_hint[h].ours_key); if (w && strcmp(ours, w)) { strlcpy(ours, w, sizeof g_hint[h].ours); if (*nodep && ((uint64_t *)(uintptr_t)(*nodep + 0x20))[0] == (uint64_t)(uintptr_t)ours) ((uint64_t *)(uintptr_t)(*nodep + 0x20))[1] = strlen(ours); } }
-        int on = g_cur && atomic_load(&g_hint[h].on) > 0; if (atomic_load(&g_hint[h].on) > 0) atomic_fetch_sub(&g_hint[h].on, 1);
-        uint64_t nd = str_node((uint64_t)(uintptr_t)(g_b + 0x2d71030), g_hint[h].key, strlen(g_hint[h].key)); if (!nd) continue;
-        uint64_t *v = (uint64_t *)(uintptr_t)(nd + 0x20);
-        if (nd != *nodep) { if (v[0] == (uint64_t)(uintptr_t)ours) continue; *nodep = nd; g_hint[h].orig = v[0]; g_hint[h].olen = v[1]; }   // 新节点（开机首次 / 切语言后串表重装）：记原文 | New node (first time after boot / string table reloaded after a language switch): record the original text
-        uint64_t want = on ? (uint64_t)(uintptr_t)ours : g_hint[h].orig, wl = on ? strlen(ours) : g_hint[h].olen;
-        if (v[0] != want) { v[1] = wl; v[0] = want; LOG("手柄提示：%s → %s", g_hint[h].key, on ? ours : "原文"); } }
 }
 // 手柄版暂停菜单「游戏难度：N」行（布局 touch_layout.py pad_pause；难度挂暂停菜单）：按钮发 ClosePanel:TouchPadDiff（空操作，这里当信号收），按一下人数档 +1、8 之后回 1。
 // 菜单开着时游戏停拍，请求要关了菜单才落地（dm_hud.c 在服务端拍入口取），所以连按时从「上一次请求的档」接着加，当前档位写在这一行我们自己的文字控件 TouchPadDiffTxt 上。
@@ -467,7 +436,6 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
         int ok = dm_ui_hover_now(x, y); LOG("测试 padcur：手柄光标放到 (%d,%d) → %d", x, y, ok); } }
     diff_text(b, frame);
     legend_pump(b, frame);
-    if (g_have) hint_pump();
     void dm_oe_ui_opmode(int m); int dm_opmode(void);
     // 测试开关 DM_TEST_PADMODE=<帧>:<0|1>[,<帧>:<0|1>…]（宿主没有手柄 / 触屏，用它切模式）；每次切后与开机第 300 帧各用原版取串 0x7f5630 读前 3 条记一行
     // Test switch DM_TEST_PADMODE=<frame>:<0|1>[,<frame>:<0|1>...] (the host has no controller / touchscreen, so this switches modes); after each switch and

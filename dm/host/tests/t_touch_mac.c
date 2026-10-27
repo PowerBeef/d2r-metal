@@ -38,17 +38,6 @@ int dm_shop_open(void) { return 0; }   // 商人页（dm_actions.c）的桩：�
 int dm_padmode_current(void) { return 0; }   // 手柄 / 触屏模式（dm_padmode.c）的桩：触屏 | Stub for controller / touch mode (dm_padmode.c): touch
 uint64_t dm_padmode_page_keys(uint64_t m) { (void)m; return 0; } void dm_padmode_legend_hide(const char *l, int a) { (void)l; (void)a; } int dm_padmode_busy(void) { return 0; } uint64_t dm_padmode_page_held(void) { return 0; } void dm_padmode_page_pulse(uint64_t m) { (void)m; } void dm_padmode_legend(int a, const char *t) { (void)a; (void)t; } const char *dm_str(uint8_t *b, const char *k) { (void)b; return k; }   // 手柄页键 / 提示条 / 取串的桩（个人仓库手柄翻页用，触屏下不走） | Stubs for controller page keys / button legend / string fetch (used by controller paging of the personal stash, not reached under touch)
 int dm_swapskill_wset(void) { return -1; }
-int dm_pages_cur(void) { return 0; } int dm_pages_count(void) { return 5; } void dm_pages_request_flip(int d) { (void)d; }   // 个人仓库多页（dm_pages.c）桩 | stubs for the multi-page personal stash (dm_pages.c)
-void dm_vault_ui_flip(int dir) { (void)dir; }
-int dm_vault_ui_pager_hit(int x, int y) { (void)x; (void)y; return 0; }
-void dm_vault_request_deposit(uint32_t id) { (void)id; }
-uint32_t dm_vault_ui_held(void) { return 0; }
-int dm_vault_ui_over(int x, int y) { (void)x; (void)y; return 0; }
-int dm_vault_ui_tip_gate(int x, int y) { (void)x; (void)y; return 0; }
-int dm_pouch_tip_gate(int x, int y) { (void)x; (void)y; return 0; }
-int dm_vault_ui_blocks(int x, int y) { (void)x; (void)y; return 0; }
-int dm_vault_ui_tap(int x, int y) { (void)x; (void)y; return 0; }
-int dm_vault_ui_drag(int phase, int x, int y) { (void)phase; (void)x; (void)y; return 0; }
 uint32_t dm_swapskill_itemsig(void) { return 0; }   // 副手组技能当前武器组（dm_actions.c）的桩：读不到 | stub for the current weapon set of the swap-set skill (dm_actions.c): cannot be read
 _Atomic int g_dm_frz_want, g_dm_frozen; void dm_freeze_frame(int want) { (void)want; }   // 面板冻结（diag.c）的桩 | stub for the panel freeze (diag.c)
 void dm_save_frame(void) {}   // 存盘握手（diag.c）的桩 | stub for the save handshake (diag.c)

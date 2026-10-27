@@ -1045,10 +1045,7 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     { int dm_cloud_char_conflict_take(char *, size_t); char nm[256], msg[400];   // iCloud 首次同步遇到同名角色、用了云端那份（dm_cloudsync.c）：进局后提示一次 | iCloud first sync met a character with the same name and used the cloud copy (dm_cloudsync.c): one notice after entering a run
       if (main && player && dm_cloud_char_conflict_take(nm, sizeof nm)) { snprintf(msg, sizeof msg, dm_str((uint8_t *)main->base, "dmCloudCharConflict"), nm); dm_game_notice((uint8_t *)main->base, msg); LOG("iCloud 同步：弹了同名角色用云端那份的提示（%s）", nm); } }
     { void dm_ser_track(uint64_t, uint64_t); if (main) dm_ser_track(G, player); }   // 存盘序列化在途的记录（dm_savebits.c，iCloud 并回读）；在各存档模块之前 | record of a save serialized but not yet written (dm_savebits.c, read by the iCloud merge); before the save modules
-    { void dm_pages_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.pages", dm_pages_tick(G, player, (uint8_t *)main->base)); }   // 个人仓库 2–5 页（dm_pages.c）；这一拍没有受控玩家（不在局内 / 正在死）player 为 0，个人仓库 / 编年史 / 百宝囊都当没有这一拍，只在换了一局或换了角色时重读（F-SAVE-1） | Personal stash pages 2–5 (dm_pages.c); player is 0 on ticks without a controlled player (not in a run / dying), which the personal stash / Chronicle / pouch treat as no tick, rereading only on a new session or a different character (F-SAVE-1)
-    { void dm_vault_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.vault", dm_vault_tick(G, player, (uint8_t *)main->base)); }
-    { void dm_pouch_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.pouch", dm_pouch_srv_tick((uint8_t *)main->base, G, player)); }
-    { void dm_cloudmerge_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.cloudmerge", dm_cloudmerge_srv_tick((uint8_t *)main->base, G, player)); }   // iCloud 收件箱局内并回（dm_cloudmerge.c）；不在局内 player 为 0   // 百宝囊收 / 放、存放的系统提示（dm_pouch.c）；不在局内 player 为 0   // 编年史仓库存取（dm_vault.c）；同上 | iCloud inbox in-game merge (dm_cloudmerge.c); player is 0 when not in game   // System notices for pouch take / put and deposit (dm_pouch.c); player is 0 when not in game   // Chronicle stash take / store (dm_vault.c); same as above
+    { void dm_cloudmerge_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.cloudmerge", dm_cloudmerge_srv_tick((uint8_t *)main->base, G, player)); }   // iCloud 收件箱局内并回（dm_cloudmerge.c）；不在局内 player 为 0 | iCloud inbox in-game merge (dm_cloudmerge.c); player is 0 when not in game
     dm_ipf_frame(1);
     cube_diag_tick(G, player);   // 合成读数 | Transmute readout
     if (main && player) seek_tp_step(G, player, main);
@@ -1218,8 +1215,7 @@ static void c2s_obs(const uint64_t *regs) {
     if (regs[1] && tk_rd(regs[1] + 8, &uid, 4)) hu = 1;
     uint8_t b[512]; uint32_t n = len < 512 ? len : 512; if (!tk_rd(regs[2], b, n)) n = 0;
     if (n >= 1 && b[0] == 0x20) cube_diag_req(regs[0], regs[1], b, n);   // 合成读数 | Transmute readout
-    { void dm_pouch_c2s(uint64_t *); dm_pouch_c2s((uint64_t *)(uintptr_t)regs); }   // 珍宝匣：符文 / 宝石 / 材料拖进共享页时改道进高级仓库（dm_pouch.c；会换掉 x2 / x3 指向的包） | Trove: runes / gems / materials dragged into the shared tab are rerouted into the advanced stash tabs (dm_pouch.c; replaces the packet x2 / x3 point to)
-    if (!g_c2sfp) return;                       // 门在产品里常挂（百宝囊、合成读数等要看），没开 DM_C2S_LOG 时不记 | The gate is always installed in the product (the pouch, the transmute readout and others need it); nothing is logged when DM_C2S_LOG is off
+    if (!g_c2sfp) return;                       // 门在产品里常挂（合成读数等要看），没开 DM_C2S_LOG 时不记 | The gate is always installed in the product (the transmute readout and others need it); nothing is logged when DM_C2S_LOG is off
     // 诊断开关 DM_TEST_WARP_DIAG=1（只读）：收到「与出口砖交互」包（0x40 [砖 id]）这一刻，把服务端处理函数 main+0x6dbea0 的判定逐项读出来记一行——点了出口不进时看是哪一项拒的（全部拒绝都不回包）。
     // 判定顺序：当前动作能否被打断 main+0x6c5730(游戏, 玩家, 2, 0, 0)（0 = 放行）→ 砖对应的出口可用 main+0x5592f0(砖)（非 0 = 放行）→ 距离 main+0x5c7050(玩家, 砖)（查表距离，≤4 才当场换，>4 什么都不做）。
     // Diagnostic switch DM_TEST_WARP_DIAG=1 (read-only): at the moment an "interact with exit tile" packet (0x40 [tile id]) is received, read out each check of the server handler main+0x6dbea0 and log one line -- to see which check refused when tapping an exit does not go in (no refusal sends a reply packet).
@@ -1928,9 +1924,7 @@ static void loadscreen_on_uimsg(const char *cat, const char *act, const char *ar
     if (!strcmp(cat, "PanelManager") && !strcmp(arg, "QuestLogPanelExpansion") && (!strcmp(act, "OpenPanel") || !strcmp(act, "OpenExclusivePanel"))) { module_t *qm = main_mod(); if (qm) *(volatile uint8_t *)(qm->base + 0x2d5ff58) = 0; }
     { void dm_textinput_on_uimsg(const char *, const char *, const char *); dm_textinput_on_uimsg(cat, act, arg); }
     { void dm_update_on_uimsg(const char *, const char *, const char *); dm_update_on_uimsg(cat, act, arg); }
-    { void dm_vault_on_uimsg(const char *, const char *, const char *); dm_vault_on_uimsg(cat, act, arg); }
     { void dm_padmode_on_uimsg(const char *, const char *, const char *); dm_padmode_on_uimsg(cat, act, arg); }   // 手柄版暂停菜单「游戏难度」行（dm_padmode.c） | "Game Difficulty" row of the controller pause menu (dm_padmode.c)
-    { void dm_pouch_on_uimsg(const char *, const char *, const char *); dm_pouch_on_uimsg(cat, act, arg); }   // 百宝囊框 / 存放按钮（dm_pouch.c）   // 储藏箱第六页「编年史」（dm_vault_ui.c） | Pouch frame / deposit button (dm_pouch.c)   // stash page six 「编年史」(Chronicle) (dm_vault_ui.c)
     { void dm_beltauto_on_uimsg(const char *, const char *, const char *); dm_beltauto_on_uimsg(cat, act, arg); }   // 开背包自动补腰带（dm_beltauto.c） | Auto-refill the belt when the inventory opens (dm_beltauto.c)
     { extern void (*g_dm_charsel_hook)(void); if (g_dm_charsel_hook && !strcmp(cat, "FrontEndNavigation") && !strcmp(act, "ToFrontEnd")) g_dm_charsel_hook(); }   // 退出这一局、回到前端（主菜单 / 选角页）：iOS 把这一局攒下的存档传 iCloud（cloud_ios.m）   // 构建号 + 新版本提示（dm_update.c） | Exiting this run and returning to the front end (main menu / character select page): iOS uploads the saves accumulated during this run to iCloud (cloud_ios.m)   // build number + new version notice (dm_update.c)
     if (!strcmp(cat, "PanelManager") && !strcmp(act, "ClosePanel") && !strcmp(arg, "TouchShareLog")) {   // 暂停菜单「分享诊断日志」（按钮发这条空操作，布局见 touch_layout.py _pause_no_help） | Pause menu 「分享诊断日志」(Share Diagnostics) (the button sends this no-op; for the layout see touch_layout.py _pause_no_help)
@@ -2063,8 +2057,8 @@ void ticks_install(void) {
     // The product default must hook the tick entry too: the numbers on the UIKit bottom bar (level / experience / belt / return to town / difficulty level) and applying the difficulty bar are all done at the tick entry (players_apply / hud_tick).
     // Previously it was hooked only with DM_TICKS / DM_STATE / DM_C2S_* -- every test case has them, but a player launching by tapping the icon did not: the scene column of perf.txt was all 「菜单」(menu), the bottom bar did not show, and tapping the difficulty bar had no effect.
     // Without test variables a slim version is hooked (doing only these two things); with them, it is replaced by the full version below
-    if (gate_obs_present(OBS_C2S)) gate_obs_set(OBS_C2S, c2s_obs);   // 百宝囊、合成读数要看客户端命令包；DM_C2S_LOG 记包也走这个回调 | The pouch and the transmute readout need the client command packets; DM_C2S_LOG packet logging also goes through this callback
-    else LOG("【红】产物没有命令分派观测门 OBS_C2S：百宝囊改道与合成读数不工作");
+    if (gate_obs_present(OBS_C2S)) gate_obs_set(OBS_C2S, c2s_obs);   // 合成读数要看客户端命令包；DM_C2S_LOG 记包也走这个回调 | The transmute readout needs the client command packets; DM_C2S_LOG packet logging also goes through this callback
+    else LOG("【红】产物没有命令分派观测门 OBS_C2S：合成读数不工作");
     if (gate_obs_present(OBS_TICK)) gate_obs_set(OBS_TICK, tick_gate_product);
     else LOG("【红】产物没有拍入口观测门 OBS_TICK：底栏数字 / 难度条 / 动态 3D 比例（dm_ingame_now）都不工作");
     { module_t *tm = main_mod(); void dm_textbox_install(uint8_t *); if (tm) dm_textbox_install((uint8_t *)tm->base); }   // 普通文字框里的注释颜色码（dm_textbox.c，观测门 14） | Annotation color codes in ordinary text boxes (dm_textbox.c, observation gate 14)

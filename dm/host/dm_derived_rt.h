@@ -1,12 +1,12 @@
 // 壳（不含任何游戏内容的 App）里，从游戏文件生成的几张表不编进代码，运行时从安装包里的 dm/derived.tsv 读。
-// 这个文件只被壳构建时生成的替身文件包含（ios/tools/shell_stubs.py 写出的 dm_hud_exp.h、dm_vault_tab.h、dm_touch_native_art.c），
+// 这个文件只被壳构建时生成的替身文件包含（ios/tools/shell_stubs.py 写出的 dm_hud_exp.h、dm_touch_native_art.c），
 // 内测 / 自己用 Xcode 构建的包不走这里：它们的三份生成文件里是真实数据。
 // 安卓的发布包同理（dm/android/tools/shell_apk.sh）：表在导入的 files/dm/derived.tsv，路径由 DmActivity 在加载原生库之前放进环境变量 DM_DERIVED。
 // 鸿蒙也读 DM_DERIVED，但原生库随 ArkTS 静态导入一加载就跑构造函数，那时路径还没设、导入包可能还没导入：替身在构造函数里只登记读表函数，
 // 由平台层设好路径后调 dm_derived_reload() 显式读；读不全返回 -1、不记成已读，可以重试（导入完再调一次）。苹果 / 安卓仍在登记时当场读，行为不变。
 // derived.tsv 由使用者自己的游戏文件生成（dm/tools/d2rm_pack.py）：每行「标签<TAB>字段<TAB>…」，UTF-8，字段里没有制表符与换行。
 // In the shell (an App with no game content), the few tables generated from the game files are not compiled in; they are read at run time from dm/derived.tsv in the install package.
-// Only the stand-in files generated when building the shell include this file (dm_hud_exp.h, dm_vault_tab.h, dm_touch_native_art.c written by ios/tools/shell_stubs.py);
+// Only the stand-in files generated when building the shell include this file (dm_hud_exp.h, dm_touch_native_art.c written by ios/tools/shell_stubs.py);
 // test builds and packages you build yourself with Xcode do not come here: their three generated files hold the real data.
 // The Android release APK works the same way (dm/android/tools/shell_apk.sh): the tables are in the imported files/dm/derived.tsv, whose path DmActivity puts in the environment variable DM_DERIVED before loading the native library.
 // HarmonyOS reads DM_DERIVED too, but the native library is loaded by the static ArkTS import and runs its constructors right away, before the path is set and possibly before the import pack is imported: there the stand-ins' constructors only register their loaders,

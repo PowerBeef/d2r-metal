@@ -304,12 +304,11 @@ static _Atomic unsigned g_cur_stack;
 void dm_tc_set_cur_stack(unsigned id) { atomic_store(&g_cur_stack, id); }
 static _Atomic int g_imbue_open;   /* 单件任务槽面板开着（灌魔 / 打孔 / 个性化 / 古墓底座，同一个 ImbueItemsPanel） | Single-item quest slot panel open (imbue / socket / personalize / tomb pedestal, all the same ImbueItemsPanel) */
 static _Atomic int g_cube_open;   /* 赫拉迪克方块页开着：双击 = 按住 Y（原版「移到另一侧」：背包 → 方块 / 方块 → 背包），不是「使用 / 装备」 | Horadric Cube page open: double tap = hold Y (the original game's "move to the other side": inventory → cube / cube → inventory), not "use / equip" */
-static _Atomic int g_vault_open;   /* 储藏箱开在第六页「编年史」：双击背包物品 = 存进编年史仓库（走 use_seq，宿主 ui_use_pump 判页），不发原版「按住 Y」——那一页游戏当魔盒页 | Stash open on page six 「编年史」(Chronicle): double-tapping an inventory item = store it in the Chronicle vault (goes through use_seq; the host's ui_use_pump determines the page); do not send the original game's "hold Y" -- the game treats that page as the cube page */
 static _Atomic int g_bank_open;   /* 储藏箱开着（前端从宿主读游戏面板树的结果设进来，不靠开关消息）：双击 = 按住 Y（移到另一侧） | Stash open (set by the front end from the host's reading of the game panel tree, not from open/close messages): double tap = hold Y (move to the other side) */
 int dm_tc_panel_mode(int nav, const dm_tc_scene *scene, int blocked) {   /* 原在 front_ios.m（nmode）；菜单上又开了雇佣列表这类页时读数 > 0，不算「只开着对话菜单」 | formerly in front_ios.m (nmode); when a page such as the hire list is also open over the menu the reading is > 0, which does not count as "only the dialog menu open" */
     return nav ? (dm_tc_scene_dead() ? 2 : dm_tc_scene_dialog_only(scene) && blocked <= 0 ? 3 : 1) : 0;
 }
-void dm_tc_set_panel_state(int bits) { atomic_store(&g_bank_open, (bits & 1) != 0); atomic_store(&g_vendor_open, (bits & 2) != 0); atomic_store(&g_dead_modal, (bits & 4) != 0); atomic_store(&g_imbue_open, (bits & 16) != 0); atomic_store(&g_cube_open, (bits & 32) != 0); atomic_store(&g_vault_open, (bits & 64) != 0); }   /* 位同 dm_cursor.h 的 DM_PS_*；宿主读游戏状态得来 | Bits are the same as DM_PS_* in dm_cursor.h; obtained by the host reading the game state */
+void dm_tc_set_panel_state(int bits) { atomic_store(&g_bank_open, (bits & 1) != 0); atomic_store(&g_vendor_open, (bits & 2) != 0); atomic_store(&g_dead_modal, (bits & 4) != 0); atomic_store(&g_imbue_open, (bits & 16) != 0); atomic_store(&g_cube_open, (bits & 32) != 0); }   /* 位同 dm_cursor.h 的 DM_PS_*；宿主读游戏状态得来 | Bits are the same as DM_PS_* in dm_cursor.h; obtained by the host reading the game state */
 
 static void pointer_drag_begin(dm_tc_state *s, dm_tc_finger *f) {
     f->pointer_dragged = 1;
@@ -608,7 +607,7 @@ void dm_tc_end_at(dm_tc_state *s, int slot, double now_s) {
                 int dbl = now_s - s->last_tap_s < DM_TC_DOUBLE_TAP_S && hypotf(ox - s->last_tap_x, oy - s->last_tap_y) <= 2 * DM_TC_POINTER_MOVE_PT * scale_for(&s->layout);
                 if (dbl) { if (s->pointer_stack) ++s->stack_take_seq;   /* 成叠格：取 1 件（原版短按 Y；这里不按键，按住 0.6 秒会变成「移动 3 个」） | Stacked cell: take 1 (short press Y in the original game; no key is pressed here, since holding for 0.6 seconds would become "move 3") */
                     else if (atomic_load(&g_imbue_open)) pointer_pulse_btn(s, ox, oy, 2, DM_BTN_Y, 1.3);   /* 单件任务槽面板：原版对背包物品按住 Y = 放进槽（宿主读数：约 1.3 秒）；不能当「使用」——否则在古墓底座前双击法杖会被装到手上 | Single-item quest slot panel: in the original game holding Y on an inventory item = put it into the slot (host reading: about 1.3 seconds); it must not be treated as "use" -- otherwise double-tapping the staff in front of the tomb pedestal would equip it in hand */
-                    else if (atomic_load(&g_bank_open) && !atomic_load(&g_tap_box) && !atomic_load(&g_vault_open)) {
+                    else if (atomic_load(&g_bank_open) && !atomic_load(&g_tap_box)) {
                         /* 背包里的物品：先发原版的 X（移动到堆叠栏）。能堆叠的（符文 / 宝石 / 材料）游戏收下、进堆叠格；不能堆叠的游戏对 X 不做任何事，0.4 秒后它还在光标下就退回按住 Y。
                            不直接按住 Y：那是「到仓库当前这一页」，在符文 / 宝石页且背包带着魔盒时会进页里嵌的魔盒格。仓库一侧的物品不走这里，仍是按住 Y 取回
                            Item in the inventory: first send the original game's X (move to the stacking tab). Stackable ones (runes / gems / materials) are accepted by the game and go into a stack cell; for non-stackable ones the game does nothing on X, and if it is still under the cursor after 0.4 seconds, fall back to hold Y.

@@ -8,7 +8,7 @@
 # Usage: uireg_pick.py <commit or branch under test> [--main main]
 # The last output line 「局：…」(runs: …) is for scripts (containing * means the full table is needed); exit code 0 = OK to run, 3 = the base is old and mainline changes touch affected runs (rebase first, do not run runs that are bound to fail).
 import sys, os, re, fnmatch, subprocess
-CORE = "e k s sb t pk rf2 pg2 vt1 j".split()   # 核心局：前端 / 镶嵌与符文之语 / 储藏箱存取与按钮 / 魔盒 / iPad 身体框 / 重开 / 个人仓库翻页 / 编年史仓库；单档运行合计约 6.5 分钟 | core runs: front end / socketing and runewords / stash deposit-withdraw and buttons / cube / iPad body box / restart / personal stash paging / chronicle vault; about 6.5 minutes in total for a single-mode pass
+CORE = "e k sb pk rf2 j".split()   # 核心局：前端 / 镶嵌与符文之语 / 储藏箱按钮 / iPad 身体框 / 重开 / 镶孔（储藏箱存取与魔盒几局待按原版储藏箱重量，见 uireg.py REMEASURE） | core runs: front end / socketing and runewords / stash buttons / iPad body box / restart / socketing (the stash deposit-withdraw and cube runs await re-measuring against the original stash, see REMEASURE in uireg.py)
 H = os.path.dirname(os.path.abspath(__file__))
 def git(*a): return subprocess.run(["git", *a], capture_output=True, text=True, check=True).stdout
 def rules():

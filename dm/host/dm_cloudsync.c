@@ -9,13 +9,13 @@
 // 本地另记每个单位「上次同步时的内容摘要和时刻」（状态文件），据此分出本地改了 / 云端改了：只一边改了就照那边；两边都改了，时刻大的赢。
 // 被覆盖或被删的那一份不丢：整份改名挪进备份目录 <备份>/<单位>-<时刻>/，每个单位只留最近 3 份；挪不进去就这次不覆盖、不删。
 // allow_down = 0（游戏运行中，存档提交后调）：只上传，不改本地；需要拿云端版本的等下次启动。删除标记只在这时写（见下面「本地没了」）。
-// 后改（出过编年史与编年史仓库被整份换成空的：新设备首次同步时本机刚建的空共享仓库按「后写赢」盖了云端）：
+// 后改（出过编年史被整份换成空的：新设备首次同步时本机刚建的空共享仓库按「后写赢」盖了云端）：
 //   · 首次同步（这一单位没有状态记录）且两边内容不同：一律以云端为准（本地那份照常整份进备份）；运行中（allow_down = 0）不传不改，等下次启动下载。云端没有才上传本地。
 //   · 共享仓库（_stash）再加一道：要被覆盖的一方「明显更多」就不覆盖——任一共享仓库档（.d2i）的编年史段变短（编年史只增不减；新装的空仓库编年史最短）、
-//     或要盖上去的是没东西的新档（0 件且编年史还是新建大小）而另一份有物品，或编年史仓库侧文件（.swvault）有件而另一份根本没有这个文件（新装 / 旧版本）。
-//     物品变少、编年史仓库取空都是正常玩法，不算（只有从没记过编年史的仓库被取空会被当成新档）。
+//     或要盖上去的是没东西的新档（0 件且编年史还是新建大小）而另一份有物品。
+//     物品变少是正常玩法，不算（只有从没记过编年史的仓库被取空会被当成新档）。
 // 共享仓库分叉（iCloud 离线冲突第 1 条第一笔，不丢、不永久拦）：首次同步两边不同、或上面那道保险判出「会丢东西」时，不再永久拦住——
-//   启动时一律以云端为现行版（换下的本机那份照常整份进备份），本机那份有东西（物品 / 金币 / 编年史 / 编年史仓库任一项，预置与新建空档不算）就另存进
+//   启动时一律以云端为现行版（换下的本机那份照常整份进备份），本机那份有东西（物品 / 金币 / 编年史任一项，预置与新建空档不算）就另存进
 //   待合并收件箱 <存档>/_cloudinbox/<时刻>-<序号>/（在存档目录里：局内并回时与角色档、共享仓库同一次存盘提交原子换入，被杀不会复制也不会丢；
 //   下划线开头不算角色、也不是共享仓库文件，iCloud 不同步它——收件箱是这台设备自己的）：mine.pack = 本机那份；base.pack = 上次同步成功时的共享仓库（状态文件旁的 .stash_base，摘要对得上才带），
 //   以后在局内并回：云端是基准的后代（编年史只增不减，基准的编年史条目云端都有）时按「云端 + 本机新增 − 本机取走」，分不清来历时按同一件取一份的并集
@@ -33,13 +33,13 @@
 // Locally, "the content digest and timestamp at the last sync" is also recorded per unit (state file), which separates changed locally / changed in the cloud: if only one side changed, follow that side; if both changed, the larger timestamp wins.
 // The copy that is overwritten or deleted is not lost: the whole copy is renamed into the backup directory <backup>/<unit>-<timestamp>/, keeping only the most recent 3 copies per unit; if it cannot be moved in, no overwrite or delete happens this time.
 // allow_down = 0 (game running, called after a save commit): upload only, no local changes; anything needing the cloud version waits for the next launch. Deletion markers are written only at this time (see "Missing locally" below).
-// Later change (the chronicle and the chronicle vault were once replaced wholesale with empty ones: at a new device's first sync, the empty shared stash just created locally overwrote the cloud under "later write wins"):
+// Later change (the chronicle was once replaced wholesale with an empty one: at a new device's first sync, the empty shared stash just created locally overwrote the cloud under "later write wins"):
 //   - First sync (this unit has no state record) and the two sides differ: the cloud is always authoritative (the local copy goes into the backup whole as usual); while running (allow_down = 0) nothing is uploaded or changed, and the download waits for the next launch. Local is uploaded only if the cloud has nothing.
 //   - The shared stash (_stash) gets one more check: do not overwrite if the side to be overwritten "clearly has more" -- the chronicle segment of any shared stash save (.d2i) gets shorter (the chronicle only grows, never shrinks; a freshly installed empty stash has the shortest chronicle),
-//     or what would overwrite is an empty new save (0 items and the chronicle still at the freshly-created size) while the other copy has items, or the chronicle vault side file (.swvault) has items while the other copy does not have this file at all (fresh install / old version).
-//     Fewer items and an emptied chronicle vault are both normal play and do not count (only a stash that never recorded any chronicle being emptied is treated as a new save).
+//     or what would overwrite is an empty new save (0 items and the chronicle still at the freshly-created size) while the other copy has items.
+//     Fewer items is normal play and does not count (only a stash that never recorded any chronicle being emptied is treated as a new save).
 // Shared stash fork (iCloud offline conflict item 1, first step: nothing lost, nothing blocked forever): when the two sides differ at first sync, or the check above finds that "something would be lost", it is no longer blocked forever -
-//   at launch the cloud is always taken as the current version (the local copy it replaces goes into the backup whole as usual), and if the local copy has anything (items / gold / chronicle / chronicle vault, any of them; the preset and freshly created empty saves do not count) it is also stored in
+//   at launch the cloud is always taken as the current version (the local copy it replaces goes into the backup whole as usual), and if the local copy has anything (items / gold / chronicle, any of them; the preset and freshly created empty saves do not count) it is also stored in
 //   the to-merge inbox <save>/_cloudinbox/<timestamp>-<seq>/ (inside the save directory: when merged back in a run it is swapped in atomically in the same save commit as the character saves and the shared stash, so being killed neither duplicates nor loses anything;
 //   names starting with an underscore are not characters and not shared stash files, and iCloud does not sync it - the inbox belongs to this device): mine.pack = the local copy; base.pack = the shared stash at the last successful sync (.stash_base next to the state file, included only if its digest matches),
 //   to be merged back in a run later: when the cloud is a descendant of the base (the chronicle only grows; the cloud has every chronicle entry of the base) as "cloud + added locally - taken out locally"; when the origin cannot be told apart, as a union taking one of each identical item
@@ -85,9 +85,9 @@ static int read_dir(const char *root, const char *rel, cs_unit *u) {   // rel �
         if (!stat(full, &st) && S_ISREG(st.st_mode) && read_file(full, rp, u)) r = -1; }
     closedir(dp); return r;
 }
-// ---- 共享仓库的内容量（只认结构，不解物品）：.d2i 按 55 AA 55 AA 分段，段内 +64 是 'JM' 的是物品页（+66 物品数），其余段是编年史；.swvault 头 'SWVT'、+6 件数
-// ---- Content volume of the shared stash (structure only, items are not decoded): .d2i is split into segments by 55 AA 55 AA; a segment with 'JM' at +64 is an item page (+66 item count), the other segments are the chronicle; .swvault has the header 'SWVT', +6 item count
-typedef struct { int kind, items, chron, vault; long long gold; } cs_rich;
+// ---- 共享仓库的内容量（只认结构，不解物品）：.d2i 按 55 AA 55 AA 分段，段内 +64 是 'JM' 的是物品页（+66 物品数），其余段是编年史
+// ---- Content volume of the shared stash (structure only, items are not decoded): .d2i is split into segments by 55 AA 55 AA; a segment with 'JM' at +64 is an item page (+66 item count), the other segments are the chronicle
+typedef struct { int kind, items, chron; long long gold; } cs_rich;
 // 游戏新建的空共享仓库：物品 0 件、编年史段 148 字节（三份新建档、rf3 的专家仓库都是这个值）。「0 件且编年史还是新建大小」= 没东西的新档，
 // 不许盖掉有物品的一份（rf3：云端专家仓库 2 件、编年史 148，本机新建的空档同样 148，只比编年史拦不住）；编年史长过新建的仓库被玩家取空照常同步
 // An empty shared stash newly created by the game: 0 items, chronicle segment 148 bytes (three freshly created saves and rf3's hardcore stash all have this value). "0 items and the chronicle still at the freshly-created size" = an empty new save,
@@ -101,8 +101,8 @@ enum { FRESH_CHRON = 148 };
 #include "stash_seed.h"
 #define CS_HAVE_STASH_SEED 1
 #endif
-   // kind：1 = .d2i，2 = .swvault，0 = 不管
-   // kind: 1 = .d2i, 2 = .swvault, 0 = ignored
+   // kind：1 = .d2i，0 = 不管
+   // kind: 1 = .d2i, 0 = ignored
 static cs_rich rich_of(const cs_file *f) {
     cs_rich r = {0}; size_t L = strlen(f->path);
     if (L > 4 && !strcmp(f->path + L - 4, ".d2i")) { r.kind = 1;
@@ -111,7 +111,6 @@ static cs_rich rich_of(const cs_file *f) {
 #endif
         for (uint32_t o = 0; o + 68 <= f->size && !memcmp(f->data + o, "\x55\xaa\x55\xaa", 4); ) { uint32_t ln; memcpy(&ln, f->data + o + 16, 4); if (ln < 68 || ln > f->size - o) break;
             if (!memcmp(f->data + o + 64, "JM", 2)) { uint16_t c; uint32_t g; memcpy(&c, f->data + o + 66, 2); memcpy(&g, f->data + o + 12, 4); r.items += c; r.gold += g; } else r.chron += (int)ln; o += ln; } }
-    else if (L > 8 && !strcmp(f->path + L - 8, ".swvault")) { r.kind = 2; if (f->size >= 8 && !memcmp(f->data, "SWVT", 4)) { uint16_t c; memcpy(&c, f->data + 6, 2); r.vault = c; } }
     return r;
 }
 // ---- 编年史段并集（iCloud 离线冲突第三笔）：编年史只增不减，两份共享仓库档里找到过的条目都该留着。
@@ -160,14 +159,13 @@ static const char *stash_shrinks(const cs_unit *w, const cs_unit *x, char *why, 
     for (int i = 0; i < x->n; i++) { cs_rich rx = rich_of(&x->f[i]); if (!rx.kind || (rx.kind == 1 && !rx.items && rx.chron <= FRESH_CHRON)) continue;   // 被盖的是没东西的新档 / 预置：没什么可丢 | what gets overwritten is an empty new save / the seed: nothing to lose
         const cs_file *wf = NULL; for (int j = 0; j < w->n; j++) if (!strcmp(w->f[j].path, x->f[i].path)) wf = &w->f[j];
         cs_rich rw = wf ? rich_of(wf) : (cs_rich){0};
-        if (rx.kind == 1 && (rw.chron < rx.chron || (rx.items > 0 && rw.items == 0 && rw.chron <= FRESH_CHRON))) { snprintf(why, cap, "%s：编年史段 %d → %d 字节、物品 %d → %d 件", x->f[i].path, rx.chron, rw.chron, rx.items, rw.items); return why; }
-        if (rx.kind == 2 && rx.vault > 0 && !wf) { snprintf(why, cap, "%s：编年史仓库 %d 件 → 没有侧文件", x->f[i].path, rx.vault); return why; } }
+        if (rx.kind == 1 && (rw.chron < rx.chron || (rx.items > 0 && rw.items == 0 && rw.chron <= FRESH_CHRON))) { snprintf(why, cap, "%s：编年史段 %d → %d 字节、物品 %d → %d 件", x->f[i].path, rx.chron, rw.chron, rx.items, rw.items); return why; } }
     return NULL;
 }
 static _Atomic int g_conflict;
 int dm_cloud_conflict_take(void) { return __atomic_exchange_n((int *)&g_conflict, 0, __ATOMIC_SEQ_CST); }   // 进局后取一次：这次启动有共享仓库收进了待合并收件箱就弹系统提示（diag.c） | taken once after entering a run: if a shared stash was put in the to-merge inbox during this launch, show the system notice (diag.c)
-static int stash_has_stuff(const cs_unit *u) {   // 共享仓库这份有没有东西值得留：任一 .d2i 有物品 / 金币 / 编年史长过新建，或编年史仓库有件（预置与新建空档不算） | whether this shared stash copy has anything worth keeping: any .d2i with items / gold / a chronicle longer than freshly created, or the chronicle vault has items (the preset and freshly created empty saves do not count)
-    for (int i = 0; i < u->n; i++) { cs_rich r = rich_of(&u->f[i]); if ((r.kind == 1 && (r.items || r.gold || r.chron > FRESH_CHRON)) || (r.kind == 2 && r.vault)) return 1; }
+static int stash_has_stuff(const cs_unit *u) {   // 共享仓库这份有没有东西值得留：任一 .d2i 有物品 / 金币 / 编年史长过新建（预置与新建空档不算） | whether this shared stash copy has anything worth keeping: any .d2i with items / gold / a chronicle longer than freshly created (the preset and freshly created empty saves do not count)
+    for (int i = 0; i < u->n; i++) { cs_rich r = rich_of(&u->f[i]); if (r.kind == 1 && (r.items || r.gold || r.chron > FRESH_CHRON)) return 1; }
     return 0;
 }
 // 同名角色（iCloud 离线冲突第 3 条）：首次同步两边都有同名角色、内容不同 → 照旧以云端为准、本机那份整份进备份，另外记下名字，进局后提示一次（diag.c）。

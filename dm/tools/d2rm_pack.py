@@ -141,11 +141,11 @@ def main():
     # 2. UI assets and a few data tables (same as the beginning of ios/run.sh build)
     say('从游戏文件生成界面素材（输入没变会自己跳过）')
     run([PY, os.path.join(IOS, 'tools', 'gen_assets.py'), romfs], cwd=IOS, env={'DM_ROMFS_SRC': romfs}, log=os.path.join(stage, 'gen_assets.log'), what='生成界面素材')
-    for name, gen in (('dm_vault_tab.h', 'gen_vault_table.py'), ('dm_hud_exp.h', 'gen_hud_exp.py')):
+    for name, gen in (('dm_hud_exp.h', 'gen_hud_exp.py'),):
         txt = run([PY, os.path.join(IOS, 'tools', gen), romfs], what='生成 ' + name)
         with open(os.path.join(DM, 'host', name), 'w', encoding='utf-8') as f: f.write(txt)
     sys.path.insert(0, os.path.join(IOS, 'tools')); import shell_stubs
-    say('数据表：经验 %d、部位 %d、仓库条目 %d、套装 %d、技能索引 %d' % shell_stubs.data(DM, os.path.join(stage, 'dm', 'derived.tsv')))
+    say('数据表：经验 %d、技能索引 %d' % shell_stubs.data(DM, os.path.join(stage, 'dm', 'derived.tsv')))
     hud = os.path.join(IOS, 'Gen', 'assets', 'NativeHUD')
     for d, src in (('hud_v4_ui', os.path.join(hud, 'v4', 'hud_v4_ui')), ('mapgoal', os.path.join(hud, 'mapgoal'))):
         if d + '/' in manifest: shutil.copytree(src, os.path.join(stage, d))

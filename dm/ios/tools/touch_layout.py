@@ -505,23 +505,23 @@ def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=()):
             s = s[:e] + ',\n        ' + r + s[e:]; n += 1
         return s, n
     return fn
-# 手柄版暂停菜单（「难度、百宝囊存放挂暂停菜单」）：原版布局 + 我们的功能行，放原版路径（gen_romfs_overlay.py 手柄版布局）；触屏插回的关闭钮不带。
-# 行 = 游戏难度 / 保存并退出 / 一键重开 / 选项 / 存放 / 编年史（经典版没有）/ 分享诊断日志；帮助、战利品过滤器、消息记录照的裁定不留。
+# 手柄版暂停菜单（「难度挂暂停菜单」）：原版布局 + 我们的功能行，放原版路径（gen_romfs_overlay.py 手柄版布局）；触屏插回的关闭钮不带。
+# 行 = 游戏难度 / 保存并退出 / 一键重开 / 选项 / 编年史（经典版没有）/ 分享诊断日志；帮助、战利品过滤器、消息记录照的裁定不留。
 #   「选项」固定在第四行（y 653）：原版手柄版开暂停菜单时自由光标在屏幕正中、压着哪行哪行高亮，直接按确认就点它——正中那行只许是按了没后果的。
-#   「游戏难度：N」= 按一下人数档 +1（8 之后回 1），当前档位写在这一行上；「存放」= 物品栏「存放」钮同一件事（手柄焦点到不了那颗钮），字用原版串 @strGoldDeposit。
+#   「游戏难度：N」= 按一下人数档 +1（8 之后回 1），当前档位写在这一行上。
 # 按钮图高 120 单位：带编年史那版七行在原版首末两行之间（278–1028）等距 125；经典版原底图只放得下四行，换用带编年史那版的底图（同尺寸），同一套行距排前六行（少编年史那行，后一行上移）
-# Gamepad pause menu ("difficulty and trove deposit hang on the pause menu"): the original layout + our feature rows, placed at the original path (gamepad layout in gen_romfs_overlay.py); the close button inserted for touch is not included.
-# Rows = Game Difficulty / Save and Exit / Quick Restart / Options / Deposit / Chronicle (absent in the classic version) / Share Diagnostics; Help, Loot Filter and Message Log are not kept, as ruled.
+# Gamepad pause menu ("difficulty hangs on the pause menu"): the original layout + our feature rows, placed at the original path (gamepad layout in gen_romfs_overlay.py); the close button inserted for touch is not included.
+# Rows = Game Difficulty / Save and Exit / Quick Restart / Options / Chronicle (absent in the classic version) / Share Diagnostics; Help, Loot Filter and Message Log are not kept, as ruled.
 #   "Options" is fixed on the fourth row (y 653): when the original gamepad UI opens the pause menu the free cursor is at the centre of the screen and highlights whichever row it rests on, and pressing confirm straight away activates it -- the centre row may only be one whose press has no consequence.
-#   "Game Difficulty: N" = one press raises the player-count setting by 1 (back to 1 after 8), with the current setting shown on this row; "Deposit" = the same thing as the "Deposit" button of the inventory (the gamepad focus cannot reach that button), using the original string @strGoldDeposit.
+#   "Game Difficulty: N" = one press raises the player-count setting by 1 (back to 1 after 8), with the current setting shown on this row.
 # Button image height is 120 units: in the version with the Chronicle, seven rows are spaced evenly by 125 between the original first and last rows (278–1028); the classic version's own background only fits four rows, so the background of the Chronicle version (same size) is used and the first six rows are laid out with the same spacing (without the Chronicle row, the following row moves up)
 def pad_pause(s, garden, share=True):   # share=False（Mac App）：没有系统分享面板，「分享诊断日志」行不放 | share=False (Mac App): there is no system share sheet, so the "Share Diagnostics" row is left out
-    ex = (('TouchPadDiff', '', 278), ('TouchPadStore', '@strGoldDeposit', 778)); y = 278
+    ex = (('TouchPadDiff', '', 278),); y = 278
     sh = lambda y0, y1: {'MessageLog': (y0, y1)} if share else {}; hs = () if share else ('MessageLog',)
-    if garden: s = _pause_no_help({'Settings': (428, 653), 'Exit': (728, 403), 'Chronicle': (1028, 903), **sh(278, 1028)}, hide=('Help', 'LootFilter') + hs, restart_y=528, extra=ex)(s)[0]
+    if garden: s = _pause_no_help({'Settings': (428, 653), 'Exit': (728, 403), 'Chronicle': (1028, 778), **sh(278, 903)}, hide=('Help', 'LootFilter') + hs, restart_y=528, extra=ex)(s)[0]
     else:
         s = _sub1(s, '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBGClassic"', '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBG"')
-        s = _pause_no_help({'Settings': (578, 653), 'Exit': (878, 403), **sh(428, 903)}, hide=('Help',) + hs, restart_y=528, extra=ex)(s)[0]
+        s = _pause_no_help({'Settings': (578, 653), 'Exit': (878, 403), **sh(428, 778)}, hide=('Help',) + hs, restart_y=528, extra=ex)(s)[0]
     # 「游戏难度：N」的字：菜单开着时游戏停拍、原版系统通知要关了菜单才出，所以当前档位直接写在这一行上——按钮自己不带字，上面叠一个同字体的文字控件，宿主写（dm_padmode.c）
     # Text of "Game Difficulty: N": while the menu is open the game stops ticking and the original system notification only appears once the menu is closed,
     # so the current setting is written directly on this row. The button itself carries no text; a text widget with the same font is stacked on top and
@@ -529,6 +529,38 @@ def pad_pause(s, garden, share=True):   # share=False（Mac App）：没有系�
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     return (s[:i].rstrip(' ') + '        { "type": "TextBoxWidget", "name": "TouchPadDiffTxt", "fields": { "rect": { "x": 564, "y": %d, "width": 664, "height": 120 }, "text": "@OptionsMenuGameDifficulty", '
             '"style": { "fontColor": "$LightButtonTextColor", "pointSize": "$MediumLargeFontSize", "alignment": { "h": "center", "v": "center" } } } },\n    ' % y + s[i:])
+# 魔盒并排时的两个标题（dm_cursor.c 魔盒并排那段）：原版标题条此时写的是「赫拉迪克方块 | 物品栏」（魔盒面板在原版里占左边那一位），
+# 并排后左边其实是储藏箱、右边是魔盒。原版那两个字挪出屏（位置守卫），换成我们自己的两个文字控件：字用原版串（@stash / @box）、样式照面板标题，
+# 位置照原版两个标题字（标题条 Tabs 宽 2880、两等分：左 0..1440、右 1440..2880），缺省在屏外；插在 Tabs 后面、同一个父控件里（同一套缩放与原点，画在标题条之上）。
+# 触屏、手柄两份外框布局都加（gen_romfs_overlay.py）
+# The two titles while the cube is side by side (the cube side-by-side section of dm_cursor.c): the original title bar then reads 「赫拉迪克方块 | 物品栏」(Horadric Cube | Inventory)
+# (in the original game the cube panel takes the left position), but side by side the left is actually the stash and the right is the cube. The two original title texts are moved off screen
+# (position guard) and replaced with two text widgets of our own: the original strings (@stash / @box), the panel title style, and the rects of the two original title texts
+# (the title bar Tabs is 2880 wide and split in two: left 0..1440, right 1440..2880); off screen by default. Inserted right after Tabs in the same parent widget (same scaling and origin,
+# drawn above the title bar). Added to both the touch and the controller copy of the outer frame layout (gen_romfs_overlay.py)
+SIDE_TITLE_LAYOUT = 'controller/controlleroverlayhd.json'
+def _title_text(name, x, w, text):
+    return {'type': 'TextBoxWidget', 'name': name, 'fields': {'rect': {'x': x, 'y': 0, 'width': w, 'height': 103}, 'text': text,
+            'style': {'fontColor': '$FontColorWhite', 'pointSize': '$MediumFontSize', 'alignment': {'h': 'center', 'v': 'center'}}, 'truncateWithEllipsis': True}}
+def side_titles(text):
+    st = {'type': 'Widget', 'name': 'TouchSideTitle', 'fields': {'rect': {'x': 99999, 'y': 0, 'width': 2880, 'height': 103}}, 'children': [
+        _title_text('TouchSideTitle_L', 0, 1440, '@stash'), _title_text('TouchSideTitle_R', 1440, 1440, '@box')]}
+    j = text.find('"TabBarWidget", "name": "Tabs"')
+    if j < 0: raise SystemExit('touch_layout：外框布局里没有 Tabs（原版布局变了？）')
+    k = text.rfind('{', 0, j); d = 0; e = k
+    while e < len(text):
+        c = text[e]
+        if c == '{': d += 1
+        elif c == '}':
+            d -= 1
+            if d == 0: break
+        e += 1
+    if d != 0: raise SystemExit('touch_layout：外框布局里 Tabs 控件的括号没配上（原版布局变了？）')
+    return text[:e + 1] + ',\n                ' + json.dumps(st, ensure_ascii=False) + text[e + 1:]
+def build_side_titles(romfs, outdir, repl):   # 叠在已改的那份上（触屏：外框的触摸改动；手柄：原版） | stacked on the already-modified copy (touch: the outer frame's touch changes; controller: the original)
+    logical = read_layout(romfs, SIDE_TITLE_LAYOUT)[0].lower(); src = repl.get(logical)
+    text = open(src, encoding='utf-8').read() if src else read_layout(romfs, SIDE_TITLE_LAYOUT)[1]
+    p = os.path.join(outdir, 'side_' + os.path.basename(SIDE_TITLE_LAYOUT)); open(p, 'w', encoding='utf-8').write(side_titles(text)); return {logical: p}
 # 编年史保留。只有键鼠版布局，套在手柄外框里；列表行 / 分类筛选 / 查看奖励 / 下拉都认点击。页内的关闭按钮被外框盖住：在外框右上角凹槽放关闭按钮，
 # 发原 CloseButton 的消息，关掉后回到暂停菜单；单放一个加宽的容器，2868×1320 下金色包围盒 (2413,40)–(2438,77)。
 # 页签不在这里处理：点页签由触摸层翻成 ZL / ZR（一件事只留一个执行者；先前盖在页签上的透明按钮与它并存、一次点击切两回，已撤）
@@ -782,7 +814,7 @@ def _drop_rows(*rows):
 # 视频页的表格整个换成我们的行：分节标题 + 每个开关一行原版勾选框（照「游戏」页「自动拾取金币」那一行的字段）。控件名 TouchCustom_<键>，
 # 宿主 dm_custom.c 读勾没勾、按应用 / 放弃 / 默认处理。勾选框的消息发一条无害的 ClosePanel，游戏不认
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'eco_fps', 'q3d', 'loot_filter', 'touch_swap_above')
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'eco_fps', 'q3d', 'loot_filter', 'touch_swap_above')
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines

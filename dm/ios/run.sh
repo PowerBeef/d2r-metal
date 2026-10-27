@@ -48,7 +48,7 @@ if [ "$1" = build ]; then
   # 原版衍生资源（加宽储藏箱、百宝囊框、选角面板、小地图终点、技能图集、底部 UI v4 …）不进仓库，每次从游戏文件生成（tools/gen_assets.py；dm/README.md「从你的游戏文件生成资源」）
   # Assets derived from the original game (widened stash, pouch frame, character select panel, minimap goal, skill atlas, bottom UI v4 ...) are not committed to the repository and are generated from game files every time (tools/gen_assets.py; dm/README.md 「从你的游戏文件生成资源」(Generate assets from your game files))
   python3 tools/gen_assets.py "${DM_ROMFS_SRC:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/RomFS}" || { t "🔴 gen_assets 失败（见上）"; exit 1; }
-  make -s -C ../host dm_vault_tab.h dm_hud_exp.h dm_bright_levels.inc ROMFS="${DM_ROMFS_SRC:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/RomFS}" || { t "🔴 宿主表头生成失败（见上）"; exit 1; }
+  make -s -C ../host dm_hud_exp.h dm_bright_levels.inc ROMFS="${DM_ROMFS_SRC:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/RomFS}" || { t "🔴 宿主表头生成失败（见上）"; exit 1; }
   python3 tools/gen_build.py ../host Gen > Gen/dm.xcconfig || { t "🔴 gen_build 失败"; exit 1; }
   F=$(python3 tools/gen_embed.py "$OUT" Gen/embed.S $MODS) || { t "🔴 gen_embed 失败"; exit 1; }
   echo "OTHER_LDFLAGS = \$(inherited) \$(DM_FRAMEWORKS) $F $MOVIE_LDFLAGS" >> Gen/dm.xcconfig
