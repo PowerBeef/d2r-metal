@@ -373,7 +373,6 @@ DM_TEST_EDGE_B	ios	ios/Sources/front_ios.m	-
 DM_TEST_EQUIP	host	host/dm_autobuff.c	-
 DM_TEST_FINDCHK	host	host/dm_prof.c	-
 DM_TEST_FOLD	ios	ios/Sources/front_ios.m	-
-DM_TEST_FREETP	host	host/dm_freetp.c	-
 DM_TEST_FREEZE	host	host/diag.c	-
 DM_TEST_FRZ	host	host/diag.c	-
 DM_TEST_FS_FAIL	host	host/hle_fs.c host/tests/t_fs.c host/tests/t_save_hooks.c	-

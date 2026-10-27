@@ -50,7 +50,6 @@ SRC=\
 	dm_drophaptic.c \
 	dm_engine.c \
 	dm_events.c \
-	dm_freetp.c \
 	dm_hud.c \
 	dm_i18n.c \
 	dm_lootfilter.c \

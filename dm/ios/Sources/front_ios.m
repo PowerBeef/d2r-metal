@@ -113,7 +113,6 @@ static void world_norm(UIView *v, CGFloat x, CGFloat y, float *nx, float *ny) { 
 static void touch_script_start(void);
 static _Atomic int g_touch_navigation = 1;
 
-static _Atomic int g_nav_pub; int dm_front_navigation(void) { return atomic_load(&g_nav_pub); }   // 面板 / 读取画面 / 过场开着（非零）：dm_gamepad.m 据此只在游戏态接管 ZR | A panel / loading screen / cutscene is open (non-zero): dm_gamepad.m uses this to take over ZR only in the gameplay state
 static void pad_mode_changed(int pad) { dispatch_async(dispatch_get_main_queue(),^{ [g_touch_view padMode:pad]; }); }   // dm_gamepad.m 在主队列回调，照样切一次主线程（与上面同法） | dm_gamepad.m calls back on the main queue; still hop to the main thread once (same approach as above)
 static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(),^{ [g_touch_view restartCover:on]; }); }   // 0 撤 / 1 黑屏 / 2 透明（读取画面露出来，照样吞触点）   // 宿主在游戏主线程调，切到界面主线程开关 | 0 remove / 1 black screen / 2 transparent (the loading screen shows through, touch points still swallowed)   // Called by the host on the game main thread; switches to the UI main thread to toggle
 // 一键重开遮罩：吞掉落在它上面的所有触点（不调 super，不沿响应链交给下面的游戏视图——诊断日志里见过：遮罩是游戏视图的子视图时，
@@ -190,7 +189,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 - (void)frontendMode:(BOOL)fe { _feMode=fe; _overlay.hidden=fe || _padMode; _info.hidden=fe; if(fe) { _pendEnd=nil; _finalAsked=NO; for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:"frontend" phase:"none"]; } }
 - (void)navigationMode:(int)n {
     if (_navigation==n) return;
-    dm_tc_set_navigation_mode(&_controls,n); _navigation=n; atomic_store(&g_nav_pub,n);   // 内部按非零归一 | Internally normalized to non-zero
+    dm_tc_set_navigation_mode(&_controls,n); _navigation=n;   // 内部按非零归一 | Internally normalized to non-zero
     static int pad=-1; if(pad<0) { const char *e=getenv("DM_TOUCH_NAV_PAD"); pad=e && e[0]=='1'; }   // 面板态的五个虚拟手柄圆钮：缺省不给（点按 / 双击 / 拖放 / 点页签 / 面板外点按已全部替代，圆钮还压着背包格右半边）；DM_TOUCH_NAV_PAD=1 调试时叫回来 | The five round virtual controller buttons of panel mode: not shown by default (tap / double tap / drag and drop / tab tap / tap outside the panel have replaced them all, and the round buttons also sat over the right half of the inventory cells); DM_TOUCH_NAV_PAD=1 brings them back for debugging
     uint32_t mask=n ? (dm_tc_nav_mask(pad && n!=2) | (n==3 ? 1u<<DM_TC_MENU : 0)) :   // 3 = 只开着 NPC 对话菜单：底栏十字可点（原版 ＋ 键此时 = 关对话并开功能页） | 3 = only the NPC dialog menu is open: the bottom bar cross is tappable (the original game's + key at this time = close the dialog and open the function page)
         (((1u<<DM_TC_COUNT)-1) & ~(1u<<DM_TC_MAP));   // 游戏态不要右上地图键（不要顶部图标） | No top-right map button in game mode (no top icon wanted)
@@ -332,7 +331,9 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     _overlay.nativeMapping=snapshot;
     if(_navigation) return; // 导航态Portal禁用，不发布旧玩法bank。 | Portal is disabled in navigation mode; the old gameplay bank is not published.
     if(!snapshot.supported) return; // 旧包无OBS6，仅保留旧ZR已验域。 | Old builds have no OBS6; keep only the old verified ZR domain.
-    uint64_t mask=0; (void)dm_tg_portal_mask;   // 免费回城：回城钮不再按原版手柄的回城书 / 卷轴键，点下去由宿主直接开门（dm_freetp.c，见 touchesBegan） | Free town portal: the town portal button no longer presses the original controller's Tome of Town Portal / scroll key; tapping it has the host open the portal directly (dm_freetp.c, see touchesBegan)
+    // 回城钮按原版手柄的回城键（绑了回城技能 / 回城书 / 卷轴的那一格，原版扣书的次数或卷轴）；身上（背包 / 腰带）没有书和卷轴时不按、不画（DmTouchOverlay.m）
+    // The town portal button presses the original game's town portal key (the slot bound to the town portal skill / tome / scroll; the game spends a tome charge or a scroll); with no tome or scroll carried (inventory / belt) it presses nothing and is not drawn (DmTouchOverlay.m)
+    uint64_t mask=_overlay.hud.portal>0?dm_tg_portal_mask(&snapshot,now_ns()):0;
     if(_controls.layout.target[DM_TC_PORTAL].button!=mask || _controls.portal_binding_identity!=snapshot.binding_identity || _controls.portal_scene_epoch!=snapshot.scene_epoch) {
         dm_tc_set_portal_binding(&_controls,mask,snapshot.binding_identity,snapshot.scene_epoch);
         _modifierPublishEpoch=0;_modifierPublishEndNS=0;
@@ -532,7 +533,6 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
         if(!_mapTouch && [self inMinimap:[t locationInView:self]]) { _mapTouch=t; _mapP0=[t locationInView:self]; _mapT0=CACurrentMediaTime(); continue; }
         for(int i=0;i<16;i++) if(!_slot[i]) {
             _slot[i]=t; CGPoint p=[t locationInView:self]; { int ex=0; _controls.belt_rows=dm_belt_rows(&ex); _controls.belt_open=ex; } dm_tc_begin_at(&_controls,i,p.x,p.y,CACurrentMediaTime()); slot=i;
-            if(!_navigation && _controls.finger[i].target==DM_TC_PORTAL) { void dm_tp_request(void); dm_tp_request(); LOG("前端：点回城钮 → 免费回城"); }   // 不要回城书 / 卷轴（宿主 dm_freetp.c） | No Tome of Town Portal / scroll needed (host dm_freetp.c)
             if(!_navigation && !_mapBackTouch && _controls.finger[i].target==DM_TC_NONE && dm_ui_map_is_full()) { _mapBackTouch=t; _mapP0=p; _mapT0=CACurrentMediaTime(); }   // 全屏地图开着、这根手指没落在任何键和摇杆区上：松手时若是点按就回小地图 | Fullscreen map open and this finger landed on no button and no stick area: if it turns out to be a tap on release, return to the minimap
             // 功能页里的指针手指：问宿主这点是不是物品区（游戏主线程下一帧作答，松手时取）
             // Pointer finger in a function page: ask the host whether this point is an item area (the game main thread answers on the next frame; fetched on release)

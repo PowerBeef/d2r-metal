@@ -4,7 +4,7 @@
 // 怎么知道掉了：读客户端玩家的状态位图（[单位+0x88] 属性表 +0xb30 起，同自动喝药读药效）。剩余时间读不到，所以是「掉了再补」。
 // 补谁：不用绑键、不用先手动放一次——角色学了（或当前在手的装备给了：非职业技能建的也是来源 -1 的普通节点）、有效等级 > 0、身上没有，就补。
 //   有负面作用的不自动放：见 k_skip（一张带理由的排除表，技能号、名字、理由）。互斥组：本局见过哪个在身上（玩家手动放的）就补哪个，没见过补等级最高的。
-// 怎么放：服务端拍里走原版右键施放那一步 main+0x6e77f0(游戏, 玩家, x, y, 1 = 右手, 技能节点)（同免费回城 dm_freetp.c）：法力检查与扣除、施法动作、
+// 怎么放：服务端拍里走原版右键施放那一步 main+0x6e77f0(游戏, 玩家, x, y, 1 = 右手, 技能节点)：法力检查与扣除、施法动作、
 //   城里规则都是原版自己的；不占技能栏、不改玩家的左右键绑定（调用期间把右键技能节点临时指过去，调完放回）。
 // 什么时候放（都是为了不打扰玩家）：人物站立那一拍（客户端与服务端模式都是 1）——走路会被施法打断，攻击 / 施法中原版自己拒；不在城里（喊叫类在城里
 //   调用会被拒、还会把人重置成站立）；没死；手上没拿东西；法力够（宿主先自己比，不够不调——原版在法力不足时会出语音）；一拍只做一件事。
@@ -21,7 +21,7 @@
 // How we know it dropped: read the client player's state bitmap ([unit+0x88] stat list from +0xb30, same as auto-drink reading potion effects). The remaining time is not readable, so it is "recast after it drops".
 // What gets recast: no key binding needed and no manual first cast - if the character has the skill (learned, or granted by the gear in hand: non-class skills from gear are ordinary nodes with source -1), its effective level > 0 and the state is not on, it is recast.
 //   Skills with downsides are never auto-cast: see k_skip (an exclusion table with reasons: skill id, name, reason). Mutual-exclusion groups: recast whichever one was seen on the character this game (cast by the player); if none was seen, the highest-level one.
-// How it is cast: in the server tick, through the game's own right-hand cast step main+0x6e77f0(game, player, x, y, 1 = right hand, skill node) (same as free town portal, dm_freetp.c): mana check and cost, cast animation
+// How it is cast: in the server tick, through the game's own right-hand cast step main+0x6e77f0(game, player, x, y, 1 = right hand, skill node): mana check and cost, cast animation
 //   and town rules are all the game's own; it takes no skill slot and does not change the player's left / right bindings (the right-hand skill node is pointed at it during the call and restored afterwards).
 // When it is cast (all so as not to disturb the player): on a tick when the character is standing (client and server mode both 1), since walking would be interrupted by the cast and the game itself refuses during attack / cast; not in town (warcries called in town
 //   are refused and also reset the character to standing); not dead; nothing on the cursor; enough Mana (the host compares first and does not call if short: the game plays a voice line on insufficient Mana); one thing per tick.
@@ -130,9 +130,9 @@ static int w_ph, w_from, w_tries, w_list[6], w_n, w_life0, w_lr0[2]; static uint
 int dm_swapskill_wset(void); int dm_swapskill_busy(void); static int g_wait = -1, g_mana0; static uint32_t g_wait_until;   // 交服务端拍放的那个；服务端那一拍没法放（还在动作里）；在等它出现的那个、请求时的法力 | the one handed to the server tick to cast; the server could not cast on that tick (still mid-action); the one we are waiting to see appear, Mana at request time
 
 // 测试开关 DM_TEST_BUFF_LEARN=<技能号>[:<等级>][,…]（造现场用：手头的测试角色都没学名单里的技能）：给这个单位的技能链挂上这些技能并把基础等级设到这个数
-// （原版不扣技能点的加技能 main+0x7bf010，同免费回城挂 411）。客户端玩家与服务端玩家各调一次
+// （原版不扣技能点的加技能 main+0x7bf010）。客户端玩家与服务端玩家各调一次
 // Test switch DM_TEST_BUFF_LEARN=<skill id>[:<level>][,...] (for staging a scene: none of the test characters at hand has learned the listed skills): attach these skills to this unit's skill chain and set their base level to this number
-// (the game's add-skill that spends no skill points, main+0x7bf010, same as free town portal attaching 411). Called once each for the client player and the server player
+// (the game's add-skill that spends no skill points, main+0x7bf010). Called once each for the client player and the server player
 static void test_learn(uint8_t *b, uint64_t unit, const char *side) {
     const char *e = getenv("DM_TEST_BUFF_LEARN"); if (!e || !unit) return; char bf[160]; strlcpy(bf, e, sizeof bf);
     for (char *sv, *k = strtok_r(bf, ",", &sv); k; k = strtok_r(NULL, ",", &sv)) { int sk = 0, lv = 1; if (sscanf(k, "%d:%d", &sk, &lv) < 1 || sk <= 0) continue;

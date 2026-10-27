@@ -188,8 +188,8 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
     v4text([NSString stringWithFormat:@(dm_ui("dmHudMana")),h.mp,h.mp_max],vt[@"glyphs"],[vt[@"right_x"] doubleValue],[vt[@"baseline"] doubleValue],0,W,u);
     NSDictionary *lv=ui[@"lv"];
     v4text([NSString stringWithFormat:@"Lv %d · %d%%",h.level,h.exp_permille/10],lv[@"glyphs"],[lv[@"x"] doubleValue],[lv[@"baseline"] doubleValue],0,W,u);
-    // 角标：腰带四列件数（第 1–4 格），右下内角右对齐（回城不要书 / 卷轴、不显示次数，第 5 格是十字）
-    // Badges: item counts of the four belt columns (cells 1–4), right-aligned at the inner bottom-right corner (town portal needs no tome / scroll and shows no count; cell 5 is the cross)
+    // 角标：腰带四列件数（第 1–4 格），右下内角右对齐（回城钮在技能弧上、不在这里，第 5 格是十字）
+    // Badges: item counts of the four belt columns (cells 1–4), right-aligned at the inner bottom-right corner (the town portal button is on the skill arc, not here; cell 5 is the cross)
     NSArray *slots=ui[@"slots"], *in=ui[@"inner"]; NSDictionary *bd=ui[@"badge"];
     int counts[5]={0,h.belt[0],h.belt[1],h.belt[2],h.belt[3]};
     for(int i=1;i<=4;i++) { if(!counts[i]) continue;
@@ -248,6 +248,7 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
             icon=[self skillImage:g held:held];
             showCaption=g.status!=DM_TA_EMPTY && !icon;
         } else if(!self.navigationMode && i==DM_TC_PORTAL) {
+            if(!t->button) continue;   // 没绑回城键或身上没有回城书 / 卷轴：不画（front_ios.m 给的键为 0） | No town portal key bound, or no tome / scroll carried: not drawn (front_ios.m sets the key to 0)
             icon=[self skillImage:dm_ta_skill(359) held:held]; // 原版回城技能图（技能描述表 Town Portal：通用技能页第 18 格，219 / 220 / 411 同一张），不显示次数 | the original game's town portal skill image (skill description table Town Portal: cell 18 of the generic skill page, 219 / 220 / 411 share one image), count not shown
         } else if(!self.navigationMode && (i==DM_TC_MENU || i==DM_TC_MAP)) {
             icon=[self frameImage:i==DM_TC_MAP?_map:_menu key:[NSString stringWithFormat:@"fixed:%d:%d",i,held] rect:CGRectMake(held?36:0,0,36,36)];

@@ -64,19 +64,6 @@ static void apply(void) {
     if (g_capture) { dm_pad_set(0, 0, 0, 0, 0); return; }
     g_swallow &= b; b &= ~g_swallow;
     if (!g_pad_mode || !on[0]) ax[0] = ax[1] = 0; if (!g_pad_mode || !on[1]) ax[2] = ax[3] = 0;   // 触屏模式不交摇杆；手柄模式下没推出来的给 0 | Sticks are not delivered in touch mode; in controller mode a stick that is not pushed out gives 0
-    // ZR：原版六个技能格之一。这一格空着（没绑技能）时按它 = 免费回城（手柄玩家也免费回城，与触屏回城钮一致）；绑了技能就整颗交还原版（不再整颗占用）。
-    // 想把回城放在别的键上：原版选技能界面「综合技能」里有回城技能可绑（宿主进局时挂上的，dm_freetp.c），那条走原版自己的施放，不经这里。
-    // 只在游戏态接管：面板开着时 ZR 照常交给原版（储藏箱 / 编年史用 ZL / ZR 翻页签）；按下时在游戏态接管的那一下，到松开前都不交给游戏
-    // ZR: one of the six original skill slots. While this slot is empty (no skill bound), pressing it = free town portal (controller players get
-    // the free town portal too, consistent with the touch town portal button); once a skill is bound the whole button is handed back to the
-    // original game (we no longer claim the whole button).
-    // To put town portal on another key: the original skill selection screen has a town portal skill under "General Skills" that can be bound
-    // (attached by the host on joining a run, dm_freetp.c); that one goes through the original game's own cast and does not pass through here.
-    // Taken over only in game state: with a panel open ZR goes to the original game as usual (the stash / Chronicle use ZL / ZR to switch tabs);
-    // a press that was taken over in game state is not handed to the game until it is released
-    { static uint64_t prev; static int mine; void dm_tp_request(void); int dm_front_navigation(void), dm_freetp_zr_free(int zl);
-      if ((b & DM_BTN_ZR) && !(prev & DM_BTN_ZR)) { mine = !dm_front_navigation() && dm_freetp_zr_free((b & DM_BTN_ZL) != 0); if (mine) { dm_tp_request(); LOG("手柄：ZR（这一格空着）→ 免费回城"); } }
-      prev = b; if (mine) b &= ~(uint64_t)DM_BTN_ZR; if (!(b & DM_BTN_ZR) && !(prev & DM_BTN_ZR)) mine = 0; }
     dm_pad_set(b, ax[0], ax[1], ax[2], ax[3]);
 }
 // 最近一次手柄明确输入的时刻（now_ns）：系统的自动锁屏只认触屏，手柄操作不重置它，前端据此在菜单里多亮一会儿（front_ios.m 屏幕常亮）

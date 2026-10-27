@@ -884,8 +884,11 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
         if (tk_rd(inv + 0x10, &u, 8))
             for (unsigned k = 0; u && k < 1024 && state_read_item(u, &it, 0, &next); k++) {
                 if (it.mode == 2) h.belt[it.x % 4]++;                       // 腰带物品 x = 0..15，列 = x % 4（与 LEFT/UP/RIGHT/DOWN 对应） | Belt items x = 0..15, column = x % 4 (matching LEFT/UP/RIGHT/DOWN)
-                if (it.cls == CLS_TSC) h.portal++;
-                if (it.cls == CLS_TBK) { uint32_t q = 0; if (stat_read(u, 70, &q)) h.portal += (int)q; }   // stat 70 = quantity
+                // 回城次数只算身上能用的（背包页 0 / 腰带）：箱子、魔盒里的书和卷轴按不出回城（iOS 回城钮据此显隐，front_ios.m）
+                // Town portal count only counts what can be used now (inventory page 0 / belt): tomes and scrolls in the stash or cube cannot cast a portal (the iOS portal button shows or hides by it, front_ios.m)
+                if ((it.mode == 0 && it.page == 0) || it.mode == 2) {
+                    if (it.cls == CLS_TSC) h.portal++;
+                    if (it.cls == CLS_TBK) { uint32_t q = 0; if (stat_read(u, 70, &q)) h.portal += (int)q; } }   // stat 70 = quantity
                 ids[ni++] = it.id;
                 u = next;
             }
@@ -1010,7 +1013,6 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     // Test switch DM_TEST_POS_LOG=1: log a line when the cell the player is in changes (at most one line per 25 ticks; used as the criterion for "can the player still move after this step")
     { static int on = -1, lx, ly; static uint32_t lt; uint32_t tq = 0; if (on < 0) on = getenv("DM_TEST_POS_LOG") != NULL;
       if (on && main && player && tk_rd(G + 0x170, &tq, 4) && tq - lt >= 25) { uint64_t pp = 0; tk_rd(player + 0x38, &pp, 8); if (pp) { int x = *(uint16_t *)(pp + 2), y = *(uint16_t *)(pp + 6); if (x != lx || y != ly) { LOG("DM_TEST_POS_LOG：拍 %u 位置 %d,%d", tq, x, y); lx = x; ly = y; lt = tq; } } } }
-    { void dm_freetp_server_step(uint8_t *, uint64_t, uint64_t); if (main) dm_freetp_server_step((uint8_t *)main->base, G, player); }   // 免费回城（dm_freetp.c） | Free town portal (dm_freetp.c)
     // 测试开关 DM_TEST_STAT_LOG=<属性号>[,…]：这些玩家属性（14 身上金币、15 箱内金币、12 等级…）有变化时记一行（买卖 / 雇佣 / 修理这类成交的判据用）
     // Test switch DM_TEST_STAT_LOG=<stat number>[,...]: log a line when these player stats (14 gold on person, 15 gold in stash, 12 level...) change (used as the criterion for completed deals such as buying and selling / hiring / repairing)
     { static int ids[8], n = -1; static int last[8]; if (n < 0) { n = 0; const char *e = getenv("DM_TEST_STAT_LOG"); char buf[64]; if (e) { strlcpy(buf, e, sizeof buf); for (char *sv, *t = strtok_r(buf, ",", &sv); t && n < 8; t = strtok_r(NULL, ",", &sv)) { ids[n] = atoi(t); last[n++] = -1; } } }

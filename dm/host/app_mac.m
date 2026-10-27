@@ -214,8 +214,3 @@ static void upd_start(void) {
     upd_check();   // 启动时查一次：手柄版主菜单不发「选角页出现」那条消息（核心靠它叫外壳去查），不能只等回调；回调若来了也照查（两次之间隔 60 秒） | check once at launch: the gamepad-layout main menu does not send the "character selection appeared" message (which the core relies on to ask the shell to check), so waiting for the callback alone is not enough; if the callback does come it checks as well (at least 60 seconds apart)
 }
 
-// 手柄代码（ios/Sources/dm_gamepad.m，两边共用）问「现在是不是面板 / 读取画面开着」：只用来决定空着的 ZR 格要不要当免费回城。
-// 宿主没有 iOS 壳那套面板栈；一律答「是」= ZR 整颗交给原版（面板里它是翻页签键），手柄上的免费回城这一版没有（记在已知不足里）
-// The gamepad code (ios/Sources/dm_gamepad.m, shared by both sides) asks "is a panel / loading screen open right now": used only to decide whether the empty ZR slot should act as the free town portal.
-// The host has no panel stack like the iOS shell; it always answers "yes" = ZR is handed entirely to the original game (in panels it is the tab-switch key), so the free town portal on the gamepad is absent in this version (listed under known gaps)
-int dm_front_navigation(void) { return 1; }

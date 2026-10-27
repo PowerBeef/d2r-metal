@@ -30,7 +30,7 @@ English: [control_port.md](control_port.md)
 |---|---|---|---|
 | `ping` | | 看还活着没有。 | `pong` |
 | `help` | | 列出命令名。 | `cmds` |
-| `state` | | 快照。 | `in_game`、`tick`、`paused`、`panel`（最近打开、还没关的面板）、`level`、`hp`、`hp_max`、`mp`、`mp_max`、`area`（levels.txt 号）、`x`、`y`（格）、`dead`、`players`、`holding`（光标上的物品）、`belt0`–`belt3`（腰带各列剩几瓶）、`portal`（回城次数）、`points`（未分配的属性 + 技能点）、`exp_permille`（本级经验进度 ‰）、`quest_unread`、`gold` / `gold_stash`（属性 14 / 15）、`items`（玩家物品链里的件数：身上、腰带、箱子、魔盒、穿着的）、`item_dups`（这条链里重复的物品 id 数；不为 0 就是物品被复制或链表坏了）、`monsters`（服务端活着的怪，含营地 NPC 与佣兵）、`ev_dropped`；引擎快照（`dm_engine.c`）：`panels`（屏上面板，最上面的在前）、`focus`、`focus_panel`、`cursor_mode`（1 = 自由光标面板）、`save_busy`、`save_pending`（提交推迟）、`save_mounted`、`save_containers` |
+| `state` | | 快照。 | `in_game`、`tick`、`paused`、`panel`（最近打开、还没关的面板）、`level`、`hp`、`hp_max`、`mp`、`mp_max`、`area`（levels.txt 号）、`x`、`y`（格）、`dead`、`players`、`holding`（光标上的物品）、`belt0`–`belt3`（腰带各列剩几瓶）、`portal`（身上能用的回城次数：背包或腰带里回城书的次数 + 卷轴张数）、`points`（未分配的属性 + 技能点）、`exp_permille`（本级经验进度 ‰）、`quest_unread`、`gold` / `gold_stash`（属性 14 / 15）、`items`（玩家物品链里的件数：身上、腰带、箱子、魔盒、穿着的）、`item_dups`（这条链里重复的物品 id 数；不为 0 就是物品被复制或链表坏了）、`monsters`（服务端活着的怪，含营地 NPC 与佣兵）、`ev_dropped`；引擎快照（`dm_engine.c`）：`panels`（屏上面板，最上面的在前）、`focus`、`focus_panel`、`cursor_mode`（1 = 自由光标面板）、`save_busy`、`save_pending`（提交推迟）、`save_mounted`、`save_containers` |
 | `press` | `keys`（`A+B`，键名同 `DM_KEYS`）、`frames`（6）、`gap`（3） | 按住这些键 `frames` 个出图帧，再松开等 `gap` 帧。在取手柄处并进去，与脚本键同一套裁决。 | `frame`、`held_frames` |
 | `stick` | `x`、`y` ∈ [-1, 1]（上为正）、`frames`（30）、`keys` | 推左摇杆（可同时按键）。 | `frame`、`held_frames` |
 | `tap` | `x`、`y` ∈ [0, 1]（出图画面）、`hold`（3 帧） | 经 `dm_ui_touch` 点一下界面，与 `DM_KEYS` 的 `C<x>:<y>` 和真手指同一条路。 | |

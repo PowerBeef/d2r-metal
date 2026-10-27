@@ -11,7 +11,7 @@ typedef struct {
     int level;          // stat 12
     int exp_permille;   // 本级经验进度 ‰（原版 experience.txt 门槛） | Experience progress within the current level ‰ (thresholds from the original game's experience.txt)
     int belt[4];        // 腰带四列各剩几件（腰带物品 x % 4 = 列） | How many items remain in each of the four belt columns (belt item x % 4 = column)
-    int portal;         // 回城次数：回城书 tbk 的数量（stat 70）+ 回城卷轴 tsc 张数 | Town portal count: quantity in the Tome of Town Portal tbk (stat 70) + number of Scroll of Town Portal tsc
+    int portal;         // 身上能用的回城次数（背包 / 腰带）：回城书 tbk 的数量（stat 70）+ 回城卷轴 tsc 张数 | Town portals usable now (inventory / belt): quantity in the Tome of Town Portal tbk (stat 70) + number of Scroll of Town Portal tsc
     int players;        // 当前人数档（人数设置对象 +0xc）；0 = 未读到 | Current players setting (players setting object +0xc); 0 = not read
     int hp, hp_max, mp, mp_max;   // 生命 / 法力（stat 6–9 ÷ 256，取整） | Life / mana (stat 6–9 ÷ 256, rounded to an integer)
     int area, x, y;     // 所在区域号（levels.txt Id；0 = 未读到）与玩家坐标（格） | Current area number (levels.txt Id; 0 = not read) and player coordinates (cells)
