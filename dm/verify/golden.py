@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # 我们自己构建录的基线（代替模拟器里原版游戏的真值录制）：逻辑、画面、存档三样，都放在 $DM_ROOT/data/switch/golden/，只在有意时重录（--reason 写进 LOG.tsv）。
 #   replay record [路线…] --reason 原因     按 dm/verify/golden/<路线>.scn 跑一局，录命令包与逐拍状态（replay.py record），连同那一局提交的存档
-#   replay check [路线…] [--dmhost 宿主]…   在每个宿主（缺省 dmhost，编过 dmhost_m3 就也带上）上回放，逐拍比录制；回放里在录制请存盘的那一拍也请一次，
+#   replay check [路线…] [--dmhost 宿主]…   在每个宿主（缺省 dmhost）上回放，逐拍比录制；回放里在录制请存盘的那一拍也请一次，
 #                                           回放存下的档与录制的档用 savecmp.py 比（校验和自洽、时间核来源、其余逐字节相同）；
 #                                           每条路线再跑一次负对照：从中间那条客户端命令包起往后全删，回放必须在某一拍分叉，否则说明比对是瞎的、判红
 #   shots record [页…] --reason 原因        dm/verify/shotgate_pages 里不用录制输入的页，用本工作树的宿主截图存成基线（按渲染接口分目录：m4 / m3）
@@ -13,7 +13,7 @@
 # 这些基线都是由游戏程序推出来的数据：只放本机，不入库
 # Baselines recorded from our own build (instead of ground-truth recordings of the original game in an emulator): logic, screens and saves, all kept in $DM_ROOT/data/switch/golden/, re-recorded only on purpose (--reason goes into LOG.tsv).
 #   replay record [route...] --reason why     runs dm/verify/golden/<route>.scn and records its packets and per-tick state (replay.py record), together with the save that run committed
-#   replay check [route...] [--dmhost host]...  replays on each host (default dmhost, plus dmhost_m3 when built) and compares tick by tick with the recording; the replay also asks for a save at the tick the recording did,
+#   replay check [route...] [--dmhost host]...  replays on each host (default dmhost) and compares tick by tick with the recording; the replay also asks for a save at the tick the recording did,
 #                                             and the replay's save is compared with the recorded one by savecmp.py (checksums self-consistent, times checked against their source, everything else byte for byte);
 #                                             each route also runs a negative control: the client packets from the middle one onward are dropped and the replay must diverge at some tick, otherwise the comparison is blind and the check is red
 #   shots record [page...] --reason why       screenshots the pages in dm/verify/shotgate_pages that need no recorded input with this tree's host and keeps them as the baseline (one folder per rendering API: m4 / m3)
@@ -71,11 +71,9 @@ def pick(folder, ext, names):
 
 
 def host_bins(given):
-    """缺省：普通宿主与旧接口宿主都按本工作树编好（逻辑基线两边都要逐拍相同）。 | Default: the normal host and the older-API host, both built from this tree (the logic baseline must match tick by tick on both)."""
+    """缺省：本工作树的宿主（逻辑基线要逐拍相同）；--dmhost 可给多个。 | Default: this tree's host (the logic baseline must be tick-identical); --dmhost may be given several times."""
     if given: return [os.path.abspath(h) for h in given]
-    hs = [replay.default_host()]
-    if subprocess.run(['make', '-s', '-C', os.path.join(DM, 'host'), 'dmhost_m3'], capture_output=True, check=False).returncode: raise SystemExit('🔴 make -C dm/host dmhost_m3 failed')
-    return hs + [os.path.join(DM, 'host', 'dmhost_m3')]
+    return [replay.default_host()]   # 本 fork 只支持 Metal 4（macOS / iOS 27 起）：旧接口宿主不再一起比 | this fork supports Metal 4 only (macOS / iOS 27 and later): the older-API host is no longer compared too
 
 
 # ---------- 逻辑与存档 | logic and saves ----------

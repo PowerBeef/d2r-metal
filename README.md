@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <img alt="macOS 15 and later" src="https://img.shields.io/badge/macOS-15%2B-a07638?style=for-the-badge&labelColor=1a110d">
-  <img alt="iOS and iPadOS 18 and later" src="https://img.shields.io/badge/iOS%20%2F%20iPadOS-18%2B-a07638?style=for-the-badge&labelColor=1a110d">
+  <img alt="macOS 27 and later" src="https://img.shields.io/badge/macOS-27%2B-a07638?style=for-the-badge&labelColor=1a110d">
+  <img alt="iOS and iPadOS 27 and later" src="https://img.shields.io/badge/iOS%20%2F%20iPadOS-27%2B-a07638?style=for-the-badge&labelColor=1a110d">
   <img alt="Metal 4 and MetalFX" src="https://img.shields.io/badge/Metal%204-MetalFX-7a1d12?style=for-the-badge&labelColor=1a110d">
   <img alt="Plays offline" src="https://img.shields.io/badge/plays-offline-7a1d12?style=for-the-badge&labelColor=1a110d">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-5a4a3a?style=for-the-badge&labelColor=1a110d">
@@ -57,14 +57,16 @@ Some of D2R Mobile's conveniences are kept. On the **Extras** tab of Options, ea
 
 ## A sharper picture with MetalFX
 
-MetalFX is Apple's edge-aware upscaler. D2R Metal puts it where each platform enlarges the picture:
+MetalFX is Apple's edge-aware upscaler. D2R Metal draws the interface and text at your screen's own resolution and lowers only the 3D world, which the game's own upscale pass (a bilinear stretch with light sharpening) brings back to full size; MetalFX replaces that pass:
 
-- **Mac**: the whole game is drawn below your screen's resolution and enlarged at the last step, with MetalFX in place of a plain stretch.
-- **iPhone / iPad**: the interface is drawn at the screen's full resolution, but the 3D world is drawn at 75% and scaled back up by the game's own pass (a bilinear stretch with light sharpening). MetalFX replaces that pass.
+- **Mac**: Native output, with the 3D world at a scale chosen for your chip (75% of a 2560-wide screen on a base M-series chip, full size on Max and Ultra). On this setup the GPU time per frame is about the same as drawing the whole picture at 1920 × 1080 and enlarging it, and text is visibly crisper.
+- **iPhone / iPad**: the 3D world at 75% of the screen's full resolution.
+
+The Mac also uses the game's own PC options the Switch build leaves off: SMAA anti-aliasing and up to 16x texture filtering, with colors shown as the game was made (sRGB) on wide-gamut screens.
 
 Full frames from the same build and the same spot; only the setting changed. Click one for full size.
 
-**Mac, 2560 × 1440 screen.** Left: the original 1600 × 900, stretched. Right: what D2R Metal picks for that Mac, 1920 × 1080 enlarged with MetalFX.
+**Mac, 2560 × 1440 screen.** Left: the original 1600 × 900, stretched. Right: 1920 × 1080 enlarged with MetalFX (the earlier Recommended; Native output looks sharper still).
 
 <table><tr><th>Original</th><th>D2R Metal</th></tr><tr>
 <td><img width="440" alt="Mac, 1600 × 900, plain stretch" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/3a-mac-original-1600-standard.jpg" /></td>
@@ -99,11 +101,11 @@ Options has five tabs on both platforms: **Video**, **Audio**, **Gameplay**, **S
 | | Mac | iPhone / iPad |
 |---|---|---|
 | Controls | Keyboard, mouse, trackpad, controller | Touch, controller |
-| Picture drawn at | 1600 × 900 to 2560 × 1440 | The screen's full resolution, 3D at 75–100% |
-| MetalFX enlarges | The whole picture | The 3D world |
+| Picture drawn at | The screen's own resolution (Native), 3D at 50–100% | The screen's full resolution, 3D at 75–100% |
+| MetalFX enlarges | The 3D world | The 3D world |
 | When frames drop | Keeps the 3D resolution | Lowers it for a while |
 | Saves | On every quit and when minimized | When sent to the background |
-| System | macOS 26 (15–25: older-API build) | iOS 26 (18–25: older-API build) |
+| System | macOS 27 or later | iOS / iPadOS 27 or later |
 
 **On the Mac**, it behaves like a Mac game: full screen at launch (View → Full Screen updates the setting), the mouse wheel and trackpad scroll the game's lists, scroll bars and sliders drag, and keyboard and controller move a highlight drawn like the game's own. The Mac guide, with keys, saves, iCloud and moving saves over from an iPhone, is [docs/MAC.md](docs/MAC.md).
 
@@ -126,16 +128,16 @@ These came out of a full audit of the port, a bug hunt with sanitizers and Metal
 
 ## Which devices are supported
 
-The graphics layer needs Metal 3, so the minimum is an **A14 or M1 chip**.
+D2R Metal is built for **macOS 27 and iOS / iPadOS 27 or later** and draws only through Metal 4, so it can use what those systems add without older fallbacks. Metal 4 needs an **A14 or M1 chip** or later.
 
 | Device | Plays? | What you need |
 |---|---|---|
-| Mac, M1 or later | Yes | macOS 26, or 15–25 with the [older-API build](docs/OLDER_SYSTEMS.md) |
-| iPhone / iPad, A17 Pro or M chip | Yes | iOS 26, or 18–25 with the older-API build |
-| iPhone / iPad, A14–A16 | Yes | Also a [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
+| Mac, M1 or later | Yes | macOS 27 or later |
+| iPhone / iPad, A17 Pro or M chip | Yes | iOS / iPadOS 27 or later |
+| iPhone / iPad, A14–A16 | Yes | iOS / iPadOS 27 or later, and a [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
 | A13 and older, Intel Macs | No | — |
 
-A17 Pro means iPhone 15 Pro and later and iPhone 16 and later; A14–A16 covers the iPhone 12 to 14 families and the iPhone 15 / 15 Plus. Devices with 4 GB of memory run, but tightly. Apple TV, Android and HarmonyOS versions exist in [upstream](https://github.com/jhaizhou-ops/d2r-mobile); this fork doesn't build or test them.
+A17 Pro means iPhone 15 Pro and later and iPhone 16 and later; A14–A16 covers the iPhone 12 to 14 families and the iPhone 15 / 15 Plus. Devices with 4 GB of memory run, but tightly. Older systems (macOS 15–26, iOS 18–26, through the older-API build) and the Apple TV, Android and HarmonyOS versions are supported by [upstream](https://github.com/jhaizhou-ops/d2r-mobile); this fork doesn't build or test them.
 
 ## Getting started
 
@@ -161,7 +163,7 @@ There are no prebuilt downloads: you build the apps on your Mac.
 
 3. **Build the app.**
 
-   - **Mac**: `dm/tools/mac_app.sh` produces `~/dm-work/out/macapp/D2R Metal.app` (macOS 15–25: `DM_MAC_M3=1 dm/tools/mac_app.sh`). No developer account needed. See [docs/MAC.md](docs/MAC.md).
+   - **Mac**: `dm/tools/mac_app.sh` produces `~/dm-work/out/macapp/D2R Metal.app` (macOS 27 or later). No developer account needed. See [docs/MAC.md](docs/MAC.md).
    - **iPhone / iPad**: copy `dm/ios/local.env.example` to `dm/ios/local.env` and set your signing details (`DM_TEAM_ID`, `DM_BUNDLE_ID`; with a free Apple ID also `DM_FREE_ACCOUNT=1` and `DM_IOS_UDID`), then `cd dm/ios && ./run.sh build && ./run.sh install`. On first launch the app asks for the game resource folder ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
 
 Run `./setup.sh` again after updating to a new commit. It also rewrites three files that depend on your local tools (`dm/gfx/tools/dmsh_chain.lock`, `dm/gfx/nvn/dmsh_chain.h`, `dm/gfx/nvn/c1_full.tsv`); that is expected, don't commit them. The full dependency list is in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).

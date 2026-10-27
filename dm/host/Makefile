@@ -3,7 +3,7 @@ DM_ROOT ?= $(HOME)/dm-work
 # 打包脚本（tools/mac_app.sh）用 print-macos-min 取同一个数写进 Info.plist，并核程序本体里的数与它相等
 # Minimum system version: the graphics backend (gfx/nvn/nvn_mtl.m) is built entirely on Metal 4, which exists from macOS 26; without stating it explicitly the compiler takes the version of the local system.
 # The packaging script (tools/mac_app.sh) takes the same number through print-macos-min, writes it into Info.plist, and checks that the number in the executable equals it
-MACOS_MIN ?= 26.0
+MACOS_MIN ?= 27.0   # 本 fork 只支持 macOS 27 起（iOS 27 起）：只用 Metal 4，不另走旧接口；dmhost_m3 留给上游合并，不编不测 | this fork supports macOS 27 and later only (iOS 27 and later): Metal 4 only, no older-API path; dmhost_m3 stays for upstream merges and is neither built nor tested
 CFLAGS=-O1 -g -Wall -Wno-unused-function -mmacosx-version-min=$(MACOS_MIN)
 MOVIE_FFMPEG ?= 0
 MOVIE_PREFIX ?=

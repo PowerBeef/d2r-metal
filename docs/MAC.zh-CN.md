@@ -8,14 +8,7 @@ Apple 芯片的 Mac 可以把本项目构建成一个原生的 macOS App：`D2R 
 
 ## 系统要求
 
-Apple 芯片（Intel 芯片的 Mac 不支持；各设备的情况见首页「[支持哪些设备](../README.md#which-devices-are-supported)」（英文））。按系统分两档：
-
-| 你的系统 | 用哪种出法 | 产出 |
-|---|---|---|
-| macOS 26 及以上 | 缺省：`dm/tools/mac_app.sh` | `D2R Metal.app` |
-| macOS 15 – 25 | 旧接口版：`DM_MAC_M3=1 dm/tools/mac_app.sh` | `D2R Metal M3.app` |
-
-默认构建把图形部分建在 macOS 26 才有的图形接口（Metal 4）上，更早的系统上打不开（系统会提示这个 App 不能与当前版本的 macOS 配合使用）。旧接口版是同一份源码、同一个游戏，图形部分改用老系统也有的接口，最低 macOS 15.0；细节见 [OLDER_SYSTEMS.zh-CN.md](OLDER_SYSTEMS.zh-CN.md)。
+Apple 芯片、**macOS 27 及以上**（Intel 芯片的 Mac 不支持；各设备的情况见首页「[支持哪些设备](../README.md#which-devices-are-supported)」（英文））。D2R Metal 只走 Metal 4，并用 macOS 27 新增的东西，不为老系统留退路；更早的系统上 App 打不开（系统会提示这个 App 不能与当前版本的 macOS 配合使用）。上游给 macOS 15 – 26 的旧接口版（[OLDER_SYSTEMS.zh-CN.md](OLDER_SYSTEMS.zh-CN.md)）本分支不编也不测。
 
 ## 构建
 
@@ -23,11 +16,10 @@ Apple 芯片（Intel 芯片的 Mac 不支持；各设备的情况见首页「[�
 
 ```bash
 source ~/dm-work/build/cache/dm/venv/bin/activate
-dm/tools/mac_app.sh                  # macOS 26 及以上
-DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
+dm/tools/mac_app.sh                  # macOS 27 及以上
 ```
 
-默认出法约十几秒，产出 `~/dm-work/out/macapp/D2R Metal.app`（约 3 MB）。旧接口版第一次要把着色器库按 macOS 15 重编一份，多花约 3–4 分钟，产出 `D2R Metal M3.app`；它有自己的存档与日志目录（名字里带 M3），可以和缺省的 App 并存。想放到别处：命令后面跟输出目录。
+出法约十几秒，产出 `~/dm-work/out/macapp/D2R Metal.app`（约 3 MB）。想放到别处：命令后面跟输出目录。
 
 这个 App 里只有我们自己的程序。改写后的游戏程序、着色器库、界面覆盖层都是从你的游戏文件做出来的，它们留在你的工作区（`~/dm-work`）里，App 只记着它们的位置——所以**这个 App 只能在构建它的这台 Mac 上跑**，请不要拷给别人，也不要删掉或挪动工作区（旧接口版重编的着色器库就在输出目录里）。签名用的是本机临时签名，不需要开发者账号，也不需要登记设备。
 
@@ -121,7 +113,6 @@ App 带本项目自己的图标（`dm/ios/Assets.xcassets/AppIcon.appiconset/App
 - 存档：`~/Library/Application Support/D2R Mobile/save`（数据文件夹沿用项目原来的名字，以前构建的存档照常接上）
 - 日志：`~/Library/Logs/D2R Mobile/host.log`（上一次运行的是 `host.prev.log`）。报问题时用菜单栏「帮助 → 分享日志…」：它把这两份日志和一份版本信息打成一个压缩包，让你选保存位置；不上传、不带存档，日志里的用户名会换成 `~`。
 - 没有声音时看日志：启动时有一行「audio：输出设备「…」，系统缺省输出「…」」，两者不一致会标红；退出时有一行「声卡回调累计 N」，N 为 0 表示这次没有出声。
-- 旧接口版（`D2R Metal M3.app`）用的是名字里带 M3 的另一对目录。
 
 **iCloud 存档同步：自己构建的 App 缺省没有，有付费开发者账号可以打开。**程序里接了与 iPhone / iPad 相同的同步，但它需要 App 带着 iCloud 的签名权限。缺省用本机临时签名，没有这项权限，所以存档只留在这台 Mac 上，日志里会记一行「iCloud 不可用…只用本地存档」，游戏照常。有付费开发者账号时，下载一份带 iCloud 能力的 Mac 描述文件（`.provisionprofile`），放进 `~/dm-work/mac-sign`（或用 `DM_MAC_SIGN_DIR` 指到它所在的文件夹），用 `DM_MAC_ICLOUD=1 dm/tools/mac_app.sh` 构建：脚本从描述文件里读出团队、包标识和权限，用钥匙串里对应的证书签名。描述文件里的包标识决定用哪个 iCloud 容器，用你 iOS App 的包标识就能和 iPhone / iPad 同步。这项由 [@xielh96](https://github.com/xielh96) 贡献（[#121](https://github.com/jhaizhou-ops/d2r-mobile/pull/121)）。没有付费账号时，要把手机上的进度带过来，用下面的手工导入。
 
@@ -167,4 +158,3 @@ App 带本项目自己的图标（`dm/ios/Assets.xcassets/AppIcon.appiconset/App
 - 点地走只在营地验过。隔着墙点远处的怪，角色可能走到障碍前就停，绕一步再点。远程职业点怪未经验证。PC 版的右键技能没有。
 - 「分享日志」的菜单项与保存面板未经真人操作，验过的是打出来的压缩包。
 - 自己构建的 App 不做更新检查（它不联网）；iCloud 存档同步要用付费账号的描述文件、带 `DM_MAC_ICLOUD=1` 构建才有（见「存档、日志与 iCloud」）。
-- 旧接口版在 macOS 15 上由一位内测玩家实际玩过（Mac mini M4，macOS 15.7，用的是出好的包）；在 macOS 15 的 Mac 上从本仓库自己构建，未经真人操作。

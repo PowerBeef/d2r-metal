@@ -28,7 +28,7 @@ dm/verify/fork_gate.sh device           # iPhone 连得上时
 | 层 | 步 |
 |---|---|
 | quick | `scan_literals.py`、`dm_i18n.py --check`、`switches.py check`、全部场景的 `scenario.py check`、`check_hud_gen.sh` |
-| unit | 宿主、图形、图形旧 API、iOS 各套单测；`regress.sh` |
+| unit | 宿主、图形、iOS 各套单测；`regress.sh`（本分支只走 Metal 4，不跑图形旧 API 那一遍） |
 | core | 编宿主；不含前端步的场景无窗跑、三个并行；要最小化 / 进后台 / 退出的开窗一个一个跑；再跑触屏用例 |
 | full | 按当前提交重出 Mac App 测试副本、在它上面跑场景；`smoke_mac.sh 1`（同时按当前提交重出 Mac 上的 iOS 包）、在那个包上跑场景；一个场景开 Metal API 校验；故障场景 |
 | long | `bench.py` 跑城镇路线（最先跑，机器还凉）；`explore.py` 在 ASan、UBSan 宿主上；TSan 单独跑；`fnfuzz.py` |

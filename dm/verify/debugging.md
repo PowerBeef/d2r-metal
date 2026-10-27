@@ -153,7 +153,7 @@ The messages are summarized in `metal_validation.txt`; from the shell, `python3 
 
 Findings:
 
-- With shader validation on, the Metal 4 host crashes at its first present commit inside Metal's own `-[MTL4GPUDebugCommandBuffer applyResidencySets:]`, with the layer's residency set attached (macOS 27). Use the older-API host (`dmhost_m3`) for shader validation. It runs the same shaders, and the runner prints a note when it sees the combination.
+- With shader validation on, a windowed run crashes at its first present commit inside Metal's own `-[MTL4GPUDebugCommandBuffer applyResidencySets:]` (macOS 27, still on 27.0.1; moving the layer's residency set off the queue does not help). Run shader validation headless (`--headless`): there is no present step, and all of the game's rendering is still validated. The fork is Metal 4 only, so the older-API host is no longer an option. A windowed run also reports MetalFX's own scaler shader (`MFX_SCALE_SHADER_V1_FRAG`) reading a non-resident 4-byte internal buffer; MetalFX exposes no residency hook for it.
 - `api` and `shader` runs of the scenarios above report nothing.
 - `lint`: about 46,600 redundant `setComputePipelineState` calls in a 12 s `enter_game`. They come from the texture deswizzle encoder (`dm/gfx/tex/nvn_deswizzle_gpu.m`), which sets the pipeline once per level and layer on the same encoder. This is cheap (a few ms over a load) and has not been changed.
 

@@ -92,7 +92,6 @@ for tier in "${TIERS[@]}"; do
   unit)
     step unit_host 1800 -- make -C "$DM/host/tests" run
     step unit_gfx 1800 -- make -C "$DM/gfx/tests" run
-    step unit_gfx_m3 1800 -- make -C "$DM/gfx/tests" run-m3
     step unit_ios 1200 -- make -C "$DM/ios/tests" test
     step unit_regress 1800 -- bash "$DM/verify/regress.sh"
     ;;

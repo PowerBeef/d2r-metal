@@ -8,14 +8,7 @@ On an Apple silicon Mac this project can be built into a native macOS App, `D2R 
 
 ## Requirements
 
-Apple silicon (Intel Macs are not supported; see "[Which devices are supported](../README.md#which-devices-are-supported)" in the README for every device). Two tiers by system:
-
-| Your system | How to build | Output |
-|---|---|---|
-| macOS 26 or later | Default: `dm/tools/mac_app.sh` | `D2R Metal.app` |
-| macOS 15 – 25 | Older-API build: `DM_MAC_M3=1 dm/tools/mac_app.sh` | `D2R Metal M3.app` |
-
-The default build puts the graphics side on a graphics interface that only exists from macOS 26 on (Metal 4); on earlier systems it does not open (the system says the App cannot be used with this version of macOS). The older-API build is the same source and the same game with the graphics side using interfaces that older systems also have; its minimum is macOS 15.0. Details: [OLDER_SYSTEMS.md](OLDER_SYSTEMS.md).
+Apple silicon and **macOS 27 or later** (Intel Macs are not supported; see "[Which devices are supported](../README.md#which-devices-are-supported)" in the README for every device). D2R Metal draws only through Metal 4 and uses what macOS 27 adds, without fallbacks for older systems; on an earlier system the App does not open (the system says it cannot be used with this version of macOS). Upstream's older-API build for macOS 15 – 26 ([OLDER_SYSTEMS.md](OLDER_SYSTEMS.md)) is not built or tested in this fork.
 
 ## Build
 
@@ -23,11 +16,10 @@ The prerequisites are the same as for iOS: game files in place and `./setup.sh` 
 
 ```bash
 source ~/dm-work/build/cache/dm/venv/bin/activate
-dm/tools/mac_app.sh                  # macOS 26 or later
-DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
+dm/tools/mac_app.sh                  # macOS 27 or later
 ```
 
-The default build takes ten-odd seconds and produces `~/dm-work/out/macapp/D2R Metal.app` (about 3 MB). The older-API build recompiles the shader libraries for macOS 15 the first time, which adds about 3–4 minutes, and produces `D2R Metal M3.app`; it has its own save and log directories (with M3 in the name), so it can sit next to the default App. To put the output elsewhere, add an output directory after the command.
+The build takes ten-odd seconds and produces `~/dm-work/out/macapp/D2R Metal.app` (about 3 MB). To put the output elsewhere, add an output directory after the command.
 
 The App contains only our own program. The rewritten game program, the shader libraries and the UI overlay are all made from your game files; they stay in your working directory (`~/dm-work`) and the App only records where they are — so **the App runs only on the Mac that built it**. Please do not copy it to anyone, and do not delete or move the working directory (the shader libraries recompiled for the older-API build are in the output directory). Signing is local ad-hoc signing: no developer account and no device registration.
 
@@ -121,7 +113,6 @@ What it cannot do yet:
 - Saves: `~/Library/Application Support/D2R Mobile/save` (the data folders keep the project's former name, so saves carry over from earlier builds)
 - Log: `~/Library/Logs/D2R Mobile/host.log` (the previous run is `host.prev.log`). When reporting a problem use Help → Share Log… in the menu bar: it packs these two logs and a version-information file into one archive and lets you choose where to save it; nothing is uploaded, no saves are included, and the user name in the logs is replaced with `~`.
 - No sound: at launch the log has a line `audio：输出设备「…」…，系统缺省输出「…」…` (the output device in use and the system default output; a mismatch is marked red), and on exit a line `声卡回调累计 N` — N = 0 means no sound was played this time. (These log lines are in Chinese.)
-- The older-API build (`D2R Metal M3.app`) uses a separate pair of directories with M3 in the name.
 
 **iCloud save sync: off by default in an App you build from this repository; a paid developer account can turn it on.** The program has the same sync as on iPhone / iPad wired in, but it needs the App to carry the iCloud signing entitlement. By default the App is signed locally without it, so saves stay on this Mac, the log records one line saying iCloud is unavailable and only local saves are used, and the game runs as usual. With a paid developer account, download a Mac provisioning profile that carries iCloud, put the `.provisionprofile` into `~/dm-work/mac-sign` (or point `DM_MAC_SIGN_DIR` at its folder) and build with `DM_MAC_ICLOUD=1 dm/tools/mac_app.sh`: the script reads the team, bundle identifier and entitlements from the profile and signs with the matching certificate in your keychain. The bundle identifier in the profile decides the iCloud container, so a profile for your iOS App's identifier syncs with your iPhone / iPad. Contributed by [@xielh96](https://github.com/xielh96) ([#121](https://github.com/jhaizhou-ops/d2r-mobile/pull/121)). Without a paid account, bring your phone's progress over by importing it by hand as below.
 
@@ -167,4 +158,3 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 - Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class is unverified. There is no right-click skill as on PC.
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
 - An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud").
-- The older-API build was played on macOS 15 by one player in our test group (Mac mini M4, macOS 15.7, using a package built elsewhere); building it from this repository on a Mac running macOS 15 has not been operated by a person.

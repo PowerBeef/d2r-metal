@@ -153,7 +153,7 @@ make -C dm/host dmhost_m3 && SCN_DMHOST=$PWD/dm/host/dmhost_m3 python3 dm/tools/
 
 发现：
 
-- 开着着色器校验时，Metal 4 宿主第一次出图提交就崩在 Metal 自己的 `-[MTL4GPUDebugCommandBuffer applyResidencySets:]` 里，当时挂着图层的驻留集（macOS 27）。着色器校验请用旧接口宿主（`dmhost_m3`）。它跑同一批着色器；运行器见到这种组合会打一行提示。
+- 开着着色器校验时，有窗口的运行第一次出图提交就崩在 Metal 自己的 `-[MTL4GPUDebugCommandBuffer applyResidencySets:]` 里（macOS 27，27.0.1 仍在；把图层的驻留集从队列上挪开也没用）。着色器校验请无窗口跑（`--headless`）：没有出图这一步，游戏的全部渲染照样校验。本分支只走 Metal 4，旧接口宿主不再是选项。有窗口的运行还会报 MetalFX 自己的放大着色器（`MFX_SCALE_SHADER_V1_FRAG`）读一块没驻留的 4 字节内部缓冲；MetalFX 没给这块内存的驻留接口。
 - 上面那些场景在 `api` 和 `shader` 档下都没有消息。
 - `lint`：12 秒的 `enter_game` 里约有 46,600 次多余的 `setComputePipelineState`，来自贴图反交错编码（`dm/gfx/tex/nvn_deswizzle_gpu.m`）：它在同一个编码器上每个级别、每层都设一次管线。开销不大（一次读取总共几毫秒），没有改。
 

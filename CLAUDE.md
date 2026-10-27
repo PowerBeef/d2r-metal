@@ -16,7 +16,7 @@ Everything derived from the user's game files lives in the workspace `$DM_ROOT` 
 The fork develops on its own `main`. Changes worth sharing go upstream as cherry-picks.
 
 - **Platform scope: macOS and iOS only.**
-  - The fork targets Apple silicon, Metal 4, MetalFX and current Apple hardware.
+  - The fork targets Apple silicon, macOS / iOS 27 and later, Metal 4, MetalFX and current Apple hardware; upstream's older-API build for earlier systems is not supported here (see "Metal 4 only" under Architecture).
   - The Android, HarmonyOS and Vulkan code (`dm/android`, `dm/harmony`, `dm/gfx/vulkan`, their docs and switches) stays in the tree so upstream merges stay clean, but it isn't built, tested or maintained here. Shared-code changes may break it; don't delete it.
   - When a change also fits upstream's platforms, keep it portable and offer it as an `up/<topic>` PR. Apple-only work stays `Upstream: fork-only` unless upstream would want it.
 - **Branding:** the apps show "D2R Metal" (`mac_app.sh` `NAME`, the Mac window title, the iOS `CFBundleDisplayName`, player-facing strings). Everything player data hangs on keeps the old spelling: the bundle IDs, the Mac data folders (`APP_NAME` "D2R Mobile" in `app_mac.m`), the iOS "D2R Mobile Resources" folder, the `org.d2rmobile.*` IDs and the executable `D2RMobile`. Don't rename those.
@@ -107,7 +107,7 @@ The Python version and the venv:
 ./setup.sh                            # venv, rewrite (product.sh build), shader translation; reruns skip done steps
 ./setup.sh <package>... <prod.keys>   # extract game files first (base and update may be separate packages)
 
-dm/tools/mac_app.sh                   # Mac App → $DM_ROOT/out/macapp/D2R Metal.app (macOS 26+; DM_MAC_M3=1 for 15–25)
+dm/tools/mac_app.sh                   # Mac App → $DM_ROOT/out/macapp/D2R Metal.app (macOS 27+)
 cd dm/ios && DM_DEVICE_FAMILY=1 ./run.sh build && ./run.sh install   # iPhone; signing in dm/ios/local.env
 ```
 
@@ -123,7 +123,7 @@ python3 dm/ios/tools/dm_i18n.py --check
 ```bash
 make -C dm/host/tests run             # host unit tests + source scans (native_write_scan, mode_scan, i18n)
 cd dm/host/tests && make build/t_widget && ./build/t_widget        # one host test (binaries in build/)
-make -C dm/gfx/tests run              # graphics tests on the local Metal device; run-m3 = older-API pass
+make -C dm/gfx/tests run              # graphics tests on the local Metal device
 cd dm/gfx/tests && make t_nvn && ./t_nvn                            # one gfx test (binaries in tests dir)
 make -C dm/ios/tests test             # iOS shell unit tests (plain `make` only builds)
 cd dm/ios/tests && make t_touch_controls && ./t_touch_controls      # one iOS test
@@ -224,7 +224,7 @@ DM_BREAK_AT_TICK=<tick> ./dmhost … ; lldb -p <pid>; (lldb) command script impo
 ```
 
 - The sanitizer targets don't track headers: delete the binary to force a rebuild. They run game threads on 8 MiB host stacks and carry their own options and TSan suppressions (`main.c`).
-- Shader validation crashes the Metal 4 host inside Metal (macOS 27); use `SCN_DMHOST=dm/host/dmhost_m3`.
+- Shader validation crashes windowed runs at the first present inside Metal's validation layer (macOS 27, still on 27.0.1); run it `--headless`, which still validates all game rendering (the fork has no older-API host to fall back on).
 - `DM_BREAK_AT_TICK` waits on the tick thread: start the host by hand without `DM_WATCH` / `DM_WATCH_STALL`. In `lldb --batch`, commands after the trap go in `-k`, not `-o`.
 - Agents can drive the same lldb through `(lldb) protocol-server start MCP` + `xcrun lldb-mcp` (one MCP server at a time; delete stale `~/.lldb/lldb-mcp-<pid>.json`).
   - With no server running when it starts, `lldb-mcp` starts its own lldb, which stays up and is reused. On Xcode 27.1 that lldb can't attach ("Bad file descriptor") unless `LLDB_EXE_PATH` points at a wrapper that gives it a stdin; `debugging.md` has the wrapper. Never `process launch` through `lldb-mcp`: it never returns and blocks that lldb until it's killed. Start the host yourself and attach.
@@ -283,7 +283,7 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   - Chain: `dmsh_xlate` (C#, bundled Ryujinx translator) → SPIR-V → `spirv-cross` → MSL → metallib.
   - Each shader is keyed by the first 16 hex digits of the SHA-256 of its control section.
   - Libraries live under `b-<V>/`, where V is the chain version hashed from chain sources + `dmsh_chain.lock`. The host refuses a version mismatch.
-- **Metal 4 is the default.** `DM_NVN_M3` / `DM_MAC_M3` / `DM_IOS_M3` selects the older-API backend for macOS 15 / iOS 18. Every divergence is inside `#if DM_NVN_M3` in `nvn_mtl.m`.
+- **Metal 4 only, macOS / iOS 27 and later (decided 2026-10-27).** The fork targets macOS 27 / iOS 27 (`MACOS_MIN`, `project.yml`) and uses Metal 4 and what those systems add, with no older-system fallbacks. Upstream's older-API backend (`DM_NVN_M3` / `DM_MAC_M3` / `DM_IOS_M3`, `dmhost_m3`, `run-m3`, `project_m3.py`) stays in the tree like the Android / Vulkan code, so upstream merges stay clean, but it is not built, tested or shipped here, and new code needs no older-API path (it may break that build). Its divergences sit inside `#if DM_NVN_M3` in `nvn_mtl.m`.
 
 **D. Frontends and features.**
 - **`dm/host/front.h` is implemented by:**
@@ -333,7 +333,7 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   - NVN names or prototypes → `gfx/tools/nvn_slots.py` + `gen_protos.py`
   - `pso_manifest.tsv` row order matters; don't sort it.
 - **Mac App:**
-  - It links to build outputs under `$DM_ROOT`; the bundle ID is `org.d2rmobile.mac` (`.m3` for the older-API build).
+  - It links to build outputs under `$DM_ROOT`; the bundle ID is `org.d2rmobile.mac`.
   - Its resource folder is stored as the `RomfsDir` default.
   - The pointer auto-hide delay is `CursorHideSeconds`.
   - Picture settings (Display Mode, Resolution incl. Native, Color, Graphic Presets, 3D Resolution, Upscaling, Anti-Aliasing, Anisotropic Filtering) are on the Mac Options Video tab: layout `touch_layout.py` `_VIDEO` (`DM_OVERLAY_MAC`), logic `dm_video.c`, stored in `sw_video.txt` beside `sw_custom.txt` with a first-boot "recommended" copy (`front_mac.m` `front_video_firstboot`; the older `StartFullScreen` / `RenderScale` / `MetalFXUpscale` defaults only seed it once). Keys: `mode res up aa aniso color s3d` (value 0 = the original look; new keys go at the end; `k_rows` must follow the page order). Keys after the first three get their recommendation from `front_video_rec` (Mac App only: the CLI host and test copies get 0, so baselines don't move). `rec_v` versions the recommendation: an older file gets the new one, and a player still on the old Recommended moves with it. AA writes the renderer's mode byte (`hle_oe.c` `aa_tick`, `DM_AA_MODE`); filtering is the sampler override (`nvn_mtl.m` `aniso_latch`, `DM_NVN_ANISO`); Color tags the layer sRGB (`front_mac.m` `layer_color`, `DM_COLORSPACE`). Selectors are native `CarouselWidget`s: read `+0x7ec`, set through `main+0xab0c84`; their update message must not be `PanelManager:ClosePanel:<name>` (the selector replaces the third part, and a nameless ClosePanel crashes).

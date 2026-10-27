@@ -580,10 +580,12 @@ def main(argv):
     held = game_lock(__file__, argv, f"scenario {' '.join(os.path.basename(f) for f in a.files)[:60]} ~{len(a.files) * 2} min", a.backend == 'mac-app' or (a.backend == 'cli' and not a.headless))
     if held is not None: return held
     results, rc = [], 0
-    if a.metal_validation in ('shader', 'all') and not os.environ.get('SCN_DMHOST', '').endswith('_m3'):
-        # macOS 27 实测：Metal 4 宿主开着色器校验时，第一次出图提交就崩在 Metal 自己的 -[MTL4GPUDebugCommandBuffer applyResidencySets:]（挂着图层的驻留集）；旧接口宿主正常
-        # Measured on macOS 27: with shader validation the Metal 4 host crashes at the first present commit inside Metal's own -[MTL4GPUDebugCommandBuffer applyResidencySets:] (with the layer's residency set attached); the older-API host works
-        print('NOTE 着色器校验在 Metal 4 宿主上会崩在 Metal 的校验层里，用旧接口宿主：make -C dm/host dmhost_m3 && SCN_DMHOST=dm/host/dmhost_m3 | shader validation crashes inside Metal\'s validation layer on the Metal 4 host; use the older-API host: make -C dm/host dmhost_m3 && SCN_DMHOST=dm/host/dmhost_m3')
+    if a.metal_validation in ('shader', 'all') and not a.headless:
+        # macOS 27（27.0.1 仍在）实测：开着着色器校验的有窗口运行，第一次出图提交就崩在 Metal 自己的 -[MTL4GPUDebugCommandBuffer applyResidencySets:] 里；
+        # 无窗口运行没有出图这一步，游戏的全部渲染照样校验。本分支只走 Metal 4，不再有旧接口宿主可换
+        # Measured on macOS 27 (still on 27.0.1): a windowed run with shader validation crashes at the first present commit inside Metal's own -[MTL4GPUDebugCommandBuffer applyResidencySets:];
+        # a headless run has no present step and still validates all of the game's rendering. This fork is Metal 4 only, so there is no older-API host to switch to
+        print('NOTE 着色器校验的有窗口运行会在第一次出图时崩在 Metal 的校验层里：加 --headless（游戏的渲染照样全校验，只少出图那一步） | a windowed run with shader validation crashes inside Metal\'s validation layer at the first present: add --headless (all game rendering is still validated; only the present step is skipped)', flush=True)
     for f in a.files:
         try:
             ensure_save(parse(f)[0]['save'], a.headless)
