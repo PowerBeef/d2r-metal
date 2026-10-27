@@ -569,6 +569,11 @@ HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv；存档 �
     char dd[1024]; strlcpy(dd, d, sizeof dd); size_t L = strlen(dd); while (L > 1 && dd[L - 1] == '/') dd[--L] = 0;   // 去掉结尾斜杠（.work / .new 拼在同级） | strip trailing slashes (.work / .new are appended at the same level)
     stash_seed(dd);
     low_vision_off(dd);
+    // 残留工作目录先按「挂载之前」的已提交版判：和它逐个文件相同就先记成「没改过」。下面两步会改已提交版的 Settings.json（补设置、语言开关），
+    // 原先之后才比，一个本来干净的残留就被当成「有没提交的改动」挪成 .work.orphan 并报红（切过语言、上一局没在最后提交时）
+    // Judge a leftover work directory against the committed version as it was before mounting: if identical file by file, mark it "unchanged" first. The next two steps change the committed Settings.json (seeding, the language switch);
+    // comparing only afterwards turned a clean leftover into "uncommitted changes", moved to .work.orphan with a red line (after a language change, when the last session had not committed at the end)
+    { char work[1100]; snprintf(work, sizeof work, "%s.work", dd); if (!access(work, F_OK) && !work_marked(work) && tree_same(work, dd, 0)) work_mark(work, 1); }
     settings_seed(dd); settings_lang_apply(dd);
     // 掉落过滤的规则文件（原版启动时载入，dm_lootfilter.c 用构造函数登记这个钩子；只链 hle_fs.c 的单测里它是空的）。与 settings_seed 同一个开关：
     // iOS 上缺省写；Mac 宿主的对拍闸门（存档要和真机真值逐文件相同）不写
