@@ -194,6 +194,7 @@ DM_NATIVE_RES	harmony	harmony/native/front_ohos.c	-
 DM_NICK	host	host/hle_account.c	-
 DM_NO_PRELOAD	ios	ios/Sources/main.m	-
 DM_NSO_DIR	tools,verify	tools/product.sh tools/sampagg.py verify/regress.sh	y
+DM_NVN_ANISO	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_B	verify	verify/shotgate.sh	-
 DM_NVN_BF_WANT	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BLOOM_Q	gfx	gfx/nvn/nvn_mtl.m	-

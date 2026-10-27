@@ -589,6 +589,7 @@ static uint64_t g_sub_serial;   // 第几次提交（并行预编「每次提交
 static void tbdr_latch(void);
 static void pso_pend_age(void);
 static void mfx3d_sub_begin(void);
+static void aniso_latch(void);
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
     pso_pend_age();   // 并行预编：回收过期没人领的预测槽 | parallel precompile: recycle stale untaken prediction slots
@@ -596,6 +597,7 @@ void mtl_sub_begin(void) {
     tbdr_latch();
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
     defer_drain();
+    aniso_latch();   // 「各向异性过滤」换档：在这里换掉已建的采样器 | "Anisotropic Filtering" changed: swap out the samplers built so far here
     defer_reset();
     warm_claim();
     if (g_cb) MDIE("提交重入");
@@ -827,8 +829,8 @@ int g_fx_dedup = 1;
 int g_la_cache = 1;   // 每次绘制的反射摘要 / 全零事实表 / 全零集合删除这三处按对象缓存（udc_note_draw、zskip_can_draw）；0 = 每次现算（同进程交替测量对照用）   // 渲染编码器固定功能状态同值不重发（draw 里的 FX_SET）；0 = 每次绘制照发（同进程交替测量对照用） | Per-object caching for the per-draw reflection summary / all-zero fact table / all-zero set removal (udc_note_draw, zskip_can_draw); 0 = computed every time (for in-process alternating measurement comparison)   // Render encoder fixed-function state not resent if unchanged (FX_SET in draw); 0 = sent on every draw (for in-process alternating measurement comparison)
 int g_blit_bar = 1;   // Metal 4 复用拷贝编码器时的屏障（blit()）；0 = 不设，只供同进程交替量开销（数据可能乱序） | Barrier when reusing the blit encoder on Metal 4 (blit()); 0 = not set, only for measuring overhead with in-process alternation (data may be reordered)
 static int *ub_var(const char *nm) {
-    extern int g_bloom_q, g_dm_present_link, g_tbdr_rt, g_blit_bar, g_sdx_attdedup, g_tbdr_sub;
-    static const struct { const char *n; int *p; } t[] = { {"g_bloom_q", &g_bloom_q}, {"g_dm_present_link", &g_dm_present_link}, {"g_frz_on", &g_frz_on}, {"g_fx_dedup", &g_fx_dedup}, {"g_la_cache", &g_la_cache}, {"g_tbdr_rt", &g_tbdr_rt}, {"g_blit_bar", &g_blit_bar}, {"g_sdx_attdedup", &g_sdx_attdedup}, {"g_tbdr_sub", &g_tbdr_sub} };
+    extern int g_bloom_q, g_dm_present_link, g_tbdr_rt, g_blit_bar, g_sdx_attdedup, g_tbdr_sub, g_aniso;
+    static const struct { const char *n; int *p; } t[] = { {"g_bloom_q", &g_bloom_q}, {"g_dm_present_link", &g_dm_present_link}, {"g_frz_on", &g_frz_on}, {"g_fx_dedup", &g_fx_dedup}, {"g_la_cache", &g_la_cache}, {"g_tbdr_rt", &g_tbdr_rt}, {"g_blit_bar", &g_blit_bar}, {"g_sdx_attdedup", &g_sdx_attdedup}, {"g_tbdr_sub", &g_tbdr_sub}, {"g_aniso", &g_aniso} };
     for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(nm, t[i].n)) return t[i].p;
     return dlsym(RTLD_DEFAULT, nm);
 }
@@ -2643,6 +2645,32 @@ static MTLSamplerAddressMode wrapm(int w) {
         case 6: return MTLSamplerAddressModeMirrorRepeat; }
     return MTLSamplerAddressModeRepeat;
 }
+// 纹理过滤（选项页「各向异性过滤」，画质计划 1.4）：缩小、放大都线性且 mip 线性、不做比较的采样器，各向异性至少取这一档（游戏自己要得更高的照它的）。
+// 原版 Switch 上这类采样器几乎都是 1（只有一种镜像环绕的要 4）；阴影比较、最近点与不带 mip 线性的（界面、查表）一概不动，屏幕对齐的后处理趟足迹各向同性，开了也不变。
+// 换档在提交开头（mtl_sub_begin → aniso_latch）：已建的采样器全部延后放掉（用过它们的提交做完才放），参数缓冲按 g_reg_gen 重填。
+// 定档：g_aniso（DM_NVN_UB 同进程交替用）> DM_NVN_ANISO > 宿主 dm_video_aniso()；0 = 原版
+// Texture filtering (options "Anisotropic Filtering", picture plan 1.4): samplers with linear min and mag, a linear mip filter and no compare get at least this anisotropy (a game sampler asking for more keeps its own).
+// On the original Switch these samplers are almost all 1 (one mirrored-repeat kind asks for 4); shadow compares, nearest-point and samplers without a linear mip (UI, lookups) are left alone, and screen-aligned post
+// passes have an isotropic footprint, so they look the same with it on.
+// The level changes at the start of a submission (mtl_sub_begin → aniso_latch): every sampler already built is released later (after the submissions that used it complete) and argument buffers refill through g_reg_gen.
+// Level: g_aniso (DM_NVN_UB in-process alternation) > DM_NVN_ANISO > the host's dm_video_aniso(); 0 = the original
+int g_aniso = -1;
+static int g_aniso_cur;   // 已建的采样器按这一档（g_rmu 下读写） | the level the samplers built so far use (read and written under g_rmu)
+__attribute__((weak)) int dm_video_aniso(void) { return 0; }   // 宿主 dm_video.c 提供强定义；图形单测不链宿主时 = 原版 | the host's dm_video.c provides the strong definition; graphics unit tests without the host = the original
+static int aniso_want(void) {
+    static int env = -2; if (env == -2) { const char *e = getenv("DM_NVN_ANISO"); env = e && *e ? atoi(e) : -1; }
+    int a = g_aniso >= 0 ? g_aniso : env >= 0 ? env : dm_video_aniso();
+    return a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 0;
+}
+static void aniso_latch(void) {   // 提交线程，mtl_sub_begin | submission thread, mtl_sub_begin
+    int a = aniso_want(); if (a == g_aniso_cur) return;
+    pthread_mutex_lock(&g_rmu);
+    int n = 0, was = g_aniso_cur;
+    for (int i = 0; i < g_nsreg; i++) if (g_sview[i]) { defer_obj_unref((__bridge id)g_sview[i]); CFRelease(g_sview[i]); g_sview[i] = NULL; g_srid[i] = 0; n++; }
+    g_aniso_cur = a; g_reg_gen++;
+    pthread_mutex_unlock(&g_rmu);
+    MLOG("纹理过滤：各向异性 %d → %d（0 = 原版；%s；重建 %d 个采样器） | texture filtering: anisotropy %d → %d (0 = original; %s; %d samplers rebuilt)", was, a,
+         g_aniso >= 0 ? "g_aniso" : getenv("DM_NVN_ANISO") ? "DM_NVN_ANISO" : "选项页", n, was, a, g_aniso >= 0 ? "g_aniso" : getenv("DM_NVN_ANISO") ? "DM_NVN_ANISO" : "options page", n);
 }
 // 诊断开关 DM_NVN_SAMPHIST=1：游戏实际要的采样器参数分布（缩小 / 放大 / mip 过滤、各向异性、LOD 偏移与钳位、比较、环绕），每出现一种新组合记一行，
 // 每建 64 个采样器打一次各组合的个数。用来定纹理过滤覆盖该管哪些采样器（画质计划 R3）。在 g_rmu 下调，不另加锁
@@ -2674,6 +2702,7 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     d.sAddressMode = wrapm(p.ws); d.tAddressMode = wrapm(p.wt); d.rAddressMode = wrapm(p.wr);
     d.lodMinClamp = p.lod_min < 0 ? 0 : p.lod_min; d.lodMaxClamp = p.lod_max;
     d.maxAnisotropy = p.aniso < 1 ? 1 : p.aniso > 16 ? 16 : (NSUInteger)p.aniso;
+    if (g_aniso_cur && p.minf == 5 && p.magf && !p.cmp_mode && d.maxAnisotropy < (NSUInteger)g_aniso_cur) d.maxAnisotropy = (NSUInteger)g_aniso_cur;   // 纹理过滤覆盖（见 aniso_latch） | texture filtering override (see aniso_latch)
     if (p.cmp_mode) d.compareFunction = (MTLCompareFunction)(p.cmp_func - 1);
     d.borderColor = p.border[3] > 0.5f ? (p.border[0] > 0.5f ? MTLSamplerBorderColorOpaqueWhite : MTLSamplerBorderColorOpaqueBlack) : MTLSamplerBorderColorTransparentBlack;
     d.supportArgumentBuffers = YES;
