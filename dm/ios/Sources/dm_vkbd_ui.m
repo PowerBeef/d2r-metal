@@ -12,6 +12,8 @@
 #import <QuartzCore/QuartzCore.h>
 #import <CoreText/CoreText.h>
 #include <stdatomic.h>
+#include <string.h>
+#include <strings.h>
 #include "dm_vkbd_ui.h"
 #include "dm_vkbd.h"
 #include "dm_input.h"
@@ -30,37 +32,80 @@ extern int g_swkbd_name_panel, g_swkbd_numeric_max;   // hle_swkbd.c
 static NSData *zinflate(const uint8_t *p, size_t n) {   // zlib（带 2 字节头）→ 原文；Foundation 的 Zlib 算法是裸 deflate，跳过头 | zlib (with 2-byte header) → plaintext; Foundation's Zlib algorithm is raw deflate, so skip the header
     if (n < 2) return nil; return [[NSData dataWithBytes:p + 2 length:n - 2] decompressedDataUsingAlgorithm:NSDataCompressionAlgorithmZlib error:nil];
 }
-static NSData *romfs_file(NSString *suffix) {
-    const char *root = getenv("DM_ROMFS"); if (!root) return nil;
-    NSString *data = [@(root) stringByAppendingPathComponent:@"data"], *psv = [NSString stringWithContentsOfFile:[data stringByAppendingPathComponent:@"build_manifest.psv"] encoding:NSUTF8StringEncoding error:nil];
-    for (NSString *line in [psv componentsSeparatedByString:@"\n"]) { NSArray<NSString *> *f = [line componentsSeparatedByString:@"|"];
-        if (f.count < 11 || [line hasPrefix:@"#"] || ![f[9].lowercaseString hasSuffix:suffix]) continue;
-        NSString *ek = f[6]; if (ek.length < 32) return nil; uint8_t k[16]; for (int i = 0; i < 16; i++) k[i] = (uint8_t)strtol([[ek substringWithRange:NSMakeRange(i * 2, 2)] UTF8String], NULL, 16);
-        uint64_t off = 0; for (int i = 11; i < 16; i++) off = off << 8 | k[i]; long rawlen = f[7].longLongValue;
-        NSFileHandle *h = [NSFileHandle fileHandleForReadingAtPath:[data stringByAppendingPathComponent:[NSString stringWithFormat:@"%02d-%08d.data", k[9], k[10]]]]; if (!h) return nil;
-        [h seekToFileOffset:off]; NSData *raw = [h readDataOfLength:rawlen]; [h closeFile]; const uint8_t *r = raw.bytes; if ((long)raw.length != rawlen) return nil;
-        if ([f[8] isEqualToString:@"n"]) return raw;
-        if ([f[8] isEqualToString:@"z"]) return zinflate(r, raw.length);
-        uint32_t hs = (uint32_t)r[4] << 24 | r[5] << 16 | r[6] << 8 | r[7], nch = (uint32_t)r[9] << 16 | r[10] << 8 | r[11], pos = hs; NSMutableData *o = [NSMutableData data];
-        for (uint32_t i = 0; i < nch; i++) { const uint8_t *e = r + 12 + i * 24; uint32_t es = (uint32_t)e[0] << 24 | e[1] << 16 | e[2] << 8 | e[3];
-            if (pos + es > raw.length) return nil; const uint8_t *b = r + pos;
-            if (b[0] == 'N') [o appendBytes:b + 1 length:es - 1]; else { NSData *d = zinflate(b + 1, es - 1); if (!d) return nil; [o appendData:d]; } pos += es; }
-        return o; }
-    return nil;
+// 清单约 30 MB、13 万行。映射进来按字节扫一遍，只看路径列的后缀，要找的几行都找到就停（字体在约三分之一处），不给每行建对象。
+// 原先每找一个字体就把整份清单读成字符串、拆成 13 万个行对象再逐行拆列，三个字体三遍：秘境任务栏第一帧在主线程上约 70–100 MB 临时内存，没有自动释放池
+// The manifest is about 30 MB and 132k rows. It is mapped and scanned once byte by byte, looking only at the suffix of the path column, and the scan stops once every wanted row is found (the fonts are about a third of the way in); no object is created per row.
+// It used to read the whole manifest into a string for every font, split it into 132k row objects and split each row into columns, three times for three fonts: about 70-100 MB of transient memory on the main thread at the first rift quest bar frame, with no autorelease pool
+typedef struct { const char *suffix; uint8_t ek[16]; long len; char enc[8]; int ok; } romfs_row;   // ok：0 没找到、1 找到且能用、-1 找到但编码键不对 | ok: 0 not found, 1 found and usable, -1 found but the encoding key is malformed
+static int hex2(const char *p) {   // 两位十六进制 → 0–255，不是十六进制返回 -1 | two hex digits -> 0-255, -1 if not hex
+    int v = 0; for (int i = 0; i < 2; i++) { char c = p[i]; int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; if (d < 0) return -1; v = v << 4 | d; }
+    return v;
+}
+static void manifest_find(NSString *data, romfs_row *row, int n) {
+    NSData *m = [NSData dataWithContentsOfFile:[data stringByAppendingPathComponent:@"build_manifest.psv"] options:NSDataReadingMappedIfSafe error:nil];
+    const char *p = m.bytes, *end = p + m.length; int left = n;
+    while (p && p < end && left) {
+        const char *e = memchr(p, '\n', (size_t)(end - p)); if (!e) e = end;
+        const char *f[12]; int nf = 1; f[0] = p;
+        if (*p != '#') for (const char *q = p; q < e && nf < 12; q++) if (*q == '|') f[nf++] = q + 1;
+        if (nf >= 11) {   // 第 10 列路径 = f[9] 到 f[10] 前那条竖线 | column 10, the path = from f[9] to the bar before f[10]
+            size_t plen = (size_t)(f[10] - 1 - f[9]);
+            for (int i = 0; i < n; i++) { size_t sl = strlen(row[i].suffix);
+                if (row[i].ok || plen < sl || strncasecmp(f[9] + plen - sl, row[i].suffix, sl)) continue;
+                left--; row[i].ok = -1;
+                if (f[7] - 1 - f[6] < 32) break;   // 编码键不足 32 位十六进制 | encoding key shorter than 32 hex digits
+                int bad = 0; for (int k = 0; k < 16; k++) { int v = hex2(f[6] + 2 * k); if (v < 0) bad = 1; row[i].ek[k] = (uint8_t)v; }
+                if (bad) break;
+                row[i].len = strtol(f[7], NULL, 10);
+                size_t el = (size_t)(f[9] - 1 - f[8]); if (el >= sizeof row[i].enc) el = sizeof row[i].enc - 1; memcpy(row[i].enc, f[8], el); row[i].enc[el] = 0;
+                row[i].ok = 1; break; }
+        }
+        p = e + 1;
+    }
+}
+static NSData *romfs_read(NSString *data, const romfs_row *rw) {
+    if (rw->ok != 1) return nil;
+    const uint8_t *k = rw->ek; uint64_t off = 0; for (int i = 11; i < 16; i++) off = off << 8 | k[i]; long rawlen = rw->len;
+    NSFileHandle *h = [NSFileHandle fileHandleForReadingAtPath:[data stringByAppendingPathComponent:[NSString stringWithFormat:@"%02d-%08d.data", k[9], k[10]]]]; if (!h) return nil;
+    [h seekToFileOffset:off]; NSData *raw = [h readDataOfLength:rawlen]; [h closeFile]; const uint8_t *r = raw.bytes; if ((long)raw.length != rawlen) return nil;
+    if (!strcmp(rw->enc, "n")) return raw;
+    if (!strcmp(rw->enc, "z")) return zinflate(r, raw.length);
+    uint32_t hs = (uint32_t)r[4] << 24 | r[5] << 16 | r[6] << 8 | r[7], nch = (uint32_t)r[9] << 16 | r[10] << 8 | r[11], pos = hs; NSMutableData *o = [NSMutableData data];
+    for (uint32_t i = 0; i < nch; i++) { const uint8_t *e = r + 12 + i * 24; uint32_t es = (uint32_t)e[0] << 24 | e[1] << 16 | e[2] << 8 | e[3];
+        if (pos + es > raw.length) return nil; const uint8_t *b = r + pos;
+        if (b[0] == 'N') [o appendBytes:b + 1 length:es - 1]; else { NSData *d = zinflate(b + 1, es - 1); if (!d) return nil; [o appendData:d]; } pos += es; }
+    return o;
 }
 // 原版的三种字：0 BlizzardGlobal（中日韩等全字符集，秘境任务栏用）、1 Exocet（标题）、2 Formal436（正文）。1、2 缺的字（汉字、⌫ 等）先找 BlizzardGlobal，再由 CoreText 换系统字体。
-// 只建字体描述、不在系统里注册（注册的接口 macOS 15 起已废弃）
+// 只建字体描述、不在系统里注册（注册的接口 macOS 15 起已废弃）。整个进程只读一次（dispatch_once），任意线程可调；dm_game_font_preload 在后台线程上先读好，
+// 主线程用 dm_game_font_ready 判断读好了没有、没好就先用系统字，不在主线程上等清单与解压
 // The original game's three fonts: 0 BlizzardGlobal (full CJK etc. character set, used by the rift quest bar), 1 Exocet (headings), 2 Formal436 (body text). Characters 1 and 2 lack (Chinese, ⌫ etc.) go to BlizzardGlobal first, then CoreText falls back to a system font.
-// Only font descriptors are created; nothing is registered with the system (the registration API is deprecated since macOS 15)
+// Only font descriptors are created; nothing is registered with the system (the registration API is deprecated since macOS 15). Read once per process (dispatch_once), callable from any thread; dm_game_font_preload reads them ahead on a background thread,
+// and the main thread checks dm_game_font_ready and uses a system font until they are ready, instead of waiting for the manifest scan and decompression on the main thread
+static CTFontDescriptorRef g_font_desc[3]; static dispatch_once_t g_font_once; static _Atomic int g_font_ready;
+static void fonts_load(void) {
+    @autoreleasepool {
+        static const char *const file[3] = {"blizzardglobal-v5_81.ttf", "exocetblizzardot-medium.otf", "formal436bt.ttf"};
+        char suf[3][64]; romfs_row row[3]; memset(row, 0, sizeof row);
+        for (int i = 0; i < 3; i++) { snprintf(suf[i], sizeof suf[i], "/hd/ui/fonts/%s", file[i]); row[i].suffix = suf[i]; }
+        const char *root = getenv("DM_ROMFS"); NSString *data = root ? [@(root) stringByAppendingPathComponent:@"data"] : nil;
+        if (data) manifest_find(data, row, 3);
+        for (int i = 0; i < 3; i++) { NSData *d = data ? romfs_read(data, &row[i]) : nil; g_font_desc[i] = d ? CTFontManagerCreateFontDescriptorFromData((__bridge CFDataRef)d) : NULL;
+            if (i && g_font_desc[i] && g_font_desc[0]) { CTFontDescriptorRef c = CTFontDescriptorCreateCopyWithAttributes(g_font_desc[i], (__bridge CFDictionaryRef)@{(id)kCTFontCascadeListAttribute: @[(__bridge id)g_font_desc[0]]}); CFRelease(g_font_desc[i]); g_font_desc[i] = c; } }
+        LOG("原版字体：BlizzardGlobal %s、Exocet %s、Formal436 %s", g_font_desc[0] ? "有" : "缺", g_font_desc[1] ? "有" : "缺", g_font_desc[2] ? "有" : "缺");
+    }
+    atomic_store(&g_font_ready, 1);
+}
 static CTFontRef game_font(int which, double size) {
-    static CTFontDescriptorRef desc[3]; static int tried;
-    if (!tried) { tried = 1; static const char *const file[3] = {"blizzardglobal-v5_81.ttf", "exocetblizzardot-medium.otf", "formal436bt.ttf"};
-        for (int i = 0; i < 3; i++) { NSData *d = romfs_file([@"/hd/ui/fonts/" stringByAppendingString:@(file[i])]); desc[i] = d ? CTFontManagerCreateFontDescriptorFromData((__bridge CFDataRef)d) : NULL;
-            if (i && desc[i] && desc[0]) { CTFontDescriptorRef c = CTFontDescriptorCreateCopyWithAttributes(desc[i], (__bridge CFDictionaryRef)@{(id)kCTFontCascadeListAttribute: @[(__bridge id)desc[0]]}); CFRelease(desc[i]); desc[i] = c; } }
-        LOG("原版字体：BlizzardGlobal %s、Exocet %s、Formal436 %s", desc[0] ? "有" : "缺", desc[1] ? "有" : "缺", desc[2] ? "有" : "缺"); }
-    return desc[which] ? CTFontCreateWithFontDescriptor(desc[which], size, NULL) : NULL;
+    dispatch_once(&g_font_once, ^{ fonts_load(); });
+    return g_font_desc[which] ? CTFontCreateWithFontDescriptor(g_font_desc[which], size, NULL) : NULL;
 }
 CTFontRef dm_game_font(double size) { return game_font(0, size); }
+int dm_game_font_ready(void) { return atomic_load(&g_font_ready); }
+void dm_game_font_preload(void) {   // 后台线程上读好字体（只发一次）；读的时候主线程若来要字，dispatch_once 让它等这一次读完 | read the fonts on a background thread (sent once); if the main thread asks for a font meanwhile, dispatch_once makes it wait for this read to finish
+    static _Atomic int asked; if (atomic_exchange(&asked, 1)) return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ dispatch_once(&g_font_once, ^{ fonts_load(); }); });
+}
 
 // ---- 状态（主线程） | state (main thread) ----
 static dm_vkbd g_k;

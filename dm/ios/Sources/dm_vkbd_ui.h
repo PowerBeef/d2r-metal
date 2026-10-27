@@ -28,7 +28,9 @@ void dm_vkbd_ui_key(int key, const char *chars);   // 实体键盘（DM_VKBD_KEY
 int dm_name_blank_random(char *out, int cap);
 void dm_vkbd_ui_handoff(void);     // 玩家改用键盘鼠标 / 触屏：收起，dm_vkbd_input 返回 2 带已打的字 | the player turned to keyboard and mouse / touch: close; dm_vkbd_input returns 2 with what was typed
 CGImageRef dm_vkbd_ui_snapshot(CGRect *in_pic);     // 测试：面板图（调用方释放）+ 它在游戏画面里的位置（点，原点左上） | test: the panel image (caller releases) + its rectangle in the game picture (points, origin at top left)
-CTFontRef dm_game_font(double size);                // 原版字体 BlizzardGlobal（运行时从资源包读，任意线程首次调用前先在主线程调一次）；调用方释放，读不到 NULL | the original font BlizzardGlobal (read from the asset pack at run time; call once on the main thread before any other thread does); the caller releases it, NULL if unreadable
+CTFontRef dm_game_font(double size);                // 原版字体 BlizzardGlobal（运行时从资源包读，整个进程读一次，任意线程；还没读好时会当场读完再返回）；调用方释放，读不到 NULL | the original font BlizzardGlobal (read from the asset pack at run time, once per process, any thread; if not read yet it reads it there and then before returning); the caller releases it, NULL if unreadable
+int dm_game_font_ready(void);                       // 原版字体读好了没有（读不到也算读好）：主线程据此决定先用系统字，免得在主线程上等 | whether the original fonts have been read (unreadable counts as read): the main thread uses a system font until then instead of waiting on the main thread
+void dm_game_font_preload(void);                    // 在后台线程上读原版字体（只发一次，任意线程） | read the original fonts on a background thread (sent once, any thread)
 
 #ifdef __cplusplus
 }
