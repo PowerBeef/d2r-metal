@@ -244,8 +244,14 @@ static void add_gold(uint64_t G, uint64_t player) {   // 加到有空的共享�
 
 // ---- 提交前钩子（写盘线程）
 // ---- Pre-commit hook (disk write thread)
+// 读整个文件：1 = 读全了（*d 归调用方 free）；0 = 没有 / 空 / 太大 / 读错，*d 已放掉、置 NULL。原先读错（fread 不足）时缓冲留给了调用方，
+// 有的调用方只在返回 1 时才 free（编年史仓库侧文件那条），漏掉；读了一半的也当读到了用
+// Read a whole file: 1 = read completely (*d is the caller's to free); 0 = missing / empty / too large / read error, with *d already released and set to NULL. Before, on a read error (short fread) the buffer was left to the caller,
+// and a caller that frees only on 1 (the chronicle vault side file) leaked it; a half-read file also counted as read
 static int file_blob(const char *p, uint8_t **d, size_t *n) { FILE *f = fopen(p, "rb"); *d = NULL; *n = 0; if (!f) return 0;
-    fseek(f, 0, SEEK_END); long L = ftell(f); fseek(f, 0, SEEK_SET); *d = L > 0 && L < (16 << 20) ? malloc((size_t)L) : NULL; *n = *d ? fread(*d, 1, (size_t)L, f) : 0; fclose(f); return *n > 0; }
+    fseek(f, 0, SEEK_END); long L = ftell(f); fseek(f, 0, SEEK_SET); *d = L > 0 && L < (16 << 20) ? malloc((size_t)L) : NULL; *n = *d ? fread(*d, 1, (size_t)L, f) : 0; fclose(f);
+    if (!*d || *n != (size_t)L) { free(*d); *d = NULL; *n = 0; return 0; }
+    return 1; }
 static char g_char[64];
 int dm_save_blobs(const char *wd, const char *stash, dm_blob *out, int max); void dm_blobs_free(dm_blob *bl, int nb);
 int dm_blobs_have(const dm_blob *bl, int nb, const uint8_t *bits, int len); int dm_bits_simple(const uint8_t *bits, int len);
