@@ -675,7 +675,6 @@ void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at th
 #if TARGET_OS_OSX
     w_mouse_cancel_pending();
 #endif
-    { void dm_rift_client_pump(uint8_t *); DM_PROF(0, "w.rift_client", dm_rift_client_pump(wb())); }   // 秘境爬塔：认击杀（dm_rift.c） | rift tower climb: recognize kills (dm_rift.c)
     { int nd = atomic_load(&g_dm_dur_sync_n); uint8_t *b0 = nd ? wb() : NULL; if (b0) { atomic_store(&g_dm_dur_sync_n, 0); for (int i = 0; i < nd && i < 16; i++) { uint64_t c = w_find(4, g_dm_dur_sync[i][0]); if (c) ((void (*)(uint64_t, int, int, int))(b0 + 0x5bc1f0))(c, 72, (int)g_dm_dur_sync[i][1], 0); } } }   // DM_TEST_DUR 的客户端一半（diag.c） | client half of DM_TEST_DUR (diag.c)
     DM_PROF(0, "w.test_seek", w_test_seek_step());
     w_test_xy_step();

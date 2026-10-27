@@ -290,11 +290,7 @@ uint64_t svc_host_call(int num, uint64_t *regs) {
     case SVC_HOST_DROP_SOUND: { void svc_drop_sound(uint64_t *); svc_drop_sound(regs); return 1; }
     case SVC_HOST_GROUND_ASSET: { void svc_ground_asset(uint64_t *); svc_ground_asset(regs); return 1; }
     case SVC_HOST_GRANNY_B: { void svc_granny_chunk_b(uint64_t *); svc_granny_chunk_b(regs); return 1; }
-    case SVC_HOST_RIFT_EXIT: { void svc_rift_exit(uint64_t *); svc_rift_exit(regs); return 1; }
     case SVC_HOST_JOIN_SPAWN: case SVC_HOST_JOIN_CORPSE: { void svc_join_spawn(uint64_t *, int); svc_join_spawn(regs, num == SVC_HOST_JOIN_CORPSE); return 1; }
-    case SVC_HOST_SAVE_ACT: { void svc_save_act(uint64_t *); svc_save_act(regs); return 1; }
-    case SVC_HOST_MERC_SLOT: { void svc_merc_slot(uint64_t *); svc_merc_slot(regs); return 1; }
-    case SVC_HOST_MERC_SLOT_CL: { void svc_merc_slot_cl(uint64_t *); svc_merc_slot_cl(regs); return 1; }
     }
     return 0;
 }

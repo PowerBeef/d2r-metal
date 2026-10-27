@@ -21,7 +21,7 @@ enum {
     DM_VT_SLOT_C = 0x2088fc8,    // 物品格（dm_cursor_item.c 认的第三种） | item slot (the third kind, recognized by dm_cursor_item.c)
     DM_VT_IMAGE = 0x20b8650,     // 图片控件：此刻的帧 +0x90（宿主实读：编年史页的 Img） | image widget: current frame +0x90 (read on the host: Img on the Chronicle page)
     DM_VT_CAROUSEL = 0x20b7c28,  // 切换框（CarouselWidget）：选项个数 +0x7e8、当前项 +0x7ec、每项可选 +0x7d8 起各一字节（宿主实读：画面设置页的 TouchVideo_*，dm_video.c） | selector (CarouselWidget): option count +0x7e8, current option +0x7ec, one "can be chosen" byte per option from +0x7d8 (read on the host: TouchVideo_* on the picture settings page, dm_video.c)
-    DM_VT_BUTTON = 0x20b7b00,    // 按钮：四个帧号 +0x6e8..，此刻的帧 +0x610（宿主实读：秘境选层页的 TouchRF_M1） | button: four frame ids at +0x6e8.., current frame +0x610 (read on the host: TouchRF_M1 on the Greater Rift level select page)
+    DM_VT_BUTTON = 0x20b7b00,    // 按钮：四个帧号 +0x6e8..，此刻的帧 +0x610（宿主实读） | button: four frame ids at +0x6e8.., current frame +0x610 (read on the host)
 };
 
 static inline uint64_t dm_widget_vt(const uint8_t *base, uint64_t w) { return w && base ? *(const uint64_t *)(uintptr_t)w - (uint64_t)(uintptr_t)base : 0; }

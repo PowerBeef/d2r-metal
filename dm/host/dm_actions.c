@@ -27,9 +27,7 @@
 #include <unistd.h>
 #include "dm_uiscreen.h"
 #include "hle.h"
-#include "dm_rift.h"
 #include "dm_i18n.h"
-int dm_skill_cap(void);
 #include "dm.h"
 #include <string.h>
 #include <stdio.h>
@@ -175,47 +173,7 @@ static int a_skill_block(uint8_t *b, uint64_t pl, int skill, int points) {
     if (((int (*)(uint64_t, int, int))(b + 0x5b9290))(pl, 12, 0) < *(int16_t *)(rec + 0x214) + a_skill_base(pl, skill)) return 2;
     for (int i = 0; i < 3; i++) { int q = *(int16_t *)(rec + 0x21e + 2 * i); if (q >= 0 && a_skill_base(pl, q) < 1) return 3; }
     if (((int (*)(int))(b + 0xc368b0))(skill) & 1) return 0;
-    // 5：卡在「没打通过秘境、已到原版上限 20」——这一格本来是 20、解锁后会放到 40 的技能，基础等级已到 20
-    // 5: stuck at "no Greater Rift cleared, already at the original cap of 20": this slot holds a skill whose cap was 20 and becomes 40 once unlocked, and its base level is already 20
-    if (dm_skill_cap() > 20 && !dm_rift_cleared_any() && a_skill_base(pl, skill) >= 20 && a_skill_base(pl, skill) < dm_skill_cap() && *(int16_t *)(uintptr_t)(rec + 0x184) == 20) return 5;
     return 4;
-}
-// 技能硬点上限 20 → 40（「硬点放到 40 级上限吧」，秘境里人物能力要跟上怪物成长）。
-// 上限在哪判（读码）：客户端「能不能加」main+0xc368b0（0xc36a64–0xc36a90）与服务端收加点包 0x3b main+0x6db600（0x6db770–0x6db798）读的都是
-// 技能表记录 +0x184（int16，skills.txt 的 maxlvl 列）；两处写死的 20（mov #0x14）只是这一格 < 1 时的缺省。所以改表就够，不用改代码：
-// 数据表装好后把每个版本表里 maxlvl 正好是 20 的技能改成 40（客户端与服务端同进程、同一份表）。别的上限值（1 级技能、不可加点的 0）不动。
-// 基础等级读数另有一个全局钳值 *[数据表 + 0x1500]（两处都先 min 一下），值在首次改表时记进日志。
-// 上限是可调的数（「太强了就压到 30 级硬顶。这个咱们都可调」）：缺省 SKILL_CAP，环境变量 DM_SKILL_CAP=<21–99> 覆盖（=20 等于不改表，照原版）
-// Hard skill point cap 20 → 40 ("let's raise hard points to a cap of level 40"; in the Rift the character's power has to keep up with monster growth).
-// Where the cap is checked (from reading the code): both the client's "can a point be added" check at main+0xc368b0 (0xc36a64–0xc36a90) and the server's
-// handler for the add-point packet 0x3b at main+0x6db600 (0x6db770–0x6db798) read
-// skill table record +0x184 (int16, the maxlvl column of skills.txt); the hard-coded 20 at both sites (mov #0x14) is only the default when this field is
-// < 1. So changing the table is enough, with no code change:
-// once the data tables are loaded, every skill whose maxlvl is exactly 20 in each version's table is changed to 40 (client and server share one process
-// and one copy of the table). Other cap values (level 1 skills, 0 for skills that cannot take points) are left alone.
-// The base level reading also has a global clamp *[data table + 0x1500] (both sites apply min with it first); its value is logged the first time the
-// table is changed.
-// The cap is a tunable number ("if it's too strong, clamp it to a hard cap of level 30. All of this is adjustable"): default SKILL_CAP, overridden by
-// the environment variable DM_SKILL_CAP=<21–99> (=20 means the table is not changed, same as the original game)
-#define SKILL_CAP 40
-int dm_skill_cap(void) { static int c; if (!c) { const char *e = getenv("DM_SKILL_CAP"); c = e ? atoi(e) : SKILL_CAP; if (c < 20 || c > 99) c = SKILL_CAP; } return c; }
-// 解锁条件：「做成首次打通任意一次秘境以后开启技能硬点上限解锁。之前已有存档和状态不用管。」——这个角色限时内打通过任意一层（dm_rift_cleared_any，
-// 就是秘境记录里的最高通关层 ≥ 1，随角色档同一次提交）才把表改成 40；没打通过是原版的 20。表是全局的、客户端与服务端共用，所以每帧按「当前角色」对一次，换角色跟着换。
-// 不迁移不回收：没解锁的老角色已经点过 20 的技能点数原样留着（表只管「还能不能再加」），只是不能再往上加。
-// Unlock condition: "Once any Greater Rift has been cleared for the first time, unlock the hard skill point cap. Existing saves and state need no handling." Only when this character has cleared any level within the time limit (dm_rift_cleared_any,
-// i.e. highest cleared level in the Greater Rift record ≥ 1, committed together with the character save) is the table changed to 40; otherwise it stays at the original 20. The table is global and shared by client and server, so it is synced to "the current character" every frame and follows character switches.
-// No migration, no refund: skill points that an old character without the unlock has already put in up to 20 stay as they are (the table only governs "can more be added"); they just cannot go higher.
-static void skill_cap_pump(uint8_t *b) {
-    static uint64_t seen[4]; static int applied[4]; static uint8_t ours[4][512]; int cap = dm_skill_cap();   // ours：这个版本表里原本正好是 20、归我们改的那些技能（位图） | ours: the skills whose entry in this version's table was originally exactly 20 and that we change (bitmap)
-    if (cap == 20) return;
-    int want = dm_rift_cleared_any() ? cap : 20;
-    for (int v = 1; v <= 3; v++) { uint64_t t = *(uint64_t *)(b + 0x2d64a18 + (uint64_t)v * 16); if (!t || (seen[v] == t && applied[v] == want)) continue;
-        uint64_t recs = *(uint64_t *)(t + 0x11e8), n = *(uint64_t *)(t + 0x11f0), gp = *(uint64_t *)(t + 0x1500); if (!recs || !n || n > 4096) continue;
-        if (seen[v] != t) { int ch = 0, other = 0; memset(ours[v], 0, sizeof ours[v]);
-            for (uint64_t i = 0; i < n; i++) { int16_t m = *(int16_t *)(uintptr_t)(recs + i * 0x2ec + 0x184); if (m == 20) { ours[v][i >> 3] |= (uint8_t)(1 << (i & 7)); ch++; } else if (m > 0) other++; }
-            seen[v] = t; applied[v] = 20; LOG("技能上限：数据表版本 %d 共 %llu 个技能，%d 个的硬点上限是 20（解锁后改成 %d；另有 %d 个上限不是 20 的不动）；基础等级读数的全局钳值 %d", v, (unsigned long long)n, ch, cap, other, gp ? *(int32_t *)(uintptr_t)gp : -1); }
-        if (applied[v] != want) { int ch = 0; for (uint64_t i = 0; i < n; i++) if (ours[v][i >> 3] & (1 << (i & 7))) { *(int16_t *)(uintptr_t)(recs + i * 0x2ec + 0x184) = (int16_t)want; ch++; }
-            applied[v] = want; LOG("技能上限：数据表版本 %d 的 %d 个技能硬点上限 → %d（这个角色%s）", v, ch, want, want == 20 ? "还没打通过秘境" : "打通过秘境"); } }
 }
 static void a_send(uint8_t *b, uint64_t root, uint64_t cat, uint64_t act, int32_t p0, int32_t p1) {   // 给界面根发消息（虚表 +0x28） | send a message to the UI root (vtable +0x28)
     static int32_t payload[4]; static uint64_t msg[8]; payload[0] = p0; payload[1] = p1; memset(msg, 0, sizeof msg); msg[0] = cat; msg[1] = act; msg[2] = (uint64_t)(uintptr_t)payload;
@@ -782,7 +740,6 @@ void dm_actions_pump(void) {
       else if (h) { int r = ((int (*)(uint64_t, int, uint64_t, int, int))(b + 0x565950))(pl, loc, h, 0, 0); ((void (*)(uint64_t, int, int, int, int))(b + 0x3bb24c))(h, loc, 0, -1, 0);
           LOG("装备：手上物品 id %u → 栏位 %d（原版判定 %d：0 不能放、1 放入、5 交换）已调原版放下", *(uint32_t *)(h + 8), loc, r); }
       else if (loc > 0) LOG("装备：手上没有物品，不动"); }
-    DM_PROF(0, "a.skill_cap", skill_cap_pump(b));
     {   // 测试开关 DM_TEST_SKILL_ADD=<帧>:<技能号>:<点数>[,<技能号>:<点数>…]（造现场 / 验上限）：到帧起每 6 帧替玩家发一个原版加技能点包（0x3b：技能号、0 = 加 1 点）， | test switch DM_TEST_SKILL_ADD=<frame>:<skill id>:<points>[,<skill id>:<points>...] (for setting up a test case / verifying the cap): starting at that frame, every 6 frames send one of the original game's add-skill-point packets on the player's behalf (0x3b: skill id, 0 = add 1 point),
         // 按写的顺序一个技能发够再发下一个（有前置的技能把前置写在前面）；进局后列一次已学技能，每个技能发完记一行它的基础等级
         // Skills are processed in the order written, one skill receiving all its points before the next (for a skill with prerequisites, list the prerequisites
@@ -803,7 +760,7 @@ void dm_actions_pump(void) {
                 while (l < 32 && sscanf(c, "%2x", &v) == 1 && c[0] != ';' && c[1] != ';' && c[1]) { q[n].pk[l++] = (uint8_t)v; c += 2; } q[n].len = l; n++; e = strchr(c, ';'); if (e) e++; } }
         uint64_t f = dm_guest_frame(); for (int i = 0; pl && i < n; i++) if (q[i].at && f >= q[i].at) { q[i].at = 0; ((void (*)(const uint8_t *, int))(b + 0x2ceab0))(q[i].pk, q[i].len); LOG("测试 DM_TEST_C2S：帧 %llu 发包 %02x（长 %d）", (unsigned long long)f, q[i].pk[0], q[i].len); } }
     { void dm_freetp_client_step(uint8_t *, uint64_t); DM_PROF(0, "a.freetp_client", dm_freetp_client_step(b, pl)); }   // 免费回城：客户端玩家挂回城技能、读 ZR 那格空不空 | Free town portal: attach the town portal skill to the client player and read whether the ZR slot is empty
-    dm_custom_ui_pump(root); DM_PROF(0, "a.auto_pot", auto_pot_pump(b, pl)); DM_PROF(0, "a.swapskill", swapskill_pump(b, pl)); { void dm_chronicle_closex(uint64_t); dm_chronicle_closex(root); } { void dm_rift_ui_pump(void); DM_PROF(0, "a.rift_ui", dm_rift_ui_pump()); } { void dm_vault_ui_pump(void); DM_PROF(0, "a.vault_ui", dm_vault_ui_pump()); }
+    dm_custom_ui_pump(root); DM_PROF(0, "a.auto_pot", auto_pot_pump(b, pl)); DM_PROF(0, "a.swapskill", swapskill_pump(b, pl)); { void dm_chronicle_closex(uint64_t); dm_chronicle_closex(root); } { void dm_vault_ui_pump(void); DM_PROF(0, "a.vault_ui", dm_vault_ui_pump()); }
     uint32_t use = atomic_exchange(&g_use, 0); int force_merc = use ? atomic_exchange(&g_use_merc, 0) : 0;
     if (use && pl) { uint64_t it = ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + 4 * 0x400), use & 0x7f, use, 4);
         int busy = *(uint32_t *)(pl + 0xc) == 0x11 || ((uint64_t (*)(void))(b + 0x2aa7c0))() != 0, can = it && !busy && (((int (*)(uint64_t, int))(b + 0x3bff70))(it, 3) & 1);
@@ -889,6 +846,5 @@ void dm_actions_pump(void) {
         if (!done) LOG("测试：没有能卖的物品 / 商人页没开"); }
     int st = atomic_exchange(&g_stat, -1);
     if (st >= 0 && pl) { a_send(b, root, H_STATS, H_USEPT, st >> 8, st & 0xff); LOG("加点：属性序号 %d 模式 %d（2 = 1 点、3 = 5 点、1 = 全部），发令前剩余属性点 %d", st >> 8, st & 0xff, p.stat_points); }
-    if (atomic_exchange(&g_skill, 0)) { int go = p.sel_skill >= 0 && p.sel_can_add; if (go) a_send(b, root, H_TREE, H_USEPT, p.sel_skill, 0); LOG("加点：技能 %d（不能加的原因 %d：0 可加 1 没点数 2 等级不够 3 前置没学 4 其它 5 没打通过秘境、已到 20；剩余技能点 %d）%s", p.sel_skill, p.sel_block, p.skill_points, go ? "已发" : p.sel_skill >= 0 ? "不能加，没发" : "没有选中的技能，忽略");
-        if (!go && p.sel_skill >= 0 && p.sel_block == 5) { static uint64_t last; uint64_t f = dm_guest_frame(); if (!last || f - last >= 120) { last = f; void dm_game_notice(uint8_t *, const char *); dm_game_notice(b, dm_str(b, "dmSkillCapLocked")); LOG("加点：提示「%s」", dm_str(b, "dmSkillCapLocked")); } } }
+    if (atomic_exchange(&g_skill, 0)) { int go = p.sel_skill >= 0 && p.sel_can_add; if (go) a_send(b, root, H_TREE, H_USEPT, p.sel_skill, 0); LOG("加点：技能 %d（不能加的原因 %d：0 可加 1 没点数 2 等级不够 3 前置没学 4 其它；剩余技能点 %d）%s", p.sel_skill, p.sel_block, p.skill_points, go ? "已发" : p.sel_skill >= 0 ? "不能加，没发" : "没有选中的技能，忽略"); }
 }

@@ -19,7 +19,6 @@ run: \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
-	$(B)/t_doorspot \
 	$(B)/t_dump \
 	$(B)/t_dump_asan \
 	$(B)/t_fs \
@@ -42,14 +41,9 @@ run: \
 	$(B)/t_padmap \
 	$(B)/t_ctl \
 	$(B)/t_events \
-	$(B)/t_rift_clock \
-	$(B)/t_rift_next \
-	$(B)/t_rift_oldrun \
-	$(B)/t_rift_wave \
 	$(B)/t_interaction_diag \
 	$(B)/t_loader_weak \
 	$(B)/t_map_diag \
-	$(B)/t_warp_diag \
 	$(B)/t_romfs_validate \
 	$(B)/t_rwlv \
 	$(B)/t_save_hooks \
@@ -103,14 +97,9 @@ run: \
 	$(B)/t_ctl
 	python3 test_ctl_transport.py
 	$(B)/t_events
-	$(B)/t_rift_clock
-	$(B)/t_rift_next
-	$(B)/t_rift_oldrun
 	$(B)/t_interaction_diag
 	$(B)/t_loader_weak
 	$(B)/t_map_diag
-	$(B)/t_warp_diag
-	$(B)/t_rift_wave
 	$(B)/t_textbox
 	$(B)/t_rwlv
 	$(B)/t_touch
@@ -147,7 +136,6 @@ run: \
 	$(B)/t_padmap
 	$(B)/t_unit_level
 	$(B)/t_widget
-	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_scrub
 	TMPDIR="$(abspath $(B))" $(B)/t_video 2>/dev/null
@@ -172,8 +160,6 @@ $(B)/t_video: t_video.c ../dm_video.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_video.c ../dm_video.c
 $(B)/t_rwlv: t_rwlv.c ../dm_rwlv_core.c ../dm_rwlv_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_rwlv.c ../dm_rwlv_core.c
-$(B)/t_doorspot: t_doorspot.c ../dm_doorspot.h | $(B)
-	clang -O1 -Wall -Werror -I.. -o $@ t_doorspot.c
 $(B)/t_widget: t_widget.c ../dm_widget.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_widget.c
 $(B)/t_unit_level: t_unit_level.c ../dm_unit.h | $(B)
@@ -269,14 +255,6 @@ $(B)/t_ctl: t_ctl.c ../dm_ctl.c ../dm_ctl.h ../dm_events.c ../dm_events.h ../dm.
 	clang -O1 -Wall -Wextra -Wno-unused-function -I.. -o $@ t_ctl.c ../dm_ctl.c ../dm_events.c
 $(B)/t_events: t_events.c ../dm_events.c ../dm_events.h ../dm.h | $(B)
 	clang -O1 -Wall -Wextra -Wno-unused-function -I.. -o $@ t_events.c ../dm_events.c
-$(B)/t_rift_clock: t_rift_clock.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_clock.c ../hle_os.c
-$(B)/t_rift_next: t_rift_next.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_next.c ../hle_os.c
-$(B)/t_rift_oldrun: t_rift_oldrun.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_oldrun.c ../hle_os.c
-$(B)/t_rift_wave: t_rift_wave.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_wave.c ../hle_os.c
 $(B)/t_guest_clock: t_guest_clock.c ../hle_os.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_guest_clock.c
 $(B)/t_thread_leak: t_thread_leak.c ../thread.c ../dm.h | $(B)
@@ -291,8 +269,6 @@ $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 $(B)/t_map_diag: t_map_diag.c ../dm_cursor.c ../dm_unit.h | $(B)
 	clang -O1 -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_map_diag.c
 
-$(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
-	clang -O1 -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_warp_diag.c
 
 $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_weak.c ../hle.c

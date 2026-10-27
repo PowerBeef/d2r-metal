@@ -815,15 +815,11 @@ if RULE_RUN and PRIVATE_GATES:
     obs.append((0x4b74d0, 12, "f81e0ff3", "client per-unit per-frame update entry (unit): drives model animation / interpolation from the tick fraction; while frozen the host swaps x0 to a stand-in unit (type 9, no render component) so both the callee 0x2a18d0 and this function take their own early-outs"))
     obs.append((0x2c3c90, 13, "f81c0ff7", "render per-frame entry, called right after the main loop writes the world frame step [0x20cebb8] and world time [0x3114208]: while frozen the host rewrites the step to 0 and the world time to its value at freeze, the same thing the game's own pause path does at 0x2c1574"))
     obs.append((0xadc434, 14, "d10143ff", "TextBoxWidget text-changed entry (widget): reads the raw text at +0x88 and rebuilds the display; host rewrites +0x88 for strings our item-notes generator annotated with colour codes (TextBoxWidget draws U+E07E as '*'), exact-match table only, everything else untouched"))
-    obs.append((0x442bc0, 15, "a9ba6ffc", "client event-message entry (x0 = packet; byte 1 = event subtype, jump table 0x1da6752): subtype 0x17 = offline difficulty scale changed -> 0x20f91c chat line + system notification; host rewrites byte 1 past the table (default branch, nothing shown) only for 0x17 and only in a rift game (dm_rift.c); otherwise untouched. orig stp x28, x27, [sp, #-0x60]!"))
-    obs.append((0x634000, 16, "d10143ff", "server level change by level number (game, player, level, kind), used by waypoints / portals / quest moves: in a rift game, when the player leaves a rift map for a level that is neither town nor a rift map, the host swaps w2 to the rift's next map so the destination is replaced inside the single native transition"))
-    obs.append((0x711040, 17, "d101c3ff", "server quest event 'monster killed' entry (game, monster, attacker), the only entry (callers 0x7d8550 kill, 0x7ab8dc); in a rift game, for a monster that died on a rift map, the host swaps x1 to a stand-in whose +0xc0 is null so the function takes its own early return (0x711064): bosses in the rift are combat only, no quest state / quest notifications"))
     obs.append((0x3d84a0, 18, "d10143ff", "NotificationPanel message handler entry (panel, message): on InputMessage / ControllerActionBegin with action id 9 (the menu key) the native handler re-sends the notice callback and marks the message bus consumed, so the first menu press only dismisses the notice. In touch mode the host swaps x1 to a copy of the message whose action id is not 9: the notice stays until it times out and the menu key opens the menu; controller mode keeps the native behaviour"))
     obs.append((0x463f40, 19, "f81c0ff7", "client per-frame position-error smoothing entry (s0 = frame length in ticks), called by the main loop right after all units were extrapolated in place and before the per-unit error is added back: the native error is only computed on start / stop (0x4639c0, which runs before the tick loop), so a sharp turn inside a tick snaps the extrapolated position back in one frame; the host adds that frame's jump to the local player's error fields (path +0x2a8 / +0x2ac, same clamp as native) and the native code decays it"))
     obs.append((0x9da5b0, 20, "d104c3ff", "model yaw component per-frame update entry (x1 = argument block: +8 component, +0x20 -> +8 unit): the body turn speed is instance data on the component (+0x10..+0x2c min / max degrees per second for controller / mouse, +0x34 spring parameter); the host only reads them for the local player when a test switch is set"))
     obs.append((0x2f7664, 7, "6dbb23e9", "touch target rank: candidate compare entry (closure, unit, kind, s0=score); host raises Boss/elite score, native eligibility unchanged"))
     obs.append((0xb0d560, 21, "fc1a0fe8", "TooltipsPanel add-tooltip entry (panel, text, target position x2 / x3, style, text2): tooltips are immediate-mode (re-submitted by the hovered widget every frame and cleared after drawing, so the host cannot reach the record at its own time); on touch, in panel state, for an item the player just tapped, the host swaps the target position so the game lays the tooltip out beside the panel instead of over the item grid; everything else passes through unchanged"))
-    obs.append((0x7ce800, 22, "d100c3ff", "server place-one-preset-unit entry (game, room, record), only called by the room-activation preset loop 0x7ce930 (8 sites): in a rift game at tier 90+ on a rift map, for a monster record that is not a superunique and not scenery / NPC, the host swaps x2 to a copy whose class is -1 so 0x6910d0 takes its own early return (tbnz w2, #31) and nothing is spawned; the real record is untouched; rift guardian / invader / superunique spawns call 0x7ce630 / 0x69b310 directly and never pass here"))
 for off, oid, ow, why in obs:
     w = struct.unpack_from('<I', IMG, off)[0]
     assert f'{w:08x}' == ow, f'观测门原指令不符 {off:#x}：{w:08x}'
@@ -832,113 +828,6 @@ for off, oid, ow, why in obs:
     assert off in set(starts) or (oid == 6 and off == 0x43ecc8), f'private obs point not approved {off:#x}'
     assert off < TEXT_END and off not in kinds and not any(lo <= off < hi for wseg in windows for lo, hi in [(wseg[0].address, wseg[-1].address + 4)]), f'观测门与改写点冲突 {off:#x}'
     put_branch(off, site_obs(off, oid, w)); stat('obs')
-
-# 秘境出口改道（r36 起）：分支门 0x89，挂在「按出口砖的连接换关」main+0x7cc1e0(游戏, 玩家, 砖) 的入口。它的四个调用者（点出口砖 0x6dbea0、
-# 入口物件 0x6aeaa0 / 0x6b0500、任务 0x7314c0）都在各自的判定通过之后才调它；目的地不是关卡号而是砖的对端房间（同一幕已生成的地图里），换不成别的幕。
-# 宿主在秘境局里把 w2 / w3 换成（秘境下一张图, 11）并让 x8≠0 → 门块直接跳去「按关卡号换关」0x634000，同一个调用者、只发生一次换关；其余情形执行原指令回 0x7cc1e4。
-# 门块与 0x85 分支门逐字同构（structck ⑪ 按 hle.h 登记表核）；与观测门 15 / 16 一样只在带宿主私有门的产物里（touch）
-# Rift exit rerouting (since r36): branch gate 0x89, hooked at the entry of "change level by the exit tile's connection" main+0x7cc1e0(game, player, tile). Its four callers (clicking an exit tile 0x6dbea0,
-# entrance objects 0x6aeaa0 / 0x6b0500, quest 0x7314c0) all call it only after their own checks have passed; the destination is not a level id but the tile's peer room (in the already generated map of the same act), so it cannot be switched to another act.
-# In a rift run the host replaces w2 / w3 with (the rift's next map, 11) and makes x8≠0 → the gate block jumps straight to "change level by level id" 0x634000, same caller, exactly one level change; in all other cases the original instruction is executed and control returns to 0x7cc1e4.
-# The gate block is word-for-word isomorphic with the 0x85 branch gate (structck ⑪ checks it against the hle.h registry); like observation gates 15 / 16 it exists only in build outputs with host-private gates (touch)
-if RULE_RUN and PRIVATE_GATES:
-    off, word, tgt = 0x7cc1e0, 0xd10183ff, 0x634000
-    assert struct.unpack_from('<I', IMG, off)[0] == word and off in set(starts) and tgt in set(starts)
-    assert off < TEXT_END and off not in kinds and not any(seg[0].address <= off < seg[-1].address + 4 for seg in windows)
-    start = here()
-    emit(STP_PRE(8, 31, 31, -16))
-    emit(STP_PRE(29, 30, 31, -16))
-    emit_gate_call(); emit(BLR(30))
-    ret = here(); emit(LDP_POST(29, 30, 31, 16))
-    emit(0x34000068)
-    emit(LDP_POST(8, 31, 31, 16)); emit(B(here(), tgt))
-    emit(LDP_POST(8, 31, 31, 16)); emit(word); emit(B(here(), off + 4))
-    gates.append((ret, 'svc', 0x89, off))
-    put_branch(off, start); stat('rift_exit')
-    cuts.append((off, struct.pack('<I', word).hex(), struct.pack('<I', B(off, start)).hex(),
-                 'rift exit redirect: tile-link level change entry -> host swaps (level, kind) and x8!=0 takes the branch to level-number change 0x634000; otherwise original ->0x7cc1e4; svc89', '仅宿主'))
-
-# 秘境里存档时的当前幕（r38 起）：分支门 0x8c，挂在原版写存档头函数 0x6fa3e0 里「取难度」那条 main+0x6fa9d0（ldrb w10, [x21, #0x104]）。
-# 它的上一条 0x6fa9cc 刚把「玩家当前在第几幕」读进 w9（ldrb w9, [x24, #0x2e8]），下面 0x6fa9e4 / 0x6fa9e8 写成难度字节 0x80 | 幕号（.d2s 0x98–0x9a），
-# 下次进局落哪个城由它定。宿主在人处于秘境图里时把 w9 换成 4（第五幕 → 重进落哈洛加斯），只动写进存档的这一个值，运行中的幕号不碰。
-# 用分支门而不是「替换一条指令」：structck 只认「bl 调用点」「入口」「分支门」三种登记形态。宿主永远让 x8 = 0（不走跳转那一路），
-# 门块恢复 x8、执行原指令、回 0x6fa9d4；跳转目标填回点本身只为满足模板（走不到）。门块与 0x85 / 0x89 逐字同构
-# Current act written to the save while in a Rift (since r38): branch gate 0x8c, hooked at the "read difficulty" instruction main+0x6fa9d0 (ldrb w10,
-# [x21, #0x104]) inside the original save-header writer 0x6fa3e0.
-# The preceding instruction 0x6fa9cc has just loaded "which act the player is currently in" into w9 (ldrb w9, [x24, #0x2e8]); below, 0x6fa9e4 / 0x6fa9e8
-# write it as the difficulty byte 0x80 | act number (.d2s 0x98–0x9a),
-# which decides which town the next session starts in. While the player is in a Rift map the host replaces w9 with 4 (Act 5 → re-enter in Harrogath);
-# only this one value written to the save is changed, the running act number is untouched.
-# A branch gate is used rather than "replace one instruction": structck only recognizes three registered forms, "bl call site", "entry" and "branch
-# gate". The host always sets x8 = 0 (the jump path is never taken);
-# the gate block restores x8, executes the original instruction and returns to 0x6fa9d4; the jump target is set to the return point itself only to
-# satisfy the template (never reached). The gate block is word-for-word identical in structure to 0x85 / 0x89
-if RULE_RUN and PRIVATE_GATES:
-    off, word, tgt = 0x6fa9d0, 0x394412aa, 0x6fa9d4   # 函数中间的一条指令（同 0x85 那扇门），不要求是函数入口；原指令不依赖 pc | An instruction in the middle of a function (same as gate 0x85); it need not be a function entry; the original instruction does not depend on pc
-    assert struct.unpack_from('<I', IMG, off)[0] == word
-    assert off < TEXT_END and off not in kinds and not any(seg[0].address <= off < seg[-1].address + 4 for seg in windows)
-    start = here()
-    emit(STP_PRE(8, 31, 31, -16))
-    emit(STP_PRE(29, 30, 31, -16))
-    emit_gate_call(); emit(BLR(30))
-    ret = here(); emit(LDP_POST(29, 30, 31, 16))
-    emit(0x34000068)
-    emit(LDP_POST(8, 31, 31, 16)); emit(B(here(), tgt))
-    emit(LDP_POST(8, 31, 31, 16)); emit(word); emit(B(here(), off + 4))
-    gates.append((ret, 'svc', 0x8c, off))
-    put_branch(off, start); stat('rift_save_act')
-    cuts.append((off, struct.pack('<I', word).hex(), struct.pack('<I', B(off, start)).hex(),
-                 'rift save act: save-header writer, right after it loads the current act into w9 -> host swaps w9 to 4 (act V) while the player is in a rift map; x8 stays 0, original insn runs ->0x6fa9d4; svc8c', '仅宿主'))
-# 佣兵加装备位（r39 起）：分支门 0x8d，挂在原版通用放置校验 main+0x6493a8 的怪物主人分支里 main+0x64a34c（mov w9, w25）。
-# 这一段（0x64a314–0x64a354）对怪物类主人只放行两类物品：0x574bc0(物品, 3 护甲)、0x574bc0(物品, 0x25 头盔)，都不是就走武器那条（按 monstats 的左右手类型），再不中就拒。
-# 门挂在「是不是头盔」返回之后、cbnz w0 之前：宿主在「主人是玩家的佣兵 + 秘境最高通关 ≥ 10 层 + 物品是腰带 / 鞋 / 手套 / 戒指 / 项链」时把 w0 改成 1，
-# 走头盔同一条放行路径（后面的部位格子、部位空不空等通用检查照常）。宿主永远让 x8 = 0；门块与 0x85 / 0x89 / 0x8c 逐字同构
-# Extra mercenary equipment slots (since r39): branch gate 0x8d, hooked in the monster-owner branch of the original game's generic placement check main+0x6493a8 at main+0x64a34c (mov w9, w25).
-# This section (0x64a314–0x64a354) lets through only two kinds of items for monster-type owners: 0x574bc0(item, 3 armor) and 0x574bc0(item, 0x25 helm); if neither, it takes the weapon path (by the left / right hand types in monstats), and if that fails too it rejects.
-# The gate is hooked after the "is it a helm" call returns and before cbnz w0: when "the owner is the player's mercenary + highest rift level cleared ≥ 10 + the item is a belt / boots / gloves / ring / amulet", the host changes w0 to 1,
-# taking the same pass path as the helm (the generic checks that follow, such as the body location cell and whether the location is empty, run as usual). The host always sets x8 = 0; the gate block is word-for-word isomorphic with 0x85 / 0x89 / 0x8c
-if RULE_RUN and PRIVATE_GATES:
-    off, word, tgt = 0x64a34c, 0x2a1903e9, 0x64a350   # 原指令不依赖 pc | The original instruction does not depend on pc
-    assert struct.unpack_from('<I', IMG, off)[0] == word
-    assert off < TEXT_END and off not in kinds and not any(seg[0].address <= off < seg[-1].address + 4 for seg in windows)
-    start = here()
-    emit(STP_PRE(8, 31, 31, -16))
-    emit(STP_PRE(29, 30, 31, -16))
-    emit_gate_call(); emit(BLR(30))
-    ret = here(); emit(LDP_POST(29, 30, 31, 16))
-    emit(0x34000068)
-    emit(LDP_POST(8, 31, 31, 16)); emit(B(here(), tgt))
-    emit(LDP_POST(8, 31, 31, 16)); emit(word); emit(B(here(), off + 4))
-    gates.append((ret, 'svc', 0x8d, off))
-    put_branch(off, start); stat('merc_slot')
-    cuts.append((off, struct.pack('<I', word).hex(), struct.pack('<I', B(off, start)).hex(),
-                 'merc slots: placement check, monster-owner branch right after the helm type test -> host sets w0=1 for ring/amulet/boots/gloves/belt on a hireling (rift best >= 10 for new equips; always on load); x8 stays 0, original insn runs ->0x64a350; svc8d', '仅宿主'))
-# 佣兵加装备位的客户端那一半（r39 同代）：分支门 0x8e，挂在客户端「佣兵能不能穿这件」函数 main+0x3bea44(佣兵, 物品) 里 main+0x3beb58（mov x0, x19）。
-# 这个函数和服务端那段同一个规则：0x574bc0(物品, 3 护甲)、0x574bc0(物品, 0x25 头盔) 中一个就返回 1，都不是走武器那条。物品格控件拿它的结果画「不可放置」的红色、
-# 决定松手时放不放——不改它，已解锁的新格拖着对的物品悬停也是红的、原版放下不成（原先靠触摸层兜底直接调 0x3bed60）。
-# 门挂在「mov w1, #0x25」之后、这次类型判断的 bl 之前：宿主在「秘境最高通关 ≥ 10 层 + 物品是腰带 / 鞋 / 手套 / 戒指 / 项链」时把 w1 换成该物品自己的类型号，
-# 类型判断自然成立、走头盔同一条返回 1 的路。宿主永远让 x8 = 0；门块与 0x8d 逐字同构
-# Client half of the extra mercenary equipment slots (same generation as r39): branch gate 0x8e, hooked inside the client's "can the mercenary wear this" function main+0x3bea44(mercenary, item) at main+0x3beb58 (mov x0, x19).
-# This function follows the same rule as the server-side section: if either 0x574bc0(item, 3 armor) or 0x574bc0(item, 0x25 helm) matches it returns 1, and if neither does it takes the weapon path. The item cell widget uses its result to draw the "cannot place" red and
-# to decide whether to place on release -- without changing it, an unlocked new cell still shows red when the right item is dragged over it, and the original game's drop fails (previously the touch layer's fallback called 0x3bed60 directly).
-# The gate is hooked after "mov w1, #0x25" and before the bl of this type check: when "highest rift level cleared ≥ 10 + the item is a belt / boots / gloves / ring / amulet", the host replaces w1 with the item's own type number,
-# so the type check passes naturally and takes the same return-1 path as the helm. The host always sets x8 = 0; the gate block is word-for-word isomorphic with 0x8d
-if RULE_RUN and PRIVATE_GATES:
-    off, word, tgt = 0x3beb58, 0xaa1303e0, 0x3beb5c   # 原指令不依赖 pc | The original instruction does not depend on pc
-    assert struct.unpack_from('<I', IMG, off)[0] == word
-    assert off < TEXT_END and off not in kinds and not any(seg[0].address <= off < seg[-1].address + 4 for seg in windows)
-    start = here()
-    emit(STP_PRE(8, 31, 31, -16))
-    emit(STP_PRE(29, 30, 31, -16))
-    emit_gate_call(); emit(BLR(30))
-    ret = here(); emit(LDP_POST(29, 30, 31, 16))
-    emit(0x34000068)
-    emit(LDP_POST(8, 31, 31, 16)); emit(B(here(), tgt))
-    emit(LDP_POST(8, 31, 31, 16)); emit(word); emit(B(here(), off + 4))
-    gates.append((ret, 'svc', 0x8e, off))
-    put_branch(off, start); stat('merc_slot_client')
-    cuts.append((off, struct.pack('<I', word).hex(), struct.pack('<I', B(off, start)).hex(),
-                 'merc slots (client): hireling can-equip check, between "mov w1,#0x25" and the type test -> host swaps w1 to the item\'s own type for ring/amulet/boots/gloves/belt (rift best >= 10); x8 stays 0, original insn runs ->0x3beb5c; svc8e', '仅宿主'))
 
 # ---- 参数位（仅宿主）：{NSO 构建号: [(偏移 A, 原字 A, 偏移 B, 原字 B, 寄存器, 键, 理由)]}。
 # 原处两条造常数指令改成第一条跳补丁区参数跳板、第二条 nop；跳板间接取键页值后跳回第一条之后（A+4）：A、B 不相邻时中间的原指令照常执行

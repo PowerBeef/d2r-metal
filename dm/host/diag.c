@@ -473,22 +473,8 @@ static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄
 void crash_set_trap_hook(int (*fn)(ucontext_t *uc));
 // SetLanguage 记录（观测门 5，常开）：原版切语言（声音页「文字语言」或读设置时）走 0x317298 清空 + 重装字符串表，r34 起不再剪（英文版）。
 // 每次换语言记一行（号 → 名表 main+0x20ae478：0 enUS … 8 zhCN）；当前语言号的全局量是 main+0x20ae4e0（SetLanguage 写）
-// 客户端事件包（观测门 15，r35 起）：入口 main+0x442bc0，x0 = 包，第 2 字节 = 事件子类型（跳转表 0x1da6752，0–0x19）。
-// 子类型 0x17 = 离线难度（/players）变了 → 0x442d5c 按串号 0x6a47 取「游戏难度设为 N…」，写聊天栏一行 + 系统提示框（宿主 A/B 实测：开关关时 0x17 到后约 10 秒出这条提示，开着拦掉后不出；
-// patch_nso.py 观测门 15 的说明里写的 0x19 是读跳转表时认错了，下次换代改）。秘境局里（dm_quiet_difficulty_msg 开着）把这一字节改成表外值，
-// 原版自己走默认分支（不显示）；人数本身在服务端照常生效。开关不开时门块进出一次即返回，什么都不改
 // SetLanguage log (observation gate 5, always on): the original game's language switch (「文字语言」(Text Language) on the audio page, or when settings are read) goes through 0x317298 to clear + reload the string table; no longer cut since r34 (English version).
 // Log a line on every language change (number → name table main+0x20ae478: 0 enUS ... 8 zhCN); the global holding the current language number is main+0x20ae4e0 (written by SetLanguage)
-// Client event packet (observation gate 15, since r35): entry main+0x442bc0, x0 = packet, byte 2 = event subtype (jump table 0x1da6752, 0–0x19).
-// Subtype 0x17 = offline difficulty (/players) changed → 0x442d5c fetches 「游戏难度设为 N…」(Game difficulty set to N...) by string number 0x6a47 and writes a chat line + a system prompt box (host A/B measured: with the switch off this prompt appears about 10 seconds after 0x17 arrives; with it on and blocked it does not appear;
-// the 0x19 written in the observation gate 15 description in patch_nso.py was a misreading of the jump table, to be fixed at the next build output generation). In a rift run (dm_quiet_difficulty_msg on) this byte is changed to an out-of-table value,
-// and the original game takes its default branch by itself (shows nothing); the player count itself still takes effect on the server as usual. When the switch is off the gate block returns after one pass in and out, changing nothing
-static _Atomic int g_quiet_diff;
-void dm_quiet_difficulty_msg(int on) { atomic_store(&g_quiet_diff, on); }
-static void event_msg_obs(const uint64_t *regs) {
-    uint8_t *pkt = (uint8_t *)(uintptr_t)regs[0]; if (!atomic_load(&g_quiet_diff) || !pkt || pkt[1] != 0x17) return;
-    static int n; if (n++ < 8) LOG("秘境：拦下原版「游戏难度设为 N」提示（事件子类型 0x17）"); pkt[1] = 0xff;
-}
 static void setlang_obs(const uint64_t *regs) {
     dm_ui_gen_bump(DM_UIGEN_LANG);   // 界面代号（dm_cursor.h）：切语言会重建整套界面 | UI generation (dm_cursor.h): switching language rebuilds the entire UI
     { void dm_padmode_lang_reset(void); dm_padmode_lang_reset(); }   // 串表清空之前：我们换进串表的指针先写回原文、记的节点清空（dm_padmode.c） | Before the string table is cleared: write the original text back over the pointers we swapped into the string table and clear the recorded nodes (dm_padmode.c)
@@ -501,7 +487,6 @@ static void setlang_obs(const uint64_t *regs) {
 }
 void probe_install(void) {
     if (gate_obs_present(OBS_SETLANG)) gate_obs_set(OBS_SETLANG, setlang_obs);
-    if (gate_obs_present(OBS_EVENT_MSG)) gate_obs_set(OBS_EVENT_MSG, event_msg_obs);
     { void dm_ui_tooltip_obs(const uint64_t *regs); if (gate_obs_present(OBS_TOOLTIP)) gate_obs_set(OBS_TOOLTIP, dm_ui_tooltip_obs); }   // 说明框停靠（dm_cursor.c） | tooltip docking (dm_cursor.c)
     const char *ui = getenv("DM_UIMSG");
     if (ui && strcmp(ui, "1") && !(g_uifp = fopen(ui, "w"))) die("DM_UIMSG 打不开 %s", ui);
@@ -1075,7 +1060,6 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     { int dm_cloud_char_conflict_take(char *, size_t); char nm[256], msg[400];   // iCloud 首次同步遇到同名角色、用了云端那份（dm_cloudsync.c）：进局后提示一次 | iCloud first sync met a character with the same name and used the cloud copy (dm_cloudsync.c): one notice after entering a run
       if (main && player && dm_cloud_char_conflict_take(nm, sizeof nm)) { snprintf(msg, sizeof msg, dm_str((uint8_t *)main->base, "dmCloudCharConflict"), nm); dm_game_notice((uint8_t *)main->base, msg); LOG("iCloud 同步：弹了同名角色用云端那份的提示（%s）", nm); } }
     if (main && player) DM_PROF(1, "s.bossrush", dm_bossrush_tick(G, player, (uint8_t *)main->base));   // 首领连战（dm_bossrush.c） | Boss rush (dm_bossrush.c)
-    if (main && player) { void dm_rift_tick(uint64_t, uint64_t, uint8_t *); DM_PROF(1, "s.rift", dm_rift_tick(G, player, (uint8_t *)main->base)); }   // 秘境爬塔（dm_rift.c） | Rift tower climb (dm_rift.c)
     { void dm_pages_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.pages", dm_pages_tick(G, player, (uint8_t *)main->base)); }   // 个人仓库 2–5 页（dm_pages.c）；这一拍没有受控玩家（不在局内 / 正在死）player 为 0，个人仓库 / 编年史 / 百宝囊都当没有这一拍，只在换了一局或换了角色时重读（F-SAVE-1） | Personal stash pages 2–5 (dm_pages.c); player is 0 on ticks without a controlled player (not in a run / dying), which the personal stash / Chronicle / pouch treat as no tick, rereading only on a new session or a different character (F-SAVE-1)
     { void dm_vault_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.vault", dm_vault_tick(G, player, (uint8_t *)main->base)); }
     { void dm_autobuff_srv_tick(uint8_t *, uint64_t, uint64_t); if (main && player) DM_PROF(1, "s.autobuff", dm_autobuff_srv_tick((uint8_t *)main->base, G, player)); }   // 增益技能自动补：放主线程点名的技能 | Buff auto-recast: cast the skill named by the main thread
@@ -1251,7 +1235,6 @@ static void c2s_obs(const uint64_t *regs) {
     uint8_t b[512]; uint32_t n = len < 512 ? len : 512; if (!tk_rd(regs[2], b, n)) n = 0;
     if (n >= 1 && b[0] == 0x20) cube_diag_req(regs[0], regs[1], b, n);   // 合成读数 | Transmute readout
     dm_bossrush_c2s(regs[0], regs[1], b, n);
-    { void dm_rift_c2s(uint64_t, const uint8_t *, uint32_t); dm_rift_c2s(regs[0], b, n); }
     { void dm_pouch_c2s(uint64_t *); dm_pouch_c2s((uint64_t *)(uintptr_t)regs); }   // 珍宝匣：符文 / 宝石 / 材料拖进共享页时改道进高级仓库（dm_pouch.c；会换掉 x2 / x3 指向的包） | Trove: runes / gems / materials dragged into the shared tab are rerouted into the advanced stash tabs (dm_pouch.c; replaces the packet x2 / x3 point to)
     { void dm_shoprefresh_c2s(uint64_t, uint64_t, const uint8_t *, uint32_t); dm_shoprefresh_c2s(regs[0], regs[1], b, n); }   // 商人交易页「刷新货架」（dm_shoprefresh.c）   // 首领连战：玩家点了连战的门（门只是外观，换关由 dm_bossrush.c 做） | Vendor trade page 「刷新货架」(Refresh Stock) (dm_shoprefresh.c)   // Boss rush: the player tapped the boss rush door (the door is appearance only; the level change is done by dm_bossrush.c)
     if (!g_c2sfp) return;                       // 门在产品里常挂（首领连战要看），没开 DM_C2S_LOG 时不记 | The gate is usually installed in the product (boss rush needs it); nothing is logged when DM_C2S_LOG is not on
@@ -1981,7 +1964,6 @@ static void loadscreen_on_uimsg(const char *cat, const char *act, const char *ar
     if (!strcmp(cat, "PanelManager") && !strcmp(arg, "QuestLogPanelExpansion") && (!strcmp(act, "OpenPanel") || !strcmp(act, "OpenExclusivePanel"))) { module_t *qm = main_mod(); if (qm) *(volatile uint8_t *)(qm->base + 0x2d5ff58) = 0; }
     { void dm_textinput_on_uimsg(const char *, const char *, const char *); dm_textinput_on_uimsg(cat, act, arg); }
     { void dm_update_on_uimsg(const char *, const char *, const char *); dm_update_on_uimsg(cat, act, arg); }
-    { void dm_rift_ui_on_uimsg(const char *, const char *, const char *); dm_rift_ui_on_uimsg(cat, act, arg); }   // 编年史「首领」页签（dm_kills.c） | The chronicle's 「首领」(Bosses) tab (dm_kills.c)
     { void dm_vault_on_uimsg(const char *, const char *, const char *); dm_vault_on_uimsg(cat, act, arg); }
     { void dm_padmode_on_uimsg(const char *, const char *, const char *); dm_padmode_on_uimsg(cat, act, arg); }   // 手柄版暂停菜单「游戏难度」行（dm_padmode.c） | "Game Difficulty" row of the controller pause menu (dm_padmode.c)
     { void dm_pouch_on_uimsg(const char *, const char *, const char *); dm_pouch_on_uimsg(cat, act, arg); }   // 百宝囊框 / 存放按钮（dm_pouch.c）   // 储藏箱第六页「编年史」（dm_vault_ui.c） | Pouch frame / deposit button (dm_pouch.c)   // stash page six 「编年史」(Chronicle) (dm_vault_ui.c)

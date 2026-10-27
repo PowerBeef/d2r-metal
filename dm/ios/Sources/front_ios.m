@@ -433,7 +433,6 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 - (void)tickTouchControls:(double)now {
     [self mapGoalSync];
     { int dm_padmode_busy(void); BOOL hide=_feMode || _padMode || dm_padmode_busy(); if(_overlay.hidden!=hide) _overlay.hidden=hide; }   // 手柄 → 触屏切换事务还没完成（界面还在重建）时触屏控件层先不露出来（dm_padmode.c） | While the controller → touch switch transaction is not yet complete (the UI is still rebuilding) the touch control layer is not revealed yet (dm_padmode.c)
-    { void dm_rift_hud_draw(UIView *, CGRect, BOOL); dm_rift_hud_draw(_info, world_rect(self), _navigation || _info.hidden); }
     {   // 高价值掉落震动（宿主 dm_drophaptic.c 判档）：1 重 / 2 中 / 3 轻 | High-value drop haptics (the host's dm_drophaptic.c decides the level): 1 heavy / 2 medium / 3 light
         int dm_drop_haptic_take(void); int t = dm_drop_haptic_take();
         if (t >= 1 && t <= 3) { static UIImpactFeedbackGenerator *g[4]; if (!g[t]) g[t] = [[UIImpactFeedbackGenerator alloc] initWithStyle:t == 1 ? UIImpactFeedbackStyleHeavy : t == 2 ? UIImpactFeedbackStyleMedium : UIImpactFeedbackStyleLight];
@@ -468,7 +467,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
         if(wr>=0) { _mapWorldAsked=NO; if(wr==0 && !_navigation) { dm_ui_map_full(1); LOG("前端：点小地图那一块 (%.0f,%.0f) → 全屏地图",_mapWorldPt.x,_mapWorldPt.y); }
             else LOG("前端：点小地图那一块 (%.0f,%.0f) → 底下有世界目标（类 %d），交互、不切地图",_mapWorldPt.x,_mapWorldPt.y,wr); } }
     if(_addAt>0 && now>=_addAt) { dm_points_info pi; dm_points_get(&pi);   // 再点同一个技能：光标到位、游戏选中了它才发加点 | Tapping the same skill again: send the point only once the cursor is in place and the game has selected it
-        if(pi.tree_open && pi.sel_skill>=0 && !dm_cursor_pending()) { _addAt=0; if(pi.sel_block==0) { dm_skill_add_selected(); LOG("前端：再点同一个技能 → 加 1 点"); } else if(pi.sel_block==5) { dm_skill_add_selected(); LOG("前端：再点同一个技能 → 已到 20、这个角色还没打通过秘境，交宿主出提示"); } else LOG("前端：再点同一个技能 → 不能加（原因 %d），不发",pi.sel_block); }
+        if(pi.tree_open && pi.sel_skill>=0 && !dm_cursor_pending()) { _addAt=0; if(pi.sel_block==0) { dm_skill_add_selected(); LOG("前端：再点同一个技能 → 加 1 点"); } else LOG("前端：再点同一个技能 → 不能加（原因 %d），不发",pi.sel_block); }
         else if(now>_addAt+1.0 || !pi.tree_open) { _addAt=0; LOG("前端：再点同一个技能 → 1 秒内游戏没选中它，不发"); } }
     // 说明框只在手指按着 / 刚点过时显示：游戏给手柄光标停着的那一格一直出说明，触摸下松手后它就一直盖着（技能树盖住中间、商人页盖住页签、拖放完还留着）。
     // 说明框关不掉，办法同绑定态：到点把光标停到屏幕左缘（面板外）。手上拿着物品、绑定态、还有键没送完时不动。

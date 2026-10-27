@@ -253,7 +253,7 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   - `CUTS`: byte patches; the original bytes are checked before patching.
   - `OBS`: observation gates; numbers must match the `OBS_*` enum in `dm/host/dm.h`.
   - `PARAMS`: host-filled values.
-- **Products** go to `$DM_ROOT/build/cache/dm/out/<dm/PRODUCT>-<kind>` (currently `3.3.94012-r44-touch`):
+- **Products** go to `$DM_ROOT/build/cache/dm/out/<dm/PRODUCT>-<kind>` (currently `3.3.94012-r45-touch`):
   - `touch` is what the apps run.
   - `keypage` and `rules` are used by the verifiers.
 

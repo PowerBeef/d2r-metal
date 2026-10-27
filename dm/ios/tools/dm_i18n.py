@@ -13,38 +13,22 @@ ID0 = 300000   # 原版全部字符串表最大 id 251780；我们的条目从�
 PROPER = '老机型补充包|D2R Mobile Resources|D2R Mobile|D2R Metal'   # 英文里唯一许可的中文：App 显示名与资源文件夹名（玩家在桌面 /「文件」里看到的就是这几个字；d2r-metal 的显示名是 D2R Metal，资源文件夹与安卓仍叫 D2R Mobile） | the only Chinese allowed in English text: the App display name and the asset folder name (these are the very characters the player sees on the home screen / in "Files"; renaming is a separate matter, see open items 6 and 7 of the inventory)
 FMT = re.compile(r'%[-+ #0-9.]*(?:ll|l|h|z)?[a-zA-Z@%]')   # printf / strftime / NSString 占位符：中英两列必须同序同类（运行时拿英文串当格式串用） | printf / strftime / NSString placeholders: the Chinese and English columns must match in order and type (at run time the English string is used as a format string)
 
-# 英文字数闸（进行中页「This Rift will be lost」被截断出框，靠人眼看图没拦住）：大秘境面板 / 秘境提示各栏的英文上限（字符数，占位符按 3 个字符算）。
-# 数是按 Mac 截图量出来的每栏像素宽 ÷ 该栏字号下英文每字符平均宽度、再留一个字符余量——是按字数的近似，不是按字形逐个量宽；
-# 全是窄字母（i、l、1）的串实际更短，全是宽字母（M、W）的会更长，所以新词进表后仍要出图看一眼
-# English length gate (on the in-progress page "This Rift will be lost" was truncated and ran out of its box, and looking at screenshots by eye did not
-# catch it): English limits for each field of the Greater Rift panel / Rift messages (in characters, with a placeholder counted as 3 characters).
-# The numbers are each field's pixel width measured from Mac screenshots ÷ the average English character width at that field's font size, less one
-# character of margin. This is an approximation by character count, not a glyph-by-glyph width measurement;
-# a string made of narrow letters only (i, l, 1) is actually shorter and one made of wide letters only (M, W) is longer, so new wording added to the
-# table still needs a look at a screenshot
-EN_LIMITS = (
-    (r'dmRiftSay(?!Prefix).*', 31),
-    (r'dmRiftPtsGot', 62), (r'dmRiftPtsHeld', 33),        # 通关点数两句：第一句中文就占两行（提示框自动换行），英文同样两行、不缩写；第二句一行                       # 系统提示：前缀「Rift  」6 个字符 + 正文，提示框一行约 37 个字符 | the two clear-points sentences: the first already takes two lines in Chinese (the message box wraps automatically), so English is likewise two lines, unabbreviated; the second is one line                       # system messages: the prefix "Rift  " is 6 characters plus the body, and one message box line holds about 37 characters
-    (r'dmRift(Range|Best|Str|Lvl|Time)', 13),             # 左栏「标签 + 值」的标签（英文专用小字号控件，值最长 7 个字符） | labels of the left column's "label + value" rows (English-only small-font widget; values are at most 7 characters)
-    (r'dmRiftGam(Uni|Set)', 8), (r'dmRiftGamAfterEn', 17),
-    (r'dmRift(SelT|InfT|GamT|TitleRun|TitleDone|TitleLate)', 16),   # 左栏小标题（中号字，栏宽约 160 像素） | left column small headings (medium font, column about 160 pixels wide)
-    (r'dmRift(GuardDown|NextOpen|Saved|RetryOpen|NotCounted)', 16),            # 已完成页那三行（整行，中号字） | the three lines on the completed page (full lines, medium font)
-    (r'dmRiftCap.*', 20),                                 # 按钮上方的说明（英文专用小字号控件） | caption above the buttons (English-only small-font widget)
-    (r'dmRiftBtn.*', 12),                                 # 按钮上的字 | text on the buttons
-    (r'dmRiftMsItem\d+', 15), (r'dmRiftMsSub\d+', 19), (r'dmRiftMsTier\d+', 4), (r'dmRiftMs(Got|Next|No)', 7), (r'dmRiftMsT', 12), (r'dmRiftMsNEn', 38),
-    (r'dmRiftHud(Title)', 4), (r'dmRiftHud(Done|Late|Guard)', 18), (r'dmRiftHud(Next|Same|Kill|Goal)', 26),
-)
+# 英文字数闸：定宽栏里的英文上限（字符数，占位符按 3 个字符算），按 Mac 截图量出的栏宽 ÷ 该字号下英文平均字宽、再留一个字符余量。
+# 原先只给大秘境面板用（「This Rift will be lost」截断出框没被人眼拦住）；大秘境删掉后表是空的，机制留着给以后的定宽栏
+# English length gate: English limits for fixed-width fields (in characters, a placeholder counts as 3), from the field width measured on Mac screenshots ÷ the average English
+# character width at that font size, with one character of margin. It used to serve only the Greater Rift panel ("This Rift will be lost" ran out of its box unnoticed);
+# with the Rift removed the table is empty, and the mechanism stays for future fixed-width fields
+EN_LIMITS = ()
 # 宿主把整串抄进定长缓冲区的键：各语言 UTF-8 字节数（不含结尾的 0）的上限。超了会被截断；其中 g_hint 的缓冲区地址直接换进了游戏的串表，
 # 原先俄语「捡起（按住鉴定）」正好 48 字节、缓冲区 48 字节，结尾的「)」丢了、串表里的长度还按 48 算。只管原样整串抄进去的，带占位符拼出来的不在这里
 # Keys whose whole string the host copies into a fixed-size buffer: the limit on the UTF-8 byte length (without the trailing 0) in every language. Longer ones are truncated; the g_hint buffer address is swapped straight into the game's string table,
 # and the Russian "Pick Up (hold to identify)" used to be exactly 48 bytes in a 48-byte buffer: the closing ")" was lost and the length in the string table still said 48. Only strings copied whole are listed here, not ones assembled with placeholders
 BYTE_LIMITS = (
     (r'dmPadHintDeposit|dmPadLegIdentify', 127),                                      # dm_padmode.c g_hint[].ours[128]
-    (r'dmPadLeg(Prev|Next|View)|dmRiftBtn(Cont|Start|Resel|Abandon)', 47),   # dm_padmode.c g_lg[].text[48]（dm_padmode_legend 的条目 | entries of dm_padmode_legend）
-    (r'dmRiftGam(Uni|Set|AfterEn|UniAfter|SetAfter)', 39),                            # dm_rift_ui.c ln[][40]
+    (r'dmPadLeg(Prev|Next|View)', 47),   # dm_padmode.c g_lg[].text[48]（dm_padmode_legend 的条目 | entries of dm_padmode_legend）
     (r'dmStoreFull', 159),                                                             # dm_pouch.c g_notice[160]
     (r'dmCloudMerge(Back|Full)', 255),                                                 # dm_cloudmerge.c g_notice[256]
-    (r'dmSkillCapLocked|dmElyToaGround|dmCloudConflict|dmMercSlotLocked', 511),        # dm_i18n.c dm_game_notice line[512]
+    (r'dmElyToaGround|dmCloudConflict', 511),        # dm_i18n.c dm_game_notice line[512]
 )
 # 键只许字母数字：布局里「@键」的解析遇到 _ 就断（@dmCustom_auto_mana 显示成「丢失字符串_auto_mana」，Mac 上的 iOS 包实测）
 # 英文界面下也要写汉字的键（自定义页语言那一行：切错语言的人得看得懂）。只许用在指定了全球字体 BlizzardGlobal 的文字控件上——英文界面缺省字体没有汉字

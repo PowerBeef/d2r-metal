@@ -71,12 +71,12 @@ uint64_t dm_audio_render_calls(void);   // 声卡回调累计次数（静音接�
 //   0x86   私有技能地面方向（转调原 0x2b4ef8 再按右摇杆改向） hle_private_aim.c 0x2faf04（bl 0x2b4ef8 调用点；仅触屏私有门）
 //   0x87   地上物品外观路径（转调原 0xa14dc4 再按规则改指带光变体） dm_dropfilter.c 0x8fa590（bl 0xa14dc4 调用点；只改模式 3 / 5 的物品，输出在 x8 字符串）
 //   0x88   物品落地掉落音（转调原 0x470c20 再把一档物品换成提示音） dm_dropfilter.c 0x468f2c（bl 0x470c20 调用点；写 x0 = 声音号）
-//   0x89   秘境出口改道（秘境局里把目的地换成下一张图，写 x2 / x3 / x8） dm_rift.c      0x7cc1e0（分支门：x8≠0 跳 0x634000，否则执行原指令回 0x7cc1e4）
+//   0x89   已停用：大秘境删掉（2026-10-27）。号码保留、不再复用（旧产物 gates.tsv 里还有）
 //   0x8a   进局给玩家取出生点（转调原 0x5596c0；进局在城镇时换成小站旁）  dm_townwp.c     0x5d8040（bl 0x5596c0 调用点；玩家进局函数 0x5d7f70 里）
 //   0x8b   进局给尸体取落点（同上，与玩家取同一个点）                      dm_townwp.c     0x5d8400（bl 0x5596c0 调用点；同一函数里）
-//   0x8c   秘境里存档的当前幕（人在秘境图里把 w9 换成 4 = 第五幕，写 x9；x8 恒 0） dm_rift.c      0x6fa9d0（分支门：x8≠0 跳 0x6fa9d4，否则执行原指令回 0x6fa9d4）
-//   0x8d   佣兵加装备位（佣兵 + 秘境 ≥10 层 + 腰带 / 鞋 / 手套 / 戒指 / 项链时把 w0 换成 1，写 x0；x8 恒 0） dm_rift.c      0x64a34c（分支门：x8≠0 跳 0x64a350，否则执行原指令回 0x64a350）
-//   0x8e   佣兵加装备位的客户端校验（秘境 ≥10 层 + 物品是腰带 / 鞋 / 手套 / 戒指 / 项链时把 w1 换成物品自己的类型号，写 x1；x8 恒 0） dm_rift.c      0x3beb58（分支门：x8≠0 跳 0x3beb5c，否则执行原指令回 0x3beb5c）
+//   0x8c   已停用：大秘境删掉（2026-10-27）。号码保留、不再复用（旧产物 gates.tsv 里还有）
+//   0x8d   已停用：大秘境删掉（2026-10-27）。号码保留、不再复用（旧产物 gates.tsv 里还有）
+//   0x8e   已停用：大秘境删掉（2026-10-27）。号码保留、不再复用（旧产物 gates.tsv 里还有）
 // ---------- Host call number registry (a cut replaces a game-internal function entry with `svc #number; ret`, and the rewriter turns it into a host gate) ----------
 // Horizon's SVC numbers only go up to 0x7F; 0x80 onward is reserved for host calls. New ones must be registered here and numbers must not repeat; dispatch is in hle_svc.c → svc_host_call.
 //   No.    Purpose                                      File            Cut (main offset)
@@ -89,10 +89,10 @@ uint64_t dm_audio_render_calls(void);   // 声卡回调累计次数（静音接�
 //   0x86   Private skill ground direction (forwards to the original 0x2b4ef8, then redirects by the right stick) hle_private_aim.c 0x2faf04 (bl 0x2b4ef8 call site; touch-only private gate)
 //   0x87   Ground item appearance path (forwards to the original 0xa14dc4, then repoints by rule to the lit variant) dm_dropfilter.c 0x8fa590 (bl 0xa14dc4 call site; only items in mode 3 / 5 are changed, output in the x8 string)
 //   0x88   Item landing drop sound (forwards to the original 0x470c20, then swaps tier-one items to a notification sound) dm_dropfilter.c 0x468f2c (bl 0x470c20 call site; writes x0 = sound id)
-//   0x89   Rift exit rerouting (in a rift run the destination is replaced with the next map, writes x2 / x3 / x8) dm_rift.c      0x7cc1e0 (branch gate: x8≠0 jumps to 0x634000, otherwise executes the original instruction and returns to 0x7cc1e4)
+//   0x89   Retired: the Greater Rift was removed (2026-10-27). The number stays reserved and is never reused (old build outputs' gates.tsv still have it)
 //   0x8a   Spawn point for the player on run entry (forwards to the original 0x5596c0; replaced with a point next to the waypoint when entering in town)  dm_townwp.c     0x5d8040 (bl 0x5596c0 call site; in the player join function 0x5d7f70)
 //   0x8b   Drop point for the corpse on run entry (same as above, the same point as the player gets)                      dm_townwp.c     0x5d8400 (bl 0x5596c0 call site; in the same function)
-//   0x8c   Current act saved while in a rift (when the character is in a rift map w9 is replaced with 4 = Act V, writes x9; x8 always 0) dm_rift.c      0x6fa9d0 (branch gate: x8≠0 jumps to 0x6fa9d4, otherwise executes the original instruction and returns to 0x6fa9d4)
-//   0x8d   Extra mercenary equipment slots (mercenary + rift level ≥10 + belt / boots / gloves / ring / amulet: w0 is replaced with 1, writes x0; x8 always 0) dm_rift.c      0x64a34c (branch gate: x8≠0 jumps to 0x64a350, otherwise executes the original instruction and returns to 0x64a350)
-//   0x8e   Client-side check for the extra mercenary equipment slots (rift level ≥10 + the item is a belt / boots / gloves / ring / amulet: w1 is replaced with the item's own type number, writes x1; x8 always 0) dm_rift.c      0x3beb58 (branch gate: x8≠0 jumps to 0x3beb5c, otherwise executes the original instruction and returns to 0x3beb5c)
-enum { SVC_HOST_TACT_ZLIB = 0x80, SVC_HOST_C2S_DELIVER = 0x81, SVC_HOST_C2S_SYS = 0x82, SVC_HOST_GRANNY_A = 0x83, SVC_HOST_GRANNY_B = 0x84, SVC_HOST_PRIVATE_SKILL_RENDER = 0x85, SVC_HOST_PRIVATE_SKILL_AIM = 0x86, SVC_HOST_GROUND_ASSET = 0x87, SVC_HOST_DROP_SOUND = 0x88, SVC_HOST_RIFT_EXIT = 0x89, SVC_HOST_JOIN_SPAWN = 0x8a, SVC_HOST_JOIN_CORPSE = 0x8b, SVC_HOST_SAVE_ACT = 0x8c, SVC_HOST_MERC_SLOT = 0x8d, SVC_HOST_MERC_SLOT_CL = 0x8e };   // 0x87：地上物品取模型路径（dm_dropfilter.c 掉落光）   // 0x83/0x84：Granny 逐块解码调用点（hle_granny.c） | 0x87: fetch the model path for ground items (dm_dropfilter.c drop light)   // 0x83/0x84: Granny per-block decode call sites (hle_granny.c)
+//   0x8c   Retired: the Greater Rift was removed (2026-10-27). The number stays reserved and is never reused (old build outputs' gates.tsv still have it)
+//   0x8d   Retired: the Greater Rift was removed (2026-10-27). The number stays reserved and is never reused (old build outputs' gates.tsv still have it)
+//   0x8e   Retired: the Greater Rift was removed (2026-10-27). The number stays reserved and is never reused (old build outputs' gates.tsv still have it)
+enum { SVC_HOST_TACT_ZLIB = 0x80, SVC_HOST_C2S_DELIVER = 0x81, SVC_HOST_C2S_SYS = 0x82, SVC_HOST_GRANNY_A = 0x83, SVC_HOST_GRANNY_B = 0x84, SVC_HOST_PRIVATE_SKILL_RENDER = 0x85, SVC_HOST_PRIVATE_SKILL_AIM = 0x86, SVC_HOST_GROUND_ASSET = 0x87, SVC_HOST_DROP_SOUND = 0x88, SVC_HOST_JOIN_SPAWN = 0x8a, SVC_HOST_JOIN_CORPSE = 0x8b };   // 0x87：地上物品取模型路径（dm_dropfilter.c 掉落光）   // 0x83/0x84：Granny 逐块解码调用点（hle_granny.c） | 0x87: fetch the model path for ground items (dm_dropfilter.c drop light)   // 0x83/0x84: Granny per-block decode call sites (hle_granny.c)

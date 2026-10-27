@@ -2,12 +2,12 @@
 // 用手柄玩时游戏要文字（起名、金币数量、编年史搜索），front_text_input 改走这里：游戏画面下部画一块游戏风格的键盘（深色底、金边金字、原版字体），
 // 手柄归它（dm_gamepad_capture）；玩家改用键盘鼠标 / 触屏（前端看到按键、点击、触摸）就收起、把已打的字交给前端的输入框（dm_vkbd_ui_handoff）。游戏那边照旧冻着客体时钟等结果（hle_swkbd.c）。
 // 画法：每次有变化用 CoreGraphics 把整块面板画成一张图，放进加在游戏画面上面的 CALayer（不经游戏的出图，所以 DM_TEST_PRESENT_SHOT 要另外叠，见 dm_vkbd_ui_snapshot）。
-// 字：原版的 Exocet（标题）与 Formal436（正文），缺的字找 BlizzardGlobal；运行时从资源包读出来、只建字体描述不注册（不进仓库、不进 App 包；秘境任务栏 dm_rift_hud.m 也用这里的 dm_game_font）；都没有的字（⌫ ⇧）CoreText 自动换系统字体。
+// 字：原版的 Exocet（标题）与 Formal436（正文），缺的字找 BlizzardGlobal；运行时从资源包读出来、只建字体描述不注册（不进仓库、不进 App 包）；都没有的字（⌫ ⇧）CoreText 自动换系统字体。
 // Front-end part of the on-screen controller keyboard (see dm_vkbd_ui.h; shared by the Mac App and iOS, using only QuartzCore / CoreText, no AppKit / UIKit).
 // When the game asks for text (naming, gold quantity, Chronicle search) while it is played with a controller, front_text_input comes here instead: a game-style keyboard (dark panel, gold frame and lettering, the original font) is drawn over the lower part of the picture,
 // the controllers belong to it (dm_gamepad_capture); when the player turns to keyboard and mouse / touch (the front end sees a key press, click or touch) it closes and hands what was typed to the front end's input box (dm_vkbd_ui_handoff). The game keeps its guest clock frozen and waits for the result as before (hle_swkbd.c).
 // Drawing: on every change the whole panel is drawn into one image with CoreGraphics and put into a CALayer above the game picture (it does not pass through the game's presentation, so DM_TEST_PRESENT_SHOT composites it separately, see dm_vkbd_ui_snapshot).
-// Fonts: the original game's Exocet (headings) and Formal436 (body), with BlizzardGlobal for characters they lack; read from the asset pack at run time into font descriptors, not registered (not in the repository, not in the App bundle; the rift quest bar dm_rift_hud.m uses dm_game_font from here too); characters none of them has (⌫ ⇧) fall back to a system font in CoreText automatically.
+// Fonts: the original game's Exocet (headings) and Formal436 (body), with BlizzardGlobal for characters they lack; read from the asset pack at run time into font descriptors, not registered (not in the repository, not in the App bundle); characters none of them has (⌫ ⇧) fall back to a system font in CoreText automatically.
 #import <Foundation/Foundation.h>
 #import <QuartzCore/QuartzCore.h>
 #import <CoreText/CoreText.h>
@@ -33,9 +33,9 @@ static NSData *zinflate(const uint8_t *p, size_t n) {   // zlib（带 2 字节�
     if (n < 2) return nil; return [[NSData dataWithBytes:p + 2 length:n - 2] decompressedDataUsingAlgorithm:NSDataCompressionAlgorithmZlib error:nil];
 }
 // 清单约 30 MB、13 万行。映射进来按字节扫一遍，只看路径列的后缀，要找的几行都找到就停（字体在约三分之一处），不给每行建对象。
-// 原先每找一个字体就把整份清单读成字符串、拆成 13 万个行对象再逐行拆列，三个字体三遍：秘境任务栏第一帧在主线程上约 70–100 MB 临时内存，没有自动释放池
+// 原先每找一个字体就把整份清单读成字符串、拆成 13 万个行对象再逐行拆列，三个字体三遍：第一次用时在主线程上约 70–100 MB 临时内存，没有自动释放池
 // The manifest is about 30 MB and 132k rows. It is mapped and scanned once byte by byte, looking only at the suffix of the path column, and the scan stops once every wanted row is found (the fonts are about a third of the way in); no object is created per row.
-// It used to read the whole manifest into a string for every font, split it into 132k row objects and split each row into columns, three times for three fonts: about 70-100 MB of transient memory on the main thread at the first rift quest bar frame, with no autorelease pool
+// It used to read the whole manifest into a string for every font, split it into 132k row objects and split each row into columns, three times for three fonts: about 70-100 MB of transient memory on the main thread the first time it was used, with no autorelease pool
 typedef struct { const char *suffix; uint8_t ek[16]; long len; char enc[8]; int ok; } romfs_row;   // ok：0 没找到、1 找到且能用、-1 找到但编码键不对 | ok: 0 not found, 1 found and usable, -1 found but the encoding key is malformed
 static int hex2(const char *p) {   // 两位十六进制 → 0–255，不是十六进制返回 -1 | two hex digits -> 0-255, -1 if not hex
     int v = 0; for (int i = 0; i < 2; i++) { char c = p[i]; int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; if (d < 0) return -1; v = v << 4 | d; }
@@ -76,10 +76,10 @@ static NSData *romfs_read(NSString *data, const romfs_row *rw) {
         if (b[0] == 'N') [o appendBytes:b + 1 length:es - 1]; else { NSData *d = zinflate(b + 1, es - 1); if (!d) return nil; [o appendData:d]; } pos += es; }
     return o;
 }
-// 原版的三种字：0 BlizzardGlobal（中日韩等全字符集，秘境任务栏用）、1 Exocet（标题）、2 Formal436（正文）。1、2 缺的字（汉字、⌫ 等）先找 BlizzardGlobal，再由 CoreText 换系统字体。
+// 原版的三种字：0 BlizzardGlobal（中日韩等全字符集）、1 Exocet（标题）、2 Formal436（正文）。1、2 缺的字（汉字、⌫ 等）先找 BlizzardGlobal，再由 CoreText 换系统字体。
 // 只建字体描述、不在系统里注册（注册的接口 macOS 15 起已废弃）。整个进程只读一次（dispatch_once），任意线程可调；dm_game_font_preload 在后台线程上先读好，
 // 主线程用 dm_game_font_ready 判断读好了没有、没好就先用系统字，不在主线程上等清单与解压
-// The original game's three fonts: 0 BlizzardGlobal (full CJK etc. character set, used by the rift quest bar), 1 Exocet (headings), 2 Formal436 (body text). Characters 1 and 2 lack (Chinese, ⌫ etc.) go to BlizzardGlobal first, then CoreText falls back to a system font.
+// The original game's three fonts: 0 BlizzardGlobal (full CJK etc. character set), 1 Exocet (headings), 2 Formal436 (body text). Characters 1 and 2 lack (Chinese, ⌫ etc.) go to BlizzardGlobal first, then CoreText falls back to a system font.
 // Only font descriptors are created; nothing is registered with the system (the registration API is deprecated since macOS 15). Read once per process (dispatch_once), callable from any thread; dm_game_font_preload reads them ahead on a background thread,
 // and the main thread checks dm_game_font_ready and uses a system font until they are ready, instead of waiting for the manifest scan and decompression on the main thread
 static CTFontDescriptorRef g_font_desc[3]; static dispatch_once_t g_font_once; static _Atomic int g_font_ready;

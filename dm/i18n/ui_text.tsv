@@ -207,132 +207,17 @@ dmVaultTierX	优异	Exc	Exc		Отличн.	예외	编年史档次勾选（中文
 dmVaultTierE	精英	Elite	Élite		Элитн.	엘리트	编年史档次勾选（中文同原版 EliteQuality）
 dmStashVaultTab	编年史	Vault	Crónica		История	연대기	储藏箱第六页签（中文同原版 Chronicle；英文原词放不下、压到前一个页签）
 dmTroveTab	珍宝匣	Trove	Tesoro		Копилка	보물함	储藏箱第三个页签：宝石 / 符文 / 材料三页合成的一页（wide_stash.py；材料、符文两个页签挪出屏）
-dmRiftSayPrefix	秘境  %s	Rift  %s	Grieta  %s		Рифт  %s	균열  %s	秘境系统提示的前缀（dm_rift.c say）
-dmRiftSayFirst	第 %d 层首通奖励已掉在脚下	Level %d first clear reward	Nivel %d: premio de 1.ª vez		Уровень %d: первая награда	%d층 첫 클리어 보상	秘境系统提示（dm_rift.c）；英文：「首通」暗黑 3 无对应原文，拟
-dmRiftSayDoneBoth	本层完成，下一层与回城之门已开启	Rift complete! Portals opened	¡Superada! Portales abiertos		Рифт пройден! Порталы открыты	층 완료! 포탈 열림	秘境系统提示（dm_rift.c）；英文：complete 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）「complete the current Greater Rift level」；整句拟；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
-dmRiftSayLateBoth	超时未过关，重打与回城之门已开启	Not cleared. Portals opened	No superada. Portales abiertos		Время вышло. Порталы открыты	미클리어. 포탈 열림	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
-dmRiftSayLateNext	超时未过关，重打之门已开启	Not cleared. Portal opened	No superada. Portal abierto		Время вышло. Портал открыт	미클리어. 포탈 열림	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
-dmRiftSayLateTown	超时未过关，回城之门已开启	Not cleared. Town Portal open	No superada. Portal a la ciudad		Время вышло. Портал в город	미클리어. 마을 포탈 열림	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
-dmRiftSayLate	超时未过关	Level not cleared	Nivel no superado		Уровень не пройден	층 미클리어	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
-dmRiftSayDoneNext	本层完成，下一层之门已开启	Rift complete! Portal opened	¡Superada! Portal abierto		Рифт пройден! Портал открыт	층 완료! 포탈 열림	秘境系统提示（dm_rift.c）；英文：同上；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
-dmRiftSayDoneTown	本层完成，回城之门已开启	Complete! Town Portal open	¡Superada! Portal a la ciudad		Пройдено! Портал в город	완료! 마을 포탈 열림	秘境系统提示（dm_rift.c）；英文：Town Portal = 暗黑 2 原版 skills[skillan219]；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
-dmRiftSayTopBoth	最高层通关，重打与回城之门已开启	Top level done! Portals opened	¡Nivel tope! Portales abiertos		Топ пройден! Порталы открыты	최고층 클리어! 포탈 열림	秘境系统提示（dm_rift.c）：第 100 层限时内通关，没有下一层，那扇门是重打（公开仓库 / #29）；英文：拟
-dmRiftSayTopNext	最高层通关，重打之门已开启	Top level done! Portal opened	¡Nivel tope! Portal abierto		Топ пройден! Портал открыт	최고층 클리어! 포탈 열림	同上，只开出重打那扇门时
-dmRiftSayTopTown	最高层通关，回城之门已开启	Top level! Town Portal open	¡Nivel tope! Portal a la ciudad		Топ пройден! Портал в город	최고층! 마을 포탈 열림	同上，只开出回城门时
-dmRiftSayTop	最高层通关	Top level cleared	Nivel tope superado		Топ пройден	최고층 클리어	同上，两扇门都没开出时
-dmRiftSayDone	本层完成	Rift complete	Grieta superada		Рифт пройден	균열 완료	秘境系统提示（dm_rift.c）；英文：同上；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
-dmRiftSayErr	秘境出错了，这次没开	The Rift could not be opened	No se pudo abrir la grieta		Рифт не открылся	균열을 열 수 없었습니다	秘境系统提示（dm_rift.c）；英文：拟
-dmRiftSayStart	第 %d 层开始，限时 15 分钟	Level %d: 15 minute time limit	Nivel %d: 15 minutos de límite		Уровень %d: 15 минут	%d층: 15분 제한	秘境系统提示（dm_rift.c）；英文：Greater Rift level / time limit 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）「complete the current Greater Rift level within the designated time limit」
-dmRiftSayGift	赠彩虹刻面一颗，已掉在脚下	A Rainbow Facet has dropped	Ha caído una Faceta de arcoíris		Выпала Грань радуги	레인보우 파셋이 떨어졌습니다	秘境系统提示（dm_rift.c）；「彩虹刻面」是旧译名（原版现行「彩虹魔石」）；英文物品名 = 原版键 Rainbow Facet 的 enUS；英文：物品名 = 暗黑 2 原版 item-names[Rainbow Facet]
-dmRiftSayTimeout	时间到：本层未过关，守护者仍会掉落	Time's up: level not cleared	Tiempo agotado: no superado		Время вышло: не пройден	시간 종료: 층 미클리어	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
-dmRiftSayFoes	本场有 %d 位强敌	%d powerful foes this run	%d enemigos poderosos esta vez		Сильных врагов в забеге: %d	이번 런 강적 %d명	秘境系统提示（dm_rift.c）：90 层起开局提示本场闯入首领的位数；英文：拟
-dmRiftSayInvader	强敌逼近！	A powerful foe approaches!	¡Se acerca un enemigo poderoso!		Приближается сильный враг!	강적이 다가옵니다!	秘境系统提示（dm_rift.c）：80 层起途中闯入一位首领，刷出前约 3 秒提示；英文：拟
-dmRiftSayInvaderGone	闯入者退去了	The intruder withdraws	El intruso se retira		Пришелец отступает	침입자가 물러납니다	秘境系统提示（dm_rift.c）：守护者现身时，还在场的闯入首领退场；英文：拟
-dmRiftSayGuardians	进度已满：两位守护者现身！	Two Rift Guardians appear!	¡Aparecen dos Guardianes!		Два стража рифта!	가디언 둘 등장!	秘境系统提示（dm_rift.c）：75 层起守护者是两位；英文：同 dmRiftSayGuardian 的用词
-dmRiftSayWave	守护者第 %d 波现身（共 %d 波）	Guardian wave %d of %d	Oleada de guardianes %d de %d		Волна стражей %d из %d	가디언 웨이브 %d / %d	秘境系统提示（dm_rift.c）：95 层起守护者分波，第 2 波起每波现身时说一声；英文：拟
-dmRiftSayGuardian	进度已满：守护者现身！	The Rift Guardian appears!	¡Aparece el Guardián!		Страж рифта появился!	균열 가디언 등장!	秘境系统提示（dm_rift.c）；英文：Rift Guardian 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）；出现时的界面原句没查到，拟
 dmElyToaGround	背包已满，赦免之证掉在脚边	Inventory full: Token of Absolution dropped	Inventario lleno: Muestra de absolución en el suelo	Inventario lleno: Insignia de la absolución en el suelo	Инвентарь полон: Талисман очищения упал	가방 가득 참: 사면의 증표 드롭	极乐世界新角色补齐（dm_elysium.c）：背包放不下时的系统提示；英文物品名 = 暗黑 2 原版 Token of Absolution
-dmMercSlotLocked	通关地狱后打通秘境10层解锁	Clear Greater Rift Level 10 to unlock	Supera el nivel 10 de Grieta superior para desbloquearlo	Supera el nivel 10 de Grieta mayor para desbloquearlo	Пройдите Великий рифт 10 ур.	그레이터 리프트 10층 클리어로 해금	佣兵新装备位没解锁时的系统提示（dm_rift.c；中文是 原句）；英文：Greater Rift 取暗黑 3 原文
-dmRiftPtsGot	最高第 %d 层：获得 %d 技能点、%d 属性点	Level %d: +%d Skill Points, +%d Stat Points	Nivel %d: +%d puntos de habilidad, +%d de estadísticas	Nivel %d: +%d puntos de habilidad, +%d puntos de atributo	Уровень %d: +%d очка навыков, +%d очка характеристик	%d층: 스킬 +%d, 스탯 +%d	秘境系统提示（dm_rift.c 通关点数）；英文：Skill Points / Stat Points 写全，取暗黑 2 原版人物面板的说法（Stat Points Remaining / Skill Choices Remaining；不缩成 Skill / Stat）；中文这句本身就占两行，英文同样两行
-dmSkillCapLocked	打通任意一层秘境后解锁技能等级上限	Clear any Rift level to unlock the skill level cap	Supera cualquier nivel de grieta para desbloquear el tope de nivel de habilidad		Пройдите любой уровень рифта, чтобы снять лимит навыков	균열 아무 층 클리어 시 스킬 상한 해금	技能树里对已到 20 级的技能再加点、而这个角色还没打通过秘境时的系统提示（dm_actions.c）；英文：Rift / level 同秘境其它提示
-dmRiftPtsHeld	未分配的点数太多，剩余奖励在用掉后补发	Spend your points to get the rest	Gasta puntos y recibirás el resto		Потратьте очки — дадим остальное	포인트를 소모해야 나머지 보상을 받습니다	秘境系统提示（dm_rift.c 通关点数）：未用点数顶到上限，剩下的等用掉后补发；英文按原意写
-dmRiftTierN	第 %d 层	Level %d	Nivel %d		Уровень %d	%d층	秘境层号（面板大字、积分牌、顶部条共用）；英文：层数叫 level：暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）「Greater Rift level」；暗黑 3 方尖碑选层下拉原文「Level 12」「Level 25 (Torment 6)」（游戏内截图 diablo.fandom.com/wiki/File:HP2AA65JO17Q1434998338415.jpg）；暗黑 3 结算屏与排行榜写 Tier（「TIER 31 COMPLETED」、列名 Tier），选层写 Level；同一局里用两个词更乱，全用 Level，未分场合
-dmRiftCapResel	换一层再打	Choose another level	Elige otro nivel		Другой уровень	다른 층 선택	大秘境面板（dm_rift_ui.c）已完成页上组说明；英文：拟
-dmRiftCapGuard	回到守护者处	Return to Guardian	Volver al Guardián		Вернуться к стражу	가디언으로 돌아가기	大秘境面板（dm_rift_ui.c）已完成页下组说明；英文：拟
-dmRiftCapVoid	本层作废	Run will be lost	Perderás el intento		Забег пропадёт	이번 런 무효	大秘境面板（dm_rift_ui.c）；英文：拟
-dmRiftCapVoidPad	按住 X，本层放弃	Hold X to quit level	Mantén X para salir		Удержите X — выйти	X 길게: 층 포기	大秘境面板进行中页「放弃」钮上方的说明，手柄模式用（dm_rift_ui.c）；英文：拟（按钮叫 Quit）
-dmRiftTitleDone	本层已完成	Rift Complete	Grieta superada		Рифт пройден	균열 완료	大秘境面板（dm_rift_ui.c）；英文：见 dmRiftSayDoneBoth；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
-dmRiftTitleLate	超时未过关	Time's Up	Tiempo agotado		Время вышло	시간 종료	大秘境面板（dm_rift_ui.c）超时打倒守护者时的标题；英文：拟
-dmRiftTitleNext	进入下一层？	Next Level?	¿Próximo nivel?		Следующий?	다음 층?	大秘境面板（dm_rift_ui.c）守护者处那扇门的确认页标题（公开仓库）；英文：拟
-dmRiftTitleRetry	重打这一层？	Retry Level?	¿Repetir nivel?		Повторить?	이 층 재도전?	同上，没有更高的层可去时（超时未过关 / 已在最高层）；英文：拟
-dmRiftLeaveWarn1	会离开这一场	Leave this Rift	Dejar la grieta		Вы уйдёте из рифта	나가면 이번 진행이 사라집니다	确认页说明第一行；英文：拟（这一栏中号字约 16 个字符宽，同 dmRiftGuardDown）
-dmRiftLeaveWarn2	地上的东西不保留	Drops are lost	Pierdes el botín		Дроп пропадёт	정말 나가시겠습니까?	确认页说明第二行；英文：拟（同上宽度；drops 指掉落物）
-dmRiftCapStay	关闭本页：留在这里	Close to stay here	Cierra para quedarte		Закрыть — остаться	남기	确认页上组说明（取消的办法：关面板）；英文：拟
-dmRiftCapGo	进入第 %d 层	Enter Level %d	Entrar al nivel %d		Войти в %d ур.	%d층 입장	确认页下组说明（下面的「继续」钮 = 确认）；英文：拟
-dmRiftTitleRun	秘境进行中	Rift in Progress	Grieta en curso		Рифт идёт	균열 진행 중	大秘境面板（dm_rift_ui.c）
-dmRiftGuardDown	已击败守护者	Guardian slain	Guardián muerto		Страж повержен	가디언 처치	大秘境面板（dm_rift_ui.c）；英文：slain = 暗黑 2 原版 ui[sysmsg9]「was slain.」；Rift Guardian 见上（此处栏宽放不下全称）
-dmRiftNextOpen	下一层之门已开启	Next portal open	Portal siguiente		Следующий портал	다음 층 포탈 열림	大秘境面板（dm_rift_ui.c）；英文：拟
-dmRiftRetryOpen	重打本层之门已开启	Portal reopened	Portal reabierto		Портал открыт	재도전 포탈 열림	大秘境面板（dm_rift_ui.c）超时：守护者处那扇门重打本层；英文：拟
-dmRiftSaved	进度已记录	Progress saved	Avance guardado		Прогресс записан	진행 저장됨	大秘境面板（dm_rift_ui.c）
-dmRiftNotCounted	不计入通关	Not cleared	No superado		Не зачтено	이번 런은 집계되지 않음	大秘境面板（dm_rift_ui.c）超时；英文：拟
-dmRiftTimeLeft	剩余时间	Time Left	Tiempo restante		Осталось	남은 시간	大秘境面板（dm_rift_ui.c）
-dmRiftProgress	进度	Progress	Progreso		Прогресс	진행	大秘境面板（dm_rift_ui.c）
-dmRiftLvlBase	原版	Unchanged	Sin cambios		Без изменений	층	大秘境面板「怪物等级」：9 层以下不改等级；英文：拟（9 层以下不改怪物等级）
-dmRiftGamUni	暗金	Unique	Único		Уник.	유니크	大秘境面板（dm_rift_ui.c）
-dmRiftGamSet	套装	Set	Conjunto		Сет	세트	大秘境面板（dm_rift_ui.c）
-dmRiftGamUniAfter	通关后暗金	Unique after	Único tras		Уник. после	이후 유니크	大秘境面板（dm_rift_ui.c）；英文：拟：通关所选层之后的暗金几率；栏宽只够 12 个字符；英文界面不用这两条（换成小标题 dmRiftGamAfterEn + 并排两个数），只为表的完整留着
-dmRiftGamSetAfter	通关后套装	Set after	Conj. tras		Сет после	이후 세트	大秘境面板（dm_rift_ui.c）；英文：同上；英文界面不用这两条（换成小标题 dmRiftGamAfterEn + 并排两个数），只为表的完整留着
-dmRiftMsGot	已领取	Claimed	Cobrado		Забрано	획득	大秘境面板（dm_rift_ui.c）
-dmRiftMsNext	下一目标	Next	Próximo		Дальше	다음	大秘境面板（dm_rift_ui.c）
-dmRiftMsNo	未达成	Locked	Cerrado		Закрыто	없음	大秘境面板（dm_rift_ui.c）
 dmCloudConflict	iCloud：两台设备的共享仓库各有内容，已用云端那份，本机那份已完整保存待并回	iCloud: both devices had shared stash contents. Using the cloud copy; this device's copy is kept to be merged back	iCloud: ambos dispositivos tenían contenido en el alijo compartido. Se usa la copia de la nube; la de este dispositivo se guarda para fusionarla después	iCloud: ambos dispositivos tenían contenido en el Arcón compartido. Se usa la copia de la nube; la de este dispositivo se guarda para fusionarla después	iCloud: на обоих устройствах в общем тайнике есть вещи. Взята копия из облака; копия этого устройства сохранена целиком для слияния	클라우드 충돌	iCloud 共享仓库分叉提示（diag.c；本机那份在待合并收件箱）
 dmCloudCharConflict	iCloud：角色 %s 两台设备各有一份，已用云端那份，本机那份已备份	iCloud: both devices had character %s. Using the cloud copy; this device's copy is backed up	iCloud: ambos dispositivos tenían el personaje %s. Se usa la copia de la nube; la de este dispositivo queda en una copia de seguridad	iCloud: ambos dispositivos tenían el personaje %s. Se usa la copia de la nube; la de este dispositivo queda respaldada	iCloud: персонаж %s есть на обоих устройствах. Взята копия из облака; копия этого устройства сохранена	iCloud: 캐릭터 %s가 기기마다 달라, 클라우드 쪽을 쓰고 기기 쪽은 백업했습니다	iCloud 首次同步同名角色提示（diag.c，%s = 角色名）
 dmCloudMergeBack	iCloud：另一台设备共享仓库里多出的物品已放进背包，金币已加回共享仓库	iCloud: items from the other device's shared stash are now in your inventory; its gold is back in the shared stash	iCloud: los objetos del alijo compartido del otro dispositivo ya están en tu inventario; su oro ha vuelto al alijo compartido	iCloud: los objetos del Arcón compartido del otro dispositivo ya están en tu inventario; su oro volvió al Arcón compartido	iCloud: вещи из общего тайника другого устройства уже в инвентаре, золото вернулось в общий тайник	iCloud: 다른 기기의 공유 창고 아이템은 가방에, 그 금화는 공유 창고로 되돌렸습니다	iCloud 收件箱局内并回：开箱时放进背包的提示（dm_cloudmerge.c）
 dmCloudMergeFull	iCloud：背包放不下了，腾出空位后再打开储藏箱继续取回	iCloud: inventory is full. Make room and open the stash again to get the rest	iCloud: el inventario está lleno. Haz sitio y vuelve a abrir el alijo para recibir el resto	iCloud: el inventario está lleno. Haz espacio y vuelve a abrir el Arcón para recibir el resto	iCloud: инвентарь полон. Освободите место и откройте тайник снова, чтобы забрать остальное	iCloud: 가방이 가득 참. 자리를 비운 뒤 창고를 다시 열어 나머지를 받으세요	iCloud 收件箱局内并回：背包满了的提示（dm_cloudmerge.c）
-dmRiftHudTitle	秘境	Rift	Gr.		Рифт	균열	秘境顶部进度条（dm_rift_hud.m，UIKit）
-dmRiftHudDone	第 %d 层完成	Level %d complete	Nivel %d superado		Ур. %d пройден	%d층 완료	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：见 dmRiftSayDoneBoth
-dmRiftHudLate	第 %d 层超时	Level %d overtime	Nivel %d prórroga		Ур. %d: просрочен	%d층 시간 초과	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
-dmRiftHudGuard	守护者现身	Rift Guardian	Guardián		Страж рифта	가디언 등장	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：见 dmRiftSayGuardian
-dmRiftHudNext	下次第 %d 层	Next: Level %d	Siguiente: nivel %d		Дальше: %d ур.	다음: %d층	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
-dmRiftHudTop	已通关最高层	Highest level cleared	Nivel máximo superado		Топ пройден	최고층 클리어	秘境顶部进度条（dm_rift_hud.m，UIKit）：第 100 层限时内通关，没有下一层了（公开仓库）；英文：拟
-dmRiftHudOver	已超时：打完仍有掉落，不计通关	Overtime: drops, no clear	Prórroga: botín, no cuenta		Время вышло: дроп есть, зачёта нет	시간 초과: 드롭은 있으나 클리어 미집계	秘境顶部进度条（dm_rift_hud.m，UIKit）第二行：限时已到、守护者还没倒（公开仓库）；英文：拟
-dmRiftHudKillWave	守护者 第 %d/%d 波（%d/%d）	Guardians %d/%d (%d/%d)	Guardianes %d/%d (%d/%d)		Стражи %d/%d (%d/%d)	가디언 %d/%d (%d/%d)	秘境顶部进度条第二行：守护者分波时（95 层起）写第几波 / 共几波与这一波已倒 / 总数；英文：拟，栏宽所限不写 wave
-dmRiftHudKillN	击败守护者（%d/%d）	Slay the Guardians (%d/%d)	Mata a los Guardianes (%d/%d)		Убейте стражей (%d/%d)	가디언 처치 (%d/%d)	秘境顶部进度条第二行：守护者两位以上时带已倒 / 总数；英文：同 dmRiftHudKill 的用词
-dmRiftHudOverKill	已超时：击败守护者仍有掉落	Overtime: slay it for drops	Prórroga: mátalo por el botín		Время вышло: убейте ради дропа	시간 초과: 처치 시 드롭	秘境顶部进度条第二行：已超时且守护者在场（一位）；英文：拟
-dmRiftHudOverKillN	已超时：击败守护者（%d/%d）仍有掉落	Overtime: slay %d/%d for drops	Prórroga: mata %d/%d por el botín		Время вышло: убейте %d/%d ради дропа	시간 초과: 가디언 처치 (%d/%d) 시 드롭	同上，守护者两位以上；英文：拟
-dmRiftHudSame	下次仍是这一层	Next: same level	Siguiente: mismo nivel		Дальше та же	다음: 같은 층	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
-dmRiftHudKill	击败守护者	Slay the Rift Guardian	Mata al Guardián		Убейте стража рифта	균열 가디언 처치	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到
-dmRiftHudGoal	消灭秘境中的怪物   %d%%	Slay the monsters   %d%%	Mata monstruos   %d%%		Убивайте монстров   %d%%	몬스터 처치   %d%%	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到
-dmRiftMsItem10	破免大板	Sunder Charm	Dije hendedor	Talismán Surco	Чарм пробития	선더 참	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文自拟：原版没有统称（六件各有名字，词条里有 Sundered），用玩家通行叫法
-dmRiftMsSub10	随机一种	One at random	Uno al azar		Случайная	무작위 하나	大秘境面板首通奖励列表（touch_layout.py RF_MS）
-dmRiftMsTier10	10 层	10	10		10	10	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftMsItem20	毁灭	Annihilus	Annihilus		Аннигилюс	어나이얼러스	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文 = 原版串表键 Annihilus 的 enUS
-dmRiftMsTier20	20 层	20	20		20	20	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftMsItem30	地狱火炬	Hellfire Torch	Antorcha		Адский факел	헬파이어 토치	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文 = 原版键 Hellfire Torch 的 enUS
-dmRiftMsTier30	30 层	30	30		30	30	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftMsItem40	无形精英底材	Ethereal Elite	Élite etéreo		Эфирный элит	에테리얼 엘리트	大秘境面板首通奖励列表（touch_layout.py RF_MS）
-dmRiftMsSub40	带孔	Socketed item	Objeto con huecos	Objeto engarzado	С гнёздами	소켓 아이템	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文 = 原版 ui[LootFilterEtherealSocketed]「Ethereal / Socketed」里的词
-dmRiftMsTier40	40 层	40	40		40	40	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftMsItem50	先祖暗金珠宝	Colossal Jewel	Joya colosal		Огромный камень	콜로설 주얼	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文统称是英文社区的通行叫法（Colossal Jewel），原版只有 6 个单件名：item-names.json 的 Defender's Fire / Defender's Bile / Protector's Frost / Protector's Stone / Guardian's Thunder / Guardian's Light（中文 防御者之火 / 防御者之怒 / 保卫者之霜 / 保卫者之石 / 守护者之雷 / 守护者之光）
-dmRiftMsSub50	随机一种	One at random	Una al azar		Случайный	무작위 하나	大秘境面板首通奖励列表（touch_layout.py RF_MS）
-dmRiftMsTier50	50 层	50	50		50	50	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftMsItem60	死亡深度	Death's Fathom	Prof. de muerte	Braza de muerte	Видение смерти	데스의 심연	大秘境面板首通奖励列表（touch_layout.py RF_MS）；中文是旧译名（原版现行「死亡深渊」）；英文 = 原版键 Fathom 的 enUS
-dmRiftMsTier60	60 层	60	60		60	60	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftMsItem70	格利风之眼	Griffon's Eye	Ojo del grifo	Ojo de grifo	Глаз грифона	그리폰의 눈	大秘境面板首通奖励列表（touch_layout.py RF_MS）；中文是旧译名（原版现行「狮鹫之眼」）；英文 = 原版同名键的 enUS
-dmRiftMsTier70	70 层	70	70		70	70	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftMsItem80	泰瑞尔的威能	Tyrael's Might	Poderío Tyrael		Мощь Тираэля	티리엘의 위력	大秘境面板首通奖励列表（touch_layout.py RF_MS）；中文是旧译名（原版现行「泰瑞尔的力量」）；英文 = 原版同名键的 enUS
-dmRiftMsTier80	80 层	80	80		80	80	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftMsItem90	破免大板	Sunder Charm	Dije hendedor	Talismán Surco	Чарм пробития	선더 참	大秘境面板首通奖励列表（touch_layout.py RF_MS）；同 dmRiftMsItem10
-dmRiftMsSub90	补齐没有的那种	One you are missing	Uno que te falte		Которой нет	없는 종류 하나	大秘境面板首通奖励列表（touch_layout.py RF_MS）
-dmRiftMsTier90	90 层	90	90		90	90	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftMsItem100	六颗高级符文	6 High Runes	6 runas altas		6 высших рун	고급 룬 6개	大秘境面板首通奖励列表（touch_layout.py RF_MS）
-dmRiftMsSub100	28–33 号符文各一颗	Lo to Zod, one each	Una de cada: Lo-Zod		Lo–Zod, по одной	Lo–Zod 각 1	大秘境面板首通奖励列表（touch_layout.py RF_MS）；符文名 = 原版 item-runes[r28]–[r33]：Lo / Sur / Ber / Jah / Cham / Zod Rune
-dmRiftMsTier100	100 层	100	100		100	100	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
-dmRiftSelT	选择层数	Select Level	Elegir nivel		Выбор уровня	층 선택	大秘境面板（touch_layout.py _rift_panel）；英文：仿暗黑 2 原版 ui[strselectdiff]「Select Difficulty」；level 见 dmRiftTierN
-dmRiftInfT	本层	This Level	Este nivel		Этот ур.	정보	大秘境面板（touch_layout.py _rift_panel）；英文：拟
-dmRiftRange	可选层数	Unlocked	Desbloqueado		Доступно	범위	大秘境面板（touch_layout.py _rift_panel）；英文：拟
-dmRiftBest	最高通关	Highest	Máximo		Рекорд	최고	大秘境面板（touch_layout.py _rift_panel）；英文：拟
-dmRiftStr	怪物强度	Monster Power	Pod. monstruo		Сила монстров	강도	大秘境面板（touch_layout.py _rift_panel）；英文：Monster Power 是暗黑 3 1.0.5 的正式系统名（官方博客 us.diablo3.com/en/blog/7540457：「Monster Power, a new system designed to give players more control over how challenging enemies are」，并自比暗黑 2 的 Players X）
-dmRiftLvl	怪物等级	Monster Level	Niv. monstruo		Ур. монстров	층	大秘境面板（touch_layout.py _rift_panel）；暗黑 2 的说法（原版 ui[charmonster]「level %d monster」；怪物一律 Monster，不用 Enemy）
-dmRiftTime	限时	Time Limit	Tiempo límite		Лимит времени	시간	大秘境面板（touch_layout.py _rift_panel）；英文：time limit 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）
-dmRiftGamT	安亚赌博	Gamble at Anya	Suerte con Anya	Apostar con Anya	Сыграть у Аньи	보상	大秘境面板（touch_layout.py _rift_panel）；英文用原版词 ui[gamble]「gamble」
-dmRiftBtnStart	开始	Enter Rift	Abrir grieta		Войти	시작	大秘境面板（touch_layout.py _rift_panel）；英文：拟；方尖碑面板按钮原文没查到；暗黑 3 方尖碑面板的进入按钮原文为 ACCEPT；我们的面板没有它那句前置说明，单一个 Accept 不知接受什么，未采用，留 Enter Rift（看过认可）
-dmRiftBtnAbandon	放弃	Quit	Salir		Выйти	포기	大秘境面板（touch_layout.py _rift_panel）；英文用 Quit（「放弃用 quit 不是 abandon」）
-dmRiftBtnResel	重新选层	Select Level	Elegir nivel		Выбрать	다시 선택	大秘境面板（touch_layout.py _rift_panel）已完成页上组按钮；英文与选层页标题同词
-dmRiftCapContOver	有掉落，不计通关	Loot only, no clear	Botín sí, no cuenta		Дроп без зачёта	계속 (초과)	大秘境面板进行中页「继续」钮上方的说明，已超时时用（公开仓库）；英文：拟
-dmRiftCapCont	回到离开时的位置	Resume your run	Reanuda tu intento	Continúa tu intento	Вернуться в забег	계속	大秘境面板（touch_layout.py _rift_panel）；英文：拟
-dmRiftBtnCont	继续	Continue	Continuar		Продолжить	계속	大秘境面板（touch_layout.py _rift_panel）
-dmRiftMsT	首通奖励	First Clear	Primera vez		Первый раз	마일스톤	大秘境面板（touch_layout.py _rift_panel）
-dmRiftMsN	每档另得 符文 · 赦免之证 · 打孔	+Rune, Token, Socket	+Runa, Muestra, Hueco	+Runa, Insignia, Engarce	+руна, талисман, гнездо	다음	大秘境面板（touch_layout.py _rift_panel）
-dmRiftPanelTitle	大秘境	Greater Rift	Grieta superior	Grieta mayor	Великий рифт	그레이터 리프트	大秘境面板（touch_layout.py _rift_panel）
 dmPadLegView	查看 / 取出	View / Withdraw	Ver / Retirar		Смотреть / взять	보기	编年史仓库页手柄提示条（dm_vault_ui.c）；Withdraw = 原版 ui[AdvancedStashWithdraw]
 dmPadLegPrev	上一页	Previous Page	Página anterior		Предыдущая	이전	同上；英文 = 原版 ui[NPCPreviousPage]
 dmPadLegNext	下一页	Next Page	Página siguiente		Следующая	다음	同上；英文 = 原版 ui[NPCNextPage]
 dmPadHintDeposit	存入	Deposit	Depositar		Внести	보관	编年史页「按住 Y」那半句（dm_padmode.c）；英文 = 原版 ui[strGoldDeposit]
 dmPadLegIdentify	捡起（按住鉴定）	Pick Up (Hold to Identify)	Recoger (mantén: identificar)	Recolectar (mantén: identificar)	Взять (держать — опознать)	감정	手柄模式光标在未鉴定物品上时，原版提示条 A 那条的「捡起」换成这句（dm_padmode.c 换串小表）；写法照原版「捡起(按住使用)」；英文：拟
 dmPadDiffLine	游戏难度：%d	Game Difficulty: %d	Dificultad de la partida: %d	Dificultad de partida: %d	Сложность игры: %d	게임 난이도: %d	手柄版暂停菜单的难度行（dm_padmode.c）；英文 = 原版 ui[OptionsMenuGameDifficulty]「Game Difficulty」
-dmRiftGamAfterEn	通关本层后	After This Level	Tras este nivel		После уровня	이 층 이후	大秘境面板赌博区英文版的小标题行（中文界面不用：中文是「通关后暗金 / 通关后套装」两行）
-dmRiftMsNEn	每档另得 符文 · 赦免之证 · 打孔	+ Rune, Token of Absolution, Sockets	+ Runa, Muestra de absolución, Huecos	+Runa, Insignia de absolución, Engarce	+ руна, Талисман очищения, гнездо	단계마다 룬 · 사면 증표 · 소켓 추가	大秘境面板右上那句的英文版控件（物品名 = 暗黑 2 原版 item-modifiers[toa]「Token of Absolution」、ui[Addsocketsui]「Add sockets」）
 dmAppQuit	退出 D2R Metal	Quit D2R Metal	Salir de D2R Metal		Выйти из D2R Metal	종료	Mac App 菜单栏（host/front_mac.m）
 dmAppOK	好	OK	Aceptar		ОК	확인	Mac App 提示框的按钮（host/app_mac.m，下同）
 dmAppPickUse	用这个文件夹	Use This Folder	Usar esta carpeta		Выбрать эту папку	이 폴더 사용	选资源文件夹对话框的确认按钮
@@ -394,8 +279,6 @@ dmVideoDropsLower	降低清晰度	Lower 3D Res	Bajar res. 3D		Снижать 3D	
 dmVideoDropsKeep	保持清晰度	Keep 3D Res	Mantener res.		Держать 3D	해상도 유지	「掉帧时」第二项（q3d=1）：始终用设定的 3D 清晰度
 dmVideoFpsTip	30 帧是省电模式：更省电、机器更凉；60 帧更流畅。	30 fps is the power saver: it uses less power and runs cooler; 60 fps is smoother.	30 fps es el modo ahorro: gasta menos energía y calienta menos; 60 fps es más fluido.		30 fps — режим экономии: меньше расход и нагрев; 60 fps — плавнее.	30 fps는 절전 모드로 전력을 덜 쓰고 덜 뜨거워집니다. 60 fps가 더 부드럽습니다.	「帧率」行的悬停说明（Mac）
 dmVideoDropsTip	降低：掉帧时自动降低 3D 清晰度，让画面保持流畅；保持：始终用设定的 3D 清晰度。	Lower: when frames drop, the 3D resolution goes down to keep the game smooth; Keep: it stays as set.	Bajar: si caen los fps, la resolución 3D baja para que el juego siga fluido; Mantener: se queda como está.		«Снижать»: при падении FPS 3D-разрешение снижается ради плавности; «Держать»: остаётся заданным.	낮춤: 프레임이 떨어지면 3D 해상도를 낮춰 부드럽게 유지합니다. 유지: 정한 해상도를 그대로 둡니다.	「掉帧时」行的悬停说明（Mac）
-dmDoorRift	大秘境	Greater Rift	Grieta superior	Grieta mayor	Великий рифт	그레이터 리프트	城里大秘境传送门头顶的名牌（dm_rift.c dm_door_label）
-dmDoorRiftTown	回城	Return to Town	Volver a la ciudad		Портал в город	마을로	秘境图里回城门头顶的名牌（dm_rift.c dm_door_label）
 dmDoorBossRush	Boss 连战	Boss Rush	Ronda de jefes		Босс-раш	보스 러시	城里 Boss 连战门头顶的名牌（dm_bossrush.c dm_door_label）
 dmAndroidName	D2R Mobile	D2R Mobile	D2R Mobile		D2R Mobile	D2R Mobile	安卓启动器应用名称 | Android launcher name
 dmAndroidPermission	需要「所有文件访问」权限，才能读取 Download/S2X/D2R Mobile/data 里的游戏资源。\n点屏幕打开设置，允许后返回。	Allow all files access to read your game resources in Download/S2X/D2R Mobile/data.\nTap to open Settings, allow access, then return.	Permite el acceso a todos los archivos para leer los recursos del juego en Download/S2X/D2R Mobile/data.\nToca para abrir Ajustes, permite el acceso y vuelve.		Разрешите доступ ко всем файлам, чтобы читать ресурсы игры в Download/S2X/D2R Mobile/data.\nНажмите, чтобы открыть настройки, разрешите доступ и вернитесь.	Download/S2X/D2R Mobile/data에 있는 게임 리소스를 읽으려면 모든 파일 접근 권한을 허용하세요.\n탭하여 설정을 열고 접근을 허용한 뒤 돌아오세요.	安卓权限提示 | Android file access prompt

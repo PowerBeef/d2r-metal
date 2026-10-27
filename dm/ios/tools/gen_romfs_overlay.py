@@ -52,7 +52,6 @@ with tempfile.TemporaryDirectory() as t:
     REPL.update(touch_layout.build_pcfront(romfs,t))   # 选角页改用键鼠版界面（盖掉上面 build 对这几份的改动） | Character select page switched to the keyboard-and-mouse UI (overrides the changes the build above made to these files)
     tp,ntp=touch_layout.build_present(romfs,t); REPL.update(tp)   # 局内：页签条两端 L / R、人物页耐力行 | In-game: L / R at the two ends of the tab strip, stamina row on the character page
     ti,nti=touch_layout.build_ingame(romfs,t); REPL.update(ti)   # 局内：各面板右上角的关闭按钮（同一落点、各发各的消息）与手柄版删掉的功能按钮（修理 / 翻页 / 高级属性 / 选项页应用·默认·放弃）；要在 build_present 之后（同一文件以这份为准） | In-game: the close button at each panel's top-right corner (same position, each sending its own message) and the function buttons removed in the controller version (repair / page turn / advanced stats / options page apply·default·discard); must come after build_present (for the same file this copy wins)
-    import merc_slots; REPL.update(merc_slots.build(romfs,t,REPL))   # 佣兵面板加六个装备位（底图 + 布局；要在 build_ingame 给它插关闭钮之后） | Add six equipment slots to the mercenary panel (base image + layout; must come after build_ingame has inserted the close button into it)
     REPL.update(touch_layout.build_cursor(romfs,t))   # 面板里的手柄光标圆环换成透明 | The controller cursor ring in panels replaced with a transparent one
     REPL.update(touch_layout.build_glyphs(romfs,t))   # 22 张手柄键图标换成透明 | 22 controller button icons replaced with transparent ones
     import romfs_art
@@ -95,14 +94,10 @@ with tempfile.TemporaryDirectory() as t:
     lp,lt=touch_layout.read_layout(romfs,pouch_layout.INV); o=os.path.join(tpad,'pad_inv.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_inv_rw(lt)); PR[lp.lower()]=o
     for rel,gd in (('controller/pauselayoutgardenhd.json',1),('controller/pauselayouthd.json',0)):   # 手柄版暂停菜单：一键重开 / 切换难度 / 存放 / 分享诊断日志 | Controller pause menu: one-tap restart / change difficulty / Deposit / Share Diagnostics
         lp,lt=touch_layout.read_layout(romfs,rel); o=os.path.join(tpad,'pad_pause%d.json'%gd); open(o,'w',encoding='utf-8').write(touch_layout.pad_pause(lt,gd,share=not os.environ.get('DM_OVERLAY_MAC'))); PR[lp.lower()]=o
-    # 大秘境面板（借「消息记录」面板外壳，touch_layout._rift_panel）：手柄版同一份。少了它手柄模式点秘境门开出来的是空的原版消息记录面板、进不了秘境；手柄键在 dm_rift_ui.c
     # 手柄版的系统提示框：原版那份（停靠 y −500）下沿压着底栏上方那行「生命 / 法力」数值，数值位数多时字伸进框里。只把停靠位置上提 90 单位（下沿高过数值行），其余原样
-    # Greater Rift panel (borrowing the shell of the "message log" panel, touch_layout._rift_panel): the same for the gamepad layout. Without it, tapping a rift door in gamepad mode opens the empty original message log panel and the rift cannot be entered; gamepad keys are in dm_rift_ui.c
     # The gamepad layout's system notice box: in the original (docked at y -500) its lower edge sits on the "life / mana" numbers above the bottom bar, and with many digits the text runs into the box. Only the docking position is raised by 90 units (lower edge above the number row); everything else as in the original
     lp,lt=touch_layout.read_layout(romfs,'controller/notificationpanelhd.json'); assert lt.count('"y": -500')==1, lp   # 原版手柄版提示框的停靠位置应是 y -500（原包变了就停在这里） | the original gamepad notice box should dock at y -500 (if the original package changes, stop here)
     o=os.path.join(tpad,'pad_notification.json'); open(o,'w',encoding='utf-8').write(lt.replace('"y": -500','"y": -590')); PR[lp.lower()]=o
-    lp,lt=touch_layout.read_layout(romfs,'controller/messagelogpanelhd.json'); o=os.path.join(tpad,'pad_rift.json'); open(o,'w',encoding='utf-8').write(touch_layout._rift_panel(lt)[0]); PR[lp.lower()]=o
-    PR.update(merc_slots.build_pad(romfs,tpad))   # 手柄版佣兵面板：同样加六个装备位 | Controller layout mercenary panel: likewise add six equipment slots
     # 手柄版职业选择页：八个职业的点击矩形同样改成按实际站位分的竖条（touch_layout.CLASS_STRIPS，原因见那里）。手柄用左右键选、原版没暴露；
     # Mac App 是手柄版布局 + 鼠标，点德鲁伊出术士、右半边四个职业都错一格
     # Gamepad-layout class selection page: the click rectangles of the eight classes are likewise changed to vertical strips split by where the characters actually stand (touch_layout.CLASS_STRIPS, see there for the reason). A gamepad selects with left / right and the original never exposed this;

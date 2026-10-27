@@ -53,9 +53,6 @@ void dm_inv_sort(int page) { (void)page; }
 int dm_diag_difficulty(void) { return -1; }
 uint64_t dm_fs_commit_count(void) { return 0; }
 void dm_held_equip(int bodyloc) { (void)bodyloc; }
-int dm_rift_merc_unlocked(void) { return 1; }
-int dm_rift_merc_slot_empty(int loc) { (void)loc; return 0; }
-void dm_rift_merc_locked_hint(void) {}
 void dm_name_random(void) {}
 void dm_item_use(unsigned id) { (void)id; }
 void dm_test_equip(int what) { (void)what; }

@@ -65,7 +65,7 @@ DM_DBG_COVER	host	host/dm_cursor.c	-
 DM_DBG_FE_SEND	host	host/dm_cursor.c	-
 DM_DERIVED	android,harmony,host	android/app/src/main/java/com/xiaoboluo/d2r/DmActivity.java harmony/native/napi_ohos.c host/dm_derived_rt.h	-
 DM_DESWIZZLE_LIB	ios-tools	ios/tools/gen_widestash_art.py ios/tools/romfs_art.py	y
-DM_DETCLOCK	gfx,host,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/tests/t_rift_clock.c host/touch_mac.c …	y
+DM_DETCLOCK	gfx,host,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c verify/golden.py	y
 DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	-
 DM_DEVBATTERY	ios-tools	ios/run.sh ios/tools/devlock.sh	-
 DM_DEVBATTERY_APP_MAX_AGE_S	ios-tools	ios/tools/devbattery.sh	-
@@ -295,66 +295,6 @@ DM_REQUIRE_SAVES	ios-tools	ios/run.sh	-
 DM_RES_CENSUS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RES_CHECK	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RE_PORT	tools	tools/re/q.py tools/re/re.sh	y
-DM_RIFT_GROW_DM100	host	host/dm_rift.c	-
-DM_RIFT_GROW_DM_FROM	host	host/dm_rift.c	-
-DM_RIFT_GROW_FROM	host	host/dm_rift.c	-
-DM_RIFT_GROW_HP100	host	host/dm_rift.c	-
-DM_RIFT_HI	host	host/dm_rift.c	-
-DM_RIFT_LVL_CAP	host	host/dm_rift.c	-
-DM_RIFT_MAPS	host	host/dm_rift.c	-
-DM_RIFT_MENU_AUTO	host	host/dm_rift_ui.c	-
-DM_RIFT_NEED	host	host/dm_rift.c	-
-DM_RIFT_PET_FROM	host	host/dm_rift.c	-
-DM_RIFT_PET_HP100	host	host/dm_rift.c	-
-DM_RIFT_PTS_EVERY	host	host/dm_rift.c	-
-DM_RIFT_PTS_SKILL	host	host/dm_rift.c	-
-DM_RIFT_PTS_STAT	host	host/dm_rift.c	-
-DM_RIFT_TEST	host	host/dm_rift.c	-
-DM_RIFT_TEST_ABANDON	host	host/dm_rift.c	-
-DM_RIFT_TEST_BEST	host	host/dm_rift.c	-
-DM_RIFT_TEST_CLEAR	host	host/dm_rift.c	-
-DM_RIFT_TEST_DMGLOG	host	host/dm_rift.c	-
-DM_RIFT_TEST_DUMMY	host	host/dm_rift.c	-
-DM_RIFT_TEST_EXHAUST	host	host/dm_rift.c	-
-DM_RIFT_TEST_EXHAUST_DONE	host	host/dm_rift.c	-
-DM_RIFT_TEST_GIVE	host	host/dm_rift.c	-
-DM_RIFT_TEST_GONE	host	host/dm_rift.c	-
-DM_RIFT_TEST_GONEKILL	host	host/dm_rift.c	-
-DM_RIFT_TEST_GUARDS	host	host/dm_rift.c	-
-DM_RIFT_TEST_HI	host	host/dm_rift.c	-
-DM_RIFT_TEST_HSLOG	host	host/dm_rift.c	-
-DM_RIFT_TEST_ILVL	host	host/dm_rift.c	-
-DM_RIFT_TEST_INVADE	host	host/dm_rift.c	-
-DM_RIFT_TEST_INVPCT	host	host/dm_rift.c	-
-DM_RIFT_TEST_INVREACH	host	host/dm_rift.c	-
-DM_RIFT_TEST_KB	host	host/dm_rift_ui.c	-
-DM_RIFT_TEST_LATE	host	host/dm_rift.c	-
-DM_RIFT_TEST_LOWHP	host	host/dm_rift.c	-
-DM_RIFT_TEST_NAT	host	host/dm_rift.c	-
-DM_RIFT_TEST_ND_FAR	host	host/dm_rift.c	-
-DM_RIFT_TEST_NEXTDOOR	host	host/dm_rift.c	-
-DM_RIFT_TEST_NOFAR	host	host/dm_rift.c	-
-DM_RIFT_TEST_NONEXTDOOR	host	host/dm_rift.c	-
-DM_RIFT_TEST_NOROOM	host	host/dm_rift.c	-
-DM_RIFT_TEST_OPEN	host	host/dm_rift.c	-
-DM_RIFT_TEST_PETDUMP	host	host/dm_rift.c	-
-DM_RIFT_TEST_PETGOD	host	host/dm_rift.c	-
-DM_RIFT_TEST_PETPCT	host	host/dm_rift.c	-
-DM_RIFT_TEST_PULL	host	host/dm_rift.c	-
-DM_RIFT_TEST_RESTART	host	host/dm_rift.c	-
-DM_RIFT_TEST_SAVE	host	host/dm_rift.c	-
-DM_RIFT_TEST_SCORE	host	host/dm_rift.c	-
-DM_RIFT_TEST_SCOREAT	host	host/dm_rift.c	-
-DM_RIFT_TEST_STALE	host	host/dm_rift.c	-
-DM_RIFT_TEST_STALE_KEEP	host	host/dm_rift.c	-
-DM_RIFT_TEST_START	host	host/dm_rift.c	-
-DM_RIFT_TEST_SUPUSH	host	host/dm_rift.c	-
-DM_RIFT_TEST_SUROWS	host	host/dm_rift.c	-
-DM_RIFT_TEST_SUSEQ	host	host/dm_rift.c	-
-DM_RIFT_TEST_TOUR	host	host/dm_rift.c	-
-DM_RIFT_TEST_TP_NOROOM	host	host/dm_rift.c	-
-DM_RIFT_TEST_UNLOCK	host	host/dm_rift.c	-
-DM_RIFT_TIER	host	host/dm_rift.c	-
 DM_ROMFS	android,harmony,host,ios,tools,tvos,verify	android/jni_android.c harmony/native/napi_ohos.c host/app_mac.m host/hle_fs.c …	y
 DM_ROMFS_OVERLAY	android,harmony,host,ios,tools,tvos,verify	android/jni_android.c android/touch_android.c harmony/native/napi_ohos.c host/app_mac.m …	y
 DM_ROMFS_SKIP_LOCAL	ios	ios/Sources/main.m	-
@@ -385,7 +325,6 @@ DM_SCREEN_SHOT	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSm
 DM_SCREEN_WANT	ios-tools	ios/tools/frame_cmp.sh ios/tools/pages.sh	-
 DM_SHADER_PREP_THREADS	ios	ios/Sources/dm_shader_prep.m	-
 DM_SKILL_AIM_LOG	host	host/hle_private_aim.c	-
-DM_SKILL_CAP	host	host/dm_actions.c	-
 DM_SKILL_RENDER_GATE_LOG	host	host/hle_tact.c	-
 DM_SLOWFRAME	gfx	gfx/nvn/hle_nvn.c	y
 DM_SOAK	host,ios	host/diag.c ios/Sources/front_ios.m	-
@@ -489,11 +428,8 @@ DM_TEST_LOOT_BOW	host	host/dm_lootfilter.c	-
 DM_TEST_MAP_FULL	host	host/diag.c	-
 DM_TEST_MAP_MARK_CHECK	host	host/dm_world.c	-
 DM_TEST_MEMWARN	ios	ios/Sources/main.m	-
-DM_TEST_MERC_DUMP	host	host/dm_rift.c	-
-DM_TEST_MERC_EQUIP	host	host/dm_rift.c	-
 DM_TEST_MERC_HP	host	host/diag.c	-
 DM_TEST_MERC_KILL	host	host/diag.c	-
-DM_TEST_MERC_SLOTS	host	host/dm_rift.c	-
 DM_TEST_MINI_AT	host	host/front_mac.m	y
 DM_TEST_MONRES_LOG	host	host/diag.c	-
 DM_TEST_MON_HP	host	host/diag.c	-

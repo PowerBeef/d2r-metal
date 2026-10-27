@@ -753,22 +753,6 @@ def groups():
     g.item("全屏地图点空处","回小地图（小地图还在，点得回来）",r"地图：玩家点了 → 记住小地图"); g.tap(P(300,150),1.5); g.shot()
     g.item("点区域名那一条","又切回全屏",r"地图：玩家点了 → 记住全屏地图"); g.tap("@mmname",1.5); g.shot()
     gs.append(g)
-    # ms 局：佣兵加装备位（秘境最高通关 ≥ 10 层解锁，DM_TEST_MERC_SLOTS=1 当作已解锁）。带活佣兵的老角色（第 4 行 88 级法师：旧数据版本，走 base/ 那份物品栏表）。
-    # 给腰带、手套进背包（这个角色背包只剩这点空位），测试开关替玩家发原版「从背包格给佣兵穿」的包；读佣兵身上的物品；保存退出、同一角色再进一局再读——两件还在各自的部位上。
-    # 老角色的暂停菜单是 PauseLayout（不是 PauseLayoutGarden）
-    # ms run: extra mercenary equipment slots (unlocked at highest rift level cleared ≥ 10; DM_TEST_MERC_SLOTS=1 treats them as unlocked). An old character with a living mercenary (row 4, the level 88 Sorceress: old data version, using the base/ copy of the inventory table).
-    # A belt and gloves are given into the inventory (this character's inventory only has this much room left), and the test switch sends the original game's "equip the mercenary from an inventory cell" packet on the player's behalf; the items on the mercenary are read; save and exit, enter another run with the same character and read again -- both items are still at their own body locations.
-    # The old character's pause menu is PauseLayout (not PauseLayoutGarden)
-    def worn(st,bd): 
-        m=re.findall(r"佣兵装备位：拍 \d+（定时）佣兵[^\n]*",st); 
-        if not m: return "不通：没有佣兵读数（没有佣兵？）"
-        miss=[k for k in ("lbl 部位 8","lgl 部位 10") if k not in m[-1]]
-        return "通：腰带 8 / 手套 10 都在佣兵身上" if not miss else "不通：缺 "+"、".join(miss)
-    g=G("ms","DM_TEST_GIVE=lbl:2:1,lgl:2:1@60 DM_TEST_GIVE_INV=1 DM_TEST_MERC_SLOTS=1 DM_TEST_MERC_EQUIP=200:lbl:8;220:lgl:10 DM_TEST_MERC_DUMP=180,300"); g.sect("mercslot",0); g.enter(4)
-    g.item("进局后等 12 秒","两件穿到佣兵的新部位上：日志两次「发完物品模式 1」，读数里两件各在其位；不带红",lambda st,bd: ("不通：有红" if re.search(r"【红】",st) else "不通：没穿上（发完物品模式不是 1）" if len(re.findall(r"替玩家发 0x5b：[^\n]*发完物品模式 1",st))!=2 else worn(st,bd))); g.wait(12.0); g.at("pos",.3); g.tap("@menu",1.4); g.tap(P(469,18),1.5); g.shot()
-    g.item("保存并退出","回选角页",r"FrontEndNavigation ToFrontEnd"); g.tap(P(551,17)); g.at("tap_ui Exit@PauseLayout 3",5.0); g.shot()
-    g.item("同一角色再进一局，等 14 秒","读档后两件还在佣兵的新部位上；不带红",lambda st,bd: ("不通：没进局" if "FrontEndNavigation ToGame" not in st else "不通：有红" if re.search(r"【红】",st) else worn(st,bd))); g.ui("ListItem3@CharacterSelectPanel",1.3); g.tap(P(333,336),1.6); g.tap(P(333,157),8.0); g.wait(14.0); g.at("pos",.3); g.shot()
-    gs.append(g)
     # m 局：商人页开着时把物品拖到商人面板任意位置都卖出。现场：软帽 2 顶（第一顶自动戴上）、鉴定卷轴、魔盒当场进背包，走到恰西开「交易或修复」。
     # 判据读身上金币（游戏属性 14）与截图里的背包占格，不认发包；金币差另核 = 游戏给的卖价。松手点 = 目标下方 40 点
     # m run: with the vendor page open, dragging an item anywhere onto the vendor panel sells it. Setup: 2 caps (the first is auto-equipped), an identify scroll and the cube go into the inventory on the spot, walk to Charsi and open 「交易或修复」(trade/repair).

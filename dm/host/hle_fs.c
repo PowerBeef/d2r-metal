@@ -599,7 +599,7 @@ HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv；存档 �
     { const char *e = getenv("DM_TOUCH_DEFAULTS"); if (g_dm_mount_seed_hook && (e ? strcmp(e, "0") != 0 : DM_PHONE)) g_dm_mount_seed_hook(dd); }
     return mount_ex(name, dd, 0, 1);
 }
-void (*g_dm_pre_commit_hook[5])(const char *workdir);   // 提交前调（工作目录）：宿主旁路文件按工作目录里的存档内容核对后再写（[0] 个人仓库多页 dm_pages.c、[2] 百宝囊 dm_pouch.c、[1] 编年史仓库 dm_vault.c、[3] 秘境进度 dm_rift.c、[4] iCloud 收件箱并回 dm_cloudmerge.c） | Called before commit (working directory): host side files are checked against the save content in the working directory before being written ([0] personal stash multi-page dm_pages.c, [2] pouch dm_pouch.c, [1] Chronicle stash dm_vault.c, [3] Rift progress dm_rift.c, [4] iCloud inbox merge dm_cloudmerge.c)
+void (*g_dm_pre_commit_hook[5])(const char *workdir);   // 提交前调（工作目录）：宿主旁路文件按工作目录里的存档内容核对后再写（[0] 个人仓库多页 dm_pages.c、[2] 百宝囊 dm_pouch.c、[1] 编年史仓库 dm_vault.c、[3] 空（原先大秘境用）、[4] iCloud 收件箱并回 dm_cloudmerge.c） | Called before commit (working directory): host side files are checked against the save content in the working directory before being written ([0] personal stash multi-page dm_pages.c, [2] pouch dm_pouch.c, [1] Chronicle stash dm_vault.c, [3] empty (the removed Greater Rift used it), [4] iCloud inbox merge dm_cloudmerge.c)
 void (*g_dm_save_commit_hook)(const char *commit_dir);   // 存档提交成功后调（已提交目录）；iOS 的 iCloud 同步设它，宿主为空 | called after a save commit succeeds (committed directory); the iOS iCloud sync sets it, NULL on the host
 // 提交结果钩子（与提交前钩子同下标）：每次 Commit 在同一次调用里、持着存档锁报一次这次提交成没成。
 //   ok = 1：工作目录已原子换入，提交前钩子这次写进工作目录的旁路文件已落盘，钩子把这次核对通过的那些定下来（记成已落盘）；
