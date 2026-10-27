@@ -1663,7 +1663,11 @@ static void dg_sliders(uint64_t w, uint64_t vt, int dep, uint64_t *out, int *n) 
 // read on the host (3.3.94012, Mac options page): scrolling the list 600 units moves Indicator.y 0 -> 442. The game only takes the wheel, so send wheel steps from "where the thumb should be - where it is", measuring the thumb units per step
 // as it goes; the next batch waits until the last one has landed (the thumb moved, or 3 frames passed), so it does not send more before the list has moved and overshoot. The wheel goes to the list just left of the track (the scroll area's hit function takes it there)
 static uint64_t dg_child_vt(uint64_t w, uint64_t vt) { uint64_t ch = *(uint64_t *)(w + 0x58), k = *(uint64_t *)(w + 0x60); if (!ch || k > 64) return 0; for (uint64_t i = 0; i < k; i++) { uint64_t c = *(uint64_t *)(ch + 8 * i); if (c && *(uint64_t *)c == vt) return c; } return 0; }
-static struct { uint64_t bar, ind; int top, bot, len, grab, x, last, wait, rel; double k; } g_th;
+// 跨帧拖着的滚动条 Bar / 滑块 Indicator 存成 dm_wref：拖动或松手后收尾那 30 帧里选项页被关掉（翻页、Esc、存盘退出），裸指针就指着释放了的控件，
+// 原先还照读它的 +0x50 / +0x74，接着在旧位置发滚轮与 MouseMove。取不到（不在界面树上了）就停
+// The scroll bar Bar / thumb Indicator held across frames are dm_wref: if the options page closes during the drag or the 30 converging frames after release (tab switch, Esc, save and quit), a raw pointer points at a freed widget,
+// and the old code still read its +0x50 / +0x74 and went on sending wheel steps and MouseMove at the old spot. When they cannot be fetched (no longer in the UI tree) it stops
+static struct { dm_wref bar, ind; int top, bot, len, grab, x, last, wait, rel; double k; } g_th;
 static void ui_drag_pump(module_t *m, uint64_t root, int W, int H) {
     static unsigned seen; static int kind, sent, s_ok, s_y, s_l, s_r, s_last, s_down; static uint64_t h_mv, h_dn, h_up, h_sc;
     if (!h_mv) { h_mv = ui_hash("MouseMove"); h_dn = ui_hash("LeftMouseButtonDown"); h_up = ui_hash("LeftMouseButtonUp"); h_sc = ui_hash("MouseScroll"); }
@@ -1699,15 +1703,16 @@ static void ui_drag_pump(module_t *m, uint64_t root, int W, int H) {
                     for (a = oy, b = H - 1; a < b;) { int mid = (a + b + 1) / 2; if (dg_hit(bar, x, mid)) a = mid; else b = mid - 1; } g_th.bot = a;
                     if (g_th.bot - g_th.top < 16) continue;
                     double sc1 = (double)(g_th.bot - g_th.top + 1) / len; int p = (int)((oy - g_th.top) / sc1);
-                    g_th.bar = bar; g_th.ind = ind; g_th.len = len; g_th.grab = p >= iy && p <= iy + ih ? p - iy : ih / 2; g_th.x = x - W / 12; g_th.last = iy; g_th.wait = 0; g_th.k = 0; g_th.rel = 30; kind = 4;
+                    dm_wref_set(&g_th.bar, bar); dm_wref_set(&g_th.ind, ind); g_th.len = len; g_th.grab = p >= iy && p <= iy + ih ? p - iy : ih / 2; g_th.x = x - W / 12; g_th.last = iy; g_th.wait = 0; g_th.k = 0; g_th.rel = 30; kind = 4;
                     LOG("界面拖动：起手 (%d,%d) 在滚动条上 → 拖滑块（滑槽 y %d–%d，%d 单位，滑块 y %d 高 %d，%s）", ox, oy, g_th.top, g_th.bot, len, iy, ih, p >= iy && p <= iy + ih ? "按在滑块上" : "按在滑槽上：滑块先跳到指针处"); } }
             if (kind == 1) { static int once; if (!once++) LOG("界面拖动：首例纵向拖 → 在起手位置 (%d,%d) 发滚轮，每 %d 像素一格", ox, oy, UI_SCROLL_STEP(H)); } }
     }
     if (!kind) return;
     if (kind == 3) { int dm_vault_ui_drag(int, int, int); if (live) dm_vault_ui_drag(1, cx, cy); else { dm_vault_ui_drag(2, cx, cy); kind = 0; } return; }
     if (kind == 4) {
-        if (!*(uint8_t *)(g_th.bar + 0x50) || (!live && --g_th.rel <= 0)) { kind = 0; return; }   // 滚动条不见了（翻页 / 关面板）就停；松手后再追 30 帧（点一下滑槽 = 滑块跳过去，要几批滚轮） | stops when the scroll bar is gone (tab switch / panel closed); after release it keeps converging for 30 frames (a click on the track = the thumb jumps there, which takes a few wheel batches)
-        int len = g_th.len, ih = *(int32_t *)(g_th.ind + 0x7c), cur = *(int32_t *)(g_th.ind + 0x74);
+        uint64_t bar = dm_wref_get(&g_th.bar), ind = bar ? dm_wref_get(&g_th.ind) : 0;
+        if (!bar || !ind || !*(uint8_t *)(bar + 0x50) || (!live && --g_th.rel <= 0)) { if (!bar || !ind) LOG("界面拖动：滚动条已不在界面树上（面板关了 / 界面重建），停止拖滑块"); kind = 0; return; }   // 滚动条不见了（翻页 / 关面板 / 控件已释放）就停；松手后再追 30 帧（点一下滑槽 = 滑块跳过去，要几批滚轮） | stops when the scroll bar is gone (tab switch / panel closed / widget freed); after release it keeps converging for 30 frames (a click on the track = the thumb jumps there, which takes a few wheel batches)
+        int len = g_th.len, ih = *(int32_t *)(ind + 0x7c), cur = *(int32_t *)(ind + 0x74);
         double sc1 = (double)(g_th.bot - g_th.top + 1) / len; int want = (int)((cy - g_th.top) / sc1) - g_th.grab;
         if (want < 0) want = 0; if (want > len - ih) want = len - ih;
         if (g_th.wait > 0) { if (cur == g_th.last && --g_th.wait > 0) return; if (cur != g_th.last && sent) { double k1 = fabs((double)(cur - g_th.last) / sent); g_th.k = g_th.k > 0 ? (g_th.k + k1) / 2 : k1; } g_th.wait = 0; }
