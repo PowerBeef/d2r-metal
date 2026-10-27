@@ -68,6 +68,7 @@ typedef struct {
     uint8_t *begin;                      // 本次录制的 BEGIN 记录 | BEGIN record of this recording
     PFNNVNCOMMANDBUFFERMEMORYCALLBACKPROC cb; void *cb_data;
     NVNdevice *dev;
+    void *shadow;                        // 录制时滤重复状态绑定用的影子（宿主 calloc，hle_nvn.c bshadow；Finalize / 同址重建时放） | shadow for filtering repeated state binds while recording (host calloc, hle_nvn.c bshadow; freed at Finalize / re-init at the same address)
 } cmd_t;                                                                                     FITS(cmd_t, NVNcommandBuffer);
 
 // ---------- 状态对象（默认值按 NVN / GL 默认） ----------

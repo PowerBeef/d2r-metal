@@ -198,6 +198,7 @@ DM_NSO_DIR	tools,verify	tools/product.sh tools/sampagg.py verify/regress.sh	y
 DM_NVN_ANISO	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_B	verify	verify/shotgate.sh	-
 DM_NVN_BF_WANT	gfx	gfx/nvn/nvn_mtl.m	-
+DM_NVN_BINDFILT	gfx	gfx/nvn/hle_nvn.c	-
 DM_NVN_BLOOM_Q	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_CBDUMP	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_CMDSTAT	gfx	gfx/nvn/hle_nvn.c	-

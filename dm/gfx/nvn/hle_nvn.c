@@ -554,11 +554,44 @@ NVN(nvnQueueFinish, void, NVNqueue *q) { (void)q; x_drain(); mtl_finish(); }
 #define OP_RESERVE 24                             // 段尾永远留够一条 JUMP / END | Always keep enough room at the segment end for one JUMP / END
 static void hostseg_leave(const cmd_t *o, int all);
 
+// 录制时滤掉重复的状态绑定（画质计划 2.1）：游戏每次绘制前把混合 / 颜色 / 通道掩码 / 多重采样 / 多边形 / 深度模板状态、程序、顶点属性与顶点流全绑一遍
+// （每帧一两万条绑定记录），其中大半与同一命令缓冲上一次绑的逐字节相同。每个命令缓冲一份影子：本段录制里每类最后一次录下的值，相同就不录。
+// 回放按记录顺序执行、状态一直保持到下一次同类绑定（nvn_mtl.m S），被滤掉的那条在回放时本来就是同值不变，所以画面与原先逐像素相同。
+// 影子在 BeginRecording 清空（每段录制的第一次绑定都录，单独提交、被拷进别的录制都自足），CopyCommands 之后作废（拷进来的记录改了什么不知道）。
+// 贴图 / 采样器 / 缓冲绑定不滤（回放会改写贴图绑定）。DM_NVN_BINDFILT=0 关；每帧滤掉多少条在 @bindskip（bench.py 按段统计）
+// Filter repeated state binds while recording (picture plan 2.1): before every draw the game binds blend / color / channel mask / multisample / polygon / depth-stencil state, the program, vertex attributes and
+// vertex streams again (10–20 thousand bind records per frame), and most are byte-for-byte the same as the previous bind of that kind on the same command buffer. One shadow per command buffer: the last value
+// recorded for each kind in this recording; an identical bind is not recorded. Replay executes records in order and state holds until the next bind of the same kind (nvn_mtl.m S), so a filtered bind was a
+// no-op on replay anyway and the picture is identical pixel for pixel.
+// The shadow is cleared at BeginRecording (the first bind of each kind in every recording is recorded, so a recording stays self-contained when submitted alone or copied into another one) and voided after
+// CopyCommands (the copied records may have changed anything). Texture / sampler / buffer binds are not filtered (replay rewrites texture binds). DM_NVN_BINDFILT=0 turns it off; the per-frame count of
+// filtered binds is @bindskip (summarized per segment by bench.py)
+typedef struct {
+    uint32_t have;   // 位：0–7 各目标的混合，8 颜色，9 通道掩码，10 多重采样，11 多边形，12 深度模板，13 程序，14 顶点属性，15 顶点流 | bits: 0–7 blend per target, 8 color, 9 channel mask, 10 multisample, 11 polygon, 12 depth-stencil, 13 program, 14 vertex attributes, 15 vertex streams
+    blend_st blend[8]; color_st color; chmask_st chmask; ms_st ms; poly_st poly; ds_st ds;
+    const prog_t *prog; uint64_t prog_serial; int prog_stages;
+    int nattr, nstream; va_st attr[16]; vs_st stream[16];
+} bshadow;
+int g_bindfilt = -1;   // -1 = 按 DM_NVN_BINDFILT（缺省开）；0 / 1 = 定死（DM_NVN_UB 同进程交替） | -1 = from DM_NVN_BINDFILT (on by default); 0 / 1 = fixed (DM_NVN_UB in-process alternation)
+static _Atomic uint64_t g_bindskip_n;
+static bshadow *shadow_get(cmd_t *o) {
+    if (g_bindfilt < 0) { const char *e = getenv("DM_NVN_BINDFILT"); g_bindfilt = !e || strcmp(e, "0"); LOG("NVN：录制时滤重复状态绑定%s | NVN: filter repeated state binds while recording %s", g_bindfilt ? "开" : "关（DM_NVN_BINDFILT=0）", g_bindfilt ? "on" : "off (DM_NVN_BINDFILT=0)"); }
+    if (!g_bindfilt) { if (o->shadow) ((bshadow *)o->shadow)->have = 0; return NULL; }   // 关着时影子跟不上：作废，再开时从头记 | while off the shadow falls behind: void it, so it starts afresh when turned back on
+    if (!o->shadow) o->shadow = calloc(1, sizeof(bshadow));
+    return o->shadow;
+}
+// 与影子相同 → 1（不录）；不同 → 记进影子、0（照录） | same as the shadow → 1 (skip); different → store in the shadow, 0 (record)
+static int shadow_same(bshadow *s, int bit, void *slot, const void *v, size_t n) {
+    if ((s->have >> bit & 1) && !memcmp(slot, v, n)) { atomic_fetch_add_explicit(&g_bindskip_n, 1, memory_order_relaxed); return 1; }
+    memcpy(slot, v, n); s->have |= 1u << bit; return 0;
+}
+static void shadow_free(cmd_t *o) { if (o->magic == MAGIC('C', 'M', 'D', 'B') && o->shadow) free(o->shadow); o->shadow = NULL; }
 NVN(nvnCommandBufferInitialize, NVNboolean, NVNcommandBuffer *c, NVNdevice *d) {
     hostseg_leave(CB(c), 1);   // 同址重建：此前这个对象占着的宿主补段放开 | Re-initialized at the same address: release the host segments this object held
+    shadow_free(CB(c));
     memset(c, 0, sizeof(cmd_t)); CB(c)->magic = MAGIC('C', 'M', 'D', 'B'); CB(c)->dev = d; return 1;
 }
-NVN(nvnCommandBufferFinalize, void, NVNcommandBuffer *c) { hostseg_leave(CB(c), 1); CB(c)->magic = 0; }
+NVN(nvnCommandBufferFinalize, void, NVNcommandBuffer *c) { hostseg_leave(CB(c), 1); shadow_free(CB(c)); CB(c)->magic = 0; }
 NVN(nvnCommandBufferSetMemoryCallback, void, NVNcommandBuffer *c, PFNNVNCOMMANDBUFFERMEMORYCALLBACKPROC cb) { CB(c)->cb = cb; }
 NVN(nvnCommandBufferSetMemoryCallbackData, void, NVNcommandBuffer *c, void *d) { CB(c)->cb_data = d; }
 static uint8_t *align8(uint8_t *p) { return (uint8_t *)(((uintptr_t)p + 7) & ~(uintptr_t)7); }
@@ -756,6 +789,7 @@ NVN(nvnCommandBufferBeginRecording, void, NVNcommandBuffer *c) {
     cmd_t *o = CB(c);
     if (o->recording) LOG("【红】BeginRecording 重入");
     o->recording = 1;
+    if (o->shadow) ((bshadow *)o->shadow)->have = 0;   // 每段录制从「什么都不知道」起：第一次绑定一定录 | each recording starts knowing nothing: the first bind of each kind is always recorded
     uint8_t *p = cmd_alloc(o, 8); put_hdr(p, OP_BEGIN, 8); o->begin = p;
     hostseg_rec_begin(o);
 }
@@ -790,6 +824,7 @@ NVN(nvnCommandBufferCopyCommands, void, NVNcommandBuffer *c, int n, const NVNcom
         }
         if (m) { pthread_mutex_lock(&g_hostseg_mu); hostseg_pin(m, -1); pthread_mutex_unlock(&g_hostseg_mu); }
     }
+    if (CB(c)->shadow) ((bshadow *)CB(c)->shadow)->have = 0;   // 拷进来的记录可能改了任何状态：影子作废 | the copied records may have changed any state: the shadow is void
 }
 NVN(nvnCommandBufferSignalEvent, void, NVNcommandBuffer *c, const NVNevent *e, NVNeventSignalMode m, NVNeventSignalLocation loc, int flags, uint32_t v) {
     (void)loc; (void)flags;
@@ -853,9 +888,22 @@ NVN(nvnCommandBufferSetViewports, void, NVNcommandBuffer *c, int first, int n, c
 NVN(nvnCommandBufferSetScissor, void, NVNcommandBuffer *c, int x, int y, int w, int h) { *REC(c, OP_SCISSOR, p_scissor) = (p_scissor){x, y, w, h}; }
 NVN(nvnCommandBufferSetDepthRange, void, NVNcommandBuffer *c, float n, float f) { *REC(c, OP_DEPTH_RANGE, p_depth_range) = (p_depth_range){n, f}; }
 NVN(nvnCommandBufferBindProgram, void, NVNcommandBuffer *c, const NVNprogram *p, int stages) {
-    *REC(c, OP_BIND_PROGRAM, p_bind_program) = (p_bind_program){snap_prog(p), stages};
+    const prog_t *sp = snap_prog(p); bshadow *s = shadow_get(CB(c));
+    if (s) { uint64_t ser = sp ? sp->serial : 0;   // 快照指针 + 序号 + 阶段都相同才算同一次绑定（快照槽回收后指针可能重用，序号不会） | same snapshot pointer + serial + stages (a recycled snapshot slot may reuse the pointer, never the serial)
+        if ((s->have >> 13 & 1) && s->prog == sp && s->prog_serial == ser && s->prog_stages == stages) { atomic_fetch_add_explicit(&g_bindskip_n, 1, memory_order_relaxed); return; }
+        s->prog = sp; s->prog_serial = ser; s->prog_stages = stages; s->have |= 1u << 13; }
+    *REC(c, OP_BIND_PROGRAM, p_bind_program) = (p_bind_program){sp, stages};
 }
-static void bind_state(NVNcommandBuffer *c, int kind, const void *st, size_t n) { p_bind_state *r = REC(c, OP_BIND_STATE, p_bind_state); r->kind = kind; memcpy(r->bytes, st, n); }
+static void bind_state(NVNcommandBuffer *c, int kind, const void *st, size_t n) {
+    bshadow *s = shadow_get(CB(c));
+    if (s) { void *slot = NULL; int bit = 8 + kind;
+        switch (kind) {
+            case 0: { blend_st b; memcpy(&b, st, sizeof b); slot = &s->blend[b.target]; bit = b.target; break; }   // 混合按目标各记一份（回放 S.blend[target]） | blend is kept per target (replay S.blend[target])
+            case 1: slot = &s->color; break; case 2: slot = &s->chmask; break; case 3: slot = &s->ms; break; case 4: slot = &s->poly; break; case 5: slot = &s->ds; break;
+        }
+        if (slot && shadow_same(s, bit, slot, st, n)) return; }
+    p_bind_state *r = REC(c, OP_BIND_STATE, p_bind_state); r->kind = kind; memcpy(r->bytes, st, n);
+}
 NVN(nvnCommandBufferBindBlendState, void, NVNcommandBuffer *c, const NVNblendState *st) { bind_state(c, 0, st, sizeof(blend_st)); }
 NVN(nvnCommandBufferBindColorState, void, NVNcommandBuffer *c, const NVNcolorState *st) { bind_state(c, 1, st, sizeof(color_st)); }
 NVN(nvnCommandBufferBindChannelMaskState, void, NVNcommandBuffer *c, const NVNchannelMaskState *st) { bind_state(c, 2, st, sizeof(chmask_st)); }
@@ -864,10 +912,16 @@ NVN(nvnCommandBufferBindPolygonState, void, NVNcommandBuffer *c, const NVNpolygo
 NVN(nvnCommandBufferBindDepthStencilState, void, NVNcommandBuffer *c, const NVNdepthStencilState *st) { bind_state(c, 5, st, sizeof(ds_st)); }
 NVN(nvnCommandBufferBindVertexAttribState, void, NVNcommandBuffer *c, int n, const NVNvertexAttribState *st) {
     if (n < 0 || n > 16) { LOG("【红】BindVertexAttribState n=%d", n); return; }
+    bshadow *s = shadow_get(CB(c));
+    if (s) { if ((s->have >> 14 & 1) && s->nattr == n && !memcmp(s->attr, st, 4 * (size_t)n)) { atomic_fetch_add_explicit(&g_bindskip_n, 1, memory_order_relaxed); return; }
+        s->nattr = n; memcpy(s->attr, st, 4 * (size_t)n); s->have |= 1u << 14; }
     p_bind_vattr *r = RECN(c, OP_BIND_VATTR, p_bind_vattr, st, n); r->first = 0; r->n = n; memcpy(r->st, st, 4 * n);
 }
 NVN(nvnCommandBufferBindVertexStreamState, void, NVNcommandBuffer *c, int n, const NVNvertexStreamState *st) {
     if (n < 0 || n > 16) { LOG("【红】BindVertexStreamState n=%d", n); return; }
+    bshadow *s = shadow_get(CB(c));
+    if (s) { if ((s->have >> 15 & 1) && s->nstream == n && !memcmp(s->stream, st, 8 * (size_t)n)) { atomic_fetch_add_explicit(&g_bindskip_n, 1, memory_order_relaxed); return; }
+        s->nstream = n; memcpy(s->stream, st, 8 * (size_t)n); s->have |= 1u << 15; }
     p_bind_vstream *r = RECN(c, OP_BIND_VSTREAM, p_bind_vstream, st, n); r->first = 0; r->n = n; memcpy(r->st, st, 8 * n);
 }
 NVN(nvnCommandBufferBindVertexBuffers, void, NVNcommandBuffer *c, int first, int n, const NVNbufferRange *rg) {
@@ -1684,7 +1738,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
             trow(f, "@call_ms", (t0 - g_t0_ns) / 1e6);
         }
         trow(f, "@passes", (double)(ps - prev_pass)); trow(f, "@draws", (double)(dr - prev_draw));
-        { static uint64_t pb, pc; uint64_t b_ = atomic_load(&g_bind_n), c_ = atomic_load(&g_cmdcb_n); trow(f, "@binds", (double)(b_ - pb)); trow(f, "@cmdmem_cb", (double)(c_ - pc)); pb = b_; pc = c_; }
+        { static uint64_t pb, pc, ps; uint64_t b_ = atomic_load(&g_bind_n), c_ = atomic_load(&g_cmdcb_n), s_ = atomic_load(&g_bindskip_n); trow(f, "@binds", (double)(b_ - pb)); trow(f, "@cmdmem_cb", (double)(c_ - pc)); trow(f, "@bindskip", (double)(s_ - ps)); pb = b_; pc = c_; ps = s_; }
         static uint64_t pl, pst, pf, pudc; uint64_t l, st, fu; mtl_bw(&l, &st, &fu);
         trow(f, "@rt_load_mb", (l - pl) / 1048576.0); trow(f, "@rt_store_mb", (st - pst) / 1048576.0); trow(f, "@pass_full_rw", (double)(fu - pf));
         uint64_t udc = mtl_udc_saved_bytes(); trow(f, "@unwritten_dc_mb", (udc - pudc) / 1048576.0);

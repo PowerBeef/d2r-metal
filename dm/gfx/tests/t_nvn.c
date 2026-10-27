@@ -52,6 +52,17 @@ static int g_cb_pool_left;   // mem_cb_then_empty：还能从游戏池给几段�
 static void mem_cb_then_empty(NVNcommandBuffer *c, NVNcommandBufferMemoryEvent ev, size_t minsz, void *data) {
     if (g_cb_pool_left-- > 0) mem_cb(c, ev, minsz, data); else mem_cb_empty(c, ev, minsz, data);
 }
+static int count_ops(NVNcommandHandle h, uint32_t op, int kind) {   // 一段录制里某种记录的条数（kind ≥ 0：只数这一类状态绑定） | how many records of one kind a recording holds (kind ≥ 0: only that kind of state bind)
+    int n = 0;
+    for (const uint8_t *p = (const uint8_t *)h; p;) {
+        op_hdr r; memcpy(&r, p, sizeof r);
+        if (r.op == OP_END) break;
+        if (r.op == OP_JUMP) { memcpy(&p, p + 8, 8); continue; }
+        if (r.op == op && (kind < 0 || ((const p_bind_state *)(p + 8))->kind == kind)) n++;
+        p += r.size;
+    }
+    return n;
+}
 static int hostseg_of(const void *p) {   // p 落在第几段宿主补段里（-1 = 不在） | Which host segment p lies in (-1 = none)
     for (int i = 0; i < HOSTSEG_MAX; i++) if (g_hostseg[i].mem && (const uint8_t *)p >= g_hostseg[i].mem && (const uint8_t *)p < g_hostseg[i].mem + HOSTSEG_SZ) return i;
     return -1;
@@ -573,6 +584,50 @@ int main(void) {
         P(nvnQueueSubmitCommands)(&q, 1, &hD); P(nvnQueueFinish)(&q);
         EXPECT("9d 宿主补段里的 uniform 更新已写进缓冲（16 个字）", 1, words_eq(poolmem + 0x7300, 0x600, 16));
         P(nvnCommandBufferFinalize)(&cd);
+    }
+
+    // 10. 录制时滤重复状态绑定（hle_nvn.c bshadow）：同一段录制里同值的再次绑定不录；混合按目标各算；新录制、拷命令之后都从头记；关掉就全录；Finalize 放掉影子
+    // 10. Filtering repeated state binds while recording (hle_nvn.c bshadow): an identical later bind in the same recording is not recorded; blend counts per target; a new recording and CopyCommands both
+    // start afresh; switched off, everything is recorded; Finalize frees the shadow
+    {
+        NVNcommandBuffer cf; P(nvnCommandBufferInitialize)(&cf, &dev); P(nvnCommandBufferSetMemoryCallback)(&cf, mem_cb_empty);
+        NVNblendState b0, b1; NVNdepthStencilState dx, dy; NVNvertexAttribState va[2]; NVNprogram pg; NVNshaderData sd[1];
+        memset(&b0, 0, sizeof b0); memset(&b1, 0, sizeof b1); memset(&dx, 0, sizeof dx); memset(&dy, 0, sizeof dy); memset(va, 0, sizeof va); memset(sd, 0, sizeof sd);
+        ((blend_st *)&b1)->target = 1; ((ds_st *)&dx)->dt = 1; ((ds_st *)&dy)->dw = 1; ((va_st *)&va[1])->offset = 16;
+        P(nvnProgramInitialize)(&pg, &dev); P(nvnProgramSetShaders)(&pg, 1, sd);
+        uint64_t skip0 = atomic_load(&g_bindskip_n);
+        P(nvnCommandBufferBeginRecording)(&cf);
+        for (int k = 0; k < 3; k++) {   // 每样三遍：只录第一遍 | each three times: only the first is recorded
+            P(nvnCommandBufferBindBlendState)(&cf, &b0); P(nvnCommandBufferBindBlendState)(&cf, &b1);
+            P(nvnCommandBufferBindDepthStencilState)(&cf, &dx); P(nvnCommandBufferBindProgram)(&cf, &pg, NVN_SHADER_STAGE_VERTEX_BIT);
+            P(nvnCommandBufferBindVertexAttribState)(&cf, 2, va);
+        }
+        P(nvnCommandBufferBindVertexAttribState)(&cf, 1, va);   // 个数不同 = 不同的绑定 | a different count = a different bind
+        P(nvnCommandBufferBindProgram)(&cf, &pg, NVN_SHADER_STAGE_VERTEX_BIT | NVN_SHADER_STAGE_FRAGMENT_BIT);   // 阶段不同 = 不同的绑定 | different stages = a different bind
+        NVNcommandHandle ha = P(nvnCommandBufferEndRecording)(&cf);
+        EXPECT("10a 混合：两个目标各录一次", 2, count_ops(ha, OP_BIND_STATE, 0));
+        EXPECT("10a 深度模板只录一次", 1, count_ops(ha, OP_BIND_STATE, 5));
+        EXPECT("10a 程序：同阶段一次 + 换阶段一次", 2, count_ops(ha, OP_BIND_PROGRAM, -1));
+        EXPECT("10a 顶点属性：2 个一次 + 1 个一次", 2, count_ops(ha, OP_BIND_VATTR, -1));
+        EXPECT("10a 滤掉 2 遍 × 5 条 = 10 条", 10, atomic_load(&g_bindskip_n) - skip0);
+        P(nvnCommandBufferBeginRecording)(&cf); P(nvnCommandBufferBindDepthStencilState)(&cf, &dy); NVNcommandHandle hy = P(nvnCommandBufferEndRecording)(&cf);
+        P(nvnCommandBufferBeginRecording)(&cf);
+        P(nvnCommandBufferBindDepthStencilState)(&cf, &dx);   // 上一段录制绑过 dx，新录制仍录 | an earlier recording bound dx; a new recording still records it
+        P(nvnCommandBufferCopyCommands)(&cf, 1, &hy);         // 拷进来的记录绑了 dy | the copied records bind dy
+        P(nvnCommandBufferBindDepthStencilState)(&cf, &dx);   // 拷命令之后影子作废：照录 | after CopyCommands the shadow is void: recorded
+        P(nvnCommandBufferBindDepthStencilState)(&cf, &dx);   // 这次才滤掉 | only this one is filtered
+        NVNcommandHandle hb = P(nvnCommandBufferEndRecording)(&cf);
+        EXPECT("10b 深度模板：dx、拷进的 dy、拷后的 dx", 3, count_ops(hb, OP_BIND_STATE, 5));
+        g_bindfilt = 0;
+        P(nvnCommandBufferBeginRecording)(&cf); for (int k = 0; k < 3; k++) P(nvnCommandBufferBindDepthStencilState)(&cf, &dx);
+        NVNcommandHandle hc = P(nvnCommandBufferEndRecording)(&cf);
+        EXPECT("10c 关掉（DM_NVN_BINDFILT=0）：三次都录", 3, count_ops(hc, OP_BIND_STATE, 5));
+        g_bindfilt = 1;
+        P(nvnCommandBufferBeginRecording)(&cf); P(nvnCommandBufferBindDepthStencilState)(&cf, &dy); P(nvnCommandBufferBindDepthStencilState)(&cf, &dy);
+        NVNcommandHandle hd = P(nvnCommandBufferEndRecording)(&cf);
+        EXPECT("10c 再开：从头记（dy 录一次）", 1, count_ops(hd, OP_BIND_STATE, 5));
+        P(nvnCommandBufferFinalize)(&cf);
+        EXPECT("10 Finalize 放掉影子", 0, ((cmd_t *)&cf)->shadow != NULL);
     }
 
     // 7. 未实现函数：返回 0、报红、只报一次
