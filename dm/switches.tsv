@@ -450,6 +450,7 @@ DM_TEST_GIVE_INV	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	
 DM_TEST_GLYPH	host	host/dm_padmode.c	-
 DM_TEST_GOLD	host	host/diag.c	-
 DM_TEST_GOTO_LEVEL	host	host/diag.c	-
+DM_TEST_GUEST_RETURN	host	host/main.c	-
 DM_TEST_HAND_GUARD	host	host/dm_cursor.c	-
 DM_TEST_HID_STALL_MS	host	host/hle_hid.c	-
 DM_TEST_HOLDY	host	host/dm_pouch.c	-

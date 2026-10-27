@@ -55,6 +55,7 @@ static void game_seed_maybe(void) {
 }
 
 static void guest_main(void) {
+    if (getenv("DM_TEST_GUEST_RETURN")) { LOG("DM_TEST_GUEST_RETURN：客体主函数不进游戏、直接返回（验游戏自己退出时的收尾）"); return; }   // 测试：同 nnMain 返回 | test: as if nnMain returned
     guest_thread_init();
     { void inflate_bench_maybe(void); inflate_bench_maybe(); }   // DM_INFLATE_BENCH 测试模式（诊断用，跑完退出） | DM_INFLATE_BENCH test mode (for diagnostics, exits when done)
     crash_sample_self();   // DM_SAMPLE 采样（诊断用） | DM_SAMPLE sampling (for diagnostics)

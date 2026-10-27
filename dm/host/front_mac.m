@@ -291,10 +291,19 @@ static void on_key(NSEvent *e, int down) {
 }
 
 typedef struct { void (*fn)(void); } guest_arg;
+// 游戏自己退出（nnMain 返回）：走与关窗口相同的收尾——等这一局还排着的 iCloud 上传，再 dm_host_shutdown（停预取、暂停声音、挂起图形，_exit）。
+// 原先在客体线程上直接 exit(0)：跳过 dm_host_shutdown，排着的上传被掐掉，atexit / C++ 析构跑的时候主线程与出图线程还在动。
+// 这时游戏已经不拍了，没有能存的盘（不调 dm_save_wait）。dm_host_shutdown 返回 = 已有一次退出在进行（关窗口等），由那次结束进程
+// The game exiting by itself (nnMain returned): the same wrap-up as closing the window -- wait for this run's still-queued iCloud upload, then dm_host_shutdown (stop prefetch, pause audio, suspend graphics, _exit).
+// It used to call exit(0) right on the guest thread: dm_host_shutdown was skipped, the queued upload was cut off, and atexit / C++ destructors ran while the main and present threads were still busy.
+// The game no longer ticks at this point, so there is nothing to save (no dm_save_wait). dm_host_shutdown returning = a quit is already under way (window closed etc.), and that one ends the process
 static void *guest_tramp(void *p) {
     static char alt[65536];                       // 信号备用栈是每线程的；崩溃打印要在客体线程上也生效 | The signal alternate stack is per thread; crash printing must also work on the guest thread
     stack_t ss = {.ss_sp = alt, .ss_size = sizeof alt}; sigaltstack(&ss, 0);
-    ((guest_arg *)p)->fn(); LOG("客体线程结束"); exit(0);
+    ((guest_arg *)p)->fn(); LOG("客体线程结束：游戏自己退出 → 有序收尾");
+    { int dm_cloud_flush_wait(double sec); dm_cloud_flush_wait(10); }
+    dm_host_shutdown("客体线程结束");
+    return NULL;
 }
 
 void front_run(void (*guest)(void)) {
