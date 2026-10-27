@@ -117,7 +117,6 @@ A run name is the first argument of `G("…")` in `uireg.py`; below they are gro
 | `rf1`–`rf3` | One-tap restart from the pause menu, restarting three times in a row per run |
 | `pg1`, `pg2` | Paging through the personal stash |
 | `vt1`, `vf1`, `vf2` | The sixth tab of the stash (the collection page added by the shell): deposit, withdraw, search, switching back and forth between tabs |
-| `kba`, `kbb` | Kill statistics panel: tap each widget one by one; look at the statistics after kills |
 | `wd1`, `wd2` | No-progress watchdog: no false positive when returning to the front end and sitting idle; it still triggers when nothing moves at all after launch |
 | `dc` | Death in the wild → tap `继续` (Continue) on the death screen → revive in town |
 | `top` | Exists only in the `ipadfull` profile: the minimap and area name at the true top of the screen, and the title bars of the panels |

@@ -21,7 +21,7 @@
 # Usage: widget_cache_scan.py <dm/host directory>; --selftest first verifies that the scanner itself reports red on deliberately violating text
 import os, re, sys
 
-FIND = r'\b(?:ui_find|vis_find|find_w|ui_panel|ui_child|belt_find|belt_now|vu_find|kb_find|rw_find|find_widget|ui_top_panel)\s*\('
+FIND = r'\b(?:ui_find|vis_find|find_w|ui_panel|ui_child|belt_find|belt_now|vu_find|rw_find|find_widget|ui_top_panel)\s*\('
 TREE = r'(?:\bch\s*\+\s*8\s*\*|\+\s*0x58\b|0x2f05458|\+\s*0x190\b|\+\s*0x178\b)'
 PARAM = r'^(?:w|bw|pw|sp|tw|cw|vt|panel|\w+_w)$'
 SRC = re.compile(FIND + '|' + TREE)

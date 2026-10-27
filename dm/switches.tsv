@@ -91,7 +91,7 @@ DM_EVENTS	host	host/dm_ctl_cmds.c host/dm_events.c host/tests/t_events.c	y
 DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-
 DM_FE_AUTO	host	host/dm_cursor.c	-
-DM_FIXED_TIME	host,tools	host/dm_kills.c host/hle_time.c host/main.c tools/replay.py	y
+DM_FIXED_TIME	host,tools	host/hle_time.c host/main.c tools/replay.py	y
 DM_FPS	gfx	gfx/nvn/nvn_mtl.m	y
 DM_FRAMES	host	host/diag.c	y
 DM_FREE_ACCOUNT	ios-tools	ios/run.sh	-
@@ -472,7 +472,6 @@ DM_TEST_KBD_TYPE	ios	ios/Sources/front_ios.m	-
 DM_TEST_KEYRACE	host	host/main.c	-
 DM_TEST_KILL	host	host/diag.c	-
 DM_TEST_KILL_AT	host	host/dm_cloudmerge.c host/hle_fs.c	-
-DM_TEST_KILL_DROP	host	host/dm_kills.c	-
 DM_TEST_LAG	host	host/diag.c	y
 DM_TEST_LANG	host	host/dm_custom.c	y
 DM_TEST_LEAK	host,tools	host/diag.c tools/l3seg.sh	-
@@ -521,7 +520,6 @@ DM_TEST_PG_NOSAVE	host	host/dm_pages.c	-
 DM_TEST_PG_SOCK	host	host/dm_pages.c	-
 DM_TEST_PG_TAKE	host	host/dm_pages.c	-
 DM_TEST_PICK	host	host/dm_pouch.c	-
-DM_TEST_PICK_UQ	host	host/dm_kills.c	-
 DM_TEST_POS_LOG	host	host/diag.c	-
 DM_TEST_POTPICK_BURST	host	host/dm_potpick.c	-
 DM_TEST_POTPICK_FROM	host	host/dm_potpick.c	-
@@ -552,7 +550,6 @@ DM_TEST_SEEK_NOACT	host	host/dm_world.c	-
 DM_TEST_SHARELOG	host	host/front_mac.m	-
 DM_TEST_SHARELOG_CLOSE	ios	ios/Sources/dm_sharelog.m	-
 DM_TEST_SKILL_ADD	host	host/dm_actions.c	-
-DM_TEST_SLAY	host	host/dm_kills.c	-
 DM_TEST_SPAWN	host	host/diag.c	-
 DM_TEST_SS_ALT	host	host/dm_actions.c	-
 DM_TEST_SS_REJECT	host	host/dm_actions.c	-

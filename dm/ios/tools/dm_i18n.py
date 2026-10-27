@@ -33,7 +33,6 @@ EN_LIMITS = (
     (r'dmRiftBtn.*', 12),                                 # 按钮上的字 | text on the buttons
     (r'dmRiftMsItem\d+', 15), (r'dmRiftMsSub\d+', 19), (r'dmRiftMsTier\d+', 4), (r'dmRiftMs(Got|Next|No)', 7), (r'dmRiftMsT', 12), (r'dmRiftMsNEn', 38),
     (r'dmRiftHud(Title)', 4), (r'dmRiftHud(Done|Late|Guard)', 18), (r'dmRiftHud(Next|Same|Kill|Goal)', 26),
-    (r'dmKbRiftUnlock', 9), (r'dmKbRift(Best|Total)', 16),
 )
 # 宿主把整串抄进定长缓冲区的键：各语言 UTF-8 字节数（不含结尾的 0）的上限。超了会被截断；其中 g_hint 的缓冲区地址直接换进了游戏的串表，
 # 原先俄语「捡起（按住鉴定）」正好 48 字节、缓冲区 48 字节，结尾的「)」丢了、串表里的长度还按 48 算。只管原样整串抄进去的，带占位符拼出来的不在这里
@@ -41,7 +40,7 @@ EN_LIMITS = (
 # and the Russian "Pick Up (hold to identify)" used to be exactly 48 bytes in a 48-byte buffer: the closing ")" was lost and the length in the string table still said 48. Only strings copied whole are listed here, not ones assembled with placeholders
 BYTE_LIMITS = (
     (r'dmPadHintDeposit|dmPadLegIdentify', 127),                                      # dm_padmode.c g_hint[].ours[128]
-    (r'dmPadLeg(Prev|Next|Diff|Sort|View)|dmRiftBtn(Cont|Start|Resel|Abandon)', 47),   # dm_padmode.c g_lg[].text[48]（dm_padmode_legend 的条目 | entries of dm_padmode_legend）
+    (r'dmPadLeg(Prev|Next|View)|dmRiftBtn(Cont|Start|Resel|Abandon)', 47),   # dm_padmode.c g_lg[].text[48]（dm_padmode_legend 的条目 | entries of dm_padmode_legend）
     (r'dmRiftGam(Uni|Set|AfterEn|UniAfter|SetAfter)', 39),                            # dm_rift_ui.c ln[][40]
     (r'dmStoreFull', 159),                                                             # dm_pouch.c g_notice[160]
     (r'dmCloudMerge(Back|Full)', 255),                                                 # dm_cloudmerge.c g_notice[256]

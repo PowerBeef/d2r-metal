@@ -657,87 +657,12 @@ def _chronicle_touch(s):
            '            ]\n        }\n    ')
     end = s.rstrip().rstrip('}').rstrip(); assert end.endswith(']'); at = len(end) - 1
     return s[:at].rstrip() + add + s[at:], 1
-# 编年史第四个页签「首领」= 刷怪积分牌。页签条加第四项，消息发 ToggleChildPanel:TouchKillBoard——
-# 游戏照常关掉当前列表页、去开一个不存在的面板（宿主实测：中间留空，不报错）；那块空地由这里加的控件 TouchKillBoard 占：
-# 照原版列表页（ChronicleBaseListPanelHD.json）的摆法与美术——普通 / 噩梦 / 地狱三个勾选、右上下拉（排序）、左列五幕、左下总数框、右列每个首领一行（任务日志图标 + 两行字）。
-# 名单与字由宿主 dm_kills.c 写（键 = dm_kills.c 的 k_rows），显示 / 隐藏、切幕、排序、滚动高度也由它管；点击一律发无害的 ClosePanel:TouchKB_*（同自定义页）
-# Chronicle fourth tab 「首领」(Bosses) = the kill board. A fourth item is added to the tab strip, and its message sends ToggleChildPanel:TouchKillBoard --
-# the game closes the current list page as usual and goes to open a panel that does not exist (measured on the host: the middle is left empty, no error); that empty area is occupied by the widget TouchKillBoard added here:
-# following the placement and art of the original game's list page (ChronicleBaseListPanelHD.json) -- three checkboxes Normal / Nightmare / Hell, top-right dropdown (sort), five acts in the left column, total count box at the bottom left, one row per boss in the right column (quest log icon + two lines of text).
-# The roster and text are written by the host dm_kills.c (keys = k_rows in dm_kills.c), which also manages show / hide, act switching, sorting and scroll height; all taps send a harmless ClosePanel:TouchKB_* (same as the custom page)
-KB_ROW_H = 188   # 原版行底图的高（底图不拉伸）。三行字：名字 + 击杀 / 首杀 + 暗金套装 / 最快 · 最近 · 平均；宿主 dm_kills.c KB_ROW_H 同值 | Height of the original game's row background image (the background image is not stretched). Three lines of text: name + kills / first kill + unique and set / fastest, latest, average; same value as KB_ROW_H in the host dm_kills.c
-# 每行的原版图标（hd/global/ui/QuestIcons，第 0 帧 = 金色）：按原版任务认，没有对应任务的用 Done（任务日志里的暗色骷髅章）
-# Each row's original-game icon (hd/global/ui/QuestIcons, frame 0 = gold): matched by the original game's quest; rows with no corresponding quest use Done (the dark skull stamp in the quest log)
-KB_ICON = {'andariel': 'a1q6', 'countess': 'a1q4', 'bloodraven': 'a1q2', 'cowking': 'Misc\\CowKing', 'corpsefire': 'a1q1', 'smith': 'a1q5', 'griswold': 'a1q3', 'rakanishu': 'a1q3',
-           'duriel': 'a2q6', 'summoner': 'a2q5', 'radament': 'a2q1', 'fangskin': 'a2q3',
-           'mephisto': 'a3q6', 'council': 'a3q5', 'bremm': 'a3q6', 'wyand': 'a3q6', 'maffer': 'a3q6',
-           'diablo': 'a4q2', 'vizier': 'a4q2', 'deseis': 'a4q2', 'infector': 'a4q2', 'izual': 'a4q1', 'hephasto': 'a4q3',
-           'baal': 'a5q6', 'nihlathak': 'a5q4', 'shenk': 'a5q1', 'frozenstein': 'a5q3', 'ancients': 'a5q5',
-           'colenzo': 'a5q6', 'achmel': 'a5q6', 'bartuc': 'a5q6', 'ventar': 'a5q6', 'lister': 'a5q6'}
-def _kb_keys():   # 名单的键取自 dm_kills.c（一处定义） | The keys of the roster are taken from dm_kills.c (defined in one place)
-    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'host', 'dm_kills.c'), encoding='utf-8').read()
-    ks = re.findall(r'\{"([a-z]+)", (?:"[^"]*"|NULL), ([1-5]), K_', src)
-    if len(ks) < 60 or len({k for k, _ in ks}) != len(ks): raise SystemExit('touch_layout：从 dm_kills.c 读到的积分牌名单不对（%d 行）' % len(ks))
-    return [(k, int(a)) for k, a in ks]
+# 列表行的高与文字控件（秘境面板用）：行高 = 原版行底图 Slot_list_item_XL 的高（底图不拉伸）
+# Row height and text widget for list rows (used by the Rift panel): row height = height of the original row background Slot_list_item_XL (not stretched)
+KB_ROW_H = 188
 def _kb_text(name, x, y, w, h, color, size, align='left', text=''):
     return {'type': 'TextBoxWidget', 'name': name, 'fields': {'rect': {'x': x, 'y': y, 'width': w, 'height': h}, 'text': text,
             'style': {'fontColor': color, 'pointSize': size, 'alignment': {'h': align, 'v': 'center'}}}}
-def _kb_check(name, x, label):
-    return [{'type': 'ToggleButtonWidget', 'name': name, 'fields': {'rect': {'x': x, 'y': 0, 'width': 65, 'height': 65}, 'sound': 'cursor_menu_select_hd',
-             'filename': 'Lobby\\CreateGame\\CreateGame_AdvancedCheckbox', 'untoggledFrame': 0, 'untoggledPressedFrame': 1, 'untoggledHoveredFrame': 3, 'untoggledDisabledFrame': 2,
-             'toggledFrame': 4, 'toggledPressedFrame': 5, 'toggledHoveredFrame': 6, 'onClickMessage': 'PanelManager:ClosePanel:' + name}},
-            {'type': 'TextBoxWidget', 'name': name + '_Text', 'fields': {'text': label, 'rect': {'x': x + 80, 'y': -5, 'height': 50}, 'style': '$StyleSettingsTitle', 'fitToText': True}}]
-_KB_SPACER = {'type': 'Widget', 'name': 'spacer', 'fields': {'rect': {'width': 20, 'height': 65}}}
-def _kb_row(key):
-    ic = KB_ICON.get(key, 'Done')
-    return {'type': 'Widget', 'name': 'TouchKB_' + key, 'fields': {'rect': {'x': 0, 'y': 0, 'width': 1157, 'height': KB_ROW_H}}, 'children': [
-        {'type': 'ImageWidget', 'name': 'Bg', 'fields': {'filename': 'PANEL\\Chronicle\\Slot_list_item_XL'}},
-        {'type': 'ImageWidget', 'name': 'Icon', 'fields': {'rect': {'x': 22, 'y': 24, 'scale': 0.83}, 'filename': 'QuestIcons\\' + ic}},
-        _kb_text('Name', 180, 8, 640, 60, '$FontColorWhite', '$LootFilterMediumLargeFontSize'),
-        _kb_text('Kills', 760, 8, 360, 60, '$FontColorGoldYellow', '$LootFilterMediumLargeFontSize', 'right'),
-        _kb_text('First', 180, 76, 560, 48, '$FontColorMoreLightGray', '$LootFilterSmallFontSize'),
-        _kb_text('Drops', 740, 76, 380, 48, '$FontColorMoreLightGray', '$LootFilterSmallFontSize', 'right'),
-        _kb_text('Times', 180, 126, 940, 48, '$FontColorMoreLightGray', '$LootFilterSmallFontSize')]}
-def _kb_board():
-    acts = []
-    for i in range(6):   # 第一至五幕 + 秘境（秘境成绩挂在积分牌第六项） | Acts one to five + rift (rift results hang on the sixth item of the kill board)
-        y = 80 + 100 * i
-        acts += [{'type': 'ImageWidget', 'name': 'TouchKB_ActArrow%d' % i, 'fields': {'rect': {'x': 0, 'y': y}, 'filename': 'PANEL\\Chronicle\\Btn_collapse'}},
-                 {'type': 'ToggleButtonWidget', 'name': 'TouchKB_Act%d' % i, 'fields': {'rect': {'x': 100, 'y': y, 'width': 360, 'height': 100}, 'sound': 'cursor_menu_select_hd',
-                  'filename': 'PANEL\\Chronicle\\Slot_list_small_golddeco', 'untoggledFrame': 0, 'toggledFrame': 1, 'onClickMessage': 'PanelManager:ClosePanel:TouchKB_Act%d' % i},
-                  'children': [_kb_text('Text', 35, 0, 315, 100, '$FontColorWhite', '$MediumFontSize', text=('@dmKbAct%d' % (i + 1)) if i < 5 else '@dmKbRift')]}]
-    # 外层 TouchKillBoard 用原版列表页同一个矩形变量（各档位的位置 / 缩放跟原版一致）；里层 TouchKB_Body 缺省挪出屏幕（游戏不认 visible: false），
-    # 宿主切到这一页时挪回 (0, 0)：面板刚打开那一帧宿主还够不着它，放在屏外就不会闪一帧
-    # The outer TouchKillBoard uses the same rectangle variable as the original game's list pages (position / scaling in each profile match the original game); the inner TouchKB_Body is moved off screen by default (the game does not honor visible: false),
-    # and the host moves it back to (0, 0) when switching to this page: on the frame the panel has just opened the host cannot reach it yet, and keeping it off screen avoids a one-frame flash
-    return {'type': 'Widget', 'name': 'TouchKillBoard', 'fields': {'rect': '$OptionsPanelRect', 'anchor': {'x': 0.5}}, 'children': [
-        {'type': 'Widget', 'name': 'TouchKB_Body', 'fields': {'rect': {'x': 99999, 'y': 0, 'width': 1730, 'height': 1284}}, 'children':
-        [{'type': 'StackWidget', 'name': 'TouchKB_DiffStack', 'fields': {'rect': {'x': 0, 'y': 0, 'height': 65, 'width': 1300}, 'direction': 'LeftRight', 'padding': 15},   # 照原版 QualityStack | Follows the original game's QualityStack
-          'children': _kb_check('TouchKB_D0', 0, '@strCreateGameNormalText') + [_KB_SPACER] + _kb_check('TouchKB_D1', 406, '@strCreateGameNightmareText') + [_KB_SPACER] + _kb_check('TouchKB_D2', 950, '@strCreateGameHellText')}] + [
-        {'type': 'DropdownListWidget', 'name': 'TouchKB_Sort', 'fields': {'rect': {'x': -390, 'y': 0, 'width': 610, 'height': 105, 'scale': 0.65},
-            'background': {'rect': {'width': 610, 'height': 105}, 'filename': 'PANEL/DropdownButton_Large_Center', 'leftCap/filename': 'PANEL/DropdownButton_Large_Left', 'rightCap/filename': 'PANEL/DropdownButton_Large_Right'},
-            # 选了哪项宿主按显示的字认（dm_kills.c kb_sort）。onUpdateMessage 带的是选项号：发 ClosePanel 会让游戏把选项号当面板名、取空崩（宿主实测），这里发一条没人收的
-            # The host recognizes which item was selected by the displayed text (dm_kills.c kb_sort). onUpdateMessage carries the option index: sending ClosePanel would make the game treat the option index as a panel name and crash on a null fetch (measured on the host), so here a message nobody receives is sent
-            'pressedFrame': 1, 'disabledFrame': 2, 'hoveredFrame': 3, 'anchor': {'x': 1.0}, 'states': ['@dmKbSortAct', '@dmKbSortCount', '@dmKbSortFast'],
-            'onUpdateMessage': 'TouchKillBoardMessage:Sort', 'text/rect': {'scale': 1.538}, 'text/anchor': {'x': 0, 'y': -0.3}, 'textMargin': {'left': 20, 'right': 290},
-            'text/style': '$StyleFilterRuleListButtonTextSmall', 'text/truncateWithEllipsis': True, 'textColor': '$FontColorLightGold'}},
-        {'type': 'ImageWidget', 'name': 'TouchKB_TypeBar', 'fields': {'rect': {'x': 466, 'y': 80}, 'filename': 'Panel\\Chronicle\\Chronicle_ScrollBar_Small'}}] + acts + [
-        {'type': 'ImageWidget', 'name': 'TouchKB_TotalBox', 'fields': {'rect': {'x': 0, 'y': 1000, 'width': 450, 'height': 110}, 'filename': 'PANEL\\Chronicle\\Footer_BG_Progress'}, 'children': [
-            {'type': 'TextBoxWidget', 'name': 'TouchKB_Total', 'fields': {'text': '', 'rect': {'y': 15, 'width': 450, 'height': 40}, 'style': {'pointSize': '$MediumFontSize', 'alignment': {'h': 'center', 'v': 'center'}}}},
-            {'type': 'ImageWidget', 'name': 'FillBg', 'fields': {'rect': {'x': 25, 'y': 65, 'width': 450, 'height': 80}, 'filename': 'PANEL\\Chronicle\\ProgressBar_Small_2'}}]},
-        ] + [_kb_page(i) for i in range(5)] + [_kb_rift_page()]}]}
-# 右列每幕一页（滚动条 + 滚动区 + 本幕各行）：滚动位置存在游戏的滚动控件里、宿主改不了，切幕时只换页（不在屏上的页挪到屏外），各幕的滚动位置各自留着
-# Right column, one page per act (scrollbar + scroll area + that act's rows): the scroll position is stored in the game's scroll widget and the host cannot change it, so switching acts only swaps pages (pages not on screen are moved off screen), and each act keeps its own scroll position
-def _kb_page(i):
-    return {'type': 'Widget', 'name': 'TouchKB_Page%d' % i, 'fields': {'rect': {'x': 99999, 'y': 0, 'width': 1730, 'height': 1284}}, 'children': [
-        {'type': 'ImageWidget', 'name': 'TouchKB_ListBar', 'fields': {'rect': {'x': -20, 'y': 80}, 'anchor': {'x': 1.0}, 'filename': 'Panel\\Chronicle\\Chronicle_Scrollbar_Large'}, 'children': [
-            {'type': 'ScrollControllerWidget', 'name': 'TouchKB_ScrollController%d' % i, 'fields': {'rect': {'x': -31, 'y': 29, 'width': 26, 'height': 1095}, 'anchor': {'x': 1.0},
-             'upArrowFilepath': 'FrontEnd\\HD\\Final\\FrontEnd_ScrollUpBtn', 'downArrowFilepath': 'FrontEnd\\HD\\Final\\FrontEnd_ScrollDownBtn', 'barFilepath': 'PauseMenu\\VerticalIndicator',
-             'viewName': 'TouchKB_Scroll%d' % i, 'wheelScrollSound': 'cursor_scroll_hd', 'buttonScrollSound': 'cursor_scroll_hd'}}]},
-        {'type': 'Widget', 'name': 'TouchKB_ListBox', 'fields': {'rect': {'x': 530, 'y': 80, 'width': 1157, 'height': 1200}}, 'children': [
-            {'type': 'ScrollViewWidget', 'name': 'TouchKB_Scroll%d' % i, 'fields': {'fitToParent': True, 'scrollControllerName': 'TouchKB_ScrollController%d' % i}, 'children': [
-                {'type': 'Widget', 'name': 'TouchKB_List', 'fields': {'rect': {'x': 0, 'y': 0, 'width': 1157, 'height': KB_ROW_H * sum(1 for _, a in _kb_keys() if a == i + 1)}},
-                 'children': [_kb_row(k) for k, a in _kb_keys() if a == i + 1]}]}]}]}
 # 编年史第五页签「秘境」（选层页要像编年史仓库 / 积分牌一样用原版控件和图元）。宿主 dm_rift_ui.c 切页、写字、收点按（ClosePanel:TouchRF_*）。
 # 左列：选层（原版大厅大箭头 ±1、前端小按钮 ±10、前端中按钮「开始」，都带按下态）+ 本层说明 + 安亚赌博率；进行中时换成「继续 / 放弃」（宿主挪进挪出）。
 # 右列：10 档首通奖励，一行一项（积分牌同款行底图），物品用原版物品图。图标路径与 dm_rift.c 里程碑物品对应
@@ -919,46 +844,18 @@ def _rift_panel(s):
     lay = {'basedOn': 'MessageLogPanel_800x600HD.json', 'type': 'MessageLogPanel', 'name': 'MessageLogPanel',
            'fields': {'priority': 9002, 'fitToParent': True, 'defaultWidget': 'TouchRF_Start'}, 'children': native + frame + [board]}
     return json.dumps(lay, ensure_ascii=False, indent=1), 1
-# 积分牌「秘境」页（第六项）：一行总览 + 每层一行（只显示限时内通关过的层，宿主按层号从高到低排、其余挪出屏），行样式同首领行
-# Kill board 「秘境」(Rift) page (sixth item): one summary row + one row per level (only levels cleared within the time limit are shown; the host sorts by level number from high to low and moves the rest off screen), row style same as the boss rows
-RIFT_ROWS = 100
-def _kb_rift_row(name):
-    return {'type': 'Widget', 'name': name, 'fields': {'rect': {'x': 99999, 'y': 0, 'width': 1157, 'height': KB_ROW_H}}, 'children': [
-        {'type': 'ImageWidget', 'name': 'Bg', 'fields': {'filename': 'PANEL\\Chronicle\\Slot_list_item_XL'}},
-        {'type': 'ImageWidget', 'name': 'Icon', 'fields': {'rect': {'x': 22, 'y': 24, 'scale': 0.83}, 'filename': 'QuestIcons\\Done'}},
-        _kb_text('Name', 180, 8, 640, 60, '$FontColorWhite', '$LootFilterMediumLargeFontSize'),
-        _kb_text('Kills', 760, 8, 360, 60, '$FontColorGoldYellow', '$LootFilterMediumLargeFontSize', 'right'),
-        _kb_text('First', 180, 76, 560, 48, '$FontColorMoreLightGray', '$LootFilterSmallFontSize'),
-        _kb_text('Drops', 740, 76, 380, 48, '$FontColorMoreLightGray', '$LootFilterSmallFontSize', 'right'),
-        _kb_text('Times', 180, 126, 940, 48, '$FontColorMoreLightGray', '$LootFilterSmallFontSize')]}
-def _kb_rift_page():
-    return {'type': 'Widget', 'name': 'TouchKB_Page5', 'fields': {'rect': {'x': 99999, 'y': 0, 'width': 1730, 'height': 1284}}, 'children': [
-        {'type': 'ImageWidget', 'name': 'TouchKB_ListBar', 'fields': {'rect': {'x': -20, 'y': 80}, 'anchor': {'x': 1.0}, 'filename': 'Panel\\Chronicle\\Chronicle_Scrollbar_Large'}, 'children': [
-            {'type': 'ScrollControllerWidget', 'name': 'TouchKB_ScrollController5', 'fields': {'rect': {'x': -31, 'y': 29, 'width': 26, 'height': 1095}, 'anchor': {'x': 1.0},
-             'upArrowFilepath': 'FrontEnd\\HD\\Final\\FrontEnd_ScrollUpBtn', 'downArrowFilepath': 'FrontEnd\\HD\\Final\\FrontEnd_ScrollDownBtn', 'barFilepath': 'PauseMenu\\VerticalIndicator',
-             'viewName': 'TouchKB_Scroll5', 'wheelScrollSound': 'cursor_scroll_hd', 'buttonScrollSound': 'cursor_scroll_hd'}}]},
-        {'type': 'Widget', 'name': 'TouchKB_ListBox', 'fields': {'rect': {'x': 530, 'y': 80, 'width': 1157, 'height': 1200}}, 'children': [
-            {'type': 'ScrollViewWidget', 'name': 'TouchKB_Scroll5', 'fields': {'fitToParent': True, 'scrollControllerName': 'TouchKB_ScrollController5'}, 'children': [
-                {'type': 'Widget', 'name': 'TouchKB_List', 'fields': {'rect': {'x': 0, 'y': 0, 'width': 1157, 'height': KB_ROW_H * (RIFT_ROWS + 2)}},
-                 'children': [_kb_rift_row('TouchKB_RiftSum'), _kb_rift_row('TouchKB_RiftSum2')] + [_kb_rift_row('TouchKB_RiftT%d' % t) for t in range(1, RIFT_ROWS + 1)]}]}]}]}
-def _chronicle_killboard(s):
+def _chronicle_tabs(s):
     n = 0
     # 页签宽度 266 → 320：原版三个页签每个固定宽 266、字用「中号」；我们整套界面用大字号（中号 28 → 40）之后，
-    # 英文 Runewords 九个字母放不下，显示成「Runewo…」（中文四个字放得下，所以一直没人看见；英文版第一阶段合入后线上就这样）。
-    # 四个页签统一加宽、整排仍居中（中文那排也跟着变宽，有意改动）；4 × 320 + 间隔 = 1286，面板内宽 1730，iPad 档同一套单位
+    # 英文 Runewords 九个字母放不下，显示成「Runewo…」。三个页签统一加宽、整排仍居中；3 × 320 + 间隔，面板内宽 1730，iPad 档同一套单位
     # Tab width 266 → 320: each of the original three tabs has a fixed width of 266 and uses the "medium" font; after we moved the whole UI to large fonts
-    # (medium 28 → 40),
-    # the nine letters of the English Runewords no longer fit and it shows as "Runewo..." (the four Chinese characters fit, which is why nobody ever saw it;
-    # this is how released builds looked after phase one of the English version was merged).
-    # All four tabs are widened uniformly and the row stays centered (the Chinese row gets wider as well, an intentional change); 4 × 320 + gaps = 1286,
-    # panel inner width 1730, same units for the iPad profile
-    for a, b in (('"tabSize": { "x": 266, "y": 121 },', '"tabSize": { "x": 320, "y": 121 },'), ('"tabCount": 3,', '"tabCount": 4,'), ('"inactiveFrames": [ 0, 0, 0],', '"inactiveFrames": [ 0, 0, 0, 0],'), ('"activeFrames": [ 1, 1, 1],', '"activeFrames": [ 1, 1, 1, 1],'),
-                 ('"textStrings": [ "@Unique", "@Sets", "@Runewords"],', '"textStrings": [ "@Unique", "@Sets", "@dmChronRunewords", "@Bosses"],'),   # 第三项换表里的串：西语原版「Palabras rúnicas」在 320 宽里被截成「Palabras …」（西语截图），中英与原版同字 | The third item uses the string from our table: original Spanish "Palabras rúnicas" is truncated to "Palabras …" in 320 width (Spanish screenshot); Chinese and English match the original
-                 ('"ChroniclePanelMessage:ToggleChildPanel:ChronicleRunewordsListPanel"', '"ChroniclePanelMessage:ToggleChildPanel:ChronicleRunewordsListPanel",\n                    "ChroniclePanelMessage:ToggleChildPanel:TouchKillBoard"')):
+    # (medium 28 → 40), the nine letters of the English Runewords no longer fit and it shows as "Runewo...". The three tabs are widened uniformly and the
+    # row stays centered; 3 × 320 + gaps, panel inner width 1730, same units for the iPad profile
+    for a, b in (('"tabSize": { "x": 266, "y": 121 },', '"tabSize": { "x": 320, "y": 121 },'),
+                 ('"textStrings": [ "@Unique", "@Sets", "@Runewords"],', '"textStrings": [ "@Unique", "@Sets", "@dmChronRunewords"],')):   # 第三项换表里的串：西语原版「Palabras rúnicas」在 320 宽里被截成「Palabras …」 | The third item uses our table's string: the original Spanish 「Palabras rúnicas」 is cut to 「Palabras ...」 at width 320
         if s.count(a) != 1: raise SystemExit('touch_layout：编年史页签条 %s 不是原样（原版布局变了？）' % a)
         s = s.replace(a, b); n += 1
-    end = s.rstrip().rstrip('}').rstrip(); assert end.endswith(']'); at = len(end) - 1
-    return s[:at].rstrip() + ',\n        ' + json.dumps(_kb_board(), ensure_ascii=False) + '\n    ' + s[at:], n + 1
+    return s, n
 # 下拉列表（编年史排序、选项页各下拉共用）：每行高 40，大字号（40）下几行字叠在一起——行高改 56
 # Dropdown list (shared by the chronicle sort and the dropdowns on the options pages): each row is 40 high, and at the large font size (40) several lines of text overlap -- row height changed to 56
 def _dropdown_rows(s):
@@ -1020,7 +917,7 @@ PRESENT = {
     'npcdialogpanelhd.json': _npc_menu,
     'chroniclebaselistpanelhd.json': _chronicle_no_search,
     'dropdownlistcontentshd.json': _dropdown_rows,
-    'chroniclepanelhd.json': lambda s: (lambda a: (lambda b: (b[0], a[1] + b[1]))(_chronicle_killboard(a[0])))(_chronicle_touch(s)),
+    'chroniclepanelhd.json': lambda s: (lambda a: (lambda b: (b[0], a[1] + b[1]))(_chronicle_tabs(a[0])))(_chronicle_touch(s)),
     'controller/messagelogpanelhd.json': _rift_panel,
     # 战利品过滤器去掉、编年史保留、消息记录不要；另加第四个「分享诊断日志」（占原「消息记录」按钮）。
     # 暂停菜单 = 选项 / 保存并退出 / 编年史 / 分享诊断日志（中心距仍 240，四个落在原版六个的上下两端之内）；

@@ -3,13 +3,13 @@
 # 静态扫：编年史页（dm_vault_ui.c 全文）与个人仓库页码（dm_cursor.c 的 ui_pages_pump）里不许出现原版储藏箱控件名——这两处只该碰 TouchVault / TouchPgPage 底下的控件。
 # 运行时另有一道：dm_vault_ui.c vu_guard（写之前沿父链核是不是我们的控件，不是就报红不写）。
 # 第二道（不写原版控件）：整个宿主（dm/host/*.c）不许直接写控件的可见位 +0x50 / +0x51，只许在带守卫的函数里写——
-# dm_cursor.c ui_show_ours、dm_vault_ui.c vu_show、dm_kills.c kb_show（名字不是 Touch 开头就报红不写）。别处要改可见，调它们
+# dm_cursor.c ui_show_ours、dm_vault_ui.c vu_show（名字不是 Touch 开头就报红不写）。别处要改可见，调它们
 # 用法：native_write_scan.py <dm/host 目录>；--selftest 先拿一段故意违规的文本验这个扫描本身会报红
 # Our own features must not write the original game's stash widgets (the chronicle vault is a separate page; lost-equipment incident: the chronicle page set the original grid invisible and the game never resets it, so the personal / shared pages looked completely empty).
 # Static scan: the chronicle page (all of dm_vault_ui.c) and the personal stash page numbers (ui_pages_pump in dm_cursor.c) must not contain original stash widget names -- these two places should only touch widgets under TouchVault / TouchPgPage.
 # There is another check at run time: dm_vault_ui.c vu_guard (before writing, walk the parent chain to check whether it is our widget; if not, report a failure and do not write).
 # Second check (do not write original-game widgets): the whole host (dm/host/*.c) must not write a widget's visible flag +0x50 / +0x51 directly, only inside guarded functions --
-# dm_cursor.c ui_show_ours, dm_vault_ui.c vu_show, dm_kills.c kb_show (a name not starting with Touch is reported as a failure and not written). To change visibility elsewhere, call them
+# dm_cursor.c ui_show_ours, dm_vault_ui.c vu_show (a name not starting with Touch is reported as a failure and not written). To change visibility elsewhere, call them
 # Usage: native_write_scan.py <dm/host directory>; --selftest first verifies with a deliberately violating piece of text that the scan itself reports a failure
 import os, re, sys
 
@@ -25,7 +25,7 @@ def scan(text, where):
     return bad
 
 VIS = re.compile(r'\+\s*0x5[01]\)\s*=(?!=)')
-GUARDED = ('ui_show_ours', 'vu_show', 'kb_show')
+GUARDED = ('ui_show_ours', 'vu_show')
 def vis_scan(text, where):   # 直接写可见位的行；在带守卫的函数里（定义那一行或其函数体内）的不算 | lines that write the visible flag directly; those inside a guarded function (its definition line or its body) do not count
     bad, inside = [], None
     for no, line in enumerate(text.split('\n'), 1):

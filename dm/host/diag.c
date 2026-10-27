@@ -1081,7 +1081,7 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     { void dm_autobuff_srv_tick(uint8_t *, uint64_t, uint64_t); if (main && player) DM_PROF(1, "s.autobuff", dm_autobuff_srv_tick((uint8_t *)main->base, G, player)); }   // 增益技能自动补：放主线程点名的技能 | Buff auto-recast: cast the skill named by the main thread
     { void dm_pouch_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.pouch", dm_pouch_srv_tick((uint8_t *)main->base, G, player)); }
     { void dm_cloudmerge_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.cloudmerge", dm_cloudmerge_srv_tick((uint8_t *)main->base, G, player)); }   // iCloud 收件箱局内并回（dm_cloudmerge.c）；不在局内 player 为 0   // 百宝囊收 / 放、存放的系统提示（dm_pouch.c）；不在局内 player 为 0   // 编年史仓库存取（dm_vault.c）；同上 | iCloud inbox in-game merge (dm_cloudmerge.c); player is 0 when not in game   // System notices for pouch take / put and deposit (dm_pouch.c); player is 0 when not in game   // Chronicle stash take / store (dm_vault.c); same as above
-    if (main && player) DM_PROF(1, "s.kills", dm_kills_tick(G, player, (uint8_t *)main->base)); dm_ipf_frame(1);   // 刷怪积分牌（dm_kills.c）：在首领连战之后，连战本关的首领它已记好 id | Kill board (dm_kills.c): runs after boss rush, which has already recorded the id of the boss of the current boss rush stage
+    dm_ipf_frame(1);
     cube_diag_tick(G, player);   // 合成读数 | Transmute readout
     if (main && player) seek_tp_step(G, player, main);
     if (main && h.valid) h.quest_unread = *(volatile uint8_t *)(main->base + 0x2d5ff58) != 0;   // 任务提示：收到任务更新包时游戏置 1（0x306cfc），原版只在点 HUD 任务提示按钮时清（0xbbe6ec） | Quest hint: the game sets it to 1 when a quest update packet arrives (0x306cfc); the original game only clears it when the HUD quest hint button is tapped (0xbbe6ec)
@@ -1981,7 +1981,7 @@ static void loadscreen_on_uimsg(const char *cat, const char *act, const char *ar
     if (!strcmp(cat, "PanelManager") && !strcmp(arg, "QuestLogPanelExpansion") && (!strcmp(act, "OpenPanel") || !strcmp(act, "OpenExclusivePanel"))) { module_t *qm = main_mod(); if (qm) *(volatile uint8_t *)(qm->base + 0x2d5ff58) = 0; }
     { void dm_textinput_on_uimsg(const char *, const char *, const char *); dm_textinput_on_uimsg(cat, act, arg); }
     { void dm_update_on_uimsg(const char *, const char *, const char *); dm_update_on_uimsg(cat, act, arg); }
-    { void dm_kills_on_uimsg(const char *, const char *, const char *); dm_kills_on_uimsg(cat, act, arg); } { void dm_rift_ui_on_uimsg(const char *, const char *, const char *); dm_rift_ui_on_uimsg(cat, act, arg); }   // 编年史「首领」页签（dm_kills.c） | The chronicle's 「首领」(Bosses) tab (dm_kills.c)
+    { void dm_rift_ui_on_uimsg(const char *, const char *, const char *); dm_rift_ui_on_uimsg(cat, act, arg); }   // 编年史「首领」页签（dm_kills.c） | The chronicle's 「首领」(Bosses) tab (dm_kills.c)
     { void dm_vault_on_uimsg(const char *, const char *, const char *); dm_vault_on_uimsg(cat, act, arg); }
     { void dm_padmode_on_uimsg(const char *, const char *, const char *); dm_padmode_on_uimsg(cat, act, arg); }   // 手柄版暂停菜单「游戏难度」行（dm_padmode.c） | "Game Difficulty" row of the controller pause menu (dm_padmode.c)
     { void dm_pouch_on_uimsg(const char *, const char *, const char *); dm_pouch_on_uimsg(cat, act, arg); }   // 百宝囊框 / 存放按钮（dm_pouch.c）   // 储藏箱第六页「编年史」（dm_vault_ui.c） | Pouch frame / deposit button (dm_pouch.c)   // stash page six 「编年史」(Chronicle) (dm_vault_ui.c)

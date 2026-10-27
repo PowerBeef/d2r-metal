@@ -30,23 +30,6 @@ dmPouchTitle	百宝囊	Pouch	Zurrón		Сумка	주머니	百宝囊清单标题
 dmPouchEmpty	（空）	(empty)	(vacío)		(пусто)	(비어 있음)	百宝囊清单：空
 dmRwTitle	%s · %d 孔 · 可做的符文之语	%s · Socketed (%d) · Runewords	%s · Con huecos (%d) · Palabras rúnicas	%s · Engarzado (%d) · Palabras rúnicas	%s · С гнездами (%d) · Рунные слова	%s · 홈 %d · 가능한 룬워드	符文之语清单标题（dm_runeword.c；%s = 底材名）；英文用原版词：item-modifiers[Socketable]「Socketed (%i)」、ui[Runewords]
 dmRwLevel	需要等级 %d	Required Level: %d	Nivel requerido: %d		Требуемый уровень: %d	필요 레벨: %d	符文之语清单每行的需要等级；英文 = 原版 item-modifiers[ItemStats1p]「Required Level: %d」
-dmKbJoin3	%s、%s、%s	%s, %s, %s	%s, %s, %s		%s, %s, %s	%s, %s, %s	积分牌：三位先祖名字拼接（dm_kills.c）
-dmKbKilledNth	%s第 %d 次成功击杀！	%s slain! (kill #%d)	¡%s ha muerto! (baja n.º %d)		%s повержен! (убийство №%d)	%s 처치! (%d회차)	击杀首领后的系统提示
-dmKbKilledTotal	%s已累计击杀 %d 次！	%s slain %d times in total!	¡%s ha muerto %d veces en total!		%s повержен %d раз всего!	%s 누적 처치 %d회!	整十次等里程碑提示
-dmKbKills	击杀 %d	Kills %d	Bajas %d		Убийств %d	처치 %d	积分牌行：次数
-dmKbFirst	首杀 %m-%d %H:%M	First %m-%d %H:%M	Primera %m-%d %H:%M		Первый %m-%d %H:%M	첫 처치 %m-%d %H:%M	积分牌行：首杀时刻（strftime）
-dmKbDrops	暗金 %d · 套装 %d	Unique %d · Set %d	Únicos %d · Conjunto %d		Уник. %d · Сет %d	유니크 %d · 세트 %d	积分牌行：掉落件数
-dmKbTimes	最快 %s · 最近 %s · 平均 %s	Best %s · Last %s · Avg %s	Mejor %s · Último %s · Media %s		Лучшее %s · Последнее %s · Среднее %s	최단 %s · 최근 %s · 평균 %s	积分牌行：用时
-dmKbTotal	总击杀 %s	Total kills %s	Bajas totales %s		Всего убийств %s	총 처치 %s	积分牌底部总数
-dmKbAct1	第一幕	Act I	Acto I		Акт I	1막	积分牌幕页签（touch_layout.py）
-dmKbAct2	第二幕	Act II	Acto II		Акт II	2막	积分牌幕页签
-dmKbAct3	第三幕	Act III	Acto III		Акт III	3막	积分牌幕页签
-dmKbAct4	第四幕	Act IV	Acto IV		Акт IV	4막	积分牌幕页签
-dmKbAct5	第五幕	Act V	Acto V		Акт V	5막	积分牌幕页签
-dmKbRift	秘境	Rift	Grieta		Рифт	균열	积分牌第六个分组（touch_layout.py）
-dmKbSortAct	按幕顺序	By Act	Por acto		По актам	막 순서	积分牌排序下拉
-dmKbSortCount	按次数	By Kills	Por bajas		По убийствам	처치 수	积分牌排序下拉（宿主 kb_sort 按这个键认）
-dmKbSortFast	按最快	By Best Time	Por tiempo		По времени	최단 시간	积分牌排序下拉（宿主 kb_sort 按这个键认）
 dmBrPrefix	首领连战  %s	Boss Rush  %s	Ronda de jefes  %s		Босс-раш  %s	보스 러시  %s	首领连战所有提示的前缀（dm_bossrush.c）
 dmBrDoneThisGame	本局已完成，下局再来	Already completed this game. Try again next game	Ya completada en esta partida. Vuelve a intentarlo en la siguiente		В этой игре уже пройдено. Попробуйте в следующей	이번 게임에서 이미 완료. 다음 게임에 다시 시도	首领连战：本局打过了
 dmBrToChamber	前 5 关完成，进门前往世界之石大殿	First 5 stages done. Enter the portal to the Worldstone Chamber	5 primeras fases superadas. Entra en el portal a la Cámara de la Piedra del Mundo	5 primeras fases superadas. Entra al portal a la Cámara de la Piedra Ecuménica	5 этапов пройдено. Войдите в портал в Чертог Мирового камня	앞 5단계 완료. 월드스톤 방으로 가는 포탈 입장	首领连战：前 5 关完成
@@ -282,17 +265,6 @@ dmRiftGamSetAfter	通关后套装	Set after	Conj. tras		Сет после	이후
 dmRiftMsGot	已领取	Claimed	Cobrado		Забрано	획득	大秘境面板（dm_rift_ui.c）
 dmRiftMsNext	下一目标	Next	Próximo		Дальше	다음	大秘境面板（dm_rift_ui.c）
 dmRiftMsNo	未达成	Locked	Cerrado		Закрыто	없음	大秘境面板（dm_rift_ui.c）
-dmKbRiftName	大秘境	Greater Rift	Grieta superior	Grieta mayor	Великий рифт	균열	积分牌秘境项（dm_kills.c）
-dmKbRiftBest	最高通关 %d 层	Best Level: %d	Mejor nivel: %d		Лучший: %d	최고 %d층	积分牌秘境项（dm_kills.c）；英文：拟；排行榜原文没查到
-dmKbRiftNever	还没进过秘境	No Greater Rifts yet	Aún sin grietas superiores	Aún sin grietas mayores	Великих рифтов ещё не было	기록 없음	积分牌秘境项（dm_kills.c）；英文：拟
-dmKbRiftClears	通关 %d · 死亡 %d	Cleared %d · Deaths %d	Superadas %d · Muertes %d		Пройдено %d · смертей %d	클리어 %d · 사망 %d	积分牌秘境项（dm_kills.c）；英文：拟
-dmKbRiftUnlock	可选到第 %d 层	Max: %d	Máx.: %d		До %d	선택 %d층	积分牌秘境项（dm_kills.c）；英文：拟
-dmKbRiftMs	首通奖励	First Clear Rewards	Premios de primera vez		Первая награда	마일스톤	积分牌秘境项（dm_kills.c）；英文：拟
-dmKbRiftMsNext	下一档在第 %d 层	Next at Level %d	Próxima: nivel %d		Дальше на %d ур.	다음 단계는 %d층	积分牌秘境项（dm_kills.c）；英文：拟
-dmKbRiftMsAll	已全部领取	All claimed	Todas cobradas		Всё получено	전부 획득	积分牌秘境项（dm_kills.c）
-dmKbRiftFast	最快 %d:%02d	Best Time %d:%02d	Mejor tiempo %d:%02d		Лучшее %d:%02d	최단 %d:%02d	积分牌秘境项（dm_kills.c）；英文：拟（同积分牌 dmKbTimes 的 Best）；暗黑 3 排行榜列名为 Time Spent（意思是用时，不是最快），未采用，留 Best Time
-dmKbRiftMsGot	首通奖励已领取	First clear reward claimed	Premio de primera vez cobrado		Первая награда получена	획득함	积分牌秘境项（dm_kills.c）；英文：拟
-dmKbRiftTotal	最高 %d 层	Best Level: %d	Mejor nivel: %d		Лучший: %d	최고 %d층	积分牌秘境项（dm_kills.c）；英文：拟
 dmCloudConflict	iCloud：两台设备的共享仓库各有内容，已用云端那份，本机那份已完整保存待并回	iCloud: both devices had shared stash contents. Using the cloud copy; this device's copy is kept to be merged back	iCloud: ambos dispositivos tenían contenido en el alijo compartido. Se usa la copia de la nube; la de este dispositivo se guarda para fusionarla después	iCloud: ambos dispositivos tenían contenido en el Arcón compartido. Se usa la copia de la nube; la de este dispositivo se guarda para fusionarla después	iCloud: на обоих устройствах в общем тайнике есть вещи. Взята копия из облака; копия этого устройства сохранена целиком для слияния	클라우드 충돌	iCloud 共享仓库分叉提示（diag.c；本机那份在待合并收件箱）
 dmCloudCharConflict	iCloud：角色 %s 两台设备各有一份，已用云端那份，本机那份已备份	iCloud: both devices had character %s. Using the cloud copy; this device's copy is backed up	iCloud: ambos dispositivos tenían el personaje %s. Se usa la copia de la nube; la de este dispositivo queda en una copia de seguridad	iCloud: ambos dispositivos tenían el personaje %s. Se usa la copia de la nube; la de este dispositivo queda respaldada	iCloud: персонаж %s есть на обоих устройствах. Взята копия из облака; копия этого устройства сохранена	iCloud: 캐릭터 %s가 기기마다 달라, 클라우드 쪽을 쓰고 기기 쪽은 백업했습니다	iCloud 首次同步同名角色提示（diag.c，%s = 角色名）
 dmCloudMergeBack	iCloud：另一台设备共享仓库里多出的物品已放进背包，金币已加回共享仓库	iCloud: items from the other device's shared stash are now in your inventory; its gold is back in the shared stash	iCloud: los objetos del alijo compartido del otro dispositivo ya están en tu inventario; su oro ha vuelto al alijo compartido	iCloud: los objetos del Arcón compartido del otro dispositivo ya están en tu inventario; su oro volvió al Arcón compartido	iCloud: вещи из общего тайника другого устройства уже в инвентаре, золото вернулось в общий тайник	iCloud: 다른 기기의 공유 창고 아이템은 가방에, 그 금화는 공유 창고로 되돌렸습니다	iCloud 收件箱局内并回：开箱时放进背包的提示（dm_cloudmerge.c）
@@ -353,8 +325,6 @@ dmRiftBtnCont	继续	Continue	Continuar		Продолжить	계속	大秘境�
 dmRiftMsT	首通奖励	First Clear	Primera vez		Первый раз	마일스톤	大秘境面板（touch_layout.py _rift_panel）
 dmRiftMsN	每档另得 符文 · 赦免之证 · 打孔	+Rune, Token, Socket	+Runa, Muestra, Hueco	+Runa, Insignia, Engarce	+руна, талисман, гнездо	다음	大秘境面板（touch_layout.py _rift_panel）
 dmRiftPanelTitle	大秘境	Greater Rift	Grieta superior	Grieta mayor	Великий рифт	그레이터 리프트	大秘境面板（touch_layout.py _rift_panel）
-dmPadLegDiff	难度	Difficulty	Dificultad		Сложность	난이도	积分牌手柄提示条 X（dm_kills.c）；英文 = 原版 ui[automapdif]「Difficulty: %s」里的词
-dmPadLegSort	排序	Sort	Ordenar		Сортировка	정렬	积分牌手柄提示条 Y；英文 = 原版 ui[strSort]「Sort」
 dmPadLegView	查看 / 取出	View / Withdraw	Ver / Retirar		Смотреть / взять	보기	编年史仓库页手柄提示条（dm_vault_ui.c）；Withdraw = 原版 ui[AdvancedStashWithdraw]
 dmPadLegPrev	上一页	Previous Page	Página anterior		Предыдущая	이전	同上；英文 = 原版 ui[NPCPreviousPage]
 dmPadLegNext	下一页	Next Page	Página siguiente		Следующая	다음	同上；英文 = 原版 ui[NPCNextPage]
