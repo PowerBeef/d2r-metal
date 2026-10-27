@@ -79,8 +79,9 @@ python3 dm/verify/golden.py list
 
 - **场景驱动前端输入：** 控制口 `fe` 跑一行 `DM_TEST_NSMOUSE` 的输入（虚拟手柄、按键、输入表单、真鼠标事件），走与玩家同一条前端路；`inputmode` 切手柄 / 触屏布局与键帽（做完发 `padmode` 事件）。带 `fe` 步的场景开窗跑。
 - **`dm/tools/playbot.py`：** 按种子抽玩家意图，只走玩家的路（不发 `msg`，碰不到已知会崩的那几处），每个意图后查不变量：没暂停时拍在走、HUD 在面板栈上、面板关了就没有焦点；收尾查没有红、没有 `save_stuck`、存档合法。红了先重跑，再按意图缩短（`explore.py` 的 ddmin）。`playbot.py soak --minutes 30` 是 Mac 浸泡，用 `soak_report.py` 判（拍、内存斜率、句柄 / 线程、帧时间）。`long` 两样都跑。
-- **覆盖场景：** `new_character_vkbd`（用手柄屏幕键盘给新角色起名，经 `fe`）、`input_mode_switch`（手柄 ↔ 触屏，Xbox / PlayStation / Switch 键帽；替 accept ⑩ 的切模式部分）、`opmode_switch`（主机 → 掌机；自给的 accept ⑩）、`lang_zh`、`lang_es`（游戏语言真的换了：`language` 事件），以及 `full` 里原有的 `ios-mac` 生命周期场景。
+- **覆盖场景：** `new_character_vkbd`（用手柄屏幕键盘给新角色起名，经 `fe`；Mac App 用 `new_character_vkbd_mac`，它的前端要按 ＋ 才接受名字）、`input_mode_switch`（手柄 ↔ 触屏，Xbox / PlayStation / Switch 键帽；替 accept ⑩ 的切模式部分）、`opmode_switch`（主机 → 掌机；自给的 accept ⑩）、`lang_zh`、`lang_es`（游戏语言真的换了：`language` 事件），以及 `full` 里原有的 `ios-mac` 生命周期场景。
 - 做的时候发现：「保存并退出」后 `state.in_game` 一直是真（HUD 读数只在走拍时更新）；命令行宿主上 `DM_OE_SCRIPT` 的 `@ingame` 与 `DM_TEST_LANG` 悄悄不起作用。都修了；每个场景现在都要求一个证明切换真的发生了的事件。
+- 第一次跑 `full`（22 分钟）又抓到一个：挂存档时宿主先改了已提交版的 `Settings.json`（补设置、语言开关），才拿它和上一局残留的工作目录比，干净的残留就被当成「有没提交的改动」挪到旁边并报红。现在先判残留。
 - 没覆盖：局内切语言（语言在挂存档时生效）。
 
 ## 能说明时间花在哪的基准
