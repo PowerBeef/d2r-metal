@@ -75,6 +75,14 @@ python3 dm/verify/golden.py list
 - **Rebaseline** after a deliberate change to what the routes see: the town spawn move (`dm_townwp.c`), the player count, rift or custom-setting defaults, picture settings.
 - `full` runs both checks; with no baselines they are ⚪.
 
+## Playtesting and wider coverage
+
+- **Front-end input from scenarios:** the control port's `fe` runs one line of `DM_TEST_NSMOUSE` input (virtual controller, keys, the text sheet, real mouse events) through the same front-end path as a player; `inputmode` switches the controller / touch layout and key caps (`padmode` event when done). Scenarios with `fe` steps run windowed.
+- **`dm/tools/playbot.py`:** seeded player intents on player paths only (no `msg` steps, so none of the known crashers), with invariants after every intent: ticks advance while not paused, the HUD is on the panel stack, no focus once panels are closed; at the end no red, no `save_stuck`, a valid save. A red episode is rerun, then shrunk by intent (`explore.py`'s ddmin). `playbot.py soak --minutes 30` is the Mac soak, judged by `soak_report.py` (ticks, memory slope, handles / threads, frame time). `long` runs both.
+- **Coverage scenarios:** `new_character_vkbd` (a character named with the controller's on-screen keyboard, through `fe`), `input_mode_switch` (controller ↔ touch, Xbox / PlayStation / Switch caps; replaces accept ⑩'s mode part), `opmode_switch` (docked → handheld; the self-contained accept ⑩), `lang_zh`, `lang_es` (the game language really switched: `language` event), and the existing `ios-mac` lifecycle scenarios in `full`.
+- Found while building them: `state.in_game` stayed true after Save and Exit (HUD readings only refresh on ticks); `DM_OE_SCRIPT`'s `@ingame` trigger and `DM_TEST_LANG` silently did nothing on the CLI host. All fixed; each scenario now requires an event proving its switch happened.
+- Not covered: a language switch during play (the language applies when the save is mounted).
+
 ## Touch cases and fixture saves
 
 The touch cases start from `save_ref_warlock` (or `DM_TOUCH_SAVE`). Some were written against upstream's fixture save: an item in inventory slot (5,3), the Horadric Cube at (8,0). The checks on the starting state are **preconditions** (`lib.precondition`): when the save doesn't have what the case needs, the case is ⚪ unavailable (`assert.py` exit code 3, `touchchain.sh` exit code 3) instead of red, and the other checks don't count. A case whose prefix recording is missing is ⚪ the same way.

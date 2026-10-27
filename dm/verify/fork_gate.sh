@@ -52,7 +52,7 @@ lock_on() {   # 开窗的层持 Mac 游戏锁；子进程见 XT_LOCK_HELD=1 就�
 scenarios() {   # 精选场景：scenarios/*.scn（不含 saves/ 生成器与 faults/） | curated scenarios: scenarios/*.scn (not the saves/ generators or faults/)
   ls "$DM/verify/scenarios/"*.scn
 }
-FRONT_RE='^[[:space:]]*(app|background|system_quit|swipe_away)([[:space:]]|$)'   # 要前端的步（app 命令与它的宏）：无窗宿主没有前端 | steps that need a front end (the app command and its macros): a headless host has none
+FRONT_RE='^[[:space:]]*(app|background|system_quit|swipe_away|fe)([[:space:]]|$)'   # 要前端的步（app 命令与它的宏、前端测试输入 fe）：无窗宿主没有前端 | steps that need a front end (the app command and its macros, front-end test input fe): a headless host has none
 headless_scenarios() { for f in "$@"; do grep -qE "$FRONT_RE" "$f" || echo "$f"; done; }
 front_scenarios() { for f in "$@"; do grep -qE "$FRONT_RE" "$f" && echo "$f"; done; }
 par_scenarios() {   # par_scenarios <backend> <并行数 | jobs> <文件… | files…>：每个场景单独一个 scenario.py 进程 | one scenario.py process per scenario
@@ -118,6 +118,8 @@ for tier in "${TIERS[@]}"; do
   long)
     lock_on 120
     step long_bench 3600 -- python3 "$DM/tools/bench.py" run "$DM/verify/bench/town_loop.scn" --reps 3
+    step long_playbot 3600 -- python3 "$DM/tools/playbot.py" run --seed 1 --episodes 4 --intents 15   # 试玩机器人：玩家意图 + 不变量（dm/tools/playbot.py） | the playtest bot: player intents + invariants (dm/tools/playbot.py)
+    step long_soak 3600 -- python3 "$DM/tools/playbot.py" soak --minutes 30 --seed 2   # Mac 浸泡：soak_report.py 的四条判据 | Mac soak: soak_report.py's four criteria
     for san in asan ubsan; do
       make -C "$DM/host" "dmhost_$san" -s >/dev/null 2>&1 || { echo "🔴 dmhost_$san 编译失败 | build failed"; continue; }
       step "long_explore_$san" 3600 -- python3 "$DM/tools/explore.py" run --seed 1 --episodes 4 --dmhost "$DM/host/dmhost_$san"
