@@ -307,6 +307,8 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
   - Mac App: `~/Library/Logs/D2R Mobile/host.log`
   - iOS: `Documents/boot.txt`
   - iOS build: `$DM_ROOT/run/ios/build.log`
+- **Failed save writes:** the game's save job used to skip its own unmount after a failed open / create / truncate, so no later Commit ever happened (silent progress loss on a full disk). The host-only cut at `main+0xe0c04c` (`patch_nso.py`) fixes it; `DM_TEST_FS_FAILAT=guestopen` fails the game's open for writing once, and `dm/verify/scenarios/save_open_fails.scn` checks that later saves still commit.
+- **Overlay messages:** a layout's message strings are hashed at load through the game's own channel / action name lists; an unknown category or action hashes to 0, and a button sends its click message only when both hashes are non-zero, so a click message with an unknown name silently never fires (`dm/verify/ui_message_stream.md`).
 - **Overlay files:** `casc_overlay.py` can replace any file but can add new ones only in a new folder directly under an existing directory (first character unlike every item there). Layouts the game should find in both input modes go in a new folder under the layout root, which both modes fall back to (see the Extras page).
 - **Weak symbols on Apple:** a `__attribute__((weak))` declaration of a function no target defines still fails to link on iOS. Give a weak default definition instead (as `dm_ctl_cmds.c` does for the Mac-only `dm_wheel_ui`).
 - **Flaky test:** `t_svc_mem` det5 is a timing test. It has failed inside the full host suite under load and then passed alone; rerun it before suspecting a change.
