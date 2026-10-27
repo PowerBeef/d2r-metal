@@ -37,8 +37,6 @@ DM_AUTOBUFF_RETRY	host	host/dm_autobuff.c	-
 DM_AUTOBUFF_SAFE	host	host/dm_autobuff.c	-
 DM_AUTOBUFF_SWAPLIFE	host	host/dm_autobuff.c	-
 DM_AUTOBUFF_SWAPMAX	host	host/dm_autobuff.c	-
-DM_AUTOPOT_RED	host	host/dm_actions.c	-
-DM_AUTOPOT_REJUV	host	host/dm_actions.c	-
 DM_BC_FAST	gfx	gfx/vulkan/engine/xbg_texture.c	-
 DM_BC_FASTVERIFY	gfx	gfx/vulkan/engine/xbg_texture.c	-
 DM_BC_THREADS	gfx	gfx/vulkan/engine/xbg_texture.c	-
@@ -187,7 +185,6 @@ DM_MEMSTAT	host	host/memstat.m	-
 DM_MEMSTAT_DUMP	host	host/memstat.m	-
 DM_MEM_CAP_GB	gfx	gfx/nvn/hle_nvn.c	-
 DM_MEM_STAT_ALL	gfx	gfx/nvn/nvn_mtl.m	-
-DM_MERC_POT	host	host/dm_actions.c	-
 DM_METAL_COLD	ios	ios/Sources/main.m	-
 DM_MFX	gfx	gfx/nvn/nvn_mtl.m	-
 DM_MFX3D	gfx	gfx/nvn/nvn_mtl.m	-

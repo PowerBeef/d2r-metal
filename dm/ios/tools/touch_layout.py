@@ -865,12 +865,12 @@ def _drop_rows(*rows):
 # 视频页的表格整个换成我们的行：分节标题 + 每个开关一行原版勾选框（照「游戏」页「自动拾取金币」那一行的字段）。控件名 TouchCustom_<键>，
 # 宿主 dm_custom.c 读勾没勾、按应用 / 放弃 / 默认处理。勾选框的消息发一条无害的 ClosePanel，游戏不认
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'eco_fps', 'q3d', 'loot_filter', 'auto_buff', 'touch_swap_above')
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'eco_fps', 'q3d', 'loot_filter', 'auto_buff', 'touch_swap_above')
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines
 # (otherwise the layout changes with the language)
-def _custom_key(key): return 'dmCustom' + ''.join(w.capitalize() for w in key.split('_'))   # auto_mana → dmCustomAutoMana（布局里 @键 遇下划线就断，键名不能带 _） | auto_mana → dmCustomAutoMana (in layouts @key stops at an underscore, so key names cannot contain _)
+def _custom_key(key): return 'dmCustom' + ''.join(w.capitalize() for w in key.split('_'))   # drop_light → dmCustomDropLight（布局里 @键 遇下划线就断，键名不能带 _） | drop_light → dmCustomDropLight (in layouts @key stops at an underscore, so key names cannot contain _)
 def _custom_label(key):
     import dm_i18n
     t = {r[0]: r[1:] for r in dm_i18n.rows()}[_custom_key(key)]   # （中文, English, Español, Español MX）；各语言行数相同由 dm_i18n.rows() 把关 | (Chinese, English, Español, Español MX); equal line counts across languages enforced by dm_i18n.rows()

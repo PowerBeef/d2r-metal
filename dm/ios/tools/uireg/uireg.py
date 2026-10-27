@@ -783,8 +783,6 @@ def groups():
     # 所以压血（拍 80）后要等过拍 250 再开页截图——早了看到的还是 2142 / 2142（两遍都截早了，误报成「面板不跟」）
     # 两项有连带：佣兵页那一步要是被玩家错喝了，玩家就满血，后一步「玩家自己喝」的生命读数不再涨，也会报不通
     # 别在这一局用 clr()：法师背包那一格是护身符，点了出说明框
-    # q / bdm 验的是「手动」双击腰带喂佣兵：佣兵自动喂药缺省开之后，压到三成的佣兵会先被自动喂满，手动那一下读不出涨（两档实测 2142 → 2142）。
-    # 这两局把自动喂药关掉只为把手动路径单独量出来；自动喂药本身由专项六格（人物 / 佣兵各三格）与缺省开着的其余各局守。
     # Case q: double-tap a potion with the mercenary page open = feed the mercenary; with the mercenary page closed = the player drinks. Same level-88 Sorceress (player Life 713/809 not full, mercenary 2142/2142 full).
     # Criteria: belt potion count and player Life are read from the dm_hud line: one potion gone while the not-full player's Life did not move = the potion did not go to the player.
     # Mercenary Life is read from the DM_TEST_MERC_HP log line: on tick 80 after entry the mercenary is pushed down to 30%, and must rise after feeding. On older builds without this switch the mercenary is at full Life and there is no readout, so this item reports undetermined. Swapping the helm cannot cause Life loss: taking off the "+60 Life" tiara and putting it back returns current Life to 2142.
@@ -793,9 +791,7 @@ def groups():
     # So after lowering Life (tick 80), wait past tick 250 before opening the page for a screenshot; too early still shows 2142 / 2142 (both early runs captured too soon and were misreported as "panel does not follow")
     # The two items are coupled: if the player wrongly drinks in the mercenary-page step, the player is at full Life, the Life reading of the later "player drinks" step no longer rises, and it also reports a failure
     # Do not use clr() in this case: that inventory cell of the Sorceress holds a charm, and tapping it brings up the tooltip
-    # q / bdm verify "manual" double-tap belt feeding of the mercenary: with mercenary auto-feed on by default, a mercenary pushed down to 30% is auto-fed to full first, and the manual tap shows no rise (measured on both profiles 2142 → 2142).
-    # These two cases turn auto-feed off only to measure the manual path in isolation; auto-feed itself is covered by the six dedicated cells (three each for character / mercenary) and by all the other cases where it stays on by default.
-    g=G("q","DM_TEST_MERC_HP=30@80 DM_MERC_POT=0"); g.sect("mercpot",0); g.enter(4); g.wait(12.0); g.tap("@menu",1.4)
+    g=G("q","DM_TEST_MERC_HP=30@80"); g.sect("mercpot",0); g.enter(4); g.wait(12.0); g.tap("@menu",1.4)
     g.item("点页签条「佣兵」","开佣兵页；属性表「生命」约 621 / 2142、左上角头像血条只剩三成（看截图）",r"OpenPanel HirelingInventoryPanel"); g.tap(P(469,18),1.5); g.shot()
     g.item("佣兵页开着双击腰带里的红药","喂佣兵：腰带少 1 瓶、玩家生命不变、佣兵生命读数涨；属性表「生命」也涨、左上角头像血条变长（对比上一张截图）",both(belt('-'),php(0),merc('+'))); g.dbl(486,197); g.wait(5.0); g.shot()
     g.tap(P(615,17),1.5); g.tap("@menu",1.4)
@@ -1108,7 +1104,7 @@ def groups():
     gs.append(g)
     # bdm：带佣兵的 88 法师（佣兵生命压到三成）。底栏腰带点一下喝一瓶、点几下喝几瓶，都给自己——「双击 = 喂佣兵」已取消，喂佣兵只在佣兵页开着时双击腰带（q 局）
     # bdm: level-88 Sorceress with a mercenary (mercenary Life pushed down to 30%). One tap on the bottom-bar belt drinks one potion, several taps drink several, all for the player. "Double-tap = feed mercenary" has been removed; feeding the mercenary is only by double-tapping the belt with the mercenary page open (case q)
-    g=G("bdm","DM_TEST_MERC_HP=30@80 DM_MERC_POT=0"); g.sect("bdm",0); g.enter(4); g.wait(12.0)
+    g=G("bdm","DM_TEST_MERC_HP=30@80"); g.sect("bdm",0); g.enter(4); g.wait(12.0)
     g.item("底栏腰带第 1 格连点两下","都给自己喝：玩家生命涨、佣兵生命不变",both(php('+'),merc(0))); g.tap("@belt1",.25); g.tap("@belt1",5.0); g.shot()
     gs.append(g)
     # ---- 一键重开：回到前端按名字改选刚退出的角色再原版载入。BASE 钉了游戏时间，选角列表第一行永远是 joe——正好造出「刚退出的不在第一行」。每局连重开 3 次 ----

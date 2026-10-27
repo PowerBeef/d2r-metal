@@ -1264,24 +1264,6 @@ int dm_game_paused(void) { uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) i
 // 测试用：按 id 取服务端物品单位（物品表 G+0x2e30，128 桶、next=+0x158）；不在局内 / 没找到返回 0
 // For tests: get a server item unit by id (item table G+0x2e30, 128 buckets, next=+0x158); returns 0 when not in a run / not found
 uint64_t dm_diag_srv_item(uint32_t id) { if (!in_game()) return 0; uint64_t u = 0; tk_rd(g_lastG + 0x2e30 + 8 * (id & 0x7f), &u, 8); for (int k = 0; u && k < 4096; k++) { uint32_t ty = 0, uid = 0; if (!tk_rd(u, &ty, 4) || !tk_rd(u + 8, &uid, 4)) return 0; if (ty == 4 && uid == id) return u; if (!tk_rd(u + 0x158, &u, 8)) return 0; } return 0; }
-// 佣兵自动喂药用（dm_actions.c）：按单位 id 取服务端那只佣兵（怪物表 G+0x2630，128 桶、next=+0x158）的生命真值与「生命药药效还在」（状态 100）。
-// 不读客户端那只：客户端怪物的生命只是服务端发来的 1/128 比例，进局头两百多拍还没发过、读出来是没初始化的值（宿主：满血佣兵读成 9%，误喂两瓶）。
-// 返回 1 = 找到且活着（怪物模式 0 死亡中 / 12 已死不算）；游戏主线程调（服务端拍与它同一条线程）
-// For mercenary auto-potion (dm_actions.c): look up the server-side mercenary by unit id (monster table G+0x2630, 128 buckets, next=+0x158) and return
-// its true life and "healing potion effect still active" (state 100).
-// The client-side one is not read: a client monster's life is only a 1/128 ratio sent by the server; for the first two hundred-odd ticks after joining
-// it has not been sent yet and reads as an uninitialized value (host: a full-life mercenary read as 9% and was wrongly fed two potions).
-// Returns 1 = found and alive (monster mode 0 dying / 12 dead do not count); called on the game main thread (server ticks run on that same thread)
-int dm_diag_srv_merc(uint32_t id, int *hp, int *mx, int *healing) {
-    module_t *m = main_mod(); if (!in_game() || !m) return 0; uint64_t u = 0; tk_rd(g_lastG + 0x2630 + 8 * (id & 0x7f), &u, 8);
-    for (int k = 0; u && k < 4096; k++) { uint32_t ty = 0, uid = 0, mode = 0; if (!tk_rd(u, &ty, 4) || !tk_rd(u + 8, &uid, 4) || !tk_rd(u + 0xc, &mode, 4)) return 0;
-        if (ty == 1 && uid == id) { if (mode == 0 || mode == 12) return 0;
-            int (*get)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(m->base + 0x5b9290); *hp = get(u, 6, 0) >> 8; *mx = get(u, 7, 0) >> 8;
-            uint64_t sl = 0; uint32_t fl = 0, w = 0; *healing = tk_rd(u + 0x88, &sl, 8) && sl && tk_rd(sl + 0x1c, &fl, 4) && fl >> 31 && tk_rd(sl + 0xb30 + 4 * (100 >> 5), &w, 4) && (w >> (100 & 31) & 1);   // 状态位图读法同 dm_actions.c a_has_state | State bitmap is read the same way as a_has_state in dm_actions.c
-            return 1; }
-        if (!tk_rd(u + 0x158, &u, 8)) return 0; }
-    return 0;
-}
 int dm_diag_difficulty(void) { uint8_t d = 0; return in_game() && tk_rd(g_lastG + 0x104, &d, 1) && d < 3 ? d : -1; }   // 当前局难度（G+0x104：0 普通 1 噩梦 2 地狱），不在局内 -1；一键重开用（dm_cursor.c） | Difficulty of the current run (G+0x104: 0 Normal 1 Nightmare 2 Hell), -1 when not in a run; used by one-tap restart (dm_cursor.c)
 uint32_t dm_cur_tick(void) { uint32_t t = 0; if (in_game()) tk_rd(g_lastG + 0x170, &t, 4); return t; }   // 触点脚本（touch_mac.c）用 | For the touch point script (touch_mac.c)
 static uint32_t cur_tick(void) { return dm_cur_tick(); }
