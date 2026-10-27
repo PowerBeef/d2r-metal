@@ -1042,6 +1042,16 @@ typedef struct { const char *who; double comp_ms, period_ms; uint64_t last; doub
 static rt_decl g_rt_main = {"出图线程"}, g_rt_xlat = {"翻译线程"};
 static void set_time_constraint(rt_decl *d, uint64_t period_ns);
 static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
+// 实时线程声明用的周期：出图节拍照旧按 60 档算（present_period，见那里），省电模式（30 帧）的放慢由显示节拍做——声明得跟实际帧周期走，
+// 原先省电模式下仍按 60 Hz 声明期限，系统照 16.7 ms 的期限调度、提频（白耗电）。显示节拍没在跑（无窗口 / 关着）时省电模式不起作用，周期照旧
+// Period for the real-time thread declarations: the present pacing is still computed at the 60 tier (present_period, see there), and power-saving mode (30 fps) is slowed down by the display link - the declaration has to follow the actual frame period;
+// power-saving mode used to keep declaring a 60 Hz deadline, so the system scheduled and raised clocks for a 16.7 ms deadline (power wasted). When the display link is not running (no window / off) power-saving mode has no effect and the period is unchanged
+int mtl_fps_target(void);
+static uint64_t rt_decl_period(uint64_t period_ns) {
+    if (!period_ns || mtl_fps_target() != 30 || !mtl_link_active()) return period_ns;
+    double hz = dm_pace_hz(mtl_display_refresh(), 30); uint64_t eco = hz > 0 ? (uint64_t)(1e9 / hz) : 0;
+    return eco > period_ns ? eco : period_ns;
+}
 // ---------- 翻译队列（B 方案第二期）：提交 / 出图 / 设帧号按序排给翻译线程，游戏线程只登记、立刻返回 ----------
 // 游戏逻辑与上一帧的翻译（回放 + Metal 编码）重叠。栅栏值 = 已入队的提交数：Metal 层每次提交恰好 ++g_fence、g_done 只在已提交的命令缓冲
 // 完成时推进，所以等栅栏 f 就是等「f 翻译完且 GPU 做完」——游戏按栅栏回收命令内存、改写对象时翻译线程早已读完。
@@ -1109,7 +1119,7 @@ static void x_run(const xjob *j, uint64_t job) {
         mtl_set_frame(j->frame);
         // 翻译线程与游戏主线程同级：时间约束（实时）线程，周期 = 出图周期，计算量按本线程每帧 CPU 的 p90 自动声明（同取图处的主线程；确定性时钟下不声明）
         // The translation thread has the same standing as the game main thread: a time-constraint (real-time) thread, period = present period, computation declared automatically from the p90 of this thread's per-frame CPU (same as the main thread at acquire; not declared under the deterministic clock)
-        uint64_t pn = (uint64_t)(j->period * 1e9); static uint64_t rt_p;
+        uint64_t pn = rt_decl_period((uint64_t)(j->period * 1e9)); static uint64_t rt_p;   // 省电模式按 30 帧的周期声明 | power-saving mode declares the 30 fps period
         if (!g_x_sync && !dm_detclock_enabled()) { if (pn && rt_p != pn) { rt_p = pn; set_time_constraint(&g_rt_xlat, pn); } rt_comp_tick(&g_rt_xlat, pn); }
         XTRACE_END();
     }
@@ -1301,9 +1311,9 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
     // Vsync blocks here (real-device NVN: when all textures in the swapchain are waiting for display, wait for the next one to be released), not in present -- the game often calls present while holding a lock
     uint64_t at = *idx < 4 ? o->avail[*idx] : 0, now = dm_detclock_enabled() ? guest_ns() : now_ns(), wait = at > now ? at - now : 0;
     if (!dm_detclock_enabled()) {   // 取图线程登记为时间约束线程（不再只在「来早了」时才登记：热态一直落后时也要声明） | Register the acquire thread as a time-constraint thread (no longer registered only when it "arrived early": it must also declare itself when it is constantly behind in the hot state)
-        static uint64_t rt_period; uint64_t period = present_period(o);
-        if (period && rt_period != period) { rt_period = period; set_time_constraint(&g_rt_main, period); }
-        rt_comp_tick(&g_rt_main, period);
+        static uint64_t rt_period; uint64_t period = present_period(o), decl = rt_decl_period(period);   // 声明按实际帧周期（省电模式 30 帧），节拍等待仍按 period | declare the actual frame period (30 fps in power-saving mode); the pacing wait still uses period
+        if (decl && rt_period != decl) { rt_period = decl; set_time_constraint(&g_rt_main, decl); }
+        rt_comp_tick(&g_rt_main, decl);
         if (mtl_link_active()) { if (!mtl_link_wait_tick(period ? 2 * period : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
         else if (wait) sleep_until_ns(at);
     } else {   // DM_DETCLOCK_PACE=1（画面闸门用）：客体时钟按帧走的同时，每帧墙钟不短于一个步长——帧数与游戏内时间确定，后台加载线程每帧至少有一个步长的墙钟可用； | DM_DETCLOCK_PACE=1 (used by the screenshot gate): while the guest clock advances per frame, each frame's wall clock is no shorter than one step -- frame count and in-game time are deterministic, and the background loading thread has at least one step of wall clock available per frame;

@@ -587,8 +587,12 @@ static int tbdr_on(void);
 
 static uint64_t g_sub_serial;   // 第几次提交（并行预编「每次提交只预测一次」用） | Submission index (used by the parallel precompile's 'predict only once per submission')
 static void tbdr_latch(void);
+static void pso_pend_age(void);
+static void mfx3d_sub_begin(void);
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
+    pso_pend_age();   // 并行预编：回收过期没人领的预测槽 | parallel precompile: recycle stale untaken prediction slots
+    mfx3d_sub_begin();   // 「放大方式」关了：放掉 3D 放大趟的 MetalFX 资源 | "Upscaling" off: release the 3D pass's MetalFX resources
     tbdr_latch();
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
     defer_drain();
@@ -715,7 +719,7 @@ static inline void enc_r_draw_indexed(RENC e, MTLPrimitiveType p, NSUInteger n, 
 #if DM_NVN_M3
 static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { return d ? [g_cb computeCommandEncoderWithDescriptor:d] : [g_cb computeCommandEncoder]; }
 #else
-static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; return e; }
+static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [(CBUF)g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; return e; }
 #endif
 static inline id<MTLComputeCommandEncoder> enc_c_begin_concurrent(id<MTLCommandBuffer> cb) { return [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent]; }
 static inline void enc_c_end(id e) { m4_end(e); }
@@ -729,7 +733,7 @@ static inline void enc_c_dispatch(id e, MTLSize n, MTLSize t) { [e dispatchThrea
 #if DM_NVN_M3
 static inline id enc_b_begin(id cb) { return [cb blitCommandEncoder]; }
 #else
-static inline id enc_b_begin(id cb) { return [cb respondsToSelector:@selector(beginCommandBufferWithAllocator:)] ? [cb computeCommandEncoder] : [cb blitCommandEncoder]; }
+static inline id enc_b_begin(id cb) { return [cb respondsToSelector:@selector(beginCommandBufferWithAllocator:)] ? (id)[(CBUF)cb computeCommandEncoder] : (id)[(id<MTLCommandBuffer>)cb blitCommandEncoder]; }
 #endif
 static inline void enc_b_end(id e) { m4_end(e); }
 static inline void enc_b_copy_buffer(id e, id<MTLBuffer> s, NSUInteger so, id<MTLBuffer> d, NSUInteger doff, NSUInteger n) { [e copyFromBuffer:s sourceOffset:so toBuffer:d destinationOffset:doff size:n]; }
@@ -1525,7 +1529,8 @@ void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb, int heap_
 void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads) { *uploads = g_pkg_uploads; *reuploads = g_pkg_reuploads; }
 uint64_t mtl_pkg_miss(void) { return g_pkg_miss; }
 static void mp_lut_forget(uint64_t ser);
-void mtl_tex_release(tex_t *t) { if (t->serial) { mp_lut_forget(t->serial); serial_del(t->serial); } }
+static void treg_forget(uint64_t ser);
+void mtl_tex_release(tex_t *t) { if (t->serial) { mp_lut_forget(t->serial); serial_del(t->serial); treg_forget(t->serial); } }
 
 // ---------- 渲染通道：SetRenderTargets 开新通道；通道里第一条命令之前的清除并进 load 动作 ----------
 // ---------- Render passes: SetRenderTargets opens a new pass; clears before the first command in the pass are folded into the load action ----------
@@ -1764,7 +1769,7 @@ static void pg_render_finish(RENC e) {   // 收渲染编码器之前：写通道
     if (g_pg_open >= 0 && e) [e writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed afterStage:MTLRenderStageFragment intoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)g_pg_pass[g_pg_open].slot + 1];
 #endif
 }
-static id<MTLComputeCommandEncoder> pg_compute(void) {
+static CENC pg_compute(void) {
     pg_pass *p = pg_new(1, 2);
     ser_gate();
     if (!p) { args_dirty_all(); return enc_c_begin(NULL); }
@@ -1772,7 +1777,7 @@ static id<MTLComputeCommandEncoder> pg_compute(void) {
     p->draws = 0; args_dirty_all();
     CENC ce = enc_c_begin(NULL);   // Metal 4：开编码器后写起点，收编码器前写终点（pg_compute_end） | Metal 4: write the start point after opening the encoder, write the end point before ending it (pg_compute_end)
     [ce writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed intoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)p->slot]; g_pg_copen = p->slot + 1;
-    return (id<MTLComputeCommandEncoder>)ce;
+    return ce;
 #else
     MTLComputePassDescriptor *cd = [MTLComputePassDescriptor computePassDescriptor];
     cd.sampleBufferAttachments[0].sampleBuffer = g_pg_buf[g_pg_b];
@@ -1839,7 +1844,7 @@ static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回�
             }
         }
         pthread_mutex_unlock(&g_pg_mu);
-        free(ps);
+        free(t); free(ps);   // t：本次解析的时间戳表（原先漏放，开 DM_NVN_PASSGPU 时每次提交漏一份） | t: this resolve's timestamp table (it used to be leaked, one per submission with DM_NVN_PASSGPU on)
     }];
 }
 void ts_after(void);
@@ -2219,7 +2224,7 @@ static int scissor_full(const tex_t *t, const view_t *v, int has_v) {
 static pthread_mutex_t g_rmu = PTHREAD_MUTEX_INITIALIZER;
 // ---------- 着色器映射表：Switch 控制段哈希 → PC metallib（dm/gfx/tools/shader_map.py 产出） ----------
 // ---------- Shader mapping table: Switch control section hash → PC metallib (produced by dm/gfx/tools/shader_map.py) ----------
-static NSMutableDictionary<NSString *, NSArray *> *g_shmap;
+static NSMutableDictionary<NSString *, NSString *> *g_shmap;
 static NSString *g_shmap_path, *g_msl_dir;
 static NSString *exe_rel(const char *rel) {
     char buf[4096]; uint32_t n = sizeof buf;
@@ -2539,6 +2544,20 @@ void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
     if (id_ < (1 << 20)) atomic_store_explicit(&g_tser[id_], t ? t->serial : 0, memory_order_release);
     pthread_mutex_unlock(&g_rmu);
 }
+// 游戏释放贴图（mtl_tex_release）时，放掉登记着它的各贴图号缓存的视图：视图（或基贴图本身）是 CFBridgingRetain 持有的，原先要等这个号被重新登记才放，
+// 号一直不再用的话，已经退役（移出驻留集）的贴图连同显存一直被钉着。号仍登记着（描述符还在池里），以后真被用到时照常重建视图。
+// 按无锁序号副本 g_tser 扫（每项 8 字节，一万多项约 0.1 MB），只在有视图的项上动手；放引用走 defer_obj_unref（在途的提交还可能读它，不动驻留集）
+// When the game releases a texture (mtl_tex_release), drop the views cached for the texture IDs registered with it: the view (or the base texture itself) is held by CFBridgingRetain and used to be released only when that ID was registered again,
+// so an ID never used again kept the already retired texture (out of the residency set) and its memory pinned. The ID stays registered (the descriptor is still in the pool), and a later real use rebuilds the view as usual.
+// The scan goes over the lock-free serial copy g_tser (8 bytes per entry, about 0.1 MB for some ten thousand entries) and only touches entries holding a view; the reference is dropped with defer_obj_unref (submissions in flight may still read it; the residency set is left alone)
+static uint64_t g_treg_forgot;   // 累计放掉的视图数（持 g_rmu；资源计数行末尾） | cumulative views dropped (under g_rmu; at the end of the resource-count line)
+static void treg_forget(uint64_t ser) {
+    pthread_mutex_lock(&g_rmu);
+    int n = g_ntreg < (1 << 20) ? g_ntreg : (1 << 20);
+    for (int i = 0; i < n; i++) if (atomic_load_explicit(&g_tser[i], memory_order_relaxed) == ser && g_treg[i].view) {
+        defer_obj_unref((__bridge id)g_treg[i].view); CFRelease(g_treg[i].view); g_treg[i].view = NULL; g_treg[i].view_id = g_treg[i].view_rid = 0; g_treg_forgot++; }
+    pthread_mutex_unlock(&g_rmu);
+}
 void mtl_reg_samp(int sid, const samp_par *sp) {
     int id_ = sid; if (id_ < 0) return;
     pthread_mutex_lock(&g_rmu);
@@ -2846,18 +2865,40 @@ static void pso_key_fill(pso_key *k, NvShader *vs, NvShader *fs, const uint32_t 
 // ---- Parallel precompile: pipelines met for the first time used to be compiled synchronously one by one on the submit thread; 9 misses in a row in one frame = 284 ms (heavy scene on a real device).
 // Now: on the first pipeline miss in a submission, scan ahead once along the remaining commands (replaying state only, no drawing) and kick all the normal-pass pipelines that will also miss later to the background to compile in parallel;
 // when the submit thread reaches that draw it only waits for 'the remaining time not yet compiled'. The compiled pipelines are identical to synchronously compiled ones (same descriptor). Pipeline keys of merged passes / specialized fragments depend on the planning result at replay time, are not predicted, and are compiled synchronously as before.
+// 槽位回收：预测按「每种可能的深度 / 模板挂法」各丢一条，猜错的那几条和没走到的绘制永远没人领；原先只有领用才腾槽，384 个槽被它们占满后，并行预编在整个进程余下的时间里都不再生效。
+// 现在每条记下丢出时的提交序号：每次提交开头，把 PSO_PEND_AGE 次提交以前丢出、已编完却没人领的丢掉（pso_pend_age）；丢新预测时表满，先回收更早提交里最老的一条已编完的。
+// 还在后台编的那条不动（后台块编完按槽号写回）。计数 g_pp_aged（回收）/ g_pp_full（表满没丢）记进 DM_BOOTPROF 那一行。
+// Slot recycling: the prediction kicks one key per possible depth / stencil attach mode, and the wrong guesses and draws never reached are never taken; slots used to be freed only by a take, so once those filled all 384 slots the parallel precompile stopped working for the rest of the process.
+// Now each entry records the submission serial it was kicked in: at the start of every submission, entries kicked PSO_PEND_AGE or more submissions ago that finished compiling but were never taken are dropped (pso_pend_age); when a new prediction finds the table full, the oldest finished entry from an earlier submission is recycled first.
+// An entry still compiling in the background is left alone (the background block writes back by slot index). The counters g_pp_aged (recycled) / g_pp_full (not kicked, table full) go into the DM_BOOTPROF line.
 #define PSO_PEND_MAX 384
-static struct { pso_key k; id<MTLRenderPipelineState> ps; int used, done; } g_pp[PSO_PEND_MAX];
+#define PSO_PEND_AGE 8   // 丢出后过这么多次提交仍没人领就回收：预测只覆盖本次提交余下的绘制，多留几次提交给隔一两帧才走到的同一绘制 | recycle when still untaken this many submissions after the kick: a prediction only covers the rest of its own submission, and a few more submissions leave room for the same draw reached a frame or two later
+static struct { pso_key k; id<MTLRenderPipelineState> ps; uint64_t ser; int used, done; } g_pp[PSO_PEND_MAX];   // ser：丢出时的提交序号 | ser: submission serial at the kick
 static pthread_mutex_t g_pp_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_pp_cv = PTHREAD_COND_INITIALIZER;
-static uint64_t g_pp_submit_mark, g_pp_kicked, g_pp_taken;   // 本次提交是否已预测过（按提交序号）；累计丢出 / 领用条数 | Whether this submission has already been predicted (by submission serial); cumulative kicked / taken counts
+static uint64_t g_pp_submit_mark, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full;   // 本次提交是否已预测过（按提交序号）；累计丢出 / 领用 / 过期回收 / 表满没丢的条数 | Whether this submission has already been predicted (by submission serial); cumulative kicked / taken / recycled as stale / not kicked because the table was full counts
+static int g_pp_live;   // 表里占着的槽数（只在提交线程上改，持 g_pp_mu） | Slots in use (changed only on the submit thread, under g_pp_mu)
 static void pso_predict_rest(void);
 static int pso_pend_find(const pso_key *k) { for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && !memcmp(&g_pp[i].k, k, sizeof *k)) return i; return -1; }
+static void pso_pend_age(void) {   // 提交开头（提交线程）调：回收过期没人领的预测 | Called at the start of a submission (submit thread): recycle stale untaken predictions
+    if (!g_pp_live) return;
+    int n = 0;
+    pthread_mutex_lock(&g_pp_mu);
+    for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && g_pp[i].done && g_sub_serial - g_pp[i].ser >= PSO_PEND_AGE) { g_pp[i].ps = nil; g_pp[i].used = 0; g_pp_live--; n++; }
+    g_pp_aged += (uint64_t)n;
+    pthread_mutex_unlock(&g_pp_mu);
+    static int logged; if (n && logged++ < 5) MLOG("并行预编：回收 %d 条过期没人领的预测（累计丢出 %llu / 领用 %llu / 回收 %llu / 表满没丢 %llu） | parallel precompile: recycled %d stale untaken predictions (kicked / taken / recycled / not kicked, table full)",
+        n, (unsigned long long)g_pp_kicked, (unsigned long long)g_pp_taken, (unsigned long long)g_pp_aged, (unsigned long long)g_pp_full, n);
+}
 static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // 提交线程调：没在缓存、没在表里才丢 | Called by the submit thread: kick only if it is neither in the cache nor in the table
     if (hm_get_id(&g_pso, k)) return;
     pthread_mutex_lock(&g_pp_mu);
     int at = pso_pend_find(k), slot = -1;
     if (at < 0) for (int i = 0; i < PSO_PEND_MAX; i++) if (!g_pp[i].used) { slot = i; break; }
-    if (at < 0 && slot >= 0) { g_pp[slot].k = *k; g_pp[slot].ps = nil; g_pp[slot].done = 0; g_pp[slot].used = 1; }
+    if (at < 0 && slot < 0) {   // 表满：回收更早提交里最老的一条已编完的；全是本次提交的或都还在编，就不丢 | Table full: recycle the oldest finished entry from an earlier submission; if all are from this submission or still compiling, do not kick
+        for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].done && g_pp[i].ser < g_sub_serial && (slot < 0 || g_pp[i].ser < g_pp[slot].ser)) slot = i;
+        if (slot >= 0) { g_pp[slot].ps = nil; g_pp[slot].used = 0; g_pp_live--; g_pp_aged++; } else g_pp_full++;
+    }
+    if (at < 0 && slot >= 0) { g_pp[slot].k = *k; g_pp[slot].ps = nil; g_pp[slot].ser = g_sub_serial; g_pp[slot].done = 0; g_pp[slot].used = 1; g_pp_live++; }
     pthread_mutex_unlock(&g_pp_mu);
     if (at >= 0 || slot < 0) return;
     MTLRenderPipelineDescriptor *d = pso_desc(k, vs, fs, nil, 0); g_pp_kicked++;
@@ -2869,7 +2910,7 @@ static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // �
 static id<MTLRenderPipelineState> pso_pend_take(const pso_key *k) {   // 提交线程调：表里有就等它编完并取走；没有返回 nil | Called by the submit thread: if it is in the table, wait for it to finish compiling and take it; otherwise return nil
     pthread_mutex_lock(&g_pp_mu);
     int at = pso_pend_find(k); id<MTLRenderPipelineState> ps = nil;
-    if (at >= 0) { while (!g_pp[at].done) pthread_cond_wait(&g_pp_cv, &g_pp_mu); ps = g_pp[at].ps; g_pp[at].ps = nil; g_pp[at].used = 0; }
+    if (at >= 0) { while (!g_pp[at].done) pthread_cond_wait(&g_pp_cv, &g_pp_mu); ps = g_pp[at].ps; g_pp[at].ps = nil; g_pp[at].used = 0; g_pp_live--; }
     pthread_mutex_unlock(&g_pp_mu);
     return ps;
 }
@@ -3080,9 +3121,9 @@ static inline void args_sync_dirty(void) {
         g_args_reg_seen = reg; g_args_dirty_seen = dirty; args_dirty_all();
     }
 }
-static void bind_args(id<MTLCommandEncoder> en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, uint64_t gpu, size_t off, NSUInteger ai) {
-    if (nvn_stage == 5) enc_c_args((id<MTLComputeCommandEncoder>)en, gpu, ai);
-    else enc_r_args((id<MTLRenderCommandEncoder>)en, metal_vertex ? MTLRenderStageVertex : MTLRenderStageFragment, gpu, ai);
+static void bind_args(id en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, uint64_t gpu, size_t off, NSUInteger ai) {
+    if (nvn_stage == 5) enc_c_args(en, gpu, ai);
+    else enc_r_args((RENC)en, metal_vertex ? MTLRenderStageVertex : MTLRenderStageFragment, gpu, ai);
 }
 // B 路线的静态常量缓冲：Ryujinx support_buffer（布局见 Ryujinx.Graphics.Shader/SupportBuffer.cs：alpha_test u32、is_bgra u32[8]、
 // viewport_inverse f4、viewport_size f4、frag_scale_count i32、render_scale f32[73]…，各字段按 16 字节对齐）与全 0 驱动常量段（64 KB = 着色器声明的上限）
@@ -3136,7 +3177,7 @@ static inline int m3_use_seen(void *p, uint32_t u) {
     return 0;
 }
 #endif
-static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, int metal_vertex) {
+static int encode_args(id en, NvShader *sh, int nvn_stage, int metal_vertex) {
     if (!sh->ae) return 1;
     uint64_t slots[NVN_REFL_MAXB];   // 只清本着色器参数块那么长（arg_len = 8 ×（最大序号 + 1），shader_load 核过）：上限放大后每次新编的清零量不变，复用路径不清 | Only clear as much as this shader's argument block (arg_len = 8 x (max index + 1), checked in shader_load): with the larger limit each new encode clears the same amount, and the reuse path clears nothing
     args_sync_dirty();
@@ -4837,7 +4878,7 @@ frz_plain:;
     int need = g_enc || !tb_sub(TB_DS) ? 3 : pass_ds_need(), mode = defer_q_draw ? 0 : need == 0 ? 2 : need == 2 ? 3 : need == 1 ? 4 : 0;   // 2 都不挂 3 只挂模板 4 只挂深度 | 2 attach neither, 3 attach stencil only, 4 attach depth only
     int skip_d = mode != 0;
     if (!g_enc) { g_fd_dw = dw; g_fd_di = di; }
-    id<MTLRenderCommandEncoder> en = rp_begin_ex(mode);
+    RENC en = rp_begin_ex(mode);
     g_fd_dw = NULL; g_fd_di = NULL;
     if (!en) return;
     if (defer_q_draw) defer_replay();
@@ -5165,7 +5206,7 @@ static void dispatch(const p_dispatch *dp) {
                  m ? (unsigned long long)(dp->caller - (uint64_t)m->base) : (unsigned long long)dp->caller, dp->x, dp->y, dp->z, *(uint32_t *)u->addr);
         }
         rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
-        id<MTLComputeCommandEncoder> ce = pg_compute();
+        CENC ce = pg_compute();
         enc_c_pso(ce, ps);
         enc_c_args(ce, ((__bridge id<MTLBuffer>)ub).gpuAddress + uo, 0); enc_c_args(ce, ((__bridge id<MTLBuffer>)sb).gpuAddress + so, 1); enc_c_args(ce, ((__bridge id<MTLBuffer>)db).gpuAddress + dof, 2);   // 内嵌计算核：冷路径，直接取地址 | Built-in compute kernel: cold path, take the addresses directly
         enc_c_dispatch(ce, MTLSizeMake(dp->x, dp->y, dp->z), MTLSizeMake(32, 1, 1));
@@ -5175,7 +5216,7 @@ static void dispatch(const p_dispatch *dp) {
     const uint16_t *tg = cs->rf.tg;
     if (!tg[0]) { RED_ONCE(29, "计算着色器缺线程组大小反射"); return; }
     rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
-    id<MTLComputeCommandEncoder> ce = pg_compute();
+    CENC ce = pg_compute();
     enc_c_pso(ce, ps);
     encode_args(ce, cs, 5, 0);
     enc_c_dispatch(ce, MTLSizeMake(dp->x, dp->y, dp->z), MTLSizeMake(tg[0], tg[1], tg[2]));
@@ -5762,9 +5803,10 @@ void mtl_res_counts(uint32_t tick, const char *why) {
     mtl_res_count c;
     mtl_res_snapshot(&c);
     int dl, du; uint64_t da; nvn_dirty_slot_stats(&dl, &du, &da);
-    LOG("[nvn] 资源计数 拍 %u %s：渲染管线 %u 计算管线 %u 着色器 %u 深度模板 %u view非空 %u view槽 %u 存活贴图 %u 内存池存活 %u 内存池累计 %llu 采样器view非空 %u 脏页区间存活 %d 脏页区间累计 %llu c1缓冲 %u c1字节 %llu c1实际 %llu",
+    pthread_mutex_lock(&g_rmu); uint64_t vd = g_treg_forgot; pthread_mutex_unlock(&g_rmu);
+    LOG("[nvn] 资源计数 拍 %u %s：渲染管线 %u 计算管线 %u 着色器 %u 深度模板 %u view非空 %u view槽 %u 存活贴图 %u 内存池存活 %u 内存池累计 %llu 采样器view非空 %u 脏页区间存活 %d 脏页区间累计 %llu c1缓冲 %u c1字节 %llu c1实际 %llu 释放贴图放掉view累计 %llu",
         tick, why, c.pso, c.cps, c.shaders, c.dss, c.view_nonnull, c.view_slots, c.live_tex,
-        c.pools, (unsigned long long)c.pool_adds, c.sview_nonnull, dl, (unsigned long long)da, c.c1_bufs, (unsigned long long)c.c1_alloc, (unsigned long long)c.c1_data);
+        c.pools, (unsigned long long)c.pool_adds, c.sview_nonnull, dl, (unsigned long long)da, c.c1_bufs, (unsigned long long)c.c1_alloc, (unsigned long long)c.c1_data, (unsigned long long)vd);
 }
 // 按请求截图（DM_NVN_SHOT_UI 用）：dm_gfx_shot_at(k, 路径) = 在当前出图帧之后第 k 帧截图；每帧出图时检查到期请求
 // Screenshot on request (used by DM_NVN_SHOT_UI): dm_gfx_shot_at(k, path) = take a screenshot at the kth frame after the current present frame; due requests are checked at every frame's present
@@ -6093,25 +6135,33 @@ static id<MTLTexture> present_src(id<MTLTexture> src) {
 // 开关是选项页「图形 → 放大方式」（dm_video.c，见 mfx_on），DM_MFX=0/1 可定死。同一个命令缓冲里三步：
 // ① 拷贝趟（出图着色器，带队列屏障）把有效区 1:1 画进输入贴图，顺带处理裁切与 sRGB 视图；② MetalFX 放大到视口尺寸；③ 出图趟把结果 1:1 画上 drawable。
 // Metal 4 不跟踪资源冒险：一个围栏串起三步（拷贝趟更新 → MetalFX 等待并更新 → 出图趟等待），出图趟另有原来的队列屏障。旧接口资源自动跟踪，不用围栏。
-// 放大器与两张贴图按尺寸缓存：视口一变（拉窗口、进出全屏、挪到别的屏、改分辨率）就重建一次，所以换屏无缝；Metal 4 的旧贴图等之后 4 次出图（在途最多 3 帧）再移出驻留集。
-// 整窗截图（grab_present）走旧接口命令缓冲，用另一份旧接口放大器，截到的就是玩家看到的。建不出放大器就记一次红、退回双线性。
+// 放大器与两张贴图按尺寸缓存：视口一变（拉窗口、进出全屏、挪到别的屏、改分辨率）就重建一次。拉窗口时尺寸每一步都在变，所以新尺寸要连续 MFX_SETTLE 次出图不变才重建，
+// 期间照原路径（双线性 / 原版 3D 放大）；换下的放大器与两张贴图都等用过它们的命令缓冲跑完再放（出图用的等之后 4 次出图，在途最多 3 帧；3D 放大趟的走回放的延迟释放）——
+// Metal 4 命令缓冲不持有资源，放大器也不归命令缓冲管。选项页关掉「放大方式」时，放大器与贴图一并放掉（Mac 约 23 MB、iPhone 约 47 MB）。
+// 整窗截图（grab_present）走旧接口命令缓冲，用另一份旧接口放大器，截到的就是玩家看到的（不等尺寸稳定）。建不出放大器就记一次红、退回双线性。
 // MetalFX spatial upscaling (Mac only): with DM_MFX=1, frames whose present upscales (viewport more than 5% larger than the game picture) use MetalFX's edge-adaptive upscaler instead of bilinear; other frames are unchanged.
 // The switch is the options page "Graphics → Upscaling" (dm_video.c, see mfx_on); DM_MFX=0/1 fixes it. Three steps in one command buffer:
 // (1) a copy pass (the present shader, with the queue barrier) draws the valid area 1:1 into the input texture, handling the crop and the sRGB view on the way; (2) MetalFX scales it to the viewport size; (3) the present pass draws the result 1:1 onto the drawable.
 // Metal 4 does not track resource hazards: one fence chains the steps (copy pass updates → MetalFX waits and updates → present pass waits), and the present pass keeps its queue barrier. The older API tracks resources, so no fence there.
-// The scaler and both textures are cached per size: when the viewport changes (window resize, entering or leaving full screen, moving to another screen, a resolution change) they are rebuilt once, so changing screens is seamless; with Metal 4 the old textures leave the residency set after 4 more presents (at most 3 in flight).
-// The whole-window screenshot (grab_present) uses an older-API command buffer and a separate older-API scaler, so it captures what the player sees. If a scaler can't be created, log one red line and fall back to bilinear.
+// The scaler and both textures are cached per size: when the viewport changes (window resize, entering or leaving full screen, moving to another screen, a resolution change) they are rebuilt once. A window resize changes the size at every step, so a new size must stay the same for MFX_SETTLE presents in a row before the rebuild,
+// and until then the original path draws (bilinear / the game's own 3D upscale); the replaced scaler and both textures are released only after the command buffers that used them have run (the present ones after 4 more presents, at most 3 in flight; the 3D pass ones through the replay's deferred release) -
+// Metal 4 command buffers do not retain resources, and the scaler is not retained by any command buffer. When "Upscaling" is turned off on the options page, the scalers and their textures are released too (about 23 MB on the Mac, 47 MB on iPhone).
+// The whole-window screenshot (grab_present) uses an older-API command buffer and a separate older-API scaler, so it captures what the player sees (it does not wait for the size to settle). If a scaler can't be created, log one red line and fall back to bilinear.
 #if DM_NVN_M3
 #define MFX_M4 0
 #else
 #define MFX_M4 1
 #endif
 // 每份放大器各带自己的格式、参数表与 UV 缓冲：出图线程（出图 / 截图）与回放线程（3D 放大趟）各用各的，不共用会被并发改写的东西。
-// main_cb = 编在每帧的主命令缓冲里（3D 放大趟）：换下的贴图走回放的延迟释放（defer_obj_release）；否则走出图计数的退役表（mfx_retire）
+// main_cb = 编在每帧的主命令缓冲里（3D 放大趟）：换下的放大器与贴图走回放的延迟释放（defer_obj_release）；否则走出图计数的退役表（mfx_retire）
+// settle：新尺寸要连续要几次才重建（0 = 立即，截图用）；p* 是正在等稳定的那个尺寸与已连续要的次数
 // Each scaler carries its own formats, argument table and UV buffers: the present thread (present / screenshot) and the replay thread (3D upscale pass) each use their own, sharing nothing that is rewritten concurrently.
-// main_cb = encoded into each frame's main command buffer (3D upscale pass): replaced textures go through the replay's deferred release (defer_obj_release); otherwise through the present-counted retire list (mfx_retire)
-typedef struct { id scaler; id<MTLTexture> in, out; id<MTLFence> fence; NSUInteger iw, ih, ow, oh; MTLPixelFormat fmt; int m4, bad, main_cb, uvi; id args; id<MTLBuffer> uv[3]; const char *who; } mfx_t;
-static mfx_t g_mfx_pres = { .who = "出图" }, g_mfx_grab = { .who = "出图截图" }, g_mfx_3d = { .who = "3D 放大", .main_cb = 1 };   // 出图用 / 整窗截图用（旧接口）/ 游戏 3D 放大趟用 | present / whole-window screenshot (older API) / the game's 3D upscale pass
+// main_cb = encoded into each frame's main command buffer (3D upscale pass): the replaced scaler and textures go through the replay's deferred release (defer_obj_release); otherwise through the present-counted retire list (mfx_retire)
+// settle: how many requests in a row a new size needs before the rebuild (0 = at once, for the screenshot); p* are the size waiting to settle and how many times in a row it was requested
+#define MFX_SETTLE 8
+typedef struct { id scaler; id<MTLTexture> in, out; id<MTLFence> fence; NSUInteger iw, ih, ow, oh; MTLPixelFormat fmt; int m4, bad, main_cb, uvi; id args; id<MTLBuffer> uv[3]; const char *who;
+                 int settle, pn; NSUInteger piw, pih, pow_, poh; MTLPixelFormat pfmt; } mfx_t;
+static mfx_t g_mfx_pres = { .who = "出图", .settle = MFX_SETTLE }, g_mfx_grab = { .who = "出图截图" }, g_mfx_3d = { .who = "3D 放大", .main_cb = 1, .settle = MFX_SETTLE };   // 出图用 / 整窗截图用（旧接口）/ 游戏 3D 放大趟用 | present / whole-window screenshot (older API) / the game's 3D upscale pass
 static id<MTLRenderPipelineState> mfx_copy_pso(MTLPixelFormat fmt) {   // 拷贝趟：出图着色器，按输出格式各编一份 | copy pass: the present shader, one pipeline per output format
     static MTLPixelFormat f[4]; static id<MTLRenderPipelineState> p[4]; static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_lock(&mu); id<MTLRenderPipelineState> r = nil; int k = 0;
@@ -6129,7 +6179,8 @@ static id<MTLSamplerState> mfx_samp(int linear) {   // 自带的采样器：3D �
         sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge; sd.supportArgumentBuffers = YES; sm[i] = [g_dev newSamplerStateWithDescriptor:sd]; } });
     return sm[linear != 0];
 }
-static struct { id<MTLTexture> t; uint64_t at; } g_mfx_old[8]; static int g_mfx_nold; static uint64_t g_mfx_calls;
+#define MFX_OLD 24   // 退役表：每次换下最多 3 项（放大器 + 两张贴图），尺寸稳定后才重建，同时在表的不过两三代 | retire list: at most 3 entries per replacement (scaler + two textures), and with rebuilds only after the size settles no more than two or three generations are in it at once
+static struct { id o; uint64_t at; int res; } g_mfx_old[MFX_OLD]; static int g_mfx_nold; static uint64_t g_mfx_calls;   // res：在驻留集里，到期要移出（Metal 4 的贴图） | res: in the residency set, to be removed when due (Metal 4 textures)
 __attribute__((weak)) int dm_video_upscale(void) { return 0; }   // 宿主 dm_video.c 提供强定义（选项页「放大方式」）；图形单测不链宿主时恒关 | the host's dm_video.c provides the strong definition (options page "Upscaling"); always off when the graphics unit tests do not link the host
 static int mfx_on(void) {   // DM_MFX=0/1 定死（测试、A/B）；没给就每帧按选项页的设置，点「应用」下一帧就换 | DM_MFX=0/1 fixes it (tests, A/B); otherwise follow the options page setting every frame, so "Apply" takes effect on the next frame
     static int env = -2, last = -1; if (env == -2) { const char *e = getenv("DM_MFX"); env = e ? atoi(e) > 0 : -1; }
@@ -6137,20 +6188,34 @@ static int mfx_on(void) {   // DM_MFX=0/1 定死（测试、A/B）；没给就�
     if (on != last) { last = on; MLOG("出图：MetalFX 空间放大%s（%s） | present: MetalFX spatial upscaling %s", on ? "开" : "关", env >= 0 ? "DM_MFX" : "选项页设置", on ? "on" : "off"); }
     return on;
 }
-static void mfx_retire(id<MTLTexture> t) {   // Metal 4：等之后 4 次出图再移出驻留集 | Metal 4: leave the residency set after 4 more presents
-    if (!t) return;
-    if (g_mfx_nold == 8) { res_remove(g_mfx_old[0].t); for (int i = 1; i < 8; i++) g_mfx_old[i - 1] = g_mfx_old[i]; g_mfx_old[7].t = nil; g_mfx_nold--; }   // 逐个赋值（ARC 对象不能 memmove） | element-wise assignment (ARC objects can't be memmoved)
-    g_mfx_old[g_mfx_nold].t = t; g_mfx_old[g_mfx_nold++].at = g_mfx_calls;
+static void mfx_retire(id o, int res) {   // 出图线程：等之后 4 次出图再放引用（res：先移出驻留集） | present thread: drop the reference after 4 more presents (res: leave the residency set first)
+    if (!o) return;
+    if (g_mfx_nold == MFX_OLD) { if (g_mfx_old[0].res) { res_remove(g_mfx_old[0].o); res_commit(); } for (int i = 1; i < MFX_OLD; i++) g_mfx_old[i - 1] = g_mfx_old[i]; g_mfx_old[MFX_OLD - 1].o = nil; g_mfx_nold--; }   // 逐个赋值（ARC 对象不能 memmove） | element-wise assignment (ARC objects can't be memmoved)
+    g_mfx_old[g_mfx_nold].o = o; g_mfx_old[g_mfx_nold].res = res; g_mfx_old[g_mfx_nold++].at = g_mfx_calls;
 }
-static void mfx_retire_tick(void) {
-    g_mfx_calls++; int k = 0;
-    for (int i = 0; i < g_mfx_nold; i++) if (g_mfx_calls - g_mfx_old[i].at >= 4) res_remove(g_mfx_old[i].t); else g_mfx_old[k++] = g_mfx_old[i];
-    for (int i = k; i < g_mfx_nold; i++) g_mfx_old[i].t = nil;
-    if (k != g_mfx_nold) { g_mfx_nold = k; res_commit(); }
+static void mfx_retire_tick(void) {   // 每次出图调（两种接口都调：旧接口的放大器也要等在途的帧跑完） | called at every present (with both APIs: the older API's scaler also has to wait for the frames in flight)
+    g_mfx_calls++; int k = 0, removed = 0;
+    for (int i = 0; i < g_mfx_nold; i++) if (g_mfx_calls - g_mfx_old[i].at >= 4) { if (g_mfx_old[i].res) { res_remove(g_mfx_old[i].o); removed = 1; } } else g_mfx_old[k++] = g_mfx_old[i];
+    for (int i = k; i < g_mfx_nold; i++) g_mfx_old[i].o = nil;
+    g_mfx_nold = k; if (removed) res_commit();
+}
+// 放下放大器与两张贴图（换尺寸、关掉「放大方式」）：等用过它们的命令缓冲跑完再放——Metal 4 命令缓冲不持有资源，放大器（及它内部的资源）也不归命令缓冲管，原先换尺寸时旧放大器当场就放了。参数表、UV 缓冲、围栏很小，留着复用
+// Put down the scaler and both textures (size change, "Upscaling" turned off): release them only after the command buffers that used them have run - Metal 4 command buffers retain no resources, and the scaler (with its internal resources) is not retained by any command buffer; the old scaler used to be released on the spot at a size change. The argument table, UV buffers and fence are small and kept for reuse
+static void mfx_drop(mfx_t *m) {
+    if (!m->scaler && !m->in && !m->out) return;
+    MLOG("%s：MetalFX 放大器与贴图放下（%lux%lu → %lux%lu），等用过它们的帧跑完再释放 | MetalFX scaler and textures put down, released once the frames that used them have run", m->who, (unsigned long)m->iw, (unsigned long)m->ih, (unsigned long)m->ow, (unsigned long)m->oh);
+    if (m->main_cb) { defer_obj_release(m->scaler); defer_obj_release(m->in); defer_obj_release(m->out); }   // 回放线程：本次提交跑完再放（贴图同时移出驻留集） | replay thread: released after this submission has run (the textures also leave the residency set)
+    else { mfx_retire(m->scaler, 0); mfx_retire(m->in, m->m4); mfx_retire(m->out, m->m4); }
+    m->scaler = nil; m->in = m->out = nil; m->iw = m->ih = m->ow = m->oh = 0; m->pn = 0;
 }
 static int mfx_ready(mfx_t *m, int m4, MTLPixelFormat fmt, NSUInteger iw, NSUInteger ih, NSUInteger ow, NSUInteger oh) {
     if (m->bad) return 0;
-    if (m->scaler && m->fmt == fmt && m->iw == iw && m->ih == ih && m->ow == ow && m->oh == oh) return 1;
+    if (m->scaler && m->fmt == fmt && m->iw == iw && m->ih == ih && m->ow == ow && m->oh == oh) { m->pn = 0; return 1; }
+    if (m->settle) {   // 尺寸变了（或第一次）：同一新尺寸连续要够 settle 次才建，拉窗口的每一步不各建一套；这期间调用方照原路径画 | size changed (or first build): build only after the same new size was requested settle times in a row, not one set per window-resize step; meanwhile the caller draws the original way
+        if (m->pfmt != fmt || m->piw != iw || m->pih != ih || m->pow_ != ow || m->poh != oh) { m->pfmt = fmt; m->piw = iw; m->pih = ih; m->pow_ = ow; m->poh = oh; m->pn = 0; }
+        if (++m->pn < m->settle) return 0;
+    }
+    mfx_drop(m);   // 旧尺寸那套不会再用了 | the old-size set will not be used again
     NSError *e = nil;
     if (!mfx_copy_pso(fmt)) { m->bad = 1; return 0; }
     MTLFXSpatialScalerDescriptor *d = [MTLFXSpatialScalerDescriptor new];
@@ -6177,7 +6242,6 @@ static int mfx_ready(mfx_t *m, int m4, MTLPixelFormat fmt, NSUInteger iw, NSUInt
             m->args = [g_dev newArgumentTableWithDescriptor:ad error:&e]; }
         if (!m->uv[0]) for (int i = 0; i < 3; i++) { m->uv[i] = [g_dev newBufferWithLength:sizeof(float) * 8 options:MTLResourceStorageModeShared]; res_add(m->uv[i]); }
 #endif
-        if (m->main_cb) { defer_obj_release(m->in); defer_obj_release(m->out); } else { mfx_retire(m->in); mfx_retire(m->out); }
         res_add(in); res_add(out); res_commit();
         if (!m->fence) m->fence = [g_dev newFence];
         s.fence = m->fence;
@@ -6259,6 +6323,9 @@ static int mfx3d_on(void) {
     if (on != last) { last = on; MLOG("3D 放大：MetalFX %s（%s） | 3D upscale: MetalFX %s", on ? "开" : "关", env >= 0 ? "DM_MFX3D" : "选项页设置", on ? "on" : "off"); }
     return on;
 }
+// 每次提交开头（回放线程）：「放大方式」关了就放掉 3D 放大趟的放大器与贴图（游戏不画放大趟了，mfx3d_draw 就走不到）
+// At the start of every submission (replay thread): with "Upscaling" off, release the 3D pass scaler and textures (once the game stops drawing the upscale pass, mfx3d_draw is never reached)
+static void mfx3d_sub_begin(void) { if (g_mfx_3d.scaler && !mfx3d_on()) mfx_drop(&g_mfx_3d); }
 static const char *g_mfx3d_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"
     "struct V { float4 p [[position]]; float2 uv; };\n"
@@ -6381,7 +6448,8 @@ static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, c
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
 #if TARGET_OS_OSX
     int mfx = 0;
-    if (MFX_M4) mfx_retire_tick();
+    mfx_retire_tick();
+    if (!mfx_on()) { mfx_drop(&g_mfx_pres); mfx_drop(&g_mfx_grab); }   // 「放大方式」关了：出图与截图的放大器、贴图都放掉 | "Upscaling" off: release the present and screenshot scalers and textures
     if (mfx_want(&g_mfx_pres, MFX_M4, cw, ch, vp)) {
         if (!mfx_scale(&g_mfx_pres, cb, src, cx, cy, cw, ch)) return 0;
         src = g_mfx_pres.out; cx = cy = 0; cw = src.width; ch = src.height; mfx = 1;
@@ -6455,10 +6523,10 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     if (bootprof() && (g_present_n == 1 || g_present_n % 120 == 0)) {
         if (g_present_n == 1) g_bp_first_present = bp_now() - g_bp_t0;
         MLOG("[bootprof] t=%.3f s 出图第 %llu 次：metallib 载入 %llu 个 / %.1f ms；管线创建 %llu 个 / %.1f ms（均在提交线程同步）；预热领用 着色器 %llu / 渲染管线 %llu / 计算管线 %llu；"
-             "贴图上传 %.1f MB / %llu 张首传 + %llu 次重传 / %.1f ms；首帧出图 t=%.3f s", (bp_now() - g_bp_t0) / 1e9, g_present_n,
+             "贴图上传 %.1f MB / %llu 张首传 + %llu 次重传 / %.1f ms；首帧出图 t=%.3f s；并行预编 丢出 %llu / 领用 %llu / 过期回收 %llu / 表满没丢 %llu / 在表 %d", (bp_now() - g_bp_t0) / 1e9, g_present_n,
              g_bp_lib_n, g_bp_lib_ns / 1e6, g_bp_pso_n, g_bp_pso_ns / 1e6, g_warm_claim_shaders, g_warm_claim_rps, g_warm_claim_cps,
              g_bp_up_bytes / 1048576.0, g_pkg_uploads, g_pkg_reuploads,
-             g_up_total_ns / 1e6, g_bp_first_present / 1e9);
+             g_up_total_ns / 1e6, g_bp_first_present / 1e9, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full, g_pp_live);
     }
     PD("X ser=%llu", t->serial);
     id<MTLTexture> src = tex_mtl(t);

@@ -123,6 +123,27 @@ static void lut_case(void) {
     mtl_tex_release(&t);
     os_unfair_lock_lock(&g_mp_lk); held = g_mp_lut != nil; os_unfair_lock_unlock(&g_mp_lk); EXPECT("调色表释放后：探针放手 | after the color table is released: the probe lets go", 0, held);
 }
+// 贴图号的视图缓存：游戏释放贴图后，登记着它的各号缓存的视图（这里一个是带重映射的真视图，一个是基贴图本身）当场放掉，不再等号被重新登记；
+// 号仍登记着；在途的提交可能还读它，所以要等本次提交完成才真正释放；之后再用这个号照常重建
+// Texture-ID view cache: once the game releases a texture, the views cached for the IDs registered with it (here one real swizzled view and one that is the base texture itself) are dropped at once instead of waiting for the ID to be registered again;
+// the ID stays registered; submissions in flight may still read it, so it is really released only when this submission completes; a later use of the ID rebuilds as usual
+static void treg_view_case(void) {
+    tex_t a = tex(8, NVN_FORMAT_RGBX8); mtl_reg_tex(1501, &a, NULL); mtl_reg_tex(1502, &a, NULL);
+    tex_t b = tex(8, NVN_FORMAT_RGBA8); mtl_reg_tex(1503, &b, NULL);
+    __weak id wv, wb;
+    @autoreleasepool { pthread_mutex_lock(&g_rmu); wv = tex_by_id(1501); (void)tex_by_id(1502); wb = tex_by_id(1503); pthread_mutex_unlock(&g_rmu); }
+    EXPECT("视图缓存：三个号都缓存了视图 | view cache: all three IDs cache a view", 1, g_treg[1501].view && g_treg[1502].view && g_treg[1503].view);
+    EXPECT("视图缓存：RGBX 的是带重映射的真视图 | view cache: the RGBX one is a real swizzled view", 1, ((id<MTLTexture>)wv).parentTexture != nil);
+    uint64_t f0 = g_treg_forgot;
+    mtl_tex_release(&a);
+    EXPECT("释放贴图：登记它的两个号的视图都放掉 | texture released: the views of both IDs registered with it are dropped", 0, g_treg[1501].view || g_treg[1502].view);
+    EXPECT("释放贴图：放掉计数 +2 | texture released: drop count +2", 2, g_treg_forgot - f0);
+    EXPECT("释放贴图：别的贴图的号不动 | texture released: another texture's ID is untouched", 1, g_treg[1503].view != NULL && wb != nil);
+    EXPECT("释放贴图：号仍登记着 | texture released: the IDs stay registered", 1, g_treg[1501].ok && g_treg[1502].ok);
+    EXPECT("释放贴图：本次提交完成前视图还活着 | texture released: the view stays alive until this submission completes", 1, wv != nil);
+    @autoreleasepool { chain c = chain_new(); exec(&c); commit(); defer_drain(); res_commit(); }   // 跑完一次（空）提交 | run one (empty) submission to completion
+    EXPECT("释放贴图：提交完成后视图释放 | texture released: the view is released once the submission completes", 0, wv != nil);
+}
 // F-GFX-17：遮挡查询的「通过采样数」= 自清零以来各通道槽之和，可跨提交；后一次提交不能复用还被记着槽的可见性缓冲，
 // 报告要读的缓冲在那次提交的完成回调读完之前也不能复用。先做的一段让 GPU 队列先等事件，B、C 两次提交都排着；B 的完成回调先等 C 在 GPU 上做完再求和（环从空着开始，C 若可复用 A 的缓冲就会挑中它）
 // F-GFX-17: "samples passed" = the sum of the per-pass slots since the reset, which can span submits; a later submit must not reuse a visibility buffer whose slots are still on record,
@@ -201,5 +222,5 @@ static void present_slot_case(void) {
 }
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init(); lib_init();
-    scissor_case(); clear_view_case(); stencil_mask_case(); stream14_case(); swizzle_case(); pending_vb_case(); lut_case(); vis_ring_case(); m3_table_case(); present_slot_case();
+    scissor_case(); clear_view_case(); stencil_mask_case(); stream14_case(); swizzle_case(); pending_vb_case(); lut_case(); treg_view_case(); vis_ring_case(); m3_table_case(); present_slot_case();
     printf("== %d 项，失败 %d ==\n", count, fail); return fail != 0; } }
