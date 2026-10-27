@@ -59,6 +59,7 @@ void dm_set_opmode(int m) {   // 前端调（过热降级等）：改状态并�
     int old = dm_opmode(); if (old == m) return;
     g_opmode = m;
     LOG("oe 运行模式 %d → %d", old, m);
+    DM_EV("opmode", "from:d to:d", old, m);
     if (g_ntf_opmode) mq_push(MSG_OPMODE);
     if (g_ntf_perfmode) mq_push(MSG_PERFMODE);
 }

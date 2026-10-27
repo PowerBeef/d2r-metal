@@ -84,7 +84,7 @@ static char g_dir[1024];   // iOS 外壳启动时给的 Documents（main.m）：
 void dm_custom_init(const char *dir) { if (dir) strlcpy(g_dir, dir, sizeof g_dir); }
 int dm_custom_path(const char *name, char *p, size_t n) {   // 设置文件放哪：sw_custom.txt 与画面设置 sw_video.txt（dm_video.c）同一处 | where settings files go: sw_custom.txt and the picture settings sw_video.txt (dm_video.c) share one place
     if (g_dir[0]) { snprintf(p, n, "%s/%s", g_dir, name); return 1; }
-    const char *c = dm_save_commitdir(); if (!c) return 0; snprintf(p, n, "%s/../%s", c, name); return 1; }
+    const char *c = dm_save_commitdir(); if (!c) c = getenv("DM_SAVE"); if (!c) return 0; snprintf(p, n, "%s/../%s", c, name); return 1; }   // 命令行宿主挂存档之前（hle_fs.c 挂载时改设置文件的语言要先读这里）已提交目录还没登记：就是 DM_SAVE（两个 App 有 g_dir） | before the CLI host mounts the save (hle_fs.c reads this while mounting, to rewrite the settings file's language) the committed directory is not registered yet: it is DM_SAVE (both apps have g_dir)
 static int file_path(char *p, size_t n) { return dm_custom_path("sw_custom.txt", p, n); }
 
 static void load_once(void) {

@@ -444,6 +444,7 @@ static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄
     { static int played, back; if (!strcmp(n0, "FrontEndNavigation") && !strcmp(n1, "ToGame")) { played = 1; back = 0; crash_watch_pregame_done(); }
       else if (!strcmp(n0, "FrontEndNavigation") && !strcmp(n1, "ToFrontEnd") && played) { back = 1; void crash_watch_pregame_again(void); crash_watch_pregame_again(); }
       else if (have_arg && !strcmp(nm, "MainMenuButtonRibbon") && !back) crash_watch_pregame_done(); }
+    if (!strcmp(n0, "FrontEndNavigation") && !strcmp(n1, "ToFrontEnd")) { void hud_clear(void); hud_clear(); }   // 出局：HUD 读数只在拍入口更新，出局后不再走拍，清掉（控制口 state 的 in_game 原先一直是真） | leaving a run: the HUD readings only update at the tick entry, which stops after leaving, so clear them (the control port's state.in_game used to stay true)
     for (int k = 0, n = atomic_load(&g_nui_sub); k < n; k++) { char s0[24], s1[24]; g_ui_sub[k](uih_name(f[0], s0), uih_name(f[1], s1), have_arg ? nm : ""); }
     if (!strcmp(n0, "PanelManager") && have_arg) {   // 长帧日志的上下文、控制口 state 的 panel：记最近打开且未关的面板（不开 DM_UIMSG 也记） | Context for the long-frame log and the control port's state panel: remember the most recently opened and not yet closed panel (recorded without DM_UIMSG too)
         extern char g_lf_panel[48];
@@ -495,7 +496,7 @@ static void setlang_obs(const uint64_t *regs) {
     uint32_t idx = 0; const char *nm = NULL; vm_size_t got = 0;   // 安全读（不用 tk_rd：它给拍状态采集计数） | Safe read (not tk_rd: that one counts toward tick state collection)
     if (regs[1] && !vm_read_overwrite(mach_task_self(), regs[1], 4, (vm_address_t)&idx, &got) && got == 4 && idx < 13) {
         uint64_t p = 0; memcpy(&p, m->base + 0x20ae478 + 8ull * idx, 8); nm = (const char *)p; }
-    static uint32_t last = 0xffffffff; if (idx != last) { last = idx; LOG("SetLanguage：语言 %s（号 %u），重装字符串表", nm ? nm : "?", idx); }
+    static uint32_t last = 0xffffffff; if (idx != last) { last = idx; LOG("SetLanguage：语言 %s（号 %u），重装字符串表", nm ? nm : "?", idx); DM_EV("language", "name:s idx:u", nm, (unsigned long long)idx); }
     if (nm) atomic_store(&g_dm_lang, (int)idx);   // 我们自己的 UIKit 文字跟着换（dm_i18n.c） | our own UIKit text switches along with it (dm_i18n.c)
 }
 void probe_install(void) {
@@ -1059,6 +1060,7 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
         LOG("dm_hud：区域 %d (%d,%d) Lv %d 经验 %d‰ 生命 %d/%d 法力 %d/%d 腰带 %d/%d/%d/%d 回城 %d 人数档 %d 点数 %d 新任务 %d%s%s", h.area, h.x, h.y, h.level, h.exp_permille, h.hp, h.hp_max, h.mp, h.mp_max, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.players, h.points, h.quest_unread, h.dead ? " 已死亡" : "", h.valid ? "" : "（未读到玩家）"); }
     g_hud = h; dm_hud_publish(&h);
 }
+void hud_clear(void) { dm_hud_info z; memset(&z, 0, sizeof z); g_hud = z; dm_hud_publish(&z); }   // 游戏主线程（界面消息观测）：出局 | game main thread (UI message observer): leaving a run
 
 static void state_dump(const uint64_t *regs) {
     static char *prev;
@@ -2055,7 +2057,8 @@ void ticks_install(void) {
     g_ctl_track = (getenv("DM_CTL_PORT") && *getenv("DM_CTL_PORT")) || (getenv("DM_LOG_PORT") && *getenv("DM_LOG_PORT"));
     const char *pn = getenv("DM_PLAYERS");
     if (pn && *pn) { dm_hud_request_players(atoi(pn)); LOG("DM_PLAYERS：起局请求档位 %d", dm_hud_requested_players()); }
-    if ((e || rp || lg) && gate_obs_present(OBS_UIMSG)) { void uimsg_subscribe(void (*)(const char *, const char *, const char *)); uimsg_subscribe(res_on_uimsg); }
+    const char *oe = getenv("DM_OE_SCRIPT"); int oe_in = oe && strstr(oe, "@ingame");   // DM_OE_SCRIPT 的 @ingame 按读取画面撤下计，也要这个订阅（原先只在录 / 放拍时装，单开 DM_OE_SCRIPT 时永远等不到） | DM_OE_SCRIPT's @ingame counts loading-screen unloads and needs this subscriber too (it used to be installed only when recording / replaying ticks, so DM_OE_SCRIPT alone waited forever)
+    if ((e || rp || lg || oe_in) && gate_obs_present(OBS_UIMSG)) { void uimsg_subscribe(void (*)(const char *, const char *, const char *)); uimsg_subscribe(res_on_uimsg); }
     soak_install();
     shotui_install();
     if (lg) {

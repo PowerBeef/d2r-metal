@@ -57,6 +57,9 @@ UTF-8, one object per line, terminated by `\n`, written with a single `write()` 
 | `save_alert` | `errno` | The player is told a save was not written (`front_save_failed`): a refused commit, a failed clone / swap, a failed mount-time clone. |
 | `fault` | `point`, `n` (or `ms` for `savedelay`) | A test fault fired (`DM_TEST_FS_FAILAT`, `DM_TEST_SAVE_DELAY`, the control port's `fault`): `mountclone`, `reclone`, `guestname`, `renameback`, `guestopen`, `savedelay`. |
 | `action` | `id`, `name`, `phase` (`begin`, `end`) | A controller action reached the UI bus (`InputMessage` `ControllerActionBegin` / `End`); `name` is read from the game's own action table at run time (`select`, `back`, `pause`, `cycleLeft`, …; null if unreadable). Only while a panel takes input: menus, not world play. |
+| `language` | `name` (`enUS`, `esES`, `zhCN`, …), `idx` | The game switched its text language (SetLanguage; at boot from the settings file, or from the options page). |
+| `opmode` | `from`, `to` (1 docked, 0 handheld) | The operation mode changed (`dm_set_opmode`: the front end's overheat downgrade, `DM_OE_SCRIPT`); the game is notified through 30 / 31. |
+| `padmode` | `mode` (`controller`, `touch`), `glyph` (`Switch`, `keyboard`, `Xbox`, `PlayStation`), `frames`, `timeouts` | A controller / touch layout or key cap switch finished (`dm_padmode.c`); `timeouts` > 0 means a UI rebuild was not seen in time. |
 | `focus` | `panel`, `widget` | The focused widget changed (`dm_engine.c`, the game's focus manager); null = no focus. |
 | `shutdown` | `why` | `dm_host_shutdown` started (SIGTERM, iOS terminate / scene disconnect, Mac quit). |
 | `shot` | `path`, `ok` | A screenshot file was written (`DM_NVN_SHOT_UI`, the control port's `screenshot`). |

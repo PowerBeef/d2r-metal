@@ -57,6 +57,9 @@ UTF-8，一行一个对象，以 `\n` 结尾；一次 `write()` 写出，多线�
 | `save_alert` | `errno` | 告诉玩家存盘没写进去（`front_save_failed`）：提交被拒、克隆 / 互换失败、挂载时克隆失败。 |
 | `fault` | `point`、`n`（`savedelay` 为 `ms`） | 测试故障打到了（`DM_TEST_FS_FAILAT`、`DM_TEST_SAVE_DELAY`、控制口 `fault`）：`mountclone`、`reclone`、`guestname`、`renameback`、`guestopen`、`savedelay`。 |
 | `action` | `id`、`name`、`phase`（`begin`、`end`） | 手柄动作到了界面总线（`InputMessage` `ControllerActionBegin` / `End`）；`name` 运行时从游戏自己的动作名表读（`select`、`back`、`pause`、`cycleLeft`…；读不出为 null）。只在有面板收输入时有：菜单里有，局内走动没有。 |
+| `language` | `name`（`enUS`、`esES`、`zhCN`…）、`idx` | 游戏换了文字语言（SetLanguage；开机读设置文件时，或选项页里换）。 |
+| `opmode` | `from`、`to`（1 主机、0 掌机） | 运行模式变了（`dm_set_opmode`：前端过热降级、`DM_OE_SCRIPT`），经通知 30 / 31 告诉游戏。 |
+| `padmode` | `mode`（`controller`、`touch`）、`glyph`（`Switch`、`keyboard`、`Xbox`、`PlayStation`）、`frames`、`timeouts` | 手柄 / 触屏布局或键帽样式切换做完了（`dm_padmode.c`）；`timeouts` > 0 = 有一次界面重建没按时看到。 |
 | `focus` | `panel`、`widget` | 焦点控件变了（`dm_engine.c`，游戏的焦点管理器）；null = 没有焦点。 |
 | `shutdown` | `why` | `dm_host_shutdown` 开始（SIGTERM、iOS 终止 / 场景断开、Mac 退出）。 |
 | `shot` | `path`、`ok` | 一张截图写完（`DM_NVN_SHOT_UI`、控制口 `screenshot`）。 |
