@@ -2,7 +2,10 @@
 # 保存并退出再进局后金币原样、物品件数不变、id 仍不重复——存档与读回不丢不复制物品
 # In-run game state (dm_hud): gold on the character / in the stash reads back as the test switches set it, the item chain holds items with no repeated id, the server has live monsters (camp NPCs);
 # after Save and Exit and rejoining, the gold is unchanged, the item count is the same and ids are still unique -- saving and loading neither loses nor copies items
+# 只在命令行宿主跑：「暂停页按 A = 保存并退出」只在没有前端覆盖层的原版暂停页上成立；Mac App 上 A 落在「选项」、iOS 包上 A 是回到游戏（2026-10-27 第一次在前端上跑时发现）
+# CLI host only: "A on the pause page = Save and Exit" holds only on the original pause page without a front-end overlay; on the Mac App A lands on Options, and on the iOS package A resumes the game (found on 2026-10-27, its first run on the front ends)
 name game_state
+requires cli
 save warlock
 env DM_TEST_GOLD=1234 DM_TEST_STAT=15=5000
 timeout 240
