@@ -420,6 +420,7 @@ static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄
     if ((g_ui_print || atomic_load(&g_nui_sub)) && !g_uih) uih_build();
     uint64_t msg = regs[1], f[3] = {0}; vm_size_t got = 0;
     if (vm_read_overwrite(mach_task_self(), msg, sizeof f, (vm_address_t)f, &got) || got != sizeof f) return;   // 非消息调用：不输出 | Not a message call: no output
+    if (f[0] == 0x4ae067c6248b6042ull) { void dm_engine_input_msg(uint64_t, uint64_t); dm_engine_input_msg(f[1], f[2]); }   // InputMessage：手柄动作给引擎快照（action 事件） | InputMessage: controller actions to the engine snapshot (the action event)
     char b0[24], b1[24], nm[65] = ""; int have_arg = 0; got = 0;
     if (f[2] && !vm_read_overwrite(mach_task_self(), f[2], 64, (vm_address_t)nm, &got)) {
         nm[got] = 0; have_arg = 1;
@@ -1257,6 +1258,7 @@ int dm_request_save(void) {
     if (!in_game()) return 0;
     uint64_t last = 0; if (!tk_rd(g_lastG + 0x5800, &last, 8) || !last) return 0;   // 0 = 游戏还没开始计时（刚进局第一拍），不动 | 0 = the game has not started timing yet (first tick right after joining the run), leave it alone
     *(volatile uint64_t *)(uintptr_t)(g_lastG + 0x5800) = 1;
+    { void dm_engine_save_requested(void); dm_engine_save_requested(); }   // 存盘卡住的计时从这里起（dm_engine.c） | the stuck-save timer starts here (dm_engine.c)
     return 1;
 }
 // 游戏是不是停着（暂停菜单 / 大秘境选层页这类开着：同上两个界面状态字节）。不在局内返回 0

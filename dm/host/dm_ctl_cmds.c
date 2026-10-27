@@ -5,6 +5,7 @@
 #include "dm.h"
 #include "dm_ctl.h"
 #include "dm_hud.h"
+#include "dm_engine.h"
 #include <unistd.h>
 #include <limits.h>
 #include <strings.h>
@@ -48,27 +49,55 @@ static int c_frame(void *a) { return dm_guest_frame() >= *(uint64_t *)a; }
 static int wait_frames(uint64_t n, double timeout_s) { uint64_t f = dm_guest_frame() + n; return wait_until(c_frame, &f, timeout_s); }
 static int c_input_idle(void *a) { (void)a; return !dm_ctl_input_busy(); }
 
-// state：局内与否、拍号、暂停、最近打开的面板、玩家（等级 / 生命 / 法力 / 区域 / 坐标 / 死亡）、控制口统计
-// state: in a run or not, tick, paused, the most recently opened panel, the player (level / life / mana / area / position / dead), control-port counters
+// state：局内与否、拍号、暂停、最近打开的面板、玩家（等级 / 生命 / 法力 / 区域 / 坐标 / 死亡 / 经验进度 / 新任务）、控制口统计；
+// 再加引擎快照（dm_engine.c）：屏上面板（最上面的在前）、焦点控件与它的面板、手柄光标模式、存盘忙 / 提交推迟 / 挂着的容器
+// state: in a run or not, tick, paused, the most recently opened panel, the player (level / life / mana / area / position / dead / experience progress / new quest), control-port counters;
+// plus the engine snapshot (dm_engine.c): the panels on screen (top one first), the focused widget and its panel, the controller cursor mode, save busy / commit deferred / mounted containers
 static int cmd_state(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     (void)a; (void)err; (void)ecap;
     dm_hud_info h; dm_hud_get(&h);
     char panel[48]; strlcpy(panel, g_lf_panel, sizeof panel);
-    dm_json_fields(out, cap, "in_game:b tick:u paused:b panel:s level:d hp:d hp_max:d mp:d mp_max:d area:d x:d y:d dead:b players:d holding:d belt0:d belt1:d belt2:d belt3:d portal:d points:d ev_dropped:u",
+    size_t n = dm_json_fields(out, cap, "in_game:b tick:u paused:b panel:s level:d hp:d hp_max:d mp:d mp_max:d area:d x:d y:d dead:b players:d holding:d belt0:d belt1:d belt2:d belt3:d portal:d points:d exp_permille:d quest_unread:b ev_dropped:u",
                    h.valid, (unsigned long long)(h.valid ? dm_cur_tick() : 0), h.valid && dm_game_paused(), panel[0] ? panel : NULL, h.level, h.hp, h.hp_max, h.mp, h.mp_max,
-                   h.area, h.x, h.y, h.dead, h.players, h.holding, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.points, (unsigned long long)dm_ctl_dropped());
+                   h.area, h.x, h.y, h.dead, h.players, h.holding, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.points, h.exp_permille, h.quest_unread, (unsigned long long)dm_ctl_dropped());
+    if (n < cap) dm_engine_state_json(out + n, cap - n);
     return 1;
 }
 
 // save_now [timeout=秒，缺省 5]：请游戏照自己的定时存盘路径马上存一次并等提交（前端退出 / 进后台用的同一个 dm_save_wait；暂停着会先冻结世界、临时放开）
+// save_now wait=0：只请下一拍存一次、不等（同 iOS 失活的 dm_save_soon），让后面的步（退出、进后台）落在存盘进行中
 // save_now [timeout=seconds, default 5]: ask the game to save right away along its own timed-save path and wait for the commit (the same dm_save_wait the front ends use on quit / background; when paused, the world is frozen and the pause released for this save)
+// save_now wait=0: only ask for a save on the next tick without waiting (as dm_save_soon on iOS resign), so the next steps (quit, background) land while the save is in progress
+void dm_save_soon(void);
 static int cmd_save_now(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    if (!dm_ctl_num(a, "wait", 1)) { dm_save_soon(); dm_json_fields(out, cap, "queued:b", 1); return 1; }
     double t = dm_ctl_num(a, "timeout", 5), ms = 0; uint64_t n = 0; int froze = 0;
     if (t <= 0 || t > 60) ERR("timeout must be 0-60 s");
     int asked = dm_save_wait(t, &n, &froze, &ms);
     if (!asked) ERR("not in a state where a save can be requested (not in a game, or on the loading screen)");
     if (!n) ERR("no save commit within %.1f s", t);
     dm_json_fields(out, cap, "commits:u ms:f paused:b", (unsigned long long)n, ms, froze);
+    return 1;
+}
+
+// engine：整份引擎快照（面板栈带激活与优先级、焦点 / 悬停控件、光标、存盘状态）加最近 48 个手柄动作与 48 条界面消息；场景运行器在第一个红事件时存成 engine.json
+// engine: the whole engine snapshot (panel stack with active and priority, focused / hovered widget, cursor, save state) plus the latest 48 controller actions and 48 UI messages; the scenario runner stores it as engine.json at the first red event
+static int cmd_engine(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) { (void)a; (void)err; (void)ecap; dm_engine_full_json(out, cap); return 1; }
+
+// fault arm point=<点> [skip=0] [count=1]：跑着时挂一个存档故障（同 DM_TEST_FS_FAILAT 的点：mountclone / reclone / guestname / renameback / guestopen）；
+// fault delay ms=<毫秒>：下一次存档事务第一次写前等这么久（同 DM_TEST_SAVE_DELAY，只管一次）；fault list：各点挂着 / 经过 / 已打的次数
+// fault arm point=<point> [skip=0] [count=1]: arm a save fault while running (the DM_TEST_FS_FAILAT points: mountclone / reclone / guestname / renameback / guestopen);
+// fault delay ms=<ms>: wait that long before the next save transaction's first write (as DM_TEST_SAVE_DELAY, once only); fault list: each point's armed / seen / fired counts
+int dm_fs_fault_arm(const char *pt, int skip, int count);
+size_t dm_fs_fault_list(char *out, size_t cap);
+void dm_fs_save_delay_once(int ms);
+static int cmd_fault(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *op = dm_ctl_get(a, "op"); if (!op) op = "list";
+    if (!strcmp(op, "arm")) { const char *pt = dm_ctl_get(a, "point");
+        if (dm_fs_fault_arm(pt, (int)dm_ctl_num(a, "skip", 0), (int)dm_ctl_num(a, "count", 1))) ERR("unknown point '%s' (mountclone reclone guestname renameback guestopen), or skip < 0 / count < 1", pt ? pt : ""); }
+    else if (!strcmp(op, "delay")) { int ms = (int)dm_ctl_num(a, "ms", 0); if (ms < 1 || ms > 120000) ERR("ms must be 1-120000"); dm_fs_save_delay_once(ms); }
+    else if (strcmp(op, "list")) ERR("op must be arm, delay or list");
+    size_t n = snprintf(out, cap, ",\"faults\":"); if (n < cap) dm_fs_fault_list(out + n, cap - n);
     return 1;
 }
 
@@ -352,6 +381,8 @@ static int cmd_crash(const ctl_args *a, char *out, size_t cap, char *err, size_t
 void dm_ctl_commands_init(void) {
     dm_ctl_register("state", cmd_state);
     dm_ctl_register("save_now", cmd_save_now);
+    dm_ctl_register("engine", cmd_engine);
+    dm_ctl_register("fault", cmd_fault);
     dm_ctl_register("dump", cmd_dump);
     dm_ctl_register("quit", cmd_quit);
     dm_ctl_register("press", cmd_press);

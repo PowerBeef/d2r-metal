@@ -36,12 +36,12 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'wheel': ['x', 'y', 'dy', 'precise', 'view'], 'drag': ['x0', 'y0', 'x1', 'y1', 'frames'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
-       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind']}
+       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'fault': ['op', 'point']}
 ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away')
 LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture')
 HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires')
-CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event')
+CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event', 'actions', 'saves_valid', 'save_pairs')
 BAD = ('red', 'fatal', 'crash', 'watchdog')
 
 
@@ -282,6 +282,7 @@ class Runner:
         for k, v in METAL_VALIDATION.get(metal or '', {}).items(): self.meta['env'].setdefault(k, v)
         self.on_started: Callable[[Any], None] | None = None   # 回调（后端）：连上之后、第一步之前调，基准测试用它挂系统读数 | callback(backend): called after connecting and before the first step; benchmarks attach system readings with it
         self.c: dmctl.Ctl | None = None; self.prev_mark = -1; self.records: list[dict[str, Any]] = []
+        self.snapped = False   # 红时的引擎快照只取一次（engine.json） | the engine snapshot on red is taken once (engine.json)
         self.vars: dict[str, Any] = {}   # remember 记下的值，后面的值里写 $名 或 $名+N / $名-N 引用 | values kept by remember, referenced later as $name or $name+N / $name-N
 
     @property
@@ -304,12 +305,13 @@ class Runner:
 
     def expect_state(self, kw):
         kw = dict(kw); t = float(kw.pop('timeout', 5)); conds = []
-        for k, v in kw.items():   # 名=值；名 后面可带 > < >= <= !（如 hp>=1 写成 hp>=1 也行） | name=value; the name may end in > < >= <= ! (hp>=1 works as written)
-            m = re.fullmatch(r'(\w+)([<>!]?)', k)
+        for k, v in kw.items():   # 名=值；名 后面可带 > < >= <= ! ~（如 hp>=1 写成 hp>=1 也行；panels~=HUDPanel = 列表里有 / 串里含） | name=value; the name may end in > < >= <= ! ~ (hp>=1 works as written; panels~=HUDPanel = the list holds it / the string contains it)
+            m = re.fullmatch(r'(\w+)([<>!~]?)', k)
             if not m: raise ScenarioError(f'bad condition {k}={v}')
-            conds.append((m.group(1), m.group(2) + '=' if m.group(2) in ('<', '>', '!') else '=', value(v) if isinstance(v, str) else v))
+            conds.append((m.group(1), m.group(2) + '=' if m.group(2) in ('<', '>', '!', '~') else '=', value(v) if isinstance(v, str) else v))
         def ok(st, f, op, v):
             x = st.get(f)
+            if op == '~=': return isinstance(x, (list, str)) and (str(v) in x if isinstance(x, str) else any(str(i) == str(v) for i in x))
             if op == '=': return x == v or str(x) == str(v)
             if op == '!=': return x != v and str(x) != str(v)
             try: return x >= v if op == '>=' else x <= v
@@ -433,6 +435,20 @@ class Runner:
             elif op.startswith('exit'):
                 want = int(ck['kw'].get('exit', ck['args'][0] if ck['args'] else 0) if op == 'exit' else op.split('=', 1)[1])
                 code = self.backend.exit_code(); ok = code == want; why = f'exit code {code} (want {want})'
+            elif op == 'actions':   # actions seq=back,select：手柄动作（begin）按这个先后出现过（中间可夹别的；名字或号） | actions seq=back,select: these controller actions (begin) happened in this order (others may come between; names or numbers)
+                want = [w for w in str(ck['kw'].get('seq', '')).split(',') if w]; got = [e for e in evs if e['ev'] == 'action' and e.get('phase') == 'begin']; k = 0
+                for e in got:
+                    if k < len(want) and want[k] in (str(e.get('name')), str(e.get('id'))): k += 1
+                ok = bool(want) and k == len(want); why = f"{k}/{len(want)} in order among {len(got)} actions: " + ','.join(str(e.get('name') or e.get('id')) for e in got[-12:])
+            elif op == 'saves_valid':
+                ok, why = self.saves_valid()
+            elif op == 'save_pairs':   # 宿主每请一次存盘（save_request）到下一次请求之间至少两次提交（角色 + 共享箱） | each host save request (save_request) is followed by at least two commits (character + shared stash) before the next request
+                req = [i for i, e in enumerate(evs) if e['ev'] == 'save_request']; short = []
+                for j, i in enumerate(req):
+                    end = req[j + 1] if j + 1 < len(req) else len(evs)
+                    n = sum(1 for e in evs[i:end] if e['ev'] == 'save' and e.get('result') == 'commit')
+                    if n < 2: short.append(f"request at t={evs[i].get('t')}: {n} commits")
+                ok = bool(req) and not short; why = f'{len(req)} requests' + (f"; {'; '.join(short[:3])}" if short else ', each with 2+ commits')
             elif op in ('event', 'no_event'):
                 ev = ck['args'][0] if ck['args'] else ''
                 hit = [e for e in evs if e['ev'] == ev and all(e.get(k) == value(v) or str(e.get(k)) == v for k, v in ck['kw'].items())]
@@ -441,12 +457,35 @@ class Runner:
             self.say(f"CHECK {'✓' if ok else '✗'} {ck['line']} — {why}")
         return out
 
+    def save_root(self):   # 这一局已提交的存档目录（只 cli / mac-app 拿得到） | this run's committed save directory (only reachable on cli / mac-app)
+        if self.backend.name == 'cli': return os.path.join(self.run, 'save')
+        if self.backend.name == 'mac-app': return os.path.join(self.run, 'support', 'save')
+        return None
+
+    def saves_valid(self):
+        root = self.save_root()
+        if not root or not os.path.isdir(root): return True, f'not checked on the {self.backend.name} backend (no save directory)'
+        sys.path.insert(0, os.path.join(DM, 'verify')); import d2save   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+        res = d2save.check_dir(root); bad = [(f, p) for f, p in res if p]
+        return not bad, (f'{bad[0][0]}: {"; ".join(bad[0][1])[:140]}' if bad else f"{len(res)} files, {sum(f.endswith('.d2s') for f, _ in res)} .d2s, all valid")
+
+    def snapshot(self, why):   # 红时现场：问宿主要引擎快照（面板栈、焦点、存盘状态、最近的动作与界面消息），存成 engine.json | the state on red: ask the host for the engine snapshot (panel stack, focus, save state, latest actions and UI messages), stored as engine.json
+        if self.snapped or not self.c or not self.backend.alive(): return
+        self.snapped = True
+        try: r = self.c.cmd('engine', reply_timeout=5)
+        except (dmctl.CtlError, TimeoutError, OSError) as e: r = {'error': str(e)}
+        with open(os.path.join(self.run, 'engine.json'), 'w', encoding='utf-8') as f:
+            json.dump(dict(why=why, **{k: v for k, v in r.items() if k not in ('id', 'cmd', 'ok')}), f, ensure_ascii=False, indent=1)
+
     def log_scans(self):
         """跑完查日志：消毒器报告（总查，有就判红）与 Metal 校验层消息（开了 --metal-validation 才查；lint 只汇总）。汇总写进结果目录的 sanitizer.txt / metal_validation.txt。 | Log scans after the run: sanitizer reports (always; any is red) and Metal validation messages (only with --metal-validation; lint only summarizes). Summaries go to sanitizer.txt / metal_validation.txt in the result folder."""
         sys.path.insert(0, os.path.join(DM, 'verify')); import assertlib   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
         lf = getattr(self.backend, 'log_file', None)
         logs = [x for x in ((lf() if lf else None), os.path.join(self.run, 'launch.log')) if x and os.path.exists(x)]   # mac-app 的 stderr 在 launch.log | the mac-app stderr is in launch.log
         out = []
+        if 'saves_valid' not in [c['op'] for c in self.checks] and self.save_root() and os.path.isdir(self.save_root() or ''):   # 每局都核已提交的存档（场景自己写了 check saves_valid 就不重复） | every run checks its committed save (not repeated when the scenario has its own check saves_valid)
+            ok, why = self.saves_valid()
+            out.append(dict(check='saves valid', ok=ok, detail=why)); self.say(f"CHECK {'✓' if ok else '✗'} saves valid — {why}")
         san = [r for x in logs for r in assertlib.sanitizers(x)]
         if san:
             with open(os.path.join(self.run, 'sanitizer.txt'), 'w', encoding='utf-8') as f: f.writelines(f'{n}\t{k}\t{w}\n' for k, w, n in san)
@@ -482,11 +521,14 @@ class Runner:
                 tsv.write(f"{i}\t{st['line']}\t{'ok' if ok else 'RED'}\t{dt:.3f}\t{text[:300]}\n")
                 self.records.append(dict(step=i, line=st['line'], ok=ok, s=round(dt, 3), detail=text[:300]))
                 self.prev_mark = mark
+                red = next((e for e in self.cc.events if e.get('ev') in BAD), None)
+                if red and not self.snapped: self.snapshot(f"first red event: {red.get('ev')} {red.get('code', '')}".strip())
                 if not ok: fail = dict(step=i, line=st['line'], reason=text); break
         except ScenarioError as e:
             fail = dict(step=0, line='start', reason=str(e))
         finally:
             tsv.close()
+            if fail and fail.get('step'): self.snapshot(f"step {fail['step']} failed: {fail['line']}")
             if self.backend.alive() and self.c:
                 try: self.c.cmd('quit', reply_timeout=5)
                 except (dmctl.CtlError, TimeoutError, OSError): pass

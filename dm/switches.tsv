@@ -376,6 +376,8 @@ DM_SAMPLE	host	host/diag.c	y
 DM_SAVE	android,gfx,harmony,host,ios,tvos	android/jni_android.c gfx/nvn/nvn_mtl.m harmony/native/napi_ohos.c host/app_mac.m …	y
 DM_SAVE_FRESH	ios,ios-tools	ios/Sources/front_ios.m ios/Sources/main.m ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_SAVE_KEY	ios-tools	ios/tools/save_key.sh ios/tools/smoke_mac.sh	-
+DM_SAVE_MOUNT_STUCK_S	host	host/dm_engine.c	y
+DM_SAVE_STUCK_S	host	host/dm_engine.c	y
 DM_SAVE_TEST	ios	ios/Sources/main.m	y
 DM_SAVE_THROTTLE	host	host/main.c	-
 DM_SCREEN_SHOT	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSmoke.swift	-
@@ -442,7 +444,7 @@ DM_TEST_FREETP	host	host/dm_freetp.c	-
 DM_TEST_FREEZE	host	host/diag.c	-
 DM_TEST_FRZ	host	host/diag.c	-
 DM_TEST_FS_FAIL	host	host/hle_fs.c host/tests/t_fs.c host/tests/t_save_hooks.c	-
-DM_TEST_FS_FAILAT	host	host/hle_fs.c host/tests/t_fs.c	-
+DM_TEST_FS_FAILAT	host	host/hle_fs.c host/tests/t_fs.c	y
 DM_TEST_FULLSCREEN_AT	host	host/front_mac.m	-
 DM_TEST_GHOST	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_GIVE	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	y
@@ -540,7 +542,8 @@ DM_TEST_RW_OPEN	host	host/dm_runeword.c	-
 DM_TEST_RW_SOCKETS	host	host/dm_runeword.c	-
 DM_TEST_SAFE_L	ios	ios/Sources/dm_update.m ios/Sources/front_ios.m	-
 DM_TEST_SAFE_R	ios	ios/Sources/front_ios.m	-
-DM_TEST_SAVE_AT	host	host/diag.c	-
+DM_TEST_SAVE_AT	host	host/diag.c	y
+DM_TEST_SAVE_DELAY	host	host/hle_fs.c	y
 DM_TEST_SCREEN	ios	ios/Sources/front_ios.m	-
 DM_TEST_SCREEN_ASPECT	host	host/front_mac.m	-
 DM_TEST_SEEK_BIAS	host	host/diag.c	-

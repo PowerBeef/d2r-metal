@@ -46,7 +46,7 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 | 任一控制口命令 | 同 [control_port.zh-CN.md](../control_port.zh-CN.md)；按位置的写法：`press 键 [帧]`、`stick X Y [帧]`、`tap X Y`、`wheel X Y 滚量 [precise] [view]`、`drag X0 Y0 X1 Y1 [帧]`、`msg 消息`、`world_tap X Y`、`walk_to X Y [超时]`、`screenshot 路径`（别名 `shot`）、`ui_dump [want]`、`step [n]`、`save_now`、`tap_ui 名`、`await_ui 名`、`tap_unit 类型 类号`、`app 动作`、`mark 名`、`crash 种类`、`quit` | 发这条命令；回执 `ok:false` 即红。截图的相对路径落在结果目录（命令行宿主）或 `Documents/`（iOS）。 |
 | `expect <事件> [字段=值 …] [timeout=30]` | | 等上一步开始以来出现这个事件（所以上一步触发的事件不会漏掉）。 |
 | `expect_no <事件> [字段=值 …] [for=3]` | | `for` 秒内出现这个事件即红。 |
-| `expect_state 字段=值 … [timeout=5]` | 也可写 `字段>=n`、`字段<=n`、`字段!=v` | 反复读 `state`，直到每一条都成立。 |
+| `expect_state 字段=值 … [timeout=5]` | 也可写 `字段>=n`、`字段<=n`、`字段!=v`、`字段~=v`（`~=`：列表里有 `v` / 串里含它，如 `panels~=PauseLayoutGarden`） | 反复读 `state`，直到每一条都成立。 |
 | `sleep <秒>`、`log <文字>` | | |
 | `remember <字段> [as=名]` | | 记下 `state` 的一个字段；后面的值可写 `$名`、`$名+N`、`$名-N`（如 `expect_state tick<=$tick+30`）。 |
 | `gpu_capture [frames=1] [path=frame.gputrace] [keep=1]` | | `cli` / `mac-app`：用 `gpucapture` 截 GPU 帧，结果给 `gpudebug` 的摘要（命令缓冲、编码器、绘制、计算派发）。截帧文件（一帧约 4 GB）缺省删掉，`keep=1` 才留。这一局自动带 `MTL_CAPTURE_ENABLED=1`。截帧时出图会停，要加 `check no_red allow=e6db5cb6`。 |
@@ -66,6 +66,13 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 | `check saved` | 至少提交过一次存档。 |
 | `check exit <码>` | 进程退出码（命令行宿主）。 |
 | `check event <事件> [字段=值 …]` / `check no_event …` | 出现过 / 没出现过这样的事件。 |
+| `check actions seq=a,b,…` | 这些手柄动作（`action` 事件的 `begin`）按这个先后出现过，中间可夹别的；名字或号都行。 |
+| `check saves_valid` | 这一局已提交的存档过 `dm/verify/d2save.py`（游戏载入时的规则）。`cli` / `mac-app` 上每局都会以 `saves valid` 这么查一遍，场景自己写了 `check saves_valid` 就不重复；iOS 后端没有存档目录可读。 |
+| `check save_pairs` | 宿主每请一次存盘（`save_request`），到下一次请求前至少两次提交（角色 + 共享箱）。 |
+
+第一个红事件出现、或某步失败时，运行器向宿主要 `engine` 快照（面板、焦点、存盘状态、最近的动作与界面消息），存成结果目录里的 `engine.json`（进程崩了时在 `crash.txt` 旁边）。
+
+故障场景在 `faults/`（见 [faults/README.zh-CN.md](faults/README.zh-CN.md)）：用 `fault` 命令挂存档故障，查玩家被告知、存盘照常提交、存档仍合法。
 
 ## 生成的存档
 

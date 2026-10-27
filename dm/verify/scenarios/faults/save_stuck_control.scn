@@ -1,0 +1,20 @@
+# 正对照：存档任务停 4.5 秒（fault delay）、卡住判定放到 1.5 秒、容器挂着的判定放到 3 秒——宿主请的存盘 1.5 秒没有提交、容器挂过 3 秒，两条 save_stuck 都必须报；
+# 之后这次存盘照常提交、存档合法。证明 save_stuck 真会响，别的场景里的 no_event save_stuck 才有意义。
+# 停顿不能更长：存盘任务跑在游戏的异步任务池上，卡住约 8 秒任务分配器就用光、游戏崩在任务池的入队函数（见 dm_engine.c）
+# Positive control: the save job pauses 4.5 s (fault delay), the stuck threshold is 1.5 s and the mounted-container threshold 3 s -- a host-requested save with no commit for 1.5 s and a container mounted past 3 s must both report save_stuck;
+# afterwards this save commits as usual and the save is valid. This proves save_stuck really fires, so no_event save_stuck in the other scenarios means something.
+# The pause cannot be longer: save jobs run on the game's async job pool, and with one stuck for about 8 s the task allocator runs out and the game crashes in the pool's enqueue function (see dm_engine.c)
+name save_stuck_control
+save warlock
+timeout 180
+env DM_SAVE_STUCK_S=1.5 DM_SAVE_MOUNT_STUCK_S=3
+
+enter_game
+fault delay ms=4500
+save_now wait=0
+expect save_stuck why=no_commit timeout=10
+expect save_stuck why=mounted timeout=10
+expect save result=commit timeout=10
+quit
+check event fault point=savedelay
+check saved

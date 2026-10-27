@@ -30,7 +30,7 @@ English: [control_port.md](control_port.md)
 |---|---|---|---|
 | `ping` | | 看还活着没有。 | `pong` |
 | `help` | | 列出命令名。 | `cmds` |
-| `state` | | 快照。 | `in_game`、`tick`、`paused`、`panel`（最近打开、还没关的面板）、`level`、`hp`、`hp_max`、`mp`、`mp_max`、`area`（levels.txt 号）、`x`、`y`（格）、`dead`、`players`、`holding`（光标上的物品）、`belt0`–`belt3`（腰带各列剩几瓶）、`portal`（回城次数）、`points`（未分配的属性 + 技能点）、`ev_dropped` |
+| `state` | | 快照。 | `in_game`、`tick`、`paused`、`panel`（最近打开、还没关的面板）、`level`、`hp`、`hp_max`、`mp`、`mp_max`、`area`（levels.txt 号）、`x`、`y`（格）、`dead`、`players`、`holding`（光标上的物品）、`belt0`–`belt3`（腰带各列剩几瓶）、`portal`（回城次数）、`points`（未分配的属性 + 技能点）、`exp_permille`（本级经验进度 ‰）、`quest_unread`、`ev_dropped`；引擎快照（`dm_engine.c`）：`panels`（屏上面板，最上面的在前）、`focus`、`focus_panel`、`cursor_mode`（1 = 自由光标面板）、`save_busy`、`save_pending`（提交推迟）、`save_mounted`、`save_containers` |
 | `press` | `keys`（`A+B`，键名同 `DM_KEYS`）、`frames`（6）、`gap`（3） | 按住这些键 `frames` 个出图帧，再松开等 `gap` 帧。在取手柄处并进去，与脚本键同一套裁决。 | `frame`、`held_frames` |
 | `stick` | `x`、`y` ∈ [-1, 1]（上为正）、`frames`（30）、`keys` | 推左摇杆（可同时按键）。 | `frame`、`held_frames` |
 | `tap` | `x`、`y` ∈ [0, 1]（出图画面）、`hold`（3 帧） | 经 `dm_ui_touch` 点一下界面，与 `DM_KEYS` 的 `C<x>:<y>` 和真手指同一条路。 | |
@@ -50,9 +50,11 @@ English: [control_port.md](control_port.md)
 | `resume` | | 解冻。 | `tick` |
 | `mark` | `name` | 往事件流里打一个 `mark` 事件（带当前帧号），基准路线用它切段。 | `t`、`frame` |
 | `wait` | `frames`、`ticks` 或 `ms`；`timeout`（60 秒） | 在宿主这头等。 | `frame`、`tick` |
-| `save_now` | `timeout`（5 秒） | 请游戏照自己的定时存盘路径存一次并等提交（前端退出 / 进后台用的同一个 `dm_save_wait`）。 | `commits`、`ms`、`paused` |
+| `save_now` | `timeout`（5 秒）、`wait`（1） | 请游戏照自己的定时存盘路径存一次并等提交（前端退出 / 进后台用的同一个 `dm_save_wait`）。`wait=0` 只请下一拍存一次、马上回执（同 iOS 失活），让后面的退出 / 进后台落在存盘进行中。 | `commits`、`ms`、`paused`（`wait=0` 为 `queued`） |
 | `dump` | | 把各线程在等什么写进日志。 | |
 | `crash` | `kind`：`segv`、`abort`、`trap` | 在控制口线程上故意让宿主崩（测崩溃这一路：事件、`crash.json`、`.ips`、判红）。 | |
+| `engine` | | 整份引擎快照（`dm_engine.c`）：面板栈（带 `active`、`priority`）、`focus_panel`、`focus`、`hover`、`cursor_mode`、`cursor_state`、`save` {`busy`、`pending`、`containers`、`mounted`、`dirty`}、最近 48 个手柄动作 `actions` 与 48 条界面消息 `messages`（连着同一条折成一条，`n`）。场景运行器在第一个红事件或失败的步时存成 `engine.json`。 | 同左 |
+| `fault` | `op`：`arm`（`point`、`skip` 0、`count` 1）、`delay`（`ms`）、`list` | 存档测试故障：`arm` 跑着时加一个 `DM_TEST_FS_FAILAT` 点（`mountclone`、`reclone`、`guestname`、`renameback`、`guestopen`）；`delay` 让下一次存档事务第一次写前停 `ms` 毫秒（同 `DM_TEST_SAVE_DELAY`，只一次）。停顿别超过约 8 秒：一个任务卡得更久，游戏的异步任务池会用光任务内存、崩在任务池的入队函数（main+0x14f0590）。 | `faults` [{`point`、`skip`、`count`、`seen`、`fired`}] |
 | `quit` | `save`（0） | 先回执，再优雅退出（`dm_host_shutdown`）。`save=1` 时先像 Mac 关窗那样存一次。 | `saved` |
 
 `state.tick` 与事件的 `tick` 是服务端拍号；`frames` 数的是出图帧，进局之前在前端也一直走。

@@ -1,0 +1,20 @@
+# 引擎快照（dm_engine.c）：局内 HUD 在屏、存档容器读得到且没挂着；开暂停页后它在面板栈上、焦点落在它里面；关掉后焦点离开；
+# 手柄动作按游戏自己的名字出来（＋ = pause、L = cycleLeft、B = back）；宿主请的存盘得到角色 + 共享箱两次提交
+# Engine snapshot (dm_engine.c): in a run the HUD is on screen and the save containers are readable and not mounted; after opening the pause page it is on the panel stack and the focus is inside it; after closing it the focus leaves;
+# controller actions come out under the game's own names (+ = pause, L = cycleLeft, B = back); a host-requested save gets two commits, character + shared stash
+name engine_state
+save warlock
+timeout 180
+
+enter_game
+expect_state panels~=HUDPanel save_containers>=1 save_mounted=0
+open_pause
+expect_state panels~=PauseLayoutGarden focus_panel=PauseLayoutGarden
+close_pause
+expect_state focus_panel!=PauseLayoutGarden
+save_now timeout=8
+quit
+check actions seq=pause,cycleLeft,cycleLeft,cycleLeft,back
+check save_pairs
+check no_red
+check no_event save_stuck

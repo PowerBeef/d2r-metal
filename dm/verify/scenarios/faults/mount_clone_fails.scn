@@ -1,0 +1,17 @@
+# 开机挂存档时克隆工作目录失败（盘满）：开机就提示玩家，存档改为只读挂载已提交的版本，游戏照常起来、照常进局；
+# 这一局的存盘写不进去（不提交），游戏的存盘任务照样收尾、不把容器一直挂着，已提交的存档原样、合法
+# Cloning the work directory fails when the save is mounted at boot (full disk): the player is told at boot, the save is mounted read-only from the committed version, and the game still starts and enters a run;
+# this session's saves cannot be written (no commit), the game's save job still finishes and does not leave the container mounted, and the committed save stays as it was and valid
+name mount_clone_fails
+save warlock
+timeout 180
+env DM_TEST_FS_FAILAT=mountclone
+
+enter_game
+save_now wait=0
+sleep 2
+expect_state save_mounted=0 timeout=10
+quit
+check event fault point=mountclone
+check event save_alert
+check no_event save result=commit

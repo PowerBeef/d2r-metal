@@ -52,6 +52,12 @@ UTF-8, one object per line, terminated by `\n`, written with a single `write()` 
 | `app` | `state` | Shell lifecycle. iOS: `resign`, `background`, `foreground`, `active` (the scene callbacks). Mac: `resign`, `active` (window key state), `minimized`, `restored`, `occluded`, `visible`. |
 | `quit` | `why` | Mac: the window / app quit path started. |
 | `quit_save` | `saved`, `commits`, `ms`, `paused` | Mac: the save wait before quitting finished. |
+| `save_request` | | The host asked the game to save (`dm_request_save`: `save_now`, quit / background saves, `DM_TEST_SAVE_AT`); starts the `save_stuck` timer. Not emitted again while an earlier request is still unanswered. |
+| `save_stuck` | `why` (`no_commit`, `mounted`), `s`, `busy`, `pending`, `mounted`, `containers` | Red (`dm_engine.c`, with a `【红】` line): a requested save got no commit or rejection within `DM_SAVE_STUCK_S` seconds of unpaused play (20), or a save container stayed mounted `DM_SAVE_MOUNT_STUCK_S` seconds (60). |
+| `save_alert` | `errno` | The player is told a save was not written (`front_save_failed`): a refused commit, a failed clone / swap, a failed mount-time clone. |
+| `fault` | `point`, `n` (or `ms` for `savedelay`) | A test fault fired (`DM_TEST_FS_FAILAT`, `DM_TEST_SAVE_DELAY`, the control port's `fault`): `mountclone`, `reclone`, `guestname`, `renameback`, `guestopen`, `savedelay`. |
+| `action` | `id`, `name`, `phase` (`begin`, `end`) | A controller action reached the UI bus (`InputMessage` `ControllerActionBegin` / `End`); `name` is read from the game's own action table at run time (`select`, `back`, `pause`, `cycleLeft`, …; null if unreadable). Only while a panel takes input: menus, not world play. |
+| `focus` | `panel`, `widget` | The focused widget changed (`dm_engine.c`, the game's focus manager); null = no focus. |
 | `shutdown` | `why` | `dm_host_shutdown` started (SIGTERM, iOS terminate / scene disconnect, Mac quit). |
 | `shot` | `path`, `ok` | A screenshot file was written (`DM_NVN_SHOT_UI`, the control port's `screenshot`). |
 | `tick_hold` | `on` | The control port froze (`pause`, `step`) or released game ticks. |

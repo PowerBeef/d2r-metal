@@ -75,6 +75,12 @@ In `lldb --batch`, a stop at the trap counts as a crash-like stop, so commands a
 | `dm bt [-a]` | Backtrace of the current thread (all threads with `-a`), every frame as module offset and guest function, with source-comment notes |
 | `dm break <module>+0x<offset>` | Breakpoint at a game address, converted with the current load base |
 | `dm tick` | Current server tick (calls `dm_cur_tick`) |
+| `dm ui [-a]` | The UI root's panels: name, visible / active, priority (`-a` also the hidden ones) |
+| `dm focus` | The focus manager: hovered widget, the focus's panel, focused widget; cursor mode and state |
+| `dm saves` | Save busy / commit pending, and each save container's mount state and dirty flag |
+| `dm unit <id>` | A server unit by id (item table, then monster table): address, type, row, mode |
+
+The same game state is readable without a debugger: the control port's `state` / `engine` commands (`dm/host/dm_engine.c`), and `engine.json` in a scenario's run folder after a red event.
 
 ### Agents: lldb-mcp
 

@@ -46,7 +46,7 @@ Steps:
 | Any control-port command | as in [control_port.md](../control_port.md); positional forms: `press KEYS [frames]`, `stick X Y [frames]`, `tap X Y`, `wheel X Y DY [precise] [view]`, `drag X0 Y0 X1 Y1 [frames]`, `msg SPEC`, `world_tap X Y`, `walk_to X Y [timeout]`, `screenshot PATH` (alias `shot`), `ui_dump [want]`, `step [n]`, `save_now`, `tap_ui NAME`, `await_ui NAME`, `tap_unit TYPE CLS`, `app DO`, `mark NAME`, `crash KIND`, `quit` | Sends the command; red if the reply is `ok:false`. A relative screenshot path lands in the result folder (CLI) or in `Documents/` (iOS). |
 | `expect <event> [field=value …] [timeout=30]` | | Waits for the event since the previous step started (so an event triggered by that step is not missed). |
 | `expect_no <event> [field=value …] [for=3]` | | Red if the event appears within `for` seconds. |
-| `expect_state field=value …  [timeout=5]` | `field>=n`, `field<=n`, `field!=v` too | Polls `state` until every condition holds. |
+| `expect_state field=value …  [timeout=5]` | `field>=n`, `field<=n`, `field!=v`, `field~=v` too (`~=`: the list holds `v` / the string contains it, e.g. `panels~=PauseLayoutGarden`) | Polls `state` until every condition holds. |
 | `sleep <s>`, `log <text>` | | |
 | `remember <field> [as=name]` | | Keeps a `state` field; later values can say `$name`, `$name+N` or `$name-N` (e.g. `expect_state tick<=$tick+30`). |
 | `gpu_capture [frames=1] [path=frame.gputrace] [keep=1]` | | `cli` / `mac-app`: captures GPU frames with `gpucapture` and returns the `gpudebug` summary (command buffers, encoders, draws, dispatches). The trace (about 4 GB a frame) is deleted unless `keep=1`. The run gets `MTL_CAPTURE_ENABLED=1` automatically. Capturing stalls presentation, so add `check no_red allow=e6db5cb6`. |
@@ -66,6 +66,13 @@ Final checks (`check …`, evaluated after the run):
 | `check saved` | At least one save was committed. |
 | `check exit <code>` | The process exit code (CLI). |
 | `check event <event> [field=value …]` / `check no_event …` | Such an event appeared / did not appear. |
+| `check actions seq=a,b,…` | These controller actions (`action` events, `begin`) happened in this order, others allowed between; names or numbers. |
+| `check saves_valid` | The run's committed save passes `dm/verify/d2save.py` (the game's load rules). On `cli` / `mac-app` every run also does this as `saves valid` unless the scenario has its own `check saves_valid`; the iOS backends have no save directory to read. |
+| `check save_pairs` | Every host save request (`save_request`) got at least two commits (character + shared stash) before the next request. |
+
+At the first red event, or when a step fails, the runner asks the host for the `engine` snapshot (panels, focus, save state, the latest actions and UI messages) and stores it as `engine.json` in the run folder, beside `crash.txt` when the process crashed.
+
+Fault scenarios live in `faults/` (see [faults/README.md](faults/README.md)): they arm save faults with the `fault` command and check that the player is told, saves keep committing and the save stays valid.
 
 ## Generated saves
 

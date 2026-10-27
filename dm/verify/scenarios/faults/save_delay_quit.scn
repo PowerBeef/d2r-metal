@@ -1,0 +1,18 @@
+# 存盘进行到一半时退出：存档任务第一次写前停 2.5 秒，这时走系统退出；退出等到这次存盘提交了再走，存档合法
+# Quitting in the middle of a save: the save job pauses 2.5 s before its first write, and the system quit comes during that pause; the quit waits for this save to commit before going, and the save is valid
+name save_delay_quit
+requires cli mac-app
+save warlock
+timeout 180
+
+enter_game
+stick 0 1 frames=30
+fault delay ms=2500
+save_now wait=0
+sleep 0.5
+system_quit
+check event fault point=savedelay
+check event quit_save saved=true
+check exit 0
+check saved
+check no_event save_stuck

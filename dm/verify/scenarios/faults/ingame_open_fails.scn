@@ -1,0 +1,18 @@
+# 局内存盘时写方式打开失败一次（盘满）：这次提交被拒并提示玩家，存档容器照常卸载（715ed80 修的剪口），下一次存盘两边都提交
+# A write-mode open fails once during an in-game save (full disk): that commit is refused and the player is told, the save container is unmounted as usual (the cut fixed by 715ed80), and the next save commits both sides
+name ingame_open_fails
+save warlock
+timeout 180
+
+enter_game
+fault arm guestopen
+save_now wait=0
+expect save result=rejected timeout=10
+expect_state save_mounted=0 timeout=10
+sleep 1
+save_now timeout=8
+quit
+check event fault point=guestopen
+check event save_alert
+check no_event save_stuck
+check saved

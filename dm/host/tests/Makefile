@@ -88,12 +88,13 @@ run: \
 	python3 ../../tools/test_boothist.py
 	python3 ../../tools/test_guestsyms.py
 	python3 ../../tools/re/test_nso2elf.py
+	python3 ../../verify/test_d2save.py
 	python3 ../../tools/test_tickdiff.py
 	python3 ../../tools/test_explore.py
 	python3 ../../tools/scenario.py check ../../verify/bench/*.scn
 	python3 ../../verify/test_assertlib.py
 	python3 ../../verify/touchcases/test_lib.py
-	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn ../../verify/scenarios/saves/*.scn
+	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn ../../verify/scenarios/saves/*.scn ../../verify/scenarios/faults/*.scn
 	python3 ../../tools/test_switches.py
 	python3 ../../tools/switches.py check
 	$(B)/t_ctl

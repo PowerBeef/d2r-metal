@@ -67,7 +67,7 @@ static int cmd_help(const ctl_args *a, char *out, size_t cap, char *err, size_t 
 
 void dm_ctl_handle(const char *line, dm_ctl_reply reply, void *ctx) {
     dm_ctl_init();   // iOS 日志端口可能在宿主起来之前就收到命令 | the iOS log port may receive commands before the host has started
-    ctl_args a; char out[3072] = "", err[256] = "", head[640];
+    ctl_args a; char out[16384] = "", err[256] = "", head[640];   // engine 命令的快照带最近的动作与界面消息，约 10 KB | the engine command's snapshot carries the latest actions and UI messages, about 10 KB
     atomic_fetch_add(&g_commands, 1);
     const char *id = "null", *cmd = "";
     int ok = 0;
