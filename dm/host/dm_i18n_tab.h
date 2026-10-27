@@ -49,7 +49,6 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomQ3dQuality", "画质优先", "Quality first", "Calidad primero", "Calidad primero", "Качество важнее", "화질 우선" },
     { "dmCustomQ3dQualityHint", "始终保持设定的 3D 清晰度", "Always keeps the set 3D resolution", "Mantiene siempre la resolución 3D elegida", "Mantiene siempre la resolución 3D elegida", "Всегда держит заданное 3D-разрешение", "설정한 3D 해상도 항상 유지" },
     { "dmCustomLootFilter", "掉落过滤（噩梦起自动隐藏杂物）", "Loot Filter (auto, Nightmare+)", "Filtro de botín (auto, Pesadilla+)", "Filtro de botín (auto, Pesadilla+)", "Фильтр лута (авто, Кошмар+)", "루트 필터 (악몽부터 자동)" },
-    { "dmCustomAutoBuff", "自动补上增益技能（站着不动时）", "Auto-recast buffs when idle", "Renovar mejoras al estar quieto", "Renovar mejoras al estar quieto", "Автоперекаст бафов в покое", "대기 중 버프 자동 재시전" },
     { "dmCustomLang", "语言", "Language", "Idioma", "Idioma", "Язык", "언어" },
     { "dmCustomLangZh", "中文", "中文", "中文", "中文", "中文", "中文" },
     { "dmCustomLangEnOpt", "English", "English", "English", "English", "English", "English" },

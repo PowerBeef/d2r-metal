@@ -66,7 +66,6 @@ void dm_potpick_step(uint8_t *b) {
     // 掉落过滤（dm_lootfilter.c）借这个每帧入口：按难度切当前配置；测试读数（缺省不做事）
     // The loot filter (dm_lootfilter.c) borrows this per-frame entry: switches the current profile by difficulty; test readout (does nothing by default)
     if (b) { void dm_lootfilter_pump(uint8_t *, uint64_t); void dm_lootfilter_test_dump(uint8_t *); dm_lootfilter_pump(b, ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c))); dm_lootfilter_test_dump(b); }
-    if (b) { void dm_autobuff_pump(uint8_t *, uint64_t); void dm_autobuff_test_drop(uint64_t); uint64_t pl = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)); dm_autobuff_test_drop(pl); dm_autobuff_pump(b, pl); }   // 增益技能自动补（dm_autobuff.c）也借这个每帧入口 | buff auto-recast (dm_autobuff.c) also borrows this per-frame entry
     static int env = -2; if (env == -2) { const char *e = getenv("DM_POT_PICK"); env = e ? e[0] != '0' : -1; }   // 测试强制：DM_POT_PICK=0 关 / 其余开，优先于自定义页 | Test override: DM_POT_PICK=0 off / anything else on; takes priority over the customization page
     if (!b || !(env >= 0 ? env : dm_custom_get("pot_pick"))) return;
     static uint64_t next; uint64_t fr = dm_guest_frame(); if (fr < next) return;

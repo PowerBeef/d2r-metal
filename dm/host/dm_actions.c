@@ -203,7 +203,6 @@ static _Atomic uint64_t g_ss_map[6];       // 6 个面：手柄位 | 普通格 <
 static _Atomic uint32_t g_ss_equipped[16]; static _Atomic int g_ss_neq;   // 身上穿着的物品 id（两组都算） | Ids of the items being worn (both sets counted)
 void dm_swapskill_srv_wset(int w) { atomic_store(&g_ss_srv_wset, w); }
 int dm_swapskill_wset(void) { return atomic_load(&g_ss_srv_wset); }
-int dm_swapskill_busy(void) { return atomic_load(&g_ss_phase) != SS_IDLE; }   // 副手组技能的连招在进行（增益自动补 dm_autobuff.c 这时不自己换武器） | an off-hand-set skill combo is in progress (buff auto-recast dm_autobuff.c does not swap weapons itself meanwhile)
 static _Atomic uint32_t g_ss_itemsig; uint32_t dm_swapskill_itemsig(void) { return atomic_load(&g_ss_itemsig); }   // 客户端技能链表里物品给的技能（技能号、物品 id）的指纹 | Fingerprint of the item-granted skills (skill id, item id) in the client skill linked list
 int dm_swapskill_slot(int slot, int *charges) {   // 1 = 技能在另一组（画「II」），2 = 充能技能（画次数），4 = 当前组也有同号技能（按下用当前组那个，不换武器）；可叠加 | 1 = the skill is in the other set (draw "II"), 2 = charged skill (draw the count), 4 = the current set also has a skill with the same id (a press uses the one in the current set, no weapon swap); can be combined
     if (slot < 0 || slot >= 12) return 0; int k = atomic_load(&g_ss_kind[slot]); if (charges) *charges = atomic_load(&g_ss_charges[slot]); return k; }

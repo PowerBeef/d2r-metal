@@ -24,7 +24,6 @@ dm/ios/tools/gen_widestash_art.py	vf1 vf2 vt1 pg1 pg2 c s sb t u d cb
 dm/ios/tools/gen_vault_table.py	vt1
 dm/host/dm_potpick*	bd bdm p q b
 dm/host/dm_lootfilter*	bd bdm p q b
-dm/host/dm_autobuff*	bd bdm p q b
 dm/host/dm_beltauto*	ba bd bdm p q b
 dm/host/dm_townwp*	*
 dm/host/dm_unit.h	dc wp tp

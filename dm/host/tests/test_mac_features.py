@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# 直接编译自动补增益开关、执行打包脚本的覆盖层段；全部输入为合成数据，无游戏内容。
-# Compile the actual autobuff switch and execute the packager's overlay section; all inputs are synthetic, with no game content.
+# 执行打包脚本的覆盖层段；全部输入为合成数据，无游戏内容。
+# Execute the packager's overlay section; all inputs are synthetic, with no game content.
 import os
 from pathlib import Path
 import subprocess
@@ -11,30 +11,6 @@ DM = Path(__file__).resolve().parents[2]
 
 
 class MacFeatures(unittest.TestCase):
-    def test_autobuff_policy(self):
-        text = (DM / 'host/dm_autobuff.c').read_text()
-        policy = text[text.index('static int enabled(void)'):text.index('static int cfg(')]
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / 'switch.c'
-            source.write_text('#include <stdlib.h>\n#include <assert.h>\n#undef TARGET_OS_IPHONE\n#define TARGET_OS_IPHONE TEST_PLATFORM\n#define DM_PHONE TEST_PLATFORM\n'
-                              'static int custom;\nstatic int dm_custom_get(const char *key) { (void)key; return custom; }\n'
-                              + policy + '\nint main(int argc, char **argv) { assert(argc == 3); '
-                              'custom = 0; assert(enabled() == atoi(argv[1])); '
-                              'custom = 1; assert(enabled() == atoi(argv[2])); }\n')
-            for ios in (0, 1):
-                binary = Path(tmp) / f'switch-{ios}'
-                subprocess.run(['clang', '-Wall', '-Werror', f'-DTEST_PLATFORM={ios}',
-                                str(source), '-o', str(binary)], check=True)
-                for app in (None, '', '0', '1'):
-                    for override in (None, '0', '1'):
-                        env = {k: v for k, v in os.environ.items() if k not in ('DM_APP', 'DM_AUTOBUFF')}
-                        if app is not None:
-                            env['DM_APP'] = app
-                        if override is not None:
-                            env['DM_AUTOBUFF'] = override
-                        expected = (int(override),) * 2 if override is not None else (0, int(bool(ios or app == '1')))
-                        subprocess.run([str(binary), *map(str, expected)], env=env, check=True)
-
     def test_overlay_packaging(self):
         text = (DM / 'tools/mac_app.sh').read_text()
         section = text[text.index('if [ "${DM_MAC_OVERLAY:-}" != none ]; then'):text.index('[ -s "$RES/paths.txt" ]')]

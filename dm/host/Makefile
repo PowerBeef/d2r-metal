@@ -37,7 +37,6 @@ SRC=\
 	memstat.m \
 	romfs_validate.c \
 	dm_actions.c \
-	dm_autobuff.c \
 	dm_beltauto.c \
 	dm_bright.c \
 	dm_cloudsync.c \

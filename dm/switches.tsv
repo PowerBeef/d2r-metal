@@ -12,7 +12,7 @@ DM_ANDROID_KEY_PASS	android	android/tools/shell_apk.sh	-
 DM_ANDROID_SIGN	android	android/tools/shell_apk.sh	-
 DM_ANDROID_USER	android	android/docker/build.sh	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
-DM_APP	host	host/app_mac.m host/dm_autobuff.c host/dm_padmode.c host/front_mac.m	-
+DM_APP	host	host/app_mac.m host/dm_padmode.c host/front_mac.m	-
 DM_APP_POOL_ADD_MB	host	host/hle_svc.c	-
 DM_APP_ROMFS	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	-
 DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/front_mac.m	y
@@ -32,11 +32,6 @@ DM_AUDIO	host,ios-tools	host/app_mac.m host/hle_audio.c host/tests/t_audio.c ios
 DM_AUDIO_DUMP	host	host/hle_audio.c	-
 DM_AUDIO_NQOS	host	host/hle_audio.c	-
 DM_AUDIO_OUT_DUMP	host	host/hle_audio.c	-
-DM_AUTOBUFF	host	host/dm_autobuff.c	-
-DM_AUTOBUFF_RETRY	host	host/dm_autobuff.c	-
-DM_AUTOBUFF_SAFE	host	host/dm_autobuff.c	-
-DM_AUTOBUFF_SWAPLIFE	host	host/dm_autobuff.c	-
-DM_AUTOBUFF_SWAPMAX	host	host/dm_autobuff.c	-
 DM_BC_FAST	gfx	gfx/vulkan/engine/xbg_texture.c	-
 DM_BC_FASTVERIFY	gfx	gfx/vulkan/engine/xbg_texture.c	-
 DM_BC_THREADS	gfx	gfx/vulkan/engine/xbg_texture.c	-
@@ -354,10 +349,6 @@ DM_TEST_BELT_NOPUT	host	host/dm_beltauto.c	-
 DM_TEST_BG	ios	ios/Sources/front_ios.m	y
 DM_TEST_BG_RELAUNCH	ios	ios/Sources/main.m	-
 DM_TEST_BINDTBL	host	host/dm_actions.c	-
-DM_TEST_BUFF_DROP	host	host/dm_autobuff.c	-
-DM_TEST_BUFF_DUMP	host	host/dm_autobuff.c	-
-DM_TEST_BUFF_LEARN	host	host/dm_autobuff.c	-
-DM_TEST_BUFF_NOSKIP	host	host/dm_autobuff.c	-
 DM_TEST_C2S	host	host/dm_actions.c	-
 DM_TEST_CLOCK_AT	host	host/dm_pages.c	-
 DM_TEST_CM_KEYS	host	host/dm_cloudmerge.c	-
@@ -367,7 +358,6 @@ DM_TEST_DAYTIME	host	host/dm_bright.c	-
 DM_TEST_DROP_SOUND	host	host/dm_dropfilter.c	-
 DM_TEST_DUR	host	host/diag.c	-
 DM_TEST_EDGE_B	ios	ios/Sources/front_ios.m	-
-DM_TEST_EQUIP	host	host/dm_autobuff.c	-
 DM_TEST_FINDCHK	host	host/dm_prof.c	-
 DM_TEST_FOLD	ios	ios/Sources/front_ios.m	-
 DM_TEST_FREEZE	host	host/diag.c	-
