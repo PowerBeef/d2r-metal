@@ -34,7 +34,7 @@ English: [control_port.md](control_port.md)
 | `press` | `keys`（`A+B`，键名同 `DM_KEYS`）、`frames`（6）、`gap`（3） | 按住这些键 `frames` 个出图帧，再松开等 `gap` 帧。在取手柄处并进去，与脚本键同一套裁决。 | `frame`、`held_frames` |
 | `stick` | `x`、`y` ∈ [-1, 1]（上为正）、`frames`（30）、`keys` | 推左摇杆（可同时按键）。 | `frame`、`held_frames` |
 | `tap` | `x`、`y` ∈ [0, 1]（出图画面）、`hold`（3 帧） | 经 `dm_ui_touch` 点一下界面，与 `DM_KEYS` 的 `C<x>:<y>` 和真手指同一条路。 | |
-| `wheel` | `x`、`y` ∈ [0, 1]（出图画面）、`dy`、`precise`（1）、`view`（720） | 经 `dm_wheel_ui` 滚一下滚轮 / 触控板，与 Mac App 的滚动事件同一个函数：`precise=1` 是触控板点数，`0` 是鼠标滚轮行数；`view` 是视图高几点。`dy` 为正 = 内容往下。只有 Mac。 | `ui`（0 = 不在界面上，App 会改推右摇杆） |
+| `wheel` | `x`、`y` ∈ [0, 1]（出图画面）、`dy`、`precise`（1）、`view`（720）、`n`（1） | 经 `dm_wheel_ui` 滚一下滚轮 / 触控板，与 Mac App 的滚动事件同一个函数：`precise=1` 是触控板点数，`0` 是鼠标滚轮行数；`view` 是视图高几点。`dy` 为正 = 内容往下。`n` > 1 时一口气连发这么多个同样的事件、中间不等帧，同触控板甩一下。只有 Mac。 | `ui`（0 = 不在界面上，App 会改推右摇杆） |
 | `drag` | `x0`、`y0`、`x1`、`y1` ∈ [0, 1]（出图画面）、`frames`（20） | 按下、在 `frames` 帧里直线拖过去、抬起。Mac App 里走真鼠标的手势路（`dm_touch_host_live`），别处走 `dm_ui_touch`。 | |
 | `msg` | `spec` = `类别:动作[:参数]` | 往游戏发一条界面消息（同 `DM_KEYS` 的 `MSG:` 步），发出去才回执。 | |
 | `world_tap` | `x`、`y` ∈ [0, 1] | 点世界里那一处：像触屏点击一样走过去和那里的东西交互。 | `target`：`none`、`item`、`npc`、`object`、`exit` |
@@ -43,7 +43,7 @@ English: [control_port.md](control_port.md)
 | `await_ui` | `name`、`timeout`（30 秒） | 只等控件可见。 | `x`、`y` |
 | `tap_unit` | `type`（1 怪 / NPC、2 物件、4 物品、5 出口）、`cls`（类号或 `any`）、`timeout`（10 秒） | 等这类单位出现在画面里，点它，同触屏脚本的 `tap_unit`。 | `x`、`y`、`target` |
 | `app` | `do`：`background`、`foreground`、`resign`、`active`、`minimize`、`restore`、`terminate` | 在主线程上走前端生命周期，与系统事件、`DM_TEST_BG` / `DM_TEST_MINI_AT` 同一批处理函数。Mac 上 `background` / `foreground` 就是最小化 / 还原，不支持 `resign` / `active`；`terminate` 照系统退出那样先存盘再退。 | |
-| `screenshot` | `path`、`frames`（1） | 第 `frames` 个出图帧之后把游戏输出写成 PNG。iOS 上相对路径落在 `Documents/` 下。 | `path` |
+| `screenshot` | `path`、`frames`（1） | 第 `frames` 个出图帧之后把游戏输出写成 PNG。路径须以 `.png` 结尾、不含 `..`。iOS 上只收相对路径，落在 `Documents/` 下；Mac 上所在目录须已存在、且在这一局的运行目录里（`DM_EVENTS` 所在目录、`DM_APP_SUPPORT` 的上一级、当前目录、`$DM_ROOT/run`）或临时目录下。 | `path` |
 | `ui_dump` | `want`（`@top` 或控件名） | 下一帧把界面控件树打进日志（`UIDUMP` 行，同 `DM_UI_DUMP`）。 | |
 | `pause` | | 冻结游戏拍（`DM_TICK_HOLD` 那种冻结）。要局内跑过拍、且开着控制通道。冻着超过 `DM_WATCH_STALL` 秒看门狗会判死。 | `tick` |
 | `step` | `n`（1） | 冻着时：放行正好 `n` 拍再冻上。 | `tick` |

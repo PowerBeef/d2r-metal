@@ -3,14 +3,14 @@
 // 宿主收到这条空操作消息后调这里登记的回调（dm/host/diag.c）。这里做两件：
 //   ① 打一个文件：头部（构建号、机型、系统版本、温控 / 电量 / 内存 / 存储、本局与上一局的关键性能读数）+ 本局 boot.txt + 上一局 boot.previous.txt（main.m 每次启动前改名留下）；
 //   ② 弹系统分享面板（UIActivityViewController），玩家自己选发到哪；iPad / Mac 上分享面板是弹出框，必须给锚点，否则一弹就崩。
-// 隐私：只放这两份日志（游戏与宿主自己写的）和上面那几项机器读数；不取设备名、不取任何账号 / 位置 / 通讯录类信息。
+// 隐私：只放这两份日志（游戏与宿主自己写的）和上面那几项机器读数；不取设备名、不取任何账号 / 位置 / 通讯录类信息。整份导出前脱敏（scrub_log，规则在 dm/host/dm_scrub.c）。
 // 测试开关 DM_TEST_SHARELOG_CLOSE=<秒>：分享面板照常弹出，过这么多秒自动收起；导出的文件另拷一份到 Documents/sharelog_test.txt 供回归核内容。
 // iOS side of the pause menu's 「分享诊断日志」(Share Diagnostics).
 // The button is the game's own widget (layout: _pause_no_help in tools/touch_layout.py: borrows the original game's 「消息记录」(Message Log) button, changes the text, and makes it send PanelManager:ClosePanel:TouchShareLog instead),
 // and on receiving this no-op message the host calls the callback registered here (dm/host/diag.c). Two things are done here:
 //   ① Build one file: header (build number, device model, OS version, thermal / battery / memory / storage, key performance readings of this run and the previous run) + this run's boot.txt + the previous run's boot.previous.txt (left by main.m's rename before each launch);
 //   ② Present the system share sheet (UIActivityViewController), and the player chooses where to send it; on iPad / Mac the share sheet is a popover and must be given an anchor, otherwise it crashes as soon as it is presented.
-// Privacy: only these two logs (written by the game and the host themselves) and the machine readings listed above are included; no device name, no account / location / contacts information of any kind.
+// Privacy: only these two logs (written by the game and the host themselves) and the machine readings listed above are included; no device name, no account / location / contacts information of any kind. The whole export is scrubbed first (scrub_log, rules in dm/host/dm_scrub.c).
 // Test switch DM_TEST_SHARELOG_CLOSE=<seconds>: the share sheet is presented as usual and dismissed automatically after that many seconds; the exported file is also copied to Documents/sharelog_test.txt so regression can check its content.
 #import <UIKit/UIKit.h>
 #include <stdatomic.h>
@@ -18,6 +18,7 @@
 #include <pwd.h>
 #include <unistd.h>
 #include "../../host/dm_i18n.h"
+#include "../../host/dm_scrub.h"
 void plog(const char *fmt, ...);
 void dm_sharelog_init(void (*cb)(void));   // dm/host/diag.c
 
@@ -38,14 +39,25 @@ static void perf_block(NSMutableString *h, NSString *title, NSData *d) {
     static const char *keys[] = { "boot: 版本", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图" };
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) { NSString *l = last_line(d, keys[i]); [h appendFormat:@"%@\n", l ?: [NSString stringWithFormat:@"（没有「%@」行）", @(keys[i])]]; }
 }
-// 日志里的路径会带系统用户主目录（Mac 上是 /Users/<用户名>，iPhone 上是 /var/mobile）：导出时一律换成 ~，不把用户名带出去
-// Paths in the log carry the system user's home directory (/Users/<username> on Mac, /var/mobile on iPhone): on export always replace it with ~ so the username does not leak out
-static NSData *scrub_home(NSData *d) {
-    struct passwd *pw = getpwuid(getuid()); const char *h = pw ? pw->pw_dir : NULL; size_t hn = h ? strlen(h) : 0;
-    if (!d || hn < 2) return d;
-    NSMutableData *o = [NSMutableData dataWithCapacity:d.length]; const uint8_t *b = d.bytes; size_t n = d.length, i = 0, from = 0;
-    while (i + hn <= n) { if (b[i] == (uint8_t)h[0] && !memcmp(b + i, h, hn)) { [o appendBytes:b + from length:i - from]; [o appendBytes:"~" length:1]; i += hn; from = i; } else i++; }
-    [o appendBytes:b + from length:n - from]; return o;
+// 导出前脱敏（dm/host/dm_scrub.c，同 Mac 的 front_mac.m share_scrubber）：应用容器与系统用户主目录（iPhone 上是 /var/mobile，Mac 上跑时是 /Users/<用户名> 与沙盒）→ ~，
+// 包名（自己签名的包名多半带开发者的名字；本项目自己的 org.d2rmobile.* 不换）与它在 iCloud 目录名里的 ~ 写法 → <bundle-id>，存档里的角色名 → <char1> …；
+// 路径里的 UUID（应用容器、包目录）按形状换。洗不了（内存不够）返回 nil，调用方不导出
+// Scrub before export (dm/host/dm_scrub.c, as the Mac's front_mac.m share_scrubber): the app container and the system user's home directory (/var/mobile on iPhone; /Users/<username> and the sandbox when run on a Mac) -> ~,
+// the bundle ID (a self-signed one usually carries the developer's name; the project's own org.d2rmobile.* stays) and its ~ spelling in the iCloud directory name -> <bundle-id>, the character names in the save -> <char1> ...;
+// UUIDs in paths (app container, bundle directory) go by shape. Returns nil when it cannot scrub (out of memory), and the caller does not export
+static NSData *scrub_log(NSData *d) {
+    dm_scrub *s = dm_scrub_new(); if (!s || !d) { dm_scrub_free(s); return nil; }
+    NSMutableArray<NSString *> *homes = [NSMutableArray arrayWithObject:NSHomeDirectory()];
+    struct passwd *pw = getpwuid(getuid()); if (pw && pw->pw_dir) [homes addObject:@(pw->pw_dir)];
+    for (NSString *h in homes.copy) if ([h hasPrefix:@"/var/"]) [homes addObject:[@"/private" stringByAppendingString:h]];   // 同一个目录的 /private/var 写法 | the /private/var spelling of the same directory
+    for (NSString *h in homes) dm_scrub_add(s, h.fileSystemRepresentation, "~", 1);
+    NSString *bid = NSBundle.mainBundle.bundleIdentifier;
+    if (bid.length && ![bid hasPrefix:@"org.d2rmobile."]) { dm_scrub_add(s, bid.UTF8String, "<bundle-id>", 1); dm_scrub_add(s, [bid stringByReplacingOccurrencesOfString:@"." withString:@"~"].UTF8String, "<bundle-id>", 1); }
+    const char *sv = getenv("DM_SAVE"); if (sv) dm_scrub_add_chars(s, sv);
+    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;   // 测试局的存档在 save.test：玩家自己那份也收一遍 | a test run's save is save.test: collect the player's own save too
+    if (doc) dm_scrub_add_chars(s, [doc stringByAppendingPathComponent:@"save"].fileSystemRepresentation);
+    size_t on = 0; char *o = dm_scrub_run(s, d.bytes, d.length, &on); dm_scrub_free(s);
+    return o ? [NSData dataWithBytesNoCopy:o length:on freeWhenDone:YES] : nil;
 }
 static NSDate *g_t0;   // 本次启动时刻（dm_sharelog_boot） | Time of this launch (dm_sharelog_boot)
 static NSURL *build_file(void) {
@@ -74,7 +86,7 @@ static NSURL *build_file(void) {
     [fm removeItemAtPath:dir error:nil]; [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     df.dateFormat = @"yyyyMMdd_HHmmss";
     NSString *p = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@(dm_ui("dmShareLogFile")), build, [df stringFromDate:NSDate.date]]];
-    NSData *fin = scrub_home(out);
+    NSData *fin = scrub_log(out); if (!fin) { plog("诊断日志：【红】脱敏失败（内存不够？），不导出"); return nil; }
     if (![fin writeToFile:p atomically:YES]) { plog("诊断日志：【红】导出文件写不进 %s", p.UTF8String); return nil; }
     plog("诊断日志：已打包 %s（%lu 字节：本局 %lu、上一局 %s）", p.lastPathComponent.UTF8String, (unsigned long)fin.length, (unsigned long)cur.length,
          prev ? [NSString stringWithFormat:@"%lu", (unsigned long)prev.length].UTF8String : "没有");

@@ -93,6 +93,7 @@ void dm_ui_key_pulse(uint64_t mask, int frames);   // 替玩家点一下手柄�
 // 界面连续手势（前端任意线程调，主线程每帧执行）：kind 1 = 纵向拖 → 滚动，2 = 横向拖 → 滑块；坐标 = 出图画面归一化 [0,1]；tol_ny = 认滑块时上下放宽多少（手指粗细）
 // Continuous UI gestures (called by the front end from any thread, executed every frame on the main thread): kind 1 = vertical drag -> scroll, 2 = horizontal drag -> slider; coordinates = normalized to the rendered picture [0,1]; tol_ny = how much vertical slack to allow when identifying a slider (finger thickness)
 void dm_ui_drag_begin(int kind, float ox, float oy, float tol_ny);
+void dm_ui_drag_begin_ptr(int kind, float ox, float oy, float tol_ny);   // 同上，来自 Mac 指针（鼠标 / 触控板）：滚动条上起手一律拖滑块；触屏的只有按在滑块本身上才拖 | as above, from the Mac pointer (mouse / trackpad): starting on a scroll bar always drags the thumb; for touch only a press on the thumb itself does
 void dm_ui_drag_move(float x, float y);
 void dm_ui_drag_end(void);
 void dm_ui_drag_lift(float ny);   // 起拖前报物品图抬在手指上方多少（屏高比例）：编年史格子拖回背包按物品图位置判落点（dm_vault_ui.c） | Before a drag starts, report how far the item image is lifted above the finger (as a fraction of screen height): dragging a chronicle cell back to the inventory decides the landing point by the item image position (dm_vault_ui.c)

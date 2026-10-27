@@ -325,7 +325,7 @@ static int auto_merc_pot(uint8_t *b, uint64_t pl, uint32_t t) {
 static void auto_pot_pump(uint8_t *b, uint64_t pl) {
     if (!pl) return;
     uint32_t t = dm_cur_tick(); if (!t) return;
-    uint32_t mode = *(uint32_t *)(pl + 0xc); if (mode == 0 || mode == 17 || mode == 0x11) return;   // 死亡中 / 已死 / 玩家状态不允许用物品（同 g_use 的挡法） | Dying / dead / the player state does not allow using items (same blocking as g_use)
+    uint32_t mode = *(uint32_t *)(pl + 0xc); if (mode == 0 || mode == 17) return;   // 死亡中（0）/ 已死（17 = 0x11，也正是 g_use 那里挡的「不能用物品」的状态） | dying (0) / dead (17 = 0x11, which is also the "cannot use items" state g_use blocks)
     if (((uint64_t (*)(void))(b + 0x2aa7c0))() || atomic_load(&g_use)) return;   // 手上拿着东西 / 已有一件在等着用 | Holding something in hand / one item is already waiting to be used
     if (dm_custom_get("auto_mana") && (auto_pot_life(b, pl, t) || auto_pot_mana(b, pl, t))) return;   // 一拍只发一件（g_use 一次一件），先红后蓝 | Only one is sent per tick (g_use handles one at a time), red first, then blue
     auto_merc_pot(b, pl, t);   // 玩家这一拍没喝药才轮到佣兵 | The mercenary only gets a turn if the player did not drink a potion this tick

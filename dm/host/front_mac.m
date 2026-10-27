@@ -13,6 +13,11 @@
 #include "dm.h"
 #include "dm_input.h"
 #include "dm_uiscreen.h"
+#include "dm_scrub.h"
+#include <pwd.h>
+#ifndef APP_NAME
+#define APP_NAME "D2R Mobile"   // 同 app_mac.m：日志目录名，旧接口版构建时另给 | as app_mac.m: name of the log directory, given separately for the older-API build
+#endif
 void mtl_set_ui_rect_fn(void (*fn)(double *y, double *h));
 static void ui_rect_frac(double *fy, double *fh) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); if (dm_screen_real(&rw, &rh) && rh > 0) { *fy = (double)y / rh; *fh = (double)h / rh; } }   // 同 front_ios.m：界面矩形的纵向位置与高（占画面高的比例） | Same as front_ios.m: vertical position and height of the UI rectangle (as fractions of the frame height)
 __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn(ui_rect_frac); }   // 不开窗口的跑法（截图 / 闸门）也要生效，所以不放在建图层那里 | Must also take effect when running without a window (screenshots / gate checks), so it is not placed where the layer is created
@@ -63,11 +68,11 @@ static void render_setup(void) {
 }
 int front_video_running_res(void) { return g_render_tier; }
 int front_video_mfx_ok(void) { static int ok = -1; if (ok < 0) ok = [MTLFXSpatialScalerDescriptor supportsDevice:MTLCreateSystemDefaultDevice()] ? 1 : 0; return ok; }
-// 首次启动的推荐值（dm_video.c 读不到 rec_* 时调，启动时在主线程）：全屏；分辨率取「不超过主屏像素宽的 3/4」的最高一档，2560 那档只给 Pro / Max / Ultra
+// 首次启动的推荐值（dm_video.c 读到的 sw_video.txt 缺键或越界时调，只取缺的那几个，启动时在主线程）：全屏；分辨率取「不超过主屏像素宽的 3/4」的最高一档，2560 那档只给 Pro / Max / Ultra
 // 显卡（名字里带；M6 实测 1920 出图 + MetalFX 每帧约 13.7 ms，2560 约 14.5 ms，60 帧只有 16.7 ms）；出图比画布小又支持 MetalFX 就开 MetalFX。
 // 旧版偏好（StartFullScreen / RenderScale / MetalFXUpscale）设过的当作当前值接着用。测试副本（DM_APP_SUPPORT）缺省全按原版（窗口、1600、标准），
 // 自动跑的局才稳定；DM_TEST_VIDEO_FIRSTBOOT=1 让测试也走真推荐
-// Recommended values on first boot (called by dm_video.c when it finds no rec_*, on the main thread at launch): full screen; resolution = the highest tier not wider than 3/4 of the main screen's pixel width, the 2560 tier only for
+// Recommended values on first boot (called by dm_video.c when sw_video.txt lacks a key or has one out of range, only the missing ones are used, on the main thread at launch): full screen; resolution = the highest tier not wider than 3/4 of the main screen's pixel width, the 2560 tier only for
 // Pro / Max / Ultra GPUs (going by the name; on an M6 a 1920 render + MetalFX took about 13.7 ms per frame and 2560 about 14.5 ms, against 16.7 ms at 60 fps); MetalFX on when the render is smaller than the canvas and MetalFX is supported.
 // Values from the older preferences (StartFullScreen / RenderScale / MetalFXUpscale) carry over as the current values when set. The test copy (DM_APP_SUPPORT) defaults to the original throughout (windowed, 1600, standard)
 // so automated runs stay stable; DM_TEST_VIDEO_FIRSTBOOT=1 makes a test take the real recommendation
@@ -120,27 +125,43 @@ static void layout_game(void) {
 // 暂停菜单 / 大秘境面板开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
 // Quit (close window / Cmd-Q / menu): if a game is running, first ask the game to do one of its own saves and wait for the save commit (same as the iOS shell going to the background), at most 3 s, then shut down in order.
 // When the pause menu / Greater Rift panel is open the game does not tick: freeze the world and temporarily release the pause for this one save (diag.c dm_save_wait, the same function as iOS going to the background); on the loading screen wait until in game before asking. If there is still no commit after 3 s, log "quit without saving" as is
+// 等的那几步（iCloud 启动同步最多 20 秒、存盘最多 3.5 秒、iCloud 上传最多 10 秒、收尾最多 1.5 秒）不在主线程上：原先整段堵着主线程，
+// 慢的时候窗口卡住、出彩球，系统也当它没响应。现在主线程只做非它不可的几步（关输入框、读窗口状态、最小化着就先恢复），其余交给后台线程，结束时 _exit。
+// 存盘的保证不变：游戏自己的存盘本来就在游戏线程上做、出图走显示节拍线程，都不靠主线程；退出一开始就记下 g_quitting，之后失焦不再告诉游戏（原先主线程堵着，失焦也到不了游戏），
+// 系统来的退出答「稍后」（applicationShouldTerminate），注销 / 关机等这个进程自己结束，不会被取消
+// The waiting steps (the iCloud boot sync up to 20 s, the save up to 3.5 s, the iCloud upload up to 10 s, the wrap-up up to 1.5 s) are off the main thread: they used to block it throughout,
+// so a slow quit froze the window with a spinning cursor and the system took the app as not responding. Now the main thread does only what needs it (close an input box, read the window state, resume first when minimized), the rest goes to a background thread that ends with _exit.
+// The save guarantee is unchanged: the game's own save runs on the game thread and frames go through the display-link thread, neither needs the main thread; g_quitting is set when the quit starts, after which a focus loss is no longer passed to the game (with the main thread blocked it never reached the game either),
+// and a quit from the system is answered "later" (applicationShouldTerminate), so log out / shut down wait for this process to end by itself instead of being cancelled
+static _Atomic int g_quitting;
+static void app_quit_finish(const char *why, int ingame) {   // 后台线程 | background thread
+    // iCloud 启动同步还在做（窗口先出来了，游戏还在等它，见 main.c cloud_boot_start）：它在改存档目录，做完再退，最多 20 秒
+    // The iCloud boot sync is still running (the window came up first and the game is waiting for it, see main.c cloud_boot_start): it is changing the save directory, so let it finish before quitting, at most 20 s
+    { int dm_cloud_boot_wait(double max_s); dm_cloud_boot_wait(20); }
+    int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms), dm_cloud_flush_wait(double sec);
+    if (!ingame) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
+    uint64_t n = 0; int froze = 0; double ms = 0; int asked = dm_save_wait(3, &n, &froze, &ms);
+    if (n && asked) LOG("窗口：退出前等游戏存盘 %.0f ms，期间存档提交 %llu 次%s", ms, (unsigned long long)n, froze ? "（原先暂停着：冻结世界存盘、已恢复暂停）" : "");
+    else LOG("【红】窗口：未存盘退出——3 秒内没等到存档提交（%s%s）", asked ? "已请游戏存盘" : "一直没到能请存盘的状态（读取画面？）", froze ? "，原先暂停着、冻结放开过" : "");
+    DM_EV("quit_save", "saved:b commits:u ms:f paused:b", n && asked, (unsigned long long)n, ms, froze);
+    dm_cloud_flush_wait(10);   // 存盘之后把这一局传上 iCloud 再退（没开同步时立即返回） | after saving, upload this session to iCloud before quitting (returns immediately when sync is off)
+    dm_host_shutdown(why);
+}
 static int text_input_cancel(void), text_input_up(void);
 static void text_input_handoff_pad(void), text_input_test(NSString *text, int ok);
-static void app_quit(const char *why) {
+static void app_quit(const char *why) {   // 主线程 | main thread
     static int once; if (once++) return;
+    atomic_store(&g_quitting, 1);
     { uint64_t dm_audio_render_calls(void); LOG("窗口：退出（%s）；声卡回调累计 %llu（0 = 这次没出声）", why, (unsigned long long)dm_audio_render_calls()); }
     DM_EV("quit", "why:s", why);
     // 数量 / 起名输入框（或手柄屏幕键盘）开着：先按「取消」关掉，放走等它的键盘线程、解冻客体时钟，下面才存得了盘（见 front_text_input）
     // A quantity / name input box (or the on-screen controller keyboard) is open: answer "Cancel" first to release the keyboard thread waiting on it and unfreeze the guest clock, so the save below can happen (see front_text_input)
     if (text_input_cancel() || dm_vkbd_ui_cancel()) LOG("窗口：退出时输入框开着 → 先按取消关掉，再存盘");
-    int dm_ingame_now(void); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
-    int dm_cloud_flush_wait(double sec);
-    if (!dm_ingame_now() && !dm_uiscreen_ingame()) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
+    int dm_ingame_now(void), ingame = dm_ingame_now() || dm_uiscreen_ingame();
     // 最小化着退出：游戏线程挡在图形挂起处（dm_gfx_suspend）、客体时钟冻着，拍不走就存不了盘。先恢复（出图照丢，不画到看不见的窗口），再请存盘
     // Quitting while minimized: the game thread is blocked at the graphics suspend (dm_gfx_suspend) and the guest clock is frozen, so no tick runs and nothing can be saved. Resume first (frames are still dropped, nothing is drawn to the hidden window), then ask for the save
-    if (g_win.miniaturized) { void mtl_present_discard(int on); void guest_clock_freeze_for(int reason, int on); mtl_present_discard(1); dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); LOG("窗口：最小化着退出，先恢复图形与客体时钟再存盘"); }
-    uint64_t n = 0; int froze = 0; double ms = 0; int asked = dm_save_wait(3, &n, &froze, &ms);
-    if (n && asked) LOG("窗口：退出前等游戏存盘 %.0f ms，期间存档提交 %llu 次%s", ms, (unsigned long long)n, froze ? "（原先暂停着：冻结世界存盘、已恢复暂停）" : "");
-    else LOG("【红】窗口：未存盘退出——3 秒内没等到存档提交（%s%s）", asked ? "已请游戏存盘" : "一直没到能请存盘的状态（读取画面？）", froze ? "，原先暂停着、冻结放开过" : "");
-    DM_EV("quit_save", "saved:b commits:u ms:f paused:b", n && asked, (unsigned long long)n, ms, froze);
-    { int dm_cloud_flush_wait(double sec); dm_cloud_flush_wait(10); }   // 存盘之后把这一局传上 iCloud 再退（没开同步时立即返回） | after saving, upload this session to iCloud before quitting (returns immediately when sync is off)
-    dm_host_shutdown(why);
+    if (ingame && g_win.miniaturized) { void mtl_present_discard(int on); void guest_clock_freeze_for(int reason, int on); mtl_present_discard(1); dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); LOG("窗口：最小化着退出，先恢复图形与客体时钟再存盘"); }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ app_quit_finish(why, ingame); });
 }
 // 控制口 app 命令（dm_ctl_cmds.c）：在主线程上做与 DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT 相同的动作。最小化与 DM_TEST_MINI_AT 一样临时给窗口加上可最小化（游戏窗口本身没有）；
 // background / foreground 在 Mac 上就是最小化 / 还原；resign / active 不支持（Mac 的失焦靠别的窗口抢走焦点）
@@ -156,29 +177,50 @@ static int ctl_app(const char *w) {
 }
 static const char *ui(const char *k) { const char *dm_ui(const char *key); return dm_ui(k); }
 static void show_keys(void) { NSAlert *a = [NSAlert new]; a.messageText = @(ui("dmAppKeysTitle")); a.informativeText = @(ui("dmAppKeysText")); [a addButtonWithTitle:@(ui("dmAppOK"))]; [a runModal]; }
+// 分享日志的脱敏规则（dm_scrub.c，同 iOS 的 dm_sharelog.m）：家目录 → ~、显示器型号 → <display>、挂着的盘名、登录名 / 全名 / 主机名、
+// 不是本项目自己的包名（org.d2rmobile.*）时的包名，以及存档里的角色名 → <char1> …；路径里的 UUID、/var/folders 与 .d2s 文件名按形状换（见 dm_scrub.c）
+// Scrubbing rules of the shared log (dm_scrub.c, as iOS's dm_sharelog.m): home directory -> ~, display models -> <display>, mounted disk names, login / full / host name,
+// the bundle ID when it is not the project's own (org.d2rmobile.*), and the character names in the save -> <char1> ...; UUIDs in paths, /var/folders and .d2s file names go by shape (see dm_scrub.c)
+static dm_scrub *share_scrubber(NSString *home) {
+    dm_scrub *s = dm_scrub_new(); if (!s) return NULL;
+    struct passwd *pw = getpwuid(getuid());
+    dm_scrub_add(s, home.fileSystemRepresentation, "~", 1); if (pw && pw->pw_dir) dm_scrub_add(s, pw->pw_dir, "~", 1);
+    { const char *sv = getenv("DM_SAVE"); if (sv) dm_scrub_add_chars(s, sv); }
+    for (NSScreen *sc in NSScreen.screens) { CGDirectDisplayID id_ = [sc.deviceDescription[@"NSScreenNumber"] unsignedIntValue]; NSString *nm = sc.localizedName;
+        if (nm.length >= 2) dm_scrub_add(s, nm.UTF8String, CGDisplayIsBuiltin(id_) ? "<built-in display>" : "<display>", 0); }
+    for (NSURL *u in [NSFileManager.defaultManager mountedVolumeURLsIncludingResourceValuesForKeys:nil options:0] ?: @[]) if ([u.path hasPrefix:@"/Volumes/"]) dm_scrub_add(s, u.path.fileSystemRepresentation, "/Volumes/<volume>", 0);
+    NSString *bid = NSBundle.mainBundle.bundleIdentifier;
+    if (bid.length && ![bid hasPrefix:@"org.d2rmobile."]) { dm_scrub_add(s, bid.UTF8String, "<bundle-id>", 1); dm_scrub_add(s, [bid stringByReplacingOccurrencesOfString:@"." withString:@"~"].UTF8String, "<bundle-id>", 1); }
+    if (pw && pw->pw_name && strlen(pw->pw_name) >= 3) dm_scrub_add(s, pw->pw_name, "<user>", 1);
+    NSString *full = NSFullUserName(); if (full.length >= 3) dm_scrub_add(s, full.UTF8String, "<user>", 1);
+    char hn[256] = ""; if (!gethostname(hn, sizeof hn - 1) && strlen(hn) >= 3) {   // 主机名（Mac-mini-de-Patrice.local）与它去掉 .local、连字符换空格的样子（多半就是电脑名） | host name (Mac-mini-de-Patrice.local) and its form without .local and with spaces for hyphens (usually the computer name)
+        dm_scrub_add(s, hn, "<computer>", 1); char *dot = strstr(hn, ".local"); if (dot) *dot = 0; dm_scrub_add(s, hn, "<computer>", 1);
+        for (char *p = hn; *p; p++) if (*p == '-') *p = ' '; dm_scrub_add(s, hn, "<computer>", 1); }
+    return s;
+}
 // 帮助 → 分享日志…：把本次与上一次的日志（~/Library/Logs/D2R Mobile/host.log、host.prev.log）和一份版本信息打成一个压缩包，弹系统的存储面板让玩家选位置（缺省桌面），存好后在访达里选中它。
-// 不上传、不发邮件；包里只有这三份文件——不放存档、不放 iCloud 目录里的任何东西。日志里的家目录前缀一律换成 ~（同 iOS 的分享日志 dm_sharelog.m scrub_home：不把用户名带出去）。
+// 不上传、不发邮件；包里只有这三份文件——不放存档、不放 iCloud 目录里的任何东西。三份都先脱敏（share_scrubber：家目录、角色名、显示器、盘名……），洗不了的那份不放。
 // to 非空 = 测试（DM_TEST_SHARELOG）：不弹面板，直接写到这个路径。返回 nil 成功，否则是失败原因
 // Help -> Share Log...: pack the logs of this run and the previous one (~/Library/Logs/D2R Mobile/host.log, host.prev.log) and a version-information file into one archive, show the system save panel for the player to choose a location (Desktop by default), and select it in Finder once saved.
-// Nothing is uploaded or mailed; the archive contains only these three files - no saves, nothing from the iCloud directory. The home-directory prefix in the logs is always replaced with ~ (same as the iOS share-log dm_sharelog.m scrub_home: the user name is not carried out).
+// Nothing is uploaded or mailed; the archive contains only these three files - no saves, nothing from the iCloud directory. All three are scrubbed first (share_scrubber: home directory, character names, displays, disk names...); a file that cannot be scrubbed is left out.
 // to non-empty = test (DM_TEST_SHARELOG): no panel, write directly to this path. Returns nil on success, otherwise the reason for failure
 static NSString *share_logs(NSString *to) {
-    NSFileManager *fm = NSFileManager.defaultManager; NSString *home = NSHomeDirectory(), *logd = [home stringByAppendingPathComponent:@"Library/Logs/D2R Mobile"];
+    // 日志目录同 app_mac.m 写的那处：测试副本（DM_APP_SUPPORT）在 <支持目录>/Logs，旧接口版是 Logs/D2R Mobile M3（APP_NAME）。原先写死 Logs/D2R Mobile，这两种都打包了别的包的日志
+    // The log directory is where app_mac.m writes: <support>/Logs for a test copy (DM_APP_SUPPORT), Logs/D2R Mobile M3 for the older-API build (APP_NAME). It used to be hard-coded to Logs/D2R Mobile, so both packed another package's logs
+    NSFileManager *fm = NSFileManager.defaultManager; NSString *home = NSHomeDirectory(), *logd = getenv("DM_APP_SUPPORT") ? [@(getenv("DM_APP_SUPPORT")) stringByAppendingPathComponent:@"Logs"] : [home stringByAppendingPathComponent:@"Library/Logs/" APP_NAME];
     NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSString *build = [inf[@"CFBundleVersion"] description] ?: @"0", *ver = [inf[@"CFBundleShortVersionString"] description] ?: @"?";
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyyMMdd-HHmm"; NSString *name = [NSString stringWithFormat:@"D2RMobile-logs-%@-%@", build, [df stringFromDate:NSDate.date]];
     NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dm_share_%d", getpid()]], *dir = [tmp stringByAppendingPathComponent:name];
     [fm removeItemAtPath:tmp error:nil]; if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil]) return @"mkdir";
     fflush(stderr);
-    NSData *hb = [home dataUsingEncoding:NSUTF8StringEncoding]; NSData *tilde = [@"~" dataUsingEncoding:NSUTF8StringEncoding];
-    NSData *(^scrub)(NSData *) = ^NSData *(NSData *d) { if (!d || hb.length < 2) return d; NSMutableData *o = [NSMutableData dataWithCapacity:d.length]; NSRange all = NSMakeRange(0, d.length), r;
-        while ((r = [d rangeOfData:hb options:0 range:all]).location != NSNotFound) { [o appendData:[d subdataWithRange:NSMakeRange(all.location, r.location - all.location)]]; [o appendData:tilde]; all = NSMakeRange(NSMaxRange(r), d.length - NSMaxRange(r)); }
-        [o appendData:[d subdataWithRange:all]]; return o; };
-    int n = 0; for (NSString *f in @[@"host.log", @"host.prev.log"]) { NSData *d = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:f] options:NSDataReadingMappedIfSafe error:nil]; if (d) { [scrub(d) writeToFile:[dir stringByAppendingPathComponent:f] atomically:YES]; n++; } }
+    dm_scrub *sc = share_scrubber(home); if (!sc) { [fm removeItemAtPath:tmp error:nil]; return @"scrub"; }
+    NSData *(^scrub)(NSData *) = ^NSData *(NSData *d) { size_t on = 0; char *o = d ? dm_scrub_run(sc, d.bytes, d.length, &on) : NULL; return o ? [NSData dataWithBytesNoCopy:o length:on freeWhenDone:YES] : nil; };   // 洗不了（内存不够）= nil：那份不放 | cannot scrub (out of memory) = nil: that file is left out
+    int n = 0; for (NSString *f in @[@"host.log", @"host.prev.log"]) { NSData *d = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:f] options:NSDataReadingMappedIfSafe error:nil]; if (d && [scrub(d) writeToFile:[dir stringByAppendingPathComponent:f] atomically:YES]) n++; }
     NSString *bt = [NSString stringWithContentsOfFile:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"build.txt"] encoding:NSUTF8StringEncoding error:nil] ?: @"";
     char hw[64] = "?"; size_t hn = sizeof hw; sysctlbyname("hw.model", hw, &hn, NULL, 0); NSProcessInfo *pi = NSProcessInfo.processInfo;
     NSString *info = [NSString stringWithFormat:@"%@\nD2R Metal (macOS) %@ (%@)\n%@\n%@\nmacOS %@\n%@  %.0f GB\n%@\n", @(ui("dmAppShareInfo")), ver, build, inf[@"CFBundleIdentifier"] ?: @"", [bt stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],
         pi.operatingSystemVersionString, @(hw), pi.physicalMemory / 1073741824.0, [NSLocale.preferredLanguages componentsJoinedByString:@","]];
-    [[scrub([info dataUsingEncoding:NSUTF8StringEncoding]) copy] writeToFile:[dir stringByAppendingPathComponent:@"info.txt"] atomically:YES];
+    [scrub([info dataUsingEncoding:NSUTF8StringEncoding]) writeToFile:[dir stringByAppendingPathComponent:@"info.txt"] atomically:YES]; dm_scrub_free(sc);
     NSString *zip = [tmp stringByAppendingPathComponent:[name stringByAppendingString:@".zip"]];
     NSTask *t = [NSTask new]; t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/ditto"]; t.arguments = @[@"-c", @"-k", @"--keepParent", dir, zip]; NSError *err = nil;
     if (![t launchAndReturnError:&err]) { [fm removeItemAtPath:tmp error:nil]; return err.localizedDescription ?: @"ditto"; } [t waitUntilExit];
@@ -220,10 +262,12 @@ double front_display_refresh(char *name, size_t n) {
 - (void)windowDidChangeScreen:(NSNotification *)n { (void)n; screen_note(); }
 - (void)quit:(id)s { (void)s; app_quit("菜单退出"); }
 // 系统来的退出（程序坞「退出」、⌘-Tab 时按 Q、注销 / 重启 / 关机、AppleScript quit）都走 terminate:。没有这个委托方法时 AppKit 直接结束进程，不存盘。
-// app_quit 存完盘自己结束进程（dm_host_shutdown）；它返回了说明已有一次退出在进行，这次取消，让那次走完
+// app_quit 在后台线程上存完盘自己结束进程（dm_host_shutdown 里 _exit），这里一律答「稍后」：注销 / 关机等着这个进程结束，不会像答「取消」那样把注销取消掉；
+// 已有一次退出在进行时也一样，等那次结束进程
 // Quits coming from the system (Quit in the Dock, Q while Cmd-Tabbing, log out / restart / shut down, AppleScript quit) all go through terminate:. Without this delegate method AppKit ends the process directly, without saving.
-// app_quit ends the process itself after saving (dm_host_shutdown); if it returns, a quit is already in progress, so cancel this one and let that one finish
-- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)a { (void)a; app_quit("系统退出"); return NSTerminateCancel; }
+// app_quit saves on a background thread and ends the process itself (_exit in dm_host_shutdown), so the answer here is always "later": log out / shut down wait for this process to end, instead of being cancelled as answering "cancel" would;
+// the same when a quit is already under way, which will end the process
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)a { (void)a; app_quit("系统退出"); return NSTerminateLater; }
 - (void)keys:(id)s { (void)s; show_keys(); }
 - (void)share:(id)s { (void)s; share_logs_ui(); }
 @end
@@ -270,10 +314,19 @@ static void on_key(NSEvent *e, int down) {
 }
 
 typedef struct { void (*fn)(void); } guest_arg;
+// 游戏自己退出（nnMain 返回）：走与关窗口相同的收尾——等这一局还排着的 iCloud 上传，再 dm_host_shutdown（停预取、暂停声音、挂起图形，_exit）。
+// 原先在客体线程上直接 exit(0)：跳过 dm_host_shutdown，排着的上传被掐掉，atexit / C++ 析构跑的时候主线程与出图线程还在动。
+// 这时游戏已经不拍了，没有能存的盘（不调 dm_save_wait）。dm_host_shutdown 返回 = 已有一次退出在进行（关窗口等），由那次结束进程
+// The game exiting by itself (nnMain returned): the same wrap-up as closing the window -- wait for this run's still-queued iCloud upload, then dm_host_shutdown (stop prefetch, pause audio, suspend graphics, _exit).
+// It used to call exit(0) right on the guest thread: dm_host_shutdown was skipped, the queued upload was cut off, and atexit / C++ destructors ran while the main and present threads were still busy.
+// The game no longer ticks at this point, so there is nothing to save (no dm_save_wait). dm_host_shutdown returning = a quit is already under way (window closed etc.), and that one ends the process
 static void *guest_tramp(void *p) {
     static char alt[65536];                       // 信号备用栈是每线程的；崩溃打印要在客体线程上也生效 | The signal alternate stack is per thread; crash printing must also work on the guest thread
     stack_t ss = {.ss_sp = alt, .ss_size = sizeof alt}; sigaltstack(&ss, 0);
-    ((guest_arg *)p)->fn(); LOG("客体线程结束"); exit(0);
+    ((guest_arg *)p)->fn(); LOG("客体线程结束：游戏自己退出 → 有序收尾");
+    { int dm_cloud_flush_wait(double sec); dm_cloud_flush_wait(10); }
+    dm_host_shutdown("客体线程结束");
+    return NULL;
 }
 
 void front_run(void (*guest)(void)) {
@@ -568,7 +621,7 @@ void front_run(void (*guest)(void)) {
                   LOG("DM_TEST_COVER：盖上 %.1f 秒，游戏窗口%s是主窗口", dur, win.isKeyWindow ? "" : "不");
                   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(dur * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [c orderOut:nil]; LOG("DM_TEST_COVER：拿开"); });
               }); }
-        [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "resign"); if (!win.miniaturized) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
+        [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "resign"); if (!win.miniaturized && !atomic_load(&g_quitting)) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
         [nc addObserverForName:NSWindowDidBecomeKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "active"); dm_focus_set(1); }];
         // 最小化：客体时钟一并冻结（同 iOS 进后台）。否则游戏线程挡在图形挂起处、墙钟照走，恢复时主循环把整段最小化时长的拍一口气补跑完——角色站着不动、怪照打（专家模式死了就没了）
         // Minimize: the guest clock is frozen as well (as when iOS goes to the background). Otherwise the game thread is blocked at the graphics suspend while the wall clock keeps running, and on restore the main loop catches up on every tick of the minimized period in one burst -- the character stands still while monsters keep attacking (a death in Hardcore is permanent)

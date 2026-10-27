@@ -54,7 +54,10 @@ static void game_seed_maybe(void) {
     LOG("DM_GAME_SEED：main+0x20a0074 ← %#x", *p);
 }
 
+int dm_cloud_boot_wait(double max_s);   // 下面 main 旁边 | next to main below
 static void guest_main(void) {
+    dm_cloud_boot_wait(-1);   // Mac App：iCloud 启动同步在自己的线程上，做完才让游戏挂存档（见 cloud_boot_start） | Mac App: the iCloud boot sync runs on its own thread; the game mounts the save only after it is done (see cloud_boot_start)
+    if (getenv("DM_TEST_GUEST_RETURN")) { LOG("DM_TEST_GUEST_RETURN：客体主函数不进游戏、直接返回（验游戏自己退出时的收尾）"); return; }   // 测试：同 nnMain 返回 | test: as if nnMain returned
     guest_thread_init();
     { void inflate_bench_maybe(void); inflate_bench_maybe(); }   // DM_INFLATE_BENCH 测试模式（诊断用，跑完退出） | DM_INFLATE_BENCH test mode (for diagnostics, exits when done)
     crash_sample_self();   // DM_SAMPLE 采样（诊断用） | DM_SAMPLE sampling (for diagnostics)
@@ -225,9 +228,41 @@ const char *__tsan_default_suppressions(void) {
 #endif
 #endif
 int dm_app_bootstrap(int *argc, char ***argv);   // app_mac.m：包成 .app 双击起时备好环境与参数；命令行起原样 | app_mac.m: when packaged as an .app and started by double-click, prepare the environment and arguments; command-line starts are unchanged
+// iCloud 启动同步（Mac App）：挂存档之前做一次（同 iOS 壳的启动次序），但放在自己的线程上——原先在主线程上做，取容器、看云端条目、等下载最多 5 秒，
+// 这段时间窗口还没出来、程序坞图标一直跳。现在宿主装载与开窗口照走，只有游戏要等它：客体主函数开头 dm_cloud_boot_wait(-1)，做完才进游戏、才挂存档。
+// 同步改的是存档目录（整份挪进备份、换进云端那份），做到一半不能退：窗口开着时退出（app_quit）先 dm_cloud_boot_wait 等它做完。
+// dm_cloud_boot 本来就能在子线程上跑（iOS 壳就在 boot 子线程上调）：要主线程的那一步（第一次同步前的云端条目查询）派到主队列，主线程这时已进运行循环。
+// 自定义设置（「iCloud 同步」开关）先在主线程读好，免得两个线程同时首次读盘
+// iCloud boot sync (Mac App): done once before the save is mounted (same startup order as the iOS shell), but on its own thread -- it used to run on the main thread, and taking the container, looking at the cloud listing
+// and waiting for downloads (up to 5 s) kept the window from appearing while the Dock icon bounced. Now host loading and the window go ahead and only the game waits for it: the guest main function starts with
+// dm_cloud_boot_wait(-1), and enters the game (and mounts the save) only after it is done. The sync changes the save directory (moving whole copies into the backup, swapping in the cloud copy) and must not be cut
+// halfway: a quit while the window is up (app_quit) first waits with dm_cloud_boot_wait. dm_cloud_boot already runs off the main thread (the iOS shell calls it on a boot thread): the one step that needs the main
+// thread (the cloud listing query before the first sync) is dispatched to the main queue, whose run loop is running by then. The custom settings (the "iCloud sync" switch) are read on the main thread first, so two threads never do the first read at once
+static pthread_mutex_t g_cb_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_cb_cv = PTHREAD_COND_INITIALIZER; static int g_cb_state;   // 0 没起 1 进行中 2 做完 | 0 not started, 1 running, 2 done
+int dm_cloud_boot_wait(double max_s) {   // 1 = 做完了（或没起），0 = 到点还没完；max_s < 0 = 一直等 | 1 = done (or never started), 0 = still running at the deadline; max_s < 0 = wait as long as it takes
+    pthread_mutex_lock(&g_cb_mu); int r = 1;
+    if (g_cb_state == 1) { uint64_t t0 = now_ns(); LOG("等 iCloud 启动同步做完…");
+        struct timeval tv; gettimeofday(&tv, NULL); double end = tv.tv_sec + tv.tv_usec / 1e6 + (max_s < 0 ? 1e7 : max_s);
+        struct timespec ts = { (time_t)end, (long)((end - (time_t)end) * 1e9) };
+        while (g_cb_state == 1) if (pthread_cond_timedwait(&g_cb_cv, &g_cb_mu, &ts)) break;
+        r = g_cb_state != 1; LOG("%siCloud 启动同步：等了 %.0f ms%s", r ? "" : "【红】", (now_ns() - t0) / 1e6, r ? "，做完了" : "，到点还没做完（照常往下走）"); }
+    pthread_mutex_unlock(&g_cb_mu); return r;
+}
+#if TARGET_OS_OSX
+static void *cloud_boot_main(void *a) {
+    (void)a; pthread_setname_np("dm-cloud-boot"); void dm_cloud_boot(void); dm_cloud_boot();
+    pthread_mutex_lock(&g_cb_mu); g_cb_state = 2; pthread_cond_broadcast(&g_cb_cv); pthread_mutex_unlock(&g_cb_mu); return NULL;
+}
+static void cloud_boot_start(void) {
+    int dm_custom_get(const char *key); (void)dm_custom_get("icloud");
+    pthread_mutex_lock(&g_cb_mu); g_cb_state = 1; pthread_mutex_unlock(&g_cb_mu);
+    pthread_t th; if (pthread_create(&th, NULL, cloud_boot_main, NULL)) { LOG("【红】iCloud 启动同步：起不了线程，改在主线程上做"); cloud_boot_main(NULL); return; }
+    pthread_detach(th);
+}
+#endif
 int main(int argc, char **argv) {
 #if TARGET_OS_OSX   // iOS 包也编这个文件（入口由外壳调），那边没有 app_mac.m | The iOS package compiles this file too (the entry is called by the shell); there is no app_mac.m on that side
-    if (dm_app_bootstrap(&argc, &argv)) { void dm_cloud_boot(void); dm_cloud_boot(); }   // App 形态：挂存档之前先做一次 iCloud 同步（同 iOS 壳的启动次序）；取不到容器 / 测试存档时它自己记一行就返回 | App form: do one iCloud sync before mounting the save (same startup order as the iOS shell); when the container cannot be obtained / with a test save it logs one line and returns
+    if (dm_app_bootstrap(&argc, &argv)) cloud_boot_start();   // App 形态：挂存档之前先做一次 iCloud 同步（见上）；取不到容器 / 测试存档时它自己记一行就返回 | App form: do one iCloud sync before mounting the save (see above); when the container cannot be obtained / with a test save it logs one line and returns
 #endif
     if (getenv("DM_PRELOAD")) dm_host_preload_start(argc, argv);   // Mac 上验证提前起跑的路径（iOS 由 App 的 main() 调） | Exercise the early-start path on Mac (on iOS it is called from the App's main())
     if (atomic_load(&g_pre.started)) {

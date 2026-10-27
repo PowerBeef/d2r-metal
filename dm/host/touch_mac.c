@@ -234,7 +234,7 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
             // A press on a scroll bar (front-end pages, or a panel open in game): the whole gesture goes to the thumb drag (dm_ui_drag_*, kind 4 of dm_cursor.c ui_drag_pump) -- pressed on the thumb = it follows, pressed on the track = the thumb jumps to the pointer;
             // never a click (a click's snap to the nearest landed on the arrow of the slider next to it)
             { static int sb; int dm_ui_scrollbar_at(float, float);
-              if (op == 0 && (!in || g_touch.state.navigation_mode || dm_game_paused()) && dm_ui_scrollbar_at(px, py)) { sb = 1; dm_ui_drag_begin(1, px, py, 44.0f / 1320); dm_ui_drag_move(px, py); fprintf(stderr, "[dm] 鼠标：按在滚动条上（%.3f,%.3f）→ 拖滑块，这一下不点\n", px, py); }
+              if (op == 0 && (!in || g_touch.state.navigation_mode || dm_game_paused()) && dm_ui_scrollbar_at(px, py)) { sb = 1; dm_ui_drag_begin_ptr(1, px, py, 44.0f / 1320); dm_ui_drag_move(px, py); fprintf(stderr, "[dm] 鼠标：按在滚动条上（%.3f,%.3f）→ 拖滑块，这一下不点\n", px, py); }
               if (sb) { if (op == 1) dm_ui_drag_move(px, py); else if (op == 2) { dm_ui_drag_end(); sb = 0; } atomic_store(&g_live.head, h + 1); continue; } }
             if (g_lm.owned) {
                 g_lm.x = px; g_lm.y = py;
@@ -271,7 +271,7 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
                 if (fe_drag) { if (op == 1) dm_ui_drag_move(px, py); else if (op == 2) { dm_ui_drag_end(); fe_drag = 0; } atomic_store(&g_live.head, h + 1); continue; }
                 if (op == 1 && fe_down) { int dm_ui_fe_drag_ok(void), dm_ui_slider_at(float, float); float dx = fabsf(px - fo_x) * 2868, dy = fabsf(py - fo_y) * 1320, th = 10 * 1320.0f / 720;   // 10 点（界面高按 720 点算） | 10 points (with the UI 720 points high)
                     int k = dy > th && dy >= dx && dm_ui_fe_drag_ok() ? 1 : dx > th && dx > dy && dm_ui_slider_at(fo_x, fo_y) ? 2 : 0;
-                    if (k) { dm_ui_touch(3, px, py); dm_ui_drag_begin(k, fo_x, fo_y, 44.0f / 1320); dm_ui_drag_move(px, py); fe_drag = k;
+                    if (k) { dm_ui_touch(3, px, py); dm_ui_drag_begin_ptr(k, fo_x, fo_y, 44.0f / 1320); dm_ui_drag_move(px, py); fe_drag = k;
                         fprintf(stderr, "[dm] 鼠标：前端页%s拖（起手 %.3f,%.3f），这一下不点\n", k == 1 ? "纵向" : "横向（滑块上）", fo_x, fo_y); atomic_store(&g_live.head, h + 1); continue; } }
                 if (op == 2 && dm_ui_item_at_now(px, py) == 2) { dm_ui_touch(3, px, py); dm_ui_tab_go(); } else dm_ui_touch(op, px, py);
                 atomic_store(&g_live.head, h + 1); continue; }
@@ -368,7 +368,7 @@ apply_input:
             // 界面连续手势（同 iOS 前端 front_ios.m）：手势层定型后把起手点与当前点交给宿主；起拖时报一次物品图的抬起量（同上面拖放落点的 DM_TC_POINTER_LIFT_PT / 1320）
             // Continuous UI gestures (same as the iOS front end front_ios.m): once the gesture layer has settled the gesture, hand the start point and current point to the host; when a drag starts report the lift amount of the item image once (same as DM_TC_POINTER_LIFT_PT / 1320 of the drag-and-drop landing point above)
             dm_tc_finger *f = &g_touch.state.finger[e->slot];
-            if (g_touch.state.navigation_mode && e->slot == g_touch.state.pointer_slot && f->ui_drag) { if (!g_touch.ui_drag_on) { g_touch.ui_drag_on = 1; dm_ui_drag_lift(DM_TC_POINTER_LIFT_PT / 1320); dm_ui_drag_begin(f->ui_drag, f->aim_origin_x / 2868, f->aim_origin_y / 1320, 44.0f / 1320); }
+            if (g_touch.state.navigation_mode && e->slot == g_touch.state.pointer_slot && f->ui_drag) { if (!g_touch.ui_drag_on) { g_touch.ui_drag_on = 1; dm_ui_drag_lift(DM_TC_POINTER_LIFT_PT / 1320); dm_ui_drag_begin_ptr(f->ui_drag, f->aim_origin_x / 2868, f->aim_origin_y / 1320, 44.0f / 1320); }
                 dm_ui_drag_move(e->x / 2868, e->y / 1320); } }
         else {
             if (g_touch.ui_drag_on && e->slot == g_touch.state.pointer_slot) { g_touch.ui_drag_on = 0; dm_ui_drag_end(); }   // 松手前告诉手势层这根手指是否落在物品区（这里就在游戏主线程，直接问） | before release tell the gesture layer whether this finger landed on an item area (this is already the game main thread, so ask directly)

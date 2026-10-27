@@ -49,6 +49,12 @@ static int inbox_n(const char *dev) { char d[1024]; path(d, dev, "save/_cloudinb
 static int inbox_has(const char *dev, const char *f) {   // 收件箱里有没有哪个条目带这个文件 | whether any inbox entry carries this file
     char d[1024]; path(d, dev, "save/_cloudinbox"); DIR *dp = opendir(d); struct dirent *e; int k = 0; struct stat st;
     while (dp && (e = readdir(dp))) { if (e->d_name[0] == '.') continue; char p[1400]; snprintf(p, sizeof p, "%s/%s/%s", d, e->d_name, f); k |= !stat(p, &st); } if (dp) closedir(dp); return k; }
+// 手造一个云端包（格式见 dm_cloudsync.c pack_write）：n 个文件，路径 rel[i]、内容 txt[i]，修改时间都取 stamp | hand-build a cloud pack (format in dm_cloudsync.c pack_write): n files, paths rel[i], contents txt[i], all with modification time stamp
+static void pack_put(const char *p, uint64_t stamp, uint32_t n, const char *const *rel, const char *const *txt) {
+    FILE *f = fopen(p, "wb"); uint32_t fl = 0; fwrite("SWPK1\n\0\0", 8, 1, f); fwrite(&stamp, 8, 1, f); fwrite(&fl, 4, 1, f); fwrite(&n, 4, 1, f);
+    for (uint32_t i = 0; i < n; i++) { uint16_t pl = (uint16_t)strlen(rel[i]); uint32_t sz = (uint32_t)strlen(txt[i]); fwrite(&pl, 2, 1, f); fwrite(rel[i], pl, 1, f); fwrite(&stamp, 8, 1, f); fwrite(&sz, 4, 1, f); fwrite(txt[i], sz, 1, f); }
+    fclose(f);
+}
 static int d2i_items(const char *dev, const char *rel) { char p[1024]; path(p, dev, rel); FILE *f = fopen(p, "rb"); if (!f) return -1; uint8_t b[70]; size_t n = fread(b, 1, 70, f); fclose(f); return n >= 67 ? b[66] : -1; }
 
 // 带合法编年史段的共享仓库档：一页物品（items 件）+ 编年史段（A 组 n 条：序号 id[i]、时刻 t[i]；B、C 组空），格式见 dm_cloudsync.c chron_union
@@ -317,6 +323,34 @@ int main(void) {
           CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0, "㉓ %s 带着段长绕回的坏仓库档同步：5 秒内照常结束（实为%s）", devs[k],
                 WIFSIGNALED(st) ? (WTERMSIG(st) == SIGALRM ? "卡死被闹钟杀掉" : "被信号杀掉") : "异常退出");
       }
+    }
+    // ㉔ 包与单位绑定：云端放进来的包里的路径必须落在它自己的单位里。Mallory.pack 带着 Victim/Victim.d2s 与 Ghost/Ghost.d2s、Evil.pack 带着 Settings/… 与根目录的共享仓库侧文件、
+    //    _stash.pack 带着角色档、_cloudinbox.pack（不是单位名）：一律不换进本地；正常的 Good.pack 照常下载（对照）
+    // ㉔ Binding packs to their unit: paths in a pack placed in the cloud must stay inside its own unit. Mallory.pack carrying Victim/Victim.d2s and Ghost/Ghost.d2s, Evil.pack carrying Settings/... and the shared stash side file at the root,
+    //    _stash.pack carrying a character file, _cloudinbox.pack (not a unit name): none is swapped into the local save; a proper Good.pack downloads as usual (control)
+    { char c9[1024], s9[1024], b9[1024], t9[1024], p[1200]; snprintf(c9, sizeof c9, "%s/cloud9", R); mkdir(c9, 0755);
+      #define S9(dev, down) (path(s9, dev, "save"), path(b9, dev, "bak"), path(t9, dev, "state"), dm_cloud_sync(s9, c9, b9, t9, down, 0, NULL))
+      put("V9", "save/Victim/Victim.d2s", "mine", 1000); put("V9", "save/Settings/Settings.json", "{\"mine\":1}", 1000); put("V9", "save/ModernSharedStashSoftCoreV2.swvault", "vault", 1000);
+      const char *r1[] = { "Mallory/Mallory.d2s", "Ghost/Ghost.d2s", "Victim/Victim.d2s" }, *x1[] = { "m", "boo", "pwned" };
+      const char *r2[] = { "Evil/Evil.d2s", "ModernSharedStashSoftCoreV2.swvault", "Settings/Settings.json" }, *x2[] = { "e", "pwned", "{\"pwned\":1}" };
+      const char *r3[] = { "Victim/Victim.d2s" }, *x3[] = { "pwned" };
+      const char *r4[] = { "_cloudinbox/1-0/mine.pack" }, *x4[] = { "x" };
+      const char *r5[] = { "Good/Good.d2s", "Good/Good.key" }, *x5[] = { "g", "k" };
+      snprintf(p, sizeof p, "%s/Mallory.pack", c9); pack_put(p, 5000000, 3, r1, x1);
+      snprintf(p, sizeof p, "%s/Evil.pack", c9); pack_put(p, 5000000, 3, r2, x2);
+      snprintf(p, sizeof p, "%s/_stash.pack", c9); pack_put(p, 5000000, 1, r3, x3);
+      snprintf(p, sizeof p, "%s/_cloudinbox.pack", c9); pack_put(p, 5000000, 1, r4, x4);
+      snprintf(p, sizeof p, "%s/Good.pack", c9); pack_put(p, 5000000, 2, r5, x5);
+      int n9 = S9("V9", 1);
+      CHECK(get("V9", "save/Victim/Victim.d2s") && !strcmp(get("V9", "save/Victim/Victim.d2s"), "mine"), "㉔ Mallory.pack 里的 Victim/Victim.d2s 没盖掉本地的 Victim");
+      CHECK(get("V9", "save/Settings/Settings.json") && !strcmp(get("V9", "save/Settings/Settings.json"), "{\"mine\":1}"), "㉔ Evil.pack 里的 Settings/ 没换进本地");
+      CHECK(get("V9", "save/ModernSharedStashSoftCoreV2.swvault") && !strcmp(get("V9", "save/ModernSharedStashSoftCoreV2.swvault"), "vault"), "㉔ Evil.pack 里根目录的共享仓库侧文件没盖掉本地那份");
+      CHECK(!get("V9", "save/Mallory/Mallory.d2s") && !get("V9", "save/Ghost/Ghost.d2s") && !get("V9", "save/Evil/Evil.d2s") && !get("V9", "save/_cloudinbox/1-0/mine.pack"), "㉔ 越界的包整份不下载（Mallory / Ghost / Evil / _cloudinbox 都没出现）");
+      CHECK(get("V9", "save/Good/Good.d2s") && !strcmp(get("V9", "save/Good/Good.d2s"), "g") && n9 == 2, "㉔ 对照：Good.pack 照常下载、Victim 照常上传（动作 %d 个，应为 2）", n9);
+      // 冲突版本收件箱也只收真共享仓库的包 | the conflict-version inbox also takes only real shared stash packs
+      char sv[1024], st9[1024]; path(sv, "V9", "save"); path(st9, "V9", "state"); snprintf(p, sizeof p, "%s/_stash.pack", c9);
+      CHECK(dm_cloud_inbox_add(sv, st9, p) == -1 && inbox_n("V9") == 0, "㉔ 带着角色档的「共享仓库」冲突版本不收进收件箱");
+      #undef S9
     }
     printf("t_cloudsync: %d 项，%d 失败\n", checks, fails);
     return fails != 0;
