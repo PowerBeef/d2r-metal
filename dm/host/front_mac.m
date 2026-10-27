@@ -15,6 +15,9 @@
 #include "dm_uiscreen.h"
 #include "dm_scrub.h"
 #include <pwd.h>
+#ifndef APP_NAME
+#define APP_NAME "D2R Mobile"   // 同 app_mac.m：日志目录名，旧接口版构建时另给 | as app_mac.m: name of the log directory, given separately for the older-API build
+#endif
 void mtl_set_ui_rect_fn(void (*fn)(double *y, double *h));
 static void ui_rect_frac(double *fy, double *fh) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); if (dm_screen_real(&rw, &rh) && rh > 0) { *fy = (double)y / rh; *fh = (double)h / rh; } }   // 同 front_ios.m：界面矩形的纵向位置与高（占画面高的比例） | Same as front_ios.m: vertical position and height of the UI rectangle (as fractions of the frame height)
 __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn(ui_rect_frac); }   // 不开窗口的跑法（截图 / 闸门）也要生效，所以不放在建图层那里 | Must also take effect when running without a window (screenshots / gate checks), so it is not placed where the layer is created
@@ -202,7 +205,9 @@ static dm_scrub *share_scrubber(NSString *home) {
 // Nothing is uploaded or mailed; the archive contains only these three files - no saves, nothing from the iCloud directory. All three are scrubbed first (share_scrubber: home directory, character names, displays, disk names...); a file that cannot be scrubbed is left out.
 // to non-empty = test (DM_TEST_SHARELOG): no panel, write directly to this path. Returns nil on success, otherwise the reason for failure
 static NSString *share_logs(NSString *to) {
-    NSFileManager *fm = NSFileManager.defaultManager; NSString *home = NSHomeDirectory(), *logd = [home stringByAppendingPathComponent:@"Library/Logs/D2R Mobile"];
+    // 日志目录同 app_mac.m 写的那处：测试副本（DM_APP_SUPPORT）在 <支持目录>/Logs，旧接口版是 Logs/D2R Mobile M3（APP_NAME）。原先写死 Logs/D2R Mobile，这两种都打包了别的包的日志
+    // The log directory is where app_mac.m writes: <support>/Logs for a test copy (DM_APP_SUPPORT), Logs/D2R Mobile M3 for the older-API build (APP_NAME). It used to be hard-coded to Logs/D2R Mobile, so both packed another package's logs
+    NSFileManager *fm = NSFileManager.defaultManager; NSString *home = NSHomeDirectory(), *logd = getenv("DM_APP_SUPPORT") ? [@(getenv("DM_APP_SUPPORT")) stringByAppendingPathComponent:@"Logs"] : [home stringByAppendingPathComponent:@"Library/Logs/" APP_NAME];
     NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSString *build = [inf[@"CFBundleVersion"] description] ?: @"0", *ver = [inf[@"CFBundleShortVersionString"] description] ?: @"?";
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyyMMdd-HHmm"; NSString *name = [NSString stringWithFormat:@"D2RMobile-logs-%@-%@", build, [df stringFromDate:NSDate.date]];
     NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dm_share_%d", getpid()]], *dir = [tmp stringByAppendingPathComponent:name];
