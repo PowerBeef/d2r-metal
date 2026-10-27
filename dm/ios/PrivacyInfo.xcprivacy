@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+App 的隐私清单（project.yml 把它放进 DmIOS 包的资源；TestFlight / App Store 收包时核，缺了按 ITMS-91053 退回，直装不受影响）。
+不跟踪、不收集数据（存档只进玩家自己的 iCloud 容器，更新检查只读一个版本文件，诊断日志由玩家自己点分享）。
+用到的「须说明原因」的接口与原因：
+  文件时间戳（stat 等，宿主存档 / 资源 / iCloud 同步比对修改时间）：C617.1 只看 App 容器、App Group 容器、App 自己 iCloud 容器里的文件。
+  开机时间（mach_absolute_time：宿主计时、图形层测时）：35F9.1 只量 App 里两件事之间过了多久、做计时。
+  磁盘空间（NSURLVolumeAvailableCapacityForImportantUsageKey、NSFileSystemFreeSize）：85F4.1 资源下载页给玩家看还差多少；
+    E174.1 判空间够不够、不够就不下载并提示；7D9E.1 玩家自己点「分享诊断日志」时日志里带可用空间。
+  UserDefaults（asset_dl.m 记上次用通的下载地址）：CA92.1 只读写 App 自己写的。
+资源下载扩展 RomfsDownloader 只有系统缺省实现、不调这些接口，不另带清单。
+The App's privacy manifest (project.yml puts it into the DmIOS bundle's resources; TestFlight / the App Store check it on upload and reject a build without it under ITMS-91053; direct installs are unaffected).
+No tracking and no data collection (saves go only to the player's own iCloud container, the update check only reads a version file, the diagnostic log is shared only when the player taps Share).
+Required-reason APIs used and their reasons:
+  File timestamps (stat etc.: the host compares modification times of saves / resources / iCloud sync): C617.1 only files inside the app container, the App Group container and the app's own iCloud container.
+  System boot time (mach_absolute_time: host timing, graphics timing): 35F9.1 only measuring elapsed time between events in the app and timers.
+  Disk space (NSURLVolumeAvailableCapacityForImportantUsageKey, NSFileSystemFreeSize): 85F4.1 the resource download page shows the player how much space is missing;
+    E174.1 checking whether there is enough space, and not downloading with a notice when there is not; 7D9E.1 the free space in the log the player chooses to share with "Share diagnostic log".
+  UserDefaults (asset_dl.m remembers the download address that last worked): CA92.1 only reading and writing what the app itself wrote.
+The resource download extension RomfsDownloader is only the system default implementation and calls none of these APIs, so it carries no manifest of its own.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>85F4.1</string>
+				<string>E174.1</string>
+				<string>7D9E.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
