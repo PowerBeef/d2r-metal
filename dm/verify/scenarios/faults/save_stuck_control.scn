@@ -17,4 +17,5 @@ expect save_stuck why=mounted timeout=10
 expect save result=commit timeout=10
 quit
 check event fault point=savedelay
+check event save_slow op=write
 check saved

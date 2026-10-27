@@ -377,6 +377,7 @@ DM_SAVE	android,gfx,harmony,host,ios,tvos	android/jni_android.c gfx/nvn/nvn_mtl.
 DM_SAVE_FRESH	ios,ios-tools	ios/Sources/front_ios.m ios/Sources/main.m ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_SAVE_KEY	ios-tools	ios/tools/save_key.sh ios/tools/smoke_mac.sh	-
 DM_SAVE_MOUNT_STUCK_S	host	host/dm_engine.c	y
+DM_SAVE_SLOW_MS	host	host/hle_fs.c	y
 DM_SAVE_STUCK_S	host	host/dm_engine.c	y
 DM_SAVE_TEST	ios	ios/Sources/main.m	y
 DM_SAVE_THROTTLE	host	host/main.c	-

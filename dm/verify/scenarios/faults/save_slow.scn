@@ -1,0 +1,14 @@
+# 慢存盘看得见：存档任务第一次写前停 1.5 秒（fault delay）——要有 save_slow 事件（写、≥ 1 秒），但不到 4 秒不报红；这次存盘照常提交、存档合法
+# A slow save is visible: the save job pauses 1.5 s before its first write (fault delay) -- there must be a save_slow event (write, ≥ 1 s), but no red line below 4 s; this save still commits and the save is valid
+name save_slow
+save warlock
+timeout 120
+
+enter_game
+fault delay ms=1500
+save_now timeout=8
+quit
+check event save_slow op=write
+check no_red
+check no_event save_stuck
+check saved

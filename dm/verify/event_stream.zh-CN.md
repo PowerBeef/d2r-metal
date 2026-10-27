@@ -54,6 +54,7 @@ UTF-8，一行一个对象，以 `\n` 结尾；一次 `write()` 写出，多线�
 | `quit_save` | `saved`、`commits`、`ms`、`paused` | Mac：退出前等存盘结束。 |
 | `save_request` | | 宿主请游戏存盘（`dm_request_save`：`save_now`、退出 / 进后台的存盘、`DM_TEST_SAVE_AT`），`save_stuck` 从这里起计时。前一次请求还没回音时不再发。 |
 | `save_stuck` | `why`（`no_commit`、`mounted`）、`s`、`busy`、`pending`、`mounted`、`containers` | 红（`dm_engine.c`，另有一行【红】）：请了存盘，游戏没暂停地走了 `DM_SAVE_STUCK_S` 秒（20）还没有提交或拒绝；或某个存档容器连着挂了 `DM_SAVE_MOUNT_STUCK_S` 秒（60）。 |
+| `save_slow` | `op`（`write`、`commit`）、`ms` | 存档挂载上的一次写或一次提交在宿主这边用了至少 `DM_SAVE_SLOW_MS`（1000）毫秒；到 4 秒另有一行【红】。存档任务卡约 7.5 秒，游戏的异步任务内存就用光、游戏崩溃，30 帧与 60 帧一样。 |
 | `save_alert` | `errno` | 告诉玩家存盘没写进去（`front_save_failed`）：提交被拒、克隆 / 互换失败、挂载时克隆失败。 |
 | `fault` | `point`、`n`（`savedelay` 为 `ms`） | 测试故障打到了（`DM_TEST_FS_FAILAT`、`DM_TEST_SAVE_DELAY`、控制口 `fault`）：`mountclone`、`reclone`、`guestname`、`renameback`、`guestopen`、`savedelay`。 |
 | `action` | `id`、`name`、`phase`（`begin`、`end`） | 手柄动作到了界面总线（`InputMessage` `ControllerActionBegin` / `End`）；`name` 运行时从游戏自己的动作名表读（`select`、`back`、`pause`、`cycleLeft`…；读不出为 null）。只在有面板收输入时有：菜单里有，局内走动没有。 |

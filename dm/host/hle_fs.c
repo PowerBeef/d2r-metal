@@ -173,6 +173,23 @@ static int dm_fs_test_fail(const char *pt) {
     DM_EV("fault", "point:s n:d", pt, nth);
     errno = ENOSPC; return 1;
 }
+// 存盘慢（DM_SAVE_SLOW_MS，缺省 1000）：存档挂载上的一次写 / 一次提交（含克隆、刷盘、提交前后钩子）在宿主这边用了这么久就发 save_slow 事件，
+// 到 4 秒另记一行【红】。游戏的存盘任务跑在它的异步任务池上，一个任务卡约 8 秒、每帧排进去的任务就把池子的内存用光，游戏崩溃（dm_engine.c）；
+// 宿主别的模块都不碰存档锁，所以能把存盘任务卡住的只有存盘自己的读写（盘满、盘忙、刷盘慢）
+// Slow saves (DM_SAVE_SLOW_MS, default 1000): when one write or one commit on the save mount (clone, flush and the commit hooks included) takes that long on the host side, emit a save_slow event,
+// and a 【红】 line from 4 s. The game's save jobs run on its async job pool; with one stuck about 8 s, the tasks queued every frame use up the pool's memory and the game crashes (dm_engine.c);
+// no other host module takes the save locks, so only the save's own I/O (a full or busy disk, a slow flush) can stall the save job
+typedef struct { const char *op; uint64_t t0; int on; } save_slow_t;
+static void save_slow_done(save_slow_t *s) {
+    if (!s->on) return;
+    static int lim = -1; if (lim < 0) { const char *e = getenv("DM_SAVE_SLOW_MS"); lim = e ? atoi(e) : 1000; }
+    int ms = (int)((clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - s->t0) / 1000000); if (ms < lim) return;
+    const char *zh = !strcmp(s->op, "write") ? "写" : "提交";
+    if (ms >= 4000) LOG("【红】存盘慢：一次%s用了 %d 毫秒（存盘任务卡约 8 秒游戏就崩）", zh, ms);
+    else LOG("存盘慢：一次%s用了 %d 毫秒", zh, ms);
+    DM_EV("save_slow", "op:s ms:d", s->op, ms);
+}
+#define SAVE_SLOW(opname, cond) save_slow_t save_slow_guard __attribute__((cleanup(save_slow_done))) = { opname, clock_gettime_nsec_np(CLOCK_UPTIME_RAW), (cond) }
 // 「存档没存上」的提示：先发 save_alert 事件（场景据此确认玩家被告知了），再交给前端 | the "progress not saved" alert: emit a save_alert event first (so a scenario can confirm the player was told), then hand it to the front end
 static void save_failed_alert(int err) { DM_EV("save_alert", "errno:d", err); front_save_failed(err); }
 // 测试开关 DM_TEST_SAVE_DELAY=<毫秒>（或控制口 fault delay，只管下一次）：存档事务第一次写之前在写的线程（游戏的存档任务）上等这么久，
@@ -622,6 +639,7 @@ static int txn_barrier(const char *path) {   // 返回 0 = 屏障发出去了（
 #endif
 }
 HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv；事务式存档：工作目录整树 clone 后与已提交目录原子互换（renamex_np RENAME_SWAP）", Result, h_fs_Commit, const char *name) {
+    SAVE_SLOW("commit", 1);   // 整个提交（刷盘、钩子、克隆、互换）：太慢就报 | the whole commit (flush, hooks, clone, swap): report when slow
     // 拿路径锁之前先把游戏这次写好的文件 fsync 一遍（要等真正写到盘上，局内实测 2 个文件 5–12 毫秒）：持着路径锁做会把别的线程开文件挡这么久。
     // 锁里克隆之前再走一遍（这时只剩钩子刚写的旁路文件有新数据，其余的已经干净，很快）再发屏障
     // Before taking the path lock, fsync the files the game has just written (it waits for the data to really reach the disk, measured in game at 5-12 ms for 2 files): doing it under the path lock would block other threads' file opens that long.
@@ -824,6 +842,7 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
 static Result null_handle_write(const char *op) { if (t_wopen_failed_txn) { LOG("【红】存档事务：%s 用的是打开失败后的空句柄（打开时 errno=%d）→ 本事务提交将被拒", op, t_wopen_failed_txn); save_poison(t_wopen_failed_txn); } return RES_FAIL; }
 HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp-srv → pwrite(2)", Result, h_fs_WriteFile, uint64_t h, int64_t off, const void *buf, size_t sz, const void *opt) {
     if (!h) return null_handle_write("WriteFile");
+    SAVE_SLOW("write", g_fsave[(int)h & 0xffff]);   // 存档挂载上的写：太慢就报（见 save_slow_done） | a write on the save mount: report when slow (see save_slow_done)
     (void)opt; size_t put = 0;
     if (g_fsave[(int)h & 0xffff]) {                                     // 存档写注入点（确定性回归用；只数存档挂载上的写） | Save write injection point (for deterministic regression; only writes on the save mount are counted)
         static int cfg = -1, kill_n, fail_n, fail_e;
