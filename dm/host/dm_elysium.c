@@ -304,9 +304,12 @@ static void stash_backup(void) {
     const char *c = dm_save_commitdir(); if (!c) return; char dir[1100]; snprintf(dir, sizeof dir, "%s/../stash_backup", c); mkdir(dir, 0755);
     static const char *nm[2] = { "ModernSharedStashSoftCoreV2", "ModernSharedStashHardCoreV2" }; char stamp[32]; time_t t = time(NULL); struct tm tm; localtime_r(&t, &tm); strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", &tm);
     for (int k = 0; k < 2; k++) { char src[1300], dst[1300]; snprintf(src, sizeof src, "%s/%s/%s.d2i", c, nm[k], nm[k]); snprintf(dst, sizeof dst, "%s/%s.%s.d2i", dir, nm[k], stamp);
-        FILE *f = fopen(src, "rb"); if (!f) continue; FILE *o = fopen(dst, "wb"); char buf[4096]; size_t n, tot = 0; int ok = o != NULL;
-        while (ok && (n = fread(buf, 1, sizeof buf, f)) > 0) { ok = fwrite(buf, 1, n, o) == n; tot += n; } fclose(f); if (o) ok = fclose(o) == 0 && ok;
-        LOG("极乐世界：共享仓库补齐前备份 %s → %s（%zu 字节）%s", src, dst, tot, ok ? "" : "【红】备份写失败");
+        FILE *f = fopen(src, "rb"); if (!f) continue; FILE *o = fopen(dst, "wb"); char buf[4096]; size_t n, tot = 0; int ok = o != NULL, rd_bad = 0;
+        while (ok && (n = fread(buf, 1, sizeof buf, f)) > 0) { ok = fwrite(buf, 1, n, o) == n; tot += n; }
+        if (ferror(f)) { rd_bad = 1; ok = 0; } fclose(f); if (o) ok = fclose(o) == 0 && ok;   // 读错也算失败：原先只看写，读到一半的截断副本当成好备份留着，还把更早的好备份挤出最近 5 份 | a read error is a failure too: before, only writes were checked, so a truncated copy was kept as a good backup and pushed an older good one out of the latest 5
+        if (!ok) remove(dst);
+        LOG("极乐世界：共享仓库补齐前备份 %s → %s（%zu 字节）%s", src, dst, tot, ok ? "" : rd_bad ? "【红】备份读失败，删掉这份不全的副本" : "【红】备份写失败，删掉这份不全的副本");
+        if (!ok) continue;   // 失败时不清旧备份：留着的都是好的 | on failure the old backups are not pruned: those kept are all good
         char old[64][64]; int no = 0; DIR *dd = opendir(dir); struct dirent *e; size_t pl = strlen(nm[k]);   /* 每种只留最近 5 份：名字带时刻，字典序即时间序 | Keep only the latest 5 copies of each kind: the names carry the time, so lexicographic order is chronological order */
         while (dd && (e = readdir(dd))) if (no < 64 && !strncmp(e->d_name, nm[k], pl) && e->d_name[pl] == '.' && strlen(e->d_name) < 64) strlcpy(old[no++], e->d_name, 64);
         if (dd) closedir(dd);
