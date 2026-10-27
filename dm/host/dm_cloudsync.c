@@ -180,6 +180,32 @@ int dm_cloud_char_conflict_take(char *out, size_t n) { pthread_mutex_lock(&g_cc_
 
 static int is_stash(const char *nm) { return !strncmp(nm, "SharedStash", 11) || !strncmp(nm, "ModernSharedStash", 17); }
 static int is_char_dir(const char *save, const char *nm) { char p[1600]; struct stat st; snprintf(p, sizeof p, "%s/%s/%s.d2s", save, nm, nm); return nm[0] != '.' && nm[0] != '_' && !stat(p, &st) && S_ISREG(st.st_mode); }
+// ---- 包与单位绑定：云端目录里的包谁都能放（别的设备、坏了的包、手改的），包里的路径必须落在它自己那个单位里——
+//   单位名：_stash，或角色名（不以 . / _ 开头，没有 /）；云端目录里别的 <名>.pack（如 _cloudinbox.pack）不算单位。
+//   角色 <名>：每个文件都是 <名>/<文件>（只一层，文件名不以 . 开头），且带 <名>/<名>.d2s（同本地认角色的 is_char_dir）；
+//   共享仓库 _stash：顶层名字是 SharedStash* / ModernSharedStash*，最多一层目录（同 local_read 读的样子）。删除标记不带文件、不查。
+// 原先只拒 .. 和绝对路径：<甲>.pack 里放 <乙>/<乙>.d2s、Settings/…，下载时整份换进存档根，盖掉别的角色或别的文件
+// ---- Binding packs to their unit: anyone can put a pack in the cloud directory (another device, a damaged pack, a hand-edited one), so every path in a pack must stay inside its own unit --
+//   unit names: _stash, or a character name (not starting with . / _, no /); any other <name>.pack in the cloud directory (such as _cloudinbox.pack) is not a unit.
+//   character <name>: every file is <name>/<file> (one level only, the file name not starting with .), and <name>/<name>.d2s is there (as is_char_dir recognises a local character);
+//   shared stash _stash: top-level names are SharedStash* / ModernSharedStash*, with at most one directory level (the shape local_read reads). Deletion markers carry no files and are not checked.
+// Before, only .. and absolute paths were refused: <A>.pack could hold <B>/<B>.d2s or Settings/..., which a download swapped into the save root whole, overwriting another character or other files
+static int unit_name_ok(const char *u) { return !strcmp(u, "_stash") || (u[0] && u[0] != '.' && u[0] != '_' && !strchr(u, '/')); }
+static int pack_bound(const char *unit, const cs_unit *u) {
+    if (u->tomb) return 1;
+    if (!unit_name_ok(unit)) return 0;
+    if (!strcmp(unit, "_stash")) {
+        for (int i = 0; i < u->n; i++) { const char *p = u->f[i].path, *sl = strchr(p, '/'); char top[256]; size_t tl = sl ? (size_t)(sl - p) : strlen(p);
+            if (!tl || tl >= sizeof top) return 0; memcpy(top, p, tl); top[tl] = 0;
+            if (!is_stash(top) || (sl && (!sl[1] || sl[1] == '.' || strchr(sl + 1, '/')))) return 0; }
+        return u->n > 0;
+    }
+    size_t l = strlen(unit); int has = 0;
+    for (int i = 0; i < u->n; i++) { const char *p = u->f[i].path, *fn = p + l + 1;
+        if (strncmp(p, unit, l) || p[l] != '/' || !*fn || *fn == '.' || strchr(fn, '/')) return 0;
+        if (!strncmp(fn, unit, l) && !strcmp(fn + l, ".d2s")) has = 1; }
+    return has;
+}
 // 读本地单位：返回 1 = 有，0 = 没有，-1 = 读失败（这一单位本次不动）
 // Read a local unit: returns 1 = present, 0 = absent, -1 = read failed (this unit is left alone this time)
 static int local_read(const char *save, const char *unit, cs_unit *u) {
@@ -316,6 +342,7 @@ static int inbox_put(const char *save, const char *statef, const cs_unit *u, uin
 // iCloud conflict version (cloud_ios.m): store one shared stash pack in the inbox, with the copy from this device's last sync as the base. Returns 0 = stored (or nothing worth storing), -1 = bad pack / cannot write
 int dm_cloud_inbox_add(const char *save, const char *statef, const char *pack) {
     cs_unit *u = calloc(1, sizeof *u); if (!u) return -1; int r = pack_read(pack, u), ret = -1;
+    if (r == 1 && !pack_bound("_stash", u)) { LOG("【红】iCloud 同步：冲突版本 %s 里有不属于共享仓库的路径，不收", pack); r = -1; }
     if (r == 1 && !u->tomb) { if (!stash_has_stuff(u)) ret = 0; else { char bp[1300]; base_path(statef, bp, sizeof bp); cs_unit *B = calloc(1, sizeof *B); uint64_t bh = B && pack_read(bp, B) == 1 ? B->hash : 0; if (B) { unit_free(B); free(B); }
         ret = inbox_put(save, statef, u, bh, "iCloud 冲突版本", "冲突版本"); } }
     else if (r == 1) ret = 0; else LOG("【红】iCloud 同步：冲突版本 %s 读不了", pack);
@@ -325,7 +352,9 @@ int dm_cloud_inbox_add(const char *save, const char *statef, const char *pack) {
 // iCloud conflict version of a character pack (cloud_ios.m): the pack header timestamp (the moment the game last wrote it), the whole copy goes into the backup, the name is recorded for a notice after entering a run
 uint64_t dm_cloud_pack_stamp(const char *pack) { cs_unit *u = calloc(1, sizeof *u); uint64_t t = u && pack_read(pack, u) == 1 ? u->stamp : 0; if (u) { unit_free(u); free(u); } return t; }
 int dm_cloud_bak_pack(const char *bak, const char *unit, const char *pack, const char *why) {
-    cs_unit *u = calloc(1, sizeof *u); int r = u && pack_read(pack, u) == 1 ? (u->tomb ? 0 : backup_copy(bak, unit, u, why)) : -1; if (u) { unit_free(u); free(u); } return r; }
+    cs_unit *u = calloc(1, sizeof *u); int r = u && pack_read(pack, u) == 1 ? (u->tomb ? 0 : pack_bound(unit, u) ? backup_copy(bak, unit, u, why) : -1) : -1;
+    if (u && r < 0 && u->n && !pack_bound(unit, u)) LOG("【红】iCloud 同步：%s 的冲突版本 %s 里有不属于这个角色的路径，不进备份", unit, pack);
+    if (u) { unit_free(u); free(u); } return r; }
 void dm_cloud_char_conflict_note(const char *unit) { char_conf_add(unit); }
 
 // 返回本次动作数（上传 + 下载 + 删除），-1 = 参数错。ready(单位) 返回 0 = 云端那份还没下载好（iCloud 占位），这一单位本次跳过。now_ms = 写删除标记用的时刻
@@ -334,12 +363,13 @@ int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const ch
     if (!save || !cloud || !bak || !statef) return -1;
     static char names[256][64]; int nn = 0; static cs_state st[256]; int ns = state_load(statef, st, 256), acts = 0;
     DIR *dp = opendir(save); struct dirent *e; while (dp && (e = readdir(dp))) { if (is_char_dir(save, e->d_name)) add_name(names, &nn, e->d_name); else if (is_stash(e->d_name)) add_name(names, &nn, "_stash"); } if (dp) closedir(dp);
-    dp = opendir(cloud); while (dp && (e = readdir(dp))) { size_t l = strlen(e->d_name); if (e->d_name[0] != '.' && l > 5 && !strcmp(e->d_name + l - 5, ".pack")) { char nm[64]; if (l - 5 < sizeof nm) { memcpy(nm, e->d_name, l - 5); nm[l - 5] = 0; add_name(names, &nn, nm); } } } if (dp) closedir(dp);
+    dp = opendir(cloud); while (dp && (e = readdir(dp))) { size_t l = strlen(e->d_name); if (e->d_name[0] != '.' && l > 5 && !strcmp(e->d_name + l - 5, ".pack")) { char nm[64]; if (l - 5 < sizeof nm) { memcpy(nm, e->d_name, l - 5); nm[l - 5] = 0; if (unit_name_ok(nm)) add_name(names, &nn, nm); else LOG("iCloud 同步：云端的 %s 不是同步单位（名字以 . / _ 开头），不理", e->d_name); } } } if (dp) closedir(dp);
     for (int i = 0; i < ns; i++) add_name(names, &nn, st[i].unit);
     for (int k = 0; k < nn; k++) {
         const char *un = names[k]; if (ready && !ready(un)) { LOG("iCloud 同步：%s 云端那份还没下载好，本次跳过", un); continue; }
         char cp[1300]; snprintf(cp, sizeof cp, "%s/%s.pack", cloud, un);
         cs_unit *L = calloc(1, sizeof *L), *C = calloc(1, sizeof *C); int hl = local_read(save, un, L), hc = pack_read(cp, C);
+        if (hc == 1 && !pack_bound(un, C)) { LOG("【红】iCloud 同步：云端 %s.pack 里有不属于这个单位的路径（如 %s），当坏包", un, C->n ? C->f[0].path : "?"); hc = -1; }   // 见 pack_bound | see pack_bound
         cs_state *S = state_get(st, &ns, 256, un, 0);
         if (hl < 0 || hc < 0) { LOG("【红】iCloud 同步：%s %s读不了，本次跳过", un, hl < 0 ? "本地" : "云端包"); goto next; }
         int lchg = hl ? (!S || S->tomb || L->hash != S->hash) : (S && !S->tomb);   // 本地自上次同步后改过（没有了也算改：被删了） | changed locally since the last sync (being gone also counts as a change: it was deleted)
