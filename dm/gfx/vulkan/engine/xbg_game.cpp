@@ -17,6 +17,7 @@ extern "C" int xbg_completion_wait_selftest(char *report,size_t bytes);
 #include "xbg_framebuffer.h"
 #include "xbg_clear.h"
 #include "xbg_blit.h"
+#include "xbg_adreno_policy.h"
 #include "xbg_bc_policy.h"
 #include "xbg_writeback_policy.h"
 #include "xbg_clear_spv.h"
@@ -581,7 +582,12 @@ struct Job{Slot *slot;VkFence fence;VkCommandPool pool;};std::vector<Job> jobs;
 uint64_t queued=0,waits=0,wait_ns=0;   // render thread only
 void run(){
     for(;;){Job j;{std::unique_lock<std::mutex> l(mu);cv.wait(l,[]{return stop || !jobs.empty();});if(jobs.empty())return;j=jobs.front();jobs.erase(jobs.begin());}
-        VkResult r=vkWaitForFences(cfg.device,1,&j.fence,VK_TRUE,std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull));
+        const uint64_t timeout=std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull);
+        VkResult r=vkWaitForFences(cfg.device,1,&j.fence,VK_TRUE,timeout);
+        // 栅栏一直不亮而驱动又不报 DEVICE_LOST 时，这里只剩 VK_TIMEOUT；把它说清楚，别让崩在后面的检查里只留下一个 2。
+        // When the fence never signals and the driver does not report DEVICE_LOST, all that is left here is VK_TIMEOUT; say so,
+        // so the fatal check later does not leave just a 2 in the crash report.
+        if(r==VK_TIMEOUT)xbg_logf("NVN command pool reset: the slot's fence did not signal within %llu ms (GPU hang)",(unsigned long long)(timeout/1000000ull));
         if(r==VK_SUCCESS)r=vkResetCommandPool(cfg.device,j.pool,0);
         {std::lock_guard<std::mutex> l(mu);j.slot->reset_result=r;j.slot->reset_busy=false;}cv.notify_all();}
 }
@@ -808,7 +814,7 @@ Slot &recording_slot(){
         s.readback.cached=readback_cached;
         if(!s.fence){VkFenceCreateInfo f{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VK(vkCreateFence(cfg.device,&f,nullptr,&s.fence));}
         if(!s.timestamps && timestamp_bits){VkQueryPoolCreateInfo q{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};q.queryType=VK_QUERY_TYPE_TIMESTAMP;q.queryCount=2;VK(vkCreateQueryPool(cfg.device,&q,nullptr,&s.timestamps));}
-        bind_cache_reset();if(s.pool){if(s.reset_queued){poolreset::finish(s);s.reset_queued=false;VK(s.reset_result);}else VK(vkResetCommandPool(cfg.device,s.pool,0));}else{VK(vkResetCommandBuffer(s.cmd,0));if(s.pro)VK(vkResetCommandBuffer(s.pro,0));}VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};b.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;VK(vkBeginCommandBuffer(s.cmd,&b));
+        bind_cache_reset();if(s.pool){if(s.reset_queued){poolreset::finish(s);s.reset_queued=false;if(s.reset_result==VK_TIMEOUT)xbg_fatalf("The GPU did not finish this slot's work within %llu ms (fence wait timed out), so the device is hung",(unsigned long long)(std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull)/1000000ull));else VK(s.reset_result);}else VK(vkResetCommandPool(cfg.device,s.pool,0));}else{VK(vkResetCommandBuffer(s.cmd,0));if(s.pro)VK(vkResetCommandBuffer(s.pro,0));}VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};b.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;VK(vkBeginCommandBuffer(s.cmd,&b));
         if(s.timestamps){vkCmdResetQueryPool(s.cmd,s.timestamps,0,2);vkCmdWriteTimestamp(s.cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,s.timestamps,0);}
         s.recording=true;s.ops=0;
         const uint64_t frame=stats.presents.load()+1;
@@ -1275,6 +1281,8 @@ VkFormat decoded_format(uint32_t pixels) {
     case XBG_R16_SNORM:return VK_FORMAT_R16_SNORM;
     case XBG_RG16_SNORM:return VK_FORMAT_R16G16_SNORM;
     case XBG_RGBA16_SFLOAT:return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case XBG_R8_UNORM:return VK_FORMAT_R8_UNORM;
+    case XBG_RG8_UNORM:return VK_FORMAT_R8G8_UNORM;
     default:xbg_fatalf("Invalid decoded BC pixel format %u",pixels);
     }
 }
@@ -1631,6 +1639,10 @@ Image &get_image_slow(const tex_t *t,bool upload){CPU_SCOPE(Image);
         need(t->d.target==0 || t->d.target==1 || t->d.target==2 || t->d.target==3 || t->d.target==4 || t->d.target==5 || t->d.target==6 || t->d.target==7 || t->d.target==8 || t->d.target==9,"Unsupported texture target (1D/3D/buffer handled separately)");
         auto p=std::make_shared<Image>();p->source=*t;p->provenance_epoch=provenance.epoch((t->mem && t->off>=0 && uint64_t(t->off)<=uint64_t(t->mem)?uint64_t(t->mem)-uint64_t(t->off):0));p->width=t->d.width;p->height=(t->d.target==0 || t->d.target==3)?1:t->d.height;p->depth=t->d.target==2?t->d.depth:1;p->levels=t->d.levels;p->layers=t->L.layers;p->aspects=aspect(t->d.format);p->samples=VkSampleCountFlagBits(std::max(1,t->d.samples));
         need(p->width && p->height && p->levels && p->levels<=16 && p->layers,"Invalid texture dimensions");
+        // 设备不能线性过滤 R16G16_UNORM（Mali-G925 实测：optimalTilingFeatures 缺 FILTER_LINEAR）时，BC4/BC5 解码成 8 位通道，
+        // 否则带线性过滤的采样器会拿不到可过滤格式。 | When the device cannot linearly filter R16G16_UNORM (Mali-G925: no FILTER_LINEAR),
+        // BC4/BC5 decode to 8-bit channels so linear-filtered samplers stay valid.
+        {static int bc8=-1;if(bc8<0){VkFormatProperties q;vkGetPhysicalDeviceFormatProperties(cfg.physical,VK_FORMAT_R16G16_UNORM,&q);bc8=!(q.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);if(bc8)xbg_logf("NVN caps bc 8bit: R16G16_UNORM optimalFeatures=%#x lacks SAMPLED_IMAGE_FILTER_LINEAR",q.optimalTilingFeatures);}if(bc8)xbg_bc_8bit_channels=1;}
         xbg_bc_format info;p->decoded=xbg_bc_format_info(t->d.format,&info)==0;
         if(p->decoded && native_bc && p->samples==VK_SAMPLE_COUNT_1_BIT){const VkFormatFeatureFlags need_bc=VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT|VK_FORMAT_FEATURE_TRANSFER_SRC_BIT|VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
             VkFormatProperties np;vkGetPhysicalDeviceFormatProperties(cfg.physical,format(t->d.format),&np);if((np.optimalTilingFeatures&need_bc)==need_bc)p->decoded=false;}
@@ -2187,6 +2199,49 @@ void pstat_log(VkPipeline pl){
         std::string en=ex[i].name;for(auto &c:en)if(c==' ')c='_';
         xbg_logf("NVN PSTAT pipeline=%p what=%s exec=%u stages=%#x name=%s subgroup=%u%s",(void*)pl,pstat_what().c_str(),i,unsigned(ex[i].stages),en.c_str(),ex[i].subgroupSize,line.c_str());}
 }
+// 有的驱动在自己的着色器编译器里崩掉建管线的调用（Adreno 750：vkCreateComputePipelines 里 libllvm-qgl.so 段错误，
+// 只碰流体模拟的一个计算着色器），有的直接报错（Adreno 650：-13）。建计算管线前把着色器键写进 gfx-pipe-inflight，建完删掉；
+// 下次启动看到它还在，说明上次死在编译器里，就把这个键记进 gfx-pipe-skip，之后这条计算着色器的派发一律跳过（少一个特效，
+// 不再每次启动都崩）。驱动报错的同样记下跳过。删掉 gfx-pipe-skip 即恢复。
+// Some drivers crash inside their own shader compiler while building a pipeline (Adreno 750: a segfault in libllvm-qgl.so
+// inside vkCreateComputePipelines, on one fluid-simulation compute shader only); others return an error (Adreno 650: -13).
+// Before a compute pipeline is built its shader key is written to gfx-pipe-inflight and removed afterwards; if the next boot
+// still finds it, the last one died in the compiler, so the key goes into gfx-pipe-skip and that compute shader's dispatches
+// are skipped from then on (one effect fewer instead of a crash on every boot). A driver error is recorded the same way.
+// Deleting gfx-pipe-skip restores them.
+namespace pipeguard{
+std::unordered_set<std::string> skip;bool loaded=false;std::unordered_set<std::string> told;
+std::string base(){std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');return cut==std::string::npos?dir:dir.substr(0,cut);}
+void record(const std::string &key,const char *why){
+    if(!skip.insert(key).second)return;
+    if(FILE *f=fopen((base()+"/gfx-pipe-skip").c_str(),"ab")){fprintf(f,"%s\n",key.c_str());fclose(f);}
+    xbg_logf("NVN compute shader %s %s; its dispatches are skipped from now on (gfx-pipe-skip)",key.c_str(),why);
+}
+void load(){
+    if(loaded)return;loaded=true;char line[128];
+    if(FILE *f=fopen((base()+"/gfx-pipe-skip").c_str(),"rb")){while(fgets(line,sizeof line,f)){line[strcspn(line,"\r\n")]=0;if(*line)skip.insert(line);}fclose(f);}
+    const std::string inflight=base()+"/gfx-pipe-inflight";
+    if(FILE *f=fopen(inflight.c_str(),"rb")){const bool got=fgets(line,sizeof line,f)!=nullptr;fclose(f);remove(inflight.c_str());
+        // 要连着两次启动死在同一个着色器上才记下：一次可能只是建管线那几毫秒里进程正好被系统杀掉。
+        // It takes two boots in a row dying on the same shader: once may just be the process being killed during those milliseconds.
+        if(got){line[strcspn(line,"\r\n")]=0;const std::string suspect=base()+"/gfx-pipe-suspect";char prev[128]={0};
+            if(FILE *g=fopen(suspect.c_str(),"rb")){if(!fgets(prev,sizeof prev,g))*prev=0;fclose(g);prev[strcspn(prev,"\r\n")]=0;}
+            if(*line && !strcmp(line,prev)){remove(suspect.c_str());record(line,"crashed the driver's shader compiler on two boots");}
+            else if(*line){if(FILE *g=fopen(suspect.c_str(),"wb")){fprintf(g,"%s\n",line);fclose(g);}xbg_logf("NVN compute shader %s was being built when the last boot ended",line);}}}
+    // Adreno 750 这一族上流体模拟的累加着色器每次都让编译器崩（#123、#153 两台机器），不必先崩两次。
+    // On the Adreno 750 family the fluid-simulation accumulate shader crashes the compiler every time (#123, #153, two phones);
+    // there is no need to crash twice first.
+    if(properties.vendorID==0x5143){const int model=xbg_adreno_model(properties.deviceName);if(model>=750 && model<800)record("098a126f92bf533a","crashes the Adreno 750 shader compiler");}
+    if(!skip.empty())xbg_logf("NVN compute shaders skipped=%zu (gfx-pipe-skip)",skip.size());
+}
+bool skipped(const std::string &key){load();if(!skip.count(key))return false;if(told.insert(key).second)xbg_logf("NVN dispatch of compute shader %s skipped (gfx-pipe-skip)",key.c_str());return true;}
+// 一个着色器第一次建成之后就不再写记号：同一着色器换布局再建不会走到编译器的另一条路，也省掉每次派发的文件操作。
+// Once a shader has built once it is no longer marked: rebuilding it for another layout does not take the compiler down a
+// different path, and dispatches do not pay for the file operations.
+std::unordered_set<std::string> proven;bool marking=false;
+void begin(const std::string &key){marking=!proven.count(key);if(marking)if(FILE *f=fopen((base()+"/gfx-pipe-inflight").c_str(),"wb")){fprintf(f,"%s\n",key.c_str());fclose(f);}}
+void end(const std::string &key,bool ok){if(!marking)return;marking=false;remove((base()+"/gfx-pipe-inflight").c_str());if(ok)proven.insert(key);}
+}
 void pipeline_lookup(PipelineLease &out,const XbgPipelineKey &key,bool cacheable,const VkGraphicsPipelineCreateInfo *graphics,const VkComputePipelineCreateInfo *compute,bool may_skip=false){
     static std::string bytes;bytes.clear();   // reused key buffer (graphics thread only)
     if(cacheable){
@@ -2199,7 +2254,7 @@ void pipeline_lookup(PipelineLease &out,const XbgPipelineKey &key,bool cacheable
     // A draw that may be skipped gets no pipeline while its build is queued (warm::async_request); it is not cached.
     else if(graphics && cacheable && may_skip && warm::async_request(*graphics,key,bytes)){out.pipeline=VK_NULL_HANDLE;out.transient=true;++warm::async_skips;return;}
     else if(graphics){uint64_t t0=timing_clock();VkGraphicsPipelineCreateInfo g=*graphics;if(pipe_stats)g.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;VK(vkCreateGraphicsPipelines(cfg.device,pipeline_cache,1,&g,nullptr,&out.pipeline));if(pipe_stats)pstat_log(out.pipeline);uint64_t dt=timing_clock()-t0;if(dt>=compile_ns)++pipelines_unsaved;++warm::creates;warm::create_ns+=dt;++hud::pipelines;hud::pipeline_ns+=dt;warm::create_max_ns=std::max(warm::create_max_ns,dt);if(cacheable)warm::record(*graphics,key);}
-    else{uint64_t t0=timing_clock();VkComputePipelineCreateInfo cc=*compute;if(pipe_stats)cc.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;VK(vkCreateComputePipelines(cfg.device,pipeline_cache,1,&cc,nullptr,&out.pipeline));++pipelines_unsaved;++hud::pipelines;hud::pipeline_ns+=timing_clock()-t0;if(pipe_stats)pstat_log(out.pipeline);}
+    else{uint64_t t0=timing_clock();VkComputePipelineCreateInfo cc=*compute;if(pipe_stats)cc.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;const std::string &shader_key=state.shader[5]->key;pipeguard::begin(shader_key);const VkResult made=vkCreateComputePipelines(cfg.device,pipeline_cache,1,&cc,nullptr,&out.pipeline);pipeguard::end(shader_key,made==VK_SUCCESS);if(made!=VK_SUCCESS){char why[64];snprintf(why,sizeof why,"failed to build (result=%d)",int(made));pipeguard::record(shader_key,why);out.pipeline=VK_NULL_HANDLE;out.transient=true;return;}++pipelines_unsaved;++hud::pipelines;hud::pipeline_ns+=timing_clock()-t0;if(pipe_stats)pstat_log(out.pipeline);}
     if(!cacheable){out.transient=true;return;}
     if(pipeline_objects.size()==pipeline_object_limit){
         // All prior draws/dispatches waited their fence. This lookup occurs
@@ -2297,7 +2352,7 @@ VkSampler sampler_slow(const samp_par &p,Image &im,VkFormat viewed,bool integer_
     VkSamplerCreateInfo s{};int result=xbg_sampler_from_nvn(&input,&limits,&s);
     if(result)xbg_fatalf("NVN sampler %s result=%d min=%u mag=%u wrap=%u/%u/%u lod=%g/%g bias=%g aniso=%g compare=%u/%u border=%g,%g,%g,%g texture=%llu format=%#x vk=%u mirrorEnabled=%u",xbg_sampler_error(result),result,p.minf,p.magf,p.ws,p.wt,p.wr,p.lod_min,p.lod_max,p.lod_bias,p.aniso,p.cmp_mode,p.cmp_func,p.border[0],p.border[1],p.border[2],p.border[3],(unsigned long long)im.source.serial,im.source.d.format,unsigned(viewed),sampler_mirror_clamp_enabled);
     const VkFormatProperties &fp=format_properties(viewed);
-    if((s.minFilter==VK_FILTER_LINEAR || s.magFilter==VK_FILTER_LINEAR) && !(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))xbg_fatalf("NVN sampler linear filtering unsupported min=%u mag=%u compare=%u/%u format=%#x vk=%u optimalFeatures=%#x texture=%llu",p.minf,p.magf,p.cmp_mode,p.cmp_func,im.source.d.format,unsigned(viewed),fp.optimalTilingFeatures,(unsigned long long)im.source.serial);
+    if((s.minFilter==VK_FILTER_LINEAR || s.magFilter==VK_FILTER_LINEAR) && !(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))xbg_fatalf("NVN sampler linear filtering unsupported min=%u mag=%u compare=%u/%u format=%#x vk=%u optimalFeatures=%#x texture=%llu decoded=%d imfmt=%u",p.minf,p.magf,p.cmp_mode,p.cmp_func,im.source.d.format,unsigned(viewed),fp.optimalTilingFeatures,(unsigned long long)im.source.serial,int(im.decoded),unsigned(im.fmt));
     need(s.pNext==nullptr,"Unexpected sampler extension chain");
     auto bits=[](float f){uint32_t u;memcpy(&u,&f,4);return u;};
     std::array<uint32_t,16> key{s.flags,uint32_t(s.magFilter),uint32_t(s.minFilter),uint32_t(s.mipmapMode),uint32_t(s.addressModeU),uint32_t(s.addressModeV),uint32_t(s.addressModeW),bits(s.mipLodBias),s.anisotropyEnable,bits(s.maxAnisotropy),s.compareEnable,uint32_t(s.compareOp),bits(s.minLod),bits(s.maxLod),uint32_t(s.borderColor),s.unnormalizedCoordinates};
@@ -3129,7 +3184,7 @@ void after_dispatch(Commands &c){
     ++applied;
 }
 }
-void dispatch(const p_dispatch &p){preflight_cpu_reads();CPU_SCOPE(Dispatch);provenance_log("DISPATCH shader=%s",state.shader[5]?state.shader[5]->key.c_str():"null");need(state.shader[5],"Dispatch has no genuine compute shader");need(p.x>=0 && p.y>=0 && p.z>=0,"Negative compute dispatch");if(!p.x||!p.y||!p.z)return;need(uint32_t(p.x)<=properties.limits.maxComputeWorkGroupCount[0] && uint32_t(p.y)<=properties.limits.maxComputeWorkGroupCount[1] && uint32_t(p.z)<=properties.limits.maxComputeWorkGroupCount[2],"Compute dispatch exceeds device limit");Commands c;Descriptors &d=acquire_descriptors();descriptors(d,c,true);VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};ci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;ci.stage.module=state.shader[5]->module;ci.stage.pName="main";ci.layout=d.pipeline_layout;PipelineLease pipeline;{CPU_SCOPE(Pipeline);XbgPipelineKey key;bool cacheable=xbg_compute_pipeline_key(key,ci,d.entry->definition.view());pipeline_lookup(pipeline,key,cacheable,nullptr,&ci);}vkCmdBindPipeline(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline.pipeline);vkCmdBindDescriptorSets(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,d.pipeline_layout,0,1,&d.set,uint32_t(d.dynamic_offsets.size()),d.dynamic_offsets.data());int prof_dispatch=pass_prof_compute_begin(c.command,p);vkCmdDispatch(c.command,p.x,p.y,p.z);pass_prof_complete(c.command,prof_dispatch);bright::after_dispatch(c);VkMemoryBarrier b{VK_STRUCTURE_TYPE_MEMORY_BARRIER};b.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;b.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(c.command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&b,0,nullptr,0,nullptr);c.finish();++perf.dispatches;d.defer_writeback();++stats.dispatches;}
+void dispatch(const p_dispatch &p){preflight_cpu_reads();CPU_SCOPE(Dispatch);provenance_log("DISPATCH shader=%s",state.shader[5]?state.shader[5]->key.c_str():"null");need(state.shader[5],"Dispatch has no genuine compute shader");need(p.x>=0 && p.y>=0 && p.z>=0,"Negative compute dispatch");if(!p.x||!p.y||!p.z)return;if(pipeguard::skipped(state.shader[5]->key))return;need(uint32_t(p.x)<=properties.limits.maxComputeWorkGroupCount[0] && uint32_t(p.y)<=properties.limits.maxComputeWorkGroupCount[1] && uint32_t(p.z)<=properties.limits.maxComputeWorkGroupCount[2],"Compute dispatch exceeds device limit");Commands c;Descriptors &d=acquire_descriptors();descriptors(d,c,true);VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};ci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;ci.stage.module=state.shader[5]->module;ci.stage.pName="main";ci.layout=d.pipeline_layout;PipelineLease pipeline;{CPU_SCOPE(Pipeline);XbgPipelineKey key;bool cacheable=xbg_compute_pipeline_key(key,ci,d.entry->definition.view());pipeline_lookup(pipeline,key,cacheable,nullptr,&ci);}if(!pipeline.pipeline){c.finish();return;}vkCmdBindPipeline(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline.pipeline);vkCmdBindDescriptorSets(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,d.pipeline_layout,0,1,&d.set,uint32_t(d.dynamic_offsets.size()),d.dynamic_offsets.data());int prof_dispatch=pass_prof_compute_begin(c.command,p);vkCmdDispatch(c.command,p.x,p.y,p.z);pass_prof_complete(c.command,prof_dispatch);bright::after_dispatch(c);VkMemoryBarrier b{VK_STRUCTURE_TYPE_MEMORY_BARRIER};b.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;b.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(c.command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&b,0,nullptr,0,nullptr);c.finish();++perf.dispatches;d.defer_writeback();++stats.dispatches;}
 
 struct MaskedClear {
     VkShaderModule vs{},fs{};VkPipelineLayout layout{};VkPipeline pipeline{};
@@ -3704,10 +3759,14 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
     VkPhysicalDeviceShaderDrawParametersFeatures draw_parameters{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES};VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&draw_parameters;vkGetPhysicalDeviceFeatures2(cfg.physical,&features);if(cfg.enabled_shader_draw_parameters && !draw_parameters.shaderDrawParameters){if(error&&bytes)snprintf(error,bytes,"shaderDrawParameters unsupported");return -1;}
     VkCommandPoolCreateInfo cp{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};cp.queueFamilyIndex=cfg.queue_family;cp.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;VkResult r=vkCreateCommandPool(cfg.device,&cp,nullptr,&command_pool);if(r!=VK_SUCCESS){if(error&&bytes)snprintf(error,bytes,"vkCreateCommandPool=%d",r);return r;}
     VkPipelineCacheCreateInfo cache{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};std::vector<uint8_t> cache_data=load_pipeline_cache();cache.initialDataSize=cache_data.size();cache.pInitialData=cache_data.empty()?nullptr:cache_data.data();r=vkCreatePipelineCache(cfg.device,&cache,nullptr,&pipeline_cache);if(r!=VK_SUCCESS){vkDestroyCommandPool(cfg.device,command_pool,nullptr);command_pool=VK_NULL_HANDLE;if(error&&bytes)snprintf(error,bytes,"vkCreatePipelineCache=%d",r);return r;}
-    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-quad-derivatives").c_str(),"rb");quad_derivatives=false;
-     if(q){quad_derivatives=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_QUAD_DERIVATIVES"))quad_derivatives=atoi(e)!=0;xbg_logf("NVN quad shuffles to fine derivatives=%d (marker gfx-quad-derivatives)",int(quad_derivatives));}
-    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-warp32").c_str(),"rb");warp32=false;
-     if(q){warp32=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_WARP32"))warp32=atoi(e)!=0;xbg_logf("NVN 32-lane warps in wider subgroups=%d subgroup=%u (marker gfx-warp32)",int(warp32),subgroup.subgroupSize);}
+    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');std::string base=cut==std::string::npos?dir:dir.substr(0,cut);
+     const bool rewrites_fault=xbg_adreno_rewrites_fault(properties.vendorID,properties.deviceName);
+     if(rewrites_fault)xbg_logf("NVN Adreno 740/750 (device \"%s\"): the quad-derivative and warp32 rewrites default off; a marker file still turns either on",properties.deviceName);
+     auto sw=[&](const char *marker,const char *env){FILE *q=fopen((base+marker).c_str(),"rb");const bool present=q!=nullptr;int c=-1;if(q){c=fgetc(q);fclose(q);}return xbg_adreno_rewrite_option(present,c,getenv(env),rewrites_fault);};
+     quad_derivatives=sw("/gfx-quad-derivatives","DM_GFX_QUAD_DERIVATIVES");
+     warp32=sw("/gfx-warp32","DM_GFX_WARP32");
+     xbg_logf("NVN quad shuffles to fine derivatives=%d (marker gfx-quad-derivatives)",int(quad_derivatives));
+     xbg_logf("NVN 32-lane warps in wider subgroups=%d subgroup=%u (marker gfx-warp32)",int(warp32),subgroup.subgroupSize);}
     {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');std::string base=cut==std::string::npos?dir:dir.substr(0,cut);
      auto dm=[&](const char *marker,const char *env){FILE *q=fopen((base+marker).c_str(),"rb");bool on=false;if(q){on=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv(env))on=atoi(e)!=0;return on;};
      ldc_fold=dm("/gfx-ldc-fold","DM_GFX_LDC_FOLD");forward_temps=dm("/gfx-forward-temps","DM_GFX_FORWARD_TEMPS");nan_minmax=dm("/gfx-nan-minmax","DM_GFX_NAN_MINMAX");
