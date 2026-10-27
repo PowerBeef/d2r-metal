@@ -1,6 +1,8 @@
 # 局内切手柄 / 触屏布局与键帽样式（自给的 accept ⑩ 替代，外加键帽）：每次切换都要做完（padmode 事件）、没有靠超时的重建，切完拍照走、能开关暂停页、没有红标
+# 只在会切布局的前端上跑：Mac App 一直是手柄版、从不切 | only on front ends that switch layouts: the Mac App always runs the controller layout and never switches
 # Switching the controller / touch layout and the key cap style during a run (a self-contained replacement for accept ⑩, plus key caps): every switch must finish (padmode event) with no rebuild that needed the timeout, ticks keep running, the pause page opens and closes, no red markers
 name input_mode_switch
+requires cli ios-mac
 save warlock
 env DM_ROMFS_OVERLAY=auto
 timeout 240

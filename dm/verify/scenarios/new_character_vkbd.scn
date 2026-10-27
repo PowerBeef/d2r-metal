@@ -1,9 +1,10 @@
 # 用手柄屏幕键盘起名建新角色（DM_VKBD=1 强制屏幕键盘）：主菜单 ＋ → 下 → A 进职业页（第一个职业已选中），A「创建」到模式页、A「标准」到起名页，A 弹键盘；
 # 前端测试输入（fe，走 dm_gamepad 与屏幕键盘同一条路）按 X（大写）、A、右 A、右 A 打三个字母、＋ 确定 → 名字交回、自动接受，新角色进局；存一次盘，新角色的存档要合法
+# 命令行宿主上名字交回就自动接受；Mac App（手柄版）要玩家按 ＋ 接受，见 new_character_vkbd_mac.scn | on the CLI host the name is accepted as soon as it is handed back; the Mac App (controller layout) waits for the player to press + to accept, see new_character_vkbd_mac.scn
 # Creating a new character named with the controller's on-screen keyboard (DM_VKBD=1 forces it): main menu + → down → A to the class page (the first class is already selected), A "Create" to the mode page, A "Standard" to the naming page, A brings up the keyboard;
 # front-end test input (fe, through the same dm_gamepad path as the on-screen keyboard) presses X (upper case), A, right A, right A for three letters, + OK → the name is handed back and accepted, and the new character enters a run; one save, and the new character's save must be valid
 name new_character_vkbd
-requires cli mac-app
+requires cli
 save warlock
 env DM_VKBD=1
 timeout 180

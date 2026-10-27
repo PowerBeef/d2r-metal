@@ -1,6 +1,8 @@
 # 语言扫一遍（西班牙文）：游戏语言当作在选项页选了 es（DM_TEST_LANG=2），宿主提示用 es；进局后把总面板的页签都翻一遍、开关暂停页，焦点与面板栈正常、没有红标
+# 只在每局一份新存档的后端上跑：iOS 包的测试容器各局共用，改了语言会留给后面的场景 | only on backends with a fresh save per run: the iOS package's test container is shared between runs, so a language change would carry over to later scenarios
 # Language sweep (es): the game language as if es had been chosen on the options page (DM_TEST_LANG=2), host dialogs in es; in a run flip through every tab of the combined panel and open and close the pause page; focus and the panel stack stay sane, no red markers
 name lang_es
+requires cli mac-app
 save warlock
 env DM_TEST_LANG=2 DM_LANG=es
 timeout 180
