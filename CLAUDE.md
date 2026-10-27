@@ -170,6 +170,8 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn       # parse only 
 python3 dm/tools/dmctl.py --listen <port> state                     # one command to a host started with DM_CTL_PORT=<port>
 python3 dm/verify/assertlib.py logred <log> [--allow regex]         # red-marker guard (catches plog lines events miss)
 python3 dm/tools/imgdiff.py a.png b.png --max-mean 0.05            # perceptual screenshot diff (LDR-FLIP)
+python3 dm/tools/playbot.py run --episodes 3 --intents 12 | soak --minutes 30    # playtest bot: player intents + invariants, shrunk by intent; soak judged by soak_report.py
+python3 dm/verify/golden.py replay|shots check   (record --reason …; prefix)     # our own baselines in $DM_ROOT/data/switch/golden: tick-identical replay + savecmp + negative control, shotgate
 ```
 
 - The protocol is in `dm/verify/control_port.md` and the scenario format in `dm/verify/scenarios/README.md`.
@@ -177,6 +179,8 @@ python3 dm/tools/imgdiff.py a.png b.png --max-mean 0.05            # perceptual 
 - `mac-app` runs a test copy (`$DM_ROOT/out/macapp_test`) with `DM_APP_SUPPORT` set. Never point scenarios at the player's real save folder.
 - `ios-mac` needs `.iosdd_mac/DmMacSmoke.app`; `dm/ios/tools/smoke_mac.sh 1` builds it. Saves for the iOS backends are the ones bundled at build time.
 - Generated saves (`export_save`, `scenarios/saves/*.scn`) stay in `$DM_ROOT/data/switch/save_ref_<name>/` and are never committed.
+- **Engine-aware state (`dm/host/dm_engine.c`):** `state` carries `panels` (visible, top first), `focus` / `focus_panel`, `cursor_mode`, `save_busy` / `save_pending` / `save_mounted`; `engine` gives the whole snapshot plus the last actions and UI messages (the runner saves it as `engine.json` on the first red). Events `action` (controller actions under the game's own names), `focus`, `save_request`, `save_stuck` (red), `save_alert`, `fault`, `padmode`, `opmode`, `language`. Checks: `expect_state panels~=X`, `check actions seq=…`, `check save_pairs`, `check saves_valid` (`dm/verify/d2save.py`; every cli / mac-app run checks its save).
+- **Faults and front-end input:** `fault arm <point> skip=N count=N` / `fault delay ms=N` (`DM_TEST_FS_FAILAT=<point>[@skip][:count]`, `DM_TEST_SAVE_DELAY`); `fe "<s> pad A"` runs one `DM_TEST_NSMOUSE` line through the Mac front end (virtual controller, on-screen keyboard, sheet); `inputmode mode=touch|controller glyph=…` (needs `env DM_ROMFS_OVERLAY=auto` on cli). Every fault / switch scenario must require the event that proves it happened.
 - **Pointer steps and their paths:**
   - `tap` goes straight to `dm_ui_touch`. It skips the Mac mouse path, and the game ignores plain clicks on console tabs, so switch tabs with `press ZR` / `ZL`.
   - On the Mac App, `drag x0 y0 x1 y1` goes through the real mouse's gesture path (`dm_touch_host_live`); a zero-length `drag` is a mouse click. `wheel x y dy [precise] [view]` calls the same `dm_wheel_ui` as the App's scroll events.
@@ -192,6 +196,8 @@ python3 dm/tools/bench.py run dm/verify/bench/town_loop.scn --reps 3 [--mpt]    
 python3 dm/tools/bench.py ab dm/verify/bench/town_loop.scn --reps 6 --a-env … --b-env … --metric gpu_ms.p50   # ABBA, Mann-Whitney + bootstrap, ledger
 python3 dm/tools/gpucap.py capture|summary|listen|hud …                            # gpucapture / gpudebug / metalperftrace
 python3 dm/tools/boothist.py show --label bench:cli                                # boot-stage history across revisions
+python3 dm/tools/bench.py profile dm/verify/bench/combat.scn                         # sampled per-thread-role attribution with engine names + hitches over 25 ms
+python3 dm/tools/bench.py baseline save && python3 dm/tools/bench.py regress <route>  # ABBA against a kept host; red only on a significant slowdown
 ```
 
 - Present intervals are pinned at 16.67 ms by vsync on this Mac; compare `cpu_ms`, `nvn_ms` and `gpu_ms` instead.
@@ -209,7 +215,7 @@ python3 dm/tools/scenario.py run … --metal-validation api|lint|shader|all     
 python3 dm/tools/explore.py run --seed N --episodes K [--dmhost …]                  # random play; a red run is shrunk to minimal_<k>.scn
 python3 dm/tools/replay.py record <scn> && python3 dm/tools/replay.py check <dir> --dmhost A --dmhost B   # same input on two builds → first divergent tick
 python3 dm/tools/tickdiff.py a/ticks.jsonl b/ticks.jsonl                             # first divergent tick between two DM_TICKS records
-DM_BREAK_AT_TICK=<tick> ./dmhost … ; lldb -p <pid>; (lldb) command script import dm/tools/lldb/dm.py   # dm modules|where|bt|break|tick
+DM_BREAK_AT_TICK=<tick> ./dmhost … ; lldb -p <pid>; (lldb) command script import dm/tools/lldb/dm.py   # dm modules|where|bt|break|tick|ui|focus|saves|unit <id>
 ```
 
 - The sanitizer targets don't track headers: delete the binary to force a rebuild. They run game threads on 8 MiB host stacks and carry their own options and TSan suppressions (`main.c`).
@@ -312,6 +318,9 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
 - **Overlay messages:** a layout's message strings are hashed at load through the game's own channel / action name lists; an unknown category or action hashes to 0, and a button sends its click message only when both hashes are non-zero, so a click message with an unknown name silently never fires (`dm/verify/ui_message_stream.md`).
 - **Overlay files:** `casc_overlay.py` can replace any file but can add new ones only in a new folder directly under an existing directory (first character unlike every item there). Layouts the game should find in both input modes go in a new folder under the layout root, which both modes fall back to (see the Extras page).
 - **Weak symbols on Apple:** a `__attribute__((weak))` declaration of a function no target defines still fails to link on iOS. Give a weak default definition instead (as `dm_ctl_cmds.c` does for the Mac-only `dm_wheel_ui`).
+- **A stuck save job crashes the game:** save jobs run on the game's async job pool; with one job blocked about 8 s, the tasks queued every frame exhaust the pool's task allocator and the pool's enqueue function (main+0x14f0590) writes through NULL. Never hold the save path (host hooks, locks, slow I/O) for seconds; keep `fault delay` under ~5 s.
+- **Don't edit a shell script while it runs** (`fork_gate.sh`, `touchchain.sh`, `re.sh`): bash reads scripts incrementally, so the running copy executes shifted text and fails with a syntax error.
+- **Test suites under `dmtest.py`:** their negative cases print `RED` verdict lines; wrap suites with `--rc-only` (the fork gate does for `unit_*`).
 - **Flaky test:** `t_svc_mem` det5 is a timing test. It has failed inside the full host suite under load and then passed alone; rerun it before suspecting a change.
 - **Regenerate after editing:**
   - `patch_nso.py` or `dm/PRODUCT` → `dm/tools/product.sh build`
