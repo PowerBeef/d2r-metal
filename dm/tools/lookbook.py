@@ -71,7 +71,8 @@ def take_shot(host, p, png):
     env = dict(os.environ, DM_TOWNWP_OFF='1', DM_GAME_SEED='0x12345678', DM_FIXED_TIME='1790000000', DM_TEST_GOTO_LEVEL=f"150:{h['level']}", DM_TICK_HOLD=f'{e}:SHOT',
                DM_STATE=png[:-4] + '.state.jsonl', DM_BRIGHT_K='1', DM_KEYS=LB_KEYS)
     env['DM_DETCLOCK'] = env.get('DM_DETCLOCK', '16666667')
-    prod = subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'keypage'], capture_output=True, text=True, check=False).stdout.strip()
+    # DM_SHOT_PRODUCT=<产物目录>：换一份改写产物截（比较改写变体，如阴影图边长）；缺省 keypage | DM_SHOT_PRODUCT=<output dir>: shoot another rewrite output (to compare rewrite variants such as the shadow-map size); default keypage
+    prod = os.environ.get('DM_SHOT_PRODUCT') or subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'keypage'], capture_output=True, text=True, check=False).stdout.strip()
     r = subprocess.run(['bash', os.path.join(DM, 'verify', 'hostshot.sh'), host, prod, f'DM:Tick:{e}#+2', png, '300'], env=env, capture_output=True, text=True, check=False)
     return r.returncode == 0 and os.path.exists(png), (r.stderr.strip().splitlines() or [''])[-1]
 

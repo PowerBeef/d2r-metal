@@ -317,6 +317,7 @@ DM_SAVE_THROTTLE	host	host/main.c	-
 DM_SCREEN_SHOT	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSmoke.swift	-
 DM_SCREEN_WANT	ios-tools	ios/tools/frame_cmp.sh ios/tools/pages.sh	-
 DM_SHADER_PREP_THREADS	ios	ios/Sources/dm_shader_prep.m	-
+DM_SHOT_PRODUCT	tools,verify	tools/lookbook.py verify/golden.py	-
 DM_SKILL_AIM_LOG	host	host/hle_private_aim.c	-
 DM_SKILL_RENDER_GATE_LOG	host	host/hle_tact.c	-
 DM_SLOWFRAME	gfx	gfx/nvn/hle_nvn.c	y

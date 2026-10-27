@@ -217,7 +217,8 @@ def take_shot(host, p, png):
     env.update({k: os.path.expanduser(v) for k, v in h.get('env', {}).items()})
     env.update(DM_BRIGHT_K='1', DM_DETCLOCK=env.get('DM_DETCLOCK', '16666667'))
     if h.get('keys'): env['DM_KEYS'] = h['keys']
-    prod = subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'keypage'], capture_output=True, text=True, check=False).stdout.strip()
+    # DM_SHOT_PRODUCT=<产物目录>：换一份改写产物截（比较改写变体，如阴影图边长）；缺省 keypage | DM_SHOT_PRODUCT=<output dir>: shoot another rewrite output (to compare rewrite variants such as the shadow-map size); default keypage
+    prod = os.environ.get('DM_SHOT_PRODUCT') or subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'keypage'], capture_output=True, text=True, check=False).stdout.strip()
     os.makedirs(os.path.dirname(png), exist_ok=True)
     p_ = subprocess.run(['bash', os.path.join(HERE, 'hostshot.sh'), host, prod, h['trigger'], png, '240'], env=env, capture_output=True, text=True, check=False)
     return p_.returncode == 0 and os.path.exists(png), (p_.stderr.strip().splitlines() or [''])[-1]
