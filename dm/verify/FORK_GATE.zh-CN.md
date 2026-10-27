@@ -40,6 +40,22 @@ dm/verify/fork_gate.sh device           # iPhone 连得上时
 - **测试用的应用按当前提交出。** `mac-app` 测试副本（`$DM_ROOT/out/macapp_test`，bundle ID `org.d2rmobile.mac.test`）的标记（`.gate_head`）与提交和工作区状态对不上就重出。绝不用 `out/macapp` 里玩家的那份。
 - **红标。** `assertlib.RED_MARKERS` 也认 Metal 命令缓冲出错与 GPU 故障（`logred.sh` 的那几条），先拿现有的场景日志核过没有误报。
 
+## 懂引擎的检查
+
+`dm/host/dm_engine.c` 每帧在游戏主线程上读一遍游戏自己的界面与存盘状态（只读；控件按名字与界面代号跟，不留指针），发布出去：
+
+- **控制口：** `state` 多了 `panels`（屏上面板，最上面的在前）、`focus`、`focus_panel`、`cursor_mode`、`save_busy`、`save_pending`、`save_mounted`、`save_containers`、`exp_permille`、`quest_unread`；`engine` 给整份快照，加最近的手柄动作与界面消息。
+- **事件：** `action`（手柄动作，名字运行时从游戏自己的动作名表读）、`focus`、`save_request`、`save_stuck`（红：请了存盘一直没有提交或拒绝，或容器挂着太久）、`save_alert`、`fault`。
+- **场景检查：** `expect_state panels~=名字 focus=控件`、`check actions seq=…`、`check save_pairs`、`check saves_valid`（`dm/verify/d2save.py`，游戏载入时的规则：头、版本、大小字段、校验和、共享箱各段、金币上限）。`cli` / `mac-app` 每局都核已提交的存档。
+- **红时：** 运行器把宿主的 `engine` 快照存成结果目录里的 `engine.json`。
+- **lldb：** `dm ui`、`dm focus`、`dm saves`、`dm unit <id>`（`dm/verify/debugging.zh-CN.md`）。
+
+## 故障矩阵
+
+`dm/verify/scenarios/faults/`（`full` 跑）：局内写方式打开失败、提交被拒后重新克隆也失败、开机克隆失败（这一局只读）、退出落在存盘中间，以及 `save_stuck` 的正对照。故障用控制口 `fault` 命令挂（`arm` 带 `skip` / `count`、`delay`），或 `DM_TEST_FS_FAILAT=<点>[@<跳过>][:<次数>]` / `DM_TEST_SAVE_DELAY`；每次注入发 `fault` 事件，用例要求它出现，故障没打到就过不了。`guestname` / `renameback` 正常玩到不了，留给 `dm/host/tests/t_fs.c`。
+
+做的时候发现：游戏的存盘任务跑在它的异步任务池上，一个任务卡住时，每帧排进去的任务把任务池的内存用光，约 8 秒后 任务池的入队函数（main+0x14f0590）拿到空指针照写，游戏崩溃。存盘卡上几秒（存储慢、宿主钩子占着存档锁）就是崩溃，不只是存晚了。
+
 ## 触屏用例与夹具存档
 
 触屏用例从 `save_ref_warlock`（或 `DM_TOUCH_SAVE`）起跑。有几例是照上游的夹具存档写的：背包 (5,3) 格有物品、(8,0) 是赫拉迪克方块。对起跑状态的检查是**前提**（`lib.precondition`）：存档里没有用例要的东西时，这一例判 ⚪ 不可用（`assert.py` 退出码 3，`touchchain.sh` 退出码 3）而不是红，其余检查不算数。缺前缀录制的用例同样判 ⚪。
