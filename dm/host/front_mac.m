@@ -122,30 +122,43 @@ static void layout_game(void) {
 // 暂停菜单 / 大秘境面板开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
 // Quit (close window / Cmd-Q / menu): if a game is running, first ask the game to do one of its own saves and wait for the save commit (same as the iOS shell going to the background), at most 3 s, then shut down in order.
 // When the pause menu / Greater Rift panel is open the game does not tick: freeze the world and temporarily release the pause for this one save (diag.c dm_save_wait, the same function as iOS going to the background); on the loading screen wait until in game before asking. If there is still no commit after 3 s, log "quit without saving" as is
+// 等的那几步（iCloud 启动同步最多 20 秒、存盘最多 3.5 秒、iCloud 上传最多 10 秒、收尾最多 1.5 秒）不在主线程上：原先整段堵着主线程，
+// 慢的时候窗口卡住、出彩球，系统也当它没响应。现在主线程只做非它不可的几步（关输入框、读窗口状态、最小化着就先恢复），其余交给后台线程，结束时 _exit。
+// 存盘的保证不变：游戏自己的存盘本来就在游戏线程上做、出图走显示节拍线程，都不靠主线程；退出一开始就记下 g_quitting，之后失焦不再告诉游戏（原先主线程堵着，失焦也到不了游戏），
+// 系统来的退出答「稍后」（applicationShouldTerminate），注销 / 关机等这个进程自己结束，不会被取消
+// The waiting steps (the iCloud boot sync up to 20 s, the save up to 3.5 s, the iCloud upload up to 10 s, the wrap-up up to 1.5 s) are off the main thread: they used to block it throughout,
+// so a slow quit froze the window with a spinning cursor and the system took the app as not responding. Now the main thread does only what needs it (close an input box, read the window state, resume first when minimized), the rest goes to a background thread that ends with _exit.
+// The save guarantee is unchanged: the game's own save runs on the game thread and frames go through the display-link thread, neither needs the main thread; g_quitting is set when the quit starts, after which a focus loss is no longer passed to the game (with the main thread blocked it never reached the game either),
+// and a quit from the system is answered "later" (applicationShouldTerminate), so log out / shut down wait for this process to end by itself instead of being cancelled
+static _Atomic int g_quitting;
+static void app_quit_finish(const char *why, int ingame) {   // 后台线程 | background thread
+    // iCloud 启动同步还在做（窗口先出来了，游戏还在等它，见 main.c cloud_boot_start）：它在改存档目录，做完再退，最多 20 秒
+    // The iCloud boot sync is still running (the window came up first and the game is waiting for it, see main.c cloud_boot_start): it is changing the save directory, so let it finish before quitting, at most 20 s
+    { int dm_cloud_boot_wait(double max_s); dm_cloud_boot_wait(20); }
+    int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms), dm_cloud_flush_wait(double sec);
+    if (!ingame) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
+    uint64_t n = 0; int froze = 0; double ms = 0; int asked = dm_save_wait(3, &n, &froze, &ms);
+    if (n && asked) LOG("窗口：退出前等游戏存盘 %.0f ms，期间存档提交 %llu 次%s", ms, (unsigned long long)n, froze ? "（原先暂停着：冻结世界存盘、已恢复暂停）" : "");
+    else LOG("【红】窗口：未存盘退出——3 秒内没等到存档提交（%s%s）", asked ? "已请游戏存盘" : "一直没到能请存盘的状态（读取画面？）", froze ? "，原先暂停着、冻结放开过" : "");
+    DM_EV("quit_save", "saved:b commits:u ms:f paused:b", n && asked, (unsigned long long)n, ms, froze);
+    dm_cloud_flush_wait(10);   // 存盘之后把这一局传上 iCloud 再退（没开同步时立即返回） | after saving, upload this session to iCloud before quitting (returns immediately when sync is off)
+    dm_host_shutdown(why);
+}
 static int text_input_cancel(void), text_input_up(void);
 static void text_input_handoff_pad(void), text_input_test(NSString *text, int ok);
-static void app_quit(const char *why) {
+static void app_quit(const char *why) {   // 主线程 | main thread
     static int once; if (once++) return;
+    atomic_store(&g_quitting, 1);
     { uint64_t dm_audio_render_calls(void); LOG("窗口：退出（%s）；声卡回调累计 %llu（0 = 这次没出声）", why, (unsigned long long)dm_audio_render_calls()); }
     DM_EV("quit", "why:s", why);
     // 数量 / 起名输入框（或手柄屏幕键盘）开着：先按「取消」关掉，放走等它的键盘线程、解冻客体时钟，下面才存得了盘（见 front_text_input）
     // A quantity / name input box (or the on-screen controller keyboard) is open: answer "Cancel" first to release the keyboard thread waiting on it and unfreeze the guest clock, so the save below can happen (see front_text_input)
     if (text_input_cancel() || dm_vkbd_ui_cancel()) LOG("窗口：退出时输入框开着 → 先按取消关掉，再存盘");
-    // iCloud 启动同步还在做（窗口先出来了，游戏还在等它，见 main.c cloud_boot_start）：它在改存档目录，做完再退，最多 20 秒
-    // The iCloud boot sync is still running (the window came up first and the game is waiting for it, see main.c cloud_boot_start): it is changing the save directory, so let it finish before quitting, at most 20 s
-    { int dm_cloud_boot_wait(double max_s); dm_cloud_boot_wait(20); }
-    int dm_ingame_now(void); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
-    int dm_cloud_flush_wait(double sec);
-    if (!dm_ingame_now() && !dm_uiscreen_ingame()) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
+    int dm_ingame_now(void), ingame = dm_ingame_now() || dm_uiscreen_ingame();
     // 最小化着退出：游戏线程挡在图形挂起处（dm_gfx_suspend）、客体时钟冻着，拍不走就存不了盘。先恢复（出图照丢，不画到看不见的窗口），再请存盘
     // Quitting while minimized: the game thread is blocked at the graphics suspend (dm_gfx_suspend) and the guest clock is frozen, so no tick runs and nothing can be saved. Resume first (frames are still dropped, nothing is drawn to the hidden window), then ask for the save
-    if (g_win.miniaturized) { void mtl_present_discard(int on); void guest_clock_freeze_for(int reason, int on); mtl_present_discard(1); dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); LOG("窗口：最小化着退出，先恢复图形与客体时钟再存盘"); }
-    uint64_t n = 0; int froze = 0; double ms = 0; int asked = dm_save_wait(3, &n, &froze, &ms);
-    if (n && asked) LOG("窗口：退出前等游戏存盘 %.0f ms，期间存档提交 %llu 次%s", ms, (unsigned long long)n, froze ? "（原先暂停着：冻结世界存盘、已恢复暂停）" : "");
-    else LOG("【红】窗口：未存盘退出——3 秒内没等到存档提交（%s%s）", asked ? "已请游戏存盘" : "一直没到能请存盘的状态（读取画面？）", froze ? "，原先暂停着、冻结放开过" : "");
-    DM_EV("quit_save", "saved:b commits:u ms:f paused:b", n && asked, (unsigned long long)n, ms, froze);
-    { int dm_cloud_flush_wait(double sec); dm_cloud_flush_wait(10); }   // 存盘之后把这一局传上 iCloud 再退（没开同步时立即返回） | after saving, upload this session to iCloud before quitting (returns immediately when sync is off)
-    dm_host_shutdown(why);
+    if (ingame && g_win.miniaturized) { void mtl_present_discard(int on); void guest_clock_freeze_for(int reason, int on); mtl_present_discard(1); dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); LOG("窗口：最小化着退出，先恢复图形与客体时钟再存盘"); }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ app_quit_finish(why, ingame); });
 }
 // 控制口 app 命令（dm_ctl_cmds.c）：在主线程上做与 DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT 相同的动作。最小化与 DM_TEST_MINI_AT 一样临时给窗口加上可最小化（游戏窗口本身没有）；
 // background / foreground 在 Mac 上就是最小化 / 还原；resign / active 不支持（Mac 的失焦靠别的窗口抢走焦点）
@@ -244,10 +257,12 @@ double front_display_refresh(char *name, size_t n) {
 - (void)windowDidChangeScreen:(NSNotification *)n { (void)n; screen_note(); }
 - (void)quit:(id)s { (void)s; app_quit("菜单退出"); }
 // 系统来的退出（程序坞「退出」、⌘-Tab 时按 Q、注销 / 重启 / 关机、AppleScript quit）都走 terminate:。没有这个委托方法时 AppKit 直接结束进程，不存盘。
-// app_quit 存完盘自己结束进程（dm_host_shutdown）；它返回了说明已有一次退出在进行，这次取消，让那次走完
+// app_quit 在后台线程上存完盘自己结束进程（dm_host_shutdown 里 _exit），这里一律答「稍后」：注销 / 关机等着这个进程结束，不会像答「取消」那样把注销取消掉；
+// 已有一次退出在进行时也一样，等那次结束进程
 // Quits coming from the system (Quit in the Dock, Q while Cmd-Tabbing, log out / restart / shut down, AppleScript quit) all go through terminate:. Without this delegate method AppKit ends the process directly, without saving.
-// app_quit ends the process itself after saving (dm_host_shutdown); if it returns, a quit is already in progress, so cancel this one and let that one finish
-- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)a { (void)a; app_quit("系统退出"); return NSTerminateCancel; }
+// app_quit saves on a background thread and ends the process itself (_exit in dm_host_shutdown), so the answer here is always "later": log out / shut down wait for this process to end, instead of being cancelled as answering "cancel" would;
+// the same when a quit is already under way, which will end the process
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)a { (void)a; app_quit("系统退出"); return NSTerminateLater; }
 - (void)keys:(id)s { (void)s; show_keys(); }
 - (void)share:(id)s { (void)s; share_logs_ui(); }
 @end
@@ -601,7 +616,7 @@ void front_run(void (*guest)(void)) {
                   LOG("DM_TEST_COVER：盖上 %.1f 秒，游戏窗口%s是主窗口", dur, win.isKeyWindow ? "" : "不");
                   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(dur * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [c orderOut:nil]; LOG("DM_TEST_COVER：拿开"); });
               }); }
-        [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "resign"); if (!win.miniaturized) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
+        [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "resign"); if (!win.miniaturized && !atomic_load(&g_quitting)) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
         [nc addObserverForName:NSWindowDidBecomeKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "active"); dm_focus_set(1); }];
         // 最小化：客体时钟一并冻结（同 iOS 进后台）。否则游戏线程挡在图形挂起处、墙钟照走，恢复时主循环把整段最小化时长的拍一口气补跑完——角色站着不动、怪照打（专家模式死了就没了）
         // Minimize: the guest clock is frozen as well (as when iOS goes to the background). Otherwise the game thread is blocked at the graphics suspend while the wall clock keeps running, and on restore the main loop catches up on every tick of the minimized period in one burst -- the character stands still while monsters keep attacking (a death in Hardcore is permanent)
