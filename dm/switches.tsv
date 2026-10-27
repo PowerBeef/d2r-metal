@@ -5,6 +5,7 @@ DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c	-
 DM_3D_SCALE_FLOOR	android,harmony,host	android/debug_env.h harmony/native/front_ohos.c host/hle_oe.c	y
 DM_3D_SCALE_GPU	harmony,host	harmony/native/napi_ohos.c host/hle_oe.c	y
 DM_3D_SCALE_GPU_FLOOR	host	host/hle_oe.c	-
+DM_AA_MODE	host	host/hle_oe.c	-
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_ANDROID_BUILD_IMAGE	android	android/docker/build.sh	-
 DM_ANDROID_KEYSTORE	android	android/tools/shell_apk.sh	-

@@ -331,8 +331,30 @@ static void scale3d_tick(void) {
     LOG("3D 渲染比例 %.2f：3D 目标 %ux%u，输出 %ux%u（帧 %llu）", want, *(uint32_t *)(renderer + 0xee78), *(uint32_t *)(renderer + 0xee7c),
         *(uint32_t *)(renderer + 0xee88), *(uint32_t *)(renderer + 0xee8c), (unsigned long long)dm_nvn_frame_count());
 }
+// 抗锯齿档：游戏自己的 renderer+0x6614（0 无 / 1 FXAA / 2 SMAA / 3 SMAA T2x；主机版配置是 1）。准备场景那一步（main+0x162f738）每帧把它抄进本帧的设置块，
+// 后处理节点（main+0x166e710）按它选 FXAA（1）或 SMAA（≥ 2）；SMAA 要的目标（边缘、混合权重，T2x 另加上一帧颜色 / 深度 / 速度与亮度历史）
+// 由 SMAA 那一趟（main+0x16aa23c）头一次用到时自己建，不用另调重建。T2x 要的速度目标主机版从来不建，选 3 会在游戏里出错，所以只用 1 / 2。
+// 画面设置 aa（dm_video.c）给值；DM_AA_MODE=0..3 强制。-1 = 不动（游戏自己的值）
+// Anti-aliasing mode: the game's own renderer+0x6614 (0 none / 1 FXAA / 2 SMAA / 3 SMAA T2x; the console config is 1). The scene setup (main+0x162f738) copies it into each
+// frame's settings block, and the post-processing node (main+0x166e710) picks FXAA (1) or SMAA (>= 2) from it; the targets SMAA needs (edges, blending weights, plus
+// previous colour / depth / velocity and luma history for T2x) are created by the SMAA pass (main+0x16aa23c) on first use, so no rebuild call is needed. T2x needs a
+// velocity target the console build never creates, and 3 fails inside the game, so only 1 / 2 are used.
+// The picture setting aa (dm_video.c) gives the value; DM_AA_MODE=0..3 forces it. -1 = leave it (the game's own value)
+__attribute__((weak)) int dm_video_aa_mode(void) { return -1; }
+static void aa_tick(void) {
+    static int force = -2; static module_t *main;
+    if (force == -2) { const char *e = getenv("DM_AA_MODE"); force = e && *e >= '0' && *e <= '3' && !e[1] ? *e - '0' : -1; }
+    int want = force >= 0 ? force : dm_video_aa_mode(); if (want < 0 || want > 3) return;
+    if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
+    if (!main || dm_nvn_frame_count() < 30) return;
+    uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;
+    uint8_t *aa = (uint8_t *)(renderer + 0x6614); if (*aa == want) return;
+    uint8_t was = *aa; dm_guest_write_prepare(aa, 1); *aa = (uint8_t)want;
+    LOG("抗锯齿：游戏的档位 %u → %d（0 无 / 1 FXAA / 2 SMAA / 3 SMAA T2x，帧 %llu）", was, want, (unsigned long long)dm_nvn_frame_count());
+}
 HLE_FORCE("_ZN2nn2oe25TryPopNotificationMessageEPj", "系统通知队列；前端状态变化入队", unsigned, h_oe_TryPopMsg, uint32_t *msg) {
     scale3d_tick();
+    aa_tick();
     pthread_once(&g_oe_once, oe_script_start);
     pthread_mutex_lock(&g_mq_lock);
     int ok = g_mqn > 0;
