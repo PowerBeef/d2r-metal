@@ -48,7 +48,7 @@
 #include "dm.h"
 
 #define VMAX 1024
-#define VBYTES 1024   // 同 dm_pages.c：单件位流上限（含孔里的） | Same as dm_pages.c: upper limit of a single item's bitstream (including socketed ones)
+#define VBYTES 1024   // 同 dm_savebits.c：单件位流上限（含孔里的） | Same as dm_savebits.c: upper limit of a single item's bitstream (including socketed ones)
 typedef struct { uint8_t kind; uint16_t idx, len; uint8_t *data; } ventry;
 static ventry g_v[VMAX]; static int g_nv, g_loaded; static char g_vname[64];   // g_v = 内存里的仓库（界面看的） | g_v = the in-memory vault (what the UI sees)
 static ventry g_d[VMAX]; static int g_nd, g_ddirty;   // g_d = 盘上状态（侧文件写它）；g_ddirty = 进局去重改了 g_d，下次提交要写 | g_d = on-disk state (what the sidecar file writes); g_ddirty = join-time dedup changed g_d, to be written on the next commit
@@ -80,16 +80,11 @@ static _Atomic int g_vgen;   // 仓库内容一变就加一（界面 dm_vault_ui
 int dm_vault_gen(void) { return atomic_load(&g_vgen); }
 
 const char *dm_save_workdir(void); int dm_request_save(void); uint64_t dm_diag_srv_item(uint32_t id);
-int dm_item_write(uint8_t *b, uint64_t it, uint8_t *buf); uint64_t dm_item_make(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out);   // dm_pages.c
+int dm_item_write(uint8_t *b, uint64_t it, uint8_t *buf); uint64_t dm_item_make(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out);   // dm_savebits.c
 void *dm_memfind(const uint8_t *h, size_t hn, const uint8_t *n, size_t nn);
 
-static const char *vault_name(uint8_t *b) {   // 同游戏选共享仓库名：DLC 类型（3）= ModernSharedStash*、毁灭之王类型（2）= SharedStash*；状态位 2 = 专家 | Same as the game's choice of shared stash name: DLC type (3) = ModernSharedStash*, Lord of Destruction type (2) = SharedStash*; status bit 2 = hardcore
-    uint8_t mode = *(uint8_t *)(b + 0x2127c48); uint16_t st; memcpy(&st, b + 0x21278d5, 2); int hc = (st >> 2) & 1;   // 状态字在奇数地址：memcpy 读 | the status word sits at an odd address: read with memcpy
-    if (mode == 3) return hc ? "ModernSharedStashHardCoreV2" : "ModernSharedStashSoftCoreV2";
-    if (mode == 2) return hc ? "SharedStashHardCoreV2" : "SharedStashSoftCoreV2";
-    return NULL;   // 经典类型：没有共享仓库，也不开编年史仓库 | Classic type: no shared stash, and no chronicle vault either
-}
-const char *dm_stash_name(uint8_t *b) { return vault_name(b); }   // 个人仓库多页（dm_pages.c）核对时也要认共享仓库档 | Personal stash multi-page (dm_pages.c) verification also needs to recognize the shared stash save
+const char *dm_stash_name(uint8_t *b);   // dm_savebits.c
+static const char *vault_name(uint8_t *b) { return dm_stash_name(b); }   // 经典类型没有共享仓库，也不开编年史仓库 | Classic type: no shared stash, and no chronicle vault either
 static void vault_clear(void) { for (int i = 0; i < g_nv; i++) free(g_v[i].data); g_nv = 0; for (int i = 0; i < g_nd; i++) free(g_d[i].data); g_nd = 0; g_ddirty = 0;
     for (int i = 0; i < g_npend; i++) free(g_pend[i].data); g_npend = 0; g_vloadgen++; g_vstaged = 0; }
 int dm_save_blobs(const char *wd, const char *stash, dm_blob *out, int max); int dm_blobs_have(const dm_blob *bl, int nb, const uint8_t *bits, int len); void dm_blobs_free(dm_blob *bl, int nb);   // dm_pages.c

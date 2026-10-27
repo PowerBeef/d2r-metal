@@ -82,7 +82,7 @@ int dm_cloud_pack_each(const char *path, void (*cb)(const char *rel, const uint8
 #include "stash_seed.h"
 #define CM_HAVE_STASH_SEED 1
 #endif
-#define VB 1024            // 单件位流上限（含孔里的，同 dm_pages.c VBYTES） | Max bitstream size per item (including socketed items, same as dm_pages.c VBYTES)
+#define VB 1024            // 单件位流上限（含孔里的，同 dm_savebits.c VBYTES） | Max bitstream size per item (including socketed items, same as dm_savebits.c VBYTES)
 #define PAGE_GOLD 2500000  // 每个共享页金币上限（界面「金币最大数」） | Gold cap per shared page (the UI "max gold")
 typedef struct { uint16_t len; uint8_t *bits; } cm_item;
 typedef struct { cm_item *v; int n, cap; } cm_list;
@@ -138,7 +138,7 @@ static long long live_items(uint64_t G, uint64_t player, cm_list *out) {
 typedef struct { int idx; uint32_t nid; uint16_t plen; uint8_t pb[VB]; uint64_t h0, seen; } cm_pend;   // 放进背包、等证明的：清单里第几件（按内容找）、新物品 id、放好后的那一串、放时已提交几次、放时的上次存盘时刻 [G+0x5800] | Placed into the inventory and awaiting proof: index in the list (found by content), new item id, the bit stream after placing, the character file fingerprint at placement, and the commit at which a different character file was first seen
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static void plan_prune(const char *wd);
-int dm_ser_state(void); uint64_t dm_fnv64(const uint8_t *d, size_t n);   // dm_pages.c：在途存盘、整份指纹（同个人仓库翻页的「翻页后序列化」证明） | dm_pages.c: save in flight, whole-file fingerprint (same proof of 'serialized after the change' as personal stash page turns)
+int dm_ser_state(void); uint64_t dm_fnv64(const uint8_t *d, size_t n);   // dm_savebits.c：在途存盘、整份指纹（同个人仓库翻页的「翻页后序列化」证明） | dm_savebits.c: save in flight, whole-file fingerprint (same proof of 'serialized after the change' as personal stash page turns)
 static uint64_t char_h(const char *wd);
 static char g_entry[600], g_stash[64];   // 当前在并的条目（相对存档根：_cloudinbox/<条目>）与仓库名；空 = 没有要并的 | Entry currently being merged (relative to the save root: _cloudinbox/<entry>) and stash name; empty = nothing to merge
 static cm_list g_plan; static long long g_gold; static int g_have, g_dirty;   // g_have：清单已算好 / 读到；g_dirty：要随下次提交写盘 | g_have: list computed / read; g_dirty: must be written with the next commit

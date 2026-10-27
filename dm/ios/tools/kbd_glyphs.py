@@ -7,7 +7,7 @@
 import os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PIL import Image, ImageDraw, ImageFont
-import romfs_art, gen_widestash_art as GW
+import romfs_art, dxt5 as GW
 
 DIR = 'data/hd/global/ui/Controller/ControllerButtons/switch/'
 KEYS = {'ButtonRight': 'J', 'ButtonBottom': 'K', 'ButtonTop': 'U', 'ButtonLeft': 'I', 'BumperLeft': 'Q', 'BumperLeftRectangle': 'Q', 'BumperRight': 'E', 'BumperRightRectangle': 'E',

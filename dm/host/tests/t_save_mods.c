@@ -44,6 +44,7 @@ int tp_hook_on(void) { pthread_mutex_lock(&g_umu); int r = g_uload; pthread_mute
 #endif
 
 #ifdef MOD_PAGES
+#include "../dm_savebits.c"   // 位流 / 存档工具与在途存盘记录（原先在 dm_pages.c 里）：同一个编译单元，tg_set_inflight 才拨得到 | bitstream / save helpers and the in-flight save record (formerly in dm_pages.c): same unit, so tg_set_inflight can set it
 #include "../dm_pages.c"
 static void pg_set(ppage *p, const uint8_t *bits, int len, int x, int y) { ppage_free(p); if (!bits) return; pitem t = { (uint8_t)x, (uint8_t)y, (uint16_t)len, (uint8_t *)bits }; pitem_dup(p, &t); }
 void tg_setup(const char *ch) { pthread_mutex_lock(&g_pmu); strlcpy(g_pchar, ch, sizeof g_pchar); g_pload = 1; pthread_mutex_unlock(&g_pmu); }

@@ -56,7 +56,7 @@ DM_DBG	host	host/main.c	y
 DM_DBG_COVER	host	host/dm_cursor.c	-
 DM_DBG_FE_SEND	host	host/dm_cursor.c	-
 DM_DERIVED	android,harmony,host	android/app/src/main/java/com/xiaoboluo/d2r/DmActivity.java harmony/native/napi_ohos.c host/dm_derived_rt.h	-
-DM_DESWIZZLE_LIB	ios-tools	ios/tools/gen_widestash_art.py ios/tools/romfs_art.py	y
+DM_DESWIZZLE_LIB	ios-tools	ios/tools/romfs_art.py	y
 DM_DETCLOCK	gfx,host,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c verify/golden.py	y
 DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	-
 DM_DEVBATTERY	ios-tools	ios/run.sh ios/tools/devlock.sh	-

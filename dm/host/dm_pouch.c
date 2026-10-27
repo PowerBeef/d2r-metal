@@ -130,7 +130,7 @@ static int pouch_save(const char *wd, const uitem *ud, int nud) {   // 写给定
     ok = fclose(f) == 0 && ok; if (!ok || rename(t, p)) { remove(t); LOG("【红】百宝囊：写 %s 失败", p); return -1; }
     return 0;
 }
-int dm_ser_state(void); uint64_t dm_fnv64(const uint8_t *d, size_t n);   // dm_pages.c
+int dm_ser_state(void); uint64_t dm_fnv64(const uint8_t *d, size_t n);   // dm_savebits.c
 static int char_blob(const char *wd, dm_blob *o);
 // 收 / 放这一刻的角色档指纹（见文件头）：没有在途的存盘才记（有在途的，工作目录里那份之后可能被翻页前序列化的那份盖掉），读不到为 0（持 g_umu 调）
 // The character file fingerprint at the moment of a stow / release (see the file header): recorded only with no save in flight (with one in flight, the copy in the work directory may later be overwritten by one serialized before), 0 if it cannot be read (called holding g_umu)

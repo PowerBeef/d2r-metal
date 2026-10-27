@@ -30,59 +30,10 @@ const char *dm_save_workdir(void);   // hle_fs.c：事务式存档的工作目�
 int dm_request_save(void);           // diag.c：请游戏走一次它自己的定时存盘 | diag.c: ask the game to run one of its own timed saves
 static pthread_mutex_t g_pmu = PTHREAD_MUTEX_INITIALIZER;   // 服务端拍（翻页）与写盘线程（提交前钩子）都碰页数据 | Both the server tick (page flip) and the disk-write thread (pre-commit hook) touch the page data
 
-int dm_item_write(uint8_t *b, uint64_t it, uint8_t *buf) {   // 原版写位流（模板 main+0x65a840）：写入器 {缓冲, 容量位, 字节, 余位, 错误}，上下文 = GOT 虚表 + 0x10 | The original game's bitstream write (template main+0x65a840): writer {buffer, capacity in bits, byte, remaining bits, error}, context = GOT vtable + 0x10
-    struct { uint64_t buf, cap, n, bits; uint32_t err, pad; uint8_t rest[0x60]; } w; uint64_t ctx[2] = { *(uint64_t *)(b + 0x211feb8) + 0x10, 0 };
-    memset(&w, 0, sizeof w); memset(buf, 0, VBYTES); w.buf = (uint64_t)buf; w.cap = VBYTES * 8;
-    ((void (*)(uint64_t, void *, int, int, int, void *))(b + 0x581b60))(it, &w, 1, 1, 0, ctx);
-    int len = w.err ? 0 : (int)w.n + (w.bits != 0); return len > 0 && len <= VBYTES ? len : 0;
-}
-// 读位流建物品（含孔里镶的，照原版复制物品 0x65a840：母件后面紧跟孔里的件数 = 信息块 +0x14），清「新物品」位。room = 落在哪个房间（0 = 不进房间，放进物品栏用）
-// Read a bitstream and build the item (including socketed ones, following the original game's item copy 0x65a840: the parent item is immediately followed by the socketed items, count = info block +0x14), clearing the "new item" bit. room = which room it lands in (0 = not placed in a room, used when putting it into an item container)
-uint64_t dm_item_make_n(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out, int *bytes_out);
-uint64_t dm_item_make(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out) { return dm_item_make_n(b, G, room, buf, len, socks_out, NULL); }
-// 同上，另给出这件（连同孔里的）在位流里占了多少字节（bytes_out）：从一页里连续排着的物品逐件拆开用（dm_cloudmerge.c）
-// Same as above, and also reports how many bytes this item (with its socketed items) takes in the bitstream (bytes_out): used to split items packed consecutively in a page one by one (dm_cloudmerge.c)
-uint64_t dm_item_make_n(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out, int *bytes_out) {
-    uint8_t info[0x100]; int used = 0; memset(info, 0, sizeof info);
-    ((void (*)(int, const void *, int64_t, int, void *, int))(b + 0x5793a0))(*(uint8_t *)(G + 0x106), buf, len, 1, info, 0x69);
-    uint64_t nu = ((uint64_t (*)(uint64_t, uint64_t, const void *, int, int, void *, int *, int))(b + 0x6564e0))(G, room, buf, len, 1, info, &used, 0x69);
-    if (!nu) return 0;
-    { uint64_t nd = *(uint64_t *)(nu + 0x10); if (nd) *(uint32_t *)(nd + 0x18) &= ~0x2000u; }
-    int socks = *(int32_t *)(info + 0x14), off = used, rem = len - used, okn = 0;
-    for (int s = 0; s < socks && rem > 0; s++) { uint8_t ci[0x100]; int cu = 0; memset(ci, 0, sizeof ci);
-        ((void (*)(int, const void *, int64_t, int, void *, int))(b + 0x5793a0))(*(uint8_t *)(G + 0x106), buf + off, rem, 1, ci, 0x69);
-        uint64_t ch = ((uint64_t (*)(uint64_t, uint64_t, const void *, int, int, void *, int *, int))(b + 0x6564e0))(G, 0, buf + off, rem, 1, ci, &cu, 0x69);
-        if (!ch || cu <= 0) { LOG("【红】建物品：孔里第 %d 件建不出来", s + 1); break; }
-        ((void (*)(uint64_t, int))(b + 0x5ca8a0))(ch, 4);
-        if (!((int (*)(uint64_t, uint64_t, uint32_t, uint32_t, int))(b + 0x64d080))(G, nu, *(uint32_t *)(ch + 8), *(uint32_t *)(nu + 8), 2)) LOG("【红】建物品：孔里第 %d 件镶不回去", s + 1); else okn++;
-        { uint64_t cd = *(uint64_t *)(ch + 0x10); if (cd) *(uint32_t *)(cd + 0x18) &= ~0x2000u; }
-        off += cu; rem -= cu; }
-    if (socks_out) *socks_out = okn; if (bytes_out) *bytes_out = off; return nu;
-}
+int dm_item_write(uint8_t *b, uint64_t it, uint8_t *buf); uint64_t dm_item_make(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out);   // dm_savebits.c
+int dm_save_blobs(const char *wd, const char *stash, dm_blob *out, int max); int dm_blobs_have(const dm_blob *bl, int nb, const uint8_t *bits, int len); void dm_blobs_free(dm_blob *bl, int nb);   // dm_savebits.c
+int dm_ser_state(void); int64_t dm_ser_last_sec(void); void *dm_memfind(const uint8_t *h, size_t hn, const uint8_t *n, size_t nn); int dm_bits_simple(const uint8_t *bits, int len); int64_t dm_user_clock(void); int dm_user_clock_fixed(void);   // dm_savebits.c / hle_time.c
 static uint64_t pf_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
-void *dm_memfind(const uint8_t *h, size_t hn, const uint8_t *n, size_t nn) { if (!nn || hn < nn) return NULL; for (size_t i = 0; i + nn <= hn; i++) if (h[i] == n[0] && !memcmp(h + i, n, nn)) return (void *)(h + i); return NULL; }
-// 工作目录里的原版存档：各角色档 <角色>/<角色>.d2s 与这一类共享仓库档（<名>/<名>.d2i 或 <名>.d2i），整份读进内存，供提交前核对「这件物品在不在原版存档里」
-// （编年史仓库 dm_vault.c、个人仓库多页共用）。stash 为空就只读角色档
-// The original saves in the working directory: each character save <character>/<character>.d2s and the shared stash saves of this kind (<name>/<name>.d2i or <name>.d2i), read whole into memory for the pre-commit check "is this item in the original save"
-// (shared by the chronicle vault dm_vault.c and the multi-page personal stash). If stash is empty, only character saves are read
-int dm_save_blobs(const char *wd, const char *stash, dm_blob *out, int max) {
-    int k = 0; DIR *dd = opendir(wd); struct dirent *e; char p[1400];
-    #define BLOB(path) do { FILE *f_; if (k < max && (f_ = fopen(path, "rb"))) { fseek(f_, 0, SEEK_END); long L_ = ftell(f_); fseek(f_, 0, SEEK_SET); \
-        uint8_t *m_ = L_ > 0 && L_ < (16 << 20) ? malloc((size_t)L_) : NULL; size_t n_ = m_ ? fread(m_, 1, (size_t)L_, f_) : 0; fclose(f_); if (m_ && n_) { out[k].d = m_; out[k].n = n_; k++; } else free(m_); } } while (0)
-    while (dd && (e = readdir(dd))) { if (e->d_name[0] == '.') continue; snprintf(p, sizeof p, "%s/%s/%s.d2s", wd, e->d_name, e->d_name); BLOB(p); }
-    if (dd) closedir(dd);
-    if (stash && stash[0]) { snprintf(p, sizeof p, "%s/%s/%s.d2i", wd, stash, stash); BLOB(p); snprintf(p, sizeof p, "%s/%s.d2i", wd, stash); BLOB(p); }
-    #undef BLOB
-    return k;
-}
-// 这件（位流）在不在这些存档里：比位流第 8 字节起最多 48 字节（跳过标志位与位置字段，物品挪了地方也认得）。只对有自己身份的物品可靠：
-// 简单物品（位流标志位 0x200000，如同种符文、药水）没有唯一编号，两颗同种符文字节一样——调用方别拿它判「同一件」
-// Whether this item (bitstream) is in these saves: compare up to 48 bytes of the bitstream starting from byte 8 (skipping the flag bits and position fields, so an item is still recognized after being moved). Reliable only for items with their own identity:
-// simple items (bitstream flag bit 0x200000, e.g. runes or potions of the same kind) have no unique id, and two runes of the same kind have identical bytes -- callers must not use it to decide "the same item"
-int dm_blobs_have(const dm_blob *bl, int nb, const uint8_t *bits, int len) { int n = len - 8 > 48 ? 48 : len - 8; if (n <= 8) return 0;
-    for (int i = 0; i < nb; i++) if (dm_memfind(bl[i].d, bl[i].n, bits + 8, (size_t)n)) return 1; return 0; }
-void dm_blobs_free(dm_blob *bl, int nb) { for (int i = 0; i < nb; i++) free(bl[i].d); }
-int dm_bits_simple(const uint8_t *bits, int len) { return len >= 4 && (bits[2] & 0x20); }   // 位流标志位 0x200000 = 简单物品（没有唯一编号） | Bitstream flag bit 0x200000 = simple item (no unique id)
 // ---------- 个人仓库 2–5 页 ----------
 // 角色存档里的个人仓库格（玩家物品栏页 4）放「当前页」；另外 4 页的物品位流放侧文件 <角色>/<角色>.swpage（存档工作目录里，随存档提交原子换入）。
 // 翻页（服务端拍）：当前格整页搬出（写位流 → 摘下 0x55e430 → 通知 → 释放）存进当前页的槽，再把目标页逐件建出来（含孔里的）按原格放回（读档放物品 0x6f1940），
@@ -133,25 +84,13 @@ static int g_pfrom, g_pto; static uint64_t g_pH0; static ppage g_pA, g_pB, g_pS0
 //   不用「我们 fs 层写 d2s 的先后序号」：角色档由另一条线程写，序列化在翻页前、写盘在翻页后的交错真实存在（dm_vault.c 文件头「定时存盘的序列化与写盘之间夹着存取」；
 // after2 实测档头时刻 20:04:28、写盘 20:04:31），写序号只证「写在后」，证不了「序列化在后」，满页翻空页会复制整页。
 //   也不用档头时刻对墙钟：玩家改系统时间 / 网络对时往回拨会颠倒先后。
-// g_ser_infl：服务端拍看到序列化（[G+0x5800] 变成真时刻；与翻页同在服务端拍上，先后确定），且这一拍窗口里角色档还没写完 → 在途；之后看到角色档写完（hle_fs 的序号更大）→ 不在途。
-//   假「在途」只多等，安全；假「不在途」要「上一次存盘的角色档恰好在这一拍才写完、这一次的还没写」——存盘间隔秒级、写盘毫秒级，不会同拍。
-// g_ser_sec：最近一次看到序列化那一拍的用户时钟秒；同一秒里翻页前刚存过就顺延到下一秒（只防「翻页后同秒再存、内容逐字节相同」，用相等判、改时钟不会长卡）
 // How 'this character file was serialized after the page turn' is proven (a fact; no counting, no wall clock):
 //   If at the turn no character file is serialized but not yet written (g_ser_infl = 0), the pre-turn content can only be the d2s now in the working directory; record its whole-file fingerprint g_pH0.
 //   A later committed character file whose fingerprint != g_pH0 can only have been serialized after the turn. g_pH0 = 0 means the fact was not available at the turn (deferral timed out); judge by the grid only.
 //   Not the order of our fs-layer d2s writes: the character file is written by another thread, and serialization before the turn with the write after it really happens (header of dm_vault.c: 'between serialization and write of the timed save, a store/take can happen';
 // measured: header time 20:04:28, written 20:04:31). A write order only proves 'written later', not 'serialized later'; turning a full page to an empty one would duplicate the page.
 //   Not the header time against the wall clock either: the player changing the system time / network time sync going back would reverse the order.
-// g_ser_infl: the server tick sees a serialization ([G+0x5800] became a real time; on the same server tick as page turns, so the order is fixed) and the character file has not finished writing within this tick's window -> in flight; once a finished write is seen (a larger hle_fs number) -> not in flight.
-//   A false 'in flight' only waits longer, which is safe; a false 'not in flight' would need the previous save's character file to finish exactly in this tick while this one is not yet written - saves are seconds apart and writes take milliseconds, so not in the same tick.
-// g_ser_sec: user clock second of the tick where the last serialization was seen; if a save happened earlier in the same second, defer the turn to the next second (only guards against a byte-identical save later in the same second; compared for equality, so clock changes cannot stall it for long)
-static int g_ser_infl; static uint64_t g_ser_seq; static int64_t g_ser_sec = -1; static uint32_t g_ser_tq, g_tq_now;
-int64_t dm_user_clock(void); int dm_user_clock_fixed(void); uint64_t dm_seq_next(void); uint64_t dm_fs_d2s_wseq(void);   // hle_time.c / hle_fs.c
-// 给 iCloud 并回：0 = 没有在途的存盘（放件时可记指纹）；1 = 在途、50 拍内（等）；2 = 在途超过 50 拍还没见写完（不等了，这次拿不到「放好后序列化」的事实，只认在存档里找到）
-// For the iCloud merge: 0 = no save in flight (a fingerprint can be taken at placement); 1 = in flight, within 50 ticks (wait); 2 = in flight for more than 50 ticks with no finished write seen (stop waiting; the 'serialized after placing' fact is not available this time, only 'found in the saves' counts)
-int dm_ser_state(void) { return !g_ser_infl ? 0 : g_tq_now - g_ser_tq < 50 ? 1 : 2; }
 uint64_t dm_fnv64(const uint8_t *d, size_t n);
-uint64_t dm_fnv64(const uint8_t *d, size_t n) { uint64_t h = 1469598103934665603ull; for (size_t i = 0; i < n; i++) { h ^= d[i]; h *= 1099511628211ull; } return h ? h : 1; }
 static uint8_t *d2s_read(const char *wd, size_t *n) {   // 工作目录里本角色档整份；读不到返回 NULL | This character's whole file in the working directory; NULL if it cannot be read
     char cp[1400]; snprintf(cp, sizeof cp, "%s/%s/%s.d2s", wd, g_pchar, g_pchar); FILE *f = fopen(cp, "rb"); uint8_t *d = NULL; *n = 0; if (!f) return NULL;
     fseek(f, 0, SEEK_END); long L = ftell(f); fseek(f, 0, SEEK_SET); d = L > 0 && L < (16 << 20) ? malloc((size_t)L) : NULL; *n = d ? fread(d, 1, (size_t)L, f) : 0; fclose(f);
@@ -260,7 +199,7 @@ static void pages_flip(uint8_t *b, uint64_t G, uint64_t player, int dir) {
     for (int i = 0; i < out.n; i++) pitem_dup(&g_pA, &out.it[i]);   // 格里搬出的（并进残留之前） | Moved out of the grid (before merging leftovers)
     for (int i = 0; i < g_pp[g_pcur].n; i++) pitem_dup(&g_pS0, &g_pp[g_pcur].it[i]);
     if (g_pp[g_pcur].n) { LOG("【红】个人仓库：第 %d 页槽里有 %d 件放不回的，并进这次搬出的", g_pcur + 1, g_pp[g_pcur].n); pitem *m = realloc(out.it, sizeof(pitem) * (size_t)(out.n + g_pp[g_pcur].n)); if (m) { out.it = m; memcpy(out.it + out.n, g_pp[g_pcur].it, sizeof(pitem) * (size_t)g_pp[g_pcur].n); out.n += g_pp[g_pcur].n; free(g_pp[g_pcur].it); g_pp[g_pcur].it = NULL; g_pp[g_pcur].n = 0; } }
-    g_pp[g_pcur] = out; int from = g_pcur; g_pfrom = from; g_pto = tgt; { const char *wd = dm_save_workdir(); size_t dn = 0; uint8_t *d = !g_ser_infl && wd ? d2s_read(wd, &dn) : NULL; g_pH0 = d ? dm_fnv64(d, dn) : 0; free(d); } g_pcur = tgt; g_ppend = 1; atomic_store(&g_pcur_pub, g_pcur);
+    g_pp[g_pcur] = out; int from = g_pcur; g_pfrom = from; g_pto = tgt; { const char *wd = dm_save_workdir(); size_t dn = 0; uint8_t *d = !dm_ser_state() && wd ? d2s_read(wd, &dn) : NULL; g_pH0 = d ? dm_fnv64(d, dn) : 0; free(d); } g_pcur = tgt; g_ppend = 1; atomic_store(&g_pcur_pub, g_pcur);
     ((void (*)(uint64_t, int))(b + 0x5cadb0))(player, 1);
     int sv = getenv("DM_TEST_PG_NOSAVE") ? -9 : dm_request_save();   // 测试开关 DM_TEST_PG_NOSAVE=1：翻完不请存盘（配合杀进程验「翻页后、落盘前」掉电） | Test switch DM_TEST_PG_NOSAVE=1: do not request a save after flipping (combine with killing the process to verify power loss "after the page flip, before persisting")
     g_pmade = dm_fs_commit_count(); g_pmore = 0;
@@ -359,10 +298,6 @@ void dm_pages_tick(uint64_t G, uint64_t player, uint8_t *b) {
     uint32_t tq = *(uint32_t *)(G + 0x170); uint64_t pd = *(uint64_t *)(player + 0x10);
     pthread_mutex_lock(&g_pmu); pages_enter(G, tq, pd ? (const char *)pd : "", dm_stash_name(b), b, player); pthread_mutex_unlock(&g_pmu);
     { pthread_mutex_lock(&g_pmu);
-      { static uint64_t pv, tick_seq; uint64_t v = *(uint64_t *)(G + 0x5800), w = dm_fs_d2s_wseq();   // [G+0x5800] 变成真时刻 = 游戏序列化了（请存盘时我们拨成 1） | [G+0x5800] became a real time = the game serialized (we set it to 1 when requesting a save)
-        if (v != pv) { if (v > 1 && pv) { g_ser_sec = dm_user_clock(); g_ser_infl = !(w > tick_seq); g_ser_seq = dm_seq_next(); g_ser_tq = tq; } pv = v; }   // 从 0 变过来是进局开始计时，不是序列化 | A change from 0 is the game starting its timer on entry, not a serialization
-        if (g_ser_infl && w > g_ser_seq) g_ser_infl = 0;   // 看到序列化之后角色档写完了 | The character file finished writing after the serialization was seen
-        tick_seq = dm_seq_next(); g_tq_now = tq; }
       int more = g_pmore; g_pmore = 0; pthread_mutex_unlock(&g_pmu); if (more && !getenv("DM_TEST_PG_NOSAVE")) { int r = dm_request_save(); LOG("个人仓库：翻页还没证明，再请一次存盘 → %d", r); } }
     pg_sock_test(G, player, b, tq);
     int dir = atomic_exchange(&g_preq, 0);
@@ -382,7 +317,7 @@ void dm_pages_tick(uint64_t G, uint64_t player, uint8_t *b) {
     // Page turn deferral (at most 50 ticks): if a save is in flight (serialized, character file not yet written), wait for the write so the turn can record the unique pre-turn fingerprint (usually a few milliseconds);
     // if a save already happened in this second, also wait for the next second (not with a fixed clock), so a save later in the same second cannot produce a byte-identical file whose fingerprint cannot be told apart
     { static int hold; static uint32_t hq; if (dir) { hold = dir; hq = tq; }
-      if (hold) { if ((dm_ser_state() == 1 || (g_ser_sec == dm_user_clock() && !dm_user_clock_fixed())) && tq - hq < 50) dir = 0; else { if (tq != hq) LOG("个人仓库：翻页顺延了 %u 拍（等存盘写完 / 这一秒刚存过盘）%s", tq - hq, g_ser_infl ? "，到上限存盘还在写：这次照翻、只按格判" : ""); dir = hold; hold = 0; } } }
+      if (hold) { if ((dm_ser_state() == 1 || (dm_ser_last_sec() == dm_user_clock() && !dm_user_clock_fixed())) && tq - hq < 50) dir = 0; else { if (tq != hq) LOG("个人仓库：翻页顺延了 %u 拍（等存盘写完 / 这一秒刚存过盘）%s", tq - hq, dm_ser_state() ? "，到上限存盘还在写：这次照翻、只按格判" : ""); dir = hold; hold = 0; } } }
     if (dir) { pthread_mutex_lock(&g_pmu); pages_flip(b, G, player, dir); pthread_mutex_unlock(&g_pmu); }
 }
 static void pages_hook(const char *wd) { pthread_mutex_lock(&g_pmu); pages_pre_commit(wd); pthread_mutex_unlock(&g_pmu); }
