@@ -719,7 +719,7 @@ static inline void enc_r_draw_indexed(RENC e, MTLPrimitiveType p, NSUInteger n, 
 #if DM_NVN_M3
 static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { return d ? [g_cb computeCommandEncoderWithDescriptor:d] : [g_cb computeCommandEncoder]; }
 #else
-static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; return e; }
+static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [(CBUF)g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; return e; }
 #endif
 static inline id<MTLComputeCommandEncoder> enc_c_begin_concurrent(id<MTLCommandBuffer> cb) { return [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent]; }
 static inline void enc_c_end(id e) { m4_end(e); }
@@ -733,7 +733,7 @@ static inline void enc_c_dispatch(id e, MTLSize n, MTLSize t) { [e dispatchThrea
 #if DM_NVN_M3
 static inline id enc_b_begin(id cb) { return [cb blitCommandEncoder]; }
 #else
-static inline id enc_b_begin(id cb) { return [cb respondsToSelector:@selector(beginCommandBufferWithAllocator:)] ? [cb computeCommandEncoder] : [cb blitCommandEncoder]; }
+static inline id enc_b_begin(id cb) { return [cb respondsToSelector:@selector(beginCommandBufferWithAllocator:)] ? (id)[(CBUF)cb computeCommandEncoder] : (id)[(id<MTLCommandBuffer>)cb blitCommandEncoder]; }
 #endif
 static inline void enc_b_end(id e) { m4_end(e); }
 static inline void enc_b_copy_buffer(id e, id<MTLBuffer> s, NSUInteger so, id<MTLBuffer> d, NSUInteger doff, NSUInteger n) { [e copyFromBuffer:s sourceOffset:so toBuffer:d destinationOffset:doff size:n]; }
@@ -1769,7 +1769,7 @@ static void pg_render_finish(RENC e) {   // 收渲染编码器之前：写通道
     if (g_pg_open >= 0 && e) [e writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed afterStage:MTLRenderStageFragment intoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)g_pg_pass[g_pg_open].slot + 1];
 #endif
 }
-static id<MTLComputeCommandEncoder> pg_compute(void) {
+static CENC pg_compute(void) {
     pg_pass *p = pg_new(1, 2);
     ser_gate();
     if (!p) { args_dirty_all(); return enc_c_begin(NULL); }
@@ -1777,7 +1777,7 @@ static id<MTLComputeCommandEncoder> pg_compute(void) {
     p->draws = 0; args_dirty_all();
     CENC ce = enc_c_begin(NULL);   // Metal 4：开编码器后写起点，收编码器前写终点（pg_compute_end） | Metal 4: write the start point after opening the encoder, write the end point before ending it (pg_compute_end)
     [ce writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed intoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)p->slot]; g_pg_copen = p->slot + 1;
-    return (id<MTLComputeCommandEncoder>)ce;
+    return ce;
 #else
     MTLComputePassDescriptor *cd = [MTLComputePassDescriptor computePassDescriptor];
     cd.sampleBufferAttachments[0].sampleBuffer = g_pg_buf[g_pg_b];
@@ -2224,7 +2224,7 @@ static int scissor_full(const tex_t *t, const view_t *v, int has_v) {
 static pthread_mutex_t g_rmu = PTHREAD_MUTEX_INITIALIZER;
 // ---------- 着色器映射表：Switch 控制段哈希 → PC metallib（dm/gfx/tools/shader_map.py 产出） ----------
 // ---------- Shader mapping table: Switch control section hash → PC metallib (produced by dm/gfx/tools/shader_map.py) ----------
-static NSMutableDictionary<NSString *, NSArray *> *g_shmap;
+static NSMutableDictionary<NSString *, NSString *> *g_shmap;
 static NSString *g_shmap_path, *g_msl_dir;
 static NSString *exe_rel(const char *rel) {
     char buf[4096]; uint32_t n = sizeof buf;
@@ -3121,9 +3121,9 @@ static inline void args_sync_dirty(void) {
         g_args_reg_seen = reg; g_args_dirty_seen = dirty; args_dirty_all();
     }
 }
-static void bind_args(id<MTLCommandEncoder> en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, uint64_t gpu, size_t off, NSUInteger ai) {
-    if (nvn_stage == 5) enc_c_args((id<MTLComputeCommandEncoder>)en, gpu, ai);
-    else enc_r_args((id<MTLRenderCommandEncoder>)en, metal_vertex ? MTLRenderStageVertex : MTLRenderStageFragment, gpu, ai);
+static void bind_args(id en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, uint64_t gpu, size_t off, NSUInteger ai) {
+    if (nvn_stage == 5) enc_c_args(en, gpu, ai);
+    else enc_r_args((RENC)en, metal_vertex ? MTLRenderStageVertex : MTLRenderStageFragment, gpu, ai);
 }
 // B 路线的静态常量缓冲：Ryujinx support_buffer（布局见 Ryujinx.Graphics.Shader/SupportBuffer.cs：alpha_test u32、is_bgra u32[8]、
 // viewport_inverse f4、viewport_size f4、frag_scale_count i32、render_scale f32[73]…，各字段按 16 字节对齐）与全 0 驱动常量段（64 KB = 着色器声明的上限）
@@ -3177,7 +3177,7 @@ static inline int m3_use_seen(void *p, uint32_t u) {
     return 0;
 }
 #endif
-static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, int metal_vertex) {
+static int encode_args(id en, NvShader *sh, int nvn_stage, int metal_vertex) {
     if (!sh->ae) return 1;
     uint64_t slots[NVN_REFL_MAXB];   // 只清本着色器参数块那么长（arg_len = 8 ×（最大序号 + 1），shader_load 核过）：上限放大后每次新编的清零量不变，复用路径不清 | Only clear as much as this shader's argument block (arg_len = 8 x (max index + 1), checked in shader_load): with the larger limit each new encode clears the same amount, and the reuse path clears nothing
     args_sync_dirty();
@@ -4878,7 +4878,7 @@ frz_plain:;
     int need = g_enc || !tb_sub(TB_DS) ? 3 : pass_ds_need(), mode = defer_q_draw ? 0 : need == 0 ? 2 : need == 2 ? 3 : need == 1 ? 4 : 0;   // 2 都不挂 3 只挂模板 4 只挂深度 | 2 attach neither, 3 attach stencil only, 4 attach depth only
     int skip_d = mode != 0;
     if (!g_enc) { g_fd_dw = dw; g_fd_di = di; }
-    id<MTLRenderCommandEncoder> en = rp_begin_ex(mode);
+    RENC en = rp_begin_ex(mode);
     g_fd_dw = NULL; g_fd_di = NULL;
     if (!en) return;
     if (defer_q_draw) defer_replay();
@@ -5206,7 +5206,7 @@ static void dispatch(const p_dispatch *dp) {
                  m ? (unsigned long long)(dp->caller - (uint64_t)m->base) : (unsigned long long)dp->caller, dp->x, dp->y, dp->z, *(uint32_t *)u->addr);
         }
         rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
-        id<MTLComputeCommandEncoder> ce = pg_compute();
+        CENC ce = pg_compute();
         enc_c_pso(ce, ps);
         enc_c_args(ce, ((__bridge id<MTLBuffer>)ub).gpuAddress + uo, 0); enc_c_args(ce, ((__bridge id<MTLBuffer>)sb).gpuAddress + so, 1); enc_c_args(ce, ((__bridge id<MTLBuffer>)db).gpuAddress + dof, 2);   // 内嵌计算核：冷路径，直接取地址 | Built-in compute kernel: cold path, take the addresses directly
         enc_c_dispatch(ce, MTLSizeMake(dp->x, dp->y, dp->z), MTLSizeMake(32, 1, 1));
@@ -5216,7 +5216,7 @@ static void dispatch(const p_dispatch *dp) {
     const uint16_t *tg = cs->rf.tg;
     if (!tg[0]) { RED_ONCE(29, "计算着色器缺线程组大小反射"); return; }
     rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
-    id<MTLComputeCommandEncoder> ce = pg_compute();
+    CENC ce = pg_compute();
     enc_c_pso(ce, ps);
     encode_args(ce, cs, 5, 0);
     enc_c_dispatch(ce, MTLSizeMake(dp->x, dp->y, dp->z), MTLSizeMake(tg[0], tg[1], tg[2]));
