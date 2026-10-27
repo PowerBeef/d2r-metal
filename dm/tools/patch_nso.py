@@ -51,10 +51,14 @@ IMG.extend(bytes(0x4000))
 PATCH_OFF = (len(IMG) + 0xFFFF) & ~0xFFFF
 
 # ---- 已登记剪口：{NSO 构建号: [(偏移, 原字节, 新字节, 理由)]} ----
-# 联网剪口（排除范围：战网 / 联机）：取自社区离线修复（LFS Mod Offline Fix for v2228224，与官方 94012 main 只差这 7 个字）。
+# 联网剪口（排除范围：战网 / 联机）：取自社区离线修复（LFS Mod Offline Fix for v2228224，与官方 94012 main 只差 7 个字）。
+# 只取放行离线的两处：30 天检查里的 lt→gt 与它改读的设置键。那份补丁另在 0x5b14dc、0x5f3184 两处做了同样的 lt→gt，与联网无关、改的是游戏逻辑
+# （一处改了德鲁伊变身后马上能放哪些技能，一处让术士召唤物走路不播跑动动画），不取。
 # 实测系统服务层（nifm 无网 / DNS 黑洞 / 账号服务）绕不过：游戏自己直接发战网请求、按「上次在线」时间放行离线。
 # ---- Registered cuts: {NSO build ID: [(offset, original bytes, new bytes, reason)]} ----
-# Networking cuts (excluded scope: Battle.net / online play): taken from a community offline fix (LFS Mod Offline Fix for v2228224, which differs from the official 94012 main in only these 7 words).
+# Networking cuts (excluded scope: Battle.net / online play): taken from a community offline fix (LFS Mod Offline Fix for v2228224, which differs from the official 94012 main in only 7 words).
+# Only the two that allow offline play are taken: the lt->gt in the 30-day check and the setting key it reads instead. That fix makes the same lt->gt at 0x5b14dc and 0x5f3184 too; those have nothing to do with going online and change game logic
+# (one changes which skills a Druid can cast right after shapeshifting, the other stops the Warlock's summons from playing their running animation), so they are left out.
 # Measured: the system service layer (nifm offline / DNS black hole / account service) cannot get around it: the game itself sends Battle.net requests directly and allows offline play according to the "last online" time.
 CUTS = {'db0507f36b84200ac05f75d76ed5026f': [
     # （放进所有产物共用的基础改写）：游戏显存分配器预算 260 MB → 512 MB
@@ -64,10 +68,6 @@ CUTS = {'db0507f36b84200ac05f75d76ed5026f': [
      '只是显存预算，不进游戏逻辑：cvd5 逐拍对拍在 1600x900 与 2868x1320 两档均一致'),
     (0x1979bc, 'e8a79f1a', 'e8d79f1a', '离线放行窗口：读存档设置键（0x1d53e80 处字串）的上次在线时刻，'
      '「当前时刻 − 上次在线 < 0x0009356907420000 ns（= 30 天）」置位 [x20+0x2c]；lt→gt'),
-    (0x5b14dc, 'e8a79f1a', 'e8d79f1a', '调 0xddab50（缓冲区 [x10+0x138]+x25、剩余长度、回调 0x527d50、表 0x209cdb8、9 项）返回值 <1 置位，'
-     '为真时走 0x5b14f8 分支；lt→gt（业务含义未从字串定出）'),
-    (0x5f3184, 'e8a79f1a', 'e8d79f1a', '数据表 [0x2d64a18+idx*16] → +0xf90 记录（0x1fc 字节）+0x4c 下标 → +0xfd0 记录（0x128 字节）+0xf1 有符号字节 <0 置位，'
-     '与（w26>0x24）相与后作第 4 参传下游；lt→gt（业务含义未从字串定出）'),
     (0x1d53e80, '55736572204c617374204f6e6c696e6500', '566f6963654c616e677561676500000000',
      '只读字串 "User Last Online" → "VoiceLanguage"：第 1 处改读一个必定存在的设置键，「上次在线」取到小数值，差值恒超 30 天，配合 gt 恒放行'),
     # 产品剪口：开场 Logo 与「按 A 开始」页剪掉，启动直达主菜单（装载画面保留）

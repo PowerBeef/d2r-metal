@@ -81,4 +81,4 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 | `dm/third_party/ryujinx` | Ryujinx 1.3.2 的着色器翻译库（三个项目，未修改），把 Switch 原版着色器翻译成 SPIR-V | MIT | <https://github.com/Ryubing> |
 | `dm/gfx/nvn/include/nvn.h` | 图形接口声明 | MIT | 文件头注明作者 |
 | `dm/gfx/nvn/nvn_tex.c` 中的排布尺寸算法 | 移植自 deko3d | zlib | <https://github.com/devkitPro/deko3d> |
-| `dm/tools/patch_nso.py` 里让游戏离线运行的 7 处改写 | 取自社区的离线修复补丁（LFS Mod Offline Fix） | 未知 | 首发处与作者我们没有确切记录，知道的请开 Issue，见 [DERIVED.zh-CN.md](DERIVED.zh-CN.md) |
+| `dm/tools/patch_nso.py` 里让游戏离线运行的两处改写 | 取自社区的离线修复补丁（LFS Mod Offline Fix） | 未知 | 首发处与作者我们没有确切记录，知道的请开 Issue，见 [DERIVED.zh-CN.md](DERIVED.zh-CN.md) |
