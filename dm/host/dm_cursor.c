@@ -600,12 +600,30 @@ void dm_ui_wheel_on(uint64_t w, int notches) {
 // Generic pointer events (for the gesture layer / probing): while a hover is held, send MouseMove every frame to pin the cursor; the other events are queued, one sent per presented frame (preceded by a Move).
 // The message names are all ones with a comparison site in the main program (found by searching instructions for the hash): Left/RightMouseButtonDown/Up, MouseScroll, KeyDown / KeyUp.
 static _Atomic int g_tab_unhover;   // 点页签切页：下一次指针泵把光标挪到这次点的页签上（g_iq_xy）并收掉悬停保持，见 dm_ui_tab_go | Tapping a tab to switch pages: the next pointer pump moves the cursor onto the tab just tapped (g_iq_xy) and drops the held hover, see dm_ui_tab_go
-static _Atomic int g_up_hold; static _Atomic uint64_t g_up_xy; static struct { int kind, arg; } g_up_q[32]; static _Atomic unsigned g_up_w, g_up_r;
+// 滚轮并条：触控板一秒给几十个滚动事件，原先每个排一条、每出图帧只发一条，甩一下列表要在松手后再滚 0.5–1 秒（30 帧时更久）。
+// 现在一条滚轮还没被取走时，后来的滚轮量加进这一条（只并进队尾那条：中间夹着点击的不跨过去，先后不变），每帧发的是这一帧攒下的总量，最多 UP_SCROLL_MAX。
+// 生产端（前端线程）与取走端（游戏主线程）只靠这一条的 arg 交接：取走时换成 UP_TAKEN，加之前用比较交换核它还没被取走，取走了就另排一条
+// Wheel coalescing: a trackpad gives dozens of scroll events a second; each used to be queued as its own entry with one sent per presented frame, so after a flick the list kept scrolling for 0.5-1 s after the fingers lifted (longer at 30 fps).
+// Now while a wheel entry has not been taken yet, later wheel amounts are added into it (only into the entry at the tail of the queue: never across a click queued in between, so the order is kept); each frame sends the amount gathered for that frame, at most UP_SCROLL_MAX.
+// The producer (front-end thread) and the taker (game main thread) hand over only through that entry's arg: taking swaps in UP_TAKEN, and adding uses compare-and-swap to check it has not been taken yet; if it has, a new entry is queued
+#define UP_TAKEN INT32_MIN
+#define UP_SCROLL_MAX (24 * 120)   // 一帧最多 24 格（900 线画面上约 770 像素） | at most 24 steps per frame (about 770 pixels on a 900-line picture)
+static _Atomic int g_up_hold; static _Atomic uint64_t g_up_xy; static struct { int kind; _Atomic int32_t arg; } g_up_q[32]; static _Atomic unsigned g_up_w, g_up_r;
 void dm_ui_ptr(int kind, float nx, float ny, int arg) { if (dm_restart_busy()) return;
     nx = nx < 0 ? 0 : nx > 1 ? 1 : nx; ny = ny < 0 ? 0 : ny > 1 ? 1 : ny;
     if (kind <= DM_UP_MOVE) { atomic_store(&g_up_xy, ((uint64_t)(uint32_t)(nx * 65535 + .5f) << 16) | (uint32_t)(ny * 65535 + .5f)); if (kind == DM_UP_HOVER) atomic_store(&g_up_hold, 1); return; }
-    unsigned w = atomic_load(&g_up_w); if (w - atomic_load(&g_up_r) >= 32) return;
-    g_up_q[w % 32].kind = kind; g_up_q[w % 32].arg = arg; atomic_store(&g_up_w, w + 1);
+    unsigned w = atomic_load(&g_up_w);
+    if (kind == DM_UP_SCROLL && w && g_up_q[(w - 1) % 32].kind == DM_UP_SCROLL) {   // 并进队尾那条还没取走的滚轮 | merge into the wheel entry at the tail that has not been taken yet
+        _Atomic int32_t *pa = &g_up_q[(w - 1) % 32].arg; int32_t a = atomic_load(pa);
+        while (a != UP_TAKEN) { int64_t sum = (int64_t)a + arg; if (sum > UP_SCROLL_MAX) sum = UP_SCROLL_MAX; if (sum < -UP_SCROLL_MAX) sum = -UP_SCROLL_MAX;
+            if (atomic_compare_exchange_weak(pa, &a, (int32_t)sum)) return; } }
+    if (w - atomic_load(&g_up_r) >= 32) return;
+    if (kind == DM_UP_SCROLL) { if (arg > UP_SCROLL_MAX) arg = UP_SCROLL_MAX; if (arg < -UP_SCROLL_MAX) arg = -UP_SCROLL_MAX; }
+    g_up_q[w % 32].kind = kind; atomic_store(&g_up_q[w % 32].arg, arg); atomic_store(&g_up_w, w + 1);
+}
+static int up_take(int *kind, int *arg) {   // 游戏主线程：取走队头一条（1 = 有） | game main thread: take the entry at the head of the queue (1 = there was one)
+    unsigned r = atomic_load(&g_up_r); if (r == atomic_load(&g_up_w)) return 0;
+    *kind = g_up_q[r % 32].kind; *arg = atomic_exchange(&g_up_q[r % 32].arg, UP_TAKEN); atomic_store(&g_up_r, r + 1); return 1;
 }
 // 物品区命中：触点是否落在物品格 / 装备位 / 腰带 / 箱子格上（手势层据此分「单击 = 只移光标出说明」与「单击 = 点按钮」）。
 // 做法：从界面根控件按名字走控件树（+8 名字、+0x50 可见、+0x58 / +0x60 子控件），对名字是 grid / horadriccube_grid / Belt / slot_* / advancedstash_* / basicstash_container 的可见控件
@@ -1614,8 +1632,8 @@ static void ui_ptr_pump(module_t *m, uint64_t root, int width, int height) {
     uint64_t v = atomic_load(&g_up_xy); int x = (int)(((v >> 16) & 0xffff) / 65535.0 * width), y = (int)((v & 0xffff) / 65535.0 * height); if (x >= width) x = width - 1; if (y >= height) y = height - 1;
     int dm_vault_ui_blocks(int, int), vb = (dm_ui_panel_state() & DM_PS_VAULT) && dm_vault_ui_blocks(x, y);   // 编年史页上（我们的控件除外）：悬停与按键都不发，见 dm_vault_ui.c | On the chronicle page (except our own widgets): neither hover nor key presses are sent, see dm_vault_ui.c
     if (!vb) ui_send_mouse(m, root, hs[0], x, y);
-    if (!pend) return;
-    int k = g_up_q[r % 32].kind, a = g_up_q[r % 32].arg; atomic_store(&g_up_r, r + 1);
+    int k = 0, a = 0; if (!pend || !up_take(&k, &a)) return;
+    if (k == DM_UP_SCROLL && !a) return;   // 来回滚、并起来正好抵消：不发 | scrolled back and forth and merged to nothing: not sent
     if (k == DM_UP_END) atomic_store(&g_up_hold, 0); else if (k >= DM_UP_LDOWN && k <= DM_UP_KEYUP && !vb) { ui_send_mouse_arg(m, root, hs[k], x, y, a); static int nsc; if (k != DM_UP_SCROLL || nsc++ < 3) LOG("界面指针：事件 %d 参数 %d @(%d,%d)", k, a, x, y); }   // 滚轮（Mac 触控板一秒几十次）只记前 3 次 | wheel (dozens a second on a Mac trackpad): only the first 3 are logged
 }
 // ---------- 界面连续手势：上下拖 = 滚动、按住滑块横拖 = 值跟手 ----------

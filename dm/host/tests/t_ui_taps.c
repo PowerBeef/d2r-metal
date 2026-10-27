@@ -129,8 +129,27 @@ static void class_page_scan(void) {
     remove(f); rmdir(sub); rmdir(dir); g_fake_ns = 0;
 }
 
+// 滚轮并条（dm_ui_ptr / up_take）：没取走的滚轮量并进队尾那条，夹着点击的不跨过去，一帧封顶 24 格，取走了的不再往里加
+// Wheel coalescing (dm_ui_ptr / up_take): wheel amounts not yet taken merge into the tail entry, never across a click in between, capped at 24 steps per frame, and nothing is added to an entry already taken
+static void wheel_coalesce(void) {
+    printf("滚轮并条：一帧发这一帧攒下的总量 | wheel coalescing: each frame sends what gathered in that frame\n");
+    int k = 0, a = 0, n = 0; while (up_take(&k, &a)) {}
+    for (int i = 0; i < 5; i++) dm_ui_ptr(DM_UP_SCROLL, .5f, .5f, 120);
+    CHECK(atomic_load(&g_up_w) - atomic_load(&g_up_r) == 1, "五个滚轮事件只排一条 | five wheel events queue one entry");
+    CHECK(up_take(&k, &a) && k == DM_UP_SCROLL && a == 600 && !up_take(&k, &a), "取走：一条，600（5 格） | taken: one entry, 600 (5 steps)");
+    dm_ui_ptr(DM_UP_SCROLL, .5f, .5f, -240);
+    CHECK(up_take(&k, &a) && a == -240, "取走之后再来的另起一条 | an event after the take starts a new entry");
+    dm_ui_ptr(DM_UP_SCROLL, .5f, .5f, 120); dm_ui_ptr(DM_UP_LDOWN, .5f, .5f, 0); dm_ui_ptr(DM_UP_SCROLL, .5f, .5f, 120); dm_ui_ptr(DM_UP_SCROLL, .5f, .5f, 240);
+    int ks[4] = { 0 }, as[4] = { 0 }; n = 0; while (n < 4 && up_take(&ks[n], &as[n])) n++;
+    CHECK(n == 3 && ks[0] == DM_UP_SCROLL && as[0] == 120 && ks[1] == DM_UP_LDOWN && ks[2] == DM_UP_SCROLL && as[2] == 360, "夹着点击：滚轮 120、按下、滚轮 360（不跨过点击） | with a click in between: wheel 120, press, wheel 360 (not merged across the click)");
+    for (int i = 0; i < 40; i++) dm_ui_ptr(DM_UP_SCROLL, .5f, .5f, 120);
+    CHECK(up_take(&k, &a) && a == 24 * 120, "一帧封顶 24 格：40 格并成 2880 | capped at 24 steps per frame: 40 steps merge to 2880 (got %d)", a);
+    dm_ui_ptr(DM_UP_SCROLL, .5f, .5f, 360); dm_ui_ptr(DM_UP_SCROLL, .5f, .5f, -360);
+    CHECK(up_take(&k, &a) && k == DM_UP_SCROLL && a == 0 && !up_take(&k, &a), "来回滚抵消：一条、量 0（泵里不发） | back and forth cancels: one entry of 0 (the pump sends nothing)");
+}
+
 int main(void) {
-    speech_box(); taps(); drop_query(); class_page_scan();
+    speech_box(); taps(); drop_query(); class_page_scan(); wheel_coalesce();
     printf("== t_ui_taps %d 项，失败 %d | %d checks, %d failed ==\n", checks, fails, checks, fails);
     return fails != 0;
 }
