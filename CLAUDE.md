@@ -73,7 +73,7 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
   - **Every checkout shares `$DM_ROOT`:**
     - `$DM_ROOT/out/macapp` is the player's installed Mac App. From a worktree, build into another folder: `dm/tools/mac_app.sh <dir>`.
     - Install on the phone (`run.sh install`) only from the main checkout on `main`.
-    - Windowed game runs steal each other's frames, so take the Mac game lock around them: `source dm/ios/tools/mlock.sh; mlock_acquire "<who> <what> ~N min"; trap mlock_release EXIT`. `smoke_mac.sh`, the touch cases and the `ios-mac` / `device` scenario backends already take it or the device lock. The `cli` and `mac-app` backends, `bench.py`, `explore.py` and `replay.py` don't.
+    - Windowed game runs steal each other's frames, so take the Mac game lock around them: `source dm/ios/tools/mlock.sh; mlock_acquire "<who> <what> ~N min"; trap mlock_release EXIT`. `smoke_mac.sh`, the touch cases, `scenario.py` (windowed `cli`, `mac-app`; the `ios-mac` / `device` backends take it or the device lock), `bench.py`, `explore.py`, `replay.py` and `fork_gate.sh` take it themselves unless `XT_LOCK_HELD=1` says a caller holds it; headless runs don't need it.
   - **Land worktree work on `main` from the main checkout:** merge the branch, then delete it.
     - Claude Code's worktrees branch from `origin/main` by default, so push `main` first if a new worktree needs local commits.
     - Two sessions never edit the same files.
@@ -147,6 +147,7 @@ dm/tools/product.sh build|path <touch|rules|keypage>|rev
 
 - Use `regress.sh --fresh` whenever `dm/tools/patch_nso.py` changed.
 - `dm/verify/accept.sh` items need ground-truth recordings that aren't shipped, so they can't be fully run here. Those items report `⚪ 不可用` (unavailable) and don't count as red.
+- **The fork's gate is `dm/verify/fork_gate.sh quick|unit|core|full|long|device`** (`dm/verify/FORK_GATE.md`): each step through `dmtest.py`, results in `$DM_ROOT/run/gate/latest/`, last line `FORKGATE OK|RED {json}`. Run `quick unit` for every change, `core` for host changes (≤ 15 min), `full` before rebuilding the apps.
 
 **Machine-readable results** (prefer these to grepping Chinese log lines):
 

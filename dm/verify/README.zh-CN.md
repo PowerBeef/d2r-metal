@@ -30,6 +30,10 @@ D2R Mobile 把 Switch 版游戏程序改写后直接在 iOS 上执行。这个�
 - `structck.py` 用 `llvm-objdump` 与 `llvm-objcopy` 作独立反汇编器，目录由 `LLVM_BIN` 指定，缺省 `/opt/homebrew/opt/llvm@23/bin`。`brew install llvm` 装到的不一定是 23 版，这个目录不存在时设 `LLVM_BIN=$(brew --prefix llvm)/bin`。
 - 多个脚本用到 `timeout` 命令；系统里没有的话要自己装（GNU coreutils 里有）。
 
+## 分支自己的闸门：`fork_gate.sh`
+
+d2r-metal 跑 `fork_gate.sh quick|unit|core|full|long|device`，不跑 `accept.sh`（它的各项要本分支没有的真值录制）。见 [FORK_GATE.zh-CN.md](FORK_GATE.zh-CN.md)。
+
 ## 改写等价回归：`regress.sh`
 
 验证「改写没有改变程序行为」。只要游戏文件与产物，秒级跑完。

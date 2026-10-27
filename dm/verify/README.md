@@ -30,6 +30,10 @@ External tools:
 - `structck.py` uses `llvm-objdump` and `llvm-objcopy` as an independent disassembler; their directory is given by `LLVM_BIN`, default `/opt/homebrew/opt/llvm@23/bin`. `brew install llvm` does not necessarily install version 23; if that directory does not exist, set `LLVM_BIN=$(brew --prefix llvm)/bin`.
 - Several scripts use the `timeout` command; if your system does not have it you have to install it yourself (it is part of GNU coreutils).
 
+## The fork's own gate: `fork_gate.sh`
+
+d2r-metal runs `fork_gate.sh quick|unit|core|full|long|device` instead of `accept.sh`, whose items need ground-truth recordings this fork doesn't have. See [FORK_GATE.md](FORK_GATE.md).
+
 ## Rewrite-equivalence regression: `regress.sh`
 
 Verifies that "the rewrite has not changed the program's behavior". Needs only the game files and the build output, and finishes in seconds.
