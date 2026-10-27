@@ -123,20 +123,69 @@ static const char *envdir(const char *var, const char *rel, char *buf, size_t n)
     snprintf(buf, n, "%s%s/%s", getenv("DM_ROOT") ?: getenv("HOME"), getenv("DM_ROOT") ? "" : "/dm-work", rel); return buf;
 }
 
-// 测试注入 DM_TEST_FS_FAILAT=<点>[:<次数>][,…]：存档事务里写失败收场的几步（mountclone 挂载时克隆工作目录、reclone 提交被拒后重新克隆、
-// guestname 改名后写客体名、renameback 改名回退）前 <次数> 次（缺省 1）按 ENOSPC 失败，验「不退出、已提交版本不变、下次提交照常」（tests/t_fs.c）；
-// guestopen = 游戏在事务存档上写方式打开文件（模拟盘满时打开失败；游戏存档任务对它的处理见 patch_nso.py 剪口 0xe0c04c）
-// Test injection DM_TEST_FS_FAILAT=<point>[:<count>][,...]: the steps of a save transaction that end in a failed write (mountclone = clone the work directory at mount, reclone = reclone after a refused commit,
-// guestname = write the guest name after a rename, renameback = rename rollback) fail with ENOSPC for the first <count> times (default 1), to check "no exit, committed version unchanged, next commit works" (tests/t_fs.c);
-// guestopen = the game opening a file for writing on the transactional save (an open failing on a full disk; how the game's save job handles it: patch_nso.py cut 0xe0c04c)
+// 测试注入 DM_TEST_FS_FAILAT=<点>[@<跳过>][:<次数>][,…]：存档事务里写失败收场的几步（mountclone 挂载时克隆工作目录、reclone 提交被拒后重新克隆、
+// guestname 改名后写客体名、renameback 改名回退）先放过 <跳过> 次（缺省 0）、再 <次数> 次（缺省 1）按 ENOSPC 失败，验「不退出、已提交版本不变、下次提交照常」（tests/t_fs.c）；
+// guestopen = 游戏在事务存档上写方式打开文件（模拟盘满时打开失败；游戏存档任务对它的处理见 patch_nso.py 剪口 0xe0c04c）。
+// 跳过让故障落在局内的某次存盘（选角页的几次存盘先放过），控制口 fault arm 在跑着的时候另挂一个（dm_fs_fault_arm）。每次注入发一个 fault 事件，场景据此确认故障真的打到了
+// Test injection DM_TEST_FS_FAILAT=<point>[@<skip>][:<count>][,...]: the steps of a save transaction that end in a failed write (mountclone = clone the work directory at mount, reclone = reclone after a refused commit,
+// guestname = write the guest name after a rename, renameback = rename rollback) are let through <skip> times (default 0), then fail with ENOSPC <count> times (default 1), to check "no exit, committed version unchanged, next commit works" (tests/t_fs.c);
+// guestopen = the game opening a file for writing on the transactional save (an open failing on a full disk; how the game's save job handles it: patch_nso.py cut 0xe0c04c).
+// Skipping lands the fault on a given in-game save (letting the character-select saves through); the control port's fault arm adds one while running (dm_fs_fault_arm). Every injection emits a fault event, so a scenario can confirm the fault really hit
+static const char *const k_fault_pts[] = { "mountclone", "reclone", "guestname", "renameback", "guestopen" };
+typedef struct { char pt[16]; int skip, count, seen, fired; } fs_fault;
+static fs_fault g_fault[8]; static int g_nfault; static char g_fault_env[256]; static pthread_mutex_t g_fault_lock = PTHREAD_MUTEX_INITIALIZER;
+static int fault_known(const char *pt) { for (size_t i = 0; i < sizeof k_fault_pts / sizeof *k_fault_pts; i++) if (!strcmp(pt, k_fault_pts[i])) return 1; return 0; }
+static void fault_put(const char *pt, int skip, int count) {   // 持 g_fault_lock | holds g_fault_lock
+    int k = 0; while (k < g_nfault && strcmp(g_fault[k].pt, pt)) k++;
+    if (k == g_nfault) { if (g_nfault >= 8) return; g_nfault++; }
+    fs_fault *f = &g_fault[k]; strlcpy(f->pt, pt, sizeof f->pt); f->skip = skip; f->count = count; f->seen = f->fired = 0;
+}
+static void fault_env(void) {   // 持 g_fault_lock；换了一组注入就从头数 | holds g_fault_lock; a new set of injections starts counting from zero
+    const char *e = getenv("DM_TEST_FS_FAILAT"); if (!e) e = "";
+    if (!strcmp(g_fault_env, e)) return;
+    strlcpy(g_fault_env, e, sizeof g_fault_env); g_nfault = 0;
+    char buf[256]; strlcpy(buf, e, sizeof buf);
+    for (char *sv, *t = strtok_r(buf, ",", &sv); t; t = strtok_r(NULL, ",", &sv)) {
+        char pt[16]; int skip = 0, count = 1; size_t n = strcspn(t, "@:"); if (!n || n >= sizeof pt) continue;
+        memcpy(pt, t, n); pt[n] = 0; const char *q = t + n;
+        if (*q == '@') { skip = atoi(q + 1); q += 1 + strspn(q + 1, "0123456789"); }
+        if (*q == ':') count = atoi(q + 1);
+        if (fault_known(pt)) fault_put(pt, skip, count);
+    }
+}
+int dm_fs_fault_arm(const char *pt, int skip, int count) {   // 控制口 fault arm：跑着时挂一个（同名的换掉、从头数）；不认识的点返回 -1 | the control port's fault arm: add one while running (replacing one of the same name, counting from zero); -1 for an unknown point
+    if (!pt || !fault_known(pt) || skip < 0 || count < 1) return -1;
+    pthread_mutex_lock(&g_fault_lock); fault_env(); fault_put(pt, skip, count); pthread_mutex_unlock(&g_fault_lock);
+    LOG("故障注入：挂上 %s（先放过 %d 次，再失败 %d 次）", pt, skip, count); return 0;
+}
+size_t dm_fs_fault_list(char *out, size_t cap) {   // 控制口 fault list：各点「挂着 / 经过 / 已打」的 JSON 数组 | the control port's fault list: a JSON array of each point's armed / seen / fired counts
+    size_t n = snprintf(out, cap, "["); pthread_mutex_lock(&g_fault_lock); fault_env();
+    for (int k = 0; k < g_nfault && n < cap; k++) n += snprintf(out + n, cap - n, "%s{\"point\":\"%s\",\"skip\":%d,\"count\":%d,\"seen\":%d,\"fired\":%d}", k ? "," : "", g_fault[k].pt, g_fault[k].skip, g_fault[k].count, g_fault[k].seen, g_fault[k].fired);
+    pthread_mutex_unlock(&g_fault_lock); if (n < cap) n += snprintf(out + n, cap - n, "]"); return n < cap ? n : cap - 1;
+}
 static int dm_fs_test_fail(const char *pt) {
-    static char spec[256]; static int cnt[8]; const char *e = getenv("DM_TEST_FS_FAILAT"); if (!e || !e[0]) return 0;
-    if (strcmp(spec, e)) { strlcpy(spec, e, sizeof spec); memset(cnt, 0, sizeof cnt); }   // 换了一组注入就从头数 | A new set of injections starts counting from zero
-    size_t L = strlen(pt); int k = 0;
-    for (const char *q = spec; *q && k < 8; k++) { const char *end = strchr(q, ','); size_t n = end ? (size_t)(end - q) : strlen(q);
-        if (n >= L && !strncmp(q, pt, L) && (n == L || q[L] == ':')) { int lim = n > L ? atoi(q + L + 1) : 1; if (cnt[k] < lim) { cnt[k]++; errno = ENOSPC; LOG("DM_TEST_FS_FAILAT：%s 第 %d 次按 ENOSPC 失败", pt, cnt[k]); return 1; } return 0; }
-        q = end ? end + 1 : q + n; }
-    return 0;
+    pthread_mutex_lock(&g_fault_lock); fault_env(); int hit = 0, nth = 0;
+    for (int k = 0; k < g_nfault; k++) if (!strcmp(g_fault[k].pt, pt)) { fs_fault *f = &g_fault[k];
+        if (++f->seen > f->skip && f->fired < f->count) { hit = 1; nth = ++f->fired; } break; }
+    pthread_mutex_unlock(&g_fault_lock);
+    if (!hit) return 0;
+    LOG("DM_TEST_FS_FAILAT：%s 第 %d 次按 ENOSPC 失败", pt, nth);
+    DM_EV("fault", "point:s n:d", pt, nth);
+    errno = ENOSPC; return 1;
+}
+// 「存档没存上」的提示：先发 save_alert 事件（场景据此确认玩家被告知了），再交给前端 | the "progress not saved" alert: emit a save_alert event first (so a scenario can confirm the player was told), then hand it to the front end
+static void save_failed_alert(int err) { DM_EV("save_alert", "errno:d", err); front_save_failed(err); }
+// 测试开关 DM_TEST_SAVE_DELAY=<毫秒>（或控制口 fault delay，只管下一次）：存档事务第一次写之前在写的线程（游戏的存档任务）上等这么久，
+// 让「存盘进行到一半时退出 / 进后台」落进来
+// Test switch DM_TEST_SAVE_DELAY=<ms> (or the control port's fault delay, for the next one only): before the first write of a save transaction, wait that long on the writing thread (the game's save job),
+// so a quit / going to the background lands in the middle of a save
+static _Atomic int g_save_delay_once;
+void dm_fs_save_delay_once(int ms) { atomic_store(&g_save_delay_once, ms); }
+static void save_delay(void) {
+    static int env = -1; if (env < 0) { const char *e = getenv("DM_TEST_SAVE_DELAY"); env = e ? atoi(e) : 0; }
+    int ms = atomic_exchange(&g_save_delay_once, 0); if (!ms) ms = env; if (ms <= 0) return;
+    LOG("DM_TEST_SAVE_DELAY：存档事务第一次写前等 %d 毫秒", ms); DM_EV("fault", "point:s ms:d", "savedelay", ms);
+    usleep((useconds_t)ms * 1000);
 }
 static int in_txn_dir(const char *hp) { for (int i = 0; i < g_nmnt; i++) { size_t n = strlen(g_mnt[i].dir); if (g_mnt[i].commit[0] && !strncmp(hp, g_mnt[i].dir, n) && (hp[n] == '/' || !hp[n])) return 1; } return 0; }
 static int rm_tree(const char *p);
@@ -196,7 +245,7 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
     } else strlcpy(g_mnt[g_nmnt].dir, dir, sizeof g_mnt[0].dir);
     g_nmnt++;
     pthread_mutex_unlock(&g_lock);
-    if (txn_err) front_save_failed(txn_err);
+    if (txn_err) save_failed_alert(txn_err);
     if (!ro && !txn) mkdir(dir, 0755);
     LOG("fs 挂载 %s: → %s%s%s", name, txn ? g_mnt[g_nmnt - 1].dir : dir, ro || txn_err ? "（只读）" : txn ? "（事务式存档：工作目录，Commit 原子换入）" : "", g_mnt[g_nmnt - 1].overlay[0] ? "（overlay 优先）" : "");
     return RES_OK;
@@ -611,7 +660,7 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv；事务式存档：工作目录整�
         pthread_mutex_unlock(&g_lock);
         LOG("【红】存档提交拒绝：本事务有存档写失败 errno=%d（工作目录里 0 字节文件：%s）；已提交版本不变，工作目录%s%s", perr, tl ? torn + 1 : "无", rerr ? "没能重新克隆（见上一行）" : "已从已提交版重新克隆", nopen ? "；【红】仍有存档文件开着" : "");
         DM_EV("save", "result:s errno:d", "rejected", perr);
-        if (say) front_save_failed(perr);
+        if (say) save_failed_alert(perr);
         return RES_FAIL;
     }
     char neu[1100], prev[1100]; snprintf(neu, sizeof neu, "%s.new", g_mnt[i].commit); snprintf(prev, sizeof prev, "%s.prev", g_mnt[i].commit);
@@ -643,7 +692,7 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv；事务式存档：工作目录整�
     // Clone / swap failure: the front end shows "progress not saved" (once per run of consecutive failures, see g_commit_fail_said), called on this thread after the lock is released, as for refused commits
     int say = r != RES_OK && !g_commit_fail_said; g_commit_fail_said = r != RES_OK;
     pthread_mutex_unlock(&g_lock);
-    if (say) front_save_failed(ferr ? ferr : EIO);
+    if (say) save_failed_alert(ferr ? ferr : EIO);
     return r;
 }
 HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv；挂载表常驻，卸载为空操作", void, h_fs_Unmount, const char *name) { (void)name; }
@@ -778,7 +827,7 @@ HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp
             if (f && !strncmp(f, "write:", 6)) { fail_n = atoi(f + 6); const char *c = strchr(f + 6, ':'); fail_e = c ? atoi(c + 1) : ENOSPC; }
             cfg = 1; }
         int n = atomic_fetch_add(&g_save_writes, 1) + 1; txn_touch();
-        { uint64_t z = 0; atomic_compare_exchange_strong(&g_txn_first_ns, &z, clock_gettime_nsec_np(CLOCK_MONOTONIC)); }
+        { uint64_t z = 0; if (atomic_compare_exchange_strong(&g_txn_first_ns, &z, clock_gettime_nsec_np(CLOCK_MONOTONIC))) save_delay(); }   // 本事务第一次写 | this transaction's first write
         if (kill_n && n == kill_n) { LOG("DM_TEST_KILL_AT：存档第 %d 次写，直接 _exit（模拟写到一半被杀）", n); _exit(9); }
         if (fail_n && n == fail_n) { LOG("DM_TEST_FS_FAIL：存档第 %d 次写返回失败 errno=%d", n, fail_e); errno = fail_e; save_poison(fail_e); return err_res("pwrite（注入）", "fd"); }
     }
