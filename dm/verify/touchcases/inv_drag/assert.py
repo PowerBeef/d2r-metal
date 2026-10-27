@@ -10,8 +10,8 @@ first_tick = min(ticks)
 initial = r.items_at(first_tick)
 source = [item for item in initial.values() if item.get("x") == 5 and item.get("y") == 3]
 target = [item for item in initial.values() if item.get("x") == 6 and item.get("y") == 3]
-lib.check(len(source) == 1, "初始 (5,3) 目标物品唯一")
-lib.check(not target, "初始 (6,3) 目标格为空")
+lib.precondition(len(source) == 1, "初始 (5,3) 目标物品唯一")
+lib.precondition(not target, "初始 (6,3) 目标格为空")
 if source:
     item_id = source[0]["id"]
     picked = [t for t in ticks if r.items_at(t).get(item_id, {}).get("mode") == 4 and r.cursor_at(t) == item_id]

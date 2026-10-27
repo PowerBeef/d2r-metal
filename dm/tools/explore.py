@@ -168,6 +168,9 @@ def main(argv):
     r.add_argument('--window', action='store_true', help='show the game window (default headless)'); r.add_argument('--out')
     g = sub.add_parser('gen', help='print the generated steps of one episode'); g.add_argument('--seed', type=int, default=1); g.add_argument('--steps', type=int, default=40)
     a = ap.parse_args(argv)
+    sys.path.insert(0, HERE); import scenario   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    held = scenario.game_lock(__file__, argv, f"explore seed {getattr(a, 'seed', '?')} ~{getattr(a, 'episodes', 1)} min", a.cmd == 'run' and a.window)   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
+    if held is not None: return held
     if a.cmd == 'gen':
         for s in actions(a.seed, a.steps): print(s)
         return 0

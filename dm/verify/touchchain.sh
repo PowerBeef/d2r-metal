@@ -21,6 +21,9 @@ START=$SECONDS
 status=2
 mkdir -p "$RUN/user" || exit 2
 if [ -n "$PREFIX" ]; then
+    # 前缀目录整个不在 = 本机没有这份录制（真值录制不随仓发布）：报不可用、退出码 3，不算红；在但缺文件才是红
+    # The prefix folder missing altogether = this machine has no such recording (ground-truth recordings are not shipped): report unavailable with exit code 3, not red; present but incomplete is red
+    [ -d "$PREFIX" ] || { echo "⚪ TOUCHCHAIN $CASE 不可用：缺前缀录制 $PREFIX | unavailable: prefix recording missing"; exit 3; }
     [ -f "$PREFIX/manifest.json" ] && [ -f "$PREFIX/c2s.jsonl" ] || { echo "【红】前缀不完整：$PREFIX" >&2; exit 2; }
     sha=$(sed -n 's/.*"start_save_sha": "\([0-9a-f]*\)".*/\1/p' "$PREFIX/manifest.json")
     root=""   # 起始存档指纹 = data/switch/*/MANIFEST.sha256 文件本身的 SHA-256（同 dm/tools/host_savecmp.sh） | Starting save fingerprint = SHA-256 of the data/switch/*/MANIFEST.sha256 file itself (same as dm/tools/host_savecmp.sh)
@@ -80,6 +83,11 @@ assert_status=$?
 # Interface contract with the host state probe: each case's run directory must have a state.jsonl written by the host (DM_STATE, always written on the first tick); if missing, the host was built without the state probe and the assertion library cannot read state
 [ -s "$RUN/state.jsonl" ] || { echo "断言失败：局目录缺 state.jsonl（宿主未写 DM_STATE）" >&2; assert_status=1; }
 set -e
+if [ "$host_status" -eq 0 ] && [ "$assert_status" -eq 3 ]; then   # 断言库：起跑存档不是这个用例的夹具（前提不满足），判不可用 | the assertion library: the starting save is not this case's fixture (a precondition is unmet): unavailable
+    [ "${DM_TOUCH_KEEP:-0}" = 1 ] || rm -rf "$RUN"
+    echo "⚪ TOUCHCHAIN $CASE 不可用：起跑存档不满足用例前提 | unavailable: the starting save does not meet the case's preconditions（DM_TOUCH_SAVE=$REF）"
+    exit 3
+fi
 if [ "$host_status" -eq 0 ] && [ "$assert_status" -eq 0 ]; then
     status=0
     [ "${DM_TOUCH_KEEP:-0}" = 1 ] || rm -rf "$RUN"

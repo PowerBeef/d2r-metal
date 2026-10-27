@@ -29,6 +29,7 @@ class AssertFail(AssertionError):
 
 
 _FAILURES = []
+_UNMET = []
 _CHECKS = 0
 _TICK_RE = re.compile(r"^(?:DM:Tick:)?(\d+)(?:#)?$")
 
@@ -38,6 +39,18 @@ def check(cond, msg):
     _CHECKS += 1
     if not cond:
         _FAILURES.append(str(msg))
+    return bool(cond)
+
+
+# 前提：起跑存档里得有用例要的东西（如背包某格的物品）。不满足 = 本机的存档不是这个用例的夹具，判「不可用」（退出码 3），不判红；
+# 其余检查照常记，但前提不满足时不再算数（前提不对，后面的结论没有意义）
+# Precondition: the starting save must hold what the case needs (such as an item in a given inventory slot). Unmet = this machine's save is not this case's fixture: "unavailable" (exit code 3), not red;
+# the other checks are still recorded, but they do not count once a precondition is unmet (with a wrong starting state their verdict means nothing)
+def precondition(cond, msg):
+    global _CHECKS
+    _CHECKS += 1
+    if not cond:
+        _UNMET.append(str(msg))
     return bool(cond)
 
 
@@ -220,7 +233,10 @@ def events(path):
 
 
 # ---------- 日志红标守卫 | Log red-marker guard ----------
-RED_MARKERS = re.compile(r"【红】|🔴|\bFATAL\b|CRASH sig=|看门狗")
+# 含 logred.sh 那几条 Metal 命令缓冲 / GPU 故障 / 管线失败：这些行不经 LOG、不带【红】，原先只有 logred.sh 认（2026-10-26 在 820 份现有场景日志上核过，零误报）
+# Includes logred.sh's Metal command-buffer / GPU fault / pipeline failure patterns: those lines bypass LOG and carry no 【红】, and only logred.sh caught them before (checked on 820 existing scenario logs on 2026-10-26: no false hits)
+RED_MARKERS = re.compile(r"【红】|🔴|\bFATAL\b|CRASH sig=|看门狗|MTLCommandBufferStatus(Error|Fault)|CommandBufferCallbackError"
+                         r"|Discarded \(victim|Discarded (victim|GPU (hang|error|fault|recovery))|管线.*失败|[Pp]ipeline.*fail")
 
 
 def logred(log_path, allow=()):
@@ -319,6 +335,11 @@ def main(argv=None):
     if argv and argv[0] == "sanitizers": return sanitizers_main(argv[1:])
     if argv and argv[0] == "metal": return metal_main(argv[1:])
     del argv
+    if _UNMET:
+        print(f"⚪ 不可用 | unavailable：起跑存档不满足 {len(_UNMET)} 条前提 | the starting save misses {len(_UNMET)} precondition(s)")
+        for unmet in _UNMET:
+            print(f"- {unmet}")
+        return 3
     if _FAILURES:
         print(f"红 {len(_FAILURES)} 条")
         for failure in _FAILURES:

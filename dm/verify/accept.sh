@@ -177,6 +177,7 @@ func_cases() {
       reported=$(awk '/^TOUCHCHAIN / {print $(NF - 1)}' "$log" | tail -1)
       elapsed=${reported:-$((SECONDS - started))}
       status=RED
+      [ "$rc" -eq 3 ] && status=UNAVAIL   # touchchain.sh：用例要的前缀录制本机没有 | touchchain.sh: the prefix recording the case needs is not on this machine
       [ "$rc" -eq 0 ] && [ "$elapsed" -le "${FUNC_LIMIT_S:-60}" ] && status=OK   # 判对错只看断言；墙钟只作卡死兜底（60 s）。20 s 硬线在多线并行 accept 时反复误红，用例单跑 4–5 s | right or wrong is judged by assertions only; wall clock is only a backstop for hangs (60 s). The hard 20 s line repeatedly failed spuriously when several accept runs ran in parallel; a case run alone takes 4–5 s
       printf '%s %s\n' "$status" "$elapsed" > "$L/func_${name}.row"
       echo >&8
@@ -190,6 +191,8 @@ func_cases() {
     printf 'FUNCCASE %s %s %s 秒%s\n' "$name" "$status" "$elapsed" "$note"
     if [ "$status" = OK ]; then
       green=$((green + 1))
+    elif [ "$status" = UNAVAIL ]; then
+      unav=$((${unav:-0} + 1)); printf 'FUNCUNAVAIL %s 不可用：缺前缀录制 | unavailable: prefix recording missing\n' "$name"
     else
       log="$L/func_${name}.log"
       detail=$(grep -E '局目录：|断言失败：' "$log" | tail -2 | tr '\n' ' ')
@@ -197,9 +200,9 @@ func_cases() {
       printf 'FUNCFAIL %s %s\n' "$name" "$detail"
     fi
   done
-  printf 'FUNC %s/%s\n' "$green" "$total"
+  printf 'FUNC %s/%s%s\n' "$green" "$((total - ${unav:-0}))" "$([ "${unav:-0}" -gt 0 ] && printf '（另 %s 例不可用 | %s unavailable）' "$unav" "$unav")"
   [ ${#pending[@]} -eq 0 ] || { printf 'FUNCPENDING 待接入 %s 例：' "${#pending[@]}"; printf '%s；' "${pending[@]}"; echo; }
-  [ "$green" -eq "$total" ]
+  [ "$green" -eq "$((total - ${unav:-0}))" ]   # 不可用的例不算红（同其余各项的 ⚪） | unavailable cases do not count as red (like the other items' ⚪)
 }
 item 9 "⑨ 功能用例 touchchain" "自动收集 script.txt + assert.py 用例；各例并行；断言通过（墙钟 60 s 只作卡死兜底）" func.log '^(FUNCCASE|FUNC|FUNCFAIL|FUNCPENDING)' 1000 func_cases &
 PAGES=()

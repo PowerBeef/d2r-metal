@@ -45,6 +45,16 @@ CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event')
 BAD = ('red', 'fatal', 'crash', 'watchdog')
 
 
+def game_lock(script, argv, what, needed):
+    """开窗的跑局（带窗口的命令行宿主、Mac App 测试副本）先拿 Mac 游戏锁（dm/ios/tools/mlock.sh），免得和别的开窗跑局互相盖住、停帧。
+    父进程已持锁（XT_LOCK_HELD=1，如 fork_gate.sh、gamelock.sh）或不开窗就返回 None、照常往下跑；否则在锁里把同一条命令重跑一遍，返回它的退出码。
+    Runs that open a window (the windowed command-line host, the Mac App test copy) take the Mac game lock (dm/ios/tools/mlock.sh) first, so they do not cover each other and stall frames.
+    Returns None (carry on as usual) when a parent already holds the lock (XT_LOCK_HELD=1, e.g. fork_gate.sh, gamelock.sh) or nothing opens a window; otherwise reruns the same command inside the lock and returns its exit code."""
+    if not needed or os.environ.get('XT_LOCK_HELD') == '1': return None
+    sh = 'source "$1" && mlock_acquire "$2" || exit 2; trap mlock_release EXIT; shift 2; "$@"'
+    return subprocess.call(['bash', '-c', sh, 'game_lock', os.path.join(DM, 'ios', 'tools', 'mlock.sh'), what, sys.executable, os.path.abspath(script)] + list(argv))
+
+
 class ScenarioError(Exception):
     pass
 
@@ -519,6 +529,8 @@ def main(argv):
             try: meta, steps, checks = parse(f); print(f"SCENARIO-CHECK {meta['name']} OK {len(steps)} steps, {len(checks)} checks")
             except ScenarioError as e: bad += 1; print(f'SCENARIO-CHECK {os.path.basename(f)} RED {e}')
         return 1 if bad else 0
+    held = game_lock(__file__, argv, f"scenario {' '.join(os.path.basename(f) for f in a.files)[:60]} ~{len(a.files) * 2} min", a.backend == 'mac-app' or (a.backend == 'cli' and not a.headless))
+    if held is not None: return held
     results, rc = [], 0
     if a.metal_validation in ('shader', 'all') and not os.environ.get('SCN_DMHOST', '').endswith('_m3'):
         # macOS 27 实测：Metal 4 宿主开着色器校验时，第一次出图提交就崩在 Metal 自己的 -[MTL4GPUDebugCommandBuffer applyResidencySets:]（挂着图层的驻留集）；旧接口宿主正常

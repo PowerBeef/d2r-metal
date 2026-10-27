@@ -11,3 +11,5 @@ save_now timeout=8
 sleep 2
 save_now timeout=8
 quit
+check event save result=rejected
+check saved

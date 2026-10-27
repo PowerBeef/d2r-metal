@@ -299,6 +299,8 @@ def main(argv):
     b.add_argument('--out'); b.add_argument('--cool', type=float, default=120)
     s = sub.add_parser('show'); s.add_argument('file')
     a = ap.parse_args(argv)
+    held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * 2} min", a.cmd in ('run', 'ab'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
+    if held is not None: return held
     if a.cmd == 'run': return cmd_run(a)
     if a.cmd == 'ab': return cmd_ab(a)
     with open(a.file, encoding='utf-8') as f: show(json.load(f))

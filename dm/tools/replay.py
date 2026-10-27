@@ -93,6 +93,8 @@ def main(argv):
     p = sub.add_parser('run'); p.add_argument('recording'); p.add_argument('--dmhost'); p.add_argument('--out')
     c = sub.add_parser('check'); c.add_argument('recording'); c.add_argument('--dmhost', action='append', help='host executable (repeatable; default dm/host/dmhost)')
     a = ap.parse_args(argv)
+    held = scenario.game_lock(__file__, argv, f"replay record {os.path.basename(getattr(a, 'scenario', ''))} ~2 min", a.cmd == 'record' and a.window)   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
+    if held is not None: return held
     try:
         if a.cmd == 'record': return record(a)
         rec = os.path.abspath(a.recording)

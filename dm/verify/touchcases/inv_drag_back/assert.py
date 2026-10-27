@@ -8,7 +8,7 @@ r = lib.load(sys.argv[1])
 ticks = sorted(r._state_by_tick)
 initial = r.items_at(min(ticks))
 source = [item for item in initial.values() if item.get("x") == 5 and item.get("y") == 3]
-lib.check(len(source) == 1, "初始 (5,3) 目标物品唯一")
+lib.precondition(len(source) == 1, "初始 (5,3) 目标物品唯一")
 if source:
     item_id = source[0]["id"]
     final = r.items_at(ticks[-1]).get(item_id, {})
