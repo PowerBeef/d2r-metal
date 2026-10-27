@@ -33,7 +33,6 @@
 // The read-only data segment is writable by the host (loader.c only seals the code region and the patch region); the original value of each string is
 // verified one by one, and nothing is written on a mismatch (wrong game version).
 #include "hle.h"
-#include "dm_hud.h"
 #include "dm_input.h"
 #include "dm_i18n.h"
 #include "dm_modetx.h"
@@ -233,21 +232,6 @@ void dm_padmode_lang_reset(void) {
         g_str[i].node = g_str[i].orig = g_str[i].olen = 0; }
     if (g_have) LOG("手柄 / 触屏布局：串表要重装（切语言）→ %d 条写回原文，记的节点清空，重装后重新认", back);
 }
-// 手柄版暂停菜单「游戏难度：N」行（布局 touch_layout.py pad_pause；难度挂暂停菜单）：按钮发 ClosePanel:TouchPadDiff（空操作，这里当信号收），按一下人数档 +1、8 之后回 1。
-// 菜单开着时游戏停拍，请求要关了菜单才落地（dm_hud.c 在服务端拍入口取），所以连按时从「上一次请求的档」接着加，当前档位写在这一行我们自己的文字控件 TouchPadDiffTxt 上。
-// "Game Difficulty: N" row of the controller pause menu (layout touch_layout.py pad_pause; difficulty lives in the pause menu): the button sends
-// ClosePanel:TouchPadDiff (a no-op, received here as a signal); each press raises the /players setting by 1, wrapping back to 1 after 8.
-// While the menu is open the game stops ticking and a request only takes effect once the menu is closed (dm_hud.c picks it up at the server tick entry),
-// so repeated presses keep adding from "the last requested setting"; the current setting is written on this row in our own text widget TouchPadDiffTxt.
-static _Atomic int g_pause_open, g_diff_pend;   // 暂停菜单开着；菜单开着期间已请求、还没落地的档（0 = 没有） | Pause menu is open; the setting requested while the menu is open that has not taken effect yet (0 = none)
-void dm_padmode_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c，游戏主线程） | UI message callback (diag.c, game main thread)
-    if (!cat || !act || !arg || strcmp(cat, "PanelManager")) return;
-    if (!strncmp(arg, "PauseLayout", 11)) { if (!strcmp(act, "OpenPanel")) { atomic_store(&g_pause_open, 1); atomic_store(&g_diff_pend, 0); } else if (!strcmp(act, "ClosePanel")) atomic_store(&g_pause_open, 0); return; }
-    if (strcmp(act, "ClosePanel") || strcmp(arg, "TouchPadDiff")) return;
-    dm_hud_info h; dm_hud_get(&h); int cur = atomic_load(&g_diff_pend); if (!cur) cur = h.players;
-    if (!cur) { LOG("【红】手柄暂停菜单：游戏难度没读到当前档位，不动"); return; }
-    int to = cur % 8 + 1; dm_hud_request_players(to); atomic_store(&g_diff_pend, to); LOG("手柄暂停菜单：游戏难度 %d → %d", cur, to);
-}
 static uint64_t pm_find(uint64_t w, const char *name, int dep) {   // 按名字找控件：名字 +8、子控件 +0x58、个数 +0x60（同 dm_custom.c） | Find a widget by name: name +8, children +0x58, count +0x60 (same as dm_custom.c)
     if (!w || dep > 6) return 0; const char *nm = (const char *)rd8(w + 8); if (nm && !strcmp(nm, name)) return w;
     uint64_t ch = rd8(w + 0x58), n = rd8(w + 0x60); for (uint64_t i = 0; ch && i < n && i < 256; i++) { uint64_t r = pm_find(rd8(ch + 8 * i), name, dep + 1); if (r) return r; }
@@ -413,14 +397,6 @@ static void legend_pump(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧
         for (uint64_t i = 0; arr && i < n && i < 10; i++) L += (size_t)snprintf(o + L, L < sizeof o ? sizeof o - L : 0, " %x", *(uint32_t *)(uintptr_t)(arr + 0x40 * i));
         LOG("手柄提示条：帧 %llu，近 120 帧声明 %d 次、补加 %d 次；提示条现有 %llu 条，字形%s", (unsigned long long)frame, tot, miss, (unsigned long long)n, o); tot = miss = 0; }
 }
-static void diff_text(uint8_t *b, uint64_t frame) {   // 游戏主线程：菜单开着时每 6 帧核一次这行的字（只写我们自己的 TouchPadDiffTxt，文字控件虚表 main+0x20ba4c8，同 dm_pouch.c w_text） | Game main thread: while the menu is open, check this row's text every 6 frames (only writes our own TouchPadDiffTxt; text widget vtable main+0x20ba4c8, same as w_text in dm_pouch.c)
-    if (!g_cur || !atomic_load(&g_pause_open) || frame % 6) return;
-    uint64_t w = pm_find(rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), "TouchPadDiffTxt", 0); if (!w || rd8(w) - (uint64_t)(uintptr_t)b != 0x20ba4c8) return;
-    dm_hud_info h; dm_hud_get(&h); int n = atomic_load(&g_diff_pend); if (!n) n = h.players; if (!n) return;
-    char t[64]; snprintf(t, sizeof t, dm_str(b, "dmPadDiffLine"), n); size_t L = strlen(t);
-    if (rd8(w + 0x90) == L && !memcmp((const void *)(uintptr_t)rd8(w + 0x88), t, L)) return;
-    ((void (*)(uint64_t, const char *, uint64_t))(b + 0x136e5c))(w + 0x88, t, L); ((void (*)(uint64_t))(b + 0xadc434))(w);
-}
 // 测试（触点脚本 padcur 步，没有实体手柄时造现场用）：把原版手柄光标直接放到视口归一化坐标处并让游戏当场重算悬停（dm_ui_hover_now）。
 // 只是摆光标——摇杆推光标有加速、跟帧率走，按时长推落不准格子；之后的 A / Y 仍走手柄键那条路
 // Test (touch script padcur step, for setting up a scenario without a physical controller): put the original controller cursor directly at viewport-normalized
@@ -434,7 +410,6 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
       if (at > 0 && frame >= (uint64_t)at) { at = 0; dm_padmode_lang_reset(); } }
     { uint64_t tc = atomic_exchange(&g_test_cur, 0); if (tc >> 63) { int dm_ui_hover_now(int, int); int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c), x = (int)(((tc >> 16) & 0xffff) / 65535.0 * W), y = (int)((tc & 0xffff) / 65535.0 * H);
         int ok = dm_ui_hover_now(x, y); LOG("测试 padcur：手柄光标放到 (%d,%d) → %d", x, y, ok); } }
-    diff_text(b, frame);
     legend_pump(b, frame);
     void dm_oe_ui_opmode(int m); int dm_opmode(void);
     // 测试开关 DM_TEST_PADMODE=<帧>:<0|1>[,<帧>:<0|1>…]（宿主没有手柄 / 触屏，用它切模式）；每次切后与开机第 300 帧各用原版取串 0x7f5630 读前 3 条记一行

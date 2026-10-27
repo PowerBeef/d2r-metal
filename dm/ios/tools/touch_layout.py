@@ -468,7 +468,7 @@ def _bind_touch(s):
     return s, n
 # 帮助页整页切掉（帮助页不留）：去掉的是入口——暂停菜单里的「帮助」按钮（两份布局）与 HUD 的帮助按钮面板；剩下的按钮按原间距 150 重新排匀、整组仍以 y 653 为中心，不留空洞。
 # The help page is cut out entirely (the help page is not kept): what is removed is the entries -- the 「帮助」(Help) button in the pause menu (two layouts) and the HUD's help button panel; the remaining buttons are re-spaced evenly at the original spacing of 150 and the whole group is still centered on y 653, leaving no hole.
-def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=()):
+def _pause_no_help(ys, hide=('Help',), restart_y=None):
     # 不换原版按钮的图和字（换成前端按钮图 + 放大白字的做法观感差，已撤）；「消息记录」入口不要。
     # 手指尺寸不靠改外观：条目少了以后把间距拉开（中心距 240 单位 ≈ 9.4 毫米），命中外扩交给输入层的就近吸附
     # 「分享诊断日志」：借原版「消息记录」按钮（同一张按钮图、同一种字），换字、
@@ -495,40 +495,25 @@ def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=()):
             r = _sub1(_sub1(_sub1(b, '"name": "Exit"', '"name": "TouchRestart"'), '"textString": "@SaveAndExit"', '"textString": "@dmPauseRestart"'), '"onClickMessage": "PausePanelMessage:ExitGame"', '"onClickMessage": "PanelManager:ClosePanel:TouchRestart"')
             r = re.sub(r'"rect":\s*\{ "x": 564, "y": \d+ \}', '"rect": { "x": 564, "y": %d }' % restart_y, r, count=1)
             s = s[:e] + ',\n        ' + r + s[e:]; n += 1
-        # 手柄版另加的行（pad_pause）：同样复制「保存并退出」按钮，换名、换字、换消息（空操作，宿主当信号收）
-        # Rows added for the controller version (pad_pause): likewise copy the "Save and Exit" button and change its name, text and message (a no-op, which the
-        # host receives as a signal)
-        for name, text, y in extra:
-            b = _widget_block(s, 'Exit'); e = s.index(b) + len(b)
-            r = _sub1(_sub1(_sub1(b, '"name": "Exit"', '"name": "%s"' % name), '"textString": "@SaveAndExit"', '"textString": "%s"' % text), '"onClickMessage": "PausePanelMessage:ExitGame"', '"onClickMessage": "PanelManager:ClosePanel:%s"' % name)
-            r = re.sub(r'"rect":\s*\{ "x": 564, "y": \d+ \}', '"rect": { "x": 564, "y": %d }' % y, r, count=1)
-            s = s[:e] + ',\n        ' + r + s[e:]; n += 1
         return s, n
     return fn
-# 手柄版暂停菜单（「难度挂暂停菜单」）：原版布局 + 我们的功能行，放原版路径（gen_romfs_overlay.py 手柄版布局）；触屏插回的关闭钮不带。
-# 行 = 游戏难度 / 保存并退出 / 一键重开 / 选项 / 编年史（经典版没有）/ 分享诊断日志；帮助、消息记录照的裁定不留，战利品过滤器不留是因为它的设置页（LootFilterOptionsPanel）在本移植里一开就崩。
+# 手柄版暂停菜单：原版布局 + 我们的功能行，放原版路径（gen_romfs_overlay.py 手柄版布局）；触屏插回的关闭钮不带。
+# 行 = 保存并退出 / 一键重开 / 选项 / 编年史（经典版没有）/ 分享诊断日志；帮助、消息记录照的裁定不留，战利品过滤器不留是因为它的设置页（LootFilterOptionsPanel）在本移植里一开就崩。
 #   「选项」固定在第四行（y 653）：原版手柄版开暂停菜单时自由光标在屏幕正中、压着哪行哪行高亮，直接按确认就点它——正中那行只许是按了没后果的。
-#   「游戏难度：N」= 按一下人数档 +1（8 之后回 1），当前档位写在这一行上。
+#   人数档不在这里：照原版在选项页「离线难度缩放」那一行改。
 # 按钮图高 120 单位：带编年史那版七行在原版首末两行之间（278–1028）等距 125；经典版原底图只放得下四行，换用带编年史那版的底图（同尺寸），同一套行距排前六行（少编年史那行，后一行上移）
-# Gamepad pause menu ("difficulty hangs on the pause menu"): the original layout + our feature rows, placed at the original path (gamepad layout in gen_romfs_overlay.py); the close button inserted for touch is not included.
-# Rows = Game Difficulty / Save and Exit / Quick Restart / Options / Chronicle (absent in the classic version) / Share Diagnostics; Help and Message Log are not kept, as ruled, and Loot Filter is not kept because its settings page (LootFilterOptionsPanel) crashes as soon as it opens in this port.
+# Gamepad pause menu: the original layout + our feature rows, placed at the original path (gamepad layout in gen_romfs_overlay.py); the close button inserted for touch is not included.
+# Rows = Save and Exit / Quick Restart / Options / Chronicle (absent in the classic version) / Share Diagnostics; Help and Message Log are not kept, as ruled, and Loot Filter is not kept because its settings page (LootFilterOptionsPanel) crashes as soon as it opens in this port.
 #   "Options" is fixed on the fourth row (y 653): when the original gamepad UI opens the pause menu the free cursor is at the centre of the screen and highlights whichever row it rests on, and pressing confirm straight away activates it -- the centre row may only be one whose press has no consequence.
-#   "Game Difficulty: N" = one press raises the player-count setting by 1 (back to 1 after 8), with the current setting shown on this row.
+#   The player count is not here: as in the game, it is set on the Offline Difficulty Scaling row of the Options page.
 # Button image height is 120 units: in the version with the Chronicle, seven rows are spaced evenly by 125 between the original first and last rows (278–1028); the classic version's own background only fits four rows, so the background of the Chronicle version (same size) is used and the first six rows are laid out with the same spacing (without the Chronicle row, the following row moves up)
 def pad_pause(s, garden, share=True):   # share=False（Mac App）：没有系统分享面板，「分享诊断日志」行不放 | share=False (Mac App): there is no system share sheet, so the "Share Diagnostics" row is left out
-    ex = (('TouchPadDiff', '', 278),); y = 278
     sh = lambda y0, y1: {'MessageLog': (y0, y1)} if share else {}; hs = () if share else ('MessageLog',)
-    if garden: s = _pause_no_help({'Settings': (428, 653), 'Exit': (728, 403), 'Chronicle': (1028, 778), **sh(278, 903)}, hide=('Help', 'LootFilter') + hs, restart_y=528, extra=ex)(s)[0]
+    if garden: s = _pause_no_help({'Settings': (428, 653), 'Exit': (728, 403), 'Chronicle': (1028, 778), **sh(278, 903)}, hide=('Help', 'LootFilter') + hs, restart_y=528)(s)[0]
     else:
         s = _sub1(s, '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBGClassic"', '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBG"')
-        s = _pause_no_help({'Settings': (578, 653), 'Exit': (878, 403), **sh(428, 778)}, hide=('Help',) + hs, restart_y=528, extra=ex)(s)[0]
-    # 「游戏难度：N」的字：菜单开着时游戏停拍、原版系统通知要关了菜单才出，所以当前档位直接写在这一行上——按钮自己不带字，上面叠一个同字体的文字控件，宿主写（dm_padmode.c）
-    # Text of "Game Difficulty: N": while the menu is open the game stops ticking and the original system notification only appears once the menu is closed,
-    # so the current setting is written directly on this row. The button itself carries no text; a text widget with the same font is stacked on top and
-    # written by the host (dm_padmode.c)
-    i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    return (s[:i].rstrip(' ') + '        { "type": "TextBoxWidget", "name": "TouchPadDiffTxt", "fields": { "rect": { "x": 564, "y": %d, "width": 664, "height": 120 }, "text": "@OptionsMenuGameDifficulty", '
-            '"style": { "fontColor": "$LightButtonTextColor", "pointSize": "$MediumLargeFontSize", "alignment": { "h": "center", "v": "center" } } } },\n    ' % y + s[i:])
+        s = _pause_no_help({'Settings': (578, 653), 'Exit': (878, 403), **sh(428, 778)}, hide=('Help',) + hs, restart_y=528)(s)[0]
+    return s
 # 魔盒并排时的两个标题（dm_cursor.c 魔盒并排那段）：原版标题条此时写的是「赫拉迪克方块 | 物品栏」（魔盒面板在原版里占左边那一位），
 # 并排后左边其实是储藏箱、右边是魔盒。原版那两个字挪出屏（位置守卫），换成我们自己的两个文字控件：字用原版串（@stash / @box）、样式照面板标题，
 # 位置照原版两个标题字（标题条 Tabs 宽 2880、两等分：左 0..1440、右 1440..2880），缺省在屏外；插在 Tabs 后面、同一个父控件里（同一套缩放与原点，画在标题条之上）。
