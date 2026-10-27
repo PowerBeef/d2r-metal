@@ -6,6 +6,8 @@
 #include "dm_ctl.h"
 #include "dm_hud.h"
 #include <unistd.h>
+#include <limits.h>
+#include <strings.h>
 
 #include "dm_cursor.h"
 #include "dm_world.h"
@@ -189,10 +191,46 @@ static int cmd_walk_to(const ctl_args *a, char *out, size_t cap, char *err, size
 static pthread_mutex_t g_shot_mu = PTHREAD_MUTEX_INITIALIZER; static char g_shot_path[1024]; static _Atomic int g_shot_done, g_shot_ok;
 static void shot_hook(const char *path, int ok) { pthread_mutex_lock(&g_shot_mu); if (!strcmp(path, g_shot_path)) { atomic_store(&g_shot_ok, ok); atomic_store(&g_shot_done, 1); } pthread_mutex_unlock(&g_shot_mu); }
 static int c_shot(void *a) { (void)a; return atomic_load(&g_shot_done); }
+// 截图路径的范围：控制口只供测试，但它收的路径原先照写，App 能写的文件都能被一个 PNG 盖掉。现在只写 .png、路径里不许 ..，并且——
+//   iOS：只收相对路径，落在 Documents 下；
+//   Mac：所在目录（已存在，按 realpath 比）要在这一局的运行目录里：DM_EVENTS 所在目录（scenario.py 的结果目录）、DM_APP_SUPPORT 的上一级（mac-app 测试副本）、
+//        当前目录、$DM_ROOT/run（缺省 ~/dm-work/run），或临时目录（TMPDIR、/tmp）。返回 NULL = 可以，否则是原因
+// Range of screenshot paths: the control port is for tests only, but it used to write whatever path it got, so any file the App can write could be overwritten by a PNG. Now it writes only .png, no .. in the path, and --
+//   iOS: relative paths only, landing under Documents;
+//   Mac: the directory (existing, compared by realpath) must be inside this run's folders: the directory of DM_EVENTS (scenario.py's result directory), the parent of DM_APP_SUPPORT (mac-app test copies),
+//        the current directory, $DM_ROOT/run (default ~/dm-work/run), or a temporary directory (TMPDIR, /tmp). Returns NULL = allowed, otherwise the reason
+#if !TARGET_OS_IPHONE
+static int under(const char *dir, const char *root) {   // dir（已 realpath）在 root 之下（含相等） | dir (already realpath'd) is under root (or equal)
+    char r[PATH_MAX]; if (!root || !*root || !realpath(root, r)) return 0; size_t l = strlen(r);
+    return !strncmp(dir, r, l) && (dir[l] == 0 || dir[l] == '/' || (l == 1 && r[0] == '/'));
+}
+#endif
+static const char *shot_path_bad(const char *p) {
+    size_t n = strlen(p); if (n < 5 || strcasecmp(p + n - 4, ".png")) return "path must end in .png";
+    for (const char *s = p; (s = strstr(s, "..")); s += 2) if ((s == p || s[-1] == '/') && (s[2] == 0 || s[2] == '/')) return "path must not contain ..";
+#if TARGET_OS_IPHONE
+    if (p[0] == '/') return "path must be relative (it lands under Documents)";
+    return NULL;
+#else
+    char full[PATH_MAX], dir[PATH_MAX], cwd[PATH_MAX] = "";
+    if (!getcwd(cwd, sizeof cwd)) cwd[0] = 0;
+    if (p[0] == '/') strlcpy(full, p, sizeof full); else snprintf(full, sizeof full, "%s/%s", cwd, p);
+    char *sl = strrchr(full, '/'); if (sl == full) sl++; *sl = 0;
+    if (!realpath(full, dir)) return "the directory does not exist";
+    char roots[4][PATH_MAX]; int nr = 0; const char *e;
+    if ((e = getenv("DM_EVENTS")) && strchr(e, '/')) { strlcpy(roots[nr], e, PATH_MAX); *strrchr(roots[nr], '/') = 0; nr++; }
+    if ((e = getenv("DM_APP_SUPPORT")) && strchr(e, '/')) { strlcpy(roots[nr], e, PATH_MAX); *strrchr(roots[nr], '/') = 0; nr++; }
+    if ((e = getenv("DM_ROOT")) && *e) snprintf(roots[nr++], PATH_MAX, "%s/run", e); else if ((e = getenv("HOME"))) snprintf(roots[nr++], PATH_MAX, "%s/dm-work/run", e);
+    for (int i = 0; i < nr; i++) if (under(dir, roots[i])) return NULL;
+    if (under(dir, cwd) || under(dir, getenv("TMPDIR")) || under(dir, "/tmp")) return NULL;
+    return "the directory is outside the run folder ($DM_ROOT/run, the scenario result directory, the current directory or a temporary directory)";
+#endif
+}
 static int cmd_screenshot(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     const char *p = dm_ctl_get(a, "path"); long k = (long)dm_ctl_num(a, "frames", 1); char path[1024];
     if (!p || !*p) ERR("missing path");
     if (k < 1 || k > 600) ERR("frames must be 1-600");
+    { const char *bad = shot_path_bad(p); if (bad) ERR("%s: %s", bad, p); }
 #if TARGET_OS_IPHONE
     if (p[0] != '/' && getenv("HOME")) snprintf(path, sizeof path, "%s/Documents/%s", getenv("HOME"), p); else
 #endif

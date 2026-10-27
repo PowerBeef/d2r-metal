@@ -43,7 +43,7 @@ English: [control_port.md](control_port.md)
 | `await_ui` | `name`、`timeout`（30 秒） | 只等控件可见。 | `x`、`y` |
 | `tap_unit` | `type`（1 怪 / NPC、2 物件、4 物品、5 出口）、`cls`（类号或 `any`）、`timeout`（10 秒） | 等这类单位出现在画面里，点它，同触屏脚本的 `tap_unit`。 | `x`、`y`、`target` |
 | `app` | `do`：`background`、`foreground`、`resign`、`active`、`minimize`、`restore`、`terminate` | 在主线程上走前端生命周期，与系统事件、`DM_TEST_BG` / `DM_TEST_MINI_AT` 同一批处理函数。Mac 上 `background` / `foreground` 就是最小化 / 还原，不支持 `resign` / `active`；`terminate` 照系统退出那样先存盘再退。 | |
-| `screenshot` | `path`、`frames`（1） | 第 `frames` 个出图帧之后把游戏输出写成 PNG。iOS 上相对路径落在 `Documents/` 下。 | `path` |
+| `screenshot` | `path`、`frames`（1） | 第 `frames` 个出图帧之后把游戏输出写成 PNG。路径须以 `.png` 结尾、不含 `..`。iOS 上只收相对路径，落在 `Documents/` 下；Mac 上所在目录须已存在、且在这一局的运行目录里（`DM_EVENTS` 所在目录、`DM_APP_SUPPORT` 的上一级、当前目录、`$DM_ROOT/run`）或临时目录下。 | `path` |
 | `ui_dump` | `want`（`@top` 或控件名） | 下一帧把界面控件树打进日志（`UIDUMP` 行，同 `DM_UI_DUMP`）。 | |
 | `pause` | | 冻结游戏拍（`DM_TICK_HOLD` 那种冻结）。要局内跑过拍、且开着控制通道。冻着超过 `DM_WATCH_STALL` 秒看门狗会判死。 | `tick` |
 | `step` | `n`（1） | 冻着时：放行正好 `n` 拍再冻上。 | `tick` |

@@ -15,7 +15,7 @@ DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_autobuff.c host/dm_padmode.c host/front_mac.m	-
 DM_APP_POOL_ADD_MB	host	host/hle_svc.c	-
 DM_APP_ROMFS	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	-
-DM_APP_SUPPORT	host	host/app_mac.m host/front_mac.m	y
+DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/front_mac.m	y
 DM_APP_VERSION	harmony	harmony/native/gameperf_ohos.c	-
 DM_ASC_ENV	ios-tools	ios/tools/asc_env.sh	-
 DM_ASSETS_TEST	ios	ios/Sources/main.m	-
@@ -87,7 +87,7 @@ DM_DROP_HAPTIC	host	host/dm_drophaptic.c	-
 DM_DROP_LIGHT	host	host/dm_dropfilter.c	-
 DM_ELYSIUM_LOG	host	host/dm_elysium.c	-
 DM_ELYSIUM_TCDUMP	host	host/dm_elysium.c	-
-DM_EVENTS	host	host/dm_events.c host/tests/t_events.c	y
+DM_EVENTS	host	host/dm_ctl_cmds.c host/dm_events.c host/tests/t_events.c	y
 DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-
 DM_FE_AUTO	host	host/dm_cursor.c	-
