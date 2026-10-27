@@ -40,7 +40,7 @@ class BenchTest(unittest.TestCase):
             ev = [dict(seq=1, t=1.0, ev='mark', name='town', frame=100), dict(seq=2, t=2.0, ev='mark', name='wild', frame=160), dict(seq=3, t=3.0, ev='mark', name='end', frame=220)]
             (p / 'events.ndjson').write_text(''.join(json.dumps(e) + '\n' for e in ev), encoding='utf-8')
             (p / 'frames.tsv').write_text('t\tiv_ms\n' + ''.join(f'{1 + i / 60:.4f}\t{16.667 if i < 60 else 33.3}\n' for i in range(120)), encoding='utf-8')
-            rows = ['frame\tname\tvalue'] + [f'{f}\t@gpu_ms\t{5.0 if f < 160 else 7.0}' for f in range(100, 220)] + [f'{f}\t@cpu_ms\t2.0' for f in range(100, 220)] + ['150\tnvnDrawElements\t12']
+            rows = ['frame\tname\tvalue'] + [f'{f}\t@gpu_ms\t{5.0 if f < 160 else 7.0}' for f in range(100, 220)] + [f'{f}\t@cpu_ms\t2.0' for f in range(100, 220)] + [f'{f}\t@proc_cpu_ms\t9.5' for f in range(100, 220)] + [f'{f}\t@pso_new\t{1 if f == 170 else 0}' for f in range(100, 220)] + ['150\tnvnDrawElements\t12']
             (p / 'nvn.tsv').write_text('\n'.join(rows) + '\n', encoding='utf-8')
             seg = bench.segments(str(p))
         self.assertEqual(sorted(seg), ['town', 'wild'])
@@ -48,6 +48,7 @@ class BenchTest(unittest.TestCase):
         self.assertEqual((seg['town']['present']['frames'], seg['wild']['present']['p50_ms']), (60, 33.3))
         self.assertEqual(bench.metric(seg['wild'], 'gpu_ms.p50'), 7.0); self.assertEqual(bench.metric(seg['town'], 'present.slow_share'), 0.0)
         self.assertIsNone(bench.metric(seg['town'], 'rec_ms.p95'))
+        self.assertEqual((bench.metric(seg['town'], 'proc_cpu_ms.p50'), bench.metric(seg['wild'], 'pso_new.p99') > 0), (9.5, True))   # 全进程 CPU 与同步建管线进了汇总 | whole-process CPU and synchronous pipeline builds are summarised
         summ = bench.summarize([dict(ok=True, segments=seg), dict(ok=True, segments=seg), dict(ok=False, segments={})])
         self.assertEqual((summ['town']['runs'], summ['wild']['gpu_ms.p50']), (2, 7.0))
 

@@ -46,7 +46,8 @@ DM_ROOT = scenario.DM_ROOT
 PRESENT = ('mean_ms', 'p50_ms', 'p95_ms', 'p99_ms', 'max_ms', 'slow_share', 'fps')
 # 逐帧计时（DM_NVN_TSV 的 @ 行，hle_nvn.c）：帧间隔 / 出帧工作 / NVN 调用 / GPU / 翻译录制 / 翻译提交 / 出帧线程 CPU / 取图等待。苹果上帧率常被垂直同步钉死，这些不受刷新率量化，A/B 主要看它们
 # Per-frame timing (the @ rows of DM_NVN_TSV, hle_nvn.c): frame interval / frame work / NVN calls / GPU / translation record / translation submit / frame-thread CPU / image-acquire wait. On Apple platforms the frame rate is often pinned by vsync; these are not quantized by the refresh rate, and A/B mainly looks at them
-SERIES = ('frame_ms', 'work_ms', 'nvn_ms', 'gpu_ms', 'rec_ms', 'submit_ms', 'cpu_ms', 'wait_ms', 'draws', 'binds', 'cmdmem_cb')   # 后三个是逐帧计数（条 / 次） | the last three are per-frame counts
+SERIES = ('frame_ms', 'work_ms', 'nvn_ms', 'gpu_ms', 'rec_ms', 'submit_ms', 'cpu_ms', 'wait_ms', 'draws', 'binds', 'cmdmem_cb',   # draws / binds / cmdmem_cb 是逐帧计数（条 / 次） | draws / binds / cmdmem_cb are per-frame counts
+          'proc_cpu_ms', 'sub_cpu_ms', 'pso_new', 'lib_new', 'rt_load_mb')   # 全进程 CPU / 翻译线程提交 CPU / 本帧同步建管线数 / 建着色器库数 / 渲染目标读回量 | whole-process CPU / translation-thread submit CPU / pipelines and shader libraries built synchronously this frame / render-target load traffic
 STATS = ('mean', 'p50', 'p95', 'p99')
 METRICS = tuple(f'present.{m}' for m in PRESENT) + tuple(f'{s}.{t}' for s in SERIES for t in STATS)
 SLOW_MS = 20.8   # 超过这个算慢帧（60 Hz 下两个刷新以上，同 perf.txt 的档） | above this a frame is slow (more than two refreshes at 60 Hz, as the perf.txt buckets)
@@ -440,7 +441,7 @@ def main(argv):
     pr.add_argument('--hitch-ms', type=float, default=25); pr.add_argument('--host'); pr.add_argument('--cool', type=float, default=120)
     bl = sub.add_parser('baseline'); bl.add_argument('op', choices=('save',)); bl.add_argument('--host')
     rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); rg.add_argument('--reps', type=int, default=6)
-    rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,gpu_ms.p50'); rg.add_argument('--cool', type=float, default=120)
+    rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,gpu_ms.p50,proc_cpu_ms.p50'); rg.add_argument('--cool', type=float, default=120)
     a = ap.parse_args(argv)
     held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * 2} min", a.cmd in ('run', 'ab', 'profile', 'regress'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
     if held is not None: return held
