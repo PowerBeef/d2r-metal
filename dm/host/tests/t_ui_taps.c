@@ -14,7 +14,6 @@ int dm_uiscreen_ingame(void) { return 1; }
 void dm_ui_rect(int *x, int *y, int *w, int *h) { *x = 0; *y = 0; *w = 2360; *h = 1326; }
 void dm_uiscreen_set_ingame(int on) { (void)on; }
 void dm_custom_on_uimsg(const char *c, const char *a, const char *g) { (void)c; (void)a; (void)g; }
-void dm_elysium_arm(int on) { (void)on; }
 static int world_taps;
 unsigned dm_world_tap(float x, float y) { (void)x; (void)y; world_taps++; return 0; }
 

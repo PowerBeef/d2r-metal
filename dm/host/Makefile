@@ -48,7 +48,6 @@ SRC=\
 	dm_custom.c \
 	dm_dropfilter.c \
 	dm_drophaptic.c \
-	dm_elysium.c \
 	dm_engine.c \
 	dm_events.c \
 	dm_freetp.c \

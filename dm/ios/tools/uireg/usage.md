@@ -97,7 +97,6 @@ A run name is the first argument of `G("…")` in `uireg.py`; below they are gro
 | Run | Contents |
 |---|---|
 | `e` | Character select page, character creation, naming (creates a new character and enters the game) |
-| `v` | Create a character after ticking the additional mode on the character creation page, enter the game, open the stash and look at the shared page |
 | `a` | Swapping gear in equipment slots, bottom bar and panel tabs, minimap, stick, casting skills in the wild, pause menu and settings page |
 | `b` | NPC dialogue menu, buying and selling on the merchant page, single tap / drag and drop / double tap / long press in the inventory |
 | `c` | Stash drag and drop and tabs, gold amount box, tapping outside the box while several kinds of dialog are open |

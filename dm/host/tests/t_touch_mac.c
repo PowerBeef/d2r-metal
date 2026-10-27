@@ -52,7 +52,6 @@ int dm_vault_ui_drag(int phase, int x, int y) { (void)phase; (void)x; (void)y; r
 uint32_t dm_swapskill_itemsig(void) { return 0; }   // 副手组技能当前武器组（dm_actions.c）的桩：读不到 | stub for the current weapon set of the swap-set skill (dm_actions.c): cannot be read
 _Atomic int g_dm_frz_want, g_dm_frozen; void dm_freeze_frame(int want) { (void)want; }   // 面板冻结（diag.c）的桩 | stub for the panel freeze (diag.c)
 void dm_save_frame(void) {}   // 存盘握手（diag.c）的桩 | stub for the save handshake (diag.c)
-void dm_elysium_arm(int on) { (void)on; }   // 极乐世界勾选（dm_elysium.c）的桩 | stub for the Elysium checkbox (dm_elysium.c)
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }   // 「自定义」设置（dm_custom.c）的桩 | stub for the "Custom" settings (dm_custom.c)
 void dm_belt_put(unsigned id) { (void)id; }
 void dm_ui_rect(int *x, int *y, int *w, int *h) { *x = *w = 0; *y = test_ui_y; *h = test_ui_h; }

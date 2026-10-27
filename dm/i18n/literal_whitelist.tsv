@@ -13,7 +13,6 @@ host/hle_touch.c	*	触屏采样调试串，只进日志
 host/dm_actions.c	*	动作结果说明，只进日志（LOG 的 %s 参数）
 host/dm_cursor.c	*	交互层判定说明 / 挪位审计 / 一键重开状态，只进日志
 host/dm_world.c	*	走近物品 / 单位分类的调试串，只进日志
-host/dm_elysium.c	*	极乐世界读档转储，只进日志
 host/dm_vault.c	*	编年史存取对账说明，只进日志
 host/dm_pages.c	*	翻页对账说明，只进日志
 host/dm_cloudsync.c	*	iCloud 备份来源标签（写进备份文件名旁的日志）

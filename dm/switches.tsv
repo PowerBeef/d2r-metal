@@ -84,8 +84,6 @@ DM_DEVLOCK_WD_LOG	ios-tools	ios/tools/devlock.sh	-
 DM_DROPF_LOG	host	host/dm_dropfilter.c	-
 DM_DROP_HAPTIC	host	host/dm_drophaptic.c	-
 DM_DROP_LIGHT	host	host/dm_dropfilter.c	-
-DM_ELYSIUM_LOG	host	host/dm_elysium.c	-
-DM_ELYSIUM_TCDUMP	host	host/dm_elysium.c	-
 DM_EVENTS	host	host/dm_ctl_cmds.c host/dm_events.c host/tests/t_events.c	y
 DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-
@@ -372,8 +370,6 @@ DM_TEST_DAYTIME	host	host/dm_bright.c	-
 DM_TEST_DROP_SOUND	host	host/dm_dropfilter.c	-
 DM_TEST_DUR	host	host/diag.c	-
 DM_TEST_EDGE_B	ios	ios/Sources/front_ios.m	-
-DM_TEST_ELYSIUM	host	host/dm_elysium.c	-
-DM_TEST_ELYSIUM_ARM	host	host/dm_elysium.c	-
 DM_TEST_EQUIP	host	host/dm_autobuff.c	-
 DM_TEST_FINDCHK	host	host/dm_prof.c	-
 DM_TEST_FOLD	ios	ios/Sources/front_ios.m	-
@@ -487,7 +483,6 @@ DM_TEST_SPAWN	host	host/diag.c	-
 DM_TEST_SS_ALT	host	host/dm_actions.c	-
 DM_TEST_SS_REJECT	host	host/dm_actions.c	-
 DM_TEST_STACK99	host	host/dm_pouch.c	-
-DM_TEST_STASH_TOPUP	host	host/dm_elysium.c	-
 DM_TEST_STAT	host	host/diag.c	-
 DM_TEST_STAT_LOG	host	host/diag.c	-
 DM_TEST_STORE	host	host/dm_pouch.c	-

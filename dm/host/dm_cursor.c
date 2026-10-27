@@ -1,4 +1,3 @@
-#include "dm_elysium.h"
 #include "dm_cursor.h"
 #include "dm_engine.h"
 #include "dm_custom.h"
@@ -503,23 +502,13 @@ static _Atomic int g_fe_name_has;   // 起名页开着期间已经填过名字�
 static const char *const k_cc_class[8] = { "Amazon", "Assassin", "Necromancer", "Barbarian", "Paladin", "Sorceress", "Warlock", "Druid" };
 static _Atomic int g_fe_opt_open, g_fe_confirm_open, g_fe_back;
 static _Atomic int g_fe_opt_side;   // 模式页最近一次点的是哪张牌：0 标准（左半屏）1 专家（右半屏） | Which card was tapped most recently on the mode page: 0 Standard (left half of the screen), 1 Hardcore (right half of the screen)
-// 「极乐世界」勾选项（布局见 touch_layout.py 的 _BLISS：模式页牌子下面一行，原版勾选框 TouchBliss + 标题 + 说明）。
-// 勾选框是原版开关按钮，点一下自己切换；点这一行的文字 = 点勾选框（点击挪到框心）。勾没勾读控件当前用的那组帧号：+0x6e8 = 当前常态帧，
-// 等于布局里写的 toggledFrame（4）即已勾（真机 逐字节比对：勾 / 不勾只有 +0x610、+0x6e8–0x6f7 这几处变）。模式页开着时每帧读一次记下来，页关了保留最后的值。
-// The 「极乐世界」(Elysium) checkbox (for the layout see _BLISS in touch_layout.py: one row below the plaques on the mode page, the original game's checkbox TouchBliss + title + description).
-// The checkbox is an original-game toggle button that toggles itself on a tap; tapping the text of this row = tapping the checkbox (the click is moved to the box center). Whether it is checked is read from the frame number set the widget currently uses: +0x6e8 = current normal-state frame,
-// equal to the toggledFrame written in the layout (4) means checked (byte-by-byte comparison on a real device: between checked / unchecked only +0x610 and +0x6e8–0x6f7 change). While the mode page is open it is read once per frame and recorded; after the page closes the last value is kept.
-#define BLISS_Y0 1290
-#define BLISS_Y1 1470
-static _Atomic int g_fe_bliss;
-int dm_fe_bliss(void) { return atomic_load(&g_fe_bliss); }
 // 删除角色弹窗：原版要「长按『是』」，长按按手柄 A 的按住时长算（鼠标按住 4 秒只在抬起时出一次 Confirm、不删）。手指按在「是」上期间按住 A，松手放开
 // Delete-character popup: the original game requires 'long-press 「是」(Yes)', and the long-press is measured by how long controller A is held (holding the mouse for 4 seconds only produces one Confirm on release and does not delete). Hold A while the finger is pressed on 「是」(Yes), and release it when the finger lifts
 static _Atomic int g_fe_del_open, g_del_q, g_del_hold;   // 模式页 / 确认框开着；模式页上点了牌子以外 → 返回 | Mode page / confirmation box open; on the mode page a tap landed outside the plaques -> back
 int dm_restart_busy(void);   // 一键重开进行中（定义在下面）：界面触点一律丢掉 | One-key restart in progress (defined below): all UI touch points are dropped
-// 「选择游戏模式」页只有标准 / 专家两块牌子（布局 y 899–1259 / 2160，覆盖层已挪走天梯行与键位提示）：点牌子那一行以外 = 返回职业选择。牌子下面那一行是「极乐世界」勾选项，不算返回
-// The 「选择游戏模式」(Select game modes) page has only the two plaques standard / hardcore (layout y 899–1259 / 2160; the overlay has already moved away the ladder row and the key hints): tapping outside the plaque row = back to class selection. The row below the plaques is the 「极乐世界」(Elysium) checkbox and does not count as back
-static int fe_opt_outside(float ny) { return atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_confirm_open) && (ny < 899 / 2160.0f || ny > 1259 / 2160.0f) && !(ny > BLISS_Y0 / 2160.0f && ny < BLISS_Y1 / 2160.0f); }
+// 「选择游戏模式」页只有标准 / 专家两块牌子（布局 y 899–1259 / 2160，覆盖层已挪走天梯行与键位提示）：点牌子那一行以外 = 返回职业选择。
+// The 「选择游戏模式」(Select game modes) page has only the two plaques standard / hardcore (layout y 899–1259 / 2160; the overlay has already moved away the ladder row and the key hints): tapping outside the plaque row = back to class selection.
+static int fe_opt_outside(float ny) { return atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_confirm_open) && (ny < 899 / 2160.0f || ny > 1259 / 2160.0f); }
 // 后到的点按排在在途的那一下后面：一下点击还没发完（相 2 待发按下 / 相 3 待发抬起）时又来了按下，原先直接改写坐标和相位——前一下被丢掉，
 // 或者按下已经发了、抬起再也不发（Mac 的真鼠标一帧里收到两下点击只剩后一下）。现在新的手势先记成「下一下」（按着期间跟着移动），抬起后进待发队列；
 // 在途的那下发完，取手柄处（ut_promote）按先后接上。没有点击在途时照旧直接走上面的相位，单独一下点按的行为不变。
@@ -2984,10 +2973,6 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
     if (width <= 0 || height <= 0 || !root) return;
     uint64_t r = atomic_load(&g_ut_xy);
     int x = (int)(((r >> 16) & 0xffff) / 65535.0 * width), y = (int)((r & 0xffff) / 65535.0 * height); if (x >= width) x = width - 1; if (y >= height) y = height - 1;
-    if (atomic_load(&g_fe_opt_open)) { uint64_t bw = ui_find(root, "TouchBliss", 0);
-        if (bw) { int on = *(int32_t *)(bw + 0x6e8) == 4; if (atomic_exchange(&g_fe_bliss, on) != on) { LOG("前端路径：极乐世界 %s", on ? "勾上" : "取消"); dm_elysium_arm(on); }
-            int32_t vw = *(int32_t *)(m->base + 0x211da38), vh = *(int32_t *)(m->base + 0x211da3c);
-            if (ph && vh > 0 && !atomic_load(&g_fe_confirm_open) && y > BLISS_Y0 * vh / 2160 && y < BLISS_Y1 * vh / 2160) { x = vw / 2 + (-1551 + 35) * vh / 2160; y = (1330 + 33) * vh / 2160; } } }   // 这一行里点哪都算点勾选框（悬停那几拍也要挪：控件没被悬停过不收点击） | a tap anywhere in this row counts as tapping the checkbox (the hover ticks must be moved too: a widget that has never been hovered does not accept clicks)
     static uint64_t h_mv, h_dn, h_up; if (!h_mv) { h_mv = ui_hash("MouseMove"); h_dn = ui_hash("LeftMouseButtonDown"); h_up = ui_hash("LeftMouseButtonUp"); }
     static int logged;
     { int dm_vault_ui_blocks(int, int); if (!((dm_ui_panel_state() & DM_PS_VAULT) && dm_vault_ui_blocks(x, y))) ui_send_mouse(m, root, h_mv, x, y); }   // 编年史页上不悬停（会冒出底下魔盒钮的原版说明，dm_vault_ui.c） | no hover on the chronicle page (it would bring up the original description of the cube button underneath, dm_vault_ui.c)
@@ -3152,7 +3137,6 @@ void dm_ui_on_uimsg(const char *cat, const char *act, const char *arg) {
     // Whether the main menu button bar is present and whether the character select list is open: when there are saves the home page must be the character select page, and if the list is collapsed (the already selected row was tapped = the original game's "select and return to the main menu") it is reopened
     if (!strcmp(cat, "PanelManager") && !strcmp(arg, "MainMenuButtonRibbon") && !strcmp(act, "OpenPanel")) atomic_store(&g_fe_ribbon, 1);
     if ((!strcmp(cat, "PanelManager") && (!strcmp(act, "UnloadAll") || (!strcmp(arg, "MainMenuPanel") && !strcmp(act, "UnloadPanel")))) || (!strcmp(cat, "FrontEndNavigation") && (!strcmp(act, "ToGame") || !strcmp(act, "ToCharacterCreate")))) atomic_store(&g_fe_ribbon, 0);
-    if (!strcmp(cat, "PanelManager") && !strcmp(arg, "CharacterSelectPanel") && !strcmp(act, "OpenPanel") && atomic_exchange(&g_fe_bliss, 0)) { LOG("前端路径：回到选角页，极乐世界勾选清掉"); dm_elysium_arm(0); }   // 取消建角：这次的勾不带到下一次 | character creation cancelled: this time's checkmark is not carried over to the next time
     if (!strcmp(cat, "PanelManager") && !strcmp(arg, "CharacterSelectPanel")) { if (!strcmp(act, "OpenPanel")) atomic_store(&g_fe_list, 1); else if (!strcmp(act, "ClosePanel") || !strcmp(act, "UnloadPanel")) atomic_store(&g_fe_list, 0); }
     if (strcmp(cat, "PanelManager") || strcmp(act, "OpenPanel")) return;
     if (!strcmp(arg, "TutorialTooltip")) atomic_store(&g_fe_skip_tut, 1);
@@ -3270,7 +3254,7 @@ static void rs_pump(void) {   // 取手柄处（游戏主线程）每次调 | ca
       else if (e == 2 && fr - g_rs_ext_f > 30) { atomic_store(&g_rs_ext, 0); g_rs_req = 1; } }
     if (g_rs_req) { g_rs_req = 0; if (atomic_load(&g_rs) != RS_IDLE) return;
         int dm_diag_difficulty(void); module_t *m = main_module(); uint8_t *b = m ? (uint8_t *)m->base : NULL; int d = dm_diag_difficulty();
-        uint64_t pl = b ? ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)) : 0, pd = pl ? *(uint64_t *)(pl + 0x10) : 0;   // 客户端玩家单位，玩家数据开头即名字（同 dm_elysium.c） | client player unit; the player data starts with the name (same as dm_elysium.c)
+        uint64_t pl = b ? ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)) : 0, pd = pl ? *(uint64_t *)(pl + 0x10) : 0;   // 客户端玩家单位，玩家数据开头即名字 | client player unit; the player data starts with the name
         if (d < 0 || !pd || !*(const char *)pd) { LOG("【红】一键重开：取不到当前角色 / 难度（难度 %d），不动", d); return; }
         strlcpy(g_rs_name, (const char *)pd, sizeof g_rs_name); g_rs_diff = d; g_rs_t0 = fe_ms(); g_rs_f0 = fr; g_rs_resent = 0; rs_set(RS_EXIT);
         LOG("一键重开：「%s」难度 %d → 原版保存并退出", g_rs_name, d); fe_send("PausePanelMessage", "ExitGame", ""); return; }
@@ -3329,14 +3313,7 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
     }
     { int nk = atomic_exchange(&g_fe_name_key, 0); if (nk) { fe_key(nk == 1 ? DM_BTN_PLUS : DM_BTN_B); next = fr + 8; LOG("前端路径：起名页点了「%s」→ %s", nk == 1 ? "创建" : "返回", nk == 1 ? "＋" : "B"); return; } }
     if (atomic_exchange(&g_fe_name_tap, 0)) { fe_key(DM_BTN_A); next = fr + 8; LOG("前端路径：起名页点了输入框 → 重新弹键盘（A）"); return; }
-    // 手柄模式的建角模式页：按 Y = 勾 / 取消「极乐世界」。这一页原版只有写死的两行（天梯、标准 / 专家），手柄动作只认 A / B / X（main+0xc31c24），Y 空着；
-    // 勾选框是我们自己的控件 TouchBliss（手柄版布局 touch_layout.pad_bliss），翻它 = 替玩家在框心点一下（悬停一帧 → 按下 → 抬起，原版开关按钮自己切换）；勾没勾仍由上面每帧读
-    // Character-creation mode page in controller mode: press Y = check / uncheck "Elysium". In the original game this page has only two
-    // hard-coded rows (Ladder, Standard / Hardcore), and its controller actions only recognize A / B / X (main+0xc31c24); Y is unused.
-    // The checkbox is our own widget TouchBliss (controller layout touch_layout.pad_bliss); flipping it = clicking once at the center of the box
-    // on the player's behalf (hover for one frame -> press -> release; the original game's toggle button switches itself).
-    // Whether it is checked is still read every frame by the code above.
-    { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int ck; module_t *mm = main_module(); uint64_t root = 0; if (mm) memcpy(&root, mm->base + 0x2f05458, 8);
+    { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); module_t *mm = main_module(); uint64_t root = 0; if (mm) memcpy(&root, mm->base + 0x2f05458, 8);
       // 「天梯 / 非天梯」那一行在手柄版布局里挪走了（同触屏版，单机只支持标准 / 专家），但原版的焦点一进页仍停在它上面（实跑：按右弹「必须用线上角色才能体验天梯」）：
       // 进页后替玩家按一次十字键下，把焦点落到「标准 / 专家」那一行，之后这一页的上 / 下键收掉（只剩一行，不让焦点回到看不见的那行）。页重开或刚切到手柄模式时重做
       // The "Ladder / Non-Ladder" row has been moved away in the controller layout (same as the touch version; single player only supports
@@ -3352,8 +3329,6 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
           if (prep == 0) { prep = 1; prep_at = fr + (after_modal ? 2 : 20); after_modal = 0; }   // 刚进页等面板建好；确认框刚关则马上做 | Just entered the page: wait for the panel to be built; if the confirmation dialog has just closed, do it right away
           else if (prep == 1 && fr >= prep_at) { fe_key(DM_BTN_DOWN); prep = 2; prep_at = fr + 8; LOG("前端路径：手柄模式页 → 焦点下移到「标准 / 专家」那一行（十字键下）"); }
           else if (prep == 2 && fr >= prep_at) prep = 3; }
-      if (padpage) { uint64_t bw = ui_find(root, "TouchBliss", 0);   // 勾没勾：同触屏路径的读法（那边只在有触点的帧里读，手柄路径读不到——实跑：勾翻了但进局没生效） | Checked or not: read the same way as the touch path (that path only reads on frames that have a touch point, so the controller path never gets a reading; real run: the checkbox flipped but had no effect once in game)
-          if (bw) { int on = *(int32_t *)(bw + 0x6e8) == 4; if (atomic_exchange(&g_fe_bliss, on) != on) { LOG("前端路径：极乐世界 %s", on ? "勾上" : "取消"); dm_elysium_arm(on); } } }
       if (padpage && !atomic_load(&g_fe_confirm_open)) {
           // 焦点还没落到位的那几帧里左 / 右 / A 也先收掉（否则落在看不见的那一行上：按右会弹天梯提示）；落位后只收上 / 下
           // X 一直收掉：原版这一页 X = 切到经典版角色，单机不支持那类角色（同触屏版；提示条里那一条在布局里去掉了）
@@ -3362,12 +3337,7 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
           // X is always swallowed: on this page the original game's X = switch to a Classic character, and single player does not support that kind
           // of character (same as the touch version; that entry in the button legend has been removed in the layout).
           { void dm_padmode_legend_hide(const char *, int); dm_padmode_legend_hide("CharacterOptionsLegend", 2); }   // 提示条里原版运行时加的「X 经典版」那一条拿掉（布局里删预设不够：这一页的代码每次刷新都会再加） | Remove the 「X 经典版」(X Classic) entry that the original game adds to the legend at runtime (deleting the preset in the layout is not enough: this page's code adds it again on every refresh)
-          if ((dm_padmode_page_keys(DM_BTN_Y | DM_BTN_X | (prep == 3 ? DM_BTN_UP | DM_BTN_DOWN : DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A)) & DM_BTN_Y) && !ck) { ck = 1; LOG("前端路径：手柄模式页按 Y → 翻「极乐世界」的勾"); }
-          if (ck) { int32_t vw = *(int32_t *)(mm->base + 0x211da38), vh = *(int32_t *)(mm->base + 0x211da3c); int x = vw / 2 + (-1551 + 35) * vh / 2160, y = (1330 + 33) * vh / 2160;
-              ui_send_mouse(mm, root, ui_hash("MouseMove"), x, y);
-              if (ck == 2) ui_send_mouse(mm, root, ui_hash("LeftMouseButtonDown"), x, y); else if (ck == 3) ui_send_mouse(mm, root, ui_hash("LeftMouseButtonUp"), x, y);
-              if (++ck > 3) ck = 0; return; } }
-      else ck = 0; }
+          dm_padmode_page_keys(DM_BTN_X | (prep == 3 ? DM_BTN_UP | DM_BTN_DOWN : DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A)); } }
     // 带按键脚本的用例走自己的键序（真值对照用），不插手；DM_FE_AUTO=1 强制开、=0 强制关（画面闸门的「选角页」对照的是原版主菜单那一拍，不带键序）
     // Cases with a key script follow their own key sequence (for ground truth comparison), no interference; DM_FE_AUTO=1 forces on, =0 forces off (the screenshot gate's "character select page" compares against the original game's main menu tick, without a key sequence)
     static int fa = -1; if (fa < 0) { const char *e = getenv("DM_FE_AUTO"); fa = e ? atoi(e) != 0 : !getenv("DM_KEYS"); }

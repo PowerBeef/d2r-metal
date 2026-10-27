@@ -69,7 +69,6 @@ void dm_belt_use(int col, int row) { (void)col; (void)row; }
 void dm_aim_cone_pump(void) {}
 void dm_item_identify(unsigned id) { (void)id; }
 void dm_item_target_cancel(void) {}
-void dm_elysium_arm(int on) { (void)on; }   // 极乐世界勾选（dm_elysium.c）：单测里空桩 | Elysium checkbox (dm_elysium.c): empty stub in the unit test
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }   // 「自定义」设置（dm_custom.c）的桩 | stub for the "Custom" settings (dm_custom.c)
 void dm_test_stash_take(int n) { (void)n; }
 void dm_stash_take(int n) { (void)n; }

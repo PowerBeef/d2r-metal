@@ -168,24 +168,8 @@ INSERT = {
 # layout units, origin = horizontal center of the screen), vertically 450–1750 (title and description above, buttons below). On the real device, trying to tap the warlock always gave the druid or the sorceress.
 CLASS_STRIPS = [('Amazon', -1500, -1092), ('Assassin', -1092, -750), ('Necromancer', -750, -396), ('Barbarian', -396, -18),
                 ('Paladin', -18, 372), ('Sorceress', 372, 750), ('Warlock', 750, 1158), ('Druid', 1158, 1640)]
-# 建角「选择游戏模式」页的「极乐世界」勾选项（原版勾选框 + 标题 + 一行说明，放在标准 / 专家那行下面左侧；它是附加项，不是第三种模式）。
-# 勾选框 = 原版开关按钮（建局高级选项 / 储藏箱页那个勾选框的图），标题与说明用本页牌子上的两个字样式。点击消息是空操作，勾选由控件自己切换，
-# 宿主读它的状态（dm_cursor.c dm_fe_bliss）。位置数字（-1551, 1330）宿主那边也用到，改这里要一起改。
-# The 「极乐世界」(Elysium) checkbox item on the character creation 「选择游戏模式」(Select game modes) page (original-game checkbox + title + one line of description, placed at the left below the standard / hardcore row; it is an add-on, not a third mode).
-# Checkbox = the original game's toggle button (the checkbox image from the game creation advanced options / stash page), and the title and description use the two text styles from this page's plaques. The tap message is a no-op, the check state is toggled by the widget itself,
-# and the host reads its state (dm_cursor.c dm_fe_bliss). The position numbers (-1551, 1330) are also used on the host side, so change them together when changing here.
-_BLISS = ('        { "type": "Widget", "name": "TouchBlissWidget", "children": [\n        {\n            "type": "ToggleButtonWidget", "name": "TouchBliss",\n            "fields": {\n'
-          '                "rect": { "x": -1551, "y": 1330 }, "hitMargin": { "left": 30, "top": 30, "right": 30, "bottom": 30 },\n'
-          '                "filename": "Lobby\\\\CreateGame\\\\CreateGame_AdvancedCheckbox",\n                "untoggledFrame": 0, "untoggledPressedFrame": 1, "untoggledHoveredFrame": 3, "untoggledDisabledFrame": 2,\n'
-          '                "toggledFrame": 4, "toggledPressedFrame": 5, "toggledHoveredFrame": 6,\n                "onClickMessage": "PanelManager:ClosePanel:TouchBliss",\n            }\n        },\n        ] },\n'
-          '        { "type": "TextBoxWidget", "name": "TouchBlissTitle", "fields": { "rect": { "x": -1451, "y": 1322, "width": 690, "height": 60 }, "text": "@dmBlissTitle", "style": "$StyleCharacterModeSelectTitle" } },\n'
-          '        { "type": "TextBoxWidget", "name": "TouchBlissDesc", "fields": { "rect": { "x": -1451, "y": 1400, "width": 3000, "height": 120 }, "text": "@dmBlissDesc", "style": "$StyleCharacterModeSelectDescription" } },\n')
-INSERT['controller/console/characteroptionspanelhd.json'] = (r'\{\s*"type"\s*:\s*"ButtonLegendWidget"\s*,\s*"name"\s*:\s*"CharacterOptionsLegend"', _BLISS)
-def pad_bliss(s):   # 手柄版建角模式页（原版布局原样）+ 「极乐世界」那一行（同触屏版定稿的那一行）+ 勾选框左边一个原版 Y 键帽（Switch 手柄左键）： | Controller-version character-creation mode page (original layout unchanged) + the "Elysium" row (the same row as finalized for the touch version) + an original Y keycap to the left of the checkbox (the left face button on a Switch controller):
-    # 这一页原版只有写死的几行、没有自由光标，做不成「移上去按 A」，按 Y 勾 / 取消（dm_cursor.c；做不成可聚焦的一行就用快捷键，哪个键都行）
+def pad_charopt(s):   # 手柄版建角模式页（原版布局原样） | Controller-version character creation mode page (the original layout as is)
     # 「天梯 / 非天梯」一行同触屏版一样挪走（单机只支持标准 / 专家）；键位提示条留着（手柄版界面）
-    # In the original game this page has only a few hard-coded rows and no free cursor, so "move onto it and press A" cannot be done;
-    # press Y to check / uncheck (dm_cursor.c; when a focusable row cannot be made, use a shortcut key, and any key will do).
     # The "Ladder / Non-Ladder" row is moved away just as in the touch version (single player only supports Standard / Hardcore);
     # the button legend is kept (controller-version UI).
     s, n = offscreen(s, types=(), names=('LadderFlag', 'LadderToggle', 'NonLadderToggle', 'LadderCenter')); assert n == 4, n
@@ -193,11 +177,7 @@ def pad_bliss(s):   # 手柄版建角模式页（原版布局原样）+ 「极�
     # Remove "X Classic" from the button legend (the host also swallows X on this page, see dm_cursor.c): single player only supports
     # Standard / Hardcore expansion characters, same as the touch version.
     s, n = re.subn(r'\{\s*"action"\s*:\s*"option2"\s*,\s*"description"\s*:\s*"@LegacyGameVersionSwitch"\s*\}\s*,?', '', s); assert n == 1, n
-    at, add = INSERT['controller/console/characteroptionspanelhd.json']; ms = list(re.finditer(at, s)); assert len(ms) == 1
-    key = '        { "type": "ImageWidget", "name": "TouchBlissKey", "fields": { "rect": { "x": -1665, "y": 1330, "scale": 1.5 }, "filename": "Controller/ControllerButtons/Switch/ButtonLeft" } },\n'
-    if os.environ.get('DM_OVERLAY_MAC'):   # Mac App：同位再带一个键盘键帽（缺省在屏外，玩家用键盘时宿主把两个对调，dm_padmode.c） | Mac App: one more keyboard key cap at the same position (off screen by default; when the player uses the keyboard the host swaps the two, dm_padmode.c)
-        key += '        { "type": "ImageWidget", "name": "TouchBlissKeyK", "fields": { "rect": { "x": 99999, "y": 1330, "scale": 1.5 }, "filename": "Ztouch_controller_buttons_ui/switchKButtonLeft" } },\n'
-    return s[:ms[0].start()] + add.lstrip() + key + '        ' + s[ms[0].start():]
+    return s
 def set_rect(s, name, x, y, w, h):
     m = re.search(r'"name"\s*:\s*"%s"' % re.escape(name), s); assert m, name
     r = re.compile(r'"rect"\s*:\s*\{[^}]*\}').search(s, m.end()); assert r and r.start() - m.end() < 200, name
@@ -895,7 +875,7 @@ def _drop_rows(*rows):
 # 「自定义」页：选项面板第四个页签。布局覆盖层只能替换已有路径，所以借原版「视频」页
 # （主机版 VideoOptionsPanelHD.json，触摸版已去掉视频页签）：页签条第四项（原「控制」= KeyBindingMenu，本平台不出现）改名「自定义」、打开 VideoOptionsPanel；
 # 视频页的表格整个换成我们的行：分节标题 + 每个开关一行原版勾选框（照「游戏」页「自动拾取金币」那一行的字段）。控件名 TouchCustom_<键>，
-# 宿主 dm_custom.c 读勾没勾、按应用 / 放弃 / 默认处理。勾选框的消息发一条无害的 ClosePanel（同「极乐世界」），游戏不认
+# 宿主 dm_custom.c 读勾没勾、按应用 / 放弃 / 默认处理。勾选框的消息发一条无害的 ClosePanel，游戏不认
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
 _CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'eco_fps', 'q3d', 'loot_filter', 'auto_buff', 'touch_swap_above')
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）

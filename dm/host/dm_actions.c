@@ -19,7 +19,6 @@
 #include "dm_prof.h"
 #include "dm_actions.h"
 #include "dm_cursor_item.h"
-#include "dm_elysium.h"
 #include "dm_custom.h"
 #include "dm_input.h"
 #include "dm_hud.h"
@@ -476,7 +475,6 @@ void dm_actions_pump(void) {
       static uint32_t last; if (id != last) { last = id; LOG("手上物品（客户端）：%s（物品 id %u）", id ? "拿着" : "空了", id); }
       dm_hud_set_held(id); }
     test_bindtbl(b, pl);
-    DM_PROF(0, "a.elysium", dm_elysium_pump());
     { void dm_runeword_pump(void); DM_PROF(0, "a.runeword", dm_runeword_pump()); }   // 符文之语助手（dm_runeword.c） | Runeword helper (dm_runeword.c)
     dm_uiscreen_pump();
     // 随机名：给 CharacterCreateNamePanel 发它自己认的那条消息——InputMessage:ControllerActionBegin，载荷 +0x10 键序号 2（布局图例 option2「随机名字」；面板消息处理 main+0xc33378 的 0xc33594 分支：

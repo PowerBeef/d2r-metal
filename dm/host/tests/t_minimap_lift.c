@@ -11,7 +11,6 @@ int dm_uiscreen_ingame(void) { return ingame; }
 void dm_ui_rect(int *x,int *y,int *w,int *h) { *x=0; *y=uy; *w=2360; *h=1326; }
 void dm_uiscreen_set_ingame(int on) { ingame=on; }
 void dm_custom_on_uimsg(const char *cat,const char *act,const char *arg) { (void)cat; (void)act; (void)arg; }
-void dm_elysium_arm(int on) { (void)on; }
 static int checks,fails;
 #define CHECK(c) do { checks++; if(!(c)) { fails++; printf("FAIL line %d: %s\n",__LINE__,#c); } } while(0)
 static _Alignas(8) unsigned char root[160], maps[2][160], extra[160], hud[160], old[96][160], incoming[160];

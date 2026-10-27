@@ -54,8 +54,7 @@ BASE="DM_SAVE_FRESH=warlock DM_GAME_SEED=0x12345678 DM_FIXED_TIME=1790000000 DM_
 # until only the one run that specifically verifies "this feature turned off" remains. The reason comes from real runs in both profiles (with
 # the spawn point on, the first tap of these runs hits nothing and everything after it fails in turn).
 OLD_SPAWN={
- "n":"点阿卡拉的屏幕坐标","p":"点阿卡拉的屏幕坐标","b":"点瓦瑞夫 / 恰西的屏幕坐标","top":"iPad 档：开箱子、走到阿卡拉旁的点位","i":"iPad 档：点卡夏雇佣菜单的点位","pg2":"点箱子","rw2":"点箱子","vt1":"点箱子","vf1":"开箱","v":"建角后点箱子",
- "rw1":"长按物品栏里的软帽后清单落点","j":"背包拖放的落点（物品给在脚下的次序）","k":"背包拖放的落点","pk":"箱子选择框边缘的屏幕坐标","g4":"点凯恩的屏幕坐标",}
+ "n":"点阿卡拉的屏幕坐标","p":"点阿卡拉的屏幕坐标","b":"点瓦瑞夫 / 恰西的屏幕坐标","top":"iPad 档：开箱子、走到阿卡拉旁的点位","i":"iPad 档：点卡夏雇佣菜单的点位","pg2":"点箱子","rw2":"点箱子","vt1":"点箱子","vf1":"开箱","rw1":"长按物品栏里的软帽后清单落点","j":"背包拖放的落点（物品给在脚下的次序）","k":"背包拖放的落点","pk":"箱子选择框边缘的屏幕坐标","g4":"点凯恩的屏幕坐标",}
 if os.environ.get("UIREG_EXTRA_ENV"): BASE+=" "+os.environ["UIREG_EXTRA_ENV"].strip()   # 每局都加的环境变量（空格分隔的 K=V），如某条分支的核对开关 | environment variables added to every run (space-separated K=V), such as the verification switch of some branch
 SAVE_TIME_MIN=1800000000   # 手柄选人的局若要固定时钟，取不早于它的值（标准存档里角色的时间戳都早于它） | If a controller-selection run wants a fixed clock, use a value no earlier than this (the timestamps of the characters in the standard save are all earlier than it)
 WHO_ROW={1:"joe",2:"Warlock",3:"joebao",4:"法师"}   # 标准存档选角页自上而下四行的角色名 | Character names of the four rows, top to bottom, on the standard save's character select page
@@ -466,8 +465,6 @@ def groups():
     g.item("点「创建新角色」","进选职业页",r"ToCharacterCreate"); g.ui("CreateCharacter@CharacterSelectPanel",2.5); g.shot()
     g.item("点一个职业两下","选中职业",r"CharacterCreate Select"); g.tap(P(488,209),.8); g.tap(P(433,189),1.5); g.shot()
     g.item("点「创建」","进选择游戏模式页",r"OpenPanel CharacterOptionsPanel"); g.tap(P(334,343),2.8); g.shot()
-    g.item("点「极乐世界」勾选框","勾上",r"极乐世界 勾上","late"); g.tap(P(70,236),1.2); g.shot()   # 勾选状态到下一次触摸才记日志 | the checked state is only logged at the next touch
-    g.item("再点一次勾选框","取消勾选",r"极乐世界 取消","late"); g.tap(P(70,236),1.2); g.shot()
     g.item("点「标准」","弹名字输入框",r"OpenPanel CharacterCreateNamePanel"); g.tap(P(167,193),2.5); g.shot()
     g.item("名字框留空点确定","填入随机名",r"随机名 → 名字框"); g.at("alert ok",2.0); g.shot()
     g.item("起名页点「创建」","进局；建的是普通角色，不补共享仓库",r"FrontEndNavigation ToGame",r"共享仓库补齐"); g.tap(P(407,257),7.0); g.at("pos",.3); g.shot()
@@ -476,40 +473,6 @@ def groups():
     g.item("暂停菜单点「保存并退出」","回选角页",r"FrontEndNavigation ToFrontEnd"); g.tap("@menu"); g.tap(P(551,17)); g.at("tap_ui Exit@PauseLayoutGarden 3",4.0); g.shot()
     g.item("再建一个：名字框同样留空","建成进局",r"随机名 → 名字框[\s\S]*FrontEndNavigation ToGame"); g.ui("CreateCharacter@CharacterSelectPanel",2.5); g.tap(P(488,209),.8); g.tap(P(433,189),1.5); g.tap(P(334,343),2.8); g.tap(P(167,193),2.5); g.at("alert ok",2.0); g.tap(P(407,257),7.0); g.at("pos",.3); g.shot()
     g.item("再保存并退出回选角页","两次填进名字框的随机名不同；选角列表里有这两个名字（看截图）",two_names); g.tap("@menu"); g.tap(P(551,17)); g.at("tap_ui Exit@PauseLayoutGarden 3",4.5); g.shot()
-    gs.append(g)
-    # v 局：勾着「极乐世界」建角（勾选框只点一次）。进局约 1 秒后宿主把共享仓库金币补到合计 250 万、往这个角色背包里发 2 枚赦免之证并请游戏存盘；再开箱看共享页（金币框，看截图；赦免之证在背包）
-    # v run: create a character with "Elysium" checked (the checkbox is tapped only once). About 1 second after entering the run the host tops
-    # the shared stash gold up to a total of 2.5 million, grants 2 Tokens of Absolution into this character's backpack and asks the game to save;
-    # then open the stash and look at the shared page (gold box, check the screenshot; the Tokens of Absolution are in the backpack)
-    g=G("v"); g.sect("ely",0); g.t=3.5
-    g.item("点「创建新角色」","进选职业页",r"ToCharacterCreate"); g.ui("CreateCharacter@CharacterSelectPanel",2.5); g.shot()
-    g.item("点一个职业两下","选中职业",r"CharacterCreate Select"); g.tap(P(488,209),.8); g.tap(P(433,189),1.5); g.shot()
-    g.item("点「创建」","进选择游戏模式页",r"OpenPanel CharacterOptionsPanel"); g.tap(P(334,343),2.8); g.shot()
-    g.item("点「极乐世界」勾选框（只点一次）","勾上",r"极乐世界 勾上","late"); g.tap(P(70,236),1.2); g.shot()   # 勾选状态到下一次触摸才记日志 | the checked state is only logged at the next touch
-    g.item("点「标准」","弹名字输入框",r"OpenPanel CharacterCreateNamePanel"); g.tap(P(167,193),2.5); g.shot()
-    g.item("名字框留空点确定","填入随机名",r"随机名 → 名字框"); g.at("alert ok",2.0); g.shot()
-    g.item("起名页点「创建」，进局后等 12 秒","记为极乐角色 → 共享仓库补齐 → 补齐后金币到数、角色身上赦免之证 2 枚 → 随存档落盘，四行依次出现、不带红",r"记为极乐世界角色[\s\S]*共享仓库补齐——[\s\S]*共享仓库补齐后——[^\n]*角色身上 2 枚[\s\S]*共享仓库补齐已随存档提交落盘",r"共享仓库补齐[^\n]*【红】|【红】[^\n]*共享仓库"); g.tap(P(407,257),12.0); g.at("pos",.3); g.shot()
-    g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 4",4.5); g.shot()
-    g.item("点「共享」页签","切页",r"界面页签：切 \+1 页"); g.tap(P(106.5,53),1.2); g.shot()   # 储藏箱加宽后页签左移 34.5 | after the stash widening the tabs move left by 34.5
-    g.item("共享页","金币框 ≥ 2500000；两枚赦免之证在背包里（看截图）",None); g.shot()
-    gs.append(g)
-    # v2 局（产品落点，不关「进局落小站旁」）：线上缺陷的固定局——落点改到小站旁之后每个新建的极乐角色欠条永不划掉、每次进局再发两枚赦免之证并把金币补回 250 万。
-    # 同 v 局建角到补齐；再保存退出、同一角色再进一局：不许再出现补齐行
-    # v2 run (product spawn position, "spawn next to the town waypoint" not turned off): the fixed run for a bug in the released build -- after
-    # the spawn position was moved next to the waypoint, the pending-grant record of every newly created Elysium character was never cleared, and
-    # every run granted two more Tokens of Absolution and topped the gold back up to 2.5 million.
-    # Same as the v run from character creation through the top-up; then save and exit and enter another run with the same character: the
-    # top-up line must not appear again
-    g=G("v2"); g.sect("ely2",0); g.t=3.5
-    g.item("点「创建新角色」","进选职业页",r"ToCharacterCreate"); g.ui("CreateCharacter@CharacterSelectPanel",2.5); g.shot()
-    g.item("点一个职业两下","选中职业",r"CharacterCreate Select"); g.tap(P(488,209),.8); g.tap(P(433,189),1.5); g.shot()
-    g.item("点「创建」","进选择游戏模式页",r"OpenPanel CharacterOptionsPanel"); g.tap(P(334,343),2.8); g.shot()
-    g.item("点「极乐世界」勾选框（只点一次）","勾上",r"极乐世界 勾上","late"); g.tap(P(70,236),1.2); g.shot()   # 勾选状态到下一次触摸才记日志 | the checked state is only logged at the next touch
-    g.item("点「标准」","弹名字输入框",r"OpenPanel CharacterCreateNamePanel"); g.tap(P(167,193),2.5); g.shot()
-    g.item("名字框留空点确定","填入随机名",r"随机名 → 名字框"); g.at("alert ok",2.0); g.shot()
-    g.item("起名页点「创建」，进局后等 12 秒","记为极乐角色 → 共享仓库补齐 → 补齐后金币到数、角色身上赦免之证 2 枚 → 随存档落盘，四行依次出现、不带红",r"记为极乐世界角色[\s\S]*共享仓库补齐——[\s\S]*共享仓库补齐后——[^\n]*角色身上 2 枚[\s\S]*共享仓库补齐已随存档提交落盘",r"共享仓库补齐[^\n]*【红】|【红】[^\n]*共享仓库"); g.tap(P(407,257),12.0); g.at("pos",.3); g.shot()
-    g.item("保存并退出","回选角页",r"FrontEndNavigation ToFrontEnd"); g.tap("@menu"); g.tap(P(551,17)); g.at("tap_ui Exit@PauseLayoutGarden 3",5.0); g.shot()
-    g.item("同一角色再进一局，等 12 秒","进局；不再补齐（没有「共享仓库补齐——」行）、不带红",lambda st,bd: ("不通：没进局" if "FrontEndNavigation ToGame" not in st else "不通：进的不是那个极乐角色" if "极乐世界：角色" not in st else "不通：第二局又补了一次" if "共享仓库补齐——" in st else "不通：有红" if re.search(r"【红】极乐世界",st) else "通：进局、没有补齐行")); g.tap(P(333,336),8.0); g.wait(12.0); g.at("pos",.3); g.shot()
     gs.append(g)
     g=G("b","DM_TEST_GOLD=1300 DM_TEST_WORLD_GO=near2:1:c154@650"); g.sect("npc",0); g.enter()
     g.item("点瓦瑞夫（第一次）","走过去，出讲话",r"OpenPanel ScrollSpeechPanel"); g.at("tap_unit 1 155 3",5.0); g.shot()   # 要先走过去，留够时间 | has to walk over first, leave enough time

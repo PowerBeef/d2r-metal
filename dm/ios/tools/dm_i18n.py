@@ -28,7 +28,7 @@ BYTE_LIMITS = (
     (r'dmPadLeg(Prev|Next|View)', 47),   # dm_padmode.c g_lg[].text[48]（dm_padmode_legend 的条目 | entries of dm_padmode_legend）
     (r'dmStoreFull', 159),                                                             # dm_pouch.c g_notice[160]
     (r'dmCloudMerge(Back|Full)', 255),                                                 # dm_cloudmerge.c g_notice[256]
-    (r'dmElyToaGround|dmCloudConflict', 511),        # dm_i18n.c dm_game_notice line[512]
+    (r'dmCloudConflict', 511),        # dm_i18n.c dm_game_notice line[512]
 )
 # 键只许字母数字：布局里「@键」的解析遇到 _ 就断（@dmCustom_auto_mana 显示成「丢失字符串_auto_mana」，Mac 上的 iOS 包实测）
 # 英文界面下也要写汉字的键（自定义页语言那一行：切错语言的人得看得懂）。只许用在指定了全球字体 BlizzardGlobal 的文字控件上——英文界面缺省字体没有汉字
