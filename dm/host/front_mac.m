@@ -56,18 +56,34 @@ static void full_setup(void) {
 // 只在启动时定（游戏分辨率启动后不变）；换屏、拉窗口后由出图（MetalFX / 双线性）跟着视口缩放。DM_GAME_RES（直接给分辨率，对拍用）在时不理它
 // Output resolution (the docked game output width; height from the picture's aspect ratio): 1600 originally. In the App it follows the options page "Display → Resolution" tier (res in dm_video.c: 1600 / 1920 / 2560),
 // set only at launch (the game resolution does not change after launch); after a screen change or window resize the present (MetalFX / bilinear) scales to the viewport. Ignored with DM_GAME_RES (which gives the resolution directly, for comparisons)
+// 第四档「原生」（res=3）= 主屏的像素宽（16 对齐，1600–3840）：界面与文字按屏幕原生分辨率画，3D 由「3D 清晰度」单独降（dm_video.c s3d）
+// The fourth tier "Native" (res=3) = the main screen's pixel width (16-aligned, 1600–3840): the interface and text are drawn at the screen's own resolution, and "3D Resolution" lowers the 3D on its own (s3d in dm_video.c)
 static const int k_render_w[3] = { 1600, 1920, 2560 };
 static int g_render_w = 1600, g_render_tier = -1;   // 这次启动用的那一档（-1 = 没按设置定） | the tier used for this launch (-1 = not set from the settings)
 int dm_video_get(const char *key);
 void dm_video_fullscreen_note(int on);
+static double main_px(void) { NSScreen *sc = NSScreen.mainScreen; return sc ? sc.frame.size.width * sc.backingScaleFactor : 1600; }   // 主屏的像素宽 | the main screen's width in pixels
+static int native_w(void) { int w = (int)main_px() / 16 * 16; return w < 1600 ? 1600 : w > 3840 ? 3840 : w; }
 static void render_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
-    int t = dm_video_get("res"); if (t < 0 || t > 2) t = 0;
-    g_render_tier = t; g_render_w = k_render_w[t];
+    int t = dm_video_get("res"); if (t < 0 || t > 3) t = 0;
+    g_render_tier = t; g_render_w = t == 3 ? native_w() : k_render_w[t];
     LOG("画面：出图宽 %d（选项页「分辨率」第 %d 档） | render width %d (Resolution tier %d)", g_render_w, t, g_render_w, t);
 }
 int front_video_running_res(void) { return g_render_tier; }
 int front_video_mfx_ok(void) { static int ok = -1; if (ok < 0) ok = [MTLFXSpatialScalerDescriptor supportsDevice:MTLCreateSystemDefaultDevice()] ? 1 : 0; return ok; }
+// 显卡档（按名字）：0 基础款、1 Pro、2 Max / Ultra | GPU class (by name): 0 base, 1 Pro, 2 Max / Ultra
+static int gpu_class(void) { NSString *g = MTLCreateSystemDefaultDevice().name ?: @""; return [g containsString:@" Max"] || [g containsString:@" Ultra"] ? 2 : [g containsString:@" Pro"] ? 1 : 0; }
+// 推荐的原生出图与 3D 清晰度：原生宽不超过这档显卡的上限（2560 / 3456 / 3840）才推荐原生；3D 取「原生宽 × 比例」不超过 1920 / 2560 / 3840 的最高一档。
+// M6 实测（town_loop，2560 屏）见 docs/MAC.md。原生不合适时 *res = -1（照旧按 1600 / 1920 / 2560 三档挑）
+// Recommended native output and 3D resolution: Native only when the native width is within this GPU class's limit (2560 / 3456 / 3840); 3D takes the highest tier whose "native width × scale" is within
+// 1920 / 2560 / 3840. Measurements on an M6 (town_loop, 2560 screen) are in docs/MAC.md. When Native does not fit, *res = -1 (pick from the 1600 / 1920 / 2560 tiers as before)
+static void rec_native(int *res, int *s3d) {
+    static const int lim_out[3] = { 2560, 3456, 3840 }, lim_3d[3] = { 1920, 2560, 3840 }; static const float sc[5] = { 1.0f, 0.85f, 0.75f, 0.67f, 0.5f };
+    int c = gpu_class(), w = native_w(); *res = -1; *s3d = 0;
+    if (!front_video_mfx_ok() || w > lim_out[c]) return;
+    *res = 3; *s3d = 4; for (int i = 0; i < 5; i++) if (w * sc[i] <= lim_3d[c] + 0.5f) { *s3d = i; break; }
+}
 // 首次启动的推荐值（dm_video.c 读到的 sw_video.txt 缺键或越界时调，只取缺的那几个，启动时在主线程）：全屏；分辨率取「不超过主屏像素宽的 3/4」的最高一档，2560 那档只给 Pro / Max / Ultra
 // 显卡（名字里带；M6 实测 1920 出图 + MetalFX 每帧约 13.7 ms，2560 约 14.5 ms，60 帧只有 16.7 ms）；出图比画布小又支持 MetalFX 就开 MetalFX。
 // 旧版偏好（StartFullScreen / RenderScale / MetalFXUpscale）设过的当作当前值接着用。测试副本（DM_APP_SUPPORT）缺省全按原版（窗口、1600、标准），
@@ -78,18 +94,17 @@ int front_video_mfx_ok(void) { static int ok = -1; if (ok < 0) ok = [MTLFXSpatia
 // so automated runs stay stable; DM_TEST_VIDEO_FIRSTBOOT=1 makes a test take the real recommendation
 int front_video_firstboot(int rec[3], int cur[3]) {
     if (getenv("DM_APP_SUPPORT") && !getenv("DM_TEST_VIDEO_FIRSTBOOT")) { for (int i = 0; i < 3; i++) rec[i] = cur[i] = 0; LOG("画面设置：测试副本，推荐值按原版（窗口 / 1600 / 标准）"); return 1; }
-    NSScreen *sc = NSScreen.mainScreen; double px = sc ? sc.frame.size.width * sc.backingScaleFactor : 1600;
-    id<MTLDevice> dev = MTLCreateSystemDefaultDevice(); NSString *gpu = dev.name ?: @"";
-    int big = [gpu containsString:@" Pro"] || [gpu containsString:@" Max"] || [gpu containsString:@" Ultra"], t = 0;
+    double px = main_px(); NSString *gpu = MTLCreateSystemDefaultDevice().name ?: @"";
+    int big = gpu_class() > 0, t = 0, nres, ns3d; rec_native(&nres, &ns3d);
     for (int i = 0; i < 3; i++) if (k_render_w[i] <= fmax(px * 0.75, 1600) && (i < 2 || big)) t = i;
-    rec[0] = 1; rec[1] = t; rec[2] = front_video_mfx_ok() && k_render_w[t] < px ? 1 : 0;
+    rec[0] = 1; rec[1] = nres >= 0 ? nres : t; rec[2] = front_video_mfx_ok() && (nres >= 0 || k_render_w[t] < px) ? 1 : 0;   // 原生时 MetalFX 管 3D 放大趟 | with Native, MetalFX does the 3D upscale pass
     for (int i = 0; i < 3; i++) cur[i] = rec[i];
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults; int legacy = 0;
     if ([ud objectForKey:@"StartFullScreen"]) { cur[0] = [ud boolForKey:@"StartFullScreen"]; legacy = 1; }
     id rs = [ud objectForKey:@"RenderScale"]; double k = [rs respondsToSelector:@selector(doubleValue)] ? [rs doubleValue] : 0;   // 手写的设置可能是任何类型 | a hand-written default can be any type
     if (k > 0 && isfinite(k)) { double w = fmin(fmax(px * fmin(k, 1.0), 1600), 2560); cur[1] = 0; for (int i = 0; i < 3; i++) if (k_render_w[i] <= w) cur[1] = i; legacy = 1; }
     if ([ud objectForKey:@"MetalFXUpscale"]) { cur[2] = [ud boolForKey:@"MetalFXUpscale"] && front_video_mfx_ok(); legacy = 1; }
-    LOG("画面设置：首次启动 主屏 %.0f 像素宽、显卡 %s → 推荐 全屏 / %d / %s%s", px, gpu.UTF8String, k_render_w[t], rec[2] ? "MetalFX" : "标准", legacy ? "；旧版偏好设过的接着用" : "");
+    LOG("画面设置：首次启动 主屏 %.0f 像素宽、显卡 %s → 推荐 全屏 / %d%s / %s%s", px, gpu.UTF8String, nres >= 0 ? native_w() : k_render_w[t], nres >= 0 ? "（原生）" : "", rec[2] ? "MetalFX" : "标准", legacy ? "；旧版偏好设过的接着用" : "");
     return 1;
 }
 // 之后加的画质键的推荐值（dm_video.c 读盘缺这个键时问）：Mac App 上是 SMAA、16× 各向异性、准确色彩。命令行宿主（没有 DM_APP）与测试副本照原版（0），
@@ -101,6 +116,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "aa")) return 1;
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "color")) return 1;
+    if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
     return -1;
 }
 // 「色彩」：准确 = 层标 sRGB（游戏写的就是 sRGB 编码的字节），系统把它配到屏幕的色域；鲜艳 = 不标（原先的样子：宽色域屏把 sRGB 原色当屏幕原色，偏艳）。

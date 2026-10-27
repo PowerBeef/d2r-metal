@@ -855,10 +855,11 @@ _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') els
 # Mac 与 iOS 上这几行独占「视频」页签（页首标题 = 第一节的名字，在表格的标题行里）；自定义各行在第五个页签「附加」那一页（_EXTRAS_PANEL）
 # On the Mac and iOS these rows have the "Video" tab to themselves (the page title = the first section's name, in the table's title row); the custom rows are on the page of the fifth tab, "Extras" (_EXTRAS_PANEL)
 _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVideoModeTip'),
-           ('res', '@ScreenResolution', ('dmVideoRes1600', 'dmVideoRes1920', 'dmVideoRes2560'), 'dmVideoResTip'),
+           ('res', '@ScreenResolution', ('dmVideoRes1600', 'dmVideoRes1920', 'dmVideoRes2560', 'dmVideoResNative'), 'dmVideoResTip'),
            ('color', '@dmVideoColor', ('dmVideoColorVivid', 'dmVideoColorAccurate'), 'dmVideoColorTip'),
            ('hdr', '@Graphics'),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), 'dmVideoPresetTip'),
+           ('s3d', '@dmVideo3DRes', ('dmVideoScale100', 'dmVideoScale85', 'dmVideoScale75', 'dmVideoScale67', 'dmVideoScale50'), 'dmVideo3DResTip'),
            ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX'), 'dmVideoUpscaleTip'),
            ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), 'OptionsMenuAntiAliasingTooltip'),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), 'OptionsMenuAnisotropicFilteringTooltip'),
