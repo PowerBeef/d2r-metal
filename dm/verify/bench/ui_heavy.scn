@@ -1,0 +1,37 @@
+# 基准路线：界面重的一段——营地里开总面板、把页签来回翻几遍、开关暂停页。mark 切段：panels
+# Benchmark route: a UI-heavy stretch -- in the camp, open the combined panel, flip through the tabs a few times, open and close the pause page. Segments cut by mark: panels
+name ui_heavy
+save warlock
+env DM_GAME_SEED=305419896
+timeout 180
+
+enter_game
+sleep 2
+mark panels
+press PLUS
+sleep 0.5
+press R
+sleep 0.5
+press R
+sleep 0.5
+press R
+sleep 0.5
+press R
+sleep 0.5
+press L
+sleep 0.5
+press L
+sleep 0.5
+press L
+sleep 0.5
+press L
+sleep 0.5
+press B
+sleep 0.5
+open_pause
+sleep 0.5
+close_pause
+sleep 0.5
+mark end
+quit
+check no_red

@@ -49,7 +49,17 @@ python3 dm/tools/bench.py show bench.json
 | 实时 Metal 读数 | `python3 dm/tools/gpucap.py listen --pid <pid> --seconds 10`，或 `bench.py run … --mpt` | `metalperftrace listen`：每秒的上屏间隔、上屏迟到、跳帧。 |
 | 系统常开的 Metal 记录 | `metalperftrace collect --last 10m <目录>`，再 `metalperftrace overview --aggregate --domain GameState <记录>` | 系统自己的记录；那一局设了 `DM_STATEREP=1` 的话按 `game_state` 分段。 |
 | GPU 截帧 | `python3 dm/tools/gpucap.py capture --pid <pid>`（或场景步骤 `gpu_capture`） | 按图层边界截一帧，约 4 GB；进程要带 `MTL_CAPTURE_ENABLED=1` 起。`gpucap.py summary <截帧>` 列命令缓冲、编码器、绘制、计算派发数（`gpudebug --json`）。截帧时出图停几秒，宿主会记一条红标「显示节拍没回调」（码 `e6db5cb6`）。 |
+| 采样归因 | `python3 dm/tools/bench.py profile <路线> [--ms 4] [--hitch-ms 25]` | 跑一遍，对全部客体线程采样（`DM_SAMPLE=<ms>:*`）。按段、按线程角色（主线程、任务线程、读写池、音频、其他）出在跑占比与最热的游戏函数，名字取本机的引擎符号表（`guestsyms.py`）；再列出每个超过 `--hitch-ms` 的帧（`nvn.tsv` 的 `@frame_ms`）那段时间里在跑的函数。写 `profile.json`。 |
 | Metal HUD | `python3 dm/tools/gpucap.py hud --pid <pid> on|off` | 系统的性能叠层，运行中开关（`metalperftrace setup`）。 |
+
+## 对留存基线的回归
+
+```bash
+python3 dm/tools/bench.py baseline save                 # 把本树的 dmhost（连同它的 gfx/nvn 各表）留成 $DM_ROOT/run/bench/baseline/<提交>，current 指向它
+python3 dm/tools/bench.py regress <路线> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]
+```
+
+`regress` 让基线宿主（A）与当前宿主（B）按 ABBA 跑，各指标同 `ab` 判。只有「B 显著变慢」（p < 0.05、区间整个在 0 一侧）才红；每一行都记账本。没有基线时为 ⚪（退出码 3）。
 
 ## 启动时间历史
 
@@ -59,6 +69,9 @@ python3 dm/tools/bench.py show bench.json
 
 | 路线 | 段 | 说明 |
 |---|---|---|
+| `combat.scn` | `walk`（走到血腥荒野）、`fight`（`tap_unit` 点怪打） | `save warlock`，固定地图种子；走法同 `golden/fight.scn` |
+| `ui_heavy.scn` | `panels`（总面板、页签来回翻、暂停页） | `save warlock` |
+| `rejoin.scn` | `leave`（保存并退出到前端）、`join`（再进局到读取画面撤下） | `save warlock` |
 | `town_loop.scn` | `town`（罗格营地里走一圈）、`wild`（出南门进血腥荒野） | `save warlock`，固定地图种子（`DM_GAME_SEED`），`walk_to` 用格坐标；每遍约 32 秒。 |
 
 加路线：写一个场景，每段之前 `mark <名>`，最后一段之后 `mark end`，并保持确定性：固定存档、固定 `DM_GAME_SEED`、移动不依赖时机。

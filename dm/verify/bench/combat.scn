@@ -1,0 +1,26 @@
+# 基准路线：出南门进血腥荒野，点怪打一阵（tap_unit 等怪进画面再点：触屏点怪 = 走过去攻击）。固定存档与地图种子（同 golden/fight.scn 的走法）；mark 切段：walk（走到荒野）、fight（打）
+# Benchmark route: out of the south gate into the Blood Moor, then tap monsters for a while (tap_unit waits for a monster on screen, then taps it: a touch tap on a monster = walk over and attack). Fixed save and map seed (the path of golden/fight.scn); segments cut by mark: walk (to the moor), fight
+name combat
+save warlock
+env DM_GAME_SEED=305419896
+timeout 240
+
+enter_game
+sleep 2
+mark walk
+walk_to 5789 4495 timeout=20
+walk_to 5791 4523 timeout=25
+expect_state area=2 timeout=10
+walk_to 5791 4600 timeout=25
+mark fight
+tap_unit 1 any timeout=20
+sleep 2
+tap_unit 1 any timeout=20
+sleep 2
+tap_unit 1 any timeout=20
+sleep 2
+tap_unit 1 any timeout=20
+sleep 2
+mark end
+quit
+check no_red

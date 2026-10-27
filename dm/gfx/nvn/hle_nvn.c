@@ -580,7 +580,11 @@ static void cs_dump(void) {   // 每帧调一次（出图处） | Called once pe
         (unsigned long long)f, g_cs.bytes / n / 1024.0, g_cs.recs / n, g_cs.grants / n, g_cs.grants ? g_cs.grant_bytes / (double)g_cs.grants / 1024.0 : 0, g_cs.grant_min / 1024.0, g_cs.grant_max / 1024.0, g_cs.cbs / n, g_cs.hostseg / n, g_cs.waste / n / 1024.0, top);
     int on = g_cs.on; memset(&g_cs, 0, sizeof g_cs); g_cs.on = on; g_cs.frame0 = f; pthread_mutex_unlock(&g_cs_mu);
 }
-static void put_hdr(uint8_t *p, uint32_t op, uint32_t size) { op_hdr h = {op, size}; memcpy(p, &h, sizeof h); if (op) cs_op(op, size); }
+// 常开的两个逐帧计数（DM_NVN_TSV 的 @binds / @cmdmem_cb 行，bench.py 按段统计）：录了多少条绑定命令（纹理 / 采样器 / 缓冲 / 程序 / 状态…）、调了几次游戏的补内存回调
+// Two always-on per-frame counters (the @binds / @cmdmem_cb rows of DM_NVN_TSV, summarized per segment by bench.py): how many bind commands were recorded (textures / samplers / buffers / programs / state...), and how many times the game's out-of-memory callback was called
+static _Atomic uint64_t g_bind_n, g_cmdcb_n;
+static int is_bind(uint32_t op) { switch (op) { case OP_BIND_UBO: case OP_BIND_SSBO: case OP_BIND_TEX: case OP_BIND_SAMP: case OP_BIND_IMG: case OP_BIND_PROGRAM: case OP_BIND_STATE: case OP_BIND_VATTR: case OP_BIND_VBUF: case OP_BIND_VSTREAM: return 1; default: return 0; } }
+static void put_hdr(uint8_t *p, uint32_t op, uint32_t size) { op_hdr h = {op, size}; memcpy(p, &h, sizeof h); if (op) { cs_op(op, size); if (is_bind(op)) atomic_fetch_add_explicit(&g_bind_n, 1, memory_order_relaxed); } }
 // 新段：录制中则在旧段尾写 JUMP 接上
 // New segment: if recording is in progress, write a JUMP at the end of the old segment to link it
 static void cmd_new_segment(cmd_t *o, uint8_t *mem, size_t n) {
@@ -742,6 +746,7 @@ static uint8_t *cmd_alloc(cmd_t *o, uint32_t size) {
     for (int tries = 0; !o->cur || o->cur + size + OP_RESERVE > o->end; tries++) {
         if (!o->cb || tries == 2) die("NVN 命令内存耗尽且无法补充（cb=%p）", (void *)o->cb);
         if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.cbs++; pthread_mutex_unlock(&g_cs_mu); }
+        atomic_fetch_add_explicit(&g_cmdcb_n, 1, memory_order_relaxed);
         o->cb((NVNcommandBuffer *)o, NVN_COMMAND_BUFFER_MEMORY_EVENT_OUT_OF_COMMAND_MEMORY, size + OP_RESERVE, o->cb_data);
     }
     if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.bytes += size; g_cs.recs++; pthread_mutex_unlock(&g_cs_mu); }
@@ -1679,6 +1684,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
             trow(f, "@call_ms", (t0 - g_t0_ns) / 1e6);
         }
         trow(f, "@passes", (double)(ps - prev_pass)); trow(f, "@draws", (double)(dr - prev_draw));
+        { static uint64_t pb, pc; uint64_t b_ = atomic_load(&g_bind_n), c_ = atomic_load(&g_cmdcb_n); trow(f, "@binds", (double)(b_ - pb)); trow(f, "@cmdmem_cb", (double)(c_ - pc)); pb = b_; pc = c_; }
         static uint64_t pl, pst, pf, pudc; uint64_t l, st, fu; mtl_bw(&l, &st, &fu);
         trow(f, "@rt_load_mb", (l - pl) / 1048576.0); trow(f, "@rt_store_mb", (st - pst) / 1048576.0); trow(f, "@pass_full_rw", (double)(fu - pf));
         uint64_t udc = mtl_udc_saved_bytes(); trow(f, "@unwritten_dc_mb", (udc - pudc) / 1048576.0);

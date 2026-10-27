@@ -49,7 +49,17 @@ Checked on this tree (Apple M6, macOS 27):
 | Live Metal stats | `python3 dm/tools/gpucap.py listen --pid <pid> --seconds 10`, or `bench.py run … --mpt` | `metalperftrace listen`: on-glass frame interval, present lateness and skipped frames per second. |
 | Always-on Metal record | `metalperftrace collect --last 10m <dir>` then `metalperftrace overview --aggregate --domain GameState <trace>` | The system's own record, split by `game_state` when the run had `DM_STATEREP=1`. |
 | GPU capture | `python3 dm/tools/gpucap.py capture --pid <pid>` (or the scenario step `gpu_capture`) | One frame at the layer boundary, about 4 GB; the process must start with `MTL_CAPTURE_ENABLED=1`. `gpucap.py summary <trace>` lists command buffers, encoders, draws and dispatches (`gpudebug --json`). Capturing pauses presentation for a few seconds, so the host logs a red "display link silent" line (code `e6db5cb6`). |
+| Sampled attribution | `python3 dm/tools/bench.py profile <route> [--ms 4] [--hitch-ms 25]` | One run with every guest thread sampled (`DM_SAMPLE=<ms>:*`). Per segment and thread role (main, job workers, IO pool, audio, other): the running share and the hottest game functions, named from the local engine symbol table (`guestsyms.py`); then every frame over `--hitch-ms` (`@frame_ms` in `nvn.tsv`) with the functions running during it. Writes `profile.json`. |
 | Metal HUD | `python3 dm/tools/gpucap.py hud --pid <pid> on|off` | The system performance overlay, switched on a running process (`metalperftrace setup`). |
+
+## Regression against a kept baseline
+
+```bash
+python3 dm/tools/bench.py baseline save                 # keep this tree's dmhost (and its gfx/nvn tables) as $DM_ROOT/run/bench/baseline/<rev>, current → it
+python3 dm/tools/bench.py regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]
+```
+
+`regress` runs the baseline host (A) against the current one (B) in ABBA order and judges each metric as `ab` does. Only "B slower" (p < 0.05, interval on one side of 0) is red; every row goes to the ledger. With no baseline it is ⚪ (exit code 3).
 
 ## Boot-time history
 
@@ -59,6 +69,9 @@ Every benchmark run and every `dm/ios/tools/bootprof.sh` run appends the time fr
 
 | Route | Segments | Notes |
 |---|---|---|
+| `combat.scn` | `walk` (to the Blood Moor), `fight` (`tap_unit` on monsters) | `save warlock`, fixed map seed; the path of `golden/fight.scn` |
+| `ui_heavy.scn` | `panels` (the combined panel, tabs back and forth, the pause page) | `save warlock` |
+| `rejoin.scn` | `leave` (Save and Exit to the front end), `join` (rejoin until the loading screen goes away) | `save warlock` |
 | `town_loop.scn` | `town` (a loop inside the Rogue Encampment), `wild` (out of the south gate into the Blood Moor) | `save warlock`, fixed map seed (`DM_GAME_SEED`), `walk_to` cell coordinates; about 32 s per run. |
 
 To add a route, write a scenario with `mark <name>` before each segment and `mark end` after the last, and keep it deterministic: a fixed save, a fixed `DM_GAME_SEED`, and moves that don't depend on timing.

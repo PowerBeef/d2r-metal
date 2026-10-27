@@ -5,6 +5,10 @@
 #        A、B 按 ABBA 交替（抵消发热 / 频率漂移），每段按每遍的指标做 Mann-Whitney U（小样本精确）与 B−A 中位数差的自助法 95% 区间；
 #        区间整个在 0 一侧且 p < 0.05 才算有差别；结论追加到 $DM_ROOT/run/bench/ledger.tsv
 #   show <bench.json>    打印各段摘要
+#   profile <路线> [--ms 4] [--hitch-ms 25]   跑一遍并对全部客体线程采样（DM_SAMPLE=<ms>:*）：按段、按线程角色（主线程 / 任务线程 / 读写池 / 音频 / 其他）出在跑占比与最热的游戏函数
+#        （名字来自本机的引擎符号表 guestsyms.py），再把超过 --hitch-ms 的帧（nvn.tsv 的帧时间）各自那段时间里在跑的函数列出来；写 profile.json
+#   baseline save [--host 宿主]               把当前宿主（缺省本树 dm/host/dmhost）留一份作基线：$DM_ROOT/run/bench/baseline/<提交>/host/dmhost（旁边带它的着色器映射表），current 指向它
+#   regress <路线> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]   基线宿主（A）对当前宿主（B）按 ABBA 跑，各指标同 ab 判；只有「B 显著变慢」才 RED，结论记账本
 #   每遍之前看温控（Mac：pmset -g therm；过热就等，最多 --cool 秒）与游戏模式（gamepolicyctl），都记进结果；末行 RESULT {json}
 # Performance benchmark: runs a fixed route (dm/verify/bench/*.scn, scenario format, segments cut by mark) N times, reports per-segment statistics of the per-frame present intervals (DM_FRAMES), writes bench.json; A/B runs interleaved with a significance judgement, the conclusion recorded in a ledger.
 #   run <route> [--backend cli|mac-app] [--reps 3] [--env K=V ...] [--host host executable] [--out bench.json] [--cool seconds]
@@ -12,8 +16,13 @@
 #        A and B alternate as ABBA (cancelling thermal / clock drift); per segment, a Mann-Whitney U on the per-run metric (exact for small samples) and a bootstrap 95% interval of the B-A median difference;
 #        a difference counts only when the interval lies entirely on one side of 0 and p < 0.05; the conclusion is appended to $DM_ROOT/run/bench/ledger.tsv
 #   show <bench.json>    print the per-segment summary
+#   profile <route> [--ms 4] [--hitch-ms 25]  one run with all guest threads sampled (DM_SAMPLE=<ms>:*): per segment and thread role (main / job workers / IO pool / audio / other), the running share and the hottest game functions
+#        (names from the local engine symbol table, guestsyms.py); then, for every frame longer than --hitch-ms (frame time in nvn.tsv), the functions running during it; writes profile.json
+#   baseline save [--host host]               keeps a copy of the current host (default this tree's dm/host/dmhost) as the baseline: $DM_ROOT/run/bench/baseline/<rev>/host/dmhost (with its shader map beside it), with current pointing at it
+#   regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]   baseline host (A) against the current host (B) in ABBA order, each metric judged as in ab; RED only when B is significantly slower; conclusions go to the ledger
 #   Before each run the thermal state (Mac: pmset -g therm; wait while hot, at most --cool seconds) and Game Mode (gamepolicyctl) are checked and recorded in the result; last line RESULT {json}
 import argparse
+import collections
 import datetime
 import itertools
 import json
@@ -37,7 +46,7 @@ DM_ROOT = scenario.DM_ROOT
 PRESENT = ('mean_ms', 'p50_ms', 'p95_ms', 'p99_ms', 'max_ms', 'slow_share', 'fps')
 # 逐帧计时（DM_NVN_TSV 的 @ 行，hle_nvn.c）：帧间隔 / 出帧工作 / NVN 调用 / GPU / 翻译录制 / 翻译提交 / 出帧线程 CPU / 取图等待。苹果上帧率常被垂直同步钉死，这些不受刷新率量化，A/B 主要看它们
 # Per-frame timing (the @ rows of DM_NVN_TSV, hle_nvn.c): frame interval / frame work / NVN calls / GPU / translation record / translation submit / frame-thread CPU / image-acquire wait. On Apple platforms the frame rate is often pinned by vsync; these are not quantized by the refresh rate, and A/B mainly looks at them
-SERIES = ('frame_ms', 'work_ms', 'nvn_ms', 'gpu_ms', 'rec_ms', 'submit_ms', 'cpu_ms', 'wait_ms')
+SERIES = ('frame_ms', 'work_ms', 'nvn_ms', 'gpu_ms', 'rec_ms', 'submit_ms', 'cpu_ms', 'wait_ms', 'draws', 'binds', 'cmdmem_cb')   # 后三个是逐帧计数（条 / 次） | the last three are per-frame counts
 STATS = ('mean', 'p50', 'p95', 'p99')
 METRICS = tuple(f'present.{m}' for m in PRESENT) + tuple(f'{s}.{t}' for s in SERIES for t in STATS)
 SLOW_MS = 20.8   # 超过这个算慢帧（60 Hz 下两个刷新以上，同 perf.txt 的档） | above this a frame is slow (more than two refreshes at 60 Hz, as the perf.txt buckets)
@@ -257,23 +266,37 @@ def cmd_ab(a):
     for i, v in enumerate(order, 1):
         print(f'== {i}/{len(order)} 变体 | variant {v}', flush=True)
         env, host = var[v]; reps[v].append(run_once(a.route, a.backend, os.path.join(base, f'{i:02d}{v}'), env, host, a.cool))
-    rows = []
-    segs = sorted({n for v in reps.values() for r in v if r['ok'] for n in r['segments']})
-    for n in segs:
-        va = [x for x in (metric(r['segments'].get(n, {}), a.metric) for r in reps['A'] if r['ok']) if x is not None]
-        vb = [x for x in (metric(r['segments'].get(n, {}), a.metric) for r in reps['B'] if r['ok']) if x is not None]
-        if len(va) < 2 or len(vb) < 2: rows.append(dict(segment=n, verdict='not enough runs')); continue
-        u, p = mann_whitney(va, vb); d, lo, hi = boot_median_diff(va, vb)
-        worse = not a.metric.endswith('.fps')   # 除了 fps，越大越差 | except fps, larger is worse
-        sig = p < 0.05 and (lo > 0 or hi < 0)
-        verdict = 'no difference' if not sig else ('B slower' if (d > 0) == worse else 'B faster')
-        rows.append(dict(segment=n, metric=a.metric, a=va, b=vb, median_a=statistics.median(va), median_b=statistics.median(vb), diff=round(d, 4), ci95=[round(lo, 4), round(hi, 4)], u=u, p=round(p, 4), verdict=verdict))
-        print(f"  {n:<10} {a.metric}: A {statistics.median(va):.3f} B {statistics.median(vb):.3f}  B−A {d:+.3f} [{lo:+.3f}, {hi:+.3f}]  p {p:.3f}  → {verdict}")
+    rows = compare(reps, a.metric)
     envinfo = environment()
     res = dict(schema='bench-ab/1', route=name, backend=a.backend, started=stamp, order=order, a=dict(env=var['A'][0], host=a.a_host), b=dict(env=var['B'][0], host=a.b_host),
                environment=envinfo, rows=rows, reps=reps)
     out = a.out or os.path.join(base, 'ab.json')
     with open(out, 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
+    ledger = ledger_write(stamp, envinfo, name, a.metric, a.a_env or a.a_host or '-', a.b_env or a.b_host or '-', rows)
+    ok = all(r['ok'] for v in reps.values() for r in v)
+    print(f"BENCH-AB {'OK' if ok else 'RED'} {name} → {out}（账本 | ledger {ledger}）")
+    print('RESULT ' + json.dumps(dict(name='bench-ab', verdict='OK' if ok else 'RED', route=name, rows=[{k: r.get(k) for k in ('segment', 'diff', 'ci95', 'p', 'verdict')} for r in rows], file=out), ensure_ascii=False))
+    return 0 if ok else 1
+
+
+def compare(reps, m):
+    """A / B 各遍按段取指标 m：Mann-Whitney + 中位数差的自助区间，判「没差别 / B 慢 / B 快」。 | Per segment, metric m over the A / B runs: Mann-Whitney + bootstrap interval of the median difference, judged "no difference / B slower / B faster"."""
+    rows = []
+    segs = sorted({n for v in reps.values() for r in v if r['ok'] for n in r['segments']})
+    for n in segs:
+        va = [x for x in (metric(r['segments'].get(n, {}), m) for r in reps['A'] if r['ok']) if x is not None]
+        vb = [x for x in (metric(r['segments'].get(n, {}), m) for r in reps['B'] if r['ok']) if x is not None]
+        if len(va) < 2 or len(vb) < 2: rows.append(dict(segment=n, metric=m, verdict='not enough runs')); continue
+        u, p = mann_whitney(va, vb); d, lo, hi = boot_median_diff(va, vb)
+        worse = not m.endswith('.fps')   # 除了 fps，越大越差 | except fps, larger is worse
+        sig = p < 0.05 and (lo > 0 or hi < 0)
+        verdict = 'no difference' if not sig else ('B slower' if (d > 0) == worse else 'B faster')
+        rows.append(dict(segment=n, metric=m, a=va, b=vb, median_a=statistics.median(va), median_b=statistics.median(vb), diff=round(d, 4), ci95=[round(lo, 4), round(hi, 4)], u=u, p=round(p, 4), verdict=verdict))
+        print(f"  {n:<10} {m}: A {statistics.median(va):.3f} B {statistics.median(vb):.3f}  B−A {d:+.3f} [{lo:+.3f}, {hi:+.3f}]  p {p:.3f}  → {verdict}")
+    return rows
+
+
+def ledger_write(stamp, envinfo, name, m, a_label, b_label, rows):
     ledger = os.path.join(DM_ROOT, 'run', 'bench', 'ledger.tsv'); os.makedirs(os.path.dirname(ledger), exist_ok=True)
     new = not os.path.exists(ledger)
     with open(ledger, 'a', encoding='utf-8') as f:
@@ -281,11 +304,126 @@ def cmd_ab(a):
         rev = envinfo['git']['rev']
         for r in rows:
             if 'diff' not in r: continue
-            f.write(f"{stamp}\t{rev}\t{name}\t{r['segment']}\t{a.metric}\t{a.a_env or a.a_host or '-'}\t{a.b_env or a.b_host or '-'}\t{len(r['a'])}/{len(r['b'])}\t{r['median_a']:.4f}\t{r['median_b']:.4f}\t{r['diff']:+.4f}\t[{r['ci95'][0]:+.4f}, {r['ci95'][1]:+.4f}]\t{r['p']:.4f}\t{r['verdict']}\n")
-    ok = all(r['ok'] for v in reps.values() for r in v)
-    print(f"BENCH-AB {'OK' if ok else 'RED'} {name} → {out}（账本 | ledger {ledger}）")
-    print('RESULT ' + json.dumps(dict(name='bench-ab', verdict='OK' if ok else 'RED', route=name, rows=[{k: r.get(k) for k in ('segment', 'diff', 'ci95', 'p', 'verdict')} for r in rows], file=out), ensure_ascii=False))
-    return 0 if ok else 1
+            f.write(f"{stamp}\t{rev}\t{name}\t{r['segment']}\t{m}\t{a_label}\t{b_label}\t{len(r['a'])}/{len(r['b'])}\t{r['median_a']:.4f}\t{r['median_b']:.4f}\t{r['diff']:+.4f}\t[{r['ci95'][0]:+.4f}, {r['ci95'][1]:+.4f}]\t{r['p']:.4f}\t{r['verdict']}\n")
+    return ledger
+
+
+# ---------- 采样归因与卡顿 | sampled attribution and hitches ----------
+WAITS = ('__psynch', '__semwait', 'semaphore_', 'mach_msg', '__ulock', 'kevent', '__select', '__workq', '__wait4', 'nanosleep', '__nanosleep', 'usleep', '__sleep', '_pthread_cond_wait')
+SAMPLE_RE = re.compile(r'\[dm\] SAMPLE #\d+ \[([\d.]+)s\] thr=(0x[0-9a-f]+) pc=(\S+)')
+
+
+def role(name):
+    """线程名 → 角色（按名字粗分；无名的 Thread_0x… 是游戏的任务线程）。 | Thread name -> role (coarsely by name; the unnamed Thread_0x... are the game's job workers)."""
+    if name in ('主线程', 'main'): return 'main'
+    if name.startswith('Thread_0x'): return 'workers'
+    if 'AIO' in name: return 'io'
+    if name.startswith('FMOD'): return 'audio'
+    return 'other'
+
+
+def samples(log):
+    """host.log 的全线程采样 → (线程名表, [(秒, 句柄, 在跑, 最内层游戏函数)])。 | All-thread samples from host.log -> (thread name map, [(seconds, handle, running, innermost game function)])."""
+    sys.path.insert(0, HERE); import guestsyms   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    names, out, cur = {}, [], None
+    with open(log, encoding='utf-8', errors='replace') as f:
+        for ln in f:
+            if ln.startswith('[dm] SAMPLE-THR '):
+                h, _, nm = ln[16:].strip().partition(' '); names[int(h, 16)] = nm; continue
+            m = SAMPLE_RE.match(ln)
+            if m: cur = [float(m.group(1)), int(m.group(2), 16), not m.group(3).startswith(WAITS), m.group(3)]; continue
+            if cur and ln.startswith('[dm] bt:'):
+                frames = [cur[3]] + ln[8:].split()
+                game = next((x for x in frames if x.startswith(('main+0x', 'sdk+0x'))), None)
+                sym = guestsyms.lookup(game) if game else ''
+                fn = (sym.split('+0x')[0] if sym else game) if game else 'host:' + cur[3].split('+0x')[0]   # 没名字的游戏函数留模块偏移 | game functions without a name keep their module offset
+                out.append((cur[0], cur[1], cur[2], fn)); cur = None
+    return names, out
+
+
+def attribute(run_dir, hitch_ms):
+    names, smp = samples(os.path.join(run_dir, 'host.log'))
+    evs = dmevents.load(os.path.join(run_dir, 'events.ndjson')) if os.path.exists(os.path.join(run_dir, 'events.ndjson')) else []
+    marks = [(e['t'], e.get('name')) for e in evs if e['ev'] == 'mark']
+    def table(t0, t1):
+        by: dict[str, Any] = {}
+        for t, h, run, fn in smp:
+            if not t0 <= t < t1: continue
+            r = by.setdefault(role(names.get(h, '?')), dict(samples=0, running=0, hot=collections.Counter()))
+            r['samples'] += 1
+            if run: r['running'] += 1; r['hot'][fn] += 1
+        return {k: dict(samples=v['samples'], running_pct=round(100 * v['running'] / v['samples'], 1) if v['samples'] else 0,
+                        hot=[[f, n] for f, n in v['hot'].most_common(6)]) for k, v in sorted(by.items())}
+    segs = {name: table(t0, t1) for (t0, name), (t1, _) in zip(marks, marks[1:], strict=False) if name != 'end'}
+    nv = nvn_rows(os.path.join(run_dir, 'nvn.tsv')); hitches = []
+    for f, row in sorted(nv.items()):
+        ms, t = row.get('frame_ms'), row.get('t_s')
+        if ms is None or t is None or ms <= hitch_ms: continue
+        hot = collections.Counter(fn for ts, h, run, fn in smp if run and t - ms / 1000 <= ts <= t)
+        hitches.append(dict(frame=f, ms=round(ms, 1), t=round(t, 3), running=[[k, n] for k, n in hot.most_common(6)]))
+    return dict(threads={f'{h:#x}': names[h] for h in sorted(names)}, segments=segs, hitches=hitches)
+
+
+def cmd_profile(a):
+    stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
+    out = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_profile_{stamp}')
+    r = run_once(a.route, a.backend, out, {'DM_SAMPLE': f'{a.ms}:*'}, a.host, a.cool)
+    prof = attribute(out, a.hitch_ms); prof.update(route=name, ms=a.ms, hitch_ms=a.hitch_ms, ok=r['ok'], segments_timing=r['segments'])
+    with open(os.path.join(out, 'profile.json'), 'w', encoding='utf-8') as f: json.dump(prof, f, ensure_ascii=False, indent=1)
+    for seg, tab in prof['segments'].items():
+        print(f'== {seg}')
+        for rl, v in tab.items(): print(f"  {rl:<8} 在跑 | running {v['running_pct']:5.1f}%  " + '; '.join(f'{fn} {n}' for fn, n in v['hot'][:4]))
+    print(f"  卡顿 | hitches > {a.hitch_ms} ms: {len(prof['hitches'])}" + ''.join(f"\n    帧 | frame {h['frame']} {h['ms']} ms: " + '; '.join(f'{fn} {n}' for fn, n in h['running'][:4]) for h in prof['hitches'][:8]))
+    print(f"BENCH-PROFILE {'OK' if r['ok'] else 'RED'} {name} → {os.path.join(out, 'profile.json')}")
+    print('RESULT ' + json.dumps(dict(name='bench-profile', verdict='OK' if r['ok'] else 'RED', route=name, hitches=len(prof['hitches']), file=os.path.join(out, 'profile.json')), ensure_ascii=False))
+    return 0 if r['ok'] else 1
+
+
+# ---------- 对留存基线的回归 A/B | regression A/B against a kept baseline ----------
+BASE = os.path.join(DM_ROOT, 'run', 'bench', 'baseline')
+
+
+def current_host():
+    h = os.path.join(scenario.DM, 'host', 'dmhost')
+    if subprocess.run(['make', '-s', '-C', os.path.dirname(h), 'dmhost'], capture_output=True, check=False).returncode: raise scenario.ScenarioError('host build failed')
+    return h
+
+
+def cmd_baseline(a):
+    src = os.path.abspath(a.host) if a.host else current_host()
+    rev = environment()['git'].get('rev') or 'unknown'; d = os.path.join(BASE, rev)
+    import shutil   # noqa: PLC0415
+    # 宿主按自己所在位置找「../gfx/nvn/」下的表（着色器映射 shader_map.tsv、c1_full.tsv…，nvn_mtl.m exe_rel）：照仓库的相对布局留一份 | the host finds the tables under "../gfx/nvn/" relative to itself (shader_map.tsv, c1_full.tsv..., nvn_mtl.m exe_rel): keep a copy in the repository's relative layout
+    os.makedirs(os.path.join(d, 'host'), exist_ok=True); os.makedirs(os.path.join(d, 'gfx', 'nvn'), exist_ok=True)
+    shutil.copy2(src, os.path.join(d, 'host', 'dmhost'))
+    import glob   # noqa: PLC0415
+    for t in glob.glob(os.path.join(os.path.dirname(src), '..', 'gfx', 'nvn', '*.tsv')): shutil.copy2(t, os.path.join(d, 'gfx', 'nvn', os.path.basename(t)))   # 着色器映射、c1 清单… | shader map, c1 list...
+    cur = os.path.join(BASE, 'current')
+    if os.path.lexists(cur): os.remove(cur)
+    os.symlink(rev, cur)
+    print(f'BENCH-BASELINE OK {rev} → {d}/host/dmhost'); return 0
+
+
+def cmd_regress(a):
+    base = os.path.join(BASE, 'current', 'host', 'dmhost')
+    if not os.path.exists(base): print('⚪ BENCH-REGRESS 没有基线 | no baseline (bench.py baseline save)'); return 3
+    stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
+    out = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_regress_{stamp}')
+    hosts = {'A': os.path.realpath(base), 'B': current_host()}
+    order = ''.join('ABBA' for _ in range(math.ceil(a.reps / 2)))[:2 * a.reps]; reps: dict[str, list] = {'A': [], 'B': []}
+    for i, v in enumerate(order, 1):
+        print(f'== {i}/{len(order)} 变体 | variant {v}', flush=True)
+        reps[v].append(run_once(a.route, a.backend, os.path.join(out, f'{i:02d}{v}'), {}, hosts[v], a.cool))
+    envinfo = environment(); rows = []
+    for m in a.metrics.split(','):
+        if m not in METRICS: print(f'🔴 unknown metric {m}'); return 2
+        rr = compare(reps, m); rows += rr; ledger_write(stamp, envinfo, name, m, f"baseline {os.path.basename(os.path.dirname(os.path.dirname(hosts['A'])))}", 'current', rr)
+    slower = [r for r in rows if r.get('verdict') == 'B slower']; ok = all(r['ok'] for v in reps.values() for r in v)
+    with open(os.path.join(out, 'regress.json'), 'w', encoding='utf-8') as f: json.dump(dict(route=name, hosts=hosts, order=order, rows=rows, environment=envinfo), f, ensure_ascii=False, indent=1)
+    verdict = 'RED' if slower or not ok else 'OK'
+    print(f"BENCH-REGRESS {verdict} {name}：{len(slower)} 项显著变慢 | significantly slower" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower))
+    print('RESULT ' + json.dumps(dict(name='bench-regress', verdict=verdict, route=name, slower=[(r['segment'], r['metric'], r['diff']) for r in slower]), ensure_ascii=False))
+    return 1 if verdict == 'RED' else 0
 
 
 def main(argv):
@@ -298,11 +436,19 @@ def main(argv):
     b.add_argument('--a-env', default=''); b.add_argument('--b-env', default=''); b.add_argument('--a-host'); b.add_argument('--b-host'); b.add_argument('--metric', default='nvn_ms.p50', choices=METRICS)
     b.add_argument('--out'); b.add_argument('--cool', type=float, default=120)
     s = sub.add_parser('show'); s.add_argument('file')
+    pr = sub.add_parser('profile'); pr.add_argument('route'); pr.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); pr.add_argument('--ms', type=int, default=4)
+    pr.add_argument('--hitch-ms', type=float, default=25); pr.add_argument('--host'); pr.add_argument('--cool', type=float, default=120)
+    bl = sub.add_parser('baseline'); bl.add_argument('op', choices=('save',)); bl.add_argument('--host')
+    rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); rg.add_argument('--reps', type=int, default=6)
+    rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,gpu_ms.p50'); rg.add_argument('--cool', type=float, default=120)
     a = ap.parse_args(argv)
-    held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * 2} min", a.cmd in ('run', 'ab'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
+    held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * 2} min", a.cmd in ('run', 'ab', 'profile', 'regress'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
     if held is not None: return held
     if a.cmd == 'run': return cmd_run(a)
     if a.cmd == 'ab': return cmd_ab(a)
+    if a.cmd == 'profile': return cmd_profile(a)
+    if a.cmd == 'baseline': return cmd_baseline(a)
+    if a.cmd == 'regress': return cmd_regress(a)
     with open(a.file, encoding='utf-8') as f: show(json.load(f))
     return 0
 

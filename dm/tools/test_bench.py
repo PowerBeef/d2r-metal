@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -49,6 +50,33 @@ class BenchTest(unittest.TestCase):
         self.assertIsNone(bench.metric(seg['town'], 'rec_ms.p95'))
         summ = bench.summarize([dict(ok=True, segments=seg), dict(ok=True, segments=seg), dict(ok=False, segments={})])
         self.assertEqual((summ['town']['runs'], summ['wild']['gpu_ms.p50']), (2, 7.0))
+
+    def test_attribute_segments_and_hitches(self):   # 合成的采样日志 + 逐帧计时：按段按线程角色出在跑占比与热点，长帧只列它那段时间里在跑的函数 | synthetic samples + per-frame timing: running share and hotspots per segment and thread role; a long frame lists only what ran during it
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            ev = [dict(seq=1, t=1.0, ev='mark', name='seg', frame=10), dict(seq=2, t=3.0, ev='mark', name='end', frame=70)]
+            (p / 'events.ndjson').write_text(''.join(json.dumps(e) + '\n' for e in ev), encoding='utf-8')
+            log = ['[dm] SAMPLE-THR 0x1001 主线程', '[dm] SAMPLE-THR 0x1005 Thread_0x0000000100000000', '[dm] SAMPLE-THR 0x1007 AIO Pool Thread']
+            for i in range(20):
+                t = 1.0 + i * 0.1
+                log += [f'[dm] SAMPLE #{3 * i + 1} [{t:.3f}s] thr=0x1001 pc=main+0x100', '[dm] bt: main+0x200 dm_thread_enter+0x18']
+                log += [f'[dm] SAMPLE #{3 * i + 2} [{t:.3f}s] thr=0x1005 pc=__psynch_cvwait+0x8 lr=x', '[dm] bt: sdk+0x10 main+0x300']
+                log += [f'[dm] SAMPLE #{3 * i + 3} [{t:.3f}s] thr=0x1007 pc={"main+0x400" if 2.0 <= t < 2.1 else "__semwait_signal+0x8"}', '[dm] bt: main+0x500']
+            (p / 'host.log').write_text('\n'.join(log) + '\n', encoding='utf-8')
+            rows = ['frame\tname\tvalue'] + [f'{f}\t@frame_ms\t{80.0 if f == 40 else 16.7}' for f in range(10, 70)] + [f'{f}\t@t_s\t{1.0 + (f - 10) / 30 + (0.05 if f == 40 else 0):.3f}' for f in range(10, 70)]
+            (p / 'nvn.tsv').write_text('\n'.join(rows) + '\n', encoding='utf-8')
+            real = sys.modules.get('guestsyms'); sys.modules['guestsyms'] = types.SimpleNamespace(lookup=lambda a: '')   # 不靠本机的引擎符号表 | independent of the local engine symbol table
+            try: prof = bench.attribute(str(p), 25)
+            finally:
+                if real: sys.modules['guestsyms'] = real
+                else: sys.modules.pop('guestsyms', None)
+        seg = prof['segments']['seg']
+        self.assertEqual((seg['main']['running_pct'], seg['workers']['running_pct'], seg['io']['running_pct']), (100.0, 0.0, 5.0))
+        self.assertEqual(seg['main']['hot'][0][1], 20)
+        self.assertEqual([h['frame'] for h in prof['hitches']], [40])
+        self.assertEqual(sorted(f for f, _ in prof['hitches'][0]['running']), ['main+0x100', 'main+0x400'])   # 那 80 ms 里两条线程在跑 | two threads were running during those 80 ms
+        self.assertEqual(prof['threads']['0x1007'], 'AIO Pool Thread')
+        self.assertEqual((bench.role('主线程'), bench.role('Thread_0x01'), bench.role('FMOD mixer thread'), bench.role('BGS Thread')), ('main', 'workers', 'audio', 'other'))
 
 
 if __name__ == '__main__':

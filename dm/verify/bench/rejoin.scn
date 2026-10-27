@@ -1,0 +1,21 @@
+# 基准路线：保存并退出、再进同一个角色（存盘、拆局、前端、读取、建局）。mark 切段：leave（保存并退出到前端）、join（进局到读取画面撤下）
+# Benchmark route: Save and Exit, then rejoin the same character (save, teardown, front end, loading, game creation). Segments cut by mark: leave (Save and Exit to the front end), join (entering until the loading screen goes away)
+name rejoin
+save warlock
+env DM_GAME_SEED=305419896
+timeout 240
+
+enter_game
+sleep 2
+mark leave
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+mark join
+enter_game
+mark end
+sleep 1
+quit
+check no_red
+check saved

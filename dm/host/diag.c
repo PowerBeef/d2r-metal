@@ -567,6 +567,9 @@ static void *sampler(void *p) {
         usleep(us);
         if (g_sample_name && !strcmp(g_sample_name, "*")) {        // 全部客体线程轮一遍 | Cycle through all guest threads
             int thr_list(pthread_t *out, int max); pthread_t all[64]; int n = thr_list(all, 64);
+            int thr_name_of(pthread_t pt, char *out, size_t n); static pthread_t named[128]; static int nnamed;   // 每条线程第一次轮到时记一行「句柄 名字」（bench.py profile 按线程名分组） | the first time each thread comes up, log one "handle name" line (bench.py profile groups by thread name)
+            for (int k = 0; k < n; k++) { int seen = 0; for (int j = 0; j < nnamed; j++) seen |= pthread_equal(named[j], all[k]);
+                if (!seen && nnamed < 128) { char nm[80]; named[nnamed++] = all[k]; if (thr_name_of(all[k], nm, sizeof nm)) fprintf(stderr, "[dm] SAMPLE-THR %s\n", nm); } }
             for (int k = 0; k < n; k++) { pthread_kill(all[k], SIGUSR2); usleep(200); }
         } else {
             if (g_sample_name) { pthread_t t; if (!thr_find_by_name(g_sample_name, &t)) continue; g_sample_pt = t; }

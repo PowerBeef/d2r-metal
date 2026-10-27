@@ -42,6 +42,12 @@ class DmtestTest(unittest.TestCase):
         p, res = self.wrap('echo "LIFECYCLE RED"; exit 0')
         self.assertEqual((p.returncode, res['verdict']), (1, 'red'))
 
+    def test_rc_only_trusts_the_exit_code(self):   # 测试套的负向用例会打 RED 判定行，退出码才是结论 | a test suite's negative cases print RED verdict lines; the exit code is the verdict
+        p, res = self.wrap('echo "SCENARIO t RED step 1"; exit 0', '--rc-only')
+        self.assertEqual((p.returncode, res['verdict'], len(res['verdicts'])), (0, 'ok', 1))
+        p, res = self.wrap('echo "ALL OK"; exit 2', '--rc-only')
+        self.assertEqual((p.returncode, res['verdict']), (1, 'red'))
+
     def test_nonzero_exit_is_red_and_markers_counted(self):
         p, res = self.wrap('echo "【红】宿主编译失败"; echo "x 🔴 y"; exit 3')
         self.assertEqual((p.returncode, res['verdict'], res['rc']), (1, 'red', 3))

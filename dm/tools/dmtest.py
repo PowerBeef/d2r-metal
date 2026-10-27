@@ -92,8 +92,9 @@ def run(cmd, log_path, timeout, env):
     return rc, timed_out, sc
 
 
-def verdict_of(rc, timed_out, sc, strict):
+def verdict_of(rc, timed_out, sc, strict, rc_only=False):
     if timed_out or rc in (126, 127): return 'error'
+    if rc_only: return 'red' if rc != 0 else 'ok'   # 测试套：退出码就是结论（套里的负向用例自己会打出 RED 判定行） | test suites: the exit code is the verdict (the suite's own negative cases print RED verdict lines)
     bad = [v for v in sc.verdicts if v['verdict'] in ('RED', 'FAIL')] + [r for r in sc.results if str(r.get('verdict', '')).upper() in ('RED', 'FAIL')]
     return 'red' if rc != 0 or bad or (strict and sc.red_n) else 'ok'
 
@@ -125,6 +126,7 @@ def main(argv):
     ap = argparse.ArgumentParser(prog='dmtest.py', description='Run a test command and write result.json / JUnit XML from its verdict lines.')
     ap.add_argument('--name'); ap.add_argument('--out'); ap.add_argument('--junit'); ap.add_argument('--timeout', type=float, default=0)
     ap.add_argument('--strict-log', action='store_true', help='red-marker lines (【红】 / 🔴 / FATAL / CRASH) make the run red')
+    ap.add_argument('--rc-only', action='store_true', help='the verdict comes from the exit code only (for test suites whose negative cases print RED lines); lines are still recorded')
     ap.add_argument('cmd', nargs=argparse.REMAINDER)
     a = ap.parse_args(argv)
     cmd = a.cmd[1:] if a.cmd[:1] == ['--'] else a.cmd
@@ -136,7 +138,7 @@ def main(argv):
     t0 = time.monotonic()
     rc, timed_out, sc = run(cmd, os.path.join(out, 'log.txt'), a.timeout, dict(os.environ, DMTEST_OUT=out))
     res = dict(schema='dmtest/1', name=name, cmd=cmd, cwd=os.getcwd(), started=started.isoformat(timespec='seconds'), elapsed_s=round(time.monotonic() - t0, 3),
-               rc=rc, timed_out=timed_out, verdict=verdict_of(rc, timed_out, sc, a.strict_log),
+               rc=rc, timed_out=timed_out, verdict=verdict_of(rc, timed_out, sc, a.strict_log, a.rc_only),
                verdicts=sc.verdicts[-KEEP:], results=sc.results[-KEEP:], unavailable=sc.unavailable, skipped=sc.skipped,
                red_lines=dict(count=sc.red_n, first=sc.red), git=git_info(os.path.dirname(os.path.abspath(__file__))),
                host=dict(os=platform.system(), release=platform.release(), machine=platform.machine()), log='log.txt')
