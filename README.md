@@ -19,8 +19,8 @@ Mac (Apple silicon) · iPhone and iPad · Game: Switch release 1.0.34.0 with Rei
 - **A real Mac game.** Full screen, mouse wheel and trackpad scrolling, keyboard and controller, saves on quit.
 - **Type with a controller.** When the game asks for a name or an amount, an in-game keyboard appears; type on the keyboard or click and it steps aside for a regular text box.
 - **Saves you can trust.** Quitting, minimizing or a failed write no longer loses progress.
-- **Built on D2R Mobile:** touch controls, controller support, the loot filter, minimap guidance and more.
-- **The game as shipped.** Upstream additions that change its rules, economy or storage, or play it for you, are left out: the Greater Rift, Boss Rush, Elysium mode, the Kill Board, free town portals, free identify, vendor restocks on demand, auto-drink and buff recasting, and the extra stash space (wide stash, extra pages, Trove, Pouch, Chronicle vault).
+- **Built on D2R Mobile:** touch controls, controller support, minimap guidance and more.
+- **The game as shipped.** Upstream additions that change its rules, economy or storage, or play it for you, are left out: the Greater Rift, Boss Rush, Elysium mode, the Kill Board, free town portals, free identify, vendor restocks on demand, auto-drink and buff recasting, the difficulty loot filter, and the extra stash space (wide stash, extra pages, Trove, Pouch, Chronicle vault).
 
 ## Mac and iPhone / iPad at a glance
 
@@ -115,9 +115,9 @@ These came out of a full audit of the port (111 findings), a later bug hunt with
 
 ## What comes from D2R Mobile
 
-Upstream's port is here and kept in sync: the original program running unchanged (every class, Runeword and drop rule as shipped), touch controls rebuilt for fingers, controller support, the loot filter and minimap guidance, and five languages (English, Chinese, Spanish, Russian and Korean). Upstream's [README](https://github.com/jhaizhou-ops/d2r-mobile#readme) shows them with screenshots.
+Upstream's port is here and kept in sync: the original program running unchanged (every class, Runeword and drop rule as shipped), touch controls rebuilt for fingers, controller support and minimap guidance, and five languages (English, Chinese, Spanish, Russian and Korean). Upstream's [README](https://github.com/jhaizhou-ops/d2r-mobile#readme) shows them with screenshots.
 
-Upstream features that change the game's rules or economy, or play part of it for you, are removed here, so the game plays as shipped: the Greater Rift (with its six extra mercenary slots and the skill cap of 40), the Endgame Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify, the vendor's Refresh Stock button, auto-drink, mercenary auto-feed, auto-recast buffs, the Runeword helper, and the extra storage: the 14-column stash with four extra personal pages, the Trove, the Pouch (with its auto-stash and Deposit button) and the Chronicle vault. Identifying takes a scroll, a tome or Cain again, a town portal costs a scroll or a tome charge, vendors restock as the game decides, potions and buffs are yours to use, and the stash is the game's own 10 columns. Saves made with those features still load, but nothing is migrated: items kept in the extra columns, pages, Pouch or vault are not carried over.
+Upstream features that change the game's rules or economy, or play part of it for you, are removed here, so the game plays as shipped: the Greater Rift (with its six extra mercenary slots and the skill cap of 40), the Endgame Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify, the vendor's Refresh Stock button, auto-drink, mercenary auto-feed, auto-recast buffs, the loot filter set by difficulty, the Runeword helper, and the extra storage: the 14-column stash with four extra personal pages, the Trove, the Pouch (with its auto-stash and Deposit button) and the Chronicle vault. Identifying takes a scroll, a tome or Cain again, a town portal costs a scroll or a tome charge, vendors restock as the game decides, potions and buffs are yours to use, and the stash is the game's own 10 columns. Saves made with those features still load, but nothing is migrated: items kept in the extra columns, pages, Pouch or vault are not carried over.
 
 **This repository contains and distributes no game content**: no game program, art, text, data table or shader. Everything is generated on your own machine from your own files ([docs/GAME_FILES.md](docs/GAME_FILES.md); the interface information the port relies on is listed in [docs/DERIVED.md](docs/DERIVED.md)).
 
