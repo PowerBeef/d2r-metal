@@ -56,9 +56,34 @@ dm/verify/fork_gate.sh device           # iPhone 连得上时
 
 做的时候发现：游戏的存盘任务跑在它的异步任务池上，一个任务卡住时，每帧排进去的任务把任务池的内存用光，约 8 秒后 任务池的入队函数（main+0x14f0590）拿到空指针照写，游戏崩溃。存盘卡上几秒（存储慢、宿主钩子占着存档锁）就是崩溃，不只是存晚了。
 
+## 我们自己的基线：`golden.py`
+
+不用原版游戏的录制，分支拿自己的构建录基线，放在 `$DM_ROOT/data/switch/golden/`（绝不入库），只在有意时重录：每次 `record` 都要 `--reason`，连同提交号记进 `golden/LOG.tsv`。
+
+```bash
+python3 dm/verify/golden.py replay record --reason "…"   # dm/verify/golden/{walk,fight,belt}.scn：命令包 + 逐拍状态 + 那一局提交的存档
+python3 dm/verify/golden.py replay check                 # 在 dmhost 与 dmhost_m3 上回放、逐拍比；回放存的档用 savecmp 比；负对照
+python3 dm/verify/golden.py shots record --reason "…"    # shotgate 里 11 个不用录制输入的页，按渲染接口分（m4 / m3）
+python3 dm/verify/golden.py shots check                  # 用 shotgate.py 比基线，阈值同页规格
+python3 dm/verify/golden.py prefix                       # 触屏用例的野外前缀（golden/prefix_wild.scn）+ 存档的 MANIFEST.sha256
+python3 dm/verify/golden.py list
+```
+
+- **逻辑：** 每条路线用录下的命令包回放（`replay.py`），逐拍比（`tickdiff.py`）。回放在录制请存盘的那一拍也请一次（`DM_TEST_SAVE_AT`），`savecmp.py` 比这份存档与录下的那份（校验和各自自洽、时间核各自那一局的时段、其余逐字节）。
+- **负对照：** 每次检查还把路线从中间那条客户端命令包起往后全删再回放一次，必须分叉，否则比对是瞎的、判红。（只删一条移动包不够：后面的包会重新指同一处。）
+- **画面：** `cube` 为 ⚪（术士存档没有赫拉迪克方块）；`newchar` 截到的是过场黑帧，只证明那一帧稳定。
+- **要重录：** 有意改了路线看得到的东西之后：城镇落点（`dm_townwp.c`）、人数档、秘境或自定义设置的缺省、画面设置。
+- `full` 两样都跑；没有基线时为 ⚪。
+
 ## 触屏用例与夹具存档
 
 触屏用例从 `save_ref_warlock`（或 `DM_TOUCH_SAVE`）起跑。有几例是照上游的夹具存档写的：背包 (5,3) 格有物品、(8,0) 是赫拉迪克方块。对起跑状态的检查是**前提**（`lib.precondition`）：存档里没有用例要的东西时，这一例判 ⚪ 不可用（`assert.py` 退出码 3，`touchchain.sh` 退出码 3）而不是红，其余检查不算数。缺前缀录制的用例同样判 ⚪。
+
+分支能生成的自己生成：
+
+- `dm/verify/touch_fixture.sh inv53` 跑 `touchcases/_fixtures/inv53`（把卷轴从 (9,3) 拖到 (5,3)），让游戏存盘（`DM_TEST_SAVE_AT`），导出 `save_ref_touch_inv53`。用例目录里的 `save` 文件指向它：`inv_tap`、`inv_drag`、`inv_drag_back`、`inv_drag_out`、`inv_long_press`。
+- `golden.py prefix` 给 `skill_main` 录 `prefix_wild_warlock`。
+- `inv_double_tap` 仍为 ⚪：要赫拉迪克方块。
 
 ## 不做的
 

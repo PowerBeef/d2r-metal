@@ -85,7 +85,7 @@ for tier in "${TIERS[@]}"; do
     step quick_literals 120 -- python3 "$DM/i18n/scan_literals.py"
     step quick_i18n 120 -- python3 "$DM/ios/tools/dm_i18n.py" --check
     step quick_switches 120 -- python3 "$DM/tools/switches.py" check
-    step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/bench/"*.scn
+    step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/golden/"*.scn "$DM/verify/bench/"*.scn
     step quick_hudgen 300 -- bash "$DM/ios/tools/check_hud_gen.sh"
     ;;
   unit)
@@ -109,6 +109,9 @@ for tier in "${TIERS[@]}"; do
     step full_smoke_mac 900 -- bash "$DM/ios/tools/smoke_mac.sh" 1   # 也按 HEAD 重出 iOS 包的 Mac 版（ios-mac 场景用它） | also rebuilds the iOS package for the Mac from HEAD (the ios-mac scenarios use it)
     step full_iosmac_scenarios 1800 -- python3 "$DM/tools/scenario.py" run $(scenarios) --backend ios-mac
     step full_metal_validation 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/enter_game.scn" --backend cli --headless --metal-validation api
+    # 我们自己的基线（golden.py；没录过 = ⚪ 不可用，不算红） | our own baselines (golden.py; never recorded = ⚪ unavailable, not red)
+    step full_golden_replay 1800 -- bash -c 'python3 "$DM/verify/golden.py" replay check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
+    step full_golden_shots 1200 -- bash -c 'python3 "$DM/verify/golden.py" shots check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
     step full_faults 1200 -- bash -c 'par_scenarios cli 3 "$@"' _ $(headless_scenarios "$DM/verify/scenarios/faults/"*.scn)   # 故障矩阵（scenarios/faults/README.md） | the fault matrix (scenarios/faults/README.md)
     step full_faults_front 600 -- python3 "$DM/tools/scenario.py" run $(front_scenarios "$DM/verify/scenarios/faults/"*.scn) --backend cli
     ;;

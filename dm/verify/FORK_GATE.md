@@ -56,9 +56,34 @@ Several tiers can be given at once; they run in the order given.
 
 Found while building it: the game's save jobs run on its async job pool, and while one job is stuck the tasks queued every frame use up the pool's task memory; after about 8 s the pool's enqueue function (main+0x14f0590) writes through the null allocation and the game crashes. A save that blocks for seconds (slow storage, a host hook holding the save lock) is a crash, not just a late save.
 
+## Our own baselines: `golden.py`
+
+Instead of recordings of the original game, the fork records baselines from its own build, kept in `$DM_ROOT/data/switch/golden/` (never in git) and re-recorded only on purpose: every `record` needs `--reason`, which goes into `golden/LOG.tsv` with the commit.
+
+```bash
+python3 dm/verify/golden.py replay record --reason "…"   # dm/verify/golden/{walk,fight,belt}.scn: packets + per-tick state + the committed save
+python3 dm/verify/golden.py replay check                 # replay on dmhost and dmhost_m3, tick by tick; savecmp on the replay's save; negative control
+python3 dm/verify/golden.py shots record --reason "…"    # the 11 shotgate pages that need no recorded input, per renderer (m4 / m3)
+python3 dm/verify/golden.py shots check                  # shotgate.py against the baseline, page thresholds as in the spec
+python3 dm/verify/golden.py prefix                       # the touch cases' wilderness prefix (golden/prefix_wild.scn) + the save's MANIFEST.sha256
+python3 dm/verify/golden.py list
+```
+
+- **Logic:** each route is replayed with the recorded packets (`replay.py`) and compared tick by tick (`tickdiff.py`). The replay also asks for a save at the recorded tick (`DM_TEST_SAVE_AT`), and `savecmp.py` compares that save with the recorded one (checksums self-consistent, times checked against their run's window, everything else byte for byte).
+- **Negative control:** every check also replays the route with the client packets from the middle one onward dropped; it must diverge, or the comparison is blind and the check is red. (Dropping a single move isn't enough: the next packets re-target the same spot.)
+- **Screens:** `cube` is ⚪ (the Warlock save has no Horadric Cube); `newchar` catches a black transition frame, so it only proves that frame is stable.
+- **Rebaseline** after a deliberate change to what the routes see: the town spawn move (`dm_townwp.c`), the player count, rift or custom-setting defaults, picture settings.
+- `full` runs both checks; with no baselines they are ⚪.
+
 ## Touch cases and fixture saves
 
 The touch cases start from `save_ref_warlock` (or `DM_TOUCH_SAVE`). Some were written against upstream's fixture save: an item in inventory slot (5,3), the Horadric Cube at (8,0). The checks on the starting state are **preconditions** (`lib.precondition`): when the save doesn't have what the case needs, the case is ⚪ unavailable (`assert.py` exit code 3, `touchchain.sh` exit code 3) instead of red, and the other checks don't count. A case whose prefix recording is missing is ⚪ the same way.
+
+The fork generates what it can:
+
+- `dm/verify/touch_fixture.sh inv53` runs `touchcases/_fixtures/inv53` (drags the scroll from (9,3) to (5,3)), has the game save (`DM_TEST_SAVE_AT`) and exports `save_ref_touch_inv53`. A case's `save` file points at it: `inv_tap`, `inv_drag`, `inv_drag_back`, `inv_drag_out`, `inv_long_press`.
+- `golden.py prefix` records `prefix_wild_warlock` for `skill_main`.
+- `inv_double_tap` stays ⚪: it needs the Horadric Cube.
 
 ## What it doesn't do
 
