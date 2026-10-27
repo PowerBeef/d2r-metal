@@ -121,13 +121,16 @@ static int cmd_tap(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     (void)out; (void)cap; return 1;
 }
 
-// wheel x y dy [precise=1] [view=720]：滚轮 / 触控板滚一下（出图画面归一化坐标；走 Mac 前端同一个 dm_wheel_ui：precise = 触控板点数，0 = 鼠标滚轮行数；view = 视图高几点）
-// wheel x y dy [precise=1] [view=720]: one wheel / trackpad scroll (coordinates normalized to the rendered picture; goes through dm_wheel_ui like the Mac front end: precise = trackpad points, 0 = mouse-wheel lines; view = view height in points)
+// wheel x y dy [precise=1] [view=720] [n=1]：滚轮 / 触控板滚一下（出图画面归一化坐标；走 Mac 前端同一个 dm_wheel_ui：precise = 触控板点数，0 = 鼠标滚轮行数；view = 视图高几点）。
+// n > 1：一口气连发 n 个同样的事件、中间不等帧（同触控板甩一下，两帧之间到好几个滚动事件；验滚轮并条，dm_cursor.c dm_ui_ptr）
+// wheel x y dy [precise=1] [view=720] [n=1]: one wheel / trackpad scroll (coordinates normalized to the rendered picture; goes through dm_wheel_ui like the Mac front end: precise = trackpad points, 0 = mouse-wheel lines; view = view height in points).
+// n > 1: send n identical events back to back without waiting for a frame (as a trackpad flick delivers several scroll events between two frames; checks wheel coalescing, dm_cursor.c dm_ui_ptr)
 __attribute__((weak)) int dm_wheel_ui(float nx, float ny, double dy, int precise, double view_h) { (void)nx; (void)ny; (void)dy; (void)precise; (void)view_h; return -1; }   // Mac 前端（touch_mac.c）给强定义；别的平台 -1 = 没有滚轮 | the Mac front end (touch_mac.c) gives the strong definition; elsewhere -1 = no wheel
 static int cmd_wheel(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     double x = dm_ctl_num(a, "x", -1), y = dm_ctl_num(a, "y", -1), dy = dm_ctl_num(a, "dy", 0);
     if (x < 0 || x > 1 || y < 0 || y > 1) ERR("x / y must be in [0, 1]");
-    int r = dm_wheel_ui((float)x, dm_ui_ny((float)y), dy, (int)dm_ctl_num(a, "precise", 1), dm_ctl_num(a, "view", 720));
+    long n = (long)dm_ctl_num(a, "n", 1); if (n < 1 || n > 60) ERR("n must be 1-60");
+    int r = 0; for (long i = 0; i < n && r >= 0; i++) r = dm_wheel_ui((float)x, dm_ui_ny((float)y), dy, (int)dm_ctl_num(a, "precise", 1), dm_ctl_num(a, "view", 720));
     if (r < 0) ERR("no wheel on this platform");
     wait_frames(3, 5); dm_json_fields(out, cap, "ui:u", (unsigned long long)r); return 1;
 }
