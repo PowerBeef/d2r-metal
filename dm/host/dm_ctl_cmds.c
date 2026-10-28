@@ -47,6 +47,19 @@ static int wait_until(int (*cond)(void *), void *arg, double timeout_s) {
 }
 static int c_frame(void *a) { return dm_guest_frame() >= *(uint64_t *)a; }
 static int wait_frames(uint64_t n, double timeout_s) { uint64_t f = dm_guest_frame() + n; return wait_until(c_frame, &f, timeout_s); }
+// 按帧数给的超时：原先按至少 10 帧 / 秒算（帧数 / 10 + 5 秒）；消毒器宿主慢得多（线程消毒版约 5 帧 / 秒，按住 60 帧的摇杆要 12.5 秒，超时 11 秒就报红），按构建乘个系数
+// timeouts given in frames: they assumed at least 10 frames / s (frames / 10 + 5 s); sanitizer hosts are much slower (the ThreadSanitizer host runs about 5 frames / s, so a 60-frame stick hold took 12.5 s against an 11 s timeout), so scale by the build
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer)
+#    define CTL_SLOW 4.0
+#  elif __has_feature(address_sanitizer)
+#    define CTL_SLOW 2.0
+#  endif
+#endif
+#ifndef CTL_SLOW
+#  define CTL_SLOW 1.0
+#endif
+static double frames_timeout(double frames, double base_s) { return (frames / 10.0 + base_s) * CTL_SLOW; }
 static int c_input_idle(void *a) { (void)a; return !dm_ctl_input_busy(); }
 
 // state：局内与否、拍号、暂停、最近打开的面板、玩家（等级 / 生命 / 法力 / 区域 / 坐标 / 死亡 / 经验进度 / 新任务）、控制口统计；
@@ -157,8 +170,8 @@ static int input_common(const ctl_args *a, double fx, double fy, int frames_def,
     if (!wait_until(c_input_idle, NULL, 10)) ERR("previous input still held");
     uint64_t f0 = dm_guest_frame();
     dm_ctl_input(m, (int)(fx * 32767), (int)(fy * 32767), frames);
-    if (!wait_until(c_input_idle, NULL, frames / 10.0 + 5)) { dm_ctl_input(0, 0, 0, 0); ERR("frames are not advancing (window hidden / game stalled?)"); }
-    if (gap && !wait_frames((uint64_t)gap, gap / 10.0 + 5)) ERR("frames are not advancing after release");
+    if (!wait_until(c_input_idle, NULL, frames_timeout(frames, 5))) { dm_ctl_input(0, 0, 0, 0); ERR("frames are not advancing (window hidden / game stalled?)"); }
+    if (gap && !wait_frames((uint64_t)gap, frames_timeout(gap, 5))) ERR("frames are not advancing after release");
     dm_json_fields(out, cap, "frame:u held_frames:u", (unsigned long long)f0, (unsigned long long)frames);
     return 1;
 }
@@ -176,7 +189,7 @@ static int cmd_tap(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     if (dm_restart_busy()) ERR("one-key restart in progress: taps are dropped");
     y = dm_ui_ny((float)y);   // 真实画面纵坐标 → 界面矩形（同 DM_UI_TAPS；界面占满屏时不变） | real-picture y -> the UI rectangle (as DM_UI_TAPS; unchanged when the UI fills the screen)
     dm_ui_touch(0, (float)x, (float)y);
-    if (!wait_frames((uint64_t)hold, hold / 10.0 + 5)) { dm_ui_touch(3, (float)x, (float)y); ERR("frames are not advancing"); }
+    if (!wait_frames((uint64_t)hold, frames_timeout(hold, 5))) { dm_ui_touch(3, (float)x, (float)y); ERR("frames are not advancing"); }
     dm_ui_touch(2, (float)x, (float)y); wait_frames(2, 5);
     (void)out; (void)cap; return 1;
 }
@@ -301,7 +314,7 @@ static int cmd_screenshot(const ctl_args *a, char *out, size_t cap, char *err, s
     pthread_mutex_lock(&g_shot_mu); strlcpy(g_shot_path, path, sizeof g_shot_path); atomic_store(&g_shot_done, 0); pthread_mutex_unlock(&g_shot_mu);
     g_dm_ctl_shot_hook = shot_hook;
     dm_gfx_shot_at(k, path);
-    if (!wait_until(c_shot, NULL, k / 10.0 + 10)) ERR("screenshot not written within %.0f s (frames not presenting?)", k / 10.0 + 10);
+    if (!wait_until(c_shot, NULL, frames_timeout(k, 10))) ERR("screenshot not written within %.0f s (frames not presenting?)", frames_timeout(k, 10));
     if (!atomic_load(&g_shot_ok)) ERR("screenshot failed: %s", path);
     dm_json_fields(out, cap, "path:s", path);
     return 1;
