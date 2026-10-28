@@ -7,12 +7,17 @@ import XCTest
 // The criterion is not asserted here (UI tests cannot see inside the game): after the run tools/lifecycle.sh pulls back Documents/boot.txt and judges by the log
 // (in the same log the foreground / background events are all there, present resumes after returning, the guest clock is continuous, the audio callback count keeps rising, 0 failure lines). Here we only guarantee that the action sequence completes and the process returns to the foreground.
 final class LifecycleSmoke: XCTestCase {
+    // 进局键序同冒烟（tools/smoke.sh KEYS_DEFAULT）：开机是触屏版布局，选角列表上的 A（itemSelectionMessage）被换成了空操作（touch_layout.py），
+    // 所以点第一行、直接发 LoadCharacter:0 进局，不走手柄的「选中 → 确认」
+    // Same entry keys as the smoke test (tools/smoke.sh KEYS_DEFAULT): the app boots with the touch layouts, where A on the character list (itemSelectionMessage) is replaced
+    // with a no-op (touch_layout.py), so click the first row and send LoadCharacter:0 directly instead of the controller's "select → confirm"
+    static let enterKeys = "X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterSelectPanel,C0.84:0.208@OpenPanel:CharacterSelectPanel%1>UpdateCharacterInfo,MSG:CharacterSelect:LoadCharacter:0@UpdateCharacterInfo%0.3>FrontEndNavigation:ToGame"
     func testBackgroundAndReturn() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-mode", "boot"]
         app.launchEnvironment = ["DM_SAVE_FRESH":"warlock", "DM_UIMSG":"1", "DM_AUDIO":"1",
-            "DM_KEYS":"X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterSelectPanel,DOWN@OpenPanel:CharacterSelectPanel>UpdateCharacterInfo,A@UpdateCharacterInfo%1>CharacterSelect:SelectCharacter,A@CharacterSelect:SelectCharacter>FrontEndNavigation:ToGame"]
+            "DM_KEYS":LifecycleSmoke.enterKeys]
         app.launch()
         defer { app.terminate() }
         sleep(25)                                   // 进局并在营地站定 | enter the run and settle in the camp
@@ -30,7 +35,6 @@ final class LifecycleSmoke: XCTestCase {
     // 停 3 秒 → 结束进程（等同在多任务界面划掉：系统直接杀进程）。判据由 tools/lifecycle.sh switcher 读这一局的 boot.txt 与下一局（testReenter）的物品表
     // Swipe away in the app switcher: around second 8 after entering the run pick up one r30 into the inventory for the player (DM_TEST_GIVE_INV) → at second 25 drag slowly up from the bottom edge and hold = app switcher →
     // pause 3 seconds → terminate the process (equivalent to swiping away in the app switcher: the system kills the process directly). The criterion is judged by tools/lifecycle.sh switcher reading this run's boot.txt and the item table of the next run (testReenter)
-    private static let enterKeys = "X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterSelectPanel,DOWN@OpenPanel:CharacterSelectPanel>UpdateCharacterInfo,A@UpdateCharacterInfo%1>CharacterSelect:SelectCharacter,A@CharacterSelect:SelectCharacter>FrontEndNavigation:ToGame"
     func testSwitcherKill() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

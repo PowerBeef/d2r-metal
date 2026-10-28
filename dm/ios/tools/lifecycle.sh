@@ -47,7 +47,9 @@ xcodebuild build-for-testing -project DmIOS.xcodeproj -scheme DmIOS -configurati
   || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5; echo "LIFECYCLE RED"; exit 1; }
 source tools/devlock.sh; devlock_acquire "${SMOKE_OWNER:-未署名} 生命周期"; trap devlock_release EXIT
 t "跑界面测试（约 90 秒）"
-xcodebuild test-without-building -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "platform=iOS,id=$UDID" -derivedDataPath "$DD" -only-testing:TouchSmokeTests/LifecycleSmoke > "$R/test.log" 2>&1; trc=$?
+# 只跑前后台这一项：同一个类里还有 switcher 模式用的两项，整类跑的话拉回来的 boot.txt 是最后一项的，里面没有进后台
+# Run only the background test: the same class also holds the two switcher-mode tests, and running the whole class pulls back the last test's boot.txt, which never goes to the background
+xcodebuild test-without-building -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "platform=iOS,id=$UDID" -derivedDataPath "$DD" -only-testing:TouchSmokeTests/LifecycleSmoke/testBackgroundAndReturn > "$R/test.log" 2>&1; trc=$?
 grep -E "Test Case.*(passed|failed)|error:|XCTAssert" "$R/test.log" | tail -4
 fi
 timeout 60 xcrun devicectl device copy from --device $D --domain-type appDataContainer --domain-identifier $B --source Documents/boot.txt --destination "$R/boot.txt" > "$R/pull.log" 2>&1 || { t "🔴 拉 boot.txt 失败"; echo "LIFECYCLE RED"; exit 1; }
