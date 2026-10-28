@@ -143,6 +143,16 @@ def spot_filled(path,x,y):   # 截图上以 (x,y)（667 宽基准的视图点）
     im=Image.open(path).convert("L"); W,H=im.size; k,ox,oy=shot_geom(W,H,path); cx,cy,h=x*k+ox,y*k+oy,6*k
     return ImageStat.Stat(im.crop((int(cx-h),int(cy-h),int(cx+h),int(cy+h)))).stddev[0]>15
 INV_X0,INV_DX,INV_Y0,INV_DY=386.0,19.55,227.0,19.5   # 箱子开着时右边物品栏的背包格（10 列 4 行）中心，667 宽基准 | centers of the inventory cells (10 columns, 4 rows) of the inventory panel on the right when the stash is open, 667-wide base
+# 「符文」页签与 El 那一格（原版储藏箱，667 宽基准）；标准存档背包里只有两张卷轴（第 10 列第 3、4 行）时第 60 拍发的 12 枚符文落进的格（列, 行）
+# the "Runes" tab and the El cell (original stash, 667-wide base); the cells (column, row) the 12 runes given at tick 60 land in when the standard save's inventory holds only its two scrolls (column 10, rows 3 and 4)
+RUNES_TAB=(275.5,53); RUNE_STACK=(104.5,90.5)
+GEM=(484,285); CUBE=(552,238)   # c 局用标准存档自带的宝石（第 6 列第 4 行）与魔盒（右上 2×2）：原先按加宽后量的点位整体左移 38.5（物品栏回到原位） | run c uses the standard save's own gem (column 6, row 4) and cube (top-right 2x2): the points measured on the widened layout, moved left by 38.5 (the inventory panel back in place)
+BG_SPOT=(590,150)   # 物品栏面板上的空石面（右手武器格右边）：背包塞满时点这里挪开光标，不出物品说明框 | bare stone on the inventory panel (right of the right-hand weapon slot): with the inventory full, tapping here moves the cursor away without bringing up an item tooltip
+RUNE_CELLS=[(7,0),(8,0),(9,0),(7,1),(8,1),(9,1),(6,2),(7,2),(8,2),(6,3),(7,3),(8,3)]
+def stack_runes(g):   # 切到「符文」页，把这 12 格逐个双击进箱子（都进 El 那一叠） | switch to the "Runes" tab and double-click these 12 cells into the stash one by one (all into the El stack)
+    g.tap(P(*RUNES_TAB))
+    for k,r in RUNE_CELLS: g.dbl(INV_X0+INV_DX*k,INV_Y0+INV_DY*r)
+    g.clr()
 def inv_count(path):   # 背包里有东西的格子数；读不了返回 None | number of occupied inventory cells; returns None when unreadable
     n=0
     for r in range(4):
@@ -272,7 +282,7 @@ def stay(s,before):   # 人不离开原地：本段第一条与最后一条 pos 
 # The stash widening (10 → 14 columns) used to shift the stash side by x −39 and the inventory side by +38.5 (inventory column 0 at 424.5); the stash tap points of runs c / d / t / u / s were measured then (see REMEASURE)
 WIDE=()   # 加宽删掉了（2026-10-27）：clr() / INV_X0 都按原版位置 | the widening was removed (2026-10-27): clr() / INV_X0 use the original positions
 # 这几局的储藏箱点位是按加宽 + 珍宝匣量的，删掉以后要在 iOS 包上按原版储藏箱重量；整表跑时先跳过（点名跑照跑，好重量） | the stash tap points of these runs were measured on the widened stash + Trove; once removed they must be re-measured on the iOS package against the original stash. Skipped in full-table runs until then (still run when named, for re-measuring)
-REMEASURE=("c","d","t","u","s")
+REMEASURE=()   # 2026-10-27 按原版储藏箱重量完：s / d / t / u 改成标准存档 + 当场发物品自给，c 的箱子一侧点位按原版量 | re-measured against the original stash on 2026-10-27: s / d / t / u now set themselves up with the standard save + items given on the spot, run c's stash-side points measured on the original layout
 def run(g):
     global INV_X0; INV_X0=424.5 if g.run in WIDE else 386.0   # 背包占格的读法跟着物品栏右移 | the inventory occupancy reading follows the inventory panel's shift to the right
     script="\n".join(g.L)+f"\n{g.t+1.0:.2f} note 结束\n"; cap=int(g.t)+6; tag=f"{os.environ.get('UIREG_TAG') or 'ur'}_{MODE}_{g.run}"   # 起局脚本见到「note 结束」就收，cap 只是上限 | the run launcher script stops as soon as it sees 「note 结束」(note end); cap is only an upper limit
@@ -509,23 +519,23 @@ def groups():
     # The name tag shows only when something points at an NPC: this run has the test switch point at Warriv 40 ticks after entering the run, then waits 3 seconds and takes a screenshot. Not placed in run b - setting out for Charsi from right next to Warriv, the game's pathfinding cancels with "cannot walk there"
     g.item("NPC 名牌位置","名牌在 NPC 头顶（看截图）",None); g.shot()
     g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.at("tap_unit 2 267 3",3.0); g.shot()
-    g.item("背包里的宝石拖进箱子的空格","放进箱子",r"拖放落点类 5"); g.dragp((522.5,285),(82,235)); g.shot()   # 落点要是空格：拖到已有物品的格子上会换下那件留在手上 | the drop point must be an empty cell: dragging onto a cell that already has an item swaps that item out and leaves it in hand
-    g.item("双击箱子里那颗宝石","移回背包（开箱时双击 = 按住 Y 脉冲，另看截图）",r"InputMessage ControllerActionBegin"); g.dbl(82,201); g.shot()
-    g.item("点「共享」页签","切页",r"界面页签：切 \+1 页"); g.tap(P(106.5,53)); g.shot()
-    g.item("点「个人」页签","切回",r"界面页签：切 -1 页"); g.tap(P(62.5,53)); g.shot()
+    g.item("背包里的宝石拖进箱子的空格","放进箱子",r"拖放落点类 5"); g.dragp(GEM,(121,235)); g.shot()   # 落点要是空格：拖到已有物品的格子上会换下那件留在手上 | the drop point must be an empty cell: dragging onto a cell that already has an item swaps that item out and leaves it in hand
+    g.item("双击箱子里那颗宝石","移回背包（开箱时双击 = 按住 Y 脉冲，另看截图）",r"InputMessage ControllerActionBegin"); g.dbl(121,201); g.shot()
+    g.item("点「共享」页签","切页",r"界面页签：切 \+1 页"); g.tap(P(145.5,53)); g.shot()
+    g.item("点「个人」页签","切回",r"界面页签：切 -1 页"); g.tap(P(101.5,53)); g.shot()
     g.item("点取金币按钮","弹数量框",r"OpenPanel DropGoldModal"); g.tap(P(187.5,307),1.0); g.shot()
-    g.item("数量框开着、存盘指示叠在上面时拖背包里的魔盒","框关掉、魔盒没被拖走、金币不变（看截图）；日志有存盘指示",r"OpenPanel SaveIndicatorPanel[\s\S]*ClosePanel DropGoldModal|ClosePanel DropGoldModal[\s\S]*OpenPanel SaveIndicatorPanel",r"拖放落点类 5[\s\S]*换下来|原版判定"); g.dragp((590.5,238),(161,275)); g.wait(1.2); g.shot()
+    g.item("数量框开着、存盘指示叠在上面时拖背包里的魔盒","框关掉、魔盒没被拖走、金币不变（看截图）；日志有存盘指示",r"OpenPanel SaveIndicatorPanel[\s\S]*ClosePanel DropGoldModal|ClosePanel DropGoldModal[\s\S]*OpenPanel SaveIndicatorPanel",r"拖放落点类 5[\s\S]*换下来|原版判定"); g.dragp(CUBE,(200,275)); g.wait(1.2); g.shot()
     g.tap(P(187.5,307),1.0)
     g.item("数量框开着等 3 秒","数字不变（看截图）",None); g.wait(3.0); g.shot()
     g.item("数量框点「取消」","关框、金币不变",r"ClosePanel DropGoldModal"); g.tap(P(375,200)); g.shot()
-    g.item("数量框开着点框外的「共享」页签","框关掉、不切页、金币不变（看截图）",r"ClosePanel DropGoldModal",r"界面页签：切"); g.tap(P(187.5,307),1.0); g.tap(P(106.5,53),1.2); g.shot()
-    g.item("数量框开着拖底下的魔盒","框关掉、魔盒没被拖走（看截图）",r"ClosePanel DropGoldModal",r"拖放落点类 5"); g.tap(P(187.5,307),1.0); g.dragp((590.5,238),(161,275)); g.shot()
-    g.item("数量框开着点箱子里的空格子","框关掉、金币不变",r"ClosePanel DropGoldModal"); g.tap(P(187.5,307),1.0); g.tap(P(82,235),1.2); g.shot()
-    g.item("数量框开着双击背包里的魔盒","框关掉、魔盒没打开",r"ClosePanel DropGoldModal",r"OpenPanel HoradricCubeLayout"); g.tap(P(187.5,307),1.0); g.dbl(590.5,238); g.shot()
+    g.item("数量框开着点框外的「共享」页签","框关掉、不切页、金币不变（看截图）",r"ClosePanel DropGoldModal",r"界面页签：切"); g.tap(P(187.5,307),1.0); g.tap(P(145.5,53),1.2); g.shot()
+    g.item("数量框开着拖底下的魔盒","框关掉、魔盒没被拖走（看截图）",r"ClosePanel DropGoldModal",r"拖放落点类 5"); g.tap(P(187.5,307),1.0); g.dragp(CUBE,(200,275)); g.shot()
+    g.item("数量框开着点箱子里的空格子","框关掉、金币不变",r"ClosePanel DropGoldModal"); g.tap(P(187.5,307),1.0); g.tap(P(121,235),1.2); g.shot()
+    g.item("数量框开着双击背包里的魔盒","框关掉、魔盒没打开",r"ClosePanel DropGoldModal",r"OpenPanel HoradricCubeLayout"); g.tap(P(187.5,307),1.0); g.dbl(*CUBE); g.shot()
     g.item("数量框里输 100 点「好」","取出 100：箱子 296、身上 100（看截图）",r"ClosePanel DropGoldModal"); g.tap(P(187.5,307),1.0); g.tap(P(332,173),1.5); g.at("clear",.3); g.at("type 100",.5); g.at("alert ok",1.2); g.tap(P(290,200),1.5); g.shot()
-    g.item("存入框开着点框外的页签","框关掉、不切页、金币不变（看截图）",r"ClosePanel DropGoldModal",r"界面页签：切"); g.tap(P(494.5,308),1.0); g.shot(); g.tap(P(106.5,53),1.2); g.shot()
-    g.item("开着箱子双击背包里的魔盒","打开魔盒",r"OpenPanel HoradricCubeLayout"); g.dbl(590.5,238); g.shot()
-    g.tap(P(654.5,17),1.2); g.tap(P(654.5,17),1.2); g.tap("@menu",1.4)
+    g.item("存入框开着点框外的页签","框关掉、不切页、金币不变（看截图）",r"ClosePanel DropGoldModal",r"界面页签：切"); g.tap(P(473.5,308),1.0); g.shot(); g.tap(P(145.5,53),1.2); g.shot()
+    g.item("开着箱子双击背包里的魔盒","打开魔盒",r"OpenPanel HoradricCubeLayout"); g.dbl(*CUBE); g.shot()
+    g.tap(P(614.5,17),1.2); g.tap(P(614.5,17),1.2); g.tap("@menu",1.4)
     g.item("只开物品栏点金币（丢金币框）再点框外","框关掉、金币不变（看截图）",r"OpenPanel DropGoldModal[\s\S]*ClosePanel DropGoldModal"); g.tap(P(333,309),1.0); g.shot(); g.tap(P(120,200),1.2); g.shot()
     g.tap(P(615,17),1.2)
     # 模态框外触摸的其余两类也放在这一局
@@ -537,51 +547,52 @@ def groups():
     g.item("设置改了一项后点顶部页签弹出确认框，点框外","没有反应、框还在（看截图）",r"script\] down",r"ClosePanel ConfirmationModal|CancelChanges|AcceptChanges"); g.tap(P(333,330),1.2); g.shot()
     g.item("确认框点「应用」","保存生效",r"AcceptChanges"); g.tap(P(283,200),1.8); g.shot()
     gs.append(g)
-    # d 局要一份专用存档（术士，箱子符文页有一叠 12 个符文）：仓库里不带，本机要先备好，目录名由 UIREG_STACK_SAVE 指定（见usage.md）
-    # Run d needs a dedicated save (warlock, the stash rune page has a stack of 12 runes): it is not in the repository and must be prepared locally first, with the directory name given by UIREG_STACK_SAVE (see usage.md)
-    g=G("d","DM_TEST_WORLD_GO=near2:2:c267@200",save=os.environ.get("UIREG_STACK_SAVE") or "save.pw_rune_stack"); g.sect("stack",0); g.t=3.5; g.tap(P(333,336),1.6); g.at("await pos"); g.t=max(g.t,13.0); g.at("note 进局",1.5)
+    # d / t / u 局不再要专用存档：标准存档进局后第 60 拍发 12 枚 El 符文进背包（落在固定的 12 格），开箱切到「符文」页逐个双击进去，叠成 12 个的一叠（stack_runes）；
+    # 要的其他东西（魔盒、软帽、宝石）第二批再发，那时背包里只剩存档自带的两张卷轴
+    # Runs d / t / u no longer need a dedicated save: after entering with the standard save, 12 El runes are given into the inventory at tick 60 (they land in 12 fixed cells); the stash is opened on the "Runes" tab and
+    # each is double-clicked in, making one stack of 12 (stack_runes); whatever else is needed (cube, caps, gem) comes in a second batch, when only the save's own two scrolls are left in the inventory
+    g=G("d","DM_TEST_GIVE=r01:2:12@60 DM_TEST_GIVE_INV=1"+" DM_TEST_WORLD_GO=near2:2:c267@200"); g.sect("stack",0); g.enter(); g.wait(2.0)
     g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.arrive(5808,4443,3,24.0); g.at("tap_unit 2 267 3",3.0); g.shot()
-    g.item("点「符文」页签","切到符文页",r"界面页签：切 [+-]\d+ 页"); g.tap(P(148,53)); g.shot()
-    g.item("单击成叠的符文格","命中成叠格、出说明、不取",r"成叠格",r"取多件"); g.tap(P(201,81),2.0); g.shot()
-    g.item("双击成叠格","取 1 件",r"取多件：.*取 1："); g.dbl(201,81); g.shot()
-    g.item("长按成叠格","取 3 件",r"取多件：.*取 3："); g.hold(201,81); g.shot()
-    g.item("从成叠格拖到背包","取 1 件",r"取多件：.*取 1："); g.dragp((201,81),(488.5,297)); g.shot()
-    g.item("从成叠格拖到面板下方松手","不取",r"拖放落点|界面命中",r"取多件"); g.dragp((201,81),(333,372)); g.shot()
+    g.item("点「符文」页签、把背包里 12 枚符文双击进去","切到符文页；12 枚进 El 那一叠：背包少 12 格",("inv",-12)); stack_runes(g); g.shot()
+    g.item("单击成叠的符文格","命中成叠格、出说明、不取",r"成叠格",r"取多件"); g.tap(P(*RUNE_STACK),2.0); g.shot()
+    g.item("双击成叠格","取 1 件",r"取多件：.*取 1："); g.dbl(*RUNE_STACK); g.shot()
+    g.item("长按成叠格","取 3 件",r"取多件：.*取 3："); g.hold(*RUNE_STACK); g.shot()
+    g.item("从成叠格拖到背包","取 1 件",r"取多件：.*取 1："); g.dragp(RUNE_STACK,(450,297)); g.shot()
+    g.item("从成叠格拖到面板下方松手","不取",r"拖放落点|界面命中",r"取多件"); g.dragp(RUNE_STACK,(333,372)); g.shot()
     gs.append(g)
     # t 局：背包里带着魔盒时从符文页那一叠取件——双击 / 长按 / 拖三种手法。判据读截图的背包占格（魔盒本身占 4 格，取出的符文要多占格；占格增量 = 叠数减量，就没有东西进了魔盒），叠数认取件时读到的游戏值
     # t run: with the cube in the inventory, take items from that stack on the rune page - three gestures: double-tap / long-press / drag. The criterion reads the inventory cell occupancy from the screenshot (the cube itself takes 4 cells, and runes taken out must take additional cells; cell increase = stack count decrease means nothing went into the cube), and the stack count trusts the game value read at take time
-    SV=os.environ.get("UIREG_STACK_SAVE") or "save.pw_rune_stack"
-    g=G("t","DM_TEST_GIVE=box:2:1@60 DM_TEST_GIVE_INV=1"+" DM_TEST_WORLD_GO=near2:2:c267@200",save=SV); g.sect("cube",0); g.t=3.5; g.tap(P(333,336),1.6); g.at("await pos"); g.t=max(g.t,13.0); g.at("note 进局",1.5); g.wait(2.0)
+    g=G("t","DM_TEST_GIVE=r01:2:12@60;box:2:1@300 DM_TEST_GIVE_INV=1"+" DM_TEST_WORLD_GO=near2:2:c267@200"); g.sect("cube",0); g.enter(); g.wait(2.0)
     g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.arrive(5808,4443,3,24.0); g.at("tap_unit 2 267 3",3.0); g.shot()
-    g.item("点「符文」页签","切到符文页（背包里有魔盒，看截图）",r"界面页签：切 [+-]\d+ 页"); g.tap(P(148,53)); g.shot()
-    g.item("双击成叠格","背包多 1 格",("inv",1,"→ 成叠格")); g.dbl(201,81); g.shot()
-    g.item("长按成叠格","背包多 3 格",("inv",3,"→ 成叠格")); g.hold(201,81); g.shot()
-    g.item("从成叠格拖到背包","背包多 1 格",("inv",1,"→ 成叠格")); g.dragp((201,81),(488.5,297)); g.shot()
-    g.item("再双击一次","取件时游戏里那一叠是 7 个（12 − 5，没有多扣也没有少扣）",r"叠数 7 取 1"); g.dbl(201,81); g.shot()
-    g.item("双击背包里的一枚符文（背包带着魔盒）","背包少 1 格",("inv",-1)); g.dbl(580.9,285.5); g.shot()
-    g.item("再双击那一叠","那枚进的是这一叠（取件时叠数回到 7）、没进魔盒；背包多 1 格",("inv",1,"叠数 7 取 1")); g.dbl(201,81); g.shot()
+    g.item("点「符文」页签、把背包里 12 枚符文双击进去","12 枚进 El 那一叠：背包少 12 格（魔盒第 300 拍已进背包，看截图）",("inv",-12)); stack_runes(g); g.shot()
+    g.item("双击成叠格","背包多 1 格",("inv",1,"→ 成叠格")); g.dbl(*RUNE_STACK); g.shot()
+    g.item("长按成叠格","背包多 3 格",("inv",3,"→ 成叠格")); g.hold(*RUNE_STACK); g.shot()
+    g.item("从成叠格拖到背包","背包多 1 格",("inv",1,"→ 成叠格")); g.dragp(RUNE_STACK,(450,297)); g.shot()
+    g.item("再双击一次","取件时游戏里那一叠是 7 个（12 − 5，没有多扣也没有少扣）",r"叠数 7 取 1"); g.dbl(*RUNE_STACK); g.shot()
+    g.item("双击背包里的一枚符文（背包带着魔盒）","背包少 1 格",("inv",-1)); g.dbl(542.4,285.5); g.shot()
+    g.item("再双击那一叠","那枚进的是这一叠（取件时叠数回到 7）、没进魔盒；背包多 1 格",("inv",1,"叠数 7 取 1")); g.dbl(*RUNE_STACK); g.shot()
     gs.append(g)
     # u 局：背包塞到只剩一格（魔盒 4 格 + 8 顶软帽 32 格 + 1 颗宝石 + 存档自带 2 张卷轴 = 39 格；发 9 顶软帽，第一顶会自动戴到头上）再取：第一枚取得出，之后背包满了取不出、那一叠也不能少
     # u run: fill the inventory until only one cell is left (cube 4 cells + 8 caps 32 cells + 1 gem + the 2 scrolls that come with the save = 39 cells; 9 caps are given, the first is auto-equipped on the head) and then take: the first one comes out, after that the inventory is full and nothing comes out, and that stack must not decrease either
-    g=G("u","DM_TEST_GIVE=box:2:1,cap:2:9,gcv:2:1@60 DM_TEST_GIVE_INV=1"+" DM_TEST_WORLD_GO=near2:2:c267@200",save=SV); g.sect("full",0); g.t=3.5; g.tap(P(333,336),1.6); g.at("await pos"); g.t=max(g.t,13.0); g.at("note 进局",1.5); g.wait(2.0)
+    g=G("u","DM_TEST_GIVE=r01:2:12@60;box:2:1,cap:2:9,gcv:2:1@880 DM_TEST_GIVE_INV=1"+" DM_TEST_WORLD_GO=near2:2:c267@200"); g.sect("full",0); g.enter(); g.wait(2.0)
     g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.arrive(5808,4443,3,24.0); g.at("tap_unit 2 267 3",3.0); g.shot()
-    g.item("点「符文」页签","切到符文页（背包只剩 1 个空格，看截图）",r"界面页签：切 [+-]\d+ 页"); g.tap(P(148,53)); g.shot()
-    g.item("双击成叠格","背包多 1 格（满了）",("inv",1,"→ 成叠格")); g.dbl(201,81); g.shot()
-    g.item("背包满了再双击","背包占格不变",("inv",0,"→ 成叠格")); g.dbl(201,81); g.shot()
-    g.item("背包满了长按","那一叠还是 11 个（没取出来的不能凭空少）",r"叠数 11 取"); g.hold(201,81); g.shot()
+    g.item("点「符文」页签、把背包里 12 枚符文双击进去","12 枚进 El 那一叠：背包少 12 格",("inv",-12)); stack_runes(g); g.shot()
+    g.item("等第二批进背包","背包只剩 1 个空格（看截图：软帽这类深色大件，占格读数认不全）",None); g.wait(9.0); g.tap(P(*BG_SPOT),.7); g.shot()   # 第二批在第 880 拍：这时 12 枚刚叠完（脚本时刻约 = 拍 / 25 + 13 秒） | the second batch is at tick 880, just after the 12 are stacked (script time is about tick / 25 + 13 s)
+    g.item("双击成叠格","背包多 1 格（满了）",("inv",1,"→ 成叠格")); g.dbl(*RUNE_STACK); g.tap(P(*BG_SPOT),.7); g.shot()
+    g.item("背包满了再双击","背包占格不变",("inv",0,"→ 成叠格")); g.dbl(*RUNE_STACK); g.tap(P(*BG_SPOT),.7); g.shot()
+    g.item("背包满了长按","那一叠还是 11 个（没取出来的不能凭空少）",r"叠数 11 取"); g.hold(*RUNE_STACK); g.tap(P(*BG_SPOT),.7); g.shot()
     gs.append(g)
     # s 局：玩家原路——背包里的符文放进箱子（个人页普通格、符文页成叠格）再取出来。标准存档 + 当场发两枚符文，不要专用存档，真机也能跑；判据读背包占格
     # s run: the player's original path - put runes from the inventory into the stash (normal cells on the personal page, stack cells on the rune page) and take them out again. Standard save + two runes handed out on the spot, no dedicated save needed, also runs on a real device; the criterion reads inventory cell occupancy
-    g=G("s","DM_TEST_GIVE=r01:2:2@60 DM_TEST_GIVE_INV=1"+" DM_TEST_WORLD_GO=near2:2:c267@200"); g.sect("put",0); g.enter(); g.wait(2.0)
+    g=G("s","DM_TEST_GIVE=r01:2:3@60 DM_TEST_GIVE_INV=1"+" DM_TEST_WORLD_GO=near2:2:c267@200"); g.sect("put",0); g.enter(); g.wait(2.0)
     g.item("点箱子","开储藏箱",r"OpenPanel BankExpansionLayout"); g.arrive(5808,4443,3,24.0); g.at("tap_unit 2 267 3",3.0); g.shot()
-    # 珍宝匣存入之后：符文 / 宝石 / 材料落进个人页（或共享页）会自动转进珍宝匣对应那一格，个人页里不留——所以没有「从个人页拖回」这一步了
-    # After depositing into the Trove: a rune / gem / material landing in the personal tab (or shared tab) is moved automatically into its Trove slot and does not stay in the personal tab, so there is no "drag back from the personal tab" step any more
-    g.item("背包右上角的符文拖进个人页空格","自动转进珍宝匣（个人页不留，看截图）",r"珍宝匣：物品 id \d+ 已从仓库页转进高级仓库"); g.dragp((600.5,227),(81,237)); g.wait(1.5); g.clr(); g.shot()
-    g.item("个人页开着双击背包里的卷轴（不可堆叠）","进箱子当前页：背包少 1 格（卷轴在个人页里，看截图）",("inv",-1)); g.dbl(600.5,266); g.clr(); g.shot()
-    g.item("点「珍宝匣」页签","切到珍宝匣页（符文那一格已有 1 枚，看截图）",r"界面页签：切 [+-]\d+ 页"); g.tap(P(148,53)); g.shot()
-    g.item("珍宝匣页开着双击背包里另一枚符文","进那一叠：背包少 1 格",("inv",-1)); g.dbl(600.5,246.5); g.clr(); g.shot()
-    g.item("双击珍宝匣里那一叠","取出 1 枚：背包多 1 格；取件时那一叠是 2 个（自动转进去 1 + 双击进去 1）",("inv",1,"叠数 2 取 1")); g.dbl(201,81); g.clr(); g.shot()
-    g.item("从那一叠拖到背包左上角空格","再取出 1 枚：背包多 1 格",("inv",1,"→ 成叠格")); g.dragp((201,81),(424.5,267)); g.clr(); g.shot()
+    g.item("背包右上角的符文拖进个人页空格","留在个人页：背包少 1 格（看截图）",r"拖放落点类 5"); g.dragp((562,227),(120,237)); g.wait(1.5); g.clr(); g.shot()
+    g.item("个人页开着双击背包里的卷轴（不可堆叠）","进箱子当前页：背包少 1 格（卷轴在个人页里，看截图）",("inv",-1)); g.dbl(562,266); g.clr(); g.shot()
+    g.item("点「符文」页签","切到符文页（看截图）",r"界面页签：切 [+-]\d+ 页"); g.tap(P(275.5,53)); g.shot()
+    g.item("符文页开着双击背包里的符文","进 El 那一格：背包少 1 格",("inv",-1)); g.dbl(562,246.5); g.clr(); g.shot()
+    g.item("再双击背包里另一枚符文","进同一叠：背包少 1 格",("inv",-1)); g.dbl(542.4,285.5); g.clr(); g.shot()
+    g.item("双击符文页那一叠","取出 1 枚：背包多 1 格；取件时那一叠是 2 个",("inv",1,"叠数 2 取 1")); g.dbl(104.5,90.5); g.clr(); g.shot()
+    g.item("从那一叠拖到背包左上角空格","再取出 1 枚：背包多 1 格",("inv",1,"→ 成叠格")); g.dragp((104.5,90.5),(386,267)); g.clr(); g.shot()   # 拖着的物品浮在指尖上方约 40 点：落点往下写 40 点 | a dragged item floats about 40 points above the fingertip: the drop point is written 40 points lower
     gs.append(g)
     # g 局：技能绑定（从 a 局技能段拆出来，守住单局 3 分钟）。先走出营地——绑完要点一下看能不能施放，城里放不了技能
     # g run: skill binding (split out of the skill section of run a, to keep a single run within 3 minutes). Walk out of the camp first - after binding, one tap checks whether it can be cast, and skills cannot be cast in town

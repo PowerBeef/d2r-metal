@@ -76,11 +76,12 @@ python3 dm/ios/tools/uireg/uireg.py iphone a c e      # 跑几局
 
 ### 专用存档
 
+`d`、`t`、`u` 三局不要专用存档：从标准存档进局，当场发 12 枚 El 符文，自己双击进储藏箱的「符文」页叠成一叠（`uireg.py` 的 `stack_runes`）。
+
 下面几局不用标准存档，而是换上一份专用存档。它们同样不在仓库里，要自备；目录名是脚本里写死的，名字本身没有含义：
 
 | 目录名 | 用它的局 | 脚本假定的内容 |
 |---|---|---|
-| `save.pw_rune_stack`（可用 `UIREG_STACK_SAVE` 改名） | `d`、`t`、`u` | 术士；箱子的符文页里有一叠 12 个符文 |
 | `save.rg_act4done` | `g1`–`g4` | 第四幕已通关的角色 |
 | `save.rg_act4` | `ex` | 在第四幕、小站已开的角色 |
 | `save.rg_joejoe` | `tb`、`dz` | 在第二幕的角色，脚本从城里的小站去法师峡谷；`dz` 还要背包里带着任务法杖 |
@@ -100,7 +101,7 @@ python3 dm/ios/tools/uireg/uireg.py iphone a c e      # 跑几局
 | `b` | NPC 对话菜单、商人页买卖、物品栏的单击 / 拖放 / 双击 / 长按 |
 | `c` | 储藏箱拖放与页签、金币数量框、几种弹框开着时点框外 |
 | `s`、`sb` | 符文放进储藏箱再取出；储藏箱每个按钮逐个点 |
-| `d`、`t`、`u` | 从成叠的格子里取件：基本手法、背包里带着魔盒时、背包只剩一格时（专用存档） |
+| `d`、`t`、`u` | 从成叠的格子里取件（「符文」页上一叠 12 枚 El 符文，局里自己叠）：基本手法、背包里带着魔盒时、背包只剩一格时 |
 | `g`、`h` | 技能绑定；技能树的「综合技能」页 |
 | `i`、`f`、`q`、`bdm` | 雇佣兵：雇佣与复活、带佣兵时物品栏拖放、双击腰带药水喂佣兵 |
 | `j`、`k` | 镶嵌；做一个符文之语 |
@@ -130,7 +131,6 @@ python3 dm/ios/tools/uireg/uireg.py iphone a c e      # 跑几局
 | `UIREG_OUT` | 产物根目录 | `$DM_ROOT/run/uireg` |
 | `UIREG_APP` | `iphone` 档的包（`<名>.app`，里面是 `Wrapper/DmIOS.app`） | 仓库根目录下 `.iosdd_mac/DmMacSmoke.app` |
 | `UIREG_APP_IPAD` | `ipad` / `ipadfull` 档的包 | 无，必须给 |
-| `UIREG_STACK_SAVE` | `d`、`t`、`u` 局专用存档的目录名 | `save.pw_rune_stack` |
 | `UIREG_EXTRA_ENV` | 每局都加给 App 的环境变量（空格分隔的 `K=V`） | 不设 |
 | `UIREG_FORBID` | 正则：整局日志里出现就算不通 | 不设 |
 | `UIREG_REQUIRE` | 正则：整局日志里必须出现，结果里写出现次数（用来确认某个开关真的生效了） | 不设 |

@@ -76,11 +76,12 @@ The items, gold and positions each run needs do not come from the save; they are
 
 ### Dedicated saves
 
+Runs `d`, `t` and `u` need no dedicated save: they start from the standard save, are given 12 El runes on the spot and stack them into the stash's Runes tab themselves (`stack_runes` in `uireg.py`).
+
 The runs below do not use the standard save but swap in a dedicated save instead. These are likewise not in the repository; you need to provide your own. The directory names are hard-coded in the script and have no meaning of their own:
 
 | Directory name | Runs that use it | Contents the script assumes |
 |---|---|---|
-| `save.pw_rune_stack` (the name can be changed with `UIREG_STACK_SAVE`) | `d`, `t`, `u` | Warlock; the rune page of the stash has one stack of 12 runes |
 | `save.rg_act4done` | `g1`–`g4` | A character that has completed Act IV |
 | `save.rg_act4` | `ex` | A character in Act IV with the waypoint opened |
 | `save.rg_joejoe` | `tb`, `dz` | A character in Act II; the script goes from the waypoint in town to the Canyon of the Magi; `dz` also needs the quest staff in the inventory |
@@ -100,7 +101,7 @@ A run name is the first argument of `G("…")` in `uireg.py`; below they are gro
 | `b` | NPC dialogue menu, buying and selling on the merchant page, single tap / drag and drop / double tap / long press in the inventory |
 | `c` | Stash drag and drop and tabs, gold amount box, tapping outside the box while several kinds of dialog are open |
 | `s`, `sb` | Put a rune into the stash and take it out again; tap every button of the stash one by one |
-| `d`, `t`, `u` | Taking items from a stacked slot: the basic gesture, with the Horadric Cube in the inventory, with only one free slot left in the inventory (dedicated save) |
+| `d`, `t`, `u` | Taking items from a stacked slot (a stack of 12 El runes on the Runes tab, built by the run): the basic gesture, with the Horadric Cube in the inventory, with only one free slot left in the inventory |
 | `g`, `h` | Skill binding; the `综合技能` (general skills) page of the skill tree |
 | `i`, `f`, `q`, `bdm` | Mercenary: hiring and reviving, inventory drag and drop with a mercenary, double-tapping a belt potion to feed the mercenary |
 | `j`, `k` | Socketing; making one runeword |
@@ -130,7 +131,6 @@ The scope when no run name is given:
 | `UIREG_OUT` | Output root directory | `$DM_ROOT/run/uireg` |
 | `UIREG_APP` | The package for the `iphone` profile (`<name>.app`, containing `Wrapper/DmIOS.app`) | `.iosdd_mac/DmMacSmoke.app` under the repository root |
 | `UIREG_APP_IPAD` | The package for the `ipad` / `ipadfull` profiles | None, must be given |
-| `UIREG_STACK_SAVE` | Directory name of the dedicated save for runs `d`, `t`, `u` | `save.pw_rune_stack` |
 | `UIREG_EXTRA_ENV` | Environment variables added to the app for every run (space-separated `K=V`) | Unset |
 | `UIREG_FORBID` | Regular expression: if it appears anywhere in the log of a run, the run counts as failed | Unset |
 | `UIREG_REQUIRE` | Regular expression: must appear in the log of the run; the result states the number of occurrences (used to confirm that a certain switch really took effect) | Unset |
