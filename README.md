@@ -62,7 +62,7 @@ MetalFX is Apple's edge-aware upscaler. D2R Metal draws the interface and text a
 - **Mac**: Native output, with the 3D world at a scale chosen for your chip (75% of a 2560-wide screen on a base M-series chip, full size on Max and Ultra). On this setup the GPU time per frame is about the same as drawing the whole picture at 1920 × 1080 and enlarging it, and text is visibly crisper.
 - **iPhone / iPad**: the 3D world at 75% of the screen's full resolution.
 
-The Mac also uses the game's own PC options the Switch build leaves off: SMAA anti-aliasing and up to 16x texture filtering, with colors shown as the game was made (sRGB) on wide-gamut screens.
+Both also use the game's own PC options the Switch build leaves off: SMAA anti-aliasing and up to 16x texture filtering, with colors shown as the game was made (sRGB) on wide-gamut screens.
 
 Full frames from the same build and the same spot; only the setting changed. Click one for full size.
 
@@ -77,21 +77,25 @@ The same two frames at 1:1 pixels: interface text, the waypoint and ground, name
 
 <p align="center"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/12-mac-detail-1to1.jpg" width="100%" alt="1:1 crops of the two frames: interface text, waypoint and ground, labels and fence, character"></p>
 
-**iPhone 17 Pro, 2622 × 1206.** Both with the 3D world at 75%. Left: the game's own upscale. Right: MetalFX.
+**iPhone 17 Pro, 2622 × 1206** (the phone's screen resolution). Both with the 3D world at 75%. Left: the original, with the game's own upscale and FXAA. Right: D2R Metal's Recommended: MetalFX, SMAA and 16x texture filtering. These frames come from the same iOS app running on a Mac at the phone's resolution and settings; the rendering is the same as on the phone.
 
-<table><tr><th>Original</th><th>D2R Metal</th></tr><tr>
-<td><img width="440" alt="iPhone 17 Pro, 3D at 75% with the game's own upscale" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/7a-iphone-original-75-standard.jpg" /></td>
-<td><img width="440" alt="iPhone 17 Pro, 3D at 75% with MetalFX" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/7b-iphone-improved-75-metalfx.jpg" /></td>
+<table><tr><th>Original</th><th>D2R Metal Recommended</th></tr><tr>
+<td><img width="440" alt="iPhone 17 Pro, 3D at 75% with the game's own upscale and FXAA" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/15a-iphone-original-75.jpg" /></td>
+<td><img width="440" alt="iPhone 17 Pro, 3D at 75% with MetalFX, SMAA and 16x filtering" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/15b-iphone-recommended.jpg" /></td>
 </tr></table>
 
-On the M6 the Mac's Recommended takes about the same GPU time per frame as the earlier 1920 × 1080 + MetalFX setup, about 8 ms of the 16.7 ms a 60 fps frame allows, because the plain 1:1 present replaces the full-frame MetalFX pass and rendering passes now overlap on the GPU. On an iPhone 17 Pro MetalFX costs about 0.6 ms and it still holds 60 fps (details under *For developers*, below).
+The same two iPhone frames at 1:1 pixels.
+
+<p align="center"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/16-iphone-detail-1to1.jpg" width="100%" alt="1:1 crops of the two iPhone frames: waypoint and ground, labels and fence, character, interface"></p>
+
+On the M6 the Mac's Recommended takes about the same GPU time per frame as the earlier 1920 × 1080 + MetalFX setup, about 8 ms of the 16.7 ms a 60 fps frame allows, because the plain 1:1 present replaces the full-frame MetalFX pass and rendering passes now overlap on the GPU. On an iPhone 17 Pro MetalFX costs about 0.6 ms and it still holds 60 fps; adding SMAA and 16x filtering leaves 60 fps, frame pacing and CPU time unchanged (details under *For developers*, below).
 
 ## Settings in the game's own Options
 
 Options has five tabs on both platforms: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**, all drawn with the game's own selectors, checkboxes and text.
 
 - **Video**: on the Mac, Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets, 3D Resolution (100 down to 50%) and Upscaling (Standard / MetalFX); on iPhone and iPad, 3D Resolution (75 / 85 / 100%), Color, Graphic Presets and Upscaling. Both have **Anti-Aliasing** (the game's FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Frame Rate** (60 fps, or 30 to save power) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
-- **Recommended** is worked out for the device: on a Mac, full screen at Native with the 3D resolution chosen for its chip, MetalFX, SMAA, 16x filtering and Accurate color; on iPhone and iPad, 3D at 75% with MetalFX (the new picture options are off there until they have been measured on a phone).
+- **Recommended** is worked out for the device: on a Mac, full screen at Native with the 3D resolution chosen for its chip, MetalFX, SMAA, 16x filtering and Accurate color; on iPhone and iPad, 3D at 75% with MetalFX, SMAA, 16x filtering and Accurate color.
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
 - Apply, Discard and Default work like the game's own option pages; Default resets only the tab you are on.
 
@@ -200,7 +204,8 @@ A tour of the code is in [dm/README.md](dm/README.md).
 - **Mac, MetalFX at the last step**: M6 (12 GPU cores), 2560 × 1440 screen, character select. Enlarging the same 1600 × 900 picture costs 0.28 ms of GPU time with a plain stretch and 1.38 ms with MetalFX; edge sharpness goes from 235 to 569. At 1920 × 1080 with MetalFX (Recommended on that Mac) enlarging costs 1.78 ms, the whole frame about 13.7 ms, inside the 16.7 ms of 60 fps, and edge sharpness reaches 754 ([4ac0543](https://github.com/PowerBeef/d2r-metal/commit/4ac0543)).
 - **iPhone, MetalFX on the 3D world**: iPhone 17 Pro, 3D at 75% (1967 × 905 inside a 2622 × 1206 frame). Steady 60 fps; median GPU time per frame 11.65 → 12.28 ms (+0.6 ms); edge sharpness 404 → 728 with the same colours ([7c2f892](https://github.com/PowerBeef/d2r-metal/commit/7c2f892)).
 - **Mac, Recommended on the M6** (2560 × 1440 screen, town route, 6 + 6 alternating runs): native output with the 3D at 75% + MetalFX takes about the same GPU time per frame as 1920 × 1080 + MetalFX (game frame 6.1 → 7.5 ms, present 1.7–2.1 → 0.3–0.4 ms); the game's SMAA adds about 0.5 ms and 16x filtering about 0.2 ms; letting rendering passes overlap saves 0.54 ms (−8.5%); skipping repeated state binds cuts bind records by 57% and the replay thread's instructions by 13%. Picture-neutral changes are checked against tick-identical replays and pixel comparisons.
-- Not measured yet: battery and heat with MetalFX on phones over long sessions, and the new picture options on an iPhone.
+- **iPhone, SMAA and 16x filtering**: iPhone 17 Pro standing in town, 3D at 75% (one pass with MetalFX, one without; runs alternated, 110 s each). Both hold 60 fps with frame time p95 17.6 ms, CPU per frame about 16 ms and the thermal state the same as the original. The phone doesn't show their GPU cost to an app: its GPU slows its clock until each frame's work fills the frame (about 15 ms whatever the setting), and the process energy reading follows the CPU.
+- Not measured yet: battery and heat with MetalFX and the new picture options on phones over long sessions.
 
 </details>
 
