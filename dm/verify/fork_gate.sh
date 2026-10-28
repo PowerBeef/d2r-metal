@@ -130,7 +130,9 @@ for tier in "${TIERS[@]}"; do
     step long_fnfuzz 3600 -- python3 "$DM/verify/fnfuzz.py" "$("$DM/tools/product.sh" path rules)" main "$DM_ROOT/data/switch/3.3.94012/Update/ExeFS/main" --trials 3
     ;;
   device)
-    if xcrun devicectl list devices 2>/dev/null | grep -q 'available (paired)'; then
+    # 手机闲着时列为 available (paired)，开着隧道（刚有 devicectl 连过）时列为 connected：两种都在
+    # The phone is listed as available (paired) when idle and as connected while a tunnel is open (devicectl talked to it recently): both mean it is there
+    if xcrun devicectl list devices 2>/dev/null | grep -qE 'available \(paired\)|connected'; then
       step device_smoke 1800 -- bash "$DM/ios/tools/smoke.sh"
       step device_lifecycle 1800 -- bash "$DM/ios/tools/lifecycle.sh"
     else

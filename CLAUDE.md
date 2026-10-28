@@ -192,6 +192,7 @@ python3 dm/verify/golden.py replay|shots check   (record --reason …; prefix)  
   - Real mouse events for any Mac App build, including upstream ones without a control port: `DM_TEST_NSMOUSE=<file>` (`down` / `dragto` / `hover` / `key` lines), `DM_TEST_PRESENT_SHOT=<s>:<png>`, `DM_TEST_QUIT_AT=<s>`. Leave `DM_WATCH` unset there: its stall watchdog kills the front end after 15 s.
   - Lines that work with the App in the background (no key window needed): `nav <keycode>` (a key straight to the game's key handler), `pad <buttons>` / `pads b1,b2,…` (virtual controller presses through `dm_gamepad`, self-timed; one scheduled line per press gets merged), `navpad <buttons>` (skipped while a text box is open, so extra presses to reach a page are harmless), `skey <keycode> <chars>` (through `[NSApp sendEvent:]` and the event monitors), `sheet ok|cancel [text]` (fill and press the Mac text sheet). `DM_TEST_PAD_GLYPH=2|3|0` makes the virtual controller count as Xbox / PlayStation / Switch for the key caps.
 - `ios-mac` keeps running the package `smoke_mac.sh 1` last built, not the `run.sh build` output: rebuild it after layout or host changes.
+- **A phone on Wi-Fi only:** devicectl paths work (`lifecycle.sh`, `touch_e2e.sh` / `uireg … run_dev.sh`, `heat_ab.sh`, file pulls). `smoke.sh` and the scenario `device` backend need a USB cable, because the app's log port (`DM_LOG_PORT`) listens on the phone's loopback, which `iproxy -n` can't reach ("Connection refused"). `ideviceinfo` can't read the battery over Wi-Fi either: `DM_DEVBATTERY_INRUN=1` lets the battery gate use the app's own reading.
 
 **Performance:**
 
@@ -207,7 +208,8 @@ python3 dm/tools/bench.py baseline save && python3 dm/tools/bench.py regress <ro
 - Present intervals are pinned at 16.67 ms by vsync on this Mac; compare `cpu_ms`, `nvn_ms` and `gpu_ms` instead.
 - Use at least 4 runs per variant (the minimum exact p is 0.029); 6 is the default.
 - To compare two rewrite outputs (one changed instruction, say), make a scratch copy of the output and point runs at it: `SCN_PRODUCT=<dir>` for scenarios and benchmarks (`--a-env "SCN_PRODUCT=…"`), `DM_SHOT_PRODUCT=<dir>` for `lookbook.py` / `golden.py` shots. Never patch the real output under `build/cache/dm/out`.
-- `proc_mj` (macOS) is the process's energy per frame from the kernel's account; A/B it with `--metric proc_mj.mean`, no admin rights needed.
+- `proc_mj` is the process's energy per frame from the kernel's account (macOS: `proc_pid_rusage`; iOS: `task_info` `TASK_POWER_INFO_V2`, which also gives `@gpu_util_ms`, the GPU time charged to the process); A/B it with `--metric proc_mj.mean`, no admin rights needed.
+- On the iPhone the GPU clocks down until each frame's GPU time fills the frame interval, so `@gpu_ms` reads the same for every picture setting (about 15.2 ms in game on an iPhone 17 Pro). Compare `@proc_mj` there.
 - `XTRACE_*` are os_signposts on Apple. Record them with `xctrace record --template Logging --attach <pid>`.
 - A GPU capture is about 4 GB per frame, and the disk is tight. `gpucap` refuses to capture when free space is short, and the `gpu_capture` step deletes the trace unless `keep=1`.
 
