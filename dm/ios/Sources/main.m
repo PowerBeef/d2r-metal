@@ -693,7 +693,20 @@ static void boot_prepare(void) {
     }
     for (NSString *d in @[@"save", @"temp"])
         [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
-    { void dm_custom_init(const char *dir); dm_custom_init(doc.fileSystemRepresentation); }   // 「自定义」设置文件在 Documents（覆盖层选择等启动期的读也要用，存档还没挂） | The "Custom" settings file lives in Documents (boot-time reads such as overlay selection need it too, and the save is not mounted yet)
+    // 「自定义」与画面设置文件（sw_custom.txt / sw_video.txt）在 Documents（覆盖层选择等启动期的读也要用，存档还没挂）。
+    // 测试局（DM_SAVE_FRESH / DM_SAVE_TEST）用 Documents/settings.test：自动跑的局会点选项页、点「应用」，原先写的是玩家自己的设置（真机回归把玩家的「放大」改成了关）。
+    // DM_SAVE_FRESH 每局从空目录起（= 首次启动的推荐值），DM_SAVE_TEST 沿用上一局的
+    // The "Custom" and picture settings files (sw_custom.txt / sw_video.txt) live in Documents (boot-time reads such as overlay selection need them too, and the save is not mounted yet).
+    // Test runs (DM_SAVE_FRESH / DM_SAVE_TEST) use Documents/settings.test: automated runs tap the Options page and press Apply, and used to write the player's own settings
+    // (a device regression turned the player's Upscaling off). DM_SAVE_FRESH starts each run from an empty folder (= the first-boot recommendation), DM_SAVE_TEST keeps the previous run's
+    NSString *setdir = doc;
+    if (getenv("DM_SAVE_FRESH") || getenv("DM_SAVE_TEST")) {
+        setdir = [doc stringByAppendingPathComponent:@"settings.test"];
+        if (getenv("DM_SAVE_FRESH")) [fm removeItemAtPath:setdir error:nil];
+        [fm createDirectoryAtPath:setdir withIntermediateDirectories:YES attributes:nil error:nil];
+        plog("boot: 本局的设置文件在 Documents/settings.test（玩家的设置未动）");
+    }
+    { void dm_custom_init(const char *dir); dm_custom_init(setdir.fileSystemRepresentation); }
     setenv("DM_ROMFS", romfs.fileSystemRepresentation, 0);
     NSString *bundledOverlay = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:g_astc_dir ? @"romfs_overlay_astc" : @"romfs_overlay"];   // 老机型补充包：贴图指向补充包的那套 | Legacy Device Pack: the set whose textures point to the Legacy Device Pack
     {   // 走覆盖层的自定义开关（物品注释…）：构建时出了全部组合 romfs_overlay_variants/<键+键…>（gen_romfs_overlay.py），按已生效的开关挑键集合正好相等的那份；全关用 romfs_overlay。重启后生效 | Custom switches that go through the overlay (item annotations...): the build produces every combination as romfs_overlay_variants/<key+key...> (gen_romfs_overlay.py); pick the one whose key set exactly equals the switches in effect; with all off use romfs_overlay. Takes effect after restart
