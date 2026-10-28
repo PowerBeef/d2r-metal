@@ -923,10 +923,9 @@ UIView *front_ios_view(CGRect frame) {
 
 void *front_metal_layer(void) { return (__bridge void *)g_layer; }
 // 「色彩」（dm_video.c color）：准确 = 出图层标 sRGB（游戏写的就是 sRGB 编码的字节），系统按屏幕色域（iPhone / iPad 是 P3）配色；鲜艳 = 不标（原先的样子）。
-// 画面字节不变，只改合成器怎么解释。iOS 的推荐值暂按原先（front_video_rec 用 dm_video.c 的弱定义 = 0）：要先在真机上看过。DM_COLORSPACE=srgb|none 定死
+// 画面字节不变，只改合成器怎么解释。推荐「准确」（front_video_rec）。DM_COLORSPACE=srgb|none 定死
 // "Colour" (color in dm_video.c): Accurate = the present layer is tagged sRGB (the game writes sRGB-encoded bytes) and the system colour-matches it to the screen's gamut (P3 on iPhone / iPad); Vivid = untagged
-// (the old look). The picture bytes are unchanged; only how the compositor reads them changes. The iOS recommendation stays the old look for now (front_video_rec is dm_video.c's weak definition = 0) until it has been
-// seen on a device. DM_COLORSPACE=srgb|none fixes it
+// (the old look). The picture bytes are unchanged; only how the compositor reads them changes. Accurate is the recommendation (front_video_rec). DM_COLORSPACE=srgb|none fixes it
 static void layer_color_ios(int accurate) {   // 主线程 | main thread
     const char *e = getenv("DM_COLORSPACE"); if (e && *e) accurate = !strcmp(e, "srgb");
     if (!g_layer) return;
@@ -952,6 +951,19 @@ int front_video_firstboot(int rec[3], int cur[3]) {
     rec[0] = 0; rec[1] = 0; rec[2] = front_video_mfx_ok() ? 1 : 0; for (int i = 0; i < 3; i++) cur[i] = rec[i];
     LOG("画面设置：首次启动 → 推荐 3D 清晰度 75%%、%s", rec[2] ? "MetalFX" : "标准（本机不支持 MetalFX）");
     return 1;
+}
+// 之后加的画质键的推荐值（dm_video.c 读盘缺这个键、或推荐版本旧了时问）：SMAA、16× 各向异性、准确色彩，同 Mac。
+// iPhone 17 Pro 上量过（城镇站定、3D 75%，MetalFX 开 / 关各一轮）：都稳 60 帧，帧间隔 p95、CPU、温控与原版一样；手机让 App 看得到的读数里看不出开销
+//（GPU 降频把每帧 GPU 时间撑满帧间隔，进程能量跟着 CPU 走）。3D 清晰度那一档（s3d）只配 Mac 的原生出图，手机不推荐
+// Recommendations for the picture keys added later (asked by dm_video.c when the file lacks the key or holds an older recommendation version): SMAA, 16x anisotropy and accurate colour, as on the Mac.
+// Measured on an iPhone 17 Pro (standing in town, 3D at 75%, one pass with MetalFX on and one off): steady 60 fps, with frame-interval p95, CPU and the thermal state the same as the original;
+// none of the readings the phone gives an app shows a cost (the GPU clocks down until each frame's GPU time fills the frame interval, and process energy follows the CPU). The 3D resolution step (s3d)
+// only goes with the Mac's native output, so the phone recommends none
+int front_video_rec(const char *key) {
+    if (!strcmp(key, "aa")) return 1;
+    if (!strcmp(key, "aniso")) return 3;
+    if (!strcmp(key, "color")) return 1;
+    return -1;
 }
 // 主机档 = 屏幕原生像素（界面文字原生，3D 由游戏自带的渲染比例另缩，见 hle_oe.c scale3d_tick）：
 // iPhone 17 Pro Max → 2868x1320。掌机档仍按原版高度 720 × 屏幕比例（宽取 8 的倍数，1568x720），只在 DM_OPMODE=0 / 脚本切换时用到。

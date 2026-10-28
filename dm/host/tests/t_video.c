@@ -38,7 +38,7 @@ static result run(const char *txt) {
 #define FULL(m, rm, s, rs, u, ru) "mode=" #m "\nrec_mode=" #rm "\nres=" #s "\nrec_res=" #rs "\nup=" #u "\nrec_up=" #ru "\n"
 #define TAIL(a, ra, n, rn, c, rc) "aa=" #a "\nrec_aa=" #ra "\naniso=" #n "\nrec_aniso=" #rn "\ncolor=" #c "\nrec_color=" #rc "\n"
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
-#define RV "rec_v=2\n"   // 推荐值版本（dm_video.c REC_V）；没有这行 = 第 1 版，读盘时重算推荐 | recommendation version (REC_V in dm_video.c); without it = version 1, recalculated at load
+#define RV "rec_v=3\n"   // 推荐值版本（dm_video.c REC_V）；没有这行 = 第 1 版，读盘时重算推荐 | recommendation version (REC_V in dm_video.c); without it = version 1, recalculated at load
 #define NEWREC TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) RV   // 后加的键缺时补成的样子（front_video_rec） | how the later keys are filled when missing (front_video_rec)
 
 int main(void) {

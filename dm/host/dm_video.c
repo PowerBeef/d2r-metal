@@ -28,11 +28,11 @@
 // dm_custom.c, saved in sw_custom.txt), and this file only drives the selectors -- pending values, Apply and Discard go through the custom settings; the graphic presets leave them alone, and "Default" puts them back to their defaults (60 fps, lower)
 // Mac 另有三行画质（画质计划第 1 阶段）：「抗锯齿」aa（0 FXAA = 原版 / 1 SMAA，游戏自己电脑版的那一档：宿主 hle_oe.c aa_tick 写渲染器的档位字节）、
 // 「各向异性过滤」aniso（0 原版 / 1 4× / 2 8× / 3 16×，nvn_mtl.m 采样器覆盖）、「色彩」color（0 鲜艳 = 原先不标色彩空间，宽色域屏把 sRGB 当屏幕原色撑开 / 1 准确 = 层标 sRGB 交给系统配色）。
-// 三项都点应用即生效、都算进「推荐」；值 0 都是原先的样子，所以测试副本、命令行宿主、手机（页上没有这几行）一概不变。旧文件没有这几个键：读盘时按前端 front_video_rec 补
+// 三项都点应用即生效、都算进「推荐」；值 0 都是原先的样子，所以测试副本、命令行宿主一概不变（iOS 页上也有这三行，推荐值从第 3 版起同 Mac）。旧文件没有这几个键：读盘时按前端 front_video_rec 补
 // The Mac has three more picture rows (picture plan phase 1): "Anti-Aliasing" aa (0 FXAA = the original / 1 SMAA, the game's own PC setting: the host's hle_oe.c aa_tick writes the renderer's mode byte),
 // "Anisotropic Filtering" aniso (0 original / 1 4x / 2 8x / 3 16x, the sampler override in nvn_mtl.m) and "Colour" color (0 Vivid = no colour space on the layer as before, so wide-gamut panels stretch sRGB to
 // the panel's primaries / 1 Accurate = the layer is tagged sRGB and the system colour-matches it).
-// All three take effect on Apply and count towards "Recommended"; value 0 is always the old look, so test copies, the CLI host and phones (whose page lacks these rows) are unchanged. Older files lack these keys: loading fills
+// All three take effect on Apply and count towards "Recommended"; value 0 is always the old look, so test copies and the CLI host are unchanged (the iOS page has these rows too, recommended like the Mac from version 3 on). Older files lack these keys: loading fills
 // them from the front end's front_video_rec
 // Mac 的原生出图与 3D 清晰度（画质计划第 3 阶段）：「分辨率」多一档「原生」（res=3：主屏的像素宽，16 对齐，1600–3840），界面与文字按屏幕原生分辨率画；
 // 「3D 清晰度」s3d（0 = 100% 原先的样子 / 1 = 85% / 2 = 75% / 3 = 67% / 4 = 50%）只降 3D，游戏自己的 3D 放大趟把它放回出图尺寸（开 MetalFX 时由 MetalFX 放大，nvn_mtl.m mfx3d_draw）。
@@ -59,7 +59,7 @@ int dm_custom_path(const char *name, char *p, size_t n);
 enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, NV };   // 新键只往后加（存盘按名字，旧文件缺的键读盘时补） | new keys go at the end (saved by name; keys an older file lacks are filled at load)
 static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d" };
 static const int k_n[NV] = { 2, 4, 2, 2, 4, 2, 5 };
-#define REC_V 2   // 推荐值的版本：2 = 原生出图 + 3D 清晰度（Mac） | version of the recommendation: 2 = native output + 3D resolution (Mac)
+#define REC_V 3   // 推荐值的版本：2 = 原生出图 + 3D 清晰度（Mac）；3 = iOS 也推荐 SMAA、16×、准确色彩 | version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour
 static int kn(int i) { return i == K_RES && DM_PHONE ? 3 : k_n[i]; }   // 手机的 res 是三档 3D 清晰度；Mac 的 res 多一档「原生」 | on phones res is the three 3D-resolution tiers; on the Mac res has the extra "Native" tier
 #define NR 10
 static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "fps", "drops" };   // 页上的行序（页上没有的行跳过） | row order on the page (rows the page lacks are skipped)
