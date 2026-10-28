@@ -425,7 +425,10 @@ def groups():
     g.item("鉴定后立刻把戒指 A 拖到左戒指位（空）","戴上（是否真戴上由后面换装与双击戒指位两项反证）",r"拖放落点类 5",r"原版判定 0|没放下"); g.dragp((245,285),(294,207)); g.shot()
     g.item("双击另一张鉴定卷轴后点戒指 B","鉴定",r"界面鉴定：单击 rin"); g.dbl(402,264); g.tap(P(403,285),0.15)
     g.item("鉴定后立刻把戒指 B 拖到左戒指位（戴着 A）","换上 B，A 落到 B 原来的格子",r"原版判定 5|换下来的那件[^\n]*原位",r"原版判定 0"); g.dragp((403,285),(294,207)); g.shot()
-    g.item("换下来的戒指 A 拖到右戒指位（空）","戴上",r"拖放落点类 5",r"原版判定 0|没放下"); g.dragp((403,285),(373,207)); g.shot()
+    # 两指：这一下拖到半路，第二根手指在面板空处点一下（原先每根新手指都把指针手指的物品问答重置成「待答」，拖放松手跟着乱）；下一项双击卸下反证真戴上了
+    # Two fingers: halfway through this drag a second finger taps bare panel stone (every new finger used to reset the pointer finger's item answer to "pending" and break the drop); the next item's double tap proves it was really equipped
+    g.item("换下来的戒指 A 拖到右戒指位（空），途中第二根手指点一下面板空处","戴上",r"拖放落点类 5",r"原版判定 0|没放下")
+    g.at(f"down 0 {P(403,285)}",.3); g.at(f"move 0 {P((403+373)/2,(285+207)/2)}",.15); g.at(f"down 1 {P(*BG_SPOT)}",.12); g.at("up 1",.15); g.at(f"move 0 {P(373,207)}",.4); g.at("up 0",1.0); g.shot()
     g.item("双击右戒指位","卸下那枚戒指（反证上一步确实戴上了）",r"界面双击：身上的 rin"); g.dbl(373,167); g.shot()
     g.item("双击左戒指位","卸下那枚戒指（反证左戒指位确实戴着）",r"界面双击：身上的 rin"); g.dbl(294,167); g.shot()
     g.tap(P(615,17),1.2); g.sect("hud")

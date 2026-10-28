@@ -183,10 +183,23 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 - (void)hudBlocked:(int)n { _overlay.hudBlocked=n>0; _overlay.dialogOnly=n<0; dm_tc_set_joy_block(&_controls,n<0); [_overlay setNeedsDisplay]; }   // 只开着讲话文字框 / 对话菜单：点底座那一下不起摇杆（只关它，人不走） | only the speech text box / dialogue menu is open: a tap on the base starts no stick (it only closes it, the character does not move)
 // 前端页面（主菜单 / 选角 / 建角 / 读取画面，即不在局内）：不显示摇杆与技能圆钮，触点直接当原生点击交给游戏界面（dm_ui_touch → 鼠标消息，dm_cursor.c）
 // Front-end pages (main menu / character select / character creation / loading screen, i.e. not in a run): no stick or round skill buttons shown; touch points are given straight to the game UI as native clicks (dm_ui_touch → mouse messages, dm_cursor.c)
-- (void)padMode:(BOOL)pad { _padMode=pad; _overlay.hidden=_feMode || pad; _info.hidden=_feMode; if(pad) { _tipUntil=-2; dm_tc_cancel_all(&_controls); [self pushFrom:"padmode" phase:"none"]; } }   // 手柄模式藏触屏控件层（dm_gamepad.m 回调） | Controller mode hides the touch controls layer (dm_gamepad.m callback)
-- (void)frontendMode:(BOOL)fe { _feMode=fe; _overlay.hidden=fe || _padMode; _info.hidden=fe; if(fe) { _pendEnd=nil; _finalAsked=NO; for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:"frontend" phase:"none"]; } }
+// 手势层整批取消（手柄模式、进出前端页、进出面板态、焦点取消）时把界面拖动一并收掉：宿主那头结束拖动，前端那根正在滚动拖的手指整根作废（抬手不再当点击）。
+// 漏收的话 _uiDragOn 一直是 YES：宿主停在拖动里，之后面板拖放起不了头，前端纵向拖也不再滚动
+// When the gesture layer is cancelled as a whole (controller mode, entering / leaving the front end or panel mode, focus cancel), end the UI drag too: the host ends its drag,
+// and a front-end finger that was scroll-dragging is dropped entirely (its lift is no longer a click). Missing this left _uiDragOn at YES: the host stayed in its drag,
+// later panel drags could not start and front-end vertical drags no longer scrolled
+- (void)endUiDrag {
+    if(!_uiDragOn && !_uiFeDrag) return;
+    if(_uiFeDrag) _uiFinger=nil;
+    _uiFeDrag=NO; _uiDragOn=NO; dm_ui_drag_end();
+}
+- (void)padMode:(BOOL)pad { _padMode=pad; _overlay.hidden=_feMode || pad; _info.hidden=_feMode; if(pad) { _tipUntil=-2; dm_tc_cancel_all(&_controls); [self endUiDrag]; [self pushFrom:"padmode" phase:"none"]; } }   // 手柄模式藏触屏控件层（dm_gamepad.m 回调） | Controller mode hides the touch controls layer (dm_gamepad.m callback)
+- (void)frontendMode:(BOOL)fe {
+    if(fe!=_feMode) [self endUiDrag];   // 进出前端页：局内面板的拖动与前端页的滚动拖都不跨过去 | entering / leaving the front end: neither an in-run panel drag nor a front-end scroll drag carries over
+    _feMode=fe; _overlay.hidden=fe || _padMode; _info.hidden=fe; if(fe) { _pendEnd=nil; _finalAsked=NO; for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:"frontend" phase:"none"]; } }
 - (void)navigationMode:(int)n {
     if (_navigation==n) return;
+    if(!_navigation != !n) [self endUiDrag];   // 进出面板态时 dm_tc_set_navigation_mode 取消全部手指，指针手指的拖动跟着收 | entering / leaving panel mode cancels every finger in dm_tc_set_navigation_mode, so the pointer finger's drag ends with it
     dm_tc_set_navigation_mode(&_controls,n); _navigation=n;   // 内部按非零归一 | Internally normalized to non-zero
     static int pad=-1; if(pad<0) { const char *e=getenv("DM_TOUCH_NAV_PAD"); pad=e && e[0]=='1'; }   // 面板态的五个虚拟手柄圆钮：缺省不给（点按 / 双击 / 拖放 / 点页签 / 面板外点按已全部替代，圆钮还压着背包格右半边）；DM_TOUCH_NAV_PAD=1 调试时叫回来 | The five round virtual controller buttons of panel mode: not shown by default (tap / double tap / drag and drop / tab tap / tap outside the panel have replaced them all, and the round buttons also sat over the right half of the inventory cells); DM_TOUCH_NAV_PAD=1 brings them back for debugging
     uint32_t mask=n ? (dm_tc_nav_mask(pad && n!=2) | (n==3 ? 1u<<DM_TC_MENU : 0)) :   // 3 = 只开着 NPC 对话菜单：底栏十字可点（原版 ＋ 键此时 = 关对话并开功能页） | 3 = only the NPC dialog menu is open: the bottom bar cross is tappable (the original game's + key at this time = close the dialog and open the function page)
@@ -268,7 +281,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 - (void)cancelControlsFrom:(const char *)source {
     _pendEnd=nil; _finalAsked=NO;
     for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:source phase:"none"];
-    if(_uiDragOn) { _uiDragOn=NO; dm_ui_drag_end(); }
+    [self endUiDrag];
     _mapTouch=_mapBackTouch=_bindTouch=nil;
 }
 // 技能绑定入口（技能为空时一个单色十字，点击进入绑定技能）：游戏态下触点落在技能钮（主攻击大钮 A 与 F1–F4，含当前组）上——
@@ -487,7 +500,9 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
             if(!_navigation && !_mapBackTouch && _controls.finger[i].target==DM_TC_NONE && dm_ui_map_is_full()) { _mapBackTouch=t; _mapP0=p; _mapT0=CACurrentMediaTime(); }   // 全屏地图开着、这根手指没落在任何键和摇杆区上：松手时若是点按就回小地图 | Fullscreen map open and this finger landed on no button and no stick area: if it turns out to be a tap on release, return to the minimap
             // 功能页里的指针手指：问宿主这点是不是物品区（游戏主线程下一帧作答，松手时取）
             // Pointer finger in a function page: ask the host whether this point is an item area (the game main thread answers on the next frame; fetched on release)
-            if(_controls.navigation_mode && _controls.pointer_slot==i && self.bounds.size.width>0) _itemSeq=dm_ui_item_query((float)(p.x/self.bounds.size.width),(float)(p.y/self.bounds.size.height)); _itemAsked=YES; _itemKind=-1;
+            // 只有指针手指才问、才清答案：原先少了大括号，每根新手指（摇杆、第二根手指）都把 _itemAsked / _itemKind 重置成「待答」，指针手指的拖放松手跟着乱
+            // Only the pointer finger asks and clears the answer: braces were missing, so every new finger (the stick, a second finger) reset _itemAsked / _itemKind to "pending" and broke the pointer finger's drag release
+            if(_controls.navigation_mode && _controls.pointer_slot==i && self.bounds.size.width>0) { _itemSeq=dm_ui_item_query((float)(p.x/self.bounds.size.width),(float)(p.y/self.bounds.size.height)); _itemAsked=YES; _itemKind=-1; }
             break;
         }
         [self recordTouch:t slot:slot phase:"began"];
