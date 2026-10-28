@@ -231,7 +231,6 @@ DM_BREAK_AT_TICK=<tick> ./dmhost … ; lldb -p <pid>; (lldb) command script impo
 - `DM_BREAK_AT_TICK` waits on the tick thread: start the host by hand without `DM_WATCH` / `DM_WATCH_STALL`. In `lldb --batch`, commands after the trap go in `-k`, not `-o`.
 - Agents can drive the same lldb through `(lldb) protocol-server start MCP` + `xcrun lldb-mcp` (one MCP server at a time; delete stale `~/.lldb/lldb-mcp-<pid>.json`).
   - With no server running when it starts, `lldb-mcp` starts its own lldb, which stays up and is reused. On Xcode 27.1 that lldb can't attach ("Bad file descriptor") unless `LLDB_EXE_PATH` points at a wrapper that gives it a stdin; `debugging.md` has the wrapper. Never `process launch` through `lldb-mcp`: it never returns and blocks that lldb until it's killed. Start the host yourself and attach.
-- **Engine-analysis database** (`dm/tools/re/README.md`): a private Ghidra project of `main` in `$DM_ROOT/re` (never in git, issues, PRs or artifacts). `re.sh serve` runs the query server (the only process that may hold the project); `re.sh q decompile|xrefs|callgraph|strings|find|name|comment main+0x…` queries it. Project addresses are `0x7100000000 + offset` (Ghidra's `FUN_71…` + `005d3bc0` = `main+0x5d3bc0`). `re.sh seed` / `export` need the server stopped; the export feeds `guestsyms.py`. `re.sh tables` (also with the server stopped) runs the headless game under lldb to record every data table's columns into `$DM_ROOT/re/export/tables.json`, which `seed` turns into `/dm/tables/txt_<table>` structures. `re.sh autoname` (server stopped) proposes names for unnamed functions in `$DM_ROOT/re/names_auto.tsv` (strings, vtables, table callbacks, packet handlers); `seed` writes its high / medium rows after `names.tsv`.
 - `explore.py` uses only steps without assertions; `open_pause` / `close_pause` are assertions and go red on their own.
 - Replay needs the town spawn moved as when recording (`replay.py` sets `DM_TOWNWP_OFF=0`) and no tick-0 join lines in the packet file. Check with a positive control (drop input, expect a divergence) before trusting an "identical" result.
 
@@ -246,6 +245,16 @@ DM_ROMFS=<Update/RomFS> DM_SAVE=<dir> DM_TEMP=<dir> DM_MSL_DIR=$DM_ROOT/build/ca
 - Omit `DM_WINDOW` for a headless run.
 - `DM_WATCH=<s>` sets a watchdog.
 - `DM_SVC=1`, `DM_IMPORTS=1`, `DM_DBG=1` turn on extra logging.
+
+## Game reference (the decompiled game code)
+
+There is no recording of the original game on a console or emulator; to learn what the game does, read its code. The reference is a private Ghidra project of `main` built by `dm/tools/re` (`dm/tools/re/README.md`) and kept in `$DM_ROOT/re`.
+
+- **Static questions** (what a function does, who calls it, where a field is written): `dm/tools/re/re.sh serve` (the only process that may hold the project; one Ghidra process at a time, never next to a game run or an Xcode build), then `re.sh q decompile|xrefs|callgraph|strings|find|bytes|name|comment main+0x…`, or the `ghidra` MCP server in a main-checkout session. Project addresses are `0x7100000000 + offset`, so a `FUN_71…` name ending in `005d3bc0` is `main+0x5d3bc0`. Area notes live in `$DM_ROOT/re/notes`.
+- **Dynamic questions** (what a value is at run time): the headless host under lldb (`dm/tools/lldb/dm.py`, `DM_BREAK_AT_TICK`) or a `DM_PROBE` scenario, with the result checked against the reading of the code.
+- **Keeping it current:** `re.sh seed` writes the repo's own names and comments into the project, `re.sh export` (server stopped) writes `$DM_ROOT/re/export/main.names.tsv`, which `guestsyms.py`, `crashlog.py`, `dm.py`, `bench.py profile` and `addrcheck.py` read. `re.sh tables` / `reflect` / `autoname` fill in data tables, reflection and bulk names.
+- **`re.sh addrcheck`** (also the gate's `quick_readdr` step): every `main+0x…` cited in `dm/host`, `dm/gfx`, `dm/ios/Sources`, `dm/tools` and `dm/verify` must land in a known function (or be a known name), 4-byte aligned; data addresses are only listed. Test files and lines giving a usage example (`e.g.`, `example`) are skipped. Without the symbol table or the export it reports unavailable.
+- **Never copy its output anywhere public or shared:** decompiled code, disassembly, strings and database files stay out of git, issues, PRs, artifacts and memory. Code and commits cite a game function by its `main+0x…` address and its role, in our own words. The tracked pre-commit guard (`dm/tools/git-hooks/pre-commit`, linked by `./setup.sh`) refuses database files and lines that look like decompiler output.
 
 ## Architecture (the pipeline)
 

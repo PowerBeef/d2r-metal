@@ -49,6 +49,10 @@ dm/tools/re/re.sh stop        # SIGINT: the server saves, then closes the projec
 
 `DM_RE_PORT` moves the server and the client off port 8000.
 
+```bash
+dm/tools/re/re.sh addrcheck   # every main+0x… the sources cite lands in a known function or name (addrcheck.py; last line READDR OK|RED)
+```
+
 In a main-checkout Claude Code session the same server is an MCP server: `claude mcp add --transport http -s local ghidra http://127.0.0.1:8000/mcp`. Worktree sessions and subagents use `re.sh q`.
 
 ## What `seed` writes
@@ -83,3 +87,4 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 | `export.py` | Names and types as text, local history commit |
 | `serve.py` | Starts pyghidra-mcp without the startup index |
 | `q.py` | Command-line client of the server |
+| `addrcheck.py`, `test_addrcheck.py` | Checks the `main+0x…` addresses cited in the sources against the game's function table and the export; unit test on synthetic data |

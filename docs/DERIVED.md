@@ -6,6 +6,8 @@ The front page says the project "contains none and distributes none" of the game
 
 ## Not in the repository
 
+- Anything from the analysis of the game's code (`dm/tools/re`): the database, decompiled code, disassembly and strings stay in `$DM_ROOT/re` on the machine that made them. Code refers to a game function only by its `main+0x…` address and a description in our own words.
+
 - The game program (not a single piece of code from the main executable or the system libraries)
 - Art, audio, cinematics
 - The game's text (the string tables for item names, skill names, dialogue and so on, in any language) and its data tables

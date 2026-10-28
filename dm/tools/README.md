@@ -21,6 +21,7 @@ Three kinds of things live here. The first you will use when following the front
 
 | File | What it does |
 |---|---|
+| `re/` | The private engine-analysis database of the game's `main` (Ghidra; build, query server, names export, `addrcheck.py`); see [re/README.md](re/README.md) |
 | `crashlog.py` | Reads and symbolicates the host's `crash.json` (`DM_CRASH_JSON`) and collects the system `.ips` reports |
 | `guestsyms.py`, `test_guestsyms.py` | Symbol table for the game program (`.eh_frame` functions, dynamic symbols, source-comment notes), kept in the local build cache |
 | `explore.py`, `test_explore.py` | Automatic exploration: seeded random play through the scenario runner, shrinking a red run to a minimal scenario ([debugging.md](../verify/debugging.md)) |

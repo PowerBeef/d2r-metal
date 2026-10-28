@@ -193,6 +193,13 @@ shaders_ok || step "翻译全部着色器（首次较久）" shaders
 # 随着色器库走的清单：哪些着色器的运行时下标没能证明有界（宿主按库版本核对这份清单，版本对不上会报红并退回保守做法）
 head -1 "$HERE/dm/gfx/nvn/c1_full.tsv" 2> /dev/null | grep -q "b-$V " || step "出着色器下标清单" "$PY" "$T/c1_guard.py" "$DM_ROOT/build/cache/metal_shader_cache/b-$V" "$HERE/dm/gfx/nvn/c1_full.tsv"
 
+# The tracked pre-commit guard (dm/tools/git-hooks/pre-commit): link it into the clone's hooks, which worktrees share;
+# the link points at the main checkout's copy so it survives removing a worktree
+GCD=$(git -C "$HERE" rev-parse --path-format=absolute --git-common-dir 2> /dev/null); GUARD=$(dirname "$GCD")/dm/tools/git-hooks/pre-commit
+if [ -n "$GCD" ] && [ -f "$GUARD" ] && [ "$(readlink "$GCD/hooks/pre-commit" 2> /dev/null)" != "$GUARD" ]; then
+  mkdir -p "$GCD/hooks" && ln -sf "$GUARD" "$GCD/hooks/pre-commit" && say "$(m "提交前守卫已接上（.git/hooks/pre-commit）" "pre-commit guard linked (.git/hooks/pre-commit)")"
+fi
+
 say "工作区就绪：${DM_ROOT}。"
 echo "  下一步先进入 setup 准备好的 Python 环境（构建与测试的脚本要用里面装的包）："
 echo "      source $DM_ROOT/build/cache/dm/venv/bin/activate"

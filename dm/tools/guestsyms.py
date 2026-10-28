@@ -103,10 +103,14 @@ def comment_notes():
         except ValueError: continue
         c = text.find('//') if not f.endswith('.py') else text.find('#')
         if c < 0: continue
-        com = text[c:].split(' | ')[0]   # 双语注释取中文那半 | of a bilingual comment, the Chinese half
-        for mm in MENTION.finditer(com):
-            before = com[2:mm.start()].strip(' ：:，,（(') [-40:]
-            notes.setdefault((mm.group(1), int(mm.group(2), 16)), []).append(f'{f}:{n} {before}'.strip())
+        seen = set()
+        for com in reversed(text[c:].split(' | ')):   # of a bilingual "Chinese | English" comment, the English half first
+            for mm in MENTION.finditer(com):
+                key = (mm.group(1), int(mm.group(2), 16))
+                if key in seen: continue
+                seen.add(key)
+                before = com[:mm.start()].lstrip('/# ').strip(' ：:，,（(')[-40:]
+                notes.setdefault(key, []).append(f'{f}:{n} {before}'.strip())
     return notes
 
 

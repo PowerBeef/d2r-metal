@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # 查询服务（re.sh serve 起的 pyghidra-mcp）的命令行客户端，给 worktree 会话、子代理和人用；由 re.sh q 调用（$DM_ROOT/re/venv）。
-#   地址一律写 main+0x…（也可写函数名 / 标签名）；工程里地址 = 0x7100000000 + 偏移，所以输出里 FUN_71… 后接 00abcdef 的名字就是 main+0xabcdef。
+#   地址一律写 main+0x…（也可写函数名 / 标签名）；工程里地址 = 0x7100000000 + 偏移，所以输出里 FUN_71… 后接 00abcdef 的名字（例）就是 main+0xabcdef。
 #   decompile <地址|名字>… [--callees] [--xrefs] [--strings] [--timeout 秒]   反编译
 #   xrefs <地址|名字>…            谁引用了它
 #   callgraph <函数> [--called]   调用图（缺省 = 它调了谁；--called = 谁调了它）
@@ -12,7 +12,7 @@
 #   tools                         列出服务提供的全部工具
 #   输出是由游戏程序推出来的分析结果：只在本机看，不贴进仓库、议题、PR 或网页。
 # Command-line client for the query server (pyghidra-mcp started by re.sh serve), for worktree sessions, subagents and people; run by re.sh q ($DM_ROOT/re/venv).
-#   Addresses are always written main+0x... (function / label names work too); an address in the project = 0x7100000000 + offset, so a FUN_71… name ending in 00abcdef in the output is main+0xabcdef.
+#   Addresses are always written main+0x... (function / label names work too); an address in the project = 0x7100000000 + offset, so e.g. a FUN_71… name ending in 00abcdef in the output is main+0xabcdef.
 #   decompile <address|name>... [--callees] [--xrefs] [--strings] [--timeout s]   decompile
 #   xrefs <address|name>...          what references it
 #   callgraph <function> [--called]  call graph (default = what it calls; --called = what calls it)
