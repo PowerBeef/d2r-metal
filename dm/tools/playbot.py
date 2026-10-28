@@ -156,7 +156,12 @@ class Bot:
         # 浸泡看长跑稳不稳：走路 / 打怪步加 try，角色生命调到 10000（DM_TEST_STAT 7 / 6，×256 定点），一次被怪堵住或被打死不收掉整局
         # the soak is about staying healthy over a long run: walk / fight steps get try and the character's life is raised to 10000 (DM_TEST_STAT 7 / 6, x256 fixed point), so one bot walk blocked or killed by monsters does not end the run
         res, sig = self.run('soak', intents, timeout=int(self.a.minutes * 60 * 2 + 120), env=f'DM_SOAK={table},10 DM_TEST_STAT=7=2560000,6=2560000', soft=True)
-        rep = subprocess.run([sys.executable, os.path.join(DM, 'ios', 'tools', 'soak_report.py'), table, os.path.join(self.out, 'soak', 'host.log')], capture_output=True, text=True, check=False)
+        # 内存斜率上限 3 MiB/分（真机浸泡缺省 1）：机器人出城换区域、进进出出，游戏自己的堆与内存池每换一块地方就多碰几 MB 新页（不还给系统，越往后越少）；
+        # 实测 2026-10-28：6 个区域轮 3 遍，宿主 malloc 与显卡已分配持平，涨的全在客体内存，同城重进 30 次持平
+        # memory slope limit 3 MiB/min (the device soak keeps 1): the bot leaves town and changes areas, and the game's own heap and memory pools touch a few MB of new pages at each new place (never returned to the system, fewer each time);
+        # measured 2026-10-28: 6 areas cycled 3 times, host malloc and GPU-allocated memory flat, all growth in guest memory; 30 rejoins in the same town flat
+        rep = subprocess.run([sys.executable, os.path.join(DM, 'ios', 'tools', 'soak_report.py'), table, os.path.join(self.out, 'soak', 'host.log')], capture_output=True, text=True, check=False,
+                             env=dict(os.environ, SOAK_MAX_SLOPE=os.environ.get('SOAK_MAX_SLOPE', '3')))
         print(rep.stdout.rstrip())
         ok = not sig and rep.returncode == 0
         print(f"PLAYBOT {'OK' if ok else 'RED'} soak {self.a.minutes} min, {n} intents" + (f'；{sig}' if sig else '') + ('' if rep.returncode == 0 else '；soak criteria red'))
