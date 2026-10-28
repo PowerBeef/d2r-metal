@@ -1,6 +1,6 @@
-# 系统退出先存盘（第二阶段修复的回归）：局内走两步后走系统退出（Mac：[NSApp terminate:]；iOS：applicationWillTerminate 那条），
+# 系统退出先存盘（第二阶段修复的回归）：局内走两步后走系统退出（Mac：退出 Apple 事件，同程序坞「退出」；iOS：applicationWillTerminate 那条），
 # 进程自己退出、退出码 0，且退出前有存档提交
-# System quit saves first (regression of the phase 2 fixes): after a few steps in a run, quit through the system path (Mac: [NSApp terminate:]; iOS: the applicationWillTerminate path);
+# System quit saves first (regression of the phase 2 fixes): after a few steps in a run, quit through the system path (Mac: the quit Apple event, as Quit in the Dock; iOS: the applicationWillTerminate path);
 # the process exits by itself with code 0, and a save was committed before it did
 name system_quit_saves
 save warlock

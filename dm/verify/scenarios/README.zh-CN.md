@@ -55,7 +55,7 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 | `enter_game [slot=0]` | | 从主菜单进局：主菜单上按 `X`，载入 `slot` 那个角色，等 `loading_done`。已在局内时什么都不做。 |
 | `open_pause`、`close_pause` | | `+` 开总面板，`L` 三次切到暂停页（`pause_open`）；`B` 关掉。 |
 | `background [for=3]` | | 进后台再回来：iOS 走与 `DM_TEST_BG` 相同的场景事件；Mac 上最小化再还原。 |
-| `system_quit` | | 走系统退出（Mac `[NSApp terminate:]`，iOS `applicationWillTerminate`：先存盘再退），等进程结束。 |
+| `system_quit` | | 走系统退出（Mac：退出 Apple 事件，同程序坞「退出」；iOS `applicationWillTerminate`：先存盘再退），等进程结束。 |
 | `swipe_away` | | iOS：先失活，再杀进程（在多任务界面划掉）。命令行宿主：直接杀。 |
 
 末尾检查（`check …`，跑完后判）：

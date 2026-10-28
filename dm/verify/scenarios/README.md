@@ -55,7 +55,7 @@ Steps:
 | `enter_game [slot=0]` | | From the main menu into a run: `X` on the main menu, load the character in `slot`, wait for `loading_done`. Does nothing when already in a run. |
 | `open_pause`, `close_pause` | | `+` opens the combined panel and `L` three times reaches the pause page (`pause_open`); `B` closes it. |
 | `background [for=3]` | | To the background and back: iOS scene events as `DM_TEST_BG`; on the Mac, minimize and restore. |
-| `system_quit` | | Quits through the system path (Mac `[NSApp terminate:]`, iOS `applicationWillTerminate`: save, then quit) and waits for the process to end. |
+| `system_quit` | | Quits through the system path (Mac: the quit Apple event, as Quit in the Dock; iOS `applicationWillTerminate`: save, then quit) and waits for the process to end. |
 | `swipe_away` | | iOS: resign active, then kill the process (swiping it away in the app switcher). CLI: kill. |
 
 Final checks (`check …`, evaluated after the run):

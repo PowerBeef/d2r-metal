@@ -209,10 +209,16 @@ static void app_quit(const char *why) {   // 主线程 | main thread
 // background / foreground 在 Mac 上就是最小化 / 还原；resign / active 不支持（Mac 的失焦靠别的窗口抢走焦点）
 // The control port's app command (dm_ctl_cmds.c): on the main thread, the same actions as DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT. Like DM_TEST_MINI_AT, minimizing temporarily makes the window minimizable (the game window is not by itself);
 // background / foreground on the Mac are minimize / restore; resign / active are not supported (on the Mac, focus is lost by another window taking it)
+// 测试用：给自己发一次系统的「退出」Apple 事件（同程序坞「退出」走的那条，见 quitEvent:reply:） | for tests: send ourselves the system "quit" Apple event (the same path as Quit in the Dock, see quitEvent:reply:)
+static void send_quit_event(void) {
+    NSAppleEventDescriptor *ev = [NSAppleEventDescriptor appleEventWithEventClass:kCoreEventClass eventID:kAEQuitApplication targetDescriptor:[NSAppleEventDescriptor currentProcessDescriptor]
+                                                                         returnID:kAutoGenerateReturnID transactionID:kAnyTransactionID];
+    NSError *err = nil; if (![ev sendEventWithOptions:NSAppleEventSendNoReply timeout:5 error:&err]) LOG("【红】测试退出：退出 Apple 事件发不出去：%s", err.localizedDescription.UTF8String);
+}
 static int ctl_app(const char *w) {
     if (!g_win) return -1;
     int mini = !strcmp(w, "minimize") || !strcmp(w, "background"), rest = !strcmp(w, "restore") || !strcmp(w, "foreground");
-    if (!strcmp(w, "terminate")) { dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; }); return 0; }   // 走 applicationShouldTerminate → app_quit（存盘再退），不返回 | goes through applicationShouldTerminate -> app_quit (save, then quit), does not return
+    if (!strcmp(w, "terminate")) { dispatch_async(dispatch_get_main_queue(), ^{ send_quit_event(); }); return 0; }   // 同程序坞「退出」：退出 Apple 事件 → app_quit（存盘再退），不返回 | as Quit in the Dock: the quit Apple event -> app_quit (save, then quit), does not return
     if (!mini && !rest) return -1;
     dispatch_sync(dispatch_get_main_queue(), ^{ if (mini) { g_win.styleMask |= NSWindowStyleMaskMiniaturizable; [g_win miniaturize:nil]; } else [g_win deminiaturize:nil]; });
     return 0;
@@ -310,6 +316,16 @@ double front_display_refresh(char *name, size_t n) {
 // app_quit saves on a background thread and ends the process itself (_exit in dm_host_shutdown), so the answer here is always "later": log out / shut down wait for this process to end, instead of being cancelled as answering "cancel" would;
 // the same when a quit is already under way, which will end the process
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)a { (void)a; app_quit("系统退出"); return NSTerminateLater; }
+// 系统的「退出」Apple 事件（程序坞「退出」、⌘-Tab 时按 Q、AppleScript quit、注销 / 关机）自己接：窗口上挂着表单（起名 / 数量输入框）时，AppKit 自带的处理把它丢掉，
+// applicationShouldTerminate 也不来，输入框开着就退不掉。接过来直接走 app_quit（先按「取消」关掉表单、存盘、自己结束进程）。
+// 要在 finishLaunching 之后装（[NSApp run] 里的 finishLaunching 会装上 AppKit 自己的处理）
+// The system's "quit" Apple event (Quit in the Dock, Q while Cmd-Tabbing, AppleScript quit, log out / shut down) is handled here: while a sheet (the name / quantity input box) is attached to the window,
+// AppKit's own handler drops it and applicationShouldTerminate never comes, so the App could not be quit with the box open. It now goes straight to app_quit (answer "Cancel" to the sheet, save, end the process itself).
+// Installed after finishLaunching (the finishLaunching inside [NSApp run] installs AppKit's own handler)
+- (void)applicationDidFinishLaunching:(NSNotification *)n {
+    (void)n; [[NSAppleEventManager sharedAppleEventManager] setEventHandler:self andSelector:@selector(quitEvent:reply:) forEventClass:kCoreEventClass andEventID:kAEQuitApplication];
+}
+- (void)quitEvent:(NSAppleEventDescriptor *)e reply:(NSAppleEventDescriptor *)r { (void)e; (void)r; app_quit("系统退出"); }
 - (void)keys:(id)s { (void)s; show_keys(); }
 - (void)share:(id)s { (void)s; share_logs_ui(); }
 @end
@@ -631,14 +647,14 @@ void front_run(void (*guest)(void)) {
                   LOG("DM_TEST_NSMOUSE：%d 条排好", n); } }
           if ((e = getenv("DM_TEST_SHARELOG"))) { NSString *to = @(e); dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSString *er = share_logs(to); LOG("DM_TEST_SHARELOG：第 8 秒打包到 %s → %s", to.lastPathComponent.UTF8String, er ? er.UTF8String : "OK"); }); }   // 测试：不弹存储面板，第 8 秒直接把压缩包写到这个路径 | test: no save panel, write the archive directly to this path at second 8
           if ((e = getenv("DM_TEST_QUIT_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ app_quit("DM_TEST_QUIT_AT"); });
-          // DM_TEST_TERMINATE_AT=<秒>：走一次系统退出（[NSApp terminate:]，同程序坞「退出」）；DM_TEST_MINI_AT=<秒>[;<秒>…]：每个时刻切一次最小化（来回切）。
+          // DM_TEST_TERMINATE_AT=<秒>：走一次系统退出（退出 Apple 事件，同程序坞「退出」）；DM_TEST_MINI_AT=<秒>[;<秒>…]：每个时刻切一次最小化（来回切）。
           // 游戏窗口本来不带「可最小化」（没有黄色按钮、没有 ⌘M）：这个开关只在测试时给窗口加上，验上面的最小化处理
-          // DM_TEST_TERMINATE_AT=<seconds>: go through one system quit ([NSApp terminate:], same as Quit in the Dock); DM_TEST_MINI_AT=<seconds>[;<seconds>...]: toggle minimize at each time (back and forth).
+          // DM_TEST_TERMINATE_AT=<seconds>: go through one system quit (the quit Apple event, same as Quit in the Dock); DM_TEST_MINI_AT=<seconds>[;<seconds>...]: toggle minimize at each time (back and forth).
           // The game window is not minimizable by itself (no yellow button, no Cmd-M): this switch adds that only for the test, to check the minimize handling above
           // 退出走主线程运行循环的公共模式（不排主队列）：模态弹框（如键位对照）的模态循环跑在主队列的一个块里，那时主队列不走，真的「程序坞退出」却照样进来
           // The quit goes through the main run loop's common modes (not the main queue): a modal dialog's (such as the key map's) modal loop runs inside a main-queue block, during which the main queue does not run, yet a real "Quit in the Dock" still comes in
           if ((e = getenv("DM_TEST_TERMINATE_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-              CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ [NSApp terminate:nil]; }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
+              CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ send_quit_event(); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
           if ((e = getenv("DM_TEST_MINI_AT"))) win.styleMask |= NSWindowStyleMaskMiniaturizable;
           if ((e = getenv("DM_TEST_MINI_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (win.miniaturized) [win deminiaturize:nil]; else [win miniaturize:nil]; }); }
