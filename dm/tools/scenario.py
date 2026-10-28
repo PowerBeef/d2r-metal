@@ -71,6 +71,10 @@ def parse(path):
         try: tok = shlex.split(raw, comments=True)
         except ValueError as e: raise ScenarioError(f'{path}:{n}: {e}') from e
         if not tok: continue
+        # 「try 步骤」：这一步不成只记一笔（STEP … try），场景接着走——浸泡这类长跑里，机器人的一次走路被怪堵住不该收掉整局（检查与心跳照旧严）
+        # "try <step>": a failure of this step is only noted (STEP ... try) and the scenario goes on -- in long runs such as the soak, one bot walk blocked by monsters should not end the whole run (checks and heartbeats stay strict)
+        soft = tok[0] == 'try' and len(tok) > 1
+        if soft: tok = tok[1:]
         op, rest = ALIAS.get(tok[0], tok[0]), tok[1:]
         args = [t for t in rest if '=' not in t or t.startswith('=')]
         kw = dict(t.split('=', 1) for t in rest if '=' in t and not t.startswith('='))
@@ -91,7 +95,7 @@ def parse(path):
         if op == 'sleep' and (not args or not re.fullmatch(r'[\d.]+', args[0])): raise ScenarioError(f'{path}:{n}: sleep needs seconds')
         if op == 'remember' and not args: raise ScenarioError(f'{path}:{n}: remember needs a state field')
         if op == 'export_save' and (not args or not re.fullmatch(r'[a-z0-9_]+', args[0])): raise ScenarioError(f'{path}:{n}: export_save needs a name of a-z 0-9 _')
-        steps.append(dict(op=op, args=args, kw=kw, line=raw.split('#')[0].strip(), n=n))
+        steps.append(dict(op=op, args=args, kw=kw, line=raw.split('#')[0].strip(), n=n, soft=soft))
     return meta, steps, checks
 
 
@@ -528,13 +532,14 @@ class Runner:
                 except (ScenarioError, dmctl.CtlError, dmctl.BadEvent, TimeoutError, OSError) as e: ok, detail = False, str(e)
                 dt = time.time() - s
                 text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False) if detail else ''
-                self.say(f"STEP {i:>2} {'ok ' if ok else 'RED'} {dt:6.2f}s  {st['line']}" + (f'  → {text[:160]}' if text else ''))
-                tsv.write(f"{i}\t{st['line']}\t{'ok' if ok else 'RED'}\t{dt:.3f}\t{text[:300]}\n")
-                self.records.append(dict(step=i, line=st['line'], ok=ok, s=round(dt, 3), detail=text[:300]))
+                tag = 'ok' if ok else 'try' if st.get('soft') else 'RED'
+                self.say(f"STEP {i:>2} {tag:<3} {dt:6.2f}s  {st['line']}" + (f'  → {text[:160]}' if text else ''))
+                tsv.write(f"{i}\t{st['line']}\t{tag}\t{dt:.3f}\t{text[:300]}\n")
+                self.records.append(dict(step=i, line=st['line'], ok=ok, soft=bool(st.get('soft')), s=round(dt, 3), detail=text[:300]))
                 self.prev_mark = mark
                 red = next((e for e in self.cc.events if e.get('ev') in BAD), None)
                 if red and not self.snapped: self.snapshot(f"first red event: {red.get('ev')} {red.get('code', '')}".strip())
-                if not ok: fail = dict(step=i, line=st['line'], reason=text); break
+                if not ok and not st.get('soft'): fail = dict(step=i, line=st['line'], reason=text); break
         except ScenarioError as e:
             fail = dict(step=0, line='start', reason=str(e))
         finally:

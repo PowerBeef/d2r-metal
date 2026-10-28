@@ -40,7 +40,7 @@ python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                    
 | `env DM_ROMFS_OVERLAY=auto` | `cli`：把 iOS 包那份界面覆盖层生成到结果目录（约 3 秒）再带着跑，同 `touchchain.sh`；手柄 / 触屏切换（`inputmode`）与触屏页要它。 |
 | `requires <后端> …` | 别的后端上跳过。 |
 
-步骤：
+步骤（任何一步前面可加 `try`：这一步不成只在步骤表里记一笔 `try`，场景接着走；给浸泡这类长跑用，机器人一次走路被堵不该收掉整局）：
 
 | 步骤 | 参数 | 做什么 |
 |---|---|---|

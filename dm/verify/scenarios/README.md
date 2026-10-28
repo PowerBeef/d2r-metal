@@ -40,7 +40,7 @@ Header lines (anywhere in the file):
 | `requires <backend> …` | Skip on other backends. |
 | `env DM_ROMFS_OVERLAY=auto` | `cli`: generate the iOS package's UI overlay into the run folder (about 3 s) and run with it, as `touchchain.sh` does; the controller / touch switch (`inputmode`) and the touch pages need it. |
 
-Steps:
+Steps (any step can be prefixed with `try`: its failure is noted as `try` in the step list and the scenario goes on; for long runs such as the soak, where one blocked bot walk should not end the run):
 
 | Step | Arguments | Does |
 |---|---|---|

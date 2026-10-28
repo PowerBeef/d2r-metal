@@ -102,6 +102,14 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual((code, res['failed']['step']), (1, 2))
         self.assertIn('pause_open', res['reason'])
 
+    def test_try_step_failure_does_not_end_the_run(self):   # try 前缀：这一步不成只记 try，后面的步照走；同样的步不带 try 就判红 | try prefix: the failure is only noted as try and later steps run; the same step without try is red
+        res, code, host = self.run_scn('try press A\npress B\n', fail_cmd='press')
+        self.assertEqual(code, 1)   # 后面不带 try 的 press 照样红 | the later press without try is still red
+        self.assertEqual(res['failed']['step'], 2)
+        res, code, _ = self.run_scn('try expect pause_open timeout=0.5\npress A\n')
+        self.assertEqual((code, res['verdict']), (0, 'OK'), res)
+        self.assertIn('\ttry\t', (self.dir / 'out' / 'steps.tsv').read_text())
+
     def test_crash_event_is_red(self):   # 等事件时先来了 crash：这一步红，说的是 crash | crash arrives while waiting for an event: the step is red and says crash
         with tempfile.TemporaryDirectory() as d:
             r = scenario.Runner(self.scn('ping\nexpect loading_done timeout=2\n'), 'cli', d, True)
