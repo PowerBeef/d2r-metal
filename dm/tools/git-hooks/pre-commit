@@ -1,0 +1,22 @@
+#!/bin/bash
+# Pre-commit guard (linked into the git hooks by ./setup.sh): keeps game content, engine-analysis output and machine-local
+# rewrites out of commits, per CONTRIBUTING.md rule 1. Bypass deliberately with: git commit --no-verify
+bad=0
+while IFS= read -r -d '' f; do
+  case "$f" in
+    dm/gfx/tools/dmsh_chain.lock|dm/gfx/nvn/dmsh_chain.h|dm/gfx/nvn/c1_full.tsv)
+      echo "✗ $f is rewritten by ./setup.sh for this machine; never commit it"; bad=1;;
+    dm/ios/local.env|dm/ios/Gen/*)
+      echo "✗ $f is local signing config / generated from game files"; bad=1;;
+    *.nsp|*.NSP|*.xci|*.XCI|*.nca|*.keys|*.data|*.d2s|*.d2i)
+      echo "✗ $f looks like game content, keys or saves"; bad=1;;
+    *.gpr|*.rep|*.gzf|*.gdt|*.idb|*.i64|*.bndb|*/re/export/*|*/re/notes/*)
+      echo "✗ $f is a disassembler database or engine-analysis output (kept in \$DM_ROOT/re)"; bad=1;;
+  esac
+  size=$(git cat-file -s ":$f" 2>/dev/null || echo 0)
+  if [ "$size" -gt 2097152 ]; then echo "✗ $f is $((size / 1048576)) MB (over 2 MB); game assets and built packages must not be committed"; bad=1; fi
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+# Decompiler output pasted into source or docs (the decompiler's automatic names and its artificial types / variables)
+hits=$(git diff --cached -U0 --diff-filter=ACMR | grep -E '^\+' | grep -v '^+++' | grep -nE '\b(FUN|DAT|LAB|PTR)_[0-9a-fA-F]{8,}\b|\bundefined[1248]\b|\bextraout_|\bunaff_' | head -5)
+if [ -n "$hits" ]; then echo "✗ staged lines look like decompiler output (engine analysis stays in \$DM_ROOT/re):"; echo "$hits"; bad=1; fi
+[ $bad = 0 ] || { echo "Commit refused by the pre-commit guard (dm/tools/git-hooks/pre-commit)."; exit 1; }

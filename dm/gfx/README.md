@@ -1,7 +1,5 @@
 # dm/gfx — graphics layer (NVN → Metal)
 
-中文：[README.zh-CN.md](README.zh-CN.md)
-
 The Switch version of the game draws with NVN (the Switch's native graphics interface). The graphics layer reimplements this interface on top of Apple's Metal: every NVN call the game makes lands here, is recorded as a command, and is replayed as Metal commands at submit time. The game's shaders are not translated at run time; they are translated offline, once, on a computer, into Metal shader libraries (when the computer has no Apple Metal compiler, the final compile step moves to the phone; see below).
 
 For the build steps of the whole project see `README.md` and `setup.sh` in the repository root, and for dependencies see `docs/DEPENDENCIES.md`; this page covers only the graphics layer's own matters.
@@ -37,8 +35,6 @@ Original Switch shader package
   → spirv-cross             converts SPIR-V to Metal Shading Language (MSL)
   → xcrun metal / metallib  compiles into Metal shader libraries
 ```
-
-Without Apple's Metal compiler (Windows, Linux, a Mac without Xcode) the last step cannot be done. `tools/nometal_run.py` lets the same chain run its first two steps as usual and puts the translated MSL source into the library files as is; a package made this way compiles the shaders once on the phone, and the system caches the compiled result. This route is used by `dm/tools/d2rm_pack.py`; see `docs/NO_XCODE.md` in the repository root.
 
 The whole chain is driven by `tools/dmsh_build.py`, and `setup.sh` runs it for you. Key points:
 
@@ -99,7 +95,6 @@ The scripts in `tools/`; usage is written in each file's header:
 | `nvn_slots.py`, `gen_protos.py` | Generate `nvn_slots.tsv` / `names.txt`, and `nvn_protos.h` / the thunks |
 | `tbdr_budget.py`, `tbdr_load_dead.py`, `tbdr_store_dead.py`, `tbdr_pass_merge.py` | Read the `DM_NVN_PASSDUMP` log and analyze the load / store volume of each render pass's attachments per frame |
 | `passgpu_top.py` | Reads the `DM_NVN_PASSGPU` output and lists GPU time by pass |
-| `nometal_run.py` | Runs this translation chain on a machine without Apple's Metal compiler: shaders go into the libraries as source and are compiled on the phone |
 
 ## Building
 

@@ -1,23 +1,17 @@
 开关 | switch	读它的部分 | read by	文件 | files	文档 | documented
-DM_3D_SCALE	android,harmony,host	android/debug_env.h android/jni_android.c harmony/native/front_ohos.c host/hle_oe.c	y
-DM_3D_SCALE_DYN	android,harmony,host	android/debug_env.h harmony/native/napi_ohos.c host/hle_oe.c	y
+DM_3D_SCALE	host	host/hle_oe.c	y
+DM_3D_SCALE_DYN	host	host/hle_oe.c	-
 DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c	-
-DM_3D_SCALE_FLOOR	android,harmony,host	android/debug_env.h harmony/native/front_ohos.c host/hle_oe.c	y
-DM_3D_SCALE_GPU	harmony,host	harmony/native/napi_ohos.c host/hle_oe.c	y
+DM_3D_SCALE_FLOOR	host	host/hle_oe.c	-
+DM_3D_SCALE_GPU	host	host/hle_oe.c	-
 DM_3D_SCALE_GPU_FLOOR	host	host/hle_oe.c	-
 DM_AA_MODE	host	host/hle_oe.c	-
 DM_AIM_CONE	host	host/hle_private_aim.c	-
-DM_ANDROID_BUILD_IMAGE	android	android/docker/build.sh	-
-DM_ANDROID_KEYSTORE	android	android/tools/shell_apk.sh	-
-DM_ANDROID_KEY_PASS	android	android/tools/shell_apk.sh	-
-DM_ANDROID_SIGN	android	android/tools/shell_apk.sh	-
-DM_ANDROID_USER	android	android/docker/build.sh	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_padmode.c host/front_mac.m	-
 DM_APP_POOL_ADD_MB	host	host/hle_svc.c	-
 DM_APP_ROMFS	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	-
 DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/front_mac.m	y
-DM_APP_VERSION	harmony	harmony/native/gameperf_ohos.c	-
 DM_ASC_ENV	ios-tools	ios/tools/asc_env.sh	-
 DM_ASSETS_TEST	ios	ios/Sources/main.m	-
 DM_ASSET_BASE	ios,ios-tools	ios/Sources/asset_dl.m ios/Sources/main.m ios/run.sh	y
@@ -33,10 +27,6 @@ DM_AUDIO	host,ios-tools	host/app_mac.m host/hle_audio.c host/tests/t_audio.c ios
 DM_AUDIO_DUMP	host	host/hle_audio.c	-
 DM_AUDIO_NQOS	host	host/hle_audio.c	-
 DM_AUDIO_OUT_DUMP	host	host/hle_audio.c	-
-DM_BC_FAST	gfx	gfx/vulkan/engine/xbg_texture.c	-
-DM_BC_FASTVERIFY	gfx	gfx/vulkan/engine/xbg_texture.c	-
-DM_BC_THREADS	gfx	gfx/vulkan/engine/xbg_texture.c	-
-DM_BC_VERIFY	gfx	gfx/vulkan/engine/xbg_texture.c	-
 DM_BINDING_DIAG	ios	ios/Sources/dm_touch_game_bridge.c	-
 DM_BOOTPROF	gfx,host,ios	gfx/nvn/nvn_mtl.m host/main.c ios/Sources/bootprof_ios.m	y
 DM_BREAK_AT_TICK	host	host/diag.c	y
@@ -45,7 +35,6 @@ DM_BRIGHT_K	host	host/dm_bright.c	y
 DM_BRIGHT_TRACE	host	host/dm_bright.c	-
 DM_BUILD_NUMBER	ios-tools	ios/project.yml	-
 DM_BUNDLE_ID	ios-tools	ios/project.yml ios/run.sh ios/tools/bootprof.sh ios/tools/frame_cmp.sh …	y
-DM_BUNDLE_NAME	harmony	harmony/native/gameperf_ohos.c	-
 DM_C2S_LOG	host,ios-tools	host/diag.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_C2S_REPLAY	host	host/diag.c host/dm_townwp.c	y
 DM_CLOUD_REAL	host,ios	host/app_mac.m ios/Sources/cloud_ios.m	-
@@ -57,8 +46,7 @@ DM_CUSTOM_TEST_ROWS	ios-tools	ios/tools/touch_layout.py	-
 DM_DBG	host	host/main.c	y
 DM_DBG_COVER	host	host/dm_cursor.c	-
 DM_DBG_FE_SEND	host	host/dm_cursor.c	-
-DM_DERIVED	android,harmony,host	android/app/src/main/java/com/xiaoboluo/d2r/DmActivity.java harmony/native/napi_ohos.c host/dm_derived_rt.h	-
-DM_DESWIZZLE_LIB	ios-tools	ios/tools/dxt5.py ios/tools/romfs_art.py	y
+DM_DESWIZZLE_LIB	ios-tools	ios/tools/dxt5.py ios/tools/romfs_art.py	-
 DM_DETCLOCK	gfx,host,tools,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c tools/lookbook.py …	y
 DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	-
 DM_DEVBATTERY	ios-tools	ios/run.sh ios/tools/devlock.sh	-
@@ -90,39 +78,13 @@ DM_FREE_ACCOUNT	ios-tools	ios/run.sh	-
 DM_FS	host	host/main.c	-
 DM_FSLOG	host	host/hle_fs.c	-
 DM_FSLOG_HASH	host	host/hle_fs.c	-
-DM_FS_NEG_DIR	ios-tools	ios/tools/pages.sh	-
-DM_GAMEPERF	harmony	harmony/native/gameperf_ohos.c	-
-DM_GAME_RES	android,harmony,host,ios	android/front_android.c harmony/native/front_ohos.c host/front_mac.m ios/Sources/front_ios.m	y
+DM_GAME_RES	host,ios	host/front_mac.m ios/Sources/front_ios.m	y
 DM_GAME_SEED	host,tools	host/main.c tools/replay.py	y
-DM_GATE_SAVE	verify	verify/gfxq/ruler.sh verify/hostshot.sh verify/shotgate.sh	y
+DM_GATE_SAVE	verify	verify/gfxq/ruler.sh verify/hostshot.sh	y
 DM_GEN_ASSETS	ios-tools	ios/tools/gen_paths.py	-
-DM_GEN_DIR	android	android/docker/build.sh	y
 DM_GEN_ONLY	ios-tools	ios/run.sh	y
 DM_GFXUSE	gfx	gfx/nvn/nvn_mtl.m	-
-DM_GFX_ASYNC_PIPELINES	gfx	gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_ASYNC_POOL_RESET	android,gfx,harmony	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	-
-DM_GFX_BRIGHT	gfx	gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_COMPLETION_WAIT	gfx	gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_COMPLETION_WAIT_TEST	gfx	gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_DEFER_EVENTS	android,gfx,harmony	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	y
 DM_GFX_FIXTURE_OUT	gfx	gfx/tests/t_mip_extent.m gfx/tests/t_reorder_chain.m gfx/tests/t_rt_range.m	-
-DM_GFX_FORWARD_TEMPS	android,gfx	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_LDC_FOLD	android,gfx	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_NAN_MINMAX	android,gfx,harmony	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	y
-DM_GFX_NATIVE_BC	android,gfx,harmony	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	y
-DM_GFX_NOLOAD	gfx,harmony	gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	y
-DM_GFX_PERF_SAMPLE	android,gfx	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_PIPE_MEMO	android,gfx,harmony	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	y
-DM_GFX_QUAD_DERIVATIVES	android,gfx,harmony	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	y
-DM_GFX_READBACK_CACHED	gfx,harmony	gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	y
-DM_GFX_READ_PREFLIGHT	android,gfx,harmony	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	y
-DM_GFX_SHADER_REUSE	android,gfx	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_TEX_DIRTY	android,gfx	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_UPLOAD_PROLOGUE	android,gfx	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_VCACHE	android,gfx	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp	-
-DM_GFX_WARP32	android,gfx,harmony	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	y
-DM_GFX_WB_SKIP	android,gfx,harmony	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp harmony/native/napi_ohos.c	-
-DM_GFX_XVIEW_GUARD	android,gfx	android/jni_android.c gfx/vulkan/engine/xbg_game.cpp	-
 DM_GRANNY_PRE	host	host/hle_granny.c	-
 DM_GRANNY_PRE_MB	host	host/hle_granny.c	-
 DM_GRANNY_PROF	host	host/hle_granny.c	-
@@ -134,8 +96,7 @@ DM_HEAT	ios	ios/Sources/front_ios.m	-
 DM_HID_RECEIPT_LOG	host	host/hle_hid.c host/tests/t_hid_receipt.c	-
 DM_HLECOUNT	host	host/hle_count.c	-
 DM_HLE_SPIN_AB	host	host/hle_thread.c	-
-DM_HLE_SPIN_US	android,host	android/jni_android.c host/hle_thread.c	-
-DM_HOST	verify	verify/shotgate.sh	y
+DM_HLE_SPIN_US	host	host/hle_thread.c	-
 DM_HOST_OUT	verify	verify/touchchain.sh	y
 DM_HUD_V4_DIR	ios-tools	ios/tools/gen_romfs_overlay.py	-
 DM_IMPORTS	host	host/main.c	y
@@ -143,20 +104,16 @@ DM_INFLATE_BENCH	host	host/diag.c	-
 DM_INFLATE_ROUNDS	host	host/diag.c	-
 DM_IOS_DD	ios-tools	ios/run.sh	y
 DM_IOS_DEPLOYMENT_MIN	ios-tools	ios/tools/build_ffmpeg_ios.sh	-
-DM_IOS_M3	ios-tools	ios/run.sh	-
 DM_IOS_UDID	ios-tools	ios/run.sh ios/tools/devbattery.sh ios/tools/lifecycle.sh ios/tools/local_env.sh …	y
 DM_IOS_WATCH	ios-tools	ios/tools/frame_cmp.sh	-
-DM_IPAD_FULL	harmony,ios	harmony/native/front_ohos.c ios/Sources/front_ios.m	-
+DM_IPAD_FULL	ios	ios/Sources/front_ios.m	-
 DM_KBD	host	host/hle_swkbd.c host/tests/t_swkbd.c	-
 DM_KEYS	host,ios-tools,verify	host/diag.c host/dm_cursor.c host/hle_hid.c host/tests/t_hid_receipt.c …	y
-DM_LANG	android,harmony,host	android/jni_android.c harmony/native/napi_ohos.c host/app_mac.m host/dm_i18n.c …	-
+DM_LANG	host	host/app_mac.m host/dm_i18n.c host/hle_oe.c host/tests/t_app_mac.m …	-
 DM_LAT_LOG	host	host/dm_cursor.c	-
 DM_LOADHASH	host	host/loader.c	-
 DM_LOCAL_ENV	ios-tools	ios/tools/local_env.sh	y
 DM_LOCAL_ENV_FILE	ios-tools	ios/tools/local_env.sh	-
-DM_LOGICSELF_OUT	verify	verify/accept.sh	y
-DM_LOGICSELF_RUNROOT	verify	verify/logicself.sh	-
-DM_LOGICSELF_TRUTH	verify	verify/logicself.sh	y
 DM_LOG_PORT	host,ios	host/diag.c ios/Sources/main.m	y
 DM_LOG_TEE	ios	ios/Sources/main.m	-
 DM_LONGFRAME	gfx	gfx/nvn/hle_nvn.c	-
@@ -167,7 +124,6 @@ DM_MAC_DEVICE_PROFILE	ios-tools	ios/tools/smoke_mac.sh ios/tools/touch_e2e_mac.s
 DM_MAC_ICLOUD	tools	tools/mac_app.sh	-
 DM_MAC_ICON_SOURCE	tools	tools/mac_app.sh	-
 DM_MAC_LINK	tools	tools/mac_app.sh	-
-DM_MAC_M3	tools	tools/mac_app.sh	-
 DM_MAC_OVERLAY	tools	tools/mac_app.sh	-
 DM_MAC_PRODUCT	tools	tools/mac_app.sh	-
 DM_MAC_ROMFS_COPY	tools	tools/mac_app.sh	-
@@ -187,16 +143,13 @@ DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
 DM_MOVIE_FFMPEG_PREFIX	ios-tools	ios/run.sh	y
 DM_MOVIE_REAL	host	host/hle_movie.c	-
-DM_MSL_DIR	gfx,host,ios,tools,tvos	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m tools/mac_app.sh …	y
+DM_MSL_DIR	gfx,host,ios,tools	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m tools/mac_app.sh	y
 DM_MSL_IOS	ios-tools	ios/run.sh	-
-DM_MSL_MAC	tvos	tvos/build.sh	-
-DM_NATIVE_ART_DIR	ios-tools	ios/tests/test_native_art_capture.py	y
-DM_NATIVE_RES	harmony	harmony/native/front_ohos.c	-
+DM_NATIVE_ART_DIR	ios-tools	ios/tests/test_native_art_capture.py	-
 DM_NICK	host	host/hle_account.c	-
 DM_NO_PRELOAD	ios	ios/Sources/main.m	-
 DM_NSO_DIR	tools,verify	tools/product.sh tools/sampagg.py verify/regress.sh	y
 DM_NVN_ANISO	gfx	gfx/nvn/nvn_mtl.m	-
-DM_NVN_B	verify	verify/shotgate.sh	-
 DM_NVN_BARRIER	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BF_WANT	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BINDFILT	gfx	gfx/nvn/hle_nvn.c	-
@@ -219,19 +172,18 @@ DM_NVN_PASSGPU	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_PASSGPU_SERIAL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_PROF	gfx	gfx/nvn/hle_nvn.c	y
 DM_NVN_REGLUM	gfx	gfx/nvn/nvn_mtl.m	-
-DM_NVN_ROUTE	verify	verify/shotgate.sh	-
 DM_NVN_RT_RANGE	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_rt_depth_ro.m gfx/tests/t_rt_range.m	-
 DM_NVN_RULER	gfx,host	gfx/nvn/nvn_mtl.m host/diag.c	y
 DM_NVN_RULER_NEG	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SAMPHIST	gfx	gfx/nvn/nvn_mtl.m	-
-DM_NVN_SHMAP	gfx,host,ios,tvos	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m tvos/main.m	y
+DM_NVN_SHMAP	gfx,host,ios	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m	y
 DM_NVN_SHOT	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SHOT_OUT	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SHOT_UI	host	host/diag.c	y
 DM_NVN_SKIP_FS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_SKIP_SMALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_SNAPRAW	gfx	gfx/nvn/nvn_mtl.m	-
-DM_NVN_SYNC	android,gfx,harmony	android/jni_android.c gfx/nvn/hle_nvn.c harmony/native/napi_ohos.c	y
+DM_NVN_SYNC	gfx	gfx/nvn/hle_nvn.c	-
 DM_NVN_TBDR	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_defer_chain.m gfx/tests/t_mip_extent.m gfx/tests/t_reorder_chain.m …	y
 DM_NVN_TEST_FRZ	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_TEST_FRZ_NEG	gfx	gfx/nvn/nvn_mtl.m	-
@@ -249,28 +201,23 @@ DM_NVN_XV	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_ZSKIP	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_zskip.m	-
 DM_OCCL	host	host/front_mac.m	-
 DM_OE_SCRIPT	host	host/diag.c host/hle_oe.c host/tests/t_oe.c	y
-DM_OPENGTX	harmony	harmony/native/front_ohos.c	-
 DM_OPMODE	host,ios-tools	host/hle_oe.c ios/TouchSmokeTests/TouchSmoke.swift	-
-DM_OPMODE_RUNROOT	verify	verify/opmode.sh	-
 DM_ORIG_DIR	tools	tools/sampagg.py	-
-DM_OUT	ios-tools,tools	ios/run.sh ios/tools/frame_cmp.sh ios/tools/pages.sh ios/tools/soak.sh …	y
+DM_OUT	ios-tools	ios/run.sh ios/tools/frame_cmp.sh	y
 DM_OVERLAY_IOS	ios-tools	ios/tools/touch_layout.py	-
 DM_OVERLAY_MAC	ios-tools	ios/tools/gen_romfs_overlay.py ios/tools/touch_layout.py	-
-DM_PACE_ADAPT	gfx,harmony	gfx/nvn/hle_nvn.c harmony/native/napi_ohos.c	y
+DM_PACE_ADAPT	gfx	gfx/nvn/hle_nvn.c	-
 DM_PANEL_FREEZE	host	host/diag.c host/dm_cursor.c	-
 DM_PC_DATA	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	y
-DM_PERFHINT	harmony	harmony/native/front_ohos.c	-
-DM_PERF_FILE	harmony,host	harmony/native/gameperf_ohos.c host/diag.c	-
-DM_PIN_FAST	harmony	harmony/native/front_ohos.c	-
+DM_PERF_FILE	host	host/diag.c	-
 DM_PLAYERS	host	host/diag.c	y
-DM_POSCHK	host	host/diag.c	y
+DM_POSCHK	host	host/diag.c	-
 DM_POT_PICK	host	host/dm_beltauto.c host/dm_potpick.c	-
 DM_PRELOAD	host	host/main.c	-
 DM_PRESENT_HZ	gfx	gfx/nvn/hle_nvn.c	y
 DM_PRESENT_INTERVAL	gfx	gfx/nvn/hle_nvn.c	-
 DM_PRESENT_LATENCY	gfx	gfx/nvn/nvn_mtl.m	-
 DM_PRESENT_LINK	gfx	gfx/nvn/nvn_mtl.m	-
-DM_PRESENT_TS	android	android/vulkan_present.cpp	-
 DM_PRIVATE_GATES	tools	tools/patch_nso.py	y
 DM_PROBE	host	host/diag.c	y
 DM_PROBE_DUMP	host	host/diag.c	-
@@ -278,9 +225,7 @@ DM_PSO_MANIFEST	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_RECORD	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_USER	gfx	gfx/nvn/nvn_mtl.m	-
 DM_PUMP_PROF	host	host/dm_prof.c	-
-DM_PY	tools,verify	tools/product.sh verify/logicself.sh verify/regress.sh verify/rulegate.sh …	y
-DM_PYTHON	android	android/tools/shell_apk.sh	-
-DM_QOS	harmony	harmony/native/front_ohos.c	-
+DM_PY	tools,verify	tools/product.sh verify/regress.sh	y
 DM_REAL_ICLOUD	ios,ios-tools	ios/Sources/cloud_ios.m ios/tools/cloud_guard.sh	-
 DM_REAL_ICLOUD_CONFIRM	ios,ios-tools	ios/Sources/cloud_ios.m ios/tools/cloud_guard.sh	-
 DM_REQUIRE_PC_ART	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	-
@@ -288,25 +233,22 @@ DM_REQUIRE_SAVES	ios-tools	ios/run.sh	-
 DM_RES_CENSUS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RES_CHECK	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RE_PORT	tools	tools/re/q.py tools/re/re.sh	y
-DM_ROMFS	android,harmony,host,ios,tools,tvos,verify	android/jni_android.c harmony/native/napi_ohos.c host/app_mac.m host/hle_fs.c …	y
-DM_ROMFS_OVERLAY	android,harmony,host,ios,tools,tvos,verify	android/jni_android.c android/touch_android.c harmony/native/napi_ohos.c host/app_mac.m …	y
+DM_ROMFS	host,ios,tools	host/app_mac.m host/hle_fs.c host/hle_tact.c host/tests/t_fs.c …	y
+DM_ROMFS_OVERLAY	host,ios,tools,verify	host/app_mac.m host/dm_padmode.c host/dm_textbox.c host/hle_fs.c …	y
 DM_ROMFS_SKIP_LOCAL	ios	ios/Sources/main.m	-
-DM_ROMFS_SRC	android,host,ios-tools,tools,verify	android/tools/shell_apk.sh host/Makefile ios/run.sh ios/tests/Makefile …	y
+DM_ROMFS_SRC	host,ios-tools,tools,verify	host/Makefile ios/run.sh ios/tests/Makefile ios/tests/test_native_art_capture.py …	y
 DM_ROMFS_TEST_CLEAN	ios	ios/Sources/main.m	-
 DM_ROMFS_TEST_DOC	ios	ios/Sources/asset_dl.m ios/Sources/main.m	-
 DM_ROMFS_TEST_PACK	ios	ios/Sources/main.m	-
-DM_ROOT	android,gfx,host,ios-tools,tools,tvos,verify	android/tools/art_compare.sh android/tools/shell_apk.sh gfx/nvn/nvn_mtl.m gfx/tests/t_refl.m …	y
+DM_ROOT	gfx,host,ios-tools,tools,verify	gfx/nvn/nvn_mtl.m gfx/tests/t_refl.m gfx/tests/t_refl_lib.m gfx/tests/t_rt_range_ro.m …	y
 DM_RS_PAUSE_PANEL	host	host/dm_cursor.c	-
 DM_RT_AB	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RT_AB_TOGGLE	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RT_COMP	gfx	gfx/nvn/hle_nvn.c	-
 DM_RT_DBG	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RULESET	tools	tools/patch_nso.py	y
-DM_RULE_OUT	verify	verify/accept.sh	y
-DM_RULE_RUNROOT	verify	verify/rulegate.sh	-
-DM_RULE_TRUTH	verify	verify/rulegate.sh	y
 DM_SAMPLE	host	host/diag.c	y
-DM_SAVE	android,gfx,harmony,host,ios,tvos	android/jni_android.c gfx/nvn/nvn_mtl.m harmony/native/napi_ohos.c host/app_mac.m …	y
+DM_SAVE	gfx,host,ios	gfx/nvn/nvn_mtl.m host/app_mac.m host/dm_cursor.c host/dm_custom.c …	y
 DM_SAVE_FRESH	ios,ios-tools	ios/Sources/front_ios.m ios/Sources/main.m ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_SAVE_KEY	ios-tools	ios/tools/save_key.sh ios/tools/smoke_mac.sh	-
 DM_SAVE_MOUNT_STUCK_S	host	host/dm_engine.c	y
@@ -315,29 +257,25 @@ DM_SAVE_STUCK_S	host	host/dm_engine.c	y
 DM_SAVE_TEST	ios	ios/Sources/main.m	y
 DM_SAVE_THROTTLE	host	host/main.c	-
 DM_SCREEN_SHOT	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSmoke.swift	-
-DM_SCREEN_WANT	ios-tools	ios/tools/frame_cmp.sh ios/tools/pages.sh	-
-DM_SHADER_PREP_THREADS	ios	ios/Sources/dm_shader_prep.m	-
-DM_SHOT_PRODUCT	tools,verify	tools/lookbook.py verify/golden.py	-
+DM_SCREEN_WANT	ios-tools	ios/tools/frame_cmp.sh	-
+DM_SHOT_PRODUCT	tools,verify	tools/lookbook.py verify/golden.py	y
 DM_SKILL_AIM_LOG	host	host/hle_private_aim.c	-
 DM_SKILL_RENDER_GATE_LOG	host	host/hle_tact.c	-
 DM_SLOWFRAME	gfx	gfx/nvn/hle_nvn.c	y
 DM_SOAK	host,ios	host/diag.c ios/Sources/front_ios.m	-
-DM_SRC	android	android/docker/build.sh	-
 DM_STASH_SEED	host	host/hle_fs.c	-
 DM_STATE	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	-
 DM_STATEREP	host	host/dm_staterep.m	y
 DM_SVC	host	host/main.c	y
-DM_SWAP_IMAGES	android	android/vulkan_present.cpp	-
 DM_SYMCHECK	host	host/loader.c	-
 DM_TACTCHK	host	host/hle_tact.c	-
 DM_TACT_PREFETCH	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_LAG	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_MB	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_THREADS	host	host/hle_tact.c	-
-DM_TARGET	tools	tools/patch_nso.py	y
 DM_TARGET_LOG	host	host/hle_target.c	-
 DM_TEAM_ID	ios-tools	ios/project.yml	y
-DM_TEMP	android,harmony,host,ios,tvos	android/jni_android.c harmony/native/napi_ohos.c host/app_mac.m host/hle_fs.c …	y
+DM_TEMP	host,ios	host/app_mac.m host/hle_fs.c host/tests/t_save_hooks.c ios/Sources/main.m	y
 DM_TEST_AIM	host	host/hle_private_aim.c host/tests/t_aim_cone.c	-
 DM_TEST_AIM_AT	host	host/hle_private_aim.c host/tests/t_aim_cone.c	-
 DM_TEST_AIM_DROP	host	host/hle_private_aim.c	-
@@ -391,10 +329,10 @@ DM_TEST_KBD_TYPE	ios	ios/Sources/front_ios.m	-
 DM_TEST_KEYRACE	host	host/main.c	-
 DM_TEST_KILL	host	host/diag.c	-
 DM_TEST_KILL_AT	host	host/dm_cloudmerge.c host/hle_fs.c	-
-DM_TEST_LAG	host	host/diag.c	y
+DM_TEST_LAG	host	host/diag.c	-
 DM_TEST_LANG	host	host/dm_custom.c	y
-DM_TEST_LEAK	host,tools	host/diag.c tools/l3seg.sh	-
-DM_TEST_LEAK_GPU	gfx,tools	gfx/nvn/nvn_mtl.m tools/l3seg.sh	-
+DM_TEST_LEAK	host	host/diag.c	-
+DM_TEST_LEAK_GPU	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_LEGEND	host	host/dm_padmode.c	-
 DM_TEST_LEGEND_LOG	host	host/dm_padmode.c	-
 DM_TEST_LEGEND_OFF	host	host/dm_padmode.c	-
@@ -419,8 +357,6 @@ DM_TEST_NSMOUSE	host	host/front_mac.m	y
 DM_TEST_OBJREC	host	host/dm_world.c	-
 DM_TEST_OE_FOCUS_FIRST	host	host/hle_oe.c	-
 DM_TEST_OVERLAY_STALE_MS	ios	ios/Sources/DmTouchOverlay.m	-
-DM_TEST_PACK_INFO	ios	ios/Sources/main.m	-
-DM_TEST_PACK_MANIFEST	ios	ios/Sources/main.m	-
 DM_TEST_PADMODE	host	host/dm_padmode.c	-
 DM_TEST_PADMODE_LANG_RESET	host	host/dm_padmode.c	-
 DM_TEST_PADMODE_READ	host	host/dm_padmode.c	-
@@ -472,7 +408,6 @@ DM_TEST_VIDEO_FIRSTBOOT	host	host/front_mac.m	-
 DM_TEST_VOICE	host	host/dm_custom.c	-
 DM_TEST_WALK_CAL	host	host/dm_world.c	-
 DM_TEST_WARP_DIAG	host	host/diag.c	-
-DM_TEST_WARP_LV	host	host/diag.c	-
 DM_TEST_WINDOW_PX	ios	ios/Sources/front_ios.m	-
 DM_TEST_WINSIZE	host	host/front_mac.m	-
 DM_TEST_WORLD_GO	host	host/dm_world.c	-
@@ -504,12 +439,11 @@ DM_TICKS_FULL	host,ios-tools	host/diag.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_TICKS_N	host,verify	host/diag.c verify/touchchain.sh	y
 DM_TICK_HOLD	host	host/diag.c	y
 DM_TOUCH_CONTROL_LOG	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSmoke.swift	-
-DM_TOUCH_DEFAULTS	harmony,host,ios	harmony/native/touch_ohos.c host/app_mac.m host/hle_fs.c host/tests/t_save_hooks.c …	-
+DM_TOUCH_DEFAULTS	host,ios	host/app_mac.m host/hle_fs.c host/tests/t_save_hooks.c ios/Sources/front_ios.m	-
 DM_TOUCH_KEEP	verify	verify/touchchain.sh	y
 DM_TOUCH_LIVE	host	host/front_mac.m	-
 DM_TOUCH_LOG	host	host/hle_touch.c	-
-DM_TOUCH_NAV_PAD	android,harmony,host,ios	android/touch_android.c harmony/native/touch_ohos.c host/touch_mac.c ios/Sources/front_ios.m	-
-DM_TOUCH_OUT	verify	verify/accept.sh	y
+DM_TOUCH_NAV_PAD	host,ios	host/touch_mac.c ios/Sources/front_ios.m	-
 DM_TOUCH_PREFIX	host,verify	host/touch_mac.c verify/touchcases/skill_main/assert.py verify/touchchain.sh	y
 DM_TOUCH_REF	ios	ios/Sources/front_ios.m	y
 DM_TOUCH_RUNROOT	verify	verify/touchchain.sh	y
@@ -521,9 +455,6 @@ DM_TOUCH_TEST_DROP	host	host/tests/t_touch_mac.c host/touch_mac.c	-
 DM_TOWNWP_OFF	host	host/dm_townwp.c	y
 DM_TURN_SMOOTH	host	host/dm_turnsmooth.c	-
 DM_TURN_YAW	host	host/dm_turnsmooth.c	-
-DM_TV_DD	tvos	tvos/build.sh	-
-DM_TV_NOSIGN	tvos	tvos/build.sh	y
-DM_TV_SHOT_SECONDS	tvos	tvos/main.m	y
 DM_UDC_SELFTEST	gfx	gfx/nvn/nvn_mtl.m	-
 DM_UIMSG	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_UI_169	host	host/dm_uiscreen.c	-
@@ -535,12 +466,9 @@ DM_UI_YPOS	host	host/dm_uiscreen.c	-
 DM_UPDATE_URL	ios-tools	ios/project.yml	-
 DM_VCACHE	verify	verify/structck.py	-
 DM_VKBD	ios	ios/Sources/dm_vkbd_ui.m	-
-DM_VK_INLINE_CS	gfx	gfx/tools/dmsh_vk.py	-
-DM_VK_TRACE_ATTACHMENTS	gfx	gfx/vulkan/engine/xbg_game.cpp	-
 DM_WATCH	host,ios-tools	host/crash.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_WATCH_SAMPLE	host	host/crash.c	-
 DM_WATCH_STALL	host	host/crash.c	y
 DM_WINDOW	host	host/app_mac.m host/front_mac.m	y
-DM_WORK_ROOT	verify	verify/logicself.sh	-
 DM_WORLD_DUMP	host	host/dm_world.c	-
 DM_XV_FILE	gfx,ios	gfx/nvn/nvn_mtl.m gfx/tests/t_xv.m ios/Sources/main.m	-

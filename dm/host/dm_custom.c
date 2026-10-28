@@ -131,15 +131,12 @@ static void save(void) {
     if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名：写到一半被杀也不会留下半个文件 | Write a temporary file first and then rename: being killed halfway through the write does not leave half a file behind
     LOG("自定义设置：存盘%s", ok ? "" : "【红】失败");
 }
-// Mac、iOS 的选项页有两张我们的页（touch_layout.py）：「视频」页签 = 借来的视频页（只有画面设置各行），「附加」页签 = 我们加的 2extras_lay/ExtrasOptionsPanel（自定义各行，类同视频页）；
-// 安卓只有一张：视频页整页是自定义各行。g_shown = 此刻在屏上那张页上有哪些行：1 = 画面设置，2 = 自定义——「默认」只管这张页上的（同原版各页签各管各的）
 // The Mac and iOS Options page has two pages of ours (touch_layout.py): the "Video" tab = the borrowed video page (picture-setting rows only), the "Extras" tab = our added 2extras_lay/ExtrasOptionsPanel (the custom rows, the video page's class);
-// Android has one: the whole video page holds the custom rows. g_shown = which rows the page on screen right now holds: 1 = picture settings, 2 = custom -- "Default" covers only those (as each original tab covers its own)
+// (The CLI host's default overlay has one page holding every custom row.) g_shown = which rows the page on screen right now holds: 1 = picture settings, 2 = custom -- "Default" covers only those (as each original tab covers its own)
 #define EXTRAS_PANEL "2extras_lay/ExtrasOptionsPanel"
 static _Atomic int g_shown;
 int dm_custom_shown(void) { return atomic_load(&g_shown); }
-// 此刻在屏上那张页上有哪几个自定义行（按键号的位）：「默认」只回这几行。Mac、iOS 的帧率 / 掉帧时在「视频」页签上，由 dm_video.c 自己回；安卓那张页上有全部的行
-// which custom rows the page on screen right now holds (one bit per key index): "Default" resets only those. On the Mac and iOS Frame Rate / Frame Drops are on the Video tab, and dm_video.c resets them; Android's page holds every row
+// which custom rows the page on screen right now holds (one bit per key index): "Default" resets only those. On the Mac and iOS Frame Rate / Frame Drops are on the Video tab, and dm_video.c resets them; the CLI host's default overlay page holds every row
 _Static_assert(NK <= 32, "g_page_keys holds one bit per key");
 static _Atomic uint32_t g_page_keys;
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {

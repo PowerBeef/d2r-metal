@@ -1,7 +1,5 @@
 # Older devices (A16 and earlier chips): making the texture pack
 
-中文：[LEGACY_DEVICES.zh-CN.md](LEGACY_DEVICES.zh-CN.md)
-
 The iPhone 14 family, iPhone 15 / 15 Plus and earlier models can play; they just need one more step (see "[Which devices are supported](../README.md#which-devices-are-supported)" in the README for every device): a **Legacy Device Pack** made from your own game files and placed on the phone. This page covers it from start to finish.
 
 ## Why the extra step
@@ -62,7 +60,6 @@ Afterwards `$D/pack` contains:
 - **The pack and the App are a matched pair.** The App checks the pack on the phone against the SHA-256 in `pack.json`; if you regenerate the pack, rebuild the App with the new `$D/pack`. The same game files, the same astcenc version and the same preset (`--preset thorough`) produce a byte-identical pack, so normally there is nothing to redo.
 - If the folder was not copied completely, is in the wrong place, or does not match the App, the App says which it is in the dialog.
 - The game resource folder is still needed as usual (see [GAME_FILES.md](GAME_FILES.md)); the pack is an additional folder, not a replacement.
-- The above describes the "with a Mac" route. On the no-Xcode route (shell plus packaging tool) the three commands that make the pack are the same and only the way it goes into the install package differs; see the "Older devices" section of [NO_XCODE.md](NO_XCODE.md). On Windows the prebuilt astcenc executable from the upstream release page is all you need.
 
 ## What it does (if you are curious)
 

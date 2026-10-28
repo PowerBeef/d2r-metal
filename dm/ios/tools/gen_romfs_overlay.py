@@ -6,10 +6,7 @@
 # Usage: gen_romfs_overlay.py <original game RomFS> <output dir>. The base image is written into the borrowed path (dm/data/casc_overlay/borrowed_paths.tsv), the layout replaces the controller HUDPanelHD.json;
 # the other data archives are still supplied by the base RomFS (at launch the App checks this layer first via DM_ROMFS_OVERLAY), so only the new .build.config and the one data archive newly written this time are copied.
 import re
-import json, os, struct, subprocess, sys, tempfile, shutil, runpy
-# 当前进程也用同一 LF 写出规则；原资源只读适配器仍在调用链内。
-# Apply the same LF output policy here; keep the original read-only resource adapter in the call chain.
-runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'tools', 'winlf', 'sitecustomize.py'))
+import json, os, struct, subprocess, sys, tempfile, shutil
 from PIL import Image
 HERE=os.path.dirname(os.path.abspath(__file__)); V4=os.environ.get('DM_HUD_V4_DIR') or __import__('gen_paths').gen_dir('NativeHUD','v4')   # 试调时可指向别的产物目录 | Can point to another build output directory when tuning
 romfs, out = sys.argv[1], sys.argv[2]

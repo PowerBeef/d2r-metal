@@ -1,7 +1,5 @@
 # dm/tools/re: the engine-analysis database
 
-中文: [README.zh-CN.md](README.zh-CN.md)
-
 A private, persistent Ghidra database of the game's `main` program, so that fixes can rest on what the engine actually does. Sessions and people query it through a local server; the names it collects flow back into the repo's debugging tools.
 
 **Everything it produces stays on your machine, in `$DM_ROOT/re` (default `~/dm-work/re`).** Decompiled code, disassembly, string dumps and Ghidra files never go into this repository, an issue, a pull request or a web page (CONTRIBUTING rule 1, [docs/DERIVED.md](../../../docs/DERIVED.md)). What may enter the repo is what already does: addresses with descriptions in our own words, and original tool code like this folder. The local `pre-commit` guard refuses disassembler databases and staged lines that look like decompiler output. `$DM_ROOT/re` keeps its own local git history for the exports and notes, with no remote and a hook that refuses every push.
@@ -49,6 +47,10 @@ dm/tools/re/re.sh stop        # SIGINT: the server saves, then closes the projec
 
 `DM_RE_PORT` moves the server and the client off port 8000.
 
+```bash
+dm/tools/re/re.sh addrcheck   # every main+0x… the sources cite lands in a known function or name (addrcheck.py; last line READDR OK|RED)
+```
+
 In a main-checkout Claude Code session the same server is an MCP server: `claude mcp add --transport http -s local ghidra http://127.0.0.1:8000/mcp`. Worktree sessions and subagents use `re.sh q`.
 
 ## What `seed` writes
@@ -83,3 +85,4 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 | `export.py` | Names and types as text, local history commit |
 | `serve.py` | Starts pyghidra-mcp without the startup index |
 | `q.py` | Command-line client of the server |
+| `addrcheck.py`, `test_addrcheck.py` | Checks the `main+0x…` addresses cited in the sources against the game's function table and the export; unit test on synthetic data |

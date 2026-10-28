@@ -387,12 +387,12 @@ static NSString *astc_pack_locate(char *why, size_t n) {
 static int g_doc_bad;   // romfs_locate 的附带结论：「文件」里有资源文件夹但校验没过（why = 哪个文件、现有 / 应有字节数）——此时不去试托管下载 | Side conclusion of romfs_locate: the Files app has an asset folder but validation did not pass (why = which file, present / expected byte counts) -- in this case do not try the hosted download
 static int g_pack_wait;   // 托管资源包的目录已经在、系统还没说「本地可用」（还在下 / 还在落盘） | The managed asset pack's directory already exists but the system has not said "locally available" (still downloading / still being written to disk)
 static int g_doc_stray;   // 另一条附带结论：「D2R Mobile」里有文件夹但没有一个是资源（why = 现有哪些文件夹），托管资源包也没到——照常去试托管下载，下载站也走不通时把 why 给玩家看 | The other side conclusion: 「D2R Mobile」 has folders but none of them is assets (why = which folders exist now), and the hosted asset pack has not arrived either -- try the hosted download as usual, and show why to the player when the download site is unreachable too
-// 本包有没有配置苹果的托管资源包（Info.plist 的 BAHasManagedAssetPacks）。没配置的包（免费账号档、不带游戏内容的壳：tools/project_free.py、
-// tools/shell_build.sh 把那几项去掉了）一碰 BAAssetPackManager，系统接口内部断言直接让进程退出——真机实测：没有资源的第一次启动必崩。
+// 本包有没有配置苹果的托管资源包（Info.plist 的 BAHasManagedAssetPacks）。没配置的包（免费账号档：tools/project_free.py
+// 把那几项去掉了）一碰 BAAssetPackManager，系统接口内部断言直接让进程退出——真机实测：没有资源的第一次启动必崩。
 // 所以凡是要问那个接口的地方先问这里。另一种同样会崩的包：Info.plist 还声明着，但签名里没有它要的 app group（用自己的 Apple ID / 自签工具重签的
 // 包——描述文件里没有我们的 app group）：系统 Swift 层报「app group … is inaccessible」致命错误。所以还要核声明的 app group 拿得到容器目录（拿不到 = 签名没带这项权限）
-// Whether this package configures Apple's managed asset packs (BAHasManagedAssetPacks in Info.plist). In packages without it (the free-account build, and the shell without game content: tools/project_free.py and
-// tools/shell_build.sh remove those entries), touching BAAssetPackManager makes an assertion inside the system interface terminate the process; measured on a device, the first launch without resources always crashed.
+// Whether this package configures Apple's managed asset packs (BAHasManagedAssetPacks in Info.plist). In packages without it (the free-account build: tools/project_free.py
+// removes those entries), touching BAAssetPackManager makes an assertion inside the system interface terminate the process; measured on a device, the first launch without resources always crashed.
 // So every place that would ask that interface asks here first. Another kind of package crashes the same way: Info.plist still declares it, but the signature lacks the app group it needs (packages re-signed with your own Apple ID / a sideloading tool,
 // whose provisioning profile does not include our app group): the system Swift layer raises a fatal "app group ... is inaccessible" error. So we also check that the declared app group returns a container directory (none = the signature does not carry that entitlement)
 static BOOL ba_configured(void) {
@@ -547,41 +547,9 @@ static BOOL astc_dl_configured(void) {   // 自动下载地址配了没有：测
     for (NSString *l in [t componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) { NSString *v = [l stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]; if (v.length && ![v hasPrefix:@"#"]) return YES; }
     return NO;
 }
-// 安装包自检（只查从发布页的壳做出来的包：壳带着 dm/shell_manifest.txt；Xcode 出的包没有它，不查）。壳清单里每一项都要由 d2rm_pack.py 做进来，
-// 缺 = 装的是没做过第一步的壳（或拼装的包）——起宿主会在装载器读 dm/main.fixups.tsv 处退出（线上闪退）。另比产物代号：打包记录 dm/pack_info.txt 与壳的
-// dm/shell_info.txt（两份都在才比，旧版打包工具不写打包记录）。不过就不起宿主，弹框说明缺什么、该做哪一步
-// Install package self-check (only for packages made from the shell on the releases page: the shell carries dm/shell_manifest.txt; packages built with Xcode do not have it and are not checked). Every item in the shell manifest must have been built in by d2rm_pack.py;
-// missing = the shell was installed without doing step 1 (or the package was assembled), and starting the host would exit where the loader reads dm/main.fixups.tsv (a crash for players). The product generation is also compared: the pack record dm/pack_info.txt against the shell's
-// dm/shell_info.txt (only when both exist; older pack tools did not write a pack record). If the check fails, do not start the host; show a message saying what is missing and which step to do
 static NSString *g_block_title, *g_block_msg, *g_block_why;   // 非空 = 这台设备 / 这个安装包起不了游戏：不起宿主，场景里弹框（BlockVC）说明；why 进日志 | Non-empty = this device / this install package cannot start the game: do not start the host, show a message in the scene (BlockVC); why goes to the log
 static NSString *g_romfs; static char g_romfs_why[2048];   // 起宿主前那次资源校验的结果（host_start 写，boot_prepare 用） | Result of the resource check before starting the host (written by host_start, used by boot_prepare)
 static UIWindow *g_window;
-static NSString *kv_file(NSString *path, NSString *key) {
-    NSString *t = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-    for (NSString *l in [t componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) if ([l hasPrefix:[key stringByAppendingString:@"="]]) return [l substringFromIndex:key.length + 1];
-    return nil;
-}
-static NSString *pack_check(void) {
-    NSString *app = NSBundle.mainBundle.resourcePath; NSFileManager *fm = NSFileManager.defaultManager;
-    // 只测试用：DM_TEST_PACK_MANIFEST=<文件，相对 Documents> 换一份壳清单、DM_TEST_PACK_INFO=<文件> 换一份打包记录（Xcode 包里没有壳信息时，同一文件的 SHELL_PRODUCT= 充当壳的代号；造「缺项」「代号不一致」现场，不动包内文件、不破签名）
-    // Test only: DM_TEST_PACK_MANIFEST=<file, relative to Documents> substitutes the shell manifest and DM_TEST_PACK_INFO=<file> substitutes the pack record (in an Xcode package, which has no shell info, SHELL_PRODUCT= in the same file stands in for the shell's generation), to create "missing item" and "generation mismatch" cases without touching files in the package or breaking the signature
-    NSString *(^tpath)(const char *) = ^NSString *(const char *e) { if (!e) return nil; NSString *p = @(e); return [p hasPrefix:@"/"] ? p :   // 相对路径按 Documents 解析（沙盒读不到容器外；真机容器路径每次变） | Relative paths are resolved against Documents (the sandbox cannot read outside the container, and the device container path changes every time)
-        [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0] stringByAppendingPathComponent:p]; };
-    NSString *tm = tpath(getenv("DM_TEST_PACK_MANIFEST")), *ti = tpath(getenv("DM_TEST_PACK_INFO"));
-    NSString *man = [NSString stringWithContentsOfFile:tm ?: [app stringByAppendingPathComponent:@"dm/shell_manifest.txt"] encoding:NSUTF8StringEncoding error:nil];
-    if (!man) { plog("boot: 安装包自检：没有壳清单（Xcode 出的包），不查"); return nil; }
-    NSMutableArray<NSString *> *miss = [NSMutableArray array]; int total = 0;
-    for (NSString *l in [man componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
-        NSString *m = [l stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]; if (!m.length) continue; total++;
-        BOOL dir = NO; if (![fm fileExistsAtPath:[app stringByAppendingPathComponent:m] isDirectory:&dir] || dir != [m hasSuffix:@"/"]) [miss addObject:m]; }
-    if (miss.count) {
-        plog("boot: 🔴 安装包自检：壳清单 %d 项缺 %lu 项：%s", total, (unsigned long)miss.count, [miss componentsJoinedByString:@", "].UTF8String);
-        return [NSString stringWithFormat:T("dmPackBadMiss"), (int)miss.count, [[miss subarrayWithRange:NSMakeRange(0, MIN(miss.count, (NSUInteger)3))] componentsJoinedByString:@", "]]; }
-    NSString *sp = kv_file([app stringByAppendingPathComponent:@"dm/shell_info.txt"], @"PRODUCT") ?: (ti ? kv_file(ti, @"SHELL_PRODUCT") : nil), *pp = kv_file(ti ?: [app stringByAppendingPathComponent:@"dm/pack_info.txt"], @"PRODUCT");
-    if (sp && pp && ![sp isEqualToString:pp]) { plog("boot: 🔴 安装包自检：壳的产物代号 %s，打包记录 %s，不一致", sp.UTF8String, pp.UTF8String); return [NSString stringWithFormat:T("dmPackBadProd"), sp, pp]; }
-    plog("boot: 安装包自检通过：壳清单 %d 项齐全；产物代号 壳 %s / 打包记录 %s", total, sp.UTF8String ?: "无", pp.UTF8String ?: "无（旧版打包工具）");
-    return nil;
-}
 @interface BlockVC : UIViewController @end
 @implementation BlockVC
 - (void)viewDidAppear:(BOOL)animated {
@@ -788,14 +756,6 @@ static void host_start(void) {
     { NSString *r = romfs_locate(g_romfs_why, sizeof g_romfs_why);   // 资源校验：起宿主前只在这里做一次（boot_prepare 用这次结果）。没过（启动判定之后资源被挪 / 删）就回资源界面，不闪退 | Resource check: done only once, here, before starting the host (boot_prepare uses this result). If it fails (resources moved / deleted after the launch decision), go back to the resources screen instead of crashing
       if (!r) { plog("boot: 起宿主前资源校验没过（%s），回到资源界面", g_romfs_why); if (g_window) astc_handoff(g_window); return; }
       g_romfs = r; }
-#ifdef DM_SHELL
-    // 壳：着色器是以源码进包的话，进游戏之前先一次编完（dm_shader_prep.m，带进度页）；做完它回头再调这里
-    // Shell: if the shaders are shipped as source in the package, compile them all in one go before entering the game (dm_shader_prep.m, with a progress page); when done it calls back here
-    // 编着的时候又进来（中途切走再回前台，sceneWillEnterForeground 又调了一次）：不起，编完它自己回头调这里——原先第二次进来跳过编译直接起宿主，游戏在进度页底下跑
-    // Called again while compiling (switched away mid-way and back, sceneWillEnterForeground calls once more): do not start; when done it calls back here itself -- previously the second call skipped compiling and started the host directly, with the game running under the progress page
-    { extern int dm_shader_prep_begin(void (^)(void)); static int asked, running; if (running) return;
-      if (!asked) { asked = 1; if (dm_shader_prep_begin(^{ running = 0; host_start(); })) { running = 1; return; } } }
-#endif
     g_host_up = 1; plog("boot: 场景到前台，起宿主（进程已活 %.1f ms）", since_start());
     { const char *mw = getenv("DM_TEST_MEMWARN");   // 测试开关 DM_TEST_MEMWARN=<秒>：起宿主后这么多秒，照系统的调法调一次内存告警回调（验那一行日志；系统真发告警的时机造不出来） | test switch DM_TEST_MEMWARN=<seconds>: this many seconds after the host starts, call the memory-warning callback once the way the system does (to check that log line; the moment the system really sends a warning cannot be staged)
       if (mw && atof(mw) > 0) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(mw) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ UIApplication *app = UIApplication.sharedApplication; [app.delegate applicationDidReceiveMemoryWarning:app]; }); }
@@ -1351,8 +1311,6 @@ int main(int argc, char *argv[]) {
             if (d) { g_astc_dir = d; g_no_bc = 0; plog("boot: 用老机型补充包 %s", d.UTF8String); }
             else plog("boot: 老机型补充包未就绪：%s", g_astc_why);
         }
-        NSString *pb = g_block_title ? nil : pack_check();
-        if (pb) { g_block_title = T("dmPackBadTitle"); g_block_msg = [NSString stringWithFormat:@"%@\n\n%@", pb, T("dmPackBadHow")]; g_block_why = @"安装包自检没过"; }
         if (g_block_title) {}   // 起不了游戏：不起宿主，场景里弹框（BlockVC） | The game cannot start: do not start the host; show a message in the scene (BlockVC)
         else if (g_no_bc) {}
         else if (getenv("DM_ASSETS_TEST") || getenv("DM_TEST_BA")) { g_need_assets = 1; plog("boot: DM_ASSETS_TEST——强制走资源下载界面再就地起宿主（测这条路径）"); }

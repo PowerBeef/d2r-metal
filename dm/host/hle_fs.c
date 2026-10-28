@@ -97,18 +97,10 @@ static _Thread_local int t_wopen_failed_txn;
 #define FS_CLEAN_MARK "org.d2rmobile.txn-clean"
 static _Atomic int g_work_clean;
 static void work_mark(const char *work, int on) {
-#ifdef __APPLE__
     if (on) setxattr(work, FS_CLEAN_MARK, "1", 1, 0, XATTR_NOFOLLOW); else removexattr(work, FS_CLEAN_MARK, XATTR_NOFOLLOW);
-#else
-    if (on) lsetxattr(work, "user." FS_CLEAN_MARK, "1", 1, 0); else lremovexattr(work, "user." FS_CLEAN_MARK);
-#endif
 }
 static int work_marked(const char *work) { char v[4];
-#ifdef __APPLE__
     return getxattr(work, FS_CLEAN_MARK, v, sizeof v, 0, XATTR_NOFOLLOW) > 0;
-#else
-    return lgetxattr(work, "user." FS_CLEAN_MARK, v, sizeof v) > 0;
-#endif
 }
 const char *dm_save_workdir(void);
 static void txn_touch(void) { if (atomic_exchange(&g_work_clean, 0)) { const char *w = dm_save_workdir(); if (w) work_mark(w, 0); } }
@@ -275,20 +267,10 @@ static Result mount(const char *name, const char *dir, int ro) { return mount_ex
 // APFS is case-insensitive by default, Horizon paths are case-sensitive: every component is looked up exactly by guest name.
 // Ordinary host names are unchanged; only when a name collides on the host is a separate physical name chosen, with the guest name stored in an xattr.
 // clonefile preserves xattr, so save Commit/remount needs no separate mapping table; enumeration must not leak physical aliases.
-#ifdef __APPLE__
 #define FS_GUEST_NAME "org.d2rmobile.guest-name"
 #define fs_xattr_get(p, buf, n) getxattr(p, FS_GUEST_NAME, buf, n, 0, XATTR_NOFOLLOW)
 #define fs_xattr_set(p, v, n) setxattr(p, FS_GUEST_NAME, v, n, 0, XATTR_NOFOLLOW)
 #define fs_xattr_del(p) removexattr(p, FS_GUEST_NAME, XATTR_NOFOLLOW)
-#else   // Linux：扩展属性要带 user. 命名空间，不跟随链接的是 l* 版本；「没有这个属性」是 ENODATA | Linux: extended attributes need the user. namespace, the no-follow versions are l*; "no such attribute" is ENODATA
-#define FS_GUEST_NAME "user.org.d2rmobile.guest-name"
-#define fs_xattr_get(p, buf, n) lgetxattr(p, FS_GUEST_NAME, buf, n)
-#define fs_xattr_set(p, v, n) lsetxattr(p, FS_GUEST_NAME, v, n, 0)
-#define fs_xattr_del(p) lremovexattr(p, FS_GUEST_NAME)
-#ifndef ENOATTR
-#define ENOATTR ENODATA
-#endif
-#endif
 static int guest_name(const char *parent, const char *physical, char *out, size_t n) {
     char p[1280]; snprintf(p, sizeof p, "%s/%s", parent, physical);
     ssize_t k = fs_xattr_get(p, out, n - 1);
@@ -454,7 +436,6 @@ HLE_FORCE("_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE", "fsp-srv；存档目�
 //   小地图（放右上角：迷你、半透明）：
 //   "AutoMapMode": 2 = 微缩地图放右（0 全屏 / 1 放左 / 2 放右，游戏缺省也是 2，这里写明）；透明度（AutoMapFade）不补、用游戏缺省 0 = 不淡化——选「全部」（3）时小地图的线条淡到几乎只剩文字，地图本来就是叠在画面上的线条，不淡化也透得过去；
 //   "AutoMap Open On Load": 1 = 进局自动开启（游戏缺省 0）。点小地图 = 地图开关键，见 front_ios.m。
-// iOS 包缺省做；Mac 宿主缺省不做（闸门对 Switch 真值比图），DM_TOUCH_DEFAULTS=1 开 / =0 关。
 // 共享仓库预置：存档目录里没有 ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i 时写入预置文件（stash_seed.h），已有的一个字节不动。
 // 在挂存档、克隆出工作目录之前做，所以游戏第一次读到的就是它。iOS 上缺省开、DM_STASH_SEED=0 关掉；Mac 宿主缺省关、DM_STASH_SEED=1 打开。
 // 只覆盖 DLC 类型（标准 + 专家）：毁灭之王类型用的 SharedStash{Soft,Hard}CoreV2.d2i 不预置——触摸建角页建不出那类角色
@@ -467,7 +448,7 @@ HLE_FORCE("_ZN2nn2fs14EnsureSaveDataERKNS_7account3UidE", "fsp-srv；存档目�
 //   Minimap (placed top right: mini, semi-transparent):
 //   "AutoMapMode": 2 = mini map on the right (0 full screen / 1 left / 2 right, the game default is also 2, stated here explicitly); opacity (AutoMapFade) is not filled in, the game default 0 = no fade is used -- with 「全部」(All) (3) the minimap lines fade until almost only the text remains; the map is lines overlaid on the picture anyway, so it shows through without fading;
 //   "AutoMap Open On Load": 1 = open automatically on entering a run (game default 0). Tapping the minimap = the map toggle key, see front_ios.m.
-// Done by default in the iOS app; not done by default on the Mac host (gate checks compare images against Switch ground truth), DM_TOUCH_DEFAULTS=1 on / =0 off.
+// Done by default in the iOS app; not done by default on the Mac host (the screen baselines and scenarios were recorded without it), DM_TOUCH_DEFAULTS=1 on / =0 off.
 // Shared stash seed: when the save directory has no ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i, write the seed file (stash_seed.h); an existing one is not changed by a single byte.
 // Done before mounting the save and cloning the working directory, so it is what the game reads the first time. On by default on iOS, DM_STASH_SEED=0 turns it off; off by default on the Mac host, DM_STASH_SEED=1 turns it on.
 // Only covers the DLC type (standard + hardcore): SharedStash{Soft,Hard}CoreV2.d2i used by the Lord of Destruction type is not seeded -- the touch character creation page cannot create that kind of character

@@ -1,10 +1,10 @@
 # Game-related material in this repository: what is here and what is not
 
-中文: [DERIVED.zh-CN.md](DERIVED.zh-CN.md)
-
 The front page says the project "contains none and distributes none" of the game's content. This page makes that statement precise: what is truly absent, and which game-related records are in the repository, what each one is, and why it has to be there.
 
 ## Not in the repository
+
+- Anything from the analysis of the game's code (`dm/tools/re`): the database, decompiled code, disassembly and strings stay in `$DM_ROOT/re` on the machine that made them. Code refers to a game function only by its `main+0x…` address and a description in our own words.
 
 - The game program (not a single piece of code from the main executable or the system libraries)
 - Art, audio, cinematics
@@ -29,7 +29,7 @@ These are records of facts about the game, not game content: without them, you c
 | `dm/gfx/nvn/include/nvn.h` | 89 KB | Declarations of the console graphics API. Third-party work under the MIT license; the author is named in the file header | The graphics layer implements against it |
 | `dm/ios/tools/touchrectv1_patch.json` | 28 KB | A description of changes to the original controller interface layout, carrying widget names and values from that layout | The touch interface is derived from the original layout |
 | `dm/data/casc_overlay/borrowed_paths.tsv` | 2 KB | The path names of 6 original textures | Our new panels reuse these original textures |
-| `dm/verify/logicself/*.json`, `dm/verify/touchcases/tests/fixture/`, `dm/verify/shotgate_pages/` | about 200 KB in total | Verification baselines: per-tick state checksums recorded while running the original, a few bytes of input commands, and comparison specs for interface screenshots | They prove the rewritten program behaves like the original |
+| `dm/verify/touchcases/tests/fixture/`, `dm/verify/shotgate_pages/` | about 60 KB in total | Verification data: a few bytes of input commands, and comparison specs for interface screenshots | They prove the rewritten program behaves like the original |
 | `main+0x…` addresses in the source (about 800 of them, across 59 files) and their descriptions | — | The locations of functions and data structures inside the game's main program, with descriptions of what they do | The host and the touch layer hook into the game at these locations; valid for version 3.3.94012 only |
 | The rewrite rules in `dm/tools/patch_nso.py` | — | Each rule reads "original instruction word → replacement instruction word". The original word is there to confirm the version and the location | This is what the rewriter does |
 | A small number of the game's internal names in the source | — | For example the keys of items and interface widgets that feature code looks up | Features find their targets by these names |

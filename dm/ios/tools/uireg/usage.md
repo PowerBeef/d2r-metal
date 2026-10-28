@@ -1,7 +1,5 @@
 # uireg — scripted regression of the touch UI
 
-中文：[usage.zh-CN.md](usage.zh-CN.md)
-
 Taps through the touch UI item by item and outputs one "expected → actual result" line per item. What is under test is the iOS package itself, driven only by touch scripts (which take the same path as real fingers, see "Touch scripts" in [../../README.md](../../README.md)); the criteria read the log of that run.
 
 **About saves first**: the whole regression suite is written against one specific multi-character save. This save is not provided with the repository and cannot be distributed. The smoke test save that can be generated from the repository is only enough for the smoke test. See "Which saves are needed" below; without that save, the in-game state and tap positions of most runs do not match.

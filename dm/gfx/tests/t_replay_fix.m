@@ -180,18 +180,10 @@ static void treg_bucket_case(void) {
 // F-GFX-17: "samples passed" = the sum of the per-pass slots since the reset, which can span submits; a later submit must not reuse a visibility buffer whose slots are still on record,
 // nor a buffer a report reads before that submit's completion callback has read it. The part run first makes the GPU queue wait for an event so submits B and C are both queued; B's completion callback first waits until C has finished on the GPU, then sums (the ring starts unused, so C would pick A's buffer if it were allowed to reuse it)
 static void gate_queue(id<MTLSharedEvent> ev) {
-#if DM_NVN_M3
-    id<MTLCommandBuffer> g = [g_q commandBuffer]; [g encodeWaitForEvent:ev value:1]; [g commit];
-#else
     [g_q4 waitForEvent:ev value:1];
-#endif
 }
 static void signal_after_queue(id<MTLSharedEvent> ev) {
-#if DM_NVN_M3
-    id<MTLCommandBuffer> g = [g_q commandBuffer]; [g encodeSignalEvent:ev value:1]; [g commit];
-#else
     [g_q4 signalEvent:ev value:1];
-#endif
 }
 static void vis_ring_case(void) {
     prog_t pg; prog(&pg, shader(@"v", 0), fs_red()); tex_t a = tex(8, NVN_FORMAT_RGBA8); uint64_t *rep = (uint64_t *)pool_mem(4096); uint64_t ty = NVN_COUNTER_TYPE_SAMPLES_PASSED;
@@ -213,17 +205,6 @@ static void vis_ring_case(void) {
     EXPECT("遮挡查询：跨两次提交的通过采样数 64 + 1 | occlusion: samples passed across two submits 64 + 1", 65, rep[0]);
     vis_clear(); g_vis_on = g_vis_counting = 0;
 }
-// F-GFX-18：旧接口按地址反查登记过的缓冲；表原先定长 512、满了就静默丢
-// F-GFX-18: the older API looks registered buffers up by address; the table used to be fixed at 512 entries and silently dropped new ones when full
-static void m3_table_case(void) {
-#if DM_NVN_M3
-    enum { N = 600 }; static __strong id<MTLBuffer> bs[N];
-    for (int i = 0; i < N; i++) { bs[i] = [g_dev newBufferWithLength:256 options:MTLResourceStorageModeShared]; res_add(bs[i]); }
-    NSUInteger off = 1; id<MTLBuffer> got = m3_buf(bs[N - 1].gpuAddress + 16, &off);
-    EXPECT("旧接口地址表：第 600 个登记的缓冲查得到 | older-API table: the 600th registered buffer is found", 1, got == bs[N - 1] && off == 16);
-    for (int i = 0; i < N; i++) { res_remove(bs[i]); bs[i] = nil; }
-#endif
-}
 // F-GFX-2：显示节拍合并旧帧时把票号直接推到「本帧 − 1」，在途的上一帧也被算成做完；出图槽（Metal 4 的命令分配器）复用前要等本槽上次的命令缓冲真正完成。
 // 这里让 GPU 队列先等一个事件，票 1 的命令缓冲就一直在途；照合并的写法把 g_pq_done 推到 3，再出票 4（与票 1 同槽）：事件发出之前它不能返回
 // F-GFX-2: when the display link merges old frames it bumps the ticket straight to "this frame - 1", so an in-flight earlier frame is counted as done too; a present slot (a Metal 4 command allocator) may be reused only after that slot's previous command buffer has really completed.
@@ -234,11 +215,7 @@ static void present_slot_case(void) {
     t_layer = [CAMetalLayer layer]; t_layer.device = g_dev; t_layer.pixelFormat = MTLPixelFormatBGRA8Unorm; t_layer.drawableSize = CGSizeMake(16, 16);
     t_psrc = tex(8, NVN_FORMAT_RGBA8); state_reset(); memset(&R, 0, sizeof R); mtl_sub_begin(); tex_mtl(&t_psrc); commit();
     id<MTLSharedEvent> ev = [g_dev newSharedEvent];
-#if DM_NVN_M3
-    id<MTLCommandBuffer> gate = [g_q commandBuffer]; [gate encodeWaitForEvent:ev value:1]; [gate commit];
-#else
     [g_q4 waitForEvent:ev value:1];
-#endif
     int ok1; @autoreleasepool { ok1 = present_now(&t_psrc, 0, 1, 1, NULL, [t_layer nextDrawable], 0); }
     EXPECT("出图：票 1 已提交（GPU 上被事件挡着）| present: ticket 1 committed (held by the event on the GPU)", 1, ok1);
     pthread_mutex_lock(&g_pq_mu); if (g_pq_done < 3) g_pq_done = 3; pthread_mutex_unlock(&g_pq_mu);   // 同显示节拍合并票 2、3 时的 g_pq_done = ticket - 1 | Same as g_pq_done = ticket - 1 when the display link merges tickets 2 and 3
@@ -253,5 +230,5 @@ static void present_slot_case(void) {
 }
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init(); lib_init();
-    scissor_case(); clear_view_case(); stencil_mask_case(); stream14_case(); swizzle_case(); pending_vb_case(); lut_case(); treg_view_case(); treg_bucket_case(); vis_ring_case(); m3_table_case(); present_slot_case();
+    scissor_case(); clear_view_case(); stencil_mask_case(); stream14_case(); swizzle_case(); pending_vb_case(); lut_case(); treg_view_case(); treg_bucket_case(); vis_ring_case(); present_slot_case();
     printf("== %d 项，失败 %d ==\n", count, fail); return fail != 0; } }

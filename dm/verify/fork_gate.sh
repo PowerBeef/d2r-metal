@@ -2,7 +2,7 @@
 # d2r-metal 自己的验收闸门：只用本机能跑的检查（不靠模拟器真值录制），按层跑，每步经 dmtest.py 出机器可读结果，末行 FORKGATE OK|RED {json}。
 #   用法：dm/verify/fork_gate.sh [层…]      层 = quick | unit | core | full | long | device，缺省 quick unit；可写多层（core 含不含 unit 由调用方决定）
 #   quick  源码检查（< 1 分钟）：字面量、中英表、开关登记、场景解析、HUD 派生物不入库
-#   unit   单测（约 6 分钟）：宿主、图形（Metal 4 与旧接口）、iOS 单测，改写等价回归 regress.sh
+#   unit   单测（约 3 分钟）：宿主、图形、iOS 单测，改写等价回归 regress.sh
 #   core   游戏局（≤ 15 分钟）：精选场景无窗口并行 3 局 + 触屏功能用例（持 Mac 游戏锁）
 #   full   core 之外：Mac App 测试副本与 iOS 包（Mac 上）场景、smoke_mac、故障注入、Metal 校验一局、回放
 #   long   按需（1.5–2.5 小时）：基准（先跑，机器凉）、随机试玩、消毒器宿主、fnfuzz
@@ -11,7 +11,7 @@
 # d2r-metal's own acceptance gate: only checks that run on this machine (no emulator ground-truth recordings), in tiers; every step goes through dmtest.py for a machine-readable result; last line FORKGATE OK|RED {json}.
 #   Usage: dm/verify/fork_gate.sh [tier...]      tier = quick | unit | core | full | long | device, default quick unit; several tiers may be given
 #   quick  source checks (< 1 min): literals, string table, switch registry, scenario parsing, no HUD derivatives in git
-#   unit   unit tests (~6 min): host, graphics (Metal 4 and older API), iOS, rewrite equivalence regress.sh
+#   unit   unit tests (~3 min): host, graphics, iOS, rewrite equivalence regress.sh
 #   core   game runs (<= 15 min): curated scenarios headless, 3 at a time + the touch function cases (under the Mac game lock)
 #   full   beyond core: Mac App test copy and iOS-package-on-Mac scenarios, smoke_mac, fault injection, one run under Metal validation, replays
 #   long   on demand (1.5-2.5 h): benchmarks (first, while the machine is cool), random play, sanitizer hosts, fnfuzz
@@ -88,6 +88,7 @@ for tier in "${TIERS[@]}"; do
     step quick_switches 120 -- python3 "$DM/tools/switches.py" check
     step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/golden/"*.scn "$DM/verify/bench/"*.scn
     step quick_hudgen 300 -- bash "$DM/ios/tools/check_hud_gen.sh"
+    step quick_readdr 300 -- python3 "$DM/tools/re/addrcheck.py"   # cited main+0x... addresses vs the game program and the private analysis export (unavailable without them)
     ;;
   unit)
     step unit_host 1800 -- make -C "$DM/host/tests" run

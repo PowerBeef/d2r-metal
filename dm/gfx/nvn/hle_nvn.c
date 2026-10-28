@@ -20,7 +20,6 @@
 // Environment switches: DM_NVN_FRAMES=N prints the call table per frame for the first N frames (default 3); DM_NVN_TSV=path writes the per-frame call table and timing to a TSV (DM_NVN_TSV_CALLS=0 writes timing only); DM_SLOWFRAME=1 writes only the per-frame breakdown of dropped frames to the log; DM_NVN_LOG=1 logs object creation.
 #include "../../host/hle.h"
 #include "nvn_protos.h"
-#include "nvn_pool_flags_registry.h"
 #include "nvn_count.h"
 #include "nvn_tex.h"
 #include "../xtrace.h"
@@ -181,42 +180,15 @@ NVN(nvnMemoryPoolBuilderSetDefaults, void, NVNmemoryPoolBuilder *b) { memset(b, 
 NVN(nvnMemoryPoolBuilderSetDevice, void, NVNmemoryPoolBuilder *b, NVNdevice *d) { ((pool_builder_t *)b)->dev = d; }
 NVN(nvnMemoryPoolBuilderSetStorage, void, NVNmemoryPoolBuilder *b, void *m, size_t n) { ((pool_builder_t *)b)->mem = m; ((pool_builder_t *)b)->size = n; }
 NVN(nvnMemoryPoolBuilderSetFlags, void, NVNmemoryPoolBuilder *b, int f) { ((pool_builder_t *)b)->flags = f; }
-// 池标志表：图形后端可查询一段客体内存所在池的标志（Vulkan 引擎据 CPU_NO_ACCESS 省掉被更新的 GPU 结果覆盖的存储写回）。
-// 建池、销池在客体线程，查询在渲染线程；用互斥量（不在信号处理里用）。按池对象删除，重叠alias不证明CPU_NO_ACCESS。
-// 表满或非法范围后全表持续返回未知，避免未登记的可读alias被忽略。
-// Pool flags: a graphics backend may ask for the flags of the pool that holds a guest range (the Vulkan engine drops storage
-// writebacks into CPU_NO_ACCESS pools that newer GPU results supersede). Pools are created and destroyed on guest threads
-// and queried from the render thread, so use a mutex (never in signal context). Remove by pool identity; overlapping aliases cannot prove CPU_NO_ACCESS.
-// A full table or invalid range makes all later queries unknown, so an untracked CPU-readable alias cannot be ignored.
-static nvn_pool_flags_registry g_pool_flags;
-static pthread_mutex_t g_pool_flags_mu = PTHREAD_MUTEX_INITIALIZER;
-static void pool_flags_add(const void *owner,const void *mem, uint64_t size, int flags) {
-    pthread_mutex_lock(&g_pool_flags_mu);
-    nvn_pool_flags_registry_add(&g_pool_flags,owner,mem,size,flags);
-    pthread_mutex_unlock(&g_pool_flags_mu);
-}
-static void pool_flags_del(const void *owner) {
-    pthread_mutex_lock(&g_pool_flags_mu);
-    nvn_pool_flags_registry_del(&g_pool_flags,owner);
-    pthread_mutex_unlock(&g_pool_flags_mu);
-}
-// [addr, addr+len) 所在池的标志；不在任何登记的池里 → -1
-// Flags of the pool holding [addr, addr+len); -1 when no registered pool holds it
-int nvn_pool_flags(const void *addr, size_t len) {
-    pthread_mutex_lock(&g_pool_flags_mu);
-    int f=nvn_pool_flags_registry_get(&g_pool_flags,addr,len);
-    pthread_mutex_unlock(&g_pool_flags_mu);
-    return f;
-}
 NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBuilder *b) {
     const pool_builder_t *s = (const pool_builder_t *)b; pool_t *o = (pool_t *)p;
     o->magic = MAGIC('P', 'O', 'O', 'L'); o->flags = s->flags; o->mem = s->mem; o->size = s->size;
-    if (o->mem) { mtl_pool_add(o->mem, o->size); nvn_dirty_add_range(o->mem, o->size); pool_flags_add(p,o->mem, o->size, o->flags); }
+    if (o->mem) { mtl_pool_add(o->mem, o->size); nvn_dirty_add_range(o->mem, o->size); }
     if (!o->mem && !(o->flags & 0x200)) LOG("【红】MemoryPoolInitialize 非虚拟池没有存储 flags=%#x size=%#llx", o->flags, o->size);
     OLOG("MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, o->size, o->flags);
     return 1;
 }
-NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) { pool_flags_del(p); if (((pool_t *)p)->mem) { nvn_dirty_remove_range(((pool_t *)p)->mem); mtl_pool_del(((pool_t *)p)->mem); } ((pool_t *)p)->magic = 0; }
+NVN(nvnMemoryPoolFinalize, void, NVNmemoryPool *p) { if (((pool_t *)p)->mem) { nvn_dirty_remove_range(((pool_t *)p)->mem); mtl_pool_del(((pool_t *)p)->mem); } ((pool_t *)p)->magic = 0; }
 NVN(nvnMemoryPoolFlushMappedRange, void, const NVNmemoryPool *p, ptrdiff_t off, size_t n) { (void)p; (void)off; (void)n; }
 NVN(nvnMemoryPoolGetBufferAddress, NVNbufferAddress, const NVNmemoryPool *p) { return (NVNbufferAddress)((const pool_t *)p)->mem; }
 
@@ -462,62 +434,24 @@ NVN(nvnSyncFinalize, void, NVNsync *s) { ((sync_t *)s)->magic = 0; }
 // Fence = "all commands previously submitted to the queue have completed": record the fence value of the most recent submit
 NVN(nvnQueueFenceSync, void, NVNqueue *q, NVNsync *s, NVNsyncCondition c, int f) { (void)q; (void)c; (void)f; ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = x_fence(); }
 // 没围栏过的同步对象按真机行为等到超时；已围栏的只在 GPU 真正完成到该栅栏值后放行
-// 诊断：游戏每帧在 SyncWait / 读事件上等了多久、等的是落后最新提交几次的栅栏（每 300 帧一行）
 // A sync object that was never fenced waits until the timeout, as on the device; a fenced one is released only once the GPU has really completed up to that fence value
-// Diagnostics: how long the game waits per frame in SyncWait / event reads, and how many submits behind the newest the waited fence is (one line per 300 frames)
 uint64_t dm_nvn_frame_count(void);
-static _Atomic uint64_t g_gw_sync_n, g_gw_sync_ns, g_gw_sync_lag, g_gw_ev_n, g_gw_ev_ns, g_gw_sync_hit, g_gw_acq_n;
-static const void *volatile g_acq_sync;   // 最近一次取图带回的同步对象（诊断：游戏等的是不是它）| The sync handed back by the latest acquire (diagnostics: is this what the game waits on)
-static void gw_report(void) {
-    static uint64_t last; uint64_t f = dm_nvn_frame_count(); if (f < last + 300) return; last = f;
-    uint64_t sn = atomic_exchange(&g_gw_sync_n, 0), sns = atomic_exchange(&g_gw_sync_ns, 0), lag = atomic_exchange(&g_gw_sync_lag, 0), hit = atomic_exchange(&g_gw_sync_hit, 0);
-    uint64_t en = atomic_exchange(&g_gw_ev_n, 0), ens = atomic_exchange(&g_gw_ev_ns, 0), an = atomic_exchange(&g_gw_acq_n, 0);
-    LOG("[nvn] 游戏等 GPU（300 帧）：SyncWait %.2f 次/帧（已完成 %.2f，其中取图同步 %.2f），共 %.2f ms/帧，平均落后最新提交 %.2f 次；读事件 %.2f 次/帧，共 %.2f ms/帧",
-        sn / 300.0, hit / 300.0, an / 300.0, sns / 300e6, sn ? (double)lag / sn : 0, en / 300.0, ens / 300e6);
-}
-static int x_wait_sub(uint64_t sub, uint64_t timeout);
 NVN(nvnSyncWait, NVNsyncWaitResult, const NVNsync *s, uint64_t timeout) {
     const sync_t *o = (const sync_t *)s;
     if (!o->fenced) return NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
-#ifdef __OHOS__   // 鸿蒙：先在翻译队列上等目标提交译完再问 GPU，并记等待统计（其他平台保持原逻辑）| HarmonyOS: wait on the translation queue for the target submit first, then ask the GPU, with wait statistics (other platforms keep the original logic)
-    atomic_fetch_add(&g_gw_sync_n, 1); atomic_fetch_add(&g_gw_sync_lag, x_fence() - o->fence); if ((const void *)s == g_acq_sync) atomic_fetch_add(&g_gw_acq_n, 1); gw_report();
-    if (mtl_wait(o->fence, 0)) { atomic_fetch_add(&g_gw_sync_hit, 1); return NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED; }
-    // 目标提交还没翻译到：先在翻译队列上睡等（不去反复抢引擎锁），再问引擎 GPU 做完没有
-    // Target submit not yet translated: sleep on the translation queue first (instead of repeatedly taking the engine lock), then ask the engine whether the GPU is done
-    XTRACE_BEGIN("dm-game-syncwait"); XTRACE_COUNT("dm-game-wait-target", o->fence); uint64_t t0 = now_ns(); int ok = !timeout || x_wait_sub(o->fence, timeout);
-    if (ok) { uint64_t used = now_ns() - t0; ok = mtl_wait(o->fence, timeout >= 3600000000000ull ? timeout : used >= timeout ? 0 : timeout - used); }
-    atomic_fetch_add(&g_gw_sync_ns, now_ns() - t0); XTRACE_END();
-    return ok ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
-#else
     if (mtl_wait(o->fence, 0)) return NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED;
     return mtl_wait(o->fence, timeout) ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
-#endif
 }
-// CPU 访问事件前解析覆盖该地址的延后 SignalEvent（安卓 Vulkan 后端 dm/gfx/vulkan/nvn_vk.c 给强定义）。这里是空的弱定义、不是弱声明：
-// 苹果的链接器要求弱引用在链接时也要有定义，否则 Mac 宿主与 iOS 链接失败（_mtl_event_read 未定义）
-// Resolves deferred SignalEvents covering the address before the CPU accesses an event (the Android Vulkan backend dm/gfx/vulkan/nvn_vk.c
-// gives the strong definition). This is an empty weak definition, not a weak declaration: Apple's linker requires even a weak reference
-// to resolve at link time, or the Mac host and the iOS app fail to link (_mtl_event_read undefined)
-__attribute__((weak)) void mtl_event_read(const volatile uint32_t *val) { (void)val; }
 NVN(nvnEventBuilderSetDefaults, void, NVNeventBuilder *b) { memset(b, 0, sizeof(ev_builder_t)); }
 NVN(nvnEventBuilderSetStorage, void, NVNeventBuilder *b, const NVNmemoryPool *p, int64_t off) { *(ev_builder_t *)b = (ev_builder_t){(const pool_t *)p, off}; }
 NVN(nvnEventInitialize, NVNboolean, NVNevent *e, const NVNeventBuilder *b) {
     const ev_builder_t *s = (const ev_builder_t *)b;
     if (!s->pool || !s->pool->mem) { LOG("【红】EventInitialize 没有存储"); return 0; }
-    if (mtl_event_read) mtl_event_read((volatile uint32_t *)(s->pool->mem + s->off));
     *(ev_t *)e = (ev_t){MAGIC('E', 'V', 'N', 'T'), (volatile uint32_t *)(s->pool->mem + s->off)}; return 1;
 }
-NVN(nvnEventFinalize, void, NVNevent *e) { if (mtl_event_read) mtl_event_read(((ev_t *)e)->val); ((ev_t *)e)->magic = 0; }
-// 后端若延后发布命令缓冲里的 SignalEvent（安卓 Vulkan，gfx-defer-events），读值前先让它落地；Metal 后端没有这个钩子
-// 读事件计时只在鸿蒙做（只有鸿蒙汇报这些计数），其余平台照旧
-// If the backend defers publishing command-buffer SignalEvents (Android Vulkan, gfx-defer-events), let it land before the read; the Metal backend has no such hook
-// The event-read timing runs on HarmonyOS only (only HarmonyOS reports these counters); other platforms as before
-#ifdef __OHOS__
-NVN(nvnEventGetValue, uint32_t, const NVNevent *e) { if (mtl_event_read) { uint64_t t0 = now_ns(); mtl_event_read(((const ev_t *)e)->val); atomic_fetch_add(&g_gw_ev_ns, now_ns() - t0); atomic_fetch_add(&g_gw_ev_n, 1); } return *((const ev_t *)e)->val; }
-#else
-NVN(nvnEventGetValue, uint32_t, const NVNevent *e) { if (mtl_event_read) mtl_event_read(((const ev_t *)e)->val); return *((const ev_t *)e)->val; }
-#endif
-static void ev_signal(const ev_t *e, int mode, uint32_t v) { if (mtl_event_read) mtl_event_read(e->val); if (mode == NVN_EVENT_SIGNAL_MODE_ADD) *e->val += v; else *e->val = v; }
+NVN(nvnEventFinalize, void, NVNevent *e) { ((ev_t *)e)->magic = 0; }
+NVN(nvnEventGetValue, uint32_t, const NVNevent *e) { return *((const ev_t *)e)->val; }
+static void ev_signal(const ev_t *e, int mode, uint32_t v) { if (mode == NVN_EVENT_SIGNAL_MODE_ADD) *e->val += v; else *e->val = v; }
 NVN(nvnEventSignal, void, NVNevent *e, NVNeventSignalMode m, uint32_t v) { ev_signal((const ev_t *)e, m, v); }
 
 // ---------- 队列 ----------
@@ -1131,19 +1065,11 @@ typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int 
 static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done, g_xsub_done;   // g_xsub_done：已翻译完的提交号（栅栏值） | g_xsub_done: the last submit number translated (fence value)   // 入队任务数 / 已执行任务数（任务号从 1 计） | Jobs enqueued / jobs executed (job numbers start at 1)
 static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号 → 出图线程票号 | Present job number -> present thread ticket
 static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
-#ifdef __OHOS__
-// 只在队列锁下传递诊断帧号，不从翻译线程读取游戏线程的 g_frame。
-// Propagate the diagnostic frame epoch under the queue lock; never read the game's g_frame from translation.
-static uint64_t g_x_trace_frame;
-#endif
 static int pace_adapt_enabled(void);
 static _Atomic double g_pa_xcpu_ms = -1;   // 最近60个翻译帧的真实线程CPU（不含任何等待）| Actual thread CPU per frame over the latest 60 translation frames, excluding waits
 static int g_x_sync; static pthread_t g_x_thr; static mach_port_t g_x_port;   // 翻译线程（策略读数用） | Translation thread (for policy readings)
 static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
     mtl_host_apply(host);
-#ifdef __OHOS__
-    { void front_pin_check(void); front_pin_check(); }   // 系统改回可用核就再绑 | re-pin if the system changed the allowed cores
-#endif
     uint64_t t0 = now_ns(), c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID), i0, y0, s0 = thr_sys_ns(); thr_counts(&i0, &y0);
     mtl_sub_begin();
     mtl_sub_index(h, n);
@@ -1164,9 +1090,6 @@ static void x_run(const xjob *j, uint64_t job) {
     XTRACE_COUNT("dm-x-run-job", job); XTRACE_COUNT("dm-x-run-sub", j->sub); XTRACE_COUNT("dm-x-run-frame", j->frame);
     if (j->kind == XJ_SUBMIT) { XTRACE_BEGIN("dm-x-submit"); x_submit(j->h, j->n, j->sub, j->host); free(j->h); XTRACE_END(); }
     else if (j->kind == XJ_PRESENT) {
-#ifdef __OHOS__
-        { void front_gtx_frame(void); front_gtx_frame(); }
-#endif
         XTRACE_BEGIN("dm-x-present"); uint64_t tk = mtl_present(j->tex, j->period, j->crop); XTRACE_END(); pthread_mutex_lock(&g_xmu); g_xtk[job % XTK].job = job; g_xtk[job % XTK].tk = tk; pthread_mutex_unlock(&g_xmu); }
     else {
         XTRACE_BEGIN("dm-x-frame");
@@ -1188,17 +1111,7 @@ static void x_run(const xjob *j, uint64_t job) {
 }
 static void *x_thread(void *a) {
     (void)a;
-#ifdef __APPLE__
     pthread_setname_np("nvn-translate");
-#else
-    // 安卓命名接口要求线程句柄，优先级在目标线程设置。
-    // Android naming takes a thread handle; apply priority on the target thread.
-    pthread_setname_np(pthread_self(), "nvn-translate");
-    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
-#ifdef __OHOS__
-    { void front_pin_fast(const char *who); void front_gtx_register(int); front_pin_fast("nvn-translate"); front_gtx_register(1); }   // 鸿蒙：翻译线程绑到最高频的核（调度器一直放在中核）| HarmonyOS: pin the translation thread to the fastest cores (the scheduler kept it on mid cores)
-#endif
-#endif
     g_x_port = pthread_mach_thread_np(pthread_self());
     pthread_mutex_lock(&g_xmu);
     for (;;) {
@@ -1229,9 +1142,6 @@ static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
     while (g_xq_in - g_xq_done >= XQ) pthread_cond_wait(&g_xcv, &g_xmu);
     if (j->kind == XJ_SUBMIT) j->sub = atomic_fetch_add(&g_x_subs, 1) + 1;
     uint64_t job = ++g_xq_in;
-#ifdef __OHOS__
-    if (j->kind == XJ_FRAME) g_x_trace_frame = j->frame; else j->frame = g_x_trace_frame;
-#endif
     XTRACE_COUNT("dm-x-enqueue-job", job); XTRACE_COUNT("dm-x-enqueue-kind", j->kind);
     XTRACE_COUNT("dm-x-enqueue-sub", j->sub); XTRACE_COUNT("dm-x-enqueue-frame", j->frame);
     if (g_x_sync) {   // 当场执行：单线程提交时与旧路径同序 | Run in place: with single-thread submission the order is the same as the old path
@@ -1247,19 +1157,6 @@ static uint64_t x_fence(void) { return atomic_load(&g_x_subs); }
 // 等翻译线程把第 sub 次提交翻完（栅栏值 ≤ 已翻译数才去问引擎）；timeout 纳秒，超时返回 0。同步翻译模式提交当场执行，不用等
 // Wait until the translation thread has translated submit number `sub` (the engine is asked about a fence only once it has been translated); timeout in ns, returns 0 on timeout.
 // In synchronous translation mode submits execute in place, so there is nothing to wait for
-static int x_wait_sub(uint64_t sub, uint64_t timeout) {
-    if (g_x_sync) return 1;
-    XTRACE_BEGIN("dm-x-wait-sub"); XTRACE_COUNT("dm-x-wait-target", sub);
-    pthread_mutex_lock(&g_xmu); int ok = 1;
-    XTRACE_COUNT("dm-x-wait-done-in", g_xsub_done);
-    if (g_xsub_done < sub) {
-        if (timeout >= 3600000000000ull) while (g_xsub_done < sub) pthread_cond_wait(&g_xcv, &g_xmu);
-        else { struct timespec d; clock_gettime(CLOCK_REALTIME, &d); uint64_t ns = (uint64_t)d.tv_nsec + timeout % 1000000000ull; d.tv_sec += (time_t)(timeout / 1000000000ull + ns / 1000000000ull); d.tv_nsec = (long)(ns % 1000000000ull);
-            while (g_xsub_done < sub) if (pthread_cond_timedwait(&g_xcv, &g_xmu, &d)) { ok = g_xsub_done >= sub; break; } }
-    }
-    XTRACE_COUNT("dm-x-wait-done-out", g_xsub_done);
-    pthread_mutex_unlock(&g_xmu); XTRACE_END(); return ok;
-}
 static uint64_t x_present_ticket(uint64_t job) {   // 出图任务执行完后换来的出图线程票号（0 = 那次出图被丢弃，不用等） | Present thread ticket obtained after the present job runs (0 = that present was dropped, nothing to wait for)
     x_wait(job);
     pthread_mutex_lock(&g_xmu); uint64_t tk = g_xtk[job % XTK].job == job ? g_xtk[job % XTK].tk : 0; int lost = g_xtk[job % XTK].job != job; pthread_mutex_unlock(&g_xmu);
@@ -1392,7 +1289,7 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
     // The previous present of this texture has not yet been processed by the present thread (display cannot keep up, a whole swapchain round behind): wait for it to be returned, then hand it to the game to draw
     uint64_t tk = *idx < 4 ? o->ticket[*idx] : 0;
     if (tk) { uint64_t w0 = now_ns(), rt = x_present_ticket(tk); if (rt) mtl_present_wait(rt); g_pq_wait_ns += now_ns() - w0; }   // tk 是翻译队列的出图任务号 | tk is the translation queue's present job number
-    if (s) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = x_fence(); g_acq_sync = s; }   // 交换链贴图在此前的提交完成后可用 | The swapchain texture becomes available once the commits before this point have completed
+    if (s) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = x_fence(); }   // 交换链贴图在此前的提交完成后可用 | The swapchain texture becomes available once the commits before this point have completed
     return NVN_WINDOW_ACQUIRE_TEXTURE_RESULT_SUCCESS;
 }
 
@@ -1561,17 +1458,10 @@ static void slow_emit(uint64_t f) {
 static void set_time_constraint_comp(rt_decl *d, uint64_t period_ns, uint64_t comp_ns) {
     static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
     if (comp_ns < 1000000ull) comp_ns = 1000000ull; if (comp_ns > period_ns * 9 / 10) comp_ns = period_ns * 9 / 10;
-#ifdef __APPLE__
     thread_time_constraint_policy_data_t p = {
         .period = (uint32_t)(period_ns * tb.denom / tb.numer), .computation = (uint32_t)(comp_ns * tb.denom / tb.numer),
         .constraint = (uint32_t)(period_ns * tb.denom / tb.numer), .preemptible = 1};
     kern_return_t kr = thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&p, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
-#else
-    // 安卓没有时间约束线程策略：同一份声明（帧期限 + 每帧工作量）交给前端走系统性能提示（APerformanceHint），未实现时视为失败
-    // Android has no time-constraint thread policy: the same declaration (frame deadline + per-frame workload) is handed to the front end for the system performance hint (APerformanceHint); treated as failure when not implemented
-    int front_perf_hint(uint64_t period_ns, uint64_t comp_ns) __attribute__((weak));
-    kern_return_t kr = front_perf_hint && !front_perf_hint(period_ns, comp_ns) ? KERN_SUCCESS : KERN_FAILURE;
-#endif
     if (kr == KERN_SUCCESS) { d->comp_ms = comp_ns / 1e6; d->period_ms = period_ns / 1e6; }
     LOG("[nvn] %s时间约束策略（周期 %.3f ms、计算 %.3f ms）%s", d->who, period_ns / 1e6, comp_ns / 1e6, kr == KERN_SUCCESS ? "已设" : "设置失败");
 }
@@ -1605,10 +1495,6 @@ static int pace_adapt_enabled(void) {
     return g_pa;
 }
 static double present_auto_hz(double screen_hz) {
-#ifdef __ANDROID__
-    // Android has no Metal display-link pacer, so apply the power-saving target here.
-    if (mtl_fps_target() == 30) return dm_pace_hz(screen_hz, 30);
-#endif
     // 自适应目标是最高60，而旧Apple策略是至少60；两者不共用取整方向。首帧/刷新率改变也受上限约束。
     // Adaptive pacing caps at 60; the legacy Apple policy has a floor of 60. Cap the first frame and refresh changes too.
     if (pace_adapt_enabled() && screen_hz > 0) return screen_hz / nvn_adaptive_divisor(screen_hz, g_pa_k, g_pa_screen_hz);
@@ -1626,11 +1512,11 @@ static void present_cfg(const win_t *o) {
     if (!g_hz) LOG("[nvn] 【警告】DM_PRESENT_HZ=0：不限帧率，帧节奏非真机，界面逻辑可能偏离（仅供性能剖析，不能用于判据 / 对拍）");
     // 剪口（有意偏离原版行为）：DM_PRESENT_INTERVAL=display 时不按游戏设的出图间隔，每个节拍出一帧，
     // 固定 60 帧硬底；逻辑 25 拍不变，且客户端按帧计数的界面逻辑不受影响——
-    // 同存档同输入下两模式 UI 消息流逐条一致。证明（选角前）：r9 game / display 60 ×3 / display 120 ×2 共 6 组 uicmp 一致
+    // 同存档同输入下两模式 UI 消息流逐条一致。证明（选角前）：r9 game / display 60 ×3 / display 120 ×2 共 6 组逐条一致
     // （存档指示按时序竞态豁免），关键消息时刻差在 game 自身噪声带内；进局后的证明尚缺，待动作脚本覆盖
     // Cut (intentional deviation from the original game's behavior): with DM_PRESENT_INTERVAL=display the present interval set by the game is not followed and one frame is presented per display-link tick,
     // with a fixed hard floor of 60 fps; the logic stays at 25 ticks, and the client's frame-counted UI logic is unaffected -
-    // with the same save and the same input, the UI message streams of the two modes match message by message. Proof (before character select): r9 game / display 60 ×3 / display 120 ×2, 6 groups in total, uicmp consistent
+    // with the same save and the same input, the UI message streams of the two modes match message by message. Proof (before character select): r9 game / display 60 ×3 / display 120 ×2, 6 groups in total, identical message by message
     // (the save indicator is exempted as a timing race), and the timing differences of key messages are within game mode's own noise band; proof after entering a run is still missing, pending action script coverage
     const char *m = getenv("DM_PRESENT_INTERVAL"); g_display_mode = m ? !strcmp(m, "display") : scr > 0;
     char name[128]; front_display_refresh(name, sizeof name);
@@ -1639,11 +1525,11 @@ static void present_cfg(const win_t *o) {
     else LOG("[nvn] 出图节拍 %d Hz，间隔模式 %s（游戏设的出图间隔 %d；%s）", g_hz, g_display_mode ? "display（每节拍一帧，剪口）" : "game（原版语义）", o->interval,
         e ? "DM_PRESENT_HZ 钉住" : "无窗口，固定 60 Hz");
 }
-// 自适应出图档（DM_PACE_ADAPT=1；鸿蒙缺省开）：跑不到 60 档时，原节拍器从不起作用，游戏帧的开始时刻跟着 GPU 栅栏忽早忽晚（实测 8 / 48 ms 交替），
+// 自适应出图档（DM_PACE_ADAPT=1）：跑不到 60 档时，原节拍器从不起作用，游戏帧的开始时刻跟着 GPU 栅栏忽早忽晚（实测 8 / 48 ms 交替），
 // 游戏按墙钟推进动画，屏上就是「卡一下、快进一下」。这里按屏幕刷新率的整数分之一（120 Hz：60 / 40 / 30 / 24 / 20）选当前撑得住的最高一档，
 // 让节拍器按这一档均匀放行游戏帧。撑不住的判据取整条流水线的瓶颈：max（游戏线程每帧 CPU 的均值，翻译线程真实每帧 CPU，GPU 每帧时间）。
 // 降档：瓶颈超过本档周期 3% 立即降；升档：瓶颈低于上一档周期的 88%、连续 90 帧才升，避免来回跳。
-// Adaptive present tier (DM_PACE_ADAPT=1; on by default on HarmonyOS): below the 60 tier the original pacer never engages, so game frame starts follow the GPU fences early
+// Adaptive present tier (DM_PACE_ADAPT=1): below the 60 tier the original pacer never engages, so game frame starts follow the GPU fences early
 // or late (measured alternating 8 / 48 ms); the game advances animation by wall clock, so the screen shows "stall, then fast-forward". This picks, among integer fractions of
 // the screen refresh (120 Hz: 60 / 40 / 30 / 24 / 20), the highest tier currently sustainable and lets the pacer release game frames evenly at it. "Sustainable" uses the
 // whole pipeline's bottleneck: max(mean game-thread CPU per frame, actual translation-thread CPU per frame, GPU time per frame).
@@ -1803,9 +1689,9 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
           if (on && r->f == f - 8 && f - 8 > 0 && (lf || lg)) { char b[512];
               snprintf(b, sizeof b, "帧 %llu（%.2f s）整帧 %.1f ms，提交+出图 %.1f ms，GPU %.1f ms；新建管线 %u 条 + 着色器库 %u 个共 %.1f ms；上传贴图 首传 %u 张 + 重传 %u 次 %.1f MB / %.1f ms",
                        (unsigned long long)r->f, r->t_s, r->fr, r->nv, g, r->pso, r->lib, r->make_ms, r->up, r->rup, r->up_mb, r->up_ms);
-              // 整帧不长、只因 GPU 才记的行标出来：没有 GPU 读数的后端（安卓原先如此）只记得到整帧长的那种，分开数才能和旧记录比
-              // Lines logged only because of the GPU, for a frame that was not long, are marked: a backend without GPU readings (Android until
-              // now) logged only frames that were long, so counting the two apart keeps comparisons with older logs possible
+              // 整帧不长、只因 GPU 才记的行标出来：没有 GPU 读数的后端只记得到整帧长的那种，分开数才能和旧记录比
+              // Lines logged only because of the GPU, for a frame that was not long, are marked: a backend without GPU readings
+              // logged only frames that were long, so counting the two apart keeps comparisons with older logs possible
               if (!lf) strlcat(b, "；整帧不长，GPU 长", sizeof b);
               // 可见性：长帧「晚出来」的那段时间屏幕上停着的是上一帧；上一帧若是读取画面（或本帧自己就是），玩家看到的只是读取画面多停了一下，没有运动被打断
               // Visibility: during the time a long frame "comes out late", what stays on screen is the previous frame; if the previous frame was a loading screen (or this frame itself is one), all the player sees is the loading screen staying a bit longer, with no motion interrupted

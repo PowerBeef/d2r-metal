@@ -30,15 +30,6 @@ t_pace: t_pace.c ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_pace.c
 t_adaptive_pace: t_adaptive_pace.c ../nvn/nvn_adaptive_pace.h ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_adaptive_pace.c
-# xbg_texture.c 弱引用宿主的 dm_prof_add；macOS 的链接器要明说允许它缺席。
-# xbg_texture.c weakly references the host's dm_prof_add; the macOS linker must be told it may be absent.
-ifeq ($(shell uname),Darwin)
-WEAK_PROF := -Wl,-U,_dm_prof_add
-endif
-t_bc8: t_bc8.c ../vulkan/engine/xbg_texture.c ../vulkan/engine/xbg_texture.h ../nvn/nvn_tex.c ../tex/nvn_deswizzle.h
-	clang -O1 -Wall -Wno-unused-function -fsigned-char -I../vulkan/engine -o $@ t_bc8.c ../vulkan/engine/xbg_texture.c ../nvn/nvn_tex.c -lpthread $(WEAK_PROF)
-t_completion_wait: t_completion_wait.cpp ../vulkan/engine/xbg_completion_wait.h
-	clang++ -std=c++17 -O1 -Wall -pthread -DDM_COMPLETION_WAIT_SELFTEST -DDM_COMPLETION_WAIT_MAIN -o $@ t_completion_wait.cpp
 t_fuse_check: t_fuse_check.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_fuse_check.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rt_srgb_view: t_rt_srgb_view.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -87,8 +78,6 @@ t_replay_asan: t_replay_san.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H
 # Dependencies one per line in alphabetical order (so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
 	t_adaptive_pace \
-	t_bc8 \
-	t_completion_wait \
 	t_copy_pitch \
 	t_builtin \
 	t_cover \
@@ -130,8 +119,6 @@ run: \
 	./t_deswz_gpu
 	./t_pace
 	./t_adaptive_pace
-	./t_bc8
-	./t_completion_wait
 	./t_refl
 	./t_refl_lib
 	./t_hmap
@@ -169,13 +156,6 @@ run: \
 	python3 test_tbdr_budget.py
 	python3 test_ub_table.py
 .PHONY: run
-# 旧接口版那一遍（图形后端编译期开关 DM_NVN_M3=1，目标 macOS 15.0）：在旁边的 tests_m3 目录里用同一份测试源码另编另跑，不动这里的缺省产物。
-# 闸门（verify/accept.sh）两遍都跑，免得以后只测一边
-# The older-API pass (compile-time switch DM_NVN_M3=1 of the graphics backend, target macOS 15.0): built and run separately from the same test sources in the sibling tests_m3 directory, leaving the default outputs here untouched.
-# The gate (verify/accept.sh) runs both passes, so that only one side being tested cannot happen later
-run-m3:
-	rm -rf ../tests_m3 && mkdir ../tests_m3 && cp Makefile *.c *.cpp *.m *.py ../tests_m3/
-	$(MAKE) -C ../tests_m3 run CFLAGS="$(CFLAGS) -DDM_NVN_M3=1 -mmacosx-version-min=15.0"
 
 t_copy_pitch: t_copy_pitch.c ../nvn/nvn_copy_pitch.h
 	clang -O1 -Wall -Werror -o $@ t_copy_pitch.c

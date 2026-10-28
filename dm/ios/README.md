@@ -1,7 +1,5 @@
 # dm/ios — iOS shell
 
-中文：[README.zh-CN.md](README.zh-CN.md)
-
 The iOS app of D2R Mobile: it packs the host (`dm/host`), the graphics layer (`dm/gfx`) and the rewritten game program into one app, and is responsible for starting up, locating the game assets, turning touches into input the game understands, and laying touch controls over the original UI.
 
 Read these first; this document does not repeat them:
@@ -144,7 +142,6 @@ cp local.env.example local.env
 | `DM_BUNDLE_ID` | The app's bundle ID, which you choose yourself (reverse-domain style). The app group and iCloud container are derived from it: `group.<bundle ID>`, `iCloud.<bundle ID>` | Building the app, all smoke test and regression scripts |
 | `DM_DEVICE` | The real device's devicectl device identifier (the Identifier column of `xcrun devicectl list devices`) | Installing to the device and the real-device scripts |
 | `DM_IOS_UDID` | The real device's hardware UDID | The battery check of the real-device smoke test, `tools/lifecycle.sh`, `tools/xtrace.sh` |
-| `MINI_SSH` | The ssh target of a second Mac dedicated to running tests | Only used by `dm/tools/l3run.sh` and `dm/tools/mini_sync.sh`; leave it empty if you have no second Mac |
 
 The scripts read the configuration through `tools/local_env.sh`, searching in this order and **reading only the first file that exists, without merging**: the file pointed to by the environment variable `DM_LOCAL_ENV` → `dm/ios/local.env` → `~/.config/dm-ios/local.env`. The last location is convenient for sharing between several worktrees on the same machine; note that once a worktree has a `local.env`, the shared one is not read at all.
 
@@ -278,6 +275,6 @@ Under `tools/` there are also self-tests that come with a few of the scripts: `d
 | `touch_e2e.sh`, `touch_e2e_mac.sh` | Run one touch script and collect the log and screenshots |
 | `charsel_retap.sh` | Touch regression of the character select page (iOS package on a Mac) |
 | `lifecycle.sh` | One round of lifecycle testing on a real device: go to the background and come back to the foreground |
-| `screen_check.py`, `fullscreen_check.py` | Check orientation, black borders and stretching from whole-window screenshots |
+| `screen_check.py` | Checks orientation, black borders and stretching from whole-window screenshots |
 | `bootprof.sh`, `heat_ab.sh`, `gpu_read.sh`, `xtrace.sh` | Real-device measurements: startup timeline, heat comparison, GPU time, Instruments command-line recording |
 | `asset_manifest.py` | Generates the manifest for the direct asset download path |

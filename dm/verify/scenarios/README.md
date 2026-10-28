@@ -1,7 +1,5 @@
 # Scenarios
 
-中文：[README.zh-CN.md](README.zh-CN.md)
-
 A scenario drives a running game step by step through the [control port](../control_port.md) and judges the run by events, state and final checks. Each step waits until its effect has gone through, so there are no timing guesses. `dm/tools/scenario.py` runs them:
 
 ```bash

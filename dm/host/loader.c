@@ -46,59 +46,12 @@ static void create_keys(void) {
     tsd_probe();
 }
 
-// 线程槽基址与键号 → 槽偏移（与 patch_nso.py emit_tp 一一对应）。
-// 苹果：pthread TSD 布局固定，槽 = tpidrro_el0 + 8*key。
-// 安卓：tpidr_el0 → bionic TCB，TCB[-1]（TLS_SLOT_BIONIC_TLS）= bionic_tls，键 k 的值在 bionic_tls + 键表偏移 + 16k + 8
-// （pthread_key_data_t = {seq, data}）。键表偏移是 bionic 内部布局，不写死：装载时设一个已知值、在 bionic_tls 里找到它反推，再用第二个键复核。
-// Thread slot base and key number → slot offset (one-to-one with patch_nso.py emit_tp).
+// Thread slot base and key number -> slot offset (one-to-one with patch_nso.py emit_tp).
 // Apple: the pthread TSD layout is fixed, slot = tpidrro_el0 + 8*key.
-// Android: tpidr_el0 → bionic TCB, TCB[-1] (TLS_SLOT_BIONIC_TLS) = bionic_tls, the value of key k lives at bionic_tls + key table offset + 16k + 8
-// (pthread_key_data_t = {seq, data}). The key table offset is a bionic internal layout and is not hard-coded: at load time set a known value, find it in bionic_tls to derive the offset, then re-check with a second key.
-#ifdef __ANDROID__
-#define DM_PATCH_TARGET 1
-static uint64_t g_tsd_off;
-static uint8_t *tsd_base(void) { uint64_t tp; __asm__ volatile("mrs %0, tpidr_el0" : "=r"(tp)); return ((uint8_t **)tp)[-1]; }
-// bionic 的键号 = 键表下标 | KEY_VALID_FLAG（第 31 位，实测 0x80000006 这种），取下标要去掉标记位
-// A bionic key number = key table index | KEY_VALID_FLAG (bit 31; measured values look like 0x80000006); strip the flag bit to get the index
-static uint64_t key_index(pthread_key_t k) { return (uint32_t)k & 0x7fffffffu; }
-static uint64_t slot_off(pthread_key_t k) { return g_tsd_off + key_index(k) * 16 + 8; }
-static void tsd_probe(void) {
-    void *const magic = (void *)0x6d4d7d5d4d3d2d1dull, *const magic2 = (void *)0x1d2d3d4d5d7d4d6dull;
-    pthread_setspecific(g_key18, magic);
-    uint8_t *b = tsd_base(); uint64_t at = 0;
-    for (uint64_t o = 8; o < 0x4000 && !at; o += 8) if (*(void **)(b + o) == magic) at = o;
-    pthread_setspecific(g_key18, 0);
-    if (!at || at < key_index(g_key18) * 16 + 8) die("bionic 键表没找到（键 %#x 设的值不在 bionic_tls 前 16 KB 里）", (unsigned)g_key18);
-    g_tsd_off = at - key_index(g_key18) * 16 - 8;
-    pthread_setspecific(g_keygate, magic2);
-    int ok = *(void **)(b + slot_off(g_keygate)) == magic2;
-    pthread_setspecific(g_keygate, 0);
-    if (!ok) die("bionic 键表布局不符（键表偏移 %#llx 对键 %#x 不成立）", (unsigned long long)g_tsd_off, (unsigned)g_keygate);
-    LOG("bionic 键表偏移 %#llx", (unsigned long long)g_tsd_off);
-}
-#elif defined(__OHOS__)
-// 鸿蒙（musl）：tpidr_el0 − 272 处是 struct pthread 的 tsd 指针，键 k 的值 = tsd[k]（Mate 90 / API 26 真机实测，子线程与主线程一致，
-// 见 dm/harmony/probe）。偏移由 patch_nso.py DM_TARGET=ohos 写进改写代码；这里装载时复核，系统 musl 布局一变即停，不读错槽。
-// HarmonyOS (musl): tpidr_el0 - 272 holds struct pthread's tsd pointer, and key k's value = tsd[k] (measured on a Mate 90 / API 26,
-// same for worker and main threads; see dm/harmony/probe). patch_nso.py DM_TARGET=ohos bakes the offset into the patch code; the
-// loader re-checks it here and stops if the system musl layout ever changes, rather than reading the wrong slot.
-#define DM_PATCH_TARGET 2
-#define DM_OHOS_TSD_OFF 272
-static uint8_t *tsd_base(void) { uint64_t tp; __asm__ volatile("mrs %0, tpidr_el0" : "=r"(tp)); return *(uint8_t **)(tp - DM_OHOS_TSD_OFF); }
-static uint64_t slot_off(pthread_key_t k) { return (uint64_t)k * 8; }
-static void tsd_probe(void) {
-    void *const magic = (void *)0x6d4d7d5d4d3d2d1dull;
-    pthread_setspecific(g_keygate, magic);
-    int ok = *(void **)(tsd_base() + slot_off(g_keygate)) == magic;
-    pthread_setspecific(g_keygate, 0);
-    if (!ok) die("musl 线程键布局不符（tpidr_el0-%d 处不是 tsd 指针）：系统 libc 变了，需重测偏移并重出改写产物", DM_OHOS_TSD_OFF);
-}
-#else
 #define DM_PATCH_TARGET 0
 static uint8_t *tsd_base(void) { uint64_t b; __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(b)); return (uint8_t *)(b & ~7ull); }
 static uint64_t slot_off(pthread_key_t k) { return (uint64_t)k * 8; }
 static void tsd_probe(void) {}
-#endif
 // K 槽校验：经键页取到的槽与 pthread_setspecific 写的是同一格
 // K slot check: the slot reached through the key page is the same cell that pthread_setspecific writes
 static void tsd_check(void) {
@@ -213,7 +166,7 @@ static void read_layout(module_t *m, const char *dir) {
     FILE *f = fopen(path, "r");
     if (!f) die("open %s", path);
     static const char *kn[8] = {"K18", "KTLS", "KTLR", "KGATE", "KRES0", "KRES1", "KASPECT", "KASPECTUI"};
-    char line[256], key[32]; unsigned long v, target = 0; unsigned seen = 0;   // 没有 TARGET 行的产物 = 苹果（早于安卓的产物） | A build output without a TARGET line = Apple (predates Android)
+    char line[256], key[32]; unsigned long v, target = 0; unsigned seen = 0;   // A build output without a TARGET line = Apple
     while (fgets(line, sizeof line, f)) {
         if (sscanf(line, "# %31s %lx", key, &v) != 2) die("%s: 产物是旧改写器出的，换成当前代号（dm/PRODUCT）的产物", path);
         if (!strcmp(key, "TARGET")) target = v;
@@ -233,9 +186,7 @@ static void read_layout(module_t *m, const char *dir) {
     fclose(f);
     if (!m->patch_off || m->key_page_off % 0x4000 || m->key_page_size != 0x4000 || seen != 0xff)
         die("%s: 产物是旧改写器出的，换成当前代号（dm/PRODUCT）的产物", path);
-    static const char *const tname[] = {"苹果", "安卓", "鸿蒙"}, *const tflag[] = {"apple", "android", "ohos"};
-    if (target != DM_PATCH_TARGET) die("%s: 产物是给%s出的（TARGET %lu），本机要 %s 的产物（patch_nso.py 用 DM_TARGET=%s 重出）", path,
-                                       target < 3 ? tname[target] : "未知平台", target, tname[DM_PATCH_TARGET], tflag[DM_PATCH_TARGET]);
+    if (target != DM_PATCH_TARGET) die("%s: build output is for another platform (TARGET %lu); rebuild it with dm/tools/product.sh build", path, target);
 }
 
 static void install_key_page(module_t *m) {
@@ -358,26 +309,7 @@ static void remap_at(module_t *m, vm_address_t to, const void *from, unsigned lo
     if (kr != KERN_SUCCESS || a != to) die("%s vm_remap %p → %#lx（%#lx 字节）失败：%d", m->name, from, (unsigned long)to, size, kr);
     if ((cur & need) != need) die("%s vm_remap 后权限 %#x，缺 %#x", m->name, cur, need);
 }
-#ifdef DM_SHELL
-// 壳（ios/tools/shell_build.sh 出的、不含任何游戏内容的 App）：模块映像不在主可执行文件里，在使用者自己用游戏文件做出来的
-// Frameworks/Guest.framework/Guest 里——一个只装段的动态库（dm/tools/guest_dylib.py 写出），节名与内嵌做法相同，下面只换一个映像头去取。
-// Shell (the App built by ios/tools/shell_build.sh, containing no game content at all): the module images are not in the main executable but in the
-// Frameworks/Guest.framework/Guest that users build themselves from their game files -- a dynamic library that holds only segments (written by dm/tools/guest_dylib.py), with the same section names as the embedded approach; below only the image header to fetch from is swapped.
-#include <dlfcn.h>
-#include <mach-o/dyld.h>
-static const struct mach_header_64 *image_mh(void) {
-    static const struct mach_header_64 *mh; if (mh) return mh;
-    char exe[4096]; uint32_t n = sizeof exe; if (_NSGetExecutablePath(exe, &n)) die("取不到可执行文件路径");
-    char *sl = strrchr(exe, '/'); if (!sl || (size_t)(sl - exe) + 40 > sizeof exe) die("可执行文件路径不对：%s", exe); strcpy(sl, "/Frameworks/Guest.framework/Guest");
-    if (!dlopen(exe, RTLD_NOW)) die("这个安装包里还没有游戏程序（%s）：先用 dm/tools/d2rm_pack.py 把你自己的游戏文件做进安装包再装。系统的说法：%s", exe, dlerror());
-    for (uint32_t i = 0; i < _dyld_image_count(); i++) if (strstr(_dyld_get_image_name(i), "/Guest.framework/Guest")) mh = (const struct mach_header_64 *)_dyld_get_image_header(i);
-    if (!mh) die("Guest 动态库已加载但找不到它的映像头");
-    fprintf(stderr, "boot: 模块映像取自 Guest 动态库 %s\n", exe); return mh;
-}
-#define IMAGE_MH image_mh()
-#else
 #define IMAGE_MH (&_mh_execute_header)
-#endif
 static void map_image(module_t *m, const char *dir) {
     (void)dir;
     char sx0[17], sx1[17], dm[17]; snprintf(sx0, sizeof sx0, "__dm%sx0", m->name); snprintf(sx1, sizeof sx1, "__dm%sx1", m->name); snprintf(dm, sizeof dm, "__DM%sW", m->name);

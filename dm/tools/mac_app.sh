@@ -10,9 +10,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd); DM=$HERE/..; ROOT=${DM_ROOT:-$HOME/dm-work}
 OUT=${1:-$ROOT/out/macapp}; KIND=${DM_MAC_PRODUCT:-touch}; BID=${DM_MAC_BUNDLE_ID:-org.d2rmobile.mac}
 P=$(bash "$HERE/product.sh" path "$KIND"); [ -f "$P/main.patched.bin" ] || { echo "🔴 没有产物 ${P}（先跑 product.sh build）"; exit 2; }
-# DM_MAC_M3=1：旧接口版（图形后端不用 Metal 4，最低系统 host/Makefile 的 MACOS_MIN_M3）。包名、显示名、包标识都带 M3，能和正式包并存；存档与日志目录也是另一个
-# DM_MAC_M3=1: older-API build (the graphics backend does not use Metal 4; minimum system is MACOS_MIN_M3 in host/Makefile). Package name, display name and bundle identifier all carry M3 so it can coexist with the regular package; the save and log directory is a separate one as well
-M3=${DM_MAC_M3:-}; NAME="D2R Metal${M3:+ M3}"; [ -z "$M3" ] || BID=${DM_MAC_BUNDLE_ID:-org.d2rmobile.mac.m3}
+NAME="D2R Metal"
 # DM_MAC_ICLOUD=1：用付费开发者的 provisioning profile（带 iCloud 能力的 Mac profile）签名，出的 App 能 iCloud 同步存档。
 # 把 profile 放进签名目录（缺省 ~/dm-work/mac-sign，DM_MAC_SIGN_DIR 可换）即可：团队、包标识、entitlements、证书全从 profile 里读，
 # 签名身份按内嵌证书的 SHA-1 指纹在钥匙串精确匹配；包标识决定 iCloud 容器（iOS 包的 profile = 与手机同步，自定标识 = 两台 Mac 互同步）。
@@ -38,16 +36,14 @@ if [ -n "$ICLOUD" ]; then
   [ "$EXPS" -gt "$(date +%s)" ] || { echo "🔴 $(basename "$PF") 已过期（${EXP}）：重新下载一份放进签名目录"; exit 3; }
   echo "签名用 profile：$(basename "$PF")（包标识 ${BID}，到期 ${EXP}）"
 fi
-make -C "$DM/host" ${M3:+dmhost_m3} > /dev/null
-MIN=$(make -s -C "$DM/host" print-macos-min${M3:+-m3})   # 最低系统版本：与编译宿主用的是同一个数（host/Makefile 的 MACOS_MIN / MACOS_MIN_M3） | minimum system version: the same number the host is compiled with (MACOS_MIN / MACOS_MIN_M3 in host/Makefile)
-# 整包先在输出目录里的暂存目录 STG 出（链接式的覆盖层、旧接口版重编的着色器库也在里面），codesign --verify 过了才换到输出目录：
-# 原先一上来就删旧包，后面哪一步失败都只剩半个包（/Applications 里的链接指着一个起不来的 App），覆盖层也已经被删掉重出
-# The whole package is first built in the staging folder STG inside the output folder (together with the link-style overlay and the shader libraries the older-API build recompiles) and only moved into the output folder after codesign --verify passes:
+make -C "$DM/host" > /dev/null
+MIN=$(make -s -C "$DM/host" print-macos-min)   # minimum system version: the same number the host is compiled with (MACOS_MIN in host/Makefile)
+# The whole package is first built in the staging folder STG inside the output folder (together with the link-style overlay) and only moved into the output folder after codesign --verify passes:
 # the old package used to be deleted first, so a failure at any later step left half a package (the /Applications link pointed at an App that could not start), with the overlay already deleted and being rebuilt
 DST="$OUT/$NAME.app"; STG="$OUT/.mac_app.new"; APP="$STG/$NAME.app"
 trap 'rm -rf "$STG" ${TMPD:+"$TMPD"}' EXIT
 rm -rf "$STG"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$DM/host/dmhost${M3:+_m3}" "$APP/Contents/MacOS/D2RMobile"
+cp "$DM/host/dmhost" "$APP/Contents/MacOS/D2RMobile"
 LINK=${DM_MAC_LINK-1}; [ "$LINK" != 0 ] || LINK=; RES="$APP/Contents/Resources"; : > "$RES/paths.txt"
 if [ -n "$LINK" ]; then echo "product=$P" >> "$RES/paths.txt"; else cp -R "$P" "$RES/product"; fi
 cp "$DM/gfx/nvn/shader_map.tsv" "$APP/Contents/Resources/shader_map.tsv"
@@ -56,12 +52,7 @@ cp "$DM/gfx/nvn/pso_manifest.tsv" "$APP/Contents/Resources/pso_manifest.tsv"   #
 # 编好的着色器库（Mac 版，dmsh_build.py 出的）：只带运行要用的 .metallib 与反射 .json，源码 .metal 不带
 # The compiled shader library (Mac variant, produced by dmsh_build.py): only the .metallib and reflection .json needed at run time are included, not the .metal sources
 V=$(sed -n 's/.*DMSH_CHAIN "\(.*\)".*/\1/p' "$DM/gfx/nvn/dmsh_chain.h")
-# 旧接口版：着色器库也要按它的最低系统重编一份（缓存里那份记的目标是编译机的系统版本，老系统上加载不了）；DM_MSL_DIR 给了就用给的
-# Older-API build: the shader libraries must also be recompiled for its minimum system (the ones in the cache record the system version of the build machine as target and cannot be loaded on an older system); DM_MSL_DIR is used when given
-# 重编到暂存目录，包里记的是换上去之后的位置 $OUT/msl_min$MIN；MSLR = 这次从哪读 | Recompiled into the staging folder; the package records the location after the swap, $OUT/msl_min$MIN; MSLR = where to read from this time
-MSLR=
-[ -z "$M3" ] || [ -n "${DM_MSL_DIR:-}" ] || { bash "$DM/gfx/tools/msl_retarget.sh" "$MIN" "$STG/msl_min$MIN" > /dev/null || { echo "🔴 着色器库按 macOS ${MIN} 重编失败"; exit 2; }; DM_MSL_DIR=$OUT/msl_min$MIN; MSLR=$STG/msl_min$MIN/b-$V; }
-MSL=${DM_MSL_DIR:-$ROOT/build/cache/metal_shader_cache}/b-$V; MSLR=${MSLR:-$MSL}
+MSL=${DM_MSL_DIR:-$ROOT/build/cache/metal_shader_cache}/b-$V; MSLR=$MSL
 [ -d "$MSLR" ] || { echo "🔴 没有着色器库 ${MSL}（先跑 dm/gfx/tools/dmsh_build.py）"; exit 2; }
 if [ -n "$LINK" ]; then echo "msl=$(dirname "$MSL")" >> "$RES/paths.txt"
 else mkdir -p "$RES/msl/b-$V"; rsync -a --include='*.metallib' --include='*.json' --exclude='*' "$MSLR/" "$RES/msl/b-$V/"; fi
@@ -139,9 +130,6 @@ PL
 # 自检：管线预热的种子清单在包里、与映射表同目录、不是空的
 # Self-check: the seed list for pipeline warm-up is in the package, in the same directory as the mapping table, and not empty
 [ -s "$RES/pso_manifest.tsv" ] && [ -s "$RES/shader_map.tsv" ] || { echo "🔴 包里缺管线预热种子清单或着色器映射表（Resources/pso_manifest.tsv、shader_map.tsv）"; exit 3; }
-# 旧接口版另核：程序本体里不许引用任何 Metal 4 符号
-# Extra check for the older-API build: the executable must not reference any Metal 4 symbol
-[ -z "$M3" ] || { N4=$(nm "$APP/Contents/MacOS/D2RMobile" | grep -c MTL4 || true); [ "$N4" = 0 ] || { echo "🔴 旧接口版的程序本体里还有 ${N4} 个 Metal 4 符号"; exit 3; }; }
 # 自检：带进包的着色器库记的目标系统不许高于包声明的最低系统（抽查头、中、尾各一个与一个 _bf；链接式的包不带库，不查）
 # Self-check: the target system recorded in the shader libraries carried in the package must not be higher than the minimum system the package declares (spot-check one each from the head, middle and tail plus one _bf; a link-style package carries no libraries and is not checked)
 if [ -z "$LINK" ]; then ( cd "$RES/msl/b-$V" && for f in $(ls | grep '_b\.metallib$' | sed -n '1p;1000p;$p') $(ls | grep '_bf\.metallib$' | head -1); do
@@ -153,7 +141,7 @@ done ) || exit 3; fi
 BIN_MIN=$(otool -l "$APP/Contents/MacOS/D2RMobile" | awk '$1=="minos"{print $2; exit}'); PL_MIN=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist")
 [ -n "$BIN_MIN" ] && [ "$BIN_MIN" = "$PL_MIN" ] || { echo "🔴 最低系统版本对不上：程序本体 ${BIN_MIN:-读不到}，Info.plist ${PL_MIN}"; exit 3; }
 ARCHS=$(lipo -archs "$APP/Contents/MacOS/D2RMobile"); [ "$ARCHS" = arm64 ] || { echo "🔴 程序本体的架构不是只有 arm64：${ARCHS}"; exit 3; }
-python3 "$HERE/mac_bundle.py" "$APP/Contents/MacOS/D2RMobile" "$DM/host/dmhost${M3:+_m3}"
+python3 "$HERE/mac_bundle.py" "$APP/Contents/MacOS/D2RMobile" "$DM/host/dmhost"
 if [ -z "$ICLOUD" ]; then
   codesign --force -s - "$APP" > /dev/null 2>&1 || { echo "🔴 本地签名失败"; exit 3; }
 else
@@ -175,4 +163,4 @@ codesign --verify --deep --strict "$APP"
 [ -z "$LINK" ] || [ "${DM_MAC_OVERLAY:-}" = none ] || rm -rf "$OUT/romfs_overlay.local" "$OUT/romfs_overlay.local_variants"
 for e in "$STG"/*; do rm -rf "${OUT:?}/${e##*/}"; mv "$e" "$OUT/" || { echo "🔴 新包换不到 ${OUT}（${e##*/}）"; exit 3; }; done
 APP=$DST
-echo "MACAPP ${APP}（${M3:+旧接口版，}版本 ${VER} 构建 ${BUILD}，最低系统 macOS ${MIN}，产物 $(basename "$P")，$(du -sh "$APP" | cut -f1)${LINK:+，不带派生物：只能在本机跑}）"
+echo "MACAPP ${APP}（版本 ${VER} 构建 ${BUILD}，最低系统 macOS ${MIN}，产物 $(basename "$P")，$(du -sh "$APP" | cut -f1)${LINK:+，不带派生物：只能在本机跑}）"

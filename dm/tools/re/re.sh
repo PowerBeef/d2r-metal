@@ -8,6 +8,7 @@
 #   serve [--index] | stop | status   查询服务 pyghidra-mcp（serve.py；127.0.0.1:${DM_RE_PORT:-8000}，唯一持有工程的进程）
 #   q …       查询服务的命令行客户端（q.py：反编译 / 交叉引用 / 改名 / 注释，地址一律写 main+0x…）
 #   snap      把工程打包成 re/snap/main-<时间>.gzf，只留最近两份
+#   addrcheck 源码里引用的 main+0x… 与游戏程序 / 分析库导出对得上（addrcheck.py；不碰工程）
 # Entry point for the engine-analysis database: environment (Java 25, Ghidra 12.2, $DM_ROOT/re/venv), the project lock, starting and stopping the query server. All output stays in $DM_ROOT/re, never committed.
 #   setup     creates $DM_ROOT/re and the Python 3.13 venv (pyghidra from Ghidra's own bundle, pyghidra-mcp at a pinned version)
 #   convert   the game's ExeFS main -> re/in/main.elf (nso2elf.py)
@@ -17,6 +18,7 @@
 #   serve [--index] | stop | status   the pyghidra-mcp query server (serve.py; 127.0.0.1:${DM_RE_PORT:-8000}, the only process that holds the project)
 #   q ...     command-line client for the query server (q.py: decompile / xrefs / rename / comment, addresses always written main+0x...)
 #   snap      packs the project into re/snap/main-<time>.gzf, keeping the latest two
+#   addrcheck the main+0x... addresses the sources cite match the game program and the database export (addrcheck.py; does not touch the project)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DM_ROOT="${DM_ROOT:-$HOME/dm-work}"
@@ -63,6 +65,9 @@ case "$cmd" in
     ;;
   tables)
     python3 -I "$HERE/tables.py" "$@"
+    ;;
+  addrcheck)
+    "$DM_ROOT/build/cache/dm/venv/bin/python" -I "$HERE/addrcheck.py" "$@"
     ;;
   import|analyze|baseline|check)
     need_free; "$PY" -I "$HERE/ghidra_db.py" "$cmd" "$@"
@@ -121,5 +126,5 @@ EOF
     ls -1t "$RE"/snap/main-*.gzf | tail -n +3 | while read -r old; do rm -f "$old"; done
     echo "SNAP OK $out ($(du -h "$out" | cut -f1))"
     ;;
-  *) die "usage: re.sh setup|convert|reflect|tables|import|analyze|baseline|check|autoname|seed|export|serve|stop|status|snap|q" ;;
+  *) die "usage: re.sh setup|convert|reflect|tables|import|analyze|baseline|check|autoname|seed|export|serve|stop|status|snap|q|addrcheck" ;;
 esac

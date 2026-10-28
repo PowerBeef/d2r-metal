@@ -1,5 +1,4 @@
 host/dmhost
-host/dmhost_m3
 host/dmhost_asan
 host/dmhost_ubsan
 host/dmhost_tsan

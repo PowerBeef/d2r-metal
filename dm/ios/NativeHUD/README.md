@@ -1,7 +1,5 @@
 # NativeHUD — bottom bar
 
-中文：[README.zh-CN.md](README.zh-CN.md)
-
 The strip at the bottom of the screen in game: life orb, mana orb, belt, feature entry, experience bar. Most of it is not UI drawn by the shell itself but widgets of the game's original HUD (the always-present in-game UI), rearranged.
 
 ## Arrangement

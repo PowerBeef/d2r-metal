@@ -19,7 +19,7 @@ static id g_rep;
 static void report(const char *label, int area, int players) {
     @autoreleasepool {
         NSDictionary *meta = area > 0 ? @{@"area": @(area), @"players": @(players)} : nil;
-        if (@available(macOS 27.0, iOS 27.0, tvOS 27.0, *)) [(SRStateReporter *)g_rep reportTransitionToStateLabel:@(label) stableMetadata:nil volatileMetadata:meta];
+        if (@available(macOS 27.0, iOS 27.0, *)) [(SRStateReporter *)g_rep reportTransitionToStateLabel:@(label) stableMetadata:nil volatileMetadata:meta];
     }
 }
 #endif
@@ -28,7 +28,7 @@ __attribute__((constructor)) static void staterep_init(void) {
     if (!e || strcmp(e, "1")) return;
 #ifdef DM_HAVE_SR
     if (!dlopen("/System/Library/Frameworks/StateReporting.framework/StateReporting", RTLD_LAZY)) { fprintf(stderr, "[dm] DM_STATEREP：系统没有 StateReporting（需 macOS / iOS 27），不上报 | StateReporting not available, not reporting\n"); return; }
-    if (@available(macOS 27.0, iOS 27.0, tvOS 27.0, *)) {
+    if (@available(macOS 27.0, iOS 27.0, *)) {
         Class c = NSClassFromString(@"SRStateReporter");
         if (c) g_rep = [(id)c reporterForDomain:@"GameState"];
     }

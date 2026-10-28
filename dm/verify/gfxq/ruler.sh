@@ -2,7 +2,6 @@
 # 视觉等价尺子（同进程 A/B/C）：每帧一个宿主、同一冻结拍连截三张——A、B 用真值设置（DM_NVN_RULER=1：TBDR 优化全关），
 # 提交边界切到被测设置（缺省全开 + 调用方透传的环境）截 C。噪声 = FLIP(A,B)，差异 = FLIP(B,C)，-ppd 95；判「FLIP 差异 ≤ 0.01 且 ≤ 2×噪声 + 0.002」并且「大差像素（任一通道差 > 30/255）数：差异 ≤ 2×噪声 + 画面像素的 0.005%」。
 # 跨运行比不可用：两次同设置独立运行的噪声底营地单帧 0.0108。只能测运行中可切换的设置。
-# 用法：ruler.sh <dmhost> <产物目录> <宽x高> <输出目录> [帧号…，缺省 02 营地 16 野外 18 战斗 06 菜单]   产物：<输出目录>/<帧号>_{A,B,C}.png、<帧号>.log
 # 口径（RULER_MODE）：exact（缺省）= 合并 / 跳过类，应与真值同图，按 2×噪声线判；
 #   approx = 降分辨率 / 换滤波 / 近似类，按「FLIP(B,C) ≤ 0.02」判（实机上 3D 内部 0.75–0.80 倍、FLIP 0.017–0.023 肉眼无差别），
 #   局部缺损判据放宽为「差 > 60/255 的像素数 B–C ≤ 2×A–B + 画面 0.05%」（边缘本来就会动；阈值待用 X1 的图校准，行里把两档像素数都打出来）。
@@ -10,7 +9,7 @@
 # Visual-equivalence ruler (same process A/B/C): one host per frame, three consecutive shots of the same frozen tick - A and B use the ground-truth settings (DM_NVN_RULER=1: all TBDR optimizations off),
 # at a commit boundary switch to the settings under test (default all on + the environment passed through by the caller) and shoot C. Noise = FLIP(A,B), difference = FLIP(B,C), -ppd 95; the verdict is "FLIP difference ≤ 0.01 and ≤ 2×noise + 0.002" and "count of large-difference pixels (any channel difference > 30/255): difference ≤ 2×noise + 0.005% of the frame's pixels".
 # Cross-run comparison is unusable: the noise floor between two independent runs with the same settings is 0.0108 for a single camp frame. Only settings that can be switched at run time can be tested.
-# Usage: ruler.sh <dmhost> <build output dir> <WxH> <output dir> [frame ids..., default 02 camp 16 wilderness 18 combat 06 menu]   Build output: <output dir>/<frame id>_{A,B,C}.png, <frame id>.log
+# Usage: ruler.sh <dmhost> <build output dir> <WxH> <output dir> [frame ids..., default 13 camp 01 automap 06 inventory]   Build output: <output dir>/<frame id>_{A,B,C}.png, <frame id>.log
 # Mode (RULER_MODE): exact (default) = merge / skip class, should produce the same image as ground truth, judged by the 2×noise line;
 #   approx = lower-resolution / filter-change / approximation class, judged by "FLIP(B,C) ≤ 0.02" (on a real device, with the 3D internal scale at 0.75–0.80×, FLIP 0.017–0.023 shows no difference to the naked eye),
 #   the local-defect criterion is relaxed to "count of pixels with difference > 60/255: B–C ≤ 2×A–B + 0.05% of the frame" (edges move anyway; the threshold is pending calibration with X1 images, and the line prints the pixel counts for both tiers).
@@ -32,7 +31,7 @@ if [ "$#" -gt 0 ]; then
     selected="$selected$row"$'\n'
   done
 else
-  selected=$(printf '%s\n' 02 16 18 06 | while IFS= read -r wanted; do awk -F '\t' -v w="$wanted" '$1 == w { print; exit }' "$FRAMES"; done)
+  selected=$(printf '%s\n' 13 01 06 | while IFS= read -r wanted; do awk -F '\t' -v w="$wanted" '$1 == w { print; exit }' "$FRAMES"; done)
 fi
 
 run_frame() {
@@ -48,9 +47,7 @@ run_frame() {
     [ "$keys" = - ] || env_args+=("DM_KEYS=$keys")
     while IFS=$'\t' read -r key value; do [ -n "$key" ] && env_args+=("$key=$value"); done < <(python3 -c 'import json,os,sys; [print(k+"\t"+os.path.expanduser(v)) for k,v in json.loads(sys.argv[1]).items()]' "$env_json")
   else
-    IFS=: read -r _ combat tick <<<"$source"
-    trigger="DM:Tick:${tick}#+20"
-    env_args+=(DM_KEYS='X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterSelectPanel,DOWN@OpenPanel:CharacterSelectPanel>UpdateCharacterInfo,A@UpdateCharacterInfo%1>CharacterSelect:SelectCharacter,A@CharacterSelect:SelectCharacter>FrontEndNavigation:ToGame' DM_C2S_REPLAY=${DM_ROOT:-$HOME/dm-work}/run/verify/ryu/war_summon13_1002_takeover/c2s.jsonl DM_GAME_SEED=305419896 DM_FIXED_TIME=1790895128 "DM_TICK_HOLD=${tick}:SHOT")
+    echo "failed: frame $id has an unknown source: $source" >&2; return 2
   fi
   trig_base=$(printf '%s' "$trigger" | sed -E 's/\+[0-9]+$//')
   # 三张等间隔（各隔 8 帧）：切换在 B 写盘后的下一次提交才生效，C 紧跟 B 一帧会赶在切换之前出图（负对照实测：尺子变成空转）

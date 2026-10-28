@@ -1,7 +1,4 @@
-# 局内运行模式 主机 → 掌机（accept ⑩ / opmode.sh 的自给版本：r24 产物一切就崩在 main+0xe10de8）：进局后切（DM_OE_SCRIPT 按读取画面撤下计时，opmode 事件证明真切了），
-# 之后游戏照常走拍、能走路、不崩、没有红标。游戏对掌机模式的反应是弹「重新连接手柄」（ControllerReconnectPanel），这里核它弹出来了。
-# 产品里眼下没有谁切运行模式（iOS 过热只记日志），这一例防的是参数门跳板那类回归
-# Operation mode docked → handheld during a run (a self-contained version of accept ⑩ / opmode.sh: the r24 build crashed at main+0xe10de8 on the switch): switch after entering (DM_OE_SCRIPT counts from the loading screen going away; the opmode event proves it happened),
+# Operation mode docked → handheld during a run (the r24 build crashed at main+0xe10de8 on the switch): switch after entering (DM_OE_SCRIPT counts from the loading screen going away; the opmode event proves it happened),
 # then the game keeps ticking, walking works, nothing crashes, no red markers. The game reacts to handheld mode by opening "reconnect controller" (ControllerReconnectPanel), which this checks.
 # Nothing in the product switches the operation mode at the moment (iOS overheating only logs); this guards against regressions like the parameter-gate trampoline
 name opmode_switch

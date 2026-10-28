@@ -1,9 +1,5 @@
-// 登记表段（HLE / 强制接管 / NVN 实现）：各源文件用 DM_SECT 把表项放进同名段，宿主用 DM_SECT_GET 取整段。
-// Mach-O（苹果）：段名 "__DATA,名"，运行时 getsectiondata 取；ELF（安卓）：段名就是「名」（合法 C 标识符），链接器自动给出 __start_名 / __stop_名。
-// 两边表项逐字相同；ELF 上 retain 防止 --gc-sections 把只被段边界符号引用的表项丢掉。
 // Registration table sections (HLE / forced takeover / NVN implementations): each source file puts its entries into the same-named section with DM_SECT, and the host takes the whole section with DM_SECT_GET.
-// Mach-O (Apple): section name "__DATA,name", fetched at run time with getsectiondata; ELF (Android): the section name is just "name" (a valid C identifier), and the linker provides __start_name / __stop_name automatically.
-// The entries are word-for-word the same on both; on ELF, retain keeps --gc-sections from dropping entries that are referenced only through the section boundary symbols.
+// Mach-O: section name "__DATA,name", fetched at run time with getsectiondata.
 #pragma once
 // 地址消毒器（dmhost_asan）给每个全局变量前后加红区，段里的表项就不再紧挨着、按数组取会读进红区：消毒构建下这些表项不加红区。
 // AddressSanitizer (dmhost_asan) pads every global with redzones, so the entries in a section are no longer contiguous and reading them as an array runs into a redzone: in sanitizer builds these entries get no redzones.
@@ -15,7 +11,6 @@
 #ifndef DM_SECT_NOASAN_
 #define DM_SECT_NOASAN_
 #endif
-#ifdef __APPLE__
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
 #define DM_SECT(name) __attribute__((DM_SECT_NOASAN_ used, section("__DATA," #name)))
@@ -23,10 +18,3 @@
 // Fetch the start address and byte count of section name (p = NULL, bytes = 0 when the section is missing)
 #define DM_SECT_GET(name, type, p, bytes) do { unsigned long dm_sz_ = 0; \
     (p) = (type *)getsectiondata(&_mh_execute_header, "__DATA", #name, &dm_sz_); (bytes) = (p) ? dm_sz_ : 0; } while (0)
-#else
-#define DM_SECT(name) __attribute__((DM_SECT_NOASAN_ used, retain, section(#name)))
-#define DM_SECT_GET(name, type, p, bytes) do { \
-    extern const char __start_##name[] __attribute__((weak, visibility("hidden"))); \
-    extern const char __stop_##name[] __attribute__((weak, visibility("hidden"))); \
-    (p) = (type *)__start_##name; (bytes) = __start_##name ? (unsigned long)(__stop_##name - __start_##name) : 0; } while (0)
-#endif

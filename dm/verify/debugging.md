@@ -1,7 +1,5 @@
 # Debugging
 
-中文：[debugging.zh-CN.md](debugging.zh-CN.md)
-
 Tools for finding out what went wrong in a run: crash records, symbols for the game program, the debugger, validation and sanitizer builds, and automatic exploration.
 
 ## Crashes
@@ -139,7 +137,7 @@ What they found (fixed):
 
 ```bash
 python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn --metal-validation api
-make -C dm/host dmhost_m3 && SCN_DMHOST=$PWD/dm/host/dmhost_m3 python3 dm/tools/scenario.py run dm/verify/bench/town_loop.scn --metal-validation shader
+python3 dm/tools/scenario.py run dm/verify/bench/town_loop.scn --headless --metal-validation shader
 ```
 
 | Level | Turns on | Verdict |
@@ -195,7 +193,7 @@ What determinism needs, and what the tool handles:
 
 Measured:
 
-- **Builds agree:** `town_loop` (781 ticks, 144 command packets, camp and Blood Moor) replays identically to the recording on the normal, ASan and older-API hosts.
+- **Builds agree:** `town_loop` (781 ticks, 144 command packets, camp and Blood Moor) replays identically to the recording on the normal and ASan hosts.
 - **Changes are caught:** removing the walk commands of ticks 405–500 gives a first divergent tick of 444: the player stops where the route already issued runs out.
 
 Recordings are derived from the game program and stay local.

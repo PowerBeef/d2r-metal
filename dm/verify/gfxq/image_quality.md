@@ -1,7 +1,5 @@
 # Image Quality Metric
 
-中文：[image_quality.zh-CN.md](image_quality.zh-CN.md)
-
 This directory holds two rulers for measuring the picture, both measured on a Mac from offline screenshots taken with the host (`dmhost` from `dm/host`):
 
 - **G1** (`shoot.sh` + `g1.py`): how far the picture at a given internal resolution is from "the best picture achievable on this phone screen". Used to choose the internal resolution.
@@ -23,15 +21,13 @@ What is measured is sharpness: the internal resolution changes only sharpness, n
 
 ### Frame list
 
-`frames.tsv` lists 20 frames, each line being "number, name, source":
+`frames.tsv` lists the frames, each line being "number, name, source":
 
-- 01–16 take the trigger, key sequence and environment variables directly from the [screenshot gate](../screenshot_gate.md) page specs (`shotgate_pages/*.json`).
-- 17–20 are four combat frames: they replay the command packets recorded from a ground-truth run (ground truth = reference data obtained by running the original game in a patched Ryujinx emulator) and use `DM_TICK_HOLD=<tick>:SHOT` to stop at the specified tick and take the screenshot.
+- Each frame takes the trigger, key sequence and environment variables directly from a [screenshot page](../screenshot_gate.md) spec (`shotgate_pages/*.json`). The numbers have gaps: frames that needed recorded input from an emulator run were removed.
 
 Prerequisites:
 
 - The standard save `$DM_ROOT/data/switch/save_ref_warlock/0000000000000001` (`DM_GATE_SAVE` overrides it).
-- The ground-truth replay files referenced in the page specs; the replay file path for the combat frames is hard-coded in `shoot.sh` and `ruler.sh`, pointing to a ground-truth run directory under `$DM_ROOT/run/verify/ryu/`. None of these are in the repository, and the emulator driver scripts used to record them are not shipped either, so the frames that rely on ground-truth replay cannot be run with this repository alone; see [../README.md](../README.md).
 
 ### Commands
 
@@ -50,7 +46,7 @@ One complete measurement: first produce the reference directory at `2868x1320`, 
 
 The game's own video memory allocator has a budget constant (`main + 0x8524c4`), which is 260 MB in the original. Under this budget, as soon as the internal resolution is high the render targets no longer fit and the game crashes at startup, so a reference frame at native resolution cannot be drawn.
 
-The rewriter has already registered this constant as a cut (`CUTS` in `dm/tools/patch_nso.py`), and it is 512 MB in all build outputs, so reference frames can simply be produced with an ordinary build output. `truth_out.sh` is the approach from before this cut went into the rewriter: it copies a build output that is still at 260 MB to `<source>-truth` and changes this one instruction. It first checks whether the source build output still has the original instruction at that location; for current build outputs it reports red and exits, and it no longer needs to be used.
+The rewriter has already registered this constant as a cut (`CUTS` in `dm/tools/patch_nso.py`), and it is 512 MB in all build outputs, so reference frames can simply be produced with an ordinary build output.
 
 ### Rules
 
@@ -69,7 +65,7 @@ bash dm/verify/gfxq/ruler.sh <dmhost> <build output dir> <WxH> <output dir> [fra
 
 - One host is started per frame. `DM_NVN_RULER=1` makes the host first take the two shots A and B with the "reference settings" (the batch of rendering optimizations the graphics layer makes for Apple GPUs all turned off), then switch to the settings under test (everything on by default, plus the environment variables passed through by the caller) and take C. The three shots are 8 frames apart.
 - **Noise** = FLIP(A, B), **difference** = FLIP(B, C), both with `-ppd 95`.
-- With no frame numbers given it runs 4 frames: `02` camp, `16` wilderness, `18` combat, `06` inventory.
+- With no frame numbers given it runs 3 frames: `13` camp, `01` automap, `06` inventory.
 - Output is `<output dir>/<frame number>_{A,B,C}.png` and `<frame number>.log`; each frame prints one line of readings and the verdict, and the last line is 「汇总：n/m 帧等价」 (summary: n/m frames equivalent); if any frame is not equivalent the exit code is 1.
 
 There are two modes of judgment, selected with the environment variable `RULER_MODE`:

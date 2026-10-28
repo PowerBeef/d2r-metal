@@ -119,11 +119,8 @@ static thr_t *pick(int kind, uint64_t a) {
     }
     return b;
 }
-// 目标在自旋时不发信号：它见到 woke 就持 G 返回，不进条件等待；安卓 bionic 的 pthread_cond_signal 不论有没有人在等都做一次
-// futex 唤醒系统调用。计数给帧 TSV（@wakes、@wake_skips）
-// No signal when the target is spinning: it returns under G once it sees woke and never enters the condition wait. Android
-// bionic's pthread_cond_signal makes a futex wake system call whether or not anyone waits. The counts go to the frame TSV
-// (@wakes, @wake_skips)
+// No signal when the target is spinning: it returns under G once it sees woke and never enters the condition wait, so the
+// signal (a system call on some platforms whether or not anyone waits) is skipped. The counts go to the frame TSV (@wakes, @wake_skips)
 static uint64_t g_wakes, g_wake_skips;
 void dm_hle_wake_counts(uint64_t *wakes, uint64_t *skips) { *wakes = __atomic_load_n(&g_wakes, __ATOMIC_RELAXED); *skips = __atomic_load_n(&g_wake_skips, __ATOMIC_RELAXED); }
 static void wake(thr_t *t, int64_t res) {
@@ -141,24 +138,14 @@ static int64_t block_inner(thr_t *t, int kind, int64_t ns);
 static int64_t now_mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1000000000ll + ts.tv_nsec; }
 // 限时等待按单调钟算：截止时刻记成单调钟读数，每次只等剩下的那段（苹果：相对时长的条件等待；别的平台：条件变量建在 CLOCK_MONOTONIC 上）。
 // 原先按 CLOCK_REALTIME 算绝对截止，墙钟一调（对时、手动改时间）等待就被拉长或缩短
-// Timed waits run on the monotonic clock: the deadline is a monotonic reading and each wait covers only what is left (Apple: a condition wait with a relative duration; other platforms: condition variables on CLOCK_MONOTONIC).
+// Timed waits run on the monotonic clock: the deadline is a monotonic reading and each wait covers only what is left (a condition wait with a relative duration).
 // It used to be an absolute deadline on CLOCK_REALTIME, so every wall-clock change (time sync, a manual change) stretched or shortened the wait
 static void thr_cv_init(pthread_cond_t *cv) {
-#ifdef __APPLE__
     pthread_cond_init(cv, NULL);
-#else
-    pthread_condattr_t a; pthread_condattr_init(&a); pthread_condattr_setclock(&a, CLOCK_MONOTONIC); pthread_cond_init(cv, &a); pthread_condattr_destroy(&a);
-#endif
 }
 static int thr_cv_wait_for(pthread_cond_t *cv, int64_t left_ns) {   // 持 G 调；left_ns > 0 | called holding G; left_ns > 0
-#ifdef __APPLE__
     struct timespec rel = {(time_t)(left_ns / 1000000000), (long)(left_ns % 1000000000)};
     return pthread_cond_timedwait_relative_np(cv, &G, &rel);
-#else
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); ts.tv_sec += (time_t)(left_ns / 1000000000); ts.tv_nsec += (long)(left_ns % 1000000000);
-    if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
-    return pthread_cond_timedwait(cv, &G, &ts);
-#endif
 }
 static int64_t block(thr_t *t, int kind, int64_t ns) {   // 启动时间线：按等待种类累计（全线程）+ 主线程单列 | Boot timeline: accumulated by wait kind (all threads) + the main thread listed separately
     if (!g_flag.bootprof) return block_inner(t, kind, ns);
@@ -170,13 +157,13 @@ static int64_t block(thr_t *t, int kind, int64_t ns) {   // 启动时间线：�
 }
 // 主线程的短等待先自旋再睡：D2R 主线程每帧约 45 次等工作线程持有的客体锁，81% 只等 10–25 µs（Redmi K50 Ultra 营地），其中大半是
 // futex 睡下、唤醒与核心退出空闲的开销，而不是持锁时间。先照常登记为等待者（交接仍会选中它），放开 G，轮询自己的 woke 至多
-// g_spin_ns，再照旧睡。宿主不要求就不开：DM_HLE_SPIN_US（安卓 App 设置）；只有客体主线程自旋。
+// g_spin_ns，再照旧睡。宿主不要求就不开：DM_HLE_SPIN_US；只有客体主线程自旋。
 // 对照：DM_HLE_SPIN_AB=N 时只在偶数个 N 秒里自旋，与引擎的 gfx-ab-toggle 同相位（单调时钟秒数 / N 为偶数 = 开）。
 // Short waits of the main thread spin before they sleep. D2R's main thread waits ~45 times a frame on guest locks held by its
 // job workers, 81% of them for 10–25 us (Redmi K50 Ultra camp), and most of that is the futex sleep, the wake-up and the
 // core's idle exit rather than the holder. The thread registers as a waiter as before (so a handoff still picks it), releases
-// G and polls its woke flag for up to g_spin_ns, then sleeps as before. Off unless the host asks: DM_HLE_SPIN_US (the Android
-// app sets it); only the guest main thread spins.
+// G and polls its woke flag for up to g_spin_ns, then sleeps as before. Off unless the host asks: DM_HLE_SPIN_US;
+// only the guest main thread spins.
 // A/B: with DM_HLE_SPIN_AB=N the thread spins only in even N-second periods, in phase with the engine's gfx-ab-toggle
 // (monotonic seconds / N even = on).
 static uint64_t g_spin_ns; static int g_spin_init; static int64_t g_spin_ab;

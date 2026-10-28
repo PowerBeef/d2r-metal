@@ -6,7 +6,7 @@
 #       ./setup.sh <游戏包 .xci 或 .nsp> <prod.keys>    先从你自己的游戏包里取出游戏文件，再准备工作区
 # 报告的语言跟系统语言走，也可用 DM_LANG=zh / en 指定。
 # 工作区根目录 DM_ROOT（缺省 ~/dm-work）：游戏文件放在 $DM_ROOT/data/switch/3.3.94012/Update/{ExeFS,RomFS}，产物与缓存也都在它下面。
-# 每一步做过就跳过；想重做某一步，删掉它的产物目录再跑。依赖说明与官方链接见 docs/DEPENDENCIES.zh-CN.md。
+# 每一步做过就跳过；想重做某一步，删掉它的产物目录再跑。依赖说明与官方链接见 docs/DEPENDENCIES.md。
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd); export DM_ROOT=${DM_ROOT:-$HOME/dm-work}
 GAME=$DM_ROOT/data/switch/3.3.94012/Update; PY=$DM_ROOT/build/cache/dm/venv/bin/python3
@@ -56,15 +56,13 @@ else bad "$(m "缺 Xcode（编译 App 与着色器）" "Xcode is missing (builds
 command -v brew > /dev/null 2>&1 || note "$(m "没有 Homebrew：下面几个工具用它装最省事，见 https://brew.sh" "Homebrew not found: it is the easiest way to install the tools below, see https://brew.sh")"
 tool xcodegen    "生成 Xcode 工程" "generates the Xcode project" "brew install xcodegen"
 tool spirv-cross "着色器转 Metal 着色语言" "converts shaders to Metal Shading Language" "brew install spirv-cross"
-# spirv-cross 换个版本，翻译出的着色器源码就可能不同（实测最新源码版与 1.4.357.0 差 231 个着色器）。自己整条构建时前后自洽，不受影响；
-# 用发布的壳做包（docs/NO_XCODE）时要与壳一致，对不上 d2rm_pack.py 会停下来。这里把版本报出来，不拦。
 # A different spirv-cross version may translate shaders differently (231 shaders differ between the latest source and 1.4.357.0). A full build
-# of your own stays self-consistent; packing into a released shell (docs/NO_XCODE) must match the shell, and d2rm_pack.py stops if it does not.
+# of your own stays self-consistent either way; this only reports the version.
 SC_WANT=1.4.357.0
 if command -v spirv-cross > /dev/null 2>&1; then
   SC_HAVE=$(brew list --versions spirv-cross 2> /dev/null | awk '{print $2}')
   if [ "$SC_HAVE" = "$SC_WANT" ]; then ok "$(m "spirv-cross 的版本是验过的 $SC_WANT" "spirv-cross is the verified version $SC_WANT")"
-  elif [ -n "$SC_HAVE" ]; then note "$(m "spirv-cross 是 ${SC_HAVE}，验过的是 ${SC_WANT}：自己整条构建不受影响；往发布的壳里做包时翻译结果可能对不上（工具会报）" "spirv-cross is $SC_HAVE, the verified version is $SC_WANT: a full build of your own is unaffected; packing into a released shell may not match (the tool will say so)")"
+  elif [ -n "$SC_HAVE" ]; then note "$(m "spirv-cross 是 ${SC_HAVE}，验过的是 ${SC_WANT}：自己整条构建不受影响" "spirv-cross is $SC_HAVE, the verified version is $SC_WANT: a full build of your own is unaffected")"
   else note "$(m "读不到 spirv-cross 的版本（不是用 Homebrew 装的）；验过的是 $SC_WANT" "Cannot read the spirv-cross version (not installed with Homebrew); the verified version is $SC_WANT")"; fi
 fi
 tool python3     "生成与验证脚本" "generation and verification scripts" "brew install python"
@@ -100,7 +98,7 @@ if [ "$gf" != 0 ]; then
   # 目录已在、却不全或不是这一版：再给游戏包也只会「已有，不再解包」，原样再卡一次，所以先让人把它移走
   # The directory exists but is incomplete or not this version: giving the packages again would only print "already exists; skipping extraction" and get stuck the same way, so ask for it to be moved aside first
   [ ! -e "$GAME" ] || G="$(m "先把 ${GAME} 移到别处（例如 mv \"$GAME\" \"$GAME.old\"），再：" "Move $GAME aside first (for example mv \"$GAME\" \"$GAME.old\"), then: ")$G"
-  echo "      → $G"; echo "      → $(m "游戏文件只能从你自己买的 Switch 版导出，怎么导出见 docs/GAME_FILES.zh-CN.md" "Game files can only come from the Switch copy you own; see docs/GAME_FILES.md for how to export them")"; [ -n "$NEXT" ] || NEXT=$G
+  echo "      → $G"; echo "      → $(m "游戏文件只能从你自己买的 Switch 版导出，怎么导出见 docs/GAME_FILES.md" "Game files can only come from the Switch copy you own; see docs/GAME_FILES.md for how to export them")"; [ -n "$NEXT" ] || NEXT=$G
   [ "${SKIPPED:-0}" != 1 ] || die "$(m "已有的游戏文件目录 ${GAME} 不全或不是 3.3.94012 这一版，所以没有解包：先把它移到别处（例如 mv \"$GAME\" \"$GAME.old\"），再重跑同一条命令" "The existing game files directory $GAME is incomplete or not version 3.3.94012, so the packages were not extracted: move it aside (for example mv \"$GAME\" \"$GAME.old\"), then rerun the same command")"
 fi
 
@@ -120,7 +118,7 @@ if [ "${1:-}" = check ]; then echo; m "体检通过。下一步：./setup.sh（�
 
 step() { local name=$1; shift; local t0; t0=$(date +%s); say "$name"; "$@" || die "$name 没成功"; say "$name 完成（$(( $(date +%s) - t0 )) 秒）"; }
 
-# 改写用到的三个包钉在验过的版本上（docs/DEPENDENCIES.zh-CN.md）：改写器靠 capstone 的反汇编文本核对每处改写，capstone 6 起常数也改了名，新版装进来改写就停
+# 改写用到的三个包钉在验过的版本上（docs/DEPENDENCIES.md）：改写器靠 capstone 的反汇编文本核对每处改写，capstone 6 起常数也改了名，新版装进来改写就停
 # The three packages the rewrite uses are pinned to the verified versions (docs/DEPENDENCIES.md): the rewriter checks every rewrite against capstone's disassembly text, and from capstone 6 on the constants are renamed too, so a newer release would stop the rewrite
 py_env() { python3 -m venv "$DM_ROOT/build/cache/dm/venv" && "$PY" -m pip install -q pillow numpy lz4==4.4.5 capstone==5.0.9 unicorn==2.1.4; }
 [ -x "$PY" ] && "$PY" -c 'import PIL, numpy, lz4, capstone, unicorn' 2> /dev/null || step "Python 环境与包" py_env
@@ -195,10 +193,17 @@ shaders_ok || step "翻译全部着色器（首次较久）" shaders
 # 随着色器库走的清单：哪些着色器的运行时下标没能证明有界（宿主按库版本核对这份清单，版本对不上会报红并退回保守做法）
 head -1 "$HERE/dm/gfx/nvn/c1_full.tsv" 2> /dev/null | grep -q "b-$V " || step "出着色器下标清单" "$PY" "$T/c1_guard.py" "$DM_ROOT/build/cache/metal_shader_cache/b-$V" "$HERE/dm/gfx/nvn/c1_full.tsv"
 
+# The tracked pre-commit guard (dm/tools/git-hooks/pre-commit): link it into the clone's hooks, which worktrees share;
+# the link points at the main checkout's copy so it survives removing a worktree
+GCD=$(git -C "$HERE" rev-parse --path-format=absolute --git-common-dir 2> /dev/null); GUARD=$(dirname "$GCD")/dm/tools/git-hooks/pre-commit
+if [ -n "$GCD" ] && [ -f "$GUARD" ] && [ "$(readlink "$GCD/hooks/pre-commit" 2> /dev/null)" != "$GUARD" ]; then
+  mkdir -p "$GCD/hooks" && ln -sf "$GUARD" "$GCD/hooks/pre-commit" && say "$(m "提交前守卫已接上（.git/hooks/pre-commit）" "pre-commit guard linked (.git/hooks/pre-commit)")"
+fi
+
 say "工作区就绪：${DM_ROOT}。"
 echo "  下一步先进入 setup 准备好的 Python 环境（构建与测试的脚本要用里面装的包）："
 echo "      source $DM_ROOT/build/cache/dm/venv/bin/activate"
 echo "  然后出 App：cd dm/ios && ./run.sh build（先在 dm/ios/local.env 里填 DM_TEAM_ID 与 DM_BUNDLE_ID；缺省同时面向 iPhone 与 iPad，只要 iPhone 加 DM_DEVICE_FAMILY=1）"
 echo "  Next, enter the Python environment setup prepared (the build and test scripts need the packages in it):  source $DM_ROOT/build/cache/dm/venv/bin/activate"
 echo "  Then build the app:  cd dm/ios && ./run.sh build   (fill DM_TEAM_ID and DM_BUNDLE_ID in dm/ios/local.env first; it targets both iPhone and iPad by default, add DM_DEVICE_FAMILY=1 for iPhone only)"
-echo "  $(m "想在这台 Mac 上直接玩：dm/tools/mac_app.sh 出一个 macOS App（见 docs/MAC.zh-CN.md）" "To play on this Mac directly: dm/tools/mac_app.sh builds a macOS App (see docs/MAC.md)")"
+echo "  $(m "想在这台 Mac 上直接玩：dm/tools/mac_app.sh 出一个 macOS App（见 docs/MAC.md）" "To play on this Mac directly: dm/tools/mac_app.sh builds a macOS App (see docs/MAC.md)")"

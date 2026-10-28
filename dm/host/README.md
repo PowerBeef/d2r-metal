@@ -1,7 +1,5 @@
 # dm/host: host file index
 
-中文: [README.zh-CN.md](README.zh-CN.md)
-
 The host does two things: it loads the rewritten game program and provides the platform services that program calls. The features added on top of the original game, and the touch adaptation, live in this directory too. For how it all works see [dm/README.md](../README.md).
 
 The file name prefix tells you which part a file belongs to:
@@ -21,7 +19,6 @@ Every file opens with a comment saying what it does and what that is based on. A
 | `touch_mac.c`, `touch_mac.h` | The touch front end of the Mac host: feeds touch points tick by tick from a touch script (`DM_TOUCH_SCRIPT`); the touch cases in [dm/verify](../verify/README.md) run on it. In the Mac App it also takes the real mouse (clicks, drags, scroll-bar thumbs) and the wheel / trackpad (`dm_wheel_ui`) |
 | `romfs_validate.h` | Interface of `romfs_validate.c`: checks that the resource archives exist and have the right size, and produces the list of what is missing for the player |
 | `stash_seed.h` | The preset content used the first time the shared stash is created. Not shipped in the public repository (it is the bytes of a save the game generated): without it nothing is seeded |
-| `dm_derived_rt.h` | Used only in the "shell" that contains no game content: the tables generated from game files are not compiled in but read from the install package at run time; see [docs/NO_XCODE.md](../../docs/NO_XCODE.md) |
 
 Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: work that `dm_cloudmerge.c` and others must do inside a server tick is called from there.
 
@@ -89,7 +86,7 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 
 | File | What it does |
 |---|---|
-| `dm_custom.c`, `dm_custom.h` | The port's own Options page ("Extras" on the Mac and iOS, "Custom" on Android): all feature switches are read and written here; modules only call `dm_custom_get` |
+| `dm_custom.c`, `dm_custom.h` | The port's own Options page ("Extras" on the Mac and iOS): all feature switches are read and written here; modules only call `dm_custom_get` |
 | `dm_cloudsync.c` | The core of iCloud save sync: comparing and moving files between the local save directory and one cloud directory, without touching the iCloud API |
 | `dm_unit.h` | A small shared helper: reads which level a unit is in |
 

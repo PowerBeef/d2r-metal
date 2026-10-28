@@ -823,10 +823,8 @@ _CUSTOM_ROWS = tuple((k, '@' + _custom_key(k)) for k in _CUSTOM_KEYS)
 _CUSTOM_TITLE_H, _CUSTOM_LINE_H = 180, 180
 _VIDEO_MAC = bool(os.environ.get('DM_OVERLAY_MAC'))
 _VIDEO_IOS = bool(os.environ.get('DM_OVERLAY_IOS')) and not _VIDEO_MAC
-# 「省电模式」（eco_fps）与「3D 画质」（q3d）是画面设置：Mac、iOS 上它们是「视频」页签「图形」一节的两个切换框（_VIDEO 的 fps / drops，宿主 dm_video.c 读写同一对键、存档不变），
-# 不在「附加」页上；安卓只有一张自定义页，照旧是勾选行。宿主按页上实际有的行上下选（dm_custom.c），键表 k_keys 仍是全部的键
 # Power saver (eco_fps) and 3D quality (q3d) are picture settings: on the Mac and iOS they are two selectors in the Video tab's Graphics section (fps / drops in _VIDEO; the host's dm_video.c reads and writes the same
-# two keys, so saved values carry over), not rows on the Extras page; Android has a single custom page and keeps them as checkbox rows there. The host moves through the rows a page really has (dm_custom.c); its key table k_keys still lists every key
+# two keys, so saved values carry over), not rows on the Extras page; the default overlay (no DM_OVERLAY_MAC / _IOS: the CLI host's DM_ROMFS_OVERLAY=auto and touchchain.sh) has a single custom page and keeps them as checkbox rows there. The host moves through the rows a page really has (dm_custom.c); its key table k_keys still lists every key
 _VIDEO_TAB_KEYS = ('eco_fps', 'q3d') if _VIDEO_MAC or _VIDEO_IOS else ()
 _CUSTOM_ALL = (('lang', '@dmCustomLang'),) + tuple(r for r in _CUSTOM_ROWS if r[0] not in _VIDEO_TAB_KEYS)
 _CUSTOM_TEST_ROWS = int(os.environ.get('DM_CUSTOM_TEST_ROWS', '0'))   # 测试（造现场）：末尾多摆这么多行假行，验更多行时的滚动；产品不设 | test (test setup): append this many dummy rows at the end, to verify scrolling with more rows; not set in the product
@@ -848,9 +846,7 @@ _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') els
 # the ones the game lacks (Upscaling, MetalFX, Standard, Recommended, the resolution tiers, Color / Vivid / Accurate, anisotropy's "Original") are in the string table.
 # A selector sends TouchVideoMessage:<key>, a category nothing in the game handles: a selector replaces the message's third part with its own value, so the checkboxes' harmless PanelManager:ClosePanel:<name> became ClosePanel with no name, which crashed (lookup of a NULL child name at main+0xb1ee2c). The host reads each selector's current choice and handles apply / discard / default. The Resolution row keeps a line below it,
 # where the host puts "Takes effect after restarting the game" while a change is waiting for a restart (like the language row's hint). There is mouse hover, so each row has an original-style hover description
-# iOS（DM_OVERLAY_IOS，dm/ios/run.sh 生成覆盖层时设；安卓共用生成器但不设）：只有「图形」一节，标题行就是它——3D 清晰度（75% / 85% / 100%）、图形预设、放大方式
-# （游戏的 3D 放大趟用不用 MetalFX）、帧率（60 / 30 省电）、掉帧时（降 / 保持 3D 清晰度）；没有显示模式与分辨率（手机按屏幕原生出图）。触屏没有悬停，不带悬停说明
-# iOS (DM_OVERLAY_IOS, set by dm/ios/run.sh when it generates the overlay; Android shares the generator but does not set it): only the "Graphics" section, which is the header row itself -- 3D Resolution (75% / 85% / 100%), Graphic Presets, Upscaling
+# iOS (DM_OVERLAY_IOS, set by dm/ios/run.sh when it generates the overlay): only the "Graphics" section, which is the header row itself -- 3D Resolution (75% / 85% / 100%), Graphic Presets, Upscaling
 # (whether the game's 3D upscale pass uses MetalFX), Frame Rate (60 / 30 power saver), Frame Drops (lower / keep the 3D resolution); no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
 # Mac 与 iOS 上这几行独占「视频」页签（页首标题 = 第一节的名字，在表格的标题行里）；自定义各行在第五个页签「附加」那一页（_EXTRAS_PANEL）
 # On the Mac and iOS these rows have the "Video" tab to themselves (the page title = the first section's name, in the table's title row); the custom rows are on the page of the fifth tab, "Extras" (_EXTRAS_PANEL)
@@ -968,7 +964,7 @@ def _custom_q3d_row(i, setting="q3d"):
 # The name is exactly what the tab sends, and opening / closing go by it (a same name differing only in case opened a second video page that would not close). The class is still the borrowed video page
 _EXTRAS_PANEL = '2extras_lay/ExtrasOptionsPanel'
 EXTRAS_PATH = 'data/global/ui/layouts/2extras_lay/extrasoptionspanelhd.json'
-def _custom_page(text, kind=None):   # kind：'video'（Mac、iOS 的视频页）、'extras'（附加页）；不给 = 按平台：有画面设置的给视频页，否则（安卓）整页自定义 | kind: 'video' (the Mac / iOS video page), 'extras' (the Extras page); none = by platform: the video page where there are picture settings, otherwise (Android) the whole Custom page
+def _custom_page(text, kind=None):   # kind: 'video' (the Mac / iOS video page), 'extras' (the Extras page); none = by overlay: the video page where there are picture settings, otherwise (the default overlay) the whole Custom page
     kind = kind or ('video' if _VIDEO else 'all')
     if '"name": "VideoOptionsPanel"' not in text or '"name": "OptionsTable"' not in text: raise SystemExit('touch_layout：主机版视频页不是原样（原版布局变了？），自定义页没换')
     title = ('{ "type": "TableRowWidget", "name": "Row TouchCustomTitle", "children": [\n'
@@ -1019,7 +1015,7 @@ def _tabs5(s):
 def pad_settings(s):
     if _VIDEO: return _tabs5(s)
     return _sub1(s, '"@OptionsMenuVideo"', '"@KeyBindingTypeCustom"')   # 原版串：自定义 / Custom（跟游戏语言走） | original string: "Custom" in Chinese / English (follows the game language)
-def pad_custom_page(s): return _custom_page(s)[0]   # 两种模式同一份内容：Mac / iOS 是视频页，安卓是整页自定义 | the same content in both modes: the video page on the Mac / iOS, the whole Custom page on Android
+def pad_custom_page(s): return _custom_page(s)[0]   # the same content in both modes: the video page on the Mac / iOS, the whole Custom page in the default overlay
 # 挂进 PRESENT：build_ingame 对同一份文件（往选项页插「应用 / 默认 / 放弃」）会先套这里的变换再插按钮，不会出两份覆盖互相盖掉
 # Hooked into PRESENT: for the same file (inserting 「应用 / 默认 / 放弃」(Apply / Default / Discard) into the options page) build_ingame applies the transform here first and then inserts the buttons, so two overlays that overwrite each other are not produced
 PRESENT['controller/console/settingspanelhd.json'] = _settings_tabs

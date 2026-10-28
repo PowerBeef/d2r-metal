@@ -1,7 +1,5 @@
 # native_binding — test fixtures for skill binding parsing
 
-中文：[README.zh-CN.md](README.zh-CN.md)
-
 For unit tests only. The app does not read these two files at run time, and the tests do not modify them.
 
 **The public repository does not ship these two fixtures**: they are two tables captured from the memory of the running game. Without them, the three tests below that read the fixtures are skipped automatically with a one-line notice, and the other tests run as usual. To run those three tests you have to capture the two tables from the running game yourself and put them in this directory under the file names below; the assertions in the tests are written against the contents of the snapshot described below, so with different contents the assertions have to be changed accordingly.

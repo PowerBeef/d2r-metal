@@ -1958,18 +1958,6 @@ static void ui_map_center(module_t *m, uint64_t root, int mini) {
     { static int lg; if (lg++ < 8) LOG("全屏地图中心：纵向卷动量 %d → %d 格", *sc, want); } *sc = want; ours = want;
 }
 static void ui_map_pump(module_t *m) {
-#if defined(__OHOS__)
-    // 鸿蒙的 UI 线程可能在选角面板加载时先请求收起地图；此时原版 AutoMap 尚未创建，回调会解引用空对象。
-    // 局外不调用地图回调，也不把旧请求带进下一局；游戏内的切换仍走原路径。
-    // The HarmonyOS UI thread can request a map reset while character select is loading, before the guest AutoMap exists.
-    // Discard out-of-game requests instead of calling the map callback or carrying them into the next game.
-    if (!dm_uiscreen_ingame()) {
-        int pending = atomic_exchange(&g_map_req, -1);
-        atomic_store(&g_map_full_now, 0);
-        if (pending >= 0) { static int n; if (n++ < 4) LOG("鸿蒙：局外地图切换请求已忽略（地图尚未就绪）"); }
-        return;
-    }
-#endif
     int cfg = *(volatile int32_t *)(m->base + 0x2d479f4), mini = *(volatile int32_t *)(m->base + 0x2d5c748);
     // 测试开关 DM_TEST_AUTOMAP=<帧>:<档>：到帧把配置改成这一档并调回调（当作玩家在选项页选了它）
     // Test switch DM_TEST_AUTOMAP=<frame>:<setting>: at that frame, change the config to this setting and call the callback (as if the player had picked it on the options page)
@@ -2382,7 +2370,6 @@ int dm_ui_panel_resident(const char *name) {
 // Returns the stack reading: number of open non-resident panels; -1 when only the NPC dialog menu / speech box is open. The log text "[hud] 面板栈 ..." is kept as is (regression scripts match on it)
 enum { HUD_STACK_MAX = 64 };
 static struct { char name[64]; int open; } g_hud_stack[HUD_STACK_MAX];
-__attribute__((weak)) void dm_platform_menu_ready(void) {}   // 空的弱定义（不是弱声明）：苹果链接器要求弱引用链接时有定义；Vulkan 后端 / 鸿蒙平台层给强定义 | empty weak definitions (not declarations): Apple's linker needs a weak reference to resolve; the Vulkan backend / HarmonyOS platform give the strong ones
 static void hud_stack_update(const char *act, const char *arg) {
     // 读取画面撤下：清掉此刻在游戏面板树里已经看不见的记录（防只开不关的漏配），屏上还在的照记——
     // 通关页是读取画面撤下前 0.5 秒开的（OpenExclusivePanel EndScreenPanelExpansion → UnloadPanel LoadScreenPanel），原先整栈清零把它也清了：
@@ -2426,7 +2413,7 @@ static void hud_stack_update(const char *act, const char *arg) {
         // no panel left on screen, yet the front end stays in panel mode (no stick, no skill buttons, every tap is "outside the panel"). Across 809 logs only 4 panels ever reached a count of 2 or more
         // (main menu links, character select page, naming candidate bar, hire list), and none of them was a real two-layer stack needing two closes. The dm_tc_navigation path was already an idempotent bitmap, so the two paths now agree
         if(open && g_hud_stack[slot].open>0) { fprintf(stderr,"[hud] 面板栈 %s %s：已经开着，不重复计\n",act,arg); return; }
-        g_hud_stack[slot].open=open?1:0; if(open && !strcmp(arg,"MainMenuButtonRibbon")) dm_platform_menu_ready();   // 主菜单出来：平台结束启动加速 | main menu shown: the platform ends its start-up boost
+        g_hud_stack[slot].open=open?1:0;
         fprintf(stderr,"[hud] 面板栈 %s %s → %d\n",act,arg,g_hud_stack[slot].open);
     }
 }
@@ -3099,8 +3086,7 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
           // of character (same as the touch version; that entry in the button legend has been removed in the layout).
           { void dm_padmode_legend_hide(const char *, int); dm_padmode_legend_hide("CharacterOptionsLegend", 2); }   // 提示条里原版运行时加的「X 经典版」那一条拿掉（布局里删预设不够：这一页的代码每次刷新都会再加） | Remove the 「X 经典版」(X Classic) entry that the original game adds to the legend at runtime (deleting the preset in the layout is not enough: this page's code adds it again on every refresh)
           dm_padmode_page_keys(DM_BTN_X | (prep == 3 ? DM_BTN_UP | DM_BTN_DOWN : DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A)); } }
-    // 带按键脚本的用例走自己的键序（真值对照用），不插手；DM_FE_AUTO=1 强制开、=0 强制关（画面闸门的「选角页」对照的是原版主菜单那一拍，不带键序）
-    // Cases with a key script follow their own key sequence (for ground truth comparison), no interference; DM_FE_AUTO=1 forces on, =0 forces off (the screenshot gate's "character select page" compares against the original game's main menu tick, without a key sequence)
+    // Cases with a key script follow their own key sequence, no interference; DM_FE_AUTO=1 forces on, =0 forces off (the "character select page" screen baseline is the original main menu tick, without a key sequence)
     static int fa = -1; if (fa < 0) { const char *e = getenv("DM_FE_AUTO"); fa = e ? atoi(e) != 0 : !getenv("DM_KEYS"); }
     if (!fa) return;
     // 手柄模式走原版自己的前端流程：下面这些「替玩家按键」都是给触屏定的，手柄模式下一律不做——

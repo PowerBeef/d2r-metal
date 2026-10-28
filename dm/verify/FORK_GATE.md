@@ -1,8 +1,6 @@
 # The fork gate: `fork_gate.sh`
 
-中文：[FORK_GATE.zh-CN.md](FORK_GATE.zh-CN.md)
-
-d2r-metal's own verification run. Upstream's acceptance run (`accept.sh`) depends on ground-truth recordings of the original game in a patched emulator; this fork has none, so most of its items are ⚪ unavailable here. The fork gate runs only what this Mac can check by itself: source checks, the test suites, scenarios on our own builds, the touch cases, faults, sanitizers and benchmarks. `accept.sh` stays for upstream merges.
+d2r-metal's verification run. It runs only what this Mac can check by itself: source checks, the test suites, scenarios on our own builds, the touch cases, faults, sanitizers and benchmarks. The reference behaviour comes from the original image (rewrite equivalence), our own baselines (`golden.py`) and the private analysis of the game's code; see [README.md](README.md#where-the-reference-behaviour-comes-from).
 
 ```bash
 dm/verify/fork_gate.sh quick            # < 1 min: source checks
@@ -27,8 +25,8 @@ Several tiers can be given at once; they run in the order given.
 
 | Tier | Steps |
 |---|---|
-| quick | `scan_literals.py`, `dm_i18n.py --check`, `switches.py check`, `scenario.py check` on every scenario, `check_hud_gen.sh` |
-| unit | host, gfx and iOS suites; `regress.sh` (the fork is Metal 4 only, so the older-API gfx pass is not run) |
+| quick | `scan_literals.py`, `dm_i18n.py --check`, `switches.py check`, `scenario.py check` on every scenario, `check_hud_gen.sh`, `addrcheck.py` (cited game addresses; ⚪ without the analysis export) |
+| unit | host, gfx and iOS suites; `regress.sh` |
 | core | builds the host; the scenarios without front-end steps run headless, three at a time; the ones that minimize, background or quit run windowed, one at a time; then the touch cases |
 | full | rebuilds the Mac App test copy for the current commit, runs the scenarios on it; `smoke_mac.sh 1` (which also rebuilds the iOS package for the Mac), the scenarios on that package; one scenario under Metal API validation; the fault scenarios |
 | long | `bench.py` on the town route (first, while the machine is cool); `explore.py` on the ASan and UBSan hosts; TSan alone; `fnfuzz.py` |
@@ -62,7 +60,7 @@ Instead of recordings of the original game, the fork records baselines from its 
 
 ```bash
 python3 dm/verify/golden.py replay record --reason "…"   # dm/verify/golden/{walk,fight,belt}.scn: packets + per-tick state + the committed save
-python3 dm/verify/golden.py replay check                 # replay on dmhost and dmhost_m3, tick by tick; savecmp on the replay's save; negative control
+python3 dm/verify/golden.py replay check                 # replay on dmhost, tick by tick; savecmp on the replay's save; negative control
 python3 dm/verify/golden.py shots record --reason "…"    # the 11 shotgate pages that need no recorded input, per renderer (m4 / m3)
 python3 dm/verify/golden.py shots check                  # shotgate.py against the baseline, page thresholds as in the spec
 python3 dm/verify/golden.py prefix                       # the touch cases' wilderness prefix (golden/prefix_wild.scn) + the save's MANIFEST.sha256
@@ -79,7 +77,7 @@ python3 dm/verify/golden.py list
 
 - **Front-end input from scenarios:** the control port's `fe` runs one line of `DM_TEST_NSMOUSE` input (virtual controller, keys, the text sheet, real mouse events) through the same front-end path as a player; `inputmode` switches the controller / touch layout and key caps (`padmode` event when done). Scenarios with `fe` steps run windowed.
 - **`dm/tools/playbot.py`:** seeded player intents on player paths only (no `msg` steps, so none of the known crashers), with invariants after every intent: ticks advance while not paused, the HUD is on the panel stack, no focus once panels are closed; at the end no red, no `save_stuck`, a valid save. A red episode is rerun, then shrunk by intent (`explore.py`'s ddmin). `playbot.py soak --minutes 30` is the Mac soak, judged by `soak_report.py` (ticks, memory slope, handles / threads, frame time). `long` runs both.
-- **Coverage scenarios:** `new_character_vkbd` (a character named with the controller's on-screen keyboard, through `fe`; `new_character_vkbd_mac` for the Mac App, whose front end waits for + to accept the name), `input_mode_switch` (controller ↔ touch, Xbox / PlayStation / Switch caps; replaces accept ⑩'s mode part), `opmode_switch` (docked → handheld; the self-contained accept ⑩), `lang_zh`, `lang_es` (the game language really switched: `language` event), and the existing `ios-mac` lifecycle scenarios in `full`.
+- **Coverage scenarios:** `new_character_vkbd` (a character named with the controller's on-screen keyboard, through `fe`; `new_character_vkbd_mac` for the Mac App, whose front end waits for + to accept the name), `input_mode_switch` (controller ↔ touch, Xbox / PlayStation / Switch caps), `opmode_switch` (docked → handheld; the self-contained accept ⑩), `lang_zh`, `lang_es` (the game language really switched: `language` event), and the existing `ios-mac` lifecycle scenarios in `full`.
 - Found while building them: `state.in_game` stayed true after Save and Exit (HUD readings only refresh on ticks); `DM_OE_SCRIPT`'s `@ingame` trigger and `DM_TEST_LANG` silently did nothing on the CLI host. All fixed; each scenario now requires an event proving its switch happened.
 - The first `full` run (22 min) caught one more: at mount the host rewrote the committed `Settings.json` (seeding, the language row) before comparing it with the last session's leftover work folder, so a clean leftover looked like uncommitted changes and was moved aside with a red line. The leftover is now judged first.
 - Not covered: a language switch during play (the language applies when the save is mounted).
@@ -94,7 +92,7 @@ python3 dm/verify/golden.py list
 
 ## Touch cases and fixture saves
 
-The touch cases start from `save_ref_warlock` (or `DM_TOUCH_SAVE`). Some were written against upstream's fixture save: an item in inventory slot (5,3), the Horadric Cube at (8,0). The checks on the starting state are **preconditions** (`lib.precondition`): when the save doesn't have what the case needs, the case is ⚪ unavailable (`assert.py` exit code 3, `touchchain.sh` exit code 3) instead of red, and the other checks don't count. A case whose prefix recording is missing is ⚪ the same way.
+The touch cases start from `save_ref_warlock` (or `DM_TOUCH_SAVE`). Some were written against the original project's fixture save: an item in inventory slot (5,3), the Horadric Cube at (8,0). The checks on the starting state are **preconditions** (`lib.precondition`): when the save doesn't have what the case needs, the case is ⚪ unavailable (`assert.py` exit code 3, `touchchain.sh` exit code 3) instead of red, and the other checks don't count. A case whose prefix recording is missing is ⚪ the same way.
 
 The fork generates what it can:
 
@@ -104,5 +102,5 @@ The fork generates what it can:
 
 ## What it doesn't do
 
-- No ground-truth comparison: `accept.sh` items ①–⑧ need recordings of the original game.
+- No recording of the original game on a console or emulator: the baselines are our own.
 - No upload: results stay in `$DM_ROOT/run/gate/`.

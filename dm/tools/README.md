@@ -1,7 +1,5 @@
 # dm/tools: tool index
 
-中文: [README.zh-CN.md](README.zh-CN.md)
-
 Three kinds of things live here. The first you will use when following the front page or the docs; the second is the measurement and regression scaffolding we use during development, published as is; the third is a set of one-off probes written when the game program was first analysed, kept for the record.
 
 ## What you will use
@@ -10,9 +8,6 @@ Three kinds of things live here. The first you will use when following the front
 |---|---|
 | `patch_nso.py` | The program rewriter: rewrites the few instructions in the game program that cannot run unchanged under Apple's kernel and leaves everything else byte-for-byte intact. Called by `setup.sh` |
 | `extract_game.sh` | Extracts the two parts this project needs (program files and resources) from your own game package into the workspace |
-| `d2rm_pack.py` | Produces a playable install package without Xcode by building your own game files into the "shell"; see [docs/NO_XCODE.md](../../docs/NO_XCODE.md) |
-| `guest_dylib.py` | Writes the rewritten game program as an Apple-format dynamic library (pure Python, byte-identical output on every system); called by `d2rm_pack.py` |
-| `winlf/` | Makes the packaging tool chain use `\n` line endings on Windows, so packages made on different systems match |
 | `product.sh` | The identifier of the current rewrite output lives in one place (`dm/PRODUCT`); scripts get paths through this |
 | `dmx.py` | A minimal read-only reader for the game's resource storage: list files, fetch a file |
 | `casc_overlay.py` | Builds the overlay at build time: points chosen resource paths at our new content without touching the original archives |
@@ -24,10 +19,7 @@ Three kinds of things live here. The first you will use when following the front
 
 | File | What it does |
 |---|---|
-| `host_savecmp.sh` | Byte-for-byte save comparison: the host replays a game, saves, and the save is compared with a reference |
-| `save_txn_regress.sh` | Determinism regression for save transactions |
-| `host_war13.sh` | Host replay of one fixed case, compared tick by tick and by save |
-| `l3reg.py`, `l3seg.sh`, `l3run.sh`, `test_l3reg.py` | Long-run memory regression: fits the growth of memory and handles against game ticks and extrapolates to a long session |
+| `re/` | The private engine-analysis database of the game's `main` (Ghidra; build, query server, names export, `addrcheck.py`); see [re/README.md](re/README.md) |
 | `crashlog.py` | Reads and symbolicates the host's `crash.json` (`DM_CRASH_JSON`) and collects the system `.ips` reports |
 | `guestsyms.py`, `test_guestsyms.py` | Symbol table for the game program (`.eh_frame` functions, dynamic symbols, source-comment notes), kept in the local build cache |
 | `explore.py`, `test_explore.py` | Automatic exploration: seeded random play through the scenario runner, shrinking a red run to a minimal scenario ([debugging.md](../verify/debugging.md)) |
@@ -44,14 +36,12 @@ Three kinds of things live here. The first you will use when following the front
 | `dmevents.py`, `test_dmevents.py` | Reads and checks the `DM_EVENTS` event stream ([event_stream.md](../verify/event_stream.md)): timeline summary, expected event order, why a run went red, wait for an event |
 | `switches.py`, `test_switches.py` | Registry of the `DM_*` environment switches: `gen` writes [dm/switches.tsv](../switches.tsv) (who reads each switch, documented or not) from a scan of the sources; `check` fails when the registry is stale or a script sets a switch nothing reads |
 | `dmtest.py`, `test_dmtest.py` | Uniform result wrapper for any test command: passes its output through and turns its verdict lines into `result.json`, optional JUnit XML and a last `RESULT {json}` line |
-| `frameprobe.sh` | Comparison measurement of frame pacing stability |
 | `conc_watch.sh` | Concurrency check for timed runs: a timing taken while other heavy work was running is discarded |
 | `sampagg.py`, `lockalign.py` | Aggregation of sampling logs; call-chain statistics for lock-holding threads |
 | `hle_inventory.py` | Inventory of the host's system service implementations (full / simplified / stub) |
 | `sdis.py`, `sideeff.py` | Disassemble one function; walk the call graph for a function's side effects |
 | `blackcols.py` | Checks a screenshot for fully black columns (whether the picture fills the screen) |
 | `guirun.sh` | Starts a program inside the graphical session and collects its output |
-| `mini_sync.sh` | Syncs the workspace to a second Mac for heavy runs (the target is set in the local config) |
 
 ## One-off probes from the early analysis
 

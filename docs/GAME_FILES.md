@@ -2,8 +2,6 @@
 
 **You must own the game.** This project only lets you run the Nintendo Switch release of Diablo II: Resurrected, which you have already bought, on your own iPhone or iPad. This repository does not contain any game files and never will. Do not ask others for game files or share them, and do not post game files or download links in issues or pull requests.
 
-中文：[GAME_FILES.zh-CN.md](GAME_FILES.zh-CN.md)
-
 ## Which files
 
 The Switch release of Diablo II: Resurrected **with the Reign of the Warlock expansion**, updated to **1.0.34.0** — the version shown on the Switch console (select the game on the HOME menu and press "+" to see it; the `v2228224` that often appears in the file name of a dumped update is the same thing, 2228224 = 34 × 65536). It corresponds to PC version **3.3.94012**; the directory names, the tools and the rest of the documentation in this repository use 3.3.94012, meaning the same version. The base game, the update and the expansion all have to be ones you bought yourself; this project is built for the version with the expansion, and using it without the expansion is not supported and has not been verified. You need two parts of it:

@@ -22,7 +22,7 @@ This is the game's own program, the Nintendo Switch release, built from files yo
 
 > **D2R Metal changes the platform, not the game.**
 
-D2R Metal is a fork of [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile) by [@jhaizhou-ops](https://github.com/jhaizhou-ops), who did the hard part: getting the game itself to run on Apple hardware, with touch controls, controller support and five languages. D2R Mobile also offers its own additions on top of the game, such as new endgame modes, town conveniences, automation, extra storage and map aids, for players who want them.
+D2R Metal started from [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile) by [@jhaizhou-ops](https://github.com/jhaizhou-ops), who did the hard part: getting the game itself to run on Apple hardware, with touch controls, controller support and five languages. D2R Mobile also offers its own additions on top of the game, such as new endgame modes, town conveniences, automation, extra storage and map aids, for players who want them.
 
 D2R Metal takes a different path and stays as close as it can to the game Blizzard shipped: the same rules, drop rates, economy and stash. Its own work goes into how that game runs and looks on Apple hardware.
 
@@ -148,7 +148,7 @@ D2R Metal is built for **macOS 27 and iOS / iPadOS 27 or later** and draws only 
 | iPhone / iPad, A14–A16 | Yes | iOS / iPadOS 27 or later, and a [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
 | A13 and older, Intel Macs | No | — |
 
-A17 Pro means iPhone 15 Pro and later and iPhone 16 and later; A14–A16 covers the iPhone 12 to 14 families and the iPhone 15 / 15 Plus. Devices with 4 GB of memory run, but tightly. Older systems (macOS 15–26, iOS 18–26, through the older-API build) and the Apple TV, Android and HarmonyOS versions are supported by [upstream](https://github.com/jhaizhou-ops/d2r-mobile); this fork doesn't build or test them.
+A17 Pro means iPhone 15 Pro and later and iPhone 16 and later; A14–A16 covers the iPhone 12 to 14 families and the iPhone 15 / 15 Plus. Devices with 4 GB of memory run, but tightly. Older systems (macOS 15–26, iOS 18–26), Apple TV, Android and HarmonyOS are not supported.
 
 ## Getting started
 
@@ -224,12 +224,10 @@ The tools used to check every change are in the repository. One command runs the
 </details>
 
 <details>
-<summary><b>How this fork works</b></summary>
+<summary><b>History</b></summary>
 
-- `main` is the trunk. Upstream's `main` is merged in regularly, so its fixes arrive here too; the additions listed above stay out of this fork.
-- Changes that also fit upstream are sent back as pull requests, one topic per branch. Upstream adopted the first four in v2.0 (#106–#109); [#144](https://github.com/jhaizhou-ops/d2r-mobile/pull/144) (MetalFX, the picture settings and the rebuilt Options page) is open.
-- Android and HarmonyOS code stays in the tree only so upstream changes merge cleanly; it isn't built or tested here.
-- Issues and pull requests about Apple platforms are welcome. Code follows upstream's rules in [CONTRIBUTING.md](CONTRIBUTING.md), so it can be sent upstream later.
+- D2R Metal began in October 2026 as a fork of D2R Mobile. Its first changes went back upstream (four were adopted in D2R Mobile v2.0); since 2026-10-28 it is developed on its own, for Apple platforms only.
+- `main` is the trunk. Changes are checked by the fork's own gate ([dm/verify/FORK_GATE.md](dm/verify/FORK_GATE.md)); see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>
 
@@ -243,7 +241,7 @@ D2R Metal exists because of **[D2R Mobile](https://github.com/jhaizhou-ops/d2r-m
 
 The project stands on the open-source work below. Thank you to its authors and maintainers.
 
-- **Ryujinx** (Ryubing 1.3.2, MIT): `dm/third_party/ryujinx` bundles its shader translator unchanged (the Ryujinx.Graphics.Shader, Spv.Generator and Ryujinx.Common projects), which translates the Switch game's shaders to SPIR-V. Upstream also used the original game in a patched Ryujinx as the reference for comparing pictures and game state (see [dm/verify/README.md](dm/verify/README.md)).
+- **Ryujinx** (Ryubing 1.3.2, MIT): `dm/third_party/ryujinx` bundles its shader translator unchanged (the Ryujinx.Graphics.Shader, Spv.Generator and Ryujinx.Common projects), which translates the Switch game's shaders to SPIR-V.
 - **deko3d** (devkitPro, zlib): the texture layout size algorithm in `dm/gfx/nvn/nvn_tex.c` is ported from it.
 - **nvn.h** (h1k421, MIT): the graphics API declarations in `dm/gfx/nvn/include/nvn.h`.
 - **libdeflate** (Eric Biggers, MIT): decompressing game data.
@@ -254,4 +252,4 @@ The project stands on the open-source work below. Thank you to its authors and m
 
 ## License
 
-MIT, see [LICENSE](LICENSE) (Copyright (c) 2026 jhaizhou). Third-party code keeps its own license in its own directory; see [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+MIT, see [LICENSE](LICENSE) (Copyright (c) 2026 jhaizhou; Copyright (c) 2026 the d2r-metal contributors). Third-party code keeps its own license in its own directory; see [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).

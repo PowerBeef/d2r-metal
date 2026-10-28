@@ -1,7 +1,5 @@
 # Optional macOS VP8 playback
 
-中文: [MOVIE.zh-CN.md](MOVIE.zh-CN.md)
-
 `MOVIE_FFMPEG=1` replaces the host's duration-only `movie::` backend with VP8 decoding through FFmpeg. The default build continues to use the existing backend. No game content or FFmpeg binaries are included. On Mac, install FFmpeg development libraries. On iOS, build the static libraries with the script below and link them into the app.
 
 The adapter implements the existing extractor/decoder vtables: the guest supplies a random-access reader, owns its input/output events, schedules frames using their PTS, and handles skip and looping. Frames are packed NV12. Audio and subtitles remain on their existing guest paths; FFmpeg does not play audio. The adapter shares the reader between extractor and decoder and keeps acquired frames until release, with eight output slots and input backpressure.
@@ -16,7 +14,7 @@ After preparing your own game files with the normal setup, force a rebuild when 
 make -C dm/host -B dmhost MOVIE_FFMPEG=1
 ```
 
-Omit the flag, or use `MOVIE_FFMPEG=0`, for the existing backend. The same option applies to `dmhost_m3`, but installed FFmpeg libraries may require a newer macOS than that target. Check dependency deployment versions separately. The Mac build does not bundle the libraries into an app; for iOS see below.
+Omit the flag, or use `MOVIE_FFMPEG=0`, for the existing backend. The Mac build does not bundle the libraries into an app; for iOS see below.
 
 ## iOS
 

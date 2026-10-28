@@ -110,29 +110,16 @@ static uint32_t style_of(uint32_t id) {
     if (id != connected_id()) return 0;
     return id == NPAD_HANDHELD ? STYLE_HANDHELD : STYLE_FULLKEY;
 }
-// 脚本化输入（不开窗也能注入），逗号分隔两种项：
-//   按时刻：键@秒[+按住秒]        DM_KEYS="A@8,A@12+0.5"＝第 8 秒按 A（默认按住 0.2 秒）、第 12 秒按 A 0.5 秒；时刻从宿主初始化算起
-//   按 UI 消息：键@前置[%延时秒][+按住秒][>确认]    DM_KEYS="A@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterDifficultyModal,A@OpenPanel:CharacterDifficultyModal>FrontEndNavigation:ToGame"
-//     规则同 dm/verify/ryu/drive.py：消息串 = 「类别:动作:面板名」，前置 / 确认按子串匹配；各步依次执行。
-//     前置在上一步按下之后（第一步：开局起）出现过、且上一次按键已空闲（见下）→ 按下 3 帧（50 ms；
-//     「+按住秒」改按住时长，如 LSL@UnloadPanel:LoadScreenPanel+0.9 = 装载画面结束即推左摇杆 0.9 秒，免得按宿主时刻按键时还没进局）；
-//     150 个服务端拍内没等到确认才重按，3 次都没等到报红中止；墙钟 60 秒只作兜底并报红；无确认项的步按下即算完成。
-//     前置留空（如 LSU@%0.2+0.35）= 紧接上一步完成（确认到 / 无确认项则松开）后延时再按。
-//     空闲 = 上一次按键已松开，且按住期间最后的 InputMessage:ControllerActionBegin 已等到 ControllerActionEnd（Begin 只在面板消费
-//     输入时才发：wild1 真值局内按 A 开小站前后无 Begin / End，面板接管后才成对出现；按住期间没出现 Begin ⇒ 松开即空闲。
-//     摇杆伪键同此规则）。原先「必须见 End」在局内按键后永远等不到。
-// 键名 = dm_input.h 的 DM_BTN_* 去前缀，另有左摇杆伪键 LSL / LSR / LSU / LSD（按住期间推满）。与前端写入的按键按位或。
-// 触点项 T<x>:<y>（只用于按 UI 消息的步）：按住期间在出图画面归一化坐标 (x, y) 落一根手指（id 0，经 dm_touch_set），松开 / 确认即抬起。
 // Scripted input (can inject without opening a window), two kinds of comma-separated items:
 //   By time: key@seconds[+hold seconds]        DM_KEYS="A@8,A@12+0.5" = press A at second 8 (held 0.2 s by default), press A for 0.5 s at second 12; time counts from host initialization
 //   By UI message: key@pre[%delay seconds][+hold seconds][>confirm]    DM_KEYS="A@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterDifficultyModal,A@OpenPanel:CharacterDifficultyModal>FrontEndNavigation:ToGame"
-//     Same rules as dm/verify/ryu/drive.py: message string = "category:action:panel name", pre / confirm match by substring; steps run in order.
+//     Message string = "category:action:panel name", pre / confirm match by substring; steps run in order.
 //     The pre has appeared after the previous step was pressed (first step: since start) and the previous key press is idle (see below) → press for 3 frames (50 ms;
 //     "+hold seconds" changes the hold duration, e.g. LSL@UnloadPanel:LoadScreenPanel+0.9 = push the left stick for 0.9 s as soon as the loading screen ends, so a key pressed by host time does not land before the run is entered);
 //     only re-press if no confirm arrives within 150 server ticks, after 3 times without one report a failure and abort; the 60 s wall clock is only a fallback and reports a failure; a step with no confirm item is done once pressed.
 //     An empty pre (e.g. LSU@%0.2+0.35) = press after a delay right after the previous step completes (confirm arrived / released if no confirm item).
 //     Idle = the previous key press has been released, and the last InputMessage:ControllerActionBegin during the hold has got its ControllerActionEnd (Begin is only sent when a panel consumes
-//     input: in the wild1 ground truth, pressing A in a run to open the waypoint has no Begin / End before or after, they only appear in pairs once a panel takes over; no Begin during the hold ⇒ idle on release.
+//     input: in a run, pressing A to open the waypoint has no Begin / End before or after, they only appear in pairs once a panel takes over; no Begin during the hold ⇒ idle on release.
 //     Stick pseudo-keys follow the same rule). The former "must see End" never arrived after in-run key presses.
 // Key name = DM_BTN_* from dm_input.h without the prefix, plus the left stick pseudo-keys LSL / LSR / LSU / LSD (pushed to full while held). ORed bitwise with the keys written by the front end.
 // Touch item T<x>:<y> (only for steps driven by UI messages): while held, one finger (id 0, via dm_touch_set) is put down at normalized rendered-picture coordinates (x, y), lifted on release / confirm.

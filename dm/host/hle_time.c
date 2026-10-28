@@ -11,14 +11,9 @@
 typedef struct { int16_t year; int8_t month, day, hour, minute, second; int8_t pad; } CalendarTime;
 typedef struct { uint32_t wday, yday; char tzname[8]; uint32_t dst; int32_t offset; } CalendarAdditionalInfo;
 
-// DM_FIXED_TIME=秒（确定性对拍用；真值侧对应 dm/verify/ryu/drive.py --fix-time）：
-// ① 用户时钟（存档 d2s +0x20 最后游玩时间、.meta last_modified_time 的来源）恒返回该值；
-// ② 建局随机数种子那一处 time()（main 0x3509a0 bl time，返回点 0x3509a4，与 drive.py 同点）返回该值。
-// 本 SDK 的 libc time() 是开机时长（clock_gettime(0) → __nnmusl_ClockGetTime → GetSystemTick），不是墙钟；
-// main 另有 17 处 time() 调用不动，原样转给 SDK 自己的 time()。
-// DM_FIXED_TIME=seconds (for deterministic comparison; the ground-truth side counterpart is dm/verify/ryu/drive.py --fix-time):
+// DM_FIXED_TIME=seconds (for deterministic runs: replays and baselines):
 // ① the user clock (source of the save's d2s +0x20 last-played time and .meta last_modified_time) always returns this value;
-// ② the one time() at the game-creation random seed (main 0x3509a0 bl time, return point 0x3509a4, same point as drive.py) returns this value.
+// ② the one time() at the game-creation random seed (main 0x3509a0 bl time, return point 0x3509a4) returns this value.
 // This SDK's libc time() is uptime (clock_gettime(0) → __nnmusl_ClockGetTime → GetSystemTick), not wall clock;
 // the other 17 time() call sites in main are left alone and forwarded unchanged to the SDK's own time().
 static int64_t fixed_time(void) {
