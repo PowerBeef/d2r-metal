@@ -46,7 +46,6 @@ import tickdiff   # noqa: E402  # pyright: ignore[reportMissingImports]
 GOLD = os.path.join(scenario.DM_ROOT, 'data', 'switch', 'golden')
 ROUTES = os.path.join(HERE, 'golden')
 PAGES = os.path.join(HERE, 'shotgate_pages')
-NEEDS_INPUT = ('DM_C2S_REPLAY',)   # 页规格里带这些的页要真值录制的输入，不录基线 | pages whose spec carries these need recorded ground-truth input: no baseline
 NO_FIXTURE = {'cube': 'the Warlock save has no Horadric Cube'}   # 本机存档里没有这页要的东西：不录，报不可用 | the local save lacks what the page needs: not recorded, reported unavailable
 
 
@@ -205,14 +204,14 @@ def page_spec(p):
 
 
 def shot_pages(names):
-    ok = [p for p in pick(PAGES, '.json', names) if not any(k in page_spec(p)['host'].get('env', {}) for k in NEEDS_INPUT)]
+    ok = pick(PAGES, '.json', names)
     for p in ok:
         if p in NO_FIXTURE: print(f'⚪ shot {p} unavailable: {NO_FIXTURE[p]}')
     return [p for p in ok if p not in NO_FIXTURE]
 
 
 def take_shot(host, p, png):
-    """同 shotgate.sh 的一页：页规格的触发、键序与环境，加确定时钟。 | One page as in shotgate.sh: the spec's trigger, key script and environment, plus the deterministic clock."""
+    """One page from its spec: the trigger, key script and environment, plus the deterministic clock."""
     h = page_spec(p)['host']; env = dict(os.environ)
     env.update({k: os.path.expanduser(v) for k, v in h.get('env', {}).items()})
     env.update(DM_BRIGHT_K='1', DM_DETCLOCK=env.get('DM_DETCLOCK', '16666667'))

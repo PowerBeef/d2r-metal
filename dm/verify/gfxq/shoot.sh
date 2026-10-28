@@ -16,8 +16,7 @@ shift 5 || true
 case "$JOBS" in ''|*[!0-9]*|0) echo "失败：并行数必须是正整数" >&2; exit 2 ;; esac
 mkdir -p "$OUTPUT/tmp" || exit 2
 
-# 统一从 frames.tsv 读取，支持传编号或名称；未指定时跑全部 20 帧。
-# Always read from frames.tsv; accepts ids or names; when unspecified, runs all 20 frames.
+# Always read from frames.tsv; accepts ids or names; when unspecified, runs every frame.
 selected=''
 if [ "$#" -gt 0 ]; then
   for wanted in "$@"; do
@@ -67,17 +66,7 @@ for key, value in json.loads(sys.argv[1]).items():
 PY
 )
   else
-    IFS=: read -r _ combat tick <<EOF2
-$source
-EOF2
-    trigger="DM:Tick:${tick}#+20"
-    env_args+=(
-      'DM_KEYS=X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterSelectPanel,DOWN@OpenPanel:CharacterSelectPanel>UpdateCharacterInfo,A@UpdateCharacterInfo%1>CharacterSelect:SelectCharacter,A@CharacterSelect:SelectCharacter>FrontEndNavigation:ToGame'
-      "DM_C2S_REPLAY=${DM_ROOT:-$HOME/dm-work}/run/verify/ryu/war_summon13_1002_takeover/c2s.jsonl"
-      DM_GAME_SEED=305419896
-      DM_FIXED_TIME=1790895128
-      "DM_TICK_HOLD=${tick}:SHOT"
-    )
+    echo "failed: frame $id has an unknown source: $source" >&2; return 2
   fi
 
   if env "${env_args[@]}" "$HOSTSHOT" "$BIN" "$PRODUCTS" "$trigger" "$png" 180 >"$frame_tmp/run.log" 2>&1; then

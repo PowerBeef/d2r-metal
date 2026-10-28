@@ -129,8 +129,7 @@ int main(int argc, char **argv) {
         fclose(f); s = read_state();
         CHECK(nb == 73 && ne == 1 && s.ly == 32767, "iOS原始步3轨迹73 Begin/1 End回放后进入LSU（假时钟按消息时间推进）");
     }
-    // 冻结拍（DM_TICK_HOLD）期间拍号不前进：前置在局内拍时钟下见到，随后宿主报「无拍」，%1 须改按出图帧 60 帧走完（host_savecmp 死等 451 s）
-    // During a tick freeze (DM_TICK_HOLD) the tick number does not advance: the precondition was seen under the in-game tick clock, then the host reports "no tick", and %1 must be finished by presented frames instead, 60 frames (host_savecmp waited 451 s dead)
+    // During a tick freeze (DM_TICK_HOLD) the tick number does not advance: the precondition was seen under the in-game tick clock, then the host reports "no tick", and %1 must be finished by presented frames instead, 60 frames (a save-and-exit key script once waited 451 s)
     setup("A@OpenPanel:PauseLayout%1>PausePanelMessage:ExitGame"); server_tick = 401; guest_frame = 1000;
     ui_cb("PanelManager", "OpenPanel", "PauseLayout"); CHECK(neutral(read_state()), "冻结前见到前置，延时未到不按");
     server_available = 0; read_state();

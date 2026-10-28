@@ -150,7 +150,6 @@ dm/tools/product.sh build|path <touch|rules|keypage>|rev
 ```
 
 - Use `regress.sh --fresh` whenever `dm/tools/patch_nso.py` changed.
-- `dm/verify/accept.sh` items need ground-truth recordings that aren't shipped, so they can't be fully run here. Those items report `⚪ 不可用` (unavailable) and don't count as red.
 - **The fork's gate is `dm/verify/fork_gate.sh quick|unit|core|full|long|device`** (`dm/verify/FORK_GATE.md`): each step through `dmtest.py`, results in `$DM_ROOT/run/gate/latest/`, last line `FORKGATE OK|RED {json}`. Run `quick unit` for every change, `core` for host changes (≤ 15 min), `full` before rebuilding the apps.
 
 **Machine-readable results** (prefer these to grepping Chinese log lines):

@@ -35,10 +35,6 @@ If you changed the rewriter `dm/tools/patch_nso.py`, use `dm/verify/regress.sh -
 
 Criteria, output locations and environment variables for each of these are in [dm/verify/README.md](dm/verify/README.md) and [dm/ios/README.md](dm/ios/README.md).
 
-### The part you cannot run
-
-In the full acceptance run `dm/verify/accept.sh`, the save comparison, the screenshot gate and the logic gates need "ground-truth data": recordings of the original game running. That data is not in the repository and never will be, and the emulator driver scripts used to record it are not shipped either. What ground truth is and how it is formatted is described in [dm/verify/README.md](dm/verify/README.md).
-
 When you submit a change, state which checks you actually ran and what they reported. If you did not run something, say so.
 
 ## Three rules

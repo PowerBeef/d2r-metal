@@ -135,8 +135,6 @@ HLE_FORCE("_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE", "前后台
 // 界面层与 Final Result 仍按输出尺寸（+0xee88 / +0xee8c）建，末端由游戏自己的放大着色器 ps_upsample_p 放回输出尺寸。
 // 启动流程不调 0x8582f0，所以要主动调一次；调用点必须是游戏主线程取系统通知处——游戏自己处理模式切换的同一上下文
 // （在出图 HLE 里调会自锁：渲染锁已被出图路径持有）。
-// 缺省：iOS 0.75，Mac 宿主 1.0（画面闸门对 Switch 真值比）；DM_3D_SCALE=0.5–1.0 覆盖。
-// 视觉尺子真值阶段（DM_NVN_RULER=1 的 A / B）强制 1.0，切到被测模式后才生效。
 // 动态比例（系统降频看的是占用率，温控档位只是粗信号 → 按实际掉帧调）：控制器吃出图线程报来的实际上屏间隔
 // （与 perf.txt 同源），三级 配置值(0.75) → 0.72 → 0.70；下限 0.70（实看 0.65 有差别）。规则见 scale3d_ctl_step。
 // 开关：DM_3D_SCALE_DYN=0 关；DM_THERMAL_NOFALLBACK=1（功耗 / 帧时间测量）也关——测量时比例必须钉住。
@@ -149,8 +147,8 @@ HLE_FORCE("_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE", "前后台
 // while the UI layer and Final Result are still built at the output size (+0xee88 / +0xee8c), and at the end the game's own upscale shader ps_upsample_p scales back to the output size.
 // The startup flow does not call 0x8582f0, so it must be called once proactively; the call site must be where the game main thread fetches system notifications, the same context in which the game itself handles mode switches
 // (calling it inside the present HLE self-deadlocks: the render lock is already held by the present path).
-// Default: iOS 0.75, Mac host 1.0 (the picture gate compares against Switch ground truth); DM_3D_SCALE=0.5–1.0 overrides.
-// During the visual ruler ground-truth phase (A / B of DM_NVN_RULER=1) it is forced to 1.0 and takes effect only after switching to the mode under test.
+// Default: iOS 0.75, Mac host 1.0 (the screen baselines were recorded at 1.0); DM_3D_SCALE=0.5–1.0 overrides.
+// During the visual ruler's reference phase (A / B of DM_NVN_RULER=1) it is forced to 1.0 and takes effect only after switching to the mode under test.
 // Dynamic scale (system throttling looks at utilization and the thermal level is only a coarse signal → adjust by actual dropped frames): the controller consumes the actual present intervals reported by the present thread
 // (same source as perf.txt), three levels: configured value (0.75) → 0.72 → 0.70; floor 0.70 (0.65 is visibly different). Rules: see scale3d_ctl_step.
 // Switches: DM_3D_SCALE_DYN=0 disables it; DM_THERMAL_NOFALLBACK=1 (power / frame-time measurement) also disables it, since the scale must be pinned during measurement.

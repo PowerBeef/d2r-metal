@@ -3099,8 +3099,7 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
           // of character (same as the touch version; that entry in the button legend has been removed in the layout).
           { void dm_padmode_legend_hide(const char *, int); dm_padmode_legend_hide("CharacterOptionsLegend", 2); }   // 提示条里原版运行时加的「X 经典版」那一条拿掉（布局里删预设不够：这一页的代码每次刷新都会再加） | Remove the 「X 经典版」(X Classic) entry that the original game adds to the legend at runtime (deleting the preset in the layout is not enough: this page's code adds it again on every refresh)
           dm_padmode_page_keys(DM_BTN_X | (prep == 3 ? DM_BTN_UP | DM_BTN_DOWN : DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A)); } }
-    // 带按键脚本的用例走自己的键序（真值对照用），不插手；DM_FE_AUTO=1 强制开、=0 强制关（画面闸门的「选角页」对照的是原版主菜单那一拍，不带键序）
-    // Cases with a key script follow their own key sequence (for ground truth comparison), no interference; DM_FE_AUTO=1 forces on, =0 forces off (the screenshot gate's "character select page" compares against the original game's main menu tick, without a key sequence)
+    // Cases with a key script follow their own key sequence, no interference; DM_FE_AUTO=1 forces on, =0 forces off (the "character select page" screen baseline is the original main menu tick, without a key sequence)
     static int fa = -1; if (fa < 0) { const char *e = getenv("DM_FE_AUTO"); fa = e ? atoi(e) != 0 : !getenv("DM_KEYS"); }
     if (!fa) return;
     // 手柄模式走原版自己的前端流程：下面这些「替玩家按键」都是给触屏定的，手柄模式下一律不做——

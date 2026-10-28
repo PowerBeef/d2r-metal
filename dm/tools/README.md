@@ -24,10 +24,6 @@ Three kinds of things live here. The first you will use when following the front
 
 | File | What it does |
 |---|---|
-| `host_savecmp.sh` | Byte-for-byte save comparison: the host replays a game, saves, and the save is compared with a reference |
-| `save_txn_regress.sh` | Determinism regression for save transactions |
-| `host_war13.sh` | Host replay of one fixed case, compared tick by tick and by save |
-| `l3reg.py`, `l3seg.sh`, `l3run.sh`, `test_l3reg.py` | Long-run memory regression: fits the growth of memory and handles against game ticks and extrapolates to a long session |
 | `crashlog.py` | Reads and symbolicates the host's `crash.json` (`DM_CRASH_JSON`) and collects the system `.ips` reports |
 | `guestsyms.py`, `test_guestsyms.py` | Symbol table for the game program (`.eh_frame` functions, dynamic symbols, source-comment notes), kept in the local build cache |
 | `explore.py`, `test_explore.py` | Automatic exploration: seeded random play through the scenario runner, shrinking a red run to a minimal scenario ([debugging.md](../verify/debugging.md)) |
@@ -44,14 +40,12 @@ Three kinds of things live here. The first you will use when following the front
 | `dmevents.py`, `test_dmevents.py` | Reads and checks the `DM_EVENTS` event stream ([event_stream.md](../verify/event_stream.md)): timeline summary, expected event order, why a run went red, wait for an event |
 | `switches.py`, `test_switches.py` | Registry of the `DM_*` environment switches: `gen` writes [dm/switches.tsv](../switches.tsv) (who reads each switch, documented or not) from a scan of the sources; `check` fails when the registry is stale or a script sets a switch nothing reads |
 | `dmtest.py`, `test_dmtest.py` | Uniform result wrapper for any test command: passes its output through and turns its verdict lines into `result.json`, optional JUnit XML and a last `RESULT {json}` line |
-| `frameprobe.sh` | Comparison measurement of frame pacing stability |
 | `conc_watch.sh` | Concurrency check for timed runs: a timing taken while other heavy work was running is discarded |
 | `sampagg.py`, `lockalign.py` | Aggregation of sampling logs; call-chain statistics for lock-holding threads |
 | `hle_inventory.py` | Inventory of the host's system service implementations (full / simplified / stub) |
 | `sdis.py`, `sideeff.py` | Disassemble one function; walk the call graph for a function's side effects |
 | `blackcols.py` | Checks a screenshot for fully black columns (whether the picture fills the screen) |
 | `guirun.sh` | Starts a program inside the graphical session and collects its output |
-| `mini_sync.sh` | Syncs the workspace to a second Mac for heavy runs (the target is set in the local config) |
 
 ## One-off probes from the early analysis
 

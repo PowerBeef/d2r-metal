@@ -42,7 +42,7 @@ Build outputs have a codename, written as the single line of [PRODUCT](PRODUCT);
 | Kind | Ruleset | Where it is used |
 |---|---|---|
 | `keypage` | `DM_RULESET=native` | `verify/regress.sh` verifies it by default |
-| `rules` | `DM_RULESET=touch-run-v4`, without host-private gates (`DM_PRIVATE_GATES=0`) | `verify/rulegate.sh` uses it by default |
+| `rules` | `DM_RULESET=touch-run-v4`, without host-private gates (`DM_PRIVATE_GATES=0`) | `verify/fnfuzz.py` (function-level fuzzing) |
 | `touch` | `DM_RULESET=touch-run-v4`, with host-private gates | The kind that `ios/run.sh` compiles into the App by default |
 
 ### 2. Loading and startup (`host/loader.c`, `host/main.c`)
@@ -84,7 +84,7 @@ The App compiles the sources of `host/` and `gfx/` in directly. The front-end in
 | `host/` | The host: loading, system call and system library takeover, the Mac front end, in-game features; `host/tests/` holds the unit tests |
 | `gfx/` | The graphics layer: `nvn/` (interface layer and Metal replay), `tex/` (texture formats and deswizzling), `tools/` (shader translation chain), `tests/` |
 | `ios/` | The iOS App: `Sources/`, the project description `project.yml`, the build-and-install script `run.sh`, `tools/` (asset generation, smoke tests, UI regression), `tests/` |
-| `verify/` | Verification: the rewrite-equivalence regression `regress.sh`, the full acceptance run `accept.sh`, and the scripts and format descriptions its items use |
+| `verify/` | Verification: the gate `fork_gate.sh`, the rewrite-equivalence regression `regress.sh`, our own baselines `golden.py`, the scenarios, and the record formats they use |
 | `data/` | Small data shipped with the repository: the registry of borrowed paths for the resource overlay. The startup prefetch list is not in the public repository: without it there is no prefetch, and startup skips one step of decoding ahead of time |
 | `i18n/` | The Chinese-English string table `ui_text.tsv`; `scan_literals.py` checks that all Chinese text the player can see goes through this table, with exceptions registered in `literal_whitelist.tsv` |
 | `third_party/` | Third-party code, see [../docs/DEPENDENCIES.md](../docs/DEPENDENCIES.md) |
@@ -130,7 +130,7 @@ Usage is `dmhost <build output directory> [module…] [-- game arguments…]`. `
 
 **Build the iOS package**: `cd dm/ios && ./run.sh build`; to install on a device use `./run.sh install`. For signing configuration see the top-level README.
 
-**Full acceptance run**: `dm/verify/accept.sh [--fast|--full]` runs rewrite equivalence, save-file comparison, the screenshot gate, unit tests, the iOS build, functional cases and more together. Besides the game files it also needs reference run data and standard save files, which are not provided with the repository; the emulator driver scripts used to obtain the reference run data are not shipped either, so the full acceptance run cannot be run with this repository alone.
+**The gate**: `dm/verify/fork_gate.sh quick|unit|core|full|long|device` runs the source checks, the test suites, the scenarios, our own baselines and the benchmarks in tiers; see [verify/FORK_GATE.md](verify/FORK_GATE.md).
 
 ## Files in host/
 

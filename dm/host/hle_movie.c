@@ -179,10 +179,9 @@ static int64_t rd_reader(void *c_, int64_t off, void *buf, size_t n) {
 static int ext_SetDataSourceReader(void *self, void **reader, const char *path) {
     // 过场 / 背景视频是产品排除项（过场动画不接，游戏自然跳过）：资源包里不带视频数据，这里不打开文件、不读时长，
     // 一律按 MV_SKIP_NS 即「播完」——一次性视频走游戏自己的播完路径，循环视频（选角背景 logoloop）按这个周期空转。
-    // DM_MOVIE_REAL=1：按容器里的真实时长空播（旧行为；对真值时序用，需要带视频数据的资源包）。
     // Cutscene / background videos are out of scope for this product (cutscenes are not hooked up, the game skips them naturally): the resource pack carries no video data, here no file is opened and no duration is read,
     // always MV_SKIP_NS and then "finished playing" -- one-shot videos take the game's own finished-playing path, looping videos (character select background logoloop) idle at this period.
-    // DM_MOVIE_REAL=1: no-op playback by the real duration in the container (old behavior; for timing against ground truth, needs a resource pack with video data).
+    // DM_MOVIE_REAL=1: no-op playback by the real duration in the container (old behavior; needs a resource pack with video data).
     (void)reader; int64_t d = MV_SKIP_NS;
     static int real = -1; if (real < 0) { const char *e = getenv("DM_MOVIE_REAL"); real = e && !strcmp(e, "1"); }
     if (real) {

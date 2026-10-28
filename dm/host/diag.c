@@ -238,9 +238,7 @@ static const char *uih_name(uint64_t h, char *buf) {
         if (g_uih[i].h == h) return g_uih[i].s;
     snprintf(buf, 24, "%#llx", h); return buf;
 }
-// 输出两路：DM_UIMSG=<路径> 时按 dm/verify/ui_message_stream.md 写 JSONL（每条一行、不折叠、不带时间，供 uicmp.py 与真值对照）；
-// stderr 上另打一行人读摘要（相邻相同合并计数）。DM_UIMSG=1 只打 stderr。
-// Output goes two ways: with DM_UIMSG=<path>, JSONL is written per dm/verify/ui_message_stream.md (one line per message, not folded, no timestamps, for uicmp.py to compare against ground truth);
+// Output goes two ways: with DM_UIMSG=<path>, JSONL is written per dm/verify/ui_message_stream.md (one line per message, not folded, no timestamps, so two runs compare line by line);
 // a human-readable summary line is also printed on stderr (adjacent identical lines merged with a count). DM_UIMSG=1 prints to stderr only.
 static FILE *g_uifp; static unsigned g_uiseq;
 static int in_game(void); static uint32_t cur_tick(void);
@@ -456,7 +454,7 @@ static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄
         if (have_arg) json_str(g_uifp, nm); else fputs("null", g_uifp);
         if (cat != b0) { fputs(",\"cat\":", g_uifp); json_str(g_uifp, cat); }
         if (act != b1) { fputs(",\"act\":", g_uifp); json_str(g_uifp, act); }
-        if (in_game()) fprintf(g_uifp, ",\"tick\":%u", cur_tick());   // 局内带服务端当前拍号（触屏用例按拍对齐面板开关；uicmp 只比 cat_h/act_h/arg，不受影响） | In a run, include the server's current tick number (touch test cases align panel open/close by tick; uicmp only compares cat_h/act_h/arg and is unaffected)
+        if (in_game()) fprintf(g_uifp, ",\"tick\":%u", cur_tick());   // In a run, include the server's current tick number (touch test cases align panel open/close by tick; comparisons use only cat_h/act_h/arg)
         fputs("}\n", g_uifp); fflush(g_uifp);
     }
     extern uint64_t g_t0_ns; uint64_t now_ns(void);
@@ -628,13 +626,10 @@ void inflate_bench_maybe(void) {
 }
 
 // ---------- DM_TICKS=<路径>[ DM_TICKS_N=拍数][ DM_TICKS_FULL=1 逐单位明细]：逐拍 6 格游戏状态哈希（main 0x5d3bc0 服务端拍入口观测门 OBS_TICK）----------
-// 口径 = dm/verify/tick_state_format.md（真值侧 dm/verify/oracle/swtick.py 逐行对照）：入口第一条指令前取，基址 G = x0；
-// 5 类单位表（128 桶、next=+0x158）+ 全局种子 G+0x1a8，按 (type, id) 稳定升序并入各格 FNV-1a 64。读不到的指针按真值 Reader 语义（读失败 = 无）。
-// 每拍一行 JSON（字段与 swtick.py 的 json.dumps 同序同分隔）；同拍号只取一次，断档报红；记满 DM_TICKS_N 拍即正常退出。不开时观测门不挂回调。
 // ---------- DM_TICKS=<path>[ DM_TICKS_N=tick count][ DM_TICKS_FULL=1 per-unit detail]: per-tick 6-cell game state hash (observation gate OBS_TICK at the server tick entry main 0x5d3bc0) ----------
-// Convention = dm/verify/tick_state_format.md (compared line by line against dm/verify/oracle/swtick.py on the ground-truth side): taken before the first instruction of the entry, base G = x0;
-// 5 unit tables (128 buckets, next=+0x158) + global seed G+0x1a8, merged in stable ascending (type, id) order into each cell's FNV-1a 64. Unreadable pointers follow the ground-truth Reader semantics (failed read = None).
-// One JSON line per tick (fields in the same order and with the same separators as swtick.py's json.dumps); each tick number is taken only once, a gap reports a failure; exits normally once DM_TICKS_N ticks are recorded. When off, no callback is attached to the observation gate.
+// Convention = dm/verify/tick_state_format.md: taken before the first instruction of the entry, base G = x0;
+// 5 unit tables (128 buckets, next=+0x158) + global seed G+0x1a8, merged in stable ascending (type, id) order into each cell's FNV-1a 64. An unreadable pointer counts as absent (failed read = None).
+// One JSON line per tick (fields in a fixed order with Python json.dumps' default separators); each tick number is taken only once, a gap reports a failure; exits normally once DM_TICKS_N ticks are recorded. When off, no callback is attached to the observation gate.
 static int tk_rd(uint64_t a, void *buf, size_t n);
 static _Atomic uint64_t g_player_path;   // 本地玩家的路径头（状态泵每拍更新） | path head of the local player (updated by the state pump every tick)
 // 本地玩家的逻辑位置（16.16 定点，格）：给图形层的连拍逐帧记一份，好和画面位移对照。读不到返回 0
@@ -697,7 +692,7 @@ static void state_dump_monsters(uint64_t G, char *out, size_t cap, size_t *used)
     }
     w = snprintf(out + *used, cap - *used, "]"); if (w >= 0 && (size_t)w < cap - *used) *used += (size_t)w;
 }
-static int tk_rd(uint64_t a, void *buf, size_t n) {           // = swtick Reader.rd：地址 0 不计数、直接无；读失败无 | = swtick Reader.rd: address 0 is not counted and is None directly; a failed read is None
+static int tk_rd(uint64_t a, void *buf, size_t n) {           // Address 0 is not counted and reads as None directly; a failed read is None
     if (!a) return 0;
     g_tkreads++; vm_size_t got = 0;
     { int dm_guest_heap_readable(uint64_t, size_t); if (dm_guest_heap_readable(a, n)) { memcpy(buf, (const void *)(uintptr_t)a, n); return 1; } }   // 客体堆内：直接读（原先每个字段一次内核调用，主线程每拍几十次） | Inside the guest heap: read directly (it used to be one kernel call per field, dozens of times per tick on the main thread)
@@ -1140,7 +1135,7 @@ static void ticks_hash(const uint64_t *regs) {
     // 同一进程里先后进两次局（退回选角再进、连建两个角色）：新一局拍号从 0 / 1 重数，这不是断档；局内跳号才报红
     // Joining a run twice in the same process (back to character select and in again, or creating two characters in a row): the new run's tick number restarts from 0 / 1, which is not a gap; only a jump within a run reports a failure
     if (g_tklast >= 0 && tick != g_tklast + 1) { if (tick <= 1 && (long long)tick < g_tklast) LOG("DM_TICKS 新一局：拍号 %lld → %u", g_tklast, tick); else LOG("【红】DM_TICKS 拍号断档 %lld → %u", g_tklast, tick); }
-    g_tkreads = 1;                                              // 上面读拍号算一次（swtick tick_line 首读同） | Reading the tick number above counts as one read (same as the first read in swtick tick_line)
+    g_tkreads = 1;                                              // Reading the tick number above counts as one read
     static uint8_t tab[0x1400]; unsigned bad = 0; size_t n = 0;   // static：同上，拍入口在客体栈上，只在拍线程上用 | static: as above, the tick entry is on a guest stack; used only on the tick thread
     if (!tk_rd(G + TB[0], tab, sizeof tab)) memset(tab, 0, sizeof tab);
     for (int t = 0; t < 5; t++)
@@ -1188,7 +1183,7 @@ static void ticks_hash(const uint64_t *regs) {
     fprintf(g_tkfp, "{\"tick\": %u, \"n\": [%u, %u, %u, %u, %u], \"frames\": %llu, \"h\": [", tick, cnt[0], cnt[1], cnt[2], cnt[3], cnt[4], (unsigned long long)dm_nvn_frame_count());
     for (int i = 0; i < 6; i++) fprintf(g_tkfp, "%s\"%016llx\"", i ? ", " : "", h[i]);
     fprintf(g_tkfp, "], \"bad\": %u, \"reads\": %u, \"game\": \"%#llx\", \"dt\": %.3f}\n", bad, g_tkreads, G, (now_ns() - g_tkt0) / 1e9);
-    if (g_tkfull)                                               // = swtick --full：每单位一行 {"t": 拍号, "u": {…}}（排序后次序） | = swtick --full: one line per unit {"t": tick number, "u": {...}} (in sorted order)
+    if (g_tkfull)                                               // DM_TICKS_FULL: one line per unit {"t": tick number, "u": {...}} (in sorted order)
         for (size_t i = 0; i < n; i++) {
             tk_unit *u = &us[i];
             fprintf(g_tkfp, "{\"t\": %u, \"u\": {\"type\": %u, \"cls\": %u, \"id\": %u, \"mode\": %u, \"act\": %u, \"seed\": %u, \"rlo\": %u, \"rhi\": %u, "
@@ -1281,8 +1276,7 @@ static long long ev_tick(void) {
     return t;
 }
 static _Atomic int g_holding;   // DM_TICK_HOLD 冻结中（定义见下） | DM_TICK_HOLD freeze in progress (defined below)
-// hid 脚本用：不在局内、或 DM_TICK_HOLD 冻结中（拍号不前进，按拍计的延时永远到不了——host_savecmp 退出键序 %1 死等 451 s）返回 UINT64_MAX，脚本改按出图帧计
-// For the hid script: when not in a run, or while DM_TICK_HOLD is frozen (the tick number does not advance, so tick-counted delays never come due -- the host_savecmp exit key sequence %1 waited dead for 451 s), return UINT64_MAX and the script counts by presented frames instead
+// For the hid script: when not in a run, or while DM_TICK_HOLD is frozen (the tick number does not advance, so tick-counted delays never come due -- a save-and-exit key sequence %1 once waited 451 s), return UINT64_MAX and the script counts by presented frames instead
 uint64_t dm_server_tick(void) { return in_game() && !atomic_load(&g_holding) ? dm_cur_tick() : UINT64_MAX; }
 static void c2s_sys_obs(const uint64_t *regs) {         // 观测门 4：0x6310b0(buf = u32 客户端号 + 包, 包长) | Observation gate 4: 0x6310b0(buf = u32 client number + packet, packet length)
     uint32_t len = (uint32_t)regs[1], cid; if (tk_rd(regs[0], &cid, 4) && !g_sysclient_set) { g_sysclient = cid; g_sysclient_set = 1; }
