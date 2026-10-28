@@ -1745,15 +1745,12 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
             static uint64_t pnj; struct rusage_info_v6 ri;
             if (!proc_pid_rusage(getpid(), RUSAGE_INFO_V6, (rusage_info_t *)&ri)) { if (pnj) trow(f, "@proc_mj", (ri.ri_energy_nj - pnj) / 1e6); pnj = ri.ri_energy_nj; }
 #else
-            // iOS 走公开的 task_info（TASK_POWER_INFO_V2）：task_energy 同一份内核能量账（纳焦），task_gpu_utilisation = 记在本进程名下的 GPU 时间（纳秒）。
-            // 手机上 GPU 降频把每帧 GPU 时间撑满帧间隔，各画质档的 @gpu_ms 一样，开销只在能量上看得出
-            // iOS uses the public task_info (TASK_POWER_INFO_V2): task_energy is the same kernel energy account (nJ), task_gpu_utilisation = GPU time charged to this process (ns).
-            // On the phone the GPU clocks down until each frame's GPU time fills the frame interval, so @gpu_ms is the same for every picture setting and the cost only shows in energy
-            static uint64_t pnj, pgpu; task_power_info_v2_data_t pi; mach_msg_type_number_t n = TASK_POWER_INFO_V2_COUNT;
-            if (task_info(mach_task_self(), TASK_POWER_INFO_V2, (task_info_t)&pi, &n) == KERN_SUCCESS) {
-                if (pnj) trow(f, "@proc_mj", (pi.task_energy - pnj) / 1e6);
-                if (pgpu) trow(f, "@gpu_util_ms", (pi.gpu_energy.task_gpu_utilisation - pgpu) / 1e6);
-                pnj = pi.task_energy; pgpu = pi.gpu_energy.task_gpu_utilisation; }
+            // iOS 走公开的 task_info（TASK_POWER_INFO_V2）：task_energy 同一份内核能量账（纳焦）。它跟着 CPU 走：iPhone 17 Pro 上 SMAA、16× 过滤加的 GPU 活在它里面看不出
+            //（同一档前后两局差 15%），GPU 时间那一栏（task_gpu_utilisation）在 iOS 27 上一直是 0
+            // iOS uses the public task_info (TASK_POWER_INFO_V2): task_energy is the same kernel energy account (nJ). It follows the CPU: on an iPhone 17 Pro the GPU work SMAA and
+            // 16x filtering add doesn't show in it (two runs of one setting differed by 15%), and its GPU time field (task_gpu_utilisation) stays 0 on iOS 27
+            static uint64_t pnj; task_power_info_v2_data_t pi; mach_msg_type_number_t n = TASK_POWER_INFO_V2_COUNT;
+            if (task_info(mach_task_self(), TASK_POWER_INFO_V2, (task_info_t)&pi, &n) == KERN_SUCCESS) { if (pnj) trow(f, "@proc_mj", (pi.task_energy - pnj) / 1e6); pnj = pi.task_energy; }
 #endif
             trow(f, "@call_ms", (t0 - g_t0_ns) / 1e6);
         }
