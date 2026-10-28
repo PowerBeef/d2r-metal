@@ -32,6 +32,9 @@
 #include <mach/mach_time.h>
 #include <mach/mach.h>
 #include <TargetConditionals.h>
+#if TARGET_OS_OSX
+#include <libproc.h>   // proc_pid_rusage：@proc_mj | proc_pid_rusage: @proc_mj
+#endif
 #include <unistd.h>
 #if TARGET_OS_OSX
 #define DM_MEM_CAP_DEFAULT_GB 24
@@ -1735,6 +1738,11 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
             struct rusage ru; getrusage(RUSAGE_SELF, &ru);
             uint64_t pc = (uint64_t)(ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) * 1000000000ull + (uint64_t)(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec) * 1000ull;
             if (pproc) trow(f, "@proc_cpu_ms", (pc - pproc) / 1e6); pproc = pc;
+            // 进程耗电（内核按核类型计的能量，纳焦；mJ / 帧）：线程 QoS、能效核 / 性能核分配的 A/B 看它 | process energy (the kernel's per-core-type energy account, nJ; mJ per frame): A/B of thread QoS and efficiency / performance core placement
+#if TARGET_OS_OSX   // iOS 的 SDK 不带 libproc.h | the iOS SDK has no libproc.h
+            static uint64_t pnj; struct rusage_info_v6 ri;
+            if (!proc_pid_rusage(getpid(), RUSAGE_INFO_V6, (rusage_info_t *)&ri)) { if (pnj) trow(f, "@proc_mj", (ri.ri_energy_nj - pnj) / 1e6); pnj = ri.ri_energy_nj; }
+#endif
             trow(f, "@call_ms", (t0 - g_t0_ns) / 1e6);
         }
         trow(f, "@passes", (double)(ps - prev_pass)); trow(f, "@draws", (double)(dr - prev_draw));
