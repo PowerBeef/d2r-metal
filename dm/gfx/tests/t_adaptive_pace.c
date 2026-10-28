@@ -42,8 +42,7 @@ int adaptive_pace_test(void) {
 }
 const char *adaptive_pace_failure(void) { return failure; }
 
-// 桌面DLL驱动可把真实 thread_time_ns 采样送进生产统计函数；不代替鸿蒙设备验证。
-// A desktop DLL driver can feed real thread_time_ns samples into the production sampler; it does not replace HarmonyOS device verification.
+// A desktop DLL driver can feed real thread_time_ns samples into the production sampler.
 static nvn_frame_cpu_window observed;
 double adaptive_pace_observe(uint64_t cpu_ns, int reset) {
     double ms = -1;

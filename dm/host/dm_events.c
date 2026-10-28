@@ -188,10 +188,8 @@ static void init_once(void) {
     struct timeval tv; gettimeofday(&tv, NULL);
 #if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
     const char *plat = "ios";
-#elif defined(__APPLE__)
-    const char *plat = "mac";
 #else
-    const char *plat = "other";
+    const char *plat = "mac";
 #endif
     ev_fn("start", "v:d pid:s platform:s wall:f", 1, pid, plat, (double)tv.tv_sec + tv.tv_usec / 1e6);
     atexit(ev_atexit);   // exit() 走这里；_exit 的路径（看门狗、拍数记满、优雅退出）自己先发 exit | exit() comes here; the _exit paths (watchdog, tick count reached, graceful exit) emit exit themselves first

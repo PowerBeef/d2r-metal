@@ -1,20 +1,12 @@
 #include "dm_touch_game_identity.h"
 #include <string.h>
-#if defined(__APPLE__) || defined(__ANDROID__) || defined(__OHOS__)
 #include <mach/mach.h>
-#ifdef __APPLE__
 #include <mach/vm_map.h>
-#endif
-#endif
 int dm_tg_vm_read(uint64_t address,void *out,size_t bytes) {
     if(!out || !bytes || !address || address>UINT64_MAX-bytes)return 0;
-#if defined(__APPLE__) || defined(__ANDROID__) || defined(__OHOS__)
     vm_size_t copied=0;
     kern_return_t rc=vm_read_overwrite(mach_task_self(),(vm_address_t)address,(vm_size_t)bytes,(vm_address_t)out,&copied);
     return rc==KERN_SUCCESS && copied==bytes;
-#else
-    (void)address;return 0;
-#endif
 }
 /* 诊断（DM_BINDING_DIAG）：最近一次的返回原因码与读到的 LR / 槽号，供 bridge 计数（v4 后快照全空，查卡在哪个返回点） | Diagnostic (DM_BINDING_DIAG): the most recent return reason code and the LR / slot number read, for bridge to count (after v4 the snapshot is entirely empty; find which return point it is stuck at) */
 int dm_tg_identity_reason; uint64_t dm_tg_identity_lr; uint32_t dm_tg_identity_slot;

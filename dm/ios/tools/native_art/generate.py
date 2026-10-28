@@ -3,12 +3,10 @@
 来源与指纹冻结在仓库里的 Sources/TouchArt/native_art_manifest.json（只有原版路径与哈希）：读包后先核原件 SHA-256 / MD5 与两张表的 SHA-256，
 解码后核尺寸与 RGBA 像素 SHA-256（不依赖 PNG 压缩编码）；对不上仍报错。
 用法：generate.py <原版 RomFS（Update）> [--output-dir 仓外目录]。默认生成在被git忽略的Sources/；指定仓外目录则生成dm_touch_native_art.c及TouchArt/。
-安卓编译时给索引添加公共头搜索路径，PNG仅作为外部overlay导入，不进安装包。
 Original game skill atlas / HUD small images → TouchArt PNG, original game Skills / Skilldesc → pure C index dm_touch_native_art.c. Generated at build time from the player's own game files, not kept in the repository.
 Sources and fingerprints are frozen in Sources/TouchArt/native_art_manifest.json in the repository (only original game paths and hashes): after reading the package, first verify the SHA-256 / MD5 of the original files and the SHA-256 of the two tables,
 after decoding verify dimensions and RGBA pixel SHA-256, independently of PNG compression; a mismatch remains fatal.
-Usage: generate.py <original game RomFS (Update)> [--output-dir external-directory]. The default remains git-ignored Sources/; an external directory receives dm_touch_native_art.c and TouchArt/.
-Android adds public header search paths for the index; PNGs are imported only as an external overlay and never packaged in the APK."""
+Usage: generate.py <original game RomFS (Update)> [--output-dir external-directory]. The default remains git-ignored Sources/; an external directory receives dm_touch_native_art.c and TouchArt/."""
 import argparse, csv, hashlib, io, json, sys
 from pathlib import Path
 HERE = Path(__file__).resolve().parent; IOS = HERE.parent.parent
@@ -39,8 +37,7 @@ def main(romfs, output=None):
         raw = romfs_art.read(romfs, 'global/excel/' + t['file'])
         if sha(raw) != t['sha256']: raise SystemExit('native_art：游戏文件里的 %s 和冻结的不一样（游戏版本不对？要 3.3.94012）' % t['file'])
         tables[t['file']] = list(csv.DictReader(io.StringIO(raw.decode('utf-8')), delimiter='\t'))
-    # 安卓可把所有生成物放仓外；苹果默认目录保持原样。
-    # Android can keep every generated file outside the checkout; Apple retains its default directories.
+    # --output-dir keeps every generated file outside the checkout; the default is the git-ignored Sources/.
     destination = Path(output) if output else IOS / 'Sources'
     art = destination / 'TouchArt'; art.mkdir(parents=True, exist_ok=True); atlases = {}
     for a in man['assets']:

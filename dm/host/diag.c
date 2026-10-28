@@ -917,12 +917,10 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     // 可跨幕、不要求开过那一幕的小站（新建的标准术士也能进；小站传送 0x6aaea0 对没开那幕的角色会断言 main+0x6ab2d8）
     // Test switch DM_TEST_GOTO_LEVEL=<tick>:<level>[;<tick>:<level>...] (for test setup): at the tick call the original game's level change main+0x634000(game, player, level, 11) -- the one used going from the Throne into the Worldstone Chamber (0x755d38);
     // it can cross acts and does not require that act's waypoint to have been activated (a freshly created standard Warlock can enter too; waypoint travel 0x6aaea0 asserts at main+0x6ab2d8 for a character that has not unlocked that act)
-    { static char q[300]; static int init; uint32_t tq = 0; if (!init) { init = 1; const char *e = getenv("DM_TEST_GOTO_LEVEL"); if (!e) e = getenv("DM_TEST_WARP_LV"); if (e) strlcpy(q, e, sizeof q); }
+    { static char q[300]; static int init; uint32_t tq = 0; if (!init) { init = 1; const char *e = getenv("DM_TEST_GOTO_LEVEL"); if (e) strlcpy(q, e, sizeof q); }
       if (q[0] && main && player && tk_rd(G + 0x170, &tq, 4)) { unsigned at = 0, to = 0; int nn = 0;
           if (sscanf(q, "%u:%u%n", &at, &to, &nn) >= 2 && tq >= at) { const char *rest = q + nn + (q[nn] == ';'); memmove(q, rest, strlen(rest) + 1);
               ((void (*)(uint64_t, uint64_t, int, int))(main->base + 0x634000))(G, player, (int)to, 11); LOG("DM_TEST_GOTO_LEVEL：拍 %u 换到关卡 %u", tq, to); } } }
-    // DM_TEST_WARP_LV=<拍>:<关卡> 是上面的旧名（首领连战删掉时并进来；docs/android-notes 里的复现命令还用它）
-    // DM_TEST_WARP_LV=<tick>:<level> is the old name of the switch above (merged in when the boss rush was removed; the reproduction commands in docs/android-notes still use it)
     // 测试开关 DM_TEST_SPAWN=<拍>:<类号>:<dx>,<dy>（造现场用）：到拍在玩家格 + (dx, dy) 附近找空地刷一只怪——原版找空地 main+0x7160d0(游戏, 房间, 坐标, 3, 0x400, &房间, 4, 100)、
     // 原版刷怪 main+0x7ce630(游戏, 房间, 1, 类号, x, y, 1, 0, 0x10)（远处 / 画面边上的首领顶部血条复现用）
     // Test switch DM_TEST_SPAWN=<tick>:<class>:<dx>,<dy> (for test setup): at the tick, find open ground near the player cell + (dx, dy) and spawn one monster -- the original free-spot search main+0x7160d0(game, room, coords, 3, 0x400, &room, 4, 100),

@@ -44,10 +44,9 @@ _COMPONENT = re.compile(r"[A-Za-z0-9_.+-]+\Z")
 _RESERVED = re.compile(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])\Z", re.I)
 
 # Fixed, reviewed dependency closure. Add dependencies here when generators gain
-# a new code/layout input; --inputs exposes exactly this list to CMake.
+# a new code/layout input.
 SOURCE_INPUTS = tuple(sorted((
     "dm/ios/tools/overlay_contract.py",
-    "dm/android/tools/stage_touch_assets.py",
     "dm/ios/tools/gen_romfs_overlay.py", "dm/ios/tools/gen_assets.py",
     "dm/ios/tools/gen_paths.py", "dm/ios/tools/gen_hud_v4.py",
     "dm/ios/tools/hud_v4_design.py", "dm/ios/tools/layout_patch.py",
@@ -330,12 +329,7 @@ def main(argv=None) -> int:
     parser.add_argument("--header", type=Path)
     parser.add_argument("--write", type=Path, action="append", default=[])
     parser.add_argument("--verify", type=Path, action="append", default=[])
-    parser.add_argument("--inputs", action="store_true", help="print fixed repo-relative dependency paths")
     args = parser.parse_args(argv)
-    if args.inputs:
-        print("\n".join(SOURCE_INPUTS))
-        if not (args.header or args.write or args.verify):
-            return 0
     try:
         source_sha = source_fingerprint(args.repo_root)
         if args.header:

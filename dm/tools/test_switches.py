@@ -12,7 +12,7 @@ FILES = {
     'ios/project.yml': 'DEVELOPMENT_TEAM: ${DM_TEAM}\nCURRENT_PROJECT_VERSION: $(DM_BUILD)\n',
     'tools/r.py': "import os\nx = os.environ.get('DM_PY')\ny = os.environ['DM_PY2']\nenv = dict(os.environ, DM_A='1', DM_PYTYPO='1')\nsubprocess.run(['open', '--env', 'DM_TABLE=1'])\ncfg = {'DM_PY': '1'}\n",
     'tools/s.sh': '# DM_COMMENT=1 只是注释 | only a comment\nDM_A=1 ./x\nexport DM_TEAM=t DM_SHREAD=1\necho "${DM_SHREAD:-0}" $DM_OTHER  # DM_TRAIL=1\nenv -u DEVICECTL_CHILD_DM_GONE ./y\nDEVICECTL_CHILD_DM_TYPO=1 xcrun devicectl\nxcodebuild DM_BUILD=3\n',
-    'android/A.java': 'String v = System.getenv("DM_JAVA");\n',
+    'ios/Sources/A.m': 'const char *v = getenv("DM_OBJC");\n',
     'docs.md': 'Set `DM_A` to test.\n',
 }
 
@@ -36,8 +36,8 @@ class SwitchesTest(unittest.TestCase):
     def test_registry_and_unread_sets(self):
         self.assertEqual(self.run_tool('gen')[0], 0)
         rows = {r.split('\t')[0]: r.split('\t') for r in (self.root / 'switches.tsv').read_text(encoding='utf-8').splitlines()[1:]}
-        self.assertEqual(sorted(rows), ['DM_A', 'DM_BUILD', 'DM_JAVA', 'DM_OTHER', 'DM_PY', 'DM_PY2', 'DM_SHREAD', 'DM_TABLE', 'DM_TEAM'])
-        self.assertEqual((rows['DM_A'][1], rows['DM_A'][3], rows['DM_JAVA'][1], rows['DM_TEAM'][3]), ('host', 'y', 'android', '-'))
+        self.assertEqual(sorted(rows), ['DM_A', 'DM_BUILD', 'DM_OBJC', 'DM_OTHER', 'DM_PY', 'DM_PY2', 'DM_SHREAD', 'DM_TABLE', 'DM_TEAM'])
+        self.assertEqual((rows['DM_A'][1], rows['DM_A'][3], rows['DM_OBJC'][1], rows['DM_TEAM'][3]), ('host', 'y', 'ios', '-'))
         rc, out = self.run_tool('check')
         self.assertEqual(rc, 1)
         unread = sorted(line.split()[0] for line in out.splitlines() if '没有地方读' in line)

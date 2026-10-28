@@ -1958,18 +1958,6 @@ static void ui_map_center(module_t *m, uint64_t root, int mini) {
     { static int lg; if (lg++ < 8) LOG("全屏地图中心：纵向卷动量 %d → %d 格", *sc, want); } *sc = want; ours = want;
 }
 static void ui_map_pump(module_t *m) {
-#if defined(__OHOS__)
-    // 鸿蒙的 UI 线程可能在选角面板加载时先请求收起地图；此时原版 AutoMap 尚未创建，回调会解引用空对象。
-    // 局外不调用地图回调，也不把旧请求带进下一局；游戏内的切换仍走原路径。
-    // The HarmonyOS UI thread can request a map reset while character select is loading, before the guest AutoMap exists.
-    // Discard out-of-game requests instead of calling the map callback or carrying them into the next game.
-    if (!dm_uiscreen_ingame()) {
-        int pending = atomic_exchange(&g_map_req, -1);
-        atomic_store(&g_map_full_now, 0);
-        if (pending >= 0) { static int n; if (n++ < 4) LOG("鸿蒙：局外地图切换请求已忽略（地图尚未就绪）"); }
-        return;
-    }
-#endif
     int cfg = *(volatile int32_t *)(m->base + 0x2d479f4), mini = *(volatile int32_t *)(m->base + 0x2d5c748);
     // 测试开关 DM_TEST_AUTOMAP=<帧>:<档>：到帧把配置改成这一档并调回调（当作玩家在选项页选了它）
     // Test switch DM_TEST_AUTOMAP=<frame>:<setting>: at that frame, change the config to this setting and call the callback (as if the player had picked it on the options page)
@@ -2382,7 +2370,6 @@ int dm_ui_panel_resident(const char *name) {
 // Returns the stack reading: number of open non-resident panels; -1 when only the NPC dialog menu / speech box is open. The log text "[hud] 面板栈 ..." is kept as is (regression scripts match on it)
 enum { HUD_STACK_MAX = 64 };
 static struct { char name[64]; int open; } g_hud_stack[HUD_STACK_MAX];
-__attribute__((weak)) void dm_platform_menu_ready(void) {}   // 空的弱定义（不是弱声明）：苹果链接器要求弱引用链接时有定义；Vulkan 后端 / 鸿蒙平台层给强定义 | empty weak definitions (not declarations): Apple's linker needs a weak reference to resolve; the Vulkan backend / HarmonyOS platform give the strong ones
 static void hud_stack_update(const char *act, const char *arg) {
     // 读取画面撤下：清掉此刻在游戏面板树里已经看不见的记录（防只开不关的漏配），屏上还在的照记——
     // 通关页是读取画面撤下前 0.5 秒开的（OpenExclusivePanel EndScreenPanelExpansion → UnloadPanel LoadScreenPanel），原先整栈清零把它也清了：
@@ -2426,7 +2413,7 @@ static void hud_stack_update(const char *act, const char *arg) {
         // no panel left on screen, yet the front end stays in panel mode (no stick, no skill buttons, every tap is "outside the panel"). Across 809 logs only 4 panels ever reached a count of 2 or more
         // (main menu links, character select page, naming candidate bar, hire list), and none of them was a real two-layer stack needing two closes. The dm_tc_navigation path was already an idempotent bitmap, so the two paths now agree
         if(open && g_hud_stack[slot].open>0) { fprintf(stderr,"[hud] 面板栈 %s %s：已经开着，不重复计\n",act,arg); return; }
-        g_hud_stack[slot].open=open?1:0; if(open && !strcmp(arg,"MainMenuButtonRibbon")) dm_platform_menu_ready();   // 主菜单出来：平台结束启动加速 | main menu shown: the platform ends its start-up boost
+        g_hud_stack[slot].open=open?1:0;
         fprintf(stderr,"[hud] 面板栈 %s %s → %d\n",act,arg,g_hud_stack[slot].open);
     }
 }

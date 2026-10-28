@@ -253,10 +253,10 @@ int dm_3d_quality_mode_get(void) { return atomic_load(&g_3d_quality_mode); }
 static _Atomic int g_scale3d_level;
 static _Atomic int g_scale3d_resumed;
 void dm_3d_scale_resumed(void) { atomic_store(&g_scale3d_resumed, 1); }   // 前端：刚回前台。回来头几秒的慢帧是恢复（表面重建、缓存变冷），不是 GPU 吃紧：停判 3 秒 | front end: just returned to foreground. Slow frames in the first few seconds back are recovery (surface rebuild, caches gone cold), not GPU pressure: suspend judging for 3 seconds
-// 按 GPU 耗时的动态 3D 比例（DM_3D_SCALE_GPU=1，鸿蒙缺省开）：上面的控制器按「60 帧、超 25 ms 算掉帧」判，帧率在 30 上下时一进局就降到底，且档位是绝对值。
+// 按 GPU 耗时的动态 3D 比例（DM_3D_SCALE_GPU=1）：上面的控制器按「60 帧、超 25 ms 算掉帧」判，帧率在 30 上下时一进局就降到底，且档位是绝对值。
 // 这里每 2 秒看一次：帧时间 > 35 ms 且 GPU 占帧时间 ≥ 85%（卡在 GPU，发热后常见）→ 降一档；GPU 只占 < 75%（有富余）连续 10 秒 → 升一档。档位 = 配置值 × 系数，
 // 下限 DM_3D_SCALE_GPU_FLOOR（缺省 0.40）。卡在 CPU 时不降（降分辨率不省 CPU）。
-// GPU-time-driven dynamic 3D scale (DM_3D_SCALE_GPU=1, on by default on HarmonyOS): the controller above judges by "60 fps, > 25 ms is a drop", so around 30 fps it hits the bottom as soon as
+// GPU-time-driven dynamic 3D scale (DM_3D_SCALE_GPU=1): the controller above judges by "60 fps, > 25 ms is a drop", so around 30 fps it hits the bottom as soon as
 // a run starts, and its levels are absolute. Here, every 2 s: frame time > 35 ms with the GPU at >= 85% of it (GPU-bound, common once hot) -> one level down; GPU below 75% (headroom)
 // for 10 s in a row -> one level up. Level = configured value x factor, floor DM_3D_SCALE_GPU_FLOOR (default 0.40). CPU-bound frames do not lower it (resolution does not save CPU).
 static const float g_s3g_mult[] = {0.92f, 0.85f, 0.78f, 0.72f, 0.66f, 0.60f};
@@ -317,7 +317,7 @@ static void scale3d_tick(void) {
     // 动态档：0 = 配置值，k = 表里第 k 个低于配置值的比例
     // Dynamic level: 0 = configured value, k = the k-th table scale below the configured value
     int lv = atomic_load(&g_scale3d_level); float dyn = s3_level_scale(want_cfg, lv);
-    if (s3g_on()) { float g = atomic_load(&g_s3g_scale); dyn = g > 0 && g < want_cfg ? g : want_cfg; }   // GPU 时间控制器（DM_3D_SCALE_GPU=1，鸿蒙缺省开）覆盖帧间隔档 | GPU-time controller (DM_3D_SCALE_GPU=1, on by default on HarmonyOS) overrides the frame-interval level
+    if (s3g_on()) { float g = atomic_load(&g_s3g_scale); dyn = g > 0 && g < want_cfg ? g : want_cfg; }   // GPU 时间控制器（DM_3D_SCALE_GPU=1）覆盖帧间隔档 | GPU-time controller (DM_3D_SCALE_GPU=1) overrides the frame-interval level
     float want = dm_nvn_ruler_truth() ? 1.0f : dyn;
     if (want == cur || !main || dm_nvn_frame_count() < 30) return;
     uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;

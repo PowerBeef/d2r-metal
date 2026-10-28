@@ -89,7 +89,7 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 
 | File | What it does |
 |---|---|
-| `dm_custom.c`, `dm_custom.h` | The port's own Options page ("Extras" on the Mac and iOS, "Custom" on Android): all feature switches are read and written here; modules only call `dm_custom_get` |
+| `dm_custom.c`, `dm_custom.h` | The port's own Options page ("Extras" on the Mac and iOS): all feature switches are read and written here; modules only call `dm_custom_get` |
 | `dm_cloudsync.c` | The core of iCloud save sync: comparing and moving files between the local save directory and one cloud directory, without touching the iCloud API |
 | `dm_unit.h` | A small shared helper: reads which level a unit is in |
 

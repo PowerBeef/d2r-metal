@@ -97,18 +97,10 @@ static _Thread_local int t_wopen_failed_txn;
 #define FS_CLEAN_MARK "org.d2rmobile.txn-clean"
 static _Atomic int g_work_clean;
 static void work_mark(const char *work, int on) {
-#ifdef __APPLE__
     if (on) setxattr(work, FS_CLEAN_MARK, "1", 1, 0, XATTR_NOFOLLOW); else removexattr(work, FS_CLEAN_MARK, XATTR_NOFOLLOW);
-#else
-    if (on) lsetxattr(work, "user." FS_CLEAN_MARK, "1", 1, 0); else lremovexattr(work, "user." FS_CLEAN_MARK);
-#endif
 }
 static int work_marked(const char *work) { char v[4];
-#ifdef __APPLE__
     return getxattr(work, FS_CLEAN_MARK, v, sizeof v, 0, XATTR_NOFOLLOW) > 0;
-#else
-    return lgetxattr(work, "user." FS_CLEAN_MARK, v, sizeof v) > 0;
-#endif
 }
 const char *dm_save_workdir(void);
 static void txn_touch(void) { if (atomic_exchange(&g_work_clean, 0)) { const char *w = dm_save_workdir(); if (w) work_mark(w, 0); } }
@@ -275,20 +267,10 @@ static Result mount(const char *name, const char *dir, int ro) { return mount_ex
 // APFS is case-insensitive by default, Horizon paths are case-sensitive: every component is looked up exactly by guest name.
 // Ordinary host names are unchanged; only when a name collides on the host is a separate physical name chosen, with the guest name stored in an xattr.
 // clonefile preserves xattr, so save Commit/remount needs no separate mapping table; enumeration must not leak physical aliases.
-#ifdef __APPLE__
 #define FS_GUEST_NAME "org.d2rmobile.guest-name"
 #define fs_xattr_get(p, buf, n) getxattr(p, FS_GUEST_NAME, buf, n, 0, XATTR_NOFOLLOW)
 #define fs_xattr_set(p, v, n) setxattr(p, FS_GUEST_NAME, v, n, 0, XATTR_NOFOLLOW)
 #define fs_xattr_del(p) removexattr(p, FS_GUEST_NAME, XATTR_NOFOLLOW)
-#else   // Linux：扩展属性要带 user. 命名空间，不跟随链接的是 l* 版本；「没有这个属性」是 ENODATA | Linux: extended attributes need the user. namespace, the no-follow versions are l*; "no such attribute" is ENODATA
-#define FS_GUEST_NAME "user.org.d2rmobile.guest-name"
-#define fs_xattr_get(p, buf, n) lgetxattr(p, FS_GUEST_NAME, buf, n)
-#define fs_xattr_set(p, v, n) lsetxattr(p, FS_GUEST_NAME, v, n, 0)
-#define fs_xattr_del(p) lremovexattr(p, FS_GUEST_NAME)
-#ifndef ENOATTR
-#define ENOATTR ENODATA
-#endif
-#endif
 static int guest_name(const char *parent, const char *physical, char *out, size_t n) {
     char p[1280]; snprintf(p, sizeof p, "%s/%s", parent, physical);
     ssize_t k = fs_xattr_get(p, out, n - 1);
