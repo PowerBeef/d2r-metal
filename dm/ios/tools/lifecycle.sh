@@ -68,7 +68,9 @@ up=$(echo "$post" | grep "上屏 至帧" | tail -1); chk "回前台后仍在上�
 # 原判据读最后一行「上屏 至帧 N」的掉帧数 ≤ 3：那一窗按帧号每 300 帧切一次，正好横跨进后台的那一刻——进后台时排着队没上屏的帧按规矩丢弃并记成掉帧，
 # 游戏在「进后台」到「图形挂起」之间还会再出几帧，赶上几帧算几帧，同一个包量出来不是 3 就是 5，和回前台后卡不卡无关。
 # 现在看三件事：① 回前台那一窗里真正上了屏的帧，间隔没有超过 25 ms 的（掉帧 − 丢弃 = 0）；② 回前台后的完整显示节拍窗（每窗 300 个节拍）至少 2 个，
-# 空节拍与被丢弃的帧一个都不新增；③ 进后台那一刻丢弃的帧数只记录、给个上限（12，约半秒的量），防它失控。
+# 空节拍一个都不新增，合并丢弃的旧帧不比进后台前多（正常游玩里游戏偶尔一拍出两帧，旧的那帧按规矩丢掉：进后台前 1200 帧里有 5 帧，回来后 900 帧里 1 帧，同一个比例）；
+# ③ 进后台那一刻丢弃的帧数只记录、给个上限防它失控：上限按「失活 → 进后台」这段的时长算（失活起就停了出图，这段里游戏照出的帧都丢；iOS 27 按主屏键这段约 0.74 s，
+# 丢了 19 帧，原来的固定上限 12 按更短的一段定的），每秒 60 帧 + 4 帧排队的量
 # Present quality after returning to the foreground: measured from the "returned to foreground" event onward, not in windows rounded by frame number.
 # The old criterion read the dropped-frame count ≤ 3 from the last "present, up to frame N" line: that window is cut every 300 frames by frame number
 # and happens to straddle the moment of entering the background. Frames queued but not yet presented at that moment are discarded by rule and counted as
@@ -77,8 +79,11 @@ up=$(echo "$post" | grep "上屏 至帧" | tail -1); chk "回前台后仍在上�
 # measures either 3 or 5, which has nothing to do with whether it stutters after returning to the foreground.
 # Three things are checked now: ① among the frames actually presented in the return-to-foreground window, no interval exceeds 25 ms (dropped − discarded
 # = 0); ② at least 2 complete display-link windows after returning to the foreground (300 display-link ticks per window),
-# with not a single new empty display-link tick or discarded frame; ③ the number of frames discarded at the moment of entering the background is only recorded and
-# given an upper bound (12, about half a second's worth) to keep it from running away.
+# with not a single new empty display-link tick, and no more merge-discarded old frames than before backgrounding (in normal play the game now and then readies two frames for
+# one tick and the older one is dropped by rule: 5 in the 1200 frames before backgrounding, 1 in the 900 after returning, the same rate); ③ the number of frames discarded
+# at the moment of entering the background is only recorded and capped to keep it from running away: the cap follows the time from "resign active" to "entered background"
+# (presenting stops at resign active, so every frame the game makes in that time is dropped; on iOS 27 a home press spends about 0.74 s there and dropped 19 frames,
+# while the old fixed cap of 12 assumed a shorter gap), at 60 frames a second plus 4 queued frames
 lg=$(tail -n +"${fg:-1}" "$L" | python3 -c '
 import re, sys
 P = sys.stdin.read().split("\n")
@@ -87,9 +92,15 @@ u = [tuple(map(int, m.groups())) for l in P for m in [re.search(r"上屏 至帧 
 n = max(len(t) - 1, 0); de = t[-1][1] - t[0][1] if t else -1; dd = t[-1][2] - t[0][2] if t else -1
 print(u[-1][0] - u[-1][1] if u else -1, u[-1][1] if u else -1, n, de, dd)')
 set -- $lg
+# 进后台前的合并丢弃比例（最后一行「显示节拍」：出图、合并丢弃都是累计数）与「失活 → 进后台」的时长（客体时钟）
+# The merge-discard rate before backgrounding (last "display link" line: frames and merge discards are running totals) and the "resign active → entered background" time (guest clock)
+pre=$(head -n "${bg:-1}" "$L" | grep "显示节拍 至" | tail -1 | sed -nE 's/.*出图 ([0-9]+)、空节拍 [0-9]+、合并丢弃旧帧 ([0-9]+).*/\1 \2/p')
+cr=$(head -n "${bg:-1}" "$L" | grep "前端：sceneWillResignActive" | tail -1 | sed -E 's/.*客体时钟 ([0-9.]+) s.*/\1/')
+ddmax=$(python3 -c "import math; f, m = map(int, '${pre:-0 0}'.split()); print(max(1, math.ceil(m * ${3:-0} * 300 / f)) if f else 0)" 2>/dev/null || echo 0)
+dbmax=$(python3 -c "import math; print(math.ceil((float('$cb') - float('$cr')) * 60) + 4)" 2>/dev/null || echo 12)
 chk "回前台那一窗上了屏的帧没有间隔超 25 ms 的：${1:-无读数} 帧" $([ "${1:--1}" = 0 ] && echo 1 || echo 0)
-chk "回前台后完整显示节拍窗 ≥ 2 个且空节拍、丢弃都不新增：${3:-0} 窗（每窗 300 节拍），空节拍 +${4:-?}，丢弃 +${5:-?}" $([ "${3:-0}" -ge 2 ] && [ "${4:--1}" = 0 ] && [ "${5:--1}" = 0 ] && echo 1 || echo 0)
-chk "进后台那一刻丢弃的帧数在上限内（只防失控，≤ 12）：${2:-无读数} 帧" $([ "${2:--1}" -ge 0 ] && [ "${2:-99}" -le 12 ] && echo 1 || echo 0)
+chk "回前台后完整显示节拍窗 ≥ 2 个、空节拍不新增、合并丢弃不比进后台前多：${3:-0} 窗（每窗 300 节拍），空节拍 +${4:-?}，丢弃 +${5:-?}（上限 ${ddmax}，按进后台前 ${pre:-无读数}）" $([ "${3:-0}" -ge 2 ] && [ "${4:--1}" = 0 ] && [ "${5:--1}" -ge 0 ] && [ "${5:-99}" -le "$ddmax" ] && echo 1 || echo 0)
+chk "进后台那一刻丢弃的帧数在上限内（只防失控，≤ ${dbmax}：失活 ${cr:-?} → 进后台 ${cb:-?} s）：${2:-无读数} 帧" $([ "${2:--1}" -ge 0 ] && [ "${2:-99}" -le "$dbmax" ] && echo 1 || echo 0)
 chk "回前台后 3D 比例没有因此降档" $(echo "$post" | grep -q "3D 渲染比例 0.7[02]" && echo 0 || echo 1)
 chk "红行 0（实得 $(grep -c '【红】' "$L")）" $(grep -q '【红】' "$L" && echo 0 || echo 1)
 chk "动作序列做完、进程还在（退出码 / 存活标志 ${trc}）" $([ "$trc" = 0 ] && echo 1 || echo 0)
