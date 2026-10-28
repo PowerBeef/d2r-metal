@@ -46,7 +46,6 @@ DM_CUSTOM_TEST_ROWS	ios-tools	ios/tools/touch_layout.py	-
 DM_DBG	host	host/main.c	y
 DM_DBG_COVER	host	host/dm_cursor.c	-
 DM_DBG_FE_SEND	host	host/dm_cursor.c	-
-DM_DERIVED	host	host/dm_derived_rt.h	-
 DM_DESWIZZLE_LIB	ios-tools	ios/tools/dxt5.py ios/tools/romfs_art.py	-
 DM_DETCLOCK	gfx,host,tools,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c tools/lookbook.py …	y
 DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	-
@@ -261,7 +260,6 @@ DM_SAVE_TEST	ios	ios/Sources/main.m	y
 DM_SAVE_THROTTLE	host	host/main.c	-
 DM_SCREEN_SHOT	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSmoke.swift	-
 DM_SCREEN_WANT	ios-tools	ios/tools/frame_cmp.sh	-
-DM_SHADER_PREP_THREADS	ios	ios/Sources/dm_shader_prep.m	-
 DM_SHOT_PRODUCT	tools,verify	tools/lookbook.py verify/golden.py	y
 DM_SKILL_AIM_LOG	host	host/hle_private_aim.c	-
 DM_SKILL_RENDER_GATE_LOG	host	host/hle_tact.c	-
@@ -362,8 +360,6 @@ DM_TEST_NSMOUSE	host	host/front_mac.m	y
 DM_TEST_OBJREC	host	host/dm_world.c	-
 DM_TEST_OE_FOCUS_FIRST	host	host/hle_oe.c	-
 DM_TEST_OVERLAY_STALE_MS	ios	ios/Sources/DmTouchOverlay.m	-
-DM_TEST_PACK_INFO	ios	ios/Sources/main.m	-
-DM_TEST_PACK_MANIFEST	ios	ios/Sources/main.m	-
 DM_TEST_PADMODE	host	host/dm_padmode.c	-
 DM_TEST_PADMODE_LANG_RESET	host	host/dm_padmode.c	-
 DM_TEST_PADMODE_READ	host	host/dm_padmode.c	-

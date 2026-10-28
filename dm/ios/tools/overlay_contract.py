@@ -64,7 +64,7 @@ SOURCE_INPUTS = tuple(sorted((
     "dm/ios/docs/native_art_v1_geometry.json",
     "dm/ios/docs/touch_layout_spec_native_binding_v5.json",
     "dm/data/casc_overlay/borrowed_paths.tsv", "dm/i18n/ui_text.tsv",
-    "dm/tools/casc_overlay.py", "dm/tools/dmx.py", "dm/tools/winlf/sitecustomize.py", "dm/tools/winlf/run.py",
+    "dm/tools/casc_overlay.py", "dm/tools/dmx.py",
     "dm/gfx/nvn/nvn_tex.c", "dm/gfx/nvn/nvn_tex.h",
     "dm/gfx/tex/nvn_deswizzle.c", "dm/gfx/tex/nvn_deswizzle.h",
 )))

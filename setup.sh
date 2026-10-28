@@ -56,15 +56,13 @@ else bad "$(m "缺 Xcode（编译 App 与着色器）" "Xcode is missing (builds
 command -v brew > /dev/null 2>&1 || note "$(m "没有 Homebrew：下面几个工具用它装最省事，见 https://brew.sh" "Homebrew not found: it is the easiest way to install the tools below, see https://brew.sh")"
 tool xcodegen    "生成 Xcode 工程" "generates the Xcode project" "brew install xcodegen"
 tool spirv-cross "着色器转 Metal 着色语言" "converts shaders to Metal Shading Language" "brew install spirv-cross"
-# spirv-cross 换个版本，翻译出的着色器源码就可能不同（实测最新源码版与 1.4.357.0 差 231 个着色器）。自己整条构建时前后自洽，不受影响；
-# 用发布的壳做包（docs/NO_XCODE）时要与壳一致，对不上 d2rm_pack.py 会停下来。这里把版本报出来，不拦。
 # A different spirv-cross version may translate shaders differently (231 shaders differ between the latest source and 1.4.357.0). A full build
-# of your own stays self-consistent; packing into a released shell (docs/NO_XCODE) must match the shell, and d2rm_pack.py stops if it does not.
+# of your own stays self-consistent either way; this only reports the version.
 SC_WANT=1.4.357.0
 if command -v spirv-cross > /dev/null 2>&1; then
   SC_HAVE=$(brew list --versions spirv-cross 2> /dev/null | awk '{print $2}')
   if [ "$SC_HAVE" = "$SC_WANT" ]; then ok "$(m "spirv-cross 的版本是验过的 $SC_WANT" "spirv-cross is the verified version $SC_WANT")"
-  elif [ -n "$SC_HAVE" ]; then note "$(m "spirv-cross 是 ${SC_HAVE}，验过的是 ${SC_WANT}：自己整条构建不受影响；往发布的壳里做包时翻译结果可能对不上（工具会报）" "spirv-cross is $SC_HAVE, the verified version is $SC_WANT: a full build of your own is unaffected; packing into a released shell may not match (the tool will say so)")"
+  elif [ -n "$SC_HAVE" ]; then note "$(m "spirv-cross 是 ${SC_HAVE}，验过的是 ${SC_WANT}：自己整条构建不受影响" "spirv-cross is $SC_HAVE, the verified version is $SC_WANT: a full build of your own is unaffected")"
   else note "$(m "读不到 spirv-cross 的版本（不是用 Homebrew 装的）；验过的是 $SC_WANT" "Cannot read the spirv-cross version (not installed with Homebrew); the verified version is $SC_WANT")"; fi
 fi
 tool python3     "生成与验证脚本" "generation and verification scripts" "brew install python"

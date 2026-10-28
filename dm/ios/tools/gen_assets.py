@@ -26,9 +26,8 @@ STEPS = [('选角右侧面板', ['gen_fe_rightpanel.py', '{R}']),
 
 
 def python_command(script, *arguments):
-    # 每个生成子进程使用 UTF-8 和 LF；保留调用方已有的只读 RomFS 适配器。
-    # Every generator subprocess uses UTF-8 and LF while retaining an existing read-only RomFS adapter.
-    return [sys.executable, '-X', 'utf8', os.path.join(HERE, '..', '..', 'tools', 'winlf', 'run.py'), script, *arguments]
+    # Every generator subprocess runs in UTF-8 mode.
+    return [sys.executable, '-X', 'utf8', script, *arguments]
 
 
 def stamp(R, overlay_only=False):

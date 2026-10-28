@@ -38,8 +38,6 @@ Original Switch shader package
   → xcrun metal / metallib  compiles into Metal shader libraries
 ```
 
-Without Apple's Metal compiler (Windows, Linux, a Mac without Xcode) the last step cannot be done. `tools/nometal_run.py` lets the same chain run its first two steps as usual and puts the translated MSL source into the library files as is; a package made this way compiles the shaders once on the phone, and the system caches the compiled result. This route is used by `dm/tools/d2rm_pack.py`; see `docs/NO_XCODE.md` in the repository root.
-
 The whole chain is driven by `tools/dmsh_build.py`, and `setup.sh` runs it for you. Key points:
 
 - **Key**: each shader is keyed by the first 16 hexadecimal digits of the sha256 of its control section (0x880 bytes). At run time the game hands the control section to `nvnProgramSetShaders`, and the replay layer computes the same key to find the library.
@@ -99,7 +97,6 @@ The scripts in `tools/`; usage is written in each file's header:
 | `nvn_slots.py`, `gen_protos.py` | Generate `nvn_slots.tsv` / `names.txt`, and `nvn_protos.h` / the thunks |
 | `tbdr_budget.py`, `tbdr_load_dead.py`, `tbdr_store_dead.py`, `tbdr_pass_merge.py` | Read the `DM_NVN_PASSDUMP` log and analyze the load / store volume of each render pass's attachments per frame |
 | `passgpu_top.py` | Reads the `DM_NVN_PASSGPU` output and lists GPU time by pass |
-| `nometal_run.py` | Runs this translation chain on a machine without Apple's Metal compiler: shaders go into the libraries as source and are compiled on the phone |
 
 ## Building
 

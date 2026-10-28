@@ -10,9 +10,6 @@ Three kinds of things live here. The first you will use when following the front
 |---|---|
 | `patch_nso.py` | The program rewriter: rewrites the few instructions in the game program that cannot run unchanged under Apple's kernel and leaves everything else byte-for-byte intact. Called by `setup.sh` |
 | `extract_game.sh` | Extracts the two parts this project needs (program files and resources) from your own game package into the workspace |
-| `d2rm_pack.py` | Produces a playable install package without Xcode by building your own game files into the "shell"; see [docs/NO_XCODE.md](../../docs/NO_XCODE.md) |
-| `guest_dylib.py` | Writes the rewritten game program as an Apple-format dynamic library (pure Python, byte-identical output on every system); called by `d2rm_pack.py` |
-| `winlf/` | Makes the packaging tool chain use `\n` line endings on Windows, so packages made on different systems match |
 | `product.sh` | The identifier of the current rewrite output lives in one place (`dm/PRODUCT`); scripts get paths through this |
 | `dmx.py` | A minimal read-only reader for the game's resource storage: list files, fetch a file |
 | `casc_overlay.py` | Builds the overlay at build time: points chosen resource paths at our new content without touching the original archives |

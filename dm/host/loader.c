@@ -309,26 +309,7 @@ static void remap_at(module_t *m, vm_address_t to, const void *from, unsigned lo
     if (kr != KERN_SUCCESS || a != to) die("%s vm_remap %p → %#lx（%#lx 字节）失败：%d", m->name, from, (unsigned long)to, size, kr);
     if ((cur & need) != need) die("%s vm_remap 后权限 %#x，缺 %#x", m->name, cur, need);
 }
-#ifdef DM_SHELL
-// 壳（ios/tools/shell_build.sh 出的、不含任何游戏内容的 App）：模块映像不在主可执行文件里，在使用者自己用游戏文件做出来的
-// Frameworks/Guest.framework/Guest 里——一个只装段的动态库（dm/tools/guest_dylib.py 写出），节名与内嵌做法相同，下面只换一个映像头去取。
-// Shell (the App built by ios/tools/shell_build.sh, containing no game content at all): the module images are not in the main executable but in the
-// Frameworks/Guest.framework/Guest that users build themselves from their game files -- a dynamic library that holds only segments (written by dm/tools/guest_dylib.py), with the same section names as the embedded approach; below only the image header to fetch from is swapped.
-#include <dlfcn.h>
-#include <mach-o/dyld.h>
-static const struct mach_header_64 *image_mh(void) {
-    static const struct mach_header_64 *mh; if (mh) return mh;
-    char exe[4096]; uint32_t n = sizeof exe; if (_NSGetExecutablePath(exe, &n)) die("取不到可执行文件路径");
-    char *sl = strrchr(exe, '/'); if (!sl || (size_t)(sl - exe) + 40 > sizeof exe) die("可执行文件路径不对：%s", exe); strcpy(sl, "/Frameworks/Guest.framework/Guest");
-    if (!dlopen(exe, RTLD_NOW)) die("这个安装包里还没有游戏程序（%s）：先用 dm/tools/d2rm_pack.py 把你自己的游戏文件做进安装包再装。系统的说法：%s", exe, dlerror());
-    for (uint32_t i = 0; i < _dyld_image_count(); i++) if (strstr(_dyld_get_image_name(i), "/Guest.framework/Guest")) mh = (const struct mach_header_64 *)_dyld_get_image_header(i);
-    if (!mh) die("Guest 动态库已加载但找不到它的映像头");
-    fprintf(stderr, "boot: 模块映像取自 Guest 动态库 %s\n", exe); return mh;
-}
-#define IMAGE_MH image_mh()
-#else
 #define IMAGE_MH (&_mh_execute_header)
-#endif
 static void map_image(module_t *m, const char *dir) {
     (void)dir;
     char sx0[17], sx1[17], dm[17]; snprintf(sx0, sizeof sx0, "__dm%sx0", m->name); snprintf(sx1, sizeof sx1, "__dm%sx1", m->name); snprintf(dm, sizeof dm, "__DM%sW", m->name);
