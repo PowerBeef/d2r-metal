@@ -481,6 +481,10 @@ class Runner:
         self.snapped = True
         try: r = self.c.cmd('engine', reply_timeout=5)
         except (dmctl.CtlError, TimeoutError, OSError) as e: r = {'error': str(e)}
+        # 再要一份线程现场（各客体线程在等什么 + 图形侧等待点，同看门狗那份）写进宿主日志：卡住的局在被收掉之前留下诊断（看门狗按 DM_WATCH 要等到场景超时之后才开口）
+        # also ask for the thread state (what each guest thread waits on + the graphics wait points, the watchdog's dump) into the host log: a stuck run leaves a diagnosis before it is shut down (the watchdog, on DM_WATCH, would speak only after the scenario timeout)
+        try: self.c.cmd('dump', reply_timeout=10)
+        except (dmctl.CtlError, TimeoutError, OSError): pass
         with open(os.path.join(self.run, 'engine.json'), 'w', encoding='utf-8') as f:
             json.dump(dict(why=why, **{k: v for k, v in r.items() if k not in ('id', 'cmd', 'ok')}), f, ensure_ascii=False, indent=1)
 
