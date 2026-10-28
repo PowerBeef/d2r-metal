@@ -206,6 +206,8 @@ python3 dm/tools/bench.py baseline save && python3 dm/tools/bench.py regress <ro
 
 - Present intervals are pinned at 16.67 ms by vsync on this Mac; compare `cpu_ms`, `nvn_ms` and `gpu_ms` instead.
 - Use at least 4 runs per variant (the minimum exact p is 0.029); 6 is the default.
+- To compare two rewrite outputs (one changed instruction, say), make a scratch copy of the output and point runs at it: `SCN_PRODUCT=<dir>` for scenarios and benchmarks (`--a-env "SCN_PRODUCT=…"`), `DM_SHOT_PRODUCT=<dir>` for `lookbook.py` / `golden.py` shots. Never patch the real output under `build/cache/dm/out`.
+- `proc_mj` (macOS) is the process's energy per frame from the kernel's account; A/B it with `--metric proc_mj.mean`, no admin rights needed.
 - `XTRACE_*` are os_signposts on Apple. Record them with `xctrace record --template Logging --attach <pid>`.
 - A GPU capture is about 4 GB per frame, and the disk is tight. `gpucap` refuses to capture when free space is short, and the `gpu_capture` step deletes the trace unless `keep=1`.
 
@@ -216,7 +218,7 @@ python3 dm/tools/crashlog.py show <run>/crash.json                              
 python3 dm/tools/guestsyms.py build                                                  # local guest symbol table for module+offset lookups
 make -C dm/host dmhost_asan|dmhost_ubsan|dmhost_tsan && SCN_DMHOST=$PWD/dm/host/dmhost_asan python3 dm/tools/scenario.py run …   # sanitizer host; any report is red (sanitizer.txt)
 python3 dm/tools/scenario.py run … --metal-validation api|lint|shader|all           # Metal validation layers (metal_validation.txt)
-python3 dm/tools/explore.py run --seed N --episodes K [--dmhost …]                  # random play; a red run is shrunk to minimal_<k>.scn
+python3 dm/tools/explore.py run --seed N --episodes K [--dmhost …]                  # random play; a red run is shrunk to minimal_<k>.scn (a failed step also writes the host's thread dump into host.log)
 python3 dm/tools/replay.py record <scn> && python3 dm/tools/replay.py check <dir> --dmhost A --dmhost B   # same input on two builds → first divergent tick
 python3 dm/tools/tickdiff.py a/ticks.jsonl b/ticks.jsonl                             # first divergent tick between two DM_TICKS records
 python3 dm/tools/c2s.py summary|near <recording> [tick]                              # recorded client packets labelled (dm/verify/c2s_opcodes.tsv), lengths checked
