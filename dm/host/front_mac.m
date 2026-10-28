@@ -16,7 +16,7 @@
 #include "dm_scrub.h"
 #include <pwd.h>
 #ifndef APP_NAME
-#define APP_NAME "D2R Mobile"   // 同 app_mac.m：日志目录名，旧接口版构建时另给 | as app_mac.m: name of the log directory, given separately for the older-API build
+#define APP_NAME "D2R Mobile"   // as app_mac.m: name of the log directory
 #endif
 void mtl_set_ui_rect_fn(void (*fn)(double *y, double *h));
 static void ui_rect_frac(double *fy, double *fh) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); if (dm_screen_real(&rw, &rh) && rh > 0) { *fy = (double)y / rh; *fh = (double)h / rh; } }   // 同 front_ios.m：界面矩形的纵向位置与高（占画面高的比例） | Same as front_ios.m: vertical position and height of the UI rectangle (as fractions of the frame height)
@@ -253,8 +253,7 @@ static dm_scrub *share_scrubber(NSString *home) {
 // Nothing is uploaded or mailed; the archive contains only these three files - no saves, nothing from the iCloud directory. All three are scrubbed first (share_scrubber: home directory, character names, displays, disk names...); a file that cannot be scrubbed is left out.
 // to non-empty = test (DM_TEST_SHARELOG): no panel, write directly to this path. Returns nil on success, otherwise the reason for failure
 static NSString *share_logs(NSString *to) {
-    // 日志目录同 app_mac.m 写的那处：测试副本（DM_APP_SUPPORT）在 <支持目录>/Logs，旧接口版是 Logs/D2R Mobile M3（APP_NAME）。原先写死 Logs/D2R Mobile，这两种都打包了别的包的日志
-    // The log directory is where app_mac.m writes: <support>/Logs for a test copy (DM_APP_SUPPORT), Logs/D2R Mobile M3 for the older-API build (APP_NAME). It used to be hard-coded to Logs/D2R Mobile, so both packed another package's logs
+    // The log directory is where app_mac.m writes: <support>/Logs for a test copy (DM_APP_SUPPORT), Logs/APP_NAME otherwise. It used to be hard-coded to Logs/D2R Mobile, so a test copy packed the player's logs
     NSFileManager *fm = NSFileManager.defaultManager; NSString *home = NSHomeDirectory(), *logd = getenv("DM_APP_SUPPORT") ? [@(getenv("DM_APP_SUPPORT")) stringByAppendingPathComponent:@"Logs"] : [home stringByAppendingPathComponent:@"Library/Logs/" APP_NAME];
     NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSString *build = [inf[@"CFBundleVersion"] description] ?: @"0", *ver = [inf[@"CFBundleShortVersionString"] description] ?: @"?";
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyyMMdd-HHmm"; NSString *name = [NSString stringWithFormat:@"D2RMobile-logs-%@-%@", build, [df stringFromDate:NSDate.date]];
@@ -505,10 +504,10 @@ void front_run(void (*guest)(void)) {
             }];
             // 指针自动隐藏：鼠标指针停在游戏窗口里不动一段时间就藏起来（用键盘 / 手柄玩时不挡画面）。用 setHiddenUntilMouseMoves，鼠标一动系统自己显示回来，没有隐藏 / 显示的计数要配对。
             // 计时器只挂在缺省运行循环模式上：菜单、拖动改窗口大小、模态对话框（键位对照）期间都不触发。只在 App 在前台、游戏窗口是键窗口（输入框表单开着时键窗口是表单）、指针在窗口内容区里、没按着鼠标键时隐藏。
-            // 时长：defaults write org.d2rmobile.mac CursorHideSeconds -float <秒>（旧接口版的包标识是 org.d2rmobile.mac.m3；0 = 关），缺省 3 秒
+            // 时长：defaults write org.d2rmobile.mac CursorHideSeconds -float <秒>（0 = 关），缺省 3 秒
             // Pointer auto-hide: the mouse pointer hides after it rests over the game window for a while (so it doesn't cover the picture while you play with keyboard / controller). It uses setHiddenUntilMouseMoves: the system shows it again on the next mouse movement, so there is no hide / unhide count to balance.
             // The timer is scheduled only in the default run loop mode: it does not fire during menus, window resizing or modal dialogs (key map). It hides only while the App is frontmost, the game window is key (while the input box sheet is up the sheet is key), the pointer is inside the window's content area and no mouse button is held.
-            // Duration: defaults write org.d2rmobile.mac CursorHideSeconds -float <seconds> (the older-API build's bundle ID is org.d2rmobile.mac.m3; 0 = off), default 3 seconds
+            // Duration: defaults write org.d2rmobile.mac CursorHideSeconds -float <seconds> (0 = off), default 3 seconds
             { id pref = [NSUserDefaults.standardUserDefaults objectForKey:@"CursorHideSeconds"];   // 手写的设置可能是任何类型：只认数字或数字字符串，数组、日期等当没设 | a hand-written default can be any type: only a number or numeric string counts, an array, date etc. is treated as unset
               double idle = [pref respondsToSelector:@selector(doubleValue)] ? [pref doubleValue] : 3.0;
               if (idle > 0 && isfinite(idle)) { __block NSPoint last = NSMakePoint(NAN, NAN); __block double since = 0; __block BOOL hid = NO;

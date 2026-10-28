@@ -195,8 +195,8 @@ def make_prefix(reason):
 
 
 # ---------- 画面 | screens ----------
-def renderer(host):
-    return 'm3' if host.endswith('_m3') else 'm4'
+def renderer(host):   # screen baselines live under shots/m4 (the Metal 4 renderer)
+    return 'm4'
 
 
 def page_spec(p):

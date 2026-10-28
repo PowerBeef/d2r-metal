@@ -16,7 +16,7 @@ After preparing your own game files with the normal setup, force a rebuild when 
 make -C dm/host -B dmhost MOVIE_FFMPEG=1
 ```
 
-Omit the flag, or use `MOVIE_FFMPEG=0`, for the existing backend. The same option applies to `dmhost_m3`, but installed FFmpeg libraries may require a newer macOS than that target. Check dependency deployment versions separately. The Mac build does not bundle the libraries into an app; for iOS see below.
+Omit the flag, or use `MOVIE_FFMPEG=0`, for the existing backend. The Mac build does not bundle the libraries into an app; for iOS see below.
 
 ## iOS
 

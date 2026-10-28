@@ -104,7 +104,6 @@ DM_INFLATE_BENCH	host	host/diag.c	-
 DM_INFLATE_ROUNDS	host	host/diag.c	-
 DM_IOS_DD	ios-tools	ios/run.sh	y
 DM_IOS_DEPLOYMENT_MIN	ios-tools	ios/tools/build_ffmpeg_ios.sh	-
-DM_IOS_M3	ios-tools	ios/run.sh	-
 DM_IOS_UDID	ios-tools	ios/run.sh ios/tools/devbattery.sh ios/tools/lifecycle.sh ios/tools/local_env.sh …	y
 DM_IOS_WATCH	ios-tools	ios/tools/frame_cmp.sh	-
 DM_IPAD_FULL	ios	ios/Sources/front_ios.m	-
@@ -125,7 +124,6 @@ DM_MAC_DEVICE_PROFILE	ios-tools	ios/tools/smoke_mac.sh ios/tools/touch_e2e_mac.s
 DM_MAC_ICLOUD	tools	tools/mac_app.sh	-
 DM_MAC_ICON_SOURCE	tools	tools/mac_app.sh	-
 DM_MAC_LINK	tools	tools/mac_app.sh	-
-DM_MAC_M3	tools	tools/mac_app.sh	-
 DM_MAC_OVERLAY	tools	tools/mac_app.sh	-
 DM_MAC_PRODUCT	tools	tools/mac_app.sh	-
 DM_MAC_ROMFS_COPY	tools	tools/mac_app.sh	-

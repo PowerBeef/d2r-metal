@@ -156,11 +156,6 @@ run: \
 	python3 test_tbdr_budget.py
 	python3 test_ub_table.py
 .PHONY: run
-# 旧接口版那一遍（图形后端编译期开关 DM_NVN_M3=1，目标 macOS 15.0）：在旁边的 tests_m3 目录里用同一份测试源码另编另跑，不动这里的缺省产物。
-# The older-API pass (compile-time switch DM_NVN_M3=1 of the graphics backend, target macOS 15.0): built and run separately from the same test sources in the sibling tests_m3 directory, leaving the default outputs here untouched.
-run-m3:
-	rm -rf ../tests_m3 && mkdir ../tests_m3 && cp Makefile *.c *.cpp *.m *.py ../tests_m3/
-	$(MAKE) -C ../tests_m3 run CFLAGS="$(CFLAGS) -DDM_NVN_M3=1 -mmacosx-version-min=15.0"
 
 t_copy_pitch: t_copy_pitch.c ../nvn/nvn_copy_pitch.h
 	clang -O1 -Wall -Werror -o $@ t_copy_pitch.c

@@ -21,7 +21,7 @@ dm/tools/mac_app.sh                  # macOS 27 or later
 
 The build takes ten-odd seconds and produces `~/dm-work/out/macapp/D2R Metal.app` (about 3 MB). To put the output elsewhere, add an output directory after the command.
 
-The App contains only our own program. The rewritten game program, the shader libraries and the UI overlay are all made from your game files; they stay in your working directory (`~/dm-work`) and the App only records where they are — so **the App runs only on the Mac that built it**. Please do not copy it to anyone, and do not delete or move the working directory (the shader libraries recompiled for the older-API build are in the output directory). Signing is local ad-hoc signing: no developer account and no device registration.
+The App contains only our own program. The rewritten game program, the shader libraries and the UI overlay are all made from your game files; they stay in your working directory (`~/dm-work`) and the App only records where they are — so **the App runs only on the Mac that built it**. Please do not copy it to anyone, and do not delete or move the working directory. Signing is local ad-hoc signing: no developer account and no device registration.
 
 Version and build number can be set: `DM_MAC_VERSION` (default 1.0) and `DM_MAC_BUILD` (default: the current month-day-hour-minute).
 

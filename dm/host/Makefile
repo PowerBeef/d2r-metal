@@ -3,7 +3,7 @@ DM_ROOT ?= $(HOME)/dm-work
 # 打包脚本（tools/mac_app.sh）用 print-macos-min 取同一个数写进 Info.plist，并核程序本体里的数与它相等
 # Minimum system version: the graphics backend (gfx/nvn/nvn_mtl.m) is built entirely on Metal 4, which exists from macOS 26; without stating it explicitly the compiler takes the version of the local system.
 # The packaging script (tools/mac_app.sh) takes the same number through print-macos-min, writes it into Info.plist, and checks that the number in the executable equals it
-MACOS_MIN ?= 27.0   # 本 fork 只支持 macOS 27 起（iOS 27 起）：只用 Metal 4，不另走旧接口；dmhost_m3 留给上游合并，不编不测 | this fork supports macOS 27 and later only (iOS 27 and later): Metal 4 only, no older-API path; dmhost_m3 stays for upstream merges and is neither built nor tested
+MACOS_MIN ?= 27.0   # macOS 27 and later only (iOS 27 and later): Metal 4, no older-API backend
 CFLAGS=-O1 -g -Wall -Wno-unused-function -mmacosx-version-min=$(MACOS_MIN)
 MOVIE_FFMPEG ?= 0
 MOVIE_PREFIX ?=
@@ -89,12 +89,6 @@ LIBDEFLATE=../third_party/libdeflate/lib/deflate_decompress.c ../third_party/lib
 .DEFAULT_GOAL := dmhost   # 下面先写了表头生成规则，缺省目标要明说（否则 make 只生成表头、不编宿主） | The header generation rules are written first below, so the default goal must be stated explicitly (otherwise make only generates the headers and does not build the host)
 print-macos-min:
 	@echo $(MACOS_MIN)
-# 旧接口版（图形后端不用 Metal 4，见 gfx/nvn/nvn_mtl.m 的 DM_NVN_M3）：最低系统单独一个数；包名另起，存档与日志目录跟着包名走、不与正式包共用
-# Older-API build (graphics backend without Metal 4, see DM_NVN_M3 in gfx/nvn/nvn_mtl.m): its minimum system is a separate number; the package gets its own name, and the save and log directory follows the package name instead of being shared with the regular package
-MACOS_MIN_M3 ?= 15.0
-CFLAGS_M3=$(subst -mmacosx-version-min=$(MACOS_MIN),-mmacosx-version-min=$(MACOS_MIN_M3),$(CFLAGS)) -DDM_NVN_M3=1 -DAPP_NAME='"D2R Mobile M3"'
-print-macos-min-m3:
-	@echo $(MACOS_MIN_M3)
 # 由原版表生成的头文件：不进仓库，构建时从玩家自己的游戏文件（Switch 版 3.3.94012 的 Update/RomFS）生成；路径用环境变量 DM_ROMFS_SRC 指定
 # Headers generated from the original game's tables: not checked into the repository, generated at build time from the player's own game files (Update/RomFS of Switch version 3.3.94012); the path is given by the environment variable DM_ROMFS_SRC
 ROMFS?=$(or $(DM_ROMFS_SRC),$(DM_ROOT)/data/switch/3.3.94012/Update/RomFS)
@@ -119,7 +113,3 @@ SAN_ubsan=-fsanitize=undefined
 SAN_tsan=-fsanitize=thread
 dmhost_asan dmhost_ubsan dmhost_tsan: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) $(GENH)
 	clang $(CFLAGS) $(SAN_$(@:dmhost_%=%)) -fno-omit-frame-pointer -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
-# 旧接口版宿主（图形后端不用 Metal 4，目标 macOS 15.0）：同一棵树、同一份源码，只多一个编译开关；不在缺省目标里，要用时 make dmhost_m3
-# Older-API host (graphics backend without Metal 4, target macOS 15.0): the same tree and the same source, with just one more compile switch; not in the default targets, run make dmhost_m3 when needed
-dmhost_m3: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) $(GENH)
-	clang $(CFLAGS_M3) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network

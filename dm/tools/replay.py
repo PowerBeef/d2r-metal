@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # 自录自放：跑一个场景时把客户端命令包（DM_C2S_LOG）与逐拍状态（DM_TICKS_FULL）录下来，之后在任意宿主构建上按拍回放（DM_C2S_REPLAY），逐拍比对，找第一个不同的拍（tickdiff.py）。
-# 用来问「这个改动 / 这个构建改没改游戏逻辑」：同一份录制在两个构建上回放应逐拍相同。实测：消毒器构建、旧接口构建与普通构建逐拍相同；删掉一条移动包，第一个不同的拍正是那一拍、说是玩家的模式变了。
+# 用来问「这个改动 / 这个构建改没改游戏逻辑」：同一份录制在两个构建上回放应逐拍相同。实测：消毒器构建与普通构建逐拍相同；删掉一条移动包，第一个不同的拍正是那一拍、说是玩家的模式变了。
 #   record <场景> [--seed N] [--time 秒] [--out 目录] [--window]   录制目录：meta.json（存档、种子、时刻、进局键序、拍数）、c2s.jsonl、ticks.jsonl、run/（场景结果）
 #   run <录制目录> [--dmhost 宿主] [--out 目录]                     回放一次，写 <目录>/ticks.jsonl
 #   check <录制目录> [--dmhost 宿主]…                               在每个宿主上回放，与录制逐拍比；判定行 REPLAY OK|RED，末行 RESULT {json}
@@ -9,7 +9,7 @@
 #   进局前的加入握手（拍 0 的系统类消息）不进回放文件：回放只在文件首末拍之间丢弃客户端自发的消息，首拍若是 0，宿主客户端自己的加入也被丢掉，服务端永远等不到玩家、拍不前进
 #   录制目录里是由游戏程序推出来的数据：只放本机，不入库
 # Self-recorded replay: while a scenario runs, record the client command packets (DM_C2S_LOG) and the per-tick state (DM_TICKS_FULL), then replay by tick on any host build (DM_C2S_REPLAY), compare tick by tick and find the first divergent tick (tickdiff.py).
-# It answers "does this change / this build change the game logic": the same recording replayed on two builds should be identical tick by tick. Measured: the sanitizer builds and the older-API build match the normal build tick by tick; with one movement packet removed, the first divergent tick is exactly that tick, naming the player's mode.
+# It answers "does this change / this build change the game logic": the same recording replayed on two builds should be identical tick by tick. Measured: the sanitizer builds match the normal build tick by tick; with one movement packet removed, the first divergent tick is exactly that tick, naming the player's mode.
 #   record <scenario> [--seed N] [--time seconds] [--out dir] [--window]   recording folder: meta.json (save, seed, time, entry key script, tick count), c2s.jsonl, ticks.jsonl, run/ (the scenario result)
 #   run <recording> [--dmhost host] [--out dir]                           replay once, writes <dir>/ticks.jsonl
 #   check <recording> [--dmhost host]...                                  replay on each host and compare with the recording tick by tick; verdict line REPLAY OK|RED, last line RESULT {json}

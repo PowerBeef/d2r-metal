@@ -28,7 +28,7 @@ Several tiers can be given at once; they run in the order given.
 | Tier | Steps |
 |---|---|
 | quick | `scan_literals.py`, `dm_i18n.py --check`, `switches.py check`, `scenario.py check` on every scenario, `check_hud_gen.sh` |
-| unit | host, gfx and iOS suites; `regress.sh` (the fork is Metal 4 only, so the older-API gfx pass is not run) |
+| unit | host, gfx and iOS suites; `regress.sh` |
 | core | builds the host; the scenarios without front-end steps run headless, three at a time; the ones that minimize, background or quit run windowed, one at a time; then the touch cases |
 | full | rebuilds the Mac App test copy for the current commit, runs the scenarios on it; `smoke_mac.sh 1` (which also rebuilds the iOS package for the Mac), the scenarios on that package; one scenario under Metal API validation; the fault scenarios |
 | long | `bench.py` on the town route (first, while the machine is cool); `explore.py` on the ASan and UBSan hosts; TSan alone; `fnfuzz.py` |
@@ -62,7 +62,7 @@ Instead of recordings of the original game, the fork records baselines from its 
 
 ```bash
 python3 dm/verify/golden.py replay record --reason "…"   # dm/verify/golden/{walk,fight,belt}.scn: packets + per-tick state + the committed save
-python3 dm/verify/golden.py replay check                 # replay on dmhost and dmhost_m3, tick by tick; savecmp on the replay's save; negative control
+python3 dm/verify/golden.py replay check                 # replay on dmhost, tick by tick; savecmp on the replay's save; negative control
 python3 dm/verify/golden.py shots record --reason "…"    # the 11 shotgate pages that need no recorded input, per renderer (m4 / m3)
 python3 dm/verify/golden.py shots check                  # shotgate.py against the baseline, page thresholds as in the spec
 python3 dm/verify/golden.py prefix                       # the touch cases' wilderness prefix (golden/prefix_wild.scn) + the save's MANIFEST.sha256
