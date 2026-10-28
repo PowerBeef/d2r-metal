@@ -21,6 +21,7 @@ typedef struct {
     int gold, gold_stash;   // 身上金币（stat 14）/ 箱内金币（stat 15） | Gold on the character (stat 14) / in the stash (stat 15)
     int items, item_dups;   // 物品链件数 / 重复的物品 id 数（应为 0） | Items in the chain / repeated item ids (should be 0)
     int monsters;       // 服务端活着的怪（含 NPC、佣兵） | Live monsters on the server (NPCs and mercenaries included)
+    int skill_left, skill_right, skills;   // 当前左 / 右键技能号（-1 = 没有）与技能个数（学的 + 装备给的） | Current left / right skill id (-1 = none) and number of skills (learned + granted by items)
     int dead;           // 玩家死亡（模式 0 / 17）：前端隐藏 UIKit 底栏，免挡死亡画面 | Player dead (mode 0 / 17): the front end hides the UIKit bottom bar so it does not block the death screen
 } dm_hud_info;
 // 玩家「已死」判定 = 游戏自己的定义（main+0x6e5c48 / 0x6e5cc8 客户端命令分派：玩家单位 [+0xc] 模式为 0 或 0x11 即按已死处理；

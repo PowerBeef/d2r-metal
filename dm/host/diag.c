@@ -860,6 +860,13 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
         uint32_t sp = 0, kp = 0, pm = 0; stat_read(player, 4, &sp); stat_read(player, 5, &kp); h.points = (int)(sp + kp);
         if (mm) { int (*get)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(mm->base + 0x5b9290); h.gold = get(player, 14, 0); h.gold_stash = get(player, 15, 0); }   // 身上金币 stat 14、箱内金币 stat 15 | gold on the character stat 14, gold in the stash stat 15
         if (tk_rd(player + 0xC, &pm, 4)) h.dead = dm_hud_player_mode_dead(pm);   // 单位 +0xC = 动画模式（dm_hud.h） | Unit +0xC = animation mode (dm_hud.h)
+        // 技能：技能链表 [单位+0x100]：+0 首节点、+8 左键当前节点、+0x10 右键当前节点（main+0x5aed30 / 0x5aee00 选技能时写）；节点 +0 → 技能表记录（首个 i16 = 技能号）、+8 下一个
+        // Skills: skill list [unit+0x100]: +0 first node, +8 current left node, +0x10 current right node (written by main+0x5aed30 / 0x5aee00 on selecting a skill); node +0 -> skills table record (first i16 = skill id), +8 next
+        { uint64_t sl = 0, nd = 0, rec = 0; int16_t sid = -1; h.skill_left = h.skill_right = -1;
+          if (tk_rd(player + 0x100, &sl, 8) && sl) {
+              if (tk_rd(sl + 8, &nd, 8) && nd && tk_rd(nd, &rec, 8) && rec && tk_rd(rec, &sid, 2)) h.skill_left = sid;
+              if (tk_rd(sl + 0x10, &nd, 8) && nd && tk_rd(nd, &rec, 8) && rec && tk_rd(rec, &sid, 2)) h.skill_right = sid;
+              for (nd = 0, tk_rd(sl, &nd, 8); nd && h.skills < 1024; h.skills++) if (!tk_rd(nd + 8, &nd, 8)) break; } }
         // 手上物品：这里是服务端玩家，只作诊断；h.holding 由 dm_hud_get 取客户端的真值（dm_hud.c）。两端持续不一致（服务端光标挂着、客户端手上空了）记红行：
         // 卡死就是这样——服务端还挂着放进仓库的魔盒，原先拿服务端这一份当「手上有东西」，拖放收尾链一遍遍按返回关面板
         // Held item: this is the server-side player, for diagnostics only; h.holding takes the client's true value via dm_hud_get (dm_hud.c). If the two sides stay inconsistent (server cursor still holding, client hand empty), log a red line:
