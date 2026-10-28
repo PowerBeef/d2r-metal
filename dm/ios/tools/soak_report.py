@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # 浸泡报告（soak.sh 末尾调；Mac 浸泡同口径）：读 DM_SOAK 表（diag.c soak_main：秒 拍号 句柄 存活线程 线程对象 malloc_MiB footprint_MiB）与同一局的宿主日志，
 # 按四项判据出 SOAK OK|RED，末行 RESULT {json} 给脚本 / 代理读。阈值都可用环境变量改：
-#   ① 拍号增长：局内（拍号 ≥ 0）各采样点拍号严格递增，平均 ≥ SOAK_MIN_TPS 拍/秒（缺省 20；游戏 25 拍/秒）
+#   ① 拍号增长：每一局里（拍号 ≥ 0；拍号变小 = 出局再进了一局，另算一段）各采样点拍号严格递增，各局合计平均 ≥ SOAK_MIN_TPS 拍/秒（缺省 20；游戏 25 拍/秒）
 #   ② 内存斜率：第 SOAK_WARM_S 秒（缺省 300）之后局内 footprint 对时间的最小二乘斜率 ≤ SOAK_MAX_SLOPE MiB/分（缺省 1.0）
 #   ③ 句柄 / 线程：预热后句柄数极差 ≤ SOAK_MAX_HANDLES（缺省 8）、存活线程极差 ≤ SOAK_MAX_THREADS（缺省 2）
 #   ④ 帧时间 p95：宿主日志「计时 至帧 N： 帧时间 … p95 X」各段分前后两半，后半中位数 ≤ 前半中位数 × (1 + SOAK_P95_REL) + SOAK_P95_ABS ms（缺省 0.15、0.5）
@@ -9,7 +9,7 @@
 # 用法：soak_report.py <soak.tsv> <宿主日志>   退出码 0 = SOAK OK，1 = SOAK RED，2 = 用法 / 读不了文件
 # Soak report (called at the end of soak.sh; same basis as the Mac soak): reads the DM_SOAK table (diag.c soak_main: seconds, tick, handles, live threads, thread objects, malloc_MiB, footprint_MiB) and the host log of the same run,
 # and prints SOAK OK|RED by four criteria, with a last line RESULT {json} for scripts / agents to read. Every threshold can be changed with an environment variable:
-#   1 ticks advance: in a run (tick >= 0) the tick number strictly increases between samples, on average >= SOAK_MIN_TPS ticks/s (default 20; the game runs 25 ticks/s)
+#   1 ticks advance: within each run (tick >= 0; a smaller tick = left and entered another run, a new segment) the tick number strictly increases between samples, on average over all runs >= SOAK_MIN_TPS ticks/s (default 20; the game runs 25 ticks/s)
 #   2 memory slope: after second SOAK_WARM_S (default 300), the least-squares slope of the in-run footprint over time <= SOAK_MAX_SLOPE MiB/min (default 1.0)
 #   3 handles / threads: after warm-up, the range of the handle count <= SOAK_MAX_HANDLES (default 8) and of live threads <= SOAK_MAX_THREADS (default 2)
 #   4 frame time p95: the host log's "计时 至帧 N： 帧时间 ... p95 X" segments are split into a first and second half; the second half's median <= first half's median × (1 + SOAK_P95_REL) + SOAK_P95_ABS ms (defaults 0.15, 0.5)
@@ -55,10 +55,19 @@ def report(tsv, log):
     if len(game) < 2:
         check('ticks', False, f'① 拍号增长：局内采样只有 {len(game)} 点，判不了', f'1 ticks advance: only {len(game)} in-run samples, cannot judge')
     else:
-        mono = all(b['tick'] > a['tick'] for a, b in zip(game, game[1:], strict=False))
-        tps = (game[-1]['tick'] - game[0]['tick']) / max(1e-9, game[-1]['t'] - game[0]['t'])
+        # 一局一段：拍号回到 −1（出局）或变小（Mac 试玩机器人的「保存并退出再进」）就开新的一段；新一局的拍号从头数，不算倒退
+        # one segment per run: the tick going back to -1 (left the run) or getting smaller (the Mac playtest bot's "save and exit, enter again") starts a new segment; a new run counts ticks from the start, which is not going back
+        segs, cur = [], []
+        for r in rows:
+            if r['tick'] < 0 or (cur and r['tick'] < cur[-1]['tick']):
+                if len(cur) >= 2: segs.append(cur)
+                cur = [] if r['tick'] < 0 else [r]
+            else: cur.append(r)
+        if len(cur) >= 2: segs.append(cur)
+        mono = bool(segs) and all(b['tick'] > a['tick'] for sg in segs for a, b in zip(sg, sg[1:], strict=False))
+        tps = sum(sg[-1]['tick'] - sg[0]['tick'] for sg in segs) / max(1e-9, sum(sg[-1]['t'] - sg[0]['t'] for sg in segs))
         check('ticks', mono and tps >= min_tps, f'① 拍号增长：{"严格递增" if mono else "有停滞 / 倒退"}，平均 {tps:.1f} 拍/秒（下限 {min_tps:g}）',
-              f'1 ticks advance: {"strictly increasing" if mono else "stalled / went back"}, {tps:.1f} ticks/s on average (minimum {min_tps:g})', ticks_per_s=round(tps, 2), monotonic=mono)
+              f'1 ticks advance: {"strictly increasing" if mono else "stalled / went back"}, {tps:.1f} ticks/s on average (minimum {min_tps:g})', ticks_per_s=round(tps, 2), monotonic=mono, runs=len(segs))
     # ② 内存斜率 | 2 memory slope
     max_slope = env_f('SOAK_MAX_SLOPE', 1.0)
     if len(late) < 3:
