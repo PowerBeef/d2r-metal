@@ -273,7 +273,6 @@ DM_TACT_PREFETCH	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_LAG	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_MB	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_THREADS	host	host/hle_tact.c	-
-DM_TARGET	tools	tools/patch_nso.py	-
 DM_TARGET_LOG	host	host/hle_target.c	-
 DM_TEAM_ID	ios-tools	ios/project.yml	y
 DM_TEMP	host,ios	host/app_mac.m host/hle_fs.c host/tests/t_save_hooks.c ios/Sources/main.m	y
