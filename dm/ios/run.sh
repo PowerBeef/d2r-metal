@@ -124,7 +124,11 @@ if [ "$1" = build ]; then
   # sign-off.
   # This affects only this development package build command: release packages (tools/testflight.sh, tools/adhoc.sh) and the Mac package
   # (tools/smoke_mac.sh) come in with DM_GEN_ONLY=1 and exit on the line above, so their build numbers do not pass through here.
-  BN=$(git log -1 --format=%ct 2>/dev/null); [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] && BN=1; BN=${BN:-1}
+  # setup.sh 按本机工具改写的三个文件（翻译链锁、链版本头、c1 表）不算：它们按约定一直是改过的、从不提交，算进去的话工具与仓内登记不同的机器上构建号永远是 1
+  # The three files setup.sh rewrites for this machine's tools (chain lock, chain version header, c1 table) don't count: by convention they stay modified and are never committed,
+  # so counting them would pin the build number at 1 on every machine whose tools differ from the ones registered in the repo
+  BN=$(git log -1 --format=%ct 2>/dev/null)
+  [ -n "$(git status --porcelain --untracked-files=no -- ':(top)' ':(top,exclude)dm/gfx/tools/dmsh_chain.lock' ':(top,exclude)dm/gfx/nvn/dmsh_chain.h' ':(top,exclude)dm/gfx/nvn/c1_full.tsv' 2>/dev/null)" ] && BN=1; BN=${BN:-1}
   [ "$BN" = 1 ] && t "⚠ 工作区有未提交改动（或读不到提交）：开发包构建号 = 1，不能用于放行" || t "开发包构建号 ${BN}（提交 $(git log -1 --format=%h | cut -c1-9) 的提交时间戳）"
   # 构建目标：平常是「通用 iOS 设备」。免费账号（个人团队）名下起初没有任何设备，苹果不给生成描述文件
   # （「Your team has no devices from which to generate a provisioning profile」，真拿免费账号签时实测撞到）——
