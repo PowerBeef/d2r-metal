@@ -1,7 +1,5 @@
 # The fork gate: `fork_gate.sh`
 
-中文：[FORK_GATE.zh-CN.md](FORK_GATE.zh-CN.md)
-
 d2r-metal's verification run. It runs only what this Mac can check by itself: source checks, the test suites, scenarios on our own builds, the touch cases, faults, sanitizers and benchmarks. The reference behaviour comes from the original image (rewrite equivalence), our own baselines (`golden.py`) and the private analysis of the game's code; see [README.md](README.md#where-the-reference-behaviour-comes-from).
 
 ```bash

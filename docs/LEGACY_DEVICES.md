@@ -1,7 +1,5 @@
 # Older devices (A16 and earlier chips): making the texture pack
 
-中文：[LEGACY_DEVICES.zh-CN.md](LEGACY_DEVICES.zh-CN.md)
-
 The iPhone 14 family, iPhone 15 / 15 Plus and earlier models can play; they just need one more step (see "[Which devices are supported](../README.md#which-devices-are-supported)" in the README for every device): a **Legacy Device Pack** made from your own game files and placed on the phone. This page covers it from start to finish.
 
 ## Why the extra step

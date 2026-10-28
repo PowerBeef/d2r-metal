@@ -1,7 +1,5 @@
 # Debugging
 
-中文：[debugging.zh-CN.md](debugging.zh-CN.md)
-
 Tools for finding out what went wrong in a run: crash records, symbols for the game program, the debugger, validation and sanitizer builds, and automatic exploration.
 
 ## Crashes

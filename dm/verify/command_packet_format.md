@@ -1,7 +1,5 @@
 # Client Command Packet Sequence Format
 
-中文：[command_packet_format.zh-CN.md](command_packet_format.zh-CN.md)
-
 Internally the game is split into two halves, client and server: the client turns the player's actions into "command packets" and hands them to the server to process. Recording the command packets of a run in order into a file lets a later **host** run (`dmhost` from `dm/host`) replay them as-is, so that the server plays out the same run again: `replay.py` and `golden.py replay` record a route once and replay it on later builds. `dm/tools/c2s.py` labels a recording by packet name (`dm/verify/c2s_opcodes.tsv`).
 
 ## Capture point

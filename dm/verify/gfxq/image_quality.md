@@ -1,7 +1,5 @@
 # Image Quality Metric
 
-中文：[image_quality.zh-CN.md](image_quality.zh-CN.md)
-
 This directory holds two rulers for measuring the picture, both measured on a Mac from offline screenshots taken with the host (`dmhost` from `dm/host`):
 
 - **G1** (`shoot.sh` + `g1.py`): how far the picture at a given internal resolution is from "the best picture achievable on this phone screen". Used to choose the internal resolution.

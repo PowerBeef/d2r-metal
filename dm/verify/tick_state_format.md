@@ -1,7 +1,5 @@
 # Per-Tick Game State Hash Format
 
-中文：[tick_state_format.zh-CN.md](tick_state_format.zh-CN.md)
-
 The game's server-side logic advances in "ticks" (each tick processes all units once). Before each tick begins, the key fields of all units in the game are computed into a few hashes and recorded as one line; if two runs are identical tick by tick, the game logic has run exactly the same way. The runs are two host builds (`dmhost` from `dm/host`), for example a baseline recorded by `golden.py` and the build under test; both run the same Switch version 3.3.94012 program, and are compared byte by byte.
 
 - Recording: enabled by the environment variable `DM_TICKS=<path>`; with `DM_TICKS_N=<tick count>` it exits normally once that many have been recorded; `DM_TICKS_FULL=1` additionally outputs per-unit detail.

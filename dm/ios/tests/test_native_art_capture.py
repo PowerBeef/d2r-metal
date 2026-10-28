@@ -6,7 +6,7 @@ from PIL import Image
 import os; DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # 工作区根目录（游戏文件、产物、运行现场都在它下面） | Workspace root (game files, build outputs and run artifacts are all under it)
 IOS=Path(__file__).resolve().parent.parent
 # 安卓把生成索引与贴图放仓外；默认仍验证苹果工程原路径。
-# Android keeps generated indices and textures outside the checkout; default to the Apple project's original paths.
+# DM_NATIVE_ART_DIR can point at generated indices and textures outside the checkout; default to the Apple project's original paths.
 GENERATED=Path(os.environ.get('DM_NATIVE_ART_DIR', str(IOS/'Sources')))
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 try:

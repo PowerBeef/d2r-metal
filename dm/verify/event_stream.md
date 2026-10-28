@@ -1,7 +1,5 @@
 # Event Stream Format (v1)
 
-中文：[event_stream.zh-CN.md](event_stream.zh-CN.md)
-
 The host's log is written for people, in Chinese, and its lines change wording over time. Test scripts and agents need something steadier: the **event stream** is a second, structured channel next to the log. It records the moments a run is judged on (main menu shown, game entered, loading screen gone, save committed, red marker, crash, app sent to the background…), one JSON object per line. The log itself is unchanged.
 
 The code is `dm/host/dm_events.c` (`dm_events.h` for the API); `dm/tools/dmevents.py` reads and checks a stream.

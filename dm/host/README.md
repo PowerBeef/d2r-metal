@@ -1,7 +1,5 @@
 # dm/host: host file index
 
-中文: [README.zh-CN.md](README.zh-CN.md)
-
 The host does two things: it loads the rewritten game program and provides the platform services that program calls. The features added on top of the original game, and the touch adaptation, live in this directory too. For how it all works see [dm/README.md](../README.md).
 
 The file name prefix tells you which part a file belongs to:

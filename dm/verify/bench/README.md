@@ -1,7 +1,5 @@
 # Benchmarks
 
-中文：[README.zh-CN.md](README.zh-CN.md)
-
 A benchmark route is a [scenario](../scenarios/README.md) with `mark <segment>` steps. `dm/tools/bench.py` runs it several times and reads two per-frame records:
 - `DM_FRAMES`: the present interval of every frame, on the event clock;
 - `DM_NVN_TSV` (timing rows only): frame, NVN, GPU and frame-thread CPU time per frame, keyed by the frame number that each `mark` event also carries.

@@ -1,7 +1,5 @@
 # Control Port (v1)
 
-中文：[control_port.zh-CN.md](control_port.zh-CN.md)
-
 `DM_KEYS` scripts are fixed before launch: they cannot react to what the game does. The **control port** lets a test script or an agent drive a running game step by step. It sends one JSON command per line, the host answers each one with one line, and the [event stream](event_stream.md) arrives on the same connection. The game is driven through the same host paths the key script and the front ends already use (controller read, UI messages, the touch tap, the game's own save), so a scenario exercises the real code.
 
 The code is `dm/host/dm_ctl.c` (protocol and transport) and `dm/host/dm_ctl_cmds.c` (commands). `dm/tools/dmctl.py` is the client.

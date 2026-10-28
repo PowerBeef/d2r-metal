@@ -119,11 +119,8 @@ static thr_t *pick(int kind, uint64_t a) {
     }
     return b;
 }
-// 目标在自旋时不发信号：它见到 woke 就持 G 返回，不进条件等待；安卓 bionic 的 pthread_cond_signal 不论有没有人在等都做一次
-// futex 唤醒系统调用。计数给帧 TSV（@wakes、@wake_skips）
-// No signal when the target is spinning: it returns under G once it sees woke and never enters the condition wait. Android
-// bionic's pthread_cond_signal makes a futex wake system call whether or not anyone waits. The counts go to the frame TSV
-// (@wakes, @wake_skips)
+// No signal when the target is spinning: it returns under G once it sees woke and never enters the condition wait, so the
+// signal (a system call on some platforms whether or not anyone waits) is skipped. The counts go to the frame TSV (@wakes, @wake_skips)
 static uint64_t g_wakes, g_wake_skips;
 void dm_hle_wake_counts(uint64_t *wakes, uint64_t *skips) { *wakes = __atomic_load_n(&g_wakes, __ATOMIC_RELAXED); *skips = __atomic_load_n(&g_wake_skips, __ATOMIC_RELAXED); }
 static void wake(thr_t *t, int64_t res) {

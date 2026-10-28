@@ -2,8 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is **d2r-metal**, the `PowerBeef/d2r-metal` fork of `jhaizhou-ops/d2r-mobile` (renamed from `PowerBeef/d2r-mobile` on 2026-10-25).
-- The project ports the Nintendo Switch build of Diablo II: Resurrected + Reign of the Warlock (1.0.34.0 = PC 3.3.94012) to iOS/macOS.
+This is **d2r-metal** (`PowerBeef/d2r-metal`), developed independently since 2026-10-28; it started as a fork of `jhaizhou-ops/d2r-mobile`.
+- The project ports the Nintendo Switch build of Diablo II: Resurrected + Reign of the Warlock (1.0.34.0 = PC 3.3.94012) to macOS and iOS / iPadOS.
 - The game's own aarch64 code runs natively; only a few instructions are rewritten, and the graphics API is reimplemented on Metal.
 
 Everything derived from the user's game files lives in the workspace `$DM_ROOT` (default `~/dm-work`), outside git:
@@ -11,64 +11,22 @@ Everything derived from the user's game files lives in the workspace `$DM_ROOT` 
 - rewrite products, the Python venv and shader caches in `build/`
 - run logs in `run/`
 
-## Fork workflow
+## Project workflow
 
-The fork develops on its own `main`. Changes worth sharing go upstream as cherry-picks.
+d2r-metal started from `jhaizhou-ops/d2r-mobile` and has been developed independently since 2026-10-28 (a hard fork: no upstream remote, merges or pull requests).
 
-- **Platform scope: macOS and iOS only.**
-  - The fork targets Apple silicon, macOS / iOS 27 and later, Metal 4, MetalFX and current Apple hardware; upstream's older-API build for earlier systems is not supported here (see "Metal 4 only" under Architecture).
-  - The Android, HarmonyOS and Vulkan code (`dm/android`, `dm/harmony`, `dm/gfx/vulkan`, their docs and switches) stays in the tree so upstream merges stay clean, but it isn't built, tested or maintained here. Shared-code changes may break it; don't delete it.
-  - When a change also fits upstream's platforms, keep it portable and offer it as an `up/<topic>` PR. Apple-only work stays `Upstream: fork-only` unless upstream would want it.
+- **Platform scope: macOS and iOS / iPadOS only**, on Apple silicon, macOS / iOS 27 and later, Metal 4 and MetalFX (see "Metal 4 only" under Architecture). There is no Android, HarmonyOS, Vulkan, tvOS or older-API code; don't add any.
+- **Out of scope for good:** features that change the game's rules or economy, or play part of it for the player. On 2026-10-27 the fork deleted those it had inherited (Greater Rift, Boss Rush, Elysium, Kill Board, free town portal / identify, Refresh Stock, auto-drink, mercenary auto-feed, auto-recast buffs, the loot filter, the Runeword helper, the extra storage, the difficulty selectors, the minimap marks and two logic-changing byte patches). The stash stays 10 columns (`inventory.bin` is never patched); Options keeps the game's `OfflineDifficultyScaling` row.
+  - Their gate numbers stay retired: OBS 15, 16, 17 and 22 (`OBS_MAX` stays 23) and svc 0x89, 0x8c, 0x8d and 0x8e. Never reuse them. The product revision only moves forward (`dm/PRODUCT`).
 - **Branding:** the apps show "D2R Metal" (`mac_app.sh` `NAME`, the Mac window title, the iOS `CFBundleDisplayName`, player-facing strings). Everything player data hangs on keeps the old spelling: the bundle IDs, the Mac data folders (`APP_NAME` "D2R Mobile" in `app_mac.m`), the iOS "D2R Mobile Resources" folder, the `org.d2rmobile.*` IDs and the executable `D2RMobile`. Don't rename those.
-
-- **Remotes:**
-  - `origin` = the fork. `main` is its default branch.
-  - `upstream` = jhaizhou-ops, fetch only (push URL `DISABLED`). Its branch is read as `upstream/main`; there is no local mirror.
-- **Branches:**
-  - **`main` is the fork's trunk.** All work lands here first, and the user's apps are built from it.
-    - It is public: never force-push it, rebase it, or reset it to `upstream/main`.
-    - Bigger work can use a short-lived local topic branch, merged into `main` when done.
-  - **`up/<topic>` branches exist only for upstream PRs.** Each starts from `upstream/main` and receives cherry-picks from `main`.
-    - The first PRs (#106–#109) were adopted into upstream v2.0.0 and their branches deleted.
-- **Commits on `main`:**
-  - Keep one topic per commit (or a short series), so any of them can be cherry-picked on its own.
-  - Code follows the upstream rules below even when it isn't meant for upstream yet, so it can be sent later without rework.
-  - End each message with an `Upstream:` trailer. Put it on the line just above the attribution lines, in the same block with no blank line, so git reads it as a trailer:
-    - `Upstream: candidate` may go upstream. It must not touch fork-only files.
-    - `Upstream: fork-only` stays here: this file, fork tooling, the README, the D2R Metal branding, and the user's own preferences.
-- **Pulling upstream changes into `main`:**
-  1. `git fetch upstream`
-  2. `git switch main && git merge upstream/main`. Always merge, never rebase. On a conflict, `git merge --abort` and report; don't auto-resolve.
-     - The READMEs are the fork's own: `.gitattributes` marks `README*.md` `merge=ours`, so upstream's README edits are dropped silently. That needs `git config merge.ours.driver true` once per clone; without it those files conflict.
-     - Maintainers adopt PRs by re-applying them, so a conflict can come from our own change in its adopted form. Upstream's version wins, after the user confirms.
-     - **Removed upstream features stay removed.** On 2026-10-27 the fork deleted upstream features that change the game's rules or economy, or play part of it for the player: the Greater Rift (with its extra mercenary slots and skill cap 40), Boss Rush, Elysium mode, the Kill Board, the free town portal, free identify, the vendor's Refresh Stock, auto-drink, mercenary auto-feed and auto-recast buffs; then the loot filter set by difficulty, the Runeword helper and the extra storage (14-column stash with personal pages 2–5, Trove, Pouch with auto-stash and Deposit, Chronicle vault); then the difficulty selectors (bottom bar, controller pause menu), the minimap marks (exits, waypoints, quest goals) and two logic-changing byte patches from the community offline fix.
-       - Upstream changes to their deleted files come back as modify/delete conflicts: `dm/host/dm_rift*`, `dm_doorspot.h`, `dm_bossrush*`, `dm_elysium*`, `dm_kills.c`, `dm_freetp.c`, `dm_shoprefresh.c`, `dm_autobuff.c`, `dm_lootfilter.c`, `dm_runeword.c`, `dm_rwlv_core.*`, `dm_pages.c`, `dm_pouch.c`, `dm_vault.c`, `dm_vault_ui.c`, `dm/ios/Sources/dm_rift_hud.m`, `dm/ios/tools/merc_slots.py`, `gen_merc_art.py`, `wide_stash.py`, `gen_widestash_art.py`, `gen_trove_art.py`, `pouch_layout.py`, `gen_pouch_art.py`, `gen_vault_table.py`, `gen_vault_cover.py`, `gen_map_goal_art.py` and their tests. Resolve those with `git rm` without asking, and finish the merge.
-       - In shared files, drop upstream hunks that only re-add hooks, strings, switches, layout entries or gates for them (auto-drink and auto-feed lived in `dm_actions.c`; the removed Extras keys are `auto_mana`, `merc_pot`, `auto_buff`, `gem_pick`, `store_btn` and `loot_filter`; the stash must stay 10 columns, so `inventory.bin` is never patched again; the iPhone bottom bar stays five cells with no difficulty cell or 1–8 strip, the controller pause menu has no Game Difficulty row (`TouchPadDiff`), and Options keeps the game's `OfflineDifficultyScaling` row; the minimap marks lived in `dm_world.c`, `front_ios.m` (`mapGoalSync`) and `dm_cursor.c` (`dm_ui_map_geom`), Extras key `map_mark`; `patch_nso.py` never regains the cuts at `0x5b14dc` and `0x5f3184`). Any other conflict is still aborted and reported.
-       - Their gate numbers stay retired: OBS 15, 16, 17 and 22 (`OBS_MAX` stays 23) and svc 0x89, 0x8c, 0x8d and 0x8e. Never reuse them. The product revision only moves forward (`dm/PRODUCT`, r46 after the two byte patches went).
-  3. Rebase each open PR branch onto `upstream/main` and push it with `--force-with-lease`. This updates the open upstream PR.
-  4. `git push origin main`, then rebuild the apps.
-- **Sending commits upstream:**
-  1. The user picks the commits. Candidates not yet upstream:
-     - `git log --format='%h %s' --grep='^Upstream: candidate' upstream/main..main`
-     - `git cherry -v upstream/main main` marks with `-` the commits upstream already has in identical form.
-     - `git log --all --grep='cherry picked from commit <sha>'` shows whether a commit is already on a PR branch.
-  2. `git fetch upstream && git switch -c up/<topic> upstream/main`
-  3. `git cherry-pick -x <sha>...`. A conflict means the change depends on other fork commits: `git cherry-pick --abort` and report.
-     - Drop the fork-only `Upstream:` line from each picked commit, keeping the `(cherry picked from commit …)` line: `git log -1 --format=%B | sed '/^Upstream: /d' | git commit --amend -F -`.
-  4. `git diff --name-only upstream/main` must list no fork-only file. Run the source checks and the test suites the change touches on this branch.
-  5. Only after the user approves each PR:
-     - `git push -u origin up/<topic>`
-     - `gh pr create -R jhaizhou-ops/d2r-mobile --head PowerBeef:up/<topic>`
-  6. Fill in `.github/PULL_REQUEST_TEMPLATE.md` honestly: tick only the checks actually run, and paste their last line.
-  7. For review feedback, fix on `main` first, then cherry-pick the fix onto the PR branch.
-  8. Maintainers "adopt" PRs: they close them and re-apply the change on their own `main` with author credit. After that, ask before deleting the PR branch locally and on `origin`.
+- **`origin`** = `PowerBeef/d2r-metal`. **`main` is the trunk**: all work lands there, and the user's apps are built from it.
+  - It is public: never force-push it, rebase it, or reset it.
+  - Bigger work can use a short-lived local topic branch, merged into `main` with `--no-ff` when done.
+- **Commits:** one topic per commit (or a short series), English message, ending with the attribution line.
 - **The three files `./setup.sh` rewrites for local tools stay dirty and are never committed:** `dm/gfx/tools/dmsh_chain.lock`, `dm/gfx/nvn/dmsh_chain.h`, `dm/gfx/nvn/c1_full.tsv`.
   - Don't `git reset --hard` / `git checkout .` over them. Restoring them means re-running `./setup.sh`, which re-translates every shader (~10 min).
-  - Switch branches with `git switch`; use `git stash` if needed.
-  - The local clone may have a `.git/hooks/pre-commit` guard that refuses these files, `dm/ios/local.env`, `dm/ios/Gen/`, game, key and save file types, and anything over 2 MB.
-- **`gh` in a fork clone resolves the `upstream` remote first**, so a bare `gh pr …` (and any tool that calls it, such as an app's "create PR" button) targets jhaizhou-ops.
-  - Run `gh repo set-default PowerBeef/d2r-metal` once per clone.
-  - Then pass `-R jhaizhou-ops/d2r-mobile` explicitly for anything aimed upstream.
+  - Switch branches with `git switch`.
+  - `./setup.sh` links the tracked pre-commit guard (`dm/tools/git-hooks/pre-commit`): it refuses these files, `dm/ios/local.env`, `dm/ios/Gen/`, game, key and save file types, analysis databases, lines that look like decompiler output, and anything over 2 MB.
 - **Worktrees and parallel sessions** (git worktrees, Claude Code `--worktree` or desktop worktree sessions):
   - **A new worktree is missing local files:**
     - The three `setup.sh` rewrites are tracked, so a worktree gets the committed versions. When the branch hasn't changed them, copy the main checkout's rewritten copies in. Otherwise run `./setup.sh` in the worktree.
@@ -82,19 +40,18 @@ The fork develops on its own `main`. Changes worth sharing go upstream as cherry
     - Claude Code's worktrees branch from `origin/main` by default, so push `main` first if a new worktree needs local commits.
     - Two sessions never edit the same files.
 
-## Rules the upstream repo enforces (CONTRIBUTING.md)
+## Repository rules (CONTRIBUTING.md)
 
-1. **No game content.** Nothing from the game, and nothing generated from it, goes into git, issues or PRs: no program, art, text, shaders, saves, keys or built packages.
-2. **Every code comment is bilingual, same content:**
-   - Block and header comments: the Chinese line(s), then the English line(s).
-   - Trailing comments: `中文 | English` on one line.
+1. **No game content, no engine-analysis output.** Nothing from the game, and nothing generated from it, goes into git, issues or PRs: no program, art, text, shaders, saves, keys or built packages; no decompiled code, disassembly or database files either (see "Game reference").
+2. **English for new comments and docs.**
+   - Many existing comments are bilingual (Chinese lines, then English; trailing `中文 | English`). When you edit one, replace the pair with the English text; don't add new Chinese comments.
    - Every source file opens with a comment saying what it does. `dm/host` feature files also list the game addresses they rely on.
-   - Docs are paired: `X.md` (English) with `X.zh-CN.md`. READMEs also have `.es.md`.
-   - `dm/third_party/` is exempt.
+   - Docs are English only (the zh-CN / es copies were dropped on 2026-10-28). `dm/third_party/` is exempt.
 3. **Player-visible text goes in the string table, never as a literal:**
-   - Add the key / Chinese / English row to `dm/i18n/ui_text.tsv`. Keys are `dm` + alphanumerics, no underscore; English length caps are in `EN_LIMITS`.
+   - Add the key / Chinese / English row to `dm/i18n/ui_text.tsv` (the game offers Chinese, so that column stays). Keys are `dm` + alphanumerics, no underscore; English length caps are in `EN_LIMITS`.
    - Regenerate with `python3 dm/ios/tools/dm_i18n.py --header > dm/host/dm_i18n_tab.h` and commit it.
    - A new Python script that writes player-visible text must be added to `PY_FILES` in `dm/i18n/scan_literals.py`.
+4. **Logs:** new log lines in English. A failure line carries `【红】`, which the tools match (`logred.sh`, `assertlib.py`, `dmtest.py`). Many existing log lines are Chinese and scripts match their text: change one only together with every script that reads it, and prefer a `DM_EV` event for anything a test needs.
 
 ## Commands
 
@@ -188,7 +145,7 @@ python3 dm/verify/golden.py replay|shots check   (record --reason …; prefix)  
   - `tap` goes straight to `dm_ui_touch`. It skips the Mac mouse path, and the game ignores plain clicks on console tabs, so switch tabs with `press ZR` / `ZL`.
   - On the Mac App, `drag x0 y0 x1 y1` goes through the real mouse's gesture path (`dm_touch_host_live`); a zero-length `drag` is a mouse click. `wheel x y dy [precise] [view]` calls the same `dm_wheel_ui` as the App's scroll events.
   - Options opened with `msg PanelManager:OpenPanel:SettingsPanel` in game don't count as a menu for the mouse code; open them as a player does, with `open_pause` then `tap_ui Settings`.
-  - Real mouse events for any Mac App build, including upstream ones without a control port: `DM_TEST_NSMOUSE=<file>` (`down` / `dragto` / `hover` / `key` lines), `DM_TEST_PRESENT_SHOT=<s>:<png>`, `DM_TEST_QUIT_AT=<s>`. Leave `DM_WATCH` unset there: its stall watchdog kills the front end after 15 s.
+  - Real mouse events for any Mac App build, including ones without a control port: `DM_TEST_NSMOUSE=<file>` (`down` / `dragto` / `hover` / `key` lines), `DM_TEST_PRESENT_SHOT=<s>:<png>`, `DM_TEST_QUIT_AT=<s>`. Leave `DM_WATCH` unset there: its stall watchdog kills the front end after 15 s.
   - Lines that work with the App in the background (no key window needed): `nav <keycode>` (a key straight to the game's key handler), `pad <buttons>` / `pads b1,b2,…` (virtual controller presses through `dm_gamepad`, self-timed; one scheduled line per press gets merged), `navpad <buttons>` (skipped while a text box is open, so extra presses to reach a page are harmless), `skey <keycode> <chars>` (through `[NSApp sendEvent:]` and the event monitors), `sheet ok|cancel [text]` (fill and press the Mac text sheet). `DM_TEST_PAD_GLYPH=2|3|0` makes the virtual controller count as Xbox / PlayStation / Switch for the key caps.
 - `ios-mac` keeps running the package `smoke_mac.sh 1` last built, not the `run.sh build` output: rebuild it after layout or host changes.
 - **A phone on Wi-Fi only:** devicectl paths work (`lifecycle.sh`, `touch_e2e.sh` / `uireg … run_dev.sh`, `heat_ab.sh`, file pulls). `smoke.sh` and the scenario `device` backend need a USB cable, because the app's log port (`DM_LOG_PORT`) listens on the phone's loopback, which `iproxy -n` can't reach ("Connection refused"). `ideviceinfo` can't read the battery over Wi-Fi either: `DM_DEVBATTERY_INRUN=1` lets the battery gate use the app's own reading.
@@ -295,13 +252,12 @@ There is no recording of the original game on a console or emulator; to learn wh
   - Chain: `dmsh_xlate` (C#, bundled Ryujinx translator) → SPIR-V → `spirv-cross` → MSL → metallib.
   - Each shader is keyed by the first 16 hex digits of the SHA-256 of its control section.
   - Libraries live under `b-<V>/`, where V is the chain version hashed from chain sources + `dmsh_chain.lock`. The host refuses a version mismatch.
-- **Metal 4 only, macOS / iOS 27 and later (decided 2026-10-27).** The fork targets macOS 27 / iOS 27 (`MACOS_MIN`, `project.yml`) and uses Metal 4 and what those systems add, with no older-system fallbacks. Upstream's older-API backend (`DM_NVN_M3` / `DM_MAC_M3` / `DM_IOS_M3`, `dmhost_m3`, `run-m3`, `project_m3.py`) stays in the tree like the Android / Vulkan code, so upstream merges stay clean, but it is not built, tested or shipped here, and new code needs no older-API path (it may break that build). Its divergences sit inside `#if DM_NVN_M3` in `nvn_mtl.m`.
+- **Metal 4 only, macOS / iOS 27 and later (decided 2026-10-27).** The fork targets macOS 27 / iOS 27 (`MACOS_MIN`, `project.yml`) and uses Metal 4 and what those systems add, with no older-system fallbacks; the older-API backend was removed on 2026-10-28. The encoder macros at the top of `nvn_mtl.m` (`RENC`, `CENC`, `FB_ON`, …) name the Metal 4 types.
 
 **D. Frontends and features.**
 - **`dm/host/front.h` is implemented by:**
   - `front_mac.m` + `app_mac.m` (Mac App; `touch_mac.c` for scripted touch)
   - `dm/ios/Sources/front_ios.m` (iOS)
-  - `dm/tvos/` (community preview)
 - **Touch flow:**
   1. `Sources/dm_touch_controls.c` (pure C) classifies the touch.
   2. Touch, cursor and input state are published.
@@ -319,7 +275,7 @@ There is no recording of the original game on a console or emulator; to learn wh
   - The host also compiles `dm/ios/Sources/dm_touch_controls.c`, `cloud_ios.m` and `dm_gamepad.m`, so edits there affect the Mac build too.
 - **Feature switches:**
   - Read them only through `dm_custom_get("<key>")`.
-  - The key order in `dm_custom.c` `k_keys` must match `touch_layout.py _CUSTOM_ROWS`, the full list (`test_touch_layout_options.py` checks it). A page may leave rows out: Extras (Mac and iOS) drops the two the Video tab shows; Android's Custom page keeps them.
+  - The key order in `dm_custom.c` `k_keys` must match `touch_layout.py _CUSTOM_ROWS`, the full list (`test_touch_layout_options.py` checks it). A page may leave rows out: Extras (Mac and iOS) drops the two the Video tab shows; the default overlay's single Custom page (CLI host, `touchchain.sh`) keeps them.
 - **Mode and UI rules:**
   - Touch-only or controller-only behaviour needs a row in `dm/host/dm_mode_items.h` (checked by `mode_scan.py`).
   - Writing to the original game's UI widgets is forbidden (`native_write_scan.py`).
@@ -350,19 +306,19 @@ There is no recording of the original game on a console or emulator; to learn wh
   - The pointer auto-hide delay is `CursorHideSeconds`.
   - Picture settings (Display Mode, Resolution incl. Native, Color, Graphic Presets, 3D Resolution, Upscaling, Anti-Aliasing, Anisotropic Filtering) are on the Mac Options Video tab: layout `touch_layout.py` `_VIDEO` (`DM_OVERLAY_MAC`), logic `dm_video.c`, stored in `sw_video.txt` beside `sw_custom.txt` with a first-boot "recommended" copy (`front_mac.m` `front_video_firstboot`; the older `StartFullScreen` / `RenderScale` / `MetalFXUpscale` defaults only seed it once). Keys: `mode res up aa aniso color s3d` (value 0 = the original look; new keys go at the end; `k_rows` must follow the page order). Keys after the first three get their recommendation from `front_video_rec` (Mac App and iOS; the CLI host and Mac test copies get 0, so baselines don't move). `rec_v` versions the recommendation: an older file gets the new one, and a player still on the old Recommended moves with it. AA writes the renderer's mode byte (`hle_oe.c` `aa_tick`, `DM_AA_MODE`); filtering is the sampler override (`nvn_mtl.m` `aniso_latch`, `DM_NVN_ANISO`); Color tags the layer sRGB (`front_mac.m` `layer_color`, `DM_COLORSPACE`). Selectors are native `CarouselWidget`s: read `+0x7ec`, set through `main+0xab0c84`; their update message must not be `PanelManager:ClosePanel:<name>` (the selector replaces the third part, and a nameless ClosePanel crashes).
   - The game's own 3D upscale pass (`ps_upsample_p`, fragment key `52aac1f2306b8fc5`: bilinear + 5-tap sharpen + an R8 mask) is replaced by MetalFX when Upscaling is on (`nvn_mtl.m` `mfx3d_draw`; `DM_MFX3D=0/1` forces it). It only acts below 100% 3D scale: on phones (3D 0.75) it is the main sharpness gain, and on the Mac it works with Native output and a 3D Resolution below 100% (`s3d`, through `dm_video_scale3d` → `hle_oe.c` `s3_cfg`), so the interface renders at the screen's resolution and only the world is upscaled.
-  - iOS gets the same Video tab with a Graphics section (overlay flag `DM_OVERLAY_IOS`, set only by `dm/ios/run.sh`; Android shares the generator without it): 3D Resolution 75 / 85 / 100% (live through `hle_oe.c` `s3_cfg`, which re-reads the setting each tick), Graphic Presets, Upscaling, plus Color / Anti-Aliasing / Anisotropic Filtering (same keys as the Mac; `front_ios.m` `layer_color_ios` tags the present layer). First boot (`front_ios.m` `front_video_firstboot`) = 75% + MetalFX; `front_video_rec` adds SMAA, 16x and Accurate colour (`rec_v` 3, measured on an iPhone 17 Pro: 60 fps, frame pacing and CPU unchanged).
+  - iOS gets the same Video tab with a Graphics section (overlay flag `DM_OVERLAY_IOS`, set only by `dm/ios/run.sh`): 3D Resolution 75 / 85 / 100% (live through `hle_oe.c` `s3_cfg`, which re-reads the setting each tick), Graphic Presets, Upscaling, plus Color / Anti-Aliasing / Anisotropic Filtering (same keys as the Mac; `front_ios.m` `layer_color_ios` tags the present layer). First boot (`front_ios.m` `front_video_firstboot`) = 75% + MetalFX; `front_video_rec` adds SMAA, 16x and Accurate colour (`rec_v` 3, measured on an iPhone 17 Pro: 60 fps, frame pacing and CPU unchanged).
   - Phone test runs (`DM_SAVE_FRESH` / `DM_SAVE_TEST`) keep their settings in `Documents/settings.test` (`main.m`), fresh each `DM_SAVE_FRESH` run, so automated taps on Options never change the player's `sw_video.txt` / `sw_custom.txt`.
   - `DM_MFX=0/1` forces MetalFX for tests and logs present-pass GPU time; `DM_GAME_RES` still overrides the render size. A test copy (`DM_APP_SUPPORT`) starts from the original settings unless `DM_TEST_VIDEO_FIRSTBOOT=1`.
 - **Text input (swkbd → `front_text_input`):** with a controller in use (`dm_gamepad_mode()` and the latest glyphs aren't the keyboard's), an on-screen keyboard drawn over the picture (`dm/ios/Sources/dm_vkbd.c` model + `t_vkbd`, `dm_vkbd_ui.m` drawing in a CALayer with the game's Exocet / Formal436 / BlizzardGlobal fonts read from the RomFS); otherwise the Mac sheet / iOS alert. Keyboard, mouse or touch while it is up hands over to the box, and a controller press while the box is up hands back, keeping the text. `DM_VKBD=1/0` forces it; `DM_TEST_SWKBD_KIND=num:<max>|text` turns the naming box into the other layouts for screenshots. Its layer isn't in the presented frame: `DM_TEST_PRESENT_SHOT` composites it.
 - **Options page (Mac, iOS):**
-  - Tabs: Video | Audio | Gameplay | Settings | Extras (`touch_layout.py` `_tabs5`). Video = the borrowed `VideoOptionsPanel` with only the picture rows; Extras = our own page `2extras_lay/ExtrasOptionsPanel` (`_EXTRAS_PANEL`, class `VideoOptionsPanel`), in a new folder under the layout root because `casc_overlay.py` can only add a new subdirectory under an existing directory, and both input modes fall back to the root. Android keeps one Custom page.
+  - Tabs: Video | Audio | Gameplay | Settings | Extras (`touch_layout.py` `_tabs5`). Video = the borrowed `VideoOptionsPanel` with only the picture rows; Extras = our own page `2extras_lay/ExtrasOptionsPanel` (`_EXTRAS_PANEL`, class `VideoOptionsPanel`), in a new folder under the layout root because `casc_overlay.py` can only add a new subdirectory under an existing directory, and both input modes fall back to the root. The default overlay (no `DM_OVERLAY_MAC` / `_IOS`) keeps one Custom page.
   - Don't open a page by a case-variant of an existing name (e.g. `videooptionspanel`): the game creates a second instance that `ClosePanel` never closes, and two pages draw on top of each other. Other candidate pages crash (`LootFilterOptionsPanel`) or are something else (`OnlineGameSettingsPanel` = the online Game Creation window).
   - The host (`dm_custom.c`) runs its page code on whichever of the two pages is on screen; `dm_custom_shown()` tells "Default" which rows that page holds, so it resets only that tab. The controller selection follows the selected row only right after it changes (the Mac is always in controller mode, and following every frame undid each wheel scroll).
-  - Frame Rate and Frame Drops (Mac and iOS) are selectors at the end of the Video tab's Graphics section (`dm_video.c` rows `fps` / `drops`), but their values are the custom keys `eco_fps` / `q3d` in `sw_custom.txt`: pending / Apply / Discard go through `dm_custom.c` (`dm_custom_shown_value`, `dm_custom_set_pending`), and the Video tab's Default resets them. The Extras layout leaves those two rows out (`_VIDEO_TAB_KEYS`); Android's single page keeps them. `dm_custom.c` walks and resets only the custom rows the page on screen has (`ck[]`, `g_page_keys`).
+  - Frame Rate and Frame Drops (Mac and iOS) are selectors at the end of the Video tab's Graphics section (`dm_video.c` rows `fps` / `drops`), but their values are the custom keys `eco_fps` / `q3d` in `sw_custom.txt`: pending / Apply / Discard go through `dm_custom.c` (`dm_custom_shown_value`, `dm_custom_set_pending`), and the Video tab's Default resets them. The Extras layout leaves those two rows out (`_VIDEO_TAB_KEYS`); the default overlay's single page keeps them. `dm_custom.c` walks and resets only the custom rows the page on screen has (`ck[]`, `g_page_keys`).
   - Controller highlight on Video / Extras: the game's own hover image on the selected control, as on the other tabs (`TouchCustomHiCar` = `Carousel_Hover`, `TouchCustomHiBox` = `CheckBox_Hover`, native size, centered). Radio rows light the chosen option; left / right step the language row. The host hides it while its item isn't wholly inside the list box. Keep list content right of the text edge: the scroll area clips at the panel's left edge, and a nine-tile's corners escape that clip (the old whole-row gold frame lost its left edge and left corners hanging over the tabs).
   - The Mac App always runs the controller layouts, with the mouse on top as touch gestures. Its Options layouts take the touch row pitch (180), clickable Apply / Default / Discard and an off-screen key legend (`PAD_SETTINGS_MAC`, `pad_settings_legend`).
   - Mac mouse paths (`touch_mac.c`): in game, presses go through the touch state machine; in the front end (`!in`) they go to `dm_ui_touch` as clicks, except that a vertical drag past 10 points scrolls and a sideways drag starting on a slider (`dm_ui_slider_at`) sets it. A press on a scroll bar (`dm_ui_scrollbar_at`) is never a click: it drags the thumb (`ui_drag_pump` kind 4, steering the list with wheel steps until `Indicator.y` sits under the pointer). The wheel sends the game's `MouseScroll` at the pointer (`dm_wheel_ui`); in game with no panel it still pushes the right stick.
 - **iOS:**
   - Reinstall over the app; deleting it wipes the 5.6 GB of resources and the saves.
   - The 18 resource archives can be pushed with `xcrun devicectl device copy to … --domain-type appDataContainer --destination 'Library/Application Support/romfs'`.
-  - `run.sh install` passes a battery gate meant for the maintainers' test phones. On upstream code without the gate fix, set `DM_DEVBATTERY=0` when `DM_IOS_UDID` isn't configured.
+  - `run.sh install` passes a battery gate meant for test phones; `DM_DEVBATTERY=0` turns it off (set in `dm/ios/local.env`).

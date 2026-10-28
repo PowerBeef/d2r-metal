@@ -1,7 +1,5 @@
 # UI Message Stream Format
 
-中文：[ui_message_stream.zh-CN.md](ui_message_stream.zh-CN.md)
-
 Every change in the game's UI (opening a panel, closing a panel, switching pages, moving the cursor…) is announced by the game itself with a UI message. Recording the UI messages of a run in order into a file shows the UI flow of a host run (`dmhost` from `dm/host`, which executes the rewritten game program on a Mac): tests assert on it (a panel opened, a page switched), and two runs can be compared message by message. This page defines the format of that file.
 
 ## Capture point

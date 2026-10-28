@@ -50,7 +50,7 @@ os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
 host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host
 # Mac / iOS：「帧率」「掉帧时」是「视频」页签上的切换框（宿主 dm_video.c 读写同一对键 eco_fps / q3d），「附加」页上没有这两行；安卓的自定义页（不设覆盖层开关）照旧是勾选行
-# Mac / iOS: Frame Rate and Frame Drops are selectors on the Video tab (the host's dm_video.c reads and writes the same keys eco_fps / q3d) and not rows on the Extras page; Android's custom page (no overlay flag) keeps the checkbox rows
+# Mac / iOS: Frame Rate and Frame Drops are selectors on the Video tab (the host's dm_video.c reads and writes the same keys eco_fps / q3d) and not rows on the Extras page; the default overlay's custom page (no overlay flag) keeps the checkbox rows
 FAKE = '"name": "VideoOptionsPanel", "name": "OptionsTable"'
 def page_nodes(text):
     found = {}

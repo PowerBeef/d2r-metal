@@ -1,8 +1,6 @@
 # dm/ — rewriter, host, graphics layer, iOS shell and verification
 
-中文：[README.zh-CN.md](README.zh-CN.md)
-
-This is all of the code of D2R Mobile. This page explains how the whole thing works, what each directory is, the common commands, and what each of the main files in `host/` is responsible for.
+This is all of the code of D2R Metal. This page explains how the whole thing works, what each directory is, the common commands, and what each of the main files in `host/` is responsible for.
 
 The steps for preparing the environment and building the app are not repeated here:
 

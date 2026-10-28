@@ -9,4 +9,3 @@ Run by `fork_gate.sh full` (`dm/verify/FORK_GATE.md`). Each case injects a save 
 
 Points not reached on these routes: `guestname` and `renameback` (the game doesn't rename save files in a normal run); they stay covered by `dm/host/tests/t_fs.c`.
 
-中文：[README.zh-CN.md](README.zh-CN.md)

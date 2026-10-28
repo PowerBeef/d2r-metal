@@ -1,7 +1,5 @@
 # dm/tools/re: the engine-analysis database
 
-中文: [README.zh-CN.md](README.zh-CN.md)
-
 A private, persistent Ghidra database of the game's `main` program, so that fixes can rest on what the engine actually does. Sessions and people query it through a local server; the names it collects flow back into the repo's debugging tools.
 
 **Everything it produces stays on your machine, in `$DM_ROOT/re` (default `~/dm-work/re`).** Decompiled code, disassembly, string dumps and Ghidra files never go into this repository, an issue, a pull request or a web page (CONTRIBUTING rule 1, [docs/DERIVED.md](../../../docs/DERIVED.md)). What may enter the repo is what already does: addresses with descriptions in our own words, and original tool code like this folder. The local `pre-commit` guard refuses disassembler databases and staged lines that look like decompiler output. `$DM_ROOT/re` keeps its own local git history for the exports and notes, with no remote and a hook that refuses every push.

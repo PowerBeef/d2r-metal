@@ -1,7 +1,5 @@
 # Game-related material in this repository: what is here and what is not
 
-中文: [DERIVED.zh-CN.md](DERIVED.zh-CN.md)
-
 The front page says the project "contains none and distributes none" of the game's content. This page makes that statement precise: what is truly absent, and which game-related records are in the repository, what each one is, and why it has to be there.
 
 ## Not in the repository

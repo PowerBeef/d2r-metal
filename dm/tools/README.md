@@ -1,7 +1,5 @@
 # dm/tools: tool index
 
-中文: [README.zh-CN.md](README.zh-CN.md)
-
 Three kinds of things live here. The first you will use when following the front page or the docs; the second is the measurement and regression scaffolding we use during development, published as is; the third is a set of one-off probes written when the game program was first analysed, kept for the record.
 
 ## What you will use

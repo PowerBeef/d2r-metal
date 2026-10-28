@@ -964,7 +964,7 @@ def _custom_q3d_row(i, setting="q3d"):
 # The name is exactly what the tab sends, and opening / closing go by it (a same name differing only in case opened a second video page that would not close). The class is still the borrowed video page
 _EXTRAS_PANEL = '2extras_lay/ExtrasOptionsPanel'
 EXTRAS_PATH = 'data/global/ui/layouts/2extras_lay/extrasoptionspanelhd.json'
-def _custom_page(text, kind=None):   # kind: 'video' (the Mac / iOS video page), 'extras' (the Extras page); none = by overlay: the video page where there are picture settings, otherwise (Android) the whole Custom page
+def _custom_page(text, kind=None):   # kind: 'video' (the Mac / iOS video page), 'extras' (the Extras page); none = by overlay: the video page where there are picture settings, otherwise (the default overlay) the whole Custom page
     kind = kind or ('video' if _VIDEO else 'all')
     if '"name": "VideoOptionsPanel"' not in text or '"name": "OptionsTable"' not in text: raise SystemExit('touch_layout：主机版视频页不是原样（原版布局变了？），自定义页没换')
     title = ('{ "type": "TableRowWidget", "name": "Row TouchCustomTitle", "children": [\n'

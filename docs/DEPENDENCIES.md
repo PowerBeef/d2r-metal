@@ -2,8 +2,6 @@
 
 Everything the build needs is on this page: what each item is, what it is for, where to get it and how to install it. The versions listed are the ones we actually build with; newer versions usually work, and if something breaks, go back to the listed version first.
 
-中文：[DEPENDENCIES.zh-CN.md](DEPENDENCIES.zh-CN.md)
-
 ## What you bring yourself
 
 | What | Used for | Notes |

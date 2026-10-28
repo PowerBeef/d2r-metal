@@ -6,7 +6,7 @@
 #       ./setup.sh <游戏包 .xci 或 .nsp> <prod.keys>    先从你自己的游戏包里取出游戏文件，再准备工作区
 # 报告的语言跟系统语言走，也可用 DM_LANG=zh / en 指定。
 # 工作区根目录 DM_ROOT（缺省 ~/dm-work）：游戏文件放在 $DM_ROOT/data/switch/3.3.94012/Update/{ExeFS,RomFS}，产物与缓存也都在它下面。
-# 每一步做过就跳过；想重做某一步，删掉它的产物目录再跑。依赖说明与官方链接见 docs/DEPENDENCIES.zh-CN.md。
+# 每一步做过就跳过；想重做某一步，删掉它的产物目录再跑。依赖说明与官方链接见 docs/DEPENDENCIES.md。
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd); export DM_ROOT=${DM_ROOT:-$HOME/dm-work}
 GAME=$DM_ROOT/data/switch/3.3.94012/Update; PY=$DM_ROOT/build/cache/dm/venv/bin/python3
@@ -98,7 +98,7 @@ if [ "$gf" != 0 ]; then
   # 目录已在、却不全或不是这一版：再给游戏包也只会「已有，不再解包」，原样再卡一次，所以先让人把它移走
   # The directory exists but is incomplete or not this version: giving the packages again would only print "already exists; skipping extraction" and get stuck the same way, so ask for it to be moved aside first
   [ ! -e "$GAME" ] || G="$(m "先把 ${GAME} 移到别处（例如 mv \"$GAME\" \"$GAME.old\"），再：" "Move $GAME aside first (for example mv \"$GAME\" \"$GAME.old\"), then: ")$G"
-  echo "      → $G"; echo "      → $(m "游戏文件只能从你自己买的 Switch 版导出，怎么导出见 docs/GAME_FILES.zh-CN.md" "Game files can only come from the Switch copy you own; see docs/GAME_FILES.md for how to export them")"; [ -n "$NEXT" ] || NEXT=$G
+  echo "      → $G"; echo "      → $(m "游戏文件只能从你自己买的 Switch 版导出，怎么导出见 docs/GAME_FILES.md" "Game files can only come from the Switch copy you own; see docs/GAME_FILES.md for how to export them")"; [ -n "$NEXT" ] || NEXT=$G
   [ "${SKIPPED:-0}" != 1 ] || die "$(m "已有的游戏文件目录 ${GAME} 不全或不是 3.3.94012 这一版，所以没有解包：先把它移到别处（例如 mv \"$GAME\" \"$GAME.old\"），再重跑同一条命令" "The existing game files directory $GAME is incomplete or not version 3.3.94012, so the packages were not extracted: move it aside (for example mv \"$GAME\" \"$GAME.old\"), then rerun the same command")"
 fi
 
@@ -118,7 +118,7 @@ if [ "${1:-}" = check ]; then echo; m "体检通过。下一步：./setup.sh（�
 
 step() { local name=$1; shift; local t0; t0=$(date +%s); say "$name"; "$@" || die "$name 没成功"; say "$name 完成（$(( $(date +%s) - t0 )) 秒）"; }
 
-# 改写用到的三个包钉在验过的版本上（docs/DEPENDENCIES.zh-CN.md）：改写器靠 capstone 的反汇编文本核对每处改写，capstone 6 起常数也改了名，新版装进来改写就停
+# 改写用到的三个包钉在验过的版本上（docs/DEPENDENCIES.md）：改写器靠 capstone 的反汇编文本核对每处改写，capstone 6 起常数也改了名，新版装进来改写就停
 # The three packages the rewrite uses are pinned to the verified versions (docs/DEPENDENCIES.md): the rewriter checks every rewrite against capstone's disassembly text, and from capstone 6 on the constants are renamed too, so a newer release would stop the rewrite
 py_env() { python3 -m venv "$DM_ROOT/build/cache/dm/venv" && "$PY" -m pip install -q pillow numpy lz4==4.4.5 capstone==5.0.9 unicorn==2.1.4; }
 [ -x "$PY" ] && "$PY" -c 'import PIL, numpy, lz4, capstone, unicorn' 2> /dev/null || step "Python 环境与包" py_env
@@ -206,4 +206,4 @@ echo "      source $DM_ROOT/build/cache/dm/venv/bin/activate"
 echo "  然后出 App：cd dm/ios && ./run.sh build（先在 dm/ios/local.env 里填 DM_TEAM_ID 与 DM_BUNDLE_ID；缺省同时面向 iPhone 与 iPad，只要 iPhone 加 DM_DEVICE_FAMILY=1）"
 echo "  Next, enter the Python environment setup prepared (the build and test scripts need the packages in it):  source $DM_ROOT/build/cache/dm/venv/bin/activate"
 echo "  Then build the app:  cd dm/ios && ./run.sh build   (fill DM_TEAM_ID and DM_BUNDLE_ID in dm/ios/local.env first; it targets both iPhone and iPad by default, add DM_DEVICE_FAMILY=1 for iPhone only)"
-echo "  $(m "想在这台 Mac 上直接玩：dm/tools/mac_app.sh 出一个 macOS App（见 docs/MAC.zh-CN.md）" "To play on this Mac directly: dm/tools/mac_app.sh builds a macOS App (see docs/MAC.md)")"
+echo "  $(m "想在这台 Mac 上直接玩：dm/tools/mac_app.sh 出一个 macOS App（见 docs/MAC.md）" "To play on this Mac directly: dm/tools/mac_app.sh builds a macOS App (see docs/MAC.md)")"

@@ -211,7 +211,7 @@ DM_PANEL_FREEZE	host	host/diag.c host/dm_cursor.c	-
 DM_PC_DATA	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	y
 DM_PERF_FILE	host	host/diag.c	-
 DM_PLAYERS	host	host/diag.c	y
-DM_POSCHK	host	host/diag.c	y
+DM_POSCHK	host	host/diag.c	-
 DM_POT_PICK	host	host/dm_beltauto.c host/dm_potpick.c	-
 DM_PRELOAD	host	host/main.c	-
 DM_PRESENT_HZ	gfx	gfx/nvn/hle_nvn.c	y
@@ -329,7 +329,7 @@ DM_TEST_KBD_TYPE	ios	ios/Sources/front_ios.m	-
 DM_TEST_KEYRACE	host	host/main.c	-
 DM_TEST_KILL	host	host/diag.c	-
 DM_TEST_KILL_AT	host	host/dm_cloudmerge.c host/hle_fs.c	-
-DM_TEST_LAG	host	host/diag.c	y
+DM_TEST_LAG	host	host/diag.c	-
 DM_TEST_LANG	host	host/dm_custom.c	y
 DM_TEST_LEAK	host	host/diag.c	-
 DM_TEST_LEAK_GPU	gfx	gfx/nvn/nvn_mtl.m	-

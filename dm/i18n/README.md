@@ -1,7 +1,5 @@
 # dm/i18n: the multilingual string table and the literal gate
 
-中文: [README.zh-CN.md](README.zh-CN.md)
-
 All UI text we added on top of the original game exists in Chinese, English, Spanish and Russian and is registered in one table here; a scanning script makes sure no text bypasses that table. The game's own text is not handled here; it follows the game's own string tables.
 
 ## The three files
