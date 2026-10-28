@@ -160,6 +160,9 @@ if ! "$PY" "$T/dmsh_chain.py" --check-tools > /dev/null 2>&1; then
   "$PY" "$T/dmsh_chain.py" --update-lock > /dev/null && "$PY" "$T/dmsh_chain.py" --header > /dev/null || die "翻译链登记没成功"
 fi
 V=$("$PY" "$T/dmsh_chain.py")
+# 工具没变、翻译链的源码变了（拉了改 dmsh_build.py、ios_metal.py 等的提交）：本机的 dmsh_chain.h 是上面改写过的、不进仓，记的还是旧版本，跟着重写
+# The tools are unchanged but the chain's sources changed (a pulled commit touched dmsh_build.py, ios_metal.py, ...): this machine's dmsh_chain.h was rewritten above and is never committed, so it still names the old version: rewrite it too
+grep -q "\"$V\"" "$HERE/dm/gfx/nvn/dmsh_chain.h" || { say "$(m "翻译链源码改过：按当前源码重写 dmsh_chain.h" "the chain's sources changed: rewriting dmsh_chain.h")"; "$PY" "$T/dmsh_chain.py" --header > /dev/null || die "翻译链登记没成功"; }
 # 翻译这一步做没做全，只认完成标记里的逐个结果：标记 _b_build.json（写在 Mac 侧缓存目录）里每个着色器都是 ok，并且 iOS 库目录里每个都有对应的库文件。
 # 只看「标记在、库目录里至少有一个文件」不够：翻译脚本即使全部失败也会写标记并正常退出，那样会把一个空的或缺了几千个的库当成做完。
 # Whether this step is complete is decided only by the per-shader results in the completion marker: every shader in _b_build.json (in the Mac-side cache directory) is ok, and every one has its library file in the iOS library directory.
