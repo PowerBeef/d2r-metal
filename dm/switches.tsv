@@ -146,9 +146,8 @@ DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
 DM_MOVIE_FFMPEG_PREFIX	ios-tools	ios/run.sh	y
 DM_MOVIE_REAL	host	host/hle_movie.c	-
-DM_MSL_DIR	gfx,host,ios,other,tools	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m tools/mac_app.sh …	y
+DM_MSL_DIR	gfx,host,ios,tools	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m tools/mac_app.sh	y
 DM_MSL_IOS	ios-tools	ios/run.sh	-
-DM_MSL_MAC	other	tvos/build.sh	-
 DM_NATIVE_ART_DIR	ios-tools	ios/tests/test_native_art_capture.py	-
 DM_NICK	host	host/hle_account.c	-
 DM_NO_PRELOAD	ios	ios/Sources/main.m	-
@@ -180,7 +179,7 @@ DM_NVN_RT_RANGE	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_rt_depth_ro.m gfx/tests/t_rt_r
 DM_NVN_RULER	gfx,host	gfx/nvn/nvn_mtl.m host/diag.c	y
 DM_NVN_RULER_NEG	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SAMPHIST	gfx	gfx/nvn/nvn_mtl.m	-
-DM_NVN_SHMAP	gfx,host,ios,other	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m tvos/main.m	y
+DM_NVN_SHMAP	gfx,host,ios	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m	y
 DM_NVN_SHOT	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SHOT_OUT	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SHOT_UI	host	host/diag.c	y
@@ -237,14 +236,14 @@ DM_REQUIRE_SAVES	ios-tools	ios/run.sh	-
 DM_RES_CENSUS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RES_CHECK	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RE_PORT	tools	tools/re/q.py tools/re/re.sh	y
-DM_ROMFS	host,ios,other,tools	host/app_mac.m host/hle_fs.c host/hle_tact.c host/tests/t_fs.c …	y
-DM_ROMFS_OVERLAY	host,ios,other,tools,verify	host/app_mac.m host/dm_padmode.c host/dm_textbox.c host/hle_fs.c …	y
+DM_ROMFS	host,ios,tools	host/app_mac.m host/hle_fs.c host/hle_tact.c host/tests/t_fs.c …	y
+DM_ROMFS_OVERLAY	host,ios,tools,verify	host/app_mac.m host/dm_padmode.c host/dm_textbox.c host/hle_fs.c …	y
 DM_ROMFS_SKIP_LOCAL	ios	ios/Sources/main.m	-
 DM_ROMFS_SRC	host,ios-tools,tools,verify	host/Makefile ios/run.sh ios/tests/Makefile ios/tests/test_native_art_capture.py …	y
 DM_ROMFS_TEST_CLEAN	ios	ios/Sources/main.m	-
 DM_ROMFS_TEST_DOC	ios	ios/Sources/asset_dl.m ios/Sources/main.m	-
 DM_ROMFS_TEST_PACK	ios	ios/Sources/main.m	-
-DM_ROOT	gfx,host,ios-tools,other,tools,verify	gfx/nvn/nvn_mtl.m gfx/tests/t_refl.m gfx/tests/t_refl_lib.m gfx/tests/t_rt_range_ro.m …	y
+DM_ROOT	gfx,host,ios-tools,tools,verify	gfx/nvn/nvn_mtl.m gfx/tests/t_refl.m gfx/tests/t_refl_lib.m gfx/tests/t_rt_range_ro.m …	y
 DM_RS_PAUSE_PANEL	host	host/dm_cursor.c	-
 DM_RT_AB	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RT_AB_TOGGLE	gfx	gfx/nvn/nvn_mtl.m	-
@@ -252,7 +251,7 @@ DM_RT_COMP	gfx	gfx/nvn/hle_nvn.c	-
 DM_RT_DBG	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RULESET	tools	tools/patch_nso.py	y
 DM_SAMPLE	host	host/diag.c	y
-DM_SAVE	gfx,host,ios,other	gfx/nvn/nvn_mtl.m host/app_mac.m host/dm_cursor.c host/dm_custom.c …	y
+DM_SAVE	gfx,host,ios	gfx/nvn/nvn_mtl.m host/app_mac.m host/dm_cursor.c host/dm_custom.c …	y
 DM_SAVE_FRESH	ios,ios-tools	ios/Sources/front_ios.m ios/Sources/main.m ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_SAVE_KEY	ios-tools	ios/tools/save_key.sh ios/tools/smoke_mac.sh	-
 DM_SAVE_MOUNT_STUCK_S	host	host/dm_engine.c	y
@@ -281,7 +280,7 @@ DM_TACT_PREFETCH_THREADS	host	host/hle_tact.c	-
 DM_TARGET	tools	tools/patch_nso.py	-
 DM_TARGET_LOG	host	host/hle_target.c	-
 DM_TEAM_ID	ios-tools	ios/project.yml	y
-DM_TEMP	host,ios,other	host/app_mac.m host/hle_fs.c host/tests/t_save_hooks.c ios/Sources/main.m …	y
+DM_TEMP	host,ios	host/app_mac.m host/hle_fs.c host/tests/t_save_hooks.c ios/Sources/main.m	y
 DM_TEST_AIM	host	host/hle_private_aim.c host/tests/t_aim_cone.c	-
 DM_TEST_AIM_AT	host	host/hle_private_aim.c host/tests/t_aim_cone.c	-
 DM_TEST_AIM_DROP	host	host/hle_private_aim.c	-
@@ -463,9 +462,6 @@ DM_TOUCH_TEST_DROP	host	host/tests/t_touch_mac.c host/touch_mac.c	-
 DM_TOWNWP_OFF	host	host/dm_townwp.c	y
 DM_TURN_SMOOTH	host	host/dm_turnsmooth.c	-
 DM_TURN_YAW	host	host/dm_turnsmooth.c	-
-DM_TV_DD	other	tvos/build.sh	-
-DM_TV_NOSIGN	other	tvos/build.sh	y
-DM_TV_SHOT_SECONDS	other	tvos/main.m	y
 DM_UDC_SELFTEST	gfx	gfx/nvn/nvn_mtl.m	-
 DM_UIMSG	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_UI_169	host	host/dm_uiscreen.c	-

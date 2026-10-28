@@ -169,10 +169,6 @@ dmAppKeysText	用键盘时，界面上的按键提示显示的就是键盘上的
 dmAppShareLog	分享日志…	Share Logs…	Compartir registros…		Поделиться логами…	로그 공유…	帮助菜单：把两份日志与版本信息打成压缩包，玩家选位置存下（不上传）
 dmAppShareInfo	版本信息	Version Info	Info. de versión		Информация о версии	버전 정보	分享日志压缩包里版本信息那份文件的标题行
 dmAppShareFail	日志打包失败	Could Not Pack the Logs	Error al empaquetar registros		Не удалось упаковать логи	로그 묶기 실패	分享日志失败时提示框的标题
-dmTvChecking	正在检查游戏文件…	Checking game files…	Comprobando archivos del juego…		Проверка игровых файлов…	게임 파일 확인 중…	Apple TV 版启动页（dm/tvos/main.m，下同）
-dmTvNoRomfs	游戏文件还不齐全：\n%s	The game files are incomplete:\n%s	Los archivos del juego están incompletos:\n%s		Игровые файлы неполные:\n%s	게임 파일이 불완전합니다:\n%s	游戏文件校验没过；%s = 校验给的原因
-dmTvNoAstcIndex	老机型补充包的覆盖层索引不在（romfs_overlay_astc/data/.build.config）	The Legacy Device Pack index is missing (romfs_overlay_astc/data/.build.config)	Falta el índice del Paquete para dispositivos antiguos (romfs_overlay_astc/data/.build.config)		Нет индекса оверлея пака для старых устройств (romfs_overlay_astc/data/.build.config)	구형 기기 팩 오버레이 인덱스가 없습니다(romfs_overlay_astc/data/.build.config)	补充包到了、配套的覆盖层索引没拷进来
-dmTvGpuFail	图形设备初始化失败，请看启动日志	Could not set up the graphics device; see the launch log	No se pudo configurar el dispositivo gráfico; consulta el registro de inicio		Не удалось инициализировать графику, см. лог запуска	그래픽 장치 초기화 실패. 실행 로그를 확인하세요	建不起 Metal 4 命令队列
 dmTcMap	地图	Map	Mapa		Карта	맵	触屏圆钮的字：右上地图键（DmTouchOverlay.m，取不到图标时）
 dmTcCancel	取消	Cancel	Cancelar		Отмена	취소	触屏圆钮的字：全屏地图开着时地图键变成「取消」（DmTouchOverlay.m）
 dmTcNavConfirm	确认／交换	Confirm / Swap	Confirmar / Cambiar		ОК / замена	확인 / 교환	触屏圆钮的字：面板态的虚拟手柄圆钮（只在 DM_TOUCH_NAV_PAD=1 调试时出现）
