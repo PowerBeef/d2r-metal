@@ -1,0 +1,60 @@
+# Source checks and tool tests that need no game files (nothing from the game is in this repository, and CI has none):
+# the string-table and switch checks, the scenario parser, the HUD-derivatives check, and the Python tool tests that build their own synthetic inputs.
+# The host, graphics and iOS test suites need macOS 27 / Xcode 27.1 and partly the game's files, so they stay local (dm/verify/fork_gate.sh).
+# Actions are pinned to commit SHAs (the tag in the comment).
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  source-and-tools:
+    name: Source checks and tool tests (no game files)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DM_ROOT: ${{ runner.temp }}/dm-work   # an empty workspace: tools that need game files report unavailable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: .github/requirements/tests.txt
+      - name: Install the pinned packages
+        run: python -m pip install -r .github/requirements/tests.txt
+      - name: Source checks
+        run: |
+          python dm/i18n/scan_literals.py
+          python dm/ios/tools/dm_i18n.py --check
+          python dm/tools/switches.py check
+          python dm/tools/scenario.py check dm/verify/scenarios/*.scn
+          bash dm/ios/tools/check_hud_gen.sh
+      - name: Tool tests
+        run: |
+          failed=0
+          for t in dm/tools/test_dmtest.py dm/tools/test_dmevents.py dm/tools/test_dmctl.py dm/tools/test_scenario.py dm/tools/test_imgdiff.py \
+                   dm/tools/test_bench.py dm/tools/test_boothist.py dm/tools/test_guestsyms.py dm/tools/test_tickdiff.py dm/tools/test_explore.py \
+                   dm/tools/test_nso_fnmap.py dm/tools/test_fuzz_corpus.py dm/tools/re/test_nso2elf.py dm/tools/re/test_addrcheck.py \
+                   dm/tools/re/test_export.py dm/tools/re/test_dbprofile.py dm/verify/test_d2save.py dm/verify/test_golden.py; do
+            echo "::group::$t"
+            python "$t" || { echo "::error::$t failed"; failed=1; }
+            echo "::endgroup::"
+          done
+          exit $failed

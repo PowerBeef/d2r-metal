@@ -14,7 +14,7 @@ Everything the build needs is on this page: what each item is, what it is for, w
 
 | Tool | Version | Used for | Official site | Install |
 |---|---|---|---|---|
-| Xcode (with the Metal compiler) | 26.6 (27.1 to fill the iPhone Duo inner screen) | Building the app and compiling shaders into Metal libraries; with 27.1, `./setup.sh` recompiles the shaders with its compiler | <https://developer.apple.com/xcode/> | App Store or the developer site |
+| Xcode (with the Metal compiler) | 27.1 (macOS / iOS 27 and Metal 4 only) | Building the app and compiling shaders into Metal libraries; with 27.1, `./setup.sh` recompiles the shaders with its compiler | <https://developer.apple.com/xcode/> | App Store or the developer site |
 | Homebrew | — | Installing the command-line tools below | <https://brew.sh> | The one-line command on its home page |
 | XcodeGen | 2.45.4 | Generating the Xcode project from `project.yml` | <https://github.com/yonaskolb/XcodeGen> | `brew install xcodegen` |
 | .NET SDK | 10.0 | Building the shader translation tool | <https://dotnet.microsoft.com/download> | `brew install dotnet` |
