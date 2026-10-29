@@ -4,6 +4,7 @@
 // Register convention: inputs w1.. / outputs w0=Result, x1=value (GetInfo / SetHeapSize), consistent with the public Horizon ABI.
 #include "dm.h"
 #include "hle.h"
+__attribute__((weak)) void dm_probe_summary(const char *why) { (void)why; }   // diag.c prints probe hit counts at exit; tests that include this file have no probes
 #include <stdatomic.h>
 #include <sys/mman.h>
 #include <errno.h>
@@ -281,6 +282,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         LOG("Break#%d reason=%#llx Result=%#x svc 位于 %s+%#llx", ++nb, regs[0], res, mm ? mm->name : "?", orig_addr);
         dm_backtrace(regs[29]);
         if (regs[0] & 0x80000000ull) return 0;   // 仅通知，可继续 | notification only, can continue
+        dm_probe_summary("game_break");
         _exit(42);
     }
     case 0x1E: regs[0] = 0; regs[1] = guest_ns() * 12 / 625; return 0;   // GetSystemTick

@@ -136,6 +136,7 @@ static void l3mem_request(uint32_t tick) {
 typedef void (*probe_fn)(ucontext_t *uc);
 static struct { uint64_t at; uint32_t *slot; unsigned hits; char name[40]; long dump; probe_fn fn; } g_probe[MAX_PROBE];   // dump：命中时打印 [x0+dump] 16 字节（-1 = 不打）；fn：专用处理（替代缺省打印） | dump: on hit print 16 bytes at [x0+dump] (-1 = do not print); fn: dedicated handler (replaces the default print)
 static int g_nprobe;
+static unsigned g_probe_max;   // DM_PROBE_MAX=<n>: print the first n hits of each probe in full, only count the rest (0 = print all)
 static void probe_str(uint64_t p) {
     char buf[80]; vm_size_t got = 0;
     if (p < 0x1000 || vm_read_overwrite(mach_task_self(), p, sizeof buf - 1, (vm_address_t)buf, &got) || !got) return;
@@ -169,8 +170,10 @@ static int probe_hit(ucontext_t *uc) {   // 由 probe_install 注册给 crash.c 
     uint64_t pc = UC_PC(uc);
     for (int i = 0; i < g_nprobe; i++) if (g_probe[i].at == pc) {
         probe_dump_once();
-        if (g_probe[i].fn) { g_probe[i].hits++; g_probe[i].fn(uc); UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
-        { extern uint64_t g_t0_ns; uint64_t now_ns(void); fprintf(stderr, "[dm] PROBE %s #%u [%.4fs]", g_probe[i].name, ++g_probe[i].hits, (now_ns() - g_t0_ns) / 1e9); }
+        unsigned n = __atomic_add_fetch(&g_probe[i].hits, 1, __ATOMIC_RELAXED);   // hits come from several threads
+        if (g_probe[i].fn) { g_probe[i].fn(uc); UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
+        if (g_probe_max && n > g_probe_max) { UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
+        { extern uint64_t g_t0_ns; uint64_t now_ns(void); fprintf(stderr, "[dm] PROBE %s #%u [%.4fs]", g_probe[i].name, n, (now_ns() - g_t0_ns) / 1e9); }
         for (int r = 0; r < 4; r++) { uint64_t v = UC_X(uc, r); fprintf(stderr, " x%d=%#llx", r, v); probe_str(v); }
         for (int r = 19; r < 24; r++) fprintf(stderr, " x%d=%#llx", r, UC_X(uc, r));
         { uint64_t x8 = UC_X(uc, 8); Dl_info di; fprintf(stderr, " x8=%#llx", x8);   // x8：间接调用目标常在这里（blr x8 前下探针） | x8: indirect call targets are often here (probe placed before blr x8)
@@ -209,7 +212,20 @@ static void probe_add(module_t *m, uint64_t off, long dump, probe_fn fn) {
     LOG("探针 %s（原指令 %08x）", g_probe[g_nprobe].name, sl[0]);
     g_nprobe++;
 }
-
+// Exit summary: one line per installed probe, zero hits included, then why the process ended. "Path not taken" needs the
+// install line, a run that ended the way the scenario expects, and hits=0 here; anything less is unknown.
+// Called once from the host's own exit paths (normal exit, graceful shutdown and its 1.5 s fallback, watchdogs, DM_TICKS full, the
+// game's break, the memory cap, fatal signals). SIGINT, SIGKILL and DM_TEST_KILL_AT end the process without it.
+void dm_probe_summary(const char *why) {
+    static _Atomic int done;
+    if (!g_nprobe || atomic_exchange(&done, 1)) return;
+    for (int i = 0; i < g_nprobe; i++)
+        fprintf(stderr, "[dm] PROBE_SUMMARY %s hits=%u%s\n", g_probe[i].name, __atomic_load_n(&g_probe[i].hits, __ATOMIC_RELAXED), g_probe[i].fn ? " internal" : "");
+    fprintf(stderr, "[dm] PROBE_SUMMARY end probes=%d why=%s\n", g_nprobe, why);
+}
+static void probe_summary_atexit(void) { dm_probe_summary("exit"); }
+#else
+void dm_probe_summary(const char *why) { (void)why; }
 #endif   // !TARGET_OS_IPHONE（DM_PROBE）
 
 // ---------- DM_UIMSG=1：UI 消息总线（main 0xb1dc60 观测门 OBS_UIMSG，x1 = 消息 {u64 类型哈希, u64 动作哈希, char* 面板名, …}）----------
@@ -494,6 +510,7 @@ void probe_install(void) {
 #if !TARGET_OS_IPHONE
     crash_set_trap_hook(probe_hit);
     const char *e = getenv("DM_PROBE");
+    if (getenv("DM_PROBE_MAX")) g_probe_max = (unsigned)strtoul(getenv("DM_PROBE_MAX"), NULL, 10);
     if (e) {
         char spec[512]; strlcpy(spec, e, sizeof spec);
         for (char *t = strtok(spec, ","); t; t = strtok(NULL, ",")) {
@@ -508,6 +525,7 @@ void probe_install(void) {
         }
     }
     if (g_slots && !g_slots_sealed) { mprotect(g_slots, 0x4000, PROT_READ | PROT_EXEC); sys_icache_invalidate(g_slots, 0x4000); g_slots_sealed = 1; }
+    if (g_nprobe) atexit(probe_summary_atexit);
 #endif
 }
 
@@ -1193,7 +1211,7 @@ static void ticks_hash(const uint64_t *regs) {
         }
     fflush(g_tkfp);
     g_tklast = tick;
-    if (g_tkleft > 0 && --g_tkleft == 0) { fclose(g_tkfp); res_report("退出"); LOG("DM_TICKS 记满，最后拍号 %u，退出", tick); DM_EV("exit", "why:s code:d", "ticks_full", 0); _exit(0); }
+    if (g_tkleft > 0 && --g_tkleft == 0) { fclose(g_tkfp); res_report("退出"); LOG("DM_TICKS 记满，最后拍号 %u，退出", tick); dm_probe_summary("ticks_full"); DM_EV("exit", "why:s code:d", "ticks_full", 0); _exit(0); }
 }
 
 // ---------- 客户端命令包：DM_C2S_LOG=<路径>（main 0x6e5b40 命令分派入口观测门 OBS_C2S）/ DM_C2S_REPLAY=<路径> ----------

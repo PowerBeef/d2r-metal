@@ -220,7 +220,8 @@ DM_PRESENT_LATENCY	gfx	gfx/nvn/nvn_mtl.m	-
 DM_PRESENT_LINK	gfx	gfx/nvn/nvn_mtl.m	-
 DM_PRIVATE_GATES	tools	tools/patch_nso.py	y
 DM_PROBE	host	host/diag.c	y
-DM_PROBE_DUMP	host	host/diag.c	-
+DM_PROBE_DUMP	host	host/diag.c	y
+DM_PROBE_MAX	host	host/diag.c	y
 DM_PSO_MANIFEST	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_RECORD	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_USER	gfx	gfx/nvn/nvn_mtl.m	-
@@ -328,7 +329,7 @@ DM_TEST_JOY_ISO	ios	ios/Sources/front_ios.m	-
 DM_TEST_KBD_TYPE	ios	ios/Sources/front_ios.m	-
 DM_TEST_KEYRACE	host	host/main.c	-
 DM_TEST_KILL	host	host/diag.c	-
-DM_TEST_KILL_AT	host	host/dm_cloudmerge.c host/hle_fs.c	-
+DM_TEST_KILL_AT	host	host/dm_cloudmerge.c host/hle_fs.c	y
 DM_TEST_LAG	host	host/diag.c	-
 DM_TEST_LANG	host	host/dm_custom.c	y
 DM_TEST_LEAK	host	host/diag.c	-

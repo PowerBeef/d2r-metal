@@ -17,13 +17,16 @@ void dm_host_shutdown(const char *why) {
     uint64_t t0 = now_ns(); LOG("收到 %s：优雅退出", why);
     DM_EV("shutdown", "why:s", why);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC), dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
-        LOG("【红】优雅退出 1.5 秒未完成，直接退出"); _exit(0); });
+        LOG("【红】优雅退出 1.5 秒未完成，直接退出");
+        { void dm_probe_summary(const char *why); dm_probe_summary("shutdown_timeout"); }   // a stuck shutdown still reports its probes
+        _exit(0); });
     tact_prefetch_stop();
     granny_prof_dump();
     hlecount_flush();                               // DM_HLECOUNT：_exit 不走 atexit，这里写一份 | DM_HLECOUNT: _exit does not run atexit, write a copy here
     dm_audio_suspend(1);
     dm_gfx_suspend(1);
     LOG("优雅退出完成（%.3f 秒）", (now_ns() - t0) / 1e9);
+    { void dm_probe_summary(const char *why); dm_probe_summary("shutdown"); }
     DM_EV("exit", "why:s code:d", "shutdown", 0);
     _exit(0);
 }

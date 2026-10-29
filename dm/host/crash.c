@@ -44,6 +44,7 @@ void crash_watch_frame(void) { if (atomic_load(&g_watch_pregame)) crash_watch_pr
 void crash_watch_pregame_done(void) { atomic_store(&g_watch_pregame, 0); }
 void crash_watch_pregame_again(void) { atomic_store(&g_watch_pregame, 1); }   // 从局里退回前端：重新按出图帧算进展（diag.c） | Back from a run to the front end: count progress by presented frames again (diag.c)
 void crash_dump_now(const char *why);
+__attribute__((weak)) void dm_probe_summary(const char *why) { (void)why; }   // diag.c prints probe hit counts at exit; tests that link crash.c alone have no probes
 static void *watchdog_main(void *arg) {
     (void)arg;
     for (;;) {
@@ -73,6 +74,7 @@ static void *watchdog_main(void *arg) {
             { const char *d = getenv("DM_WATCH_SAMPLE");   // Mac 诊断：卡住时对自己采样 1 秒，线程栈写到该路径 | Mac diagnostics: when stuck, sample itself for 1 second and write the thread stacks to this path
               if (d) { char c[1200]; snprintf(c, sizeof c, "/usr/bin/sample %d 1 -f '%s' >/dev/null 2>&1", (int)getpid(), d); if (system(c)) LOG("看门狗：采样失败"); else LOG("看门狗：线程栈已写 %s", d); } }
 #endif
+            dm_probe_summary("watchdog");
             DM_EV("exit", "why:s code:d", "watchdog", 128 + SIGALRM);
             _exit(128 + SIGALRM);
         }
@@ -230,6 +232,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
       cb_add(&c, "\n"); cb_flush(&c);
       cb_backtrace(&c, UC_FP(uc)); cb_flush(&c); }
     if (g_dump_hook) g_dump_hook();
+    dm_probe_summary("signal");
     // 所有致命信号都恢复缺省处理再发一次：进程照旧按这个信号结束，系统的崩溃报告（.ips）照写（原先只 SIGABRT 这样，别的 _exit 掉、系统那边没有报告）；shell 看到的退出码仍是 128 + 信号
     // Every fatal signal restores the default action and is raised again: the process still ends by this signal and the system still writes its crash report (.ips) (previously only SIGABRT did this, the others _exit-ed with no system report); the exit code a shell sees is still 128 + signal
     signal(sig, SIG_DFL); raise(sig);

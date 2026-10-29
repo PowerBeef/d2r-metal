@@ -436,6 +436,7 @@ NVN(nvnQueueFenceSync, void, NVNqueue *q, NVNsync *s, NVNsyncCondition c, int f)
 // 没围栏过的同步对象按真机行为等到超时；已围栏的只在 GPU 真正完成到该栅栏值后放行
 // A sync object that was never fenced waits until the timeout, as on the device; a fenced one is released only once the GPU has really completed up to that fence value
 uint64_t dm_nvn_frame_count(void);
+void dm_probe_summary(const char *why);   // weak default near the pacing code; the host's diag.c defines it
 NVN(nvnSyncWait, NVNsyncWaitResult, const NVNsync *s, uint64_t timeout) {
     const sync_t *o = (const sync_t *)s;
     if (!o->fenced) return NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
@@ -1328,7 +1329,7 @@ static void dump_frame(void) {
         if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS) { unsigned long long mb = (unsigned long long)(vi.phys_footprint >> 20); unsigned long long ht = 0, hf = 0, hm = 0; int dm_guest_heap_stat(unsigned long long *, unsigned long long *, unsigned long long *); int hok = dm_guest_heap_stat(&ht, &hf, &hm);
             void mtl_mem_stat(unsigned long long, unsigned long long, int, unsigned long long, unsigned long long, unsigned long long); mtl_mem_stat(g_frame, mb, hok, ht, hf, hm);
             static long cap = -1; if (cap < 0) { const char *e = getenv("DM_MEM_CAP_GB"); cap = e ? atol(e) : DM_MEM_CAP_DEFAULT_GB; }
-            if (cap > 0 && mb > (unsigned long long)cap * 1024) { LOG("【红】内存看门狗：常驻 %llu MB 超过上限 %ld GB（帧 %llu），自行退出", mb, cap, (unsigned long long)g_frame); _exit(86); } } }
+            if (cap > 0 && mb > (unsigned long long)cap * 1024) { LOG("【红】内存看门狗：常驻 %llu MB 超过上限 %ld GB（帧 %llu），自行退出", mb, cap, (unsigned long long)g_frame); dm_probe_summary("memory_cap"); _exit(86); } } }
     dm_guest_frame_tick();   // 确定性客体时钟（DM_DETCLOCK，宿主 hle_os.c）：每次出图推进固定步长；未开为空操作 | Deterministic guest clock (DM_DETCLOCK, host hle_os.c): each present advances a fixed step; a no-op when not enabled
 }
 // ---------- 计时埋点（逐帧行写进 DM_NVN_TSV：frame / @指标 / 值；每 300 帧汇总 p50 / p95 / 最大） ----------
@@ -1534,6 +1535,7 @@ static void present_cfg(const win_t *o) {
 // the screen refresh (120 Hz: 60 / 40 / 30 / 24 / 20), the highest tier currently sustainable and lets the pacer release game frames evenly at it. "Sustainable" uses the
 // whole pipeline's bottleneck: max(mean game-thread CPU per frame, actual translation-thread CPU per frame, GPU time per frame).
 // Step down at once when the bottleneck exceeds this tier's period by 3%; step up only after 90 consecutive frames below 88% of the faster tier's period, to avoid flapping.
+__attribute__((weak)) void dm_probe_summary(const char *why) { (void)why; }   // the host's diag.c prints probe hit counts at exit; graphics tests have no probes
 __attribute__((weak)) uint64_t dm_present_late_count(void) { return 0; } __attribute__((weak)) double xbg_recent_gpu_ms(void) { return -1; }   // 空的弱定义（不是弱声明）：苹果链接器要求弱引用链接时有定义；Vulkan 后端 / 鸿蒙平台层给强定义 | empty weak definitions (not declarations): Apple's linker needs a weak reference to resolve; the Vulkan backend / HarmonyOS platform give the strong ones
 static void pace_adapt_tick(double screen_hz) {
     if (!pace_adapt_enabled() || screen_hz <= 0) return;

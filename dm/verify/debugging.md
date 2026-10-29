@@ -40,6 +40,12 @@ python3 dm/tools/guestsyms.py lookup main+0x455aa4 sdk+0x2b0470
 
 - **Engine names** come from the engine-analysis database when it exists ([dm/tools/re](../tools/re/README.md)): a private Ghidra project of `main` with a local query server (`re.sh serve`, `re.sh q decompile main+0x…`). Its export `$DM_ROOT/re/export/main.names.tsv` names the functions the dynamic symbols leave unnamed, in this table's lookups, `crashlog.py`, `dm bt` and `sampagg.py`. Its output stays on your machine.
 
+## Probes
+
+`DM_PROBE=<module>:<offset>[@<hex>|@*<hex>][,…]` (Mac only, up to 16; every number is hex, `0x` optional) replaces one game instruction with a trap whose handler logs and then runs the original instruction from a trampoline, so put it at a function entry or where x16 is dead, never on a PC-relative instruction. Each hit logs `PROBE <module>+<offset> #<n>` with x0..x3 (and the strings they point at), x19..x23, x8 and a backtrace; `@<hex>` adds the 16 bytes at x0+hex, `@*<hex>` the 16 bytes at [x0+hex]. `DM_PROBE_MAX=<n>` prints only the first n hits of each probe in full and counts the rest, for probes on paths that run every frame. `DM_PROBE_DUMP=<module>:<offset>:<length>[:file]` (hex as well: `main:2d64a18:100` is 256 bytes) writes a range of guest memory to a file on the first hit of any probe.
+
+When the host ends through its own exit paths it prints one `PROBE_SUMMARY <name> hits=<n>` line per installed probe, zero hits included, then `PROBE_SUMMARY end probes=<n> why=<exit|shutdown|shutdown_timeout|watchdog|signal|ticks_full|game_break|memory_cap>`. Ctrl-C (SIGINT), SIGKILL and `DM_TEST_KILL_AT` end the process without one: stop a hand-started probe run with `kill <pid>` (SIGTERM, a graceful shutdown) or the control port's `quit`. A claim that a path is *not* taken needs all three: the install line (`探针 <name>`), a run that ended the way the scenario expects (`why`), and `hits=0`. Without them the answer is unknown, not "never".
+
 ## The debugger
 
 ### Stopping at a tick
