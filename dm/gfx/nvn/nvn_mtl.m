@@ -2708,9 +2708,12 @@ static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvS
         MTLRenderPipelineColorAttachmentDescriptor *c = d.colorAttachments[i];
         c.pixelFormat = (MTLPixelFormat)k->cfmt[i];
         int l = merged ? k->lmap[i] : i;
-        uint32_t m = l == 0xff ? 0 : (k->chmask >> (4 * l)) & 0xf;
+        // An output the fragment shader never writes gets no writes and no blending: the GPU the game was made for leaves that target
+        // alone, while Metal would blend undefined values into it (nxnative's rendering reference). Only when the reflection lists the outputs.
+        int unwritten = fs && !fsfn && fs->rf.color_known && l != 0xff && !(fs->rf.color_mask >> l & 1);
+        uint32_t m = l == 0xff || unwritten ? 0 : (k->chmask >> (4 * l)) & 0xf;
         c.writeMask = (m & 1 ? MTLColorWriteMaskRed : 0) | (m & 2 ? MTLColorWriteMaskGreen : 0) | (m & 4 ? MTLColorWriteMaskBlue : 0) | (m & 8 ? MTLColorWriteMaskAlpha : 0);
-        if (l != 0xff && k->blend_en >> l & 1) {
+        if (!unwritten && l != 0xff && k->blend_en >> l & 1) {
             c.blendingEnabled = YES;
             c.sourceRGBBlendFactor = bfac(k->blend[l].src_rgb); c.destinationRGBBlendFactor = bfac(k->blend[l].dst_rgb);
             c.sourceAlphaBlendFactor = bfac(k->blend[l].src_a); c.destinationAlphaBlendFactor = bfac(k->blend[l].dst_a);
