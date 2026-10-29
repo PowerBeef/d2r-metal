@@ -42,7 +42,12 @@ XC = ['--msl', '--msl-version', '20300', '--msl-argument-buffers', '--msl-textur
 CAS = os.environ.get('DMSH_CAS', os.path.join(cache_root, 'cas'))
 CAS_LOCKS, CAS_LOCKS_GUARD = {}, threading.Lock()
 PRE_STATS = collections.Counter()
-MAC_RECORD = 'xcrun -sdk macosx metal -c; xcrun -sdk macosx metallib'
+# -fpreserve-invariance: the translated vertex shaders declare [[position, invariant]], which Metal ignores without this flag. The depth prepass and the
+# colour pass then compute one vertex's position differently (fused multiply-adds), and the colour pass's depth-equal test drops pixels: wind-blown
+# grass and ground cover flashed black for single frames (Mac App main menu, ~20 events a minute). Same flag in ios_metal.METAL.
+MAC_METAL = ['xcrun', '-sdk', 'macosx', 'metal', '-c', '-fpreserve-invariance']
+MAC_METALLIB = ['xcrun', '-sdk', 'macosx', 'metallib']
+MAC_RECORD = ' '.join(MAC_METAL) + '; ' + ' '.join(MAC_METALLIB)
 TEX_BASE, SAMP_BASE, IMG_BASE = 0x168, 0x568, 0x120   # c[2]：图像句柄表 0x120 + 8 r（8 槽，紧接贴图表之前；cs_lut_combine_c 写 u4 = 0x140 反推，u5 = 0x148 核对） | c[2]: image handle table 0x120 + 8 r (8 slots, immediately before the texture table; inferred from cs_lut_combine_c writing u4 = 0x140, checked with u5 = 0x148)
 
 def records(d):
@@ -165,8 +170,8 @@ def bf_cache_publish(digest, fmsl, maclib, ioslib, fmeta):
     atomic_json(os.path.join(root, 'fetch.json'), fmeta)
 
 def mac_compile(msl, air, lib):   # the Mac compile convention (MAC_RECORD); dmsh_mtlcache.Cache calls it on a miss
-    subprocess.run(['xcrun', '-sdk', 'macosx', 'metal', '-c', msl, '-o', air], check=True)
-    subprocess.run(['xcrun', '-sdk', 'macosx', 'metallib', air, '-o', lib], check=True)
+    subprocess.run([*MAC_METAL, msl, '-o', air], check=True)
+    subprocess.run([*MAC_METALLIB, air, '-o', lib], check=True)
 
 def write_refl(key, refl):
     for t, d, rec in (('mac', out, MAC_RECORD),) + ((('ios', IOSOUT, ios_metal.RECORD),) if IOSOUT else ()):
