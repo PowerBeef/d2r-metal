@@ -25,6 +25,7 @@
 #include "../xtrace.h"
 #include "nvn_mtl.h"
 #include "nvn_pace.h"
+#include "nvn_timestamp.h"
 #include "nvn_adaptive_pace.h"
 #include "../../host/front.h"
 #include "nvn_dirty.h"
@@ -153,6 +154,14 @@ static const int g_devinfo[] = {
     [0x55] = 262144, [0x56] = 4096, [0x57] = 1, [0x58] = 4, [0x59] = 2, [0x5A] = 0, [0x5B] = 4096, [0x5C] = 16384,
     [0x5D] = 4096, [0x5E] = 128, [0x5F] = 4096,
 };
+// Counter reports hold 614.4 MHz ticks on the guest clock (nvn_mtl.m gpu_ticks); both answers are ns on that clock. Adapted from nxnative (MIT).
+uint64_t guest_ns(void);
+NVN(nvnDeviceGetTimestampInNanoseconds, uint64_t, const NVNdevice *d, const NVNcounterData *c) { (void)d; return nvn_timestamp_to_ns(c->timestamp); }
+NVN(nvnDeviceGetCurrentTimestampInNanoseconds, uint64_t, const NVNdevice *d) {
+    (void)d; uint64_t ns = guest_ns();
+    if (!ns) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); ns = (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
+    return ns;
+}
 NVN(nvnDeviceGetInteger, void, const NVNdevice *d, NVNdeviceInfo what, int *out) {
     (void)d;
     unsigned w = (unsigned)what;

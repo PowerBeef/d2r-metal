@@ -28,6 +28,8 @@ t_cover: t_cover.c ../nvn/nvn_cover.h
 	clang -O1 -Wall -o $@ t_cover.c
 t_pace: t_pace.c ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_pace.c
+t_timestamp: t_timestamp.c ../nvn/nvn_timestamp.h
+	clang -O1 -Wall -o $@ t_timestamp.c
 t_adaptive_pace: t_adaptive_pace.c ../nvn/nvn_adaptive_pace.h ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_adaptive_pace.c
 t_fuse_check: t_fuse_check.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -91,6 +93,7 @@ run: \
 	t_mip_extent \
 	t_nvn \
 	t_pace \
+	t_timestamp \
 	t_pfv \
 	t_present_crop \
 	t_prog_key \
@@ -118,6 +121,7 @@ run: \
 	./t_builtin
 	./t_deswz_gpu
 	./t_pace
+	./t_timestamp
 	./t_adaptive_pace
 	./t_refl
 	./t_refl_lib

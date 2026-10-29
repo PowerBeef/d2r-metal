@@ -28,6 +28,7 @@
 #define FB_SEL addFeedbackHandler
 #define FB_ARG id<MTL4CommitFeedback>
 #include "nvn_pace.h"
+#include "nvn_timestamp.h"
 #include "nvn_obj.h"
 #include "../tex/nvn_fmt_mtl.h"
 #include "../tex/nvn_deswizzle.h"
@@ -706,7 +707,14 @@ void mtl_sub_event(volatile uint32_t *val, uint32_t mode, uint32_t v) { post((po
 void mtl_sub_counter(uint64_t addr, uint32_t type) { post((post_op){2, NULL, 0, 0, addr, type, NULL}); }
 void mtl_counter_stats(uint64_t rep[32], uint64_t rst[32]) { memcpy(rep, g_cnt_report, sizeof g_cnt_report); memcpy(rst, g_cnt_reset, sizeof g_cnt_reset); }
 
-static uint64_t gpu_ticks(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return ((uint64_t)t.tv_sec * 1000000000ull + t.tv_nsec) * 12 / 625; }
+// Counter reports carry NVN's 614.4 MHz ticks on the guest clock (nvn_timestamp.h), the same clock cntpct and the svc tick use;
+// the weak guest_ns below answers 0 in the graphics tests, which then use the monotonic clock.
+uint64_t guest_ns(void);
+static uint64_t gpu_ticks(void) {
+    uint64_t ns = guest_ns();
+    if (!ns) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); ns = (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
+    return nvn_timestamp_from_ns(ns);
+}
 
 // ---------- 启动埋点（DM_BOOTPROF=1）：metallib 载入、管线创建（均在提交线程回放中同步发生）、贴图上传、首帧出图 ----------
 // ---------- Boot instrumentation (DM_BOOTPROF=1): metallib loading, pipeline creation (both happen synchronously during replay on the submit thread), texture upload, first-frame present ----------

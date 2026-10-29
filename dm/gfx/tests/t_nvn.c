@@ -177,6 +177,8 @@ int main(void) {
     EXPECT("缓冲拷贝 64 B 全等", 0, memcmp(src, dst, 64));
     uint64_t ts[2]; memcpy(ts, cnt, 16);
     EXPECT("计数器时间戳已写（非 0）", 1, ts[0] != 0 && ts[0] == ts[1]);
+    { struct timespec tn; clock_gettime(CLOCK_MONOTONIC, &tn); uint64_t now = (uint64_t)tn.tv_sec * 1000000000ull + (uint64_t)tn.tv_nsec, rep = ts[0] * 625 / 384;
+      EXPECT("counter timestamp is in 614.4 MHz ticks (within 10 s of now)", 1, rep <= now && now - rep < 10000000000ull); }
 
     // 5b. 同步必须挡住 CPU：先排 24 次 64 MiB 拷贝把 GPU 占住，最后一条把 src 拷到 dst；
     //     等围栏返回后 CPU 才改写 src。若等待提前放行，最后那条拷贝会读到改写后的 src。
