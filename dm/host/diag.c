@@ -134,7 +134,8 @@ static void l3mem_request(uint32_t tick) {
 // The trampoline borrows x16: place probes only at function entries or at points where x16 is dead; the original instruction must not be PC-relative (adr/adrp/b/bl/ldr literal/cbz...).
 #define MAX_PROBE 16
 typedef void (*probe_fn)(ucontext_t *uc);
-static struct { uint64_t at; uint32_t *slot; unsigned hits; char name[40]; long dump; probe_fn fn; } g_probe[MAX_PROBE];   // dump：命中时打印 [x0+dump] 16 字节（-1 = 不打）；fn：专用处理（替代缺省打印） | dump: on hit print 16 bytes at [x0+dump] (-1 = do not print); fn: dedicated handler (replaces the default print)
+static struct { uint64_t at; uint32_t *slot; unsigned hits; char name[40]; long dump; probe_fn fn;
+                int freg; char fop; uint64_t fval; char fstr[32]; char fdesc[48]; unsigned match; } g_probe[MAX_PROBE];   // filter (DM_PROBE …?x<r>=<v> / ?x<r>~<text>): freg -1 = none; match counts the hits that pass it   // dump：命中时打印 [x0+dump] 16 字节（-1 = 不打）；fn：专用处理（替代缺省打印） | dump: on hit print 16 bytes at [x0+dump] (-1 = do not print); fn: dedicated handler (replaces the default print)
 static int g_nprobe;
 static unsigned g_probe_max;   // DM_PROBE_MAX=<n>: print the first n hits of each probe in full, only count the rest (0 = print all)
 static void probe_str(uint64_t p) {
@@ -166,12 +167,25 @@ static void probe_dump_once(void) {
     fwrite(m->base + strtoull(o, 0, 16), 1, strtoull(n, 0, 16), fp); fclose(fp);
     LOG("探针转储 %s+%s 长 %s → %s", mod, o, n, f ? f : def);
 }
+// Does this hit pass the probe's register filter: '=' the register equals fval, '~' the C string it points at contains fstr.
+static int probe_match(int i, ucontext_t *uc) {
+    uint64_t v = UC_X(uc, g_probe[i].freg);
+    if (g_probe[i].fop == '=') return v == g_probe[i].fval;
+    char buf[128]; vm_size_t got = 0;
+    if (v < 0x1000 || vm_read_overwrite(mach_task_self(), v, sizeof buf - 1, (vm_address_t)buf, &got) || !got) return 0;
+    buf[got] = 0;
+    return strstr(buf, g_probe[i].fstr) != NULL;
+}
 static int probe_hit(ucontext_t *uc) {   // 由 probe_install 注册给 crash.c 的 SIGTRAP 分支 | Registered by probe_install with the SIGTRAP branch of crash.c
     uint64_t pc = UC_PC(uc);
     for (int i = 0; i < g_nprobe; i++) if (g_probe[i].at == pc) {
         probe_dump_once();
         unsigned n = __atomic_add_fetch(&g_probe[i].hits, 1, __ATOMIC_RELAXED);   // hits come from several threads
         if (g_probe[i].fn) { g_probe[i].fn(uc); UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
+        if (g_probe[i].freg >= 0) {   // filtered probe: only matching hits are printed (and capped by DM_PROBE_MAX)
+            if (!probe_match(i, uc)) { UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
+            n = __atomic_add_fetch(&g_probe[i].match, 1, __ATOMIC_RELAXED);
+        }
         if (g_probe_max && n > g_probe_max) { UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
         { extern uint64_t g_t0_ns; uint64_t now_ns(void); fprintf(stderr, "[dm] PROBE %s #%u [%.4fs]", g_probe[i].name, n, (now_ns() - g_t0_ns) / 1e9); }
         for (int r = 0; r < 4; r++) { uint64_t v = UC_X(uc, r); fprintf(stderr, " x%d=%#llx", r, v); probe_str(v); }
@@ -207,7 +221,7 @@ static void probe_add(module_t *m, uint64_t off, long dump, probe_fn fn) {
     *w = 0xD43E0000;                             // brk #0xf000
     mprotect((void *)pg, 0x4000, PROT_READ | PROT_EXEC);
     sys_icache_invalidate(w, 4);
-    g_probe[g_nprobe].at = at; g_probe[g_nprobe].slot = sl; g_probe[g_nprobe].dump = dump; g_probe[g_nprobe].fn = fn;
+    g_probe[g_nprobe].at = at; g_probe[g_nprobe].slot = sl; g_probe[g_nprobe].dump = dump; g_probe[g_nprobe].fn = fn; g_probe[g_nprobe].freg = -1;
     snprintf(g_probe[g_nprobe].name, sizeof g_probe[0].name, "%s+%#llx", m->name, off);
     LOG("探针 %s（原指令 %08x）", g_probe[g_nprobe].name, sl[0]);
     g_nprobe++;
@@ -220,7 +234,10 @@ void dm_probe_summary(const char *why) {
     static _Atomic int done;
     if (!g_nprobe || atomic_exchange(&done, 1)) return;
     for (int i = 0; i < g_nprobe; i++)
-        fprintf(stderr, "[dm] PROBE_SUMMARY %s hits=%u%s\n", g_probe[i].name, __atomic_load_n(&g_probe[i].hits, __ATOMIC_RELAXED), g_probe[i].fn ? " internal" : "");
+        if (g_probe[i].freg >= 0)
+            fprintf(stderr, "[dm] PROBE_SUMMARY %s hits=%u match=%u (%s)\n", g_probe[i].name, __atomic_load_n(&g_probe[i].hits, __ATOMIC_RELAXED),
+                    __atomic_load_n(&g_probe[i].match, __ATOMIC_RELAXED), g_probe[i].fdesc);
+        else fprintf(stderr, "[dm] PROBE_SUMMARY %s hits=%u%s\n", g_probe[i].name, __atomic_load_n(&g_probe[i].hits, __ATOMIC_RELAXED), g_probe[i].fn ? " internal" : "");
     fprintf(stderr, "[dm] PROBE_SUMMARY end probes=%d why=%s\n", g_nprobe, why);
 }
 static void probe_summary_atexit(void) { dm_probe_summary("exit"); }
@@ -518,10 +535,28 @@ void probe_install(void) {
             *c = 0; module_t *m = NULL;
             for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, t)) m = &g_mod[i];
             if (!m) die("DM_PROBE 无此模块 %s", t);
+            char *q = strchr(c + 1, '?'); if (q) *q++ = 0;   // ?x<r>=<hex|module+hex> or ?x<r>~<text>: count (and print) only the hits that match
             char *at_ = strchr(c + 1, '@');
             long dump = -1;
             if (at_) dump = at_[1] == '*' ? (0x1000000 | strtol(at_ + 2, 0, 16)) : strtol(at_ + 1, 0, 16);   // @偏移 / @*偏移 | @offset / @*offset
             probe_add(m, strtoull(c + 1, 0, 16), dump, NULL);
+            if (q) {
+                char *op = strpbrk(q, "=~"); int r = (q[0] == 'x') ? atoi(q + 1) : -1;
+                if (!op || r < 0 || r > 28) die("DM_PROBE filter: ?x<r>=<value> or ?x<r>~<text> (%s)", q);
+                typeof(g_probe[0]) *p = &g_probe[g_nprobe - 1];
+                p->freg = r; p->fop = *op; snprintf(p->fdesc, sizeof p->fdesc, "%s", q);
+                if (*op == '~') strlcpy(p->fstr, op + 1, sizeof p->fstr);
+                else {
+                    char *plus = strchr(op + 1, '+'); uint64_t base = 0;
+                    if (plus) {   // module+offset: resolved against that module's base
+                        *plus = 0; module_t *bm = NULL;
+                        for (int k = 0; k < g_nmod; k++) if (!strcmp(g_mod[k].name, op + 1)) bm = &g_mod[k];
+                        if (!bm) die("DM_PROBE filter: no module %s", op + 1);
+                        base = (uint64_t)bm->base; *plus = '+';
+                    }
+                    p->fval = base + strtoull(plus ? plus + 1 : op + 1, 0, 16);
+                }
+            }
         }
     }
     if (g_slots && !g_slots_sealed) { mprotect(g_slots, 0x4000, PROT_READ | PROT_EXEC); sys_icache_invalidate(g_slots, 0x4000); g_slots_sealed = 1; }
