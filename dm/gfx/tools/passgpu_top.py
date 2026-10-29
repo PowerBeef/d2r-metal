@@ -48,7 +48,7 @@ def main(argv):
     if a.old: a.a = a.a or a.old[0]; a.top = int(a.old[1]) if len(a.old) > 1 else a.top
     path = a.run if a.run.endswith('.tsv') else os.path.join(a.run, 'passgpu.tsv'); run = os.path.dirname(path) or '.'
     mk = marks(run); f0 = frame_of(a.a, mk, 300); f1 = frame_of(a.b, mk, 1 << 62)
-    rows = [l.rstrip('\n').split('\t') for l in open(path, encoding='utf-8')][1:]
+    rows = [r for r in (l.rstrip('\n').split('\t') for l in open(path, encoding='utf-8')) if len(r) >= 13][1:]   # a run cut short leaves a partial last row
     inc = collections.defaultdict(dict); span = collections.defaultdict(dict); draws = collections.defaultdict(list); per = collections.defaultdict(float); gpass = collections.defaultdict(dict)
     seen = collections.defaultdict(collections.Counter)
     for r in rows:
