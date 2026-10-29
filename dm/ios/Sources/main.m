@@ -384,6 +384,7 @@ static NSString *astc_pack_locate(char *why, size_t n) {
 //   ④ None of them → return empty. Set g_doc_stray when "D2R Mobile" contains other folders (the resource screen still tries the managed download first as
 //   usual; when neither managed download nor the download site works, on screen "Game resources not found. "D2R Mobile" currently contains: ...");
 //      when there is no folder at all neither flag is set (on screen "No game resources yet. Please first, from the beta page...")
+static NSString *g_doc_bad_dir;   // with g_doc_bad: the incomplete copy's data folder when it has the standard layout (the direct download fills it in)
 static int g_doc_bad;   // romfs_locate 的附带结论：「文件」里有资源文件夹但校验没过（why = 哪个文件、现有 / 应有字节数）——此时不去试托管下载 | Side conclusion of romfs_locate: the Files app has an asset folder but validation did not pass (why = which file, present / expected byte counts) -- in this case do not try the hosted download
 static int g_pack_wait;   // 托管资源包的目录已经在、系统还没说「本地可用」（还在下 / 还在落盘） | The managed asset pack's directory already exists but the system has not said "locally available" (still downloading / still being written to disk)
 static int g_doc_stray;   // 另一条附带结论：「D2R Mobile」里有文件夹但没有一个是资源（why = 现有哪些文件夹），托管资源包也没到——照常去试托管下载，下载站也走不通时把 why 给玩家看 | The other side conclusion: 「D2R Mobile」 has folders but none of them is assets (why = which folders exist now), and the hosted asset pack has not arrived either -- try the hosted download as usual, and show why to the player when the download site is unreachable too
@@ -409,7 +410,7 @@ static BOOL ba_configured(void) {
 static BOOL g_pack_legacy_available;
 
 static NSString *romfs_locate(char *why, size_t n) {
-    g_doc_bad = 0; g_doc_stray = 0;
+    g_doc_bad = 0; g_doc_stray = 0; g_doc_bad_dir = nil;
     NSString *support = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES)[0];
     NSString *local = [support stringByAppendingPathComponent:@"romfs"];
     // 只测试用：DM_ROMFS_SKIP_LOCAL=1 跳过开发机推进来的 Application Support/romfs，走「文件」里的玩家路径；
@@ -479,6 +480,7 @@ static NSString *romfs_locate(char *why, size_t n) {
         char rep[1500]; dm_romfs_report(best.fileSystemRepresentation, rep, sizeof rep); NSString *where = [holder isEqualToString:docdir] ? T("dmDlAppFolder") : [NSString stringWithFormat:T("dmDlQuoted"), holder.lastPathComponent];
         snprintf(why, n, dm_ui("dmDlIncomplete"), where.UTF8String, rep);
         plog("boot: 资源不完整（%s）：%s", best.fileSystemRepresentation, rep);
+        if ([best.lastPathComponent isEqualToString:@"data"]) g_doc_bad_dir = best;
         g_doc_bad = 1; return nil;   // 不再往下试托管资源包：它的校验结果会盖掉这条原因（界面只剩托管下载的报错） | Do not go on to try the hosted asset pack: its validation result would overwrite this reason (the screen would only show the hosted download's error)
     }
     // ③ 托管资源包（TestFlight 包的资源在这里）。取路径的接口不管有没有资源包都返回一个路径（系统文档如此，直装包也一样），不能拿它当「有」：
@@ -979,7 +981,7 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
     char why[2048];
     if (getenv("DM_TEST_BA") && !self.gone) { if (@available(iOS 26.0, *)) [self fakeBA:@(getenv("DM_TEST_BA"))]; return; }   // 测试：造托管下载现场（fakeBA） | test: stage a hosted download scene (fakeBA)
     if (!getenv("DM_ASSETS_TEST") && romfs_locate(why, sizeof why)) { [self ready]; return; }   // 重试时资源已到（如刚在「文件」里拷完） | Assets have already arrived on retry (e.g. just finished copying in the Files app)
-    if (!getenv("DM_ASSETS_TEST") && g_doc_bad) { [self direct:@(why)]; return; }   // 有文件夹但不完整（拷到一半 / 下到一半）：不试托管下载，直接从下载站补齐；下载站走不通才报原因 | A folder exists but is incomplete (half copied / half downloaded): do not try the hosted download, fill in the rest straight from the download site; report the reason only if the download site is unreachable
+    if (!getenv("DM_ASSETS_TEST") && g_doc_bad) { if (g_doc_bad_dir) [DmAssetDL.shared useFolder:g_doc_bad_dir]; [self direct:@(why)]; return; }   // 有文件夹但不完整（拷到一半 / 下到一半）：不试托管下载，直接从下载站补齐；下载站走不通才报原因 | A folder exists but is incomplete (half copied / half downloaded): do not try the hosted download, fill in the rest straight from the download site; report the reason only if the download site is unreachable
     if (self.gone) { [self direct:nil]; return; }   // 玩家已选「改用直接下载」：重试仍走这条（托管的回调此后不接，回到托管会停在「正在下载」） | the player chose "Use direct download": retries keep going this way (callbacks from the hosted download are not taken from now on; going back to hosted would stay stuck at "Downloading")
     NSString *stray = !getenv("DM_ASSETS_TEST") && g_doc_stray ? @(why) : nil;   // 「D2R Mobile」里有文件夹但都不是资源：托管下载、下载站都走不通时给玩家看这条 | 「D2R Mobile」 has folders but none of them is assets: show the player this message when neither the hosted download nor the download site works
     if (getenv("DM_ROMFS_TEST_PACK")) { [self ready]; return; }   // 只测试用：托管资源包「下完了」但不合格的现场 | Test only: the scenario where the managed asset pack has "finished downloading" but does not pass validation
@@ -1028,7 +1030,7 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
             NSString *dev = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone";   // 按设备写 | Wording depends on the device
             NSString *m = [NSString stringWithFormat:T("dmDlSpaceMsg"), DmAssetDL.shared.shortBytes / 1e9, remain / 1e9, dev, DmAssetDL.shared.freeBytes / 1e9, dev];
             NSString *title = [NSString stringWithFormat:T("dmDlSpaceTitle"), dev];
-            [self say:[[title stringByAppendingString:@"\n"] stringByAppendingString:m]]; [self showBtn:self.retry];
+            [self say:[NSString stringWithFormat:@"%@\n%@%@%@", title, m, fallback ? @"\n\n" : @"", fallback ?: @""]]; [self showBtn:self.retry];   // the missing-files report stays under the space message
             UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:m preferredStyle:UIAlertControllerStyleAlert];
             [a addAction:[UIAlertAction actionWithTitle:T("dmOk") style:UIAlertActionStyleDefault handler:nil]];
             [self presentViewController:a animated:YES completion:^{ plog("assets: 已弹系统提示「%s」｜正文：%s", title.UTF8String, [m stringByReplacingOccurrencesOfString:@"\n" withString:@" ⏎ "].UTF8String); }]; return; }

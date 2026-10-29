@@ -156,6 +156,10 @@ static NSArray<NSString *> *dl_lines(NSString *path) {   // 包内文本：一�
     return @(dm_ui("dmDlNoServer"));
 }
 static int64_t dl_size(NSString *p) { NSDictionary *a = [NSFileManager.defaultManager attributesOfItemAtPath:p error:nil]; return a ? (int64_t)[a fileSize] : -1; }
+- (void)useFolder:(NSString *)dataDir {
+    dispatch_sync(self.q, ^{ if (self.running || !dataDir.length || [dataDir isEqualToString:self.dir]) return;
+        plog("assets: filling the incomplete copy %s instead of the standard folder", dataDir.fileSystemRepresentation); self.dir = dataDir; });
+}
 - (NSString *)final:(NSString *)nm { return [self.dir stringByAppendingPathComponent:nm]; }
 - (NSString *)part:(NSString *)nm { return [self.dir stringByAppendingPathComponent:[nm stringByAppendingString:@".part"]]; }
 - (BOOL)have:(NSDictionary *)f { return dl_size([self final:f[@"name"]]) == [f[@"size"] longLongValue]; }   // 正式文件在且字节数对 | The final file exists and its byte count is right

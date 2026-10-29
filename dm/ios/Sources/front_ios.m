@@ -904,6 +904,7 @@ UIView *front_ios_view(CGRect frame) {
     CGRect full = frame; frame = letterbox_rect(frame);
     dm_tc_set_tall_scale(UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad);   // UIKit 点数：iPad 开启有上限的平板缩放（手机大屏另在布局时按短边判，见 DmMetalView layoutSubviews）
     DmMetalView *v = [[DmMetalView alloc] initWithFrame:frame];
+    [g_rate_link invalidate];   // a second view (the scene rebuilt) replaces the link: the old one would keep calling its target and hold it
     g_rate_link = [CADisplayLink displayLinkWithTarget:[DmRateHint new] selector:@selector(tick:)];
     g_rate_link.preferredFrameRateRange = CAFrameRateRangeMake(60, 60, 60);
     [g_rate_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
@@ -1220,6 +1221,15 @@ static void thermal_apply(void) {
 static int g_audio_bg, g_audio_intr;
 void guest_clock_freeze_for(int reason, int on);
 static void audio_apply(void) { dm_audio_suspend(g_audio_bg || g_audio_intr); }
+// An interruption whose "ended" never arrives while the app stays in the foreground (some system alerts end that way) left the game silent until it
+// went to the background and back. On becoming active, an interruption still pending is tried: if the session can be activated again (nothing such as
+// a call holds it), the interruption is over
+static void audio_retry_intr(void) {
+    if (!g_audio_intr || g_audio_bg) return;
+    NSError *e = nil;
+    if ([AVAudioSession.sharedInstance setActive:YES error:&e]) { g_audio_intr = 0; LOG("Front end: audio interruption with no end notice: the session is active again, sound resumes"); }
+    else LOG("Front end: audio still interrupted on becoming active (%s)", e.localizedDescription.UTF8String ?: "?");
+}
 // 进后台回调里（系统给这个回调 10 秒）：局内才等。等到「发后台焦点之后出现过存档提交、且之后 0.2 秒没有新的提交」（角色与共享箱是两个容器，可能分两次），最多 2.5 秒。
 // 这段时间游戏主循环照常跑，出图直接丢弃。不在局内（主菜单 / 选角）不等：那里没有待存的进度
 // In the enter-background callback (the system gives this callback 10 seconds): wait only in a run. Wait until "a save commit has appeared after sending the background focus, and no new commit for 0.2 seconds after that" (character and shared stash are two containers and may commit separately), at most 2.5 seconds.
@@ -1326,7 +1336,7 @@ void front_ios_focus_event(int ev) {
             break; }
         case 2: dm_ui_lifecycle(0); { void dm_update_foreground(void); dm_update_foreground(); void dm_cloud_foreground(void); dm_cloud_foreground(); }   // 回前台时人若停在选角页，重查一次新版本（dm/host/dm_update.c；局内不查） | If the player is on the character select page when returning to foreground, check for a new version once more (dm/host/dm_update.c; not checked in a run)
             { void dm_3d_scale_resumed(void); dm_3d_scale_resumed(); } dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); g_in_bg = 0; g_audio_bg = g_audio_intr = 0; audio_apply(); dm_focus_set(2); break;   // 回前台一律当打断已过：进后台时系统自己会发一次「被打断」（真机实测），却不保证回来时补发「结束」；会话若真还被占，启动声卡失败不致命、激活时重试 | Returning to foreground always treats the interruption as over: when entering background the system itself sends one "interrupted" (measured on a real device) but does not guarantee an "ended" on return; if the session is really still occupied, failing to start the audio device is not fatal and is retried on activation
-        case 3: links_pause(0); dm_focus_set(1); audio_apply(); { int e = atomic_exchange(&g_save_failed_err, 0); if (e) front_save_failed(e); } break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
+        case 3: links_pause(0); dm_focus_set(1); audio_retry_intr(); audio_apply(); { int e = atomic_exchange(&g_save_failed_err, 0); if (e) front_save_failed(e); } break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
     }
 }
 
@@ -1613,7 +1623,9 @@ void front_ios_lifecycle_install(void) {
     // Test switch DM_TEST_RESIGN=seconds: at that time send only "resign active" (sceneWillResignActive) without going to background -- mimics swiping up and stopping in the app switcher; combined with the test script's subsequent kill -9 = swiping it away in the app switcher
     { const char *tr = getenv("DM_TEST_RESIGN"); double tr_at = tr ? atof(tr) : 0;
       if (tr_at > 0) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(tr_at * 1e9)), dispatch_get_main_queue(), ^{ LOG("前端：测试失活（DM_TEST_RESIGN）"); front_ios_focus_event(0); }); }
-    const char *ai = getenv("DM_TEST_AUDIO_INTERRUPT"); double ai_at, ai_dur;
+    // DM_TEST_AUDIO_INTERRUPT=start,duration,noend: no "ended" is sent; at the end the app only becomes active again (front_ios_focus_event 3), as after an alert
+    // that never reports its end
+    const char *ai = getenv("DM_TEST_AUDIO_INTERRUPT"); double ai_at, ai_dur; int ai_noend = ai && strstr(ai, ",noend") != NULL;
     if (ai && sscanf(ai, "%lf,%lf", &ai_at, &ai_dur) == 2) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(ai_at * 1e9)), dispatch_get_main_queue(), ^{
             LOG("前端：测试打断开始（DM_TEST_AUDIO_INTERRUPT）声卡回调累计 %llu", (unsigned long long)dm_audio_render_calls());
@@ -1622,8 +1634,9 @@ void front_ios_lifecycle_install(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((ai_at + ai_dur) * 1e9)), dispatch_get_main_queue(), ^{
             uint64_t c0 = dm_audio_render_calls();
             LOG("前端：测试打断结束（DM_TEST_AUDIO_INTERRUPT）声卡回调累计 %llu", (unsigned long long)c0);
-            [nc postNotificationName:AVAudioSessionInterruptionNotification object:as userInfo:@{AVAudioSessionInterruptionTypeKey: @(AVAudioSessionInterruptionTypeEnded),
-                                                                                                AVAudioSessionInterruptionOptionKey: @(AVAudioSessionInterruptionOptionShouldResume)}];
+            if (ai_noend) { LOG("Front end: test interruption without an end notice: becoming active only"); front_ios_focus_event(3); }
+            else [nc postNotificationName:AVAudioSessionInterruptionNotification object:as userInfo:@{AVAudioSessionInterruptionTypeKey: @(AVAudioSessionInterruptionTypeEnded),
+                                                                                                     AVAudioSessionInterruptionOptionKey: @(AVAudioSessionInterruptionOptionShouldResume)}];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2000000000), dispatch_get_main_queue(), ^{
                 LOG("前端：测试打断恢复后 2 s 声卡回调 +%llu", (unsigned long long)(dm_audio_render_calls() - c0));
             });

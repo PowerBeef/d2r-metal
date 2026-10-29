@@ -121,6 +121,8 @@ static void attach(GCController *c) {
 }
 void dm_gamepad_start(void (*on_mode)(int pad)) {
     g_on_mode = on_mode;
+    static int started; if (started) return;   // a second view calls it again: one set of connect / disconnect observers, or every controller event runs twice
+    started = 1;
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
     [nc addObserverForName:GCControllerDidConnectNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *n) { attach(n.object); }];
     [nc addObserverForName:GCControllerDidDisconnectNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *n) {

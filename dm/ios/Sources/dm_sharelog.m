@@ -60,7 +60,9 @@ static NSData *scrub_log(NSData *d) {
     return o ? [NSData dataWithBytesNoCopy:o length:on freeWhenDone:YES] : nil;
 }
 static NSDate *g_t0;   // 本次启动时刻（dm_sharelog_boot） | Time of this launch (dm_sharelog_boot)
-static NSURL *build_file(void) {
+// The device readings UIKit gives only on the main thread (UIDevice battery monitoring), taken there before the file is built on a background queue
+typedef struct { float level; int state; } dev_readings;
+static NSURL *build_file(dev_readings dv) {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
     NSData *(^rd)(NSString *) = ^NSData *(NSString *n) { return [NSData dataWithContentsOfFile:[doc stringByAppendingPathComponent:n] options:NSDataReadingMappedIfSafe error:nil]; };   // 映射着读：日志没有字节封顶，整读进内存再拼、再洗各拷一遍，峰值是日志的四倍 | read through a mapping: the log has no byte cap, and reading it whole into memory, then joining and scrubbing with one copy each, peaks at four times the log size
@@ -68,12 +70,11 @@ static NSURL *build_file(void) {
     NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSString *build = [inf[@"CFBundleVersion"] description] ?: @"未知";
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyy-MM-dd HH:mm:ss ZZZ";
     char hw[64] = "未知"; size_t hn = sizeof hw; sysctlbyname("hw.machine", hw, &hn, NULL, 0);
-    UIDevice *dev = UIDevice.currentDevice; dev.batteryMonitoringEnabled = YES;
-    NSArray<NSString *> *bst = @[ @"未知", @"放电", @"充电中", @"已充满" ]; int bs = (int)dev.batteryState;
+    NSArray<NSString *> *bst = @[ @"未知", @"放电", @"充电中", @"已充满" ]; int bs = dv.state;
     NSDictionary *fsa = [fm attributesOfFileSystemForPath:doc error:nil]; NSProcessInfo *pi = NSProcessInfo.processInfo;
     NSMutableString *h = [NSMutableString string];
     [h appendFormat:@"D2R Metal Diagnostics\n导出时间 %@\n版本 %@ 构建 %@\n机型 %s 系统 %@\n", [df stringFromDate:NSDate.date], [inf[@"CFBundleShortVersionString"] description] ?: @"未知", build, hw, pi.operatingSystemVersionString];
-    [h appendFormat:@"温控档位 %ld 低电量模式 %@ 电量 %.0f%% %@\n", (long)pi.thermalState, pi.lowPowerModeEnabled ? @"开" : @"关", dev.batteryLevel < 0 ? -1.0 : dev.batteryLevel * 100, bs >= 0 && bs <= 3 ? bst[bs] : @"未知"];   // 中文一律走 %@：NSString 的 %s 不按 UTF-8 解 | Chinese always goes through %@: NSString's %s does not decode as UTF-8
+    [h appendFormat:@"温控档位 %ld 低电量模式 %@ 电量 %.0f%% %@\n", (long)pi.thermalState, pi.lowPowerModeEnabled ? @"开" : @"关", dv.level < 0 ? -1.0 : dv.level * 100, bs >= 0 && bs <= 3 ? bst[bs] : @"未知"];   // 中文一律走 %@：NSString 的 %s 不按 UTF-8 解 | Chinese always goes through %@: NSString's %s does not decode as UTF-8
     [h appendFormat:@"物理内存 %.1f GB 可用存储 %.1f GB 本次已运行 %.0f 分钟\n", pi.physicalMemory / 1073741824.0, [fsa[NSFileSystemFreeSize] doubleValue] / 1073741824.0, -g_t0.timeIntervalSinceNow / 60];
     perf_block(h, @"本局关键读数（各取最后一条）", cur);
     perf_block(h, @"上一局关键读数（各取最后一条）", prev);
@@ -107,23 +108,27 @@ static UIViewController *top_vc(void) {   // 同 front_ios.m 系统输入框找�
 static _Atomic int g_busy;   // 打包 / 分享面板开着时再点不叠第二个 | Tapping again while packaging / the share sheet is open does not stack a second one
 static void on_click(void) {   // 宿主在游戏主线程调：玩家点了「分享诊断日志」 | Called by the host on the game main thread: the player tapped 「分享诊断日志」(Share Diagnostics)
     if (atomic_exchange(&g_busy, 1)) { plog("诊断日志：分享面板还开着，这次点击不再弹"); return; }
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSURL *u = build_file();
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIViewController *vc = u ? top_vc() : nil;
-            if (!vc) { if (u) plog("诊断日志：【红】没找到可弹分享面板的界面"); atomic_store(&g_busy, 0); return; }
-            UIActivityViewController *a = [[UIActivityViewController alloc] initWithActivityItems:@[u] applicationActivities:nil];
-            a.completionWithItemsHandler = ^(UIActivityType t, BOOL done, NSArray *items, NSError *e) { (void)items;
-                plog("诊断日志：分享面板收起（%s%s%s）", done ? "已发到 " : "没发", done ? (t ?: @"未知").UTF8String : "", e ? [NSString stringWithFormat:@"，错误 %@", e.localizedDescription].UTF8String : "");
-                atomic_store(&g_busy, 0); };
-            UIPopoverPresentationController *pp = a.popoverPresentationController;   // iPad / Mac 上是弹出框：锚在画面正中（暂停菜单所在处），不画箭头 | On iPad / Mac it is a popover: anchored at the center of the picture (where the pause menu is), no arrow drawn
-            if (pp) { pp.sourceView = vc.view; pp.sourceRect = CGRectMake(CGRectGetMidX(vc.view.bounds), CGRectGetMidY(vc.view.bounds), 1, 1); pp.permittedArrowDirections = 0; }
-            [vc presentViewController:a animated:YES completion:^{
-                plog("诊断日志：分享面板已弹出（%s，%s）", pp ? "弹出框" : "底部面板", NSStringFromCGRect(a.view.frame).UTF8String);
-                const char *tc = getenv("DM_TEST_SHARELOG_CLOSE"); if (!tc) return;
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(tc) * 1e9)), dispatch_get_main_queue(), ^{
-                    [a dismissViewControllerAnimated:NO completion:^{ plog("诊断日志：测试开关 DM_TEST_SHARELOG_CLOSE 到点收起分享面板"); atomic_store(&g_busy, 0); }]; });
-            }];
+    dispatch_async(dispatch_get_main_queue(), ^{   // UIDevice is main-thread API: read the battery here, build the file off the main thread
+        UIDevice *dev = UIDevice.currentDevice; BOOL was = dev.batteryMonitoringEnabled; dev.batteryMonitoringEnabled = YES;
+        dev_readings dv = {dev.batteryLevel, (int)dev.batteryState}; dev.batteryMonitoringEnabled = was;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSURL *u = build_file(dv);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                UIViewController *vc = u ? top_vc() : nil;
+                if (!vc) { if (u) plog("诊断日志：【红】没找到可弹分享面板的界面"); atomic_store(&g_busy, 0); return; }
+                UIActivityViewController *a = [[UIActivityViewController alloc] initWithActivityItems:@[u] applicationActivities:nil];
+                a.completionWithItemsHandler = ^(UIActivityType t, BOOL done, NSArray *items, NSError *e) { (void)items;
+                    plog("诊断日志：分享面板收起（%s%s%s）", done ? "已发到 " : "没发", done ? (t ?: @"未知").UTF8String : "", e ? [NSString stringWithFormat:@"，错误 %@", e.localizedDescription].UTF8String : "");
+                    atomic_store(&g_busy, 0); };
+                UIPopoverPresentationController *pp = a.popoverPresentationController;   // iPad / Mac 上是弹出框：锚在画面正中（暂停菜单所在处），不画箭头 | On iPad / Mac it is a popover: anchored at the center of the picture (where the pause menu is), no arrow drawn
+                if (pp) { pp.sourceView = vc.view; pp.sourceRect = CGRectMake(CGRectGetMidX(vc.view.bounds), CGRectGetMidY(vc.view.bounds), 1, 1); pp.permittedArrowDirections = 0; }
+                [vc presentViewController:a animated:YES completion:^{
+                    plog("诊断日志：分享面板已弹出（%s，%s）", pp ? "弹出框" : "底部面板", NSStringFromCGRect(a.view.frame).UTF8String);
+                    const char *tc = getenv("DM_TEST_SHARELOG_CLOSE"); if (!tc) return;
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(tc) * 1e9)), dispatch_get_main_queue(), ^{
+                        [a dismissViewControllerAnimated:NO completion:^{ plog("诊断日志：测试开关 DM_TEST_SHARELOG_CLOSE 到点收起分享面板"); atomic_store(&g_busy, 0); }]; });
+                }];
+            });
         });
     });
 }

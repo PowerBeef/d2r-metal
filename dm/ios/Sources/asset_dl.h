@@ -7,6 +7,9 @@
 // 定下载地址、取清单、盘点本地已有的。回调在主线程：err 非空 = 走不了直接下载（原因）；remain / total = 还要下 / 总字节数；cellular = 当前是按流量计费的网络
 // Determine the download address, fetch the manifest, take stock of what is already local. Callback on the main thread: err non-nil = direct download not possible (reason); remain / total = bytes still to download / total bytes; cellular = the current network is metered
 - (void)prepare:(void (^)(NSString *err, int64_t remain, int64_t total, BOOL cellular))done;
+// Fill this folder (its data directory, absolute) instead of the standard "D2R Mobile Resources/data": the player's incomplete copy, so only what it lacks
+// is downloaded and no second full copy is made. Ignored while a download runs
+- (void)useFolder:(NSString *)dataDir;
 // 上一次 prepare 判出手机空间不够时：还差多少字节（含 200 MB 余量）与手机可用字节；空间够 = 0
 // When the last prepare found the phone short of space: how many bytes are still missing (including a 200 MB margin) and the phone's available bytes; enough space = 0
 @property (atomic) int64_t shortBytes, freeBytes;
