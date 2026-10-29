@@ -86,6 +86,7 @@ The scripts in `tools/`; usage is written in each file's header:
 |---|---|
 | `dmsh_xlate/` | The shader translation tool (C#), which references the translation library in `dm/third_party/ryujinx` |
 | `dmsh_build.py` | Drives the whole translation chain to produce the shader libraries; when the environment variable `IOSOUT=directory` is set, it also produces the iOS version |
+| `dmsh_rules.py` | MSL rewrite rules applied to `spirv-cross` output by shader key (each rule's source is part of its shaders' cache fingerprint); today one rule, which specialises the 7 fragment shaders that read the game's HDR output switch, so the SMAA edge pass no longer computes the PQ curve it throws away |
 | `dmsh_chain.py`, `dmsh_chain.lock` | Translation chain version and tool fingerprints |
 | `dmsh_facts.py` | Generation and checking of the answer table `shader_facts.tsv` |
 | `dmsh_fetch.py` | Generates the "readable tile" versions of fragment shaders |

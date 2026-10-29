@@ -22,7 +22,7 @@ import inspect, os, re, sys, json, struct, hashlib, shutil, subprocess, tempfile
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # 工作区根目录（游戏文件、产物、运行现场都在它下面） | Workspace root (game files, build outputs and run artifacts are all under it)
 HOME = os.path.expanduser('~')
 dm_dir, out = sys.argv[1:3]; want = set(sys.argv[3:]); cache_root = out
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import dmsh_chain, dmsh_fetch, dmsh_facts, dmsh_mtlcache   # 翻译链版本：先核工具与锁文件，产物进 b-<V>/ | translation chain version: verify the tools against the lock file first; build output goes into b-<V>/
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import dmsh_chain, dmsh_fetch, dmsh_facts, dmsh_mtlcache, dmsh_rules   # translation chain version: verify the tools against the lock file first; build output goes into b-<V>/
 _bad = dmsh_chain.check_tools()
 if _bad: sys.exit('\n'.join('【红】翻译链工具与锁文件不符：' + b for b in _bad) + '\n（换了工具就 dmsh_chain.py --update-lock 并入仓；只是没重编翻译器就重编）')
 CHAIN = dmsh_chain.version(); out = os.path.join(out, 'b-' + CHAIN)
@@ -68,8 +68,8 @@ def atomic_json(path, value):
     with open(tmp, 'w') as f: json.dump(value, f, ensure_ascii=False, indent=1)
     os.replace(tmp, path)
 
-def shader_rule_source(name):
-    return b''.join(inspect.getsource(f).encode() for f, applies in RULES if applies(name))
+def shader_rule_source(name, key):
+    return b''.join(inspect.getsource(f).encode() for f, applies in RULES if applies(name, key))
 
 def tool_fingerprint():
     sc = subprocess.run(['spirv-cross', '--version'], capture_output=True, text=True, timeout=30)
@@ -83,7 +83,7 @@ def shader_key(key, name, rec):
     embedded = rec if name.startswith('main.rodata@') else b''
     payload = (b'record\0' + rec + b'\0map\0' + map_row + b'\0pc\0' + pc + b'\0embedded\0' + embedded +
                b'\0tools\0' + TOOL_FP + b'\0code\0' + CODE_FP.encode() +
-               b'\0rule\0' + shader_rule_source(name))
+               b'\0rule\0' + shader_rule_source(name, key))
     return hashlib.sha256(payload).hexdigest()
 
 def cache_meta_path(key): return os.path.join(CAS, 'index', key + '.json')
@@ -374,7 +374,7 @@ def unfillable(dr):
             if not any(a <= o and o + 16 <= b or (a <= o < b) for a, b in DRV_FILL[int(bank)]): bad.append(f'c{bank}+{o:#x}')
     return bad
 
-RULES = []   # 按着色器名挂的 MSL 改写规则（函数, 适用判定）；原有的暗部重映射 toe 已删（回到 Switch 原版亮度） | MSL rewrite rules attached by shader name (function, applicability test); the former dark-range remap toe has been removed (back to the original Switch brightness)
+RULES = dmsh_rules.RULES   # MSL rewrite rules (function, applies(name, key)), applied in finish(); see dmsh_rules.py
 # 第一段代码指纹不包含 dmsh_fetch.py；可读 tile 变体单独按生成 MSL 做第二段缓存。
 # The first-stage code fingerprint does not include dmsh_fetch.py; readable-tile variants get a separate second-stage cache keyed on the generated MSL.
 # The code form (dmsh_chain.code_form) leaves out comments, docstrings and formatting, so an edit that changes no computation keeps every shader's cache entry.
@@ -388,7 +388,13 @@ def finish(key, w, j, c1):
     msl = os.path.join(w, key + '.metal'); air = msl[:-6] + '.air'; lib = os.path.join(out, key + '_b.metallib')
     r = subprocess.run(['spirv-cross', *XC, os.path.join(w, key + '.spv'), '--output', msl], capture_output=True, text=True)
     if r.returncode: return 'MSL 失败', r.stderr.strip()[:160], None
-    src = open(msl).read()
+    src0 = src = open(msl).read()
+    try:
+        for f, applies in RULES:
+            if applies(name, key): src = f(src)
+    except ValueError as e: return 'MSL rule failed', f'{f.__name__}: {e}'[:160], None
+    if src != src0:
+        with open(msl, 'w') as fo: fo.write(src)
     try: MTLC.compile('mac', msl, lib)   # the same MSL compiled before is reused (dmsh_mtlcache.py)
     except subprocess.CalledProcessError as e:
         return 'metal 失败', str(e)[:160], None
@@ -435,7 +441,7 @@ for key in keys:
         if name not in packs: packs[name] = records(open(os.path.join(dm_dir, name), 'rb').read())
         rec = packs[name][k]
     digests[key] = shader_key(key, name, rec)
-    rule_fps[key] = hashlib.sha256(shader_rule_source(name)).hexdigest()
+    rule_fps[key] = hashlib.sha256(shader_rule_source(name, key)).hexdigest()
     hit, cache_reasons[key] = cache_lookup(key, digests[key], rule_fps[key], CODE_FP)
     if hit: cache_hits.add(key)
     else: jobs[key], c1s[key] = job_for(key, name, rec, w)
