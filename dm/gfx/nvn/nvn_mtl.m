@@ -2548,6 +2548,7 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     d.mipFilter = p.minf <= 1 ? MTLSamplerMipFilterNotMipmapped : (p.minf == 2 || p.minf == 3) ? MTLSamplerMipFilterNearest : MTLSamplerMipFilterLinear;
     d.sAddressMode = wrapm(p.ws); d.tAddressMode = wrapm(p.wt); d.rAddressMode = wrapm(p.wr);
     d.lodMinClamp = p.lod_min < 0 ? 0 : p.lod_min; d.lodMaxClamp = p.lod_max;
+    d.lodBias = p.lod_bias;   // NVN applies the sampler's LOD bias (0 for every sampler D2R created in town and the Blood Moor, 2026-10-29)
     d.maxAnisotropy = p.aniso < 1 ? 1 : p.aniso > 16 ? 16 : (NSUInteger)p.aniso;
     if (g_aniso_cur && p.minf == 5 && p.magf && !p.cmp_mode && d.maxAnisotropy < (NSUInteger)g_aniso_cur) d.maxAnisotropy = (NSUInteger)g_aniso_cur;   // 纹理过滤覆盖（见 aniso_latch） | texture filtering override (see aniso_latch)
     if (p.cmp_mode) d.compareFunction = (MTLCompareFunction)(p.cmp_func - 1);
