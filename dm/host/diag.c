@@ -19,6 +19,7 @@
 #include <sys/mman.h>
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
+#include <os/lock.h>
 #if defined(__APPLE__)
 #include <pthread/qos.h>
 #endif
@@ -135,22 +136,33 @@ static void l3mem_request(uint32_t tick) {
 #define MAX_PROBE 16
 typedef void (*probe_fn)(ucontext_t *uc);
 static struct { uint64_t at; uint32_t *slot; unsigned hits; char name[40]; long dump; probe_fn fn;
-                int freg; char fop; uint64_t fval; char fstr[32]; char fdesc[48]; unsigned match; } g_probe[MAX_PROBE];   // filter (DM_PROBE …?x<r>=<v> / ?x<r>~<text>): freg -1 = none; match counts the hits that pass it   // dump：命中时打印 [x0+dump] 16 字节（-1 = 不打）；fn：专用处理（替代缺省打印） | dump: on hit print 16 bytes at [x0+dump] (-1 = do not print); fn: dedicated handler (replaces the default print)
+                int freg; long fmoff; int fsize; char fop; uint64_t fval; char fstr[32]; char fdesc[48]; unsigned match, unread;
+                os_unfair_lock hlock; int hn; uint64_t hkey[16]; unsigned hcnt[16], hother; } g_probe[MAX_PROBE];
+// Filter (DM_PROBE …?<src><op><value>): src = x<r>, or x<r>+<hex>.<b|h|w|q> (the 1/2/4/8 bytes at that register + offset);
+// op = '=' equal, '&' any bit of the mask set, '~' the C string the register points at contains the text, '%' count every value
+// (a histogram of up to 16 values). freg -1 = no filter; match counts the hits that pass; unread counts unreadable memory.   // dump：命中时打印 [x0+dump] 16 字节（-1 = 不打）；fn：专用处理（替代缺省打印） | dump: on hit print 16 bytes at [x0+dump] (-1 = do not print); fn: dedicated handler (replaces the default print)
 static int g_nprobe;
 static unsigned g_probe_max;   // DM_PROBE_MAX=<n>: print the first n hits of each probe in full, only count the rest (0 = print all)
-static void probe_str(uint64_t p) {
+static uint64_t g_probe_after_ns;   // DM_PROBE_AFTER=<s>: hits in the first s seconds are counted, not printed (to skip boot and the front end)
+typedef struct { char b[1536]; size_t n; } probe_line;   // one probe line, written in a single call so hits on other threads don't interleave
+static void pl_add(probe_line *l, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static void pl_add(probe_line *l, const char *fmt, ...) {
+    if (l->n >= sizeof l->b - 1) return;
+    va_list ap; va_start(ap, fmt); int k = vsnprintf(l->b + l->n, sizeof l->b - l->n, fmt, ap); va_end(ap);
+    if (k > 0) l->n += (size_t)k < sizeof l->b - l->n ? (size_t)k : sizeof l->b - l->n - 1;
+}
+static void probe_str(probe_line *l, uint64_t p) {
     char buf[80]; vm_size_t got = 0;
     if (p < 0x1000 || vm_read_overwrite(mach_task_self(), p, sizeof buf - 1, (vm_address_t)buf, &got) || !got) return;
     buf[got] = 0; int n = 0; while (buf[n] >= 0x20 && buf[n] < 0x7f) n++;
-    if (n >= 3 && (buf[n] == 0 || n == (int)got)) { fprintf(stderr, " \"%.*s\"", n, buf); return; }
-    // 游戏字符串对象 {char* 指针, u64 长度, u64 容量|最高位}（0xdf67f0 FJSONUtils 的路径参数即此布局）
+    if (n >= 3 && (buf[n] == 0 || n == (int)got)) { pl_add(l, " \"%.*s\"", n, buf); return; }
     // Game string object {char* pointer, u64 length, u64 capacity|top bit} (the path argument of 0xdf67f0 FJSONUtils has exactly this layout)
     if (got >= 24) {
         uint64_t ptr, len; memcpy(&ptr, buf, 8); memcpy(&len, buf + 8, 8);
         char t[96]; got = 0;
         if (len >= 3 && len < sizeof t && !vm_read_overwrite(mach_task_self(), ptr, len, (vm_address_t)t, &got) && got == len) {
             int k = 0; while (k < (int)len && t[k] >= 0x20 && t[k] < 0x7f) k++;
-            if (k == (int)len) fprintf(stderr, " S\"%.*s\"", (int)len, t);
+            if (k == (int)len) pl_add(l, " S\"%.*s\"", (int)len, t);
         }
     }
 }
@@ -170,7 +182,23 @@ static void probe_dump_once(void) {
 // Does this hit pass the probe's register filter: '=' the register equals fval, '~' the C string it points at contains fstr.
 static int probe_match(int i, ucontext_t *uc) {
     uint64_t v = UC_X(uc, g_probe[i].freg);
+    if (g_probe[i].fmoff >= 0) {   // the value is in memory at register + offset
+        uint64_t m = 0; vm_size_t got = 0;
+        if (v < 0x1000 || vm_read_overwrite(mach_task_self(), v + (uint64_t)g_probe[i].fmoff, (vm_size_t)g_probe[i].fsize, (vm_address_t)&m, &got) || got != (vm_size_t)g_probe[i].fsize) {
+            __atomic_add_fetch(&g_probe[i].unread, 1, __ATOMIC_RELAXED); return 0; }
+        v = m;
+    }
+    if (g_probe[i].fop == '%') {   // histogram: every hit counts under its value; all hits pass
+        os_unfair_lock_lock(&g_probe[i].hlock);
+        int k = 0; while (k < g_probe[i].hn && g_probe[i].hkey[k] != v) k++;
+        if (k < g_probe[i].hn) g_probe[i].hcnt[k]++;
+        else if (g_probe[i].hn < 16) { g_probe[i].hkey[k] = v; g_probe[i].hcnt[k] = 1; g_probe[i].hn++; }
+        else g_probe[i].hother++;
+        os_unfair_lock_unlock(&g_probe[i].hlock);
+        return 1;
+    }
     if (g_probe[i].fop == '=') return v == g_probe[i].fval;
+    if (g_probe[i].fop == '&') return (v & g_probe[i].fval) != 0;
     char buf[128]; vm_size_t got = 0;
     if (v < 0x1000 || vm_read_overwrite(mach_task_self(), v, sizeof buf - 1, (vm_address_t)buf, &got) || !got) return 0;
     buf[got] = 0;
@@ -186,21 +214,31 @@ static int probe_hit(ucontext_t *uc) {   // 由 probe_install 注册给 crash.c 
             if (!probe_match(i, uc)) { UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
             n = __atomic_add_fetch(&g_probe[i].match, 1, __ATOMIC_RELAXED);
         }
+        if (g_probe_after_ns) {
+            extern uint64_t g_t0_ns; uint64_t now_ns(void);
+            if (now_ns() - g_t0_ns < g_probe_after_ns) { UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
+            static _Atomic unsigned late[MAX_PROBE]; n = atomic_fetch_add(&late[i], 1) + 1;   // the cap counts printed hits only
+        }
         if (g_probe_max && n > g_probe_max) { UC_PC(uc) = (uint64_t)g_probe[i].slot; return 1; }
-        { extern uint64_t g_t0_ns; uint64_t now_ns(void); fprintf(stderr, "[dm] PROBE %s #%u [%.4fs]", g_probe[i].name, n, (now_ns() - g_t0_ns) / 1e9); }
-        for (int r = 0; r < 4; r++) { uint64_t v = UC_X(uc, r); fprintf(stderr, " x%d=%#llx", r, v); probe_str(v); }
-        for (int r = 19; r < 24; r++) fprintf(stderr, " x%d=%#llx", r, UC_X(uc, r));
-        { uint64_t x8 = UC_X(uc, 8); Dl_info di; fprintf(stderr, " x8=%#llx", x8);   // x8：间接调用目标常在这里（blr x8 前下探针） | x8: indirect call targets are often here (probe placed before blr x8)
-          if (dladdr((void *)x8, &di) && di.dli_sname) fprintf(stderr, "（%s+%#lx）", di.dli_sname, (unsigned long)(x8 - (uint64_t)di.dli_saddr)); }
+        probe_line l = {.n = 0};
+        { extern uint64_t g_t0_ns; uint64_t now_ns(void); pl_add(&l, "[dm] PROBE %s #%u [%.4fs] tid=%u", g_probe[i].name, n, (now_ns() - g_t0_ns) / 1e9, pthread_mach_thread_np(pthread_self())); }
+        for (int r = 0; r < 4; r++) { uint64_t v = UC_X(uc, r); pl_add(&l, " x%d=%#llx", r, v); probe_str(&l, v); }
+        for (int r = 19; r < 24; r++) pl_add(&l, " x%d=%#llx", r, UC_X(uc, r));
+        { uint64_t x8 = UC_X(uc, 8); Dl_info di; pl_add(&l, " x8=%#llx", x8);   // x8: indirect call targets are often here (probe placed before blr x8)
+          if (dladdr((void *)x8, &di) && di.dli_sname) pl_add(&l, " (%s+%#lx)", di.dli_sname, (unsigned long)(x8 - (uint64_t)di.dli_saddr)); }
         if (g_probe[i].dump >= 0) {
             uint8_t b[16]; vm_size_t got = 0;
             uint64_t at = UC_X(uc, 0) + (g_probe[i].dump & 0xffffff);
-            if (g_probe[i].dump & 0x1000000) { uint64_t p = 0; vm_size_t g = 0; if (!vm_read_overwrite(mach_task_self(), at, 8, (vm_address_t)&p, &g)) at = p; else at = 0; }   // @*偏移：先解引用再转储 | @*offset: dereference first, then dump
+            if (g_probe[i].dump & 0x1000000) { uint64_t p = 0; vm_size_t g = 0; if (!vm_read_overwrite(mach_task_self(), at, 8, (vm_address_t)&p, &g)) at = p; else at = 0; }   // @*offset: dereference first, then dump
             if (at && !vm_read_overwrite(mach_task_self(), at, 16, (vm_address_t)b, &got) && got == 16) {
-                fprintf(stderr, " [%s%#lx]=", (g_probe[i].dump & 0x1000000) ? "*x0+" : "x0+", g_probe[i].dump & 0xffffff); for (int k = 0; k < 16; k++) fprintf(stderr, "%02x", b[k]); }
+                pl_add(&l, " [%s%#lx]=", (g_probe[i].dump & 0x1000000) ? "*x0+" : "x0+", g_probe[i].dump & 0xffffff); for (int k = 0; k < 16; k++) pl_add(&l, "%02x", b[k]); }
         }
-        fputc('\n', stderr);
+        pl_add(&l, "\n");
+        static os_unfair_lock print_lock = OS_UNFAIR_LOCK_INIT;   // keeps each hit's line and backtrace together
+        os_unfair_lock_lock(&print_lock);
+        fwrite(l.b, 1, l.n, stderr);
         dm_backtrace(UC_FP(uc));
+        os_unfair_lock_unlock(&print_lock);
         UC_PC(uc) = (uint64_t)g_probe[i].slot;
         return 1;
     }
@@ -234,9 +272,13 @@ void dm_probe_summary(const char *why) {
     static _Atomic int done;
     if (!g_nprobe || atomic_exchange(&done, 1)) return;
     for (int i = 0; i < g_nprobe; i++)
-        if (g_probe[i].freg >= 0)
-            fprintf(stderr, "[dm] PROBE_SUMMARY %s hits=%u match=%u (%s)\n", g_probe[i].name, __atomic_load_n(&g_probe[i].hits, __ATOMIC_RELAXED),
-                    __atomic_load_n(&g_probe[i].match, __ATOMIC_RELAXED), g_probe[i].fdesc);
+        if (g_probe[i].freg >= 0 && g_probe[i].fop == '%') {
+            fprintf(stderr, "[dm] PROBE_SUMMARY %s hits=%u values=", g_probe[i].name, __atomic_load_n(&g_probe[i].hits, __ATOMIC_RELAXED));
+            for (int k = 0; k < g_probe[i].hn; k++) fprintf(stderr, "%s%#llx:%u", k ? "," : "", (unsigned long long)g_probe[i].hkey[k], g_probe[i].hcnt[k]);
+            fprintf(stderr, "%s other:%u unread:%u (%s)\n", g_probe[i].hn ? "," : "", g_probe[i].hother, g_probe[i].unread, g_probe[i].fdesc);
+        } else if (g_probe[i].freg >= 0)
+            fprintf(stderr, "[dm] PROBE_SUMMARY %s hits=%u match=%u%s (%s)\n", g_probe[i].name, __atomic_load_n(&g_probe[i].hits, __ATOMIC_RELAXED),
+                    __atomic_load_n(&g_probe[i].match, __ATOMIC_RELAXED), g_probe[i].unread ? " unread>0" : "", g_probe[i].fdesc);
         else fprintf(stderr, "[dm] PROBE_SUMMARY %s hits=%u%s\n", g_probe[i].name, __atomic_load_n(&g_probe[i].hits, __ATOMIC_RELAXED), g_probe[i].fn ? " internal" : "");
     fprintf(stderr, "[dm] PROBE_SUMMARY end probes=%d why=%s\n", g_nprobe, why);
 }
@@ -528,6 +570,7 @@ void probe_install(void) {
     crash_set_trap_hook(probe_hit);
     const char *e = getenv("DM_PROBE");
     if (getenv("DM_PROBE_MAX")) g_probe_max = (unsigned)strtoul(getenv("DM_PROBE_MAX"), NULL, 10);
+    if (getenv("DM_PROBE_AFTER")) g_probe_after_ns = (uint64_t)(strtod(getenv("DM_PROBE_AFTER"), NULL) * 1e9);
     if (e) {
         char spec[512]; strlcpy(spec, e, sizeof spec);
         for (char *t = strtok(spec, ","); t; t = strtok(NULL, ",")) {
@@ -535,17 +578,27 @@ void probe_install(void) {
             *c = 0; module_t *m = NULL;
             for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, t)) m = &g_mod[i];
             if (!m) die("DM_PROBE 无此模块 %s", t);
-            char *q = strchr(c + 1, '?'); if (q) *q++ = 0;   // ?x<r>=<hex|module+hex> or ?x<r>~<text>: count (and print) only the hits that match
+            char *q = strchr(c + 1, '?'); if (q) *q++ = 0;   // ?<src><op><value> (see the struct above): count (and print) only the hits that match
             char *at_ = strchr(c + 1, '@');
             long dump = -1;
             if (at_) dump = at_[1] == '*' ? (0x1000000 | strtol(at_ + 2, 0, 16)) : strtol(at_ + 1, 0, 16);   // @偏移 / @*偏移 | @offset / @*offset
             probe_add(m, strtoull(c + 1, 0, 16), dump, NULL);
             if (q) {
-                char *op = strpbrk(q, "=~"); int r = (q[0] == 'x') ? atoi(q + 1) : -1;
-                if (!op || r < 0 || r > 28) die("DM_PROBE filter: ?x<r>=<value> or ?x<r>~<text> (%s)", q);
                 typeof(g_probe[0]) *p = &g_probe[g_nprobe - 1];
-                p->freg = r; p->fop = *op; snprintf(p->fdesc, sizeof p->fdesc, "%s", q);
+                snprintf(p->fdesc, sizeof p->fdesc, "%s", q);
+                char *op = q + 1; int r = q[0] == 'x' ? (int)strtol(q + 1, &op, 10) : -1;
+                p->fmoff = -1;
+                if (*op == '+') {   // x<r>+<hex>.<b|h|w|q>: the value at that register + offset
+                    p->fmoff = strtol(op + 1, &op, 16);
+                    p->fsize = *op == '.' ? (op[1] == 'b' ? 1 : op[1] == 'h' ? 2 : op[1] == 'w' ? 4 : op[1] == 'q' ? 8 : 0) : 0;
+                    if (!p->fsize) die("DM_PROBE filter: x<r>+<hex>.<b|h|w|q> (%s)", q);
+                    op += 2;
+                }
+                if (r < 0 || r > 28 || !strchr("=&~%", *op) || !*op || (*op == '~' && p->fmoff >= 0))   // not '#': scenario lines treat it as a comment
+                    die("DM_PROBE filter: ?x<r>[+<hex>.<b|h|w|q>]<=|&|%%><value>, or ?x<r>~<text> (%s)", q);
+                p->freg = r; p->fop = *op;
                 if (*op == '~') strlcpy(p->fstr, op + 1, sizeof p->fstr);
+                else if (*op == '%') {}
                 else {
                     char *plus = strchr(op + 1, '+'); uint64_t base = 0;
                     if (plus) {   // module+offset: resolved against that module's base
