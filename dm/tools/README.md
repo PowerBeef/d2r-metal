@@ -21,6 +21,8 @@ Three kinds of things live here. The first you will use when following the front
 |---|---|
 | `re/` | The private engine-analysis database of the game's `main` (Ghidra; build, query server, names export, `addrcheck.py`); see [re/README.md](re/README.md) |
 | `crashlog.py` | Reads and symbolicates the host's `crash.json` (`DM_CRASH_JSON`) and collects the system `.ips` reports |
+| `nso_fnmap.py`, `test_nso_fnmap.py` | Carries game addresses to another build of a module (after a game update): `nso_fnmap.py <old> <new> 0xoffset… | --cited` maps code offsets by function hashes with address bits masked and globals by their adrp references; `--cited` maps every `main+0x…` the sources cite. Last line `FNMAP OK|RED`. Adapted from nxnative (MIT) |
+| `fuzz/` (`fuzzlib.py`, `fuzz_nso.py`, `fuzz_d2save.py`, `fuzz_dmx.py`, `known.tsv`, `corpus/`), `test_fuzz_corpus.py` | Fuzzing of the file parsers (the NSO decoder, the save checkers, the archive block decoder) from synthetic seeds: `python3 dm/tools/fuzz/fuzz_nso.py --time 60` (atheris when installed, else blind mutations). Findings go to `known.tsv` and `corpus/`, which `test_fuzz_corpus.py` replays in the host suite and CI. Adapted from nxnative (MIT) |
 | `guestsyms.py`, `test_guestsyms.py` | Symbol table for the game program (`.eh_frame` functions, dynamic symbols, source-comment notes), kept in the local build cache |
 | `explore.py`, `test_explore.py` | Automatic exploration: seeded random play through the scenario runner, shrinking a red run to a minimal scenario ([debugging.md](../verify/debugging.md)) |
 | `replay.py` | Records a scenario run's command packets and per-tick state, replays them on host builds and finds the first divergent tick |

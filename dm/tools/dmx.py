@@ -74,6 +74,23 @@ def _block(b):
     raise ValueError(f"未知 BLTE 块模式 {m!r}")
 
 
+def blte(raw):
+    """Decodes a BLTE-framed file: header length at +4, block count at +9, then 24-byte entries {encoded size, decoded size, ...} and the blocks.
+    A malformed frame (entries or blocks past the end, an unknown or corrupt block) raises ValueError, nothing else (fuzzed by dm/tools/fuzz/fuzz_dmx.py)."""
+    if len(raw) < 12: raise ValueError("BLTE header cut short")
+    hlen = struct.unpack(">I", raw[4:8])[0]
+    n = int.from_bytes(raw[9:12], "big")
+    if hlen < 12 + 24 * n or hlen > len(raw): raise ValueError(f"BLTE header of {hlen} bytes for {n} blocks in {len(raw)}")
+    pos, out = hlen, []
+    for i in range(n):
+        es, _cs = struct.unpack(">II", raw[12 + 24 * i:20 + 24 * i])
+        if pos + es > len(raw): raise ValueError(f"BLTE block {i} runs past the end")
+        try: out.append(_block(raw[pos:pos + es]))
+        except zlib.error as e: raise ValueError(f"BLTE block {i}: {e}") from None
+        pos += es
+    return b"".join(out)
+
+
 def read_row(c):
     chunk, arch, csize, esize, enc = int(c[2]), int(c[3]), int(c[5]), int(c[7]), c[8]
     ekey = bytes.fromhex(c[6])
@@ -83,14 +100,7 @@ def read_row(c):
     f.seek(off)
     raw = f.read(esize)
     if raw[:4] == b"BLTE":
-        hlen = struct.unpack(">I", raw[4:8])[0]
-        n = int.from_bytes(raw[9:12], "big")
-        pos, out = hlen, []
-        for i in range(n):
-            es, cs = struct.unpack(">II", raw[12 + 24 * i:20 + 24 * i])
-            out.append(_block(raw[pos:pos + es]))
-            pos += es
-        data = b"".join(out)
+        data = blte(raw)
     elif enc == "n":
         data = raw
     elif enc == "z":

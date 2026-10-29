@@ -3,19 +3,38 @@
 import struct
 import lz4.block
 
-def load(path):
-    d = open(path, 'rb').read()
-    assert d[:4] == b'NSO0', path
+class Error(ValueError):
+    """A file that is not a well-formed NSO: the one rejection decode / load raise (fuzzed by dm/tools/fuzz/fuzz_nso.py)."""
+
+
+def decode(d):
+    """NSO bytes -> the whole memory image (segments at their memory offsets, then bss). Checks the header's sizes against the file before
+    allocating or copying, so a malformed or cut file ends in Error, not in a wrong-length image, a huge allocation or another exception."""
+    if len(d) < 0x70 or d[:4] != b'NSO0': raise Error('not an NSO (no NSO0 header)')
     flags = struct.unpack_from('<I', d, 0xc)[0]
     segs = [struct.unpack_from('<III', d, 0x10 + i * 0x10) for i in range(3)]
     bss = struct.unpack_from('<I', d, 0x3c)[0]
     csz = struct.unpack_from('<III', d, 0x60)
-    img = bytearray(segs[2][1] + segs[2][2] + bss)
+    end = segs[2][1] + segs[2][2]
+    for i, (fo, mo, sz) in enumerate(segs):
+        if fo + csz[i] > len(d): raise Error(f'segment {i} runs past the end of the file')
+        if mo + sz > end or (i and mo < segs[i - 1][1] + segs[i - 1][2]): raise Error(f'segment {i} lies outside the image or overlaps the one before')
+    if end + bss > max(16 << 20, 256 * len(d)): raise Error(f'image of {end + bss:#x} bytes from a {len(d):#x}-byte file')   # LZ4 expands at most about 255 times
+    img = bytearray(end + bss)
     for i, (fo, mo, sz) in enumerate(segs):
         raw = d[fo:fo + csz[i]]
-        if flags >> i & 1: raw = lz4.block.decompress(raw, uncompressed_size=sz)
+        if flags >> i & 1:
+            try: raw = lz4.block.decompress(raw, uncompressed_size=sz)
+            except lz4.block.LZ4BlockError as e: raise Error(f'segment {i}: {e}') from None
+        if len(raw) != sz: raise Error(f'segment {i}: {len(raw)} bytes, the header says {sz}')
         img[mo:mo + sz] = raw
     return bytes(img)
+
+
+def load(path):
+    try: return decode(open(path, 'rb').read())
+    except Error as e: raise Error(f'{path}: {e}') from None
+
 
 def header(out_dir, mod):
     h = {}
