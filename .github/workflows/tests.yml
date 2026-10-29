@@ -26,12 +26,14 @@ jobs:
     name: Source checks and tool tests (no game files)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    env:
-      DM_ROOT: ${{ runner.temp }}/dm-work   # an empty workspace: tools that need game files report unavailable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Empty workspace
+        # DM_ROOT points at an empty folder: tools that need game files report unavailable. Set here, not in the job's env,
+        # where the runner context (runner.temp) does not exist yet and GitHub rejects the whole workflow file
+        run: echo "DM_ROOT=$RUNNER_TEMP/dm-work" >> "$GITHUB_ENV"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.14'
