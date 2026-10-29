@@ -150,6 +150,7 @@ def capture(debugger, timeout):
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps({'roots': roots, 'tables': tables}, ensure_ascii=False, indent=1))
     hung = sum(1 for t in tables if t.get('slots'))
+    if tables and roots: sys.path.insert(0, str(HERE)); import dbprofile; dbprofile.stamp('tables', ('tables.py',))   # what this step used (re.sh profile)
     print(f'TABLES {"OK" if tables and roots else "RED"} {len(tables)} tables, {sum(len(t["columns"]) for t in tables)} columns, {hung} located → {OUT}')
 
 

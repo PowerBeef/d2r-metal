@@ -4,7 +4,6 @@
 #   ② 源码注释：仓库里提到 main+0x… 的注释行 → 该地址的前置注释，以「[dm]」开头，每次整段替换。
 #   ③ 改写规则：产物里的 main.cuts / obs / params.tsv → 书签（类别 dm-rewrite），提醒这里的原代码在运行时被换掉或被观察。
 #   ④ 已知布局：dm/host/dm_widget.h 的控件虚表 → 标签 vt_<类>，控件基类与各类专有字段、dm_unit.h 与 dm/verify/tick_state_format.md 的单位链 → 结构体（类别 /dm）。
-#   ⑤ 名字表 $DM_ROOT/re/names.tsv（偏移 名字 可信度 来源）：函数起点改函数名，别处加标签；可信度写进注释。
 #   ⑥ 反射表 $DM_ROOT/re/export/reflect.json（reflect.py）：每个类一个结构体（/dm/reflect，含父类字段，字段名 = 布局 JSON 里的名字），
 #      类型描述符 type_<类>、类型对象虚表 vt_Type_<类>、工厂 <类>_Create、只登记一个类的取类型函数 <类>_GetType；
 #      消息频道与各频道动作做成 8 字节枚举（值 = 名字的 FNV-1a 64），$DM_ROOT/re/enums.tsv 里的枚举（如 ControllerAction）做成 4 字节枚举。
@@ -17,13 +16,15 @@
 #   ② Source comments: comment lines in the repo that mention main+0x... -> a pre-comment at that address starting with "[dm]", replaced as a whole on each run.
 #   ③ Rewrite rules: main.cuts / obs / params.tsv from the build output -> bookmarks (category dm-rewrite), a reminder that the original code here is replaced or observed at run time.
 #   ④ Known layouts: the widget vtables in dm/host/dm_widget.h -> labels vt_<class>; the widget base class and per-class fields, and the unit chain from dm_unit.h and dm/verify/tick_state_format.md -> structures (category /dm).
-#   ⑤ The name table $DM_ROOT/re/names.tsv (offset name confidence source): renames the function at a function start, adds a label elsewhere; the confidence goes into a comment.
+#   ⑤ The name table $DM_ROOT/re/names.tsv (offset name confidence source [evidence]): renames the function at a function start, adds a label elsewhere; the confidence goes into a comment. The optional evidence column (static | derived | probed | observed-mac | observed-iphone) only reaches the export.
 #   ⑥ The reflection table $DM_ROOT/re/export/reflect.json (reflect.py): one structure per class (/dm/reflect, parent fields included, field names = the names in layout JSON),
 #      type descriptors type_<Class>, type-object vtables vt_Type_<Class>, factories <Class>_Create, getters that register a single class <Class>_GetType;
 #      message channels and each channel's actions become 8-byte enums (value = FNV-1a 64 of the name), the enums in $DM_ROOT/re/enums.tsv (e.g. ControllerAction) 4-byte enums.
 #   ⑦ The data tables $DM_ROOT/re/export/tables.json (tables.py): one record structure txt_<table> per table (/dm/tables, fields = column names, flag bits merged into a u32 listed in its comment),
 #      the table root structure DataTables (each table's record pointer and row count), and the three root pointers ([main+0x2d64a18 + version × 16], versions 1-3) named g_tables_v1..v3 and typed.
 #   (8) The high / medium rows of the bulk names $DM_ROOT/re/names_auto.tsv (autoname.py), after names.tsv (addresses in names.tsv and hand names are left alone).
+#   Afterwards it adds the names it wrote or found in place to log/seed_names.tsv (offset, name, kind; kept across runs) and stamps the inputs it read
+#   in log/stamps.json (dbprofile.py), so the export knows where each name came from and which inputs the database saw.
 #   Usage (called by re.sh seed; the project must not be open in another process): seed.py [--dry-run]
 import argparse
 import os
@@ -35,6 +36,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 DM = HERE.parents[2]          # 仓库根 | repository root
 sys.path.insert(0, str(HERE))
+import dbprofile  # noqa: E402
 import ghidra_db  # noqa: E402
 
 MENTION = re.compile(r'\bmain\+0x([0-9a-f]{3,})\b')
@@ -138,11 +140,47 @@ def names_table():
     return rows
 
 
+EVIDENCE = ('static', 'derived', 'probed', 'observed-mac', 'observed-iphone')
+
+
+def names_evidence():
+    """{offset: evidence} from names.tsv's optional fifth column: the kind of proof behind a name (one of EVIDENCE; blank = static)."""
+    out = {}
+    for line in NAMES.read_text(encoding='utf-8').splitlines() if NAMES.exists() else []:
+        if line.startswith('#') or not line.strip(): continue
+        p = line.split('\t')
+        if len(p) > 4 and p[4].strip() in EVIDENCE: out[int(p[0].replace('main+', ''), 16)] = p[4].strip()
+        elif len(p) > 4 and p[4].strip(): print(f'  names.tsv: unknown evidence {p[4].strip()!r} at {p[0]} (taken as static; one of {", ".join(EVIDENCE)})', file=sys.stderr)
+    return out
+
+
+LEDGER = ghidra_db.RE / 'log' / 'seed_names.tsv'
+
+
+def seeded_names():
+    """{(offset, name): kind} of every name seed has written or found already in place, across runs (log/seed_names.tsv).
+    kind: nvn, widget vtable, reflect, tables, names.tsv, autoname. The export reads it to tell reflection, table and bulk names
+    (derived by our tooling) from loader and repo names, and to spot a bulk name whose row was later dropped."""
+    out = {}
+    for line in LEDGER.read_text(encoding='utf-8').splitlines() if LEDGER.exists() else []:
+        p = line.split('\t')
+        if len(p) == 3 and p[0].startswith('0x'): out[(int(p[0], 16), p[1])] = p[2]
+    return out
+
+
+def save_ledger(named):
+    """Adds this run's [(offset, name, kind)] to the ledger (a later kind for the same offset and name wins)."""
+    rows = seeded_names() | {(off, name): kind for off, name, kind in named}
+    LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    LEDGER.write_text('# names seed.py wrote into the database (offset, name, kind); local only\n'
+                      + ''.join(f'{off:#x}\t{name}\t{kind}\n' for (off, name), kind in sorted(rows.items())), encoding='utf-8')
+
+
 class Seeder:
     def __init__(self, program, dry):
         from ghidra.program.model.symbol import SourceType
         self.p, self.dry, self.ST = program, dry, SourceType
-        self.stats, self.skip = {}, set()
+        self.stats, self.skip, self.named = {}, set(), []
 
     def bump(self, k): self.stats[k] = self.stats.get(k, 0) + 1
 
@@ -154,9 +192,10 @@ class Seeder:
         st = self.p.getSymbolTable(); at = self.a(off)
         f = self.p.getFunctionManager().getFunctionAt(at)
         cur = f.getSymbol() if f else st.getPrimarySymbol(at)
-        if cur is not None and cur.getName() == name: return
+        if cur is not None and cur.getName() == name: self.named.append((off, name, kind)); return
         if cur is not None and cur.getSource() == self.ST.USER_DEFINED: self.bump(f'{kind}: kept hand name'); return
         if self.dry: self.bump(f'{kind}: would name'); return
+        self.named.append((off, name, kind))
         if f: f.setName(name, self.ST.IMPORTED)
         else: st.createLabel(at, name, self.ST.IMPORTED).setPrimary()
         self.bump(f'{kind}: named')
@@ -487,7 +526,10 @@ def main():
                 s.name(off, name, 'autoname')
                 notes.setdefault(off, []).insert(0, f'auto name {name}: confidence {conf}; {src}: {why}')
             for off, rows in sorted(notes.items()): s.comment(off, rows)   # 每个地址只写一次，整段 [dm] 一起换 | each address written once, the whole [dm] block replaced together
-        if not a.dry_run: program.save('dm seed', TaskMonitor.DUMMY)
+        if not a.dry_run:
+            program.save('dm seed', TaskMonitor.DUMMY)
+            save_ledger(s.named)
+            dbprofile.stamp('seed', (*dbprofile.SEED_INPUTS, 'seed.py'))
         for k in sorted(s.stats): print(f'  {k}: {s.stats[k]}')
     project.close()
     print('SEED OK' + (' (dry run)' if a.dry_run else ''))

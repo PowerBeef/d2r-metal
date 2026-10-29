@@ -260,6 +260,7 @@ def main():
     print('field kinds', dict(kinds.most_common()))
     print('without parent', sum(1 for c in classes if not c['parent']), '| retried from guards', retried, '| last-run errors', dict(errs))
     print('registration functions with nothing captured', missing, '| enums', len(enums), 'with', sum(len(e['values']) for e in enums.values()), 'values')
+    sys.path.insert(0, str(HERE)); import dbprofile; dbprofile.stamp('reflect', ('reflect.py',))   # what this step used (re.sh profile)
     print(f'REFLECT OK → {OUT}')
 
 

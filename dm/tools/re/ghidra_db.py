@@ -94,6 +94,7 @@ def cmd_import(a):
             log(f'{n} imports marked non-returning')
         program.save('import: eh_frame functions', TaskMonitor.DUMMY)
     project.close()
+    sys.path.insert(0, str(HERE)); import dbprofile; dbprofile.stamp('import', ('exefs_main', 'main_elf', 'nso_build_id', 'nso2elf.py', 'ghidra_db.py'))   # what this step used (re.sh profile)
     print('IMPORT OK')
 
 
@@ -112,6 +113,7 @@ def cmd_analyze(a):
         program.save('auto-analysis', TaskMonitor.DUMMY)
         log(f'analysis done in {(time.time() - t0) / 60:.1f} min; {program.getFunctionManager().getFunctionCount()} functions')
     project.close()
+    sys.path.insert(0, str(HERE)); import dbprofile; dbprofile.stamp('analyze', ('ghidra_db.py', 'ghidra', 'analysis'))   # what this step used (re.sh profile)
     print('ANALYZE OK')
 
 

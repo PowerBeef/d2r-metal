@@ -19,6 +19,7 @@
 #   q ...     command-line client for the query server (q.py: decompile / xrefs / rename / comment, addresses always written main+0x...)
 #   snap      packs the project into re/snap/main-<time>.gzf, keeping the latest two
 #   addrcheck the main+0x... addresses the sources cite match the game program and the database export (addrcheck.py; does not touch the project)
+#   profile [check|show]         which inputs and tool revisions produced the export, and what changed since (dbprofile.py; each step stamps what it used, export writes the profile)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DM_ROOT="${DM_ROOT:-$HOME/dm-work}"
@@ -66,6 +67,9 @@ case "$cmd" in
   tables)
     python3 -I "$HERE/tables.py" "$@"
     ;;
+  profile)
+    python3 -I "$HERE/dbprofile.py" "$@"
+    ;;
   addrcheck)
     "$DM_ROOT/build/cache/dm/venv/bin/python" -I "$HERE/addrcheck.py" "$@"
     ;;
@@ -108,6 +112,7 @@ case "$cmd" in
     serving && echo "serving: 127.0.0.1:$PORT pid $(cat "$PIDF")" || echo "server: stopped"
     [ -e "$LOCK" ] && lsof "$LOCK" >/dev/null 2>&1 && echo "project: open" || echo "project: free"
     du -sh "$RE/ghidra" 2>/dev/null | sed 's/^/project size: /'
+    python3 -I "$HERE/dbprofile.py" check | grep -E '^(PROFILE|⚪)' || true
     ;;
   snap)
     need_free
@@ -126,5 +131,5 @@ EOF
     ls -1t "$RE"/snap/main-*.gzf | tail -n +3 | while read -r old; do rm -f "$old"; done
     echo "SNAP OK $out ($(du -h "$out" | cut -f1))"
     ;;
-  *) die "usage: re.sh setup|convert|reflect|tables|import|analyze|baseline|check|autoname|seed|export|serve|stop|status|snap|q|addrcheck" ;;
+  *) die "usage: re.sh setup|convert|reflect|tables|import|analyze|baseline|check|autoname|seed|export|serve|stop|status|snap|q|addrcheck|profile" ;;
 esac

@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-# 查询服务（re.sh serve 起的 pyghidra-mcp）的命令行客户端，给 worktree 会话、子代理和人用；由 re.sh q 调用（$DM_ROOT/re/venv）。
-#   地址一律写 main+0x…（也可写函数名 / 标签名）；工程里地址 = 0x7100000000 + 偏移，所以输出里 FUN_71… 后接 00abcdef 的名字（例）就是 main+0xabcdef。
-#   decompile <地址|名字>… [--callees] [--xrefs] [--strings] [--timeout 秒]   反编译
-#   xrefs <地址|名字>…            谁引用了它
-#   callgraph <函数> [--called]   调用图（缺省 = 它调了谁；--called = 谁调了它）
-#   strings <子串> [--limit N]    搜字符串        find <子串> [--functions] [--limit N]   搜符号名
-#   bytes <地址> [个数]           读字节
-#   name <地址|名字> <新名字>      函数改名（存盘）
-#   comment <地址> <文字> [--type plate|pre|eol|post|decompiler|repeatable]   写注释（存盘）
-#   save                          让服务把改动存盘（re.sh stop 先调它）
-#   tools                         列出服务提供的全部工具
-#   输出是由游戏程序推出来的分析结果：只在本机看，不贴进仓库、议题、PR 或网页。
 # Command-line client for the query server (pyghidra-mcp started by re.sh serve), for worktree sessions, subagents and people; run by re.sh q ($DM_ROOT/re/venv).
 #   Addresses are always written main+0x... (function / label names work too); an address in the project = 0x7100000000 + offset, so e.g. a FUN_71… name ending in 00abcdef in the output is main+0xabcdef.
 #   decompile <address|name>... [--callees] [--xrefs] [--strings] [--timeout s]   decompile
@@ -22,9 +10,12 @@
 #   comment <address> <text> [--type plate|pre|eol|post|decompiler|repeatable]   set a comment (saved)
 #   save                             have the server save its changes (re.sh stop calls it first)
 #   tools                            list every tool the server offers
+#   Searches (xrefs, strings, find) end with a `Searched:` line: what was searched, the limit, the export date, the count, and
+#   whether the list was cut at --limit. Copy it into a note's negative claim; 0 results means none within that scope only.
 #   The output is analysis derived from the game program: read it on this machine only; never paste it into the repo, issues, PRs or web pages.
 import argparse
 import asyncio
+import json
 import os
 import re
 import sys
@@ -37,6 +28,41 @@ def target(where):
     """main+0x… → 工程地址（0x71…）；其余（名字、已是 0x 的地址）原样。 | main+0x... -> project address (0x71...); anything else (names, addresses already in 0x form) unchanged."""
     m = re.fullmatch(r'main\+0x([0-9a-fA-F]+)', where)
     return f'0x{BASE + int(m.group(1), 16):x}' if m else where
+
+
+def export_date():
+    """When the database was last exported (export/profile.json), for the Searched: line."""
+    p = os.path.join(os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work'), 're', 'export', 'profile.json')
+    try:
+        with open(p, encoding='utf-8') as f: return json.load(f).get('exported') or 'unknown'
+    except (OSError, ValueError): return 'unknown'
+
+
+def main_off(addr):
+    """Project address (0x71...) -> main+0x...; anything else unchanged."""
+    try: v = int(addr, 16)
+    except (TypeError, ValueError): return addr
+    return f'main+{v - BASE:#x}' if v >= BASE else addr
+
+
+def searched(a, data):
+    """The Searched: lines for a search command: scope, count and whether --limit cut the list."""
+    if not isinstance(data, dict): return []
+    db = f'db export {export_date()}'
+    if a.cmd in ('strings', 'find'):
+        rows = data.get('strings' if a.cmd == 'strings' else 'symbols') or []
+        what = f'strings the analysis defined matching "{a.query}" (bytes Ghidra never typed as a string are not searched)' if a.cmd == 'strings' else f'{"function" if a.functions else "symbol"} names matching "{a.query}"'
+        cut = f'; truncated at --limit {a.limit}, more may exist' if len(rows) >= a.limit else ''
+        return [f'Searched: {what} in main (limit {a.limit}, {db}) -> {len(rows)} result{"" if len(rows) == 1 else "s"}{cut}']
+    if a.cmd == 'xrefs':
+        out = []
+        for t in data.get('result') or []:
+            n = len(t.get('cross_references') or [])
+            err = f' (error: {t["error"]})' if t.get('error') else ''
+            out.append(f'Searched: direct references to {main_off(t.get("target"))} recorded by the analysis ({db}; calls through vtables, '
+                       f'message dispatch or computed branches are not listed) -> {n}{err}')
+        return out
+    return []
 
 
 def show(result):
@@ -91,7 +117,10 @@ async def run(a):
                 r = await call('set_comment', {'target': target(a.where), 'comment': a.text, 'comment_type': a.type})
                 if not r.isError: await s.call_tool('save', {})
             else: return 2
-            return show(r)
+            rc = show(r)
+            if not r.isError:
+                for line in searched(a, r.structuredContent): print(line)
+            return rc
 
 
 def main():

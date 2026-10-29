@@ -209,6 +209,7 @@ def main():
     applied = sum(1 for r in out if r[2] in ('high', 'medium') and r[0] in unnamed)
     for k in sorted(stats): print(f'  {k}: {stats[k]}')
     print(f'  coverage: {before}/{total} functions named ({100 * before / total:.1f}%) → {before + applied} ({100 * (before + applied) / total:.1f}%) once seed writes the high / medium rows')
+    sys.path.insert(0, str(HERE)); import dbprofile; dbprofile.stamp('autoname', ('autoname.py',))   # what this step used (re.sh profile)
     print('AUTONAME OK', AUTO)
 
 

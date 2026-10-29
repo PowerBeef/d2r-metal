@@ -82,6 +82,8 @@ run: \
 	python3 ../../tools/test_guestsyms.py
 	python3 ../../tools/re/test_nso2elf.py
 	python3 ../../tools/re/test_addrcheck.py
+	python3 ../../tools/re/test_export.py
+	python3 ../../tools/re/test_dbprofile.py
 	python3 ../../verify/test_d2save.py
 	python3 ../../verify/test_golden.py
 	python3 ../../tools/test_tickdiff.py

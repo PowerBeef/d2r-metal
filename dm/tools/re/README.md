@@ -47,6 +47,8 @@ dm/tools/re/re.sh stop        # SIGINT: the server saves, then closes the projec
 
 `DM_RE_PORT` moves the server and the client off port 8000.
 
+`xrefs`, `strings` and `find` end with a `Searched:` line: the query, its limit, the export date, the count, and whether the list was cut at `--limit`. `xrefs` lists direct references only (calls through vtables, message dispatch or computed branches don't show). `strings` searches only the strings the analysis defined, not every byte sequence in the program. A negative claim in a note quotes that line; 0 results means none within that scope.
+
 ```bash
 dm/tools/re/re.sh addrcheck   # every main+0x… the sources cite lands in a known function or name (addrcheck.py; last line READDR OK|RED)
 ```
@@ -69,7 +71,9 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 
 ## Where the names go
 
-`export` writes `$DM_ROOT/re/export/main.names.tsv` (offset, name, kind, confidence, source) and `types.h`. `dm/tools/guestsyms.py` reads the names file when it exists, so `crashlog.py`, `dm where` / `dm bt` in lldb and `sampagg.py` show engine function names; a name whose confidence is not `high` carries it in brackets.
+`export` writes `$DM_ROOT/re/export/main.names.tsv` (offset, name, kind, confidence, source, evidence), `types.h` and `profile.json`. Source is `manual`, `seed`, `auto:<rule>` (bulk names, which keep their own confidence; `auto:dropped` = a bulk name whose row is gone, exported as low) or `analysis`. Evidence is `names.tsv`'s optional fifth column (static, derived, probed, observed-mac, observed-iphone); otherwise `derived` for names our tooling computed (reflection, data tables, bulk rules, known from seed's ledger `log/seed_names.tsv`) and `static` for the rest (code readings, the loader's symbols, NVN slots, widget vtables).
+
+Each step stamps what it used as it runs (`log/stamps.json`): `import` the game binary, `main.elf`, the build ID and the converter; `analyze` the Ghidra version and analysis options; `seed` names.tsv, names_auto.tsv, enums.tsv, reflect.json, tables.json; `reflect`, `tables` and `autoname` their own script. `export` writes those stamps into `profile.json`, and `re.sh profile` compares them with the files and tools now and names what to rerun. A key no step has stamped yet is recorded as it was at export and listed as unstamped. The import check and decompile baseline summaries are recorded beside, not compared.
 
 ## Files
 
@@ -85,4 +89,6 @@ All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never o
 | `export.py` | Names and types as text, local history commit |
 | `serve.py` | Starts pyghidra-mcp without the startup index |
 | `q.py` | Command-line client of the server |
+| `dbprofile.py`, `test_dbprofile.py` | The database profile: what produced the export and what changed since (`re.sh profile`); unit test on synthetic files |
+| `test_export.py` | Unit test of the export's provenance rules (curated, bulk, seeded and analysis names) |
 | `addrcheck.py`, `test_addrcheck.py` | Checks the `main+0x…` addresses cited in the sources against the game's function table and the export; unit test on synthetic data |
