@@ -21,7 +21,7 @@ NAME = r'DM_[A-Z0-9]+(?:_[A-Z0-9]+)*'
 C_LIT = re.compile(r'"(' + NAME + r')"')
 SH_READ = re.compile(r'\$\{?(' + NAME + r')\b')
 MK_READ = re.compile(r'\$[({](' + NAME + r')[)}]')   # Makefile 与 XcodeGen（project.yml）的 $(DM_…) / ${DM_…} | $(DM_...) / ${DM_...} in Makefiles and XcodeGen (project.yml)
-LIT_EXT = ('.c', '.m', '.h', '.mm', '.S', '.cpp', '.cs', '.swift')   # "DM_..." literals in these languages count as reads
+LIT_EXT = ('.c', '.m', '.h', '.inc', '.mm', '.S', '.cpp', '.cs', '.swift')   # "DM_..." literals in these languages count as reads
 # 有意保留、没人读的开关：名字 → 理由（新加这里要写明为什么不删调用处） | switches deliberately kept although nothing reads them: name -> reason (a new entry must say why the callers are not cleaned up)
 KEPT = {
     'DM_NOINSTALL': 'ios/run.sh 说明为兼容保留：build 本来就只编译、不装机 | kept for compatibility per ios/run.sh: build only compiles and never installs anyway',

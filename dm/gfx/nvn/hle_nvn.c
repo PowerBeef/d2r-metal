@@ -121,6 +121,7 @@ HLE_FORCE("nvnBootstrapLoader", "NVN 图形接口整块换成宿主空设备（�
 #define B(x) ((x) & 0xff)
 
 #include "nvn_obj.h"
+#include "nvn_capture.h"   // DM_NVN_CAPTURE hooks (nvn_capture.inc, in nvn_mtl.m)
 
 // ---------- 设备 ----------
 // ---------- Device ----------
@@ -1079,6 +1080,7 @@ static int pace_adapt_enabled(void);
 static _Atomic double g_pa_xcpu_ms = -1;   // 最近60个翻译帧的真实线程CPU（不含任何等待）| Actual thread CPU per frame over the latest 60 translation frames, excluding waits
 static int g_x_sync; static pthread_t g_x_thr; static mach_port_t g_x_port;   // 翻译线程（策略读数用） | Translation thread (for policy readings)
 static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
+    nvn_cap_submit(n, h, host);   // DM_NVN_CAPTURE (nvn_capture.inc): one load and a branch when off
     mtl_host_apply(host);
     uint64_t t0 = now_ns(), c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID), i0, y0, s0 = thr_sys_ns(); thr_counts(&i0, &y0);
     mtl_sub_begin();
@@ -1100,6 +1102,7 @@ static void x_run(const xjob *j, uint64_t job) {
     XTRACE_COUNT("dm-x-run-job", job); XTRACE_COUNT("dm-x-run-sub", j->sub); XTRACE_COUNT("dm-x-run-frame", j->frame);
     if (j->kind == XJ_SUBMIT) { XTRACE_BEGIN("dm-x-submit"); x_submit(j->h, j->n, j->sub, j->host); free(j->h); XTRACE_END(); }
     else if (j->kind == XJ_PRESENT) {
+        nvn_cap_present(j->tex, j->crop);
         XTRACE_BEGIN("dm-x-present"); uint64_t tk = mtl_present(j->tex, j->period, j->crop); XTRACE_END(); pthread_mutex_lock(&g_xmu); g_xtk[job % XTK].job = job; g_xtk[job % XTK].tk = tk; pthread_mutex_unlock(&g_xmu); }
     else {
         XTRACE_BEGIN("dm-x-frame");

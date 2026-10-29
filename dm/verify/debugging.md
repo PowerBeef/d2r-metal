@@ -177,6 +177,23 @@ python3 dm/tools/explore.py gen --seed 21 --steps 40      # print one episode's 
 
 First result: on the UBSan host, three episodes of seed 21 all went red with misaligned reads in `dm_world.c`. Each shrank to one step (`world_tap` somewhere) in 7–11 tries. After the fix, the same seed runs clean.
 
+## One GPU frame, captured and replayed
+
+`DM_NVN_CAPTURE=<frame>:1:<file>` writes one frame at the replay boundary: the pools, the texture and sampler registries, the draw state the frame starts from, the textures whose content lives only in Metal, each submission's records (pointers relocated), the host settings each submit was drawn with (the latched drawing switches, the 3D brightening factor), and the presented frame's digest and pixels. `dm/gfx/tests/nvn_replay` replays it against the current replay layer, in a process of its own, and compares. Use it to check a change to `nvn_mtl.m` on a fixed frame without running the game, or to bisect a rendering difference to one frame.
+
+```bash
+DM_WATCH_STALL=300 DM_NVN_SYNC=1 DM_NVN_CAPTURE=800:1:$DM_ROOT/run/capture/town800.nvncap \
+  python3 dm/tools/scenario.py run dm/verify/bench/town_loop.scn --backend cli --headless   # also writes town800.nvncap.live.png
+make -C dm/gfx/tests nvn_replay
+dm/gfx/tests/nvn_replay $DM_ROOT/run/capture/town800.nvncap --repeat 3 --max-pixels 64     # MATCH / 【红】MISMATCH; --png, --list
+DM_NVN_TEXDUMP=<frame>:<dir>/rep_%d.png dm/gfx/tests/nvn_replay …                         # every colour target of the replayed frame, to compare with a live dump
+```
+
+- `<frame>` counts presents from 1. `DM_NVN_SYNC=1` keeps the game from writing the next frame into the pools while this one is read; `DM_WATCH_STALL=300` because the first submit writes every pool (about 1.8 GB raw, 320 MB with LZ4, about 1 s in town) while the game waits.
+- A town frame (CLI host, original look) replays within about 30 of 1.44 million pixels (largest difference 9 of 255). Fresh replays differ from each other by the same amount: the frame itself is not bit-exact on the GPU (order-dependent float accumulation), so compare with `--max-pixels`.
+- The replayer refuses a capture whose record layout (`nvn_obj.h`) or draw state (`nvn_mtl.m` `S`) changed, and stops when a program's translated shaders take other bindings than at capture. Captures hold game memory: they stay in `$DM_ROOT`, and the pre-commit guard refuses `*.nvncap`.
+- Debug a mismatch with `DM_NVN_PASSDUMP=<mtl_frame>` and `DM_NVN_TEXDUMP` on both sides (the capture's header names `mtl_frame`): the first render target that differs points at the missing input.
+
 ## Replay and the first divergent tick
 
 `dm/tools/replay.py` records a scenario run's client command packets and per-tick state (`DM_C2S_LOG`, `DM_TICKS_FULL`), then replays the packets on any host build (`DM_C2S_REPLAY`) and compares tick by tick. This answers whether a change or a build changes the game logic.

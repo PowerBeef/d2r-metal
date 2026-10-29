@@ -127,6 +127,8 @@ The tests in `dm/gfx/tests` compile the production code in directly and need a M
 | `t_mip_extent` | Effective size when rendering to a mip level other than level 0 |
 | `t_fuse_check`, `t_reorder_chain`, `t_defer_chain`, `t_zskip`, `t_xv`, `t_ub`, `t_pfv`, `t_rt_range`, `t_rt_range_shape`, `t_rt_range_ro`, `t_rt_depth_ro` | Compile the replay layer `nvn_mtl.m` in directly and check the various optimization and diagnostic logic inside the replay layer |
 | `test_tbdr_budget.py` | The parsing in `tools/tbdr_budget.py` |
+| `t_capture` | Frame capture (`nvn_capture.c`): every record op's pointers encode to region offsets and object indices and decode back; unknown ops are refused; the capture file round-trips its chunks |
+| `nvn_replay` (built on demand, not in `run`) | Replays a `DM_NVN_CAPTURE` frame against this tree's replay layer and compares the presented frame with the live one (see `dm/verify/debugging.md`) |
 
 ## Common run-time switches
 

@@ -5024,6 +5024,8 @@ static void mp_check(int i, uint64_t ticket) {
 // Only the 3D world is touched: UI, text and the health orbs are composited after tone mapping; highlights are compressed by PQ and do not blur into a sheet of white as a final whole-screen multiply would. The normal / readable tile merge / freeze paths all just read this table, so it takes effect in one place.
 // k is given every frame by the host's dm_bright_k() (dm/host/dm_bright.c: 1 out of game, 4 for maze-type areas, 4 where the original game's picture does not follow day and night, the rest derived from the original game's ambient brightness, with smooth transitions); no rewrite when k ~= 1.
 __attribute__((weak)) float dm_bright_k(void) { return 1.0f; }   // 宿主 dm_bright.c 提供强定义；图形单测不链宿主时不加亮 | The host's dm_bright.c provides the strong definition; no brightening when graphics unit tests do not link the host
+static float g_bright_fixed = -1;   // dm/gfx/tests/nvn_replay: the factor the captured frame was drawn with (DM_NVN_CAPTURE records it per submit); < 0 = ask the host
+static float bright_k(void) { return g_bright_fixed >= 0 ? g_bright_fixed : dm_bright_k(); }
 static const char k_lut_msl[] =
 "#include <metal_stdlib>\nusing namespace metal;\n"
 "constant float m1 = 0.1593017578125, m2 = 78.84375, c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;\n"   // 与色调映射着色器里的 PQ 常数逐位相同 | Bit-identical to the PQ constants in the tone mapping shader
@@ -5043,7 +5045,7 @@ static void bright_lut(NvShader *cs) {
     int tid = 0; for (int i = 0; i < cs->rf.nb && !tid; i++) if (cs->rf.b[i].kind == NVN_RB_IMG && cs->rf.b[i].reg < 32) tid = (int)(S.img[5][cs->rf.b[i].reg] & 0xfffff);
     pthread_mutex_lock(&g_rmu); id<MTLTexture> lut = tid ? tex_by_id(tid) : nil; uint64_t lser = lut ? g_treg[tid].t.serial : 0; pthread_mutex_unlock(&g_rmu);
     if (lut && lut.textureType == MTLTextureType3D) { os_unfair_lock_lock(&g_mp_lk); g_mp_lut = lut; g_mp_lut_ser = lser; os_unfair_lock_unlock(&g_mp_lk); }   // 紫闪探针在出图时取这张表的几格 | The magenta probe samples a few cells of this table at present time
-    float k = dm_bright_k(); if (!(k > 1.005f)) return;   // k ≈ 1（局外 / 正午）：表保持原版 | k ~= 1 (out of game / noon): the table stays as in the original game
+    float k = bright_k(); if (!(k > 1.005f)) return;   // k ≈ 1（局外 / 正午）：表保持原版 | k ~= 1 (out of game / noon): the table stays as in the original game
     if (k > 4.0f) k = 4.0f;
     if (!lut || lut.textureType != MTLTextureType3D || !(lut.usage & MTLTextureUsageShaderWrite)) { static int n; if (!n++) MLOG("【红】3D 画面加亮：调色表认不出（贴图号 %d），不加亮", tid); return; }
     if (!ps) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_lut_msl) options:nil error:&e]; id<MTLFunction> f = lib ? [lib newFunctionWithName:@"lutk"] : nil;
@@ -6771,6 +6773,8 @@ id<CAMetalDrawable> mtl_present_take_prefetched(void) { return g_prefetched_draw
 #ifdef NVN_RT_RANGE_TEST
 #include "rt_range_check.inc"
 #endif
+
+#include "nvn_capture.inc"   // DM_NVN_CAPTURE: one frame into a file for dm/gfx/tests/nvn_replay
 
 // 看门狗（无进展）时调用：把图形侧所有阻塞等待点的状态写进日志——谁在等谁一眼可见（换 Metal 4 提交模型后出现过一次「跑到 900 帧后停住、无红行」）
 // Called by the watchdog (no progress): writes the state of all blocking wait points on the graphics side to the log -- who is waiting for whom is visible at a glance (after switching to the Metal 4 submit model there was once a case of "ran to 900 frames then stopped, no failure line")

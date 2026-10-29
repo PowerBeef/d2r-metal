@@ -30,6 +30,11 @@ t_pace: t_pace.c ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_pace.c
 t_timestamp: t_timestamp.c ../nvn/nvn_timestamp.h
 	clang -O1 -Wall -o $@ t_timestamp.c
+t_capture: t_capture.c ../nvn/nvn_capture.c ../nvn/nvn_capture.h ../nvn/nvn_obj.h
+	clang -O1 -Wall -I../nvn/include -o $@ t_capture.c ../nvn/nvn_capture.c
+# DM_NVN_CAPTURE replayer (nvn_capture.inc): not in run, it needs a capture: ./nvn_replay <file.nvncap> [--repeat n] [--max-pixels n] [--png path]
+nvn_replay: nvn_replay.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ nvn_replay.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_adaptive_pace: t_adaptive_pace.c ../nvn/nvn_adaptive_pace.h ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_adaptive_pace.c
 t_fuse_check: t_fuse_check.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -97,6 +102,7 @@ run: \
 	t_nvn \
 	t_pace \
 	t_timestamp \
+	t_capture \
 	t_pfv \
 	t_present_crop \
 	t_prog_key \
@@ -125,6 +131,7 @@ run: \
 	./t_deswz_gpu
 	./t_pace
 	./t_timestamp
+	./t_capture
 	./t_adaptive_pace
 	./t_refl
 	./t_refl_lib

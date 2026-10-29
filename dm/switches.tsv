@@ -39,7 +39,8 @@ DM_C2S_LOG	host,ios-tools	host/diag.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_C2S_REPLAY	host	host/diag.c host/dm_townwp.c	y
 DM_CLOUD_REAL	host,ios	host/app_mac.m ios/Sources/cloud_ios.m	-
 DM_COLORSPACE	host,ios	host/front_mac.m ios/Sources/front_ios.m	-
-DM_CRASH_JSON	host	host/crash.c	y
+DM_CRASH_JSON	gfx,host	gfx/tests/nvn_replay.m host/crash.c	y
+DM_CTL	gfx	gfx/tests/nvn_replay.m	-
 DM_CTL_PORT	host	host/diag.c host/dm_ctl.c host/dm_events.c	y
 DM_CUBE_PICKUP	host	host/diag.c	-
 DM_CUSTOM_TEST_ROWS	ios-tools	ios/tools/touch_layout.py	-
@@ -67,13 +68,13 @@ DM_DEVLOCK_WD_LOG	ios-tools	ios/tools/devlock.sh	-
 DM_DROPF_LOG	host	host/dm_dropfilter.c	-
 DM_DROP_HAPTIC	host	host/dm_drophaptic.c	-
 DM_DROP_LIGHT	host	host/dm_dropfilter.c	-
-DM_EVENTS	host	host/dm_ctl_cmds.c host/dm_events.c host/tests/t_events.c	y
+DM_EVENTS	gfx,host	gfx/tests/nvn_replay.m host/dm_ctl_cmds.c host/dm_events.c host/tests/t_events.c	y
 DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-
 DM_FE_AUTO	host	host/dm_cursor.c	-
 DM_FIXED_TIME	host,tools	host/hle_time.c host/main.c tools/replay.py	y
 DM_FPS	gfx	gfx/nvn/nvn_mtl.m	y
-DM_FRAMES	host	host/diag.c	y
+DM_FRAMES	gfx,host	gfx/tests/nvn_replay.m host/diag.c	y
 DM_FREE_ACCOUNT	ios-tools	ios/run.sh	-
 DM_FS	host	host/main.c	-
 DM_FSLOG	host	host/hle_fs.c	-
@@ -143,7 +144,7 @@ DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
 DM_MOVIE_FFMPEG_PREFIX	ios-tools	ios/run.sh	y
 DM_MOVIE_REAL	host	host/hle_movie.c	-
-DM_MSL_DIR	gfx,host,ios,tools	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m tools/mac_app.sh	y
+DM_MSL_DIR	gfx,host,ios,tools	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m host/app_mac.m ios/Sources/main.m …	y
 DM_MSL_IOS	ios-tools	ios/run.sh	-
 DM_NATIVE_ART_DIR	ios-tools	ios/tests/test_native_art_capture.py	-
 DM_NICK	host	host/hle_account.c	-
@@ -154,6 +155,7 @@ DM_NVN_BARRIER	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BF_WANT	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BINDFILT	gfx	gfx/nvn/hle_nvn.c	-
 DM_NVN_BLOOM_Q	gfx	gfx/nvn/nvn_mtl.m	-
+DM_NVN_CAPTURE	gfx	gfx/nvn/nvn_capture.inc	y
 DM_NVN_CBDUMP	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_CMDSTAT	gfx	gfx/nvn/hle_nvn.c	-
 DM_NVN_DEFER	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_defer_chain.m	-
@@ -166,31 +168,32 @@ DM_NVN_HILITE	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_LOADPROBE	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_LOG	gfx	gfx/nvn/hle_nvn.c	y
 DM_NVN_NOFXAA	gfx	gfx/nvn/nvn_mtl.m	-
-DM_NVN_PASSDUMP	gfx	gfx/nvn/nvn_mtl.m	y
+DM_NVN_PASSDUMP	gfx	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m	y
 DM_NVN_PASSDUMP_ALL	gfx	gfx/nvn/nvn_mtl.m	y
-DM_NVN_PASSGPU	gfx	gfx/nvn/nvn_mtl.m	y
+DM_NVN_PASSGPU	gfx	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m	y
 DM_NVN_PASSGPU_SERIAL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_PROF	gfx	gfx/nvn/hle_nvn.c	y
 DM_NVN_REGLUM	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_RT_RANGE	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_rt_depth_ro.m gfx/tests/t_rt_range.m	-
+DM_NVN_RT_RANGE_CHECK	gfx	gfx/nvn/rt_range_check.inc	-
 DM_NVN_RULER	gfx,host	gfx/nvn/nvn_mtl.m host/diag.c	y
 DM_NVN_RULER_NEG	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SAMPHIST	gfx	gfx/nvn/nvn_mtl.m	-
-DM_NVN_SHMAP	gfx,host,ios	gfx/nvn/nvn_mtl.m host/app_mac.m ios/Sources/main.m	y
-DM_NVN_SHOT	gfx	gfx/nvn/nvn_mtl.m	y
+DM_NVN_SHMAP	gfx,host,ios	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m host/app_mac.m ios/Sources/main.m	y
+DM_NVN_SHOT	gfx	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m	y
 DM_NVN_SHOT_OUT	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SHOT_UI	host	host/diag.c	y
 DM_NVN_SKIP_FS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_SKIP_SMALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_SNAPRAW	gfx	gfx/nvn/nvn_mtl.m	-
-DM_NVN_SYNC	gfx	gfx/nvn/hle_nvn.c	-
+DM_NVN_SYNC	gfx	gfx/nvn/hle_nvn.c gfx/nvn/nvn_capture.inc	y
 DM_NVN_TBDR	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_defer_chain.m gfx/tests/t_mip_extent.m gfx/tests/t_reorder_chain.m …	y
 DM_NVN_TEST_FRZ	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_TEST_FRZ_NEG	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_TEXDUMP	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_TEXRAW	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_TEXSNAP	gfx	gfx/nvn/nvn_mtl.m	-
-DM_NVN_TSV	gfx	gfx/nvn/hle_nvn.c	y
+DM_NVN_TSV	gfx	gfx/nvn/hle_nvn.c gfx/tests/nvn_replay.m	y
 DM_NVN_TSV_CALLS	gfx	gfx/nvn/hle_nvn.c	y
 DM_NVN_UB	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_ub.m	-
 DM_NVN_UB_N	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_ub.m	-
@@ -242,15 +245,16 @@ DM_ROMFS_SRC	host,ios-tools,tools,verify	host/Makefile ios/run.sh ios/tests/Make
 DM_ROMFS_TEST_CLEAN	ios	ios/Sources/main.m	-
 DM_ROMFS_TEST_DOC	ios	ios/Sources/asset_dl.m ios/Sources/main.m	-
 DM_ROMFS_TEST_PACK	ios	ios/Sources/main.m	-
-DM_ROOT	gfx,host,ios-tools,tools,verify	gfx/nvn/nvn_mtl.m gfx/tests/t_refl.m gfx/tests/t_refl_lib.m gfx/tests/t_rt_range_ro.m …	y
+DM_ROOT	gfx,host,ios-tools,tools,verify	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m gfx/tests/t_refl.m gfx/tests/t_refl_lib.m …	y
 DM_RS_PAUSE_PANEL	host	host/dm_cursor.c	-
 DM_RT_AB	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RT_AB_TOGGLE	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RT_COMP	gfx	gfx/nvn/hle_nvn.c	-
 DM_RT_DBG	gfx	gfx/nvn/nvn_mtl.m	-
+DM_RT_TEST_NOPSO	gfx	gfx/nvn/nvn_rtex.inc	-
 DM_RULESET	tools	tools/patch_nso.py	y
 DM_SAMPLE	host	host/diag.c	y
-DM_SAVE	gfx,host,ios	gfx/nvn/nvn_mtl.m host/app_mac.m host/dm_cursor.c host/dm_custom.c …	y
+DM_SAVE	gfx,host,ios	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m host/app_mac.m host/dm_cursor.c …	y
 DM_SAVE_FRESH	ios,ios-tools	ios/Sources/front_ios.m ios/Sources/main.m ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_SAVE_KEY	ios-tools	ios/tools/save_key.sh ios/tools/smoke_mac.sh	-
 DM_SAVE_MOUNT_STUCK_S	host	host/dm_engine.c	y
@@ -277,7 +281,7 @@ DM_TACT_PREFETCH_MB	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_THREADS	host	host/hle_tact.c	-
 DM_TARGET_LOG	host	host/hle_target.c	-
 DM_TEAM_ID	ios-tools	ios/project.yml	y
-DM_TEMP	host,ios	host/app_mac.m host/hle_fs.c host/tests/t_save_hooks.c ios/Sources/main.m	y
+DM_TEMP	gfx,host,ios	gfx/tests/nvn_replay.m host/app_mac.m host/hle_fs.c host/tests/t_save_hooks.c …	y
 DM_TEST_AIM	host	host/hle_private_aim.c host/tests/t_aim_cone.c	-
 DM_TEST_AIM_AT	host	host/hle_private_aim.c host/tests/t_aim_cone.c	-
 DM_TEST_AIM_DROP	host	host/hle_private_aim.c	-
@@ -468,9 +472,9 @@ DM_UI_YPOS	host	host/dm_uiscreen.c	-
 DM_UPDATE_URL	ios-tools	ios/project.yml	-
 DM_VCACHE	verify	verify/structck.py	-
 DM_VKBD	ios	ios/Sources/dm_vkbd_ui.m	-
-DM_WATCH	host,ios-tools	host/crash.c ios/TouchSmokeTests/TouchSmoke.swift	y
+DM_WATCH	gfx,host,ios-tools	gfx/tests/nvn_replay.m host/crash.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_WATCH_SAMPLE	host	host/crash.c	-
 DM_WATCH_STALL	host	host/crash.c	y
-DM_WINDOW	host	host/app_mac.m host/front_mac.m	y
+DM_WINDOW	gfx,host	gfx/tests/nvn_replay.m host/app_mac.m host/front_mac.m	y
 DM_WORLD_DUMP	host	host/dm_world.c	-
 DM_XV_FILE	gfx,ios	gfx/nvn/nvn_mtl.m gfx/tests/t_xv.m ios/Sources/main.m	-
