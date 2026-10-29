@@ -58,8 +58,10 @@ class DmctlTest(unittest.TestCase):
             self.assertEqual(c.wait_for('panel', after=m, name='X')['seq'], 10)
             with self.assertRaises(TimeoutError): c.wait_for('main_menu', after=m, timeout=0.3)   # 只等之后的 | only later ones
             c.cmd('boom')
-            with self.assertRaises(dmctl.BadEvent): c.wait_for('loading_done', timeout=2)
-            self.assertEqual(c.wait_for('crash', timeout=1)['sig'], 11)   # 等的就是坏事件时照常返回 | waiting for the bad event itself returns normally
+            self.assertEqual(c.wait_for('crash', timeout=1)['sig'], 11)   # waiting for the bad event itself returns normally
+            m = c.mark()   # the crash is already read in when the next step takes its mark
+            with self.assertRaises(dmctl.BadEvent): c.wait_for('loading_done', after=m, timeout=2)
+            with self.assertRaises(TimeoutError): c.wait_for('loading_done', timeout=0.3)   # each bad event fails one wait
             c.close()
             text = log.read_text(encoding='utf-8')
             self.assertIn('boot: start', text); self.assertIn('[dm] RE {', text)

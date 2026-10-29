@@ -110,7 +110,7 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual((code, res['verdict']), (0, 'OK'), res)
         self.assertIn('\ttry\t', (self.dir / 'out' / 'steps.tsv').read_text())
 
-    def test_crash_event_is_red(self):   # 等事件时先来了 crash：这一步红，说的是 crash | crash arrives while waiting for an event: the step is red and says crash
+    def test_crash_event_is_red(self):   # a crash read in before the steps start: the expect step is red and says crash (CI once saw a timeout here)
         with tempfile.TemporaryDirectory() as d:
             r = scenario.Runner(self.scn('ping\nexpect loading_done timeout=2\n'), 'cli', d, True)
             fb = FakeBackend(); r.backend = fb   # type: ignore[assignment]
@@ -119,6 +119,7 @@ class ScenarioTest(unittest.TestCase):
                 c = orig()
                 assert fb.host is not None
                 c.wait_for('main_menu', 5); fb.host.ev('crash', sig=11)
+                c.wait_for('crash', 5)   # read in before step 1 takes its mark, the order that used to lose it
                 return c
             fb.start = start   # type: ignore[method-assign]
             res, code = r.go()

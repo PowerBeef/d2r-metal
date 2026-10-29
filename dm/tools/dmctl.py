@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-# 控制口客户端（dm/verify/control_port.md）：Mac 宿主（DM_CTL_PORT）由宿主连过来，这边监听（listen=True）；iOS 连 App 的日志端口（真机经 iproxy 转到本机）。发命令、收回执、等事件。
-#   作为模块：c = Ctl(端口[, listen=True][, log=文件])；c.cmd('state') → 回执字典（ok=false 抛 CtlError）；c.wait_for('loading_done', timeout=60) → 事件字典
-#             （先见到 crash / fatal / watchdog 抛 BadEvent）；c.mark() → 当前事件序号，配 wait_for(after=…) 只等之后的；c.close()
-#   命令行：dmctl.py [--listen] <端口> <命令> [名=值 …]（--listen = Mac 宿主）        发一条命令，打印回执；ok=false 退出码 1（reply_timeout=秒 改等回执的时限，缺省 60）
-#           dmctl.py <端口> wait <事件> [超时秒]    等事件出现（已发生过的也算）；超时 1、坏事件 2
-#   连接上收到的每一行原样追加进 log 文件（iOS 日志端口一连上会先补发整份日志）
 # Control-port client (dm/verify/control_port.md): the Mac host (DM_CTL_PORT) connects to us, so this side listens (listen=True); for iOS it connects to the App's log port (a device is forwarded to this machine through iproxy). Sends commands, receives replies and waits for events.
 #   As a module: c = Ctl(port[, listen=True][, log=file]); c.cmd('state') -> reply dict (raises CtlError when ok=false); c.wait_for('loading_done', timeout=60) -> event dict
-#                (raises BadEvent if crash / fatal / watchdog comes first); c.mark() -> the current event seq, with wait_for(after=...) to wait only for later ones; c.close()
+#                (raises BadEvent for a crash / fatal / watchdog event no earlier wait raised, even one before `after`); c.mark() -> the current event seq, with wait_for(after=...) to wait only for later ones; c.close()
 #   Command line: dmctl.py [--listen] <port> <cmd> [name=value ...] (--listen = Mac host)   send one command and print the reply; exit code 1 when ok=false (reply_timeout=seconds changes how long to wait for the reply, default 60)
 #                 dmctl.py <port> wait <event> [timeout s]   wait for the event (one that already happened counts); 1 on timeout, 2 on a bad event
 #   Every line received on the connection is appended as is to the log file (the iOS log port replays the whole log first when connected)
@@ -55,6 +49,7 @@ class Ctl:
         self.log = open(log, 'ab') if log else None
         self.cv = threading.Condition()
         self.replies, self.events, self.closed, self.next_id = {}, [], False, 1
+        self.bad_seen = -1   # seq of the last bad event a wait raised: each one fails exactly one wait
         threading.Thread(target=self._read, daemon=True).start()
 
     def _read(self):
@@ -104,8 +99,10 @@ class Ctl:
             k = 0
             while True:
                 for e in self.events[k:]:
-                    if e.get('seq', 0) <= after: continue
-                    if e['ev'] in BAD and ev not in BAD: raise BadEvent(e)
+                    s = e.get('seq', 0)
+                    if e['ev'] in BAD and ev not in BAD and s > self.bad_seen:   # not limited by after: a crash read in just before a step's mark still fails it
+                        self.bad_seen = s; raise BadEvent(e)
+                    if s <= after: continue
                     if e['ev'] == ev and all(e.get(f) == v for f, v in match.items()): return e
                 k = len(self.events)
                 left = end - time.time()
