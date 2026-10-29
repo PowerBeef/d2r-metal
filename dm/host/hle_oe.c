@@ -341,7 +341,8 @@ static void scale3d_tick(void) {
 __attribute__((weak)) int dm_video_aa_mode(void) { return -1; }
 static void aa_tick(void) {
     static int force = -2; static module_t *main;
-    if (force == -2) { const char *e = getenv("DM_AA_MODE"); force = e && *e >= '0' && *e <= '3' && !e[1] ? *e - '0' : -1; }
+    if (force == -2) { const char *e = getenv("DM_AA_MODE"); force = e && !strcmp(e, "off") ? -3 : e && *e >= '0' && *e <= '3' && !e[1] ? *e - '0' : -1; }
+    if (force == -3) return;   // DM_AA_MODE=off: leave the byte to the game (or to a test's control-port mem write)
     int want = force >= 0 ? force : dm_video_aa_mode(); if (want < 0 || want > 3) return;
     if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
     if (!main || dm_nvn_frame_count() < 30) return;

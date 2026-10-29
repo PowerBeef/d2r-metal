@@ -415,12 +415,19 @@ static int cmd_mark(const ctl_args *a, char *out, size_t cap, char *err, size_t 
 //   at is an offset into the main module or an absolute address; each chain offset first reads the 8-byte pointer at the current
 //   address, then adds the offset (at=main+0x… chain=0x15828 = the object that pointer names, +0x15828). len 1..4096 (default 8).
 //   Reads go through vm_read, so a bad pointer is an error reply, never a crash. Reply: at (final address), hex (the bytes).
+//   write=<hex> (1..64 bytes) writes those bytes there instead, for A/B checks on test runs; the reply's hex is then the bytes it replaced.
 static int cmd_mem(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
-    const char *at = dm_ctl_get(a, "at"), *chain = dm_ctl_get(a, "chain"); long n = (long)dm_ctl_num(a, "len", 8);
+    const char *at = dm_ctl_get(a, "at"), *chain = dm_ctl_get(a, "chain"), *wr = dm_ctl_get(a, "write"); long n = (long)dm_ctl_num(a, "len", 8);
+    uint8_t nb[64]; long nw = 0;
+    if (wr) {
+        size_t L = strlen(wr); if (!L || L % 2 || L > 128) ERR("write takes 1-64 bytes of hex");
+        for (nw = 0; nw < (long)L / 2; nw++) { char h[3] = {wr[2 * nw], wr[2 * nw + 1], 0}; char *e; nb[nw] = (uint8_t)strtoul(h, &e, 16); if (*e) ERR("write takes hex digits"); }
+        n = nw;
+    }
     if (!at || !*at) ERR("missing at (main+0x… or 0x…)");
     if (n < 1 || n > 4096) ERR("len must be 1-4096");
     uint64_t p = !strncmp(at, "main+", 5) ? (uint64_t)g_mod[0].base + strtoull(at + 5, NULL, 16) : strtoull(at, NULL, 16);
-    if (!strncmp(at, "main+", 5) && strcmp(g_mod[0].name, "main")) ERR("module main not loaded first");
+    if (!strncmp(at, "main+", 5) && (g_nmod < 1 || !g_mod[0].base || strcmp(g_mod[0].name, "main"))) ERR("module main is not loaded yet");
     for (const char *c = chain; c && *c; c = strchr(c, ',') ? strchr(c, ',') + 1 : NULL) {
         uint64_t q = 0; vm_size_t got = 0;
         if (vm_read_overwrite(mach_task_self(), (vm_address_t)p, 8, (vm_address_t)&q, &got) || got != 8 || !q) ERR("no pointer at %#llx", (unsigned long long)p);
@@ -428,6 +435,8 @@ static int cmd_mem(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     }
     uint8_t buf[4096]; char hex[8193]; vm_size_t got = 0;
     if (vm_read_overwrite(mach_task_self(), (vm_address_t)p, (vm_size_t)n, (vm_address_t)buf, &got) || got != (vm_size_t)n) ERR("cannot read %ld bytes at %#llx", n, (unsigned long long)p);
+    if (nw && vm_write(mach_task_self(), (vm_address_t)p, (vm_offset_t)nb, (mach_msg_type_number_t)nw)) ERR("cannot write %ld bytes at %#llx", nw, (unsigned long long)p);
+    if (nw) LOG("control port mem: wrote %ld bytes at %#llx", nw, (unsigned long long)p);
     for (long i = 0; i < n; i++) snprintf(hex + 2 * i, 3, "%02x", buf[i]);
     char adr[24]; snprintf(adr, sizeof adr, "%#llx", (unsigned long long)p);
     snprintf(out, cap, ",\"at\":\"%s\",\"hex\":\"%s\"", adr, hex);   // written directly: dm_json_fields caps strings at 400 characters, and hex needs no escaping
