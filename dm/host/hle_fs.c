@@ -267,7 +267,7 @@ static Result mount(const char *name, const char *dir, int ro) { return mount_ex
 // APFS is case-insensitive by default, Horizon paths are case-sensitive: every component is looked up exactly by guest name.
 // Ordinary host names are unchanged; only when a name collides on the host is a separate physical name chosen, with the guest name stored in an xattr.
 // clonefile preserves xattr, so save Commit/remount needs no separate mapping table; enumeration must not leak physical aliases.
-#define FS_GUEST_NAME "org.d2rmobile.guest-name"
+#define FS_GUEST_NAME DM_GUEST_NAME_XATTR
 #define fs_xattr_get(p, buf, n) getxattr(p, FS_GUEST_NAME, buf, n, 0, XATTR_NOFOLLOW)
 #define fs_xattr_set(p, v, n) setxattr(p, FS_GUEST_NAME, v, n, 0, XATTR_NOFOLLOW)
 #define fs_xattr_del(p) removexattr(p, FS_GUEST_NAME, XATTR_NOFOLLOW)

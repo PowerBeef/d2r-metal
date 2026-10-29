@@ -34,6 +34,9 @@ void AnnotateBenignRaceSized(const char *file, int line, const volatile void *me
 // With DM_EVENTS set the whole line goes to the log hook (dm_events.c: written out at once, red-marker / FATAL lines are also recorded as events); without it, written directly as before
 #define LOG(...) do { if (g_dm_log_hook) g_dm_log_hook(__FILE_NAME__, __LINE__, "[dm] " __VA_ARGS__); else { fprintf(stderr, "[dm] " __VA_ARGS__); fputc('\n', stderr); } } while (0)
 #define die(...) do { LOG("FATAL " __VA_ARGS__); abort(); } while (0)
+// Extended attribute holding a save entry's guest name when its physical name differs (hle_fs.c: names that differ only in letter case
+// get a ".dm-case-N" directory on case-insensitive APFS); read by the iCloud sync and merge (dm_cloudsync.c) to find such a character
+#define DM_GUEST_NAME_XATTR "org.d2rmobile.guest-name"
 
 typedef struct { uint32_t st_name; uint8_t st_info, st_other; uint16_t st_shndx; uint64_t st_value, st_size; } Elf64_Sym;
 typedef struct { int64_t d_tag; union { uint64_t d_val, d_ptr; } d_un; } Elf64_Dyn;
