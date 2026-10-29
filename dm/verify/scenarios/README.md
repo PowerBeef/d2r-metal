@@ -69,6 +69,8 @@ Final checks (`check …`, evaluated after the run):
 | `check saves_valid` | The run's committed save passes `dm/verify/d2save.py` (the game's load rules). On `cli` / `mac-app` every run also does this as `saves valid` unless the scenario has its own `check saves_valid`; the iOS backends have no save directory to read. |
 | `check save_pairs` | Every host save request (`save_request`) got at least two commits (character + shared stash) before the next request. |
 
+`mem <at> [len] [chain=…]` steps (guest memory reads for engine checks, `control_port.md`) are kept whole in `mem.ndjson` in the run folder, since `steps.tsv` cuts details at 300 characters.
+
 At the first red event, or when a step fails, the runner asks the host for the `engine` snapshot (panels, focus, save state, the latest actions and UI messages) and stores it as `engine.json` in the run folder, beside `crash.txt` when the process crashed.
 
 Fault scenarios live in `faults/` (see [faults/README.md](faults/README.md)): they arm save faults with the `fault` command and check that the player is told, saves keep committing and the save stays valid.

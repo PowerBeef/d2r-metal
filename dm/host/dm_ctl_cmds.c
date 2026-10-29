@@ -14,6 +14,7 @@
 #include "dm_world.h"
 #include "dm_uiscreen.h"
 #include <stdatomic.h>
+#include <mach/mach.h>
 
 int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
 int dm_game_paused(void);
@@ -410,6 +411,29 @@ static int cmd_mark(const ctl_args *a, char *out, size_t cap, char *err, size_t 
     DM_EV("mark", "name:s frame:u", n, (unsigned long long)f); dm_json_fields(out, cap, "t:f frame:u", dm_events_now_s(), (unsigned long long)f); return 1;
 }
 
+// mem at=<main+0x…|0x…> [chain=<off>[,<off>…]] [len=N]: read guest memory for engine checks (the private engine notes' memory reads).
+//   at is an offset into the main module or an absolute address; each chain offset first reads the 8-byte pointer at the current
+//   address, then adds the offset (at=main+0x… chain=0x15828 = the object that pointer names, +0x15828). len 1..4096 (default 8).
+//   Reads go through vm_read, so a bad pointer is an error reply, never a crash. Reply: at (final address), hex (the bytes).
+static int cmd_mem(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *at = dm_ctl_get(a, "at"), *chain = dm_ctl_get(a, "chain"); long n = (long)dm_ctl_num(a, "len", 8);
+    if (!at || !*at) ERR("missing at (main+0x… or 0x…)");
+    if (n < 1 || n > 4096) ERR("len must be 1-4096");
+    uint64_t p = !strncmp(at, "main+", 5) ? (uint64_t)g_mod[0].base + strtoull(at + 5, NULL, 16) : strtoull(at, NULL, 16);
+    if (!strncmp(at, "main+", 5) && strcmp(g_mod[0].name, "main")) ERR("module main not loaded first");
+    for (const char *c = chain; c && *c; c = strchr(c, ',') ? strchr(c, ',') + 1 : NULL) {
+        uint64_t q = 0; vm_size_t got = 0;
+        if (vm_read_overwrite(mach_task_self(), (vm_address_t)p, 8, (vm_address_t)&q, &got) || got != 8 || !q) ERR("no pointer at %#llx", (unsigned long long)p);
+        p = q + strtoull(c, NULL, 16);
+    }
+    uint8_t buf[4096]; char hex[8193]; vm_size_t got = 0;
+    if (vm_read_overwrite(mach_task_self(), (vm_address_t)p, (vm_size_t)n, (vm_address_t)buf, &got) || got != (vm_size_t)n) ERR("cannot read %ld bytes at %#llx", n, (unsigned long long)p);
+    for (long i = 0; i < n; i++) snprintf(hex + 2 * i, 3, "%02x", buf[i]);
+    char adr[24]; snprintf(adr, sizeof adr, "%#llx", (unsigned long long)p);
+    snprintf(out, cap, ",\"at\":\"%s\",\"hex\":\"%s\"", adr, hex);   // written directly: dm_json_fields caps strings at 400 characters, and hex needs no escaping
+    return 1;
+}
+
 // crash kind=segv|abort|trap：故意让进程崩在控制口线程上（测崩溃这一路：crash 事件、crash.json、系统 .ips、场景判红），只在测试里用
 // crash kind=segv|abort|trap: deliberately crash the process on the control-port thread (to test the crash path: crash event, crash.json, the system .ips, the scenario going red); for tests only
 static int cmd_crash(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
@@ -426,6 +450,7 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("state", cmd_state);
     dm_ctl_register("save_now", cmd_save_now);
     dm_ctl_register("engine", cmd_engine);
+    dm_ctl_register("mem", cmd_mem);
     dm_ctl_register("fault", cmd_fault);
     dm_ctl_register("fe", cmd_fe);
     dm_ctl_register("inputmode", cmd_inputmode);

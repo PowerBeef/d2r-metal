@@ -36,7 +36,7 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'wheel': ['x', 'y', 'dy', 'precise', 'view'], 'drag': ['x0', 'y0', 'x1', 'y1', 'frames'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
-       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': []}
+       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': []}
 ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away')
 LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture')
@@ -535,6 +535,8 @@ class Runner:
                 tag = 'ok' if ok else 'try' if st.get('soft') else 'RED'
                 self.say(f"STEP {i:>2} {tag:<3} {dt:6.2f}s  {st['line']}" + (f'  → {text[:160]}' if text else ''))
                 tsv.write(f"{i}\t{st['line']}\t{tag}\t{dt:.3f}\t{text[:300]}\n")
+                if ok and st['line'].split()[0] == 'mem':   # memory reads are kept whole (steps.tsv cuts details at 300 characters)
+                    with open(os.path.join(self.run, 'mem.ndjson'), 'a', encoding='utf-8') as f: f.write(json.dumps(dict(step=i, line=st['line'], **(detail if isinstance(detail, dict) else {'text': text}))) + '\n')
                 self.records.append(dict(step=i, line=st['line'], ok=ok, soft=bool(st.get('soft')), s=round(dt, 3), detail=text[:300]))
                 self.prev_mark = mark
                 red = next((e for e in self.cc.events if e.get('ev') in BAD), None)
