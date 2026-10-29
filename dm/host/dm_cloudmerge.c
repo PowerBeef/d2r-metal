@@ -32,7 +32,7 @@
 // Threads: dm_cloudmerge_srv_tick runs on the server tick (diag.c hud_tick); the pre-commit hook cm_hook runs on the disk write thread (holding the save lock); both take g_mu.
 // Later fixes:
 //   - Crossing off only counts once the commit lands (F-SAVE-2): cm_hook records what it settled, and the commit outcome hook cm_post (hle_fs.c
-//     g_dm_post_commit_hook[4]) puts it back to "placed, awaiting proof" and marks the list dirty when the commit did not land (refused after a write
+//     g_dm_post_commit_hook[3]) puts it back to "placed, awaiting proof" and marks the list dirty when the commit did not land (refused after a write
 //     failure, the work folder recloned from the last committed version; or the clone / swap failed). Before, the list was rewritten only in the lost
 //     work folder while the hook's state said "written", so the committed list still held what the player already had and handed it out again.
 //   - Returns awaiting proof survive leaving the game and entering it again (F-SAVE-1): the list, the placed returns and the gold sent stay until a
@@ -388,7 +388,7 @@ static void cm_post(int ok) {
     pthread_mutex_unlock(&g_mu);
 }
 __attribute__((constructor)) static void cm_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); extern void (*g_dm_post_commit_hook[5])(int);
-    g_dm_pre_commit_hook[4] = cm_hook; g_dm_post_commit_hook[4] = cm_post; }
+    g_dm_pre_commit_hook[4] = cm_hook; g_dm_post_commit_hook[3] = cm_post; }   // post slot 4 is dm_engine.c's (save events): one slot per module
 
 // ---- 服务端拍（diag.c hud_tick；不在局内 player 为 0）
 // ---- Server tick (diag.c hud_tick; player is 0 when not in game)

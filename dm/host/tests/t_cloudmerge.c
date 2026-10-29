@@ -34,7 +34,9 @@ static void mkdirs(const char *p) { char d[1400]; strlcpy(d, p, sizeof d); for (
 static void wfile(const char *rel, const void *d, size_t n) { char p[1400]; snprintf(p, sizeof p, "%s/%s", g_wd, rel); mkdirs(p); FILE *f = fopen(p, "wb"); fwrite(d, 1, n, f); fclose(f); }
 static long rfile(const char *rel, uint8_t *o, size_t cap) { char p[1400]; snprintf(p, sizeof p, "%s/%s", g_wd, rel); FILE *f = fopen(p, "rb"); if (!f) return -1; long n = (long)fread(o, 1, cap, f); fclose(f); return n; }
 // A save commit as hle_fs.c runs it: the pre-commit hook, then (if it lands) the commit count moves on, then the outcome hook. ok = 0: refused / failed
-static int commit(int ok) { g_poison = 0; g_dm_pre_commit_hook[4](g_wd); int land = ok && !g_poison; if (land) g_commits++; g_dm_post_commit_hook[4](land); return land; }
+// Every hook slot, as hle_fs.c calls them (a module that took another module's slot would otherwise go unnoticed here)
+static int commit(int ok) { g_poison = 0; for (int k = 0; k < 5; k++) if (g_dm_pre_commit_hook[k]) g_dm_pre_commit_hook[k](g_wd);
+    int land = ok && !g_poison; if (land) g_commits++; for (int k = 0; k < 5; k++) if (g_dm_post_commit_hook[k]) g_dm_post_commit_hook[k](land); return land; }
 // The list as it is on disk: items (-1 = no list file) and gold
 static int disk_plan(const char *ent, long long *gold) { char p[1500]; plan_path_of(p, sizeof p, g_wd, ent, STASH); cm_list l = {0}; long long g = 0; int r = plan_read(p, &l, &g), n = r == 1 ? l.n : -1; cl_free(&l); if (gold) *gold = g; return n; }
 static void st_reset(const char *wd) { snprintf(g_wd, sizeof g_wd, "%s/%s", R, wd); mkdir(g_wd, 0755); pthread_mutex_lock(&g_mu); cm_reset(); g_ndrop = 0; g_gold = 0; g_char[0] = 0; strlcpy(g_stash, STASH, sizeof g_stash); pthread_mutex_unlock(&g_mu); }
