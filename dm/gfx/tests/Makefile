@@ -50,6 +50,8 @@ t_ub: t_ub.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_ub.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_mip_extent: t_mip_extent.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_mip_extent.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
+t_link_ticks: t_link_ticks.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_link_ticks.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_rt_range_shape: t_rt_range_shape.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rt_range_shape.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rt_range_ro: t_rt_range_ro.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -91,6 +93,7 @@ run: \
 	t_hmap \
 	t_mfx_life \
 	t_mip_extent \
+	t_link_ticks \
 	t_nvn \
 	t_pace \
 	t_timestamp \
@@ -135,6 +138,7 @@ run: \
 	./t_xv
 	./t_ub
 	MTL_DEBUG_LAYER=1 ./t_mip_extent
+	./t_link_ticks
 	MTL_DEBUG_LAYER=1 ./t_mip_extent --stencil-only
 	./t_rt_depth_ro
 	./t_rt_range_shape

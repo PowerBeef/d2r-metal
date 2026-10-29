@@ -6739,14 +6739,21 @@ int mtl_has_window(void) { return front_metal_layer() != NULL; }
 int mtl_link_active(void) { return link_on(); }
 double mtl_link_tick_age_ms(void) { uint64_t t = __atomic_load_n(&g_link_tick_ns, __ATOMIC_RELAXED); return t ? (now_ns() - t) / 1e6 : -1; }
 void mtl_link_pause(int on) { CAMetalDisplayLink *l = g_link; if (l) l.paused = on != 0; }   // 测试用（DM_TEST_BG）：模仿系统在后台停掉节拍回调 | For testing (DM_TEST_BG): imitates the system stopping the display-link callback in the background
-int mtl_link_wait_tick(uint64_t timeout_ns) {
+int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns);
+// The display link's rate: 120 Hz (DM_PRESENT_LINK=2), 60, or 30 in power-saving mode
+int mtl_link_rate(void) { return g_link_mode == 3 ? 30 : g_link_mode == 2 ? 120 : 60; }
+// One game frame at 60 Hz: one tick of a 60 Hz link, two of a 120 Hz link (the game still presents 60 frames)
+int mtl_link_wait_tick(uint64_t timeout_ns) { return mtl_link_wait_ticks(g_dm_present_link == 2 ? 2 : 1, timeout_ns); }
+// The same wait counted in the link's own ticks: one tick per frame lets DM_PRESENT_HZ=120 reach 120 frames on a 120 Hz link (hle_nvn.c link_wait).
+// Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds).
+int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns) {
     if (!mtl_link_active()) return 0;
     // 只在跑得比显示快时才等节拍：上一帧开工之后若已经过了节拍（这一帧已落后），立刻开工，不再白等到下一个节拍——
     // 否则帧时间略大于一个节拍时会「错过节拍 → 再等一整拍」，帧率直接锁到一半（Mac 有窗口负载下实测成串掉帧）
     // Wait for the display link only when running faster than the display: if a display-link tick has already passed since the previous frame started work (this frame is already behind), start immediately instead of waiting in vain for the next display-link tick --
     // otherwise when the frame time is slightly more than one display-link period it would "miss the tick -> wait another whole tick", locking the frame rate straight to half (measured on Mac under windowed load: runs of dropped frames)
     static uint64_t started_tick;   // 上一帧开工时的节拍号（只有游戏出图线程调本函数） | Display-link tick number when the previous frame started work (only the game's present thread calls this function)
-    const uint64_t step = g_dm_present_link == 2 ? 2 : 1;   // 一帧占几拍：60 Hz 节拍 1 拍；120 Hz 节拍 2 拍（游戏仍按 60 帧出） | How many display-link ticks one frame takes: 1 with a 60 Hz display link; 2 with a 120 Hz display link (the game still outputs 60 frames)
+    const uint64_t step = ticks < 1 ? 1 : (uint64_t)ticks;   // link ticks this frame takes (mtl_link_wait_tick: 1 at 60 Hz, 2 at 120 Hz)
     pthread_mutex_lock(&g_link_mu);
     if (g_link_tick_n >= started_tick + step) { started_tick = g_link_tick_n; pthread_mutex_unlock(&g_link_mu); return 1; }
     struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);

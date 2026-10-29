@@ -821,7 +821,9 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
 @implementation DmRateHint
 - (void)tick:(CADisplayLink *)l {
     extern int mtl_fps_target(void);
-    { static int last = -1; int f = mtl_fps_target(); if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
+    extern int mtl_link_rate(void);   // a 120 Hz present link (DM_PRESENT_LINK=2) needs this link's hint raised too, or the screen may stay at 60
+    { static int last = -1; int f = mtl_fps_target() == 30 ? 30 : mtl_link_rate() == 120 ? 120 : 60;
+      if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : f == 120 ? CAFrameRateRangeMake(80, 120, 120) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
     DmMetalView *v = g_touch_view;
     if (v) {
         if (g_full) { static int lx = -1, ly, lw, lh, lrh, lrw; int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h);   // 界面矩形由宿主定（开机后才有、切档会变）：变了就让容器重摆游戏视图 | The UI rectangle is decided by the host (available only after boot, changes when the profile switches): on change, have the container re-lay out the game view

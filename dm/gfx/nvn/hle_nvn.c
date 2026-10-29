@@ -1264,6 +1264,7 @@ NVN(nvnWindowSetCrop, void, NVNwindow *w, int x, int y, int ww, int hh) {
 static void trow(uint64_t f, const char *name, double v);
 static void sleep_until_ns(uint64_t dl);
 static uint64_t present_period(const win_t *o);
+static int link_wait(uint64_t timeout_ns);
 __attribute__((weak)) void dm_main_yield_stats(uint64_t *n, uint64_t *ns) { *n = 0; *ns = 0; }   // 宿主 hle_thread.c 提供真值；图形单测里为 0 | The host's hle_thread.c provides the ground truth; 0 in graphics unit tests
 __attribute__((weak)) uint32_t dm_guest_work_qos(unsigned *count) { if (count) *count = 0; return QOS_CLASS_UNSPECIFIED; }
 __attribute__((weak)) void dm_hle_wake_counts(uint64_t *wakes, uint64_t *skips) { *wakes = 0; *skips = 0; }
@@ -1285,7 +1286,7 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
         rt_comp_tick(&g_rt_main, decl);
         // 等节拍的超时取两个实际帧周期（decl：省电模式是 30 帧的 33.3 ms）：原先按 60 档取 2 × 16.7 ms，正好等于 30 Hz 节拍间隔，节拍稍晚一点就落到 60 Hz 兜底、提前开工
         // the display-link wait times out after two actual frame periods (decl: 33.3 ms for the 30 fps power-saving mode): it used to be 2 x 16.7 ms from the 60 tier, exactly the 30 Hz tick spacing, so a slightly late tick fell through to the 60 Hz fallback and the frame started early
-        if (mtl_link_active()) { if (!mtl_link_wait_tick(decl ? 2 * decl : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
+        if (mtl_link_active()) { if (!link_wait(decl ? 2 * decl : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
         else if (wait) sleep_until_ns(at);
     } else {   // DM_DETCLOCK_PACE=1（画面闸门用）：客体时钟按帧走的同时，每帧墙钟不短于一个步长——帧数与游戏内时间确定，后台加载线程每帧至少有一个步长的墙钟可用； | DM_DETCLOCK_PACE=1 (used by the screenshot gate): while the guest clock advances per frame, each frame's wall clock is no shorter than one step -- frame count and in-game time are deterministic, and the background loading thread has at least one step of wall clock available per frame;
                // 机器满载时帧只会更慢、后台得到的墙钟只会更多，所以「消息后第 N 帧」截到的画面与负载无关
@@ -1513,6 +1514,19 @@ static double present_auto_hz(double screen_hz) {
 static int g_hz = -1, g_display_mode, g_hz_auto;   // g_hz_auto：有窗口、没用 DM_PRESENT_HZ 钉住——帧率跟着窗口所在屏的刷新率取整除档（每帧重读，换屏即换） | g_hz_auto: has a window and not pinned by DM_PRESENT_HZ; the frame rate takes the evenly dividing tier of the refresh rate of the screen the window is on (re-read every frame, changes with the screen)
 void nvn_present_config(int hz, int display_mode) { g_hz = hz; g_display_mode = display_mode; g_hz_auto = 0; }
 double front_display_refresh(char *name, size_t n);
+// The acquire's wait for the display link: one 60 Hz game frame (mtl_link_wait_tick), or, with the display interval mode pinned above 60
+// (DM_PRESENT_HZ=120 on a 120 Hz link, DM_PRESENT_LINK=2), one tick of that rate in the link's own ticks, keeping the fractional tick
+// (90 frames on a 120 Hz link take 1, 1, 2 ticks). Before, a 120 Hz link always waited two ticks, so the display mode never passed 60 frames.
+// Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds). Acquire thread only.
+static int link_wait(uint64_t timeout_ns) {
+    static int hz_was, rate_was, remainder;
+    int hz = g_display_mode && !g_hz_auto && g_hz > 60 ? g_hz : 0, rate = mtl_link_rate();
+    if (hz != hz_was || rate != rate_was) { remainder = 0; hz_was = hz; rate_was = rate; }
+    if (!hz) return mtl_link_wait_tick(timeout_ns);
+    int ticks = 1;
+    if (rate > hz) { remainder += rate; ticks = remainder / hz; remainder %= hz; }   // a rate at or above the link's takes one tick
+    return mtl_link_wait_ticks(ticks, timeout_ns);
+}
 static void present_cfg(const win_t *o) {
     if (g_hz >= 0) return;
     // 有窗口仍缺省 display 间隔模式；无窗口缺省 game 模式。环境变量可覆盖固定 60 Hz。
