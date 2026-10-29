@@ -35,6 +35,20 @@ def version():
     h.update(options().encode())
     return h.hexdigest()[:12]
 
+def code_form(source, blank=()):
+    """The part of a Python source that can change what it computes, as bytes: the AST dump (comments, blank lines, formatting and line numbers are not in it)
+    without docstrings, and with the bodies of the functions named in `blank` replaced by `pass` (dmsh_build.py: the rule functions, which have their own
+    per-shader fingerprints). Anything else (a constant, a string literal that is not a docstring, a default argument) changes it. ast.dump's text differs
+    between Python versions, so the version is part of the form. Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds)."""
+    import ast
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if getattr(node, 'name', None) in blank: node.body = [ast.Pass()]
+            elif node.body and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant) and isinstance(node.body[0].value.value, str):
+                node.body = node.body[1:] or [ast.Pass()]
+    return ('python %d.%d\0' % sys.version_info[:2]).encode() + ast.dump(tree).encode()
+
 def sha16(p): return hashlib.sha256(open(p, 'rb').read()).hexdigest()[:16]
 
 def tools_now():

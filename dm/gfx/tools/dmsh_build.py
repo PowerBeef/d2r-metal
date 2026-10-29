@@ -14,12 +14,15 @@
 # Graphics shaders embedded in the executable itself (mapping table rows main.rodata@offset) are extracted from MAIN (Switch main NSO, default 3.3.94012 Update/ExeFS/main); extracting the NSO needs lz4, run with dm's venv python
 # Build output: <key>_b.metallib, <key>_b.json (replay reflection, including drv_reads, the runtime read offsets into driver segments c0 / c2), <key>_b.metal (MSL)
 # Environment IOSOUT=dir: the same MSL also goes through dm/ios/tools/ios_metal.compile to produce an iphoneos metallib + reflection (chain_metal records the iOS compile convention)
+# Caches, all under the output cache dir: cas/ (per shader, keyed by its inputs and the code form of this build's sources), cas/variant/ (readable-tile variants,
+# keyed by their MSL) and mtlcache/ (compiled libraries keyed by Metal source and compiler, dmsh_mtlcache.py): a chain change that leaves a shader's MSL as it
+# was costs no Metal compile; libraries no build among the newest 3 used are pruned at the end of each build
 # Final summary: success / failure counts and the distribution of reasons; distribution of driver segment read offsets (those outside the range the replay layer can fill are listed separately)
-import ast, inspect, os, re, sys, json, struct, hashlib, shutil, subprocess, tempfile, collections, threading, concurrent.futures as cf
+import inspect, os, re, sys, json, struct, hashlib, shutil, subprocess, tempfile, collections, threading, concurrent.futures as cf
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # 工作区根目录（游戏文件、产物、运行现场都在它下面） | Workspace root (game files, build outputs and run artifacts are all under it)
 HOME = os.path.expanduser('~')
 dm_dir, out = sys.argv[1:3]; want = set(sys.argv[3:]); cache_root = out
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import dmsh_chain, dmsh_fetch, dmsh_facts   # 翻译链版本：先核工具与锁文件，产物进 b-<V>/ | translation chain version: verify the tools against the lock file first; build output goes into b-<V>/
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import dmsh_chain, dmsh_fetch, dmsh_facts, dmsh_mtlcache   # 翻译链版本：先核工具与锁文件，产物进 b-<V>/ | translation chain version: verify the tools against the lock file first; build output goes into b-<V>/
 _bad = dmsh_chain.check_tools()
 if _bad: sys.exit('\n'.join('【红】翻译链工具与锁文件不符：' + b for b in _bad) + '\n（换了工具就 dmsh_chain.py --update-lock 并入仓；只是没重编翻译器就重编）')
 CHAIN = dmsh_chain.version(); out = os.path.join(out, 'b-' + CHAIN)
@@ -59,16 +62,6 @@ def atomic_json(path, value):
     tmp = path + '.tmp-' + str(os.getpid()) + '-' + str(threading.get_ident())
     with open(tmp, 'w') as f: json.dump(value, f, ensure_ascii=False, indent=1)
     os.replace(tmp, path)
-
-def source_without_rule_bodies():
-    source = open(__file__, 'r').read(); lines = source.splitlines(True); tree = ast.parse(source)
-    names = {f.__name__ for f, _ in RULES}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names and node.body:
-            first = node.body[0].lineno - 1
-            last = max(getattr(x, 'end_lineno', x.lineno) for x in ast.walk(node) if getattr(x, 'lineno', 0) >= node.body[0].lineno)
-            indent = re.match(r'\s*', lines[first]).group(0); lines[first:last] = [indent + 'pass\n']
-    return ''.join(lines)
 
 def shader_rule_source(name):
     return b''.join(inspect.getsource(f).encode() for f, applies in RULES if applies(name))
@@ -171,9 +164,13 @@ def bf_cache_publish(digest, fmsl, maclib, ioslib, fmeta):
     if IOSOUT: clone(ioslib, os.path.join(root, 'ios.metallib'))
     atomic_json(os.path.join(root, 'fetch.json'), fmeta)
 
+def mac_compile(msl, air, lib):   # the Mac compile convention (MAC_RECORD); dmsh_mtlcache.Cache calls it on a miss
+    subprocess.run(['xcrun', '-sdk', 'macosx', 'metal', '-c', msl, '-o', air], check=True)
+    subprocess.run(['xcrun', '-sdk', 'macosx', 'metallib', air, '-o', lib], check=True)
+
 def write_refl(key, refl):
-    for d, rec in ((out, MAC_RECORD),) + (((IOSOUT, ios_metal.RECORD),) if IOSOUT else ()):
-        value = dict(refl, chain_metal=rec)
+    for t, d, rec in (('mac', out, MAC_RECORD),) + ((('ios', IOSOUT, ios_metal.RECORD),) if IOSOUT else ()):
+        value = MTLC.with_compiler(t, dict(refl, chain_metal=rec))   # also records the compiler, so a later build can import these libraries
         atomic_json(os.path.join(d, key + '_b.json'), value)
 
 def fetch_finish(key, src, refl):
@@ -198,15 +195,11 @@ def fetch_finish(key, src, refl):
                 open(fmsl, 'w').write(fv)
                 fair = fmsl[:-6] + '.air'; flib = os.path.join(out, key + '_bf.metallib')
                 try:
-                    subprocess.run(['xcrun', '-sdk', 'macosx', 'metal', '-c', fmsl, '-o', fair], check=True)
-                    tmp_flib = flib + '.tmp-' + str(os.getpid())
-                    subprocess.run(['xcrun', '-sdk', 'macosx', 'metallib', fair, '-o', tmp_flib], check=True)
-                    os.replace(tmp_flib, flib)
+                    MTLC.compile('mac', fmsl, flib)   # the same MSL compiled before is reused (dmsh_mtlcache.py)
                     ilib = None
                     if IOSOUT:
                         ilib = os.path.join(IOSOUT, key + '_bf.metallib')
-                        ios_metal.compile(fmsl, fmsl[:-6] + '.ios.air', ilib + '.tmp')
-                        os.replace(ilib + '.tmp', ilib)
+                        MTLC.compile('ios', fmsl, ilib)
                 except subprocess.CalledProcessError:
                     return refl
                 BF_STATS['compile'] += 1
@@ -379,7 +372,9 @@ def unfillable(dr):
 RULES = []   # 按着色器名挂的 MSL 改写规则（函数, 适用判定）；原有的暗部重映射 toe 已删（回到 Switch 原版亮度） | MSL rewrite rules attached by shader name (function, applicability test); the former dark-range remap toe has been removed (back to the original Switch brightness)
 # 第一段代码指纹不包含 dmsh_fetch.py；可读 tile 变体单独按生成 MSL 做第二段缓存。
 # The first-stage code fingerprint does not include dmsh_fetch.py; readable-tile variants get a separate second-stage cache keyed on the generated MSL.
-CODE_FP = hashlib.sha256(source_without_rule_bodies().encode() + b''.join(b'\0' + open(m.__file__, 'rb').read() for m in (dmsh_chain,) + ((ios_metal,) if IOSOUT else ()))).hexdigest()
+# The code form (dmsh_chain.code_form) leaves out comments, docstrings and formatting, so an edit that changes no computation keeps every shader's cache entry.
+CODE_FP = hashlib.sha256(dmsh_chain.code_form(open(__file__).read(), blank={f.__name__ for f, _ in RULES}) +
+                         b''.join(b'\0' + dmsh_chain.code_form(open(m.__file__).read()) for m in (dmsh_chain,) + ((ios_metal,) if IOSOUT else ()))).hexdigest()
 TOOL_FP = tool_fingerprint().encode()
 
 def finish(key, w, j, c1):
@@ -389,19 +384,14 @@ def finish(key, w, j, c1):
     r = subprocess.run(['spirv-cross', *XC, os.path.join(w, key + '.spv'), '--output', msl], capture_output=True, text=True)
     if r.returncode: return 'MSL 失败', r.stderr.strip()[:160], None
     src = open(msl).read()
-    try:
-        subprocess.run(['xcrun', '-sdk', 'macosx', 'metal', '-c', msl, '-o', air], check=True)
-        tmp_lib = lib + '.tmp-' + str(os.getpid())
-        subprocess.run(['xcrun', '-sdk', 'macosx', 'metallib', air, '-o', tmp_lib], check=True)
-        os.replace(tmp_lib, lib)
+    try: MTLC.compile('mac', msl, lib)   # the same MSL compiled before is reused (dmsh_mtlcache.py)
     except subprocess.CalledProcessError as e:
         return 'metal 失败', str(e)[:160], None
     clone(msl, os.path.join(out, key + '_b.metal'))
     if IOSOUT:   # iOS：同一份 MSL 走 iOS 的唯一编译口径（dm/ios/tools/ios_metal.py）出 iphoneos metallib | iOS: the same MSL goes through iOS's single compile convention (dm/ios/tools/ios_metal.py) to produce an iphoneos metallib
         ilib = os.path.join(IOSOUT, key + '_b.metallib')
         try:
-            ios_metal.compile(msl, msl[:-6] + '.ios.air', ilib + '.tmp')
-            os.replace(ilib + '.tmp', ilib)
+            MTLC.compile('ios', msl, ilib)
         except subprocess.CalledProcessError as e: return 'iOS metal 失败', str(e)[:160], None
     entry = re.search(r'(vertex|fragment|kernel)\s+\S+\s+(\w+)\s*\(', src)
     dr = drv_reads(src)
@@ -419,6 +409,11 @@ keys = sorted(want) if want else sorted(loc)
 NJ = int(os.environ.get('J', '8'))
 os.makedirs(out, exist_ok=True)
 w = tempfile.mkdtemp(prefix='dmsh_', dir=os.environ.get('WORK'))
+# Compiled libraries keyed by their Metal source (dmsh_mtlcache.py): a chain change that leaves a shader's MSL as it was costs it no Metal compile.
+MTLC = dmsh_mtlcache.Cache(os.path.join(cache_root, 'mtlcache'), {'mac': ('macosx', MAC_RECORD, mac_compile), **({'ios': ('iphoneos', ios_metal.RECORD, ios_metal.compile)} if IOSOUT else {})}, w)
+for _b in sorted(os.listdir(cache_root)):   # earlier builds that recorded their compiler fill the cache once
+    if _b.startswith('b-') and _b != 'b-' + CHAIN and os.path.isdir(os.path.join(cache_root, _b)):
+        for _line in MTLC.fill(os.path.join(cache_root, _b), os.path.join(os.path.dirname(IOSOUT), _b) if IOSOUT else None): print(_line)
 packs, jobs, c1s = {}, {}, {}
 digests, rule_fps, cache_reasons, cache_hits = {}, {}, {}, set()
 for key in keys:
@@ -452,6 +447,7 @@ for r in xr:
         if m: xerr[m.group(1)] = m.group(2)[:160]
 def fin(key):
     if key in cache_hits:
+        for _t in MTLC.targets: MTLC.touch(_t, os.path.join(out, key + '_b.metal'))   # keep their compiled entries through prune()
         refl = json.load(open(os.path.join(out, key + '_b.json')))
         src = open(os.path.join(out, key + '_b.metal')).read() if refl['stage'] == 'ps' else ''
         return key, 'ok', '', fetch_finish(key, src, refl)
@@ -467,6 +463,7 @@ print(f'前置缓存：命中 {PRE_STATS["hit"]}，重出 {PRE_STATS["miss"]}')
 for reason in ('新键', '规则变', '代码指纹变化：全部重出'):
     if PRE_STATS[reason]: print(f'  {reason} {PRE_STATS[reason]}')
 print(f'变体缓存：生成 {BF_STATS["generated"]}，命中 {BF_STATS["hit"]}，重出 {BF_STATS["miss"]}，编译 {BF_STATS["compile"]}')
+print(MTLC.summary()); MTLC.save_used(CHAIN); print(MTLC.prune())
 for lvl in [k for k in st if k != 'ok']:
     for e, n in collections.Counter(r[2] for r in res if r[1] == lvl).most_common(10): print(f'  [{lvl}] {n:5d}  {e}')
 ok = [r[3] for r in res if r[1] == 'ok']
