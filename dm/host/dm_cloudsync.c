@@ -47,6 +47,20 @@
 //   While running (allow_down = 0) a fork is left alone until the next launch. Each newly stored copy gives one notice after entering a run (dm_cloud_conflict_take).
 //   Every successful shared stash sync (upload / download / identical) writes the content at that moment to <state file>.stash_base, as the base for the next fork.
 //   iCloud's own same-name file conflict versions (read out by cloud_ios.m) also go to the inbox: dm_cloud_inbox_add.
+// Inbox entries are idempotent (F-SAVE-3): each merge returns everything its mine.pack holds that the cloud lacks, so a second entry with the same
+//   content would hand the same items and gold back twice. An entry whose mine.pack has the same content digest as one already in the inbox (or as
+//   one the merge has retired, ledger _cloudinbox/.done) is not stored again; and at launch, when the shared stash was not swapped for the cloud
+//   copy after all (the swap failed, a pack was not ready, the sync took another path after a kill), entries holding exactly the local copy are
+//   removed: that copy is still the live stash, so its items are not missing anywhere.
+// The empty-new-save rule above applies only when there is no sync state or both sides changed (F-SAVE-4): when only one side changed since the
+//   last sync, that side is the newer state of the same stash (a player emptying a stash whose chronicle never grew looks exactly like a new empty
+//   save), so it is followed like any other unit. The shared stash seed is the exception: it is only ever written for a missing file, never by play.
+// Missing locally while running (F-SAVE-7): a deletion marker is written only for a unit this process saw present (in the save at launch or in a
+//   commit since); a unit that was already missing at launch and whose cloud pack was not ready then is lost locally, not deleted, and is
+//   restored at a later launch.
+// Characters whose names differ only in letter case (F-SAVE-16): hle_fs.c stores the later one as ".dm-case-N" with its guest name in an
+//   extended attribute. Their packs would collide in a case-insensitive cloud directory, so they are not synced: each sync logs a red line for
+//   them. Every unit name must match the directory and .d2s spelled exactly (APFS on the Mac would otherwise open another character's folder).
 #include <dirent.h>
 #include <errno.h>
 #include <stdint.h>
@@ -55,6 +69,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/xattr.h>
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -87,7 +102,7 @@ static int read_dir(const char *root, const char *rel, cs_unit *u) {   // rel �
 }
 // ---- 共享仓库的内容量（只认结构，不解物品）：.d2i 按 55 AA 55 AA 分段，段内 +64 是 'JM' 的是物品页（+66 物品数），其余段是编年史
 // ---- Content volume of the shared stash (structure only, items are not decoded): .d2i is split into segments by 55 AA 55 AA; a segment with 'JM' at +64 is an item page (+66 item count), the other segments are the chronicle
-typedef struct { int kind, items, chron; long long gold; } cs_rich;
+typedef struct { int kind, items, chron, seed; long long gold; } cs_rich;   // seed: byte-identical to the shared stash seed below
 // 游戏新建的空共享仓库：物品 0 件、编年史段 148 字节（三份新建档、rf3 的专家仓库都是这个值）。「0 件且编年史还是新建大小」= 没东西的新档，
 // 不许盖掉有物品的一份（rf3：云端专家仓库 2 件、编年史 148，本机新建的空档同样 148，只比编年史拦不住）；编年史长过新建的仓库被玩家取空照常同步
 // An empty shared stash newly created by the game: 0 items, chronicle segment 148 bytes (three freshly created saves and rf3's hardcore stash all have this value). "0 items and the chronicle still at the freshly-created size" = an empty new save,
@@ -107,7 +122,7 @@ static cs_rich rich_of(const cs_file *f) {
     cs_rich r = {0}; size_t L = strlen(f->path);
     if (L > 4 && !strcmp(f->path + L - 4, ".d2i")) { r.kind = 1;
 #ifdef CS_HAVE_STASH_SEED
-        if (f->size == sizeof g_stash_seed && !memcmp(f->data, g_stash_seed, sizeof g_stash_seed)) { r.chron = FRESH_CHRON; return r; }   // 预置：0 件、新建大小 | seed: 0 items, freshly-created size
+        if (f->size == sizeof g_stash_seed && !memcmp(f->data, g_stash_seed, sizeof g_stash_seed)) { r.chron = FRESH_CHRON; r.seed = 1; return r; }   // seed: counted as 0 items at the freshly-created size
 #endif
         for (uint32_t o = 0; o + 68 <= f->size && !memcmp(f->data + o, "\x55\xaa\x55\xaa", 4); ) { uint32_t ln; memcpy(&ln, f->data + o + 16, 4); if (ln < 68 || ln > f->size - o) break;
             if (!memcmp(f->data + o + 64, "JM", 2)) { uint16_t c; uint32_t g; memcpy(&c, f->data + o + 66, 2); memcpy(&g, f->data + o + 12, 4); r.items += c; r.gold += g; } else r.chron += (int)ln; o += ln; } }
@@ -128,8 +143,9 @@ static int chron_seg(const uint8_t *d, uint32_t n, uint32_t *at, uint32_t *len) 
         o += ln; }
     return 0;
 }
-static int chron_union(cs_file *dst, const cs_file *src) {
-    uint32_t da, dl, sa, sl; if (!chron_seg(dst->data, dst->size, &da, &dl) || !chron_seg(src->data, src->size, &sa, &sl)) return -1;
+// *chg = the file's bytes changed (records added, or only an earlier time taken; dst is left as it was when nothing changed)
+static int chron_union(cs_file *dst, const cs_file *src, int *chg) {
+    uint32_t da, dl, sa, sl; *chg = 0; if (!chron_seg(dst->data, dst->size, &da, &dl) || !chron_seg(src->data, src->size, &sa, &sl)) return -1;
     uint16_t dc[3], sc[3]; memcpy(dc, dst->data + da + 70, 6); memcpy(sc, src->data + sa + 70, 6);
     uint32_t dn = dc[0] + dc[1] + dc[2], sn = sc[0] + sc[1] + sc[2];
     uint8_t *rec = malloc(10u * (dn + sn) + 1); if (!rec) return -1;
@@ -145,21 +161,27 @@ static int chron_union(cs_file *dst, const cs_file *src) {
     memcpy(nd, dst->data, da + 84); memcpy(nd + da + 84, rec, 10 * w); memcpy(nd + da + 84 + 10 * w, dst->data + da + dl - 64, 64);
     memcpy(nd + da + nl, dst->data + da + dl, dst->size - da - dl);
     memcpy(nd + da + 16, &nl, 4); for (int g = 0; g < 3; g++) { uint16_t c = (uint16_t)out[g]; memcpy(nd + da + 70 + 2 * g, &c, 2); }
-    free(rec); free(dst->data); dst->data = nd; dst->size = nsz; return (int)add;
+    free(rec); *chg = nsz != dst->size || memcmp(nd, dst->data, nsz); if (!*chg) { free(nd); return 0; }
+    free(dst->data); dst->data = nd; dst->size = nsz; return (int)add;
 }
-static int chron_union_unit(cs_unit *dst, const cs_unit *src, const char *who) {   // 同路径的 .d2i 逐个并；返回一共加了几条 | Merge .d2i files with the same path one by one; returns the total number of records added
-    int tot = 0; for (int i = 0; i < dst->n; i++) { size_t L = strlen(dst->f[i].path); if (L < 5 || strcmp(dst->f[i].path + L - 4, ".d2i")) continue;
-        for (int j = 0; j < src->n; j++) if (!strcmp(src->f[j].path, dst->f[i].path)) { int a = chron_union(&dst->f[i], &src->f[j]);
-            if (a > 0) { tot += a; LOG("iCloud 同步：%s 的编年史并进%s多出的 %d 条", dst->f[i].path, who, a); } } }
-    return tot;
+// Merge the .d2i files with the same path one by one; returns how many files changed, and chg[i] (when given) marks each changed file of dst.
+// Before, only "records added" counted: a union that only took an earlier time changed the data but was neither written back nor rehashed
+static int chron_union_unit(cs_unit *dst, const cs_unit *src, const char *who, uint8_t *chg) {
+    int nchg = 0; if (chg) memset(chg, 0, MAXF);
+    for (int i = 0; i < dst->n; i++) { size_t L = strlen(dst->f[i].path); if (L < 5 || strcmp(dst->f[i].path + L - 4, ".d2i")) continue;
+        for (int j = 0; j < src->n; j++) if (!strcmp(src->f[j].path, dst->f[i].path)) { int c = 0, a = chron_union(&dst->f[i], &src->f[j], &c);
+            if (a > 0) LOG("iCloud 同步：%s 的编年史并进%s多出的 %d 条", dst->f[i].path, who, a);
+            if (c) { nchg++; if (chg) chg[i] = 1; } } }
+    return nchg;
 }
-// 用 w 换掉 x 会不会丢东西：会就返回原因（写日志用），不会返回 NULL
-// Whether replacing x with w would lose anything: if so return the reason (for the log), otherwise return NULL
-static const char *stash_shrinks(const cs_unit *w, const cs_unit *x, char *why, size_t cap) {
-    for (int i = 0; i < x->n; i++) { cs_rich rx = rich_of(&x->f[i]); if (!rx.kind || (rx.kind == 1 && !rx.items && rx.chron <= FRESH_CHRON)) continue;   // 被盖的是没东西的新档 / 预置：没什么可丢 | what gets overwritten is an empty new save / the seed: nothing to lose
+// Whether replacing x with w would lose anything: if so return the reason (for the log), otherwise return NULL.
+// fresh = 1: the empty-new-save rule applies to any w file with 0 items at the freshly-created chronicle size (no sync state, or both sides changed);
+// fresh = 0: only one side changed since the last sync, so w is the newer state of the same stash and the rule applies only to the seed (F-SAVE-4)
+static const char *stash_shrinks(const cs_unit *w, const cs_unit *x, char *why, size_t cap, int fresh) {
+    for (int i = 0; i < x->n; i++) { cs_rich rx = rich_of(&x->f[i]); if (!rx.kind || (rx.kind == 1 && !rx.items && rx.chron <= FRESH_CHRON)) continue;   // what gets overwritten is an empty new save / the seed: nothing to lose
         const cs_file *wf = NULL; for (int j = 0; j < w->n; j++) if (!strcmp(w->f[j].path, x->f[i].path)) wf = &w->f[j];
         cs_rich rw = wf ? rich_of(wf) : (cs_rich){0};
-        if (rx.kind == 1 && (rw.chron < rx.chron || (rx.items > 0 && rw.items == 0 && rw.chron <= FRESH_CHRON))) { snprintf(why, cap, "%s：编年史段 %d → %d 字节、物品 %d → %d 件", x->f[i].path, rx.chron, rw.chron, rx.items, rw.items); return why; } }
+        if (rx.kind == 1 && (rw.chron < rx.chron || (rx.items > 0 && rw.items == 0 && rw.chron <= FRESH_CHRON && (fresh || rw.seed)))) { snprintf(why, cap, "%s：编年史段 %d → %d 字节、物品 %d → %d 件", x->f[i].path, rx.chron, rw.chron, rx.items, rw.items); return why; } }
     return NULL;
 }
 static _Atomic int g_conflict;
@@ -177,7 +199,31 @@ static void char_conf_add(const char *nm) { pthread_mutex_lock(&g_cc_mu); size_t
 int dm_cloud_char_conflict_take(char *out, size_t n) { pthread_mutex_lock(&g_cc_mu); int r = g_char_conf[0] != 0; if (r) strlcpy(out, g_char_conf, n); g_char_conf[0] = 0; pthread_mutex_unlock(&g_cc_mu); return r; }
 
 static int is_stash(const char *nm) { return !strncmp(nm, "SharedStash", 11) || !strncmp(nm, "ModernSharedStash", 17); }
-static int is_char_dir(const char *save, const char *nm) { char p[1600]; struct stat st; snprintf(p, sizeof p, "%s/%s/%s.d2s", save, nm, nm); return nm[0] != '.' && nm[0] != '_' && !stat(p, &st) && S_ISREG(st.st_mode); }
+static int has_exact(const char *dir, const char *nm) {   // dir holds an entry spelled exactly nm (the Mac's APFS ignores letter case, so stat alone also finds another spelling)
+    DIR *dp = opendir(dir); struct dirent *e; int k = 0; while (dp && !k && (e = readdir(dp))) k = !strcmp(e->d_name, nm); if (dp) closedir(dp); return k; }
+// A character unit: <save>/<name>/<name>.d2s, both spelled exactly as the unit name. Before, stat alone decided: on the Mac a cloud unit "Alice"
+// matched a local folder "alice" of another character, which the sync then read, uploaded or moved to the backup as "Alice" (F-SAVE-16)
+static int is_char_dir(const char *save, const char *nm) { char p[1600], f[300]; struct stat st; snprintf(p, sizeof p, "%s/%s/%s.d2s", save, nm, nm);
+    if (nm[0] == '.' || nm[0] == '_' || stat(p, &st) || !S_ISREG(st.st_mode)) return 0;
+    snprintf(p, sizeof p, "%s/%s", save, nm); snprintf(f, sizeof f, "%s.d2s", nm); return has_exact(save, nm) && has_exact(p, f); }
+// Guest name of a save-root entry: the extended attribute hle_fs.c writes on an aliased (".dm-case-N") entry, else the entry name itself
+static void guest_of(const char *root, const char *phys, char *out, size_t n) {
+    char p[1600]; snprintf(p, sizeof p, "%s/%s", root, phys); ssize_t k = getxattr(p, DM_GUEST_NAME_XATTR, out, n - 1, 0, XATTR_NOFOLLOW);
+    if (k > 0) out[k] = 0; else strlcpy(out, phys, n); }
+// The character file of guest name <guest> under a save root, wherever hle_fs.c put it (its own folder, or a ".dm-case-N" alias when another
+// character's name differs only in case): <root>/<physical>/<guest>.d2s. 1 = found. The iCloud merge proves returns against this file
+int dm_cloud_char_file(const char *root, const char *guest, char *out, size_t n) {
+    DIR *dp = opendir(root); struct dirent *e; int k = 0; char g[256]; struct stat st;
+    while (dp && !k && (e = readdir(dp))) { if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || (e->d_name[0] == '.' && strncmp(e->d_name, ".dm-case-", 9))) continue;
+        guest_of(root, e->d_name, g, sizeof g); if (strcmp(g, guest)) continue;
+        snprintf(out, n, "%s/%s/%s.d2s", root, e->d_name, guest); k = !stat(out, &st) && S_ISREG(st.st_mode); }
+    if (dp) closedir(dp); return k; }
+// A character stored under a ".dm-case-N" alias (see the file header): not synced, said in red on every sync so it is not silently left out
+static int case_alias_note(const char *save, const char *phys) {
+    char g[256], p[1600]; struct stat st; guest_of(save, phys, g, sizeof g); if (!strcmp(g, phys) || strchr(g, '/')) return 0;
+    snprintf(p, sizeof p, "%s/%s/%s.d2s", save, phys, g); if (stat(p, &st) || !S_ISREG(st.st_mode)) return 0;
+    LOG("【红】iCloud sync: character %s is stored as %s because another character's name differs from it only in letter case; it is not synced (its pack would collide with the other one's in a case-insensitive cloud folder)", g, phys);
+    return 1; }
 // ---- 包与单位绑定：云端目录里的包谁都能放（别的设备、坏了的包、手改的），包里的路径必须落在它自己那个单位里——
 //   单位名：_stash，或角色名（不以 . / _ 开头，没有 /）；云端目录里别的 <名>.pack（如 _cloudinbox.pack）不算单位。
 //   角色 <名>：每个文件都是 <名>/<文件>（只一层，文件名不以 . 开头），且带 <名>/<名>.d2s（同本地认角色的 is_char_dir）；
@@ -247,12 +293,26 @@ static int rm_rf(const char *p) {
     DIR *d = opendir(p); struct dirent *e; int r = 0; while (d && (e = readdir(d))) { if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue; char c[1600]; snprintf(c, sizeof c, "%s/%s", p, e->d_name); r |= rm_rf(c); }
     if (d) closedir(d); return r | rmdir(p);
 }
-static int write_files(const char *root, const cs_unit *u) {   // 把单位的文件写到 root 下（目录按需建），修改时间照包里还原 | write the unit's files under root (creating directories as needed), restoring modification times as in the pack
+// Write the unit's files under root (creating directories as needed), restoring modification times as in the pack; sync = 1 also fsyncs each file
+static int write_files(const char *root, const cs_unit *u, int sync) {
     for (int i = 0; i < u->n; i++) { char full[1600]; snprintf(full, sizeof full, "%s/%s", root, u->f[i].path);
         char *sl = strrchr(full, '/'); if (sl && sl > full + strlen(root)) { *sl = 0; mkdir(full, 0755); *sl = '/'; }
-        FILE *f = fopen(full, "wb"); if (!f) return -1; int ok = !u->f[i].size || fwrite(u->f[i].data, u->f[i].size, 1, f) == 1; ok = fclose(f) == 0 && ok; if (!ok) return -1;
+        FILE *f = fopen(full, "wb"); if (!f) return -1; int ok = !u->f[i].size || fwrite(u->f[i].data, u->f[i].size, 1, f) == 1;
+        if (ok && sync) ok = fflush(f) == 0 && fsync(fileno(f)) == 0;
+        ok = fclose(f) == 0 && ok; if (!ok) return -1;
         struct timeval tv[2]; tv[0].tv_sec = tv[1].tv_sec = (time_t)(u->f[i].mt / 1000); tv[0].tv_usec = tv[1].tv_usec = (int)(u->f[i].mt % 1000) * 1000; utimes(full, tv); }
     return 0;
+}
+// Replace the files of u flagged in chg inside the live save root: all of them are first written whole (fsynced) to <save>/.cloudin, then each is
+// renamed over its original. Before, the launch-time chronicle union rewrote the live shared stash files in place with "wb": a full disk or a kill
+// left a truncated stash (F-SAVE-5). A rename failing midway leaves every file whole, each either the old or the merged one. 0 = all replaced
+static int replace_files(const char *save, const cs_unit *u, const uint8_t *chg) {
+    char tmp[1300]; snprintf(tmp, sizeof tmp, "%s/.cloudin", save); rm_rf(tmp); if (mkdir(tmp, 0755)) return -1;
+    cs_unit *w = calloc(1, sizeof *w); if (!w) { rm_rf(tmp); return -1; }
+    for (int i = 0; i < u->n; i++) if (chg[i]) w->f[w->n++] = u->f[i];   // shallow: the data stays u's
+    int r = write_files(tmp, w, 1), k = 0;
+    for (; !r && k < w->n; k++) { char a[1600], b[1600]; snprintf(a, sizeof a, "%s/%s", tmp, w->f[k].path); snprintf(b, sizeof b, "%s/%s", save, w->f[k].path); if (rename(a, b)) r = -1; }
+    int er = errno; free(w); rm_rf(tmp); errno = er; return r;
 }
 // ---- 本地被换下 / 被删的那份：整份「改名挪进」备份目录 <备份>/<单位>-<时刻>/（同一卷上改名是原子的，不复制、不会写一半）。
 // 挪不进去（建不了目录 / 改名失败）就返回 -1，调用方不覆盖、不删——宁可这次不同步，也不丢玩家存档（排查会不会删玩家本地存档时查出：原先备份写失败仍照样覆盖）
@@ -283,7 +343,7 @@ static int move_to_bak(const char *save, const char *bak, const char *unit, cons
 }
 static int local_apply(const char *save, const char *bak, const char *unit, const cs_unit *cur, const cs_unit *cl) {   // 本地单位换成云端那份 | replace the local unit with the cloud copy
     char tmp[1300], d[1300]; snprintf(tmp, sizeof tmp, "%s/.cloudin", save); rm_rf(tmp); mkdir(tmp, 0755);
-    if (write_files(tmp, cl)) { rm_rf(tmp); return -1; }                                     // 先把云端那份完整写到旁边 | first write the cloud copy out completely alongside
+    if (write_files(tmp, cl, 0)) { rm_rf(tmp); return -1; }                                     // 先把云端那份完整写到旁边 | first write the cloud copy out completely alongside
     if (cur && move_to_bak(save, bak, unit, cur, "本机（被云端后写覆盖）", d, sizeof d)) { rm_rf(tmp); return -1; }   // 本地那份整份挪进备份，挪不动就不换 | move the whole local copy into the backup; if it cannot be moved, do not swap
     char nm[16][256]; int n = top_names(cl, nm, 16), k = 0;
     for (; k < n; k++) { char a[1600], b[1600]; snprintf(a, sizeof a, "%s/%s", tmp, nm[k]); snprintf(b, sizeof b, "%s/%s", save, nm[k]); if (rename(a, b)) break; }
@@ -294,7 +354,7 @@ static int local_apply(const char *save, const char *bak, const char *unit, cons
     rm_rf(tmp); return 0;
 }
 static int backup_copy(const char *bak, const char *unit, const cs_unit *u, const char *why) {   // 云端那份（本机后写赢、要覆盖它时）：写一份副本进备份 | the cloud copy (when the local side wins as the later write and is about to overwrite it): write a copy into the backup
-    char d[1300]; if (bak_dir(bak, unit, u->stamp, d, sizeof d) || write_files(d, u)) { LOG("【红】iCloud 同步：%s 的%s那份写备份失败 errno=%d，本次不上传", unit, why, errno); rm_rf(d); return -1; }
+    char d[1300]; if (bak_dir(bak, unit, u->stamp, d, sizeof d) || write_files(d, u, 0)) { LOG("【红】iCloud 同步：%s 的%s那份写备份失败 errno=%d，本次不上传", unit, why, errno); rm_rf(d); return -1; }
     LOG("iCloud 同步：%s 的%s那份写进备份 %s", unit, why, d); bak_prune(bak, unit); return 0;
 }
 // ---- 状态文件：每行「单位\t摘要\t时刻\t已删」
@@ -323,10 +383,46 @@ static int base_missing(const char *statef) { char bp[1300]; struct stat st; bas
 static void base_put(const char *statef, const cs_unit *u) {   // 共享仓库同步成功那一刻的内容，下次分叉时当基准 | the content at the moment of a successful shared stash sync, used as the base at the next fork
     char bp[1300]; base_path(statef, bp, sizeof bp); cs_unit t = *u; t.tomb = 0;
     if (pack_write(bp, &t)) LOG("【红】iCloud 同步：共享仓库基准写不进 %s errno=%d", bp, errno); }
-// 收件箱新条目：<存档>/_cloudinbox/<时刻>-<序号>/mine.pack（+ base.pack：摘要等于 base_hash 时才带；base_hash = 0 不带）。返回 0 = 收好了
-// New inbox entry: <save>/_cloudinbox/<timestamp>-<seq>/mine.pack (+ base.pack: included only when its digest equals base_hash; not included when base_hash = 0). Returns 0 = stored
+// ---- Inbox entry identity (F-SAVE-3): the content digest of an entry's mine.pack (paths + contents, as unit_finish computes it; 0 = unreadable).
+// Retired entries (all their plans complete, removed by the merge) leave their digest in the ledger _cloudinbox/.done, newest DONE_KEEP kept
+enum { DONE_KEEP = 64 };
+static uint64_t pack_hash(const char *p) { cs_unit *u = calloc(1, sizeof *u); uint64_t h = u && pack_read(p, u) == 1 && !u->tomb ? u->hash : 0; if (u) { unit_free(u); free(u); } return h; }
+static int done_has(const char *ib, uint64_t h) {
+    char p[1400], ln[64]; snprintf(p, sizeof p, "%s/.done", ib); FILE *f = fopen(p, "r"); int k = 0;
+    while (f && !k && fgets(ln, sizeof ln, f)) k = strtoull(ln, NULL, 16) == h; if (f) fclose(f); return k; }
+// Where content h already sits: 1 = an entry (its folder name into hit), 2 = the retired ledger, 0 = nowhere
+static int inbox_find(const char *ib, uint64_t h, char *hit, size_t hn) {
+    DIR *dp = opendir(ib); struct dirent *e; int k = 0;
+    while (dp && !k && (e = readdir(dp))) { if (e->d_name[0] == '.') continue; char p[1600]; snprintf(p, sizeof p, "%s/%s/mine.pack", ib, e->d_name);
+        if (pack_hash(p) == h) { k = 1; if (hit) strlcpy(hit, e->d_name, hn); } }
+    if (dp) closedir(dp); if (!k && done_has(ib, h)) k = 2; return k; }
+// At launch, when the shared stash was not swapped for the cloud copy: an entry holding exactly the local copy is spurious (left by a swap that failed,
+// was killed, or was not redone after a kill) -- that copy is still the live stash, so merging it would hand its items and gold back a second time
+static void inbox_drop(const char *save, uint64_t h, const char *why) {
+    char ib[1300], nm[256]; snprintf(ib, sizeof ib, "%s/_cloudinbox", save);
+    while (h && inbox_find(ib, h, nm, sizeof nm) == 1) { char d[1600]; snprintf(d, sizeof d, "%s/%s", ib, nm);
+        if (rm_rf(d)) { LOG("【红】iCloud sync: inbox entry %s holds the live shared stash (%s) but cannot be removed errno=%d", nm, why, errno); break; }
+        LOG("iCloud sync: inbox entry %s held the shared stash exactly as it still is here (%s): removed, its items are in the live stash", nm, why); } }
+// The merge retires an entry whose plans are all complete (dm_cloudmerge.c, in its pre-commit hook, root = the work folder): the mine.pack digest
+// goes into the ledger so the same content is never stored again, then the entry folder is removed. 0 = retired (or already gone), -1 = kept
+int dm_cloud_inbox_retire(const char *root, const char *name) {
+    char ib[1300], d[1600], p[1700], t[1400]; snprintf(ib, sizeof ib, "%s/_cloudinbox", root); snprintf(d, sizeof d, "%s/%s", ib, name); snprintf(p, sizeof p, "%s/mine.pack", d);
+    struct stat st; if (name[0] == '.' || strchr(name, '/') || lstat(d, &st)) return 0;
+    uint64_t h = pack_hash(p);
+    if (h && !done_has(ib, h)) { uint64_t v[DONE_KEEP]; int n = 0; char ln[64]; snprintf(t, sizeof t, "%s/.done", ib); FILE *f = fopen(t, "r");
+        while (f && fgets(ln, sizeof ln, f)) { if (n == DONE_KEEP - 1) { memmove(v, v + 1, sizeof v[0] * (DONE_KEEP - 2)); n--; } v[n++] = strtoull(ln, NULL, 16); }
+        if (f) fclose(f); v[n++] = h; char tt[1500]; snprintf(tt, sizeof tt, "%s.tmp", t); f = fopen(tt, "w"); int ok = f != NULL;
+        for (int i = 0; ok && i < n; i++) ok = fprintf(f, "%016llx\n", (unsigned long long)v[i]) > 0;
+        if (f) ok = fclose(f) == 0 && ok; if (!ok || rename(tt, t)) { unlink(tt); LOG("【红】iCloud merge: the retired-entry ledger %s cannot be written errno=%d; entry %s kept", t, errno, name); return -1; } }
+    if (rm_rf(d)) { LOG("【红】iCloud merge: finished inbox entry %s cannot be removed errno=%d", d, errno); return -1; }
+    LOG("iCloud merge: inbox entry %s is finished for every stash in it: removed (content %016llx kept in the ledger)", name, (unsigned long long)h); return 0; }
+// New inbox entry: <save>/_cloudinbox/<timestamp>-<seq>/mine.pack (+ base.pack: included only when its digest equals base_hash; not included when base_hash = 0).
+// Returns 0 = stored, 1 = this content is already in the inbox or was already merged (nothing written), -1 = cannot write
 static int inbox_put(const char *save, const char *statef, const cs_unit *u, uint64_t base_hash, const char *why, const char *who) {
-    char ib[1300], d[1400], f[1500]; snprintf(ib, sizeof ib, "%s/_cloudinbox", save); mkdir(ib, 0755);
+    char ib[1300], d[1400], f[1500], hit[256] = ""; snprintf(ib, sizeof ib, "%s/_cloudinbox", save); mkdir(ib, 0755);
+    int was = inbox_find(ib, u->hash, hit, sizeof hit);
+    if (was) { LOG("iCloud sync: _stash %s: the same content is already %s%s, not stored again", why, was == 1 ? "in inbox entry " : "merged (retired-entry ledger)", was == 1 ? hit : "");
+        return 1; }
     int k = 0; do snprintf(d, sizeof d, "%s/%llu-%d", ib, (unsigned long long)u->stamp, k++); while (mkdir(d, 0755) && errno == EEXIST && k < 100);
     snprintf(f, sizeof f, "%s/mine.pack", d); cs_unit t = *u; t.tomb = 0;
     if (pack_write(f, &t)) { LOG("【红】iCloud 同步：共享仓库收件箱写不进 %s errno=%d", f, errno); rm_rf(d); return -1; }
@@ -336,13 +432,13 @@ static int inbox_put(const char *save, const char *statef, const cs_unit *u, uin
     LOG("iCloud 同步：_stash %s，%s那份收进待合并收件箱 %s（%d 个文件，%s）", why, who, d, u->n, nb ? "带上次同步的基准" : "没有基准：两份当独立来历");
     __atomic_store_n((int *)&g_conflict, 1, __ATOMIC_SEQ_CST); return 0;
 }
-// iCloud 冲突版本（cloud_ios.m）：把一份共享仓库包收进收件箱，基准用本机上次同步的那份。返回 0 = 收好了（或没东西不用收），-1 = 坏包 / 写不进
-// iCloud conflict version (cloud_ios.m): store one shared stash pack in the inbox, with the copy from this device's last sync as the base. Returns 0 = stored (or nothing worth storing), -1 = bad pack / cannot write
+// iCloud conflict version (cloud_ios.m): store one shared stash pack in the inbox, with the copy from this device's last sync as the base. Returns 0 = stored
+// (or nothing worth storing, or the same content is already in the inbox / already merged: cloud_ios.m then marks the version resolved), -1 = bad pack / cannot write
 int dm_cloud_inbox_add(const char *save, const char *statef, const char *pack) {
     cs_unit *u = calloc(1, sizeof *u); if (!u) return -1; int r = pack_read(pack, u), ret = -1;
     if (r == 1 && !pack_bound("_stash", u)) { LOG("【红】iCloud 同步：冲突版本 %s 里有不属于共享仓库的路径，不收", pack); r = -1; }
     if (r == 1 && !u->tomb) { if (!stash_has_stuff(u)) ret = 0; else { char bp[1300]; base_path(statef, bp, sizeof bp); cs_unit *B = calloc(1, sizeof *B); uint64_t bh = B && pack_read(bp, B) == 1 ? B->hash : 0; if (B) { unit_free(B); free(B); }
-        ret = inbox_put(save, statef, u, bh, "iCloud 冲突版本", "冲突版本"); } }
+        ret = inbox_put(save, statef, u, bh, "iCloud 冲突版本", "冲突版本") < 0 ? -1 : 0; } }
     else if (r == 1) ret = 0; else LOG("【红】iCloud 同步：冲突版本 %s 读不了", pack);
     unit_free(u); free(u); return ret;
 }
@@ -357,17 +453,32 @@ void dm_cloud_char_conflict_note(const char *unit) { char_conf_add(unit); }
 
 // 返回本次动作数（上传 + 下载 + 删除），-1 = 参数错。ready(单位) 返回 0 = 云端那份还没下载好（iCloud 占位），这一单位本次跳过。now_ms = 写删除标记用的时刻
 // Returns the number of actions this time (uploads + downloads + deletions), -1 = bad arguments. ready(unit) returning 0 = the cloud copy has not finished downloading yet (iCloud placeholder), and this unit is skipped this time. now_ms = the timestamp used when writing a deletion marker
+// Units this process saw present locally, per device (state file; the tests run several devices in one process): a launch sync starts the device's
+// set afresh from what its save holds then (and what it downloads), every later sync adds what its commit snapshot holds. Only a unit in it can get a
+// deletion marker (F-SAVE-7). A full set only means fewer deletion markers (those wait), never a wrong one
+typedef struct { uint64_t dev; char unit[64]; } cs_seen;
+static cs_seen g_seen[512]; static int g_nseen;
+static int seen_has(uint64_t dev, const char *u) { for (int i = 0; i < g_nseen; i++) if (g_seen[i].dev == dev && !strcmp(g_seen[i].unit, u)) return 1; return 0; }
+static void seen_add(uint64_t dev, const char *u) { if (!seen_has(dev, u) && g_nseen < 512) { g_seen[g_nseen].dev = dev; strlcpy(g_seen[g_nseen++].unit, u, sizeof g_seen->unit); } }
+static void seen_reset(uint64_t dev) { int k = 0; for (int i = 0; i < g_nseen; i++) if (g_seen[i].dev != dev) g_seen[k++] = g_seen[i]; g_nseen = k; }
+
 int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const char *statef, int allow_down, uint64_t now_ms, int (*ready)(const char *unit)) {
     if (!save || !cloud || !bak || !statef) return -1;
     static char names[256][64]; int nn = 0; static cs_state st[256]; int ns = state_load(statef, st, 256), acts = 0;
-    DIR *dp = opendir(save); struct dirent *e; while (dp && (e = readdir(dp))) { if (is_char_dir(save, e->d_name)) add_name(names, &nn, e->d_name); else if (is_stash(e->d_name)) add_name(names, &nn, "_stash"); } if (dp) closedir(dp);
+    uint64_t dev = fnv(0xcbf29ce484222325ull, statef, strlen(statef)); if (allow_down) seen_reset(dev);
+    DIR *dp = opendir(save); struct dirent *e; while (dp && (e = readdir(dp))) { if (is_char_dir(save, e->d_name)) { add_name(names, &nn, e->d_name); seen_add(dev, e->d_name); }
+        else if (is_stash(e->d_name)) { add_name(names, &nn, "_stash"); seen_add(dev, "_stash"); }
+        else if (!strncmp(e->d_name, ".dm-case-", 9)) case_alias_note(save, e->d_name); } if (dp) closedir(dp);
     dp = opendir(cloud); while (dp && (e = readdir(dp))) { size_t l = strlen(e->d_name); if (e->d_name[0] != '.' && l > 5 && !strcmp(e->d_name + l - 5, ".pack")) { char nm[64]; if (l - 5 < sizeof nm) { memcpy(nm, e->d_name, l - 5); nm[l - 5] = 0; if (unit_name_ok(nm)) add_name(names, &nn, nm); else LOG("iCloud 同步：云端的 %s 不是同步单位（名字以 . / _ 开头），不理", e->d_name); } } } if (dp) closedir(dp);
     for (int i = 0; i < ns; i++) add_name(names, &nn, st[i].unit);
     for (int k = 0; k < nn; k++) {
-        const char *un = names[k]; if (ready && !ready(un)) { LOG("iCloud 同步：%s 云端那份还没下载好，本次跳过", un); continue; }
+        const char *un = names[k]; int stash = !strcmp(un, "_stash");
+        if (ready && !ready(un)) { LOG("iCloud 同步：%s 云端那份还没下载好，本次跳过", un);
+            if (allow_down && stash) { cs_unit *L0 = calloc(1, sizeof *L0); if (L0 && local_read(save, un, L0) == 1) inbox_drop(save, L0->hash, "its cloud pack was not ready"); if (L0) { unit_free(L0); free(L0); } }
+            continue; }
         char cp[1300]; snprintf(cp, sizeof cp, "%s/%s.pack", cloud, un);
-        cs_unit *L = calloc(1, sizeof *L), *C = calloc(1, sizeof *C); int hl = local_read(save, un, L), hc = pack_read(cp, C);
-        if (hc == 1 && !pack_bound(un, C)) { LOG("【红】iCloud 同步：云端 %s.pack 里有不属于这个单位的路径（如 %s），当坏包", un, C->n ? C->f[0].path : "?"); hc = -1; }   // 见 pack_bound | see pack_bound
+        cs_unit *L = calloc(1, sizeof *L), *C = calloc(1, sizeof *C); int hl = local_read(save, un, L), hc = pack_read(cp, C), swapped = 0; uint64_t lh0 = hl == 1 ? L->hash : 0;
+        if (hc == 1 && !pack_bound(un, C)) { LOG("【红】iCloud 同步：云端 %s.pack 里有不属于这个单位的路径（如 %s），当坏包", un, C->n ? C->f[0].path : "?"); hc = -1; }   // see pack_bound
         cs_state *S = state_get(st, &ns, 256, un, 0);
         if (hl < 0 || hc < 0) { LOG("【红】iCloud 同步：%s %s读不了，本次跳过", un, hl < 0 ? "本地" : "云端包"); goto next; }
         int lchg = hl ? (!S || S->tomb || L->hash != S->hash) : (S && !S->tomb);   // 本地自上次同步后改过（没有了也算改：被删了） | changed locally since the last sync (being gone also counts as a change: it was deleted)
@@ -375,30 +486,37 @@ int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const ch
         cs_state *W = NULL; enum { NONE, UP, DOWN, DEL_LOCAL, TOMB } act = NONE;
         if (hl && hc && !C->tomb && L->hash == C->hash) act = NONE;                  // 内容一样：只记状态 | same contents: only record the state
         else if (!S && hl && hc && !C->tomb) { if (!allow_down) goto next; act = DOWN; }   // 首次同步、两边不同：以云端为准（运行中先不动、状态不记，等下次启动下载） | first sync, the two sides differ: the cloud is authoritative (while running, leave it alone and record no state, and download at the next launch)
+        // First sync and the cloud only holds a deletion marker under this name: the local unit was never synced from this device, so it is not the one
+        // deleted elsewhere but a different character that happens to share the name -- upload it, as when the cloud has nothing. Before, it fell through to
+        // "later write wins" and a newer marker moved it to the backup without a word (F-SAVE-10). Nothing of the player's is replaced, so no notice either
+        else if (!S && hl && hc && C->tomb) { act = UP; LOG("iCloud sync: %s exists here but the cloud only has a deletion marker for that name (this device never synced it): uploading it as a different character", un); }
         else if (hl && !hc) act = UP;
-        else if (!hl && hc) { if (C->tomb) act = NONE; else if (lchg && !cchg && !allow_down) act = TOMB; else act = DOWN; }
-        // 本地没了：只有游戏运行中（存档提交后，allow_down = 0）发现的才算玩家删的（游戏删角色一定经过一次提交）→ 记删除标记；
-        // 启动时发现本地缺了（存档目录被清空 / 换掉等游戏以外的原因）一律当本地丢了、从云端拿回来——不然一次误清空会把删除传到所有设备（Mac 上实测撞到）
-        // Missing locally: only when found while the game is running (after a save commit, allow_down = 0) does it count as deleted by the player (a character deletion in the game always goes through a commit) → record a deletion marker;
+        else if (!hl && hc) { if (C->tomb) act = NONE; else if (lchg && !cchg && !allow_down) {
+                if (!seen_has(dev, un)) { LOG("iCloud sync: %s is missing here but this run never saw it present (missing already at launch, its pack not ready then): lost locally, not deleted -- no deletion marker, restored at a later launch", un); goto next; }
+                act = TOMB; } else act = DOWN; }
+        // Missing locally: only when found while the game is running (after a save commit, allow_down = 0), for a unit this run saw present, does it count as
+        // deleted by the player (a character deletion in the game always goes through a commit) -> record a deletion marker;
         // when found missing locally at launch (the save directory was emptied / replaced, or other causes outside the game), always treat it as lost locally and fetch it back from the cloud -- otherwise one accidental wipe would propagate the deletion to all devices (hit in measurement on a Mac)
         else if (!hl && !hc) { if (lchg && S) act = NONE; }
         else if (!lchg && cchg) act = C->tomb ? DEL_LOCAL : DOWN;
         else if (lchg && !cchg) act = UP;
         else act = C->stamp > L->stamp ? (C->tomb ? DEL_LOCAL : DOWN) : UP;            // 两边都改了（或从没同步过且内容不同）：后写的赢 | both sides changed (or never synced and the contents differ): the later write wins
         if ((act == DOWN || act == DEL_LOCAL) && !allow_down) { act = NONE; goto next; }   // 运行中不改本地：等下次启动，状态不动 | do not change local data while running: wait for the next launch, state untouched
-        if (!strcmp(un, "_stash") && hl && hc && !C->tomb && L->hash != C->hash) { char why[400] = "";   // 共享仓库分叉（见文件头）：云端为现行版，本机那份有东西就进收件箱 | shared stash fork (see the file header): the cloud is the current version; the local copy goes into the inbox if it has anything
-            int fork = 0;
+        if (stash && hl && hc && !C->tomb && L->hash != C->hash) { char why[400] = "";   // 共享仓库分叉（见文件头）：云端为现行版，本机那份有东西就进收件箱 | shared stash fork (see the file header): the cloud is the current version; the local copy goes into the inbox if it has anything
+            // Only one side changed since the last sync (the other is exactly what was synced): the empty-new-save rule is off, see stash_shrinks (F-SAVE-4)
+            int fork = 0, fresh = !(S && !S->tomb && (act == UP ? !cchg && C->hash == S->hash : !lchg && L->hash == S->hash));
             if (!S) { snprintf(why, sizeof why, "首次同步两边不同"); fork = 1; }
-            else if (act == DOWN) fork = stash_shrinks(C, L, why, sizeof why) != NULL;
-            else if (act == UP) fork = stash_shrinks(L, C, why, sizeof why) != NULL;
+            else if (act == DOWN) fork = stash_shrinks(C, L, why, sizeof why, fresh) != NULL;
+            else if (act == UP) fork = stash_shrinks(L, C, why, sizeof why, fresh) != NULL;
             if (fork) {
                 if (!allow_down) { LOG("iCloud 同步：_stash 分叉（%s），运行中不动，等下次启动收进收件箱", why); goto next; }
-                if (stash_has_stuff(L) && inbox_put(save, statef, L, S ? S->hash : 0, why, "本机")) goto next;   // 收不进收件箱：这次不动 | cannot store it in the inbox: leave everything this time
+                if (stash_has_stuff(L) && inbox_put(save, statef, L, S ? S->hash : 0, why, "本机") < 0) goto next;   // cannot store it in the inbox: leave everything this time
                 act = DOWN; } }
         if (act == UP) {
             if (hc && !C->tomb && C->hash != L->hash && cchg && backup_copy(bak, un, C, "云端（被本机后写覆盖）")) goto next;
-            if (!strcmp(un, "_stash") && allow_down && hc && !C->tomb && C->hash != L->hash && chron_union_unit(L, C, "云端那份") > 0) {   // 编年史并集：启动时（游戏还没读档）先写回本地再上传；运行中不动本地 | Chronicle union: at startup (game has not loaded saves yet) write back locally first, then upload; at runtime leave local untouched
-                uint64_t st0 = L->stamp; if (write_files(save, L)) { LOG("【红】iCloud 同步：%s 并好的编年史写不回本地 errno=%d，本次不上传", un, errno); goto next; } unit_finish(L); L->stamp = st0; }
+            uint8_t chg[MAXF];   // Chronicle union: at launch (the game has not read the saves yet) write the changed files back first, then upload; while running leave local untouched
+            if (stash && allow_down && hc && !C->tomb && C->hash != L->hash && chron_union_unit(L, C, "云端那份", chg) > 0) {
+                uint64_t st0 = L->stamp; if (replace_files(save, L, chg)) { LOG("【红】iCloud 同步：%s 并好的编年史写不回本地 errno=%d，本次不上传", un, errno); goto next; } unit_finish(L); L->stamp = st0; }
             L->tomb = 0; if (pack_write(cp, L)) { LOG("【红】iCloud 同步：%s 上传失败 errno=%d", un, errno); goto next; }
             LOG("iCloud 同步：%s 上传（时刻 %llu，%d 个文件）", un, (unsigned long long)L->stamp, L->n); acts++;
             W = state_get(st, &ns, 256, un, 1); if (W) { W->hash = L->hash; W->stamp = L->stamp; W->tomb = 0; }
@@ -406,9 +524,9 @@ int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const ch
         } else if (act == DOWN) {
             uint64_t ch = C->hash; cs_unit *O = NULL;   // O = 云端原样（并编年史之前），基准要记它（下次分叉判「云端是不是基准的后代」用） | O = the cloud as is (before Chronicle merge); the baseline must record it (used on the next fork to decide "is the cloud a descendant of the baseline")
             if (!strcmp(un, "_stash") && hl && L->hash != C->hash && (O = malloc(sizeof *O))) { *O = *C; for (int i = 0; i < O->n; i++) { O->f[i].data = malloc(C->f[i].size + 1); memcpy(O->f[i].data, C->f[i].data, C->f[i].size); }
-                if (chron_union_unit(C, L, "本机那份") > 0) { uint64_t st0 = C->stamp; unit_finish(C); C->stamp = st0; } }   // 编年史并集：本机那份找到过的条目并进要换进来的云端那份 | Chronicle union: entries found in the local copy are merged into the cloud copy being swapped in
+                if (chron_union_unit(C, L, "本机那份", NULL) > 0) { uint64_t st0 = C->stamp; unit_finish(C); C->stamp = st0; } }   // 编年史并集：本机那份找到过的条目并进要换进来的云端那份 | Chronicle union: entries found in the local copy are merged into the cloud copy being swapped in
             if (local_apply(save, bak, un, hl ? L : NULL, C)) { if (O) { unit_free(O); free(O); } LOG("【红】iCloud 同步：%s 下载后换进本地失败 errno=%d（本地不变）", un, errno); goto next; }
-            LOG("iCloud 同步：%s 下载（时刻 %llu，%d 个文件）", un, (unsigned long long)C->stamp, C->n); acts++;
+            LOG("iCloud 同步：%s 下载（时刻 %llu，%d 个文件）", un, (unsigned long long)C->stamp, C->n); acts++; swapped = 1; seen_add(dev, un);
             if (!S && hl && strcmp(un, "_stash")) { char_conf_add(un); LOG("iCloud 同步：%s 两台设备各有一份同名角色，用云端那份，本机那份已进备份；进局提示", un); }
             W = state_get(st, &ns, 256, un, 1); if (W) { W->hash = ch; W->stamp = C->stamp; W->tomb = 0; }   // 记云端原样的摘要：并过编年史的本地 ≠ 它 → 下次同步当本地改过、传上去 | Record the digest of the cloud as is: a local copy with the Chronicle merged ≠ it → on next sync it is treated as locally modified and uploaded
             if (!strcmp(un, "_stash")) base_put(statef, O ? O : C);
@@ -424,6 +542,9 @@ int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const ch
         } else if (hc) { W = state_get(st, &ns, 256, un, 1); if (W) { W->hash = C->tomb ? 0 : C->hash; W->stamp = C->stamp; W->tomb = C->tomb; }   // 一致：记成已同步 | identical: record as synced
             if (!strcmp(un, "_stash") && !C->tomb && (!S || S->hash != C->hash || base_missing(statef))) base_put(statef, C); }
     next:
+        // At launch, unless the shared stash was just swapped for the cloud copy, the local copy as read above is still the live stash: an inbox entry
+        // holding exactly it (left by a swap that failed, or by a kill before this sync could redo it) would hand its items back a second time (F-SAVE-3)
+        if (allow_down && stash && !swapped && lh0) inbox_drop(save, lh0, hl == 1 && hc >= 0 ? "it was not swapped for the cloud copy" : "this sync could not read it all");
         unit_free(L); unit_free(C); free(L); free(C);
     }
     state_save(statef, st, ns);

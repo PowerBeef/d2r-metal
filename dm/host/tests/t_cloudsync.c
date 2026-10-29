@@ -2,14 +2,19 @@
 // iCloud sync core unit test (takes seconds): dm_cloudsync.c. Two local directories act as two devices and one local directory as the cloud; all expectations are derived by hand from "later write overwrites earlier write", not obtained by running the implementation under test.
 #include <dirent.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <unistd.h>
+int dm_cloud_char_file(const char *root, const char *guest, char *out, size_t n);
+int dm_cloud_inbox_retire(const char *root, const char *name);
 int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const char *statef, int allow_down, uint64_t now_ms, int (*ready)(const char *unit));
 int dm_cloud_conflict_take(void);
 int dm_cloud_char_conflict_take(char *out, size_t n);
@@ -44,6 +49,12 @@ static void put_d2i(const char *dev, int items, int chron, long sec) {
     memcpy(b + 68, "\x55\xaa\x55\xaa", 4); memcpy(b + 68 + 16, &l2, 4); b[68 + 64] = 0xc0;
     put_bin(dev, "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", b, 68 + l2, sec);
 }
+static void put_d2i_salt(const char *dev, int items, int chron, long sec, uint8_t salt) {   // as put_d2i, one byte inside the chronicle segment changed: same structure, other content
+    static uint8_t b[8192]; memset(b, 0, sizeof b); uint32_t l1 = 68, l2 = (uint32_t)chron;
+    memcpy(b, "\x55\xaa\x55\xaa", 4); memcpy(b + 16, &l1, 4); memcpy(b + 64, "JM", 2); b[66] = (uint8_t)items;
+    memcpy(b + 68, "\x55\xaa\x55\xaa", 4); memcpy(b + 68 + 16, &l2, 4); b[68 + 64] = 0xc0; b[68 + 100] = salt;
+    put_bin(dev, "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", b, 68 + l2, sec);
+}
 static int inbox_n(const char *dev) { char d[1024]; path(d, dev, "save/_cloudinbox"); DIR *dp = opendir(d); struct dirent *e; int n = 0; while (dp && (e = readdir(dp))) n += e->d_name[0] != '.'; if (dp) closedir(dp); return n; }
 static int inbox_has(const char *dev, const char *f) {   // 收件箱里有没有哪个条目带这个文件 | whether any inbox entry carries this file
     char d[1024]; path(d, dev, "save/_cloudinbox"); DIR *dp = opendir(d); struct dirent *e; int k = 0; struct stat st;
@@ -76,8 +87,23 @@ static const char *chron_str(const char *dev) {
     o[0] = 0; for (int i = 0; i < a; i++) snprintf(o + strlen(o), sizeof o - strlen(o), "%s%u@%u", i ? " " : "", id[i], t[i]); return o;
 }
 
+// Log capture (dm.h LOG goes through this hook when set): the cases below that must say something in red check the captured lines
+extern void (*g_dm_log_hook)(const char *file, int line, const char *fmt, ...);
+static char g_log[65536];
+static void log_cap(const char *file, int line, const char *fmt, ...) {
+    (void)file; (void)line; char b[4096]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
+    fprintf(stderr, "%s\n", b); if (strlen(g_log) + strlen(b) + 2 < sizeof g_log) { strcat(g_log, b); strcat(g_log, "\n"); } }
+static int log_has(const char *a, const char *b) { for (const char *l = g_log; *l; ) { const char *e = strchr(l, '\n'); size_t n = e ? (size_t)(e - l) : strlen(l); char x[4096]; if (n >= sizeof x) n = sizeof x - 1; memcpy(x, l, n); x[n] = 0;
+        if (strstr(x, a) && (!b || strstr(x, b))) return 1; l += n + (e != NULL); } return 0; }
+static int pack_tomb(const char *p) { FILE *f = fopen(p, "rb"); uint8_t h[24]; size_t n = f ? fread(h, 1, 24, f) : 0; if (f) fclose(f); return n == 24 ? h[16] & 1 : -1; }   // -1 = no pack
+static int not_zed(const char *u) { return strcmp(u, "Zed"); }
+static int not_stash(const char *u) { return strcmp(u, "_stash"); }
+static long file_bytes(const char *dev, const char *rel, uint8_t *o, size_t cap) { char p[1024]; path(p, dev, rel); FILE *f = fopen(p, "rb"); if (!f) return -1; long n = (long)fread(o, 1, cap, f); fclose(f); return n; }
+static void cp_file(const char *a, const char *b) { FILE *fi = fopen(a, "rb"), *fo = fopen(b, "wb"); char buf[8192]; size_t k; while (fi && fo && (k = fread(buf, 1, sizeof buf, fi)) > 0) fwrite(buf, 1, k, fo); if (fi) fclose(fi); if (fo) fclose(fo); }
+
 int main(void) {
     snprintf(R, sizeof R, "%s/t_cloudsync.%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", getpid()); mkdir(R, 0755);
+    g_dm_log_hook = log_cap;
     char c[1024]; snprintf(c, sizeof c, "%s/cloud", R); mkdir(c, 0755);
     // ① A 有角色 Alice（时刻 1000 秒）、共享仓库、Settings；B 空 → A 上传，B 启动拿到 Alice 与共享仓库，Settings 不同步，修改时间照 A 的
     // (1) A has character Alice (timestamp 1000 seconds), the shared stash and Settings; B is empty -> A uploads, B gets Alice and the shared stash at startup, Settings is not synced, and modification times follow A's
@@ -190,15 +216,24 @@ int main(void) {
       CHECK(S3("G", 1) == 0 && inbox_n("G") == 1, "⑮ 再启动：一致、无动作、不再收（不是永久状态）");
       put_d2i("H", 0, 500, 8100);
       CHECK(S3("H", 0) == 1 && !dm_cloud_conflict_take(), "⑯ 正常玩法：共享仓库物品取空，编年史没变短——照常上传");
-      // ⑰ rf3 那个形状：云端专家仓库 2 件、编年史还是新建的 148；本机这份被换成游戏新建的空档（0 件、148），状态记录还在、云端没变 = 走「只本机改了」的上传
-      // (17) That rf3 shape: cloud hardcore stash has 2 items and the chronicle is still the freshly created 148; the local copy was replaced by the empty file the game freshly creates (0 items, 148), the state record is still there and the cloud is unchanged = takes the "only local changed" upload
+      // (17) F-SAVE-4: a stash whose chronicle never grew (148) and holds 2 items is emptied by the player (the items went to a character). With a sync
+      //      state and the cloud unchanged since, that is the newer state of the same stash and is uploaded like any other change. Before, it counted as
+      //      "an empty new save": never uploaded, and the next launch put the 2 items back while the character still held them (duplicated on one device).
+      //      Another device whose copy is unchanged since its last sync follows without a fork; the rule still holds when both sides changed
       { char cd[1024]; snprintf(cd, sizeof cd, "%s/cloud4", R); mkdir(cd, 0755);
         #define S4(dev, down) (path(s3, dev, "save"), path(b3, dev, "bak"), path(t3, dev, "state"), dm_cloud_sync(s3, cd, b3, t3, down, 0, NULL))
         put_d2i("J", 2, 148, 1000); CHECK(S4("J", 1) == 1, "⑰ 准备：J 上传 2 件、编年史 148 的仓库");
+        put("J2", "save/Settings/Settings.json", "{}", 1); CHECK(S4("J2", 1) == 1 && d2i_items("J2", D2I) == 2, "(17) prep: J2 gets the 2-item stash");
         put_d2i("J", 0, 148, 2000); dm_cloud_conflict_take();
-        CHECK(S4("J", 0) == 0 && !dm_cloud_conflict_take(), "⑰ 运行中要拿新建空档（0 件、148）盖 2 件的那份：分叉，运行中不动");
-        CHECK(S4("J", 1) == 1 && d2i_items("J", D2I) == 2 && inbox_n("J") == 0, "⑰ 启动：拿回云端 2 件；本机空档不进收件箱");
-        put_d2i("J", 0, 300, 3000); CHECK(S4("J", 0) == 1, "⑰ 编年史长过新建大小的仓库取空：照常上传");
+        CHECK(S4("J", 0) == 1 && !dm_cloud_conflict_take(), "(17) running: the stash J emptied (0 items, 148; only J changed) is uploaded");
+        CHECK(S4("J", 1) == 0 && d2i_items("J", D2I) == 0 && inbox_n("J") == 0, "(17) J launch: the 2 items do not come back (no duplicate of what the character holds)");
+        CHECK(S4("J2", 1) == 1 && d2i_items("J2", D2I) == 0 && inbox_n("J2") == 0 && !dm_cloud_conflict_take() && count_bak("J2", "_stash-") == 1,
+              "(17) J2 launch (only the cloud changed): takes the emptied stash without a fork or inbox entry; its 2-item copy is in its backup");
+        put_d2i("J2", 3, 148, 3000); CHECK(S4("J2", 0) == 1, "(17) prep: J2 puts 3 items in and uploads");
+        put_d2i_salt("J", 0, 148, 4000, 7);   // J's stash replaced by another empty new save (different bytes): both sides changed, J's is later
+        CHECK(S4("J", 0) == 0, "(17) both sides changed and J's later copy is an empty new save: still a fork, nothing uploaded while running");
+        CHECK(S4("J", 1) == 1 && d2i_items("J", D2I) == 3 && inbox_n("J") == 0, "(17) J launch: the cloud's 3 items are kept; the empty copy is not inboxed");
+        put_d2i("J", 0, 300, 5000); CHECK(S4("J", 0) == 1, "⑰ 编年史长过新建大小的仓库取空：照常上传");
         // ⑱ rf3 真形状：云端专家仓库是另一台的预置（stash_seed.h），本机还没有专家仓库档（启动同步跑在写预置之前）→ 不拦、不弹；本机写了预置后上传也不拦
         // (18) The real rf3 shape: the cloud hardcore stash is another device's preset (stash_seed.h), and the local device has no hardcore stash file yet (startup sync runs before the preset is written) -> not blocked, no prompt; uploading after the local device writes the preset is not blocked either
 #ifdef T_HAVE_STASH_SEED
@@ -274,7 +309,13 @@ int main(void) {
       // iCloud 冲突版本：A 那台读出被换下的旧版本（a_old.pack，10 件）收进收件箱；只有预置 / 空档的版本不收
       // iCloud conflict version: device A reads out the replaced old version (a_old.pack, 10 items) and stores it in the inbox; a version with only the preset / an empty save is not stored
       { char ts7[1100]; path(s7, "A7", "save"); path(ts7, "A7", "state");
-        CHECK(dm_cloud_inbox_add(s7, ts7, keep) == 0 && inbox_n("A7") == 2 && dm_cloud_conflict_take() == 1, "㉑③ 冲突版本（10 件）收进收件箱");
+        // a_old.pack is A's own last upload: exactly the local copy A just put in the inbox. Storing it again would return the same 10 items twice (F-SAVE-3)
+        CHECK(dm_cloud_inbox_add(s7, ts7, keep) == 0 && inbox_n("A7") == 1 && !dm_cloud_conflict_take(), "(21-3) the conflict version (10 items) is the local copy already in the inbox: not stored twice");
+        put_d2i("C7", 7, 650, 1500); { char c7s[1100], c7b[1100], c7t[1100], c7c[1300], pk[1400]; path(c7s, "C7", "save"); path(c7b, "C7", "bak"); path(c7t, "C7", "state"); snprintf(c7c, sizeof c7c, "%s/cloud7c", R); mkdir(c7c, 0755);
+          dm_cloud_sync(c7s, c7c, c7b, c7t, 1, 0, NULL); snprintf(pk, sizeof pk, "%s/_stash.pack", c7c);
+          CHECK(dm_cloud_inbox_add(s7, ts7, pk) == 0 && inbox_n("A7") == 2 && dm_cloud_conflict_take() == 1, "(21-3) a conflict version with other content (7 items) is stored in the inbox");
+          // the same conflict version offered again (a launch that could not mark it resolved): no second entry, no second notice
+          CHECK(dm_cloud_inbox_add(s7, ts7, pk) == 0 && inbox_n("A7") == 2 && !dm_cloud_conflict_take(), "(21-3) the same conflict version again: not stored a second time"); }
         put_d2i("E7", 0, 148, 100); { char e7[1100], ee[1100], et[1100], pk[1300]; path(e7, "E7", "save"); path(ee, "E7", "bak"); path(et, "E7", "state"); char ce[1300]; snprintf(ce, sizeof ce, "%s/cloud7e", R); mkdir(ce, 0755);
           dm_cloud_sync(e7, ce, ee, et, 1, 0, NULL); snprintf(pk, sizeof pk, "%s/_stash.pack", ce);
           CHECK(dm_cloud_inbox_add(s7, ts7, pk) == 0 && inbox_n("A7") == 2, "㉑③ 空档的冲突版本：没东西，不收"); }
@@ -348,6 +389,106 @@ int main(void) {
       char sv[1024], st9[1024]; path(sv, "V9", "save"); path(st9, "V9", "state"); snprintf(p, sizeof p, "%s/_stash.pack", c9);
       CHECK(dm_cloud_inbox_add(sv, st9, p) == -1 && inbox_n("V9") == 0, "㉔ 带着角色档的「共享仓库」冲突版本不收进收件箱");
       #undef S9
+    }
+    #define D2IX "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i"
+    // (25) F-SAVE-3: inbox entries are idempotent (each merge returns what its copy holds, so a second entry with the same content returns it twice).
+    //      Cloud: P's 10 items (chronicle 600); new device N (3 items, 300) forks at launch.
+    //      a) the swap fails (save root not writable): the entry made for it is removed, the local copy stays the live stash. Before, it stayed, and
+    //         each later launch forked again and added another entry;
+    //      b) a kill between storing the entry and the swap leaves it behind: the next launch finds the same content and does not store it again;
+    //      c) a kill, then a launch where the stash pack is not ready: the leftover entry holding the live stash is removed;
+    //      d) an entry the merge retired goes into the ledger: the same content is never stored again
+    { char c25[1024], s25[1024], b25[1024], t25[1024], ib[1100], k25[1024], kp[1100], dst[1300]; snprintf(c25, sizeof c25, "%s/cloud25", R); mkdir(c25, 0755); snprintf(k25, sizeof k25, "%s/cloud25k", R); mkdir(k25, 0755);
+      #define S25(dev, cl, down, rdy) (path(s25, dev, "save"), path(b25, dev, "bak"), path(t25, dev, "state"), dm_cloud_sync(s25, cl, b25, t25, down, 0, rdy))
+      put_d2i("P25", 10, 600, 1000); CHECK(S25("P25", c25, 1, NULL) == 1, "(25) prep: P uploads 10 items");
+      put_d2i("N25", 3, 300, 5000); dm_cloud_conflict_take();
+      path(ib, "N25", "save/_cloudinbox"); mkdir(ib, 0755); path(s25, "N25", "save"); chmod(s25, 0555);   // the inbox folder stays writable, the save root does not: the swap's .cloudin cannot be made
+      int r25 = S25("N25", c25, 1, NULL); path(s25, "N25", "save"); chmod(s25, 0755);
+      CHECK(r25 == 0 && d2i_items("N25", D2IX) == 3 && inbox_n("N25") == 0, "(25a) the swap failed: local still 3 items, no inbox entry left (actions %d, entries %d)", r25, inbox_n("N25"));
+      CHECK(S25("N25", c25, 1, NULL) == 1 && d2i_items("N25", D2IX) == 10 && inbox_n("N25") == 1 && dm_cloud_conflict_take() == 1, "(25a) next launch: swapped, exactly one entry (%d)", inbox_n("N25"));
+      CHECK(S25("N25", c25, 1, NULL) == 0 && inbox_n("N25") == 1, "(25a) and no more after that");
+      // the pack of a 4-item / 350 stash, as a launch killed after storing it would have left it in the inbox
+      put_d2i("K25", 4, 350, 5000); S25("K25", k25, 1, NULL); snprintf(kp, sizeof kp, "%s/_stash.pack", k25);
+      put_d2i("N25b", 4, 350, 5000); path(dst, "N25b", "save/_cloudinbox/5000000-0"); { char d0[1100]; path(d0, "N25b", "save/_cloudinbox"); mkdir(d0, 0755); } mkdir(dst, 0755); strcat(dst, "/mine.pack"); cp_file(kp, dst);
+      CHECK(S25("N25b", c25, 1, NULL) == 1 && d2i_items("N25b", D2IX) == 10 && inbox_n("N25b") == 1, "(25b) relaunch after a kill: swapped, the leftover entry is the only one (%d)", inbox_n("N25b"));
+      put_d2i("N25c", 4, 350, 5000); path(dst, "N25c", "save/_cloudinbox/5000000-0"); { char d0[1100]; path(d0, "N25c", "save/_cloudinbox"); mkdir(d0, 0755); } mkdir(dst, 0755); strcat(dst, "/mine.pack"); cp_file(kp, dst);
+      CHECK(S25("N25c", c25, 1, not_stash) == 0 && d2i_items("N25c", D2IX) == 4 && inbox_n("N25c") == 0, "(25c) relaunch after a kill, stash pack not ready: the entry holding the live stash is removed (%d)", inbox_n("N25c"));
+      { DIR *dp = opendir(ib); struct dirent *e; char nm[256] = ""; while (dp && (e = readdir(dp))) if (e->d_name[0] != '.') strlcpy(nm, e->d_name, sizeof nm); if (dp) closedir(dp);
+        path(s25, "N25", "save"); path(t25, "N25", "state");
+        CHECK(nm[0] && dm_cloud_inbox_retire(s25, nm) == 0 && inbox_n("N25") == 0 && get("N25", "save/_cloudinbox/.done"), "(25d) the merge retires the finished entry %s: removed, its content in the ledger", nm);
+        put_d2i("K25d", 3, 300, 5000); char k25d[1024]; snprintf(k25d, sizeof k25d, "%s/cloud25d", R); mkdir(k25d, 0755); S25("K25d", k25d, 1, NULL); snprintf(kp, sizeof kp, "%s/_stash.pack", k25d);
+        path(s25, "N25", "save"); path(t25, "N25", "state");
+        CHECK(dm_cloud_inbox_add(s25, t25, kp) == 0 && inbox_n("N25") == 0, "(25d) the same content offered again (a conflict version): not stored, it was merged already"); }
+      #undef S25
+    }
+    // (26) F-SAVE-5: the launch-time chronicle union (both sides changed, local later: upload) writes the merged stash to a temp folder and renames it
+    //      over the live file, only for the files that changed. A file-size limit makes that write fail half way, as a full disk does: the live file
+    //      must stay whole (before: rewritten in place with "wb", left truncated) and nothing is uploaded
+    { char c26[1024], s26[1024], b26[1024], t26[1024], pv[1024]; snprintf(c26, sizeof c26, "%s/cloud26", R); mkdir(c26, 0755);
+      #define S26(dev, down) (path(s26, dev, "save"), path(b26, dev, "bak"), path(t26, dev, "state"), dm_cloud_sync(s26, c26, b26, t26, down, 0, NULL))
+      uint32_t i2[] = { 1, 2 }, t2[] = { 100, 200 }, i5[] = { 1, 2, 5 }, t5[] = { 100, 200, 500 }, i4[] = { 1, 2, 4 }, t4[] = { 100, 200, 400 };
+      put_chron("A26", 2, 2, i2, t2, 1000); put("A26", "save/ModernSharedStashSoftCoreV2.swvault", "side", 1000);
+      put("N26", "save/Settings/Settings.json", "{}", 1); CHECK(S26("A26", 1) == 1 && S26("N26", 1) == 1, "(26) prep: A uploads, N gets it");
+      put_chron("N26", 2, 3, i5, t5, 6000); CHECK(S26("N26", 0) == 1, "(26) prep: N adds 5 and uploads");
+      put_chron("A26", 2, 3, i4, t4, 7000);
+      uint8_t before[8192], after[8192]; long nb = file_bytes("A26", D2IX, before, sizeof before); struct stat sv0, sv1; path(pv, "A26", "save/ModernSharedStashSoftCoreV2.swvault"); stat(pv, &sv0);
+      pid_t pid = fork();   // the cloud copy's backup (246 bytes) fits under the limit, the merged stash (256 bytes) does not
+      if (!pid) { signal(SIGXFSZ, SIG_IGN); struct rlimit rl = { 250, 250 }; setrlimit(RLIMIT_FSIZE, &rl); _exit(S26("A26", 1) == 0 ? 0 : 3); }
+      int st = 0; waitpid(pid, &st, 0); long na = file_bytes("A26", D2IX, after, sizeof after);
+      CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0 && nb > 0 && na == nb && !memcmp(before, after, (size_t)nb), "(26) the merged stash could not be written: nothing uploaded, the live file whole (%ld of %ld bytes, exit %d)", na, nb, WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+      CHECK(S26("A26", 1) == 1 && !strcmp(chron_str("A26"), "1@100 2@200 4@400 5@500"), "(26) without the limit: merged and uploaded, %s", chron_str("A26"));
+      stat(pv, &sv1); CHECK(sv1.st_ino == sv0.st_ino && sv1.st_ctimespec.tv_sec == sv0.st_ctimespec.tv_sec && sv1.st_ctimespec.tv_nsec == sv0.st_ctimespec.tv_nsec, "(26) the side file the union did not change was not rewritten");
+      #undef S26
+    }
+    // (27) F-SAVE-7: Zed is synced; its folder is gone before a launch whose Zed pack is not ready (skipped). The first sync after a commit must not write
+    //      a deletion marker: this run never saw Zed present, so it was lost locally, not deleted (before: marker written, the deletion spread to every
+    //      device). The next launch restores it. Control: deleted after this run saw it present -> marker as before
+    { char c27[1024], s27[1024], b27[1024], t27[1024], zp[1100]; snprintf(c27, sizeof c27, "%s/cloud27", R); mkdir(c27, 0755); snprintf(zp, sizeof zp, "%s/Zed.pack", c27);
+      #define S27(dev, down, now, rdy) (path(s27, dev, "save"), path(b27, dev, "bak"), path(t27, dev, "state"), dm_cloud_sync(s27, c27, b27, t27, down, now, rdy))
+      put("Z27", "save/Zed/Zed.d2s", "z1", 1000); CHECK(S27("Z27", 1, 0, NULL) == 1, "(27) prep: Zed uploaded");
+      { char p[1024]; path(p, "Z27", "save/Zed/Zed.d2s"); unlink(p); path(p, "Z27", "save/Zed"); rmdir(p); }
+      CHECK(S27("Z27", 1, 0, not_zed) == 0, "(27) launch: Zed missing here and its pack not ready: skipped");
+      int r27 = S27("Z27", 0, 5000000, NULL);
+      CHECK(r27 == 0 && pack_tomb(zp) == 0, "(27) first sync after a commit: no deletion marker (actions %d, marker %d)", r27, pack_tomb(zp));
+      CHECK(S27("Z27", 1, 0, NULL) == 1 && get("Z27", "save/Zed/Zed.d2s") && !strcmp(get("Z27", "save/Zed/Zed.d2s"), "z1"), "(27) next launch: Zed restored");
+      { char p[1024]; path(p, "Z27", "save/Zed/Zed.d2s"); unlink(p); path(p, "Z27", "save/Zed"); rmdir(p); }
+      CHECK(S27("Z27", 0, 6000000, NULL) == 1 && pack_tomb(zp) == 1, "(27) control: deleted after this run saw it present: deletion marker written");
+      #undef S27
+    }
+    // (28) F-SAVE-10: P deletes Foo (marker at 9000 s). New device Q (never synced) has its own Foo from 5000 s: the first sync uploads it as a different
+    //      character (before: "later write wins", the newer marker moved it to the backup without a word). No same-name notice: nothing was replaced
+    { char c28[1024], s28[1024], b28[1024], t28[1024], fp[1100], nm[256]; snprintf(c28, sizeof c28, "%s/cloud28", R); mkdir(c28, 0755); snprintf(fp, sizeof fp, "%s/Foo.pack", c28);
+      #define S28(dev, down, now) (path(s28, dev, "save"), path(b28, dev, "bak"), path(t28, dev, "state"), dm_cloud_sync(s28, c28, b28, t28, down, now, NULL))
+      put("P28", "save/Foo/Foo.d2s", "fooP", 1000); CHECK(S28("P28", 1, 0) == 1, "(28) prep: P uploads Foo");
+      { char p[1024]; path(p, "P28", "save/Foo/Foo.d2s"); unlink(p); path(p, "P28", "save/Foo"); rmdir(p); }
+      CHECK(S28("P28", 0, 9000000) == 1 && pack_tomb(fp) == 1, "(28) prep: P deletes Foo, marker at 9000 s");
+      dm_cloud_char_conflict_take(nm, sizeof nm);
+      put("Q28", "save/Foo/Foo.d2s", "fooQ", 5000);
+      CHECK(S28("Q28", 1, 0) == 1 && get("Q28", "save/Foo/Foo.d2s") && !strcmp(get("Q28", "save/Foo/Foo.d2s"), "fooQ") && count_bak("Q28", "Foo-") == 0 && pack_tomb(fp) == 0,
+            "(28) Q's first sync: its Foo kept and uploaded, nothing moved to its backup");
+      CHECK(!dm_cloud_char_conflict_take(nm, sizeof nm), "(28) no same-name notice");
+      CHECK(S28("P28", 1, 0) == 1 && get("P28", "save/Foo/Foo.d2s") && !strcmp(get("P28", "save/Foo/Foo.d2s"), "fooQ"), "(28) P gets Q's Foo at its next launch");
+      #undef S28
+    }
+    // (29) F-SAVE-16: a ".dm-case-N" alias (hle_fs.c: a character whose name differs from another's only in case) is not synced and every sync says so
+    //      in red (before: left out without a word); dm_cloud_char_file finds each character by its exact guest name. On a case-insensitive file system
+    //      a cloud unit "Alice" must not be taken for the local folder "alice" of another character (before: that folder went to the backup, replaced)
+    { char c29[1024], c29b[1024], s29[1024], b29[1024], t29[1024], cf[1100]; snprintf(c29, sizeof c29, "%s/cloud29", R); mkdir(c29, 0755); snprintf(c29b, sizeof c29b, "%s/cloud29b", R); mkdir(c29b, 0755);
+      #define S29(dev, cl) (path(s29, dev, "save"), path(b29, dev, "bak"), path(t29, dev, "state"), dm_cloud_sync(s29, cl, b29, t29, 1, 0, NULL))
+      put("K29", "save/alice/alice.d2s", "lower", 1000); put("K29", "save/.dm-case-1/Alice.d2s", "upper", 1000);
+      { char p[1024]; path(p, "K29", "save/.dm-case-1"); setxattr(p, "org.d2rmobile.guest-name", "Alice", 5, 0, XATTR_NOFOLLOW); }
+      g_log[0] = 0; int r29 = S29("K29", c29);
+      CHECK(r29 == 1 && log_has("【红】", "Alice"), "(29) the aliased Alice: not synced, said in red (actions %d)", r29);
+      path(s29, "K29", "save");
+      CHECK(dm_cloud_char_file(s29, "Alice", cf, sizeof cf) && strstr(cf, "/.dm-case-1/Alice.d2s") && dm_cloud_char_file(s29, "alice", cf, sizeof cf) && strstr(cf, "/alice/alice.d2s")
+            && !dm_cloud_char_file(s29, "ALICE", cf, sizeof cf), "(29) dm_cloud_char_file finds each character by its exact guest name");
+      { char up[1024]; struct stat x; path(up, "K29", "save/ALICE/ALICE.D2S");
+        if (!stat(up, &x)) { put("L29", "save/alice/alice.d2s", "mine", 1000); const char *r[] = { "Alice/Alice.d2s" }, *t[] = { "other" }; char p[1100]; snprintf(p, sizeof p, "%s/Alice.pack", c29b); pack_put(p, 5000000, 1, r, t);
+            S29("L29", c29b);
+            CHECK(get("L29", "save/alice/alice.d2s") && !strcmp(get("L29", "save/alice/alice.d2s"), "mine") && count_bak("L29", "alice-") == 0 && count_bak("L29", "Alice-") == 0,
+                  "(29) the cloud's Alice did not replace the local alice (%s)", get("L29", "save/alice/alice.d2s") ? get("L29", "save/alice/alice.d2s") : "gone"); }
+        else printf("skipping the case-insensitive half of (29): this file system is case-sensitive\n"); }
+      #undef S29
     }
     printf("t_cloudsync: %d 项，%d 失败\n", checks, fails);
     return fails != 0;

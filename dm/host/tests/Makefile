@@ -16,6 +16,7 @@ run: \
 	$(B)/t_altstack \
 	$(B)/t_audio \
 	$(B)/t_audio_spsc \
+	$(B)/t_cloudmerge \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
@@ -140,6 +141,7 @@ run: \
 	$(B)/t_unit_level
 	$(B)/t_widget
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_cloudmerge 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_scrub
 	TMPDIR="$(abspath $(B))" $(B)/t_video 2>/dev/null
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
@@ -179,6 +181,8 @@ $(B)/t_namegen: t_namegen.c ../dm_namegen.c | $(B)
 	clang -O1 -Wall -Werror -o $@ t_namegen.c ../dm_namegen.c
 $(B)/t_cloudsync: t_cloudsync.c ../dm_cloudsync.c ../dm.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_cloudsync.c ../dm_cloudsync.c
+$(B)/t_cloudmerge: t_cloudmerge.c ../dm_cloudmerge.c ../dm_cloudsync.c ../dm_savebits.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_cloudmerge.c ../dm_cloudsync.c ../dm_savebits.c
 $(B)/t_touch: t_touch.c ../hle_touch.c ../front.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_touch.c ../hle_touch.c
 $(B)/t_fs: t_fs.c t_fs_stub.c ../hle_fs.c ../hle.h ../dm.h ../dm_i18n.c | $(B)

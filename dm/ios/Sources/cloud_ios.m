@@ -64,7 +64,9 @@ static int pending_downloads(int start) {   // 还没下载好的包数；start 
 // iCloud's own same-name file conflict (two devices each wrote a same-name pack, the system picked one as the current version and the rest became "unresolved conflict versions"; iCloud offline conflict item 1). Done inside file coordination before the launch sync:
 //   shared stash: each conflict version is stored in the to-merge inbox (dm_cloud_inbox_add; the current version goes through sync as usual);
 //   character: the copy with the newest pack header timestamp (the moment the game last wrote it) becomes the current version (swapped in if it is not the one the system picked), the rest go into the backup whole, and the name is recorded for a notice after entering a run.
-//   Only once everything is stored are the conflicts marked resolved and the other versions deleted; if any one cannot be stored, all are kept and tried again at the next launch (better keep extra than lose any).
+//   Only once everything is stored are the other versions deleted; if any one cannot be stored, it stays unresolved and is tried again at the next launch (better keep extra than lose any).
+//   A shared stash version is marked resolved as soon as it is in the inbox (F-SAVE-3): before, one unreadable version kept all of them unresolved, and
+//   every launch put the readable ones into the inbox again, each entry returning the same items and gold once more (the inbox now also refuses content it already holds).
 static void take_conflicts(NSString *save) {
     NSFileManager *fm = NSFileManager.defaultManager;
     for (NSString *f in [fm contentsOfDirectoryAtPath:g_cloud error:nil] ?: @[]) {
@@ -72,14 +74,15 @@ static void take_conflicts(NSString *save) {
         NSURL *u = [NSURL fileURLWithPath:[g_cloud stringByAppendingPathComponent:f]]; NSArray<NSFileVersion *> *vs = [NSFileVersion unresolvedConflictVersionsOfItemAtURL:u];
         if (!vs.count) continue;
         NSString *unit = f.stringByDeletingPathExtension; int bad = 0;
-        if ([unit isEqualToString:@"_stash"]) { for (NSFileVersion *v in vs) bad |= dm_cloud_inbox_add(save.fileSystemRepresentation, g_state.fileSystemRepresentation, v.URL.fileSystemRepresentation) != 0; }
+        if ([unit isEqualToString:@"_stash"]) { for (NSFileVersion *v in vs) { if (dm_cloud_inbox_add(save.fileSystemRepresentation, g_state.fileSystemRepresentation, v.URL.fileSystemRepresentation)) bad = 1; else v.resolved = YES; } }
         else { uint64_t best = dm_cloud_pack_stamp(u.fileSystemRepresentation); NSFileVersion *win = nil;
             for (NSFileVersion *v in vs) { uint64_t t = dm_cloud_pack_stamp(v.URL.fileSystemRepresentation); if (t > best) { best = t; win = v; } }
             if (win) { NSError *e = nil; bad |= dm_cloud_bak_pack(g_bak.fileSystemRepresentation, unit.UTF8String, u.fileSystemRepresentation, "iCloud 冲突里较旧的现行版") != 0;
                 if (!bad && ![win replaceItemAtURL:u options:0 error:&e]) { bad = 1; LOG("【红】iCloud 同步：%s 换上较新的冲突版本失败 %s", unit.UTF8String, e.localizedDescription.UTF8String ?: "?"); } }
             for (NSFileVersion *v in vs) if (v != win) bad |= dm_cloud_bak_pack(g_bak.fileSystemRepresentation, unit.UTF8String, v.URL.fileSystemRepresentation, "iCloud 冲突版本") != 0;
             if (!bad) dm_cloud_char_conflict_note(unit.UTF8String); }
-        if (bad) { LOG("【红】iCloud 同步：%s 有 %lu 个冲突版本没收好，留着下次启动再来", unit.UTF8String, (unsigned long)vs.count); continue; }
+        if (bad) { unsigned long left = 0; for (NSFileVersion *v in vs) left += !v.resolved;
+            LOG("【红】iCloud 同步：%s 有 %lu 个冲突版本没收好，留着下次启动再来", unit.UTF8String, left); continue; }
         for (NSFileVersion *v in vs) v.resolved = YES;
         NSError *e = nil; if (![NSFileVersion removeOtherVersionsOfItemAtURL:u error:&e]) LOG("iCloud 同步：%s 冲突已标解决，删其余版本没成（%s），不影响", unit.UTF8String, e.localizedDescription.UTF8String ?: "?");
         LOG("iCloud 同步：%s 的 %lu 个 iCloud 冲突版本已收好（%s）", unit.UTF8String, (unsigned long)vs.count, [unit isEqualToString:@"_stash"] ? "进待合并收件箱" : "最新的当现行版、其余进备份");
