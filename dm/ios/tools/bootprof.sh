@@ -26,7 +26,7 @@ if [ "$METAL_COLD" -eq 1 ]; then
       [ "$kind" = cold ] && cold_env=(DEVICECTL_CHILD_DM_METAL_COLD=1)
       # 冷 / 热都按冒烟同一键序进局（标准存档新副本），量「进局读取」= ToGame → 读取画面撤下（冷缓存下预热编管线会不会拉长读取）
       # Cold / warm both enter the run with the same key sequence as the smoke test (fresh copy of the standard save), measuring "run-entry loading" = ToGame → loading screen removed (whether warm-up pipeline compilation under a cold cache lengthens loading)
-      env -u DEVICECTL_CHILD_DM_METAL_COLD "${cold_env[@]}" DEVICECTL_CHILD_DM_SAVE_FRESH=warlock DEVICECTL_CHILD_DM_KEYS="$INGAME_KEYS" DEVICECTL_CHILD_DM_UIMSG=1 DEVICECTL_CHILD_DM_BOOTPROF=1 DEVICECTL_CHILD_DM_WATCH=40 ./run.sh boot 60 > $R/$name.run 2>&1 || { t "🔴 $name 启动失败"; exit 1; }
+      env -u DEVICECTL_CHILD_DM_METAL_COLD ${cold_env[@]+"${cold_env[@]}"} DEVICECTL_CHILD_DM_SAVE_FRESH=warlock DEVICECTL_CHILD_DM_KEYS="$INGAME_KEYS" DEVICECTL_CHILD_DM_UIMSG=1 DEVICECTL_CHILD_DM_BOOTPROF=1 DEVICECTL_CHILD_DM_WATCH=40 ./run.sh boot 60 > $R/$name.run 2>&1 || { t "🔴 $name 启动失败"; exit 1; }
       cp $RUN_ROOT/out/boot.txt $R/$name.log || { t "🔴 $name 日志读取失败"; exit 1; }
       grep -q "⑥" $R/$name.log || t "🔴 $name 没出分段表（看 $R/$name.log）"
     done
