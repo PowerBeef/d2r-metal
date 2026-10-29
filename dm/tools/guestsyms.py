@@ -115,11 +115,14 @@ def comment_notes():
 
 
 def demangle(names):
-    """C++ 名字还原（xcrun c++filt，一次一批）；不可用时原样。 | Demangle C++ names (xcrun c++filt, one batch); unchanged when unavailable."""
+    """Demangle C++ names in one batch: Xcode's c++filt, else the system's c++filt (binutils on Linux) or llvm-cxxfilt; unchanged when none is available."""
     if not names: return {}
-    try: out = subprocess.run(['xcrun', 'c++filt'], input='\n'.join(names) + '\n', capture_output=True, text=True, timeout=120, check=False).stdout.splitlines()
-    except (OSError, subprocess.SubprocessError): return {}
-    return dict(zip(names, out, strict=False)) if len(out) == len(names) else {}
+    for cmd in (['xcrun', 'c++filt'], ['c++filt'], ['llvm-cxxfilt']):
+        try: p = subprocess.run(cmd, input='\n'.join(names) + '\n', capture_output=True, text=True, timeout=120, check=False)
+        except (OSError, subprocess.SubprocessError): continue
+        out = p.stdout.splitlines()
+        if p.returncode == 0 and len(out) == len(names): return dict(zip(names, out, strict=False))
+    return {}
 
 
 def build(prod):

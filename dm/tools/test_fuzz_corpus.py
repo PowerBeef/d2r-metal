@@ -36,7 +36,9 @@ class Corpus(unittest.TestCase):
                 self.assertEqual(len(row), 5, 'harness, signature pattern, corpus files, issue, what')
                 self.assertIn(row[0], HARNESSES)
                 for name in row[2].split(','): self.assertTrue((fuzzlib.CORPUS / row[0] / name).is_file(), f'corpus/{row[0]}/{name}')
-        self.assertEqual({p.name for p in fuzzlib.CORPUS.iterdir() if p.is_dir()} - set(HARNESSES), set(), 'a corpus folder without a harness')
+        # corpus/ holds the inputs runs kept (none yet): git keeps no empty folder, so a fresh checkout may have no corpus/ at all
+        folders = {p.name for p in fuzzlib.CORPUS.iterdir() if p.is_dir()} if fuzzlib.CORPUS.is_dir() else set()
+        self.assertEqual(folders - set(HARNESSES), set(), 'a corpus folder without a harness')
 
 
 def add(h, path):
