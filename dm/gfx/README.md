@@ -94,7 +94,7 @@ The scripts in `tools/`; usage is written in each file's header:
 | `shader_map.py`, `maxwell_refs.py` | Generates the shader map; reads resource references from the machine code |
 | `nvn_slots.py`, `gen_protos.py` | Generate `nvn_slots.tsv` / `names.txt`, and `nvn_protos.h` / the thunks |
 | `tbdr_budget.py`, `tbdr_load_dead.py`, `tbdr_store_dead.py`, `tbdr_pass_merge.py` | Read the `DM_NVN_PASSDUMP` log and analyze the load / store volume of each render pass's attachments per frame |
-| `passgpu_top.py` | Reads the `DM_NVN_PASSGPU` output and lists GPU time by pass |
+| `passgpu_top.py` | Reads the `DM_NVN_PASSGPU` output and ranks GPU time by pass shape, for a whole run or one segment between scenario marks (`--from town --to wild`); `--tsv` writes the full table |
 
 ## Building
 

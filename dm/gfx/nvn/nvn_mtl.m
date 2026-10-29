@@ -1621,6 +1621,7 @@ static pg_pass *pg_new(int kind, int nslot) {
 // When we moved to Metal 4 the descriptor lost its sampling attachment, this whole block was short-circuited and the readback at submit time was removed too, so neither API produced numbers any more; this restores both
 static void pg_render(RPD *pd, NSUInteger nc) {
     pg_pass *p = pg_new(0, PG_RSLOTS); if (!p) return;
+    p->pass = g_stat_pass + 1;   // the pass is counted once it opens: the number its DM_NVN_PASSDUMP P / K / B lines carry (compute passes keep the pass they follow)
     id<MTLTexture> t0 = nil; int k = 0;
     for (NSUInteger i = 0; i < nc && i < 8; i++) { id<MTLTexture> t = pd.colorAttachments[i].texture; if (!t) continue;
         if (!t0) t0 = t; if (k < 10) p->load[k++] = pd.colorAttachments[i].loadAction == MTLLoadActionClear ? 'C' : 'L'; }
