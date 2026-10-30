@@ -13,8 +13,12 @@ public struct Paths: Sendable {
     public func tools(_ version: String) -> URL { root.appendingPathComponent("tools/\(version)", isDirectory: true) }
     public var state: URL { root.appendingPathComponent("build/state.json") }
     public var gameFiles: URL { root.appendingPathComponent("data/switch/3.3.94012/Update", isDirectory: true) }
-    /// Where the game app goes: the launcher starts it (as Battle.net starts a game), so it stays out of /Applications and app search
-    public var gameApps: URL { root.appendingPathComponent("Game", isDirectory: true) }
+    /// Where the game app goes: the launcher starts it (as Battle.net starts a game), so it stays out of /Applications; the .noindex suffix keeps it
+    /// out of Spotlight and app search, which do index a plain folder under Application Support
+    public var gameApps: URL { root.appendingPathComponent("Game.noindex", isDirectory: true) }
+    /// The app an install replaced, kept for "previous version" (install.py previous_app); build/previous held it before 0.9.7
+    public var previousApp: URL { root.appendingPathComponent("build/previous.noindex/D2R Metal.app") }
+    public var legacyPreviousApp: URL { root.appendingPathComponent("build/previous/D2R Metal.app") }
 }
 
 /// Downloads, checks and unpacks the packs a release names. URLSession downloads carry no quarantine flag, and every file is checked against the

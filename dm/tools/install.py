@@ -13,7 +13,7 @@
 #                      resume after an interruption are the same command; game files are needed only when the root has none yet
 #   install.py repair  …the same arguments…   every step again
 #   install.py revert  --root R [--app-dir D]                                swaps the app back to the one before the last install or update
-#   (--app-dir: where D2R Metal.app goes; default R/Game, out of /Applications, since the launcher starts the game)
+#   (--app-dir: where D2R Metal.app goes; default R/Game.noindex, out of /Applications and app search, since the launcher starts the game)
 #   install.py status  --root R [--json]
 # P = an unpacked runtime pack (manifest.json, host/D2RMobile, repo/dm/…, lib/libnvn_deswizzle.dylib), T = an unpacked tools pack (python/bin/python3,
 # dmsh_xlate/dmsh_xlate, bin/spirv-cross, bin/hactool). --json prints one JSON event per line on stdout (what the launcher reads); the steps' own output
@@ -58,8 +58,9 @@ class Ctx:
         self.root = os.path.abspath(os.path.expanduser(a.root))
         self.runtime = os.path.abspath(os.path.expanduser(a.runtime)) if getattr(a, 'runtime', None) else ''   # '' = not given (check, revert, status)
         self.tools = os.path.abspath(os.path.expanduser(a.tools)) if getattr(a, 'tools', None) else ''
-        # the game app lives in the root's Game folder by default: started through the launcher (as a Battle.net game), out of /Applications and app search
-        self.app_dir = os.path.abspath(os.path.expanduser(getattr(a, 'app_dir', None) or os.path.join(self.root, 'Game')))
+        # the game app lives in the root's Game.noindex folder by default: started through the launcher (as a Battle.net game), out of /Applications;
+        # the .noindex suffix keeps it out of Spotlight and app search, which do index a plain folder under Application Support
+        self.app_dir = os.path.abspath(os.path.expanduser(getattr(a, 'app_dir', None) or os.path.join(self.root, 'Game.noindex')))
         self.bundle_id = getattr(a, 'bundle_id', None) or BUNDLE_ID
         self.json = getattr(a, 'json', False)
         self.game = os.path.join(self.root, 'data', 'switch', VERSION, 'Update')
@@ -336,8 +337,18 @@ def managed(app):
     except (OSError, ValueError, plistlib.InvalidFileException): return False
 
 
+def previous_app(c):
+    """Where the replaced app is kept for revert: build/previous.noindex, out of app search; a copy an older engine kept in build/previous moves there"""
+    prev = os.path.join(c.build, 'previous.noindex', APP_NAME); legacy = os.path.join(c.build, 'previous', APP_NAME)
+    if os.path.isdir(legacy):
+        if os.path.lexists(prev): shutil.rmtree(legacy)
+        else: os.makedirs(os.path.dirname(prev), exist_ok=True); shutil.move(legacy, prev)
+    if os.path.isdir(os.path.dirname(legacy)) and not os.listdir(os.path.dirname(legacy)): os.rmdir(os.path.dirname(legacy))
+    return prev
+
+
 def install_app(c, app):
-    dest = os.path.join(c.app_dir, APP_NAME); prev = os.path.join(c.build, 'previous', APP_NAME)
+    dest = os.path.join(c.app_dir, APP_NAME); prev = previous_app(c)
     if os.path.lexists(dest) and not managed(dest):
         raise Fail(f'{dest} exists and was not installed by the launcher (a link or another build): move it aside, or choose another folder for the app')
     os.makedirs(c.app_dir, exist_ok=True); os.makedirs(os.path.dirname(prev), exist_ok=True)
@@ -411,7 +422,7 @@ def cmd_install(c, a, force=False):
 
 
 def cmd_revert(c, a):
-    dest = os.path.join(c.app_dir, APP_NAME); prev = os.path.join(c.build, 'previous', APP_NAME)
+    dest = os.path.join(c.app_dir, APP_NAME); prev = previous_app(c)
     if not os.path.isdir(prev): c.event(event='error', msg='there is no previous version to go back to'); return 1
     if os.path.lexists(dest) and not managed(dest): c.event(event='error', msg=f'{dest} was not installed by the launcher'); return 1
     tmp = os.path.join(c.build, 'revert.tmp'); shutil.rmtree(tmp, ignore_errors=True)

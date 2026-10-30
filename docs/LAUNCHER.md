@@ -51,7 +51,7 @@ which put the app in Applications, is moved into the launcher's folder the first
 
 | What | Where |
 |---|---|
-| The game app | `~/Library/Application Support/D2R Metal/Game/D2R Metal.app` (**Show Game in Finder** in the gear menu) |
+| The game app | `~/Library/Application Support/D2R Metal/Game.noindex/D2R Metal.app` (**Show Game in Finder** in the gear menu; `.noindex` keeps it out of Spotlight and app search) |
 | Game files, build outputs, the release packs, logs | `~/Library/Application Support/D2R Metal/` |
 | Your characters and settings | `~/Library/Application Support/D2R Mobile/` (the folder keeps the project's former name, so saves from earlier builds carry over) |
 

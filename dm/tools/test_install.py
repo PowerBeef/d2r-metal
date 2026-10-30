@@ -86,7 +86,7 @@ class InstallTest(unittest.TestCase):
         install.install_app(c, str(self.fake_app(Path(self.tmp.name) / 's1', marker='old')))
         install.install_app(c, str(self.fake_app(Path(self.tmp.name) / 's2', marker='new')))
         self.assertEqual(self.marker(apps / install.APP_NAME), 'new')
-        self.assertEqual(self.marker(Path(c.build) / 'previous' / install.APP_NAME), 'old')
+        self.assertEqual(self.marker(Path(c.build) / 'previous.noindex' / install.APP_NAME), 'old')
         # revert swaps them back, and again
         c.state['release'], c.state['previous_release'] = {'version': '2'}, {'version': '1'}
         self.assertEqual(install.cmd_revert(c, None), 0)
@@ -138,7 +138,7 @@ class InstallTest(unittest.TestCase):
         c.state['app'] = str(self.fake_app(old_dir, marker='old'))
         install.install_app(c, str(self.fake_app(Path(self.tmp.name) / 's1', marker='new')))
         self.assertEqual(self.marker(Path(c.app_dir) / install.APP_NAME), 'new')
-        self.assertEqual(self.marker(Path(c.build) / 'previous' / install.APP_NAME), 'old')
+        self.assertEqual(self.marker(Path(c.build) / 'previous.noindex' / install.APP_NAME), 'old')
         self.assertFalse((old_dir / install.APP_NAME).exists())
         # an app at the old place that the launcher did not install stays where it is
         mine = self.fake_app(Path(self.tmp.name) / 'Mine', managed_=False, marker='mine'); c.state['app'] = str(mine)
@@ -147,7 +147,12 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(self.marker(mine), 'mine')
 
     def test_game_folder_is_the_default(self):
-        self.assertEqual(self.ctx().app_dir, str(self.root / 'Game'))
+        self.assertEqual(self.ctx().app_dir, str(self.root / 'Game.noindex'))
+
+    def test_previous_from_an_older_engine_moves_out_of_app_search(self):
+        c = self.ctx(); self.fake_app(Path(c.build) / 'previous', marker='kept')
+        self.assertEqual(self.marker(install.previous_app(c)), 'kept')
+        self.assertFalse((Path(c.build) / 'previous').exists())
 
     def test_state_survives_a_new_run(self):
         c = self.ctx(); c.state['steps']['product'] = 'r49 abc'; c.save_state()

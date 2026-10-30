@@ -118,6 +118,7 @@ final class LauncherModel {
 
     func start() async {
         if let preview = ProcessInfo.processInfo.environment["DM_LAUNCHER_PREVIEW"] { showPreview(preview); return }
+        tidyPrevious()
         readState()
         phase = installed == nil ? .welcome : .home
         if appNeedsMove { relocate() }
@@ -130,7 +131,7 @@ final class LauncherModel {
         appPath = s?.app.map { URL(fileURLWithPath: $0) }
         if let v = s?.release?.version, let b = s?.release?.build, FileManager.default.fileExists(atPath: installedApp.path) { installed = (v, b) } else { installed = nil }
         packs = s?.packs.map { (URL(fileURLWithPath: $0.runtime, isDirectory: true), URL(fileURLWithPath: $0.tools, isDirectory: true)) }
-        canRevert = FileManager.default.fileExists(atPath: paths.root.appendingPathComponent("build/previous/D2R Metal.app").path)
+        canRevert = FileManager.default.fileExists(atPath: paths.previousApp.path) || FileManager.default.fileExists(atPath: paths.legacyPreviousApp.path)
     }
 
     func refreshFeed() async {
@@ -261,11 +262,23 @@ final class LauncherModel {
         let fm = FileManager.default
         guard old.standardizedFileURL != installedApp.standardizedFileURL, fm.fileExists(atPath: old.path),
               (NSDictionary(contentsOf: old.appendingPathComponent("Contents/Info.plist"))?["DMLauncherManaged"] as? Bool) == true else { return }
-        let prev = paths.root.appendingPathComponent("build/previous/D2R Metal.app")
+        let prev = paths.previousApp
         try? fm.createDirectory(at: prev.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fm.removeItem(at: prev)
         try? fm.moveItem(at: old, to: prev)
+        let folder = old.deletingLastPathComponent()   // the Game folder of a 0.9.7 test build, now empty
+        if folder.path.hasPrefix(paths.root.path), (try? fm.contentsOfDirectory(atPath: folder.path))?.isEmpty == true { try? fm.removeItem(at: folder) }
         canRevert = fm.fileExists(atPath: prev.path)
+    }
+
+    /// A previous version an older engine kept in build/previous (indexed by Spotlight, so it showed in app search) moves to build/previous.noindex,
+    /// as install.py previous_app does; when both exist the older one goes
+    private func tidyPrevious() {
+        let fm = FileManager.default, legacy = paths.legacyPreviousApp
+        guard fm.fileExists(atPath: legacy.path) else { return }
+        if fm.fileExists(atPath: paths.previousApp.path) { try? fm.removeItem(at: legacy) }
+        else { try? fm.createDirectory(at: paths.previousApp.deletingLastPathComponent(), withIntermediateDirectories: true); try? fm.moveItem(at: legacy, to: paths.previousApp) }
+        if (try? fm.contentsOfDirectory(atPath: legacy.deletingLastPathComponent().path))?.isEmpty == true { try? fm.removeItem(at: legacy.deletingLastPathComponent()) }
     }
 
     func revert() {
@@ -287,7 +300,7 @@ final class LauncherModel {
     /// Moves the game files and build outputs to the Trash (recoverable). Saves live elsewhere and are never touched
     func removeGameData() {
         let fm = FileManager.default
-        let items = ["data", "build", "releases", "tools", "downloads", "Game"].map { paths.root.appendingPathComponent($0) }.filter { fm.fileExists(atPath: $0.path) }
+        let items = ["data", "build", "releases", "tools", "downloads", "Game.noindex", "Game"].map { paths.root.appendingPathComponent($0) }.filter { fm.fileExists(atPath: $0.path) }
         let app = managedApp && !installedApp.path.hasPrefix(paths.gameApps.path) ? [installedApp] : []   // an app still outside the Game folder
         NSWorkspace.shared.recycle(items + app) { _, error in
             Task { @MainActor in
