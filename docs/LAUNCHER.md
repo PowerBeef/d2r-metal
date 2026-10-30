@@ -1,5 +1,8 @@
 # D2R Metal Launcher
 
+> [!NOTE]
+> **Coming soon.** The launcher is not released yet; it arrives with the project's first release. Until then, build the Mac App from source ("Getting started" in the [README](../README.md#getting-started)). This page describes the launcher as it will ship.
+
 The launcher installs D2R Metal on your Mac from your own game files and keeps it up to date from this project's GitHub releases. It needs no Xcode, Homebrew, .NET or Python on your Mac: everything it runs comes with the release, and the parts made from your game files are built on your Mac and never leave it.
 
 ## What you need

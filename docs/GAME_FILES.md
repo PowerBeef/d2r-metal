@@ -21,9 +21,9 @@ Dump from your own Switch and your own purchased copy. The commonly used open-so
 
 When dumping, pick the game's **Update** and dump its ExeFS and RomFS sections.
 
-## If you already have a game package: the launcher, or one command
+## If you already have a game package: one command
 
-On a Mac, **D2R Metal Launcher** takes the packages and your `prod.keys` directly and does the rest ([LAUNCHER.md](LAUNCHER.md)). To unpack them yourself instead:
+Coming soon on the Mac: **D2R Metal Launcher** will take the packages and your `prod.keys` directly and do the rest ([LAUNCHER.md](LAUNCHER.md)). Until it is released, unpack them yourself:
 
 If what you dumped is a whole game package (`.xci` or `.nsp` containing both the base game and the 3.3.94012 update), you do not need to unpack it by hand:
 

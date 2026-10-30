@@ -16,6 +16,8 @@ D2R Metal runs the game's own program, the Nintendo Switch release, built from f
 
 It is not an emulator, cloud gaming or streaming, and it plays fully offline. The game itself stays as Blizzard shipped it.
 
+<p align="center"><b>Coming soon: D2R Metal Launcher</b>, a one-window installer for the Mac. Choose your game files, press Install, and it builds and updates the game for you. No Xcode needed. <a href="#getting-started">More below</a>.</p>
+
 <p align="center">
   <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-plaques.jpg" width="100%" alt="Native: Apple silicon, Metal 4, no emulation. Sharper: MetalFX, SMAA, 16x filtering, native-resolution interface. 60 fps: steady on the Mac and on iPhone. As shipped: rules, drops, skills, economy and stash.">
 </p>
@@ -227,14 +229,10 @@ You need **the files of the game you bought**: the Switch release of Diablo II: 
 
 > This project provides only tools and contains no game content. We do not distribute or endorse, and are not responsible for, any third party distributing game assets, game executables or install packages that contain game content. Please use only game files you legally own.
 
-**On a Mac, use the launcher.**
-1. Download `D2R-Metal-Launcher-<version>.dmg` from the [releases page](https://github.com/PowerBeef/d2r-metal/releases) and open **D2R Metal Launcher**.
-2. Choose your game packages and `prod.keys`, or a folder you already extracted.
-3. Press **Install**.
+> [!NOTE]
+> **Coming soon: D2R Metal Launcher.** Installing on a Mac is about to get much simpler. Download the launcher, choose your game packages and `prod.keys` (or a folder you already extracted), and press **Install**. It builds the game on your Mac from your own files in about 10–15 minutes, then keeps it up to date from this project's releases. You won't need Xcode, Homebrew or a developer account. It arrives with the first release; [docs/LAUNCHER.md](docs/LAUNCHER.md) describes what it will do.
 
-It builds the game on your Mac from your own files, and updates it from this project's releases. You don't need Xcode, Homebrew or a developer account. The first install takes about 10–15 minutes. See [docs/LAUNCHER.md](docs/LAUNCHER.md).
-
-**From source** (the iPhone / iPad app, or development), you build the apps on your Mac:
+**Until then, build the apps on your Mac from source** (the Mac app, the iPhone / iPad app, or development):
 
 1. **Put your game files in the workspace** (default `~/dm-work`, or set `DM_ROOT`):
 

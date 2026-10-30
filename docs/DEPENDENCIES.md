@@ -53,7 +53,7 @@ Not needed to build the app or run the Mac smoke test; only for on-device smoke 
 
 ## What the launcher's release packs ship
 
-Players who install with D2R Metal Launcher ([LAUNCHER.md](LAUNCHER.md)) need none of the build tools above. Each release carries the pieces below, built and pinned by `dm/tools/release_mac.sh` from `dm/tools/release_pins.txt`, with their license texts in the tools pack's `licenses/` folder.
+Players who install with D2R Metal Launcher ([LAUNCHER.md](LAUNCHER.md); coming with the first release) need none of the build tools above. Each release carries the pieces below, built and pinned by `dm/tools/release_mac.sh` from `dm/tools/release_pins.txt`, with their license texts in the tools pack's `licenses/` folder.
 
 | Piece | Version | License | Upstream |
 |---|---|---|---|
