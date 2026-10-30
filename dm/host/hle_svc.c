@@ -59,17 +59,15 @@ static void mem_init(void) {
 // Previously 3 GB was reported here and SetHeapSize never failed: the heap was about 150 MB smaller than on the real device, at the run entry peak the main heap had only about 18 MB left, and under high local load a timing shift made a 128 KB request return null,
 // which the guest writes to without a null check (CRASH main+0x1b36138, re-verified after merge with inv_tap).
 #define APP_POOL 0xCD500000ull
-// 报给游戏的池 = Switch 的 3285 MB + 512 MB（DM_APP_POOL_ADD_MB=<整数> 可调，可为负——往小调用来造「主堆用尽」的现场）。
-// 为什么多给：游戏自己固定划走约 3.08 GB，主堆余量进局只有 100–180 MB、换图时地板三四十 MB、最大可分配块二十几 MB；用尽时原版多处不判空直接写
-// （公开仓库，另见下面 dm_guest_heap_stat）。实测多给的量一比一变成主堆余量（138 → 649 MB），游戏划走的不跟着变；
-// 没碰过的堆页不计入常驻内存，余量真被用掉时常驻才涨。堆区上限是预留里的 4 GB（mem_init），3728 MB 放得下；再加要先动预留。
-// 取 +512 而不是更大：给 6 GB 内存的机型留余地，真机上限有读数后再定。
-// Pool reported to the game = the Switch's 3285 MB + 512 MB (adjustable with DM_APP_POOL_ADD_MB=<integer>, may be negative -- lowering it is how to stage a "main heap exhausted" scene).
-// Why more is given: the game carves out a fixed 3.08 GB or so for itself, leaving the main heap only 100–180 MB of free space on entering a game, a floor of thirty to forty MB when changing maps and a largest allocatable block of twenty-odd MB; when it runs out the original game writes through null without checking in many places
-// (see also dm_guest_heap_stat below). Measured: the extra amount turns one-to-one into main heap free space (138 -> 649 MB), while what the game carves out does not change with it;
-// heap pages never touched do not count toward resident memory, which grows only when the free space is actually used. The heap region limit is the 4 GB in the reservation (mem_init), which fits 3728 MB; adding more means changing the reservation first.
-// +512 rather than more: to leave room for devices with 6 GB of RAM; to be revisited once there are readings of the limit on real devices.
-static uint64_t app_pool(void) { static uint64_t v; if (!v) { const char *e = getenv("DM_APP_POOL_ADD_MB"); long add = e ? atol(e) : 512; v = APP_POOL + ((uint64_t)add << 20); if (e) LOG("DM_APP_POOL_ADD_MB：应用内存池报 %llu MB（Switch 的 3285 MB %+ld）", (unsigned long long)(v >> 20), add); } return v; }
+// Pool reported to the game = the Switch's 3285 MB + 768 MB (DM_APP_POOL_ADD_MB=<integer> changes the extra, may be negative -- lowering it is how to stage a "main heap exhausted" scene).
+// Why more is given: the game carves out a fixed 3.08 GB or so for itself, leaving the main heap only 100-180 MB of free space on entering a game, a floor of thirty to forty MB when changing maps and a
+// largest allocatable block of twenty-odd MB; when it runs out the original game writes through null without checking in many places (see also dm_guest_heap_stat below). Measured: the extra
+// amount turns one-to-one into main heap free space (+512: 138 -> 649 MB), while what the game carves out does not change with it. Of the 768, 256 pay for the larger GPU heap 0 budget
+// (patch_nso.py cut at main+0x8524c4, 512 -> 768 MiB, taken out of this pool at boot) so the main heap keeps the same free space as with +512.
+// Heap pages never touched do not count toward resident memory, which grows only when they are actually used; on phones heap 0 never fills past 512 MiB, so their resident memory does not
+// change. The heap region is the reservation minus 1 GB (mem_init): 4096 MB with the usual 5120 MiB reservation, which fits 4053 - 68 (image) = 3985 MB; on a reservation stepped down to
+// 4864 MiB the game's own retry loop (2 MB less per refused SetHeapSize) settles at the cap.
+static uint64_t app_pool(void) { static uint64_t v; if (!v) { const char *e = getenv("DM_APP_POOL_ADD_MB"); long add = e ? atol(e) : 768; v = APP_POOL + ((uint64_t)add << 20); if (e) LOG("DM_APP_POOL_ADD_MB：应用内存池报 %llu MB（Switch 的 3285 MB %+ld）", (unsigned long long)(v >> 20), add); } return v; }
 static size_t image_bytes(void) { size_t n = 0; for (int i = 0; i < g_nmod; i++) n += g_mod[i].size; return (n + 0x1fffff) & ~(size_t)0x1fffff; }
 
 // 游戏主堆读数：主堆 = main+0x32137a0 那个 nn::mem::StandardAllocator（启动时把整块堆交给它）。申请失败返回空，原版多处不判空直接写

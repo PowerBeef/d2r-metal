@@ -61,11 +61,13 @@ PATCH_OFF = (len(IMG) + 0xFFFF) & ~0xFFFF
 # (one changes which skills a Druid can cast right after shapeshifting, the other stops the Warlock's summons from playing their running animation), so they are left out.
 # Measured: the system service layer (nifm offline / DNS black hole / account service) cannot get around it: the game itself sends Battle.net requests directly and allows offline play according to the "last online" time.
 CUTS = {'db0507f36b84200ac05f75d76ed5026f': [
-    # （放进所有产物共用的基础改写）：游戏显存分配器预算 260 MB → 512 MB
-    # (Placed in the base rewrite shared by all build outputs): game video memory allocator budget 260 MB → 512 MB
-    (0x8524c4, '0808a2d2', '0800a4d2', '显存分配器初始化配置：mov x8,#0x10400000（260 MB）→ mov x8,#0x20000000（512 MB），随后 movk #0xa0,lsl48 与 str [sp,#0x238] 不变；'
-     '原预算下内部分辨率 > 约 345 万像素时（2736x1260 过、2864x1240 崩）渲染目标放不下，main+0x174b018 返回空、main+0x17417a4 读空崩溃；'
-     '只是显存预算，不进游戏逻辑：cvd5 逐拍对拍在 1600x900 与 2868x1320 两档均一致'),
+    # Base rewrite shared by every build output: the game's GPU heap budget (heap 0: render targets, depth, display textures) 260 MiB -> 768 MiB
+    (0x8524c4, '0808a2d2', '0800a6d2', 'GPU heap 0 budget in the device config: mov x8,#0x10400000 (260 MiB) -> mov x8,#0x30000000 (768 MiB); the movk #0xa0,lsl #48 and '
+     'str [sp,#0x238] after it are unchanged. Heap 0 is reserved whole at boot (first fit, never grows) and texture creation does not check for a failed '
+     'allocation: a full heap returns null from main+0x174b018 and main+0x17417a4 reads it. 260 MiB failed above about 3.45 Mpx (2736x1260 ok, 2864x1240 '
+     'crashed); 512 MiB (the previous value) failed at 3840x2160 at every 3D scale, the Mac Native output for 4K / 5K screens; 768 MiB boots 3840x2160 to 3840x2880 '
+     'with the 3D at 67-100%, Ultra shadows and SMAA. Budget only, no game logic (tick-identical replays); the host adds the extra 256 MiB to the '
+     'application pool (hle_svc.c APP_POOL_ADD_MB) so the main heap keeps its free space'),
     (0x1979bc, 'e8a79f1a', 'e8d79f1a', '离线放行窗口：读存档设置键（0x1d53e80 处字串）的上次在线时刻，'
      '「当前时刻 − 上次在线 < 0x0009356907420000 ns（= 30 天）」置位 [x20+0x2c]；lt→gt'),
     (0x1d53e80, '55736572204c617374204f6e6c696e6500', '566f6963654c616e677561676500000000',

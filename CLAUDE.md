@@ -229,7 +229,7 @@ There is no recording of the original game on a console or emulator; to learn wh
   - `OBS`: observation gates; numbers must match the `OBS_*` enum in `dm/host/dm.h`.
   - `PARAMS`: host-filled values (a movz / movk pair, or since r48 a single movz such as the shadow map edge, `KSHSIZE`).
   - `SWITCHES`: conditional branches also taken when a host-filled slot is non-zero (environment shadows; checked by `structck.py`).
-- **Products** go to `$DM_ROOT/build/cache/dm/out/<dm/PRODUCT>-<kind>` (currently `3.3.94012-r48-touch`):
+- **Products** go to `$DM_ROOT/build/cache/dm/out/<dm/PRODUCT>-<kind>` (currently `3.3.94012-r49-touch`):
   - `touch` is what the apps run.
   - `keypage` and `rules` are used by the verifiers.
 
