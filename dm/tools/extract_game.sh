@@ -22,17 +22,13 @@ die() { echo "✗ $*" >&2; exit 1; }
 HT=${HACTOOL:-$(command -v hactool || true)}; [ -n "$HT" ] && [ -x "$HT" ] || die "没找到 hactool：装好后放进 PATH，或设 HACTOOL=<路径>（见本文件开头） | hactool not found: install it and put it on PATH, or set HACTOOL=<path> (see the top of this file)"
 for PKG in "${PKGS[@]}"; do [ -f "$PKG" ] || die "没有这个游戏包 | no such game package: $PKG"; done; [ -f "$KEYS" ] || die "没有这个密钥文件 | no such key file: $KEYS"
 [ ! -e "$OUT" ] || die "已有 ${OUT}，不覆盖。要重做先自己把它移走 | ${OUT} already exists and is not overwritten; move it away yourself to redo the extraction"
-# hactool 只从 $HOME/.switch/title.keys 读标题密钥：给它一个临时 HOME，里面的 title.keys = 你原有的那份 + 从票据取的，不动你自己的 ~/.switch。
-# 这个 HOME 单独建在系统临时目录里，只有你自己能读，密钥不进工作区；9 GB 的中间文件仍在工作区
-# hactool only reads title keys from $HOME/.switch/title.keys: give it a temporary HOME whose title.keys = your existing one + the keys taken from the tickets, leaving your own ~/.switch untouched.
+# hactool only reads title keys from $HOME/.switch/title.keys: give it a temporary HOME whose title.keys = the keys taken from the tickets + your existing
+# ~/.switch/title.keys, each rights ID once (see below), leaving your own ~/.switch untouched.
 # That HOME is created on its own in the system temporary folder and only you can read it, so keys never land in the workspace; the 9 GB of intermediate files stay in the workspace
 ht() { HOME="$KH" "$HT" -k "$KH/.switch/prod.keys" --disablekeywarns --suppresskeys "$@"; }
 T=$DM_ROOT/build/cache/dm/extract.$$; KH=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/dm-keys.XXXXXX") || die "建不了放密钥的临时目录 | cannot create the temporary folder for the keys"
 PART=; trap 'rm -rf "$T" "$KH" ${PART:+"$PART"}' EXIT; mkdir -p "$T/nca" "$KH/.switch" || die "建不了中间目录 $T | cannot create the intermediate folder $T"
-TK=$KH/.switch/title.keys
-if [ -f "$HOME/.switch/title.keys" ]; then
-  cat "$HOME/.switch/title.keys" > "$TK"; [ -z "$(tail -c1 "$TK")" ] || echo >> "$TK"   # 原文件末尾没换行时补一个，免得下面接上的票据密钥并进它的最后一行 | add a newline if the file does not end with one, so the ticket keys appended below do not join its last line
-fi
+TK=$KH/.switch/title.keys; TIK=$KH/tickets.keys; : > "$TIK"
 # The keys hactool reads: a copy of your prod.keys in that private temporary HOME, without the lines whose value is no whole number of 16-byte
 # blocks (some key dumps carry 17-byte *_kek_source_* lines, which hactool refuses outright); deleted with that folder when this script ends
 awk -F= '{ v = $2; gsub(/[ \t\r]/, "", v); if (NF < 2 || v !~ /^[0-9a-fA-F]+$/ || length(v) % 32 == 0) print; else skipped++ }
@@ -77,9 +73,14 @@ for tik in "$T"/nca/*.tik; do
   kind=$(od -An -tu1 -j $((base + 0x141)) -N1 "$tik" | tr -d ' ')
   rid=$(od -An -tx1 -j $((base + 0x160)) -N16 "$tik" | tr -d ' \n')
   if [ "$kind" != 0 ]; then say "票据 $(basename "$tik") 是个人票据（绑定主机），取不出标题密钥 | personalized ticket, its title key cannot be read"; continue; fi
-  echo "$rid = $(od -An -tx1 -j $((base + 0x40)) -N16 "$tik" | tr -d ' \n')" >> "$TK"; tk=$((tk + 1))
+  echo "$rid = $(od -An -tx1 -j $((base + 0x40)) -N16 "$tik" | tr -d ' \n')" >> "$TIK"; tk=$((tk + 1))
 done
 [ $tk = 0 ] || say "从游戏包的票据取到 $tk 个标题密钥 | took $tk title keys from the tickets in the game packages"
+# The title keys hactool reads from here on: the tickets' keys first (they come with the packages, so they win), then the lines of your ~/.switch/title.keys
+# whose rights ID is not there yet. hactool refuses a list that names one rights ID twice, which is what a title.keys saved from these same tickets would do
+UTK=/dev/null; [ -f "$HOME/.switch/title.keys" ] && UTK=$HOME/.switch/title.keys
+awk -F= '{ k = $1; gsub(/[ \t\r]/, "", k); k = tolower(k); if (k == "" || !(k in seen)) print; if (k != "") seen[k] = 1 }' "$TIK" "$UTK" > "$TK" \
+  || die "cannot read ~/.switch/title.keys"
 
 # 找出本体与更新的程序内容：按每个内容文件自己报的类型与程序号认，不靠文件名。
 # 更新的程序内容报的也是本体的程序号；区别是它的资源段是「补丁」格式（BKTR），要叠在本体上才读得出

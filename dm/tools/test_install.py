@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import subprocess
 import sys
 import tempfile
 import types
@@ -99,6 +100,36 @@ class InstallTest(unittest.TestCase):
         link = Path(self.tmp.name) / 'Linked'; link.mkdir(); (link / install.APP_NAME).symlink_to(apps / install.APP_NAME)
         self.assertFalse(install.managed(str(link / install.APP_NAME)))
         with self.assertRaises(install.Fail): install.install_app(self.ctx(app_dir=str(link)), str(self.fake_app(Path(self.tmp.name) / 's4')))
+
+    def test_failure_names_the_error_in_english(self):
+        tail = ['[12:00:00] 从游戏包的票据取到 1 个标题密钥 | took 1 title keys from the tickets in the game packages',
+                '✗ 没找到本体（两个包都要给） | the base game is missing (give both packages)；hactool 读内容文件时报错 | hactool error: Error: bad key!']
+        self.assertEqual(install.failure('extract_game.sh', 1, tail),
+                         'the base game is missing (give both packages); hactool error: Error: bad key! (extract_game.sh exited with 1)')
+        self.assertEqual(install.failure('x.py', 2, ['plain line', 'last line']), 'plain line | last line (x.py exited with 2)')
+
+    def test_extract_merges_title_keys_once(self):
+        # A title.keys that already holds a ticket's key (saved from the same package) must not reach hactool twice: it refuses the whole list.
+        # A fake hactool unpacks one ticket and fails the content step on a repeated rights ID, as the real one does; made-up keys only
+        t = Path(self.tmp.name); home = t / 'home'; (home / '.switch').mkdir(parents=True)
+        rid, key = bytes.fromhex('0100000000001000000000000000000a'), bytes(range(16))
+        tik = bytearray(0x2c0); tik[0:4] = b'\x04\x00\x01\x00'; tik[0x180:0x190] = key; tik[0x2a0:0x2b0] = rid   # RSA-2048 common ticket
+        (t / 'fake.tik').write_bytes(bytes(tik))
+        (home / '.switch' / 'title.keys').write_text(f'{rid.hex().upper()} = {key.hex()}\nfeed0000000000000000000000000001 = {"11" * 16}')
+        (t / 'game.nsp').write_bytes(b'PFS0'); (t / 'prod.keys').write_text(f'header_key = {"00" * 32}\n')
+        ht = t / 'hactool'
+        ht.write_text('#!/bin/bash\nfor a in "$@"; do case "$a" in --outdir=*) out=${a#--outdir=};; esac; done\n'
+                      'case " $* " in\n  *" pfs0 "*) cp "$FAKE_TIK" "$out/x.tik"; : > "$out/a.nca";;\n'
+                      '  *" nca "*) [ -z "$(sed -n "s/[[:space:]]*=.*//p" "$HOME/.switch/title.keys" | tr A-Z a-z | sort | uniq -d)" ] || '
+                      '{ echo "Error: Rights ID already has a corresponding titlekey!"; exit 1; };;\nesac\n')
+        ht.chmod(0o755)
+        env = dict(os.environ, HOME=str(home), HACTOOL=str(ht), DM_ROOT=str(t / 'ws'), FAKE_TIK=str(t / 'fake.tik'))
+        r = subprocess.run(['bash', str(Path(__file__).with_name('extract_game.sh')), str(t / 'game.nsp'), str(t / 'prod.keys')],
+                           env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('took 1 title keys', r.stdout)
+        self.assertIn('the base game is not in the game package', r.stderr)   # the fake holds no program content: the script gets this far
+        self.assertNotIn('hactool error', r.stderr)
 
     def test_state_survives_a_new_run(self):
         c = self.ctx(); c.state['steps']['product'] = 'r49 abc'; c.save_state()

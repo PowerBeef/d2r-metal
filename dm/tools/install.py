@@ -35,6 +35,23 @@ class Fail(Exception):
     pass
 
 
+CJK = re.compile(r'[　-〿㐀-鿿＀-￯]')
+
+
+def english(line):
+    """The English of a bilingual "Chinese | English" output line: each " | " part cut at its first Chinese character, empty parts dropped"""
+    if not CJK.search(line): return line
+    parts = (CJK.split(p, 1)[0].strip(' ✗🔴:;,') for p in line.split(' | '))
+    return '; '.join(p for p in parts if p)
+
+
+def failure(tool, code, tail):
+    """What a failed tool says went wrong: its last error line ("✗" from the shell scripts, "🔴" or 【红】 from the Python ones), else its last lines"""
+    errs = [l for l in tail if l.lstrip().startswith(('✗', '🔴')) or '【红】' in l]
+    said = (english(errs[-1]) or errs[-1].strip()) if errs else ' | '.join(english(l) or l for l in tail[-3:] if l)
+    return f'{said} ({tool} exited with {code})'
+
+
 class Ctx:
     def __init__(self, a):
         self.root = os.path.abspath(os.path.expanduser(a.root))
@@ -94,7 +111,7 @@ class Ctx:
             if got: self.event(event='progress', step=step, done=got[0], total=got[1])
         p.wait(); self.log.flush()
         tool = next((os.path.basename(x) for x in cmd if x.endswith(('.py', '.sh'))), os.path.basename(cmd[0]))
-        if p.returncode: raise Fail(f'{tool} exited with {p.returncode}: ' + ' | '.join(l for l in tail[-3:] if l))
+        if p.returncode: raise Fail(failure(tool, p.returncode, tail))
         return tail
 
 
