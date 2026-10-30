@@ -85,18 +85,15 @@ if [ "${DM_MAC_ROMFS_COPY:-0}" = 1 ]; then
   [ -f "$ROM/data/build_manifest.psv" ] || { echo "🔴 DM_MAC_ROMFS_COPY=1 但资源里没有清单：$ROM/data/build_manifest.psv"; exit 2; }
   ditto "$ROM" "$RES/romfs"
 fi
-# DM_MAC_ICON_SOURCE=<图>：App 图标用的图，缺省是仓库自带的 iOS 图标（ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png）；=none 不带图标。
-# 图要是不透明、铺满的正方形：macOS 26 起圆角由系统自己裁；四周留透明边的图（macOS 25 以前的画法）在 macOS 27 上实测会被缩小放进灰色底框里显示
-# DM_MAC_ICON_SOURCE=<image>: the picture for the App icon, by default the repository's own iOS icon (ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png); =none builds without an icon.
-# Use an opaque, full-bleed square: from macOS 26 on the system rounds the corners itself; a picture with transparent margins (the pre-macOS 26 way of drawing) was shown shrunk inside a gray frame on macOS 27
-ICON_SRC=${DM_MAC_ICON_SOURCE:-$DM/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png}; ICON_KEY=
-# 没设 DM_MAC_ICON_SOURCE、仓库里又没有缺省图（比如只拷了部分源码的目录）：照常出包、不带图标，只提示一句；设了却找不到图才算错
-# DM_MAC_ICON_SOURCE not set and the repository's default image is missing (e.g. a tree with only part of the sources): build as usual without an icon and just say so; only a set but missing image is an error
-if [ -z "${DM_MAC_ICON_SOURCE:-}" ] && [ ! -f "$ICON_SRC" ]; then
-  echo "提示：仓库里没有缺省图标 ${ICON_SRC}，这个包不带图标 | note: the repository's default icon ${ICON_SRC} is missing; building without an icon"; ICON_SRC=none
-fi
-if [ "$ICON_SRC" != none ]; then
-  [ -f "$ICON_SRC" ] || { echo "🔴 DM_MAC_ICON_SOURCE 指的图不存在：$ICON_SRC"; exit 2; }
+# The App icon: by default the project's own, from dm/brand/icon.sh (the layered icon of dm/brand/AppIcon.icon when Xcode's actool is there,
+# else the flattened one). DM_MAC_ICON_SOURCE=<image> uses another picture instead, an opaque full-bleed square (from macOS 26 on the system
+# rounds the corners itself; a picture with transparent margins was shown shrunk inside a gray frame on macOS 27); =none builds without an icon.
+ICON_SRC=${DM_MAC_ICON_SOURCE:-}; ICON_KEY=
+if [ -z "$ICON_SRC" ]; then
+  if [ -x "$DM/brand/icon.sh" ]; then ICON_KEY=$("$DM/brand/icon.sh" "$RES")
+  else echo "note: dm/brand/icon.sh is missing (a tree with only part of the sources); building without an icon"; fi
+elif [ "$ICON_SRC" != none ]; then
+  [ -f "$ICON_SRC" ] || { echo "🔴 DM_MAC_ICON_SOURCE points at a missing image: $ICON_SRC"; exit 2; }
   ICONSET="$RES/AppIcon.iconset"; mkdir "$ICONSET"
   for size in 16 32 128 256 512; do
     sips -s format png -z "$size" "$size" "$ICON_SRC" --out "$ICONSET/icon_${size}x${size}.png" > /dev/null

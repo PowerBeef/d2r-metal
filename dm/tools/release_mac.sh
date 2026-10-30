@@ -99,9 +99,8 @@ cp "$WT/dm/gfx/tools/dmsh_chain.lock" "$RT/repo/dm/gfx/tools/"; cp "$WT/dm/gfx/n
 miss = [f for f in o.SOURCE_INPUTS if not os.path.exists(os.path.join(sys.argv[1], f))]
 sys.exit("overlay inputs missing from the runtime pack: " + ", ".join(miss) if miss else 0)' "$RT/repo"
 [ "$("$T/python/bin/python3" -E -s "$RT/repo/dm/gfx/tools/dmsh_chain.py")" = "$CHAIN" ] || die "the pack's chain differs from the host's"
-ICON=$DM/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png; IS=$WORK/AppIcon.iconset; mkdir "$IS"
-for s in 16 32 128 256 512; do sips -s format png -z $s $s "$ICON" --out "$IS/icon_${s}x${s}.png" > /dev/null; sips -s format png -z $((s*2)) $((s*2)) "$ICON" --out "$IS/icon_${s}x${s}@2x.png" > /dev/null; done
-iconutil -c icns "$IS" -o "$RT/app/AppIcon.icns"
+"$WT/dm/brand/icon.sh" "$RT/app" > /dev/null   # the game app's icon (Assets.car + AppIcon.icns); install.py copies it into the app it assembles
+[ -f "$RT/app/Assets.car" ] || die "the app icon did not compile (dm/brand/icon.sh needs Xcode's actool)"
 sign "$RT/host/D2RMobile" "$RT/lib/libnvn_deswizzle.dylib"
 RUNTIME_NAME=d2r-metal-runtime-$VERSION.tar.gz; LAUNCHER_ZIP=D2R-Metal-Launcher-$VERSION.zip; DMG=D2R-Metal-Launcher-$VERSION.dmg
 UPDATE_URL=https://github.com/$GH_REPO/releases/latest/download/latest_mac.json
