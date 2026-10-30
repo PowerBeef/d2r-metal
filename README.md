@@ -22,13 +22,13 @@ It is not an emulator, cloud gaming or streaming, and it plays fully offline. Th
 
 <h2 align="center" id="beyond-the-switch"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-plate-beyond.jpg" width="100%" alt="Beyond the Switch"></h2>
 
-The Switch draws Diablo II: Resurrected within the limits of a handheld. D2R Metal draws the same game with what Apple silicon can do, on the Mac and on iPhone and iPad.
+The Switch draws Diablo II: Resurrected within the limits of a handheld: 1600 × 900 docked, 1280 × 720 in your hands. D2R Metal draws the same game with what Apple silicon can do, on the Mac and on iPhone and iPad. The comparisons below are windows of the frame at 1:1 pixels, so on a Retina screen they show close to every pixel of both sides.
 
 <p align="center">
-  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-split-mac.jpg" width="100%" alt="One frame of the Rogue Encampment on a 2560 × 1440 Mac: the left half at the Switch's own settings, the right half at D2R Metal's Recommended">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-split-mac-1to1.jpg" width="100%" alt="The Rogue Encampment at 1:1 pixels: the left half is the Switch's docked 1600 × 900 output enlarged, the right half D2R Metal's Recommended on a 2560 × 1440 Mac">
 </p>
 
-<p align="center"><sub><b>Mac, 2560 × 1440 screen, full screen, M6.</b> One frame of the Rogue Encampment, both halves from the same build at the same moment. Left: the Switch's own settings (1600 × 900 stretched, FXAA, original filtering, character shadows only). Right: D2R Metal's Recommended. Full frames: <a href="https://github.com/PowerBeef/d2r-metal/releases/download/assets/17a-mac-original-1600.jpg">Switch original</a> · <a href="https://github.com/PowerBeef/d2r-metal/releases/download/assets/17b-mac-recommended.jpg">D2R Metal</a>.</sub></p>
+<p align="center"><sub><b>Mac, 2560 × 1440 screen, M6.</b> The same spot, a window of the frame at 1:1 pixels. Left: the Switch's docked output (1600 × 900, FXAA, original filtering, character shadows only), enlarged to the same size as a TV or monitor would. That is the Switch at its sharpest: in busy scenes it also lowers its 3D resolution, which this comparison leaves out. Right: D2R Metal's Recommended.</sub></p>
 
 The cards below show each gain at 1:1 pixels from the same frame. The first compares the Switch's settings with Recommended; each of the others changes a single setting, so you see exactly what it does.
 
@@ -58,12 +58,46 @@ The cards below show each gain at 1:1 pixels from the same frame. The first comp
 - **Accurate color.** The picture is tagged sRGB, the color space the game was made in, so wide-gamut (P3) screens show it as intended instead of stretching it to their wider colors.
 
 <p align="center">
-  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-split-iphone.jpg" width="100%" alt="One frame at iPhone 17 Pro resolution: the left half at the Switch's own settings, the right half at D2R Metal's iPhone Recommended">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-split-iphone-1to1.jpg" width="100%" alt="The Rogue Encampment at 1:1 iPhone 17 Pro pixels: the left half is the Switch's handheld 1280 × 720 output enlarged, the right half D2R Metal's iPhone Recommended">
 </p>
 
-<p align="center"><sub><b>iPhone 17 Pro resolution, 2622 × 1206,</b> 3D at 75% on both halves. Left: the Switch's own upscale, FXAA and filtering. Right: D2R Metal's iPhone Recommended (MetalFX, SMAA, 16x filtering). Drawn by the same iOS app running on a Mac at the phone's resolution and settings; the phone draws the same picture.</sub></p>
+<p align="center"><sub><b>iPhone 17 Pro, 2622 × 1206,</b> a window at 1:1 phone pixels. Left: the Switch's handheld output (1280 × 720, FXAA, original filtering), enlarged to the phone's size. Right: D2R Metal's iPhone Recommended (3D at 75% enlarged by MetalFX, SMAA, 16x filtering). Drawn by the same iOS app running on a Mac at the phone's resolution and settings; the phone draws the same picture.</sub></p>
 
 On the M6 the Mac's Recommended (native 2560 × 1440, everything above switched on) takes about 7.3 ms of GPU time per frame in town, under half of the 16.7 ms a 60 fps frame allows. On an iPhone 17 Pro, MetalFX costs about 0.6 ms, and with SMAA and 16x filtering the phone still holds 60 fps with frame pacing and CPU time unchanged. Details are under [Built to be measured](#built-to-be-measured).
+
+<h2 align="center" id="across-sanctuary"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-plate-sanctuary.jpg" width="100%" alt="Across Sanctuary"></h2>
+
+One stop in every act, each split at 1:1 pixels from the same moment: the Switch's docked output on the left, D2R Metal's Recommended on the right, on a 2560 × 1440 Mac.
+
+<p align="center">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-zone-catacombs.jpg" width="100%" alt="Act I, the Catacombs: torchlight in a dungeon, Switch docked on the left, D2R Metal on the right">
+</p>
+<p align="center">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-zone-lutgholein.jpg" width="100%" alt="Act II, Lut Gholein: desert sun and long shadows, Switch docked on the left, D2R Metal on the right">
+</p>
+<p align="center">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-zone-arcane.jpg" width="100%" alt="Act II, the Arcane Sanctuary: marble walkways over the void, Switch docked on the left, D2R Metal on the right">
+</p>
+<p align="center">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-zone-flayer.jpg" width="100%" alt="Act III, the Flayer Jungle: foliage and ruins, Switch docked on the left, D2R Metal on the right">
+</p>
+<p align="center">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-zone-riverflame.jpg" width="100%" alt="Act IV, the River of Flame: lava light in Hell, Switch docked on the left, D2R Metal on the right">
+</p>
+<p align="center">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-zone-harrogath.jpg" width="100%" alt="Act V, Harrogath: snow, stone and timber, Switch docked on the left, D2R Metal on the right">
+</p>
+
+**More of Sanctuary at Recommended:**
+
+<p align="center">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-gallery-darkwood.jpg" width="49%" alt="Act I, Dark Wood at D2R Metal's Recommended">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-gallery-faroasis.jpg" width="49%" alt="Act II, Far Oasis at D2R Metal's Recommended">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-gallery-docks.jpg" width="49%" alt="Act III, Kurast Docks at D2R Metal's Recommended">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-gallery-pandemonium.jpg" width="49%" alt="Act IV, the Pandemonium Fortress at D2R Metal's Recommended">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-gallery-frigid.jpg" width="49%" alt="Act V, Frigid Highlands at D2R Metal's Recommended">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-gallery-arreat.jpg" width="49%" alt="Act V, Arreat Plateau at D2R Metal's Recommended">
+</p>
 
 <h2 align="center" id="a-true-mac-game"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/r2-plate-mac.jpg" width="100%" alt="A True Mac Game"></h2>
 
