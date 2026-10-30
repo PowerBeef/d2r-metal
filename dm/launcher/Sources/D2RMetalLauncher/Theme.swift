@@ -1,8 +1,8 @@
 import SwiftUI
 
-// The launcher's look: the README art's palette (~/dm-work/readme_art, original artwork, no game art or fonts) under Liquid Glass. A dark
-// hellfire backdrop with rising embers is the content layer; the cards and buttons are glass floating above it, and only the primary action
-// (Install, Play) carries the ember tint.
+// The launcher's look: the brand's palette and lettering (dm/brand: the Runestone emblem, Cinzel) under Liquid Glass. A dark hellfire backdrop
+// with rising embers is the content layer; the panel, the action bar and the buttons are glass floating above it, and only the primary action
+// (Install, Play, Update) carries the ember tint.
 enum Palette {
     static let deep = [Color(hex: 0x5E1608), Color(hex: 0x2E0B07), Color(hex: 0x120A08), Color(hex: 0x070505)]   // the backdrop, from the glow out
     static let gold = [Color(hex: 0xFFF0C6), Color(hex: 0xE9C27A), Color(hex: 0xB27A2E), Color(hex: 0x7C4C18)]   // lettering, top to bottom
@@ -93,29 +93,29 @@ struct Embers: View {
 
 // MARK: lettering and ornaments
 
-/// "D2R METAL" in the README plates' gold: Optima, wide tracking, a dark under-edge and an ember glow
+/// Gold lettering in the brand's Cinzel: wide tracking, a dark under-edge and an ember glow
 struct GoldTitle: View {
     var text: String
     var size: CGFloat = 46
     var body: some View {
         Text(text.uppercased())
-            .font(.custom("Optima-Bold", size: size, relativeTo: .largeTitle))
-            .tracking(size * 0.09)
+            .font(.cinzel(size, .bold, relativeTo: .largeTitle))
+            .tracking(size * 0.1)
             .foregroundStyle(Palette.goldFill)
             .shadow(color: Color(hex: 0x120804), radius: 0, x: 0, y: 1.5)
             .shadow(color: Color(red: 0.86, green: 0.24, blue: 0.08).opacity(0.45), radius: 12)
     }
 }
 
-/// The README's caption style: Copperplate, small capitals, parchment
+/// The brand's caption style: Cinzel capitals, wide tracking, parchment
 struct Caption: View {
     var text: String
     var dim = false
     var size: CGFloat = 12
     var body: some View {
         Text(text.uppercased())
-            .font(.custom("Copperplate", size: size, relativeTo: .caption).weight(.semibold))
-            .tracking(size * 0.09)
+            .font(.cinzel(size, .bold, relativeTo: .caption))
+            .tracking(size * 0.22)
             .foregroundStyle(dim ? Palette.parchmentDim : Palette.parchment)
             .shadow(color: .black.opacity(0.8), radius: 1, y: 1)
     }
@@ -139,7 +139,7 @@ struct Rule: View {
 extension View {
     /// A card of regular Liquid Glass over the backdrop
     func glassCard(cornerRadius: CGFloat = 22, padding inset: CGFloat = 18) -> some View {
-        padding(inset).frame(maxWidth: 600).glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        padding(inset).glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
     }
 
     /// The one tinted action of a screen (Install, Play, Update)

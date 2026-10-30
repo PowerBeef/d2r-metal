@@ -47,10 +47,12 @@ final class LauncherModel {
         get { Channel(rawValue: defaults.string(forKey: "Channel") ?? "") ?? .stable }
         set { defaults.set(newValue.rawValue, forKey: "Channel"); Task { await refreshFeed() } }
     }
+    /// Where installs put the game app: the launcher's own Game folder (it starts the game, so the game stays out of /Applications and app search)
     var appDir: URL {
-        get { URL(fileURLWithPath: defaults.string(forKey: "AppFolder") ?? "/Applications", isDirectory: true) }
+        get { defaults.string(forKey: "AppFolder").map { URL(fileURLWithPath: $0, isDirectory: true) } ?? paths.gameApps }
         set { defaults.set(newValue.path, forKey: "AppFolder") }
     }
+    var appPath: URL?   // where the last install put the game app (state.json): launcher 0.9.6 and earlier put it in /Applications
     /// A test feed instead of GitHub: DM_LAUNCHER_FEED (environment) or the DMLauncherFeed default, a manifest.json URL (file:// works)
     var feedOverride: URL? {
         (ProcessInfo.processInfo.environment["DM_LAUNCHER_FEED"] ?? defaults.string(forKey: "DMLauncherFeed")).flatMap(URL.init(string:))
@@ -66,7 +68,9 @@ final class LauncherModel {
 
     var updateAvailable: Bool { if let l = latest, let i = installed { return l.build > i.build } else { return false } }
     var launcherUpdate: Manifest.LauncherAsset? { latest?.launcher.flatMap { $0.build > ownBuild ? $0 : nil } }
-    var installedApp: URL { appDir.appendingPathComponent("D2R Metal.app") }
+    var installedApp: URL { appPath ?? appDir.appendingPathComponent("D2R Metal.app") }
+    /// An install whose app is still where an older launcher put it: the next start moves it into the Game folder (relocate)
+    var appNeedsMove: Bool { installed != nil && managedApp && installedApp.deletingLastPathComponent().standardizedFileURL != appDir.standardizedFileURL }
     /// Ready when the chosen files passed their checks: an extracted folder, or the base game, the update (unless the base is an .xci) and the keys
     var gameInputReady: Bool {
         guard checking.isEmpty else { return false }
@@ -116,12 +120,14 @@ final class LauncherModel {
         if let preview = ProcessInfo.processInfo.environment["DM_LAUNCHER_PREVIEW"] { showPreview(preview); return }
         readState()
         phase = installed == nil ? .welcome : .home
+        if appNeedsMove { relocate() }
         await refreshFeed()
     }
 
     func readState() {
-        struct State: Decodable { var release: Rel?; var packs: P?; struct Rel: Decodable { var version: String?; var build: Int? }; struct P: Decodable { var runtime: String; var tools: String } }
+        struct State: Decodable { var release: Rel?; var packs: P?; var app: String?; struct Rel: Decodable { var version: String?; var build: Int? }; struct P: Decodable { var runtime: String; var tools: String } }
         let s = (try? Data(contentsOf: paths.state)).flatMap { try? JSONDecoder().decode(State.self, from: $0) }
+        appPath = s?.app.map { URL(fileURLWithPath: $0) }
         if let v = s?.release?.version, let b = s?.release?.build, FileManager.default.fileExists(atPath: installedApp.path) { installed = (v, b) } else { installed = nil }
         packs = s?.packs.map { (URL(fileURLWithPath: $0.runtime, isDirectory: true), URL(fileURLWithPath: $0.tools, isDirectory: true)) }
         canRevert = FileManager.default.fileExists(atPath: paths.root.appendingPathComponent("build/previous/D2R Metal.app").path)
@@ -154,7 +160,7 @@ final class LauncherModel {
     private func runJob(_ what: String, command: String, input: Engine.Input) {
         guard job == nil else { return }
         working = what; phase = .working; logPath = nil
-        steps = [StepRow(id: "download", title: "Downloading D2R Metal")] + StepRow.engineSteps
+        steps = [StepRow.download] + StepRow.engineSteps
         job = Task {
             defer { job = nil }
             do {
@@ -216,11 +222,33 @@ final class LauncherModel {
 
     // MARK: other actions
 
+    /// Starts the game with the launcher's mark (DM_FROM_LAUNCHER: an app the launcher installed sends any other start back here, dm/host/app_mac.m),
+    /// then quits the launcher
     func play() {
-        NSWorkspace.shared.openApplication(at: installedApp, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.environment = ["DM_FROM_LAUNCHER": "1"]; cfg.addsToRecentItems = false
+        NSWorkspace.shared.openApplication(at: installedApp, configuration: cfg) { _, error in
             Task { @MainActor in
                 if let error { self.phase = .failed("D2R Metal did not open: \(error.localizedDescription)") } else { NSApp.terminate(nil) }
             }
+        }
+    }
+
+    /// Moves the game app from where an older launcher put it into the Game folder: the engine's install with the installed release's own packs
+    /// (every step is up to date, so only the app step runs: a few seconds); the old copy becomes the previous version (install.py install_app)
+    func relocate() {
+        guard let packs, job == nil else { return }
+        let engine = Engine(paths: paths, runtime: packs.runtime, tools: packs.tools, appDir: appDir, bundleID: bundleID)
+        working = "Moving D2R Metal into the launcher"; phase = .working; steps = StepRow.engineSteps; logPath = nil
+        job = Task {
+            defer { job = nil }
+            var code: Int32 = 0, msg: String?
+            do {
+                for try await out in engine.run("install") {
+                    switch out { case .exit(let c): code = c; case .event(let ev): msg = apply(ev) ?? msg }
+                }
+            } catch { msg = error.localizedDescription; code = 1 }
+            readState(); phase = code == 0 ? .home : .failed(msg ?? "Could not move D2R Metal into the launcher's folder.")
         }
     }
 
@@ -243,8 +271,9 @@ final class LauncherModel {
     /// Moves the game files and build outputs to the Trash (recoverable). Saves live elsewhere and are never touched
     func removeGameData() {
         let fm = FileManager.default
-        let items = ["data", "build", "releases", "tools", "downloads"].map { paths.root.appendingPathComponent($0) }.filter { fm.fileExists(atPath: $0.path) }
-        NSWorkspace.shared.recycle(items + (managedApp ? [installedApp] : [])) { _, error in
+        let items = ["data", "build", "releases", "tools", "downloads", "Game"].map { paths.root.appendingPathComponent($0) }.filter { fm.fileExists(atPath: $0.path) }
+        let app = managedApp && !installedApp.path.hasPrefix(paths.gameApps.path) ? [installedApp] : []   // an app still outside the Game folder
+        NSWorkspace.shared.recycle(items + app) { _, error in
             Task { @MainActor in
                 if let error { self.phase = .failed("Could not move the game data to the Trash: \(error.localizedDescription)") }
                 else { self.readState(); self.phase = .welcome }
@@ -256,6 +285,35 @@ final class LauncherModel {
     }
 
     func showLog() { if let l = logPath { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: l)]) } }
+    func showGame() { NSWorkspace.shared.activateFileViewerSelecting([installedApp]) }
+
+    // MARK: progress of the running job
+
+    var runningStep: StepRow? { steps.first { $0.state == .running } }
+    /// The whole job's progress, each step weighted by its typical time on an M6 (TYPICAL_S in install.py); a step found up to date counts as done
+    var overallProgress: Double {
+        let total = steps.reduce(0) { $0 + $1.typical }
+        guard total > 0 else { return 0 }
+        let done = steps.reduce(0.0) { acc, s in
+            switch s.state {
+            case .done, .kept, .failed: acc + s.typical
+            case .running: acc + s.typical * (s.total > 0 ? Double(s.done) / Double(s.total) : 0.3)
+            case .waiting: acc
+            }
+        }
+        return min(done / total, 1)
+    }
+    /// "About 4 min left" from the typical times of the steps still to run (nil when under a minute or nothing is known)
+    var etaText: String? {
+        let left = steps.reduce(0.0) { acc, s in
+            switch s.state {
+            case .waiting: acc + s.typical
+            case .running: acc + s.typical * (s.total > 0 ? 1 - Double(s.done) / Double(s.total) : 0.7)
+            default: acc
+            }
+        }
+        return left >= 60 ? "About \(Int((left / 60).rounded())) min left" : nil
+    }
 }
 
 extension LauncherModel {
@@ -267,10 +325,11 @@ extension LauncherModel {
          "runtime": {"name": "", "version": "1.1.0", "sha256": "", "size": 0}, "tools": {"name": "", "version": "1", "sha256": "", "size": 0}}
         """#
         let sample = try? JSONDecoder().decode(Manifest.self, from: Data(json.utf8))
+        NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)   // in front, so the screenshot shows the active window
         switch which {
         case "working":
             working = "Installing"; phase = .working
-            steps = [StepRow(id: "download", title: "Downloading D2R Metal")] + StepRow.engineSteps
+            steps = [StepRow.download] + StepRow.engineSteps
             for (i, seconds) in [14.0, 160, 13, 21].enumerated() { steps[i].state = .done; steps[i].seconds = seconds }   // download … packs
             if let i = steps.firstIndex(where: { $0.id == "shaders" }) { steps[i].state = .running; steps[i].done = 4224; steps[i].total = 6927 }
         case "home": installed = ("1.0.0", 412); latest = sample; canRevert = true; phase = .home
@@ -287,15 +346,17 @@ extension LauncherModel {
 }
 
 extension StepRow {
+    // typical seconds on an M6, as install.py's TYPICAL_S (the engine's start events replace them); the download's depends on the connection
     static let engineSteps: [StepRow] = [
-        StepRow(id: "unpack", title: "Unpacking your game files"),
-        StepRow(id: "product", title: "Preparing the game program"),
-        StepRow(id: "packs", title: "Extracting the shaders"),
-        StepRow(id: "shaders", title: "Translating the shaders"),
-        StepRow(id: "c1", title: "Checking the shaders"),
-        StepRow(id: "overlay", title: "Building the interface"),
-        StepRow(id: "tables", title: "Reading the game tables"),
-        StepRow(id: "app", title: "Assembling D2R Metal"),
-        StepRow(id: "warm", title: "Compiling the shaders for this Mac"),
+        StepRow(id: "unpack", title: "Unpacking your game files", typical: 300),
+        StepRow(id: "product", title: "Preparing the game program", typical: 15),
+        StepRow(id: "packs", title: "Extracting the shaders", typical: 20),
+        StepRow(id: "shaders", title: "Translating the shaders", typical: 120),
+        StepRow(id: "c1", title: "Checking the shaders", typical: 10),
+        StepRow(id: "overlay", title: "Building the interface", typical: 20),
+        StepRow(id: "tables", title: "Reading the game tables", typical: 5),
+        StepRow(id: "app", title: "Assembling D2R Metal", typical: 5),
+        StepRow(id: "warm", title: "Compiling the shaders for this Mac", typical: 240),
     ]
+    static let download = StepRow(id: "download", title: "Downloading D2R Metal", typical: 20)
 }

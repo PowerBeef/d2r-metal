@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -130,6 +131,23 @@ class InstallTest(unittest.TestCase):
         self.assertIn('took 1 title keys', r.stdout)
         self.assertIn('the base game is not in the game package', r.stderr)   # the fake holds no program content: the script gets this far
         self.assertNotIn('hactool error', r.stderr)
+
+    def test_install_app_moves_an_app_from_its_old_folder(self):
+        # an install made before the launcher kept the game in its own folder: the copy in the old folder becomes the previous version
+        old_dir = Path(self.tmp.name) / 'Applications'; c = self.ctx(app_dir=str(Path(self.tmp.name) / 'Game'))
+        c.state['app'] = str(self.fake_app(old_dir, marker='old'))
+        install.install_app(c, str(self.fake_app(Path(self.tmp.name) / 's1', marker='new')))
+        self.assertEqual(self.marker(Path(c.app_dir) / install.APP_NAME), 'new')
+        self.assertEqual(self.marker(Path(c.build) / 'previous' / install.APP_NAME), 'old')
+        self.assertFalse((old_dir / install.APP_NAME).exists())
+        # an app at the old place that the launcher did not install stays where it is
+        mine = self.fake_app(Path(self.tmp.name) / 'Mine', managed_=False, marker='mine'); c.state['app'] = str(mine)
+        shutil.rmtree(Path(c.app_dir) / install.APP_NAME)
+        install.install_app(c, str(self.fake_app(Path(self.tmp.name) / 's2', marker='newer')))
+        self.assertEqual(self.marker(mine), 'mine')
+
+    def test_game_folder_is_the_default(self):
+        self.assertEqual(self.ctx().app_dir, str(self.root / 'Game'))
 
     def test_state_survives_a_new_run(self):
         c = self.ctx(); c.state['steps']['product'] = 'r49 abc'; c.save_state()

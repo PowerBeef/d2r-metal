@@ -153,10 +153,25 @@ void dm_app_msl_env(void) {
 }
 // main() 最前面调。是 App 形态就把环境与参数备好并返回 1；不是返回 0、什么都不动
 // Called at the very start of main(). In App form it prepares the environment and arguments and returns 1; otherwise it returns 0 and touches nothing
+// A game app installed by D2R Metal Launcher is started through the launcher, as a Battle.net game is: opened any other way (Finder, a Dock icon
+// kept from an earlier run, Open Recent) it opens the launcher and quits. The launcher marks its own start with DM_FROM_LAUNCHER. Builds the
+// launcher did not make (no DMLauncherManaged), test copies (DM_APP_SUPPORT) and an app whose launcher is gone start as before
+static BOOL launcher_handoff(void) {
+    if (getenv("DM_FROM_LAUNCHER") || getenv("DM_APP_SUPPORT") || ![[NSBundle.mainBundle objectForInfoDictionaryKey:@"DMLauncherManaged"] boolValue]) return NO;
+    NSURL *launcher = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"org.d2rmetal.launcher"];
+    if (!launcher) return NO;
+    dispatch_semaphore_t opened = dispatch_semaphore_create(0);
+    [NSWorkspace.sharedWorkspace openApplicationAtURL:launcher configuration:NSWorkspaceOpenConfiguration.configuration
+                                    completionHandler:^(NSRunningApplication *app, NSError *err) { (void)app; (void)err; dispatch_semaphore_signal(opened); }];
+    dispatch_semaphore_wait(opened, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+    return YES;
+}
+
 int dm_app_bootstrap(int *argc, char ***argv) {
     @autoreleasepool {
         NSString *bp = NSBundle.mainBundle.bundlePath;
         if (*argc > 1 || ![bp.pathExtension isEqualToString:@"app"]) return 0;
+        if (launcher_handoff()) exit(0);
         NSFileManager *fm = NSFileManager.defaultManager;
         if (!getenv("DM_LANG")) setenv("DM_LANG", [NSLocale.preferredLanguages.firstObject hasPrefix:@"zh"] ? "zh-Hans" : "en", 1);   // 命令行宿主一律简中；App 形态跟系统首选语言（提示框与游戏内同一个开关） | The command-line host is always Simplified Chinese; the App form follows the system's preferred language (dialogs and in-game text use the same switch)
         NSString *sup = [[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@APP_NAME] copy];

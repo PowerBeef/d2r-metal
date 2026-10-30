@@ -28,31 +28,37 @@ The launcher installs D2R Metal on your Mac from your own game files and keeps i
 | Extracting / translating the shaders | turns the game's 6,927 shaders into Metal source | about 2 min |
 | Building the interface | the overlay with the project's own pages and controls | 25 s |
 | Reading the game tables | two small tables from the game's data | about 1 min |
-| Assembling D2R Metal | `D2R Metal.app` in Applications | instant |
+| Assembling D2R Metal | `D2R Metal.app` in the launcher's own folder | instant |
 | Compiling the shaders for this Mac | macOS compiles every shader once and keeps them | about 4 min |
 
 You can keep using your Mac. If you quit midway, the next run continues where it stopped.
 
-4. Press **Play**, or open **D2R Metal** from Applications like any other app.
+4. Press **Play**.
+
+The launcher is how you open the game, as Battle.net is for Blizzard's games: D2R Metal itself is not in Applications or in app search. If you open
+it some other way (a Dock icon kept from an earlier session, say), it opens the launcher instead. An install made by launcher 0.9.6 or earlier,
+which put the app in Applications, is moved into the launcher's folder the first time a newer launcher opens; the old copy becomes the previous version.
 
 ## Updates
 
 - The launcher checks GitHub each time you open it. The game's main menu also shows **New version N** when a release is out; selecting it opens the launcher.
 - An update downloads the new release and redoes only what that release changed. Usually that is only the app itself (seconds). A release that changes the shader translation redoes it and the compile (a few minutes).
-- **Go Back to Previous Version** restores the app from before the last update.
-- **Updates: Releases and pre-releases** also offers pre-releases.
+- **Go Back to the Previous Version** (gear menu) restores the app from before the last update.
+- **Updates: With pre-releases** (under Your Game) also offers pre-releases. **Check for Updates** in the gear menu asks GitHub again.
 - **After a macOS update**, macOS's Metal compiler is new, so the game compiles its shaders again the first time it starts. A small window shows the progress for a few minutes; this happens once.
 
 ## Where things go
 
 | What | Where |
 |---|---|
-| The app | `/Applications/D2R Metal.app` (another folder can be chosen) |
+| The game app | `~/Library/Application Support/D2R Metal/Game/D2R Metal.app` (**Show Game in Finder** in the gear menu) |
 | Game files, build outputs, the release packs, logs | `~/Library/Application Support/D2R Metal/` |
 | Your characters and settings | `~/Library/Application Support/D2R Mobile/` (the folder keeps the project's former name, so saves from earlier builds carry over) |
 
+The gear menu next to Play holds the rest:
+
 - **Repair** runs every step again and rebuilds whatever is missing or damaged.
-- **Remove Game Data…** moves the game files, the build outputs and the app to the Trash. Your characters and settings are never touched.
+- **Remove the Game…** moves the game files, the build outputs and the app to the Trash. Your characters and settings are never touched.
 
 ## Privacy
 
@@ -64,7 +70,7 @@ You can keep using your Mac. If you quit midway, the next run continues where it
 ## If something goes wrong
 
 - **Show Log** opens the log of the last run (`~/Library/Application Support/D2R Metal/logs/`). Please attach it to an issue.
-- **"…exists and was not installed by the launcher"**: there is already a D2R Metal in Applications that you built yourself (or a link to one). The launcher never replaces it: move it aside, or choose another folder for the app.
+- **"…exists and was not installed by the launcher"**: there is already a D2R Metal where the launcher puts the game, one you built yourself (or a link to one). The launcher never replaces it: move it aside.
 - **"…not from version 1.0.34.0"**: the game files are another version. The launcher checks the three program files by checksum.
 - **The keys are refused**: see [Getting your game files](GAME_FILES.md). A personalized ticket needs the title key in your own `~/.switch/title.keys`.
 

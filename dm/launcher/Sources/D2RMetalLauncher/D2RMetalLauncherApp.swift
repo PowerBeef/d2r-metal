@@ -4,6 +4,8 @@ import SwiftUI
 struct D2RMetalLauncherApp: App {
     @State private var model = LauncherModel()
 
+    init() { Brand.registerFonts() }
+
     var body: some Scene {
         Window("D2R Metal Launcher", id: "main") {
             ContentView()
@@ -14,6 +16,6 @@ struct D2RMetalLauncherApp: App {
         .windowStyle(.hiddenTitleBar)          // the backdrop reaches the top edge; the traffic lights sit on it
         .windowBackgroundDragBehavior(.enabled)
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 740, height: 600)   // fits a 1280 x 720 screen (690 points under the menu bar)
+        .defaultSize(width: 980, height: 620)   // fits a 1280 x 720 screen (690 points under the menu bar)
     }
 }

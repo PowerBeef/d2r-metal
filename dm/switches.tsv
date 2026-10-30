@@ -77,6 +77,7 @@ DM_FIXED_TIME	host,tools	host/hle_time.c host/main.c tools/replay.py	y
 DM_FPS	gfx	gfx/nvn/nvn_mtl.m	y
 DM_FRAMES	gfx,host	gfx/tests/nvn_replay.m host/diag.c	y
 DM_FREE_ACCOUNT	ios-tools	ios/run.sh	-
+DM_FROM_LAUNCHER	host,other	host/app_mac.m launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_FS	host	host/main.c	-
 DM_FSLOG	host	host/hle_fs.c	-
 DM_FSLOG_HASH	host	host/hle_fs.c	-

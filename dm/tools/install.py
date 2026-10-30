@@ -13,6 +13,7 @@
 #                      resume after an interruption are the same command; game files are needed only when the root has none yet
 #   install.py repair  …the same arguments…   every step again
 #   install.py revert  --root R [--app-dir D]                                swaps the app back to the one before the last install or update
+#   (--app-dir: where D2R Metal.app goes; default R/Game, out of /Applications, since the launcher starts the game)
 #   install.py status  --root R [--json]
 # P = an unpacked runtime pack (manifest.json, host/D2RMobile, repo/dm/…, lib/libnvn_deswizzle.dylib), T = an unpacked tools pack (python/bin/python3,
 # dmsh_xlate/dmsh_xlate, bin/spirv-cross, bin/hactool). --json prints one JSON event per line on stdout (what the launcher reads); the steps' own output
@@ -57,7 +58,8 @@ class Ctx:
         self.root = os.path.abspath(os.path.expanduser(a.root))
         self.runtime = os.path.abspath(os.path.expanduser(a.runtime)) if getattr(a, 'runtime', None) else ''   # '' = not given (check, revert, status)
         self.tools = os.path.abspath(os.path.expanduser(a.tools)) if getattr(a, 'tools', None) else ''
-        self.app_dir = os.path.abspath(os.path.expanduser(getattr(a, 'app_dir', None) or '/Applications'))
+        # the game app lives in the root's Game folder by default: started through the launcher (as a Battle.net game), out of /Applications and app search
+        self.app_dir = os.path.abspath(os.path.expanduser(getattr(a, 'app_dir', None) or os.path.join(self.root, 'Game')))
         self.bundle_id = getattr(a, 'bundle_id', None) or BUNDLE_ID
         self.json = getattr(a, 'json', False)
         self.game = os.path.join(self.root, 'data', 'switch', VERSION, 'Update')
@@ -286,7 +288,7 @@ def step_tables(c, a):
 
 def info_plist(c, m):
     d = {'CFBundleName': 'D2R Metal', 'CFBundleDisplayName': 'D2R Metal', 'CFBundleIdentifier': c.bundle_id, 'CFBundleExecutable': 'D2RMobile',
-         'CFBundleIconFile': 'AppIcon', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': m.get('version', '0'), 'CFBundleVersion': str(m.get('build', 1)),
+         'CFBundleIconFile': 'AppIcon', 'CFBundleIconName': 'AppIcon', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': m.get('version', '0'), 'CFBundleVersion': str(m.get('build', 1)),
          'LSMinimumSystemVersion': m.get('macos_min', '27.0'), 'NSHighResolutionCapable': True, 'LSApplicationCategoryType': 'public.app-category.role-playing-games',
          'GCSupportsControllerUserInteraction': True, 'DMLauncherManaged': True}   # DMLauncherManaged: an app this engine may replace (see install_app)
     if m.get('update_url'): d['SWUpdateURL'] = m['update_url']
@@ -310,8 +312,9 @@ def step_app(c, a):
     shutil.copy2(os.path.join(c.runtime, 'host', 'D2RMobile'), os.path.join(app, 'Contents', 'MacOS', 'D2RMobile'))
     for name in ('shader_map.tsv', 'pso_manifest.tsv'): shutil.copy2(c.dm('gfx', 'nvn', name), os.path.join(res, name))
     shutil.copy2(os.path.join(c.build, 'c1_full.tsv'), os.path.join(res, 'c1_full.tsv'))
-    icon = os.path.join(c.runtime, 'app', 'AppIcon.icns')
-    if os.path.isfile(icon): shutil.copy2(icon, os.path.join(res, 'AppIcon.icns'))
+    for name in ('Assets.car', 'AppIcon.icns'):   # the icon (dm/brand/icon.sh): the layered one in Assets.car, the .icns as its fallback
+        icon = os.path.join(c.runtime, 'app', name)
+        if os.path.isfile(icon): shutil.copy2(icon, os.path.join(res, name))
     paths = app_paths(c)
     with open(os.path.join(res, 'paths.txt'), 'w', encoding='utf-8') as f:
         for k, v in paths.items():
@@ -338,6 +341,11 @@ def install_app(c, app):
     if os.path.lexists(dest) and not managed(dest):
         raise Fail(f'{dest} exists and was not installed by the launcher (a link or another build): move it aside, or choose another folder for the app')
     os.makedirs(c.app_dir, exist_ok=True); os.makedirs(os.path.dirname(prev), exist_ok=True)
+    # the app moved since the last install (launcher 0.9.7 keeps it in its own folder instead of /Applications): the copy at the old place is the
+    # one being replaced, so it becomes the previous version and leaves its old folder
+    old = c.state.get('app')
+    if old and not os.path.lexists(dest) and os.path.realpath(old) != os.path.realpath(dest) and os.path.isdir(old) and managed(old):
+        shutil.rmtree(prev, ignore_errors=True); shutil.move(old, prev)
     if os.path.lexists(dest):
         shutil.rmtree(prev, ignore_errors=True); shutil.move(dest, prev)   # a rename on one volume, a copy across volumes
     shutil.move(app, dest)
