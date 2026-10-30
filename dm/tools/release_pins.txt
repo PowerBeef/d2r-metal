@@ -9,5 +9,5 @@ python_sha256	709f419d175eb015f810b68aa54bdae1d776c9824cb362aa701c93b0a9f2a9e7
 pip	lz4==4.4.5 capstone==5.0.9 numpy==2.5.4 pillow==13.0.0
 # spirv-cross (Khronos, Apache-2.0): the Homebrew build this Mac's shader chain uses (links only system libraries)
 spirv_cross_version	1.4.363.0
-# hactool (SciresM, ISC), the commit built in Emulators/DIBLOII/tools/hactool
+# hactool (SciresM, ISC): cloned from github.com/SciresM/hactool and built at this commit
 hactool_commit	1d64a83
