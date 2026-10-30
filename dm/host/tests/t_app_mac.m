@@ -11,12 +11,13 @@
 #undef ephemeralSessionConfiguration
 #include "../romfs_validate.c"
 static _Atomic int g_requests, g_offers;
+static NSString *g_fake_page = @"http://dmtest.invalid/page/%d";   // the download page the fake version file names (%d = the request number)
 @interface DmFakeHTTP : NSURLProtocol @end
 @implementation DmFakeHTTP
 + (BOOL)canInitWithRequest:(NSURLRequest *)r { return [r.URL.host isEqualToString:@"dmtest.invalid"]; }
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)r { return r; }
 - (void)startLoading {
-    int n = atomic_fetch_add(&g_requests, 1); NSString *body = [NSString stringWithFormat:@"{\"build\":2,\"note\":\"n\",\"url\":\"http://dmtest.invalid/page/%d\"}", n];
+    int n = atomic_fetch_add(&g_requests, 1); NSString *body = [NSString stringWithFormat:@"{\"build\":2,\"note\":\"n\",\"url\":\"%@\"}", [NSString stringWithFormat:g_fake_page, n]];
     NSHTTPURLResponse *rsp = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{ @"Content-Type": @"application/json" }];
     [self.client URLProtocol:self didReceiveResponse:rsp cacheStoragePolicy:NSURLCacheStorageNotAllowed];
     [self.client URLProtocol:self didLoadData:[body dataUsingEncoding:NSUTF8StringEncoding]];
@@ -86,6 +87,14 @@ int main(void) {
         CHECK([g_upd_page isEqualToString:@"http://dmtest.invalid/page/0"], "下载页地址在主线程上记下了（%s） | the download page address was recorded on the main thread (%s)", g_upd_page.UTF8String, g_upd_page.UTF8String);
         upd_check(); CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.3, false);
         CHECK(atomic_load(&g_requests) == 1, "60 秒内再来一次：不查 | another one within 60 s: not checked");
+        // the launcher's scheme is a page too (an app the launcher installed opens it for the update); another host is not
+        g_fake_page = @"d2rmetal://update"; g_upd_last = 0; upd_check();
+        for (int i = 0; i < 100 && !g_upd_page.length; i++) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+        for (int i = 0; i < 100 && ![g_upd_page hasPrefix:@"d2rmetal:"]; i++) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+        CHECK([g_upd_page isEqualToString:@"d2rmetal://update"], "the launcher's d2rmetal:// address is accepted (%s)", g_upd_page.UTF8String);
+        g_fake_page = @"https://elsewhere.invalid/x"; g_upd_last = 0; upd_check();
+        for (int i = 0; i < 100 && g_upd_page; i++) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+        CHECK(!g_upd_page, "a page on another host is not (%s)", g_upd_page.UTF8String ?: "none");
     }
     printf("== t_app_mac %d 项，失败 %d | %d checks, %d failed ==\n", checks, fails, checks, fails);
     return fails != 0;

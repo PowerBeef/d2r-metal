@@ -2288,6 +2288,16 @@ static int warm_shard(NSString *dir, NSArray<NSString *> *src, int k, int n) {  
     dispatch_group_wait(g, DISPATCH_TIME_FOREVER);
     return bad;
 }
+// At app start (app_mac.m): 1 when the library is of the source form and was not warmed under this macOS build (warm.stamp), else 0
+int nvn_mtl_warm_needed(void) {
+    @autoreleasepool {
+        NSString *dir = msl_dir(); NSArray<NSString *> *src = warm_list(dir);
+        if (!src.count) return 0;   // no folder, or an Xcode-form library (every .metal has its .metallib)
+        char osb[64] = ""; size_t ol = sizeof osb; sysctlbyname("kern.osversion", osb, &ol, NULL, 0);
+        NSString *st = [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:@"warm.stamp"] encoding:NSUTF8StringEncoding error:nil];
+        return ![[st stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] isEqualToString:@(osb)];
+    }
+}
 int nvn_mtl_warm_shaders(const char *shard) {   // shard = "k/n" in a worker, NULL in the process the launcher starts
     @autoreleasepool {
         NSString *dir = msl_dir(); NSArray<NSString *> *src = warm_list(dir);

@@ -5,8 +5,20 @@
 #include "dm_uctx.h"
 #include "dm_hud.h"
 #include "dm_cursor.h"
-#include "dm_hud_exp.h"
 #include <TargetConditionals.h>
+#if TARGET_OS_IOS
+#include "dm_hud_exp.h"
+#else
+#include "dm_tables.h"
+static uint32_t k_exp[100];
+static pthread_once_t g_exp_once = PTHREAD_ONCE_INIT;
+static int g_exp_ok;
+static void exp_load(void) {   // the experience table from hud_exp.tsv (dm_tables.h); without it the experience bar stays empty
+    long v[100]; char path[PATH_MAX]; int n = dm_table_read("hud_exp.tsv", 1, v, 100, path);
+    if (n == 100) { for (int i = 0; i < 100; i++) k_exp[i] = (uint32_t)v[i]; g_exp_ok = 1; }
+    else LOG("Tables: %s %s: the experience bar stays empty", path, n < 0 ? "is missing" : "is incomplete");
+}
+#endif
 #include <fcntl.h>
 #include <dirent.h>
 #include <stdatomic.h>
@@ -983,7 +995,11 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
           // Area number (Id in levels.txt: 1 = Rogue Encampment, 2 = Blood Moor...): path +0x20 → current room +0x18 → area room +0x90 → area +0x1f8
           if (pp && tk_rd(pp + 0x20, &r1, 8) && tk_rd(r1 + 0x18, &r2, 8) && tk_rd(r2 + 0x90, &lvl, 8) && tk_rd(lvl + 0x1f8, &no, 4) && no < 200) h.area = (int)no; }
         if (lv >= 99) h.exp_permille = 1000;
+#if !TARGET_OS_IOS
+        else if (lv >= 1 && (pthread_once(&g_exp_once, exp_load), g_exp_ok)) {
+#else
         else if (lv >= 1) {
+#endif
             uint32_t lo = k_exp[lv - 1], hi = k_exp[lv];
             h.exp_permille = hi > lo && xp > lo ? (int)((uint64_t)(xp - lo) * 1000 / (hi - lo)) : 0;
             if (h.exp_permille > 1000) h.exp_permille = 1000;

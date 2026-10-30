@@ -9,6 +9,8 @@
 //   the program files (the rewritten game program, the build output directory) are in Contents/Resources/product inside the package; the log is written to ~/Library/Logs/D2R Mobile/host.log.
 // Command-line starts (gates, screenshots, scripts) do not come here: not inside an .app package, or with arguments, everything stays as it was. Packaging script: dm/tools/mac_app.sh.
 #import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
+#include <stdatomic.h>
 #include <sys/stat.h>
 #include "hle.h"
 #include "dm_i18n.h"
@@ -101,6 +103,44 @@ static NSString *res_item(NSString *name) {
     return nil;
 }
 static void upd_start(void);   // 更新检查（在文件后面） | update check (later in this file)
+// After a macOS update the system's Metal compiler, and with it the app's shader cache, is new: a source-form library (the launcher's installs, see
+// nvn_mtl.m lib_load) is compiled again before the game starts, by this executable's --warm-shaders (a few minutes, once), behind a small window that
+// shows the progress, so the game doesn't compile while it draws. The window appears only when the pass takes longer than a second (after a minor
+// update the cache usually still holds everything). Also covers an install whose warm pass never ran
+static void warm_with_window(void) {
+    NSTask *t = [NSTask new]; t.executableURL = NSBundle.mainBundle.executableURL; t.arguments = @[@"--warm-shaders"];
+    NSPipe *p = [NSPipe pipe]; t.standardOutput = p;
+    __block _Atomic int done = 0, total = 0; NSMutableString *buf = [NSMutableString string];
+    p.fileHandleForReading.readabilityHandler = ^(NSFileHandle *h) {
+        NSString *s = [[NSString alloc] initWithData:h.availableData encoding:NSUTF8StringEncoding]; if (!s.length) return;
+        @synchronized (buf) {
+            [buf appendString:s]; NSRange nl;
+            while ((nl = [buf rangeOfString:@"\n"]).location != NSNotFound) {
+                int d, n; if (sscanf([buf substringToIndex:nl.location].UTF8String, "WARM %d/%d", &d, &n) == 2) { atomic_store(&done, d); atomic_store(&total, n); }
+                [buf deleteCharactersInRange:NSMakeRange(0, nl.location + 1)];
+            }
+        }
+    };
+    NSError *e = nil; double t0 = CACurrentMediaTime();
+    if (![t launchAndReturnError:&e]) { LOG("【红】App: the shader warm pass did not start: %s", e.localizedDescription.UTF8String); return; }
+    NSWindow *w = nil; NSProgressIndicator *bar = nil; NSModalSession s = NULL;
+    while (t.isRunning) {
+        if (!w && CACurrentMediaTime() - t0 > 1.0) {
+            w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 440, 132) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+            w.title = T("dmAppWarmTitle"); w.releasedWhenClosed = NO;
+            NSTextField *l = [NSTextField wrappingLabelWithString:T("dmAppWarm")]; l.frame = NSMakeRect(20, 52, 400, 60);
+            bar = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(20, 20, 400, 20)]; bar.indeterminate = NO; bar.minValue = 0;
+            [w.contentView addSubview:l]; [w.contentView addSubview:bar]; [w center];
+            s = [NSApp beginModalSessionForWindow:w];
+        }
+        if (s) { int n = atomic_load(&total); bar.maxValue = n > 0 ? n : 1; bar.doubleValue = atomic_load(&done); [NSApp runModalSession:s]; }
+        usleep(50000);
+    }
+    p.fileHandleForReading.readabilityHandler = nil;
+    if (s) [NSApp endModalSession:s];
+    [w orderOut:nil];
+    LOG("App: shaders compiled for this macOS: %d libraries, exit %d, %.1f s", atomic_load(&total), t.terminationStatus, CACurrentMediaTime() - t0);
+}
 // --warm-shaders in App form (the launcher runs <app>/Contents/MacOS/D2RMobile --warm-shaders): the library folder comes from the package, as at a normal start
 void dm_app_msl_env(void) {
     @autoreleasepool {
@@ -165,8 +205,11 @@ int dm_app_bootstrap(int *argc, char ***argv) {
         setenv("DM_ROMFS", rom.fileSystemRepresentation, 1); setenv("DM_ROOT", sup.fileSystemRepresentation, 1);
         NSString *shmap = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"shader_map.tsv"];   // 图形后端的着色器映射表：命令行起时按可执行文件旁的源码树找，包里放在 Resources | The graphics backend's shader mapping table: when started from the command line it is found via the source tree next to the executable; in the package it is in Resources
         if ([fm fileExistsAtPath:shmap]) setenv("DM_NVN_SHMAP", shmap.fileSystemRepresentation, 1);
+        NSString *tables = res_item(@"tables");   // the game-derived tables the Mac host reads at start (dm_tables.h)
+        if (tables) setenv("DM_TABLES", tables.fileSystemRepresentation, 1);
         NSString *msl = res_item(@"msl");   // 编好的着色器库（msl/b-<翻译链版本>/） | The compiled shader library (msl/b-<translation chain version>/)
         if (msl) setenv("DM_MSL_DIR", msl.fileSystemRepresentation, 1);
+        { int nvn_mtl_warm_needed(void); if (nvn_mtl_warm_needed()) warm_with_window(); }
         BOOL missing_overlay = NO;
         NSString *ov = dm_mac_overlay(res_item(@"romfs_overlay"), res_item(@"romfs_overlay_variants"), dm_custom_get, &missing_overlay);
         if (missing_overlay) LOG("App：缺少已启用自定义功能的覆盖层组合，暂用基础覆盖层；请重新生成并打包覆盖层");
@@ -207,7 +250,8 @@ static void upd_check_main(void) {
         NSNumber *b = [j isKindOfClass:NSDictionary.class] ? j[@"build"] : nil;
         if (![b isKindOfClass:NSNumber.class] || b.intValue < 1) { LOG("更新：读版本文件没成（%s，HTTP %ld），本次不提示", e ? e.localizedDescription.UTF8String : "格式不对", (long)code); return; }
         NSString *zh = [j[@"note"] isKindOfClass:NSString.class] ? j[@"note"] : @"", *en = [j[@"note_en"] isKindOfClass:NSString.class] ? j[@"note_en"] : zh, *pg = [j[@"url"] isKindOfClass:NSString.class] ? j[@"url"] : nil;
-        NSURL *pu = pg ? [NSURL URLWithString:pg] : nil; BOOL okpg = pu && ([pu.scheme isEqualToString:@"https"] || [pu.scheme isEqualToString:@"http"]) && [pu.host isEqualToString:u.host];
+        // or the launcher's own scheme (d2rmetal://update, registered by D2R Metal Launcher, dm/launcher): an app it installed opens it for the update
+        NSURL *pu = pg ? [NSURL URLWithString:pg] : nil; BOOL okpg = pu && ((([pu.scheme isEqualToString:@"https"] || [pu.scheme isEqualToString:@"http"]) && [pu.host isEqualToString:u.host]) || [pu.scheme isEqualToString:@"d2rmetal"]);
         NSString *page = okpg ? [pg copy] : nil; dispatch_async(dispatch_get_main_queue(), ^{ g_upd_page = page; });
         if (b.intValue > g_upd_own) { const char *l = getenv("DM_LANG"); NSString *note = (l && !strncmp(l, "zh", 2)) ? zh : en; LOG("更新：最新构建 %d 比自己（%d）新 → 主菜单提示（下载页 %s）", b.intValue, g_upd_own, okpg ? "有" : "没给或不同主机，不可点"); dm_update_offer(b.intValue, note.UTF8String, 0); }
         else { LOG("更新：最新构建 %d，不比自己（%d）新，不提示", b.intValue, g_upd_own); dm_update_offer(0, "", 0); }

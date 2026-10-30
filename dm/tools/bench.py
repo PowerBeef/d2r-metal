@@ -399,6 +399,8 @@ def cmd_baseline(a):
     # 宿主按自己所在位置找「../gfx/nvn/」下的表（着色器映射 shader_map.tsv、c1_full.tsv…，nvn_mtl.m exe_rel）：照仓库的相对布局留一份 | the host finds the tables under "../gfx/nvn/" relative to itself (shader_map.tsv, c1_full.tsv..., nvn_mtl.m exe_rel): keep a copy in the repository's relative layout
     os.makedirs(os.path.join(d, 'host'), exist_ok=True); os.makedirs(os.path.join(d, 'gfx', 'nvn'), exist_ok=True)
     shutil.copy2(src, os.path.join(d, 'host', 'dmhost'))
+    if os.path.isdir(os.path.join(os.path.dirname(src), 'tables')):   # the game-derived tables it reads beside itself (dm/host/dm_tables.h)
+        shutil.copytree(os.path.join(os.path.dirname(src), 'tables'), os.path.join(d, 'host', 'tables'), dirs_exist_ok=True)
     import glob   # noqa: PLC0415
     for t in glob.glob(os.path.join(os.path.dirname(src), '..', 'gfx', 'nvn', '*.tsv')): shutil.copy2(t, os.path.join(d, 'gfx', 'nvn', os.path.basename(t)))   # 着色器映射、c1 清单… | shader map, c1 list...
     cur = os.path.join(BASE, 'current')
