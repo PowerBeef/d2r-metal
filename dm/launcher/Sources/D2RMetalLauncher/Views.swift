@@ -67,6 +67,17 @@ struct Feature: View {
 struct Panel: View {
     @Environment(LauncherModel.self) private var model
     var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let notice = model.launcherNotice { LauncherNotice(text: notice) }
+            phaseContent
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+        .animation(.smooth(duration: 0.3), value: model.phase)
+    }
+
+    @ViewBuilder private var phaseContent: some View {
         Group {
             switch model.phase {
             case .loading: ProgressView().controlSize(.large).tint(Palette.gold[1]).frame(maxWidth: .infinity, minHeight: 200)
@@ -76,10 +87,22 @@ struct Panel: View {
             case .failed(let text): ErrorPanel(text: text)
             }
         }
-        .padding(22)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 26))
-        .animation(.smooth(duration: 0.3), value: model.phase)
+    }
+}
+
+/// A newer launcher that could not be installed: why, and where to get it by hand
+struct LauncherNotice: View {
+    let text: String
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(text).font(.callout).foregroundStyle(Palette.parchment).fixedSize(horizontal: false, vertical: true)
+                Link("Releases page", destination: URL(string: "https://github.com/PowerBeef/d2r-metal/releases")!).font(.callout).foregroundStyle(Palette.gold[1])
+            }
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: .rect(cornerRadius: 14))
     }
 }
 
@@ -309,9 +332,6 @@ struct HomePanel: View {
                     }
                     .pickerStyle(.menu).labelsHidden().fixedSize().controlSize(.small)
                 }
-                if let up = model.launcherUpdate {
-                    Label("A new launcher (\(up.version)) is on the releases page", systemImage: "sparkles").font(.callout).foregroundStyle(Palette.gold[1])
-                }
             }
         }
     }
@@ -406,7 +426,7 @@ struct ActionBar: View {
     private var gear: some View {
         @Bindable var model = model
         return Menu {
-            Button("Check for Updates", systemImage: "arrow.clockwise") { Task { await model.refreshFeed() } }
+            Button("Check for Updates", systemImage: "arrow.clockwise") { Task { await model.checkForUpdates() } }
             if model.updateAvailable { Button("Play Without Updating", systemImage: "play") { model.play() } }
             Button("Repair", systemImage: "wrench.and.screwdriver") { model.repair() }
             if model.canRevert { Button("Go Back to the Previous Version", systemImage: "clock.arrow.circlepath") { model.revert() } }

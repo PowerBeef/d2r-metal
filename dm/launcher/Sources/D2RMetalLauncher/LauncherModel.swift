@@ -22,6 +22,7 @@ final class LauncherModel {
     var latest: Manifest?
     var latestURL: URL?
     var feedError: String?
+    var launcherNotice: String?      // why a newer launcher could not be installed (shown at the top of the panel)
     var steps: [StepRow] = []
     var working = ""                 // what the running job is, for the header ("Installing", "Updating"…)
     var logPath: String?
@@ -123,7 +124,72 @@ final class LauncherModel {
         phase = installed == nil ? .welcome : .home
         if appNeedsMove { relocate() }
         await refreshFeed()
-        if let what = ProcessInfo.processInfo.environment["DM_LAUNCHER_AUTORUN"] { await autorun(what) }
+        let auto = ProcessInfo.processInfo.environment["DM_LAUNCHER_AUTORUN"]
+        if auto == nil || auto == "selfupdate" {   // a test of another job runs the launcher it was given
+            while job != nil { try? await Task.sleep(for: .milliseconds(200)) }
+            if launcherUpdate != nil {
+                let ok = await updateLauncher()
+                if auto == "selfupdate" {
+                    print("LAUNCHER-AUTORUN \(ok ? "OK" : "RED") job=selfupdate from=\(ownBuild) to=\(SelfUpdate.build(of: Bundle.main.bundleURL))\(launcherNotice.map { " error=\($0)" } ?? "")")
+                    fflush(stdout)
+                }
+                if ok { relaunch(); return }
+                if auto == "selfupdate" { exit(1) }
+            } else if auto == "selfupdate" { print("LAUNCHER-AUTORUN RED job=selfupdate no newer launcher in the feed"); fflush(stdout); exit(1) }
+        }
+        if let what = auto, what != "selfupdate" { await autorun(what) }
+    }
+
+    /// The gear menu's Check for Updates: the release feed again, and a newer launcher installed (then a restart into it) when there is one
+    func checkForUpdates() async {
+        await refreshFeed()
+        if launcherUpdate != nil, await updateLauncher() { relaunch() }
+    }
+
+    // MARK: the launcher's own update
+
+    /// Installs the newer launcher the release names (SelfUpdate: download, checksum, signature, an atomic swap with this app), with its own
+    /// screen; true when the new one is in place (the caller restarts into it). When it cannot (run from its disk image, a folder it cannot write
+    /// to, a failed check) it says why at the top of the panel and this launcher carries on, unless the release needs a newer one (min_build)
+    func updateLauncher() async -> Bool {
+        guard let m = latest, let mu = latestURL, let la = m.launcher, la.build > ownBuild, job == nil else { return false }
+        let me = Bundle.main.bundleURL
+        if let why = SelfUpdate.cannotReplace(me) {
+            launcherNotice = "A new launcher (\(la.version)) is out, but this copy cannot update itself: \(why)."
+            if la.minBuild > ownBuild { phase = .failed(LauncherError.tooOld(la.minBuild).localizedDescription + " " + launcherNotice!) }
+            return false
+        }
+        let before = phase
+        working = "Updating the launcher"; phase = .working; logPath = nil
+        steps = [StepRow(id: "ldownload", title: "Downloading launcher \(la.version)", typical: 5),
+                 StepRow(id: "linstall", title: "Checking and installing it", typical: 2)]
+        do {
+            mark("ldownload", .running)
+            let su = SelfUpdate(paths: paths)
+            let app = try await su.prepare(m, from: mu) { done in Task { @MainActor in self.progress("ldownload", Int(done >> 20), max(1, Int(la.size >> 20))) } }
+            mark("ldownload", .done); mark("linstall", .running)
+            try su.install(app, over: me)
+            mark("linstall", .done)
+            return true
+        } catch {
+            launcherNotice = "Couldn't update the launcher to \(la.version): \(error.localizedDescription)"
+            phase = la.minBuild > ownBuild ? .failed(LauncherError.tooOld(la.minBuild).localizedDescription + " " + launcherNotice!) : before
+            return false
+        }
+    }
+
+    /// Quits and opens the launcher again from its own path, which now holds the new one: a shell waits for this process to end, then opens it.
+    /// The test switches (DM_LAUNCHER_ROOT, _FEED, _BUNDLE_ID) carry over, so a test launcher keeps its test install
+    func relaunch() {
+        var open = ["-n"]
+        for k in ["DM_LAUNCHER_ROOT", "DM_LAUNCHER_FEED", "DM_LAUNCHER_BUNDLE_ID"] {
+            if let v = ProcessInfo.processInfo.environment[k] { open += ["--env", "\(k)=\(v)"] }
+        }
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; shift; exec /usr/bin/open \"$@\"", "sh",
+                       String(getpid())] + open + [Bundle.main.bundlePath]
+        try? p.run()
+        NSApp.terminate(nil)
     }
 
     /// DM_LAUNCHER_AUTORUN=update|repair, for tests (dm/verify/launcher_update.py) on a test root: runs that job as its button does, then prints

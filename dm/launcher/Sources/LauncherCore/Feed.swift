@@ -43,6 +43,7 @@ public struct Feed: Sendable {
 
 public enum LauncherError: LocalizedError, Equatable {
     case http(String, Int), badManifest(String), noRelease, checksum(String), signature(String), unpack(String), engine(String), tooOld(Int)
+    case badLauncher(String), cannotReplace(String, String)
 
     public var errorDescription: String? {
         switch self {
@@ -54,6 +55,8 @@ public enum LauncherError: LocalizedError, Equatable {
         case .unpack(let n): return "\(n) could not be unpacked."
         case .engine(let m): return m
         case .tooOld(let b): return "This release needs a newer launcher (build \(b) or later). Update the launcher first."
+        case .badLauncher(let why): return "The downloaded launcher was not used: \(why)."
+        case .cannotReplace(let dir, let why): return "The launcher could not replace itself in \(dir) (\(why)). Download the new one from the releases page."
         }
     }
 }
