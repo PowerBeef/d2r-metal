@@ -859,6 +859,7 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX'), 'dmVideoUpscaleTip'),
            ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), 'OptionsMenuAntiAliasingTooltip'),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), 'OptionsMenuAnisotropicFilteringTooltip'),
+           ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), 'dmVideoEnvShadowsTip'),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), 'dmVideoFpsTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
           (('res', '@dmVideo3DRes', ('dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),
@@ -870,6 +871,7 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), None),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), None)) if _VIDEO_IOS else ())
 _VIDEO_H = _CUSTOM_LINE_H * len(_VIDEO)
+_VIDEO_RESTART = {'res': 'TouchVideoResHint', 'envsh': 'TouchVideoEnvshHint'}   # Mac rows applied at the next launch -> the name of their hint (dm_video.c hint)
 _CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
 _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
 def _video_rows():
@@ -882,7 +884,7 @@ def _video_rows():
                     '        ] },\n') % (i, y, _CUSTOM_LINE_H, row[1])
             continue
         key, label, states, tip = row
-        lh = 112 if key == 'res' and _VIDEO_MAC else _CUSTOM_LINE_H   # 分辨率行：标签与切换框占上 112，下面 68 留给「重启后生效」 | Resolution row: label and selector take the top 112; the bottom 68 is left for "takes effect after restarting"
+        lh = 112 if key in _VIDEO_RESTART and _VIDEO_MAC else _CUSTOM_LINE_H   # rows applied at the next launch: label and selector take the top 112, the bottom 68 is left for the hint
         out += ('        { "type": "TextBoxWidget", "name": "TouchVideo_%s_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "%s", "style": "$StyleSettingsText" } },\n'
                 '        { "type": "CarouselWidget", "name": "TouchVideo_%s", "fields": {\n'
                 '            "rect": { "x": 1052, "y": %d, "width": 596, "height": 72 },\n'
@@ -891,9 +893,9 @@ def _video_rows():
                 '            "style": "$StyleSettingsCarousel", "enabledColor": "$CarouselEnabledColor", "disabledColor": "$CarouselDisabledColor"%s } },\n'
                 ) % (key, y, lh, label, key, y + (lh - 72) // 2, ', '.join('"%s"' % s for s in states), key,
                      (',\n            "tooltipString": "@%s", "tooltipStyle": { "fontStyle": { "options": { "newlineHandling": "standard" } }, "showAfterDelay": true }' % tip) if tip else '')
-        if key == 'res' and _VIDEO_MAC:   # 「重启游戏后生效」：先放在屏外，宿主挪到标签下面 | "Takes effect after restarting the game": starts off screen, the host moves it under the label
-            out += ('        { "type": "TextBoxWidget", "name": "TouchVideoResHint", "fields": { "rect": { "x": 99999, "y": %d, "width": 1400, "height": 60 }, "text": "@dmVideoResHint", '
-                    '"style": { "fontColor": "$FontColorGray", "pointSize": 30, "alignment": { "h": "left", "v": "center" } } } },\n') % (y + 112)
+        if key in _VIDEO_RESTART and _VIDEO_MAC:   # "Takes effect after restarting the game": starts off screen, the host moves it under the label (dm_video.c hint)
+            out += ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": %d, "width": 1400, "height": 60 }, "text": "@dmVideoResHint", '
+                    '"style": { "fontColor": "$FontColorGray", "pointSize": 30, "alignment": { "h": "left", "v": "center" } } } },\n') % (_VIDEO_RESTART[key], y + 112)
     return out
 def _custom_toggle_row(i, key, label):
     y, h = _CUSTOM_Y[i], _CUSTOM_LINE_H

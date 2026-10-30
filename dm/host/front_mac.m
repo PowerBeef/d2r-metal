@@ -107,15 +107,15 @@ int front_video_firstboot(int rec[3], int cur[3]) {
     LOG("画面设置：首次启动 主屏 %.0f 像素宽、显卡 %s → 推荐 全屏 / %d%s / %s%s", px, gpu.UTF8String, nres >= 0 ? native_w() : k_render_w[t], nres >= 0 ? "（原生）" : "", rec[2] ? "MetalFX" : "标准", legacy ? "；旧版偏好设过的接着用" : "");
     return 1;
 }
-// 之后加的画质键的推荐值（dm_video.c 读盘缺这个键时问）：Mac App 上是 SMAA、16× 各向异性、准确色彩。命令行宿主（没有 DM_APP）与测试副本照原版（0），
-// 自动跑的局、金样与基准不变
-// Recommendations for the picture keys added later (asked by dm_video.c when the file lacks the key): SMAA, 16x anisotropy and accurate colour in the Mac App. The CLI host (no DM_APP) and test copies keep
-// the original (0), so automated runs, golden baselines and benchmarks stay as they were
+// Recommendations for the picture keys added later (asked by dm_video.c when the file lacks the key or holds an older recommendation version): SMAA, 16x
+// anisotropy, accurate colour and environment shadows (+0.5 ms GPU in town at Recommended on an M6, still a steady 60 fps) in the Mac App. The CLI host
+// (no DM_APP) and test copies keep the original (0), so automated runs, golden baselines and benchmarks stay as they were
 int front_video_rec(const char *key) {
     if (!getenv("DM_APP") || (getenv("DM_APP_SUPPORT") && !getenv("DM_TEST_VIDEO_FIRSTBOOT"))) return 0;
     if (!strcmp(key, "aa")) return 1;
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "color")) return 1;
+    if (!strcmp(key, "envsh")) return 1;
     if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
     return -1;
 }

@@ -174,6 +174,17 @@ if os.path.exists(par_p):
         if not why.strip(): bad(f'参数门 {a} 理由为空')
         params.append((int(a, 16), int(b, 16), int(r.lstrip('x')), k))
 par_words = {o for a, b, r, k in params for o in (a, b)}
+switches = []                                                        # switched branches (switches.tsv, since r47): (offset, original word bytes, key, reason)
+sw_p = f'{out_dir}/{mod}.switches.tsv'
+if os.path.exists(sw_p):
+    for l in open(sw_p, encoding='utf-8'):
+        if l.startswith('# BUILD_ID'):
+            if l.split()[-1] != open(nso, 'rb').read(0x50)[0x40:0x50].hex(): bad('switches.tsv build id does not match the NSO')
+            continue
+        o, w0, k, why = l.rstrip('\n').split('\t', 3)
+        if not why.strip(): bad(f'switched branch {o}: empty reason')
+        switches.append((int(o, 16), w0, k, why))
+sw_heads = {o for o, *_ in switches}
 
 # ① 非 text 段：先整块比，块不同再逐字节，差异只许落在剪口里（剪口字节已在 ⓪ 按应有值核过）
 # ① Non-text segments: compare whole blocks first, then byte by byte where blocks differ; differences may only fall inside cuts (cut bytes were already checked against their expected values in ⓪)
@@ -192,7 +203,7 @@ for blk in range(0, TE & ~3, 4096):                    # 先整块比，块不�
     if orig[blk:e] != pat[blk:e]: diff |= {o for o in range(blk, e, 4) if W(orig, o) != W(pat, o)}
 heads = set(sites)
 cutw = {o & ~3 for o in cutb if o < TE}
-_exp = (heads | obs_heads | par_words) - cutw; _got = diff - cutw                # 剪口里的宿主调用门头在剪口字节里，按剪口核 | Host-call gate heads inside cuts are within the cut bytes and are checked as cuts
+_exp = (heads | obs_heads | par_words | sw_heads) - cutw; _got = diff - cutw                # 剪口里的宿主调用门头在剪口字节里，按剪口核 | Host-call gate heads inside cuts are within the cut bytes and are checked as cuts
 if _got != _exp: bad(f'text 改动与改写点不一致：多改 {len(_got - _exp)} 漏改 {len(_exp - _got)} 例 {[hex(x) for x in sorted(_got ^ _exp)[:5]]}')
 def btarget(o):
     w = W(pat, o)
@@ -200,7 +211,7 @@ def btarget(o):
     imm = w & 0x3FFFFFF
     if imm & 0x2000000: imm -= 0x4000000
     return o + 4 * imm
-nb = [a for a in heads | obs_heads if not (btarget(a) is not None and PO <= btarget(a) < len(pat))]
+nb = [a for a in heads | obs_heads | sw_heads if not (btarget(a) is not None and PO <= btarget(a) < len(pat))]
 if nb: bad(f'改写点头不是跳进补丁区的 B：{len(nb)} 例 {[hex(x) for x in nb[:5]]}')
 
 # ③ 独立分母
@@ -260,7 +271,7 @@ def keyseq(at):
             or q[3].operands[1].reg != q[0].operands[0].reg:
         return None
     d = q[2].operands[1].mem.disp
-    return (q[3].address + 4, d // 8) if d % 8 == 0 and 0 <= d // 8 < 8 else None
+    return (q[3].address + 4, d // 8) if d % 8 == 0 and 0 <= d // 8 < len(KEY) else None
 def paramseq(at, r):
     q = list(_md.disasm(pat[at:at + 44], at))
     tmp = 17 if r == 16 else 16
@@ -367,9 +378,9 @@ if set(gates) != seen: bad(f'gates.tsv 有多余行 {len(set(gates) - seen)}')
 # ⑥ 线程槽
 # ⑥ Thread slots
 _base = {'K18', 'KTLS', 'KTLR', 'KGATE'}; _extra = set(KEY) - _base   # 额外键 = 参数门键（KRES* / KASPECT* …；改写器全局键表，三模块表头都列）：须是 K 开头大写名、键号低于基础四键 | Extra keys = parameter-gate keys (KRES* / KASPECT* ...; the rewriter's global key table, listed in the headers of all three modules): must be uppercase names starting with K, with key numbers below the four base keys
-if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI'} \
-        or not {k for *_, k in params} <= set(KEY) or set(KEY.values()) != set(range(8)):
-    bad(f'表头键页下标不合规：{KEY}（须含八个键且下标恰为 0..7）')
+if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW'} \
+        or not {k for *_, k in params} | {k for _, _, k, _ in switches} <= set(KEY) or set(KEY.values()) != set(range(9)):
+    bad(f'header key page indices are not valid: {KEY} (nine keys with indices exactly 0..8)')
 kv = {v: k for k, v in KEY.items()}; nk = {}
 for o in range(PO, len(pat) - 4, 4):
     w = W(pat, o)
@@ -384,6 +395,7 @@ for kind in sites.values():
     if key: expected[key] = expected.get(key, 0) + 1
 expected['KGATE'] = len(gsites) + len(obs) + nbranch
 for _, _, _, key in params: expected[key] = expected.get(key, 0) + 1
+for _, _, key, _ in switches: expected[key] = expected.get(key, 0) + 1
 if any(nk.get(k, 0) != v for k, v in expected.items()) or any(k not in expected and v for k, v in nk.items()):
     bad(f'键页槽访问计数不符：期望 {expected} 实际 {nk}')
 
@@ -472,6 +484,28 @@ if params:
                     if isimm: const[x] = ins.operands[1].imm
                     else: const.pop(x, None)
 
+# ⑪ Switched branches (SWITCHES, host only, since r47): the original word is the registered b.<cond> T, the new word a b into the patch area, and the block is
+#   b.<cond> to_T ; stur x16,[sp,#-16] ; stur x17,[sp,#-24] ; key-page slot fetch into x16 ; ldr x16,[x16] ; cbz x16, off ; ldur x16 ; ldur x17 ;
+#   to_T: b T ; off: ldur x16 ; ldur x17 ; b original+4
+#   bit for bit, with the registered key. With the slot at 0 the block computes what the original b.<cond> did (the condition is the block's first instruction;
+#   x16 / x17 come back from the same red-zone offsets before either exit, checked again by ⑨); ⑩ checks that its only exits are T and original+4
+nsw = 0
+for o, w0, k, why in switches:
+    if ANDROID: bad(f'switched branch {o:#x}: Apple layout only'); continue
+    wo = W(orig, o)
+    if orig[o:o + 4] != bytes.fromhex(w0) or wo & 0xFF000010 != 0x54000000 or wo & 0xF >= 0xE: bad(f'switched branch {o:#x}: original word is not the registered b.cond {w0}'); continue
+    if k not in KEY: bad(f'switched branch {o:#x}: key {k} not in the header'); continue
+    tgt = o + 4 * ((((wo >> 5) & 0x7FFFF) ^ 0x40000) - 0x40000); st = btarget(o)
+    if st is None or not (PO <= st < len(pat)): bad(f'switched branch {o:#x}: new word is not a b into the patch area'); continue
+    ks = keyseq(st + 12)
+    bc = lambda frm, to, cond: 0x54000000 | ((((to - frm) >> 2) & 0x7FFFF) << 5) | cond
+    want = {st: bc(st, st + 44, wo & 0xF), st + 4: 0xF81F03F0, st + 8: 0xF81E83F1, st + 28: 0xF9400210, st + 32: 0xB4000000 | (((48 - 32) >> 2) << 5) | 16,
+            st + 36: 0xF85F03F0, st + 40: 0xF85E83F1, st + 44: B(st + 44, tgt), st + 48: 0xF85F03F0, st + 52: 0xF85E83F1, st + 56: B(st + 56, o + 4)}
+    if not ks or ks != (st + 28, KEY[k]) or any(W(pat, a) != v for a, v in want.items()) or (W(pat, st + 12) & 31) != 16:
+        bad(f'switched branch {o:#x}: block at {st:#x} does not match the template'); continue
+    nsw += 1
+if switches: print(f'SWITCHES {mod} ' + ', '.join(f'{o:#x}={k}' for o, _, k, _ in switches) + f' ok={nsw}')
+
 # ⑨ 临时寄存器静态检查：每个补丁块的非原指令目的寄存器必须有同地址的栈存取配对（地址按块入口 sp 算：前 / 后变址会移动 sp，安卓的块全这么写）。
 # ⑨ Static temporary-register check: every destination register of a patch block that is not the original instruction's must have a stack save and restore at the same address (addresses relative to the block-entry sp: pre- / post-indexing moves sp, and Android blocks are all written that way).
 import capstone
@@ -500,7 +534,7 @@ def _block(start):
             t = ins.operands[0].imm
             if not (PO <= t < len(pat)): break
     return out
-static_entries = [(a, set()) for a in sites]
+static_entries = [(a, set()) for a in sites] + [(o, set()) for o, *_ in switches]
 for a, b, r, _ in params:
     static_entries.append((a, {f'x{r}'}))
 static_seen = 0
@@ -582,6 +616,6 @@ cnt = {}
 if _hostcall: print(f'剪口引入宿主调用门 {len(_hostcall)} 个：' + ', '.join(f"{a:#x}=svc#{n:#x}" for a, n in _hostcall.items()))
 for k in sites.values(): cnt[k] = cnt.get(k, 0) + 1
 print(f'STRUCT {mod} {"OK" if not fails else "FAIL"} 改写点={len(sites)} {cnt} 跳转表={jumps} 窗口内x18引用={nwin_ref} '
-      f'已登记剪口={len(cuts)}(代码{ncut_code}/数据{ncut_data}) 观测门={len(obs)} 参数门={len(params)} '
+      f'已登记剪口={len(cuts)}(代码{ncut_code}/数据{ncut_data}) 观测门={len(obs)} 参数门={len(params)} switches={len(switches)} '
       f'独立分母={len(ind)} text改动字={len(diff)} 门={len(gsites)} 槽访问={nk} 失败项={len(fails)}')
 sys.exit(1 if fails else 0)

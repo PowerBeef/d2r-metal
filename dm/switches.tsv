@@ -68,6 +68,7 @@ DM_DEVLOCK_WD_LOG	ios-tools	ios/tools/devlock.sh	-
 DM_DROPF_LOG	host	host/dm_dropfilter.c	-
 DM_DROP_HAPTIC	host	host/dm_drophaptic.c	-
 DM_DROP_LIGHT	host	host/dm_dropfilter.c	-
+DM_ENV_SHADOWS	host	host/dm_video.c	-
 DM_EVENTS	gfx,host	gfx/tests/nvn_replay.m host/dm_ctl_cmds.c host/dm_events.c host/tests/t_events.c	y
 DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-

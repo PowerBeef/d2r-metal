@@ -17,8 +17,9 @@
 module_t g_mod[MAX_MOD];
 int g_nmod;
 pthread_key_t g_key18, g_keytls, g_keytlr, g_keygate;
-pthread_key_t g_keyres[2], g_keyaspect, g_keyaspectui;   // g_keyaspect：宽高比上限参数位（KASPECT）          // 分辨率参数位（改写器 PARAMS，KRES0 掌机 / KRES1 主机）；产物没有即 0、不占 | g_keyaspect: aspect ratio upper-limit parameter slot (KASPECT)          // resolution parameter slots (rewriter PARAMS, KRES0 handheld / KRES1 docked); 0 and not allocated if the build output lacks them
-enum { KEY_K18, KEY_KTLS, KEY_KTLR, KEY_KGATE, KEY_KRES0, KEY_KRES1, KEY_KASPECT, KEY_KASPECTUI, KEY_N };
+pthread_key_t g_keyres[2], g_keyaspect, g_keyaspectui, g_keyesh;   // parameter slots (rewriter PARAMS / SWITCHES): KRES0 handheld / KRES1 console resolution, KASPECT* aspect ratio cap, KESHADOW environment shadows; 0 when a build output does not use them
+enum { KEY_K18, KEY_KTLS, KEY_KTLR, KEY_KGATE, KEY_KRES0, KEY_KRES1, KEY_KASPECT, KEY_KASPECTUI, KEY_KESHADOW, KEY_N };
+_Static_assert(KEY_N <= sizeof ((module_t *)0)->key_idx / sizeof (unsigned), "module_t.key_idx must hold every key");
 
 uint64_t resolve_import(module_t *m, const char *name, int weak);
 static void tsd_probe(void);
@@ -28,7 +29,7 @@ static pthread_key_t key_value(unsigned i) {
     switch (i) {
     case KEY_K18: return g_key18; case KEY_KTLS: return g_keytls; case KEY_KTLR: return g_keytlr;
     case KEY_KGATE: return g_keygate; case KEY_KRES0: return g_keyres[0]; case KEY_KRES1: return g_keyres[1];
-    case KEY_KASPECT: return g_keyaspect; default: return g_keyaspectui;
+    case KEY_KASPECT: return g_keyaspect; case KEY_KESHADOW: return g_keyesh; default: return g_keyaspectui;
     }
 }
 static void create_keys(void) {
@@ -37,12 +38,13 @@ static void create_keys(void) {
     // 参数位键一律建（不按产物有没有用到判断：iOS 包里没有 params.tsv，按文件判断会漏建、键页写成 0 → 游戏读到 TSD 0 号槽）
     // Parameter slot keys are always created (not decided by whether the build output uses them: an iOS app has no params.tsv, so deciding by file would miss creating them and the key page would be written as 0 → the game reads TSD slot 0)
     if (pthread_key_create(&g_keyres[0], NULL) || pthread_key_create(&g_keyres[1], NULL) ||
-        pthread_key_create(&g_keyaspect, NULL) || pthread_key_create(&g_keyaspectui, NULL)) die("创建参数位键失败");
+        pthread_key_create(&g_keyaspect, NULL) || pthread_key_create(&g_keyaspectui, NULL) || pthread_key_create(&g_keyesh, NULL)) die("创建参数位键失败");
     // 键号先转 unsigned 再放宽：bionic 的 pthread_key_t 是 int（有效键带最高位，如 0x80000020），直接转 unsigned long 会符号扩展成 0xffffffff80000020；苹果是 unsigned long 小整数，打印不变
     // Keys go through unsigned before widening: bionic's pthread_key_t is int (valid keys carry the top bit, e.g. 0x80000020), and a direct unsigned long cast sign-extends to 0xffffffff80000020; on Apple it is a small unsigned long, printed unchanged
-    LOG("键号 K18=%lu KTLS=%lu KTLR=%lu KGATE=%lu KRES0=%lu KRES1=%lu KASPECT=%lu KASPECTUI=%lu",
+    LOG("键号 K18=%lu KTLS=%lu KTLR=%lu KGATE=%lu KRES0=%lu KRES1=%lu KASPECT=%lu KASPECTUI=%lu KESHADOW=%lu",
         (unsigned long)(unsigned)g_key18, (unsigned long)(unsigned)g_keytls, (unsigned long)(unsigned)g_keytlr, (unsigned long)(unsigned)g_keygate,
-        (unsigned long)(unsigned)g_keyres[0], (unsigned long)(unsigned)g_keyres[1], (unsigned long)(unsigned)g_keyaspect, (unsigned long)(unsigned)g_keyaspectui);
+        (unsigned long)(unsigned)g_keyres[0], (unsigned long)(unsigned)g_keyres[1], (unsigned long)(unsigned)g_keyaspect, (unsigned long)(unsigned)g_keyaspectui,
+        (unsigned long)(unsigned)g_keyesh);
     tsd_probe();
 }
 
@@ -165,7 +167,7 @@ static void read_layout(module_t *m, const char *dir) {
     char path[1024]; snprintf(path, sizeof path, "%s/%s.fixups.tsv", dir, m->name);
     FILE *f = fopen(path, "r");
     if (!f) die("open %s", path);
-    static const char *kn[8] = {"K18", "KTLS", "KTLR", "KGATE", "KRES0", "KRES1", "KASPECT", "KASPECTUI"};
+    static const char *kn[KEY_N] = {"K18", "KTLS", "KTLR", "KGATE", "KRES0", "KRES1", "KASPECT", "KASPECTUI", "KESHADOW"};
     char line[256], key[32]; unsigned long v, target = 0; unsigned seen = 0;   // A build output without a TARGET line = Apple
     while (fgets(line, sizeof line, f)) {
         if (sscanf(line, "# %31s %lx", key, &v) != 2) die("%s: 产物是旧改写器出的，换成当前代号（dm/PRODUCT）的产物", path);
@@ -176,7 +178,7 @@ static void read_layout(module_t *m, const char *dir) {
         else if (!strcmp(key, "TEXT_END")) m->text_end = v;
         else if (!strcmp(key, "RO_OFF")) m->ro_off = v;
         else if (!strcmp(key, "DATA_OFF")) m->data_off = v;
-        else for (int k = 0; k < 8; k++) {
+        else for (int k = 0; k < KEY_N; k++) {
             size_t n = strlen(kn[k]);
             if (!strncmp(key, "KEY_", 4) && !strncmp(key + 4, kn[k], n) && !strcmp(key + 4 + n, "_IDX")) {
                 m->key_idx[k] = (unsigned)strtoul(strrchr(line, '\t') + 1, 0, 10); seen |= 1u << k;
@@ -184,7 +186,7 @@ static void read_layout(module_t *m, const char *dir) {
         }
     }
     fclose(f);
-    if (!m->patch_off || m->key_page_off % 0x4000 || m->key_page_size != 0x4000 || seen != 0xff)
+    if (!m->patch_off || m->key_page_off % 0x4000 || m->key_page_size != 0x4000 || seen != (1u << KEY_N) - 1)
         die("%s: 产物是旧改写器出的，换成当前代号（dm/PRODUCT）的产物", path);
     if (target != DM_PATCH_TARGET) die("%s: build output is for another platform (TARGET %lu); rebuild it with dm/tools/product.sh build", path, target);
 }
@@ -194,7 +196,7 @@ static void install_key_page(module_t *m) {
     uint64_t *page = (uint64_t *)(m->base + m->key_page_off);
     memset(page, 0, m->key_page_size);
     for (unsigned i = 0; i < KEY_N; i++) page[m->key_idx[i]] = slot_off(key_value(i));
-    for (int k = 0; k < 8; k++) if (!page[m->key_idx[k]]) die("%s: 键页第 %d 项为 0（宿主键没建）——游戏会读到 TSD 0 号槽", m->name, k);
+    for (int k = 0; k < KEY_N; k++) if (!page[m->key_idx[k]]) die("%s: 键页第 %d 项为 0（宿主键没建）——游戏会读到 TSD 0 号槽", m->name, k);
     if (mprotect(m->base + m->key_page_off, m->key_page_size, PROT_READ)) die("%s 键页 mprotect", m->name);
 }
 

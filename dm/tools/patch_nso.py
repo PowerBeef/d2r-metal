@@ -259,8 +259,8 @@ for off, ob, nb, why, scope in cuts:
     IMG[off:off + len(nb)] = nb
 # 键页下标固定；键页内容由装载器写入“实际键号 × 8”。
 # Key page indices are fixed; the key page content is written by the loader as "actual key number × 8".
-KEYS = {'K18': 508, 'KTLS': 509, 'KTLR': 510, 'KGATE': 511, 'KRES0': 506, 'KRES1': 507, 'KASPECT': 505, 'KASPECTUI': 504}   # KRES*：分辨率参数位；KASPECT：画面宽高比上限（见 PARAMS） | KRES*: resolution parameter slots; KASPECT: picture aspect ratio cap (see PARAMS)
-KEY_INDEX = {k: i for i, k in enumerate(('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI'))}
+KEYS = {'K18': 508, 'KTLS': 509, 'KTLR': 510, 'KGATE': 511, 'KRES0': 506, 'KRES1': 507, 'KASPECT': 505, 'KASPECTUI': 504, 'KESHADOW': 503}   # KRES*: resolution parameter slots; KASPECT*: picture aspect ratio cap (see PARAMS); KESHADOW: environment-shadow switch (see SWITCHES)
+KEY_INDEX = {k: i for i, k in enumerate(('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW'))}
 
 md = Cs(CS_ARCH_ARM64, CS_MODE_ARM); md.detail = True
 # 按函数取指令表用的反汇编器：遇到解不出的字记一条 .byte 接着往下解（md 会在第一个解不出的字处停，后面的独占窗口、跳转表、跳进窗口的分支都看不见）
@@ -742,6 +742,36 @@ for oa, wa, ob_, wb, r, key, why in params:
     emit(STUR(tmp, 31, -16)); emit_tp(r); emit_slot_addr(r, tmp, key); emit(LDRX(r, r)); emit(LDUR(tmp, 31, -16)); emit(B(here(), oa + 4))
     struct.pack_into('<I', IMG, oa, B(oa, start)); struct.pack_into('<I', IMG, ob_, NOP); stat('param')
 
+# ---- Switched branches (host only): {NSO build ID: [(offset, original word, key, reason)]}. The original conditional branch b.<cond> T jumps to a block in
+# the patch area that keeps the original decision first (the block's first instruction is the original condition, the only one reading the flags), then
+# also goes to T when the host's thread slot <key> is non-zero, and otherwise back to offset + 4. x16 / x17 are saved below sp and restored before either exit, so with the
+# slot at 0 the semantics are the original instruction's. The host fills the slot per thread at thread start (thread.c); structck checks the block ----
+SWITCHES = {'db0507f36b84200ac05f75d76ed5026f': [
+    # Environment shadows (Mac Video tab "Environment Shadows", dm_video.c envsh): Model_ApplyPlatformTiers main+0x15ce950 branches on the model's shadow tier
+    # being below 1 (then the ShadowExcludeFlags bit 0 is cleared and the component removed when empty, so the model casts shadows). A tier of -1
+    # is derived from the resource path (1 unless under /character/), so on the Switch nearly every environment model is kept out of the shadow casters;
+    # with the slot non-zero every model takes the tier < 1 path (ground items keep their own bit 1, set elsewhere)
+    (0x15cea80, '4b040054', 'KESHADOW', 'environment shadows: Model_ApplyPlatformTiers b.lt (shadow tier < 1) also taken when the host slot is non-zero'),
+]}
+switches = SWITCHES.get(BUILD_ID, [])
+def BCOND(frm, to, cond): return 0x54000000 | (fit(to - frm, 19, 4) << 5) | cond
+def CBZX(frm, to, r): return 0xB4000000 | (fit(to - frm, 19, 4) << 5) | r
+for o, w0, key, why in switches:
+    w = struct.unpack_from('<I', IMG, o)[0]
+    if IMG[o:o + 4] != bytes.fromhex(w0): stop(f'开关分支原指令不符 | switched branch original word differs {o:#x}: {w:08x}')
+    if w & 0xFF000010 != 0x54000000 or w & 0xF >= 0xE: stop(f'开关分支 {o:#x} 不是 b.cond | switched branch {o:#x} is not b.cond')
+    if o in kinds or any(lo <= o < hi for wseg in windows for lo, hi in [(wseg[0].address, wseg[-1].address + 4)]): stop(f'开关分支与改写点冲突 | switched branch overlaps a rewrite site {o:#x}')
+    # b.<cond> to_T ; stur x16 ; stur x17 ; slot fetch into x16 ; ldr x16,[x16] ; cbz x16, off ; ldur x16 ; ldur x17 ; to_T: b T ; off: ldur x16 ; ldur x17 ; b o+4
+    # (the original condition goes straight to the shared b T; the slot path saves x16 / x17 first and restores them before either exit)
+    tgt = o + 4 * ((((w >> 5) & 0x7FFFF) ^ 0x40000) - 0x40000); start = here()
+    emit(NOP); emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24)); emit_tp(16); emit_slot_addr(16, 17, key); emit(LDRX(16, 16))
+    cbz_at = here(); emit(NOP)
+    emit(LDUR(16, 31, -16)); emit(LDUR(17, 31, -24))
+    to_t = here(); emit(B(here(), tgt))
+    struct.pack_into('<I', patch, start - PATCH_OFF, BCOND(start, to_t, w & 0xF)); struct.pack_into('<I', patch, cbz_at - PATCH_OFF, CBZX(cbz_at, here(), 16))
+    emit(LDUR(16, 31, -16)); emit(LDUR(17, 31, -24)); emit(B(here(), o + 4))
+    struct.pack_into('<I', IMG, o, B(o, start)); stat('switch')
+
 # 既有三块原生规则跳板均只使用后继覆盖的死临时w8，不改w0/stat返回、sp或NZCV。
 # 6c6290位于原mode3门后；前方Blaze/引用计数与数据失效6c62dc分支、后方状态更新不动。
 # The three existing native rule trampolines all use only the dead temporary w8 that is overwritten afterwards, and do not change the w0/stat return, sp or NZCV.
@@ -816,6 +846,9 @@ with open(P('cuts.tsv'), 'w') as f:
 with open(P('params.tsv'), 'w') as f:
     f.write(f'# BUILD_ID\t{BUILD_ID}\n')
     for oa, wa, ob_, wb, r, key, why in params: f.write(f'{oa:#x}\t{ob_:#x}\tx{r}\t{key}\t{why}\n')
+with open(P('switches.tsv'), 'w') as f:
+    f.write(f'# BUILD_ID\t{BUILD_ID}\n')
+    for o, w0, key, why in switches: f.write(f'{o:#x}\t{w0}\t{key}\t{why}\n')
 with open(P('obs.tsv'), 'w') as f:
     f.write(f'# BUILD_ID\t{BUILD_ID}\n')
     for off, oid, ow, why in obs: f.write(f'{off:#x}\t{oid}\t{ow}\t{why}\n')

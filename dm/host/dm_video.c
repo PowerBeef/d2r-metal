@@ -42,6 +42,10 @@
 // (with MetalFX when Upscaling is MetalFX, nvn_mtl.m mfx3d_draw).
 // The recommendation has a version (rec_v): a file with an older version gets this version's recommendation at load; a player still on the old recommendation (every key equal to it) moves to the new one
 // with it, while changed settings stay
+// Environment shadows on the Mac (envsh: 0 = the Switch look, only characters and a few marked models cast shadows / 1 = environment models cast shadows too, as
+// on PC): the rewriter's switched branch in Model_ApplyPlatformTiers (patch_nso.py SWITCHES) reads the KESHADOW thread slot, which every guest thread gets
+// from dm_video_env_shadows at its start (thread.c). Models take their shadow flag when they load, so the value is latched at launch and a change shows
+// "Takes effect after restarting the game" under the row. Recommended on the Mac (version 4, front_mac.m front_video_rec); no row on the phone page (value 0)
 #include "hle.h"
 #include "dm.h"
 #include "dm_cursor.h"
@@ -56,21 +60,21 @@
 uint64_t dm_custom_find_w(uint64_t w, const char *name);
 int dm_custom_shown(void);
 int dm_custom_path(const char *name, char *p, size_t n);
-enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, NV };   // 新键只往后加（存盘按名字，旧文件缺的键读盘时补） | new keys go at the end (saved by name; keys an older file lacks are filled at load)
-static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d" };
-static const int k_n[NV] = { 2, 4, 2, 2, 4, 2, 5 };
-#define REC_V 3   // 推荐值的版本：2 = 原生出图 + 3D 清晰度（Mac）；3 = iOS 也推荐 SMAA、16×、准确色彩 | version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour
+enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
+static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh" };
+static const int k_n[NV] = { 2, 4, 2, 2, 4, 2, 5, 2 };
+#define REC_V 4   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac)
 static int kn(int i) { return i == K_RES && DM_PHONE ? 3 : k_n[i]; }   // 手机的 res 是三档 3D 清晰度；Mac 的 res 多一档「原生」 | on phones res is the three 3D-resolution tiers; on the Mac res has the extra "Native" tier
-#define NR 10
-static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "fps", "drops" };   // 页上的行序（页上没有的行跳过） | row order on the page (rows the page lacks are skipped)
-static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, -2, -2 };   // -1 = 图形预设（推导）；-2 = 自定义设置里的键（k_row_ckey） | -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
-static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", "q3d" };
+#define NR 11
+static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "fps", "drops" };   // row order on the page (rows the page lacks are skipped)
+static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, -2, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
+static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", "q3d" };
 static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // 切换框的选项个数：键的档数；预设 4；自定义设置的键 2 | options in the selector: the key's tiers; presets 4; custom settings keys 2   // 切换框第 0 / 1 项 = 键值 0 / 1（60 帧 / 30 帧；降低 / 保持） | selector options 0 / 1 = key values 0 / 1 (60 / 30 fps; lower / keep)
 int dm_custom_shown_value(const char *key); void dm_custom_set_pending(const char *key, int v); int dm_custom_default(const char *key);
 static _Atomic int g_crows;   // 页上有的自定义键行（按行号的位）：「默认」只回这几行 | the custom-key rows the page has (one bit per row): "Default" resets only those
 enum { P_REC, P_PERF, P_QUAL, P_CUSTOM };
-static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
-_Static_assert(NV == 7, "g_pend 的初值个数 | g_pend initialiser count");
+static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
+_Static_assert(NV == 8, "g_pend initialiser count");
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // 读盘 / 存盘：前端主线程（启动、全屏切换）与游戏线程（应用）都会写 | load / save: written by both the front end's main thread (launch, full-screen changes) and the game thread (Apply)
 
 // 前端提供（Mac：front_mac.m）；别的平台没有这一节，用这里的弱定义 | Provided by the front end (Mac: front_mac.m); other platforms have no such section and use the weak definitions here
@@ -150,6 +154,15 @@ float dm_video_scale3d(void) {   // 3D 清晰度（hle_oe.c s3_cfg 每拍读；>
     if (DM_PHONE) { int t = atomic_load(&g_val[K_RES]); return t >= 0 && t < 3 ? k[t] : 0; }
     int t = atomic_load(&g_val[K_S3D]); return t > 0 && t < 5 ? m[t] : 0;
 }   // 出图每帧读（nvn_mtl.m mfx_on） | read by the present every frame (nvn_mtl.m mfx_on)
+static _Atomic int g_esh_launch = -1;   // environment shadows as latched at launch (what the game's threads got); -1 = not latched yet
+int dm_video_env_shadows(void) {   // every guest thread at its start (thread.c, KESHADOW slot): the first answer once the settings are known holds for the session
+    int x = atomic_load(&g_esh_launch); if (x >= 0) return x;
+    const char *e = getenv("DM_ENV_SHADOWS");   // DM_ENV_SHADOWS=0/1 forces it (tests, A/B runs)
+    if (e && *e) x = atoi(e) != 0;
+    else { load_once(); if (!atomic_load(&g_loaded)) return 0; x = !DM_PHONE && atomic_load(&g_val[K_ESH]) == 1; }
+    int exp = -1; if (atomic_compare_exchange_strong(&g_esh_launch, &exp, x)) LOG("Environment shadows: %s (%s)", x ? "on" : "off", e && *e ? "DM_ENV_SHADOWS" : "picture setting");
+    return atomic_load(&g_esh_launch);
+}
 void dm_video_fullscreen_note(int on) {   // 玩家用菜单 / ⌃⌘F 切了全屏：设置跟着窗口走（同电脑版「显示模式」） | the player switched full screen from the menu / ⌃⌘F: the setting follows the window (as the PC "Display Mode")
     load_once(); if (!atomic_load(&g_loaded) || atomic_load(&g_val[K_MODE]) == (on != 0)) return;
     pthread_mutex_lock(&g_mu); atomic_store(&g_val[K_MODE], on != 0); save_locked(); pthread_mutex_unlock(&g_mu);
@@ -167,6 +180,7 @@ static int tier_of(int k, int t) {
     case K_AA: return DM_PHONE ? -1 : t;
     case K_ANISO: return DM_PHONE ? -1 : t ? 3 : -1;
     case K_S3D: return DM_PHONE ? -1 : 0;   // Mac：性能（出图 1600）与品质（原生）的 3D 都是 100% | Mac: both Performance (1600 output) and Quality (native) draw the 3D at 100%
+    case K_ESH: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch look, Quality = environment shadows
     default: return -1;
     }
 }
@@ -225,10 +239,15 @@ void dm_video_pad(uint64_t sp, int r, int dir) {   // 手柄：左右 = 上一�
     for (int k = 0; k < n; k++) { to = dir == 2 ? (to + 1) % n : to + dir; if (to < 0 || to >= n) { to = cur; break; } if (*(uint8_t *)(w + 0x7d8 + to)) break; }
     car_set(w, to);
 }
-static void hint(uint64_t sp) {   // 分辨率改了还没重启：「重启游戏后生效」挪到标签下面（横坐标取标签的；同语言行的提示） | resolution changed but not restarted yet: move "Takes effect after restarting the game" under the label (x from the label; as the language row's hint)
-    uint64_t hw = dm_custom_find_w(sp, "TouchVideoResHint"), lw = dm_custom_find_w(sp, "TouchVideo_res_Text"); if (!hw || !lw) return;
-    int run = front_video_running_res(), x = run >= 0 && shown(K_RES) != run ? ((int32_t *)(lw + 0x70))[0] : 99999; int32_t *r = (int32_t *)(hw + 0x70);
+static void hint_at(uint64_t sp, const char *hint, const char *label, int show) {   // show: move the hint under the row's label (x of the label); otherwise off screen
+    uint64_t hw = dm_custom_find_w(sp, hint), lw = dm_custom_find_w(sp, label); if (!hw || !lw) return;
+    int x = show ? ((int32_t *)(lw + 0x70))[0] : 99999; int32_t *r = (int32_t *)(hw + 0x70);
     if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)hw + 0x10))(hw); }
+}
+static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows)
+    int run = front_video_running_res(), esh = atomic_load(&g_esh_launch);
+    hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && shown(K_RES) != run);
+    hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && shown(K_ESH) != esh);
 }
 static int row_want(int i) { return k_row_ckey[i] ? dm_custom_shown_value(k_row_ckey[i]) : k_row_key[i] < 0 ? preset_of() : shown(k_row_key[i]); }   // 这一行该显示哪一项 | the option this row should show
 void dm_video_pump(uint64_t sp) {   // 自定义页在屏上时每帧调（dm_custom.c）；sp = 0：页不在屏上 | called every frame while the custom page is on screen (dm_custom.c); sp = 0: the page is not on screen
