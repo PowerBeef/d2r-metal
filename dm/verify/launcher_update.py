@@ -14,7 +14,7 @@
 Usage: launcher_update.py --feed file:///…/manifest.json [--root <install root>] [--launcher <D2R Metal Launcher.app>] [--keep] [--no-game]
 Last lines: LAUNCHER-UPDATE OK|RED, then RESULT {json}. Needs the workspace venv for the scenario step.
 """
-import argparse, datetime, glob, hashlib, json, os, plistlib, shutil, subprocess, sys, time, urllib.request
+import argparse, datetime, glob, hashlib, json, os, plistlib, shutil, subprocess, sys, tempfile, time, urllib.request
 from typing import Any
 
 DM = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,6 +37,14 @@ def sha256(path):
     with open(path, 'rb') as f:
         for chunk in iter(lambda: f.read(1 << 20), b''): h.update(chunk)
     return h.hexdigest()
+
+
+def unsigned_sha(binary):
+    """The checksum of a Mach-O binary without its code signature (signing the app rewrites the one in the binary)"""
+    with tempfile.TemporaryDirectory() as d:
+        c = os.path.join(d, 'bin'); shutil.copy2(binary, c)
+        subprocess.run(['codesign', '--remove-signature', c], capture_output=True)
+        return sha256(c)
 
 
 def plist(app):
@@ -143,7 +151,8 @@ def main(argv):
         sig = subprocess.run(['codesign', '--verify', '--deep', '--strict', new_app], capture_output=True, text=True)
         check('new app: signature', sig.returncode == 0, sig.stderr.strip()[:200])
         host = os.path.join(st['packs']['runtime'], 'host', 'D2RMobile')
-        check("new app: the release's game host", sha256(os.path.join(new_app, 'Contents', 'MacOS', 'D2RMobile')) == sha256(host))
+        check("new app: the release's game host", unsigned_sha(os.path.join(new_app, 'Contents', 'MacOS', 'D2RMobile')) == unsigned_sha(host),
+              'compared without signatures (the install signs the app it assembles)')
         paths = dict(l.strip().split('=', 1) for l in open(os.path.join(res, 'paths.txt')) if '=' in l)
         check('new app: paths into the copy', paths and all(v.startswith(root) and os.path.exists(v) for v in paths.values()), ', '.join(sorted(paths)))
         prev = os.path.join(root, 'build', 'previous.noindex', APP)

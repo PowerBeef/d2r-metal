@@ -111,9 +111,21 @@ DM_LAUNCHER_FEED=file://$HOME/dm-work/release/1.0.0/manifest.json DM_LAUNCHER_RO
   DM_LAUNCHER_BUNDLE_ID=org.d2rmobile.mac.launchertest open -n "D2R Metal Launcher.app"
 ```
 
-- `DM_LAUNCHER_ROOT` keeps the install apart from a player's root.
+- `DM_LAUNCHER_ROOT` keeps the install apart from a player's root; the game app goes into its `Game.noindex` folder.
 - `DM_LAUNCHER_BUNDLE_ID` gives the installed app its own preferences and Metal cache.
-- Set the app folder to a test folder in the launcher's settings, and start the installed app with `DM_APP_SUPPORT` to keep its saves apart.
+- Start the installed app with `DM_APP_SUPPORT` to keep its saves apart (a test copy also skips the hand-over to the launcher).
+- `DM_LAUNCHER_AUTORUN=update` (or `repair`) runs that job as its button does, prints `LAUNCHER-AUTORUN OK|RED …` and quits.
+
+**Testing a release:** before publishing, update a copy of a real install to it:
+
+```bash
+python3 dm/verify/launcher_update.py --feed file://$HOME/dm-work/release/1.0.0/manifest.json
+```
+
+It clones the install root (APFS clones: instant, no extra space), runs the installed launcher's Update on the copy with a test bundle ID,
+then checks the engine's steps, the install record, the new app (version, icon, signature, host, paths), the previous version kept for
+revert, the hand-over to the launcher, a game scenario on the updated app and the way back to the previous version. Last, it checks that
+the real install, its app, the saves and Applications did not change. `--keep` keeps the copy; `--no-game` skips the in-game checks.
 
 **Licenses of what the packs ship:**
 - CPython (PSF);
