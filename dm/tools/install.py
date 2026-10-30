@@ -322,7 +322,7 @@ def step_app(c, a):
     for cmd in (['codesign', '--force', '-s', '-', app], ['codesign', '--verify', '--deep', '--strict', app]):
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode: raise Fail(f'{" ".join(cmd[:2])} failed: {r.stderr.strip()[:200]}')
-    install_app(c, app)
+    install_app(c, app); shutil.rmtree(stage, ignore_errors=True)   # empty once the app has moved into place
     return f"{m.get('version', '?')} {m.get('build', '?')} {c.bundle_id} host {sha256(os.path.join(c.runtime, 'host', 'D2RMobile'))[:12]}"
 
 
