@@ -89,7 +89,7 @@ RT=$WORK/runtime; mkdir -p "$RT/host" "$RT/lib" "$RT/app" "$RT/repo"
 CHAIN=$("$T/python/bin/python3" -E -s "$WT/dm/gfx/tools/dmsh_chain.py")
 cp "$WT/dm/host/dmhost" "$RT/host/D2RMobile"
 [ "$(lipo -archs "$RT/host/D2RMobile")" = arm64 ] || die "the host is not arm64 only"
-strings "$RT/host/D2RMobile" | grep -q "$CHAIN" || die "the host does not carry chain $CHAIN"
+grep -q -F "$CHAIN" "$RT/host/D2RMobile" || die "the host does not carry chain $CHAIN"   # not strings | grep -q: with pipefail, grep's early exit fails the pipe
 # the scripts the install steps run, from the tracked files only (dm/ios/tools/overlay_contract.py lists the overlay's inputs; they must all be here)
 ( cd "$WT" && git ls-files -z dm/tools dm/gfx/tools dm/gfx/tex dm/ios/tools dm/ios/Sources dm/ios/NativeHUD dm/ios/docs dm/i18n dm/data \
     dm/PRODUCT dm/switches.tsv dm/verify/nsoimg.py 'dm/gfx/nvn/*.tsv' 'dm/gfx/nvn/*.h' dm/gfx/nvn/nvn_tex.c \
