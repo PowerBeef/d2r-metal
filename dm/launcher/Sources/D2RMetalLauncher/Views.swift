@@ -443,7 +443,7 @@ struct ActionBar: View {
                            detail: model.updateAvailable ? "Version \(model.latest?.version ?? "") is ready to install"
                                    : model.feedError != nil ? "Couldn't check for updates" : model.latest == nil ? "Checking for updates…" : "Up to date")
             }
-        case .failed(let text):
+        case .failed:
             StatusText(title: "Something went wrong", detail: "Nothing is lost: fix what the panel says, then try again", tint: Color(red: 1, green: 0.66, blue: 0.55))   // light coral: readable on the ember glass
         }
     }
