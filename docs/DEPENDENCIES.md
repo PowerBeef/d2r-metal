@@ -51,6 +51,19 @@ Not needed to build the app or run the Mac smoke test; only for on-device smoke 
 | iproxy, ideviceinfo | Forwarding the log port over USB and reading battery level in on-device smoke tests | `brew install libimobiledevice` |
 | llvm-objdump, llvm-objcopy | Disassembly and section extraction in the rewrite-equivalence checks | `brew install llvm` |
 
+## What the launcher's release packs ship
+
+Players who install with D2R Metal Launcher ([LAUNCHER.md](LAUNCHER.md)) need none of the build tools above. Each release carries the pieces below, built and pinned by `dm/tools/release_mac.sh` from `dm/tools/release_pins.txt`, with their license texts in the tools pack's `licenses/` folder.
+
+| Piece | Version | License | Upstream |
+|---|---|---|---|
+| CPython (from python-build-standalone) | 3.14.8 (build 20261013) | PSF (python-build-standalone: MIT) | <https://github.com/astral-sh/python-build-standalone> |
+| lz4, capstone, numpy, Pillow (Python packages) | 4.4.5, 5.0.9, 2.5.4, 13.0.0 | BSD-3, BSD-3, BSD-3, MIT-CMU | PyPI |
+| .NET runtime (inside the self-contained shader translator) | 10.0 | MIT | <https://dotnet.microsoft.com> |
+| Ryujinx shader translator (inside the same) | 1.3.2, as in `dm/third_party/ryujinx` | MIT | <https://github.com/Ryubing> |
+| SPIRV-Cross | 1.4.363.0 | Apache-2.0 | <https://github.com/KhronosGroup/SPIRV-Cross> |
+| hactool | commit 1d64a83 | ISC | <https://github.com/SciresM/hactool> |
+
 ## Third-party code in this repository
 
 These are already in the repository; nothing to download. Each keeps its license in its own directory.
