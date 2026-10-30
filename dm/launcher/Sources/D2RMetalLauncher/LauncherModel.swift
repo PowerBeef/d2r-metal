@@ -240,6 +240,7 @@ final class LauncherModel {
         guard let packs, job == nil else { return }
         let engine = Engine(paths: paths, runtime: packs.runtime, tools: packs.tools, appDir: appDir, bundleID: bundleID)
         working = "Moving D2R Metal into the launcher"; phase = .working; steps = StepRow.engineSteps; logPath = nil
+        let old = installedApp
         job = Task {
             defer { job = nil }
             var code: Int32 = 0, msg: String?
@@ -248,8 +249,23 @@ final class LauncherModel {
                     switch out { case .exit(let c): code = c; case .event(let ev): msg = apply(ev) ?? msg }
                 }
             } catch { msg = error.localizedDescription; code = 1 }
-            readState(); phase = code == 0 ? .home : .failed(msg ?? "Could not move D2R Metal into the launcher's folder.")
+            readState()
+            if code == 0 { retire(old) }
+            phase = code == 0 ? .home : .failed(msg ?? "Could not move D2R Metal into the launcher's folder.")
         }
+    }
+
+    /// The copy left at the old place after a move: an older release's engine (the installed packs run the move) knows nothing of it, so the
+    /// launcher does what install.py install_app now does itself: a launcher-installed copy becomes the previous version
+    private func retire(_ old: URL) {
+        let fm = FileManager.default
+        guard old.standardizedFileURL != installedApp.standardizedFileURL, fm.fileExists(atPath: old.path),
+              (NSDictionary(contentsOf: old.appendingPathComponent("Contents/Info.plist"))?["DMLauncherManaged"] as? Bool) == true else { return }
+        let prev = paths.root.appendingPathComponent("build/previous/D2R Metal.app")
+        try? fm.createDirectory(at: prev.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.removeItem(at: prev)
+        try? fm.moveItem(at: old, to: prev)
+        canRevert = fm.fileExists(atPath: prev.path)
     }
 
     func revert() {
