@@ -51,15 +51,23 @@ def stop(pattern, wait=10):
 
 
 def opens_for_id():
-    r = subprocess.run(['osascript', '-e', f'POSIX path of (path to application id "{LAUNCHER_ID}")'], capture_output=True, text=True)
+    """The app LaunchServices opens for the launcher's bundle id (asked through AppKit; AppleScript's `path to application id` would start it)"""
+    code = f'import AppKit; print(NSWorkspace.shared.urlForApplication(withBundleIdentifier: "{LAUNCHER_ID}")?.path ?? "")'
+    r = subprocess.run(['swift', '-'], input=code, capture_output=True, text=True, timeout=180)
     return r.stdout.strip().rstrip('/')
 
 
 def run_old(old, root, feed):
+    """Runs the old launcher until it ends; its output goes to a file, not a pipe, which the processes it starts could hold open"""
     exe = os.path.join(old, 'Contents', 'MacOS', 'D2RMetalLauncher')
     env = dict(os.environ, DM_LAUNCHER_ROOT=root, DM_LAUNCHER_FEED=feed, DM_LAUNCHER_AUTORUN='selfupdate')
-    p = subprocess.run([exe], env=env, capture_output=True, text=True, timeout=600)
-    return p.returncode, next((l for l in p.stdout.splitlines() if l.startswith('LAUNCHER-AUTORUN')), p.stdout[-300:])
+    out = os.path.join(root, 'autorun.txt')
+    with open(out, 'w') as f:
+        p = subprocess.Popen([exe], env=env, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT)
+        try: code = p.wait(timeout=600)
+        except subprocess.TimeoutExpired: p.kill(); code = -1
+    text = open(out, errors='replace').read()
+    return code, next((l for l in text.splitlines() if l.startswith('LAUNCHER-AUTORUN')), text[-300:])
 
 
 def main(argv):
@@ -136,7 +144,8 @@ def main(argv):
         if not a.keep: shutil.rmtree(run, ignore_errors=True)
         if os.path.isdir(a.launcher): subprocess.run([LSREGISTER, '-f', a.launcher], capture_output=True)
         check('the installed launcher untouched', real_sha is None or sha256(real_exe) == real_sha)
-        check('macOS still opens the installed launcher', real_sha is None or opens_for_id() == a.launcher.rstrip('/'), opens_for_id())
+        opener = opens_for_id()
+        check('macOS still opens the installed launcher', real_sha is None or opener == a.launcher.rstrip('/'), opener)
         if real_was_running: subprocess.run(['open', a.launcher])
 
     ok = all(c['ok'] for c in checks)

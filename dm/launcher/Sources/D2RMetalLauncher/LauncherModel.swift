@@ -179,15 +179,14 @@ final class LauncherModel {
     }
 
     /// Quits and opens the launcher again from its own path, which now holds the new one: a shell waits for this process to end, then opens it.
-    /// The test switches (DM_LAUNCHER_ROOT, _FEED, _BUNDLE_ID) carry over, so a test launcher keeps its test install
+    /// `open` hands its whole environment to the app it starts, so the test root and feed (DM_LAUNCHER_ROOT, _FEED, _BUNDLE_ID) carry over and
+    /// a test launcher keeps its test install; the one-shot switches (DM_LAUNCHER_AUTORUN, _PREVIEW) are taken out
     func relaunch() {
-        var open = ["-n"]
-        for k in ["DM_LAUNCHER_ROOT", "DM_LAUNCHER_FEED", "DM_LAUNCHER_BUNDLE_ID"] {
-            if let v = ProcessInfo.processInfo.environment[k] { open += ["--env", "\(k)=\(v)"] }
-        }
         let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; shift; exec /usr/bin/open \"$@\"", "sh",
-                       String(getpid())] + open + [Bundle.main.bundlePath]
+        p.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; exec /usr/bin/open -n \"$2\"", "sh",
+                       String(getpid()), Bundle.main.bundlePath]
+        p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "DM_LAUNCHER_AUTORUN" && $0.key != "DM_LAUNCHER_PREVIEW" }
+        p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         try? p.run()
         NSApp.terminate(nil)
     }
