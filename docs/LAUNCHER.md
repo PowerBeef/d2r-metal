@@ -42,6 +42,10 @@ which put the app in Applications, is moved into the launcher's folder the first
 ## Updates
 
 - The launcher checks GitHub each time you open it. The game's main menu also shows **New version N** when a release is out; selecting it opens the launcher.
+- **The launcher updates itself** first when a release brings a newer launcher, as Battle.net does: it downloads it, checks it (the checksum, then the
+  app's identity, build and the project's Developer ID signature), swaps it into its own place in one step, keeps the old one
+  (`build/launcher-previous.noindex`) and restarts. A launcher run from its disk image, or from a folder it cannot write to, says so and links to the
+  releases page instead; move it to Applications to let it update itself.
 - An update downloads the new release and redoes only what that release changed. Usually that is only the app itself (seconds). A release that changes the shader translation redoes it and the compile (a few minutes).
 - **Go Back to the Previous Version** (gear menu) restores the app from before the last update.
 - **Updates: With pre-releases** (under Your Game) also offers pre-releases. **Check for Updates** in the gear menu asks GitHub again.
@@ -114,7 +118,7 @@ DM_LAUNCHER_FEED=file://$HOME/dm-work/release/1.0.0/manifest.json DM_LAUNCHER_RO
 - `DM_LAUNCHER_ROOT` keeps the install apart from a player's root; the game app goes into its `Game.noindex` folder.
 - `DM_LAUNCHER_BUNDLE_ID` gives the installed app its own preferences and Metal cache.
 - Start the installed app with `DM_APP_SUPPORT` to keep its saves apart (a test copy also skips the hand-over to the launcher).
-- `DM_LAUNCHER_AUTORUN=update` (or `repair`) runs that job as its button does, prints `LAUNCHER-AUTORUN OK|RED …` and quits.
+- `DM_LAUNCHER_AUTORUN=update` (or `repair`, or `selfupdate`) runs that job as its button does, prints `LAUNCHER-AUTORUN OK|RED …` and quits.
 
 **Testing a release:** before publishing, update a copy of a real install to it:
 
@@ -126,6 +130,16 @@ It clones the install root (APFS clones: instant, no extra space), runs the inst
 then checks the engine's steps, the install record, the new app (version, icon, signature, host, paths), the previous version kept for
 revert, the hand-over to the launcher, a game scenario on the updated app and the way back to the previous version. Last, it checks that
 the real install, its app, the saves and Applications did not change. `--keep` keeps the copy; `--no-game` skips the in-game checks.
+
+Then the launcher's own update:
+
+```bash
+python3 dm/verify/launcher_selfupdate.py --feed file://$HOME/dm-work/release/1.0.0/manifest.json
+```
+
+It turns the release's launcher into an "old" one (build 1) in a throwaway folder, checks that it refuses a release whose launcher zip has a
+wrong checksum, then that it installs the release's launcher in its own place, keeps the old one, and restarts into the new one; last, that the
+installed launcher is untouched and is still the one macOS opens.
 
 **Licenses of what the packs ship:**
 - CPython (PSF);
