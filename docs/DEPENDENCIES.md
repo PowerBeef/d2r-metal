@@ -70,6 +70,7 @@ These are already in the repository; nothing to download. Each keeps its license
 
 | Path | What | License | Upstream |
 |---|---|---|---|
+| `dm/brand/fonts` | Cinzel, the lettering of the logo and the launcher's headings (also inside the launcher) | SIL Open Font License 1.1 | <https://github.com/NDISCOVER/Cinzel> |
 | `dm/third_party/bcdec` | BC texture decompression | MIT or Unlicense (your choice) | <https://github.com/iOrange/bcdec> |
 | `dm/third_party/flip` | Image difference metric | BSD 3-Clause | <https://github.com/NVlabs/flip> |
 | `dm/third_party/libdeflate` | Decompression | MIT | <https://github.com/ebiggers/libdeflate> |
