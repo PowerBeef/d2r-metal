@@ -55,7 +55,7 @@ You can keep using your Mac. If you quit midway, the next run continues where it
 
 - The launcher talks only to github.com: the release description and its files.
 - Nothing is uploaded.
-- Your game packages and `prod.keys` are read where they are; they are never copied or kept. The keys are only used while unpacking.
+- Your game packages are read where they are, never copied or kept. The keys are used only while unpacking, from a temporary copy in a private folder that is deleted when unpacking ends. That copy leaves out lines of an impossible length, which some key dumps contain and hactool refuses.
 - Every downloaded file is checked against the checksum in the release's description. The two packs' main programs must also carry the project's Developer ID signature.
 
 ## If something goes wrong

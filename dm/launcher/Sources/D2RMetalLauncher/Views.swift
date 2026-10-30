@@ -49,10 +49,9 @@ struct Header: View {
 struct WelcomeView: View {
     @Environment(LauncherModel.self) private var model
     // which selector the file panel is for: kept apart from the panel's own flag, which SwiftUI resets before it hands over the chosen file
-    @State private var target: Slot = .base
+    @State private var target: LauncherModel.Slot = .base
     @State private var showPanel = false
     @State private var dropTargeted = false
-    enum Slot { case base, update, dlc, keys, folder }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -63,18 +62,14 @@ struct WelcomeView: View {
             .font(.callout).foregroundStyle(Palette.parchment).multilineTextAlignment(.center)
             GlassEffectContainer(spacing: 16) {
                 VStack(spacing: 0) {
-                    SourceRow(symbol: "shippingbox.fill", title: "Base game", detail: "The game package, .nsp or .xci", value: model.baseGame,
-                              choose: { pick(.base) }, clear: { model.baseGame = nil })
+                    row(.base, symbol: "shippingbox.fill", title: "Base game", detail: "The game package, .nsp or .xci")
                     Divider().padding(.vertical, 10)
-                    SourceRow(symbol: "arrow.down.circle.fill", title: "Update 1.0.34.0",
-                              detail: model.baseGame?.pathExtension.lowercased() == "xci" ? "Not needed if your .xci already holds it" : "The update package (v2228224), .nsp",
-                              value: model.gameUpdate, choose: { pick(.update) }, clear: { model.gameUpdate = nil })
+                    row(.update, symbol: "arrow.down.circle.fill", title: "Update 1.0.34.0",
+                        detail: model.baseGame?.pathExtension.lowercased() == "xci" ? "Not needed if your .xci already holds it" : "The update package (v2228224), .nsp")
                     Divider().padding(.vertical, 10)
-                    SourceRow(symbol: "sparkles", title: "Reign of the Warlock DLC", detail: "Optional: its data already ships in the base game and the update",
-                              value: model.dlc, choose: { pick(.dlc) }, clear: { model.dlc = nil })
+                    row(.dlc, symbol: "sparkles", title: "Reign of the Warlock DLC", detail: "Optional: its data already ships in the base game and the update")
                     Divider().padding(.vertical, 10)
-                    SourceRow(symbol: "key.fill", title: "prod.keys", detail: "The keys of your own console", value: model.keys,
-                              choose: { pick(.keys) }, clear: { model.keys = nil })
+                    row(.keys, symbol: "key.fill", title: "prod.keys", detail: "The keys of your own console")
                 }
                 .glassCard()
                 .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 24).strokeBorder(Palette.goldFill, lineWidth: 1.5).allowsHitTesting(false) } }
@@ -83,8 +78,12 @@ struct WelcomeView: View {
             HStack(spacing: 10) {
                 Caption(text: model.folder == nil ? "Already extracted?" : "Extracted folder", dim: true, size: 10)
                 if let f = model.folder {
-                    Text(f.lastPathComponent).font(.callout).lineLimit(1).truncationMode(.middle).foregroundStyle(Palette.parchment)
-                    Button("Clear", systemImage: "xmark") { model.folder = nil }.labelStyle(.iconOnly).buttonStyle(.glass).controlSize(.small)
+                    CheckMark(verdict: model.verdicts[.folder], checking: model.checking.contains(.folder))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(f.lastPathComponent).font(.callout).lineLimit(1).truncationMode(.middle).foregroundStyle(Palette.parchment)
+                        if let v = model.verdicts[.folder] { VerdictText(verdict: v) }
+                    }
+                    Button("Clear", systemImage: "xmark") { model.clear(.folder) }.labelStyle(.iconOnly).buttonStyle(.glass).controlSize(.small)
                 } else {
                     Button("Choose a Folder…") { pick(.folder) }.buttonStyle(.glass).controlSize(.small)
                 }
@@ -109,17 +108,12 @@ struct WelcomeView: View {
         }
     }
 
-    private func pick(_ slot: Slot) { target = slot; showPanel = true }
+    private func pick(_ slot: LauncherModel.Slot) { target = slot; showPanel = true }
+    private func assign(_ url: URL, to slot: LauncherModel.Slot) { model.choose(url, for: slot) }
 
-    private func assign(_ url: URL, to slot: Slot) {
-        switch slot {
-        case .base: model.baseGame = url
-        case .update: model.gameUpdate = url
-        case .dlc: model.dlc = url
-        case .keys: model.keys = url
-        case .folder: model.folder = url; return
-        }
-        model.folder = nil   // packages and an extracted folder are two ways; the latest choice wins
+    private func row(_ slot: LauncherModel.Slot, symbol: String, title: String, detail: String) -> some View {
+        SourceRow(symbol: symbol, title: title, detail: detail, value: model.url(slot), verdict: model.verdicts[slot], checking: model.checking.contains(slot),
+                  choose: { pick(slot) }, clear: { model.clear(slot) })
     }
 
     /// Drops on the card: prod.keys by its extension, packages by the title id or version tag in their names, else the first empty selector
@@ -128,7 +122,7 @@ struct WelcomeView: View {
             switch u.pathExtension.lowercased() {
             case "keys": assign(u, to: .keys)
             case "nsp", "xci":
-                if let path = LauncherModel.slot(for: u) { model[keyPath: path] = u; model.folder = nil }
+                if let slot = LauncherModel.slot(for: u) { assign(u, to: slot) }
                 else if model.baseGame == nil { assign(u, to: .base) } else if model.gameUpdate == nil { assign(u, to: .update) } else { assign(u, to: .dlc) }
             default: if (try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true { assign(u, to: .folder) }
             }
@@ -136,25 +130,57 @@ struct WelcomeView: View {
     }
 }
 
-/// One selector: what it is, the file chosen, a glass button to choose and a small one to clear
+/// One selector: what it is, the file chosen and what its check found, a glass button to choose and a small one to clear
 struct SourceRow: View {
     let symbol: String, title: String, detail: String
     let value: URL?
+    let verdict: GameFileCheck.Verdict?
+    let checking: Bool
     let choose: () -> Void
     let clear: () -> Void
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: value == nil ? symbol : "checkmark.seal.fill")
-                .font(.title2).foregroundStyle(Palette.goldFill).frame(width: 30)
-                .contentTransition(.symbolEffect(.replace))
+            Group {
+                if value == nil { Image(systemName: symbol).foregroundStyle(Palette.goldFill) }
+                else { CheckMark(verdict: verdict, checking: checking) }
+            }
+            .font(.title2).frame(width: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
                 Text(value?.lastPathComponent ?? detail).font(.callout).foregroundStyle(value == nil ? .secondary : .primary)
                     .lineLimit(1).truncationMode(.middle).help(value?.path ?? detail)
+                if value != nil, let verdict { VerdictText(verdict: verdict) }
             }
             Spacer(minLength: 12)
             if value != nil { Button("Clear", systemImage: "xmark", action: clear).labelStyle(.iconOnly).buttonStyle(.glass).controlSize(.small) }
             Button(value == nil ? "Choose…" : "Change…", action: choose).buttonStyle(.glass)
+        }
+        .animation(.smooth, value: verdict)
+    }
+}
+
+/// The result of a file's check as a symbol: a green check when it is the right file, red when it is not, a spinner while checking
+struct CheckMark: View {
+    let verdict: GameFileCheck.Verdict?
+    let checking: Bool
+    var body: some View {
+        switch verdict {
+        case _ where checking: ProgressView().controlSize(.small)
+        case .ok?, .note?: Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, .green).symbolEffect(.bounce, value: verdict)
+        case .wrong?, .elsewhere?: Image(systemName: "xmark.octagon.fill").foregroundStyle(.white, Palette.blood)
+        case nil: Image(systemName: "circle.dotted").foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// The check's one line: green for what was recognized, amber for a note, red for why it is not the right file
+struct VerdictText: View {
+    let verdict: GameFileCheck.Verdict
+    var body: some View {
+        switch verdict {
+        case .ok(let s): Text(s).font(.caption).foregroundStyle(.green)
+        case .note(let s): Text(s).font(.caption).foregroundStyle(.orange)
+        case .wrong(let s), .elsewhere(_, let s): Text(s).font(.caption).foregroundStyle(Palette.blood)
         }
     }
 }

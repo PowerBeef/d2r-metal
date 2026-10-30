@@ -39,7 +39,7 @@ dm/tools/extract_game.sh <base game .nsp> <update .nsp> <your prod.keys>
 
 eShop-style `.nsp` packages carry a ticket (`.tik`) with the title key; the script reads it from there, so you do not need a separate `title.keys`. A *personalized* ticket is tied to the console it came from and cannot be read this way; the script says so, and extraction still works if your `~/.switch/title.keys` already has the key for that title. The add-on content (DLC) package is not needed: the expansion's data is in the base game and the update.
 
-It unpacks the package, identifies the base game and the update, extracts the two parts listed above, checks the version, and puts them where the next section says. `prod.keys` is the key file dumped from your own console; the package and the keys are only read on your computer and are never copied or uploaded.
+It unpacks the package, identifies the base game and the update, extracts the two parts listed above, checks the version, and puts them where the next section says. `prod.keys` is the key file dumped from your own console. The package and the keys stay on your computer and are never uploaded. hactool reads a temporary copy of the keys, without lines of an impossible length (some key dumps have them, and hactool refuses them), and that copy is deleted when unpacking ends.
 
 You need **hactool** (an open-source tool for unpacking Switch files) first: <https://github.com/SciresM/hactool>. Build it as its README describes, then put it on your `PATH` or point the script at it with `HACTOOL=<path>`. Leave about 20 GB of free disk space.
 

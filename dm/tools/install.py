@@ -16,7 +16,7 @@
 #   install.py status  --root R [--json]
 # P = an unpacked runtime pack (manifest.json, host/D2RMobile, repo/dm/…, lib/libnvn_deswizzle.dylib), T = an unpacked tools pack (python/bin/python3,
 # dmsh_xlate/dmsh_xlate, bin/spirv-cross, bin/hactool). --json prints one JSON event per line on stdout (what the launcher reads); the steps' own output
-# goes to <R>/logs/install-<time>.log either way. Keys and game packages are only read, in place: never copied, never kept.
+# goes to <R>/logs/install-<time>.log either way. Game packages are only read, in place; the keys too, through a temporary copy that unpacking deletes.
 import argparse, datetime, hashlib, json, os, platform, plistlib, re, shutil, subprocess, sys, time
 
 VERSION = '3.3.94012'

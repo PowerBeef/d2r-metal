@@ -3,7 +3,6 @@
 # 用法：extract_game.sh <游戏包 .xci 或 .nsp> [<游戏包> …] <prod.keys>
 #   游戏包：你自己导出的《暗黑破坏神 II：狱火重生》Switch 版，本体与 3.3.94012 的更新都要有：可以在同一个包里（.xci 常见的「1G+1U」），
 #   也可以分开给（本体一个 .nsp、更新一个 .nsp）。eShop 格式的 .nsp 里带的票据（.tik）会自动取出标题密钥，不用另备 title.keys。
-#   prod.keys：从你自己的主机导出的密钥文件，放最后。都只在本机读，不拷贝、不上传。
 # 产物：$DM_ROOT/data/switch/3.3.94012/Update/{ExeFS,RomFS}（DM_ROOT 缺省 ~/dm-work）。已有这个目录时不覆盖。
 # 需要：hactool（开源的 Switch 文件解包工具，https://github.com/SciresM/hactool ，按它的说明 make 出来）。
 #   放进 PATH，或用 HACTOOL=<路径> 指给本脚本。磁盘要留出约 20 GB（中间文件 9 GB，做完自动删）。
@@ -11,7 +10,8 @@
 # Usage: extract_game.sh <game dump .xci or .nsp> [<game dump> ...] <prod.keys>
 #   Game dump: your own dump of the Switch version of Diablo II: Resurrected; it must contain both the base game and the 3.3.94012 update, either in one package
 #   (the common "1G+1U" form for .xci) or as separate packages (one .nsp for the base game, one for the update). Title keys are taken from the tickets (.tik) in eShop-style .nsp files; no title.keys needed.
-#   prod.keys: the key file dumped from your own console, given last. Everything is only read on this machine; nothing is copied or uploaded.
+#   prod.keys: the key file dumped from your own console, given last. Everything stays on this machine and nothing is uploaded; hactool reads a temporary copy
+#   of the keys without the lines of an impossible length, in a private temporary folder deleted when this script ends.
 # Output: $DM_ROOT/data/switch/3.3.94012/Update/{ExeFS,RomFS} (DM_ROOT defaults to ~/dm-work). An existing directory is not overwritten.
 # Requires: hactool (an open-source tool for unpacking Switch files, https://github.com/SciresM/hactool ; build it with make following its instructions).
 #   Put it on PATH, or point this script at it with HACTOOL=<path>. Keep about 20 GB of disk free (9 GB of intermediate files, deleted automatically when done).
@@ -26,14 +26,18 @@ for PKG in "${PKGS[@]}"; do [ -f "$PKG" ] || die "没有这个游戏包 | no suc
 # 这个 HOME 单独建在系统临时目录里，只有你自己能读，密钥不进工作区；9 GB 的中间文件仍在工作区
 # hactool only reads title keys from $HOME/.switch/title.keys: give it a temporary HOME whose title.keys = your existing one + the keys taken from the tickets, leaving your own ~/.switch untouched.
 # That HOME is created on its own in the system temporary folder and only you can read it, so keys never land in the workspace; the 9 GB of intermediate files stay in the workspace
-ht() { HOME="$KH" "$HT" -k "$KEYS" --disablekeywarns --suppresskeys "$@"; }
+ht() { HOME="$KH" "$HT" -k "$KH/.switch/prod.keys" --disablekeywarns --suppresskeys "$@"; }
 T=$DM_ROOT/build/cache/dm/extract.$$; KH=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/dm-keys.XXXXXX") || die "建不了放密钥的临时目录 | cannot create the temporary folder for the keys"
 PART=; trap 'rm -rf "$T" "$KH" ${PART:+"$PART"}' EXIT; mkdir -p "$T/nca" "$KH/.switch" || die "建不了中间目录 $T | cannot create the intermediate folder $T"
 TK=$KH/.switch/title.keys
 if [ -f "$HOME/.switch/title.keys" ]; then
   cat "$HOME/.switch/title.keys" > "$TK"; [ -z "$(tail -c1 "$TK")" ] || echo >> "$TK"   # 原文件末尾没换行时补一个，免得下面接上的票据密钥并进它的最后一行 | add a newline if the file does not end with one, so the ticket keys appended below do not join its last line
 fi
-ln -s "$(cd "$(dirname "$KEYS")" && pwd)/$(basename "$KEYS")" "$KH/.switch/prod.keys"   # 只是链接，免得 hactool 报「prod.keys 不存在」盖住真正的错 | only a link, so hactool does not warn "prod.keys does not exist" over the real error
+# The keys hactool reads: a copy of your prod.keys in that private temporary HOME, without the lines whose value is no whole number of 16-byte
+# blocks (some key dumps carry 17-byte *_kek_source_* lines, which hactool refuses outright); deleted with that folder when this script ends
+awk -F= '{ v = $2; gsub(/[ \t\r]/, "", v); if (NF < 2 || v !~ /^[0-9a-fA-F]+$/ || length(v) % 32 == 0) print; else skipped++ }
+  END { if (skipped) printf "%d key line(s) of the wrong length skipped | 跳过 %d 行长度不对的密钥\n", skipped, skipped > "/dev/stderr" }' "$KEYS" > "$KH/.switch/prod.keys" \
+  || die "读不了密钥文件 | cannot read the key file: $KEYS"
 say() { echo "[$(date +%T)] $*"; }
 # 拆不开时：hactool 嫌某一行密钥长度不对，报的是那行的值（一个密钥）。不把值打出来，按值找回是哪个文件的哪个键：prod.keys，或标题密钥（你的 ~/.switch/title.keys 加票据里取的）
 # When unpacking fails: if hactool rejects a key line for its length it reports that line's value (a key). Don't print the value; find by it which key of which file it is: prod.keys, or the title keys (your ~/.switch/title.keys plus those taken from the tickets)

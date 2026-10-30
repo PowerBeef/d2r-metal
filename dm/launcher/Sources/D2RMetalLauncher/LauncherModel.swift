@@ -35,6 +35,9 @@ final class LauncherModel {
     var keys: URL?
     var folder: URL?
     var packages: [URL] { [baseGame, gameUpdate, dlc].compactMap { $0 } }
+    enum Slot: Hashable { case base, update, dlc, keys, folder }
+    var verdicts: [Slot: GameFileCheck.Verdict] = [:]   // what each chosen file was found to be (GameFileCheck), shown beside it
+    var checking: Set<Slot> = []
 
     let paths: Paths
     let defaults = UserDefaults.standard
@@ -64,7 +67,50 @@ final class LauncherModel {
     var updateAvailable: Bool { if let l = latest, let i = installed { return l.build > i.build } else { return false } }
     var launcherUpdate: Manifest.LauncherAsset? { latest?.launcher.flatMap { $0.build > ownBuild ? $0 : nil } }
     var installedApp: URL { appDir.appendingPathComponent("D2R Metal.app") }
-    var gameInputReady: Bool { folder != nil || (baseGame != nil && keys != nil && (gameUpdate != nil || baseGame?.pathExtension.lowercased() == "xci")) }
+    /// Ready when the chosen files passed their checks: an extracted folder, or the base game, the update (unless the base is an .xci) and the keys
+    var gameInputReady: Bool {
+        guard checking.isEmpty else { return false }
+        func good(_ s: Slot) -> Bool { switch verdicts[s] { case .ok?, .note?: true; default: false } }
+        if folder != nil { return good(.folder) }
+        let xci = baseGame?.pathExtension.lowercased() == "xci"
+        return baseGame != nil && good(.base) && keys != nil && good(.keys) && (gameUpdate != nil ? good(.update) : xci) && (dlc == nil || good(.dlc))
+    }
+
+    func url(_ slot: Slot) -> URL? {
+        switch slot { case .base: baseGame; case .update: gameUpdate; case .dlc: dlc; case .keys: keys; case .folder: folder }
+    }
+    private func set(_ slot: Slot, _ url: URL?) {
+        switch slot { case .base: baseGame = url; case .update: gameUpdate = url; case .dlc: dlc = url; case .keys: keys = url; case .folder: folder = url }
+        if url == nil { verdicts[slot] = nil; checking.remove(slot) }
+    }
+
+    /// A file for a selector: kept there and checked off the main thread. A package of this game chosen in the wrong selector moves to its own
+    /// (when that one is free); packages and an extracted folder are two ways, so the latest choice clears the other
+    func choose(_ url: URL, for slot: Slot) {
+        set(slot, url); verdicts[slot] = nil; checking.insert(slot)
+        if slot == .folder { for s in [Slot.base, .update, .dlc, .keys] { set(s, nil) } } else { set(.folder, nil) }
+        Task {
+            let v: GameFileCheck.Verdict = await Task.detached {
+                switch slot {
+                case .keys: GameFileCheck.keys(url)
+                case .folder: GameFileCheck.folder(url)
+                case .base: GameFileCheck.package(url, expected: .base)
+                case .update: GameFileCheck.package(url, expected: .update)
+                case .dlc: GameFileCheck.package(url, expected: .dlc)
+                }
+            }.value
+            guard self.url(slot) == url else { return }   // replaced meanwhile
+            checking.remove(slot)
+            if case .elsewhere(let kind, let what) = v {
+                let target: Slot = kind == .base ? .base : kind == .update ? .update : .dlc
+                if self.url(target) == nil { set(slot, nil); choose(url, for: target); return }
+                verdicts[slot] = .wrong(what + ", and that selector already has a file")
+                return
+            }
+            verdicts[slot] = v
+        }
+    }
+    func clear(_ slot: Slot) { set(slot, nil) }
 
     func start() async {
         if let preview = ProcessInfo.processInfo.environment["DM_LAUNCHER_PREVIEW"] { showPreview(preview); return }
@@ -92,14 +138,9 @@ final class LauncherModel {
     func update() { runJob("Updating", command: "install", input: .none) }
     func repair() { runJob("Repairing", command: "repair", input: .none) }
 
-    /// The selector a dropped package goes to (PackageKind.guess), nil when its name says nothing
-    static func slot(for url: URL) -> ReferenceWritableKeyPath<LauncherModel, URL?>? {
-        switch PackageKind.guess(url.lastPathComponent) {
-        case .base: \.baseGame
-        case .update: \.gameUpdate
-        case .dlc: \.dlc
-        case nil: nil
-        }
+    /// The selector a dropped package goes to (PackageKind.guess), nil when its name says nothing (its check then moves it if needed)
+    static func slot(for url: URL) -> Slot? {
+        switch PackageKind.guess(url.lastPathComponent) { case .base: .base; case .update: .update; case .dlc: .dlc; case nil: nil }
     }
 
     func gameInput() -> Engine.Input {
@@ -236,6 +277,9 @@ extension LauncherModel {
         case "failed": phase = .failed("The game files in the folder you chose are not from version 1.0.34.0 (ExeFS/main does not match). Choose the files of the 1.0.34.0 update.")
         default: baseGame = URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [0100726014352000][v0].nsp")
                  gameUpdate = URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [0100726014352800][v2228224].nsp")
+                 keys = URL(fileURLWithPath: "/Users/player/.switch/prod.keys")
+                 verdicts = [.base: .ok("Base game, title 0100726014352000"), .update: .ok("Update, title 0100726014352800 · version checked at install"),
+                             .keys: .note("Console keys, 412 entries; 2 lines of the wrong length will be skipped")]
                  latest = sample; phase = .welcome
         }
     }
