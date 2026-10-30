@@ -276,7 +276,7 @@ DM_STATE	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	-
 DM_STATEREP	host	host/dm_staterep.m	y
 DM_SVC	host	host/main.c	y
 DM_SYMCHECK	host	host/loader.c	-
-DM_TABLES	host	host/app_mac.m	-
+DM_TABLES	host	host/app_mac.m host/dm_tables.h	-
 DM_TACTCHK	host	host/hle_tact.c	-
 DM_TACT_PREFETCH	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_LAG	host	host/hle_tact.c	-

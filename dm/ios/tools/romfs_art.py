@@ -28,8 +28,7 @@ def lib():
     """块线性 ↔ 线性的转换库：仓库里的 nvn_deswizzle.c + nvn_tex.c 现编成动态库（每次进程编一次）。 | Block-linear ↔ linear conversion library: the repo's nvn_deswizzle.c + nvn_tex.c compiled on the fly into a dynamic library (compiled once per process)."""
     global _lib
     if _lib is None:
-        # 无系统 clang 的构建机可指定由同一源码预编的转换库；不随包分发。
-        # Hosts without system clang may use a library built from these same sources; it is not shipped.
+        # Without a system clang, a library built from these same sources can be given; the launcher's runtime pack carries one (dm/tools/release_mac.sh).
         p = os.environ.get('DM_DESWIZZLE_LIB')
         # Windows 上动态库的函数要点名导出才找得到（实测：不带这三项能编能加载，但取不到函数）
         # On Windows a dynamic library's functions must be exported by name to be found (measured: without these three options it compiles and loads, but the functions cannot be fetched)

@@ -4,11 +4,13 @@
 #       product.sh path <种类>  → 本机缺省产物目录 $DM_ROOT/build/cache/dm/out/<name>
 #       product.sh rev           → r28
 #       product.sh build         → 重出三种产物（keypage / rules / touch）到本机缺省目录
+#       product.sh build touch   → only the kinds named (the launcher's installs need only touch: dm/tools/install.py)
 # The codename of the current rewrite build output is written in exactly one place: dm/PRODUCT (one line, e.g. 3.3.94012-r28). A revision bump changes only that line.
 # Usage: product.sh name <kind>  → 3.3.94012-r28-<kind> (kind: touch / rules / keypage)
 #       product.sh path <kind>  → local default build output directory $DM_ROOT/build/cache/dm/out/<name>
 #       product.sh rev           → r28
 #       product.sh build         → rebuild the three kinds of build output (keypage / rules / touch) into the local default directory
+#       product.sh build touch   → only the kinds named
 set -u
 P=$(head -1 "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/PRODUCT") || exit 2
 [ -n "$P" ] || { echo "dm/PRODUCT 为空" >&2; exit 2; }
@@ -21,7 +23,8 @@ case "${1:-}" in
     # 每种产物三个模块都改写成功后最后写完成标记 .complete（内容 = 这次用的 patch_nso.py 的校验值），重出前先删：setup.sh 凭它判断产物齐全、是不是当前改写器出的
     # After all three modules of a kind are rewritten successfully, the completion stamp .complete is written last (content = the checksum of the patch_nso.py used); it is deleted before rebuilding: setup.sh uses it to tell whether the build output is complete and was made by the current rewriter
     SRC=$(shasum -a 256 "$HERE/patch_nso.py" | cut -c1-64)
-    for k in keypage rules touch; do O=${DM_ROOT:-$HOME/dm-work}/build/cache/dm/out/$P-$k; mkdir -p "$O"; rm -f "$O/.complete"
+    shift; KINDS=${*:-keypage rules touch}
+    for k in $KINDS; do case $k in keypage|rules|touch) ;; *) echo "🔴 unknown kind $k (keypage / rules / touch)" >&2; exit 2;; esac; O=${DM_ROOT:-$HOME/dm-work}/build/cache/dm/out/$P-$k; mkdir -p "$O"; rm -f "$O/.complete"
       # 每种的开关都写全（touch 的 DM_PRIVATE_GATES=1 原先靠缺省，调用方环境里漏进 0 就出成不带私有门的 touch、还照样打完成标记）；-I 不让 PYTHONOPTIMIZE 等环境变量去掉改写器的核对
       # Every kind spells out its switches (touch used to rely on the default for DM_PRIVATE_GATES=1, so a 0 leaking in from the caller's environment built a touch without private gates and still stamped it complete); -I keeps PYTHONOPTIMIZE and other environment variables from removing the rewriter's checks
       case $k in keypage) E=(DM_RULESET=native);; rules) E=(DM_RULESET=touch-run-v4 DM_PRIVATE_GATES=0);; touch) E=(DM_RULESET=touch-run-v4 DM_PRIVATE_GATES=1);; esac

@@ -462,7 +462,12 @@ for r in xr:
     for ln in r.stderr.splitlines():
         m = re.match(r'【红】(\w+)：(.*)', ln)
         if m: xerr[m.group(1)] = m.group(2)[:160]
+PROGRESS = [0, threading.Lock()] if os.environ.get('DMSH_PROGRESS') else None   # "DMSH <done>/<total>" lines for the launcher (dm/tools/install.py)
 def fin(key):
+    if PROGRESS:
+        with PROGRESS[1]:
+            PROGRESS[0] += 1
+            if PROGRESS[0] % 64 == 0 or PROGRESS[0] == len(keys): print(f'DMSH {PROGRESS[0]}/{len(keys)}', flush=True)
     if key in cache_hits:
         for _t in MTLC.targets: MTLC.touch(_t, os.path.join(out, key + '_b.metal'))   # keep their compiled entries through prune()
         refl = json.load(open(os.path.join(out, key + '_b.json')))

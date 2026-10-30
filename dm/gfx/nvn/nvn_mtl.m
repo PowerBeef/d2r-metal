@@ -2348,6 +2348,14 @@ int nvn_mtl_warm_shaders(const char *shard) {   // shard = "k/n" in a worker, NU
             for (int w = 0; w < procs; w++) { int st = 0; while (waitpid(pid[w], &st, 0) < 0 && errno == EINTR) {}
                 if (!WIFEXITED(st) || WEXITSTATUS(st)) bad += WIFEXITED(st) ? WEXITSTATUS(st) : 1; }
         }
+        // Then the game's own pipeline warm-up (pso_manifest.tsv, what the loading screen waits for): the system caches each pipeline's GPU code too,
+        // which a new install (or a new bundle id) lacks. Measured on a fresh install: 19.8 s of warm-up at the first loading screen, 0.2 s once cached
+        if (!bad) {
+            int mtl_warm_wait(int timeout_ms); double tp = CACurrentMediaTime();
+            if (!g_dev) g_dev = MTLCreateSystemDefaultDevice();   // the workers compiled the libraries; this process has had no device yet
+            shmap_load(); mtl_warm_wait(600000);
+            printf("WARM pipelines done, %.1f s\n", CACurrentMediaTime() - tp); fflush(stdout);
+        }
         char osb[64] = ""; size_t ol = sizeof osb; sysctlbyname("kern.osversion", osb, &ol, NULL, 0);
         if (!bad) [[NSString stringWithFormat:@"%s\n", osb] writeToFile:[dir stringByAppendingPathComponent:@"warm.stamp"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
         printf("WARM done %d libraries, %d failed, %.1f s (%d processes, macOS %s)\n", total, bad, CACurrentMediaTime() - t0, procs, osb); fflush(stdout);
