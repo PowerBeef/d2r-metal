@@ -29,9 +29,12 @@ final class LauncherModel {
     var packs: (runtime: URL, tools: URL)?   // the packs of the installed release (state.json), to run the engine for revert
 
     // the game files the player picked
-    var packages: [URL] = []
+    var baseGame: URL?   // the base game package (.nsp, or an .xci that may hold the update too)
+    var gameUpdate: URL? // the 1.0.34.0 update package
+    var dlc: URL?        // optional: the expansion's data already ships in the base game and the update; unpacking skips it
     var keys: URL?
     var folder: URL?
+    var packages: [URL] { [baseGame, gameUpdate, dlc].compactMap { $0 } }
 
     let paths: Paths
     let defaults = UserDefaults.standard
@@ -61,7 +64,7 @@ final class LauncherModel {
     var updateAvailable: Bool { if let l = latest, let i = installed { return l.build > i.build } else { return false } }
     var launcherUpdate: Manifest.LauncherAsset? { latest?.launcher.flatMap { $0.build > ownBuild ? $0 : nil } }
     var installedApp: URL { appDir.appendingPathComponent("D2R Metal.app") }
-    var gameInputReady: Bool { folder != nil || (!packages.isEmpty && keys != nil) }
+    var gameInputReady: Bool { folder != nil || (baseGame != nil && keys != nil && (gameUpdate != nil || baseGame?.pathExtension.lowercased() == "xci")) }
 
     func start() async {
         if let preview = ProcessInfo.processInfo.environment["DM_LAUNCHER_PREVIEW"] { showPreview(preview); return }
@@ -88,6 +91,16 @@ final class LauncherModel {
     func install() { runJob("Installing", command: "install", input: gameInput()) }
     func update() { runJob("Updating", command: "install", input: .none) }
     func repair() { runJob("Repairing", command: "repair", input: .none) }
+
+    /// The selector a dropped package goes to (PackageKind.guess), nil when its name says nothing
+    static func slot(for url: URL) -> ReferenceWritableKeyPath<LauncherModel, URL?>? {
+        switch PackageKind.guess(url.lastPathComponent) {
+        case .base: \.baseGame
+        case .update: \.gameUpdate
+        case .dlc: \.dlc
+        case nil: nil
+        }
+    }
 
     func gameInput() -> Engine.Input {
         if let folder { return .folder(folder) }
@@ -221,7 +234,8 @@ extension LauncherModel {
             if let i = steps.firstIndex(where: { $0.id == "shaders" }) { steps[i].state = .running; steps[i].done = 4224; steps[i].total = 6927 }
         case "home": installed = ("1.0.0", 412); latest = sample; canRevert = true; phase = .home
         case "failed": phase = .failed("The game files in the folder you chose are not from version 1.0.34.0 (ExeFS/main does not match). Choose the files of the 1.0.34.0 update.")
-        default: packages = [URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [base].nsp"), URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [v2228224].nsp")]
+        default: baseGame = URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [0100726014352000][v0].nsp")
+                 gameUpdate = URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [0100726014352800][v2228224].nsp")
                  latest = sample; phase = .welcome
         }
     }

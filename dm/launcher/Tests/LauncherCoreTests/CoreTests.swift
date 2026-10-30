@@ -52,3 +52,11 @@ let sample = """
     // /bin/ls is signed by Apple, not by the project's team: refused
     #expect(throws: LauncherError.signature("ls")) { try Packs(paths: Paths(root: URL(fileURLWithPath: "/tmp"))).verifySigned(URL(fileURLWithPath: "/bin/ls"), team: "FK2D8X36G2") }
 }
+
+@Test func packageKindsFromNames() {
+    #expect(PackageKind.guess("Diablo II Resurrected [0100726014352000][v0].nsp") == .base)
+    #expect(PackageKind.guess("Diablo II Resurrected [0100726014352800][v2228224].nsp") == .update)
+    #expect(PackageKind.guess("Diablo II Resurrected Reign of the Warlock [01007260143530a1][v0].nsp") == .dlc)
+    #expect(PackageKind.guess("D2R UPDATE 1.0.34.nsp") == .update)
+    #expect(PackageKind.guess("game.xci") == nil)
+}

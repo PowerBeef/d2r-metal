@@ -25,7 +25,7 @@ struct ContentView: View {
             }
             .animation(.smooth(duration: 0.35), value: model.phase)
         }
-        .frame(minWidth: 720, minHeight: 620)
+        .frame(minWidth: 720, minHeight: 680)
         .preferredColorScheme(.dark)
         .task { await model.start() }
     }
@@ -48,13 +48,14 @@ struct Header: View {
 
 struct WelcomeView: View {
     @Environment(LauncherModel.self) private var model
-    @State private var picking: Picking?
+    // which selector the file panel is for: kept apart from the panel's own flag, which SwiftUI resets before it hands over the chosen file
+    @State private var target: Slot = .base
+    @State private var showPanel = false
     @State private var dropTargeted = false
-    enum Picking: Identifiable { case packages, keys, folder; var id: Self { self } }
+    enum Slot { case base, update, dlc, keys, folder }
 
     var body: some View {
-        @Bindable var model = model
-        VStack(spacing: 18) {
+        VStack(spacing: 16) {
             VStack(spacing: 4) {
                 Text("Use your own copy: the Switch release with Reign of the Warlock, version 1.0.34.0.")
                 Text("Everything is built on this Mac. Nothing is uploaded, and your keys are only read.").foregroundStyle(Palette.parchmentDim)
@@ -62,18 +63,32 @@ struct WelcomeView: View {
             .font(.callout).foregroundStyle(Palette.parchment).multilineTextAlignment(.center)
             GlassEffectContainer(spacing: 16) {
                 VStack(spacing: 0) {
-                    SourceRow(symbol: "shippingbox.fill", title: "Game packages", detail: "The base game and the 1.0.34.0 update, .nsp or .xci",
-                              values: model.packages.map(\.lastPathComponent)) { picking = .packages }
-                    Divider().padding(.vertical, 12)
-                    SourceRow(symbol: "key.fill", title: "prod.keys", detail: "The keys of your own console", values: model.keys.map { [$0.lastPathComponent] } ?? []) { picking = .keys }
-                    Divider().padding(.vertical, 12)
-                    SourceRow(symbol: "folder.fill", title: "Or an extracted folder", detail: "A folder holding ExeFS and RomFS", values: model.folder.map { [$0.lastPathComponent] } ?? []) { picking = .folder }
+                    SourceRow(symbol: "shippingbox.fill", title: "Base game", detail: "The game package, .nsp or .xci", value: model.baseGame,
+                              choose: { pick(.base) }, clear: { model.baseGame = nil })
+                    Divider().padding(.vertical, 10)
+                    SourceRow(symbol: "arrow.down.circle.fill", title: "Update 1.0.34.0",
+                              detail: model.baseGame?.pathExtension.lowercased() == "xci" ? "Not needed if your .xci already holds it" : "The update package (v2228224), .nsp",
+                              value: model.gameUpdate, choose: { pick(.update) }, clear: { model.gameUpdate = nil })
+                    Divider().padding(.vertical, 10)
+                    SourceRow(symbol: "sparkles", title: "Reign of the Warlock DLC", detail: "Optional: its data already ships in the base game and the update",
+                              value: model.dlc, choose: { pick(.dlc) }, clear: { model.dlc = nil })
+                    Divider().padding(.vertical, 10)
+                    SourceRow(symbol: "key.fill", title: "prod.keys", detail: "The keys of your own console", value: model.keys,
+                              choose: { pick(.keys) }, clear: { model.keys = nil })
                 }
                 .glassCard()
                 .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 24).strokeBorder(Palette.goldFill, lineWidth: 1.5).allowsHitTesting(false) } }
                 .dropDestination(for: URL.self) { urls, _ in drop(urls); return true } isTargeted: { dropTargeted = $0 }
             }
-            Caption(text: "Or drop your files on the card", dim: true, size: 10)
+            HStack(spacing: 10) {
+                Caption(text: model.folder == nil ? "Already extracted?" : "Extracted folder", dim: true, size: 10)
+                if let f = model.folder {
+                    Text(f.lastPathComponent).font(.callout).lineLimit(1).truncationMode(.middle).foregroundStyle(Palette.parchment)
+                    Button("Clear", systemImage: "xmark") { model.folder = nil }.labelStyle(.iconOnly).buttonStyle(.glass).controlSize(.small)
+                } else {
+                    Button("Choose a Folder…") { pick(.folder) }.buttonStyle(.glass).controlSize(.small)
+                }
+            }
             Spacer(minLength: 0)
             if let e = model.feedError { Label("Can't reach GitHub: \(e)", systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(Palette.blood) }
             HStack(alignment: .center) {
@@ -88,46 +103,58 @@ struct WelcomeView: View {
             }
             .frame(maxWidth: 600)
         }
-        .fileImporter(isPresented: Binding(get: { picking != nil }, set: { if !$0 { picking = nil } }),
-                      allowedContentTypes: picking == .folder ? [.folder] : [.data], allowsMultipleSelection: picking == .packages) { result in
-            guard let urls = try? result.get(), !urls.isEmpty else { return }
-            switch picking {
-            case .packages: model.packages = urls; model.folder = nil
-            case .keys: model.keys = urls[0]; model.folder = nil
-            case .folder: model.folder = urls[0]; model.packages = []; model.keys = nil
-            case nil: break
-            }
+        .fileImporter(isPresented: $showPanel, allowedContentTypes: target == .folder ? [.folder] : [.item], allowsMultipleSelection: false) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            assign(url, to: target)
         }
     }
 
+    private func pick(_ slot: Slot) { target = slot; showPanel = true }
+
+    private func assign(_ url: URL, to slot: Slot) {
+        switch slot {
+        case .base: model.baseGame = url
+        case .update: model.gameUpdate = url
+        case .dlc: model.dlc = url
+        case .keys: model.keys = url
+        case .folder: model.folder = url; return
+        }
+        model.folder = nil   // packages and an extracted folder are two ways; the latest choice wins
+    }
+
+    /// Drops on the card: prod.keys by its extension, packages by the title id or version tag in their names, else the first empty selector
     private func drop(_ urls: [URL]) {
         for u in urls {
             switch u.pathExtension.lowercased() {
-            case "nsp", "xci": if !model.packages.contains(u) { model.packages.append(u) }; model.folder = nil
-            case "keys": model.keys = u; model.folder = nil
-            default: if (try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true { model.folder = u; model.packages = []; model.keys = nil }
+            case "keys": assign(u, to: .keys)
+            case "nsp", "xci":
+                if let path = LauncherModel.slot(for: u) { model[keyPath: path] = u; model.folder = nil }
+                else if model.baseGame == nil { assign(u, to: .base) } else if model.gameUpdate == nil { assign(u, to: .update) } else { assign(u, to: .dlc) }
+            default: if (try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true { assign(u, to: .folder) }
             }
         }
     }
 }
 
-/// One way to give the game files: what it is, what was chosen, and a glass button to choose
+/// One selector: what it is, the file chosen, a glass button to choose and a small one to clear
 struct SourceRow: View {
     let symbol: String, title: String, detail: String
-    let values: [String]   // what was chosen, one file per line; empty = nothing yet
+    let value: URL?
     let choose: () -> Void
+    let clear: () -> Void
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: values.isEmpty ? symbol : "checkmark.seal.fill")
+            Image(systemName: value == nil ? symbol : "checkmark.seal.fill")
                 .font(.title2).foregroundStyle(Palette.goldFill).frame(width: 30)
                 .contentTransition(.symbolEffect(.replace))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
-                if values.isEmpty { Text(detail).font(.callout).foregroundStyle(.secondary) }
-                ForEach(values, id: \.self) { Text($0).font(.callout).lineLimit(1).truncationMode(.middle) }
+                Text(value?.lastPathComponent ?? detail).font(.callout).foregroundStyle(value == nil ? .secondary : .primary)
+                    .lineLimit(1).truncationMode(.middle).help(value?.path ?? detail)
             }
             Spacer(minLength: 12)
-            Button(values.isEmpty ? "Choose…" : "Change…", action: choose).buttonStyle(.glass)
+            if value != nil { Button("Clear", systemImage: "xmark", action: clear).labelStyle(.iconOnly).buttonStyle(.glass).controlSize(.small) }
+            Button(value == nil ? "Choose…" : "Change…", action: choose).buttonStyle(.glass)
         }
     }
 }
