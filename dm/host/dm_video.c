@@ -16,12 +16,10 @@
 // (dm_custom.c lights "Apply" from dm_video_dirty too).
 // Selector (CarouselWidget, read on the host, 3.3.94012): option count +0x7e8, current option +0x7ec, one byte per option from +0x7d8 saying whether it can be chosen (0 = skipped);
 // the current option is set through the game's main+0xab0c84(widget, index) (clamps to the count, skips options that cannot be chosen, puts that option's text in the current language). The vtable and option count are checked before reading or writing.
-// 手机（DM_PHONE，iOS 覆盖层 DM_OVERLAY_IOS）：页上只有「图形」一节——res 是 3D 清晰度（0.75 / 0.85 / 1.0，交给 hle_oe.c 的 3D 比例，点应用当场换），
-// up 是游戏 3D 放大趟用不用 MetalFX（nvn_mtl.m mfx3d_draw），没有显示模式那一行；预设：推荐 = 首次启动按机型定，性能 = 75% 标准（最省电），品质 = 100% + MetalFX。
-// 页上有哪几行就管哪几行（dm_video_rows 按实际找到的切换框排）
 // 两个平台的「图形」节末尾还有「帧率」（60 / 30 省电）与「掉帧时」（降低 / 保持 3D 清晰度）：值存在自定义设置里（eco_fps / q3d，dm_custom.c 读写、存 sw_custom.txt），
 // 这里只管页上的切换框——待定值、应用、放弃都走自定义设置那一套；图形预设不管它们，「默认」把它们回到缺省（60 帧、降低）
-// Phones (DM_PHONE, iOS overlay DM_OVERLAY_IOS): the page only has the "Graphics" section -- res is the 3D resolution (0.75 / 0.85 / 1.0, handed to the 3D scale in hle_oe.c, switching as soon as Apply is pressed),
+// Phones (DM_PHONE, iOS overlay DM_OVERLAY_IOS): the page only has the "Graphics" section -- res is the 3D resolution (values 0 / 1 / 2 = 0.75 / 0.85 / 1.0 as before,
+// 3 / 4 = 0.67 / 0.5 added later; the row lists them 50 / 67 / 75 / 85 / 100 %, see car_of; handed to the 3D scale in hle_oe.c, switching as soon as Apply is pressed),
 // up is whether the game's 3D upscale pass uses MetalFX (nvn_mtl.m mfx3d_draw), and there is no display mode row; presets: Recommended = chosen per device on first boot, Performance = 75% Standard (lightest on the battery), Quality = 100% + MetalFX.
 // Only the rows the page actually has are handled (dm_video_rows lists the selectors it finds)
 // On both platforms the Graphics section ends with Frame Rate (60 / 30 power saver) and Frame Drops (lower / keep the 3D resolution): their values live in the custom settings (eco_fps / q3d, read and written by
@@ -64,7 +62,7 @@ enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, NV };   // new
 static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh" };
 static const int k_n[NV] = { 2, 4, 2, 2, 4, 2, 5, 2 };
 #define REC_V 4   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac)
-static int kn(int i) { return i == K_RES && DM_PHONE ? 3 : k_n[i]; }   // 手机的 res 是三档 3D 清晰度；Mac 的 res 多一档「原生」 | on phones res is the three 3D-resolution tiers; on the Mac res has the extra "Native" tier
+static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on phones res is the five 3D-resolution tiers; on the Mac res has the extra "Native" tier
 #define NR 11
 static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "fps", "drops" };   // row order on the page (rows the page lacks are skipped)
 static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, -2, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
@@ -149,9 +147,9 @@ int dm_video_upscale(void) { return dm_video_get("up"); }
 int dm_video_aa_mode(void) { return dm_video_get("aa") == 1 ? 2 : 1; }   // 游戏渲染器的抗锯齿档位字节（hle_oe.c aa_tick 每拍读）：1 FXAA（原版）/ 2 SMAA 1x | the game renderer's AA mode byte (read every tick by aa_tick in hle_oe.c): 1 FXAA (original) / 2 SMAA 1x
 int dm_video_aniso(void) { static const int k[4] = { 0, 4, 8, 16 }; int a = dm_video_get("aniso"); return a >= 0 && a < 4 ? k[a] : 0; }   // 提交开头读（nvn_mtl.m aniso_latch）；0 = 原版 | read at the start of each submission (nvn_mtl.m aniso_latch); 0 = the original
 float dm_video_scale3d(void) {   // 3D 清晰度（hle_oe.c s3_cfg 每拍读；> 0 才算数）：手机按 res（75 / 85 / 100%），Mac 按 s3d（0 = 100% 答 0，照原先） | the 3D resolution (read every tick by s3_cfg in hle_oe.c; only > 0 counts): phones from res (75 / 85 / 100%), the Mac from s3d (0 = 100% answers 0, as before)
-    static const float k[3] = { 0.75f, 0.85f, 1.0f }, m[5] = { 0, 0.85f, 0.75f, 0.67f, 0.5f };
+    static const float k[5] = { 0.75f, 0.85f, 1.0f, 0.67f, 0.5f }, m[5] = { 0, 0.85f, 0.75f, 0.67f, 0.5f };
     load_once(); if (!atomic_load(&g_loaded)) return 0;
-    if (DM_PHONE) { int t = atomic_load(&g_val[K_RES]); return t >= 0 && t < 3 ? k[t] : 0; }
+    if (DM_PHONE) { int t = atomic_load(&g_val[K_RES]); return t >= 0 && t < 5 ? k[t] : 0; }
     int t = atomic_load(&g_val[K_S3D]); return t > 0 && t < 5 ? m[t] : 0;
 }   // 出图每帧读（nvn_mtl.m mfx_on） | read by the present every frame (nvn_mtl.m mfx_on)
 static _Atomic int g_esh_launch = -1;   // environment shadows as latched at launch (what the game's threads got); -1 = not latched yet
@@ -159,7 +157,7 @@ int dm_video_env_shadows(void) {   // every guest thread at its start (thread.c,
     int x = atomic_load(&g_esh_launch); if (x >= 0) return x;
     const char *e = getenv("DM_ENV_SHADOWS");   // DM_ENV_SHADOWS=0/1 forces it (tests, A/B runs)
     if (e && *e) x = atoi(e) != 0;
-    else { load_once(); if (!atomic_load(&g_loaded)) return 0; x = !DM_PHONE && atomic_load(&g_val[K_ESH]) == 1; }
+    else { load_once(); if (!atomic_load(&g_loaded)) return 0; x = atomic_load(&g_val[K_ESH]) == 1; }
     int exp = -1; if (atomic_compare_exchange_strong(&g_esh_launch, &exp, x)) LOG("Environment shadows: %s (%s)", x ? "on" : "off", e && *e ? "DM_ENV_SHADOWS" : "picture setting");
     return atomic_load(&g_esh_launch);
 }
@@ -180,7 +178,7 @@ static int tier_of(int k, int t) {
     case K_AA: return DM_PHONE ? -1 : t;
     case K_ANISO: return DM_PHONE ? -1 : t ? 3 : -1;
     case K_S3D: return DM_PHONE ? -1 : 0;   // Mac：性能（出图 1600）与品质（原生）的 3D 都是 100% | Mac: both Performance (1600 output) and Quality (native) draw the 3D at 100%
-    case K_ESH: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch look, Quality = environment shadows
+    case K_ESH: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch look, Quality = environment shadows; phone presets leave it alone (cost not measured there yet)
     default: return -1;
     }
 }
@@ -249,6 +247,10 @@ static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effe
     hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && shown(K_RES) != run);
     hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && shown(K_ESH) != esh);
 }
+// The phone's 3D Resolution row lists 50 / 67 / 75 / 85 / 100 % while its stored values keep their meaning (0 = 75, 1 = 85, 2 = 100, 3 = 67, 4 = 50):
+// car_of turns a row's value into the selector index, val_of back; every other row is the identity
+static int car_of(int row, int v) { static const int m[5] = { 2, 3, 4, 1, 0 }; return DM_PHONE && k_row_key[row] == K_RES && v >= 0 && v < 5 ? m[v] : v; }
+static int val_of(int row, int c) { static const int m[5] = { 4, 3, 0, 1, 2 }; return DM_PHONE && k_row_key[row] == K_RES && c >= 0 && c < 5 ? m[c] : c; }
 static int row_want(int i) { return k_row_ckey[i] ? dm_custom_shown_value(k_row_ckey[i]) : k_row_key[i] < 0 ? preset_of() : shown(k_row_key[i]); }   // 这一行该显示哪一项 | the option this row should show
 void dm_video_pump(uint64_t sp) {   // 自定义页在屏上时每帧调（dm_custom.c）；sp = 0：页不在屏上 | called every frame while the custom page is on screen (dm_custom.c); sp = 0: the page is not on screen
     static dm_wref seen[NR];
@@ -263,18 +265,18 @@ void dm_video_pump(uint64_t sp) {   // 自定义页在屏上时每帧调（dm_cu
     if (atomic_exchange(&g_repaint, 0)) memset(seen, 0, sizeof seen);
     int want[NR], ch = -1;   // 先按改之前的值算各行该显示什么，再找玩家动了哪一行（一帧只认一行）：原先边改边比，预设刚改的待定值被后面几行当成玩家又改回去了
                             // first work out what each row should show from the values before any change, then find the row the player moved (one per frame): comparing while changing used to let the later rows read a preset's fresh pending values as the player changing them back
-    for (int i = 0; i < NR; i++) want[i] = row_want(i);
+    for (int i = 0; i < NR; i++) want[i] = car_of(i, row_want(i));
     for (int i = 0; i < NR; i++) {
         if (!w[i]) continue;
         if (dm_wref_get(&seen[i]) != w[i]) { dm_wref_set(&seen[i], w[i]); if (k_row_key[i] == -1) preset_enable(w[i], want[i] == P_CUSTOM); car_set(w[i], want[i]); continue; }   // 页刚出现：摆成该显示的值，这一帧不当玩家改了 | the page just appeared: show the value it should, and do not treat this frame as a player change
         if (ch < 0 && car_get(w[i]) != want[i]) ch = i;
     }
     if (ch >= 0) {
-        int k = k_row_key[ch], cur = car_get(w[ch]);
+        int k = k_row_key[ch], cur = val_of(ch, car_get(w[ch]));
         if (k_row_ckey[ch]) { dm_custom_set_pending(k_row_ckey[ch], cur); LOG("画面设置：%s → %d（自定义设置里的键；点「应用」生效）", k_row_ckey[ch], cur); }
         else if (k < 0) { if (cur != P_CUSTOM) apply_preset(cur); LOG("画面设置：图形预设 → %d（点「应用」生效）", cur); }
         else { atomic_store(&g_pend[k], cur); LOG("画面设置：%s → %d（点「应用」生效）", k_keys[k], cur); }
-        for (int i = 0; i < NR; i++) { if (!w[i]) continue; int v = row_want(i); if (k_row_key[i] == -1) preset_enable(w[i], v == P_CUSTOM); car_set(w[i], v); }   // 预设带动其余几项、其余几项带动预设 | presets move the other rows, and the other rows move the preset
+        for (int i = 0; i < NR; i++) { if (!w[i]) continue; int v = row_want(i); if (k_row_key[i] == -1) preset_enable(w[i], v == P_CUSTOM); car_set(w[i], car_of(i, v)); }   // 预设带动其余几项、其余几项带动预设 | presets move the other rows, and the other rows move the preset
     }
     hint(sp);
 }

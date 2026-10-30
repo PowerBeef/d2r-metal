@@ -862,12 +862,13 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), 'dmVideoEnvShadowsTip'),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), 'dmVideoFpsTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
-          (('res', '@dmVideo3DRes', ('dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),
+          (('res', '@dmVideo3DRes', ('dmVideoScale50', 'dmVideoScale67', 'dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),   # selector order; dm_video.c car_of maps it to the stored values
            ('color', '@dmVideoColor', ('dmVideoColorVivid', 'dmVideoColorAccurate'), None),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), None),
            ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX'), None),
            ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), None),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), None),
+           ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), None),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), None),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), None)) if _VIDEO_IOS else ())
 _VIDEO_H = _CUSTOM_LINE_H * len(_VIDEO)
@@ -884,7 +885,8 @@ def _video_rows():
                     '        ] },\n') % (i, y, _CUSTOM_LINE_H, row[1])
             continue
         key, label, states, tip = row
-        lh = 112 if key in _VIDEO_RESTART and _VIDEO_MAC else _CUSTOM_LINE_H   # rows applied at the next launch: label and selector take the top 112, the bottom 68 is left for the hint
+        restart = key in _VIDEO_RESTART and (_VIDEO_MAC or key == 'envsh')   # the phone's 3D resolution applies at once; Environment Shadows waits for a restart on both
+        lh = 112 if restart else _CUSTOM_LINE_H   # rows applied at the next launch: label and selector take the top 112, the bottom 68 is left for the hint
         out += ('        { "type": "TextBoxWidget", "name": "TouchVideo_%s_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "%s", "style": "$StyleSettingsText" } },\n'
                 '        { "type": "CarouselWidget", "name": "TouchVideo_%s", "fields": {\n'
                 '            "rect": { "x": 1052, "y": %d, "width": 596, "height": 72 },\n'
@@ -893,7 +895,7 @@ def _video_rows():
                 '            "style": "$StyleSettingsCarousel", "enabledColor": "$CarouselEnabledColor", "disabledColor": "$CarouselDisabledColor"%s } },\n'
                 ) % (key, y, lh, label, key, y + (lh - 72) // 2, ', '.join('"%s"' % s for s in states), key,
                      (',\n            "tooltipString": "@%s", "tooltipStyle": { "fontStyle": { "options": { "newlineHandling": "standard" } }, "showAfterDelay": true }' % tip) if tip else '')
-        if key in _VIDEO_RESTART and _VIDEO_MAC:   # "Takes effect after restarting the game": starts off screen, the host moves it under the label (dm_video.c hint)
+        if restart:   # "Takes effect after restarting the game": starts off screen, the host moves it under the label (dm_video.c hint)
             out += ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": %d, "width": 1400, "height": 60 }, "text": "@dmVideoResHint", '
                     '"style": { "fontColor": "$FontColorGray", "pointSize": 30, "alignment": { "h": "left", "v": "center" } } } },\n') % (_VIDEO_RESTART[key], y + 112)
     return out
