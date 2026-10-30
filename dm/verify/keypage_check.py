@@ -8,8 +8,8 @@ import sys
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
 
 
-KEYS = ('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW')
-KEY_OFF = {503: 'KESHADOW', 504: 'KASPECTUI', 505: 'KASPECT', 506: 'KRES0', 507: 'KRES1', 508: 'K18', 509: 'KTLS', 510: 'KTLR', 511: 'KGATE'}
+KEYS = ('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW', 'KSHSIZE')
+KEY_OFF = {502: 'KSHSIZE', 503: 'KESHADOW', 504: 'KASPECTUI', 505: 'KASPECT', 506: 'KRES0', 507: 'KRES1', 508: 'K18', 509: 'KTLS', 510: 'KTLR', 511: 'KGATE'}
 md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
 md.detail = True
 
@@ -43,6 +43,12 @@ def old_counts(directory):
             continue
         key = line.rstrip().split('\t')[3]
         counts[key] += 1
+    try:   # switched branches (since r47): one slot access per row, key in the third column
+        for line in open(f'{directory}/main.switches.tsv'):
+            if not line.startswith('#') and line.strip():
+                counts[line.rstrip().split('\t')[2]] += 1
+    except FileNotFoundError:
+        pass
     return counts
 
 
@@ -67,13 +73,14 @@ def differences(new_dir, old_dir, text_end):
     old = open(f'{old_dir}/main.patched.bin', 'rb').read()[:text_end]
     allowed, sites = set(), set()
     for base in (new_dir, old_dir):
-        for name in ('main.params.tsv', 'main.cuts.tsv', 'main.rules.tsv'):
+        for name in ('main.params.tsv', 'main.cuts.tsv', 'main.rules.tsv', 'main.switches.tsv'):
             try: lines = open(f'{base}/{name}')
             except FileNotFoundError: continue
             for line in lines:
                 if line.startswith('#') or not line.strip(): continue
                 f = line.split('\t'); a = int(f[0], 0)
                 if name == 'main.params.tsv': allowed.update(range(a, a + 8)); allowed.update(range(int(f[1], 0), int(f[1], 0) + 8))
+                elif name == 'main.switches.tsv': allowed.update(range(a, a + 4))   # a switched branch's word becomes a b into the patch area (since r47)
                 else: allowed.update(range(a, a + len(bytes.fromhex(f[1]))))
         for line in open(f'{base}/main.obs.tsv'):   # 观测门入口同样换成跳补丁区的 b | Observation gate entries are likewise replaced with a b into the patch area
             if line.startswith('#') or not line.strip(): continue

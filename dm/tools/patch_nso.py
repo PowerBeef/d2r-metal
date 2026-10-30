@@ -199,16 +199,8 @@ PRIVATE_AIM = RULE_RUN and PRIVATE_GATES
 if PRIVATE_AIM:
     cuts.append((0x2faf04, 'fde7fe97', 'c11000d4',
       'skill-aim-v1-private: skill ground direction call only; svc86 delegates original2b4ef8 then sampled-right/original rotation+grid; zero/nonplayer/non-skill retain original; busy/town/skill/server untouched', '仅宿主'))
-if RULE_RUN:
-    # 方向光阴影图边长（画质档位 1，0x168a520 填 +0x48 → 建 2 层数组 0x1697394）：2100 → 1024。授权「视觉无差别即可」；
-    # mini 108 张 + 连续 16 帧：营地 / 野外 / 战斗各档到 1024 的 FLIP 与同设置重跑的噪声分不开、影子区相邻帧变化量 0.71 → 0.75；真机两张阴影合计约 0.7–1.4 ms / 帧。
-    # 游戏传给着色器的阴影尺寸常量与视口随同一配置值变（转储核过）。native 规则域（Mac 对原版真值的闸门）保持 2100
-    # Directional light shadow map edge length (quality level 1, 0x168a520 fills +0x48 → creates the 2-layer array 0x1697394): 2100 → 1024. Authorization: "visually indistinguishable is enough";
-    # on the second Mac, 108 images + 16 consecutive frames: for camp / wilderness / combat, at every level down to 1024 the FLIP cannot be told apart from the noise of a rerun with the same settings, and the change between adjacent frames in shadow regions is 0.71 → 0.75; on a real device the two shadow maps total about 0.7–1.4 ms / frame.
-    # The shadow size constants and the viewport that the game passes to the shader change with the same config value (verified by dump). The native rule domain (the Mac gate check against the original game's ground truth) stays at 2100
-    SHADOW_SIDE = 1024
-    movz_w14 = lambda n: struct.pack('<I', 0x52800000 | (n << 5) | 14).hex()   # movz w14,#n——字节由表达式算，不手写（手算成 #32768，阴影图 32768² 分配失败启动即崩） | movz w14,#n -- the bytes are computed by an expression, not written by hand (a hand calculation came out as #32768, and the shadow map allocation of 32768² failed, crashing at startup)
-    cuts.append((0x168a580, movz_w14(2100), movz_w14(SHADOW_SIDE), f'阴影图边长 mov w14,#2100 → mov w14,#{SHADOW_SIDE}（档位 1）', '仅宿主'))
+# The directional shadow map's edge (quality level 1, 2100 on the Switch) used to be cut to 1024 here for phone GPU time; since r48 it is the
+# KSHSIZE parameter gate in PARAMS below, filled by the host from the Shadow Quality setting (dm_video.c shq; 2100 = the original).
 if RULE_RUN:
     # 纯提示的系统通知不吞功能键：手柄版通知面板处理函数 0x3d84a0 遇「动作 9（PLUS）按下」就执行通知带的确认动作并吞键（给「升级通知按 PLUS 直达技能树」用）。
     # 系统通知（事件队列第 12 类，0xab5c08；如改难度后的「游戏难度设为 N…」）带的确认动作只是关掉自己，结果是通知停留的 10 秒里第一下红十字没反应（真机 + Mac 复现）。
@@ -259,8 +251,8 @@ for off, ob, nb, why, scope in cuts:
     IMG[off:off + len(nb)] = nb
 # 键页下标固定；键页内容由装载器写入“实际键号 × 8”。
 # Key page indices are fixed; the key page content is written by the loader as "actual key number × 8".
-KEYS = {'K18': 508, 'KTLS': 509, 'KTLR': 510, 'KGATE': 511, 'KRES0': 506, 'KRES1': 507, 'KASPECT': 505, 'KASPECTUI': 504, 'KESHADOW': 503}   # KRES*: resolution parameter slots; KASPECT*: picture aspect ratio cap (see PARAMS); KESHADOW: environment-shadow switch (see SWITCHES)
-KEY_INDEX = {k: i for i, k in enumerate(('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW'))}
+KEYS = {'K18': 508, 'KTLS': 509, 'KTLR': 510, 'KGATE': 511, 'KRES0': 506, 'KRES1': 507, 'KASPECT': 505, 'KASPECTUI': 504, 'KESHADOW': 503, 'KSHSIZE': 502}   # KRES*: resolution parameter slots; KASPECT*: picture aspect ratio cap; KSHSIZE: directional shadow map edge (see PARAMS); KESHADOW: environment-shadow switch (see SWITCHES)
+KEY_INDEX = {k: i for i, k in enumerate(('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW', 'KSHSIZE'))}
 
 md = Cs(CS_ARCH_ARM64, CS_MODE_ARM); md.detail = True
 # 按函数取指令表用的反汇编器：遇到解不出的字记一条 .byte 接着往下解（md 会在第一个解不出的字处停，后面的独占窗口、跳转表、跳进窗口的分支都看不见）
@@ -727,20 +719,26 @@ PARAMS = {'db0507f36b84200ac05f75d76ed5026f': [
     (0x1663ee8, '52838e49', 0x1663eec, '72a800e9', 9, 'KASPECTUI', '界面常量缓冲 0x15 号槽 [屏宽, 屏高, 宽高比上限]：界面精灵着色器按它在上限以外画两侧黑柱（带约 20–30 像素向内的柔边，宿主另加余量把柔边推出屏幕）'),
     (0xb152bc, '52838e48', 0xb152c0, '72a800e8', 8, 'KASPECT', '新画面模式视口：边距 = (屏宽 − 屏高 × 上限) / 2，经 0x85bc90 设居中视口'),
     (0x23e888, '52838e48', 0x23e88c, '72a800e8', 8, 'KASPECT', '新画面模式坐标钳制（0x23e760）：x 夹进 [边距, 边距 + 屏高 × 上限]，宽屏两侧的指针 / 触摸不再被夹回中间'),
+    # Single-instruction gate (B = None): the quality-level routine main+0x168a520 builds the directional shadow map edge with one movz (2100 at level 1),
+    # stored with the spot / point edges and read once by the shadow init main+0x1697394 when it creates the 2-layer map. The host gives the
+    # Shadow Quality setting's edge (dm_video.c shq: 2100 / 3072 / 4096), latched at launch; 2100 is the original instruction bit for bit
+    (0x168a580, '5281068e', None, None, 14, 'KSHSIZE', 'directional shadow map edge, quality level 1 (2100 on the Switch): the Shadow Quality setting'),
 ]}
 params = PARAMS.get(BUILD_ID, [])
 for oa, wa, ob_, wb, r, key, why in params:
-    for o, w0 in ((oa, wa), (ob_, wb)):
+    for o, w0 in ((oa, wa),) + (((ob_, wb),) if ob_ is not None else ()):   # a single-instruction gate (B = None) replaces only A
         w = struct.unpack_from('<I', IMG, o)[0]
         assert f'{w:08x}' == w0, f'参数位原指令不符 {o:#x}：{w:08x}'
         assert o not in kinds and not any(lo <= o < hi for wseg in windows for lo, hi in [(wseg[0].address, wseg[-1].address + 4)]), f'参数位与改写点冲突 {o:#x}'
-    for o in range(oa + 4, ob_, 4):
+    for o in range(oa + 4, ob_ if ob_ is not None else oa + 4, 4):
         ins = dis(struct.unpack_from('<I', IMG, o)[0], o)
         assert r not in regs_in(ins), f'参数位中间用到 x{r}：{o:#x} {ins.mnemonic} {ins.op_str}'
     start = here()
     tmp = 16 if r != 16 else 17
     emit(STUR(tmp, 31, -16)); emit_tp(r); emit_slot_addr(r, tmp, key); emit(LDRX(r, r)); emit(LDUR(tmp, 31, -16)); emit(B(here(), oa + 4))
-    struct.pack_into('<I', IMG, oa, B(oa, start)); struct.pack_into('<I', IMG, ob_, NOP); stat('param')
+    struct.pack_into('<I', IMG, oa, B(oa, start))
+    if ob_ is not None: struct.pack_into('<I', IMG, ob_, NOP)
+    stat('param')
 
 # ---- Switched branches (host only): {NSO build ID: [(offset, original word, key, reason)]}. The original conditional branch b.<cond> T jumps to a block in
 # the patch area that keeps the original decision first (the block's first instruction is the original condition, the only one reading the flags), then
@@ -845,7 +843,7 @@ with open(P('cuts.tsv'), 'w') as f:
     for off, ob, nb, why, scope in cuts: f.write(f'{off:#x}\t{ob}\t{nb}\t{scope}\t{why}\n')   # 列：偏移 原字节 新字节 作用域 理由 | Columns: offset, original bytes, new bytes, scope, reason
 with open(P('params.tsv'), 'w') as f:
     f.write(f'# BUILD_ID\t{BUILD_ID}\n')
-    for oa, wa, ob_, wb, r, key, why in params: f.write(f'{oa:#x}\t{ob_:#x}\tx{r}\t{key}\t{why}\n')
+    for oa, wa, ob_, wb, r, key, why in params: f.write(f'{oa:#x}\t{(ob_ if ob_ is not None else oa):#x}\tx{r}\t{key}\t{why}\n')   # B = A: single-instruction gate
 with open(P('switches.tsv'), 'w') as f:
     f.write(f'# BUILD_ID\t{BUILD_ID}\n')
     for o, w0, key, why in switches: f.write(f'{o:#x}\t{w0}\t{key}\t{why}\n')

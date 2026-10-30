@@ -860,6 +860,7 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), 'OptionsMenuAntiAliasingTooltip'),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), 'OptionsMenuAnisotropicFilteringTooltip'),
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), 'dmVideoEnvShadowsTip'),
+           ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), 'dmVideoShadowQTip'),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), 'dmVideoFpsTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
           (('res', '@dmVideo3DRes', ('dmVideoScale50', 'dmVideoScale67', 'dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),   # selector order; dm_video.c car_of maps it to the stored values
@@ -869,10 +870,11 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), None),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), None),
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), None),
+           ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), None),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), None),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), None)) if _VIDEO_IOS else ())
 _VIDEO_H = _CUSTOM_LINE_H * len(_VIDEO)
-_VIDEO_RESTART = {'res': 'TouchVideoResHint', 'envsh': 'TouchVideoEnvshHint'}   # Mac rows applied at the next launch -> the name of their hint (dm_video.c hint)
+_VIDEO_RESTART = {'res': 'TouchVideoResHint', 'envsh': 'TouchVideoEnvshHint', 'shq': 'TouchVideoShqHint'}   # rows applied at the next launch -> the name of their hint (dm_video.c hint)
 _CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
 _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
 def _video_rows():
@@ -885,7 +887,7 @@ def _video_rows():
                     '        ] },\n') % (i, y, _CUSTOM_LINE_H, row[1])
             continue
         key, label, states, tip = row
-        restart = key in _VIDEO_RESTART and (_VIDEO_MAC or key == 'envsh')   # the phone's 3D resolution applies at once; Environment Shadows waits for a restart on both
+        restart = key in _VIDEO_RESTART and (_VIDEO_MAC or key != 'res')   # the phone's 3D resolution applies at once; Environment Shadows and Shadow Quality wait for a restart on both
         lh = 112 if restart else _CUSTOM_LINE_H   # rows applied at the next launch: label and selector take the top 112, the bottom 68 is left for the hint
         out += ('        { "type": "TextBoxWidget", "name": "TouchVideo_%s_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "%s", "style": "$StyleSettingsText" } },\n'
                 '        { "type": "CarouselWidget", "name": "TouchVideo_%s", "fields": {\n'

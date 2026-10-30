@@ -55,6 +55,7 @@ The cards below show each gain at 1:1 pixels from the same frame. The first comp
 - **SMAA.** The game's own PC anti-aliasing, in place of the Switch's FXAA.
 - **16x anisotropic filtering** on the game's textures (never on shadows or the interface), so the ground stays sharp as it recedes.
 - **Environment shadows** on the Mac. Trees, walls, fences and buildings cast shadows as on PC; the Switch keeps shadows to characters.
+- **Finer shadows.** Shadow Quality raises the shadow map from the Switch's 2100 pixels a side to the PC's 4096 (Ultra, in Mac Recommended), so characters' self-shadowing and the shadows on the ground keep their detail at your screen's resolution.
 - **Accurate color.** The picture is tagged sRGB, the color space the game was made in, so wide-gamut (P3) screens show it as intended instead of stretching it to their wider colors.
 
 <p align="center">
@@ -140,9 +141,9 @@ Every setting lives in the game's own Options, drawn with its own selectors, che
 - **Video**:
   - On the Mac: Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets, 3D Resolution (100 down to 50%) and Upscaling (Standard / MetalFX).
   - On iPhone and iPad: 3D Resolution (50 to 100%), Color, Graphic Presets and Upscaling.
-  - On both: **Anti-Aliasing** (the game's FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Environment Shadows** (takes effect at the next start), **Frame Rate** (60 fps, or 30 to save power) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
+  - On both: **Anti-Aliasing** (the game's FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Environment Shadows** and **Shadow Quality** (Standard, the Switch's own shadow map, up to Ultra; both take effect at the next start), **Frame Rate** (60 fps, or 30 to save power) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
 - **Recommended** is worked out for your device:
-  - on a Mac, full screen at Native with the 3D resolution chosen for its chip, MetalFX, SMAA, 16x filtering, Accurate color and Environment Shadows;
+  - on a Mac, full screen at Native with the 3D resolution chosen for its chip, MetalFX, SMAA, 16x filtering, Accurate color, Environment Shadows and Ultra shadows;
   - on iPhone and iPad, 3D at 75% with MetalFX, SMAA, 16x filtering and Accurate color.
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
 - **Apply, Discard and Default** work like the game's own option pages; Default resets only the tab you are on.

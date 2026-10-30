@@ -43,7 +43,12 @@
 // Environment shadows on the Mac (envsh: 0 = the Switch look, only characters and a few marked models cast shadows / 1 = environment models cast shadows too, as
 // on PC): the rewriter's switched branch in Model_ApplyPlatformTiers (patch_nso.py SWITCHES) reads the KESHADOW thread slot, which every guest thread gets
 // from dm_video_env_shadows at its start (thread.c). Models take their shadow flag when they load, so the value is latched at launch and a change shows
-// "Takes effect after restarting the game" under the row. Recommended on the Mac (version 4, front_mac.m front_video_rec); no row on the phone page (value 0)
+// "Takes effect after restarting the game" under the row. Recommended on the Mac (version 4, front_mac.m front_video_rec); the phone page has the row, off, and its
+// presets leave it alone
+// Shadow Quality (shq: 0 = Standard, the Switch's 2100-texel directional shadow map / 1 = High, 3072 / 2 = Ultra, 4096, the game's own edges at quality levels 2
+// and 3): the rewriter's KSHSIZE parameter gate (patch_nso.py PARAMS) loads the edge from a thread slot that every guest thread gets from dm_video_shadow_size at
+// its start (thread.c). The map is created once at renderer init, so the value is latched at launch and a change shows the restart hint. Ultra is Recommended on
+// the Mac (version 5); the phone keeps Standard and its presets leave the row alone. DM_SHADOW_SIZE=<px> forces the edge
 #include "hle.h"
 #include "dm.h"
 #include "dm_cursor.h"
@@ -58,21 +63,21 @@
 uint64_t dm_custom_find_w(uint64_t w, const char *name);
 int dm_custom_shown(void);
 int dm_custom_path(const char *name, char *p, size_t n);
-enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
-static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh" };
-static const int k_n[NV] = { 2, 4, 2, 2, 4, 2, 5, 2 };
-#define REC_V 4   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac)
+enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
+static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq" };
+static const int k_n[NV] = { 2, 4, 2, 2, 4, 2, 5, 2, 3 };
+#define REC_V 5   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac)
 static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on phones res is the five 3D-resolution tiers; on the Mac res has the extra "Native" tier
-#define NR 11
-static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "fps", "drops" };   // row order on the page (rows the page lacks are skipped)
-static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, -2, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
-static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", "q3d" };
+#define NR 12
+static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "shq", "fps", "drops" };   // row order on the page (rows the page lacks are skipped)
+static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, K_SHQ, -2, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
+static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", "q3d" };
 static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // 切换框的选项个数：键的档数；预设 4；自定义设置的键 2 | options in the selector: the key's tiers; presets 4; custom settings keys 2   // 切换框第 0 / 1 项 = 键值 0 / 1（60 帧 / 30 帧；降低 / 保持） | selector options 0 / 1 = key values 0 / 1 (60 / 30 fps; lower / keep)
 int dm_custom_shown_value(const char *key); void dm_custom_set_pending(const char *key, int v); int dm_custom_default(const char *key);
 static _Atomic int g_crows;   // 页上有的自定义键行（按行号的位）：「默认」只回这几行 | the custom-key rows the page has (one bit per row): "Default" resets only those
 enum { P_REC, P_PERF, P_QUAL, P_CUSTOM };
-static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
-_Static_assert(NV == 8, "g_pend initialiser count");
+static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
+_Static_assert(NV == 9, "g_pend initialiser count");
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // 读盘 / 存盘：前端主线程（启动、全屏切换）与游戏线程（应用）都会写 | load / save: written by both the front end's main thread (launch, full-screen changes) and the game thread (Apply)
 
 // 前端提供（Mac：front_mac.m）；别的平台没有这一节，用这里的弱定义 | Provided by the front end (Mac: front_mac.m); other platforms have no such section and use the weak definitions here
@@ -161,6 +166,16 @@ int dm_video_env_shadows(void) {   // every guest thread at its start (thread.c,
     int exp = -1; if (atomic_compare_exchange_strong(&g_esh_launch, &exp, x)) LOG("Environment shadows: %s (%s)", x ? "on" : "off", e && *e ? "DM_ENV_SHADOWS" : "picture setting");
     return atomic_load(&g_esh_launch);
 }
+static const int k_shq_px[3] = { 2100, 3072, 4096 };   // Standard = the Switch's level-1 edge; High / Ultra = the game's own edges at levels 2 and 3
+static _Atomic int g_shq_launch = -1;   // the shadow map edge as latched at launch (what the game's threads got); -1 = not latched yet
+int dm_video_shadow_size(void) {   // every guest thread at its start (thread.c, KSHSIZE slot): the shadow init reads it once, so the first answer holds for the session
+    int x = atomic_load(&g_shq_launch); if (x > 0) return x;
+    const char *e = getenv("DM_SHADOW_SIZE");   // DM_SHADOW_SIZE=<px> forces it (tests, A/B runs), clamped to 512..8192
+    if (e && *e) { x = atoi(e); x = x < 512 ? 512 : x > 8192 ? 8192 : x; }
+    else { load_once(); if (!atomic_load(&g_loaded)) return k_shq_px[0]; int t = atomic_load(&g_val[K_SHQ]); x = k_shq_px[t >= 0 && t < 3 ? t : 0]; }
+    int exp = -1; if (atomic_compare_exchange_strong(&g_shq_launch, &exp, x)) LOG("Shadow map: %d px (%s)", x, e && *e ? "DM_SHADOW_SIZE" : "picture setting");
+    return atomic_load(&g_shq_launch);
+}
 void dm_video_fullscreen_note(int on) {   // 玩家用菜单 / ⌃⌘F 切了全屏：设置跟着窗口走（同电脑版「显示模式」） | the player switched full screen from the menu / ⌃⌘F: the setting follows the window (as the PC "Display Mode")
     load_once(); if (!atomic_load(&g_loaded) || atomic_load(&g_val[K_MODE]) == (on != 0)) return;
     pthread_mutex_lock(&g_mu); atomic_store(&g_val[K_MODE], on != 0); save_locked(); pthread_mutex_unlock(&g_mu);
@@ -179,6 +194,7 @@ static int tier_of(int k, int t) {
     case K_ANISO: return DM_PHONE ? -1 : t ? 3 : -1;
     case K_S3D: return DM_PHONE ? -1 : 0;   // Mac：性能（出图 1600）与品质（原生）的 3D 都是 100% | Mac: both Performance (1600 output) and Quality (native) draw the 3D at 100%
     case K_ESH: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch look, Quality = environment shadows; phone presets leave it alone (cost not measured there yet)
+    case K_SHQ: return DM_PHONE ? -1 : t ? 2 : 0;   // Mac: Performance = Standard (the Switch's map), Quality = Ultra; phone presets leave it alone
     default: return -1;
     }
 }
@@ -242,10 +258,12 @@ static void hint_at(uint64_t sp, const char *hint, const char *label, int show) 
     int x = show ? ((int32_t *)(lw + 0x70))[0] : 99999; int32_t *r = (int32_t *)(hw + 0x70);
     if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)hw + 0x10))(hw); }
 }
-static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows)
+static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows, shadow quality)
     int run = front_video_running_res(), esh = atomic_load(&g_esh_launch);
     hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && shown(K_RES) != run);
     hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && shown(K_ESH) != esh);
+    int shq = atomic_load(&g_shq_launch), sq = shown(K_SHQ);
+    hint_at(sp, "TouchVideoShqHint", "TouchVideo_shq_Text", shq > 0 && sq >= 0 && sq < 3 && k_shq_px[sq] != shq);
 }
 // The phone's 3D Resolution row lists 50 / 67 / 75 / 85 / 100 % while its stored values keep their meaning (0 = 75, 1 = 85, 2 = 100, 3 = 67, 4 = 50):
 // car_of turns a row's value into the selector index, val_of back; every other row is the identity

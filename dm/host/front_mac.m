@@ -116,6 +116,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "color")) return 1;
     if (!strcmp(key, "envsh")) return 1;
+    if (!strcmp(key, "shq")) return 2;   // Ultra shadows: 4096-texel map, about +1 ms of shadow passes on an M6 (frame total +0.25 ms)
     if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
     return -1;
 }

@@ -265,6 +265,7 @@ DM_SAVE_TEST	ios	ios/Sources/main.m	y
 DM_SAVE_THROTTLE	host	host/main.c	-
 DM_SCREEN_SHOT	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSmoke.swift	-
 DM_SCREEN_WANT	ios-tools	ios/tools/frame_cmp.sh	-
+DM_SHADOW_SIZE	host	host/dm_video.c	-
 DM_SHOT_PRODUCT	tools,verify	tools/lookbook.py verify/golden.py	y
 DM_SKILL_AIM_LOG	host	host/hle_private_aim.c	-
 DM_SKILL_RENDER_GATE_LOG	host	host/hle_tact.c	-

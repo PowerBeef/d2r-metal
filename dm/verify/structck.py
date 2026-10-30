@@ -378,9 +378,9 @@ if set(gates) != seen: bad(f'gates.tsv 有多余行 {len(set(gates) - seen)}')
 # ⑥ 线程槽
 # ⑥ Thread slots
 _base = {'K18', 'KTLS', 'KTLR', 'KGATE'}; _extra = set(KEY) - _base   # 额外键 = 参数门键（KRES* / KASPECT* …；改写器全局键表，三模块表头都列）：须是 K 开头大写名、键号低于基础四键 | Extra keys = parameter-gate keys (KRES* / KASPECT* ...; the rewriter's global key table, listed in the headers of all three modules): must be uppercase names starting with K, with key numbers below the four base keys
-if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW'} \
-        or not {k for *_, k in params} | {k for _, _, k, _ in switches} <= set(KEY) or set(KEY.values()) != set(range(9)):
-    bad(f'header key page indices are not valid: {KEY} (nine keys with indices exactly 0..8)')
+if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW', 'KSHSIZE'} \
+        or not {k for *_, k in params} | {k for _, _, k, _ in switches} <= set(KEY) or set(KEY.values()) != set(range(10)):
+    bad(f'header key page indices are not valid: {KEY} (ten keys with indices exactly 0..9)')
 kv = {v: k for k, v in KEY.items()}; nk = {}
 for o in range(PO, len(pat) - 4, 4):
     w = W(pat, o)
@@ -421,6 +421,14 @@ if params:
     _busy8 = {a for a in sites} | set(inwin) | obs_heads | {o & ~3 for o in cutb}
     for a, b, r, k in params:
         wa, wb = W(orig, a), W(orig, b)
+        if a == b:   # single-instruction gate (since r48): one movz wR / xR (hw 0) builds the whole constant; the stub loads the slot and returns to A+4
+            if wa & 0x7FE00000 != 0x52800000 or wa & 31 != r: bad(f'parameter gate {a:#x}: original word {wa:#010x} is not a movz (hw 0) writing x{r}')
+            if k not in KEY: bad(f'参数门 {a:#x} 键 {k} 未在表头登记'); continue
+            s = btarget(a); ks = paramseq(s, r) if s is not None else None
+            if not (ks and ks[1] == KEY[k]): bad(f'parameter gate {a:#x}: key-page template does not match')
+            if {a} & _busy8: bad(f'parameter gate {a:#x} overlaps a rewrite site / window / observation gate / cut')
+            par_const[(a, k)] = (wa >> 5) & 0xFFFF
+            continue
         # 两种原指令对：64 位 movz xR,#lo / movk xR,#hi,lsl #32（KRES*）；32 位 movz wR,#lo / movk wR,#hi,lsl #16（KASPECT*，原值 = hi<<16|lo，
         # 写 w 寄存器高 32 位清零 ⇒ 宿主槽须按 u32 位模式存、高 32 位为 0（运行期约束，静态核不到，见 platform thread.c）
         # Two kinds of original instruction pair: 64-bit movz xR,#lo / movk xR,#hi,lsl #32 (KRES*); 32-bit movz wR,#lo / movk wR,#hi,lsl #16 (KASPECT*, original value = hi<<16|lo,

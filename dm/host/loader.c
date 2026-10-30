@@ -17,8 +17,8 @@
 module_t g_mod[MAX_MOD];
 int g_nmod;
 pthread_key_t g_key18, g_keytls, g_keytlr, g_keygate;
-pthread_key_t g_keyres[2], g_keyaspect, g_keyaspectui, g_keyesh;   // parameter slots (rewriter PARAMS / SWITCHES): KRES0 handheld / KRES1 console resolution, KASPECT* aspect ratio cap, KESHADOW environment shadows; 0 when a build output does not use them
-enum { KEY_K18, KEY_KTLS, KEY_KTLR, KEY_KGATE, KEY_KRES0, KEY_KRES1, KEY_KASPECT, KEY_KASPECTUI, KEY_KESHADOW, KEY_N };
+pthread_key_t g_keyres[2], g_keyaspect, g_keyaspectui, g_keyesh, g_keyshsz;   // parameter slots (rewriter PARAMS / SWITCHES): KRES0 handheld / KRES1 console resolution, KASPECT* aspect ratio cap, KESHADOW environment shadows, KSHSIZE shadow map edge; 0 when a build output does not use them
+enum { KEY_K18, KEY_KTLS, KEY_KTLR, KEY_KGATE, KEY_KRES0, KEY_KRES1, KEY_KASPECT, KEY_KASPECTUI, KEY_KESHADOW, KEY_KSHSIZE, KEY_N };
 _Static_assert(KEY_N <= sizeof ((module_t *)0)->key_idx / sizeof (unsigned), "module_t.key_idx must hold every key");
 
 uint64_t resolve_import(module_t *m, const char *name, int weak);
@@ -29,7 +29,7 @@ static pthread_key_t key_value(unsigned i) {
     switch (i) {
     case KEY_K18: return g_key18; case KEY_KTLS: return g_keytls; case KEY_KTLR: return g_keytlr;
     case KEY_KGATE: return g_keygate; case KEY_KRES0: return g_keyres[0]; case KEY_KRES1: return g_keyres[1];
-    case KEY_KASPECT: return g_keyaspect; case KEY_KESHADOW: return g_keyesh; default: return g_keyaspectui;
+    case KEY_KASPECT: return g_keyaspect; case KEY_KESHADOW: return g_keyesh; case KEY_KSHSIZE: return g_keyshsz; default: return g_keyaspectui;
     }
 }
 static void create_keys(void) {
@@ -38,13 +38,13 @@ static void create_keys(void) {
     // 参数位键一律建（不按产物有没有用到判断：iOS 包里没有 params.tsv，按文件判断会漏建、键页写成 0 → 游戏读到 TSD 0 号槽）
     // Parameter slot keys are always created (not decided by whether the build output uses them: an iOS app has no params.tsv, so deciding by file would miss creating them and the key page would be written as 0 → the game reads TSD slot 0)
     if (pthread_key_create(&g_keyres[0], NULL) || pthread_key_create(&g_keyres[1], NULL) ||
-        pthread_key_create(&g_keyaspect, NULL) || pthread_key_create(&g_keyaspectui, NULL) || pthread_key_create(&g_keyesh, NULL)) die("创建参数位键失败");
+        pthread_key_create(&g_keyaspect, NULL) || pthread_key_create(&g_keyaspectui, NULL) || pthread_key_create(&g_keyesh, NULL) || pthread_key_create(&g_keyshsz, NULL)) die("创建参数位键失败");
     // 键号先转 unsigned 再放宽：bionic 的 pthread_key_t 是 int（有效键带最高位，如 0x80000020），直接转 unsigned long 会符号扩展成 0xffffffff80000020；苹果是 unsigned long 小整数，打印不变
     // Keys go through unsigned before widening: bionic's pthread_key_t is int (valid keys carry the top bit, e.g. 0x80000020), and a direct unsigned long cast sign-extends to 0xffffffff80000020; on Apple it is a small unsigned long, printed unchanged
-    LOG("键号 K18=%lu KTLS=%lu KTLR=%lu KGATE=%lu KRES0=%lu KRES1=%lu KASPECT=%lu KASPECTUI=%lu KESHADOW=%lu",
+    LOG("键号 K18=%lu KTLS=%lu KTLR=%lu KGATE=%lu KRES0=%lu KRES1=%lu KASPECT=%lu KASPECTUI=%lu KESHADOW=%lu KSHSIZE=%lu",
         (unsigned long)(unsigned)g_key18, (unsigned long)(unsigned)g_keytls, (unsigned long)(unsigned)g_keytlr, (unsigned long)(unsigned)g_keygate,
         (unsigned long)(unsigned)g_keyres[0], (unsigned long)(unsigned)g_keyres[1], (unsigned long)(unsigned)g_keyaspect, (unsigned long)(unsigned)g_keyaspectui,
-        (unsigned long)(unsigned)g_keyesh);
+        (unsigned long)(unsigned)g_keyesh, (unsigned long)(unsigned)g_keyshsz);
     tsd_probe();
 }
 
@@ -167,7 +167,7 @@ static void read_layout(module_t *m, const char *dir) {
     char path[1024]; snprintf(path, sizeof path, "%s/%s.fixups.tsv", dir, m->name);
     FILE *f = fopen(path, "r");
     if (!f) die("open %s", path);
-    static const char *kn[KEY_N] = {"K18", "KTLS", "KTLR", "KGATE", "KRES0", "KRES1", "KASPECT", "KASPECTUI", "KESHADOW"};
+    static const char *kn[KEY_N] = {"K18", "KTLS", "KTLR", "KGATE", "KRES0", "KRES1", "KASPECT", "KASPECTUI", "KESHADOW", "KSHSIZE"};
     char line[256], key[32]; unsigned long v, target = 0; unsigned seen = 0;   // A build output without a TARGET line = Apple
     while (fgets(line, sizeof line, f)) {
         if (sscanf(line, "# %31s %lx", key, &v) != 2) die("%s: 产物是旧改写器出的，换成当前代号（dm/PRODUCT）的产物", path);
