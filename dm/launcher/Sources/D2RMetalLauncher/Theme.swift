@@ -138,8 +138,8 @@ struct Rule: View {
 
 extension View {
     /// A card of regular Liquid Glass over the backdrop
-    func glassCard(cornerRadius: CGFloat = 24) -> some View {
-        padding(22).frame(maxWidth: 600).glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+    func glassCard(cornerRadius: CGFloat = 22, padding inset: CGFloat = 18) -> some View {
+        padding(inset).frame(maxWidth: 600).glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
     }
 
     /// The one tinted action of a screen (Install, Play, Update)

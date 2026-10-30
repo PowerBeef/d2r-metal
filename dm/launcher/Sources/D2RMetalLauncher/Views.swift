@@ -9,7 +9,7 @@ struct ContentView: View {
         ZStack {
             Backdrop()
             VStack(spacing: 0) {
-                Header().padding(.top, 34)
+                Header().padding(.top, 24)
                 Group {
                     switch model.phase {
                     case .loading: ProgressView().controlSize(.large).tint(Palette.gold[1]).frame(maxHeight: .infinity)
@@ -20,12 +20,12 @@ struct ContentView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 32).padding(.top, 22).padding(.bottom, 26)
+                .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 18)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
             .animation(.smooth(duration: 0.35), value: model.phase)
         }
-        .frame(minWidth: 720, minHeight: 680)
+        .frame(minWidth: 680, minHeight: 540)
         .preferredColorScheme(.dark)
         .task { await model.start() }
     }
@@ -34,11 +34,11 @@ struct ContentView: View {
 struct Header: View {
     @Environment(LauncherModel.self) private var model
     var body: some View {
-        VStack(spacing: 8) {
-            GoldTitle(text: "D2R Metal")
-            Caption(text: "Diablo II: Resurrected  ·  native on Apple silicon", dim: true, size: 11)
-            Rule().padding(.top, 4)
-            if let i = model.installed { Caption(text: "Installed  \(i.version)", size: 10).padding(.top, 2) }
+        VStack(spacing: 5) {
+            GoldTitle(text: "D2R Metal", size: 36)
+            Caption(text: "Diablo II: Resurrected  ·  native on Apple silicon", dim: true, size: 10)
+            Rule().padding(.top, 2)
+            if let i = model.installed { Caption(text: "Installed  \(i.version)", size: 10) }
         }
         .accessibilityElement(children: .combine)
     }
@@ -54,25 +54,25 @@ struct WelcomeView: View {
     @State private var dropTargeted = false
 
     var body: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 4) {
+        VStack(spacing: 10) {
+            VStack(spacing: 2) {
                 Text("Use your own copy: the Switch release with Reign of the Warlock, version 1.0.34.0.")
                 Text("Everything is built on this Mac. Nothing is uploaded, and your keys are only read.").foregroundStyle(Palette.parchmentDim)
             }
-            .font(.callout).foregroundStyle(Palette.parchment).multilineTextAlignment(.center)
+            .font(.footnote).foregroundStyle(Palette.parchment).multilineTextAlignment(.center)
             GlassEffectContainer(spacing: 16) {
                 VStack(spacing: 0) {
                     row(.base, symbol: "shippingbox.fill", title: "Base game", detail: "The game package, .nsp or .xci")
-                    Divider().padding(.vertical, 10)
+                    Divider().padding(.vertical, 6)
                     row(.update, symbol: "arrow.down.circle.fill", title: "Update 1.0.34.0",
                         detail: model.baseGame?.pathExtension.lowercased() == "xci" ? "Not needed if your .xci already holds it" : "The update package (v2228224), .nsp")
-                    Divider().padding(.vertical, 10)
+                    Divider().padding(.vertical, 6)
                     row(.dlc, symbol: "sparkles", title: "Reign of the Warlock DLC", detail: "Optional: its data already ships in the base game and the update")
-                    Divider().padding(.vertical, 10)
+                    Divider().padding(.vertical, 6)
                     row(.keys, symbol: "key.fill", title: "prod.keys", detail: "The keys of your own console")
                 }
-                .glassCard()
-                .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 24).strokeBorder(Palette.goldFill, lineWidth: 1.5).allowsHitTesting(false) } }
+                .glassCard(padding: 14)
+                .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 22).strokeBorder(Palette.goldFill, lineWidth: 1.5).allowsHitTesting(false) } }
                 .dropDestination(for: URL.self) { urls, _ in drop(urls); return true } isTargeted: { dropTargeted = $0 }
             }
             HStack(spacing: 10) {
@@ -91,10 +91,7 @@ struct WelcomeView: View {
             Spacer(minLength: 0)
             if let e = model.feedError { Label("Can't reach GitHub: \(e)", systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(Palette.blood) }
             HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Caption(text: "About 30 GB free while installing", dim: true, size: 10)
-                    Caption(text: "First install: 10 to 15 minutes", dim: true, size: 10)
-                }
+                Caption(text: "About 30 GB free while installing  ·  10 to 15 minutes", dim: true, size: 10)
                 Spacer()
                 Button { model.install() } label: { Label("Install", systemImage: "flame.fill").font(.title3.weight(.semibold)).padding(.horizontal, 18).padding(.vertical, 4) }
                     .primaryGlass().controlSize(.large).keyboardShortcut(.defaultAction)
@@ -139,14 +136,14 @@ struct SourceRow: View {
     let choose: () -> Void
     let clear: () -> Void
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Group {
                 if value == nil { Image(systemName: symbol).foregroundStyle(Palette.goldFill) }
                 else { CheckMark(verdict: verdict, checking: checking) }
             }
-            .font(.title2).frame(width: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline)
+            .font(.title3).frame(width: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.body.weight(.semibold))
                 Text(value?.lastPathComponent ?? detail).font(.callout).foregroundStyle(value == nil ? .secondary : .primary)
                     .lineLimit(1).truncationMode(.middle).help(value?.path ?? detail)
                 if value != nil, let verdict { VerdictText(verdict: verdict) }
@@ -191,17 +188,15 @@ struct WorkView: View {
     @Environment(LauncherModel.self) private var model
     var body: some View {
         let done = model.steps.filter { $0.state == .done || $0.state == .kept }.count
-        VStack(spacing: 16) {
-            VStack(spacing: 6) {
-                Text("\(model.working)…").font(.title2.weight(.semibold)).foregroundStyle(Palette.goldFill)
+        VStack(spacing: 10) {
+            VStack(spacing: 3) {
+                Text("\(model.working)…").font(.title3.weight(.semibold)).foregroundStyle(Palette.goldFill)
                 Caption(text: model.steps.isEmpty ? "" : "\(done) of \(model.steps.count) steps", dim: true, size: 10)
             }
             GlassEffectContainer {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) { ForEach(model.steps) { StepLine(step: $0) } }.padding(.vertical, 2)
-                }
-                .scrollIndicators(.never)
-                .glassCard()
+                let list = VStack(alignment: .leading, spacing: 7) { ForEach(model.steps) { StepLine(step: $0) } }.padding(.vertical, 2)
+                ViewThatFits(in: .vertical) { list; ScrollView { list }.scrollIndicators(.never) }   // hugs the rows; scrolls only on a short window
+                    .glassCard()
             }
             Text("You can keep using your Mac. If you quit, the next run continues where this one stopped.")
                 .font(.footnote).foregroundStyle(Palette.parchmentDim).multilineTextAlignment(.center)
@@ -260,11 +255,11 @@ struct HomeView: View {
     @State private var confirmRemove = false
     var body: some View {
         @Bindable var model = model
-        VStack(spacing: 20) {
+        VStack(spacing: 14) {
             Spacer(minLength: 0)
             Button { model.play() } label: {
-                Label("Play", systemImage: "play.fill").font(.custom("Optima-Bold", size: 26, relativeTo: .title)).tracking(2)
-                    .padding(.horizontal, 44).padding(.vertical, 10)
+                Label("Play", systemImage: "play.fill").font(.custom("Optima-Bold", size: 22, relativeTo: .title)).tracking(2)
+                    .padding(.horizontal, 40).padding(.vertical, 6)
             }
             .primaryGlass().controlSize(.extraLarge).keyboardShortcut(.defaultAction)
             if let up = model.launcherUpdate {
@@ -278,7 +273,7 @@ struct HomeView: View {
                             Spacer()
                             Button("Update", systemImage: "arrow.down") { model.update() }.buttonStyle(.glass)
                         }
-                        Text(notes(l.notes)).font(.callout).lineLimit(6).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                        Text(notes(l.notes)).font(.callout).lineLimit(4).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
                     }
                     .glassCard()
                 } else {

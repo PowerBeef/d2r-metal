@@ -14,6 +14,6 @@ struct D2RMetalLauncherApp: App {
         .windowStyle(.hiddenTitleBar)          // the backdrop reaches the top edge; the traffic lights sit on it
         .windowBackgroundDragBehavior(.enabled)
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 760, height: 720)
+        .defaultSize(width: 740, height: 600)   // fits a 1280 x 720 screen (690 points under the menu bar)
     }
 }
