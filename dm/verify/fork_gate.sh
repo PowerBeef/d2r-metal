@@ -95,6 +95,8 @@ for tier in "${TIERS[@]}"; do
     step unit_gfx 1800 -- make -C "$DM/gfx/tests" run
     step unit_ios 1200 -- make -C "$DM/ios/tests" test
     step unit_regress 1800 -- bash "$DM/verify/regress.sh"
+    # the Mac packaging tools: mac_app.sh bundles, the launcher's install engine, the launcher's own checks (not the 9-minute end-to-end feed test)
+    step unit_packaging 900 -- bash -c 'python3 "$1/tools/test_mac_bundle.py" && python3 "$1/tools/test_install.py" && swift test --package-path "$1/launcher" --filter CoreTests' _ "$DM"
     ;;
   core)
     make -C "$DM/host" -s >/dev/null 2>&1 || { echo "🔴 宿主编译失败 | host build failed"; exit 2; }

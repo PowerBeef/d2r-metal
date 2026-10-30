@@ -45,6 +45,8 @@ class MacBundleTest(unittest.TestCase):
         (dm/'host').mkdir()
         shutil.copy2(self.exe, dm/'host/dmhost')
         (dm/'host/Makefile').write_text('all:\n\t@true\nprint-macos-min:\n\t@echo 26.0\n')
+        (dm/'host/tables').mkdir()   # the two game tables the host reads at start (make writes them beside dmhost)
+        for name in ('hud_exp.tsv', 'bright_levels.tsv'): (dm/'host/tables'/name).write_text('fixture\n')
         (dm/'gfx/nvn').mkdir(parents=True)
         for name in ('shader_map.tsv', 'pso_manifest.tsv'):
             (dm/'gfx/nvn'/name).write_text('fixture\n')
