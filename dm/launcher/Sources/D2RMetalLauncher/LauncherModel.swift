@@ -123,6 +123,24 @@ final class LauncherModel {
         phase = installed == nil ? .welcome : .home
         if appNeedsMove { relocate() }
         await refreshFeed()
+        if let what = ProcessInfo.processInfo.environment["DM_LAUNCHER_AUTORUN"] { await autorun(what) }
+    }
+
+    /// DM_LAUNCHER_AUTORUN=update|repair, for tests (dm/verify/launcher_update.py) on a test root: runs that job as its button does, then prints
+    /// `LAUNCHER-AUTORUN OK|RED …` and quits with 0 / 1. OK = back on the home screen with the feed's release installed
+    func autorun(_ what: String) async {
+        while job != nil { try? await Task.sleep(for: .milliseconds(200)) }   // a move into the Game folder runs first
+        switch what {
+        case "update": update()
+        case "repair": repair()
+        default: print("LAUNCHER-AUTORUN RED unknown job \(what)"); fflush(stdout); exit(2)
+        }
+        while job != nil { try? await Task.sleep(for: .milliseconds(300)) }
+        try? await Task.sleep(for: .seconds(2))   // the finished screen stays a moment (screenshots)
+        let ok = phase == .home && installed != nil && installed?.build == latest?.build
+        var why = ""; if case .failed(let text) = phase { why = " error=\(text)" }
+        print("LAUNCHER-AUTORUN \(ok ? "OK" : "RED") job=\(what) installed=\(installed.map { "\($0.version) (\($0.build))" } ?? "-") latest=\(latest.map { "\($0.version) (\($0.build))" } ?? "-")\(why)")
+        fflush(stdout); exit(ok ? 0 : 1)
     }
 
     func readState() {

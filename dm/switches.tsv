@@ -114,6 +114,7 @@ DM_KBD	host	host/hle_swkbd.c host/tests/t_swkbd.c	-
 DM_KEYS	host,ios-tools,verify	host/diag.c host/dm_cursor.c host/hle_hid.c host/tests/t_hid_receipt.c …	y
 DM_LANG	host	host/app_mac.m host/dm_i18n.c host/hle_oe.c host/tests/t_app_mac.m …	-
 DM_LAT_LOG	host	host/dm_cursor.c	-
+DM_LAUNCHER_AUTORUN	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_BUILD	tools	tools/launcher_app.sh	-
 DM_LAUNCHER_BUNDLE_ID	other,tools	launcher/Sources/D2RMetalLauncher/LauncherModel.swift tools/launcher_app.sh	-
 DM_LAUNCHER_FEED	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
