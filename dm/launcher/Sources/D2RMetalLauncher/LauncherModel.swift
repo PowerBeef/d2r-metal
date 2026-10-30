@@ -259,7 +259,7 @@ final class LauncherModel {
 }
 
 extension LauncherModel {
-    /// DM_LAUNCHER_PREVIEW=welcome|working|home|failed: one screen with sample data and nothing run, to look at the design (screenshots, docs)
+    /// DM_LAUNCHER_PREVIEW=welcome|empty|working|home|failed: one screen with sample data and nothing run, to look at the design (screenshots, docs)
     func showPreview(_ which: String) {
         let json = #"""
         {"schema": 1, "version": "1.1.0", "build": 420, "commit": "abc1234", "date": "2026-11-02", "macos_min": "27.0", "chain": "", "product": "",
@@ -274,6 +274,7 @@ extension LauncherModel {
             for (i, seconds) in [14.0, 160, 13, 21].enumerated() { steps[i].state = .done; steps[i].seconds = seconds }   // download … packs
             if let i = steps.firstIndex(where: { $0.id == "shaders" }) { steps[i].state = .running; steps[i].done = 4224; steps[i].total = 6927 }
         case "home": installed = ("1.0.0", 412); latest = sample; canRevert = true; phase = .home
+        case "empty": latest = sample; phase = .welcome
         case "failed": phase = .failed("The game files in the folder you chose are not from version 1.0.34.0 (ExeFS/main does not match). Choose the files of the 1.0.34.0 update.")
         default: baseGame = URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [0100726014352000][v0].nsp")
                  gameUpdate = URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [0100726014352800][v2228224].nsp")

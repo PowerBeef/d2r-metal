@@ -142,11 +142,18 @@ struct SourceRow: View {
                 else { CheckMark(verdict: verdict, checking: checking) }
             }
             .font(.title3).frame(width: 26)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.body.weight(.semibold))
-                Text(value?.lastPathComponent ?? detail).font(.callout).foregroundStyle(value == nil ? .secondary : .primary)
-                    .lineLimit(1).truncationMode(.middle).help(value?.path ?? detail)
-                if value != nil, let verdict { VerdictText(verdict: verdict) }
+            ZStack(alignment: .leading) {
+                // Room for the tallest state (title, file name, check line), so the row keeps its height when a file is chosen or cleared
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(verbatim: " ").font(.body.weight(.semibold)); Text(verbatim: " ").font(.callout); Text(verbatim: " ").font(.caption)
+                }
+                .hidden()
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.body.weight(.semibold))
+                    Text(value?.lastPathComponent ?? detail).font(.callout).foregroundStyle(value == nil ? .secondary : .primary)
+                        .lineLimit(1).truncationMode(.middle).help(value?.path ?? detail)
+                    if value != nil, let verdict { VerdictText(verdict: verdict) }
+                }
             }
             Spacer(minLength: 12)
             if value != nil { Button("Clear", systemImage: "xmark", action: clear).labelStyle(.iconOnly).buttonStyle(.glass).controlSize(.small) }
@@ -170,15 +177,17 @@ struct CheckMark: View {
     }
 }
 
-/// The check's one line: green for what was recognized, amber for a note, red for why it is not the right file
+/// The check's one line (never wrapped, so the row's height holds; the whole text is in the tooltip): green for what was recognized,
+/// amber for a note, red for why it is not the right file
 struct VerdictText: View {
     let verdict: GameFileCheck.Verdict
     var body: some View {
-        switch verdict {
-        case .ok(let s): Text(s).font(.caption).foregroundStyle(.green)
-        case .note(let s): Text(s).font(.caption).foregroundStyle(.orange)
-        case .wrong(let s), .elsewhere(_, let s): Text(s).font(.caption).foregroundStyle(Palette.blood)
+        let (text, color): (String, Color) = switch verdict {
+        case .ok(let s): (s, .green)
+        case .note(let s): (s, .orange)
+        case .wrong(let s), .elsewhere(_, let s): (s, Palette.blood)
         }
+        Text(text).font(.caption).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.85).truncationMode(.tail).help(text)
     }
 }
 
