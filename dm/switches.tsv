@@ -113,6 +113,15 @@ DM_KBD	host	host/hle_swkbd.c host/tests/t_swkbd.c	-
 DM_KEYS	host,ios-tools,verify	host/diag.c host/dm_cursor.c host/hle_hid.c host/tests/t_hid_receipt.c …	y
 DM_LANG	host	host/app_mac.m host/dm_i18n.c host/hle_oe.c host/tests/t_app_mac.m …	-
 DM_LAT_LOG	host	host/dm_cursor.c	-
+DM_LAUNCHER_BUILD	tools	tools/launcher_app.sh	-
+DM_LAUNCHER_BUNDLE_ID	other,tools	launcher/Sources/D2RMetalLauncher/LauncherModel.swift tools/launcher_app.sh	-
+DM_LAUNCHER_FEED	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
+DM_LAUNCHER_ROOT	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
+DM_LAUNCHER_SIGN	tools	tools/launcher_app.sh	-
+DM_LAUNCHER_TEST_FEED	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
+DM_LAUNCHER_TEST_GAME	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
+DM_LAUNCHER_TEST_ROOT	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
+DM_LAUNCHER_VERSION	tools	tools/launcher_app.sh	-
 DM_LOADHASH	host	host/loader.c	-
 DM_LOCAL_ENV	ios-tools	ios/tools/local_env.sh	y
 DM_LOCAL_ENV_FILE	ios-tools	ios/tools/local_env.sh	-
@@ -149,6 +158,7 @@ DM_MSL_DIR	gfx,host,ios,tools	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m host/app_
 DM_MSL_IOS	ios-tools	ios/run.sh	-
 DM_NATIVE_ART_DIR	ios-tools	ios/tests/test_native_art_capture.py	-
 DM_NICK	host	host/hle_account.c	-
+DM_NOTARY_PROFILE	tools	tools/release_mac.sh	-
 DM_NO_PRELOAD	ios	ios/Sources/main.m	-
 DM_NSO_DIR	tools,verify	tools/product.sh tools/sampagg.py verify/regress.sh	y
 DM_NVN_ANISO	gfx	gfx/nvn/nvn_mtl.m	-
