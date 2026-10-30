@@ -474,6 +474,8 @@ DM_UI_YPOS	host	host/dm_uiscreen.c	-
 DM_UPDATE_URL	ios-tools	ios/project.yml	-
 DM_VCACHE	verify	verify/structck.py	-
 DM_VKBD	ios	ios/Sources/dm_vkbd_ui.m	-
+DM_WARM_JOBS	gfx	gfx/nvn/nvn_mtl.m	-
+DM_WARM_PROCS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_WATCH	gfx,host,ios-tools	gfx/tests/nvn_replay.m host/crash.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_WATCH_SAMPLE	host	host/crash.c	-
 DM_WATCH_STALL	host	host/crash.c	y

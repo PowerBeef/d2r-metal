@@ -101,6 +101,14 @@ static NSString *res_item(NSString *name) {
     return nil;
 }
 static void upd_start(void);   // 更新检查（在文件后面） | update check (later in this file)
+// --warm-shaders in App form (the launcher runs <app>/Contents/MacOS/D2RMobile --warm-shaders): the library folder comes from the package, as at a normal start
+void dm_app_msl_env(void) {
+    @autoreleasepool {
+        if (![NSBundle.mainBundle.bundlePath.pathExtension isEqualToString:@"app"] || getenv("DM_MSL_DIR")) return;
+        NSString *msl = res_item(@"msl");
+        if (msl) setenv("DM_MSL_DIR", msl.fileSystemRepresentation, 1);
+    }
+}
 // main() 最前面调。是 App 形态就把环境与参数备好并返回 1；不是返回 0、什么都不动
 // Called at the very start of main(). In App form it prepares the environment and arguments and returns 1; otherwise it returns 0 and touches nothing
 int dm_app_bootstrap(int *argc, char ***argv) {

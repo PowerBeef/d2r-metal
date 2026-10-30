@@ -149,7 +149,7 @@ class CliBackend:
         os.makedirs(os.path.join(self.run, 'tmp'), exist_ok=True)
         srv, port = dmctl.bind()
         env = dict(os.environ, DM_ROMFS=romfs, DM_SAVE=prepare_save(self.meta, self.run), DM_TEMP=os.path.join(self.run, 'tmp'),
-                   DM_MSL_DIR=os.path.join(DM_ROOT, 'build', 'cache', 'metal_shader_cache'), DM_CTL_PORT=str(port),
+                   DM_MSL_DIR=os.environ.get('DM_MSL_DIR') or os.path.join(DM_ROOT, 'build', 'cache', 'metal_shader_cache'), DM_CTL_PORT=str(port),   # a given library folder wins (another chain, e.g. a source-form one)
                    DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_WATCH=str(self.meta['timeout'] + 60), DM_CRASH_JSON=os.path.join(self.run, 'crash.json'))
         if self.meta['window'] and not self.headless: env['DM_WINDOW'] = '1'
         env.update(self.meta['env'])

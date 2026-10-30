@@ -17,6 +17,8 @@
 # Caches, all under the output cache dir: cas/ (per shader, keyed by its inputs and the code form of this build's sources), cas/variant/ (readable-tile variants,
 # keyed by their MSL) and mtlcache/ (compiled libraries keyed by Metal source and compiler, dmsh_mtlcache.py): a chain change that leaves a shader's MSL as it
 # was costs no Metal compile; libraries no build among the newest 3 used are pruned at the end of each build
+# Source form (the lock says metal_macosx runtime, dmsh_chain.py --update-lock --runtime): no Metal compiler on this machine. The build stops at the MSL:
+# <key>_b.metal / _bf.metal + reflection, no metallib, no iOS output; the host compiles each library with macOS's own compiler (nvn_mtl.m lib_load).
 # Final summary: success / failure counts and the distribution of reasons; distribution of driver segment read offsets (those outside the range the replay layer can fill are listed separately)
 import inspect, os, re, sys, json, struct, hashlib, shutil, subprocess, tempfile, collections, threading, concurrent.futures as cf
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # 工作区根目录（游戏文件、产物、运行现场都在它下面） | Workspace root (game files, build outputs and run artifacts are all under it)
@@ -30,7 +32,9 @@ if f'"{CHAIN}"' not in open(dmsh_chain.HEADER).read(): sys.exit(f'【红】nvn/d
 XLATE = os.environ.get('XLATE', f'{DM_ROOT}/build/gfx/dmsh_xlate/dmsh_xlate')
 FACTS = dmsh_facts.load()
 if not FACTS: sys.exit('【红】没有作答表 nvn/shader_facts.tsv（随仓库；维护者用 dmsh_facts.py --freeze 重出）')
+RUNTIME = dmsh_chain.runtime_form()   # source form: write the MSL, compile nothing (see the header)
 IOSOUT = os.environ.get('IOSOUT')   # 设了就同时出 iOS 版（iphoneos metallib + 反射）到该目录 | if set, also build the iOS version (iphoneos metallib + reflection) into that directory
+if IOSOUT and RUNTIME: sys.exit('【红】IOSOUT is set but the chain is of the source form: an iOS build needs metallibs, compiled with Xcode (dmsh_chain.py --update-lock)')
 if IOSOUT:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../ios/tools')); import ios_metal
     IOSOUT = os.path.join(IOSOUT, 'b-' + CHAIN); os.makedirs(IOSOUT, exist_ok=True)
@@ -47,7 +51,8 @@ PRE_STATS = collections.Counter()
 # grass and ground cover flashed black for single frames (Mac App main menu, ~20 events a minute). Same flag in ios_metal.METAL.
 MAC_METAL = ['xcrun', '-sdk', 'macosx', 'metal', '-c', '-fpreserve-invariance']
 MAC_METALLIB = ['xcrun', '-sdk', 'macosx', 'metallib']
-MAC_RECORD = ' '.join(MAC_METAL) + '; ' + ' '.join(MAC_METALLIB)
+MAC_RECORD = 'runtime: MTLDevice newLibraryWithSource, preserveInvariance' if RUNTIME else ' '.join(MAC_METAL) + '; ' + ' '.join(MAC_METALLIB)
+MAC_LIB = '_b.metal' if RUNTIME else '_b.metallib'   # the file a Mac library must have: the source form keeps only the MSL
 TEX_BASE, SAMP_BASE, IMG_BASE = 0x168, 0x568, 0x120   # c[2]：图像句柄表 0x120 + 8 r（8 槽，紧接贴图表之前；cs_lut_combine_c 写 u4 = 0x140 反推，u5 = 0x148 核对） | c[2]: image handle table 0x120 + 8 r (8 slots, immediately before the texture table; inferred from cs_lut_combine_c writing u4 = 0x140, checked with u5 = 0x148)
 
 def records(d):
@@ -92,12 +97,12 @@ def cache_path(digest): return os.path.join(CAS, 'shader', digest)
 def cache_outputs(key, digest, cached=False):
     root = cache_path(digest); files = {}
     for label, directory, names in (
-            ('mac', out, [key + '_b.metallib', key + '_b.metal', key + '_b.json']),
+            ('mac', out, [key + n for n in dict.fromkeys(('_b.metallib', '_b.metal', '_b.json', MAC_LIB)) if not (RUNTIME and n == '_b.metallib')]),
             ('ios', IOSOUT, [key + '_b.metallib', key + '_b.json'])):
         if not directory: continue
         base = os.path.join(root, label) if cached else directory
         found = [n for n in names if os.path.exists(os.path.join(base, n))]
-        if key + '_b.metallib' not in found or key + '_b.json' not in found: return None
+        if key + (MAC_LIB if label == 'mac' else '_b.metallib') not in found or key + '_b.json' not in found: return None
         files[label] = found
     return root, files
 
@@ -154,10 +159,10 @@ def bf_cache_root(digest): return os.path.join(CAS, 'variant', digest)
 
 def bf_cache_restore(key, digest, fmeta, fmsl):
     root = bf_cache_root(digest)
-    names = ['metal', 'mac.metallib'] + (['ios.metallib'] if IOSOUT else [])
+    names = ['metal'] + ([] if RUNTIME else ['mac.metallib']) + (['ios.metallib'] if IOSOUT else [])
     if not all(os.path.exists(os.path.join(root, n)) for n in names): return False
     clone(os.path.join(root, 'metal'), fmsl)
-    clone(os.path.join(root, 'mac.metallib'), os.path.join(out, key + '_bf.metallib'))
+    if not RUNTIME: clone(os.path.join(root, 'mac.metallib'), os.path.join(out, key + '_bf.metallib'))
     if IOSOUT: clone(os.path.join(root, 'ios.metallib'), os.path.join(IOSOUT, key + '_bf.metallib'))
     BF_STATS['hit'] += 1
     return True
@@ -165,7 +170,7 @@ def bf_cache_restore(key, digest, fmeta, fmsl):
 def bf_cache_publish(digest, fmsl, maclib, ioslib, fmeta):
     root = bf_cache_root(digest); os.makedirs(root, exist_ok=True)
     clone(fmsl, os.path.join(root, 'metal'))
-    clone(maclib, os.path.join(root, 'mac.metallib'))
+    if maclib: clone(maclib, os.path.join(root, 'mac.metallib'))
     if IOSOUT: clone(ioslib, os.path.join(root, 'ios.metallib'))
     atomic_json(os.path.join(root, 'fetch.json'), fmeta)
 
@@ -175,7 +180,7 @@ def mac_compile(msl, air, lib):   # the Mac compile convention (MAC_RECORD); dms
 
 def write_refl(key, refl):
     for t, d, rec in (('mac', out, MAC_RECORD),) + ((('ios', IOSOUT, ios_metal.RECORD),) if IOSOUT else ()):
-        value = MTLC.with_compiler(t, dict(refl, chain_metal=rec))   # also records the compiler, so a later build can import these libraries
+        value = dict(refl, chain_metal=rec) if RUNTIME else MTLC.with_compiler(t, dict(refl, chain_metal=rec))   # also records the compiler, so a later build can import these libraries
         atomic_json(os.path.join(d, key + '_b.json'), value)
 
 def fetch_finish(key, src, refl):
@@ -198,19 +203,19 @@ def fetch_finish(key, src, refl):
             if not bf_cache_restore(key, digest, fmeta, fmsl):
                 BF_STATS['miss'] += 1
                 open(fmsl, 'w').write(fv)
-                fair = fmsl[:-6] + '.air'; flib = os.path.join(out, key + '_bf.metallib')
+                fair = fmsl[:-6] + '.air'; flib = None if RUNTIME else os.path.join(out, key + '_bf.metallib')
                 try:
-                    MTLC.compile('mac', fmsl, flib)   # the same MSL compiled before is reused (dmsh_mtlcache.py)
+                    if not RUNTIME: MTLC.compile('mac', fmsl, flib)   # the same MSL compiled before is reused (dmsh_mtlcache.py)
                     ilib = None
                     if IOSOUT:
                         ilib = os.path.join(IOSOUT, key + '_bf.metallib')
                         MTLC.compile('ios', fmsl, ilib)
                 except subprocess.CalledProcessError:
                     return refl
-                BF_STATS['compile'] += 1
+                if not RUNTIME: BF_STATS['compile'] += 1
                 bf_cache_publish(digest, fmsl, flib, ilib, fmeta)
         finally:
-            for path in (fmsl, fmsl[:-6] + '.air', fmsl[:-6] + '.ios.air'):
+            for path in (() if RUNTIME else (fmsl,)) + (fmsl[:-6] + '.air', fmsl[:-6] + '.ios.air'):   # the source form ships the variant's MSL
                 try: os.unlink(path)
                 except FileNotFoundError: pass
     refl['fetch'] = fmeta
@@ -395,7 +400,8 @@ def finish(key, w, j, c1):
     except ValueError as e: return 'MSL rule failed', f'{f.__name__}: {e}'[:160], None
     if src != src0:
         with open(msl, 'w') as fo: fo.write(src)
-    try: MTLC.compile('mac', msl, lib)   # the same MSL compiled before is reused (dmsh_mtlcache.py)
+    try:
+        if not RUNTIME: MTLC.compile('mac', msl, lib)   # the same MSL compiled before is reused (dmsh_mtlcache.py)
     except subprocess.CalledProcessError as e:
         return 'metal 失败', str(e)[:160], None
     clone(msl, os.path.join(out, key + '_b.metal'))
@@ -421,8 +427,8 @@ NJ = int(os.environ.get('J', '8'))
 os.makedirs(out, exist_ok=True)
 w = tempfile.mkdtemp(prefix='dmsh_', dir=os.environ.get('WORK'))
 # Compiled libraries keyed by their Metal source (dmsh_mtlcache.py): a chain change that leaves a shader's MSL as it was costs it no Metal compile.
-MTLC = dmsh_mtlcache.Cache(os.path.join(cache_root, 'mtlcache'), {'mac': ('macosx', MAC_RECORD, mac_compile), **({'ios': ('iphoneos', ios_metal.RECORD, ios_metal.compile)} if IOSOUT else {})}, w)
-for _b in sorted(os.listdir(cache_root)):   # earlier builds that recorded their compiler fill the cache once
+MTLC = dmsh_mtlcache.Cache(os.path.join(cache_root, 'mtlcache'), {} if RUNTIME else {'mac': ('macosx', MAC_RECORD, mac_compile), **({'ios': ('iphoneos', ios_metal.RECORD, ios_metal.compile)} if IOSOUT else {})}, w)
+for _b in [] if RUNTIME else sorted(os.listdir(cache_root)):   # earlier builds that recorded their compiler fill the cache once
     if _b.startswith('b-') and _b != 'b-' + CHAIN and os.path.isdir(os.path.join(cache_root, _b)):
         for _line in MTLC.fill(os.path.join(cache_root, _b), os.path.join(os.path.dirname(IOSOUT), _b) if IOSOUT else None): print(_line)
 packs, jobs, c1s = {}, {}, {}
@@ -474,7 +480,8 @@ print(f'前置缓存：命中 {PRE_STATS["hit"]}，重出 {PRE_STATS["miss"]}')
 for reason in ('新键', '规则变', '代码指纹变化：全部重出'):
     if PRE_STATS[reason]: print(f'  {reason} {PRE_STATS[reason]}')
 print(f'变体缓存：生成 {BF_STATS["generated"]}，命中 {BF_STATS["hit"]}，重出 {BF_STATS["miss"]}，编译 {BF_STATS["compile"]}')
-print(MTLC.summary()); MTLC.save_used(CHAIN); print(MTLC.prune())
+if RUNTIME: print('Source form: no Metal compile here, the host compiles the libraries (nvn_mtl.m lib_load)')
+else: print(MTLC.summary()); MTLC.save_used(CHAIN); print(MTLC.prune())
 for lvl in [k for k in st if k != 'ok']:
     for e, n in collections.Counter(r[2] for r in res if r[1] == lvl).most_common(10): print(f'  [{lvl}] {n:5d}  {e}')
 ok = [r[3] for r in res if r[1] == 'ok']
