@@ -33,8 +33,11 @@ if [ -z "$UNSIGNED" ]; then
   [ -n "$ID" ] || die "no Developer ID Application identity of team $TEAM in the keychain"
   xcrun notarytool history --keychain-profile "$PROFILE" > /dev/null 2>&1 || die "no notarytool profile $PROFILE (see the top of this file)"
 fi
-sign() {   # sign <file>… : Developer ID with a secure timestamp, or ad-hoc in a test release
-  if [ -n "$ID" ]; then codesign --force --timestamp -s "$ID" "$@" > /dev/null; else codesign --force -s - "$@" > /dev/null; fi
+sign() {   # sign <file>… : Developer ID with a secure timestamp, or ad-hoc in a test release (codesign's "replacing existing signature" notes are dropped)
+  local err; err=$(mktemp)
+  if [ -n "$ID" ]; then codesign --force --timestamp -s "$ID" "$@" > /dev/null 2> "$err"; else codesign --force -s - "$@" > /dev/null 2> "$err"; fi \
+    || { grep -v 'replacing existing signature' "$err" >&2; rm -f "$err"; return 1; }
+  rm -f "$err"
 }
 
 # ---- a clean tree at HEAD ----
@@ -55,7 +58,7 @@ if [ ! -f "$TC/$TOOLS_NAME" ]; then
   [ "$(sha "$WORK/dl/python.tgz")" = "$(pin python_sha256)" ] || die "the Python build does not match its pinned checksum"
   tar -xzf "$WORK/dl/python.tgz" -C "$T"
   # shellcheck disable=SC2046
-  "$T/python/bin/python3" -m pip install -q --no-cache-dir --disable-pip-version-check --only-binary :all: $(pin pip)
+  "$T/python/bin/python3" -m pip install -q --no-cache-dir --disable-pip-version-check --root-user-action=ignore --only-binary :all: $(pin pip)
   "$T/python/bin/python3" -c 'import lz4, capstone, numpy, PIL; assert capstone.__version__.startswith("5")' || die "the pinned packages do not import"
   cp "$T/python/lib/python3.14/LICENSE.txt" "$T/licenses/Python.txt" 2>/dev/null || true
   dotnet publish "$WT/dm/gfx/tools/dmsh_xlate" -c Release -r osx-arm64 --self-contained true -o "$T/dmsh_xlate" -v quiet > /dev/null
@@ -67,11 +70,11 @@ if [ ! -f "$TC/$TOOLS_NAME" ]; then
   cp -L "$(brew --prefix)/bin/spirv-cross" "$T/bin/spirv-cross"; cp "$(brew --prefix spirv-cross)/LICENSE" "$T/licenses/SPIRV-Cross.txt" 2>/dev/null || true
   otool -L "$T/bin/spirv-cross" | tail -n +2 | grep -v -E '^\s+/usr/lib/|/System/' && die "spirv-cross links libraries outside the system"
   git clone -q https://github.com/SciresM/hactool.git "$WORK/hactool" && git -C "$WORK/hactool" checkout -q "$(pin hactool_commit)"
-  (cd "$WORK/hactool" && cp config.mk.template config.mk && make -s > /dev/null) || die "hactool did not build"
+  (cd "$WORK/hactool" && cp config.mk.template config.mk && make -s > "$WORK/hactool.log" 2>&1) || { tail -20 "$WORK/hactool.log"; die "hactool did not build"; }
   cp "$WORK/hactool/hactool" "$T/bin/hactool"; cp "$WORK/hactool/LICENSE" "$T/licenses/hactool.txt"
   # every Mach-O of the pack carries the release's signature (the launcher checks python3's)
   find "$T" -type f \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0 | while IFS= read -r -d '' f; do
-    file -b "$f" | grep -q Mach-O && sign "$f"; done
+    if file -b "$f" | grep -q Mach-O; then sign "$f"; fi; done
   (cd "$T" && COPYFILE_DISABLE=1 tar -czf "$TC/$TOOLS_NAME" .)
 fi
 
