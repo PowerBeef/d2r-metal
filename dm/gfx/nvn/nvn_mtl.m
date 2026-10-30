@@ -52,6 +52,10 @@
 #include <time.h>
 #include <unistd.h>
 #include <stdatomic.h>
+#include <sys/sysctl.h>
+#include <spawn.h>
+#include <poll.h>
+#include <sys/wait.h>
 #include <errno.h>
 #include <execinfo.h>
 #include <os/lock.h>
@@ -2078,6 +2082,12 @@ static NSString *exe_rel(const char *rel) {
 }
 // 着色器映射表（tools/shader_map.py 出）：运行时只用「Switch 控制段键 → 阶段」；着色器一律是 Switch 原版翻译（tools/dmsh_build.py 离线出 <键>_b.metallib + 反射）
 // Shader mapping table (output of tools/shader_map.py): at runtime only 'Switch control section key → stage' is used; shaders are always translations of the Switch originals (tools/dmsh_build.py produces <key>_b.metallib + reflection offline)
+// 库目录 = <DM_MSL_DIR 或缺省缓存>/b-<翻译链版本>：版本取自本源码树的 dmsh_chain.h（tools/dmsh_chain.py），旧源码树编的宿主只认旧版本的库
+// Library directory = <DM_MSL_DIR or default cache>/b-<translation chain version>: the version comes from this source tree's dmsh_chain.h (tools/dmsh_chain.py); a host built from an old source tree only accepts libraries of the old version
+static NSString *msl_dir(void) {
+    const char *m = getenv("DM_MSL_DIR");
+    return [NSString stringWithFormat:@"%@/b-%s", m ? @(m) : [NSString stringWithFormat:@"%s%s/build/cache/metal_shader_cache", getenv("DM_ROOT") ?: getenv("HOME"), getenv("DM_ROOT") ? "" : "/dm-work"], DMSH_CHAIN];
+}
 static void shmap_load(void) {
     if (g_shmap) return;
     const char *e = getenv("DM_NVN_SHMAP");
@@ -2091,10 +2101,7 @@ static void shmap_load(void) {
         if (c.count > 3) g_shmap[c[3]] = c[2];
     }
     g_shmap_path = path;
-    const char *m = getenv("DM_MSL_DIR");
-    // 库目录 = <DM_MSL_DIR 或缺省缓存>/b-<翻译链版本>：版本取自本源码树的 dmsh_chain.h（tools/dmsh_chain.py），旧源码树编的宿主只认旧版本的库
-    // Library directory = <DM_MSL_DIR or default cache>/b-<translation chain version>: the version comes from this source tree's dmsh_chain.h (tools/dmsh_chain.py); a host built from an old source tree only accepts libraries of the old version
-    g_msl_dir = [NSString stringWithFormat:@"%@/b-%s", m ? @(m) : [NSString stringWithFormat:@"%s%s/build/cache/metal_shader_cache", getenv("DM_ROOT") ?: getenv("HOME"), getenv("DM_ROOT") ? "" : "/dm-work"], DMSH_CHAIN];
+    g_msl_dir = msl_dir();
     if (![NSFileManager.defaultManager fileExistsAtPath:g_msl_dir]) MLOG("【红】着色器库目录 %s 不存在：本源码树的翻译链版本 %s 还没出包（dm/gfx/tools/dmsh_build.py）", g_msl_dir.UTF8String, DMSH_CHAIN);
     NSString *cp = [[path stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"c1_full.tsv"];   // 与映射表同目录（Mac：dm/gfx/nvn；iOS：App 内 dm/，run.sh 一起拷） | Same directory as the mapping table (Mac: dm/gfx/nvn; iOS: dm/ inside the App, copied along by run.sh)
     NSString *ct = cp ? [NSString stringWithContentsOfFile:cp encoding:NSUTF8StringEncoding error:nil] : nil;
@@ -2231,10 +2238,133 @@ static id<MTLLibrary> lib_from_file(NSString *path, NSError **err) {
     dispatch_data_t d = dispatch_data_create(m, len, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ munmap(m, len); });
     return [g_dev newLibraryWithData:d error:err];
 }
+// Source-form chains (dmsh_chain.py --update-lock --runtime, built where there is no Xcode, as in the launcher's installs) hold <stem>.metal instead of
+// <stem>.metallib: macOS's own compiler builds the library here, with the flags of the offline compile (dmsh_build.py MAC_METAL: -fpreserve-invariance,
+// fast math, default optimisation), and keeps the result in the app's Metal cache, which the launcher's warm pass fills first (nvn_mtl_warm_shaders)
+static MTLCompileOptions *src_opts(void) {
+    static MTLCompileOptions *o; static dispatch_once_t once;
+    dispatch_once(&once, ^{ o = [MTLCompileOptions new]; o.preserveInvariance = YES; o.mathMode = MTLMathModeFast; });
+    return o;
+}
+static id<MTLLibrary> lib_load(NSString *stem, NSError **err) {   // stem = <library folder>/<key>, without the extension
+    NSString *lp = [stem stringByAppendingString:@".metallib"];
+    if (!access(lp.fileSystemRepresentation, F_OK)) return lib_from_file(lp, err);
+    NSString *src = [NSString stringWithContentsOfFile:[stem stringByAppendingString:@".metal"] encoding:NSUTF8StringEncoding error:err];
+    return src ? [g_dev newLibraryWithSource:src options:src_opts() error:err] : nil;
+}
+// --warm-shaders (host main.c): compiles every source-form library of the chain once, so the game then finds them in macOS's per-app Metal cache instead of
+// compiling while it draws. The launcher runs it after an install or an update; the system's compiler, and with it that cache, changes with each macOS update.
+// One process gets about half the cores' worth out of the compiler service; two get the most (M6, 7,212 libraries from cold: 12 min with one, 3.7 min with
+// two, no gain from three), so the pass runs as DM_WARM_PROCS (default 2) worker processes of this executable ("--warm-shaders k/n": every n-th library from
+// the k-th), which keeps them in the same app and so the same cache. Prints "WARM <done>/<total>" lines, writes warm.stamp (the macOS build) into the
+// library folder and returns the number of libraries that failed to compile
+static NSArray<NSString *> *warm_list(NSString *dir) {   // the libraries kept as source: <stem>.metal without a <stem>.metallib, sorted
+    NSArray<NSString *> *all = [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil];
+    if (!all) return nil;
+    NSSet<NSString *> *have = [NSSet setWithArray:all]; NSMutableArray<NSString *> *src = [NSMutableArray array];
+    for (NSString *n in all) if ([n hasSuffix:@".metal"] && ![have containsObject:[[n stringByDeletingPathExtension] stringByAppendingString:@".metallib"]]) [src addObject:n];
+    [src sortUsingSelector:@selector(compare:)];
+    return src;
+}
+static int warm_shard(NSString *dir, NSArray<NSString *> *src, int k, int n) {   // compiles libraries k-1, k-1+n, … ; returns how many failed
+    if (!g_dev) g_dev = MTLCreateSystemDefaultDevice();
+    NSMutableArray<NSString *> *mine = [NSMutableArray array];
+    for (NSUInteger i = (NSUInteger)(k - 1); i < src.count; i += (NSUInteger)n) [mine addObject:src[i]];
+    int total = (int)mine.count, jobs = getenv("DM_WARM_JOBS") ? atoi(getenv("DM_WARM_JOBS")) : (int)NSProcessInfo.processInfo.activeProcessorCount / n + 2;
+    __block _Atomic int done = 0, bad = 0;
+    dispatch_semaphore_t slots = dispatch_semaphore_create(jobs > 0 ? jobs : 1); dispatch_group_t g = dispatch_group_create();
+    for (NSString *f in mine) {
+        dispatch_semaphore_wait(slots, DISPATCH_TIME_FOREVER); dispatch_group_enter(g);
+        NSString *text = [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:f] encoding:NSUTF8StringEncoding error:nil];
+        void (^fin)(id<MTLLibrary>, NSError *) = ^(id<MTLLibrary> lib, NSError *e) {
+            if (!lib) { atomic_fetch_add(&bad, 1); fprintf(stderr, "【红】WARM: %s does not compile: %s\n", f.UTF8String, e ? e.localizedDescription.UTF8String : "unreadable"); }
+            int d = atomic_fetch_add(&done, 1) + 1;
+            if (d % 32 == 0 || d == total) { printf("WARM %d/%d\n", d, total); fflush(stdout); }
+            dispatch_semaphore_signal(slots); dispatch_group_leave(g);
+        };
+        if (text) [g_dev newLibraryWithSource:text options:src_opts() completionHandler:fin];
+        else fin(nil, nil);
+    }
+    dispatch_group_wait(g, DISPATCH_TIME_FOREVER);
+    return bad;
+}
+// At app start (app_mac.m): 1 when the library is of the source form and was not warmed under this macOS build (warm.stamp), else 0
+int nvn_mtl_warm_needed(void) {
+    @autoreleasepool {
+        NSString *dir = msl_dir(); NSArray<NSString *> *src = warm_list(dir);
+        if (!src.count) return 0;   // no folder, or an Xcode-form library (every .metal has its .metallib)
+        char osb[64] = ""; size_t ol = sizeof osb; sysctlbyname("kern.osversion", osb, &ol, NULL, 0);
+        NSString *st = [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:@"warm.stamp"] encoding:NSUTF8StringEncoding error:nil];
+        return ![[st stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] isEqualToString:@(osb)];
+    }
+}
+int nvn_mtl_warm_shaders(const char *shard) {   // shard = "k/n" in a worker, NULL in the process the launcher starts
+    @autoreleasepool {
+        NSString *dir = msl_dir(); NSArray<NSString *> *src = warm_list(dir);
+        if (!src) { fprintf(stderr, "【红】WARM: no library folder %s\n", dir.UTF8String); return -1; }
+        int k = 1, n = 1;
+        if (shard) {
+            if (sscanf(shard, "%d/%d", &k, &n) != 2 || n < 1 || k < 1 || k > n) { fprintf(stderr, "【红】WARM: bad shard %s (k/n)\n", shard); return -1; }
+            return warm_shard(dir, src, k, n);
+        }
+        int procs = getenv("DM_WARM_PROCS") ? atoi(getenv("DM_WARM_PROCS")) : 2, total = (int)src.count, bad = 0;
+        if (procs < 1) procs = 1;
+        double t0 = CACurrentMediaTime();
+        printf("WARM 0/%d\n", total); fflush(stdout);
+        if (procs == 1) bad = warm_shard(dir, src, 1, 1);
+        else {
+            char exe[PATH_MAX]; uint32_t el = sizeof exe;
+            if (_NSGetExecutablePath(exe, &el)) { fprintf(stderr, "【红】WARM: no executable path\n"); return -1; }
+            pid_t pid[16]; int fd[16], done[16] = {0}; if (procs > 16) procs = 16;
+            for (int w = 0; w < procs; w++) {
+                int pp[2]; char sh[16]; snprintf(sh, sizeof sh, "%d/%d", w + 1, procs);
+                char *av[] = {exe, "--warm-shaders", sh, NULL};
+                posix_spawn_file_actions_t fa; posix_spawn_file_actions_init(&fa);
+                if (pipe(pp)) { fprintf(stderr, "【红】WARM: pipe: %s\n", strerror(errno)); return -1; }
+                posix_spawn_file_actions_adddup2(&fa, pp[1], 1); posix_spawn_file_actions_addclose(&fa, pp[0]); posix_spawn_file_actions_addclose(&fa, pp[1]);
+                extern char **environ;
+                int r = posix_spawn(&pid[w], exe, &fa, NULL, av, environ); posix_spawn_file_actions_destroy(&fa); close(pp[1]);
+                if (r) { fprintf(stderr, "【红】WARM: cannot start worker %s: %s\n", sh, strerror(r)); close(pp[0]); return -1; }
+                fd[w] = pp[0];
+            }
+            // relay the workers' counts as one: "WARM <sum>/<total>" (read() into a line buffer per worker, so no line waits in a stdio buffer)
+            char buf[16][256]; size_t bl[16] = {0}; struct pollfd pf[16]; int open_n = procs, last = 0;
+            while (open_n > 0) {
+                for (int w = 0; w < procs; w++) { pf[w].fd = fd[w]; pf[w].events = POLLIN; pf[w].revents = 0; }
+                if (poll(pf, (nfds_t)procs, -1) < 0) { if (errno == EINTR) continue; break; }
+                for (int w = 0; w < procs; w++) {
+                    if (fd[w] < 0 || !(pf[w].revents & (POLLIN | POLLHUP))) continue;
+                    ssize_t r = read(fd[w], buf[w] + bl[w], sizeof buf[w] - 1 - bl[w]);
+                    if (r <= 0) { close(fd[w]); fd[w] = -1; open_n--; continue; }
+                    bl[w] += (size_t)r; buf[w][bl[w]] = 0;
+                    char *p = buf[w], *nl;
+                    while ((nl = strchr(p, '\n'))) { *nl = 0; int d, t; if (sscanf(p, "WARM %d/%d", &d, &t) == 2) done[w] = d; p = nl + 1; }
+                    bl[w] = strlen(p); memmove(buf[w], p, bl[w] + 1);
+                    if (bl[w] == sizeof buf[w] - 1) bl[w] = 0;   // a line longer than the buffer: drop it
+                }
+                int sum = 0; for (int w = 0; w < procs; w++) sum += done[w];
+                if (sum - last >= 64 || (sum == total && sum != last)) { printf("WARM %d/%d\n", sum, total); fflush(stdout); last = sum; }
+            }
+            for (int w = 0; w < procs; w++) { int st = 0; while (waitpid(pid[w], &st, 0) < 0 && errno == EINTR) {}
+                if (!WIFEXITED(st) || WEXITSTATUS(st)) bad += WIFEXITED(st) ? WEXITSTATUS(st) : 1; }
+        }
+        // Then the game's own pipeline warm-up (pso_manifest.tsv, what the loading screen waits for): the system caches each pipeline's GPU code too,
+        // which a new install (or a new bundle id) lacks. Measured on a fresh install: 19.8 s of warm-up at the first loading screen, 0.2 s once cached
+        if (!bad) {
+            int mtl_warm_wait(int timeout_ms); double tp = CACurrentMediaTime();
+            if (!g_dev) g_dev = MTLCreateSystemDefaultDevice();   // the workers compiled the libraries; this process has had no device yet
+            shmap_load(); mtl_warm_wait(600000);
+            printf("WARM pipelines done, %.1f s\n", CACurrentMediaTime() - tp); fflush(stdout);
+        }
+        char osb[64] = ""; size_t ol = sizeof osb; sysctlbyname("kern.osversion", osb, &ol, NULL, 0);
+        if (!bad) [[NSString stringWithFormat:@"%s\n", osb] writeToFile:[dir stringByAppendingPathComponent:@"warm.stamp"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        printf("WARM done %d libraries, %d failed, %.1f s (%d processes, macOS %s)\n", total, bad, CACurrentMediaTime() - t0, procs, osb); fflush(stdout);
+        return bad;
+    }
+}
 static NvShader *shader_load(NSString *pc, int stage) {
     NSError *e = nil;
-    NSString *lp = [NSString stringWithFormat:@"%@/%@.metallib", g_msl_dir, pc];
-    id<MTLLibrary> lib = lib_from_file(lp, &e);
+    id<MTLLibrary> lib = lib_load([NSString stringWithFormat:@"%@/%@", g_msl_dir, pc], &e);
     NSData *jd = [NSData dataWithContentsOfFile:[NSString stringWithFormat:@"%@/%@.json", g_msl_dir, pc]];
     NSDictionary *j = jd ? [NSJSONSerialization JSONObjectWithData:jd options:0 error:nil] : nil;
     if (!lib || !j) { MLOG("【红】加载着色器失败 %s：%s", pc.UTF8String, e ? e.localizedDescription.UTF8String : "无反射 json"); return nil; }
@@ -4361,8 +4491,8 @@ static id<MTLFunction> bf_fn(NvShader *fs, const int *fx, uint8_t fbmask, const 
     size_t kl = strlen(fs->key); NSString *base = [NSString stringWithFormat:@"%.*s", (int)(kl > 2 ? kl - 2 : kl), fs->key];
     id<MTLLibrary> lib = g_bf_lib_cache[base];
     if (!lib) {
-        NSError *e = nil; NSString *path = [NSString stringWithFormat:@"%@/%@_bf.metallib", g_msl_dir, base];
-        lib = lib_from_file(path, &e);
+        NSError *e = nil; NSString *path = [NSString stringWithFormat:@"%@/%@_bf", g_msl_dir, base];
+        lib = lib_load(path, &e);
         if (!lib) MLOG("【红】可读 tile 版本载入失败 %s：%s", path.UTF8String, e.localizedDescription.UTF8String);
         else g_bf_lib_cache[base] = lib;
     }

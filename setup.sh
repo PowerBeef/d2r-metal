@@ -153,7 +153,9 @@ xlate() {
 # 按本机工具重新登记，着色器库就按这套工具出，宿主也只认这一版。
 T=$HERE/dm/gfx/tools
 "$PY" "$T/dmsh_chain.py" --check-tools > /dev/null 2>&1 || step "按仓内源码重编着色器翻译工具" xlate   # 翻译工具的源码改过（拉了新提交）：旧的二进制不算数
-if ! "$PY" "$T/dmsh_chain.py" --check-tools > /dev/null 2>&1; then
+# A source-form lock (dmsh_chain.py --update-lock --runtime, for the launcher's installs without Xcode) is no chain for this workspace, which builds the
+# iOS libraries too: register this Mac's Xcode tools instead
+if ! "$PY" "$T/dmsh_chain.py" --check-tools > /dev/null 2>&1 || "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import dmsh_chain; sys.exit(not dmsh_chain.runtime_form())' "$T"; then
   say "本机工具与仓内登记的不同：按本机工具重新登记翻译链"
   "$PY" "$T/dmsh_chain.py" --update-lock > /dev/null && "$PY" "$T/dmsh_chain.py" --header > /dev/null || die "翻译链登记没成功"
 fi

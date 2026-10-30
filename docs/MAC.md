@@ -8,7 +8,11 @@ On an Apple silicon Mac this project can be built into a native macOS App, `D2R 
 
 Apple silicon and **macOS 27 or later** (Intel Macs are not supported; see "[Which devices are supported](../README.md#which-devices-are-supported)" in the README for every device). D2R Metal draws only through Metal 4 and uses what macOS 27 adds, without fallbacks for older systems; on an earlier system the App does not open (the system says it cannot be used with this version of macOS).
 
-## Build
+## Install with the launcher
+
+The easy way: **D2R Metal Launcher** builds the app on your Mac from your own game packages (or an extracted folder) and keeps it updated from this project's GitHub releases, with no Xcode, Homebrew or developer account. Download it from the [releases page](https://github.com/PowerBeef/d2r-metal/releases); everything it does is in [LAUNCHER.md](LAUNCHER.md). An app it installs compiles the game's shaders with macOS's own compiler: once at install (a few minutes), and once more after each macOS update, with a progress window.
+
+## Build from source
 
 The prerequisites are the same as for iOS: game files in place and `./setup.sh` finished (see "Getting started" in the README). Then:
 
@@ -157,4 +161,4 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 - Not tried by hand yet: the resource-folder dialog on a fresh install, and PlayStation or Switch controllers on the Mac (an Xbox Wireless Controller is what has been used).
 - Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class is unverified. There is no right-click skill as on PC.
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
-- An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud").
+- An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud"). An app the launcher installed checks the project's releases and shows a new version on the main menu.

@@ -245,6 +245,11 @@ static void cloud_boot_start(void) {
 #endif
 int main(int argc, char **argv) {
 #if TARGET_OS_OSX   // iOS 包也编这个文件（入口由外壳调），那边没有 app_mac.m | The iOS package compiles this file too (the entry is called by the shell); there is no app_mac.m on that side
+    // --warm-shaders: compile a source-form shader library into macOS's Metal cache and exit (nvn_mtl.m nvn_mtl_warm_shaders; the launcher runs it)
+    if (argc >= 2 && argc <= 3 && !strcmp(argv[1], "--warm-shaders")) {
+        void dm_app_msl_env(void); int nvn_mtl_warm_shaders(const char *shard); dm_app_msl_env();
+        int bad = nvn_mtl_warm_shaders(argc == 3 ? argv[2] : NULL); return bad < 0 ? 2 : bad > 250 ? 250 : bad;   // a worker's exit code = how many failed
+    }
     if (dm_app_bootstrap(&argc, &argv)) cloud_boot_start();   // App 形态：挂存档之前先做一次 iCloud 同步（见上）；取不到容器 / 测试存档时它自己记一行就返回 | App form: do one iCloud sync before mounting the save (see above); when the container cannot be obtained / with a test save it logs one line and returns
 #endif
     if (getenv("DM_PRELOAD")) dm_host_preload_start(argc, argv);   // Mac 上验证提前起跑的路径（iOS 由 App 的 main() 调） | Exercise the early-start path on Mac (on iOS it is called from the App's main())

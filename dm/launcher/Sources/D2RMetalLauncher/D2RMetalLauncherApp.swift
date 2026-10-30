@@ -1,0 +1,16 @@
+import SwiftUI
+
+@main
+struct D2RMetalLauncherApp: App {
+    @State private var model = LauncherModel()
+
+    var body: some Scene {
+        Window("D2R Metal Launcher", id: "main") {
+            ContentView()
+                .environment(model)
+                // d2rmetal://update: the installed game's main-menu notice opens the launcher for the update (dm/host/app_mac.m upd_click)
+                .onOpenURL { url in if url.host == "update" { Task { await model.refreshFeed() } } }
+        }
+        .windowResizability(.contentMinSize)
+    }
+}

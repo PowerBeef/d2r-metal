@@ -56,6 +56,11 @@ MSL=${DM_MSL_DIR:-$ROOT/build/cache/metal_shader_cache}/b-$V; MSLR=$MSL
 [ -d "$MSLR" ] || { echo "🔴 没有着色器库 ${MSL}（先跑 dm/gfx/tools/dmsh_build.py）"; exit 2; }
 if [ -n "$LINK" ]; then echo "msl=$(dirname "$MSL")" >> "$RES/paths.txt"
 else mkdir -p "$RES/msl/b-$V"; rsync -a --include='*.metallib' --include='*.json' --exclude='*' "$MSLR/" "$RES/msl/b-$V/"; fi
+# The two game-derived tables the host reads at start (dm/host/dm_tables.h; make writes them to dm/host/tables beside dmhost): carried like the overlay,
+# beside the package in the link style, inside it otherwise
+[ -f "$DM/host/tables/hud_exp.tsv" ] && [ -f "$DM/host/tables/bright_levels.tsv" ] || { echo "🔴 no game tables in $DM/host/tables (make -C dm/host tables, with the game files in place)"; exit 2; }
+if [ -n "$LINK" ]; then rm -rf "$STG/tables.local"; cp -R "$DM/host/tables" "$STG/tables.local"; echo "tables=$OUT/tables.local" >> "$RES/paths.txt"
+else cp -R "$DM/host/tables" "$RES/tables"; fi
 # 界面覆盖层（自定义页、珍宝匣、秘境等我们的页面都在里面）：从游戏资源现生成（约 3 秒）；DM_MAC_OVERLAY=<目录> 用现成的，=none 不带（原版界面）
 # UI overlay (the Custom page, the trove, rifts and our other pages all live in it): generated on the spot from the game resources (about 3 seconds); DM_MAC_OVERLAY=<dir> uses an existing one, =none leaves it out (original UI)
 if [ "${DM_MAC_OVERLAY:-}" != none ]; then

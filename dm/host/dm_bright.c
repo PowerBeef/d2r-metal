@@ -30,9 +30,25 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#if TARGET_OS_IOS
 static const struct { uint16_t lv; uint8_t act, drlg; int8_t varies; } k_lv[] = {
 #include "dm_bright_levels.inc"
 };
+static int lv_count(void) { return (int)(sizeof k_lv / sizeof *k_lv); }
+#else
+#include "dm_tables.h"
+#include <pthread.h>
+static struct { uint16_t lv; uint8_t act, drlg; int8_t varies; } k_lv[512];
+static int g_nlv;
+static pthread_once_t g_lv_once = PTHREAD_ONCE_INIT;
+static void lv_load(void) {   // the level table from bright_levels.tsv (dm_tables.h); without it every level is treated as one whose picture follows day and night
+    static long v[512 * 4]; char path[PATH_MAX]; int n = dm_table_read("bright_levels.tsv", 4, v, 512, path);
+    if (n <= 0) { LOG("Tables: %s %s: the indoor brightening rule is off", path, n < 0 ? "is missing" : "is empty"); return; }
+    for (int i = 0; i < n; i++) { k_lv[i].lv = (uint16_t)v[4 * i]; k_lv[i].act = (uint8_t)v[4 * i + 1]; k_lv[i].drlg = (uint8_t)v[4 * i + 2]; k_lv[i].varies = (int8_t)v[4 * i + 3]; }
+    g_nlv = n;
+}
+static int lv_count(void) { pthread_once(&g_lv_once, lv_load); return g_nlv; }
+#endif
 
 static int rd(uint64_t a, void *buf, size_t n) { vm_size_t got = 0; return a && !vm_read_overwrite(mach_task_self(), a, n, (vm_address_t)buf, &got) && got == n; }
 static uint64_t main_base(void) { static uint64_t b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint64_t)g_mod[i].base; return b; }
@@ -45,7 +61,7 @@ static double target_logk(int *why, int *area, int *I, double *ang) {
     if (!dm_uiscreen_ingame()) { *why = 1; return 0; }
     dm_hud_info h; dm_hud_get(&h); *area = h.valid ? h.area : -1;
     int act = -1, drlg = -1, varies = -1;
-    for (unsigned i = 0; i < sizeof k_lv / sizeof *k_lv; i++) if (k_lv[i].lv == *area) { act = k_lv[i].act; drlg = k_lv[i].drlg; varies = k_lv[i].varies; break; }
+    for (int i = 0, n = lv_count(); i < n; i++) if (k_lv[i].lv == *area) { act = k_lv[i].act; drlg = k_lv[i].drlg; varies = k_lv[i].varies; break; }
     uint64_t env = env_ptr(); int32_t iv = -1, flag = 0, rate = 0; float t = 0;
     if (env && rd(env + 0xc, &iv, 4) && rd(env + 0x34, &flag, 4) && rd(env + 0x2c, &rate, 4) && rd(env + 0x8, &t, 4)) { *I = iv; if (rate > 0) *ang = t / rate; }
     if (drlg == 1) { *why = 2; return log(4.0); }

@@ -227,7 +227,14 @@ You need **the files of the game you bought**: the Switch release of Diablo II: 
 
 > This project provides only tools and contains no game content. We do not distribute or endorse, and are not responsible for, any third party distributing game assets, game executables or install packages that contain game content. Please use only game files you legally own.
 
-There are no prebuilt downloads: you build the apps on your Mac.
+**On a Mac, use the launcher.**
+1. Download `D2R-Metal-Launcher-<version>.dmg` from the [releases page](https://github.com/PowerBeef/d2r-metal/releases) and open **D2R Metal Launcher**.
+2. Choose your game packages and `prod.keys`, or a folder you already extracted.
+3. Press **Install**.
+
+It builds the game on your Mac from your own files, and updates it from this project's releases. You don't need Xcode, Homebrew or a developer account. The first install takes about 10–15 minutes. See [docs/LAUNCHER.md](docs/LAUNCHER.md).
+
+**From source** (the iPhone / iPad app, or development), you build the apps on your Mac:
 
 1. **Put your game files in the workspace** (default `~/dm-work`, or set `DM_ROOT`):
 

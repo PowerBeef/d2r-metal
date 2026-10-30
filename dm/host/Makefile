@@ -93,6 +93,10 @@ print-macos-min:
 # Headers generated from the original game's tables: not checked into the repository, generated at build time from the player's own game files (Update/RomFS of Switch version 3.3.94012); the path is given by the environment variable DM_ROMFS_SRC
 ROMFS?=$(or $(DM_ROMFS_SRC),$(DM_ROOT)/data/switch/3.3.94012/Update/RomFS)
 GENH=dm_hud_exp.h dm_bright_levels.inc
+# The Mac host reads the same two tables at start (dm_tables.h) instead of compiling them in, so it builds without the game's files and can be shipped
+# (dm/tools/install.py generates them on the player's Mac). They are made next to dmhost when the game files are here; the iOS app keeps the headers
+TABLES=tables/hud_exp.tsv tables/bright_levels.tsv
+HAVE_ROMFS:=$(wildcard $(ROMFS)/data/build_manifest.psv)
 NEED_ROMFS=@test -f "$(ROMFS)/data/build_manifest.psv" || { echo "🔴 没找到游戏文件：$(ROMFS)/data/build_manifest.psv。把 Switch 版 3.3.94012 的 Update/RomFS 放到这里，或用环境变量 DM_ROMFS_SRC 指过去（见 dm/README.md「从你的游戏文件生成资源」）"; exit 1; }
 dm_hud_exp.h: ../ios/tools/gen_hud_exp.py ../ios/tools/romfs_art.py
 	$(NEED_ROMFS)
@@ -100,7 +104,16 @@ dm_hud_exp.h: ../ios/tools/gen_hud_exp.py ../ios/tools/romfs_art.py
 dm_bright_levels.inc: ../tools/gen_bright_levels.py ../ios/tools/touch_layout.py
 	$(NEED_ROMFS)
 	python3 ../tools/gen_bright_levels.py "$(ROMFS)" > $@.tmp && mv $@.tmp $@
-dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) $(GENH)
+tables: $(TABLES)
+tables/hud_exp.tsv: ../ios/tools/gen_hud_exp.py ../ios/tools/romfs_art.py
+	$(NEED_ROMFS)
+	@mkdir -p tables
+	python3 ../ios/tools/gen_hud_exp.py --tsv "$(ROMFS)" $@.tmp && mv $@.tmp $@
+tables/bright_levels.tsv: ../tools/gen_bright_levels.py ../ios/tools/touch_layout.py
+	$(NEED_ROMFS)
+	@mkdir -p tables
+	python3 ../tools/gen_bright_levels.py --tsv "$(ROMFS)" $@.tmp && mv $@.tmp $@
+dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) dm_tables.h | $(if $(HAVE_ROMFS),$(TABLES))
 	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
 # 消毒器版宿主（调试用，不在缺省目标里）：make dmhost_asan（地址 + 未定义行为）/ dmhost_ubsan / dmhost_tsan；只插桩宿主代码，游戏程序不插桩。
 # 场景运行器经 SCN_DMHOST 用它：SCN_DMHOST=dm/host/dmhost_asan python3 dm/tools/scenario.py run …（dm/verify/debugging.md）
@@ -111,5 +124,5 @@ dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm
 SAN_asan=-fsanitize=address,undefined -mllvm -asan-stack=0
 SAN_ubsan=-fsanitize=undefined
 SAN_tsan=-fsanitize=thread
-dmhost_asan dmhost_ubsan dmhost_tsan: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) $(GENH)
+dmhost_asan dmhost_ubsan dmhost_tsan: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) dm_tables.h | $(if $(HAVE_ROMFS),$(TABLES))
 	clang $(CFLAGS) $(SAN_$(@:dmhost_%=%)) -fno-omit-frame-pointer -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network

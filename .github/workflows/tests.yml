@@ -53,7 +53,7 @@ jobs:
           failed=0
           for t in dm/tools/test_dmtest.py dm/tools/test_dmevents.py dm/tools/test_dmctl.py dm/tools/test_scenario.py dm/tools/test_imgdiff.py \
                    dm/tools/test_bench.py dm/tools/test_boothist.py dm/tools/test_guestsyms.py dm/tools/test_tickdiff.py dm/tools/test_explore.py \
-                   dm/tools/test_nso_fnmap.py dm/tools/test_fuzz_corpus.py dm/tools/re/test_nso2elf.py dm/tools/re/test_addrcheck.py \
+                   dm/tools/test_nso_fnmap.py dm/tools/test_fuzz_corpus.py dm/tools/test_install.py dm/tools/re/test_nso2elf.py dm/tools/re/test_addrcheck.py \
                    dm/tools/re/test_export.py dm/tools/re/test_dbprofile.py dm/verify/test_d2save.py dm/verify/test_golden.py; do
             echo "::group::$t"
             python "$t" || { echo "::error::$t failed"; failed=1; }
