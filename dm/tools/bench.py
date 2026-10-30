@@ -31,6 +31,7 @@ import os
 import platform
 import random
 import re
+import shlex
 import statistics
 import subprocess
 import sys
@@ -229,9 +230,10 @@ def summarize(reps):
 
 
 def parse_env(items):
+    """K=V pairs separated by spaces; shell quoting keeps a value with spaces whole (DM_MAC_APP='…/D2R Metal.app')"""
     out = {}
     for it in items or []:
-        for kv in it.split():
+        for kv in shlex.split(it):
             if '=' in kv: k, v = kv.split('=', 1); out[k] = v
     return out
 
