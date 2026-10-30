@@ -64,6 +64,7 @@ final class LauncherModel {
     var gameInputReady: Bool { folder != nil || (!packages.isEmpty && keys != nil) }
 
     func start() async {
+        if let preview = ProcessInfo.processInfo.environment["DM_LAUNCHER_PREVIEW"] { showPreview(preview); return }
         readState()
         phase = installed == nil ? .welcome : .home
         await refreshFeed()
@@ -201,6 +202,29 @@ final class LauncherModel {
     }
 
     func showLog() { if let l = logPath { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: l)]) } }
+}
+
+extension LauncherModel {
+    /// DM_LAUNCHER_PREVIEW=welcome|working|home|failed: one screen with sample data and nothing run, to look at the design (screenshots, docs)
+    func showPreview(_ which: String) {
+        let json = #"""
+        {"schema": 1, "version": "1.1.0", "build": 420, "commit": "abc1234", "date": "2026-11-02", "macos_min": "27.0", "chain": "", "product": "",
+         "notes": "**Sharper shadows** on characters, and a faster first launch. See the release page for everything in this version.",
+         "runtime": {"name": "", "version": "1.1.0", "sha256": "", "size": 0}, "tools": {"name": "", "version": "1", "sha256": "", "size": 0}}
+        """#
+        let sample = try? JSONDecoder().decode(Manifest.self, from: Data(json.utf8))
+        switch which {
+        case "working":
+            working = "Installing"; phase = .working
+            steps = [StepRow(id: "download", title: "Downloading D2R Metal")] + StepRow.engineSteps
+            for (i, seconds) in [14.0, 160, 13, 21].enumerated() { steps[i].state = .done; steps[i].seconds = seconds }   // download … packs
+            if let i = steps.firstIndex(where: { $0.id == "shaders" }) { steps[i].state = .running; steps[i].done = 4224; steps[i].total = 6927 }
+        case "home": installed = ("1.0.0", 412); latest = sample; canRevert = true; phase = .home
+        case "failed": phase = .failed("The game files in the folder you chose are not from version 1.0.34.0 (ExeFS/main does not match). Choose the files of the 1.0.34.0 update.")
+        default: packages = [URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [base].nsp"), URL(fileURLWithPath: "/Volumes/Games/Diablo II Resurrected [v2228224].nsp")]
+                 latest = sample; phase = .welcome
+        }
+    }
 }
 
 extension StepRow {

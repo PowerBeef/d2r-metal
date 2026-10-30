@@ -6,22 +6,27 @@ struct ContentView: View {
     @Environment(LauncherModel.self) private var model
 
     var body: some View {
-        VStack(spacing: 0) {
-            Header()
-            Divider()
-            Group {
-                switch model.phase {
-                case .loading: ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                case .welcome: WelcomeView()
-                case .working: WorkView()
-                case .home: HomeView()
-                case .failed(let text): FailedView(text: text)
+        ZStack {
+            Backdrop()
+            VStack(spacing: 0) {
+                Header().padding(.top, 34)
+                Group {
+                    switch model.phase {
+                    case .loading: ProgressView().controlSize(.large).tint(Palette.gold[1]).frame(maxHeight: .infinity)
+                    case .welcome: WelcomeView()
+                    case .working: WorkView()
+                    case .home: HomeView()
+                    case .failed(let text): FailedView(text: text)
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 32).padding(.top, 22).padding(.bottom, 26)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .animation(.smooth(duration: 0.35), value: model.phase)
         }
-        .frame(minWidth: 640, minHeight: 560)
+        .frame(minWidth: 720, minHeight: 620)
+        .preferredColorScheme(.dark)
         .task { await model.start() }
     }
 }
@@ -29,15 +34,13 @@ struct ContentView: View {
 struct Header: View {
     @Environment(LauncherModel.self) private var model
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("D2R Metal").font(.largeTitle.weight(.semibold))
-                Text("Diablo II: Resurrected on your Mac, from your own copy of the game").foregroundStyle(.secondary)
-            }
-            Spacer()
-            if let i = model.installed { Text("Installed: \(i.version)").font(.callout).foregroundStyle(.secondary) }
+        VStack(spacing: 8) {
+            GoldTitle(text: "D2R Metal")
+            Caption(text: "Diablo II: Resurrected  ·  native on Apple silicon", dim: true, size: 11)
+            Rule().padding(.top, 4)
+            if let i = model.installed { Caption(text: "Installed  \(i.version)", size: 10).padding(.top, 2) }
         }
-        .padding(.horizontal, 24).padding(.vertical, 18)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -46,42 +49,44 @@ struct Header: View {
 struct WelcomeView: View {
     @Environment(LauncherModel.self) private var model
     @State private var picking: Picking?
+    @State private var dropTargeted = false
     enum Picking: Identifiable { case packages, keys, folder; var id: Self { self } }
 
     var body: some View {
         @Bindable var model = model
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Install the game").font(.title2.weight(.semibold))
-            Text("D2R Metal runs the Nintendo Switch release of Diablo II: Resurrected with the Reign of the Warlock expansion, updated to 1.0.34.0. Use files dumped from your own console and your own copy of the game; nothing is uploaded, and your keys are only read.")
-                .fixedSize(horizontal: false, vertical: true)
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Game packages (.nsp or .xci): the base game and the 1.0.34.0 update", systemImage: "shippingbox")
-                    HStack {
-                        Text(model.packages.isEmpty ? "None chosen" : model.packages.map(\.lastPathComponent).joined(separator: ", ")).foregroundStyle(.secondary).lineLimit(2)
-                        Spacer(); Button("Choose…") { picking = .packages }
-                    }
-                    Label("Your console's prod.keys", systemImage: "key")
-                    HStack {
-                        Text(model.keys?.lastPathComponent ?? "None chosen").foregroundStyle(.secondary)
-                        Spacer(); Button("Choose…") { picking = .keys }
-                    }
-                }.padding(6)
+        VStack(spacing: 18) {
+            VStack(spacing: 4) {
+                Text("Use your own copy: the Switch release with Reign of the Warlock, version 1.0.34.0.")
+                Text("Everything is built on this Mac. Nothing is uploaded, and your keys are only read.").foregroundStyle(Palette.parchmentDim)
             }
-            .dropDestination(for: URL.self) { urls, _ in drop(urls); return true }
-
-            HStack {
-                Text("Already extracted (a folder with ExeFS and RomFS)?").foregroundStyle(.secondary)
-                Button(model.folder?.lastPathComponent ?? "Choose folder…") { picking = .folder }
+            .font(.callout).foregroundStyle(Palette.parchment).multilineTextAlignment(.center)
+            GlassEffectContainer(spacing: 16) {
+                VStack(spacing: 0) {
+                    SourceRow(symbol: "shippingbox.fill", title: "Game packages", detail: "The base game and the 1.0.34.0 update, .nsp or .xci",
+                              values: model.packages.map(\.lastPathComponent)) { picking = .packages }
+                    Divider().padding(.vertical, 12)
+                    SourceRow(symbol: "key.fill", title: "prod.keys", detail: "The keys of your own console", values: model.keys.map { [$0.lastPathComponent] } ?? []) { picking = .keys }
+                    Divider().padding(.vertical, 12)
+                    SourceRow(symbol: "folder.fill", title: "Or an extracted folder", detail: "A folder holding ExeFS and RomFS", values: model.folder.map { [$0.lastPathComponent] } ?? []) { picking = .folder }
+                }
+                .glassCard()
+                .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 24).strokeBorder(Palette.goldFill, lineWidth: 1.5).allowsHitTesting(false) } }
+                .dropDestination(for: URL.self) { urls, _ in drop(urls); return true } isTargeted: { dropTargeted = $0 }
             }
-            Spacer()
-            HStack {
-                Text("About 30 GB of free space is needed while installing, 13 GB afterwards. The first install takes about 10 minutes.").font(.callout).foregroundStyle(.secondary)
+            Caption(text: "Or drop your files on the card", dim: true, size: 10)
+            Spacer(minLength: 0)
+            if let e = model.feedError { Label("Can't reach GitHub: \(e)", systemImage: "wifi.exclamationmark").font(.callout).foregroundStyle(Palette.blood) }
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Caption(text: "About 30 GB free while installing", dim: true, size: 10)
+                    Caption(text: "First install: 10 to 15 minutes", dim: true, size: 10)
+                }
                 Spacer()
-                Button("Install") { model.install() }.keyboardShortcut(.defaultAction).disabled(!model.gameInputReady || model.latest == nil)
+                Button { model.install() } label: { Label("Install", systemImage: "flame.fill").font(.title3.weight(.semibold)).padding(.horizontal, 18).padding(.vertical, 4) }
+                    .primaryGlass().controlSize(.large).keyboardShortcut(.defaultAction)
+                    .disabled(!model.gameInputReady || model.latest == nil)
             }
-            if let e = model.feedError { Text("Can't reach GitHub: \(e)").font(.callout).foregroundStyle(.red) }
+            .frame(maxWidth: 600)
         }
         .fileImporter(isPresented: Binding(get: { picking != nil }, set: { if !$0 { picking = nil } }),
                       allowedContentTypes: picking == .folder ? [.folder] : [.data], allowsMultipleSelection: picking == .packages) { result in
@@ -106,21 +111,50 @@ struct WelcomeView: View {
     }
 }
 
+/// One way to give the game files: what it is, what was chosen, and a glass button to choose
+struct SourceRow: View {
+    let symbol: String, title: String, detail: String
+    let values: [String]   // what was chosen, one file per line; empty = nothing yet
+    let choose: () -> Void
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: values.isEmpty ? symbol : "checkmark.seal.fill")
+                .font(.title2).foregroundStyle(Palette.goldFill).frame(width: 30)
+                .contentTransition(.symbolEffect(.replace))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                if values.isEmpty { Text(detail).font(.callout).foregroundStyle(.secondary) }
+                ForEach(values, id: \.self) { Text($0).font(.callout).lineLimit(1).truncationMode(.middle) }
+            }
+            Spacer(minLength: 12)
+            Button(values.isEmpty ? "Choose…" : "Change…", action: choose).buttonStyle(.glass)
+        }
+    }
+}
+
 // MARK: running
 
 struct WorkView: View {
     @Environment(LauncherModel.self) private var model
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("\(model.working)…").font(.title2.weight(.semibold))
-            Text("You can keep using your Mac. If you quit, the next run continues where this one stopped.").foregroundStyle(.secondary)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) { ForEach(model.steps) { StepLine(step: $0) } }
+        let done = model.steps.filter { $0.state == .done || $0.state == .kept }.count
+        VStack(spacing: 16) {
+            VStack(spacing: 6) {
+                Text("\(model.working)…").font(.title2.weight(.semibold)).foregroundStyle(Palette.goldFill)
+                Caption(text: model.steps.isEmpty ? "" : "\(done) of \(model.steps.count) steps", dim: true, size: 10)
             }
-            HStack {
-                if model.logPath != nil { Button("Show Log") { model.showLog() } }
-                Spacer()
-                Button("Stop") { model.cancel() }
+            GlassEffectContainer {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) { ForEach(model.steps) { StepLine(step: $0) } }.padding(.vertical, 2)
+                }
+                .scrollIndicators(.never)
+                .glassCard()
+            }
+            Text("You can keep using your Mac. If you quit, the next run continues where this one stopped.")
+                .font(.footnote).foregroundStyle(Palette.parchmentDim).multilineTextAlignment(.center)
+            HStack(spacing: 12) {
+                if model.logPath != nil { Button("Show Log", systemImage: "doc.text.magnifyingglass") { model.showLog() }.buttonStyle(.glass) }
+                Button("Stop", systemImage: "stop.fill") { model.cancel() }.buttonStyle(.glass)
             }
         }
     }
@@ -129,26 +163,39 @@ struct WorkView: View {
 struct StepLine: View {
     let step: StepRow
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Group {
                 switch step.state {
-                case .waiting: Image(systemName: "circle").foregroundStyle(.tertiary)
-                case .running: ProgressView().controlSize(.small)
-                case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                case .waiting: Image(systemName: "circle.dotted").foregroundStyle(.tertiary)
+                case .running: ProgressView().controlSize(.small).tint(Palette.gold[1])
+                case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.goldFill)
                 case .kept: Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
-                case .failed: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                case .failed: Image(systemName: "xmark.octagon.fill").foregroundStyle(Palette.blood)
                 }
-            }.frame(width: 18)
-            Text(step.title).foregroundStyle(step.state == .waiting ? .secondary : .primary)
-            Spacer()
-            if step.state == .running, step.total > 0 {
-                ProgressView(value: Double(step.done), total: Double(step.total)).frame(width: 160)
-                Text(step.id == "download" ? "\(step.done) / \(step.total) MB" : "\(step.done) / \(step.total)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            } else if step.state == .kept {
-                Text("up to date").font(.caption).foregroundStyle(.secondary)
-            } else if let s = step.seconds, step.state == .done {
-                Text(s < 60 ? "\(Int(s.rounded())) s" : "\(Int((s / 60).rounded())) min").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
+            .font(.body).frame(width: 20)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text(step.title).foregroundStyle(step.state == .waiting ? .secondary : .primary)
+                        .fontWeight(step.state == .running ? .semibold : .regular)
+                    Spacer()
+                    trailing.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                if step.state == .running, step.total > 0 {
+                    ProgressView(value: Double(step.done), total: Double(step.total)).tint(Palette.ember).controlSize(.small)
+                }
+            }
+        }
+        .animation(.smooth, value: step.state)
+    }
+
+    @ViewBuilder private var trailing: some View {
+        if step.state == .running, step.total > 0 {
+            Text(step.id == "download" ? "\(step.done) / \(step.total) MB" : "\(step.done) / \(step.total)")
+        } else if step.state == .kept {
+            Text("up to date")
+        } else if let s = step.seconds, step.state == .done {
+            Text(s < 60 ? "\(Int(s.rounded())) s" : "\(Int((s / 60).rounded())) min")
         }
     }
 }
@@ -160,41 +207,49 @@ struct HomeView: View {
     @State private var confirmRemove = false
     var body: some View {
         @Bindable var model = model
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Button { model.play() } label: { Label("Play", systemImage: "play.fill").font(.title2.weight(.semibold)).padding(.horizontal, 22).padding(.vertical, 6) }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                Spacer()
+        VStack(spacing: 20) {
+            Spacer(minLength: 0)
+            Button { model.play() } label: {
+                Label("Play", systemImage: "play.fill").font(.custom("Optima-Bold", size: 26, relativeTo: .title)).tracking(2)
+                    .padding(.horizontal, 44).padding(.vertical, 10)
             }
+            .primaryGlass().controlSize(.extraLarge).keyboardShortcut(.defaultAction)
             if let up = model.launcherUpdate {
-                GroupBox { Text("A new launcher (\(up.version)) is available. Download it from the project's GitHub releases page.").frame(maxWidth: .infinity, alignment: .leading) }
+                Label("A new launcher (\(up.version)) is on the releases page", systemImage: "sparkles").font(.callout).foregroundStyle(Palette.parchment)
             }
-            if model.updateAvailable, let l = model.latest {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Update available: \(l.version)").font(.headline)
-                        ScrollView { Text(l.notes).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.frame(maxHeight: 160)
-                        HStack { Spacer(); Button("Update") { model.update() } }
-                    }.padding(6)
+            Group {
+                if model.updateAvailable, let l = model.latest {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label("Version \(l.version) is ready", systemImage: "arrow.down.circle.fill").font(.headline).foregroundStyle(Palette.goldFill)
+                            Spacer()
+                            Button("Update", systemImage: "arrow.down") { model.update() }.buttonStyle(.glass)
+                        }
+                        Text(notes(l.notes)).font(.callout).lineLimit(6).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                    }
+                    .glassCard()
+                } else {
+                    Label(model.feedError.map { "Couldn't check for updates: \($0)" } ?? "Up to date", systemImage: model.feedError == nil ? "checkmark.seal" : "wifi.exclamationmark")
+                        .font(.callout).foregroundStyle(Palette.parchmentDim)
                 }
-            } else if let e = model.feedError {
-                Text("Couldn't check for updates: \(e)").font(.callout).foregroundStyle(.secondary)
-            } else {
-                Text("D2R Metal is up to date.").foregroundStyle(.secondary)
             }
-            Spacer()
-            Form {
-                Picker("Updates", selection: $model.channel) {
-                    Text("Releases").tag(Channel.stable)
-                    Text("Releases and pre-releases").tag(Channel.prerelease)
+            Spacer(minLength: 0)
+            GlassEffectContainer(spacing: 12) {
+                HStack(spacing: 12) {
+                    Picker("Updates", selection: $model.channel) {
+                        Text("Releases").tag(Channel.stable)
+                        Text("With pre-releases").tag(Channel.prerelease)
+                    }
+                    .pickerStyle(.menu).labelsHidden().fixedSize().buttonStyle(.glass)
+                    Spacer()
+                    Button("Repair", systemImage: "wrench.and.screwdriver") { model.repair() }.buttonStyle(.glass)
+                        .help("Checks every step again and rebuilds what is missing or damaged")
+                    if model.canRevert { Button("Previous Version", systemImage: "clock.arrow.circlepath") { model.revert() }.buttonStyle(.glass) }
+                    Button("Remove…", systemImage: "trash", role: .destructive) { confirmRemove = true }.buttonStyle(.glass)
+                        .help("Moves the game files and D2R Metal to the Trash; your characters stay")
                 }
-            }.formStyle(.grouped).frame(maxHeight: 90)
-            HStack {
-                Button("Repair") { model.repair() }.help("Checks every step again and rebuilds what is missing or damaged")
-                if model.canRevert { Button("Go Back to Previous Version") { model.revert() } }
-                Spacer()
-                Button("Remove Game Data…", role: .destructive) { confirmRemove = true }
             }
+            .frame(maxWidth: 600)
         }
         .confirmationDialog("Move the game files and D2R Metal to the Trash?", isPresented: $confirmRemove) {
             Button("Move to Trash", role: .destructive) { model.removeGameData() }
@@ -202,21 +257,34 @@ struct HomeView: View {
             Text("Your characters and settings are kept: they are stored separately and are not touched.")
         }
     }
+
+    private func notes(_ s: String) -> AttributedString {   // the release notes are Markdown; show their inline styling and links
+        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+    }
 }
 
 struct FailedView: View {
     @Environment(LauncherModel.self) private var model
     let text: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Something went wrong", systemImage: "exclamationmark.triangle.fill").font(.title2.weight(.semibold)).foregroundStyle(.orange)
-            Text(text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            HStack {
-                if model.logPath != nil { Button("Show Log") { model.showLog() } }
-                Spacer()
-                Button("Back") { model.readState(); model.phase = model.installed == nil ? .welcome : .home }.keyboardShortcut(.defaultAction)
+        VStack(spacing: 18) {
+            Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Something went wrong", systemImage: "exclamationmark.triangle.fill").font(.title3.weight(.semibold)).foregroundStyle(Palette.blood)
+                Text(text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard()
+            Spacer(minLength: 0)
+            GlassEffectContainer(spacing: 12) {
+                HStack(spacing: 12) {
+                    if model.logPath != nil { Button("Show Log", systemImage: "doc.text.magnifyingglass") { model.showLog() }.buttonStyle(.glass) }
+                    Spacer()
+                    Button("Back") { model.readState(); model.phase = model.installed == nil ? .welcome : .home }
+                        .primaryGlass().controlSize(.large).keyboardShortcut(.defaultAction)
+                }
+            }
+            .frame(maxWidth: 600)
         }
     }
 }
