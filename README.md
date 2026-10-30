@@ -62,20 +62,20 @@ MetalFX is Apple's edge-aware upscaler. D2R Metal draws the interface and text a
 - **Mac**: Native output, with the 3D world at a scale chosen for your chip (75% of a 2560-wide screen on a base M-series chip, full size on Max and Ultra). On this setup the GPU time per frame is about the same as drawing the whole picture at 1920 × 1080 and enlarging it, and text is visibly crisper.
 - **iPhone / iPad**: the 3D world at 75% of the screen's full resolution.
 
-Both also use the game's own PC options the Switch build leaves off: SMAA anti-aliasing and up to 16x texture filtering, with colors shown as the game was made (sRGB) on wide-gamut screens.
+Both also use the game's own PC options the Switch build leaves off: SMAA anti-aliasing and up to 16x texture filtering, with colors shown as the game was made (sRGB) on wide-gamut screens. On the Mac, scenery (trees, walls, fences, buildings) also casts shadows as on PC; the Switch keeps shadows to characters.
 
 Full frames from the same build and the same spot; only the setting changed. Click one for full size.
 
-**Mac, 2560 × 1440 screen, full screen.** Left: the original 1600 × 900, stretched, with the game's FXAA. Right: D2R Metal's Recommended on an M6: the interface at the screen's native 2560 × 1440, the 3D world at 75% enlarged by MetalFX, SMAA and 16x texture filtering.
+**Mac, 2560 × 1440 screen, full screen.** Left: the original 1600 × 900, stretched, with the game's FXAA. Right: D2R Metal's Recommended on an M6: the interface at the screen's native 2560 × 1440, the 3D world at 75% enlarged by MetalFX, SMAA, 16x texture filtering and environment shadows.
 
 <table><tr><th>Original</th><th>D2R Metal Recommended</th></tr><tr>
-<td><img width="440" alt="Mac, 1600 × 900 stretched, FXAA" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/11a-mac-original-1600.jpg" /></td>
-<td><img width="440" alt="Mac, native 2560 × 1440 interface, 3D at 75% with MetalFX, SMAA, 16x filtering" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/11b-mac-recommended-native.jpg" /></td>
+<td><img width="440" alt="Mac, 1600 × 900 stretched, FXAA" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/17a-mac-original-1600.jpg" /></td>
+<td><img width="440" alt="Mac, native 2560 × 1440 interface, 3D at 75% with MetalFX, SMAA, 16x filtering, environment shadows" src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/17b-mac-recommended.jpg" /></td>
 </tr></table>
 
-The same two frames at 1:1 pixels: interface text, the waypoint and ground, name labels and the character.
+The same two frames at 1:1 pixels: interface text, the waypoint and ground, name labels, the character, and Charsi's forge, where the shelter and the wall now cast shadows.
 
-<p align="center"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/12-mac-detail-1to1.jpg" width="100%" alt="1:1 crops of the two frames: interface text, waypoint and ground, labels and fence, character"></p>
+<p align="center"><img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/18-mac-detail-1to1.jpg" width="100%" alt="1:1 crops of the two frames: interface text, waypoint and ground, labels and fence, character, the forge with environment shadows"></p>
 
 **iPhone 17 Pro, 2622 × 1206** (the phone's screen resolution). Both with the 3D world at 75%. Left: the original, with the game's own upscale and FXAA. Right: D2R Metal's Recommended: MetalFX, SMAA and 16x texture filtering. These frames come from the same iOS app running on a Mac at the phone's resolution and settings; the rendering is the same as on the phone.
 
@@ -100,8 +100,8 @@ Options has five tabs on both platforms: **Video**, **Audio**, **Gameplay**, **S
 - Apply, Discard and Default work like the game's own option pages; Default resets only the tab you are on.
 
 <p align="center">
-  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/13-mac-video-tab-native.jpg" width="49%" alt="The Mac Video tab at Recommended: Fullscreen, Native, Accurate color, Recommended preset, 3D Resolution 75%">
-  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/14-mac-video-tab-graphics.jpg" width="49%" alt="The Mac Video tab's Graphics rows: MetalFX, SMAA, 16x filtering, Frame Rate and Frame Drops">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/19-mac-video-tab-display.jpg" width="49%" alt="The Mac Video tab at Recommended: Fullscreen, Native, Accurate color, Recommended preset, 3D Resolution 75%">
+  <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/20-mac-video-tab-graphics.jpg" width="49%" alt="The Mac Video tab's Graphics rows: MetalFX, SMAA, 16x filtering, Environment Shadows On, Frame Rate and Frame Drops">
 </p>
 <p align="center">
   <img src="https://github.com/PowerBeef/d2r-metal/releases/download/assets/10-mac-settings-player-count.jpg" width="49%" alt="The Settings tab with the game's own Offline Difficulty Scaling row">
