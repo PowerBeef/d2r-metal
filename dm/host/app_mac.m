@@ -167,8 +167,10 @@ static BOOL launcher_handoff(void) {
     __block BOOL ok = NO;
     [NSWorkspace.sharedWorkspace openApplicationAtURL:launcher configuration:NSWorkspaceOpenConfiguration.configuration
                                     completionHandler:^(NSRunningApplication *app, NSError *err) { ok = app != nil && err == nil; dispatch_semaphore_signal(opened); }];
-    if (dispatch_semaphore_wait(opened, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC))) return NO;
-    return ok;
+    BOOL late = dispatch_semaphore_wait(opened, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0;
+    // a hand-over test never falls back to running the game: opened without a test save folder, it would run on the player's own
+    if (tid && (late || !ok)) { fprintf(stderr, "hand-over: the test launcher %s did not open\n", tid); exit(3); }
+    return !late && ok;
 }
 
 int dm_app_bootstrap(int *argc, char ***argv) {

@@ -114,16 +114,15 @@ def opens_for_id(bundle_id):
     return subprocess.run(['swift', '-'], input=code, capture_output=True, text=True, timeout=180).stdout.strip().rstrip('/')
 
 
-def stand_in_launcher(real, where, mark):
-    """A copy of the launcher under its own test id whose program only notes that it was opened: the game, told that id with
-    DM_TEST_LAUNCHER_ID, opens it for the hand-over, so the installed launcher never starts on the player's install during the test
-    (LaunchServices keeps preferring the copy in /Applications for the real id, whatever the build number)"""
+def stand_in_launcher(real, where, scratch):
+    """A copy of the launcher under its own test id, held on its preview screen (LSEnvironment: DM_LAUNCHER_PREVIEW, a scratch root), so it
+    opens as a real app but reads and changes nothing: the game, told that id with DM_TEST_LAUNCHER_ID, opens it for the hand-over, and the
+    installed launcher never starts on the player's install during the test (LaunchServices keeps preferring the copy in /Applications for
+    the real id, whatever the build number). A bare script would not do: the game waits for the launcher to finish launching"""
     app = os.path.join(where, os.path.basename(real))
     subprocess.run(['ditto', real, app], check=True)
-    exe = os.path.join(app, 'Contents', 'MacOS', 'D2RMetalLauncher')
-    with open(exe, 'w') as f: f.write(f'#!/bin/sh\necho opened >> "{mark}"\nexec /bin/sleep 60\n')
-    os.chmod(exe, 0o755)
     pl = plist(app); pl['CFBundleIdentifier'] = STAND_IN_ID; pl.pop('CFBundleURLTypes', None)   # nor does it claim d2rmetal://
+    pl['LSEnvironment'] = {'DM_LAUNCHER_PREVIEW': 'empty', 'DM_LAUNCHER_ROOT': scratch}
     with open(os.path.join(app, 'Contents', 'Info.plist'), 'wb') as f: plistlib.dump(pl, f)
     subprocess.run(['codesign', '--force', '--deep', '-s', '-', app], check=True, capture_output=True)
     subprocess.run([LSREGISTER, '-f', app], capture_output=True)
@@ -253,11 +252,11 @@ def main(argv):
         # 4. the updated game
         if not a.no_game:
             log = os.path.expanduser('~/Library/Logs/D2R Mobile/host.log'); m0 = os.path.getmtime(log) if os.path.exists(log) else 0
-            stand_dir = os.path.join(run, 'Apps.noindex'); os.makedirs(stand_dir); mark = os.path.join(run, 'stand-in.txt')
-            stand = stand_in_launcher(a.launcher, stand_dir, mark)
+            stand_dir = os.path.join(run, 'Apps.noindex'); os.makedirs(stand_dir)
+            stand = stand_in_launcher(a.launcher, stand_dir, os.path.join(run, 'stand-in-root'))
             check('a stand-in launcher is registered for the hand-over', wait_for(lambda: opens_for_id(STAND_IN_ID) == stand, 20, 1), opens_for_id(STAND_IN_ID))
             subprocess.run(['open', new_app], check=True, env=dict(os.environ, DM_TEST_LAUNCHER_ID=STAND_IN_ID))   # open hands its environment to the app
-            stand_up = wait_for(lambda: os.path.exists(mark), 15)
+            stand_up = wait_for(lambda: running(f'{stand}/Contents/MacOS/'), 15)
             game_gone = wait_for(lambda: not running(f'{new_app}/Contents/MacOS/'), 10)
             check('opened directly, the game hands over to the launcher', stand_up and game_gone and not running(launcher_proc)
                   and (os.path.getmtime(log) if os.path.exists(log) else 0) == m0,

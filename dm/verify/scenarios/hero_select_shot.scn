@@ -1,0 +1,18 @@
+# The hero-select screen (the campfire scene of the new-character page), held for a few seconds and captured: a picture-quality check of that 3D
+# scene under the picture settings a run is given (DM_TEST_VIDEO_FIRSTBOOT=1 for the recommended ones, DM_3D_SCALE / DM_MFX3D to force others)
+name hero_select_shot
+requires mac-app
+save warlock
+timeout 240
+
+expect main_menu timeout=120
+sleep 1
+press PLUS
+sleep 1
+press DOWN
+press A
+expect_state panels~=CharacterCreatePanel timeout=20
+sleep 8
+screenshot hero_select.png
+quit
+check no_red
