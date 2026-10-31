@@ -25,6 +25,17 @@ say() { echo "[$(date +%T)] $*"; }
 die() { echo "🔴 $*" >&2; exit 1; }
 pin() { awk -F'\t' -v k="$1" '$1 == k { print $2 }' "$HERE/release_pins.txt"; }
 sha() { shasum -a 256 "$1" | cut -c1-64; }
+# Every Mach-O in a pack loads only macOS's own libraries or the pack's own (@rpath / @loader_path / @executable_path): players install nothing
+# (no Homebrew, Xcode or runtimes), so a library from the build Mac would fail on theirs. Prints the offenders
+self_contained() {
+  local bad=0 f
+  while IFS= read -r -d '' f; do
+    file -b "$f" | grep -q Mach-O || continue
+    if otool -l "$f" | awk '/cmd LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD|LOAD_UPWARD)_DYLIB$/ { getline; getline; print $2 }' \
+         | grep -v -E '^(/usr/lib/|/System/Library/|@rpath/|@loader_path/|@executable_path/)' | sed "s|^|  ${f#"$1"/} loads |" | grep .; then bad=1; fi
+  done < <(find "$1" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.so' \) -print0)
+  [ $bad = 0 ]
+}
 size() { stat -f %z "$1"; }
 
 ID=
@@ -61,11 +72,20 @@ if [ ! -f "$TC/$TOOLS_NAME" ]; then
   "$T/python/bin/python3" -m pip install -q --no-cache-dir --disable-pip-version-check --root-user-action=ignore --only-binary :all: $(pin pip)
   "$T/python/bin/python3" -c 'import lz4, capstone, numpy, PIL; assert capstone.__version__.startswith("5")' || die "the pinned packages do not import"
   cp "$T/python/lib/python3.14/LICENSE.txt" "$T/licenses/Python.txt" 2>/dev/null || true
-  dotnet publish "$WT/dm/gfx/tools/dmsh_xlate" -c Release -r osx-arm64 --self-contained true -o "$T/dmsh_xlate" -v quiet > /dev/null
+  # the shader translator, self-contained, built with Microsoft's own .NET SDK (pinned, cached across releases): a source-built .NET such as
+  # Homebrew's links Homebrew libraries (brotli) that players do not have
+  DN=$CACHE/dotnet-sdk-$(pin dotnet_sdk_version)
+  if [ ! -x "$DN/dotnet" ]; then
+    curl -fsSL "$(pin dotnet_sdk_url)" -o "$WORK/dl/dotnet.tgz"
+    [ "$(shasum -a 512 "$WORK/dl/dotnet.tgz" | cut -c1-128)" = "$(pin dotnet_sdk_sha512)" ] || die "the .NET SDK does not match its pinned checksum"
+    rm -rf "$DN.part"; mkdir -p "$DN.part"; tar -xzf "$WORK/dl/dotnet.tgz" -C "$DN.part"; mv "$DN.part" "$DN"
+  fi
+  DOTNET_ROOT=$DN DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 NUGET_PACKAGES=$CACHE/nuget \
+    "$DN/dotnet" publish "$WT/dm/gfx/tools/dmsh_xlate" -c Release -r osx-arm64 --self-contained true -o "$T/dmsh_xlate" -v quiet > /dev/null \
+    || die "the shader translator did not build with the .NET SDK"
   "$T/dmsh_xlate/dmsh_xlate" --source-sha > /dev/null || die "the self-contained translator does not start"
   cp "$WT/dm/third_party/ryujinx/LICENSE.txt" "$T/licenses/Ryujinx.txt"
-  DR=$(dirname "$(dirname "$(readlink -f "$(command -v dotnet)")")")/libexec; [ -d "$DR" ] || DR=${DOTNET_ROOT:-}
-  for f in LICENSE.txt ThirdPartyNotices.txt; do [ ! -f "$DR/$f" ] || cp "$DR/$f" "$T/licenses/dotnet-$f"; done
+  for f in LICENSE.txt ThirdPartyNotices.txt; do [ ! -f "$DN/$f" ] || cp "$DN/$f" "$T/licenses/dotnet-$f"; done
   [ "$(brew list --versions spirv-cross | awk '{print $2}')" = "$(pin spirv_cross_version)" ] || die "Homebrew spirv-cross is not $(pin spirv_cross_version)"
   cp -L "$(brew --prefix)/bin/spirv-cross" "$T/bin/spirv-cross"; cp "$(brew --prefix spirv-cross)/LICENSE" "$T/licenses/SPIRV-Cross.txt" 2>/dev/null || true
   otool -L "$T/bin/spirv-cross" | tail -n +2 | grep -v -E '^\s+/usr/lib/|/System/' && die "spirv-cross links libraries outside the system"
@@ -75,6 +95,7 @@ if [ ! -f "$TC/$TOOLS_NAME" ]; then
   # every Mach-O of the pack carries the release's signature (the launcher checks python3's)
   find "$T" -type f \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0 | while IFS= read -r -d '' f; do
     if file -b "$f" | grep -q Mach-O; then sign "$f"; fi; done
+  self_contained "$T" || die "the tools pack loads libraries from outside macOS and itself (above)"
   (cd "$T" && COPYFILE_DISABLE=1 tar -czf "$TC/$TOOLS_NAME" .)
 fi
 
@@ -129,6 +150,7 @@ json.dump(m, open(out, 'w'), indent=1, ensure_ascii=False)
 PY
 }
 write_manifest "$RT/manifest.json" 0   # the pack's own copy: what install.py reads (version, build, update URL)
+self_contained "$RT" || die "the runtime pack loads libraries from outside macOS and itself (above)"
 (cd "$RT" && COPYFILE_DISABLE=1 tar -czf "$OUT/$RUNTIME_NAME" .)
 cp "$TC/$TOOLS_NAME" "$OUT/$TOOLS_NAME"
 

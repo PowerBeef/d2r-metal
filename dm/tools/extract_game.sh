@@ -35,6 +35,8 @@ awk -F= '{ v = $2; gsub(/[ \t\r]/, "", v); if (NF < 2 || v !~ /^[0-9a-fA-F]+$/ |
   END { if (skipped) printf "%d key line(s) of the wrong length skipped | 跳过 %d 行长度不对的密钥\n", skipped, skipped > "/dev/stderr" }' "$KEYS" > "$KH/.switch/prod.keys" \
   || die "读不了密钥文件 | cannot read the key file: $KEYS"
 say() { echo "[$(date +%T)] $*"; }
+# SHA-256 with Python (the launcher's own, DM_PY, on a player's Mac): shasum is a Perl script, and Perl may leave macOS some day
+sha256() { "${DM_PY:-python3}" -E -s -c 'import hashlib, sys; print(hashlib.file_digest(open(sys.argv[1], "rb"), "sha256").hexdigest())' "$1" 2> /dev/null; }
 # 拆不开时：hactool 嫌某一行密钥长度不对，报的是那行的值（一个密钥）。不把值打出来，按值找回是哪个文件的哪个键：prod.keys，或标题密钥（你的 ~/.switch/title.keys 加票据里取的）
 # When unpacking fails: if hactool rejects a key line for its length it reports that line's value (a key). Don't print the value; find by it which key of which file it is: prod.keys, or the title keys (your ~/.switch/title.keys plus those taken from the tickets)
 keyhint() { local v n f w; v=$(sed -n 's/.*Key (\([0-9a-fA-F]*\).*) must be.*/\1/p' "$1" | head -1); [ -n "$v" ] || return 0
@@ -107,7 +109,7 @@ ht -t nca --basenca="$BASE" --exefsdir="$OUT.part/ExeFS" --romfsdir="$OUT.part/R
 # Version check: the checksums of the three program files must be those of 3.3.94012
 ok=1
 while read -r want name; do
-  got=$(shasum -a 256 "$OUT.part/ExeFS/$name" 2> /dev/null | cut -c1-64)
+  got=$(sha256 "$OUT.part/ExeFS/$name")
   if [ "$got" = "$want" ]; then echo "  ✓ $name"; else echo "  ✗ $name 不是 3.3.94012 的 | is not the 3.3.94012 one (${got:-文件不在 | file missing})"; ok=0; fi
 done <<SUMS
 55fd909bb7230b002357e5b0d8499c11f06888f345c49e69eb4734df44a27d0e main

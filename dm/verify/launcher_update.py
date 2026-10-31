@@ -10,8 +10,11 @@
   4. Checks the updated game: opened directly it hands over to the launcher; a scenario (enter_game) runs in game on it.
   5. Goes back to the previous version (the engine's revert, as the gear menu does) and checks the old app is back.
   6. Cleans up: the copy's apps unregistered, the copy deleted (--keep keeps it), the test bundle's caches and settings removed.
+With --clean-mac the launcher runs in a sandbox that hides Homebrew, /usr/local, Xcode and the Command Line Tools (what a Mac without
+them sees), the copy's shader cache is emptied first so the update translates every shader again, and a Repair then redoes every step
+but unpacking in the same sandbox: proof that the packs carry everything they need.
 
-Usage: launcher_update.py --feed file:///…/manifest.json [--root <install root>] [--launcher <D2R Metal Launcher.app>] [--keep] [--no-game]
+Usage: launcher_update.py --feed file:///…/manifest.json [--root <install root>] [--launcher <D2R Metal Launcher.app>] [--clean-mac] [--keep] [--no-game]
 Last lines: LAUNCHER-UPDATE OK|RED, then RESULT {json}. Needs the workspace venv for the scenario step.
 """
 import argparse, datetime, glob, hashlib, json, os, plistlib, shutil, subprocess, sys, tempfile, time, urllib.request
@@ -24,6 +27,9 @@ LAUNCHER_ID = 'org.d2rmetal.launcher'
 APP = 'D2R Metal.app'
 LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 checks = []
+# what a Mac without Homebrew, /usr/local, Xcode or the Command Line Tools would see (sandbox-exec profile)
+CLEAN_MAC = ('(version 1)(allow default)\n(deny file-read* file-write* process-exec (subpath "/opt/homebrew") (subpath "/usr/local") '
+             '(regex #"^/Applications/Xcode[^/]*\\.app/") (subpath "/Library/Developer"))')
 
 
 def check(name, ok, detail=''):
@@ -101,6 +107,8 @@ def main(argv):
     ap.add_argument('--launcher', default='/Applications/D2R Metal Launcher.app')
     ap.add_argument('--keep', action='store_true', help='keep the copy afterwards')
     ap.add_argument('--no-game', action='store_true', help='skip the in-game checks (handoff, scenario)')
+    ap.add_argument('--clean-mac', action='store_true', help='run the launcher where Homebrew, /usr/local, Xcode and the Command Line Tools are '
+                    'hidden, translate every shader again and redo every step but unpacking')
     a = ap.parse_args(argv)
 
     with urllib.request.urlopen(a.feed) as r: target = json.load(r)
@@ -126,17 +134,31 @@ def main(argv):
 
         # 2. the launcher's Update, on the copy
         exe = os.path.join(a.launcher, 'Contents', 'MacOS', 'D2RMetalLauncher')
-        env = dict(os.environ, DM_LAUNCHER_ROOT=root, DM_LAUNCHER_FEED=a.feed, DM_LAUNCHER_BUNDLE_ID=TEST_ID, DM_LAUNCHER_AUTORUN='update')
-        t0 = time.time()
-        p = subprocess.run([exe], env=env, capture_output=True, text=True, timeout=1800)
-        line = next((l for l in p.stdout.splitlines() if l.startswith('LAUNCHER-AUTORUN')), '')
-        check("the launcher's update", p.returncode == 0 and ' OK ' in line + ' ', f'{line or p.stdout[-300:]} ({time.time() - t0:.0f} s)')
+        if a.clean_mac:
+            check('the sandbox hides Homebrew', subprocess.run(['sandbox-exec', '-p', CLEAN_MAC, '/bin/ls', '/opt/homebrew'], capture_output=True).returncode != 0)
+            shutil.rmtree(os.path.join(root, 'build', 'cache', 'metal_shader_cache'), ignore_errors=True)   # the copy's: every shader is translated again
+
+        def launcher(job):
+            env = dict(os.environ, DM_LAUNCHER_ROOT=root, DM_LAUNCHER_FEED=a.feed, DM_LAUNCHER_BUNDLE_ID=TEST_ID, DM_LAUNCHER_AUTORUN=job)
+            t0 = time.time()
+            p = subprocess.run((['sandbox-exec', '-p', CLEAN_MAC] if a.clean_mac else []) + [exe], env=env, capture_output=True, text=True, timeout=2400)
+            line = next((l for l in p.stdout.splitlines() if l.startswith('LAUNCHER-AUTORUN')), '')
+            return p.returncode == 0 and ' OK ' in line + ' ', f'{line or p.stdout[-300:]} ({time.time() - t0:.0f} s)'
+
+        ok, detail = launcher('update')
+        check("the launcher's update" + (' (clean Mac)' if a.clean_mac else ''), ok, detail)
 
         # 3. what the update did
         evs = engine_events(root)
         steps = {e['step']: e['state'] for e in evs if e.get('event') == 'step' and e.get('state') in ('done', 'kept', 'fail')}
         check('engine steps', steps.get('unpack') == 'kept' and steps.get('app') == 'done' and 'fail' not in steps.values(),
               ', '.join(f'{k} {v}' for k, v in steps.items()))
+        if a.clean_mac:
+            missing = [l.strip()[:160] for l in open(sorted(glob.glob(os.path.join(root, 'logs', 'install-*.log')), key=os.path.getmtime)[-1], errors='replace')
+                       if any(w in l for w in ('Library not loaded', '/opt/homebrew', '/usr/local/', 'xcrun', 'CommandLineTools'))]
+            fresh = len(glob.glob(os.path.join(root, 'build', 'cache', 'metal_shader_cache', 'b-*', '*_b.metal')))
+            check('every shader translated again, nothing from outside the packs', steps.get('shaders') in ('done', 'kept') and fresh > 6000 and not missing,
+                  f'{fresh} shader sources' + (f'; {missing[0]}' if missing else ''))
         st = json.load(open(sp)); new_app = os.path.join(root, 'Game.noindex', APP)
         check('state.json', (st.get('release') or {}).get('version') == tv and (st.get('release') or {}).get('build') == tb
               and (st.get('previous_release') or {}).get('version') == ov and st.get('app') == new_app
@@ -187,6 +209,11 @@ def main(argv):
         check('back to the previous version', rv.returncode == 0 and plist(new_app).get('CFBundleShortVersionString') == ov
               and (st2.get('release') or {}).get('version') == ov and plist(prev).get('CFBundleShortVersionString') == tv,
               f"app {plist(new_app).get('CFBundleShortVersionString')}, kept {plist(prev).get('CFBundleShortVersionString') if os.path.isdir(prev) else '-'}")
+        if a.clean_mac:   # last: Repair replaces the app, and with it the previous version the checks above look at
+            ok, detail = launcher('repair')
+            rep = {e['step']: e['state'] for e in engine_events(root) if e.get('event') == 'step' and e.get('state') in ('done', 'kept', 'fail')}
+            check('Repair redoes every step but unpacking (clean Mac)', ok and 'fail' not in rep.values() and len(rep) == 9,
+                  detail + ' · ' + ', '.join(f'{k} {v}' for k, v in rep.items()))
     except Exception as e:   # noqa: BLE001 -- any failure is a red check, and the clean-up below still runs
         check('ran to the end', False, f'{type(e).__name__}: {e}')
     finally:

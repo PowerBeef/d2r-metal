@@ -22,7 +22,7 @@ case "${1:-}" in
     HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); PY=${DM_PY:-${DM_ROOT:-$HOME/dm-work}/build/cache/dm/venv/bin/python3}; NSO=${DM_NSO_DIR:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/ExeFS}
     # 每种产物三个模块都改写成功后最后写完成标记 .complete（内容 = 这次用的 patch_nso.py 的校验值），重出前先删：setup.sh 凭它判断产物齐全、是不是当前改写器出的
     # After all three modules of a kind are rewritten successfully, the completion stamp .complete is written last (content = the checksum of the patch_nso.py used); it is deleted before rebuilding: setup.sh uses it to tell whether the build output is complete and was made by the current rewriter
-    SRC=$(shasum -a 256 "$HERE/patch_nso.py" | cut -c1-64)
+    SRC=$("$PY" -E -s -c 'import hashlib, sys; print(hashlib.file_digest(open(sys.argv[1], "rb"), "sha256").hexdigest())' "$HERE/patch_nso.py")   # Python, not shasum (Perl; players' Macs may lack it some day)
     shift; KINDS=${*:-keypage rules touch}
     for k in $KINDS; do case $k in keypage|rules|touch) ;; *) echo "🔴 unknown kind $k (keypage / rules / touch)" >&2; exit 2;; esac; O=${DM_ROOT:-$HOME/dm-work}/build/cache/dm/out/$P-$k; mkdir -p "$O"; rm -f "$O/.complete"
       # 每种的开关都写全（touch 的 DM_PRIVATE_GATES=1 原先靠缺省，调用方环境里漏进 0 就出成不带私有门的 touch、还照样打完成标记）；-I 不让 PYTHONOPTIMIZE 等环境变量去掉改写器的核对
