@@ -154,6 +154,13 @@ static void notice_input_obs(const uint64_t *regs) {
 void dm_padmode_boot(void) {   // 开机：游戏建面板之前（main.c，nnMain 前） | Boot: before the game builds its panels (main.c, before nnMain)
     if (gate_obs_present(OBS_NOTICE_INPUT)) gate_obs_set(OBS_NOTICE_INPUT, notice_input_obs);
     module_t *m = NULL; for (int i = 0; i < g_nmod; ++i) if (!strcmp(g_mod[i].name, "main")) m = &g_mod[i]; char mk[1100];
+    if (m && getenv("DM_PROBE_PC_LAYOUTS")) {   // PROBE: point the three layout prefixes at folders that don't exist, so Panel_Load falls back to the PC layouts
+        int mask = atoi(getenv("DM_PROBE_PC_LAYOUTS")); if (!mask) mask = 7;
+        for (int i = 0; i < 3; i++) { char *p = (char *)m->base + k_pfx[i].off; if (!(mask >> i & 1)) continue;
+            if (strcmp(p, k_pfx[i].pad)) { LOG("【红】PC probe: main+%#x is not %s", k_pfx[i].off, k_pfx[i].pad); return; }
+            p[0] = 'Q'; }
+        LOG("PC probe: layout prefixes point nowhere, the PC layouts load"); return;
+    }
     if (!m || !getenv("DM_ROMFS_OVERLAY")) return;
     if (!dm_overlay_file("ctrl_touch", mk, sizeof mk)) { LOG("手柄 / 触屏布局：覆盖层没有 ctrl_touch 标记，照原版布局"); return; }
     int pad = getenv("DM_APP") != NULL;   // Mac App：没有触屏圆钮与底栏的绘制层，开机就用原版手柄版（我们的功能页在手柄版布局里同样有），之后也不切 | Mac App: there is no drawing layer for the touch buttons and bottom bar, so it starts in the original gamepad UI (our feature pages exist in the gamepad layout as well) and never switches afterwards
