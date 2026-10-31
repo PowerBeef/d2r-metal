@@ -1,8 +1,5 @@
 # D2R Metal Launcher
 
-> [!NOTE]
-> **Coming soon.** The launcher is not released yet; it arrives with the project's first release. Until then, build the Mac App from source ("Getting started" in the [README](../README.md#getting-started)). This page describes the launcher as it will ship.
-
 The launcher installs D2R Metal on your Mac from your own game files and keeps it up to date from this project's GitHub releases. It needs no Xcode, Homebrew, .NET or Python on your Mac: everything it runs comes with the release, and the parts made from your game files are built on your Mac and never leave it.
 
 ## What you need
@@ -16,7 +13,7 @@ The launcher installs D2R Metal on your Mac from your own game files and keeps i
 
 ## Install
 
-1. Download `D2R-Metal-Launcher-<version>.dmg` from the [releases page](https://github.com/PowerBeef/d2r-metal/releases), open it and drag **D2R Metal Launcher** to Applications. It is signed with the project's Developer ID and notarized by Apple, so it opens normally.
+1. Download `D2R-Metal-Launcher-<version>.dmg` from the [latest release](https://github.com/PowerBeef/d2r-metal/releases/latest), open it and drag **D2R Metal Launcher** to Applications. It is signed with the project's Developer ID and notarized by Apple, so it opens normally.
 2. Open it, choose your game packages and `prod.keys` (or drop them on the window), or your extracted folder, and press **Install**.
 3. The first install takes about 10–15 minutes on a recent Mac. The window shows each step:
 
@@ -39,8 +36,7 @@ continues where it stopped, and if your game files were already unpacked the wel
 4. Press **Play**.
 
 The launcher is how you open the game, as Battle.net is for Blizzard's games: D2R Metal itself is not in Applications or in app search. If you open
-it some other way (a Dock icon kept from an earlier session, say), it opens the launcher instead. An install made by launcher 0.9.6 or earlier,
-which put the app in Applications, is moved into the launcher's folder the first time a newer launcher opens; the old copy becomes the previous version.
+it some other way (a Dock icon kept from an earlier session, say), it opens the launcher instead.
 
 ## Updates
 
@@ -162,8 +158,9 @@ dm/tools/release_mac.sh 1.0.0 --no-upload        # a signed dry run (it still no
   `org.d2rmetal.manifest-signing`); `release_mac.sh` signs `manifest.json` with it. **Rotating it:** make a new key on the release Mac (delete the
   old item first), add its public key (`manifest_sign.swift public`) to `ManifestSignature.publicKeys` beside the old one, ship that launcher in a
   release signed with the old key, sign the next releases with the new key, and drop the old public key a release later.
-- **Never mark another release as "latest":** the stable channel and the in-game notice read GitHub's latest release. The `assets` release (README
-  images) is a pre-release for that reason.
+- **The releases page holds only D2R Metal releases.** The launcher and the in-game notice read GitHub's latest release, so nothing else may become
+  "latest" (`--check-latest` says so); the README's images live in `docs/images`, not on a release.
+- **Publishing:** check the draft on github.com, then publish it (or `gh release edit v<version> --draft=false --latest`) and run `--check-latest`.
 
 **Testing the launcher against a local release:**
 

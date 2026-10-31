@@ -1,6 +1,6 @@
 # Getting your game files
 
-**You must own the game.** This project only lets you run the Nintendo Switch release of Diablo II: Resurrected, which you have already bought, on your own iPhone or iPad. This repository does not contain any game files and never will. Do not ask others for game files or share them, and do not post game files or download links in issues or pull requests.
+**You must own the game.** This project only lets you run the Nintendo Switch release of Diablo II: Resurrected, which you have already bought, on your own Mac, iPhone or iPad. This repository does not contain any game files and never will. Do not ask others for game files or share them, and do not post game files or download links in issues or pull requests.
 
 ## Which files
 
@@ -23,7 +23,7 @@ When dumping, pick the game's **Update** and dump its ExeFS and RomFS sections.
 
 ## If you already have a game package: one command
 
-Coming soon on the Mac: **D2R Metal Launcher** will take the packages and your `prod.keys` directly and do the rest ([LAUNCHER.md](LAUNCHER.md)). Until it is released, unpack them yourself:
+**On a Mac, use D2R Metal Launcher:** it takes the packages and your `prod.keys` directly and does the rest, with its own copy of hactool ([LAUNCHER.md](LAUNCHER.md)). To build from source (for iPhone and iPad, say), unpack them yourself:
 
 If what you dumped is a whole game package (`.xci` or `.nsp` containing both the base game and the 3.3.94012 update), you do not need to unpack it by hand:
 

@@ -53,7 +53,7 @@ Not needed to build the app or run the Mac smoke test; only for on-device smoke 
 
 ## What the launcher's release packs ship
 
-Players who install with D2R Metal Launcher ([LAUNCHER.md](LAUNCHER.md); coming with the first release) need none of the build tools above. Every program and library in the packs loads only macOS's own libraries or the pack's own; the release script refuses to build a pack that does not. Each release carries the pieces below, built and pinned by `dm/tools/release_mac.sh` from `dm/tools/release_pins.txt` (with `release_requirements.txt` for the wheels' hashes and `release_nuget.tsv` for the NuGet packages), with their license texts in each pack's `licenses/` folder; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them all.
+Players who install with D2R Metal Launcher ([LAUNCHER.md](LAUNCHER.md)) need none of the build tools above. Every program and library in the packs loads only macOS's own libraries or the pack's own; the release script refuses to build a pack that does not. Each release carries the pieces below, built and pinned by `dm/tools/release_mac.sh` from `dm/tools/release_pins.txt` (with `release_requirements.txt` for the wheels' hashes and `release_nuget.tsv` for the NuGet packages), with their license texts in each pack's `licenses/` folder; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them all.
 
 | Piece | Version | License | Upstream |
 |---|---|---|---|

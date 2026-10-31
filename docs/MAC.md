@@ -1,20 +1,22 @@
 # Playing on a Mac (macOS App)
 
-On an Apple silicon Mac this project can be built into a native macOS App, `D2R Metal.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (the Extras page, the Video tab and so on), using the original's gamepad interface.
+On an Apple silicon Mac D2R Metal is a native macOS App, `D2R Metal.app`, with keyboard, mouse, trackpad and gamepad all working. It runs the same game and the same features as on iPhone and iPad (the Extras page, the Video tab and so on), using the game's own gamepad interface. Most players install it with **D2R Metal Launcher**; it can also be built from source.
 
 **How it has been tried**: the App is played on an M6 Mac with the keyboard, the mouse and an Xbox Wireless Controller, windowed and in full screen, and quit from the menu and the Dock. Where this page says "verified" without more, the check was an unattended run: keys and mouse events injected by a test script, quitting, full screen and resizing through test switches. What nobody has tried by hand yet is listed under [Known shortcomings](#known-shortcomings); if you try one of those, please open an Issue and tell us how it went.
 
 ## Requirements
 
-Apple silicon and **macOS 27 or later** (Intel Macs are not supported; see "[Which devices are supported](../README.md#which-devices-are-supported)" in the README for every device). D2R Metal draws only through Metal 4 and uses what macOS 27 adds, without fallbacks for older systems; on an earlier system the App does not open (the system says it cannot be used with this version of macOS).
+Apple silicon and **macOS 27 or later** (Intel Macs are not supported; see "[Supported devices](../README.md#supported-devices)" in the README for every device). D2R Metal draws only through Metal 4 and uses what macOS 27 adds, without fallbacks for older systems; on an earlier system the App does not open (the system says it cannot be used with this version of macOS).
 
-## The launcher (coming soon)
+## Install with the launcher
 
-**D2R Metal Launcher** will be the easy way: it builds the app on your Mac from your own game packages (or an extracted folder) and keeps it updated from this project's GitHub releases, with no Xcode, Homebrew or developer account. It is not released yet and arrives with the first release; until then, build the App from source as below. What it will do is in [LAUNCHER.md](LAUNCHER.md). An app it installs compiles the game's shaders with macOS's own compiler: once at install (a few minutes), and once more after each macOS update, with a progress window.
+Download **D2R Metal Launcher** from the [latest release](https://github.com/PowerBeef/d2r-metal/releases/latest), choose your game packages and `prod.keys` (or an extracted folder) and press **Install**. It builds the App on your Mac from your own files and keeps it up to date from this project's releases, with no Xcode, Homebrew or developer account; open the game from the launcher from then on. An app it installs compiles the game's shaders with macOS's own compiler: once at install (a few minutes), and once more after each macOS update, with a progress window. Everything about it is in [LAUNCHER.md](LAUNCHER.md).
+
+The rest of this page applies to both kinds of App, except where it says otherwise.
 
 ## Build from source
 
-The prerequisites are the same as for iOS: game files in place and `./setup.sh` finished (see "Getting started" in the README). Then:
+Build it yourself to work on the project, or to sign it with a paid developer account for iCloud save sync. The prerequisites are the same as for iOS: game files in place and `./setup.sh` finished (see "Getting started" in the README). Then:
 
 ```bash
 source ~/dm-work/build/cache/dm/venv/bin/activate
@@ -27,11 +29,11 @@ The App contains only our own program. The rewritten game program, the shader li
 
 Version and build number can be set: `DM_MAC_VERSION` (default 1.0) and `DM_MAC_BUILD` (default: the current month-day-hour-minute).
 
-The App gets the project's own icon (`dm/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png`). Use your own picture with `DM_MAC_ICON_SOURCE=<image>` (an opaque square that fills the whole picture; macOS 26 and later round the corners themselves, and a picture with transparent margins is shown shrunk inside a gray frame), or build without an icon with `DM_MAC_ICON_SOURCE=none`.
+The App gets the project's own icon (the layered Runestone icon from `dm/brand`). Use your own picture with `DM_MAC_ICON_SOURCE=<image>` (an opaque square that fills the whole picture; macOS 26 and later round the corners themselves, and a picture with transparent margins is shown shrunk inside a gray frame), or build without an icon with `DM_MAC_ICON_SOURCE=none`.
 
 ## First launch
 
-Double-click the App. The first launch asks you to choose the **game resource folder**: pick `~/dm-work/data/switch/3.3.94012/Update` (or the `RomFS` inside it); it must contain a `data` folder. Choosing the folder that directly holds the `.data` files and `build_manifest.psv` also works. A wrong choice is explained and you are asked again; a correct one is remembered.
+Open the game from the launcher (an App it installs already knows where your game files are) or double-click an App you built. An App you built asks on its first launch for the **game resource folder**: pick `~/dm-work/data/switch/3.3.94012/Update` (or the `RomFS` inside it); it must contain a `data` folder. Choosing the folder that directly holds the `.data` files and `build_manifest.psv` also works. A wrong choice is explained and you are asked again; a correct one is remembered.
 
 A key reference is then shown once; afterwards it is under Help in the menu bar.
 
@@ -85,7 +87,7 @@ Options has five tabs: **Video**, **Audio**, **Gameplay**, **Settings** and **Ex
 - **Default** at the bottom of the panel puts the Display rows and the Graphics rows above Frame Rate back to Recommended, Frame Rate to 60 fps and Frame Drops to Keep 3D Res; press Apply to keep it.
 - The settings live in `sw_video.txt` next to the App's saves (Frame Rate and Frame Drops with the Extras options in `sw_custom.txt`). Delete `sw_video.txt` to have the App work out Recommended again.
 
-The mouse pointer hides itself after it has rested over the game window for 3 seconds (handy when playing with the keyboard or a gamepad) and comes back the moment the mouse moves. It never hides over the menu bar, other windows or a dialog. To change the delay: `defaults write org.d2rmobile.mac CursorHideSeconds -float 5` (seconds; `0` turns it off; the older-API build uses `org.d2rmobile.mac.m3`), then restart the App.
+The mouse pointer hides itself after it has rested over the game window for 3 seconds (handy when playing with the keyboard or a gamepad) and comes back the moment the mouse moves. It never hides over the menu bar, other windows or a dialog. To change the delay: `defaults write org.d2rmobile.mac CursorHideSeconds -float 5` (seconds; `0` turns it off), then restart the App.
 
 ## Mouse
 
@@ -118,7 +120,7 @@ What it cannot do yet:
 - Log: `~/Library/Logs/D2R Mobile/host.log` (the previous run is `host.prev.log`). When reporting a problem use Help → Share Log… in the menu bar: it packs these two logs and a version-information file into one archive and lets you choose where to save it; nothing is uploaded, no saves are included, and the user name in the logs is replaced with `~`.
 - No sound: at launch the log has a line `audio：输出设备「…」…，系统缺省输出「…」…` (the output device in use and the system default output; a mismatch is marked red), and on exit a line `声卡回调累计 N` — N = 0 means no sound was played this time. (These log lines are in Chinese.)
 
-**iCloud save sync: off by default in an App you build from this repository; a paid developer account can turn it on.** The program has the same sync as on iPhone / iPad wired in, but it needs the App to carry the iCloud signing entitlement. By default the App is signed locally without it, so saves stay on this Mac, the log records one line saying iCloud is unavailable and only local saves are used, and the game runs as usual. With a paid developer account, download a Mac provisioning profile that carries iCloud, put the `.provisionprofile` into `~/dm-work/mac-sign` (or point `DM_MAC_SIGN_DIR` at its folder) and build with `DM_MAC_ICLOUD=1 dm/tools/mac_app.sh`: the script reads the team, bundle identifier and entitlements from the profile and signs with the matching certificate in your keychain. The bundle identifier in the profile decides the iCloud container, so a profile for your iOS App's identifier syncs with your iPhone / iPad. Contributed by [@xielh96](https://github.com/xielh96) ([#121](https://github.com/jhaizhou-ops/d2r-mobile/pull/121)). Without a paid account, bring your phone's progress over by importing it by hand as below.
+**iCloud save sync: off in the App the launcher installs and by default in an App you build; a paid developer account can turn it on in a build of your own.** The program has the same sync as on iPhone / iPad wired in, but it needs the App to carry the iCloud signing entitlement. By default the App is signed locally without it, so saves stay on this Mac, the log records one line saying iCloud is unavailable and only local saves are used, and the game runs as usual. With a paid developer account, download a Mac provisioning profile that carries iCloud, put the `.provisionprofile` into `~/dm-work/mac-sign` (or point `DM_MAC_SIGN_DIR` at its folder) and build with `DM_MAC_ICLOUD=1 dm/tools/mac_app.sh`: the script reads the team, bundle identifier and entitlements from the profile and signs with the matching certificate in your keychain. The bundle identifier in the profile decides the iCloud container, so a profile for your iOS App's identifier syncs with your iPhone / iPad. Contributed by [@xielh96](https://github.com/xielh96) ([#121](https://github.com/jhaizhou-ops/d2r-mobile/pull/121)). Without a paid account, bring your phone's progress over by importing it by hand as below.
 
 ### Importing saves from an iPhone / iPad
 
@@ -161,4 +163,4 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 - Not tried by hand yet: the resource-folder dialog on a fresh install, and PlayStation or Switch controllers on the Mac (an Xbox Wireless Controller is what has been used).
 - Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class is unverified. There is no right-click skill as on PC.
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
-- An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud"). An app installed by the launcher (coming soon) checks the project's releases and shows a new version on the main menu.
+- An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud"). The App the launcher installs checks the project's releases and shows a new version on the main menu, but keeps its saves on this Mac.

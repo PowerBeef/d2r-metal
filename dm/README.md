@@ -82,6 +82,8 @@ The App compiles the sources of `host/` and `gfx/` in directly. The front-end in
 | `host/` | The host: loading, system call and system library takeover, the Mac front end, in-game features; `host/tests/` holds the unit tests |
 | `gfx/` | The graphics layer: `nvn/` (interface layer and Metal replay), `tex/` (texture formats and deswizzling), `tools/` (shader translation chain), `tests/` |
 | `ios/` | The iOS App: `Sources/`, the project description `project.yml`, the build-and-install script `run.sh`, `tools/` (asset generation, smoke tests, UI regression), `tests/` |
+| `launcher/` | D2R Metal Launcher, the Mac installer and updater (SwiftUI; `LauncherCore` holds the feed, packs, trust and engine code, with its tests). Its install engine is `tools/install.py`, releases are built by `tools/release_mac.sh`; see [../docs/LAUNCHER.md](../docs/LAUNCHER.md) |
+| `brand/` | The logo, the layered app icon and the font, with the scripts that build them into the apps |
 | `verify/` | Verification: the gate `fork_gate.sh`, the rewrite-equivalence regression `regress.sh`, our own baselines `golden.py`, the scenarios, and the record formats they use |
 | `data/` | Small data shipped with the repository: the registry of borrowed paths for the resource overlay. The startup prefetch list is not in the public repository: without it there is no prefetch, and startup skips one step of decoding ahead of time |
 | `i18n/` | The Chinese-English string table `ui_text.tsv`; `scan_literals.py` checks that all Chinese text the player can see goes through this table, with exceptions registered in `literal_whitelist.tsv` |

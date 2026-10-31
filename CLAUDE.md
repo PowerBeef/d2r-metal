@@ -18,6 +18,10 @@ d2r-metal started from `jhaizhou-ops/d2r-mobile` and has been developed independ
 - **Platform scope: macOS and iOS / iPadOS only**, on Apple silicon, macOS / iOS 27 and later, Metal 4 and MetalFX (see "Metal 4 only" under Architecture). There is no Android, HarmonyOS, Vulkan, tvOS or older-API code; don't add any.
 - **Out of scope for good:** features that change the game's rules or economy, or play part of it for the player. On 2026-10-27 the fork deleted those it had inherited (Greater Rift, Boss Rush, Elysium, Kill Board, free town portal / identify, Refresh Stock, auto-drink, mercenary auto-feed, auto-recast buffs, the loot filter, the Runeword helper, the extra storage, the difficulty selectors, the minimap marks and two logic-changing byte patches). The stash stays 10 columns (`inventory.bin` is never patched); Options keeps the game's `OfflineDifficultyScaling` row.
   - Their gate numbers stay retired: OBS 15, 16, 17 and 22 (`OBS_MAX` stays 23) and svc 0x89, 0x8c, 0x8d and 0x8e. Never reuse them. The product revision only moves forward (`dm/PRODUCT`).
+- **Releases and the launcher:** players install the Mac App with D2R Metal Launcher (`dm/launcher`, engine `dm/tools/install.py`, `docs/LAUNCHER.md`) from the GitHub releases; 1.0.0 (2026-10-31) was the first.
+  - `dm/tools/release_mac.sh <version> --notes <file>` builds, signs, notarizes and uploads a draft from a HEAD on `origin/main` (needs the Developer ID identity, the `d2r-notary` notarytool profile and the release key in the keychain); publish it, then `release_mac.sh --check-latest`. Run `--no-upload` first and `dm/verify/launcher_update.py` / `launcher_selfupdate.py` against it.
+  - The launcher and the in-game notice read GitHub's latest release, so the releases page holds only D2R Metal releases.
+  - A release changes the players' installs: build it only when the user asks.
 - **Brand art:** the logo (the Runestone emblem and wordmark), the app icon and the Cinzel font live in `dm/brand` (README there): `icon.sh` puts the icon into the game app, the launcher and the release pack; `out/icon-flat.png` is the iPhone icon.
 - **Branding:** the apps show "D2R Metal" (`mac_app.sh` `NAME`, the Mac window title, the iOS `CFBundleDisplayName`, player-facing strings). Everything player data hangs on keeps the old spelling: the bundle IDs, the Mac data folders (`APP_NAME` "D2R Mobile" in `app_mac.m`), the iOS "D2R Mobile Resources" folder, the `org.d2rmobile.*` IDs and the executable `D2RMobile`. Don't rename those.
 - **`origin`** = `PowerBeef/d2r-metal`. **`main` is the trunk**: all work lands there, and the user's apps are built from it.
@@ -44,6 +48,7 @@ d2r-metal started from `jhaizhou-ops/d2r-mobile` and has been developed independ
 ## Repository rules (CONTRIBUTING.md)
 
 1. **No game content, no engine-analysis output.** Nothing from the game, and nothing generated from it, goes into git, issues or PRs: no program, art, text, shaders, saves, keys or built packages; no decompiled code, disassembly or database files either (see "Game reference").
+   - The one exception: the README's pictures in `docs/images` (screenshots of the game running in D2R Metal, and the project's original art), JPEG / PNG under 2 MB, used by the README only and never by the build or a release. The releases page holds only D2R Metal releases; no images go there.
 2. **English for new comments and docs.**
    - Many existing comments are bilingual (Chinese lines, then English; trailing `中文 | English`). When you edit one, replace the pair with the English text; don't add new Chinese comments.
    - Every source file opens with a comment saying what it does. `dm/host` feature files also list the game addresses they rely on.
