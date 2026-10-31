@@ -243,6 +243,7 @@ DM_PROBE	host	host/diag.c	y
 DM_PROBE_AFTER	host	host/diag.c	y
 DM_PROBE_DUMP	host	host/diag.c	y
 DM_PROBE_MAX	host	host/diag.c	y
+DM_PROBE_PC_LAYOUTS	host	host/dm_padmode.c	y
 DM_PRODUCT_DIR	tools	tools/product.sh	-
 DM_PSO_MANIFEST	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_RECORD	gfx	gfx/nvn/nvn_mtl.m	y
@@ -487,7 +488,7 @@ DM_UIMSG	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift ios/Touc
 DM_UI_169	host	host/dm_uiscreen.c	-
 DM_UI_DUMP	host	host/dm_cursor.c	y
 DM_UI_DUMP_AT	host	host/dm_cursor.c	-
-DM_UI_TAPS	host	host/hle_hid.c	-
+DM_UI_TAPS	host	host/hle_hid.c	y
 DM_UI_TAPS_AT	host	host/dm_cursor.c host/hle_hid.c	-
 DM_UI_YPOS	host	host/dm_uiscreen.c	-
 DM_UPDATE_URL	ios-tools	ios/project.yml	-
