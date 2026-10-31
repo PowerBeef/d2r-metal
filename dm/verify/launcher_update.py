@@ -57,10 +57,20 @@ def sha256(path):
 
 
 def unsigned_sha(binary):
-    """The checksum of a Mach-O binary without its code signature (signing the app rewrites the one in the binary)"""
+    """The checksum of a Mach-O binary without its code signature (signing the app rewrites the one in the binary). Removing a signature leaves
+    __LINKEDIT's vmsize at what the old one needed, larger for a Developer ID signature than an ad-hoc one, so that field is zeroed too"""
     with tempfile.TemporaryDirectory() as d:
         c = os.path.join(d, 'bin'); shutil.copy2(binary, c)
         subprocess.run(['codesign', '--remove-signature', c], capture_output=True)
+        with open(c, 'r+b') as f:
+            head = f.read(32)
+            if head[:4] == b'\xcf\xfa\xed\xfe':   # a thin 64-bit Mach-O (the host is arm64 only)
+                off = 32
+                for _ in range(int.from_bytes(head[16:20], 'little')):
+                    f.seek(off); cmd, size = int.from_bytes(f.read(4), 'little'), int.from_bytes(f.read(4), 'little')
+                    if cmd == 0x19 and f.read(16).rstrip(b'\0') == b'__LINKEDIT':   # LC_SEGMENT_64: segname, vmaddr, then vmsize
+                        f.seek(off + 32); f.write(bytes(8))
+                    off += size
         return sha256(c)
 
 
