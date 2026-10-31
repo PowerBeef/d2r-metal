@@ -87,9 +87,13 @@ def wait_for(cond, timeout, step=0.25):
 
 
 def quit_app(bundle_id, pattern, wait=15):
-    """Asks an app to quit (by bundle id) and waits until no process matches pattern (a path in its command line)"""
+    """Asks an app to quit (by bundle id) and waits until no process matches pattern (a path in its command line); one that is still there (the
+    quit went to another copy with the same id) gets SIGTERM, then SIGKILL: a test never leaves its game running"""
     subprocess.run(['osascript', '-e', f'tell application id "{bundle_id}" to quit'], capture_output=True)
-    wait_for(lambda: not running(pattern), wait)
+    if wait_for(lambda: not running(pattern), wait): return
+    for sig, t in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+        for p in pids(pattern): os.kill(p, sig)
+        if wait_for(lambda: not running(pattern), t): return
 
 
 def snapshot(root):
