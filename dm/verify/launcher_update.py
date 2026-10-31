@@ -7,8 +7,8 @@
      DM_LAUNCHER_BUNDLE_ID=org.d2rmobile.mac.updatetest (its own Metal cache and settings), DM_LAUNCHER_AUTORUN=update. It downloads and
      checks the release's packs, runs the install engine and reports back.
   3. Checks the engine's steps, state.json, the new app (version, icon, signature, host, paths) and the previous version kept for revert.
-  4. Checks the updated game: opened directly it hands over to the launcher (an inert stand-in registered for the launcher's id for the
-     moment, never the installed launcher, which would open on the player's install); a scenario (enter_game) runs in game on it.
+  4. Checks the updated game: opened directly it hands over to the launcher (an inert stand-in under a test id the game is told to look for
+     with DM_TEST_LAUNCHER_ID, never the installed launcher, which would open on the player's install); a scenario (enter_game) runs in game on it.
   5. The hard cases, on the copy: a Repair stopped as Stop does (the engine gets SIGINT): nothing of it keeps running and the lock is free;
      a Repair whose launcher is killed outright: the engine stops its tools by itself, and the next run sweeps what was left and resumes;
      a Repair while the game runs: refused until the game quits; an unreachable feed: said plainly, nothing changed.
@@ -29,6 +29,7 @@ from typing import Any
 DM = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DM_ROOT = os.environ.get('DM_ROOT', os.path.expanduser('~/dm-work'))
 TEST_ID = 'org.d2rmobile.mac.updatetest'
+STAND_IN_ID = 'org.d2rmetal.launcher.handovertest'   # the stand-in launcher's id (DM_TEST_LAUNCHER_ID): never the real launcher's
 LAUNCHER_ID = 'org.d2rmetal.launcher'
 APP = 'D2R Metal.app'
 LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
@@ -114,14 +115,15 @@ def opens_for_id(bundle_id):
 
 
 def stand_in_launcher(real, where, mark):
-    """A copy of the launcher whose program only notes that it was opened: registered with a higher build for the launcher's id, it is what
-    the game's hand-over opens, so the installed launcher never starts on the player's install during the test"""
+    """A copy of the launcher under its own test id whose program only notes that it was opened: the game, told that id with
+    DM_TEST_LAUNCHER_ID, opens it for the hand-over, so the installed launcher never starts on the player's install during the test
+    (LaunchServices keeps preferring the copy in /Applications for the real id, whatever the build number)"""
     app = os.path.join(where, os.path.basename(real))
     subprocess.run(['ditto', real, app], check=True)
     exe = os.path.join(app, 'Contents', 'MacOS', 'D2RMetalLauncher')
     with open(exe, 'w') as f: f.write(f'#!/bin/sh\necho opened >> "{mark}"\nexec /bin/sleep 60\n')
     os.chmod(exe, 0o755)
-    pl = plist(app); pl['CFBundleVersion'] = '999999'
+    pl = plist(app); pl['CFBundleIdentifier'] = STAND_IN_ID; pl.pop('CFBundleURLTypes', None)   # nor does it claim d2rmetal://
     with open(os.path.join(app, 'Contents', 'Info.plist'), 'wb') as f: plistlib.dump(pl, f)
     subprocess.run(['codesign', '--force', '--deep', '-s', '-', app], check=True, capture_output=True)
     subprocess.run([LSREGISTER, '-f', app], capture_output=True)
@@ -253,8 +255,8 @@ def main(argv):
             log = os.path.expanduser('~/Library/Logs/D2R Mobile/host.log'); m0 = os.path.getmtime(log) if os.path.exists(log) else 0
             stand_dir = os.path.join(run, 'Apps.noindex'); os.makedirs(stand_dir); mark = os.path.join(run, 'stand-in.txt')
             stand = stand_in_launcher(a.launcher, stand_dir, mark)
-            check('a stand-in takes the launcher\'s id for the hand-over', wait_for(lambda: opens_for_id(LAUNCHER_ID) == stand, 20, 1), opens_for_id(LAUNCHER_ID))
-            subprocess.run(['open', new_app], check=True)
+            check('a stand-in launcher is registered for the hand-over', wait_for(lambda: opens_for_id(STAND_IN_ID) == stand, 20, 1), opens_for_id(STAND_IN_ID))
+            subprocess.run(['open', new_app], check=True, env=dict(os.environ, DM_TEST_LAUNCHER_ID=STAND_IN_ID))   # open hands its environment to the app
             stand_up = wait_for(lambda: os.path.exists(mark), 15)
             game_gone = wait_for(lambda: not running(f'{new_app}/Contents/MacOS/'), 10)
             check('opened directly, the game hands over to the launcher', stand_up and game_gone and not running(launcher_proc)
@@ -342,6 +344,9 @@ def main(argv):
         # 7. clean up; the player's own install must not have changed
         for app in glob.glob(os.path.join(root, '**', '*.app'), recursive=True):
             subprocess.run([LSREGISTER, '-u', app], capture_output=True)
+        if os.path.realpath(a.launcher) != os.path.realpath(a.installed):   # a launcher run from elsewhere registered itself: the installed one again
+            subprocess.run([LSREGISTER, '-u', a.launcher], capture_output=True)
+            if os.path.isdir(a.installed): subprocess.run([LSREGISTER, '-f', a.installed], capture_output=True)
         cache = subprocess.run(['getconf', 'DARWIN_USER_CACHE_DIR'], capture_output=True, text=True).stdout.strip()
         if cache and os.path.isdir(os.path.join(cache, TEST_ID)): shutil.rmtree(os.path.join(cache, TEST_ID), ignore_errors=True)
         subprocess.run(['defaults', 'delete', TEST_ID], capture_output=True)

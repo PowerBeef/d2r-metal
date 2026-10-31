@@ -159,7 +159,9 @@ void dm_app_msl_env(void) {
 // launcher did not open (an error, or no answer within 5 s): the game then runs rather than leaving the player with nothing
 static BOOL launcher_handoff(void) {
     if (getenv("DM_FROM_LAUNCHER") || getenv("DM_APP_SUPPORT") || ![[NSBundle.mainBundle objectForInfoDictionaryKey:@"DMLauncherManaged"] boolValue]) return NO;
-    NSURL *launcher = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"org.d2rmetal.launcher"];
+    // DM_TEST_LAUNCHER_ID: a test's stand-in launcher (dm/verify/launcher_update.py), so a hand-over test never opens the player's launcher
+    const char *tid = getenv("DM_TEST_LAUNCHER_ID");
+    NSURL *launcher = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:tid ? @(tid) : @"org.d2rmetal.launcher"];
     if (!launcher) return NO;
     dispatch_semaphore_t opened = dispatch_semaphore_create(0);
     __block BOOL ok = NO;

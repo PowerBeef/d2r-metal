@@ -124,6 +124,7 @@ DM_LAUNCHER_ROOT	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_SIGN	tools	tools/launcher_app.sh	-
 DM_LAUNCHER_TEST_FEED	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
 DM_LAUNCHER_TEST_GAME	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
+DM_LAUNCHER_TEST_NETWORK	other	launcher/Tests/LauncherCoreTests/CoreTests.swift	-
 DM_LAUNCHER_TEST_ROOT	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
 DM_LAUNCHER_VERSION	tools	tools/launcher_app.sh	-
 DM_LOADHASH	host	host/loader.c	-
@@ -355,6 +356,7 @@ DM_TEST_KILL	host	host/diag.c	-
 DM_TEST_KILL_AT	host	host/dm_cloudmerge.c host/hle_fs.c	y
 DM_TEST_LAG	host	host/diag.c	-
 DM_TEST_LANG	host	host/dm_custom.c	y
+DM_TEST_LAUNCHER_ID	host	host/app_mac.m	-
 DM_TEST_LEAK	host	host/diag.c	-
 DM_TEST_LEAK_GPU	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_LEGEND	host	host/dm_padmode.c	-

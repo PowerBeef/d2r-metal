@@ -51,19 +51,19 @@ which put the app in Applications, is moved into the launcher's folder the first
   releases page instead; move it to Applications to let it update itself.
 - An update downloads the new release and redoes only what that release changed. Usually that is only the app itself (seconds). A release that changes the shader translation redoes it and the compile (a few minutes).
 - **Quit D2R Metal first:** an update, a repair or going back changes the game's files, so while the game runs the launcher asks you to quit it (leave your game first so your progress is saved).
-- **Go Back to the Previous Version** (gear menu) restores the app from before the last update. The version you went back from is then offered in the gear menu (**Update to …**) instead of as the main button, until a newer one comes out.
-- **Updates: With pre-releases** (under Your Game) also offers pre-releases. **Check for Updates** in the gear menu asks GitHub again.
+- **Go Back to the Previous Version** (under Manage) restores the app from before the last update. The version you went back from is then offered under Manage (**Update to …**) instead of as the main button, until a newer one comes out.
+- There is one channel: the release GitHub shows as the project's latest. **Check for Updates** (under Manage, or in the app menu) asks GitHub again.
 - **After a macOS update**, macOS's Metal compiler is new, so the game compiles its shaders again the first time it starts. A small window shows the progress for a few minutes; this happens once.
 
 ## Where things go
 
 | What | Where |
 |---|---|
-| The game app | `~/Library/Application Support/D2R Metal/Game.noindex/D2R Metal.app` (**Show Game in Finder** in the gear menu; `.noindex` keeps it out of Spotlight and app search) |
+| The game app | `~/Library/Application Support/D2R Metal/Game.noindex/D2R Metal.app` (**Show Game in Finder** under Manage; `.noindex` keeps it out of Spotlight and app search) |
 | Game files, build outputs, the release packs, logs | `~/Library/Application Support/D2R Metal/` |
 | Your characters and settings | `~/Library/Application Support/D2R Mobile/` (the folder keeps the project's former name, so saves from earlier builds carry over) |
 
-The gear menu next to Play holds the rest:
+The **Manage** list beside the game holds the rest:
 
 - **Repair** runs every step again for the version you have (never an update or a downgrade), from that version's own packs, which it first checks file by file (a damaged pack is downloaded again; intact ones need no network). If your game files are damaged, it asks you to choose them again.
 - **Remove the Game…** moves the game files, the build outputs and the app to the Trash. Your characters and settings are never touched.
@@ -78,8 +78,8 @@ provisioning profile, and the launcher signs the app it builds on your Mac witho
 ## Privacy
 
 - The launcher talks only to GitHub: github.com for the release description and its files (which GitHub serves from its download host,
-  `objects.githubusercontent.com` / `release-assets.githubusercontent.com`), and api.github.com for the list of releases when you choose
-  pre-releases. The game's main menu reads one small version file from the same releases.
+  `objects.githubusercontent.com` / `release-assets.githubusercontent.com`). The game's main menu reads one small version file from the same
+  releases.
 - Nothing is uploaded.
 - Your game packages are read where they are, never copied or kept. The keys are used only while unpacking, from a temporary copy in a private
   folder that is deleted when unpacking ends (also after a crash: the next run deletes what a killed one left). The tickets in the packages,
