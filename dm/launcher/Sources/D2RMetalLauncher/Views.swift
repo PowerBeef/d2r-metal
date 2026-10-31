@@ -2,9 +2,10 @@ import LauncherCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-// The window, dark only (Theme.swift): a thin top bar with the icon and the name; the game's page in the main area (what to do now: choosing the
-// game files, the install steps, what's new, an error), in cards; a side column with the installed game's details and every action; and a bottom
-// bar with the one main button and the status or the progress of the running job.
+// The window, dark only (Theme.swift), in two layers as Liquid Glass asks. The content layer: a quiet backdrop and the game's page (what to do
+// now: choosing the game files, the install steps, what's new, an error) in plain cards. The control layer, in regular Liquid Glass floating
+// above it: the side panel with the installed game and every action, and the action bar with the one main button (the only tinted glass, red)
+// and the status or the progress. The page scrolls under the action bar, which a soft scroll edge keeps legible.
 
 struct ContentView: View {
     @Environment(LauncherModel.self) private var model
@@ -13,22 +14,21 @@ struct ContentView: View {
         @Bindable var model = model
         VStack(spacing: 0) {
             TopBar()
-            Hairline()
-            // the page and its side column keep a readable width on a large display (a 5K screen's window would otherwise stretch the cards
-            // and the release notes across 2,000 points): capped and centered; the bars above and below span the window
-            HStack(spacing: 0) {
-                ScrollView { MainPage().padding(28).frame(maxWidth: .infinity, alignment: .leading) }.scrollIndicators(.automatic)
-                Hairline(vertical: true)
-                ScrollView { SideColumn().padding(.horizontal, 20).padding(.vertical, 24) }.frame(width: 284).scrollIndicators(.never)
+            // the page and its side panel keep a readable width on a large display (a 5K screen's window would otherwise stretch the cards and
+            // the release notes across 2,000 points): capped and centered
+            HStack(alignment: .top, spacing: 18) {
+                ScrollView { MainPage().padding(.horizontal, 30).padding(.top, 22).padding(.bottom, 24).frame(maxWidth: .infinity, alignment: .leading) }
+                    .scrollIndicators(.automatic)
+                    .scrollEdgeEffectStyle(.soft, for: .bottom)
+                SideColumn().frame(width: 272)
             }
+            .padding(.trailing, 18)
+            .safeAreaInset(edge: .bottom, spacing: 0) { ActionBar().padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 18) }
             .frame(maxWidth: Theme.maxContentWidth).frame(maxWidth: .infinity)
-            Hairline()
-            ActionBar().padding(.horizontal, 24).frame(maxWidth: Theme.maxContentWidth).frame(maxWidth: .infinity).frame(height: 76)
         }
         .ignoresSafeArea(.container, edges: .top)   // the top bar shares its line with the window's buttons
-        .background(Theme.bg)
+        .background(Backdrop())
         .foregroundStyle(Theme.text)
-        .tint(Theme.accent)
         .frame(minWidth: 900, minHeight: 580)
         .preferredColorScheme(.dark)
         .task { await model.start() }
@@ -131,7 +131,7 @@ struct SetupCards: View {
                                     .font(.body).foregroundStyle(Theme.text2).fixedSize(horizontal: false, vertical: true)
                             }
                         }
-                        Button("Use Other Game Files…") { otherFiles = true }.buttonStyle(QuietButtonStyle())
+                        Button("Use Other Game Files…") { otherFiles = true }.buttonStyle(.glass)
                     }
                     .card()
                 }
@@ -157,7 +157,7 @@ struct SetupCards: View {
                             row(.folder, title: "Extracted folder", detail: "").padding(.horizontal, 16).card(padding: 0)
                         } else {
                             Text("Already extracted (ExeFS and RomFS)?").font(.body).foregroundStyle(Theme.text2)
-                            Button("Choose a Folder…") { pick(.folder) }.buttonStyle(QuietButtonStyle())
+                            Button("Choose a Folder…") { pick(.folder) }.buttonStyle(.glass)
                         }
                     }
                     Text("Your own copy of the Switch release with Reign of the Warlock, version 1.0.34.0; files can be dropped on the list. Your keys are only read, and nothing is uploaded. About 30 GB of free space is needed while installing; the first install takes 10 to 15 minutes.")
@@ -218,7 +218,7 @@ struct FileRow: View {
                 Button("Clear", systemImage: "xmark", action: clear).labelStyle(.iconOnly).buttonStyle(.plain).foregroundStyle(Theme.text3)
                     .accessibilityLabel("Clear \(title)").help("Clear")
             }
-            Button(value == nil ? "Choose…" : "Change…", action: choose).buttonStyle(QuietButtonStyle())
+            Button(value == nil ? "Choose…" : "Change…", action: choose).buttonStyle(.glass)
                 .accessibilityLabel(value == nil ? "Choose \(title)" : "Change \(title)")
         }
         .padding(.vertical, 10)
@@ -295,6 +295,10 @@ struct StepLine: View {
             trailing.font(.callout).foregroundStyle(Theme.text3).monospacedDigit()
         }
         .padding(.vertical, 9)
+        // the running step carries the accent: a short red mark at its leading edge
+        .overlay(alignment: .leading) {
+            if step.state == .running { Capsule().fill(Theme.accent).frame(width: 3, height: 16).offset(x: -10).accessibilityHidden(true) }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityValue(stateText)
     }
@@ -366,7 +370,7 @@ struct ErrorCard: View {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.bad).accessibilityHidden(true)
                     Text(text).font(.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
-                if model.hasLog { Button("Show Log") { model.showLog() }.buttonStyle(QuietButtonStyle()) }
+                if model.hasLog { Button("Show Log") { model.showLog() }.buttonStyle(.glass) }
             }
             .card()
             Text("Nothing is lost: fix what is described above, then try again. The log has the details; please attach it to an issue.")
@@ -382,38 +386,14 @@ struct SideColumn: View {
     @State private var confirmRemove = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 10) {
-                SectionTitle(text: "Installed")
-                if let i = model.installed {
-                    info("Version", "\(i.version) (\(i.build))")
-                    info("Location", model.installedApp.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), path: true)
-                } else {
-                    Text("Not installed yet").font(.body).foregroundStyle(Theme.text2)
-                }
-            }
-            Hairline()
-            VStack(alignment: .leading, spacing: 12) {
-                SectionTitle(text: "Manage")
-                let idle = !model.busy
-                Button("Check for Updates") { Task { await model.checkForUpdates() } }.buttonStyle(LinkButtonStyle()).disabled(!idle)
-                if model.installed != nil {
-                    if model.updateAvailable && !model.updateIsPrimary, let l = model.latest {
-                        Button("Update to \(l.version)") { model.update() }.buttonStyle(LinkButtonStyle()).disabled(!idle)
-                    } else if model.updateAvailable {
-                        Button("Play Without Updating") { model.play() }.buttonStyle(LinkButtonStyle()).disabled(!idle)
-                    }
-                    Button("Repair") { model.repair() }.buttonStyle(LinkButtonStyle()).disabled(!idle)
-                    if model.canRevert { Button("Go Back to the Previous Version") { model.revert() }.buttonStyle(LinkButtonStyle()).disabled(!idle) }
-                    Button("Show Game in Finder") { model.showGame() }.buttonStyle(LinkButtonStyle())
-                }
-                if model.hasLog { Button("Show Log") { model.showLog() }.buttonStyle(LinkButtonStyle()) }
-                if model.hasGameData {
-                    Button("Remove the Game…") { confirmRemove = true }.buttonStyle(LinkButtonStyle(destructive: true)).disabled(!idle)
-                }
-            }
+        // the panel hugs what it holds, and scrolls only when the window is too short for it
+        ViewThatFits(in: .vertical) {
+            panel
+            ScrollView { panel }.scrollIndicators(.never)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .padding(.top, 18).padding(.bottom, 4)
+        .frame(maxHeight: .infinity, alignment: .top)
         .confirmationDialog("Move the game files and D2R Metal to the Trash?", isPresented: $confirmRemove) {
             Button("Move to Trash", role: .destructive) { model.removeGameData() }
         } message: {
@@ -421,12 +401,85 @@ struct SideColumn: View {
         }
     }
 
-    private func info(_ label: String, _ value: String, path: Bool = false) -> some View {
+    private var panel: some View {
+        let idle = !model.busy
+        return VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionTitle(text: "Installed")
+                    if let i = model.installed {
+                        info("Version", "\(i.version)", detail: "build \(i.build)")
+                        info("Location", model.installedApp.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), path: true)
+                    } else {
+                        Text("Not installed yet").font(.body).foregroundStyle(Theme.text2)
+                    }
+                }
+                .padding(.horizontal, 6)
+                Hairline().padding(.horizontal, 6)
+                VStack(alignment: .leading, spacing: 2) {
+                    SectionTitle(text: "Manage").padding(.horizontal, 6).padding(.bottom, 6)
+                    ActionRow("Check for Updates", symbol: "arrow.triangle.2.circlepath") { Task { await model.checkForUpdates() } }.disabled(!idle)
+                    if model.installed != nil {
+                        if model.updateAvailable && !model.updateIsPrimary, let l = model.latest {
+                            ActionRow("Update to \(l.version)", symbol: "arrow.down.circle") { model.update() }.disabled(!idle)
+                        } else if model.updateAvailable {
+                            ActionRow("Play Without Updating", symbol: "play") { model.play() }.disabled(!idle)
+                        }
+                        ActionRow("Repair", symbol: "wrench.and.screwdriver") { model.repair() }.disabled(!idle)
+                        if model.canRevert { ActionRow("Previous Version", symbol: "clock.arrow.circlepath", help: "Go back to the version before the last update") { model.revert() }.disabled(!idle) }
+                        ActionRow("Show in Finder", symbol: "folder") { model.showGame() }
+                    }
+                    if model.hasLog { ActionRow("Show Log", symbol: "doc.text.magnifyingglass") { model.showLog() } }
+                    if model.hasGameData {
+                        ActionRow("Remove the Game…", symbol: "trash", destructive: true) { confirmRemove = true }.disabled(!idle)
+                    }
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func info(_ label: String, _ value: String, detail: String? = nil, path: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.callout).foregroundStyle(Theme.text3)
-            Text(value).font(.body).lineLimit(path ? 2 : 1).truncationMode(.middle).textSelection(.enabled).help(value)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(value).font(.body).lineLimit(path ? 2 : 1).truncationMode(.middle).textSelection(.enabled).help(value)
+                if let detail { Text(detail).font(.callout).foregroundStyle(Theme.text3) }
+            }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// One action in the side panel: a symbol and a label, a quiet highlight under the pointer
+struct ActionRow: View {
+    let title: String, symbol: String
+    var help: String? = nil
+    var destructive = false
+    let action: () -> Void
+    @Environment(\.isEnabled) private var enabled
+    @State private var hover = false
+
+    init(_ title: String, symbol: String, help: String? = nil, destructive: Bool = false, action: @escaping () -> Void) {
+        self.title = title; self.symbol = symbol; self.help = help; self.destructive = destructive; self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol).symbolRenderingMode(.hierarchical).frame(width: 18)
+                    .foregroundStyle(destructive ? Theme.bad : Theme.text2)
+                Text(title).foregroundStyle(destructive ? Theme.bad : Theme.text)
+                Spacer(minLength: 0)
+            }
+            .font(.body)
+            .padding(.horizontal, 6).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(hover && enabled ? 0.08 : 0)))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.4)
+        .onHover { hover = $0 }
+        .help(help ?? title)
     }
 }
 
@@ -435,16 +488,18 @@ struct SideColumn: View {
 struct ActionBar: View {
     @Environment(LauncherModel.self) private var model
     var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 18) {
             primary
             status.frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(10).padding(.trailing, 10)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
     }
 
     /// The one main action: Install / Continue / Try Again, Play / Update, Stop while a job runs, Back after a failure
     @ViewBuilder private var primary: some View {
         switch model.phase {
-        case .loading: Button("Play") {}.buttonStyle(PrimaryButtonStyle()).disabled(true)
+        case .loading: main("Play") {}.disabled(true)
         case .welcome:
             if model.latest == nil && model.feedError != nil { main("Try Again") { model.refresh() } }
             else if model.canContinue { main("Continue") { model.install() }.disabled(model.latest == nil) }
@@ -452,8 +507,8 @@ struct ActionBar: View {
         case .home:
             if model.updateIsPrimary { main("Update") { model.update() } } else { main("Play") { model.play() } }
         case .working:
-            Button(model.stopping ? "Stopping…" : "Stop") { model.cancel() }
-                .buttonStyle(QuietButtonStyle(large: true))
+            Button { model.cancel() } label: { Text(model.stopping ? "Stopping…" : "Stop").font(.title3.weight(.semibold)).frame(minWidth: 132) }
+                .buttonStyle(.glass).controlSize(.extraLarge)
                 .keyboardShortcut(.cancelAction).disabled(model.stopping)
                 .help("Stop (Esc, or Command-period); the next run continues where this one stopped")
         case .failed:
@@ -462,7 +517,9 @@ struct ActionBar: View {
     }
 
     private func main(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(title, action: action).buttonStyle(PrimaryButtonStyle()).keyboardShortcut(.defaultAction)
+        // the only tinted glass in the window: the primary action, in the accent red
+        Button(action: action) { Text(title).font(.title3.weight(.semibold)).frame(minWidth: 132) }
+            .buttonStyle(.glassProminent).tint(Theme.accent).controlSize(.extraLarge).keyboardShortcut(.defaultAction)
     }
 
     @ViewBuilder private var status: some View {

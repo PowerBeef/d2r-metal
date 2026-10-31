@@ -27,40 +27,17 @@ extension Color {
     init(hex: UInt32) { self.init(red: Double(hex >> 16 & 0xFF) / 255, green: Double(hex >> 8 & 0xFF) / 255, blue: Double(hex & 0xFF) / 255) }
 }
 
-/// The main action: a solid red button, the only one on screen
-struct PrimaryButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.title3.weight(.semibold)).foregroundStyle(enabled ? .white : Theme.text3)
-            .frame(minWidth: 150, minHeight: 40).padding(.horizontal, 18)
-            .background(RoundedRectangle(cornerRadius: 8).fill(enabled ? (configuration.isPressed ? Theme.accentPressed : Theme.accent) : Theme.raised))
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-/// Every other button: a quiet grey one
-struct QuietButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-    var large = false   // the size of the main button (Stop takes its place while a job runs)
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(large ? .title3.weight(.semibold) : .body.weight(.medium)).foregroundStyle(enabled ? Theme.text : Theme.text3)
-            .frame(minWidth: large ? 150 : nil, minHeight: large ? 40 : 28).padding(.horizontal, large ? 18 : 12)
-            .background(RoundedRectangle(cornerRadius: 7).fill(configuration.isPressed ? Theme.line : Theme.raised))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.line))
-            .contentShape(RoundedRectangle(cornerRadius: 7))
-    }
-}
-
-/// A plain text action in the side column (Repair, Show Log…)
-struct LinkButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-    var destructive = false
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body).foregroundStyle(!enabled ? Theme.text3 : destructive ? Theme.bad : configuration.isPressed ? Theme.text2 : Theme.text)
-            .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+/// The window's content layer: near-black, with a faint warm light low in the window and a cooler lift at the top. Not decoration: Liquid Glass
+/// bends what is behind it, and over a flat black field the floating glass would read as flat grey
+struct Backdrop: View {
+    var body: some View {
+        ZStack {
+            Theme.bg
+            RadialGradient(colors: [Theme.accent.opacity(0.16), .clear], center: UnitPoint(x: 0.42, y: 1.08), startRadius: 0, endRadius: 760)
+            LinearGradient(colors: [.white.opacity(0.035), .clear], startPoint: .top, endPoint: .init(x: 0.5, y: 0.35))
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
     }
 }
 
