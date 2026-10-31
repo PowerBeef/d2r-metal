@@ -1,0 +1,6 @@
+# The Python packages of the launcher's tools pack (dm/tools/release_mac.sh: pip install --require-hashes --no-deps --only-binary :all:):
+# macOS arm64 wheels for CPython 3.14, each pinned to its sha256 (pip download <pkg>==<version> with the pack's Python, then shasum -a 256)
+lz4==4.4.5 --hash=sha256:c8e71b14938082ebaf78144f3b3917ac715f72d14c076f384a4c062df96f9df6
+capstone==5.0.9 --hash=sha256:fc269c5082e17d7f9f265cd6980e2fdc6ab572df913951d76db0357e06b8001d
+numpy==2.5.4 --hash=sha256:956555e0603a4d38019ae6925711cb9dc43195c076a928accf7ea5d50bddfe53
+pillow==13.0.0 --hash=sha256:d9b0a2bee3f3e03e9f29057aedb807dbf1e1d96ee1b9d0f422d9db6c8583271d
