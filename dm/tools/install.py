@@ -644,6 +644,13 @@ def sweep(c):
         if (owner and not pid_alive(owner)) or (owner is None and old): gone(d)
     for d in (os.path.join(c.build, 'tmp'), os.path.join(c.build, 'app.new'), os.path.join(c.build, 'replaced.tmp'), c.game + '.part'): gone(d)
     for d in glob.glob(c.game + '.damaged.*'): gone(d)
+    # write_atomic's half-built outputs (a .part) and replaced ones (a .old) of a run killed in the middle
+    for pattern in ('products/*.part', 'products/*.old', 'overlay/*.part', 'overlay/*.old', 'tables/*.part', 'tables/*.old', 'cache/dm/dmsh/*.part'):
+        for d in glob.glob(os.path.join(c.build, pattern)):
+            if os.path.isdir(d) and not os.path.islink(d): gone(d)
+            else: os.unlink(d)
+    for f in (os.path.join(c.build, 'c1_full.tsv.part'), os.path.join(c.build, 'c1_full.tsv.old')):
+        if os.path.lexists(f): os.unlink(f)
 
 
 def referenced(c):

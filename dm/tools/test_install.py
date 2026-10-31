@@ -310,6 +310,8 @@ class InstallTest(unittest.TestCase):
         tmp = Path(self.tmp.name) / 'T'; (tmp / 'dm-keys.dead').mkdir(parents=True); (tmp / 'dm-keys.live').mkdir()
         (tmp / 'dm-keys.dead' / '.owner').write_text(str(dead.pid)); (tmp / 'dm-keys.live' / '.owner').write_text(str(os.getpid()))
         Path(c.game + '.part').mkdir(parents=True)
+        for half in ('products/r49-touch-abc.part', 'overlay/x.old', 'tables/t.part'): (Path(c.build) / half).mkdir(parents=True)
+        (Path(c.build) / 'c1_full.tsv.part').write_text('half')
         old = os.environ.get('TMPDIR'); os.environ['TMPDIR'] = str(tmp)
         try: install.sweep(c)
         finally:
@@ -318,6 +320,7 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(cache)), [f'extract.{os.getpid()}'])
         self.assertEqual(sorted(os.listdir(tmp)), ['dm-keys.live'])
         self.assertFalse(Path(c.game + '.part').exists())
+        self.assertEqual([p for p in Path(c.build).rglob('*') if p.name.endswith(('.part', '.old'))], [])
 
     def test_prune_keeps_what_the_apps_use(self):
         apps = Path(self.tmp.name) / 'Apps'; c = self.ctx(app_dir=str(apps)); b = Path(c.build)

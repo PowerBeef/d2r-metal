@@ -171,7 +171,9 @@ final class LauncherModel {
                 }
                 if ok { relaunch(); return }
                 if auto == "selfupdate" { exit(1) }
-            } else if auto == "selfupdate" { print("LAUNCHER-AUTORUN RED job=selfupdate no newer launcher in the feed"); fflush(stdout); exit(1) }
+            } else if auto == "selfupdate" {
+                print("LAUNCHER-AUTORUN RED job=selfupdate no newer launcher in the feed\(feedError.map { " error=\($0)" } ?? "")"); fflush(stdout); exit(1)
+            }
         }
         if phase == .loading { phase = installed == nil ? .welcome : .home }
         if let what = auto, what != "selfupdate" { await autorun(what) }
@@ -256,6 +258,7 @@ final class LauncherModel {
         let ok = phase == .home && installed != nil && installed?.build == latest?.build
         var why = ""; if case .failed(let text) = phase { why = " error=\(text)" }
         if quitGamePrompt { why = " error=the game is running" }
+        if let fe = feedError { why += " feed=\(fe)" }
         print("LAUNCHER-AUTORUN \(ok ? "OK" : "RED") job=\(what) installed=\(installed.map { "\($0.version) (\($0.build))" } ?? "-") latest=\(latest.map { "\($0.version) (\($0.build))" } ?? "-")\(why)")
         fflush(stdout); exit(ok ? 0 : 1)
     }

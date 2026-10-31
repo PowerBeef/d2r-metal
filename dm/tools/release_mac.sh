@@ -123,10 +123,10 @@ if [ ! -f "$TC/$TOOLS_NAME" ] || [ "$(sha "$TC/$TOOLS_NAME")" != "$(cat "$TC/$TO
     find "$d" -maxdepth 2 -type f \( -iname 'LICEN[CS]E*' -o -path '*/licenses/*' \) -exec cp {} "$T/licenses/python-packages/$n/" \;
     [ -n "$(ls "$T/licenses/python-packages/$n")" ] || die "the $n wheel carries no license text"
   done
-  # what players never run is left out: pip, IDLE, pydoc, Tk and Tcl, and the console scripts pip wrote (their first line names this Mac's
+  # what players never run is left out: pip (and the copy ensurepip bundles), IDLE, pydoc, Tk and Tcl, and the console scripts pip wrote (their first line names this Mac's
   # build folder)
   P=$T/python; rm -rf "$P/lib/python3.14/site-packages/pip" "$P/lib/python3.14/site-packages/pip-"*.dist-info "$P/lib/python3.14/idlelib" \
-    "$P/lib/python3.14/tkinter" "$P/lib/python3.14/turtledemo" "$P/lib/python3.14/turtle.py" "$P/lib/python3.14/pydoc_data" \
+    "$P/lib/python3.14/tkinter" "$P/lib/python3.14/turtledemo" "$P/lib/python3.14/ensurepip" "$P/lib/python3.14/turtle.py" "$P/lib/python3.14/pydoc_data" \
     "$P/lib/python3.14/lib-dynload/_tkinter"* "$P/lib/tcl"* "$P/lib/tk"* "$P/lib/itcl"* "$P/lib/thread"* "$P/lib/libtcl"* "$P/lib/libtk"* \
     "$P/bin/pip"* "$P/bin/idle"* "$P/bin/pydoc"* "$P/bin/f2py" "$P/bin/numpy-config"
   if grep -rIlF "$T" "$P/bin" > /dev/null 2>&1; then die "a script in python/bin names the build folder: $(grep -rIlF "$T" "$P/bin" | head -3)"; fi
