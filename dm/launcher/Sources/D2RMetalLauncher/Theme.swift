@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // The launcher's look: the brand's palette and lettering (dm/brand: the Runestone emblem, Cinzel) under Liquid Glass. A dark hellfire backdrop
@@ -7,7 +8,11 @@ enum Palette {
     static let deep = [Color(hex: 0x5E1608), Color(hex: 0x2E0B07), Color(hex: 0x120A08), Color(hex: 0x070505)]   // the backdrop, from the glow out
     static let gold = [Color(hex: 0xFFF0C6), Color(hex: 0xE9C27A), Color(hex: 0xB27A2E), Color(hex: 0x7C4C18)]   // lettering, top to bottom
     static let parchment = Color(hex: 0xD3BB8C)      // captions on the backdrop
-    static let parchmentDim = Color(hex: 0xA8916C)
+    /// Secondary text: about 5:1 against the panel's glass over the backdrop; with Increase Contrast it is nearly the full parchment
+    static let parchmentDim = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.accessibilityHighContrastDarkAqua, .accessibilityHighContrastAqua]) != nil
+            ? NSColor(srgbRed: 0xE2 / 255, green: 0xCC / 255, blue: 0xA0 / 255, alpha: 1) : NSColor(srgbRed: 0xBA / 255, green: 0xA3 / 255, blue: 0x7E / 255, alpha: 1)
+    })
     static let bronze = Color(hex: 0xA07638)
     static let ember = Color(red: 0.64, green: 0.16, blue: 0.06)   // the primary action's glass tint: deep hellfire red
     static let blood = Color(red: 0.85, green: 0.22, blue: 0.18)   // failures
@@ -49,9 +54,12 @@ enum Grain {
         let w = 192, h = 192
         var px = [UInt8](repeating: 0, count: w * h); var s: UInt32 = 0x9E3779B9
         for i in px.indices { s = s &* 1664525 &+ 1013904223; px[i] = UInt8(truncatingIfNeeded: 96 + (s >> 24) / 2) }
-        let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: CGColorSpaceCreateDeviceGray(),
-                            bitmapInfo: CGImageAlphaInfo.none.rawValue)!
-        return Image(decorative: ctx.makeImage()!, scale: 2)
+        // the context draws into the array's own storage, so the image is made while that pointer is valid
+        let image = px.withUnsafeMutableBytes { buf in
+            CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: CGColorSpaceCreateDeviceGray(),
+                      bitmapInfo: CGImageAlphaInfo.none.rawValue)?.makeImage()
+        }
+        return image.map { Image(decorative: $0, scale: 2) } ?? Image(systemName: "circle.fill")
     }()
 }
 
@@ -110,13 +118,12 @@ struct GoldTitle: View {
 /// The brand's caption style: Cinzel capitals, wide tracking, parchment
 struct Caption: View {
     var text: String
-    var dim = false
     var size: CGFloat = 12
     var body: some View {
         Text(text.uppercased())
             .font(.cinzel(size, .bold, relativeTo: .caption))
             .tracking(size * 0.22)
-            .foregroundStyle(dim ? Palette.parchmentDim : Palette.parchment)
+            .foregroundStyle(Palette.parchment)
             .shadow(color: .black.opacity(0.8), radius: 1, y: 1)
     }
 }
@@ -137,11 +144,6 @@ struct Rule: View {
 // MARK: glass
 
 extension View {
-    /// A card of regular Liquid Glass over the backdrop
-    func glassCard(cornerRadius: CGFloat = 22, padding inset: CGFloat = 18) -> some View {
-        padding(inset).glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-    }
-
     /// The one tinted action of a screen (Install, Play, Update)
     func primaryGlass() -> some View { buttonStyle(.glassProminent).tint(Palette.ember) }
 }

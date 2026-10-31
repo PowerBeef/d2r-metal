@@ -1,7 +1,12 @@
 import Foundation
 
 /// A release as dm/tools/release_mac.sh describes it in the release's manifest.json (also copied into the runtime pack, where install.py reads it).
+/// Decoding is tolerant: only what installing needs is required, so a later release that adds or drops a descriptive field still decodes, and a
+/// release of a newer format (schema) still yields its launcher entry, so this launcher can update itself to one that reads it
 public struct Manifest: Codable, Equatable, Sendable {
+    /// The newest manifest format this launcher installs from
+    public static let supportedSchema = 1
+
     public var schema: Int
     public var version: String           // shown to the player: "1.2.0"
     public var build: Int                // monotonic (git rev-list --count): what update checks compare
@@ -23,6 +28,7 @@ public struct Manifest: Codable, Equatable, Sendable {
         public var version: String       // tools: the tools pack version (kept across releases); runtime: the release version
         public var sha256: String
         public var size: Int64
+        static let none = Asset(name: "", url: nil, version: "", sha256: "", size: 0)
     }
     public struct LauncherAsset: Codable, Equatable, Sendable {
         public var version: String
@@ -40,10 +46,56 @@ public struct Manifest: Codable, Equatable, Sendable {
     }
     enum LauncherKeys: String, CodingKey { case version, build, minBuild = "min_build", name, url, sha256, size }
 
-    /// Where an asset is: its own url, else beside the manifest
-    public func url(of name: String, url: String?, manifestURL: URL) -> URL {
-        if let url, let u = URL(string: url) { return u }
-        return manifestURL.deletingLastPathComponent().appendingPathComponent(name)
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try c.decodeIfPresent(Int.self, forKey: .schema) ?? 1
+        launcher = try? c.decodeIfPresent(LauncherAsset.self, forKey: .launcher)   // first, and never fatal: a newer format still names its launcher
+        version = try c.decode(String.self, forKey: .version); build = try c.decode(Int.self, forKey: .build)
+        commit = (try? c.decodeIfPresent(String.self, forKey: .commit)) ?? ""
+        date = (try? c.decodeIfPresent(String.self, forKey: .date)) ?? ""
+        notes = (try? c.decodeIfPresent(String.self, forKey: .notes)) ?? ""
+        macosMin = (try? c.decodeIfPresent(String.self, forKey: .macosMin)) ?? "27.0"
+        updateURL = try? c.decodeIfPresent(String.self, forKey: .updateURL)
+        chain = (try? c.decodeIfPresent(String.self, forKey: .chain)) ?? ""
+        product = (try? c.decodeIfPresent(String.self, forKey: .product)) ?? ""
+        teamID = try? c.decodeIfPresent(String.self, forKey: .teamID)
+        if schema > Manifest.supportedSchema {   // a format this launcher does not install from: only its launcher entry is used (installable is false)
+            runtime = (try? c.decode(Asset.self, forKey: .runtime)) ?? .none; tools = (try? c.decode(Asset.self, forKey: .tools)) ?? .none
+        } else {
+            runtime = try c.decode(Asset.self, forKey: .runtime); tools = try c.decode(Asset.self, forKey: .tools)
+        }
+    }
+
+    /// This launcher can install the release (its format, and its packs named)
+    public var installable: Bool { schema <= Manifest.supportedSchema && !runtime.name.isEmpty && !tools.name.isEmpty }
+
+    /// The release runs on this Mac's macOS (its macos_min)
+    public var runsOnThisMac: Bool {
+        let p = macosMin.split(separator: ".").map { Int($0) ?? 0 }
+        return ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: p.first ?? 0, minorVersion: p.count > 1 ? p[1] : 0,
+                                                                                       patchVersion: p.count > 2 ? p[2] : 0))
+    }
+
+    /// The names and versions the launcher turns into paths (downloads/<name>, releases/<version>, tools/<version>) are single, plain path
+    /// components: a manifest can never make it write outside its own folders
+    public func validate() throws {
+        func plain(_ s: String, _ what: String) throws {
+            guard !s.isEmpty, s != ".", s != "..", !s.hasPrefix("."), !s.contains("/"), !s.contains("\\"), !s.contains("\0"), !s.contains(":"),
+                  s.count <= 200 else { throw LauncherError.badManifest("unsafe \(what) \"\(s)\"") }
+        }
+        if installable { try plain(runtime.name, "runtime name"); try plain(runtime.version, "runtime version"); try plain(tools.name, "tools name"); try plain(tools.version, "tools version") }
+        if let l = launcher { try plain(l.name, "launcher name") }
+    }
+
+    /// Where an asset is: its own url, else beside the manifest (the URL the manifest was finally read from, after redirects, so a moving
+    /// "latest" link can't mix two releases). An asset of a release read over the network must come over https
+    public func assetURL(_ name: String, url: String?, manifestURL: URL) throws -> URL {
+        let u: URL
+        if let url { guard let x = URL(string: url) else { throw LauncherError.badManifest("bad url \(url)") }; u = x }
+        else { u = manifestURL.deletingLastPathComponent().appendingPathComponent(name) }
+        let local = manifestURL.isFileURL && u.isFileURL
+        guard local || u.scheme?.lowercased() == "https" else { throw LauncherError.badManifest("\(name) is not served over https") }
+        return u
     }
 }
 
@@ -67,7 +119,7 @@ public struct EngineEvent: Decodable, Equatable, Sendable {
     public var step: String?
     public var state: String?            // for step: start, done, kept, fail
     public var msg: String?
-    public var code: String?             // for error: arch, macos, disk, tools, runtime (preflight)
+    public var code: String?             // for error: arch, macos, disk, tools, runtime (preflight); busy, interrupted, stalled, game_damaged, no_game, access, internal
     public var done: Int?
     public var total: Int?
     public var seconds: Double?

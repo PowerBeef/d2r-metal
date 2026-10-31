@@ -7,9 +7,13 @@ import SwiftUI
 enum Brand {
     static let folder: URL? = {
         if let r = Bundle.main.resourceURL?.appendingPathComponent("Brand"), FileManager.default.fileExists(atPath: r.path) { return r }
+        #if DEBUG   // `swift run` from the checkout; a release build never carries the build Mac's source path
         let dev = URL(fileURLWithPath: #filePath).deletingLastPathComponent()   // dm/launcher/Sources/D2RMetalLauncher → dm/brand
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("brand")
         return FileManager.default.fileExists(atPath: dev.path) ? dev : nil
+        #else
+        return nil
+        #endif
     }()
 
     static let emblem = image("out/emblem.png")

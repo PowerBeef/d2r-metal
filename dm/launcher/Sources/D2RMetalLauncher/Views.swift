@@ -10,6 +10,7 @@ struct ContentView: View {
     @Environment(LauncherModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
         ZStack {
             Backdrop()
             VStack(spacing: 0) {
@@ -25,6 +26,12 @@ struct ContentView: View {
         .frame(minWidth: 900, minHeight: 580)
         .preferredColorScheme(.dark)
         .task { await model.start() }
+        .alert("Quit D2R Metal to continue?", isPresented: $model.quitGamePrompt) {
+            Button("Quit D2R Metal") { Task { await model.quitGameAndContinue() } }
+            Button("Cancel", role: .cancel) { model.cancelWaitingJob() }
+        } message: {
+            Text("D2R Metal is running, and its files are about to change. Leave your game first so your progress is saved; the launcher then quits it and goes on.")
+        }
     }
 }
 
@@ -66,15 +73,18 @@ struct Feature: View {
 
 struct Panel: View {
     @Environment(LauncherModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let content = VStack(alignment: .leading, spacing: 14) {
             if let notice = model.launcherNotice { LauncherNotice(text: notice) }
             phaseContent
         }
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 26))
-        .animation(.smooth(duration: 0.3), value: model.phase)
+        // at its own height; scrolling only when the window is too short for it (the minimum size, a large text setting)
+        ViewThatFits(in: .vertical) { content; ScrollView { content }.scrollIndicators(.automatic) }
+            .glassEffect(.regular, in: .rect(cornerRadius: 26))
+            .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: model.phase)
     }
 
     @ViewBuilder private var phaseContent: some View {
@@ -128,8 +138,18 @@ struct SetupPanel: View {
     @State private var showPanel = false
     @State private var dropTargeted = false
 
+    @State private var otherFiles = false
+
     var body: some View {
+        if model.hasGameFiles && model.gameDamaged == nil && model.nothingChosen && !otherFiles { ContinuePanel(otherFiles: $otherFiles) } else { form }
+    }
+
+    private var form: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let why = model.gameDamaged {
+                Notice(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                       text: "Your game files are damaged or incomplete (\(why)). Choose your game packages or an extracted folder again; the damaged files are replaced.")
+            }
             PanelHeading(title: "Install the game", detail: "Your own copy: the Switch release with Reign of the Warlock, version 1.0.34.0. Your keys are only read; nothing is uploaded.")
             VStack(spacing: 0) {
                 row(.base, symbol: "shippingbox.fill", title: "Base game", detail: "The game package, .nsp or .xci")
@@ -187,8 +207,46 @@ struct SetupPanel: View {
     }
 }
 
+/// An earlier install stopped after the game files were unpacked: they are used again, nothing to choose
+struct ContinuePanel: View {
+    @Environment(LauncherModel.self) private var model
+    @Binding var otherFiles: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            PanelHeading(title: "Finish installing", detail: "Your game files are already on this Mac, from the install that stopped. Continue picks up where it left off; nothing needs choosing again.")
+            HStack(spacing: 11) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, .green).font(.title3).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Game files of version 1.0.34.0").font(.body.weight(.semibold))
+                    Text("Checked again before anything is built").font(.callout).foregroundStyle(Palette.parchmentDim)
+                }
+            }
+            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.black.opacity(0.22), in: .rect(cornerRadius: 16))
+            .accessibilityElement(children: .combine)
+            Button("Use Other Game Files…") { otherFiles = true }.buttonStyle(.glass).controlSize(.small)
+        }
+    }
+}
+
+/// A line of warning or information over a panel's content
+struct Notice: View {
+    let symbol: String, tint: Color, text: String
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol).foregroundStyle(tint).accessibilityHidden(true)
+            Text(text).font(.callout).foregroundStyle(Palette.parchment).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.12), in: .rect(cornerRadius: 14))
+        .accessibilityElement(children: .combine)
+    }
+
+}
+
 /// One selector: what it is, the file chosen and what its check found, a glass button to choose and a small one to clear
 struct SourceRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let symbol: String, title: String, detail: String
     let value: URL?
     let verdict: GameFileCheck.Verdict?
@@ -216,23 +274,29 @@ struct SourceRow: View {
                 }
             }
             Spacer(minLength: 8)
-            if value != nil { Button("Clear", systemImage: "xmark", action: clear).labelStyle(.iconOnly).buttonStyle(.glass).controlSize(.small) }
+            if value != nil {
+                Button("Clear", systemImage: "xmark", action: clear).labelStyle(.iconOnly).buttonStyle(.glass).controlSize(.small)
+                    .accessibilityLabel("Clear \(title)").help("Clear")
+            }
             Button(value == nil ? "Choose…" : "Change…", action: choose).buttonStyle(.glass).controlSize(.small)
+                .accessibilityLabel(value == nil ? "Choose \(title)" : "Change \(title)")
         }
-        .animation(.smooth, value: verdict)
+        .animation(reduceMotion ? nil : .smooth, value: verdict)
     }
 }
 
 /// The result of a file's check as a symbol: a green check when it is the right file, red when it is not, a spinner while checking
 struct CheckMark: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let verdict: GameFileCheck.Verdict?
     let checking: Bool
     var body: some View {
         switch verdict {
-        case _ where checking: ProgressView().controlSize(.small)
-        case .ok?, .note?: Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, .green).symbolEffect(.bounce, value: verdict)
-        case .wrong?, .elsewhere?: Image(systemName: "xmark.octagon.fill").foregroundStyle(.white, Palette.blood)
-        case nil: Image(systemName: "circle.dotted").foregroundStyle(.secondary)
+        case _ where checking: ProgressView().controlSize(.small).accessibilityLabel("Checking")
+        case .ok?, .note?: Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, .green).symbolEffect(.bounce, value: reduceMotion ? nil : verdict)
+                .accessibilityLabel("Checked")
+        case .wrong?, .elsewhere?: Image(systemName: "xmark.octagon.fill").foregroundStyle(.white, Palette.blood).accessibilityLabel("Not usable")
+        case nil: Image(systemName: "circle.dotted").foregroundStyle(.secondary).accessibilityHidden(true)
         }
     }
 }
@@ -258,15 +322,16 @@ struct StepsPanel: View {
     var body: some View {
         let done = model.steps.filter { $0.state == .done || $0.state == .kept }.count
         VStack(alignment: .leading, spacing: 14) {
-            PanelHeading(title: model.working, detail: model.steps.isEmpty ? nil : "\(done) of \(model.steps.count) steps · you can keep using your Mac")
-            let list = VStack(alignment: .leading, spacing: 8) { ForEach(model.steps) { StepLine(step: $0) } }.padding(.vertical, 2)
-            ViewThatFits(in: .vertical) { list; ScrollView { list }.scrollIndicators(.never) }   // hugs the rows; scrolls only on a short window
+            PanelHeading(title: model.stopping ? "Stopping…" : model.working,
+                         detail: model.stopping ? "Waiting for the running step to stop cleanly" : model.steps.isEmpty ? nil : "\(done) of \(model.steps.count) steps · you can keep using your Mac")
+            VStack(alignment: .leading, spacing: 8) { ForEach(model.steps) { StepLine(step: $0) } }.padding(.vertical, 2)   // the panel scrolls on a short window
             Text("If you quit, the next run continues where this one stopped.").font(.footnote).foregroundStyle(Palette.parchmentDim)
         }
     }
 }
 
 struct StepLine: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let step: StepRow
     var body: some View {
         HStack(spacing: 11) {
@@ -285,7 +350,19 @@ struct StepLine: View {
             Spacer()
             trailing.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }
-        .animation(.smooth, value: step.state)
+        .animation(reduceMotion ? nil : .smooth, value: step.state)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(stateText)
+    }
+
+    private var stateText: String {
+        switch step.state {
+        case .waiting: "waiting"
+        case .running: step.total > 0 ? "running, \(step.done) of \(step.total)" : "running"
+        case .done: "done"
+        case .kept: "up to date"
+        case .failed: "failed"
+        }
     }
 
     @ViewBuilder private var trailing: some View {
@@ -307,7 +384,9 @@ struct HomePanel: View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 14) {
             if let l = model.latest {
-                PanelHeading(title: model.updateAvailable ? "Version \(l.version) is ready" : "What's new", detail: model.updateAvailable ? nil : "Version \(l.version) · \(l.date)")
+                PanelHeading(title: model.updateAvailable ? "Version \(l.version) is ready" : "What's new",
+                             detail: model.updateAvailable && !model.updateIsPrimary ? "You went back to the previous version; the gear menu updates when you want"
+                                     : model.updateAvailable ? nil : "Version \(l.version) · \(l.date)")
                 CappedScroll(cap: 170) {
                     Text(notes(l.notes)).font(.callout).foregroundStyle(Palette.parchment).lineSpacing(3)
                         .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
@@ -384,7 +463,7 @@ struct ActionBar: View {
         GlassEffectContainer(spacing: 14) {
             HStack(spacing: 14) {
                 primary
-                if case .home = model.phase { gear }
+                if model.phase != .loading && model.phase != .working { gear }
                 status.frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 6)
                 trailing
             }
@@ -402,13 +481,18 @@ struct ActionBar: View {
     @ViewBuilder private var primary: some View {
         switch model.phase {
         case .welcome:
-            big("Install", symbol: "flame.fill") { model.install() }.disabled(!model.gameInputReady || model.latest == nil)
+            if model.latest == nil && model.feedError != nil { big("Try Again", symbol: "arrow.clockwise") { model.refresh() } }
+            else if model.canContinue { big("Continue", symbol: "flame.fill") { model.install() }.disabled(model.latest == nil) }
+            else { big("Install", symbol: "flame.fill") { model.install() }.disabled(!model.gameInputReady || model.latest == nil) }
         case .home:
-            if model.updateAvailable { big("Update", symbol: "arrow.down.circle.fill") { model.update() } }
+            if model.updateIsPrimary { big("Update", symbol: "arrow.down.circle.fill") { model.update() } }
             else { big("Play", symbol: "play.fill") { model.play() } }
         case .working:
-            Button { model.cancel() } label: { Label("Stop", systemImage: "stop.fill").font(.cinzel(17, .bold)).tracking(1.5).frame(width: 150).padding(.vertical, 6) }
-                .buttonStyle(.glass).controlSize(.extraLarge)
+            Button { model.cancel() } label: {
+                Label(model.stopping ? "Stopping" : "Stop", systemImage: "stop.fill").font(.cinzel(17, .bold)).tracking(1.5).frame(width: 150).padding(.vertical, 6)
+            }
+            .buttonStyle(.glass).controlSize(.extraLarge).keyboardShortcut(.cancelAction).disabled(model.stopping)
+            .help("Stop (Esc, or Command-period)")
         case .failed:
             big("Back", symbol: "arrow.uturn.backward") { model.readState(); model.phase = model.installed == nil ? .welcome : .home }
         case .loading:
@@ -427,18 +511,27 @@ struct ActionBar: View {
         @Bindable var model = model
         return Menu {
             Button("Check for Updates", systemImage: "arrow.clockwise") { Task { await model.checkForUpdates() } }
-            if model.updateAvailable { Button("Play Without Updating", systemImage: "play") { model.play() } }
-            Button("Repair", systemImage: "wrench.and.screwdriver") { model.repair() }
-            if model.canRevert { Button("Go Back to the Previous Version", systemImage: "clock.arrow.circlepath") { model.revert() } }
-            Divider()
-            Button("Show Game in Finder", systemImage: "folder") { model.showGame() }
-            if model.logPath != nil { Button("Show Log", systemImage: "doc.text.magnifyingglass") { model.showLog() } }
-            Divider()
-            Button("Remove the Game…", systemImage: "trash", role: .destructive) { confirmRemove = true }
+            if model.installed != nil {
+                if model.updateAvailable && !model.updateIsPrimary, let l = model.latest {
+                    Button("Update to \(l.version)", systemImage: "arrow.down.circle") { model.update() }
+                } else if model.updateAvailable {
+                    Button("Play Without Updating", systemImage: "play") { model.play() }
+                }
+                Button("Repair", systemImage: "wrench.and.screwdriver") { model.repair() }
+                if model.canRevert { Button("Go Back to the Previous Version", systemImage: "clock.arrow.circlepath") { model.revert() } }
+                Divider()
+                Button("Show Game in Finder", systemImage: "folder") { model.showGame() }
+            }
+            if model.hasLog { Button("Show Log", systemImage: "doc.text.magnifyingglass") { model.showLog() } }
+            if model.hasGameData {
+                Divider()
+                Button("Remove the Game…", systemImage: "trash", role: .destructive) { confirmRemove = true }
+            }
         } label: {
             Image(systemName: "gearshape.fill").font(.title3).frame(width: 30, height: 30)
         }
         .menuIndicator(.hidden).buttonStyle(.glass).controlSize(.extraLarge).fixedSize()
+        .accessibilityLabel("Options")
         .help("Updates, repair, the game's folder")
     }
 
@@ -446,8 +539,15 @@ struct ActionBar: View {
         switch model.phase {
         case .loading: EmptyView()
         case .welcome:
-            StatusText(title: model.gameInputReady ? "Ready to install" : "Choose your game files",
-                       detail: "About 30 GB free while installing · 10 to 15 minutes the first time")
+            if model.latest == nil, let e = model.feedError {
+                StatusText(title: "Can't check for releases", detail: model.online ? e : "This Mac is offline; the launcher tries again when it's back",
+                           tint: Color(red: 1, green: 0.66, blue: 0.55))
+            } else if model.canContinue {
+                StatusText(title: "Ready to continue", detail: "About 3 GB free needed · a few minutes")
+            } else {
+                StatusText(title: model.gameInputReady ? "Ready to install" : "Choose your game files",
+                           detail: "About 30 GB free while installing · 10 to 15 minutes the first time")
+            }
         case .working:
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
@@ -460,7 +560,8 @@ struct ActionBar: View {
         case .home:
             if let i = model.installed {
                 StatusText(title: "D2R Metal \(i.version)",
-                           detail: model.updateAvailable ? "Version \(model.latest?.version ?? "") is ready to install"
+                           detail: model.updateIsPrimary ? "Version \(model.latest?.version ?? "") is ready to install"
+                                   : model.updateAvailable ? "Version \(model.latest?.version ?? "") is available from the gear menu"
                                    : model.feedError != nil ? "Couldn't check for updates" : model.latest == nil ? "Checking for updates…" : "Up to date")
             }
         case .failed:
@@ -471,6 +572,7 @@ struct ActionBar: View {
     @ViewBuilder private var trailing: some View {
         if case .working = model.phase, model.logPath != nil {
             Button("Show Log", systemImage: "doc.text.magnifyingglass") { model.showLog() }.labelStyle(.iconOnly).buttonStyle(.glass).help("Show the log")
+                .accessibilityLabel("Show the log")
         }
     }
 }
