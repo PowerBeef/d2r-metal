@@ -244,7 +244,7 @@ DM_PSO_MANIFEST	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_RECORD	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_USER	gfx	gfx/nvn/nvn_mtl.m	-
 DM_PUMP_PROF	host	host/dm_prof.c	-
-DM_PY	tools,verify	tools/product.sh verify/regress.sh	y
+DM_PY	tools,verify	tools/extract_game.sh tools/product.sh verify/regress.sh	y
 DM_REAL_ICLOUD	ios,ios-tools	ios/Sources/cloud_ios.m ios/tools/cloud_guard.sh	-
 DM_REAL_ICLOUD_CONFIRM	ios,ios-tools	ios/Sources/cloud_ios.m ios/tools/cloud_guard.sh	-
 DM_REQUIRE_PC_ART	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	-
