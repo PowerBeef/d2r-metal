@@ -250,3 +250,18 @@ func fakeLauncher(_ dir: URL, build: Int, id: String = SelfUpdate.bundleID) thro
     guard case .ok(let s) = GameFileCheck.package(both, expected: .update) else { Issue.record("update + DLC package not taken as the update"); return }
     #expect(s.contains("Update") && s.contains("dlc"))
 }
+
+@Test func latestTagFromTheRedirect() {
+    #expect(Feed.tag(fromLocation: "https://github.com/PowerBeef/d2r-metal/releases/tag/v1.0.0") == "v1.0.0")
+    #expect(Feed.tag(fromLocation: "https://github.com/PowerBeef/d2r-metal/releases") == nil)          // no latest release yet: the list
+    #expect(Feed.tag(fromLocation: "https://github.com/PowerBeef/d2r-metal/releases/tag/v1/../x") == nil)
+    #expect(Feed.tag(fromLocation: "https://github.com/PowerBeef/d2r-metal/releases/tag/") == nil)
+}
+
+/// The latest-release lookup against GitHub itself (another project's releases, the same redirect): off unless DM_LAUNCHER_TEST_NETWORK is set
+@Test(.enabled(if: ProcessInfo.processInfo.environment["DM_LAUNCHER_TEST_NETWORK"] != nil)) func latestRedirectIsReadWithoutFollowingIt() async throws {
+    var req = URLRequest(url: URL(string: "https://github.com/astral-sh/python-build-standalone/releases/latest")!); req.httpMethod = "HEAD"
+    let rsp = try await URLSession.shared.data(for: req, delegate: NoRedirect()).1 as? HTTPURLResponse
+    #expect((300..<400).contains(rsp?.statusCode ?? 0))
+    #expect(Feed.tag(fromLocation: rsp?.value(forHTTPHeaderField: "Location") ?? "") != nil)
+}

@@ -13,7 +13,7 @@ func installFromFeed() async throws {
     let env = ProcessInfo.processInfo.environment
     let root = URL(fileURLWithPath: env["DM_LAUNCHER_TEST_ROOT"] ?? NSTemporaryDirectory() + "launcher test \(getpid())", isDirectory: true)
     let paths = Paths(root: root), apps = root.appendingPathComponent("Applications", isDirectory: true)
-    let (m, u) = try await Feed(channel: .stable, override: URL(string: env["DM_LAUNCHER_TEST_FEED"]!)).latest()
+    let (m, u) = try await Feed(override: URL(string: env["DM_LAUNCHER_TEST_FEED"]!)).latest()
     let (rt, tl) = try await Packs(paths: paths).ensure(m, from: u)
     #expect(FileManager.default.isExecutableFile(atPath: tl.appendingPathComponent("python/bin/python3").path))
     let engine = Engine(paths: paths, runtime: rt, tools: tl, appDir: apps, bundleID: "org.d2rmobile.mac.launchertest4")
