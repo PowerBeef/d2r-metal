@@ -54,11 +54,14 @@ def runtime_form():
     return lock().get('metal_macosx') == RUNTIME
 
 def tools_now(runtime=None):
-    """实际工具指纹：翻译器 dll（含 Ryujinx 着色器库）、spirv-cross、metal 编译器（macOS / iOS） | Actual tool fingerprints: translator dll (including the Ryujinx shader library), spirv-cross, metal compiler (macOS / iOS)
+    """Actual tool fingerprints: the translator (its .NET assemblies, including the Ryujinx shader library; or, for the release's native
+    build (NativeAOT, dm/tools/release_mac.sh), the one program they are compiled into), spirv-cross, the Metal compilers (macOS / iOS).
     runtime (default: the lock's form): the source form records no compiler, the host's macOS compiles the libraries"""
     if runtime is None: runtime = runtime_form()
     t = {}
-    for dll in ('dmsh_xlate.dll', 'Ryujinx.Graphics.Shader.dll', 'Ryujinx.Common.dll'): t[dll] = sha16(os.path.join(XLATE_DIR, dll))
+    if os.path.exists(os.path.join(XLATE_DIR, 'dmsh_xlate.dll')):
+        for dll in ('dmsh_xlate.dll', 'Ryujinx.Graphics.Shader.dll', 'Ryujinx.Common.dll'): t[dll] = sha16(os.path.join(XLATE_DIR, dll))
+    else: t['dmsh_xlate.native'] = sha16(os.path.join(XLATE_DIR, 'dmsh_xlate'))
     t['xlate_source'] = subprocess.run([os.path.join(XLATE_DIR, 'dmsh_xlate'), '--source-sha'], capture_output=True, text=True).stdout.strip()
     sc = subprocess.run(['which', 'spirv-cross'], capture_output=True, text=True).stdout.strip()
     t['spirv-cross'] = sha16(sc) if sc else 'missing'

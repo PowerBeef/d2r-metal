@@ -72,8 +72,8 @@ if [ ! -f "$TC/$TOOLS_NAME" ]; then
   "$T/python/bin/python3" -m pip install -q --no-cache-dir --disable-pip-version-check --root-user-action=ignore --only-binary :all: $(pin pip)
   "$T/python/bin/python3" -c 'import lz4, capstone, numpy, PIL; assert capstone.__version__.startswith("5")' || die "the pinned packages do not import"
   cp "$T/python/lib/python3.14/LICENSE.txt" "$T/licenses/Python.txt" 2>/dev/null || true
-  # the shader translator, self-contained, built with Microsoft's own .NET SDK (pinned, cached across releases): a source-built .NET such as
-  # Homebrew's links Homebrew libraries (brotli) that players do not have
+  # the shader translator, compiled ahead of time (NativeAOT) with Microsoft's own .NET SDK (pinned, cached across releases): one native
+  # program that loads only macOS's libraries, so players get no .NET runtime at all; the SDK is needed only here, on the release Mac
   DN=$CACHE/dotnet-sdk-$(pin dotnet_sdk_version)
   if [ ! -x "$DN/dotnet" ]; then
     curl -fsSL "$(pin dotnet_sdk_url)" -o "$WORK/dl/dotnet.tgz"
@@ -81,8 +81,10 @@ if [ ! -f "$TC/$TOOLS_NAME" ]; then
     rm -rf "$DN.part"; mkdir -p "$DN.part"; tar -xzf "$WORK/dl/dotnet.tgz" -C "$DN.part"; mv "$DN.part" "$DN"
   fi
   DOTNET_ROOT=$DN DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 NUGET_PACKAGES=$CACHE/nuget \
-    "$DN/dotnet" publish "$WT/dm/gfx/tools/dmsh_xlate" -c Release -r osx-arm64 --self-contained true -o "$T/dmsh_xlate" -v quiet > /dev/null \
-    || die "the shader translator did not build with the .NET SDK"
+    "$DN/dotnet" publish "$WT/dm/gfx/tools/dmsh_xlate" -c Release -r osx-arm64 -p:PublishAot=true -p:InvariantGlobalization=true -p:StripSymbols=true \
+    -o "$T/dmsh_xlate" -v quiet > "$WORK/xlate.log" 2>&1 || { tail -20 "$WORK/xlate.log"; die "the shader translator did not build with the .NET SDK"; }
+  grep -q -E 'warning (IL|AOT)[0-9]+' "$WORK/xlate.log" && { grep -E 'warning (IL|AOT)[0-9]+' "$WORK/xlate.log" | head; die "the native translator has AOT warnings (above)"; }
+  rm -rf "$T/dmsh_xlate"/*.dSYM; [ "$(ls "$T/dmsh_xlate")" = dmsh_xlate ] || die "the native translator is not one program: $(ls "$T/dmsh_xlate" | head -3)"
   "$T/dmsh_xlate/dmsh_xlate" --source-sha > /dev/null || die "the self-contained translator does not start"
   cp "$WT/dm/third_party/ryujinx/LICENSE.txt" "$T/licenses/Ryujinx.txt"
   for f in LICENSE.txt ThirdPartyNotices.txt; do [ ! -f "$DN/$f" ] || cp "$DN/$f" "$T/licenses/dotnet-$f"; done
