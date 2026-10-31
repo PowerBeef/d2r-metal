@@ -95,6 +95,14 @@ int main(void) {
         g_fake_page = @"https://elsewhere.invalid/x"; g_upd_last = 0; upd_check();
         for (int i = 0; i < 100 && g_upd_page; i++) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
         CHECK(!g_upd_page, "a page on another host is not (%s)", g_upd_page.UTF8String ?: "none");
+        // the launcher's scheme opens only its update link: any other d2rmetal:// address is not followed
+        for (NSString *other in @[@"d2rmetal://remove", @"d2rmetal://update/x", @"d2rmetal://update?run=1"]) {
+            g_fake_page = @"d2rmetal://update"; g_upd_last = 0; upd_check();
+            for (int i = 0; i < 100 && !g_upd_page.length; i++) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+            g_fake_page = other; g_upd_last = 0; upd_check();
+            for (int i = 0; i < 100 && g_upd_page; i++) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+            CHECK(!g_upd_page, "%s is not followed (%s)", other.UTF8String, g_upd_page.UTF8String ?: "none");
+        }
     }
     printf("== t_app_mac %d 项，失败 %d | %d checks, %d failed ==\n", checks, fails, checks, fails);
     return fails != 0;
