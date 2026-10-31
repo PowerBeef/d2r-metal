@@ -17,7 +17,13 @@ struct D2RMetalLauncherApp: App {
         .windowStyle(.hiddenTitleBar)          // the dark window reaches the top edge; the window's buttons sit on its top bar
         .windowBackgroundDragBehavior(.enabled)
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 980, height: 640)   // fits a 1280 x 720 screen (690 points under the menu bar)
+        // the first window's size follows the display it opens on (later launches keep the size the player gave it): about two thirds of the
+        // visible area, at least 980 x 640 when the display has room for it, at most 1440 x 900 (beyond that the page is capped and centered anyway)
+        .defaultWindowPlacement { _, context in
+            let r = context.defaultDisplay.visibleRect
+            let w = min(r.width, max(980, min(1440, r.width * 0.66))), h = min(r.height, max(640, min(900, r.height * 0.72)))
+            return WindowPlacement(size: CGSize(width: w, height: h))
+        }
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Task { await model.checkForUpdates() } }.disabled(model.busy)

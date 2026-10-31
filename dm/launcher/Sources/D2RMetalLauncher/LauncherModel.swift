@@ -674,6 +674,13 @@ extension LauncherModel {
         """#
         let sample = try? JSONDecoder().decode(Manifest.self, from: Data(json.utf8))
         NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)   // in front, so the screenshot shows the active window
+        // DM_LAUNCHER_PREVIEW_SIZE=<width>x<height>: the window at that content size (how the layout scales), once it is on screen
+        if let sz = env["DM_LAUNCHER_PREVIEW_SIZE"]?.split(separator: "x").compactMap({ Double($0) }), sz.count == 2 {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(300))
+                if let w = NSApp.windows.first(where: { $0.isVisible }) { w.setContentSize(NSSize(width: sz[0], height: sz[1])); w.center() }
+            }
+        }
         switch which {
         case "working", "stopping":
             working = "Installing"; phase = .working; stopping = which == "stopping"; job = Task {}

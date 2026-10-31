@@ -16,6 +16,8 @@ enum Theme {
     static let text3 = Color(hex: 0x76767E)
     static let accent = Color(hex: 0xA8342A)        // the red: the main button's fill, progress, the running step; nothing else
     static let accentPressed = Color(hex: 0x8A2B23)
+    /// The page and its side column never grow wider than this (centered beyond it): line lengths stay readable on a large display
+    static let maxContentWidth: CGFloat = 1320
     static let ok = Color(hex: 0x6FBF7F)            // a file that passed its check
     static let warn = Color(hex: 0xE0A458)
     static let bad = Color(hex: 0xE5675B)
@@ -30,7 +32,7 @@ struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 15, weight: .semibold)).foregroundStyle(enabled ? .white : Theme.text3)
+            .font(.title3.weight(.semibold)).foregroundStyle(enabled ? .white : Theme.text3)
             .frame(minWidth: 150, minHeight: 40).padding(.horizontal, 18)
             .background(RoundedRectangle(cornerRadius: 8).fill(enabled ? (configuration.isPressed ? Theme.accentPressed : Theme.accent) : Theme.raised))
             .contentShape(RoundedRectangle(cornerRadius: 8))
@@ -43,7 +45,7 @@ struct QuietButtonStyle: ButtonStyle {
     var large = false   // the size of the main button (Stop takes its place while a job runs)
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: large ? 15 : 13, weight: large ? .semibold : .medium)).foregroundStyle(enabled ? Theme.text : Theme.text3)
+            .font(large ? .title3.weight(.semibold) : .body.weight(.medium)).foregroundStyle(enabled ? Theme.text : Theme.text3)
             .frame(minWidth: large ? 150 : nil, minHeight: large ? 40 : 28).padding(.horizontal, large ? 18 : 12)
             .background(RoundedRectangle(cornerRadius: 7).fill(configuration.isPressed ? Theme.line : Theme.raised))
             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.line))
@@ -57,7 +59,7 @@ struct LinkButtonStyle: ButtonStyle {
     var destructive = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13)).foregroundStyle(!enabled ? Theme.text3 : destructive ? Theme.bad : configuration.isPressed ? Theme.text2 : Theme.text)
+            .font(.body).foregroundStyle(!enabled ? Theme.text3 : destructive ? Theme.bad : configuration.isPressed ? Theme.text2 : Theme.text)
             .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }
 }
@@ -71,8 +73,17 @@ extension View {
     }
 }
 
+/// A separator one device pixel thick, whatever the display's scale (a 1-point line is 2 pixels on a Retina display)
+struct Hairline: View {
+    var vertical = false
+    @Environment(\.displayScale) private var scale
+    var body: some View {
+        Theme.line.frame(width: vertical ? 1 / scale : nil, height: vertical ? nil : 1 / scale).accessibilityHidden(true)
+    }
+}
+
 /// A small heading over a card or a group of rows
 struct SectionTitle: View {
     let text: String
-    var body: some View { Text(text).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text2).accessibilityAddTraits(.isHeader) }
+    var body: some View { Text(text).font(.headline).foregroundStyle(Theme.text2).accessibilityAddTraits(.isHeader) }
 }

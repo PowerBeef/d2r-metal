@@ -13,14 +13,17 @@ struct ContentView: View {
         @Bindable var model = model
         VStack(spacing: 0) {
             TopBar()
-            Theme.line.frame(height: 1)
+            Hairline()
+            // the page and its side column keep a readable width on a large display (a 5K screen's window would otherwise stretch the cards
+            // and the release notes across 2,000 points): capped and centered; the bars above and below span the window
             HStack(spacing: 0) {
                 ScrollView { MainPage().padding(28).frame(maxWidth: .infinity, alignment: .leading) }.scrollIndicators(.automatic)
-                Theme.line.frame(width: 1)
+                Hairline(vertical: true)
                 ScrollView { SideColumn().padding(.horizontal, 20).padding(.vertical, 24) }.frame(width: 284).scrollIndicators(.never)
             }
-            Theme.line.frame(height: 1)
-            ActionBar().padding(.horizontal, 24).frame(height: 76)
+            .frame(maxWidth: Theme.maxContentWidth).frame(maxWidth: .infinity)
+            Hairline()
+            ActionBar().padding(.horizontal, 24).frame(maxWidth: Theme.maxContentWidth).frame(maxWidth: .infinity).frame(height: 76)
         }
         .ignoresSafeArea(.container, edges: .top)   // the top bar shares its line with the window's buttons
         .background(Theme.bg)
@@ -44,11 +47,13 @@ struct TopBar: View {
     var body: some View {
         HStack(spacing: 9) {
             Brand.icon.resizable().interpolation(.high).frame(width: 22, height: 22).accessibilityHidden(true)
-            Text("D2R Metal").font(.system(size: 13, weight: .semibold))
-            Text("Launcher").font(.system(size: 13)).foregroundStyle(Theme.text3)
+            Text("D2R Metal").font(.headline)
+            Text("Launcher").font(.body).foregroundStyle(Theme.text3)
             Spacer()
+            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development build")")
+                .font(.subheadline).foregroundStyle(Theme.text3).lineLimit(1)
         }
-        .padding(.leading, 86)   // the window's buttons sit at the left of this bar
+        .padding(.leading, 86).padding(.trailing, 20)   // the window's buttons sit at the left of this bar
         .frame(height: 52)
     }
 }
@@ -60,8 +65,8 @@ struct MainPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("Diablo II: Resurrected").font(.system(size: 26, weight: .semibold))
-                Text("With Reign of the Warlock · built on this Mac from your own copy of the game").font(.system(size: 13)).foregroundStyle(Theme.text2)
+                Text("Diablo II: Resurrected").font(.largeTitle.weight(.semibold))
+                Text("With Reign of the Warlock · built on this Mac from your own copy of the game").font(.body).foregroundStyle(Theme.text2)
             }
             if let notice = model.launcherNotice { Notice(kind: .warn, text: notice, link: ("Releases page", "https://github.com/PowerBeef/d2r-metal/releases")) }
             switch model.phase {
@@ -85,8 +90,8 @@ struct Notice: View {
             Image(systemName: kind == .info ? "info.circle.fill" : "exclamationmark.triangle.fill")
                 .foregroundStyle(kind == .info ? Theme.text2 : kind == .warn ? Theme.warn : Theme.bad).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 6) {
-                Text(text).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                if let link, let u = URL(string: link.1) { Link(destination: u) { Label(link.0, systemImage: "arrow.up.right") }.font(.system(size: 13)).foregroundStyle(Theme.text2) }
+                Text(text).font(.body).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                if let link, let u = URL(string: link.1) { Link(destination: u) { Label(link.0, systemImage: "arrow.up.right") }.font(.body).foregroundStyle(Theme.text2) }
             }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
@@ -121,9 +126,9 @@ struct SetupCards: View {
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.ok).accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("Your game files are on this Mac").font(.system(size: 14, weight: .medium))
+                                Text("Your game files are on this Mac").font(.body.weight(.medium))
                                 Text("From the install that stopped. Continue picks up where it left off; the files are checked again first.")
-                                    .font(.system(size: 13)).foregroundStyle(Theme.text2).fixedSize(horizontal: false, vertical: true)
+                                    .font(.body).foregroundStyle(Theme.text2).fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         Button("Use Other Game Files…") { otherFiles = true }.buttonStyle(QuietButtonStyle())
@@ -135,12 +140,12 @@ struct SetupCards: View {
                     SectionTitle(text: "Your game files")
                     VStack(spacing: 0) {
                         row(.base, title: "Base game", detail: "The game package, .nsp or .xci")
-                        Theme.line.frame(height: 1)
+                        Hairline()
                         row(.update, title: "Update 1.0.34.0",
                             detail: model.baseGame?.pathExtension.lowercased() == "xci" ? "Not needed if your .xci already holds it" : "The update package (v2228224), .nsp")
-                        Theme.line.frame(height: 1)
+                        Hairline()
                         row(.dlc, title: "Reign of the Warlock", detail: "Optional: its data already ships in the update")
-                        Theme.line.frame(height: 1)
+                        Hairline()
                         row(.keys, title: "prod.keys", detail: "The keys of your own console")
                     }
                     .padding(.horizontal, 16).padding(.vertical, 4)
@@ -151,12 +156,12 @@ struct SetupCards: View {
                         if model.folder != nil {
                             row(.folder, title: "Extracted folder", detail: "").padding(.horizontal, 16).card(padding: 0)
                         } else {
-                            Text("Already extracted (ExeFS and RomFS)?").font(.system(size: 13)).foregroundStyle(Theme.text2)
+                            Text("Already extracted (ExeFS and RomFS)?").font(.body).foregroundStyle(Theme.text2)
                             Button("Choose a Folder…") { pick(.folder) }.buttonStyle(QuietButtonStyle())
                         }
                     }
                     Text("Your own copy of the Switch release with Reign of the Warlock, version 1.0.34.0; files can be dropped on the list. Your keys are only read, and nothing is uploaded. About 30 GB of free space is needed while installing; the first install takes 10 to 15 minutes.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
+                        .font(.callout).foregroundStyle(Theme.text3).fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -200,10 +205,10 @@ struct FileRow: View {
         HStack(spacing: 12) {
             CheckMark(verdict: verdict, checking: checking).frame(width: 18)
             ZStack(alignment: .leading) {
-                VStack(alignment: .leading, spacing: 2) { Text(verbatim: " ").font(.system(size: 14)); Text(verbatim: " ").font(.system(size: 12)); Text(verbatim: " ").font(.system(size: 11)) }.hidden()
+                VStack(alignment: .leading, spacing: 2) { Text(verbatim: " ").font(.body); Text(verbatim: " ").font(.callout); Text(verbatim: " ").font(.subheadline) }.hidden()
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 14, weight: .medium))
-                    Text(value?.lastPathComponent ?? detail).font(.system(size: 12)).foregroundStyle(Theme.text2)
+                    Text(title).font(.body.weight(.medium))
+                    Text(value?.lastPathComponent ?? detail).font(.callout).foregroundStyle(Theme.text2)
                         .lineLimit(1).truncationMode(.middle).help(value?.path ?? detail)
                     if value != nil, let verdict { VerdictText(verdict: verdict) }
                 }
@@ -243,7 +248,7 @@ struct VerdictText: View {
         case .note(let s): (s, Theme.warn)
         case .wrong(let s), .elsewhere(_, let s): (s, Theme.bad)
         }
-        Text(text).font(.system(size: 11)).foregroundStyle(color).lineLimit(1).truncationMode(.tail).help(text)
+        Text(text).font(.subheadline).foregroundStyle(color).lineLimit(1).truncationMode(.tail).help(text)
     }
 }
 
@@ -257,7 +262,7 @@ struct StepsCard: View {
             SectionTitle(text: model.stopping ? "Stopping…" : model.steps.isEmpty ? model.working : "\(model.working) · \(done) of \(model.steps.count) steps")
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(model.steps.enumerated()), id: \.element.id) { i, step in
-                    if i > 0 { Theme.line.frame(height: 1) }
+                    if i > 0 { Hairline() }
                     StepLine(step: step)
                 }
             }
@@ -265,7 +270,7 @@ struct StepsCard: View {
             .background(RoundedRectangle(cornerRadius: 12).fill(Theme.surface))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
             Text(model.stopping ? "Waiting for the running step to stop cleanly." : "You can keep using your Mac. If you stop or quit, the next run continues where this one stopped.")
-                .font(.system(size: 12)).foregroundStyle(Theme.text3)
+                .font(.callout).foregroundStyle(Theme.text3)
         }
     }
 }
@@ -278,16 +283,16 @@ struct StepLine: View {
                 switch step.state {
                 case .waiting: Circle().strokeBorder(Theme.text3, lineWidth: 1.2).frame(width: 13, height: 13)
                 case .running: ProgressView().controlSize(.mini).tint(Theme.accent)
-                case .done: Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.text2)
-                case .kept: Image(systemName: "checkmark").font(.system(size: 12, weight: .regular)).foregroundStyle(Theme.text3)
-                case .failed: Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.bad)
+                case .done: Image(systemName: "checkmark").font(.callout.weight(.bold)).foregroundStyle(Theme.text2)
+                case .kept: Image(systemName: "checkmark").font(.callout.weight(.regular)).foregroundStyle(Theme.text3)
+                case .failed: Image(systemName: "xmark").font(.callout.weight(.bold)).foregroundStyle(Theme.bad)
                 }
             }
             .frame(width: 18)
-            Text(step.title).font(.system(size: 13, weight: step.state == .running ? .semibold : .regular))
+            Text(step.title).font(.body.weight(step.state == .running ? .semibold : .regular))
                 .foregroundStyle(step.state == .waiting ? Theme.text3 : step.state == .running ? Theme.text : Theme.text2)
             Spacer()
-            trailing.font(.system(size: 12)).foregroundStyle(Theme.text3).monospacedDigit()
+            trailing.font(.callout).foregroundStyle(Theme.text3).monospacedDigit()
         }
         .padding(.vertical, 9)
         .accessibilityElement(children: .combine)
@@ -324,22 +329,23 @@ struct WhatsNewCard: View {
             if let l = model.latest {
                 SectionTitle(text: model.updateAvailable ? "Version \(l.version) is available" : "What's new in version \(l.version)")
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(notes(l.notes)).font(.system(size: 13)).lineSpacing(3).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(notes(l.notes)).font(.body).lineSpacing(3).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 720, alignment: .leading)   // a readable line length in a wide window
                     HStack {
                         Link(destination: URL(string: "https://github.com/PowerBeef/d2r-metal/releases")!) { Label("Release notes on GitHub", systemImage: "arrow.up.right") }
-                            .font(.system(size: 13)).foregroundStyle(Theme.text2)
+                            .font(.body).foregroundStyle(Theme.text2)
                         Spacer()
-                        if !l.date.isEmpty { Text("Released \(l.date)").font(.system(size: 12)).foregroundStyle(Theme.text3) }
+                        if !l.date.isEmpty { Text("Released \(l.date)").font(.callout).foregroundStyle(Theme.text3) }
                     }
                 }
                 .card()
                 if model.updateAvailable && !model.updateIsPrimary {
-                    Text("You went back to the previous version. Update from the side column when you want.").font(.system(size: 12)).foregroundStyle(Theme.text3)
+                    Text("You went back to the previous version. Update from the side column when you want.").font(.callout).foregroundStyle(Theme.text3)
                 }
             } else if let e = model.feedError {
                 Notice(kind: .info, text: "Couldn't check for updates: \(e)")
             } else {
-                Text("Checking for updates…").font(.system(size: 13)).foregroundStyle(Theme.text2)
+                Text("Checking for updates…").font(.body).foregroundStyle(Theme.text2)
             }
         }
     }
@@ -358,13 +364,13 @@ struct ErrorCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.bad).accessibilityHidden(true)
-                    Text(text).font(.system(size: 13)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(text).font(.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
                 if model.hasLog { Button("Show Log") { model.showLog() }.buttonStyle(QuietButtonStyle()) }
             }
             .card()
             Text("Nothing is lost: fix what is described above, then try again. The log has the details; please attach it to an issue.")
-                .font(.system(size: 12)).foregroundStyle(Theme.text3)
+                .font(.callout).foregroundStyle(Theme.text3)
         }
     }
 }
@@ -383,10 +389,10 @@ struct SideColumn: View {
                     info("Version", "\(i.version) (\(i.build))")
                     info("Location", model.installedApp.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), path: true)
                 } else {
-                    Text("Not installed yet").font(.system(size: 13)).foregroundStyle(Theme.text2)
+                    Text("Not installed yet").font(.body).foregroundStyle(Theme.text2)
                 }
             }
-            Theme.line.frame(height: 1)
+            Hairline()
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle(text: "Manage")
                 let idle = !model.busy
@@ -417,8 +423,8 @@ struct SideColumn: View {
 
     private func info(_ label: String, _ value: String, path: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 12)).foregroundStyle(Theme.text3)
-            Text(value).font(.system(size: 13)).lineLimit(path ? 2 : 1).truncationMode(.middle).textSelection(.enabled).help(value)
+            Text(label).font(.callout).foregroundStyle(Theme.text3)
+            Text(value).font(.body).lineLimit(path ? 2 : 1).truncationMode(.middle).textSelection(.enabled).help(value)
         }
         .accessibilityElement(children: .combine)
     }
@@ -432,8 +438,6 @@ struct ActionBar: View {
         HStack(spacing: 20) {
             primary
             status.frame(maxWidth: .infinity, alignment: .leading)
-            Text("Launcher \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development build")")
-                .font(.system(size: 11)).foregroundStyle(Theme.text3)
         }
     }
 
@@ -463,20 +467,20 @@ struct ActionBar: View {
 
     @ViewBuilder private var status: some View {
         switch model.phase {
-        case .loading: Text("Checking…").font(.system(size: 13)).foregroundStyle(Theme.text2)
+        case .loading: Text("Checking…").font(.body).foregroundStyle(Theme.text2)
         case .working:
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(model.stopping ? "Stopping…" : model.runningStep?.title ?? model.working).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Text(model.stopping ? "Stopping…" : model.runningStep?.title ?? model.working).font(.body.weight(.medium)).lineLimit(1)
                     Spacer()
-                    if !model.stopping, let eta = model.etaText { Text(eta).font(.system(size: 12)).foregroundStyle(Theme.text3).monospacedDigit() }
+                    if !model.stopping, let eta = model.etaText { Text(eta).font(.callout).foregroundStyle(Theme.text3).monospacedDigit() }
                 }
                 ProgressBar(value: model.overallProgress)
             }
         default:
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(detail).font(.system(size: 12)).foregroundStyle(Theme.text2).lineLimit(1).truncationMode(.tail)
+                Text(title).font(.body.weight(.medium)).lineLimit(1)
+                Text(detail).font(.callout).foregroundStyle(Theme.text2).lineLimit(1).truncationMode(.tail)
             }
         }
     }

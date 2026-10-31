@@ -120,6 +120,7 @@ DM_LAUNCHER_BUILD	tools	tools/launcher_app.sh	-
 DM_LAUNCHER_BUNDLE_ID	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_FEED	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_PREVIEW	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
+DM_LAUNCHER_PREVIEW_SIZE	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_ROOT	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_SIGN	tools	tools/launcher_app.sh	-
 DM_LAUNCHER_TEST_FEED	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-

@@ -176,7 +176,7 @@ DM_LAUNCHER_FEED=file://$HOME/dm-work/release/1.0.0/manifest.json DM_LAUNCHER_RO
 - `DM_LAUNCHER_BUNDLE_ID` gives the installed app its own preferences and Metal cache.
 - Start the installed app with `DM_APP_SUPPORT` to keep its saves apart (a test copy also skips the hand-over to the launcher).
 - `DM_LAUNCHER_AUTORUN=update` (or `repair`, or `selfupdate`) runs that job as its button does, prints `LAUNCHER-AUTORUN OK|RED …` and quits.
-- `DM_LAUNCHER_PREVIEW=welcome|empty|offline|continue|damaged|working|stopping|home|reverted|game|failed` shows one screen with sample data (screenshots).
+- `DM_LAUNCHER_PREVIEW=welcome|empty|offline|continue|damaged|working|stopping|home|reverted|game|failed` shows one screen with sample data (screenshots). `DM_LAUNCHER_PREVIEW_SIZE=<width>x<height>` sets the window's size, to check how the layout scales.
 - A launcher built from source is build 0 unless `DM_LAUNCHER_BUILD` says otherwise: it never updates itself and never looks newer than a
   release to macOS. `DM_LAUNCHER_APP_ID` builds it with another bundle id.
 - A release launcher reads `DM_LAUNCHER_FEED` too, but every manifest it reads must carry the release key's signature; it ignores and removes the
