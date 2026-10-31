@@ -240,6 +240,7 @@ DM_PROBE	host	host/diag.c	y
 DM_PROBE_AFTER	host	host/diag.c	y
 DM_PROBE_DUMP	host	host/diag.c	y
 DM_PROBE_MAX	host	host/diag.c	y
+DM_PRODUCT_DIR	tools	tools/product.sh	-
 DM_PSO_MANIFEST	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_RECORD	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_USER	gfx	gfx/nvn/nvn_mtl.m	-

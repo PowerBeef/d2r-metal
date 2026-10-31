@@ -27,7 +27,12 @@ for PKG in "${PKGS[@]}"; do [ -f "$PKG" ] || die "没有这个游戏包 | no suc
 # That HOME is created on its own in the system temporary folder and only you can read it, so keys never land in the workspace; the 9 GB of intermediate files stay in the workspace
 ht() { HOME="$KH" "$HT" -k "$KH/.switch/prod.keys" --disablekeywarns --suppresskeys "$@"; }
 T=$DM_ROOT/build/cache/dm/extract.$$; KH=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/dm-keys.XXXXXX") || die "建不了放密钥的临时目录 | cannot create the temporary folder for the keys"
-PART=; trap 'rm -rf "$T" "$KH" ${PART:+"$PART"}' EXIT; mkdir -p "$T/nca" "$KH/.switch" || die "建不了中间目录 $T | cannot create the intermediate folder $T"
+# The clean-up runs when the script ends, also on Ctrl-C or a stop request. The explicit signal trap matters: without it bash 3.2 (macOS's) runs the
+# EXIT trap at once on SIGTERM and deletes these folders under a hactool still writing into them; with it bash first waits for the running command
+# (the launcher's engine stops the whole process group, hactool included, so that is immediate)
+PART=; trap 'rm -rf "$T" "$KH" ${PART:+"$PART"}' EXIT; trap 'exit 130' INT TERM HUP
+mkdir -p "$T/nca" "$KH/.switch" || die "建不了中间目录 $T | cannot create the intermediate folder $T"
+echo $$ > "$KH/.owner"   # a run killed outright (SIGKILL) leaves this folder behind: the engine's next run deletes it once this pid is gone
 TK=$KH/.switch/title.keys; TIK=$KH/tickets.keys; : > "$TIK"
 # The keys hactool reads: a copy of your prod.keys in that private temporary HOME, without the lines whose value is no whole number of 16-byte
 # blocks (some key dumps carry 17-byte *_kek_source_* lines, which hactool refuses outright); deleted with that folder when this script ends
@@ -50,21 +55,25 @@ hterr() { if grep -q 'Key (.*) must be' "$1"; then keyhint "$1"; else tail -1 "$
 
 say "拆游戏包（约 9 GB） | unpacking the game packages (about 9 GB)"
 n=0
+shopt -s nocasematch   # .nsp, .NSP, .Nsp …
 for PKG in "${PKGS[@]}"; do
   n=$((n + 1)); L=$T/unpack$n.log
   case "$PKG" in
-    *.xci|*.XCI) ht -t xci --securedir="$T/nca" "$PKG" > "$L" 2>&1 || die "游戏包拆不开（密钥不对或文件损坏） | cannot unpack the game package (wrong keys or a damaged file): $(hterr "$L")";;
-    *.nsp|*.NSP) ht -t pfs0 --outdir="$T/nca" "$PKG" > "$L" 2>&1 || die "游戏包拆不开（密钥不对或文件损坏） | cannot unpack the game package (wrong keys or a damaged file): $(hterr "$L")";;
+    *.xci) ht -t xci --securedir="$T/nca" "$PKG" > "$L" 2>&1 || die "游戏包拆不开（密钥不对或文件损坏） | cannot unpack the game package (wrong keys or a damaged file): $(hterr "$L")";;
+    *.nsp) ht -t pfs0 --outdir="$T/nca" "$PKG" > "$L" 2>&1 || die "游戏包拆不开（密钥不对或文件损坏） | cannot unpack the game package (wrong keys or a damaged file): $(hterr "$L")";;
     *) die "只认 .xci 或 .nsp | only .xci or .nsp packages are accepted: $PKG";;
   esac
 done
+shopt -u nocasematch
+# The tickets hold title keys: they move at once from the workspace into the private key folder (deleted with it, never left in the workspace)
+for tik in "$T"/nca/*.tik; do [ -f "$tik" ] && mv "$tik" "$KH/"; done
 
 # 票据（.tik，eShop 格式的 .nsp 才有）里的标题密钥：按签名类型定出票据数据的起点，再取 密钥种类（+0x141）、权利 ID（+0x160）、密钥（+0x40）。
 # 通用票据（种类 0）的密钥能直接用；个人票据（种类 1）绑定导出它的那台主机，取不出来——你的 ~/.switch/title.keys 里已有这个标题的密钥时照样能拆。
 # Title keys from the tickets (.tik, only in eShop-style .nsp files): the signature type gives where the ticket data starts, then read the key type (+0x141), the rights ID (+0x160) and the key (+0x40).
 # A common ticket (type 0) holds a key that can be used directly; a personalized ticket (type 1) is bound to the console it was dumped from and cannot be read - extraction still works if your ~/.switch/title.keys has the key for that title.
 tk=0
-for tik in "$T"/nca/*.tik; do
+for tik in "$KH"/*.tik; do
   [ -f "$tik" ] || continue
   case "$(od -An -tx4 -N4 "$tik" | tr -d ' ')" in
     00010000|00010003) base=$((0x240));;   # RSA-4096 签名 | RSA-4096 signature
