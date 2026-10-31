@@ -220,3 +220,31 @@ Measured:
 - **Changes are caught:** removing the walk commands of ticks 405–500 gives a first divergent tick of 444: the player stops where the route already issued runs out.
 
 Recordings are derived from the game program and stay local.
+
+## PC mode probes
+
+Test switches for finding out how far the Switch build's own PC (keyboard and mouse) mode still works. They change nothing unless set, and players never set them.
+
+- **PC layouts:** `DM_PROBE_PC_LAYOUTS=3` points the `Controller/Console/Switch/` and `Controller/Console/` layout prefixes at folders that don't exist. Bit 4 (the bare `Controller/`) breaks boot, since other loaders share that string. For the PC screens, also pass an overlay (`casc_overlay.py`) that replaces each `Controller/<Panel>HD.json` that has a PC twin with that twin. Leave out `GlobalData*`, `_profile*` and `FocusManager*`: replacing those crashes boot.
+- **PC input,** as `DM_UI_TAPS` actions (frame and x,y as for the other actions):
+
+  | Action | What it sends |
+  |---|---|
+  | `K<vk>` | `KeyDown` / `KeyUp` to the interface root |
+  | `Y<vk>` | a key down/up platform event, into the game's input translator |
+  | `L` / `R` | a left / right click platform event, into the game's input translator |
+  | `H<frames>` | the left button held, as platform events |
+  | `M` | a mouse move platform event |
+  | `E<action>` | the world click entry at a tile beside the player (x,y − 500 per mille / 25 = tile offset) |
+  | `X<id>` | runs key binding `<id>` through the game's hotkey executor |
+  | `Z<mode>` | sets the game's hotkey mode |
+
+What the first probes found (2026-10-31, command-line host):
+- **Works:**
+  - **The PC screens:** the PC HUD and character select render.
+  - **Key bindings:** in game the key-binding list holds D2's PC defaults. `X1` and `X0` open the PC inventory and character sheet, still inside the console tab frame.
+  - **Click to walk:** `E0` (left press) walks to the clicked ground, once the host's click-ground move drop is exempted.
+- **Doesn't, so far:**
+  - **Platform events:** keys and mouse sent through the input translator change nothing.
+  - **The PC world-mouse handlers** are empty stubs on the Switch.
+- Details are in the private engine notes.
