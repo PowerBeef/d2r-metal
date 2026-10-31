@@ -21,13 +21,9 @@ trap 'rm -rf "$STG"' EXIT
 rm -rf "$STG"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/D2RMetalLauncher"
 ICON_KEY=$("$DM/brand/icon.sh" "$APP/Contents/Resources")   # the project's icon (dm/brand), as the game app's
-# the brand art the window draws (Brand.swift reads Resources/Brand laid out as dm/brand): the emblem at the size it is shown, the wordmark, Cinzel
-BR="$APP/Contents/Resources/Brand"; mkdir -p "$BR/out" "$BR/fonts"
-sips -Z 512 "$DM/brand/out/emblem.png" --out "$BR/out/emblem.png" > /dev/null; cp "$DM/brand/out/wordmark.png" "$BR/out/"
-cp "$DM/brand/fonts/Cinzel-wght.ttf" "$DM/brand/fonts/OFL.txt" "$BR/fonts/"
 # the project's license and the third-party notices (docs/THIRD_PARTY_NOTICES.md: what each component is and where its text is)
 LIC="$APP/Contents/Resources/Licenses"; mkdir -p "$LIC"; cp "$DM/../LICENSE" "$DM/../docs/THIRD_PARTY_NOTICES.md" "$LIC/"
-for f in "$LIC/LICENSE" "$LIC/THIRD_PARTY_NOTICES.md" "$BR/fonts/OFL.txt"; do [ -s "$f" ] || die "a license text is missing: $f"; done
+for f in "$LIC/LICENSE" "$LIC/THIRD_PARTY_NOTICES.md"; do [ -s "$f" ] || die "a license text is missing: $f"; done
 cat > "$APP/Contents/Info.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

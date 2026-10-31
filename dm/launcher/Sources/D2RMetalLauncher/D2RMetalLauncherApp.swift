@@ -6,8 +6,6 @@ struct D2RMetalLauncherApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = LauncherModel()
 
-    init() { Brand.registerFonts() }
-
     var body: some Scene {
         Window("D2R Metal Launcher", id: "main") {
             ContentView()
@@ -16,10 +14,10 @@ struct D2RMetalLauncherApp: App {
                 // d2rmetal://update: the installed game's main-menu notice opens the launcher for the update (dm/host/app_mac.m upd_click)
                 .onOpenURL { url in if url.host == "update" { Task { await model.checkForUpdates() } } }
         }
-        .windowStyle(.hiddenTitleBar)          // the backdrop reaches the top edge; the traffic lights sit on it
+        .windowStyle(.hiddenTitleBar)          // the dark window reaches the top edge; the window's buttons sit on its top bar
         .windowBackgroundDragBehavior(.enabled)
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 980, height: 620)   // fits a 1280 x 720 screen (690 points under the menu bar)
+        .defaultSize(width: 980, height: 640)   // fits a 1280 x 720 screen (690 points under the menu bar)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Task { await model.checkForUpdates() } }.disabled(model.busy)
@@ -41,6 +39,9 @@ struct D2RMetalLauncherApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: LauncherModel?
+
+    /// Dark only: the window, its menus, sheets and alerts
+    func applicationWillFinishLaunching(_ notification: Notification) { NSApp.appearance = NSAppearance(named: .darkAqua) }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 

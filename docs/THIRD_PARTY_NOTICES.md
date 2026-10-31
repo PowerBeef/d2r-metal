@@ -1,8 +1,8 @@
 # Third-party notices
 
 D2R Metal is under the MIT License (`LICENSE`). Its launcher and the packs the launcher downloads also carry other people's work, each under its own
-license. The full texts travel with the files they cover: in the launcher (`D2R Metal Launcher.app/Contents/Resources/Licenses` and
-`Contents/Resources/Brand/fonts/OFL.txt`), and in each pack's `licenses` folder. `dm/tools/release_mac.sh` refuses to build a pack when a text is
+license. The full texts travel with the files they cover: in the launcher (`D2R Metal Launcher.app/Contents/Resources/Licenses`) and in each
+pack's `licenses` folder. `dm/tools/release_mac.sh` refuses to build a pack when a text is
 missing.
 
 None of this is game content: the game's program, art, text and shaders come only from the player's own copy, on the player's own Mac.
@@ -11,8 +11,7 @@ None of this is game content: the game's program, art, text and shaders come onl
 
 | Component | License | Text |
 |---|---|---|
-| D2R Metal (the launcher's own code) | MIT | `Resources/Licenses/LICENSE` |
-| Cinzel typeface (Natanael Gama) | SIL Open Font License 1.1 | `Resources/Brand/fonts/OFL.txt` |
+| D2R Metal (the launcher's own code and its icon) | MIT | `Resources/Licenses/LICENSE` |
 
 ## Runtime pack (`d2r-metal-runtime-<version>.tar.gz`)
 

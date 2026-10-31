@@ -49,10 +49,6 @@ final class LauncherModel {
     var verdicts: [Slot: GameFileCheck.Verdict] = [:]   // what each chosen file was found to be (GameFileCheck), shown beside it
     var checking: Set<Slot> = []
 
-    var channel: Channel {
-        didSet { guard channel != oldValue else { return }; defaults.set(channel.rawValue, forKey: "Channel"); refresh() }
-    }
-
     let paths: Paths
     let trust = Trust.current
     let defaults = UserDefaults.standard
@@ -85,8 +81,7 @@ final class LauncherModel {
 
     init() {
         paths = LauncherModel.makePaths()
-        channel = Channel(rawValue: UserDefaults.standard.string(forKey: "Channel") ?? "") ?? .stable
-        defaults.removeObject(forKey: "AppFolder")   // an early test build's setting; the game always goes to the Game folder now
+        for old in ["AppFolder", "Channel"] { defaults.removeObject(forKey: old) }   // early builds' settings: the Game folder is fixed, and there is one channel
         if trust.isRelease { defaults.removeObject(forKey: "DMLauncherFeed") }   // a tester's local feed never sticks to a release launcher
     }
 
@@ -250,12 +245,12 @@ final class LauncherModel {
         await job?.value   // a move into the Game folder runs first
         switch what {
         case "update": update()
-        case "repair": repair()
+        case "repair": await startRepair()
         default: print("LAUNCHER-AUTORUN RED unknown job \(what)"); fflush(stdout); exit(2)
         }
         await job?.value
         try? await Task.sleep(for: .seconds(2))   // the finished screen stays a moment (screenshots)
-        let ok = phase == .home && installed != nil && installed?.build == latest?.build
+        let ok = !quitGamePrompt && phase == .home && installed != nil && installed?.build == latest?.build   // a job that waits for the game never ran
         var why = ""; if case .failed(let text) = phase { why = " error=\(text)" }
         if quitGamePrompt { why = " error=the game is running" }
         if let fe = feedError { why += " feed=\(fe)" }
@@ -286,11 +281,10 @@ final class LauncherModel {
 
     // MARK: the release feed
 
-    /// A new feed request for the current channel, replacing one still under way; its answer is used only while the channel is the same
+    /// A new feed request, replacing one still under way
     func refresh() {
         refreshTask?.cancel()
-        let ch = channel
-        refreshTask = Task { await fetchFeed(ch) }
+        refreshTask = Task { await fetchFeed() }
     }
 
     /// refresh, and wait for its answer (at most `timeout` seconds; the answer still lands when it comes)
@@ -305,15 +299,15 @@ final class LauncherModel {
         }
     }
 
-    private func fetchFeed(_ ch: Channel) async {
+    private func fetchFeed() async {
         do {
-            let (m, u) = try await Feed(channel: ch, override: feedOverride, trust: trust).latest()
-            guard !Task.isCancelled, ch == channel else { return }
+            let (m, u) = try await Feed(override: feedOverride, trust: trust).latest()
+            guard !Task.isCancelled else { return }
             latest = m; latestURL = u; feedError = nil
         } catch is CancellationError {
         } catch {
-            guard !Task.isCancelled, ch == channel else { return }
-            feedError = error.localizedDescription   // the last good answer for this channel stays
+            guard !Task.isCancelled else { return }
+            feedError = error.localizedDescription   // the last good answer stays
         }
     }
 
@@ -377,9 +371,14 @@ final class LauncherModel {
 
     /// Every step again, from the installed release's own packs (checked file by file, so a damaged pack is fetched again): no update and no
     /// downgrade, and no network needed when the packs are intact. Packs an older launcher left without a file list are used as they are
-    func repair() {
-        guard let i = installed else { return }
-        if let p = packs, packBuild(p.runtime) == i.build, Packs.contentsIntact(p.runtime) != false, Packs.contentsIntact(p.tools) != false {
+    func repair() { Task { await startRepair() } }
+
+    /// repair's choice of packs; the packs' files are hashed off the main actor (a few thousand files)
+    func startRepair() async {
+        guard let i = installed, job == nil else { return }
+        let p = packs
+        let intact = await Task.detached { p.map { Packs.contentsIntact($0.runtime) != false && Packs.contentsIntact($0.tools) != false } ?? false }.value
+        if let p, intact, packBuild(p.runtime) == i.build {
             runEngineJob(.repair, "Repairing", command: "repair", input: .none, from: .installed(p))
         } else if let m = latest, m.build == i.build {
             runEngineJob(.repair, "Repairing", command: "repair", input: .none, from: .feed, verify: true)
