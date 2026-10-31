@@ -14,7 +14,7 @@
 #   --min-build   the oldest launcher build that may install this release (default: LAUNCHER_MIN_BUILD in dm/tools/install.py)
 #   --replace-draft  delete a draft v<version> left by an earlier run (never a published release) before uploading
 #   --update-nuget-pins  record the NuGet packages of this build in dm/tools/release_nuget.tsv instead of refusing a change
-#   --check-latest   after publishing: GitHub's "latest release" (the stable channel and the in-game notice read it) must be a D2R Metal release
+#   --check-latest   after publishing: GitHub's "latest release" (the launcher and the in-game notice read it) must be a D2R Metal release
 # Needs: Xcode 27 (clang, make, swift, codesign, notarytool, stapler, actool), Homebrew spirv-cross (the pinned version and checksum) and zstd, git,
 # gh, and the network (the pinned Python build, .NET SDK, wheels and NuGet packages, hactool's source). Signing uses the keychain's "Developer ID
 # Application" identity of team FK2D8X36G2; the manifest signature the release key in the login keychain (dm/tools/manifest_sign.swift, made once
@@ -34,10 +34,10 @@ pin() { awk -F'\t' -v k="$1" '$1 == k { print $2 }' "$HERE/release_pins.txt"; }
 sha() { shasum -a 256 "$1" | cut -c1-64; }
 size() { stat -f %z "$1"; }
 
-# GitHub's latest release is what the stable channel and the in-game notice read: it must be one of ours (v<version>, with a manifest). A release of
-# README images or anything else must be a pre-release, or every launcher's stable channel would find no manifest there
+# GitHub's latest release is what the launcher and the in-game notice read: it must be one of ours (v<version>, with a signed manifest). Anything
+# else on the releases page made "latest" would leave every launcher with no manifest to read
 check_latest() {
-  local tag; tag=$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2>/dev/null) || die "GitHub has no latest release yet: the stable channel finds nothing"
+  local tag; tag=$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2>/dev/null) || die "GitHub has no latest release yet: launchers find nothing"
   [[ $tag == v* ]] || die "GitHub's latest release is $tag, not a D2R Metal release: mark it as a pre-release (gh release edit $tag --repo $GH_REPO --prerelease)"
   gh api "repos/$GH_REPO/releases/latest" --jq '.assets[].name' | grep -qx manifest.json || die "the latest release ($tag) has no manifest.json"
   gh api "repos/$GH_REPO/releases/latest" --jq '.assets[].name' | grep -qx manifest.json.sig || die "the latest release ($tag) has no manifest.json.sig"
@@ -77,7 +77,7 @@ if [ -n "$UPLOAD" ]; then
     curl -fsSL "https://github.com/$GH_REPO/releases/download/$t/manifest.json" 2>/dev/null | /usr/bin/python3 -I -c 'import json, sys; print(json.load(sys.stdin)["build"])' 2>/dev/null || true
   done | sort -n | tail -1)
   [ "$BUILD" -gt "${PUBLISHED:-0}" ] || die "build $BUILD is not above the newest published release's ($PUBLISHED): updates would not see it"
-  # a release of anything else marked "latest" would hide this one from the stable channel
+  # a release of anything else marked "latest" would hide this one from the launchers
   OTHER=$(gh api "repos/$GH_REPO/releases?per_page=30" --jq '.[] | select(.draft | not) | select(.prerelease | not) | select(.tag_name | startswith("v") | not) | .tag_name')
   [ -z "$OTHER" ] || die "these releases are not D2R Metal releases and not pre-releases, so GitHub may call one of them latest: $OTHER (gh release edit <tag> --prerelease)"
 fi
@@ -261,6 +261,12 @@ notarize() {
   fi
   say "notarized $(basename "$1") (submission $id)"
 }
+# staple <file>: attaches the notary ticket. Apple serves a new ticket a little after the Accepted verdict (stapler exits 68 until then), so retry
+staple() {
+  local _
+  for _ in 1 2 3 4 5 6 7 8 9 10; do xcrun stapler staple "$1" > "$WORK/staple.log" 2>&1 && return 0; sleep 15; done
+  cat "$WORK/staple.log" >&2; die "could not staple the notary ticket to $(basename "$1")"
+}
 ( unset DM_LAUNCHER_APP_ID   # a development override of the launcher's bundle id never reaches a release
   DM_LAUNCHER_VERSION=$VERSION DM_LAUNCHER_BUILD=$BUILD DM_LAUNCHER_SIGN=$ID DM_ROOT=$ROOT bash "$WT/dm/tools/launcher_app.sh" "$WORK/launcher" ) > /dev/null \
   || die "the launcher did not build (dm/tools/launcher_app.sh; its error is above)"
@@ -268,14 +274,14 @@ APP="$WORK/launcher/D2R Metal Launcher.app"
 [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "$LAUNCHER_ID" ] || die "the launcher's bundle id is not $LAUNCHER_ID"
 [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")" = "$BUILD" ] || die "the launcher's build number is not $BUILD"
 if [ -n "$ID" ]; then
-  ditto -c -k --keepParent "$APP" "$WORK/notarize.zip"; say "notarizing the app"; notarize "$WORK/notarize.zip"; xcrun stapler staple "$APP" > /dev/null
+  ditto -c -k --keepParent "$APP" "$WORK/notarize.zip"; say "notarizing the app"; notarize "$WORK/notarize.zip"; staple "$APP"
   spctl -a -t exec -vv "$APP" 2>&1 | grep -q 'source=Notarized Developer ID' || { spctl -a -t exec -vv "$APP" >&2; die "Gatekeeper does not accept the stapled launcher"; }
 fi
 ditto -c -k --keepParent "$APP" "$OUT/$LAUNCHER_ZIP"
 mkdir "$WORK/dmg"; cp -R "$APP" "$WORK/dmg/"; ln -s /Applications "$WORK/dmg/Applications"
 hdiutil create -quiet -volname "D2R Metal Launcher" -srcfolder "$WORK/dmg" -ov -format UDZO "$OUT/$DMG"
 if [ -n "$ID" ]; then
-  sign "$OUT/$DMG"; say "notarizing the disk image"; notarize "$OUT/$DMG"; xcrun stapler staple "$OUT/$DMG" > /dev/null
+  sign "$OUT/$DMG"; say "notarizing the disk image"; notarize "$OUT/$DMG"; staple "$OUT/$DMG"
   spctl -a -t open --context context:primary-signature -v "$OUT/$DMG" 2>&1 | tail -1
 fi
 
