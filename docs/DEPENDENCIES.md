@@ -53,16 +53,16 @@ Not needed to build the app or run the Mac smoke test; only for on-device smoke 
 
 ## What the launcher's release packs ship
 
-Players who install with D2R Metal Launcher ([LAUNCHER.md](LAUNCHER.md); coming with the first release) need none of the build tools above. Every program and library in the packs loads only macOS's own libraries or the pack's own; the release script refuses to build a pack that does not. Each release carries the pieces below, built and pinned by `dm/tools/release_mac.sh` from `dm/tools/release_pins.txt`, with their license texts in the tools pack's `licenses/` folder.
+Players who install with D2R Metal Launcher ([LAUNCHER.md](LAUNCHER.md); coming with the first release) need none of the build tools above. Every program and library in the packs loads only macOS's own libraries or the pack's own; the release script refuses to build a pack that does not. Each release carries the pieces below, built and pinned by `dm/tools/release_mac.sh` from `dm/tools/release_pins.txt` (with `release_requirements.txt` for the wheels' hashes and `release_nuget.tsv` for the NuGet packages), with their license texts in each pack's `licenses/` folder; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them all.
 
 | Piece | Version | License | Upstream |
 |---|---|---|---|
-| CPython (from python-build-standalone) | 3.14.8 (build 20261013) | PSF (python-build-standalone: MIT) | <https://github.com/astral-sh/python-build-standalone> |
+| CPython (from python-build-standalone) | 3.14.8 (build 20261013) | PSF (python-build-standalone: MPL-2.0; the libraries inside it, such as OpenSSL and SQLite, under their own licenses) | <https://github.com/astral-sh/python-build-standalone> |
 | lz4, capstone, numpy, Pillow (Python packages) | 4.4.5, 5.0.9, 2.5.4, 13.0.0 | BSD-3, BSD-3, BSD-3, MIT-CMU | PyPI |
 | .NET runtime (compiled into the native shader translator: NativeAOT with Microsoft's SDK 10.0.403 on the release Mac; players get one program, no .NET) | 10.0.14 | MIT | <https://dotnet.microsoft.com> |
 | Ryujinx shader translator (inside the same) | 1.3.2, as in `dm/third_party/ryujinx` | MIT | <https://github.com/Ryubing> |
 | SPIRV-Cross | 1.4.363.0 | Apache-2.0 | <https://github.com/KhronosGroup/SPIRV-Cross> |
-| hactool | commit 1d64a83 | ISC | <https://github.com/SciresM/hactool> |
+| hactool (with mbed TLS, Apache-2.0, and cJSON, MIT, inside it) | commit 1d64a83 | ISC | <https://github.com/SciresM/hactool> |
 
 ## Third-party code in this repository
 

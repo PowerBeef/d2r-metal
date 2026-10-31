@@ -48,6 +48,11 @@ jobs:
           python dm/tools/switches.py check
           python dm/tools/scenario.py check dm/verify/scenarios/*.scn
           bash dm/ios/tools/check_hud_gen.sh
+      - name: Release and install scripts
+        # the launcher's release, packaging and install scripts parse, and shellcheck (on the runner image) finds no warning in them
+        run: |
+          for f in dm/tools/release_mac.sh dm/tools/launcher_app.sh dm/tools/extract_game.sh dm/tools/product.sh; do bash -n "$f"; done
+          shellcheck -S warning dm/tools/release_mac.sh dm/tools/launcher_app.sh dm/tools/extract_game.sh dm/tools/product.sh
       - name: Tool tests
         run: |
           failed=0

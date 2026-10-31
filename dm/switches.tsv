@@ -114,15 +114,17 @@ DM_KBD	host	host/hle_swkbd.c host/tests/t_swkbd.c	-
 DM_KEYS	host,ios-tools,verify	host/diag.c host/dm_cursor.c host/hle_hid.c host/tests/t_hid_receipt.c …	y
 DM_LANG	host	host/app_mac.m host/dm_i18n.c host/hle_oe.c host/tests/t_app_mac.m …	-
 DM_LAT_LOG	host	host/dm_cursor.c	-
+DM_LAUNCHER_APP_ID	tools	tools/launcher_app.sh	-
 DM_LAUNCHER_AUTORUN	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_BUILD	tools	tools/launcher_app.sh	-
-DM_LAUNCHER_BUNDLE_ID	other,tools	launcher/Sources/D2RMetalLauncher/LauncherModel.swift tools/launcher_app.sh	-
+DM_LAUNCHER_BUNDLE_ID	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_FEED	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_PREVIEW	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_ROOT	other	launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_LAUNCHER_SIGN	tools	tools/launcher_app.sh	-
 DM_LAUNCHER_TEST_FEED	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
 DM_LAUNCHER_TEST_GAME	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
+DM_LAUNCHER_TEST_NETWORK	other	launcher/Tests/LauncherCoreTests/CoreTests.swift	-
 DM_LAUNCHER_TEST_ROOT	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
 DM_LAUNCHER_VERSION	tools	tools/launcher_app.sh	-
 DM_LOADHASH	host	host/loader.c	-
@@ -240,6 +242,7 @@ DM_PROBE	host	host/diag.c	y
 DM_PROBE_AFTER	host	host/diag.c	y
 DM_PROBE_DUMP	host	host/diag.c	y
 DM_PROBE_MAX	host	host/diag.c	y
+DM_PRODUCT_DIR	tools	tools/product.sh	-
 DM_PSO_MANIFEST	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_RECORD	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_USER	gfx	gfx/nvn/nvn_mtl.m	-
@@ -353,6 +356,7 @@ DM_TEST_KILL	host	host/diag.c	-
 DM_TEST_KILL_AT	host	host/dm_cloudmerge.c host/hle_fs.c	y
 DM_TEST_LAG	host	host/diag.c	-
 DM_TEST_LANG	host	host/dm_custom.c	y
+DM_TEST_LAUNCHER_ID	host	host/app_mac.m	-
 DM_TEST_LEAK	host	host/diag.c	-
 DM_TEST_LEAK_GPU	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_LEGEND	host	host/dm_padmode.c	-

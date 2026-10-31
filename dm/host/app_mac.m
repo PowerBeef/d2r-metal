@@ -155,16 +155,22 @@ void dm_app_msl_env(void) {
 // Called at the very start of main(). In App form it prepares the environment and arguments and returns 1; otherwise it returns 0 and touches nothing
 // A game app installed by D2R Metal Launcher is started through the launcher, as a Battle.net game is: opened any other way (Finder, a Dock icon
 // kept from an earlier run, Open Recent) it opens the launcher and quits. The launcher marks its own start with DM_FROM_LAUNCHER. Builds the
-// launcher did not make (no DMLauncherManaged), test copies (DM_APP_SUPPORT) and an app whose launcher is gone start as before
+// launcher did not make (no DMLauncherManaged), test copies (DM_APP_SUPPORT) and an app whose launcher is gone start as before; so does a start whose
+// launcher did not open (an error, or no answer within 5 s): the game then runs rather than leaving the player with nothing
 static BOOL launcher_handoff(void) {
     if (getenv("DM_FROM_LAUNCHER") || getenv("DM_APP_SUPPORT") || ![[NSBundle.mainBundle objectForInfoDictionaryKey:@"DMLauncherManaged"] boolValue]) return NO;
-    NSURL *launcher = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"org.d2rmetal.launcher"];
+    // DM_TEST_LAUNCHER_ID: a test's stand-in launcher (dm/verify/launcher_update.py), so a hand-over test never opens the player's launcher
+    const char *tid = getenv("DM_TEST_LAUNCHER_ID");
+    NSURL *launcher = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:tid ? @(tid) : @"org.d2rmetal.launcher"];
     if (!launcher) return NO;
     dispatch_semaphore_t opened = dispatch_semaphore_create(0);
+    __block BOOL ok = NO;
     [NSWorkspace.sharedWorkspace openApplicationAtURL:launcher configuration:NSWorkspaceOpenConfiguration.configuration
-                                    completionHandler:^(NSRunningApplication *app, NSError *err) { (void)app; (void)err; dispatch_semaphore_signal(opened); }];
-    dispatch_semaphore_wait(opened, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
-    return YES;
+                                    completionHandler:^(NSRunningApplication *app, NSError *err) { ok = app != nil && err == nil; dispatch_semaphore_signal(opened); }];
+    BOOL late = dispatch_semaphore_wait(opened, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0;
+    // a hand-over test never falls back to running the game: opened without a test save folder, it would run on the player's own
+    if (tid && (late || !ok)) { fprintf(stderr, "hand-over: the test launcher %s did not open\n", tid); exit(3); }
+    return !late && ok;
 }
 
 int dm_app_bootstrap(int *argc, char ***argv) {
@@ -267,8 +273,11 @@ static void upd_check_main(void) {
         NSNumber *b = [j isKindOfClass:NSDictionary.class] ? j[@"build"] : nil;
         if (![b isKindOfClass:NSNumber.class] || b.intValue < 1) { LOG("更新：读版本文件没成（%s，HTTP %ld），本次不提示", e ? e.localizedDescription.UTF8String : "格式不对", (long)code); return; }
         NSString *zh = [j[@"note"] isKindOfClass:NSString.class] ? j[@"note"] : @"", *en = [j[@"note_en"] isKindOfClass:NSString.class] ? j[@"note_en"] : zh, *pg = [j[@"url"] isKindOfClass:NSString.class] ? j[@"url"] : nil;
-        // or the launcher's own scheme (d2rmetal://update, registered by D2R Metal Launcher, dm/launcher): an app it installed opens it for the update
-        NSURL *pu = pg ? [NSURL URLWithString:pg] : nil; BOOL okpg = pu && ((([pu.scheme isEqualToString:@"https"] || [pu.scheme isEqualToString:@"http"]) && [pu.host isEqualToString:u.host]) || [pu.scheme isEqualToString:@"d2rmetal"]);
+        // or the launcher's own link d2rmetal://update (registered by D2R Metal Launcher, dm/launcher): an app it installed opens it for the update;
+        // no other d2rmetal:// link is followed
+        NSURL *pu = pg ? [NSURL URLWithString:pg] : nil;
+        BOOL okpg = pu && ((([pu.scheme isEqualToString:@"https"] || [pu.scheme isEqualToString:@"http"]) && [pu.host isEqualToString:u.host]) ||
+                           ([pu.scheme isEqualToString:@"d2rmetal"] && [pu.host isEqualToString:@"update"] && pu.path.length == 0 && !pu.query));
         NSString *page = okpg ? [pg copy] : nil; dispatch_async(dispatch_get_main_queue(), ^{ g_upd_page = page; });
         if (b.intValue > g_upd_own) { const char *l = getenv("DM_LANG"); NSString *note = (l && !strncmp(l, "zh", 2)) ? zh : en; LOG("更新：最新构建 %d 比自己（%d）新 → 主菜单提示（下载页 %s）", b.intValue, g_upd_own, okpg ? "有" : "没给或不同主机，不可点"); dm_update_offer(b.intValue, note.UTF8String, 0); }
         else { LOG("更新：最新构建 %d，不比自己（%d）新，不提示", b.intValue, g_upd_own); dm_update_offer(0, "", 0); }

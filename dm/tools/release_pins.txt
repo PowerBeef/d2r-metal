@@ -1,18 +1,26 @@
 # Inputs of the launcher's tools pack (dm/tools/release_mac.sh): everything a player's Mac needs to run dm/tools/install.py without Xcode, Homebrew
-# or .NET. The pack is versioned apart from the releases (players download it once): bump tools_version whenever a line below changes.
-# Tab-separated: name, value.
-tools_version	3
-# CPython from python-build-standalone (astral-sh, MIT; CPython itself under the PSF license), the same minor version as the workspace (3.14)
+# or .NET. The pack is versioned apart from the releases (players download it once): bump tools_version whenever an input changes (a line below,
+# dm/tools/release_requirements.txt, dm/tools/release_nuget.tsv or the translator's sources; release_mac.sh refuses a changed input under an old
+# version). Tab-separated: name, value.
+tools_version	4
+# CPython from python-build-standalone (astral-sh, MPL-2.0; CPython itself under the PSF license), the same minor version as the workspace (3.14)
 python_url	https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8%2B20261013-aarch64-apple-darwin-install_only.tar.gz
 python_sha256	709f419d175eb015f810b68aa54bdae1d776c9824cb362aa701c93b0a9f2a9e7
-# The packages the install steps import (patch_nso.py: lz4, capstone 5; the overlay: numpy, Pillow), as in the workspace's venv; wheels only
-pip	lz4==4.4.5 capstone==5.0.9 numpy==2.5.4 pillow==13.0.0
+# the same build's full archive, read only for the license texts of the libraries inside that Python (OpenSSL, SQLite, zlib, libffi …)
+python_licenses_url	https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8%2B20261013-aarch64-apple-darwin-pgo%2Blto-full.tar.zst
+python_licenses_sha256	5806ddb9d95d73796c87e1aeb45bf7ec984d08ae9eb94f9020436052b32ce498
+python_build_license_url	https://raw.githubusercontent.com/astral-sh/python-build-standalone/20261013/LICENSE
+python_build_license_sha256	1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5
+# The packages the install steps import (patch_nso.py: lz4, capstone 5; the overlay: numpy, Pillow): dm/tools/release_requirements.txt (wheels,
+# each pinned to its sha256)
 # .NET SDK from Microsoft (MIT), on the release Mac only: it compiles the shader translator ahead of time (NativeAOT) into one native program,
-# so players get no .NET (Homebrew's source-built .NET would link Homebrew libraries). From the 10.0 release metadata
+# so players get no .NET (Homebrew's source-built .NET would link Homebrew libraries). From the 10.0 release metadata. The NuGet packages the
+# build restores are pinned in dm/tools/release_nuget.tsv
 dotnet_sdk_version	10.0.403
 dotnet_sdk_url	https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.403/dotnet-sdk-10.0.403-osx-arm64.tar.gz
 dotnet_sdk_sha512	5893c66b48ea3674c7da18501059d606e96f3672fabe4d5e41762e692c7c83df3ee0b2b9dc5a0786191da2dc413d7335158101c14c935ab217f31ac2529770f3
-# spirv-cross (Khronos, Apache-2.0): the Homebrew build this Mac's shader chain uses (links only system libraries)
+# spirv-cross (Khronos, Apache-2.0): the Homebrew build this Mac's shader chain uses (links only system libraries), and its program's sha256
 spirv_cross_version	1.4.363.0
-# hactool (SciresM, ISC): cloned from github.com/SciresM/hactool and built at this commit
-hactool_commit	1d64a83
+spirv_cross_sha256	d9dc197f061b42a575d589fefc9dc236cad78bb0a0db307f007fe4389050a4f4
+# hactool (SciresM, ISC; with mbedtls, Apache-2.0, and cJSON, MIT): cloned from github.com/SciresM/hactool and built at this commit
+hactool_commit	1d64a83450e025622f3468c28fc4164dad2c5ef6

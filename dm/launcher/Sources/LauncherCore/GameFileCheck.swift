@@ -45,20 +45,28 @@ public enum GameFileCheck {
             guard n.lowercased().hasSuffix(".tik"), n.count >= 36 else { return nil }
             return UInt64(n.prefix(16), radix: 16)
         }
-        guard let tid = titles.first else {
+        guard !titles.isEmpty else {
             return names.contains(where: { $0.hasSuffix(".nca") }) ? .note("No ticket to read the title from; it is checked while unpacking") : .wrong("This package holds no game content")
         }
-        let kind: PackageKind? = tid == base ? .base : tid == base | 0x800 ? .update : tid >> 12 == (base >> 12) + 1 ? .dlc : nil
-        guard let kind else { return .wrong(String(format: "Another game (title %016llX)", tid)) }
-        let what = kind == .base ? "Base game" : kind == .update ? "Update" : "Reign of the Warlock DLC"
-        if kind != expected { return .elsewhere(kind, "This is the \(what.lowercased()) package") }
-        return .ok(String(format: "\(what), title %016llX", tid) + (kind == .update ? " · version checked at install" : ""))
+        // every ticket counts: a package may bundle the update with an add-on, say; it fits the selector when one of its titles does
+        func kind(_ tid: UInt64) -> PackageKind? { tid == base ? .base : tid == base | 0x800 ? .update : tid >> 12 == (base >> 12) + 1 ? .dlc : nil }
+        func what(_ k: PackageKind) -> String { k == .base ? "Base game" : k == .update ? "Update" : "Reign of the Warlock DLC" }
+        let kinds = titles.map(kind)
+        guard let found = kinds.compactMap({ $0 }).first else { return .wrong(String(format: "Another game (title %016llX)", titles[0])) }
+        guard let i = kinds.firstIndex(of: expected) else { return .elsewhere(found, "This is the \(what(found).lowercased()) package") }
+        let also = Set(kinds.compactMap { $0 }).subtracting([expected]).map { what($0).lowercased() }.sorted()
+        return .ok(String(format: "\(what(expected)), title %016llX", titles[i]) + (also.isEmpty ? "" : " (with the \(also.joined(separator: " and ")))")
+                   + (expected == .update ? " · version checked at install" : ""))
     }
 
     // MARK: keys
 
     public static func keys(_ url: URL) -> Verdict {
-        guard let data = try? Data(contentsOf: url), data.count < 1 << 20, let text = String(data: data, encoding: .utf8) else { return .wrong("Can't read this file as a key file") }
+        // at most 1 MB is read: a key file is a few KB, and a game package chosen here by mistake is many GB
+        guard let h = try? FileHandle(forReadingFrom: url) else { return .wrong("Can't read this file") }
+        defer { try? h.close() }
+        guard let data = try? h.read(upToCount: (1 << 20) + 1), data.count <= 1 << 20 else { return .wrong("Too big to be a key file") }
+        guard let text = String(data: data, encoding: .utf8) else { return .wrong("Can't read this file as a key file") }
         var names = Set<String>(), odd = 0
         for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
@@ -82,6 +90,7 @@ public enum GameFileCheck {
         guard let root = candidates.first(where: { fm.fileExists(atPath: $0.appendingPathComponent("ExeFS/main").path) }) else {
             return .wrong("No ExeFS/main here (choose the folder that holds ExeFS and RomFS)")
         }
+        for name in ["sdk", "subsdk0"] where !fm.fileExists(atPath: root.appendingPathComponent("ExeFS/\(name)").path) { return .wrong("ExeFS/\(name) is missing") }
         guard fm.fileExists(atPath: root.appendingPathComponent("RomFS/data/build_manifest.psv").path) else { return .wrong("RomFS/data/build_manifest.psv is missing") }
         guard let sum = try? sha256(root.appendingPathComponent("ExeFS/main")) else { return .wrong("Can't read ExeFS/main") }
         return sum == mainSHA256 ? .ok("Version 1.0.34.0, extracted") : .wrong("ExeFS/main is not from version 1.0.34.0")
