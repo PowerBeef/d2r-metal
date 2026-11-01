@@ -112,6 +112,7 @@ dm/ios/tools/check_hud_gen.sh         # no game derivatives tracked in git → H
 dm/tools/product.sh build|path <touch|rules|keypage>|rev
 ```
 
+- **Keep the workspace small** (the user asked on 2026-11-01): `python3 -I dm/tools/workspace_prune.py` lists what is safe to remove from `$DM_ROOT` (older shader-library versions and rewrite products, test runs older than 7 days except `run/bench/baseline`, older local releases, Mac App test copies older than a day); `--apply` moves it to the Trash. Run it after a shader-chain or product change and after long investigations, and delete scratch outputs (captures, probe overlays) when done with them.
 - Use `regress.sh --fresh` whenever `dm/tools/patch_nso.py` changed.
 - **The fork's gate is `dm/verify/fork_gate.sh quick|unit|core|full|long|device`** (`dm/verify/FORK_GATE.md`): each step through `dmtest.py`, results in `$DM_ROOT/run/gate/latest/`, last line `FORKGATE OK|RED {json}`. Run `quick unit` for every change, `core` for host changes (≤ 15 min), `full` before rebuilding the apps.
 
