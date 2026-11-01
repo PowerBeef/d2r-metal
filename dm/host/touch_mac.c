@@ -211,8 +211,10 @@ void dm_touch_host_game_start(uint64_t now) {
     if (g_touch.enabled && !g_touch.prefix) { g_touch.started = 1; g_touch.based = 1; g_touch.loaded = 1; g_touch.tick_set = 1; g_touch.to_game_tick = touch_cur_tick() - START_BEATS; g_touch.start_tick = touch_cur_tick(); }
 }
 
+__attribute__((weak)) int dm_kbm_step(uint64_t *buttons) { (void)buttons; return 0; }   // dm_kbm.c has the real one (tests that link this file alone)
 void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     if (!g_touch.ready) touch_init(now);
+    dm_kbm_step(buttons);   // PC control mode (dm_kbm.c): drains its keyboard / mouse queue first; panel clicks it forwards come through g_live below
     if (g_live_on) {   // Mac 键盘的回车与 Esc（front_mac.m 用两个游戏不认的高位送来）：按下那一刻按当前页定成哪个手柄键，按住期间不变 | Return and Esc on a Mac keyboard (sent by front_mac.m as two high bits the game does not recognise): decided as a gamepad key by the current page at the moment of pressing, unchanged while held
         static uint64_t ent, esc; int dm_padmode_legend_has(uint32_t glyph), dm_game_paused(void), dm_uiscreen_ingame(void); uint64_t kb = *buttons; *buttons &= ~((1ull << 40) | (1ull << 41));
         // 回车：缺省 = 确认（A）——提示条写的是手柄字母，拿键盘的人按回车是想确认；当前页的提示条里有「＋」这一条时 = ＋（起名页的「创建」等；主菜单除外，见 dm_padmode_legend_has）

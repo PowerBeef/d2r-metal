@@ -1,0 +1,147 @@
+// PC keyboard and mouse in game (the Mac App's PC control mode, docs/MAC.md): keys run the game's own PC key bindings, the mouse clicks the world the
+// way D2R on PC does (left = move / left skill at the cursor, right = right skill, Shift = stand still), and clicks on panels keep going through the
+// Mac pointer path (touch_mac.c), so the console item panels the PC set keeps (dm_padmode.c, gen_romfs_overlay.py PC_TWINS) still work.
+// Only while the PC interface set is on screen and a game is running; the front end keeps the keyboard-as-controller mapping (front_mac.m).
+// The front end (any thread) queues events; dm_kbm_step drains them on the game main thread at the controller poll (touch_mac.c dm_touch_host_step).
+// Game addresses (offsets into the original 3.3.94012 main image):
+//   main+0x2086f64  the live key-binding list, 138 x {u32 binding id, u16 VK | 0x1000 Shift | 0x2000 Ctrl | 0x4000 Alt, u16 kind, u16}; the game
+//                   fills it with D2's PC defaults on entering a game and its Key Bindings page edits it
+//   main+0x2086388  the binding handler table the two runners below take
+//   main+0x3700e0   Input_ExecuteHotkey(entry, table, 1): runs a binding (offers it to the interface first)
+//   main+0x36ff90   the binding release runner (entry, table, 0): ends a held binding (Shift, Alt, skill hold)
+// World clicks go through dm_world_pc_click (dm_world.c: the click entry main+0x4ace20 with the PC action codes).
+#include "dm.h"
+#include "dm_kbm.h"
+#include "dm_cursor.h"
+#include "dm_input.h"
+#include "dm_uiscreen.h"
+#include <TargetConditionals.h>
+#include <stdatomic.h>
+#include <string.h>
+#include <time.h>
+
+enum { BIND_LIST = 0x2086f64, BIND_TABLE = 0x2086388, EXEC_HOTKEY = 0x3700e0, RELEASE_HOTKEY = 0x36ff90, BIND_N = 138, BIND_SZ = 10 };
+enum { MOD_SHIFT = 1, MOD_CTRL = 2, MOD_ALT = 4 };
+enum { REPEAT_NS = 250000000 };
+#define HUD_BAND 0.885f   // below this (whole-picture height) is the PC HUD: orbs, skill buttons, belt, mini panel   // a held button re-issues its world click this often (moves toward / attacks at the cursor as it moves)
+
+// ---- pure helpers (t_kbm) ----
+int dm_kbm_vk_from_mac(unsigned short kc) {   // macOS virtual key code -> Windows virtual key (the codes the game's bindings use); 0 = not used
+    static const unsigned char letters[] = { 'A','S','D','F','H','G','Z','X','C','V',0,'B','Q','W','E','R','Y','T' };   // kVK_ANSI_A (0) .. kVK_ANSI_T (17)
+    if (kc < sizeof letters) return letters[kc];
+    switch (kc) {
+        case 18: return '1'; case 19: return '2'; case 20: return '3'; case 21: return '4'; case 22: return '6'; case 23: return '5'; case 25: return '9';
+        case 26: return '7'; case 28: return '8'; case 29: return '0'; case 31: return 'O'; case 32: return 'U'; case 34: return 'I'; case 35: return 'P';
+        case 37: return 'L'; case 38: return 'J'; case 40: return 'K'; case 45: return 'N'; case 46: return 'M';
+        case 24: return 0xBB; case 27: return 0xBD; case 30: return 0xDD; case 33: return 0xDB; case 39: return 0xDE; case 41: return 0xBA; case 42: return 0xDC;
+        case 43: return 0xBC; case 44: return 0xBF; case 47: return 0xBE; case 50: return 0xC0;
+        case 36: case 76: return 0x0D; case 48: return 0x09; case 49: return 0x20; case 51: return 0x08; case 53: return 0x1B; case 117: return 0x2E;
+        case 115: return 0x24; case 116: return 0x21; case 119: return 0x23; case 121: return 0x22;
+        case 123: return 0x25; case 126: return 0x26; case 124: return 0x27; case 125: return 0x28;
+        case 122: return 0x70; case 120: return 0x71; case 99: return 0x72; case 118: return 0x73; case 96: return 0x74; case 97: return 0x75;
+        case 98: return 0x76; case 100: return 0x77; case 101: return 0x78; case 109: return 0x79; case 103: return 0x7A; case 111: return 0x7B;
+        case 82: return 0x60; case 83: return 0x61; case 84: return 0x62; case 85: return 0x63; case 86: return 0x64; case 87: return 0x65;
+        case 88: return 0x66; case 89: return 0x67; case 91: return 0x68; case 92: return 0x69;
+        case 56: case 60: return 0x10; case 59: case 62: return 0x11; case 58: case 61: return 0x12;
+    }
+    return 0;
+}
+// Bindings a key fires: entries whose VK matches and whose modifier is the one held (an unmodified binding also fires with Shift held, which is
+// stand still, so Shift + F1 still picks a skill); a modifier key itself matches on its VK alone. Returns the count, indices in out
+int dm_kbm_match(const uint8_t *list, int n, int vk, int mods, int *out, int max) {
+    int c = 0, want = (mods & MOD_SHIFT ? 0x1000 : 0) | (mods & MOD_CTRL ? 0x2000 : 0) | (mods & MOD_ALT ? 0x4000 : 0), modkey = vk >= 0x10 && vk <= 0x12;
+    for (int i = 0; i < n && c < max; i++) {
+        uint16_t key; memcpy(&key, list + i * BIND_SZ + 4, 2); if (key == 0xffff || (key & 0xfff) != vk) continue;
+        int m = key & 0xf000; if (!modkey && m != want && !(m == 0 && want == 0x1000)) continue;
+        out[c++] = i;
+    }
+    return c;
+}
+
+#if TARGET_OS_OSX && !defined(DM_KBM_PURE_ONLY)   // DM_KBM_PURE_ONLY: the unit test (t_kbm) builds the pure helpers alone
+// ---- events from the front end ----
+typedef struct { uint8_t op, btn, mods; int16_t vk; float nx, ny; } kev;   // op: 0 move, 1 down, 2 up, 3 key down, 4 key up, 5 wheel (vk = notches)
+static struct { kev q[128]; _Atomic unsigned head, tail; } g_q;
+static void push(kev e) { unsigned t = atomic_load(&g_q.tail); if (t - atomic_load(&g_q.head) >= 128) return; g_q.q[t % 128] = e; atomic_store(&g_q.tail, t + 1); }
+void dm_kbm_mouse(int op, float nx, float ny, int btn, int mods) { push((kev){ (uint8_t)op, (uint8_t)btn, (uint8_t)mods, 0, nx, ny }); }
+void dm_kbm_key(int vk, int down, int mods) { if (vk) push((kev){ (uint8_t)(down ? 3 : 4), 0, (uint8_t)mods, (int16_t)vk, 0, 0 }); }
+void dm_kbm_wheel(float nx, float ny, int notches) { if (notches) push((kev){ 5, 0, 0, (int16_t)notches, nx, ny }); }
+
+// ---- game main thread ----
+static uint64_t now_ns_k(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
+static module_t *mainmod(void) { for (int i = 0; i < g_nmod; ++i) if (!strcmp(g_mod[i].name, "main")) return &g_mod[i]; return NULL; }
+static int hold_binding(uint32_t id) { return id == 34 || id == 36 || id == 37; }   // Ctrl, Shift (stand still), Alt (show items): held, so their key up ends them; the
+// release runner re-fires every other binding (a panel key would toggle its panel shut again)
+static void run_binding(uint8_t *b, int idx, int down) {
+    uint8_t *e = b + BIND_LIST + idx * BIND_SZ; uint32_t bid; memcpy(&bid, e, 4); if (!down && !hold_binding(bid)) return; static int lg; if (lg++ < 100) { uint32_t id; memcpy(&id, e, 4); LOG("PC input: binding %u %s", id, down ? "down" : "up"); }
+    if (down) ((int (*)(void *, uint64_t, uint64_t))(b + EXEC_HOTKEY))(e, (uint64_t)(uintptr_t)(b + BIND_TABLE), 1);
+    else ((int (*)(void *, uint64_t, uint64_t))(b + RELEASE_HOTKEY))(e, (uint64_t)(uintptr_t)(b + BIND_TABLE), 0);
+}
+static float ui_to_screen_y(float uy) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); return dm_screen_real(&rw, &rh) && rh > 0 && h > 0 ? (uy * h + y) / rh : uy; }
+
+static int g_use_pending;                                     // a right click on an item: use it once the hover has landed on it
+static struct { int down, ui; uint64_t next_ns; } g_btn[2];   // left, right: held, went to the interface, next world repeat
+static float g_x = .5f, g_y = .5f;                            // cursor, interface-normalized
+static int g_mods;
+static struct { int16_t vk; int n; int idx[4]; } g_keys[16];   // keys held and the bindings they fired
+
+static void world_click(int btn, int phase) {   // phase 0 press, 1 repeat while held, 2 release
+    static const int act[2][3] = { { 0, 0, 2 }, { 3, 3, 5 } };   // left: press / (press again: move on toward the cursor) / release; right: cast / cast / release
+    dm_world_pc_click(act[btn][phase], g_mods & MOD_SHIFT ? 1 : 0, g_x, ui_to_screen_y(g_y));
+}
+int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the caller skips its own keyboard mapping)
+    int dm_uiscreen_ingame(void), dm_ui_panel_state(void), dm_game_paused(void);
+    uint8_t *b = NULL; module_t *m = mainmod(); if (m) b = m->base;
+    int live = b && dm_padmode_pc() && dm_uiscreen_ingame();
+    unsigned h;
+    while ((h = atomic_load(&g_q.head)) != atomic_load(&g_q.tail)) {
+        kev e = g_q.q[h % 128]; atomic_store(&g_q.head, h + 1);
+        if (!live) { static int nl; if (nl++ < 5) LOG("PC input: event %d dropped (PC set %d, in game %d)", e.op, dm_padmode_pc(), dm_uiscreen_ingame()); continue; }
+        g_mods = e.mods;
+        if (e.op <= 2) {
+            if (e.op != 2 || e.btn > 1) { g_x = e.nx; g_y = e.ny; }
+            int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c); if (W > 0 && H > 0) dm_cursor_set((int)(g_x * W), (int)(ui_to_screen_y(g_y) * H));
+            if (e.op == 0) { if (!e.btn) { dm_touch_host_live(3, g_x, g_y); dm_ui_ptr(DM_UP_MOVE, g_x, g_y, 0); } else if (g_btn[0].down && g_btn[0].ui == 1) dm_touch_host_live(1, g_x, g_y); continue; }   // hover: the panels' tooltips and the PC HUD's   // hover, or a drag on a panel (a held world click just follows the cursor)
+            if (e.btn > 1) { int k[4], n = dm_kbm_match(b + BIND_LIST, BIND_N, 0x100 + e.btn - 2, g_mods, k, 4); for (int i = 0; i < n; i++) run_binding(b, k[i], e.op == 1); continue; }   // mouse 3-5: their bindings
+            int bt = e.btn;
+            if (e.op == 1) {
+                // Where the press lands: an open panel (the Mac pointer path, as for the console panels), the PC HUD band at the bottom (the game's own
+                // mouse messages, which its buttons take), else the world. dm_ui_item_at_now: 0 = nothing classified (no panel open), 3 = outside every panel
+                int hit = dm_ui_item_at_now(g_x, g_y), ps = dm_ui_panel_state(), hud = ui_to_screen_y(g_y) > HUD_BAND, where = (hit != 0 && hit != 3) || ps ? 1 : hud ? 2 : 0;
+                static int lh; if (lh++ < 50) LOG("PC input: button %d at %.3f,%.3f -> hit %d panels %d -> %s", bt, g_x, g_y, hit, ps, where == 1 ? "panel" : where == 2 ? "HUD" : "world");
+                g_btn[bt].down = 1; g_btn[bt].ui = where; g_btn[bt].next_ns = now_ns_k() + REPEAT_NS;
+                if (where == 1) { if (bt == 0) dm_touch_host_live(0, g_x, g_y); else { dm_touch_host_live(3, g_x, g_y); g_use_pending = 2; } }   // right click on an item: hover it, then use it (as a double click does)
+                else if (where == 2) dm_ui_ptr(bt ? DM_UP_RDOWN : DM_UP_LDOWN, g_x, g_y, 0);
+                else world_click(bt, 0);
+            } else if (g_btn[bt].down) {
+                if (g_btn[bt].ui == 1) { if (bt == 0) dm_touch_host_live(2, g_x, g_y); } else if (g_btn[bt].ui == 2) dm_ui_ptr(bt ? DM_UP_RUP : DM_UP_LUP, g_x, g_y, 0); else world_click(bt, 2);
+                g_btn[bt].down = 0;
+            }
+            continue;
+        }
+        if (e.op == 5) { int k[4], n = dm_kbm_match(b + BIND_LIST, BIND_N, e.vk > 0 ? 0x103 : 0x104, g_mods, k, 4); for (int i = 0; i < n; i++) run_binding(b, k[i], 1); continue; }   // wheel over the world: previous / next skill
+        if (e.vk == 0x1B) {   // Esc: closes what is open (B), else opens the pause menu (+), as on PC
+            if (e.op == 3) *buttons |= dm_ui_panel_state() || dm_game_paused() ? DM_BTN_B : DM_BTN_PLUS;
+            continue;
+        }
+        if (e.op == 3) {
+            int s = -1; for (int i = 0; i < 16; i++) if (g_keys[i].vk == e.vk) s = -2; if (s == -2) continue;   // auto-repeat: the binding is already held
+            for (int i = 0; i < 16 && s < 0; i++) if (!g_keys[i].vk) s = i; if (s < 0) continue;
+            g_keys[s].vk = e.vk; g_keys[s].n = dm_kbm_match(b + BIND_LIST, BIND_N, e.vk, g_mods, g_keys[s].idx, 4);
+            for (int i = 0; i < g_keys[s].n; i++) run_binding(b, g_keys[s].idx[i], 1);
+        } else for (int i = 0; i < 16; i++) if (g_keys[i].vk == e.vk) { for (int j = 0; j < g_keys[i].n; j++) run_binding(b, g_keys[i].idx[j], 0); g_keys[i].vk = 0; }
+    }
+    if (!live) { memset(g_btn, 0, sizeof g_btn); g_use_pending = 0; return 0; }
+    if (g_use_pending && !--g_use_pending) dm_ui_use_item();
+    uint64_t t = now_ns_k();
+    for (int bt = 0; bt < 2; bt++) if (g_btn[bt].down && !g_btn[bt].ui && t >= g_btn[bt].next_ns) { g_btn[bt].next_ns = t + REPEAT_NS; world_click(bt, 1); }
+    return 1;
+}
+int dm_kbm_live(void) { int dm_uiscreen_ingame(void); return dm_padmode_pc() && dm_uiscreen_ingame(); }   // any thread: in game with the PC interface
+#else   // iOS: no PC mode (touch and controller only); the unit test
+void dm_kbm_mouse(int op, float nx, float ny, int btn, int mods) { (void)op; (void)nx; (void)ny; (void)btn; (void)mods; }
+void dm_kbm_key(int vk, int down, int mods) { (void)vk; (void)down; (void)mods; }
+void dm_kbm_wheel(float nx, float ny, int notches) { (void)nx; (void)ny; (void)notches; }
+int dm_kbm_step(uint64_t *buttons) { (void)buttons; return 0; }
+int dm_kbm_live(void) { return 0; }
+#endif

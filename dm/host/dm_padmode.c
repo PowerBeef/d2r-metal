@@ -175,7 +175,7 @@ void dm_padmode_boot(void) {   // 开机：游戏建面板之前（main.c，nnMa
     g_glyph = g_glyph_next = g_glyph_have[DM_GLYPH_KBD] ? DM_GLYPH_KBD : DM_GLYPH_PAD; atomic_store(&g_glyph_want, g_glyph);   // Mac App 开机先用键盘键帽（多数人没接手柄）；实体手柄一有输入就按它的类型换 | The Mac App starts with keyboard glyphs (most people have no controller connected); as soon as a physical controller gives input, switch by its type
     g_glyph_have[DM_GLYPH_PS] = dm_overlay_file(k_glyph_mark[DM_GLYPH_PS], mk, sizeof mk);
     LOG("手柄 / 触屏布局：键帽 键盘 %d、Xbox %d、PlayStation %d", g_glyph_have[DM_GLYPH_KBD], g_glyph_have[DM_GLYPH_XBOX], g_glyph_have[DM_GLYPH_PS]);
-    g_pc_have = pad && dm_overlay_file("pc_layouts", mk, sizeof mk); int pc = g_pc_have && pcenv;
+    g_pc_have = pad && dm_overlay_file("pc_layouts", mk, sizeof mk); int pc = g_pc_have && (pcenv || (getenv("DM_APP") && !getenv("DM_APP_SUPPORT") && !getenv("DM_PC_MODE")));   // the Mac App starts in the PC set (DM_PC_MODE=0: console); its test copies (DM_APP_SUPPORT) only with DM_PC_MODE=1, so their baselines stay
     if (pfx_write((uint8_t *)m->base, pad, pc)) { g_have = 1; g_cur = pad; g_pc = pc; atomic_store(&g_pc_want, pc); if (pc) LOG("PC interface: boots in PC mode (DM_PC_MODE)"); atomic_store(&g_want, pad); g_b = (uint8_t *)m->base; str_load(); LOG("手柄 / 触屏布局：开机用%s", pad ? "原版手柄版（Mac App）" : "触屏版（layouts/xtouch_lay 等三个目录）"); }
 }
 void dm_padmode_request(int pad) { pad = pad ? 1 : 0;

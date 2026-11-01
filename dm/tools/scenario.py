@@ -36,7 +36,7 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'wheel': ['x', 'y', 'dy', 'precise', 'view'], 'drag': ['x0', 'y0', 'x1', 'y1', 'frames'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
-       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': []}
+       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': []}
 ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away')
 LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture')
@@ -153,6 +153,10 @@ class CliBackend:
                    DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_WATCH=str(self.meta['timeout'] + 60), DM_CRASH_JSON=os.path.join(self.run, 'crash.json'))
         if self.meta['window'] and not self.headless: env['DM_WINDOW'] = '1'
         env.update(self.meta['env'])
+        if env.get('DM_ROMFS_OVERLAY') == 'auto-mac':   # env DM_ROMFS_OVERLAY=auto-mac: the Mac App's overlay (DM_OVERLAY_MAC: Video tab, key caps, the PC interface set for DM_PC_MODE), about 25 s
+            ov = os.path.join(self.run, 'romfs_overlay')
+            if subprocess.run([sys.executable, os.path.join(DM, 'ios', 'tools', 'gen_romfs_overlay.py'), romfs, ov], capture_output=True, check=False, env=dict(os.environ, DM_OVERLAY_MAC='1')).returncode: raise ScenarioError('gen_romfs_overlay.py failed')
+            env['DM_ROMFS_OVERLAY'] = ov
         if env.get('DM_ROMFS_OVERLAY') == 'auto':   # env DM_ROMFS_OVERLAY=auto：带上 iOS 包那份界面覆盖层（同 touchchain.sh；手柄 / 触屏切换、触屏页要它），生成约 3 秒 | env DM_ROMFS_OVERLAY=auto: bring the iOS package's UI overlay (as touchchain.sh; the controller / touch switch and touch pages need it), about 3 s to generate
             ov = os.path.join(self.run, 'romfs_overlay')
             if subprocess.run([sys.executable, os.path.join(DM, 'ios', 'tools', 'gen_romfs_overlay.py'), romfs, ov], capture_output=True, check=False).returncode: raise ScenarioError('gen_romfs_overlay.py failed')
