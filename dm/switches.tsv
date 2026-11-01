@@ -229,6 +229,7 @@ DM_OVERLAY_MAC	ios-tools	ios/tools/gen_romfs_overlay.py ios/tools/touch_layout.p
 DM_PACE_ADAPT	gfx	gfx/nvn/hle_nvn.c	-
 DM_PANEL_FREEZE	host	host/diag.c host/dm_cursor.c	-
 DM_PC_DATA	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	y
+DM_PC_MODE	host	host/dm_padmode.c	-
 DM_PERF_FILE	host	host/diag.c	-
 DM_PLAYERS	host	host/diag.c	y
 DM_POSCHK	host	host/diag.c	-

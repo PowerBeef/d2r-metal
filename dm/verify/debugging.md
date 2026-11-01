@@ -239,6 +239,8 @@ Test switches for finding out how far the Switch build's own PC (keyboard and mo
   | `X<id>` | runs key binding `<id>` through the game's hotkey executor |
   | `Z<mode>` | sets the game's hotkey mode |
 
+**The PC interface set** (Phase 1 of the PC control mode): the Mac overlay (`DM_OVERLAY_MAC`) carries it in `layouts/3pc_console_switch_layout/` and `4pc_console_layout/` with the marker `pc_layouts`; `DM_PC_MODE=1` starts in it (also on the command-line host with that overlay), and `inputmode mode=pc|controller` switches live. The bare `Controller/` prefix is never repointed: the game also builds console art paths with it.
+
 What the first probes found (2026-10-31, command-line host):
 - **Works:**
   - **The PC screens:** the PC HUD and character select render.

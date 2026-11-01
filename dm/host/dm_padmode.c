@@ -45,10 +45,10 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <TargetConditionals.h>
 
-static const struct { uint32_t off; const char *pad, *touch; } k_pfx[] = {
-    { 0x1d21db5, "Controller/Console/Switch/", "0touch_console_switch_lay/" },
-    { 0x1d2c33f, "Controller/Console/", "Ztouch_console_lay/" },
-    { 0x1d3b705, "Controller/", "Xtouch_lay/" },
+static const struct { uint32_t off; const char *pad, *touch, *pc; } k_pfx[] = {   // pc: the PC interface set (Mac App, gen_romfs_overlay.py PCDIR); NULL = as in controller mode
+    { 0x1d21db5, "Controller/Console/Switch/", "0touch_console_switch_lay/", "3pc_console_switch_layout/" },
+    { 0x1d2c33f, "Controller/Console/", "Ztouch_console_lay/", "4pc_console_layout/" },
+    { 0x1d3b705, "Controller/", "Xtouch_lay/", NULL },   // the PC set leaves it: the game also builds console art paths with this string (HUD statues)
     { 0x1d0f5b8, "Controller/ControllerButtons/%s/%s", "Ztouch_controller_buttons_ui/%s_%s" },   // 键位图标（触屏版是透明的） | Button icons (transparent in the touch version)
     { 0x1d076c7, "Controller/Cursor/Idle", "Xtouch_cursor_lay/Idle" },   // 面板里的手柄光标圆环（触屏版是透明的） | Controller cursor ring in panels (transparent in the touch version)
     { 0x1d3acbc, "Controller/Cursor/Hold", "Xtouch_cursor_lay/Hold" },
@@ -58,6 +58,8 @@ enum { BOUNCE_FRAMES = 60 };   // 测试开关读串的等待帧数（切换本�
 static int g_have;                  // 有触屏覆盖层、前缀可改 | A touch overlay is present and the prefixes can be rewritten
 static _Atomic int g_want = -1;     // 前端要的模式：0 触屏 1 手柄（-1 没要求） | Mode requested by the front end: 0 touch, 1 controller (-1 no request)
 static int g_cur;                   // 当前前缀所指：0 触屏 1 手柄 | What the prefixes currently point to: 0 touch, 1 controller
+static int g_pc_have, g_pc;         // the overlay carries the PC set (marker pc_layouts); the prefixes point at it (controller mode with the PC layouts)
+static _Atomic int g_pc_want = -1;  // PC set requested by the front end: 1 on mouse / keyboard input, 0 on a controller (-1 no request)
 static dm_modetx g_tx;              // 切换事务（dm_modetx.h）；游戏主线程 | Switch transaction (dm_modetx.h); game main thread
 static _Atomic int g_freeze;        // 输入冻结：请求一到就立（任意线程），事务完成才撤；取手柄处经 dm_padmode_input_gate 看 | Input freeze: set as soon as a request arrives (any thread), lifted only when the transaction completes; the place where the controller is read checks it through dm_padmode_input_gate
 static uint32_t g_sig;              // 回读信号计数：游戏来读了我们报的运行模式（hle_oe.c）+ 界面根下的面板换了一批（地址指纹变了）；事务看它「动过、又连续几帧不动」判重建完成 | Readback signal count: the game came to read the operation mode we report (hle_oe.c) + the set of panels under the UI root was replaced (address fingerprint changed); the transaction judges the rebuild complete by it having "moved, then stayed still for several consecutive frames"
@@ -91,11 +93,11 @@ static int glyph_swap_ok(uint8_t *b) {
     if (!dm_ingame_now()) return dm_ui_fe_drag_ok();
     return !(*(volatile uint8_t *)(b + 0x2d5ff51) | *(volatile uint8_t *)(b + 0x2d5ff67)) && !dm_ui_panel_state();
 }
-static int pfx_write(uint8_t *b, int pad) {
+static int pfx_write(uint8_t *b, int pad, int pc) {   // pc only with pad: the PC set is controller mode with the PC layouts
     for (unsigned i = 0; i < sizeof k_pfx / sizeof *k_pfx; i++) { const char *p = (const char *)(b + k_pfx[i].off);
         if (k_pfx[i].off == GLYPH_OFF) { int g = 1; while (g < DM_GLYPH_N && strcmp(p, k_glyph[g])) g++; if (g < DM_GLYPH_N) continue; }   // 正指着某套换过的键帽
-        if (strcmp(p, k_pfx[i].pad) && strcmp(p, k_pfx[i].touch)) { LOG("【红】手柄 / 触屏布局：main+%#x 不是预期的「%s」（是「%.32s」），不改", k_pfx[i].off, k_pfx[i].pad, p); return 0; } }
-    for (unsigned i = 0; i < sizeof k_pfx / sizeof *k_pfx; i++) memcpy(b + k_pfx[i].off, pad ? k_pfx[i].pad : k_pfx[i].touch, strlen(k_pfx[i].pad));
+        if (strcmp(p, k_pfx[i].pad) && strcmp(p, k_pfx[i].touch) && !(k_pfx[i].pc && !strcmp(p, k_pfx[i].pc))) { LOG("【红】手柄 / 触屏布局：main+%#x 不是预期的「%s」（是「%.32s」），不改", k_pfx[i].off, k_pfx[i].pad, p); return 0; } }
+    for (unsigned i = 0; i < sizeof k_pfx / sizeof *k_pfx; i++) memcpy(b + k_pfx[i].off, pad && pc && k_pfx[i].pc ? k_pfx[i].pc : pad ? k_pfx[i].pad : k_pfx[i].touch, strlen(k_pfx[i].pad));
     _Static_assert(sizeof "Ztouch_controller_buttons_ui/%sK%s" == sizeof "Controller/ControllerButtons/%s/%s", "换的键帽路径要与原版路径等长");
     if (pad && g_glyph_next) memcpy(b + GLYPH_OFF, k_glyph[g_glyph_next], strlen(k_glyph[g_glyph_next]));
     return 1;
@@ -164,7 +166,7 @@ void dm_padmode_boot(void) {   // 开机：游戏建面板之前（main.c，nnMa
     }
     if (!m || !getenv("DM_ROMFS_OVERLAY")) return;
     if (!dm_overlay_file("ctrl_touch", mk, sizeof mk)) { LOG("手柄 / 触屏布局：覆盖层没有 ctrl_touch 标记，照原版布局"); return; }
-    int pad = getenv("DM_APP") != NULL;   // Mac App：没有触屏圆钮与底栏的绘制层，开机就用原版手柄版（我们的功能页在手柄版布局里同样有），之后也不切 | Mac App: there is no drawing layer for the touch buttons and bottom bar, so it starts in the original gamepad UI (our feature pages exist in the gamepad layout as well) and never switches afterwards
+    int pcenv = getenv("DM_PC_MODE") && atoi(getenv("DM_PC_MODE")) == 1, pad = getenv("DM_APP") != NULL || pcenv;   // DM_PC_MODE=1: start in the PC set (tests on the CLI host too)   // Mac App：没有触屏圆钮与底栏的绘制层，开机就用原版手柄版（我们的功能页在手柄版布局里同样有），之后也不切 | Mac App: there is no drawing layer for the touch buttons and bottom bar, so it starts in the original gamepad UI (our feature pages exist in the gamepad layout as well) and never switches afterwards
 #if TARGET_OS_OSX
     g_app = pad;
 #endif
@@ -173,7 +175,8 @@ void dm_padmode_boot(void) {   // 开机：游戏建面板之前（main.c，nnMa
     g_glyph = g_glyph_next = g_glyph_have[DM_GLYPH_KBD] ? DM_GLYPH_KBD : DM_GLYPH_PAD; atomic_store(&g_glyph_want, g_glyph);   // Mac App 开机先用键盘键帽（多数人没接手柄）；实体手柄一有输入就按它的类型换 | The Mac App starts with keyboard glyphs (most people have no controller connected); as soon as a physical controller gives input, switch by its type
     g_glyph_have[DM_GLYPH_PS] = dm_overlay_file(k_glyph_mark[DM_GLYPH_PS], mk, sizeof mk);
     LOG("手柄 / 触屏布局：键帽 键盘 %d、Xbox %d、PlayStation %d", g_glyph_have[DM_GLYPH_KBD], g_glyph_have[DM_GLYPH_XBOX], g_glyph_have[DM_GLYPH_PS]);
-    if (pfx_write((uint8_t *)m->base, pad)) { g_have = 1; g_cur = pad; atomic_store(&g_want, pad); g_b = (uint8_t *)m->base; str_load(); LOG("手柄 / 触屏布局：开机用%s", pad ? "原版手柄版（Mac App）" : "触屏版（layouts/xtouch_lay 等三个目录）"); }
+    g_pc_have = pad && dm_overlay_file("pc_layouts", mk, sizeof mk); int pc = g_pc_have && pcenv;
+    if (pfx_write((uint8_t *)m->base, pad, pc)) { g_have = 1; g_cur = pad; g_pc = pc; atomic_store(&g_pc_want, pc); if (pc) LOG("PC interface: boots in PC mode (DM_PC_MODE)"); atomic_store(&g_want, pad); g_b = (uint8_t *)m->base; str_load(); LOG("手柄 / 触屏布局：开机用%s", pad ? "原版手柄版（Mac App）" : "触屏版（layouts/xtouch_lay 等三个目录）"); }
 }
 void dm_padmode_request(int pad) { pad = pad ? 1 : 0;
 #if TARGET_OS_OSX
@@ -181,6 +184,8 @@ void dm_padmode_request(int pad) { pad = pad ? 1 : 0;
 #endif
     atomic_store(&g_want, pad); if (g_have && pad != g_cur) atomic_store(&g_freeze, 1); }   // 前端（任意线程）：从这一刻起输入就不再交给游戏 | Front end (any thread): from this moment on input is no longer handed to the game
 int dm_padmode_current(void) { return g_cur; }
+int dm_padmode_pc(void) { return g_cur && g_pc; }   // the PC interface set is on screen (dm_kbm.c drives it)
+void dm_padmode_request_pc(int pc) { pc = pc && g_pc_have; atomic_store(&g_pc_want, pc); if (g_have && g_cur && pc != g_pc) atomic_store(&g_freeze, 1); }   // front end (any thread): mouse / keyboard input wants the PC set, a controller the console one
 int dm_padmode_busy(void) { return atomic_load(&g_freeze); }   // 切换事务进行中（含请求已到、事务还没起的那一小段） | Switch transaction in progress (including the short span where the request has arrived but the transaction has not started yet)
 int dm_padmode_input_gate(uint64_t *buttons) { static dm_modegate g; return dm_modegate_apply(&g, atomic_load(&g_freeze), buttons); }   // 取手柄处（hle_hid.c fill，游戏主线程） | Where the controller is read (hle_hid.c fill, game main thread)
 static void dm_mode_none(void) {}
@@ -425,7 +430,7 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
     // at frame 300 after boot, read the first 3 entries with the original string getter 0x7f5630 and log one line
     { static int n = -1, k; static struct { uint64_t f; int m; } ev[8]; static uint64_t chk = 300;
       if (n < 0) { n = 0; const char *e = getenv("DM_TEST_PADMODE"); for (const char *q = e; q && *q && n < 8; ) { unsigned long long f; int m; if (sscanf(q, "%llu:%d", &f, &m) != 2) break; ev[n].f = f; ev[n].m = m; n++; q = strchr(q, ','); if (q) q++; } }
-      if (k < n && frame >= ev[k].f) { dm_padmode_request(ev[k].m); chk = frame + BOUNCE_FRAMES + 5; k++; }
+      if (k < n && frame >= ev[k].f) { dm_padmode_request(ev[k].m != 0); dm_padmode_request_pc(ev[k].m == 2); chk = frame + BOUNCE_FRAMES + 5; k++; }   // 2 = the PC set
       if (g_have && chk && frame >= chk && (n || getenv("DM_TEST_PADMODE_READ"))) { chk = 0; char o[512]; size_t L = 0; o[0] = 0;
           for (int i = 0; i < g_nstr && i < 3; i++) { struct { const char *s; uint64_t n; } q = { g_str[i].key, g_str[i].klen }; const char *r = ((const char *(*)(void *))(b + 0x7f5630))(&q);
               L += (size_t)snprintf(o + L, L < sizeof o ? sizeof o - L : 0, "%s%s=「%s」", i ? "、" : "", g_str[i].key, r ? r : "(空)"); }
@@ -441,15 +446,17 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
       if (fp != fp0) { fp0 = fp; nfp++; } g_sig = dm_oe_ui_opmode_reads() + nfp; }
     int w = atomic_load(&g_want), wx, cx;
     { int tp = w >= 0 ? w : g_cur, tk = tp ? atomic_load(&g_glyph_want) : 0; if (tk != g_glyph && tp == g_cur && !glyph_swap_ok(b)) tk = g_glyph;
-      wx = tp | tk << 1; cx = g_cur | g_glyph << 1; if (wx == cx && w < 0) wx = -1; }   // 键帽样式并进事务的「模式」里（触屏版不看键帽，记 0） | The glyph style goes into the transaction's "mode" (the touch layout ignores glyphs and records 0)
+      int pw = atomic_load(&g_pc_want); if (pw >= 0 && (pw == g_pc || !g_pc_have)) { atomic_store(&g_pc_want, -1); pw = -1; }   // already there, or no PC set: nothing to do
+      int tpc = tp && g_pc_have ? (pw >= 0 ? pw : g_pc) : 0;
+      wx = tp | tk << 1 | tpc << 3; cx = g_cur | g_glyph << 1 | g_pc << 3; if (wx == cx && w < 0 && pw < 0) wx = -1; }   // bit 3: the PC set   // 键帽样式并进事务的「模式」里（触屏版不看键帽，记 0） | The glyph style goes into the transaction's "mode" (the touch layout ignores glyphs and records 0)
     int act = dm_modetx_step(&g_tx, frame, wx, cx, g_sig);
-    if (act == DM_TXA_BEGIN) { g_glyph_next = wx >> 1; w = wx & 1; }
+    int pcn = g_pc; if (act == DM_TXA_BEGIN) { g_glyph_next = wx >> 1 & 3; w = wx & 1; pcn = wx >> 3 & 1; }
     if (act == DM_TXA_NONE) { if (g_tx.st == DM_TX_IDLE && atomic_load(&g_freeze)) { atomic_store(&g_freeze, 0); if (atomic_load(&g_want) != w) atomic_store(&g_freeze, 1); } return; }   // 没在切：请求时立的冻结（想要的就是当前模式 / 又改回来了）撤掉；撤的同时又来了新请求的重新立上 | Not switching: the freeze set at request time (the wanted mode is the current one / it was changed back) is lifted; if a new request arrives at the same time as the lift, it is set again
     if (act == DM_TXA_BEGIN) {
-        if (!pfx_write(b, w)) { g_tx.st = DM_TX_IDLE; atomic_store(&g_want, -1); atomic_store(&g_freeze, 0); return; }
+        if (!pfx_write(b, w, pcn)) { g_tx.st = DM_TX_IDLE; atomic_store(&g_want, -1); atomic_store(&g_pc_want, -1); atomic_store(&g_freeze, 0); return; }
         atomic_store(&g_freeze, 1); g_tx_from = frame;
         items_run(g_cur, 1);   // 旧一侧各登记项收手（dm_mode_items.h）：在途的替按键作废、挪过的控件写回、缓存的控件地址清掉 | Registered items of the old side stand down (dm_mode_items.h): in-flight key presses on the player's behalf are voided, moved widgets written back, cached widget addresses cleared
-        g_cur = w; str_apply(w); dm_oe_ui_opmode(!dm_opmode());
+        g_cur = w; g_pc = w && pcn; str_apply(w); dm_oe_ui_opmode(!dm_opmode());
         if (g_glyph != g_glyph_next) LOG("手柄 / 触屏布局：键帽 %s → %s", k_glyph_name[g_glyph], k_glyph_name[g_glyph_next]);
         g_glyph = g_glyph_next;
         LOG("手柄 / 触屏布局：切到%s版——开始（输入冻结，让游戏重载布局）", w ? "原版手柄" : "触屏"); return; }
@@ -457,10 +464,11 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
     if (act == DM_TXA_REPORT_BACK) { dm_oe_ui_opmode(-1); return; }
     atomic_fetch_add(&g_rebuilds, 1); items_run(g_cur, 0);   // 新一侧各登记项就位 | Registered items of the new side take their places
     if (atomic_load(&g_want) == g_cur) atomic_store(&g_want, -1);
+    if (atomic_load(&g_pc_want) == g_pc) atomic_store(&g_pc_want, -1);
     atomic_store(&g_freeze, 0);   // 放开输入：冻结期间按着过的键先松开过一次才交给游戏（dm_modegate）；事务中又来了反向请求的，下一帧接着起下一次（请求时已重新立冻结） | Release input: keys held during the freeze must be let go once before being handed to the game (dm_modegate); if an opposite request arrived during the transaction, the next switch starts on the next frame (the freeze was already set again at request time)
-    if (atomic_load(&g_want) >= 0 && atomic_load(&g_want) != g_cur) atomic_store(&g_freeze, 1);
+    if ((atomic_load(&g_want) >= 0 && atomic_load(&g_want) != g_cur) || (g_cur && atomic_load(&g_pc_want) >= 0 && atomic_load(&g_pc_want) != g_pc)) atomic_store(&g_freeze, 1);
     LOG("手柄 / 触屏布局：切到%s版——完成（%llu 帧，两次重建里 %d 次靠超时）", g_cur ? "原版手柄" : "触屏", (unsigned long long)(frame - g_tx_from), g_tx.timeouts);
-    DM_EV("padmode", "mode:s glyph:s frames:u timeouts:d", g_cur ? "controller" : "touch", k_glyph_name[g_glyph], (unsigned long long)(frame - g_tx_from), g_tx.timeouts);   // 场景据此等切换做完（控制口 inputmode） | scenarios wait for the switch to finish on this (the control port's inputmode)
+    DM_EV("padmode", "mode:s glyph:s frames:u timeouts:d", g_pc ? "pc" : g_cur ? "controller" : "touch", k_glyph_name[g_glyph], (unsigned long long)(frame - g_tx_from), g_tx.timeouts);   // 场景据此等切换做完（控制口 inputmode） | scenarios wait for the switch to finish on this (the control port's inputmode)
     if (g_cur) {   // 切到手柄版时记一行六个技能格各绑的技能号（第二组 = 按着 ZL）：面 → 格表 main+0x2d13cbc（6 × {逻辑键, 普通格, 替代格}）、格 → 技能表 main+0x2d5f0c0（每格 28 字节，武器第二组在 +16 格） | On switching to the controller layout, log one line with the skill number bound to each of the six skill slots (second set = ZL held): face button -> slot table main+0x2d13cbc (6 x {logical key, normal slot, alternate slot}), slot -> skill table main+0x2d5f0c0 (28 bytes per slot, the second weapon set is at +16 slots)
         int dm_swapskill_wset(void); int bank = dm_swapskill_wset() ? 16 : 0; char o[240]; size_t L = 0; o[0] = 0;
         static const struct { uint32_t lg; const char *nm; } face[6] = { { 0x2000, "A" }, { 0x1000, "B" }, { 0x8000, "X" }, { 0x4000, "Y" }, { 0x200, "R" }, { 0x800, "ZR" } };

@@ -183,6 +183,36 @@ with tempfile.TemporaryDirectory() as t:
     PAD_PAGES=('controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/videooptionspanelhd.json',
                'controller/controlleroverlayhd.json','controller/hudmonsterhealthhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json')+(('controller/settingspanelhd.json',) if os.environ.get('DM_OVERLAY_MAC') else ())
     if sorted(k[len(LAY):] for k in PADLAY)!=sorted(PAD_PAGES): raise SystemExit('gen_romfs_overlay：手柄专用布局与清单 PAD_PAGES 不一致：多 %s，少 %s' % (sorted(set(k[len(LAY):] for k in PADLAY)-set(PAD_PAGES)), sorted(set(PAD_PAGES)-set(k[len(LAY):] for k in PADLAY))))
+    # The PC interface set (Mac App only, DM_OVERLAY_MAC; dm_padmode.c switches to it on mouse / keyboard input). The host repoints the two console
+    # prefixes (Controller/Console/Switch/, Controller/Console/) at two more folders of their lengths; the bare Controller/ prefix stays, since the game
+    # also builds console art paths with it (data/hd/global/ui/Controller/HUD/…: repointed, the HUD loses its statues). The two folders hold the
+    # console-specific layouts as they load in controller mode (our patched pages included), minus the panels in PC_TWINS, whose PC layout (the root
+    # file of the same name) goes into 4pc_console_layout/ and so is found before Controller/<name>. Item panels and the console panel group stay console: the
+    # Switch build's PC item grids take no mouse clicks (their in-game handlers are stubs). Pages we patch (PAD_PAGES) keep their console copy
+    # until they have PC variants. The marker pc_layouts tells the host the set is there
+    PCDIR=[('controller/console/switch/','3pc_console_switch_layout/'),('controller/console/','4pc_console_layout/')]
+    MAC_PC=bool(os.environ.get('DM_OVERLAY_MAC'))
+    PC_TWINS=('hudpanelhd.json','panelborderspanelhd.json','characterselectpanelhd.json','characterdifficultymodalhd.json','deletecharactermodalhd.json','renamecharactermodalhd.json',
+              'confirmationmodalhd.json','dismissablemodalhd.json','cinematicsmodalhd.json','creditsmodalhd.json')
+    assert all(len(a)==len(b) for a,b in PCDIR) and all(len(a)==len(b) for a,b in TDIR)
+    def pc_path(k):   # a console layout path → the same layout in the PC folders |
+        r=k[len(LAY):]
+        for a,b in PCDIR:
+            if r.startswith(a): rest=r[len(a):]; return None if '/' in rest else LAY+b+rest
+        return None
+    def pc_set(repl):
+        for q in ORIG:
+            if q.rsplit('/',1)[1] in PC_TWINS or not pc_path(q): continue   # Controller/<name> itself loads from its usual path
+            v=PADLAY.get(q)
+            if v is None:
+                v=os.path.join(t,'orig_'+q[len(LAY):].replace('/','__'))
+                if not os.path.exists(v): open(v,'wb').write(romfs_art.read(romfs,q))
+            repl[pc_path(q)]=v
+        for name in PC_TWINS:
+            assert LAY+name in MAN and any(q.rsplit('/',1)[1]==name for q in ORIG), name   # a PC twin replaces a console panel that exists
+            o=os.path.join(t,'pc_'+name)
+            if not os.path.exists(o): open(o,'wb').write(romfs_art.read(romfs,LAY+name))
+            repl[LAY+PCDIR[-1][1]+name]=o   # 4pc_console_layout/: searched before Controller/
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data
         repl=to_touch(repl); repl.update(PADLAY); repl.update(EXTRAS)   # 「附加」页（新目录，两种模式同一份） | the "Extras" page (a new folder, the same file for both modes)
         # 只该给触屏的根目录布局（不在 Controller/ 前缀下、原先两种模式共用一份改过的）：改过的那份挪到触屏这边，原路径不再替换——手柄模式加载到原版字节。
@@ -207,7 +237,8 @@ with tempfile.TemporaryDirectory() as t:
         # SHARED_TODO 是还没按模式分开的存量（两种模式共用一份改过的），只许减不许加；新增共用布局在这里红
         # Controller mode = original: the layouts that controller mode can load (those outside the three touch directories) are either original bytes (not in the replacement table) or in the controller-only list PR.
         # SHARED_TODO is the existing stock not yet split by mode (both modes share one modified copy); it may only decrease, never increase; a newly added shared layout fails here
-        shared=sorted(k[len(LAY):] for k in repl if k.startswith(LAY) and k in MAN and k not in PADLAY and k[len(LAY):] not in PADROOT_KEYS and not any(k.startswith(LAY+d) for _,d in TDIR))
+        if MAC_PC: pc_set(repl)
+        shared=sorted(k[len(LAY):] for k in repl if k.startswith(LAY) and k in MAN and k not in PADLAY and k[len(LAY):] not in PADROOT_KEYS and not any(k.startswith(LAY+d) for _,d in TDIR+PCDIR))
         if shared!=sorted(SHARED_TODO): raise SystemExit('gen_romfs_overlay：两种模式共用的改过的布局与存量清单不一致（多出的要按模式分开：改过的放触屏目录 / 另起新名，原路径留原版）：多 %s，少 %s' % (sorted(set(shared)-set(SHARED_TODO)), sorted(set(SHARED_TODO)-set(shared))))
         with open(os.path.join(t,tag+'repl.tsv'),'w') as f:
             for k,v in repl.items(): f.write(f'{"" if k in MAN else "+"}{k}\t{os.path.join(t,v)}\n')   # 新增路径前加「+」（casc_overlay.py） | New paths are prefixed with "+" (casc_overlay.py)
@@ -220,6 +251,7 @@ with tempfile.TemporaryDirectory() as t:
             for k,o,v in TS: f.write('%s\t%s\t%s\n' % (k,o,v.replace('\\','\\\\').replace('\n','\\n').replace('\t','\\t')))
         open(os.path.join(dst,'xbox_glyphs'),'w').write('ztouch_controller_buttons_ui/switchx*.sprite\n')   # 标记文件：覆盖层带 Xbox 键帽，宿主 dm_padmode.c 见到它才在 Xbox 手柄输入时换 | Marker file: the overlay carries Xbox glyphs; the host dm_padmode.c switches to them on Xbox controller input only when it sees this file
         open(os.path.join(dst,'ps_glyphs'),'w').write('ztouch_controller_buttons_ui/switchp*.sprite\n')   # 标记文件：覆盖层带 PlayStation 键帽，宿主 dm_padmode.c 见到它才在 PS 手柄输入时换
+        if MAC_PC: open(os.path.join(dst,'pc_layouts'),'w').write('PC interface layouts in layouts/4pc_console_layout, 3pc_console_switch_layout (dm_padmode.c switches to them)\n')
         if os.environ.get('DM_OVERLAY_MAC'): open(os.path.join(dst,'kbd_glyphs'),'w').write('ztouch_controller_buttons_ui/switchk*.sprite\n')   # 标记文件：覆盖层带键盘键帽，宿主 dm_padmode.c 见到它才用 | marker file: the overlay carries keyboard key caps; the host's dm_padmode.c uses them only when it sees this
         open(os.path.join(dst,'ctrl_touch'),'w').write('触屏版布局在 layouts/xtouch_lay、ztouch_console_lay、0touch_console_switch_lay（dm_padmode.c 见到本文件才改写前缀）\n')
         GENERATED_OVERLAYS.append(dst)

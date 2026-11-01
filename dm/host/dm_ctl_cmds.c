@@ -131,18 +131,19 @@ static int cmd_fe(const ctl_args *a, char *out, size_t cap, char *err, size_t ec
 
 // inputmode mode=touch|controller、glyph=switch|keyboard|xbox|playstation（可只给一个）：请求切手柄 / 触屏布局与键帽样式，同前端看到输入换了时调的那两个（dm_padmode.c）；
 // 切换是事务、要几帧，做完发 padmode 事件。宿主得带界面覆盖层（场景 env DM_ROMFS_OVERLAY=auto），没有覆盖层时请求不起作用
-// inputmode mode=touch|controller, glyph=switch|keyboard|xbox|playstation (either may be given alone): request the controller / touch layout and the key cap style, through the same two calls the front ends make when the input changes (dm_padmode.c);
+// inputmode mode=touch|controller|pc (pc = the PC interface set of the Mac overlay), glyph=switch|keyboard|xbox|playstation (either may be given alone): request the controller / touch layout and the key cap style, through the same two calls the front ends make when the input changes (dm_padmode.c);
 // the switch is a transaction taking a few frames and emits a padmode event when done. The host needs the UI overlay (scenario env DM_ROMFS_OVERLAY=auto); without it requests have no effect
 void dm_padmode_request(int pad);
 void dm_padmode_request_glyph(int g);
+void dm_padmode_request_pc(int pc);
 static int cmd_inputmode(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     const char *m = dm_ctl_get(a, "mode"), *g = dm_ctl_get(a, "glyph"); (void)out; (void)cap;
-    if (!m && !g) ERR("give mode=touch|controller and/or glyph=switch|keyboard|xbox|playstation");
+    if (!m && !g) ERR("give mode=touch|controller|pc and/or glyph=switch|keyboard|xbox|playstation");
     static const char *const gl[] = { "switch", "keyboard", "xbox", "playstation" }; int k = -1;
     if (g) { for (int i = 0; i < 4; i++) if (!strcmp(g, gl[i])) k = i; if (k < 0) ERR("glyph must be switch, keyboard, xbox or playstation"); }
-    if (m && strcmp(m, "touch") && strcmp(m, "controller")) ERR("mode must be touch or controller");
+    if (m && strcmp(m, "touch") && strcmp(m, "controller") && strcmp(m, "pc")) ERR("mode must be touch, controller or pc");
     if (k >= 0) dm_padmode_request_glyph(k);
-    if (m) dm_padmode_request(!strcmp(m, "controller"));
+    if (m) { dm_padmode_request(strcmp(m, "touch") != 0); dm_padmode_request_pc(!strcmp(m, "pc")); }   // pc = controller mode with the PC interface set (Mac overlay)
     return 1;
 }
 
