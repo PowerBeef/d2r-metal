@@ -602,9 +602,10 @@ void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at th
 }
 // PC-mode probe (DM_UI_TAPS E<action>, dm/verify/debugging.md "PC mode probes"): the game's click entry main+0x4ace20 with any action code at a
 // ground point beside the player, with the click-ground move exemption held open for 2 s. Game main thread only
-void dm_probe_click(int action, int dx, int dy) {
+void dm_probe_click(int action, int dx, int dy) {   // action = code | flags << 8 (the click entry's flags argument)
+    int flags = action >> 8; action &= 0xff;
     uint8_t *b = wb(); uint64_t pl = w_player(); int x = 0, y = 0; if (!b || !pl || !w_unit_xy(pl, &x, &y)) return;
     atomic_store(&g_dm_move_allow_until_ns, w_now_ns() + 2000000000ull);
-    int r = ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, action, x + dx, y + dy, 0);
-    LOG("PC probe: click entry action %d at (%d,%d) from (%d,%d) -> %d", action, x + dx, y + dy, x, y, r);
+    int r = ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, action, x + dx, y + dy, (uint64_t)flags);
+    LOG("PC probe: click entry action %d flags %#x at (%d,%d) from (%d,%d) -> %d", action, flags, x + dx, y + dy, x, y, r);
 }
