@@ -194,6 +194,7 @@ with tempfile.TemporaryDirectory() as t:
     # the angel and demon statues, is the close button). The PC set gets the original bytes in a new folder, 3pc_ui/, and its twin points there
     PCDIR=[('controller/console/switch/','3pc_console_switch_layout/'),('controller/console/','4pc_console_layout/')]
     MAC_PC=bool(os.environ.get('DM_OVERLAY_MAC'))
+    if MAC_PC: import pc_strings
     PC_TWINS=('hudpanelhd.json','panelborderspanelhd.json','characterselectpanelhd.json','characterdifficultymodalhd.json','deletecharactermodalhd.json','renamecharactermodalhd.json',
               'confirmationmodalhd.json','dismissablemodalhd.json','cinematicsmodalhd.json','creditsmodalhd.json')
     PC_ART={'hudpanelhd.json':(('PANEL/HUD_02/front_panel','3pc_ui/front_panel'),)}   # twin → (borrowed image name, its PC-set copy) in the layout's own spelling
@@ -263,7 +264,11 @@ with tempfile.TemporaryDirectory() as t:
             for k,o,v in TS: f.write('%s\t%s\t%s\n' % (k,o,v.replace('\\','\\\\').replace('\n','\\n').replace('\t','\\t')))
         open(os.path.join(dst,'xbox_glyphs'),'w').write('ztouch_controller_buttons_ui/switchx*.sprite\n')   # 标记文件：覆盖层带 Xbox 键帽，宿主 dm_padmode.c 见到它才在 Xbox 手柄输入时换 | Marker file: the overlay carries Xbox glyphs; the host dm_padmode.c switches to them on Xbox controller input only when it sees this file
         open(os.path.join(dst,'ps_glyphs'),'w').write('ztouch_controller_buttons_ui/switchp*.sprite\n')   # 标记文件：覆盖层带 PlayStation 键帽，宿主 dm_padmode.c 见到它才在 PS 手柄输入时换
-        if MAC_PC: open(os.path.join(dst,'pc_layouts'),'w').write('PC interface layouts in layouts/4pc_console_layout, 3pc_console_switch_layout (dm_padmode.c switches to them)\n')
+        if MAC_PC:
+            open(os.path.join(dst,'pc_layouts'),'w').write('PC interface layouts in layouts/4pc_console_layout, 3pc_console_switch_layout (dm_padmode.c switches to them)\n')
+            romfs_art.frame(romfs,UI+'cursor/ohand.sprite',0).save(os.path.join(dst,'pc_cursor.png'))   # the PC cursor (the gauntlet); front_mac.m pc_hand makes it the pointer in PC mode
+            with open(os.path.join(dst,'pc_strings.tsv'),'w',encoding='utf-8') as f:   # the PC wording, as touch_strings.tsv (pc_strings.py; dm_padmode.c swaps it in with the PC set)
+                for k,o,v in pc_strings.build_sidecar(romfs): f.write('%s\t%s\t%s\n' % (k,o,v.replace('\\','\\\\').replace('\n','\\n').replace('\t','\\t')))
         if os.environ.get('DM_OVERLAY_MAC'): open(os.path.join(dst,'kbd_glyphs'),'w').write('ztouch_controller_buttons_ui/switchk*.sprite\n')   # 标记文件：覆盖层带键盘键帽，宿主 dm_padmode.c 见到它才用 | marker file: the overlay carries keyboard key caps; the host's dm_padmode.c uses them only when it sees this
         open(os.path.join(dst,'ctrl_touch'),'w').write('触屏版布局在 layouts/xtouch_lay、ztouch_console_lay、0touch_console_switch_lay（dm_padmode.c 见到本文件才改写前缀）\n')
         GENERATED_OVERLAYS.append(dst)

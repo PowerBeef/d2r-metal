@@ -77,6 +77,16 @@ static void run_binding(uint8_t *b, int idx, int down) {
     if (down) ((int (*)(void *, uint64_t, uint64_t))(b + EXEC_HOTKEY))(e, (uint64_t)(uintptr_t)(b + BIND_TABLE), 1);
     else ((int (*)(void *, uint64_t, uint64_t))(b + RELEASE_HOTKEY))(e, (uint64_t)(uintptr_t)(b + BIND_TABLE), 0);
 }
+// The PC bindings for the console pages (C, I, Q, T, O) only open them: pressed while their page shows, they close the panel group (B), as the
+// PC toggles do
+static const struct { uint32_t id; const char *panel; } k_toggle[] = {
+    { 0, "CharacterStatsPanel" }, { 1, "PlayerInventoryExpansionLayout" }, { 1, "PlayerInventoryOriginalLayout" }, { 4, "QuestLogPanelExpansion" },
+    { 4, "QuestLogPanelOriginal" }, { 12, "SkillsTreePanel" }, { 54, "HirelingInventoryPanel" } };
+static int toggle_closes(uint8_t *b, int idx) {
+    uint32_t id; memcpy(&id, b + BIND_LIST + idx * BIND_SZ, 4);
+    for (unsigned i = 0; i < sizeof k_toggle / sizeof *k_toggle; i++) if (k_toggle[i].id == id && dm_ui_panel_shown(k_toggle[i].panel)) return 1;
+    return 0;
+}
 static float ui_to_screen_y(float uy) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); return dm_screen_real(&rw, &rh) && rh > 0 && h > 0 ? (uy * h + y) / rh : uy; }
 
 static int g_use_pending;                                     // a right click on an item: use it once the hover has landed on it
@@ -85,6 +95,16 @@ static float g_x = .5f, g_y = .5f;                            // cursor, interfa
 static int g_mods;
 static struct { int16_t vk; int n; int idx[4]; } g_keys[16];   // keys held and the bindings they fired
 
+// Esc with nothing open: the console interface's game menu is the pause page of the panel group, reached as scenario.py open_pause does: + opens
+// the group on its default tab, three tabs to the left is the pause page. g_esc: 1-2 + held, 3 waiting for the group (at most a second), 4.. L
+// pressed three times (held 3 polls, released 3); 0 = idle
+static int g_esc, g_esc_n;
+static void esc_pump(uint64_t *buttons) {
+    if (g_esc <= 2) { *buttons |= DM_BTN_PLUS; g_esc++; g_esc_n = 0; return; }
+    if (g_esc == 3) { if (dm_ui_panel_shown("UISwitcher")) { g_esc = 4; g_esc_n = 0; } else if (++g_esc_n > 60) { LOG("PC input: Esc found no panel group to open"); g_esc = 0; } return; }
+    if (g_esc_n % 6 < 3) *buttons |= DM_BTN_L;
+    if (++g_esc_n >= 18) g_esc = 0;
+}
 static void world_click(int btn, int phase) {   // phase 0 press, 1 repeat while held, 2 release
     static const int act[2][3] = { { 0, 0, 2 }, { 3, 3, 5 } };   // left: press / (press again: move on toward the cursor) / release; right: cast / cast / release
     dm_world_pc_click(act[btn][phase], g_mods & MOD_SHIFT ? 1 : 0, g_x, ui_to_screen_y(g_y));
@@ -120,28 +140,35 @@ int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the c
             continue;
         }
         if (e.op == 5) { int k[4], n = dm_kbm_match(b + BIND_LIST, BIND_N, e.vk > 0 ? 0x103 : 0x104, g_mods, k, 4); for (int i = 0; i < n; i++) run_binding(b, k[i], 1); continue; }   // wheel over the world: previous / next skill
-        if (e.vk == 0x1B) {   // Esc: closes what is open (B), else opens the pause menu (+), as on PC
-            if (e.op == 3) *buttons |= dm_ui_panel_state() || dm_game_paused() ? DM_BTN_B : DM_BTN_PLUS;
+        if (e.vk == 0x1B) {   // Esc, as on PC: after death the death screen's own Continue (its button's message); else closes what is open (B), or opens the game menu
+            if (e.op == 3) { int ps = dm_ui_panel_state(); if (ps & DM_PS_DEAD) dm_ui_send_queue("YouDiedModalMessage:Continue"); else if (ps || dm_game_paused() || dm_ui_open_panels() || dm_ui_panel_shown("UISwitcher")) *buttons |= DM_BTN_B; else if (!g_esc) g_esc = 1; }
             continue;
         }
         if (e.op == 3) {
             int s = -1; for (int i = 0; i < 16; i++) if (g_keys[i].vk == e.vk) s = -2; if (s == -2) continue;   // auto-repeat: the binding is already held
             for (int i = 0; i < 16 && s < 0; i++) if (!g_keys[i].vk) s = i; if (s < 0) continue;
             g_keys[s].vk = e.vk; g_keys[s].n = dm_kbm_match(b + BIND_LIST, BIND_N, e.vk, g_mods, g_keys[s].idx, 4);
-            for (int i = 0; i < g_keys[s].n; i++) run_binding(b, g_keys[s].idx[i], 1);
+            for (int i = 0; i < g_keys[s].n; i++) { if (toggle_closes(b, g_keys[s].idx[i])) *buttons |= DM_BTN_B; else run_binding(b, g_keys[s].idx[i], 1); }
         } else for (int i = 0; i < 16; i++) if (g_keys[i].vk == e.vk) { for (int j = 0; j < g_keys[i].n; j++) run_binding(b, g_keys[i].idx[j], 0); g_keys[i].vk = 0; }
     }
-    if (!live) { memset(g_btn, 0, sizeof g_btn); g_use_pending = 0; return 0; }
+    if (!live) { memset(g_btn, 0, sizeof g_btn); g_use_pending = 0; g_esc = 0; return 0; }
+    if (g_esc) esc_pump(buttons);
+    // The PC bindings open and close the console pages of the panel group (I = inventory, C, T, Q; Space closes them all), but closing a page
+    // leaves the group's frame (UISwitcher, its tab bar and border) on screen, empty, and taking the keys. With no page in it for a few polls,
+    // close the frame as the game does
+    { static int empty; if (!g_esc && dm_ui_panel_shown("UISwitcher") && !dm_ui_open_panels() && !dm_game_paused()) { if (++empty == 4) { dm_ui_send_queue("PanelManager:ClosePanel:UISwitcher"); LOG("PC input: the panel group was left empty: closed"); } } else empty = 0; }
     if (g_use_pending && !--g_use_pending) dm_ui_use_item();
     uint64_t t = now_ns_k();
     for (int bt = 0; bt < 2; bt++) if (g_btn[bt].down && !g_btn[bt].ui && t >= g_btn[bt].next_ns) { g_btn[bt].next_ns = t + REPEAT_NS; world_click(bt, 1); }
     return 1;
 }
 int dm_kbm_live(void) { int dm_uiscreen_ingame(void); return dm_padmode_pc() && dm_uiscreen_ingame(); }   // any thread: in game with the PC interface
+int dm_kbm_shift(void) { return dm_kbm_live() && (g_mods & MOD_SHIFT); }   // game main thread: Shift held in PC mode (dm_cursor.c: items compare, as on PC)
 #else   // iOS: no PC mode (touch and controller only); the unit test
 void dm_kbm_mouse(int op, float nx, float ny, int btn, int mods) { (void)op; (void)nx; (void)ny; (void)btn; (void)mods; }
 void dm_kbm_key(int vk, int down, int mods) { (void)vk; (void)down; (void)mods; }
 void dm_kbm_wheel(float nx, float ny, int notches) { (void)nx; (void)ny; (void)notches; }
 int dm_kbm_step(uint64_t *buttons) { (void)buttons; return 0; }
 int dm_kbm_live(void) { return 0; }
+int dm_kbm_shift(void) { return 0; }
 #endif

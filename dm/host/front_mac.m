@@ -357,6 +357,29 @@ static void live_mouse(int op, float x, float y) {   // the Mac pointer path, or
 }   // 合成鼠标脚本：上一条带坐标的指令落在视图里的点（dragto 从这里起拖） | synthetic mouse script: the point in the view where the last instruction with coordinates landed (dragto starts dragging from here)
 static int g_wheel;   // 滚轮：+1 / −1 = 右摇杆向上 / 向下推一小会儿（原版手柄版用右摇杆滚列表） | Wheel: +1 / -1 = push the right stick up / down for a short while (the original gamepad UI scrolls lists with the right stick)
 static float g_kbm_x = .5f, g_kbm_y = .5f;   // the last pointer point (interface-normalized): where right / other buttons and the wheel act in PC mode
+// PC mode pointer: macOS draws the game's own PC cursor, the gauntlet (frame 0 of cursor/ohand.sprite, which gen_romfs_overlay.py writes beside the
+// overlay as pc_cursor.png), over the game window while the PC interface set is on screen; the arrow otherwise, and when the overlay has no picture
+static NSCursor *pc_hand(void) {
+    static NSBitmapImageRep *rep; static NSPoint tip; static int tried; static NSCursor *cur; static CGFloat cur_h;
+    if (!tried) { tried = 1; const char *ov = getenv("DM_ROMFS_OVERLAY");
+        NSData *d = ov ? [NSData dataWithContentsOfFile:[@(ov) stringByAppendingPathComponent:@"pc_cursor.png"]] : nil;
+        rep = d ? (NSBitmapImageRep *)[NSBitmapImageRep imageRepWithData:d] : nil;
+        if (rep) { NSInteger best = NSIntegerMax;   // the hot spot is the fingertip: the opaque pixel nearest the top left corner
+            for (NSInteger y = 0; y < rep.pixelsHigh; y++) for (NSInteger x = 0; x < rep.pixelsWide; x++) if (x + y < best && [rep colorAtX:x y:y].alphaComponent > .5) { best = x + y; tip = NSMakePoint(x, y); }
+            LOG("PC cursor: the game's gauntlet, %ldx%ld px, tip %.0f,%.0f", (long)rep.pixelsWide, (long)rep.pixelsHigh, tip.x, tip.y); } }
+    if (!rep) return nil;
+    CGFloat h = round(fmin(fmax(rep.pixelsHigh * game_rect().size.height / 2160.0, 20), rep.pixelsHigh));   // the HD interface is drawn for 2160 lines
+    if (!cur || h != cur_h) { CGFloat s = h / rep.pixelsHigh; NSImage *im = [[NSImage alloc] initWithSize:NSMakeSize(round(rep.pixelsWide * s), h)];
+        NSBitmapImageRep *r = [rep copy]; r.size = im.size; [im addRepresentation:r];
+        cur = [[NSCursor alloc] initWithImage:im hotSpot:NSMakePoint(tip.x * s, tip.y * s)]; cur_h = h; }
+    return cur;
+}
+static void pc_cursor_sync(void) {   // main thread, from the pointer monitor and a quarter-second timer (mode changes, window size)
+    static BOOL on; NSWindow *w = g_view.window; NSCursor *hand = nil;
+    BOOL want = dm_padmode_pc() && NSApp.isActive && w.isKeyWindow && !text_input_up() && NSPointInRect([g_view convertPoint:w.mouseLocationOutsideOfEventStream fromView:nil], g_view.bounds) && (hand = pc_hand());
+    if (want) { if (NSCursor.currentCursor != hand) [hand set]; if (!on) LOG("PC cursor: on"); on = YES; }
+    else if (on) { on = NO; if (NSApp.isActive) [NSCursor.arrowCursor set]; }
+}
 static void push(void) {
     int32_t lx = (g_d - g_a) * 32767, ly = (g_w - g_s) * 32767;
     dm_input_set(g_btn, lx, ly, 0, g_wheel * 32767);
@@ -429,6 +452,7 @@ void front_run(void (*guest)(void)) {
         if (g_live) {
             win.acceptsMouseMovedEvents = YES;
             [v addTrackingArea:[[NSTrackingArea alloc] initWithRect:NSZeroRect options:NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect owner:v userInfo:nil]];
+            [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *t) { (void)t; pc_cursor_sync(); }];   // the PC cursor follows mode changes and the window size without pointer motion
         }
         { // 菜单栏：应用（退出 ⌘Q）/ 显示（全屏 ⌃⌘F）/ 帮助（键位对照） | Menu bar: application (Quit ⌘Q) / View (Full Screen ⌃⌘F) / Help (key mapping)
           NSMenu *bar = [NSMenu new];
@@ -468,6 +492,7 @@ void front_run(void (*guest)(void)) {
         // Left clicks reuse single-point touch; Mac App button-free hover only submits coordinates using the same window / full-screen conversion, without synthesizing clicks.
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp | NSEventMaskMouseMoved | NSEventMaskMouseExited handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;
+            pc_cursor_sync();
             if (dm_vkbd_ui_active() && e.type != NSEventTypeLeftMouseUp) {   // 手柄屏幕键盘开着时鼠标点了：收起屏幕键盘、换成表单；悬停 / 拖动不交给游戏 | a mouse click while the on-screen keyboard is open: it closes and the sheet takes over; hover / drags do not go to the game
                 if (e.type == NSEventTypeLeftMouseDown) dm_vkbd_ui_handoff();
                 return e.type == NSEventTypeLeftMouseDown || e.type == NSEventTypeLeftMouseDragged ? nil : e; }
@@ -542,7 +567,7 @@ void front_run(void (*guest)(void)) {
                   LOG("鼠标指针：静止 %.1f 秒自动隐藏 | pointer auto-hides after %.1f s at rest", idle, idle);
                   [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *t) { (void)t;
                       NSPoint m = NSEvent.mouseLocation; double now = NSProcessInfo.processInfo.systemUptime;
-                      if (!NSEqualPoints(m, last) || NSEvent.pressedMouseButtons || !NSApp.isActive || !win.isKeyWindow) { last = m; since = now; hid = NO; return; }   // 动过、按着键或不在前台：重新计时 | moved, a button held or not frontmost: restart the clock
+                      if (!NSEqualPoints(m, last) || NSEvent.pressedMouseButtons || !NSApp.isActive || !win.isKeyWindow || dm_padmode_pc()) { last = m; since = now; hid = NO; return; }   // moved, a button held, not frontmost, or PC mode (the cursor aims the skills, as on PC): restart the clock
                       if (hid || now - since < idle || !NSPointInRect(m, [win convertRectToScreen:v.frame])) return;   // 已藏过、没到时长、指针不在内容区：不动 | already hidden, not long enough, or pointer outside the content area: leave it
                       [NSCursor setHiddenUntilMouseMoves:YES]; hid = YES; }]; } }
         }

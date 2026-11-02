@@ -49,10 +49,12 @@ static const struct { uint32_t off; const char *pad, *touch, *pc; } k_pfx[] = { 
     { 0x1d21db5, "Controller/Console/Switch/", "0touch_console_switch_lay/", "3pc_console_switch_layout/" },
     { 0x1d2c33f, "Controller/Console/", "Ztouch_console_lay/", "4pc_console_layout/" },
     { 0x1d3b705, "Controller/", "Xtouch_lay/", NULL },   // the PC set leaves it: the game also builds console art paths with this string (repointed, boot fails)
-    { 0x1d0f5b8, "Controller/ControllerButtons/%s/%s", "Ztouch_controller_buttons_ui/%s_%s" },   // 键位图标（触屏版是透明的） | Button icons (transparent in the touch version)
-    { 0x1d076c7, "Controller/Cursor/Idle", "Xtouch_cursor_lay/Idle" },   // 面板里的手柄光标圆环（触屏版是透明的） | Controller cursor ring in panels (transparent in the touch version)
-    { 0x1d3acbc, "Controller/Cursor/Hold", "Xtouch_cursor_lay/Hold" },
-    { 0x1d4d5ea, "Controller/Cursor/Held", "Xtouch_cursor_lay/Held" },
+    // Button icons and the controller cursor ring in panels: transparent in the touch version and in the PC set too (the mouse points; the PC
+    // bindings are not the controller's buttons, and macOS draws the PC cursor, front_mac.m pc_hand)
+    { 0x1d0f5b8, "Controller/ControllerButtons/%s/%s", "Ztouch_controller_buttons_ui/%s_%s", "Ztouch_controller_buttons_ui/%s_%s" },
+    { 0x1d076c7, "Controller/Cursor/Idle", "Xtouch_cursor_lay/Idle", "Xtouch_cursor_lay/Idle" },
+    { 0x1d3acbc, "Controller/Cursor/Hold", "Xtouch_cursor_lay/Hold", "Xtouch_cursor_lay/Hold" },
+    { 0x1d4d5ea, "Controller/Cursor/Held", "Xtouch_cursor_lay/Held", "Xtouch_cursor_lay/Held" },
 };
 enum { BOUNCE_FRAMES = 60 };   // 测试开关读串的等待帧数（切换本身不数帧，见 dm_modetx.h） | Number of frames to wait when the test switch reads its sequence (the switch itself does not count frames, see dm_modetx.h)
 static int g_have;                  // 有触屏覆盖层、前缀可改 | A touch overlay is present and the prefixes can be rewritten
@@ -99,40 +101,49 @@ static int pfx_write(uint8_t *b, int pad, int pc) {   // pc only with pad: the P
         if (strcmp(p, k_pfx[i].pad) && strcmp(p, k_pfx[i].touch) && !(k_pfx[i].pc && !strcmp(p, k_pfx[i].pc))) { LOG("【红】手柄 / 触屏布局：main+%#x 不是预期的「%s」（是「%.32s」），不改", k_pfx[i].off, k_pfx[i].pad, p); return 0; } }
     for (unsigned i = 0; i < sizeof k_pfx / sizeof *k_pfx; i++) memcpy(b + k_pfx[i].off, pad && pc && k_pfx[i].pc ? k_pfx[i].pc : pad ? k_pfx[i].pad : k_pfx[i].touch, strlen(k_pfx[i].pad));
     _Static_assert(sizeof "Ztouch_controller_buttons_ui/%sK%s" == sizeof "Controller/ControllerButtons/%s/%s", "换的键帽路径要与原版路径等长");
-    if (pad && g_glyph_next) memcpy(b + GLYPH_OFF, k_glyph[g_glyph_next], strlen(k_glyph[g_glyph_next]));
+    if (pad && !pc && g_glyph_next) memcpy(b + GLYPH_OFF, k_glyph[g_glyph_next], strlen(k_glyph[g_glyph_next]));
     return 1;
 }
-enum { NSTR = 160 };   // 中 / 英 / esES / esMX / ruRU / koKR 各一套（去重后 138 条）
-static struct { char *key, *val; size_t klen; char sha[9]; uint64_t node, orig, olen; } g_str[NSTR];
+enum { NSTR = 512 };   // touch: zh / en / esES / esMX / ruRU / koKR (138 after merging); PC (Mac): about 20 keys in the game's 13 languages
+static struct { char *key, *val, *pcval; size_t klen; char sha[9]; uint64_t node, orig, olen; } g_str[NSTR];   // val / pcval: the touch / PC wording, NULL = the original in that mode
 static int g_nstr;
 static uint8_t *g_b;
 static uint64_t rd8(uint64_t a) { return a ? *(volatile uint64_t *)(uintptr_t)a : 0; }
 static void unesc(char *s) { char *o = s; for (; *s; s++) { if (*s == '\\' && s[1]) { s++; *o++ = *s == 'n' ? '\n' : *s == 't' ? '\t' : *s; } else *o++ = *s; } *o = 0; }
-static void str_load(void) {   // 开机读旁路表 | Read the sidecar table at boot
-    char p[1100], line[1024]; FILE *f = dm_overlay_file("touch_strings.tsv", p, sizeof p) ? fopen(p, "r") : NULL; if (!f) { LOG("【红】手柄 / 触屏布局：覆盖层有 ctrl_touch 却没有 touch_strings.tsv，字符串不换"); return; }
-    while (g_nstr < NSTR && fgets(line, sizeof line, f)) { line[strcspn(line, "\r\n")] = 0; char *a = strchr(line, '\t'), *c = a ? strchr(a + 1, '\t') : NULL; if (!c || c - a - 1 != 8) continue;
-        *a = 0; *c = 0; unesc(c + 1); g_str[g_nstr].key = strdup(line); g_str[g_nstr].klen = strlen(line); memcpy(g_str[g_nstr].sha, a + 1, 8); g_str[g_nstr].val = strdup(c + 1); g_nstr++; }
-    if (g_nstr == NSTR && fgets(line, sizeof line, f)) LOG("【红】手柄 / 触屏布局：touch_strings.tsv 超过 %d 条，后面的没读（调大 NSTR）", NSTR);
-    fclose(f); LOG("手柄 / 触屏布局：触摸说法 %d 条（touch_strings.tsv）", g_nstr);
+static int str_file(const char *name, int pc) {   // key \t checksum of the original \t wording; a key and checksum already read get the other mode's wording
+    char p[1100], line[1024]; FILE *f = dm_overlay_file(name, p, sizeof p) ? fopen(p, "r") : NULL; int n = 0; if (!f) return -1;
+    while (fgets(line, sizeof line, f)) { line[strcspn(line, "\r\n")] = 0; char *a = strchr(line, '\t'), *c = a ? strchr(a + 1, '\t') : NULL; if (!c || c - a - 1 != 8) continue;
+        *a = 0; *c = 0; unesc(c + 1); int i = 0; while (i < g_nstr && (strcmp(g_str[i].key, line) || memcmp(g_str[i].sha, a + 1, 8))) i++;
+        if (i == g_nstr) { if (g_nstr == NSTR) { LOG("【红】手柄 / 触屏布局：%s 超过 %d 条，后面的没读（调大 NSTR）", name, NSTR); break; }
+            g_str[i].key = strdup(line); g_str[i].klen = strlen(line); memcpy(g_str[i].sha, a + 1, 8); g_nstr++; }
+        *(pc ? &g_str[i].pcval : &g_str[i].val) = strdup(c + 1); n++; }
+    fclose(f); return n;
 }
+static void str_load(void) {   // 开机读旁路表 | Read the sidecar tables at boot
+    int nt = str_file("touch_strings.tsv", 0); if (nt < 0) { LOG("【红】手柄 / 触屏布局：覆盖层有 ctrl_touch 却没有 touch_strings.tsv，字符串不换"); return; }
+    LOG("手柄 / 触屏布局：触摸说法 %d 条（touch_strings.tsv）", nt);
+    if (g_pc_have) { int np = str_file("pc_strings.tsv", 1); LOG("PC interface: %d PC wordings (pc_strings.tsv)", np < 0 ? 0 : np); }
+}
+static int str_mode(void) { return !g_cur ? 0 : g_pc ? 2 : 1; }   // the wording in use: 0 touch, 1 the original (controller), 2 PC
 static uint64_t str_node(uint64_t map, const char *key, size_t n) {   // 串表里键为 key 的节点 | The node in the string table whose key is key
     uint64_t cnt = rd8(map), bk = rd8(map + 8); if (!cnt || !bk || (cnt & (cnt - 1))) return 0;
     uint64_t h[4] = {0}; ((void (*)(uint64_t *, const char *, uint64_t, int))(g_b + 0x1b6e1e0))(h, key, n, 0);   // 出参 16 字节 | Output parameter is 16 bytes
     for (uint64_t nd = rd8(bk + 8 * (h[0] & (cnt - 1))); nd; nd = rd8(nd)) if (rd8(nd + 0x10) == n && !memcmp((const void *)(uintptr_t)rd8(nd + 8), key, n)) return nd;
     return 0;
 }
-static void str_apply(int pad) {   // 游戏主线程：串表里这些键的串按模式指向原文 / 触摸说法 | Game main thread: point the strings of these keys in the string table at the original text / touch wording according to the mode
+static void str_apply(int mode) {   // game main thread: point these keys' strings in the string table at the original / touch / PC wording (str_mode)
     static int warned; int nset = 0, nbad = 0;
     for (int i = 0; i < g_nstr; i++) { uint64_t nd = str_node((uint64_t)(uintptr_t)(g_b + 0x2d71030), g_str[i].key, g_str[i].klen); if (!nd) { nbad++; continue; }
         uint64_t *v = (uint64_t *)(uintptr_t)(nd + 0x20);
         if (nd != g_str[i].node) {   // 新节点（开机首次 / 切语言后串表重装）：认原文 | New node (first time after boot / string table reloaded after a language switch): identify the original text
-            uint64_t ov = v[0], ol = v[1]; if (ov == (uint64_t)(uintptr_t)g_str[i].val) continue;   // 不会发生：新节点不会指着我们的串 | Cannot happen: a new node never points at our string
+            uint64_t ov = v[0], ol = v[1]; if (ov == (uint64_t)(uintptr_t)g_str[i].val || ov == (uint64_t)(uintptr_t)g_str[i].pcval) continue;   // cannot happen: a new node never points at our strings
             unsigned char md[CC_SHA1_DIGEST_LENGTH]; char hx[9]; CC_SHA1((const void *)(uintptr_t)ov, (CC_LONG)ol, md); snprintf(hx, sizeof hx, "%02x%02x%02x%02x", md[0], md[1], md[2], md[3]);
             g_str[i].node = nd; g_str[i].orig = memcmp(hx, g_str[i].sha, 8) ? 0 : ov; g_str[i].olen = ol; if (!g_str[i].orig) { nbad++; continue; } }
         if (!g_str[i].orig) { nbad++; continue; }
-        uint64_t want = pad ? g_str[i].orig : (uint64_t)(uintptr_t)g_str[i].val, wl = pad ? g_str[i].olen : strlen(g_str[i].val);
+        const char *s = mode == 0 ? g_str[i].val : mode == 2 ? g_str[i].pcval : NULL;
+        uint64_t want = s ? (uint64_t)(uintptr_t)s : g_str[i].orig, wl = s ? strlen(s) : g_str[i].olen;
         if (v[0] != want) { v[1] = wl; v[0] = want; nset++; } }
-    if (nset) LOG("手柄 / 触屏布局：串表 %d 条换成%s说法（%d 条没换：不是这一种语言 / 原文对不上 / 键不在）", nset, pad ? "手柄" : "触摸", nbad);
+    if (nset) LOG("手柄 / 触屏布局：串表 %d 条换成%s说法（%d 条没换：不是这一种语言 / 原文对不上 / 键不在）| %d strings set to the %s wording", nset, mode == 2 ? "PC" : mode ? "手柄" : "触摸", nbad, nset, mode == 2 ? "PC" : mode ? "controller" : "touch");
     else if (nbad == g_nstr && g_nstr && !warned) { warned = 1; LOG("手柄 / 触屏布局：串表里 %d 条都没换（语言不在表里或原文对不上），照原版说法", nbad); }
 }
 // 系统提示框在屏上时的功能键（观测门 OBS_NOTICE_INPUT，原版提示面板的消息处理入口 main+0x3d84a0，游戏主线程）：
@@ -241,7 +252,7 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
 // check again.
 void dm_padmode_lang_reset(void) {
     int back = 0;
-    for (int i = 0; i < g_nstr; i++) { if (g_str[i].node && g_str[i].orig) { uint64_t *v = (uint64_t *)(uintptr_t)(g_str[i].node + 0x20); if (v[0] == (uint64_t)(uintptr_t)g_str[i].val) { v[0] = g_str[i].orig; v[1] = g_str[i].olen; back++; } }
+    for (int i = 0; i < g_nstr; i++) { if (g_str[i].node && g_str[i].orig) { uint64_t *v = (uint64_t *)(uintptr_t)(g_str[i].node + 0x20); if (v[0] == (uint64_t)(uintptr_t)g_str[i].val || v[0] == (uint64_t)(uintptr_t)g_str[i].pcval) { v[0] = g_str[i].orig; v[1] = g_str[i].olen; back++; } }
         g_str[i].node = g_str[i].orig = g_str[i].olen = 0; }
     if (g_have) LOG("手柄 / 触屏布局：串表要重装（切语言）→ %d 条写回原文，记的节点清空，重装后重新认", back);
 }
@@ -439,15 +450,16 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
     { static int n = -1, k; static struct { uint64_t f; int m; } ev[8];
       if (n < 0) { n = 0; const char *e = getenv("DM_TEST_GLYPH"); for (const char *q = e; q && *q && n < 8; ) { unsigned long long f; int m; if (sscanf(q, "%llu:%d", &f, &m) != 2) break; ev[n].f = f; ev[n].m = m; n++; q = strchr(q, ','); if (q) q++; } }
       if (k < n && frame >= ev[k].f) { LOG("DM_TEST_GLYPH：帧 %llu 请求键帽样式 %d", (unsigned long long)frame, ev[k].m); dm_padmode_request_glyph(ev[k].m); k++; } }
-    if (g_have && frame % 30 == 0) str_apply(g_cur);   // 串表开机后才装、切语言会重装：定期核 | The string table is loaded only after boot and reloaded on a language switch: check periodically
+    if (g_have && frame % 30 == 0) str_apply(str_mode());   // 串表开机后才装、切语言会重装：定期核 | The string table is loaded only after boot and reloaded on a language switch: check periodically
     if (!g_have) return;
     { uint32_t dm_oe_ui_opmode_reads(void); static uint64_t fp0; static uint32_t nfp; uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), ch = root ? rd8(root + 0x58) : 0, n = root ? rd8(root + 0x60) : 0, fp = n * 0x9e3779b97f4a7c15ull;
       for (uint64_t i = 0; ch && i < n && i < 256; i++) fp = (fp << 7 | fp >> 57) ^ rd8(ch + 8 * i);
       if (fp != fp0) { fp0 = fp; nfp++; } g_sig = dm_oe_ui_opmode_reads() + nfp; }
     int w = atomic_load(&g_want), wx, cx;
-    { int tp = w >= 0 ? w : g_cur, tk = tp ? atomic_load(&g_glyph_want) : 0; if (tk != g_glyph && tp == g_cur && !glyph_swap_ok(b)) tk = g_glyph;
+    { int tp = w >= 0 ? w : g_cur;
       int pw = atomic_load(&g_pc_want); if (pw >= 0 && (pw == g_pc || !g_pc_have)) { atomic_store(&g_pc_want, -1); pw = -1; }   // already there, or no PC set: nothing to do
       int tpc = tp && g_pc_have ? (pw >= 0 ? pw : g_pc) : 0;
+      int tk = tpc ? g_glyph : tp ? atomic_load(&g_glyph_want) : 0; if (tk != g_glyph && tp == g_cur && !glyph_swap_ok(b)) tk = g_glyph;   // the PC set shows no button icons: a glyph request alone reloads nothing
       wx = tp | tk << 1 | tpc << 3; cx = g_cur | g_glyph << 1 | g_pc << 3; if (wx == cx && w < 0 && pw < 0) wx = -1; }   // bit 3: the PC set   // 键帽样式并进事务的「模式」里（触屏版不看键帽，记 0） | The glyph style goes into the transaction's "mode" (the touch layout ignores glyphs and records 0)
     int act = dm_modetx_step(&g_tx, frame, wx, cx, g_sig);
     int pcn = g_pc; if (act == DM_TXA_BEGIN) { g_glyph_next = wx >> 1 & 3; w = wx & 1; pcn = wx >> 3 & 1; }
@@ -456,7 +468,7 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
         if (!pfx_write(b, w, pcn)) { g_tx.st = DM_TX_IDLE; atomic_store(&g_want, -1); atomic_store(&g_pc_want, -1); atomic_store(&g_freeze, 0); return; }
         atomic_store(&g_freeze, 1); g_tx_from = frame;
         items_run(g_cur, 1);   // 旧一侧各登记项收手（dm_mode_items.h）：在途的替按键作废、挪过的控件写回、缓存的控件地址清掉 | Registered items of the old side stand down (dm_mode_items.h): in-flight key presses on the player's behalf are voided, moved widgets written back, cached widget addresses cleared
-        g_cur = w; g_pc = w && pcn; str_apply(w); dm_oe_ui_opmode(!dm_opmode());
+        g_cur = w; g_pc = w && pcn; str_apply(str_mode()); dm_oe_ui_opmode(!dm_opmode());
         if (g_glyph != g_glyph_next) LOG("手柄 / 触屏布局：键帽 %s → %s", k_glyph_name[g_glyph], k_glyph_name[g_glyph_next]);
         g_glyph = g_glyph_next;
         LOG("手柄 / 触屏布局：切到%s版——开始（输入冻结，让游戏重载布局）", w ? "原版手柄" : "触屏"); return; }

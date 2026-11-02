@@ -8,6 +8,7 @@ void dm_kbm_key(int vk, int down, int mods);                                // a
 void dm_kbm_wheel(float nx, float ny, int notches);                         // any thread: over the world, previous / next skill
 int dm_kbm_step(uint64_t *buttons);                                         // game main thread, at the controller poll; 1 = PC input live
 int dm_kbm_live(void);                                                      // any thread: in game with the PC interface set
+int dm_kbm_shift(void);                                                     // game main thread: Shift held in PC mode
 // used by dm_kbm.c
 int dm_padmode_pc(void);                                                    // dm_padmode.c
 void dm_touch_host_live(int op, float nx, float ny);                         // touch_mac.c

@@ -189,6 +189,7 @@ int dm_ui_mouse_hover_now(float nx, float ny) {
     return ok;
 }
 int dm_ui_free_cursor(void) { return atomic_load(&g_free_pub); }   // 当前页有没有自由光标（物品栏 / 技能树 / 属性页这类） | Whether the current page has a free cursor (pages such as inventory / skill tree / attributes)
+__attribute__((weak)) int dm_kbm_shift(void) { return 0; }   // dm_kbm.c; the default for tests that link this file without it
 void dm_cursor_apply(uint64_t *buttons, int32_t *lx, int32_t *ly) {
     cursor_apply(buttons, lx, ly);
     // 装备对比（单击装备 = 自己的说明 + 身上那件并排，不加手势不加按钮）：原版是「按住来比较」，触摸没有按住的键——
@@ -196,7 +197,7 @@ void dm_cursor_apply(uint64_t *buttons, int32_t *lx, int32_t *ly) {
     // Equipment comparison (single tap on equipment = its own description + the equipped item side by side, with no added gesture and no added button): the original game is 'hold to compare', and touch has no key to hold --
     // while a panel with an item area is open, the compare bit stays on (dm_item_compare, without going through controller keys and without flipping tabs), so when the tooltip appears it brings the equipped item of the same slot side by side; turned off when the panel closes
     { module_t *cm = main_module(); static int cmp = -1; int want = cm ? free_cursor_page(cm) : 0; atomic_store(&g_free_pub, want);
-      int dm_padmode_current(void); int c = want && !dm_padmode_current(); if (c != cmp) { cmp = c; dm_item_compare(c); } }   // 手柄模式照原版：按住对比键才对比 | Controller mode follows the original: compare only while the compare button is held
+      int dm_padmode_current(void); int c = want && (!dm_padmode_current() || dm_kbm_shift()); if (c != cmp) { cmp = c; dm_item_compare(c); } }   // controller mode follows the original: compare only while the compare button is held; PC mode: while Shift is held, as on PC
     if ((*buttons & DM_BTN_A) && atomic_load(&g_a_wait)) atomic_store(&g_a_wait, now_ns());   // A 还按着：兜底的 0.3 秒从松开那一刻起算 | A is still held: the fallback's 0.3 seconds are counted from the moment of release
 }
 static dm_wref g_down; static _Atomic uint64_t g_origin_xy;   // 按下那次命中的物品区控件；最近一次「拿起」的物品原位中心（位 63 = 有效，x | y << 32 的低 31 位） | Item-area widget hit by that press; center of the original position of the most recently 'picked up' item (bit 63 = valid, low 31 bits of x | y << 32)
@@ -2429,6 +2430,7 @@ int dm_hud_stack_msg(const char *act, const char *arg) {
 }
 void dm_hud_stack_dump(void) { for (int i = 0; i < HUD_STACK_MAX; i++) if (g_hud_stack[i].open) fprintf(stderr, "%s×%d ", g_hud_stack[i].name, g_hud_stack[i].open); }   // 开着的记录（巡检日志用） | Records currently open (for the patrol log)
 static struct { char name[48]; int open; } g_pm[48];   // 界面消息上开着的非常驻面板 | Non-persistent panels that are open per the UI messages
+int dm_ui_open_panels(void) { int n = 0; for (int i = 0; i < 48; i++) n += g_pm[i].open > 0 && strcmp(g_pm[i].name, "UISwitcher"); return n; }   // game main thread: non-resident panels open per the UI messages, the panel group's frame (UISwitcher) not counted (dm_kbm.c)
 static void ui_panel_note(const char *act, const char *arg) {   // 界面消息回调里调（游戏主线程） | Called from the UI message callback (game main thread)
     if (!strcmp(act, "UnloadAll")) { memset(g_pm, 0, sizeof g_pm); return; }
     if (!strcmp(act, "UnloadPanel") && arg && !strcmp(arg, "LoadScreenPanel")) {   // 读取画面撤下：与前端 hud_stack_message 同口径——屏上已看不见的记录清掉，还在的（通关页）照记 | Loading screen taken down: same convention as the front end's hud_stack_message - records no longer visible on screen are cleared, those still there (the game-completion page) stay recorded

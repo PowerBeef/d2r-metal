@@ -259,7 +259,7 @@ DM_RES_CENSUS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RES_CHECK	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RE_PORT	tools	tools/re/q.py tools/re/re.sh	y
 DM_ROMFS	host,ios,tools	host/app_mac.m host/hle_fs.c host/hle_tact.c host/tests/t_fs.c …	y
-DM_ROMFS_OVERLAY	host,ios,tools,verify	host/app_mac.m host/dm_padmode.c host/dm_textbox.c host/hle_fs.c …	y
+DM_ROMFS_OVERLAY	host,ios,tools,verify	host/app_mac.m host/dm_padmode.c host/dm_textbox.c host/front_mac.m …	y
 DM_ROMFS_SKIP_LOCAL	ios	ios/Sources/main.m	-
 DM_ROMFS_SRC	host,ios-tools,tools,verify	host/Makefile ios/run.sh ios/tests/Makefile ios/tests/test_native_art_capture.py …	y
 DM_ROMFS_TEST_CLEAN	ios	ios/Sources/main.m	-
