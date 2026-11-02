@@ -17,7 +17,7 @@ D2R Metal runs the game's own program, the Nintendo Switch release, built from f
 
 It is not an emulator, cloud gaming or streaming, and it plays fully offline. The game itself stays as Blizzard shipped it.
 
-<p align="center"><b><a href="https://github.com/PowerBeef/d2r-metal/releases/latest">Download D2R Metal Launcher 1.0</a></b> for the Mac: choose your game files, press Install, and it builds the game on your Mac and keeps it up to date. No Xcode, Homebrew or developer account. <a href="#getting-started">Getting started</a>.</p>
+<p align="center"><b><a href="https://github.com/PowerBeef/d2r-metal/releases/latest">Download D2R Metal Launcher 1.1</a></b> for the Mac: choose your game files, press Install, and it builds the game on your Mac and keeps it up to date. No Xcode, Homebrew or developer account. <a href="#getting-started">Getting started</a>.</p>
 
 <p align="center">
   <img src="docs/images/r2-plaques.jpg" width="100%" alt="Native: Apple silicon, Metal 4, no emulation. Sharper: MetalFX, SMAA, 16x filtering, native-resolution interface. 60 fps: steady on the Mac and on iPhone. As shipped: rules, drops, skills, economy and stash.">
@@ -287,6 +287,7 @@ A tour of the code is in [dm/README.md](dm/README.md).
 
 - D2R Metal began in October 2026 as a fork of D2R Mobile. Its first changes went back upstream (four were adopted in D2R Mobile v2.0); since 2026-10-28 it is developed on its own, for Apple platforms only.
 - **1.0** (2026-10-31) is the first release, with D2R Metal Launcher for the Mac. Releases are listed on the [releases page](https://github.com/PowerBeef/d2r-metal/releases).
+- **1.1** (2026-11-02) plays with a mouse and keyboard as D2R does on PC: the game's own PC interface, gauntlet pointer and PC keys; a controller brings the console interface back.
 - `main` is the trunk. Changes are checked by the project's own gate ([dm/verify/FORK_GATE.md](dm/verify/FORK_GATE.md)); see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>
