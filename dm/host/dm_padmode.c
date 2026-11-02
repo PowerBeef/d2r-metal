@@ -116,7 +116,7 @@ static int str_file(const char *name, int pc) {   // key \t checksum of the orig
         *a = 0; *c = 0; unesc(c + 1); int i = 0; while (i < g_nstr && (strcmp(g_str[i].key, line) || memcmp(g_str[i].sha, a + 1, 8))) i++;
         if (i == g_nstr) { if (g_nstr == NSTR) { LOG("【红】手柄 / 触屏布局：%s 超过 %d 条，后面的没读（调大 NSTR）", name, NSTR); break; }
             g_str[i].key = strdup(line); g_str[i].klen = strlen(line); memcpy(g_str[i].sha, a + 1, 8); g_nstr++; }
-        *(pc ? &g_str[i].pcval : &g_str[i].val) = strdup(c + 1); n++; }
+        char **v = pc ? &g_str[i].pcval : &g_str[i].val; if (!*v) *v = strdup(c + 1); n++; }   // a repeated key and checksum keeps its first wording, as before the PC table
     fclose(f); return n;
 }
 static void str_load(void) {   // 开机读旁路表 | Read the sidecar tables at boot
