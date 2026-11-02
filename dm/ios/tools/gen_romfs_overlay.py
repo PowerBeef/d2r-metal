@@ -185,15 +185,18 @@ with tempfile.TemporaryDirectory() as t:
     if sorted(k[len(LAY):] for k in PADLAY)!=sorted(PAD_PAGES): raise SystemExit('gen_romfs_overlay：手柄专用布局与清单 PAD_PAGES 不一致：多 %s，少 %s' % (sorted(set(k[len(LAY):] for k in PADLAY)-set(PAD_PAGES)), sorted(set(PAD_PAGES)-set(k[len(LAY):] for k in PADLAY))))
     # The PC interface set (Mac App only, DM_OVERLAY_MAC; dm_padmode.c switches to it on mouse / keyboard input). The host repoints the two console
     # prefixes (Controller/Console/Switch/, Controller/Console/) at two more folders of their lengths; the bare Controller/ prefix stays, since the game
-    # also builds console art paths with it (data/hd/global/ui/Controller/HUD/…: repointed, the HUD loses its statues). The two folders hold the
+    # also builds console art paths with it (repointed, the game fails at boot). The two folders hold the
     # console-specific layouts as they load in controller mode (our patched pages included), minus the panels in PC_TWINS, whose PC layout (the root
     # file of the same name) goes into 4pc_console_layout/ and so is found before Controller/<name>. Item panels and the console panel group stay console: the
     # Switch build's PC item grids take no mouse clicks (their in-game handlers are stubs). Pages we patch (PAD_PAGES) keep their console copy
-    # until they have PC variants. The marker pc_layouts tells the host the set is there
+    # until they have PC variants. The marker pc_layouts tells the host the set is there.
+    # PC_ART: art the PC twins draw from a path this overlay borrows for its own image (REPL at the top: PANEL/HUD_02/front_panel, the HUD's frame with
+    # the angel and demon statues, is the close button). The PC set gets the original bytes in a new folder, 3pc_ui/, and its twin points there
     PCDIR=[('controller/console/switch/','3pc_console_switch_layout/'),('controller/console/','4pc_console_layout/')]
     MAC_PC=bool(os.environ.get('DM_OVERLAY_MAC'))
     PC_TWINS=('hudpanelhd.json','panelborderspanelhd.json','characterselectpanelhd.json','characterdifficultymodalhd.json','deletecharactermodalhd.json','renamecharactermodalhd.json',
               'confirmationmodalhd.json','dismissablemodalhd.json','cinematicsmodalhd.json','creditsmodalhd.json')
+    PC_ART={'hudpanelhd.json':(('PANEL/HUD_02/front_panel','3pc_ui/front_panel'),)}   # twin → (borrowed image name, its PC-set copy) in the layout's own spelling
     assert all(len(a)==len(b) for a,b in PCDIR) and all(len(a)==len(b) for a,b in TDIR)
     def pc_path(k):   # a console layout path → the same layout in the PC folders |
         r=k[len(LAY):]
@@ -211,8 +214,17 @@ with tempfile.TemporaryDirectory() as t:
         for name in PC_TWINS:
             assert LAY+name in MAN and any(q.rsplit('/',1)[1]==name for q in ORIG), name   # a PC twin replaces a console panel that exists
             o=os.path.join(t,'pc_'+name)
-            if not os.path.exists(o): open(o,'wb').write(romfs_art.read(romfs,LAY+name))
+            if not os.path.exists(o):
+                b=romfs_art.read(romfs,LAY+name)
+                for old,new in PC_ART.get(name,()):
+                    assert UI+old.lower()+'.sprite' in REPL and b.count(old.encode())==1, (name,old)   # only borrowed art needs a copy; the twin names it once
+                    b=b.replace(old.encode(),new.encode())
+                open(o,'wb').write(b)
             repl[LAY+PCDIR[-1][1]+name]=o   # 4pc_console_layout/: searched before Controller/
+            for old,new in PC_ART.get(name,()):
+                a=os.path.join(t,'pcart_'+new.replace('/','__')+'.sprite')
+                if not os.path.exists(a): open(a,'wb').write(romfs_art.read(romfs,UI+old.lower()+'.sprite'))
+                repl[UI+new.lower()+'.sprite']=a
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data
         repl=to_touch(repl); repl.update(PADLAY); repl.update(EXTRAS)   # 「附加」页（新目录，两种模式同一份） | the "Extras" page (a new folder, the same file for both modes)
         # 只该给触屏的根目录布局（不在 Controller/ 前缀下、原先两种模式共用一份改过的）：改过的那份挪到触屏这边，原路径不再替换——手柄模式加载到原版字节。

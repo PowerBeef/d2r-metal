@@ -48,7 +48,7 @@
 static const struct { uint32_t off; const char *pad, *touch, *pc; } k_pfx[] = {   // pc: the PC interface set (Mac App, gen_romfs_overlay.py PCDIR); NULL = as in controller mode
     { 0x1d21db5, "Controller/Console/Switch/", "0touch_console_switch_lay/", "3pc_console_switch_layout/" },
     { 0x1d2c33f, "Controller/Console/", "Ztouch_console_lay/", "4pc_console_layout/" },
-    { 0x1d3b705, "Controller/", "Xtouch_lay/", NULL },   // the PC set leaves it: the game also builds console art paths with this string (HUD statues)
+    { 0x1d3b705, "Controller/", "Xtouch_lay/", NULL },   // the PC set leaves it: the game also builds console art paths with this string (repointed, boot fails)
     { 0x1d0f5b8, "Controller/ControllerButtons/%s/%s", "Ztouch_controller_buttons_ui/%s_%s" },   // 键位图标（触屏版是透明的） | Button icons (transparent in the touch version)
     { 0x1d076c7, "Controller/Cursor/Idle", "Xtouch_cursor_lay/Idle" },   // 面板里的手柄光标圆环（触屏版是透明的） | Controller cursor ring in panels (transparent in the touch version)
     { 0x1d3acbc, "Controller/Cursor/Hold", "Xtouch_cursor_lay/Hold" },
