@@ -1,5 +1,5 @@
 # PC control mode on the command-line host (dm/host/dm_kbm.c, the PC interface set of the Mac overlay; docs/MAC.md): the PC HUD, a live switch to
-# the console interface and back, PC hotkeys (I opens and closes the inventory, Space closes it with its panel group, then 1 drinks from the belt; Esc
+# the console interface and back, PC hotkeys (I and T open and close their pages, Space closes them with their panel group, then 1 drinks from the belt; Esc
 # opens the game menu and closes it), a left click on the ground walks there, in the Blood Moor a right click casts the right skill (Fire Bolt, given
 # by the test switches) and Shift + left click attacks in place
 name pc_mode
@@ -20,6 +20,12 @@ sleep 1.5
 expect_state panels~=PlayerInventoryExpansionLayout timeout=5
 kbm key=73
 expect panel act=ClosePanel name=UISwitcher timeout=5
+kbm key=84
+sleep 1.5
+expect_state panels~=SkillsTreePanel timeout=5
+kbm key=84
+expect panel act=ClosePanel name=SkillsTreePanel timeout=5
+sleep 1
 kbm key=73
 sleep 1.5
 expect_state panels~=PlayerInventoryExpansionLayout timeout=5

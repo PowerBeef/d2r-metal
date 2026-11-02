@@ -77,8 +77,11 @@ static void run_binding(uint8_t *b, int idx, int down) {
     if (down) ((int (*)(void *, uint64_t, uint64_t))(b + EXEC_HOTKEY))(e, (uint64_t)(uintptr_t)(b + BIND_TABLE), 1);
     else ((int (*)(void *, uint64_t, uint64_t))(b + RELEASE_HOTKEY))(e, (uint64_t)(uintptr_t)(b + BIND_TABLE), 0);
 }
-// The PC bindings for the console pages (C, I, Q, T, O) only open them: pressed while their page shows, they close the panel group (B), as the
-// PC toggles do
+// The PC bindings for the console pages (C, I, Q, T, O) only open them: pressed while their page shows, they close it, as the PC toggles do. The
+// console's Back closes the group's frame but not a page a PC binding opened (the skill tree stays on screen without its frame), so closing runs
+// the game's own Clear Screen binding (Space), and the empty frame then goes (dm_kbm_step)
+enum { BIND_CLEAR = 38 };
+static int bind_index(uint8_t *b, uint32_t id) { for (int i = 0; i < BIND_N; i++) { uint32_t v; memcpy(&v, b + BIND_LIST + i * BIND_SZ, 4); if (v == id) return i; } return -1; }
 static const struct { uint32_t id; const char *panel; } k_toggle[] = {
     { 0, "CharacterStatsPanel" }, { 1, "PlayerInventoryExpansionLayout" }, { 1, "PlayerInventoryOriginalLayout" }, { 4, "QuestLogPanelExpansion" },
     { 4, "QuestLogPanelOriginal" }, { 12, "SkillsTreePanel" }, { 54, "HirelingInventoryPanel" } };
@@ -140,15 +143,20 @@ int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the c
             continue;
         }
         if (e.op == 5) { int k[4], n = dm_kbm_match(b + BIND_LIST, BIND_N, e.vk > 0 ? 0x103 : 0x104, g_mods, k, 4); for (int i = 0; i < n; i++) run_binding(b, k[i], 1); continue; }   // wheel over the world: previous / next skill
-        if (e.vk == 0x1B) {   // Esc, as on PC: after death the death screen's own Continue (its button's message); else closes what is open (B), or opens the game menu
-            if (e.op == 3) { int ps = dm_ui_panel_state(); if (ps & DM_PS_DEAD) dm_ui_send_queue("YouDiedModalMessage:Continue"); else if (ps || dm_game_paused() || dm_ui_open_panels() || dm_ui_panel_shown("UISwitcher")) *buttons |= DM_BTN_B; else if (!g_esc) g_esc = 1; }
+        if (e.vk == 0x1B) {   // Esc, as on PC: after death the death screen's own Continue (its button's message); in the game menu and Options, back (B);
+                              // else closes what is open (Clear Screen, as the toggles above), or opens the game menu
+            if (e.op == 3) { int ps = dm_ui_panel_state(), k;
+                if (ps & DM_PS_DEAD) dm_ui_send_queue("YouDiedModalMessage:Continue");
+                else if (dm_game_paused()) *buttons |= DM_BTN_B;
+                else if (ps || dm_ui_open_panels() || dm_ui_panel_shown("UISwitcher")) { if ((k = bind_index(b, BIND_CLEAR)) >= 0) run_binding(b, k, 1); else *buttons |= DM_BTN_B; }
+                else if (!g_esc) g_esc = 1; }
             continue;
         }
         if (e.op == 3) {
             int s = -1; for (int i = 0; i < 16; i++) if (g_keys[i].vk == e.vk) s = -2; if (s == -2) continue;   // auto-repeat: the binding is already held
             for (int i = 0; i < 16 && s < 0; i++) if (!g_keys[i].vk) s = i; if (s < 0) continue;
             g_keys[s].vk = e.vk; g_keys[s].n = dm_kbm_match(b + BIND_LIST, BIND_N, e.vk, g_mods, g_keys[s].idx, 4);
-            for (int i = 0; i < g_keys[s].n; i++) { if (toggle_closes(b, g_keys[s].idx[i])) *buttons |= DM_BTN_B; else run_binding(b, g_keys[s].idx[i], 1); }
+            for (int i = 0; i < g_keys[s].n; i++) { int k = g_keys[s].idx[i]; if (toggle_closes(b, k) && (k = bind_index(b, BIND_CLEAR)) < 0) continue; run_binding(b, k, 1); }
         } else for (int i = 0; i < 16; i++) if (g_keys[i].vk == e.vk) { for (int j = 0; j < g_keys[i].n; j++) run_binding(b, g_keys[i].idx[j], 0); g_keys[i].vk = 0; }
     }
     if (!live) { memset(g_btn, 0, sizeof g_btn); g_use_pending = 0; g_esc = 0; return 0; }

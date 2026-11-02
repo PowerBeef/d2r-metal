@@ -106,8 +106,8 @@ One stop in every act, each split at 1:1 pixels from the same moment: the Switch
 <h2 align="center" id="a-true-mac-game"><img src="docs/images/r2-plate-mac.jpg" width="100%" alt="A True Mac Game"></h2>
 
 - **Full screen at your display's own resolution** from the first launch. View → Full Screen (⌃⌘F) switches, and the App remembers it. The window can be resized freely, and the picture fills it at its own aspect ratio.
-- **Mouse, trackpad, keyboard and controller, all at once.** The wheel and trackpad scroll the game's lists, scroll bars and sliders drag, and the keyboard or a controller moves a highlight drawn like the game's own. Button hints follow what you hold: Xbox, PlayStation or Switch.
-- **The pointer steps aside.** It hides after resting over the game for a few seconds and returns the moment the mouse moves.
+- **Plays like D2R on PC with a mouse and keyboard:** the game's own PC HUD, PC menus and gauntlet pointer, and D2R's PC keys. Click to walk and attack, right click for your right skill, 1 – 4 for the belt, Shift to compare, Esc for the game menu.
+- **Pick up a controller and the console interface comes up instead,** with button hints for what you hold: Xbox, PlayStation or Switch. The wheel and trackpad scroll the game's lists, and scroll bars and sliders drag.
 - **It saves like a Mac app should:** on every quit, from the Dock, at logout, even with a text box open. Minimizing counts as going to the background.
 - **iCloud save sync** with your iPhone or iPad, in an App you build and sign with a paid developer account. An app the launcher installs keeps its saves on the Mac; moving a character over by hand takes a minute ([docs/MAC.md](docs/MAC.md#saves-logs-and-icloud)).
 
