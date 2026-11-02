@@ -3,6 +3,7 @@
 # belt; Esc opens the game menu, and from Options' Extras tab, the PC set's own copy from pc_panels.py, backs out and closes it), a left click on the
 # ground walks there, in the Blood Moor a right click casts the right skill (Fire Bolt, given by the test switches) and Shift + left click attacks in place
 name pc_mode
+requires cli mac-app
 save warlock
 timeout 300
 env DM_ROMFS_OVERLAY=auto-mac DM_PC_MODE=1 DM_GAME_SEED=305419896 DM_TEST_STAT=5=5 DM_TEST_SKILL_ADD=300:36:1 DM_TEST_C2S=420:3c24000000ffffffff
