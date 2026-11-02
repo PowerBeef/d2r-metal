@@ -358,9 +358,12 @@ static void live_mouse(int op, float x, float y) {   // the Mac pointer path, or
 static int g_wheel;   // 滚轮：+1 / −1 = 右摇杆向上 / 向下推一小会儿（原版手柄版用右摇杆滚列表） | Wheel: +1 / -1 = push the right stick up / down for a short while (the original gamepad UI scrolls lists with the right stick)
 static float g_kbm_x = .5f, g_kbm_y = .5f;   // the last pointer point (interface-normalized): where right / other buttons and the wheel act in PC mode
 // PC mode pointer: macOS draws the game's own PC cursor, the gauntlet (frame 0 of cursor/ohand.sprite, which gen_romfs_overlay.py writes beside the
-// overlay as pc_cursor.png), over the game window while the PC interface set is on screen; the arrow otherwise, and when the overlay has no picture
+// overlay as pc_cursor.png), over the game window while the PC interface set is on screen; the arrow otherwise, and when the overlay has no picture.
+// Its size is a share of the picture's height on screen (the gauntlet about one inventory cell tall), so it keeps its place in the picture at any render resolution,
+// window size or display scaling; it is redrawn at the screen's pixel density, so it stays smooth on a Retina screen
+#define PC_CURSOR_SHARE 0.06
 static NSCursor *pc_hand(void) {
-    static NSBitmapImageRep *rep; static NSPoint tip; static int tried; static NSCursor *cur; static CGFloat cur_h;
+    static NSBitmapImageRep *rep; static NSPoint tip; static int tried; static NSCursor *cur; static CGFloat cur_h, cur_sc;
     if (!tried) { tried = 1; const char *ov = getenv("DM_ROMFS_OVERLAY");
         NSData *d = ov ? [NSData dataWithContentsOfFile:[@(ov) stringByAppendingPathComponent:@"pc_cursor.png"]] : nil;
         rep = d ? (NSBitmapImageRep *)[NSBitmapImageRep imageRepWithData:d] : nil;
@@ -368,10 +371,18 @@ static NSCursor *pc_hand(void) {
             for (NSInteger y = 0; y < rep.pixelsHigh; y++) for (NSInteger x = 0; x < rep.pixelsWide; x++) if (x + y < best && [rep colorAtX:x y:y].alphaComponent > .5) { best = x + y; tip = NSMakePoint(x, y); }
             LOG("PC cursor: the game's gauntlet, %ldx%ld px, tip %.0f,%.0f", (long)rep.pixelsWide, (long)rep.pixelsHigh, tip.x, tip.y); } }
     if (!rep) return nil;
-    CGFloat h = round(fmin(fmax(rep.pixelsHigh * game_rect().size.height / 2160.0, 20), rep.pixelsHigh));   // the HD interface is drawn for 2160 lines
-    if (!cur || h != cur_h) { CGFloat s = h / rep.pixelsHigh; NSImage *im = [[NSImage alloc] initWithSize:NSMakeSize(round(rep.pixelsWide * s), h)];
-        NSBitmapImageRep *r = [rep copy]; r.size = im.size; [im addRepresentation:r];
-        cur = [[NSCursor alloc] initWithImage:im hotSpot:NSMakePoint(tip.x * s, tip.y * s)]; cur_h = h; }
+    CGFloat h = round(fmin(fmax(game_rect().size.height * PC_CURSOR_SHARE, 24), 160)), sc = g_view.window.backingScaleFactor ?: 2;   // points
+    if (!cur || h != cur_h || sc != cur_sc) {
+        CGFloat s = h / rep.pixelsHigh; NSSize pt = NSMakeSize(round(rep.pixelsWide * s), h);
+        NSBitmapImageRep *r = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)(pt.width * sc) pixelsHigh:(NSInteger)(pt.height * sc) bitsPerSample:8
+                                                                 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+        NSImage *src = [[NSImage alloc] initWithSize:NSMakeSize(rep.pixelsWide, rep.pixelsHigh)]; [src addRepresentation:rep];
+        [NSGraphicsContext saveGraphicsState]; NSGraphicsContext *g = [NSGraphicsContext graphicsContextWithBitmapImageRep:r]; NSGraphicsContext.currentContext = g; g.imageInterpolation = NSImageInterpolationHigh;
+        [src drawInRect:NSMakeRect(0, 0, r.pixelsWide, r.pixelsHigh) fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1];
+        [NSGraphicsContext restoreGraphicsState];
+        r.size = pt; NSImage *im = [[NSImage alloc] initWithSize:pt]; [im addRepresentation:r];
+        cur = [[NSCursor alloc] initWithImage:im hotSpot:NSMakePoint(tip.x * s, tip.y * s)]; cur_h = h; cur_sc = sc;
+        LOG("PC cursor: %.0f pt tall at %.0fx (picture %.0f pt)", h, sc, game_rect().size.height); }
     return cur;
 }
 static void pc_cursor_sync(void) {   // main thread, from the pointer monitor and a quarter-second timer (mode changes, window size)
