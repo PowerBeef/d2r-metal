@@ -69,7 +69,7 @@ The keys are D2R's PC defaults:
 | Space | Close all panels |
 | Esc | Close what is open; with nothing open, the game menu (Save and Exit, Quick Restart, Options, Chronicle); in Options, back. After death, continue |
 
-**Panels** (inventory, character, stash, vendors, the cube) are the console ones, worked with the mouse: hover an item for its description, hold Shift to compare, right click to use; press and drag to move it (between cells, onto a body slot, into the stash or cube, onto a vendor's shelf = sell, into the inventory = buy); a double click also uses, puts on or takes off. Descriptions use the PC wording ("Right Click to Use", "Hold Shift to Compare"). The PC HUD's mini panel and run / walk button take clicks.
+**Panels** (inventory, character, stash, vendors, the cube) are the console ones, drawn so they end above the PC HUD, and worked with the mouse: hover an item for its description, hold Shift to compare, right click to use; press and drag to move it (between cells, onto a body slot, into the stash or cube, onto a vendor's shelf = sell, into the inventory = buy); a double click also uses, puts on or takes off. Descriptions use the PC wording ("Right Click to Use", "Hold Shift to Compare"). The PC HUD's mini panel and run / walk button take clicks.
 
 The pointer is the game's own gauntlet in the PC interface. In the console interface it is the macOS arrow, which hides itself after it has rested over the game window for 3 seconds and comes back the moment the mouse moves; to change the delay: `defaults write org.d2rmobile.mac CursorHideSeconds -float 5` (seconds; `0` turns it off), then restart the App.
 
@@ -159,7 +159,7 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 
 - Not tried by hand yet: the resource-folder dialog on a fresh install, and PlayStation or Switch controllers on the Mac (an Xbox Wireless Controller is what has been used).
 - The keys can't be rebound yet: the game's own Key Bindings page opens in the PC interface, but it doesn't take a new key, so the App doesn't offer it. The keys are D2R's PC defaults.
-- The PC interface's panels are the console ones: the Switch build's own PC inventory and stash grids take no clicks. Their bottom edge sits behind the taller PC HUD.
+- The PC interface's panels are the console ones (the Switch build's own PC inventory and stash grids take no clicks), drawn a little smaller and higher than on a console so they end above the PC HUD. The panel group's tab bar keeps the tab it opened on when a key (C, T, Q) switches the page.
 - Click-to-walk and clicks on monsters were verified in the camp and the Blood Moor. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. The party, message log, help and mercenary keys (P, M, H, O) are untested.
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
 - An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud"). The App the launcher installs checks the project's releases and shows a new version on the main menu, but keeps its saves on this Mac.

@@ -90,6 +90,11 @@ static int toggle_closes(uint8_t *b, int idx) {
     for (unsigned i = 0; i < sizeof k_toggle / sizeof *k_toggle; i++) if (k_toggle[i].id == id && dm_ui_panel_shown(k_toggle[i].panel)) return 1;
     return 0;
 }
+static int switches_page(uint8_t *b, int idx) {   // a page key while another page shows: the console draws one page at a time, so that one closes first
+    uint32_t id; int page = 0, other = 0; memcpy(&id, b + BIND_LIST + idx * BIND_SZ, 4);
+    for (unsigned i = 0; i < sizeof k_toggle / sizeof *k_toggle; i++) { if (k_toggle[i].id == id) page = 1; else if (dm_ui_panel_shown(k_toggle[i].panel)) other = 1; }
+    return page && other;
+}
 static float ui_to_screen_y(float uy) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); return dm_screen_real(&rw, &rh) && rh > 0 && h > 0 ? (uy * h + y) / rh : uy; }
 
 static int g_use_pending;                                     // a right click on an item: use it once the hover has landed on it
@@ -156,7 +161,10 @@ int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the c
             int s = -1; for (int i = 0; i < 16; i++) if (g_keys[i].vk == e.vk) s = -2; if (s == -2) continue;   // auto-repeat: the binding is already held
             for (int i = 0; i < 16 && s < 0; i++) if (!g_keys[i].vk) s = i; if (s < 0) continue;
             g_keys[s].vk = e.vk; g_keys[s].n = dm_kbm_match(b + BIND_LIST, BIND_N, e.vk, g_mods, g_keys[s].idx, 4);
-            for (int i = 0; i < g_keys[s].n; i++) { int k = g_keys[s].idx[i]; if (toggle_closes(b, k) && (k = bind_index(b, BIND_CLEAR)) < 0) continue; run_binding(b, k, 1); }
+            for (int i = 0; i < g_keys[s].n; i++) { int k = g_keys[s].idx[i], c = bind_index(b, BIND_CLEAR);
+                if (toggle_closes(b, k)) { if (c >= 0) run_binding(b, c, 1); continue; }
+                if (c >= 0 && switches_page(b, k)) run_binding(b, c, 1);
+                run_binding(b, k, 1); }
         } else for (int i = 0; i < 16; i++) if (g_keys[i].vk == e.vk) { for (int j = 0; j < g_keys[i].n; j++) run_binding(b, g_keys[i].idx[j], 0); g_keys[i].vk = 0; }
     }
     if (!live) { memset(g_btn, 0, sizeof g_btn); g_use_pending = 0; g_esc = 0; return 0; }

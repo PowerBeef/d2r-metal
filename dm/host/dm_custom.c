@@ -134,6 +134,7 @@ static void save(void) {
 // The Mac and iOS Options page has two pages of ours (touch_layout.py): the "Video" tab = the borrowed video page (picture-setting rows only), the "Extras" tab = our added 2extras_lay/ExtrasOptionsPanel (the custom rows, the video page's class);
 // (The CLI host's default overlay has one page holding every custom row.) g_shown = which rows the page on screen right now holds: 1 = picture settings, 2 = custom -- "Default" covers only those (as each original tab covers its own)
 #define EXTRAS_PANEL "2extras_lay/ExtrasOptionsPanel"
+#define EXTRAS_PANEL_PC "5pc_base_lay/ExtrasOptionsPanel"   // its copy in the Mac PC interface set (pc_panels.py: drawn smaller and higher, above the PC HUD)
 static _Atomic int g_shown;
 int dm_custom_shown(void) { return atomic_load(&g_shown); }
 // which custom rows the page on screen right now holds (one bit per key index): "Default" resets only those. On the Mac and iOS Frame Rate / Frame Drops are on the Video tab, and dm_video.c resets them; the CLI host's default overlay page holds every row
@@ -182,7 +183,7 @@ static uint64_t list_box(uint64_t sp, int *off, int *vh) {
 void dm_custom_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
     static dm_wref seen[NK];   // 每行最近见到的勾选框（带界面代号：重建后取到 0 = 页刚出现） | Most recently seen checkbox of each row (with UI generation: 0 after a rebuild = page just appeared)
-    uint64_t sp = dm_ui_top(root, EXTRAS_PANEL); if (!sp || !*(uint8_t *)(sp + 0x50)) sp = dm_ui_top(root, "VideoOptionsPanel");   // 在屏上的那张：附加页，否则视频页 | the one on screen: the Extras page, otherwise the video page
+    uint64_t sp = dm_ui_top(root, EXTRAS_PANEL); if (!sp || !*(uint8_t *)(sp + 0x50)) sp = dm_ui_top(root, EXTRAS_PANEL_PC); if (!sp || !*(uint8_t *)(sp + 0x50)) sp = dm_ui_top(root, "VideoOptionsPanel");   // 在屏上的那张：附加页，否则视频页 | the one on screen: the Extras page, otherwise the video page
     if (!sp || !*(uint8_t *)(sp + 0x50)) { atomic_store(&g_shown, 0); atomic_store(&g_page_keys, 0);   // 「自定义」页 = 借来的视频页（界面根的直接子，与设置页并列）。页不在屏上：没点「应用」的勾选作废（同原版不应用就离开），下次出现重摆 | The 「自定义」(Custom) page = the borrowed video page (a direct child of the UI root, alongside the settings page). Page not on screen: checkbox changes without tapping 「应用」(Apply) are discarded (same as leaving without applying in the original game), and it is laid out again the next time it appears
         int was = 0; for (int i = 0; i < NK; i++) was |= seen[i].w != 0;
         if (was) for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1);

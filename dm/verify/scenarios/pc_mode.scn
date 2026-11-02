@@ -1,7 +1,7 @@
 # PC control mode on the command-line host (dm/host/dm_kbm.c, the PC interface set of the Mac overlay; docs/MAC.md): the PC HUD, a live switch to
-# the console interface and back, PC hotkeys (I and T open and close their pages, Space closes them with their panel group, then 1 drinks from the belt; Esc
-# opens the game menu and closes it), a left click on the ground walks there, in the Blood Moor a right click casts the right skill (Fire Bolt, given
-# by the test switches) and Shift + left click attacks in place
+# the console interface and back, PC hotkeys (I and T open and close their pages, Space closes them with their panel group, then 1 drinks from the
+# belt; Esc opens the game menu, and from Options' Extras tab, the PC set's own copy from pc_panels.py, backs out and closes it), a left click on the
+# ground walks there, in the Blood Moor a right click casts the right skill (Fire Bolt, given by the test switches) and Shift + left click attacks in place
 name pc_mode
 save warlock
 timeout 300
@@ -36,6 +36,14 @@ sleep 1.5
 expect_state belt0=0 timeout=5
 kbm key=27
 expect pause_open timeout=8
+sleep 1
+tap_ui Settings
+sleep 2
+msg SettingsPanelMessage:CheckChanges:5pc_base_lay/ExtrasOptionsPanel
+sleep 1.5
+expect_state panels~=5pc_base_lay/ExtrasOptionsPanel timeout=5
+screenshot pc_options_extras.png
+kbm key=27
 sleep 1
 kbm key=27
 expect panel act=ClosePanel name=UISwitcher timeout=5

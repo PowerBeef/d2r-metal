@@ -194,7 +194,7 @@ with tempfile.TemporaryDirectory() as t:
     # the angel and demon statues, is the close button). The PC set gets the original bytes in a new folder, 3pc_ui/, and its twin points there
     PCDIR=[('controller/console/switch/','3pc_console_switch_layout/'),('controller/console/','4pc_console_layout/')]
     MAC_PC=bool(os.environ.get('DM_OVERLAY_MAC'))
-    if MAC_PC: import pc_strings
+    if MAC_PC: import pc_strings, pc_panels
     PC_TWINS=('hudpanelhd.json','panelborderspanelhd.json','characterselectpanelhd.json','characterdifficultymodalhd.json','deletecharactermodalhd.json','renamecharactermodalhd.json',
               'confirmationmodalhd.json','dismissablemodalhd.json','cinematicsmodalhd.json','creditsmodalhd.json')
     PC_ART={'hudpanelhd.json':(('PANEL/HUD_02/front_panel','3pc_ui/front_panel'),)}   # twin → (borrowed image name, its PC-set copy) in the layout's own spelling
@@ -226,6 +226,19 @@ with tempfile.TemporaryDirectory() as t:
                 a=os.path.join(t,'pcart_'+new.replace('/','__')+'.sprite')
                 if not os.path.exists(a): open(a,'wb').write(romfs_art.read(romfs,UI+old.lower()+'.sprite'))
                 repl[UI+new.lower()+'.sprite']=a
+        # The console panels, smaller and higher so they end above the PC HUD (pc_panels.py): a PC copy of every layout the game looks up by name
+        # whose chain places an in-game panel, found where controller mode finds it (our patched pages included); bases in pc_panels.BASE; our Extras
+        # page, whose name holds its folder, gets a copy there and the Options copies open that one
+        def rd(p):
+            k=LAY+p
+            if k in repl: return open(os.path.join(t,repl[k]),encoding='utf-8',errors='replace').read()
+            return romfs_art.read(romfs,k).decode('utf-8','replace') if k in MAN else None
+        names=sorted({k[len(LAY):].rsplit('/',1)[-1] for k in MAN if k.startswith(LAY) and k.endswith('.json') and not re.search(r'_profile|/pc/|/handheld/',k)}-set(PC_TWINS))
+        look=('controller/console/switch/','controller/console/','controller/','')
+        moved=pc_panels.build([([d+n for d in look],n) for n in names],rd,[(touch_layout.EXTRAS_PATH[len(LAY):],'2extras_lay/ExtrasOptionsPanel',pc_panels.BASE+'ExtrasOptionsPanel')])
+        for k,s in moved.items():
+            dst=LAY+(k if isinstance(k,str) else (PCDIR[0][1] if k[0].startswith(PCDIR[0][0]) else PCDIR[1][1])+k[1])
+            o=os.path.join(t,'pcpanel_'+dst[len(LAY):].replace('/','__')); open(o,'w',encoding='utf-8').write(s); repl[dst]=o
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data
         repl=to_touch(repl); repl.update(PADLAY); repl.update(EXTRAS)   # 「附加」页（新目录，两种模式同一份） | the "Extras" page (a new folder, the same file for both modes)
         # 只该给触屏的根目录布局（不在 Controller/ 前缀下、原先两种模式共用一份改过的）：改过的那份挪到触屏这边，原路径不再替换——手柄模式加载到原版字节。
