@@ -23,6 +23,7 @@
 #        Refused before any run: a baseline without that snapshot is ⚪ (exit 3); --reps too few to reach significance over the comparisons is red (exit 2, it names the --reps needed).
 #        gpu_ms is not in the defaults: on a fast Mac the GPU lowers its clock when it has room, so it is clock-scaled (--metrics gpu_ms.p50 still works)
 #   run / ab / regress --keep: a .keep file in the result folder, so workspace_prune.py never takes it
+#   {dir} in an env value (--env, --a-env, --b-env) becomes the run's own folder, e.g. DM_NVN_PASSGPU={dir}/passgpu.tsv: one file per run and variant
 #   run / ab / profile / regress --picture rec|orig|rec75|phone: the picture (dm/tools/picture.py). rec, the default, is this Mac's Recommended in full screen
 #        (cli: every picture key pinned + DM_TEST_FULLSCREEN_AT=1; mac-app: the test copy's own Recommended); orig is the host's own defaults, windowed.
 #        --env / --a-env / --b-env win over it. The picture goes into bench.json / ab.json / regress.json and the ledger's route column (<route>@<picture>)
@@ -214,6 +215,7 @@ def metric(seg, path):
 
 
 def run_once(route, backend, out_dir, env, host, cool, mpt=False):
+    env = {k: v.replace('{dir}', out_dir) for k, v in env.items()}   # {dir} in a value = this run's own folder (DM_NVN_PASSGPU={dir}/passgpu.tsv)
     th0, waited = wait_cool(cool)
     saved = {k: os.environ.get(k) for k in list(env) + ['DM_FRAMES', 'DM_STATEREP', 'SCN_DMHOST', 'DM_NVN_TSV', 'DM_NVN_TSV_CALLS']}
     os.environ.update(env); os.environ['DM_FRAMES'] = os.path.join(out_dir, 'frames.tsv'); os.environ['DM_STATEREP'] = '1'

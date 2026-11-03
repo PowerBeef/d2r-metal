@@ -20,6 +20,8 @@ Runs default to **this Mac's Recommended picture in full screen** (`--picture re
 - `rec75` (the base M chips' 3D 75% with MetalFX) and `phone` (the iPhone 17 Pro's picture at 2622 × 1206) pin their sets the same way.
 - `--env`, `--a-env` and `--b-env` win over the picture; a run that sets `DM_TEST_WINSIZE` or `DM_TEST_FULLSCREEN_AT` itself gets no full-screen switch.
 
+`{dir}` in an env value becomes the run's own folder, e.g. `DM_NVN_PASSGPU={dir}/passgpu.tsv`: one file per run and variant, beside its `host.log` and `nvn.tsv`.
+
 The picture is recorded in `bench.json`, `ab.json`, `regress.json` and the ledger's route column (`town_loop@rec`). Results from before this default (the original look in a window: the command-line host drew its picture at 1170 × 658 points inside a 1280 × 658 point window) are not comparable with it.
 
 ## What is measured

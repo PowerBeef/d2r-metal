@@ -201,5 +201,20 @@ class BenchTest(unittest.TestCase):
                 self.assertEqual(rj['picture'], 'rec')
 
 
+    def test_dir_token(self):   # {dir} in an env value becomes the run's own folder (DM_NVN_PASSGPU={dir}/passgpu.tsv), per variant and run
+        seen = []
+        class FakeRunner:
+            def __init__(self, route, backend, out_dir, headless): seen.append((out_dir, os.environ.get('DM_NVN_PASSGPU'))); self.on_started = None
+            def go(self): return {}, 0
+        with tempfile.TemporaryDirectory() as t, contextlib.redirect_stdout(io.StringIO()), \
+             mock.patch.object(bench.scenario, 'Runner', FakeRunner), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None), \
+             mock.patch.object(bench, 'wait_cool', lambda s: (None, 0)), mock.patch.object(bench, 'thermal', lambda: None), \
+             mock.patch.object(bench, 'environment', lambda: {'git': {'rev': 'x'}}), mock.patch.object(bench, 'DM_ROOT', t):
+            self.assertEqual(bench.main(['ab', ROUTE, '--reps', '1', '--a-env', 'DM_NVN_PASSGPU={dir}/pg.tsv', '--b-env', 'DM_NVN_PASSGPU={dir}/pg.tsv']), 0)
+        self.assertEqual(len(seen), 2)
+        for d, v in seen: self.assertEqual(v, os.path.join(d, 'pg.tsv'))
+        self.assertNotIn('DM_NVN_PASSGPU', os.environ)
+
+
 if __name__ == '__main__':
     unittest.main()
