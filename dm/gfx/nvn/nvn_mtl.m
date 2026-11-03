@@ -4715,7 +4715,8 @@ static void bloomq_clear_b0(const tex_t *b0, int lv, int sl, int live) {
     PD("X %llu bloom 1/4: B0 ser=%llu level %d slice %d cleared to black", g_stat_pass, (unsigned long long)b0->serial, lv, sl);
 }
 // The health summary: "bloom 1/4, frames ...". There is no reliable exit hook (quits leave through _exit, which skips atexit), so the first window is short
-// (600 frames), later ones 3600, and a window is flushed (force) whenever new targets are announced. A window opens at the first frame boundary with something counted
+// (600 frames, until one has run its full length), later ones 3600, and a window is flushed (force) whenever new targets are announced. A window opens at the first
+// frame boundary with something counted
 static void bloomq_summary(uint64_t f, int force) {
     __typeof__(g_bloomq_stat) *st = &g_bloomq_stat;
     if (!(st->applied | st->reused | st->ab61 | st->ab62 | st->ab63 | st->midchain | st->vp | st->pso)) { st->f0 = 0; return; }
@@ -4724,7 +4725,7 @@ static void bloomq_summary(uint64_t f, int force) {
     MLOG("bloom 1/4, frames %llu-%llu: %llu applied, %llu reused the last B1, %llu not engaged (viewport %llu, pipeline %llu), %llu aborted (other draw %llu, capture %llu, no B1 %llu), %llu left mid-chain",
          (unsigned long long)st->f0, (unsigned long long)f, (unsigned long long)st->applied, (unsigned long long)st->reused, (unsigned long long)(st->vp + st->pso), (unsigned long long)st->vp, (unsigned long long)st->pso,
          (unsigned long long)(st->ab61 + st->ab62 + st->ab63), (unsigned long long)st->ab61, (unsigned long long)st->ab62, (unsigned long long)st->ab63, (unsigned long long)st->midchain);
-    int fd = 1; memset(st, 0, sizeof *st); st->first_done = fd;
+    int fd = st->first_done || !force; memset(st, 0, sizeof *st); st->first_done = fd;   // a flush at new targets keeps the short first window: the targets usually change once while entering a game
 }
 // An abort in the middle of the chain (RED 61 another draw, 62 the capture not drawn, 63 no B1 handle at the apply): B0 to black, back to state 0.
 // The current draw then goes on and opens its own pass, as after bloomq_capture's rp_end

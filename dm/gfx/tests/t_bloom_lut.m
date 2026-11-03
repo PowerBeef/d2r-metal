@@ -214,6 +214,9 @@ static void log_cap(const char *file, int line, const char *fmt, ...) { (void)fi
 static int log_count(const char *needle) { int n = 0; for (const char *q = g_log; (q = strstr(q, needle)); q++) n++; return n; }
 static void summary_case(void) {
     memset(&g_bloomq_stat, 0, sizeof g_bloomq_stat); g_log[0] = 0; g_dm_log_hook = log_cap;
+    g_bloomq_stat.applied = 1; bloomq_summary(10, 1); EXPECT("summary: a flush at new targets prints at once", 1, log_count("bloom 1/4, frames 10-10: 1 applied"));
+    g_bloomq_stat.applied = 2; bloomq_summary(11, 0); bloomq_summary(611, 0); EXPECT("summary: after a flush the first full window is still 600 frames", 1, log_count("bloom 1/4, frames 11-611: 2 applied"));
+    memset(&g_bloomq_stat, 0, sizeof g_bloomq_stat); g_log[0] = 0;
     bloomq_summary(900, 0); EXPECT("summary: nothing counted, the window stays closed", 0, g_bloomq_stat.f0);
     g_bloomq_stat.applied = 5; g_bloomq_stat.vp = 1; bloomq_summary(1000, 0); bloomq_summary(1599, 0);
     EXPECT("summary: no line before 600 frames", 0, log_count("bloom 1/4, frames"));
