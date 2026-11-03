@@ -41,6 +41,7 @@ run: \
 	$(B)/t_namegen \
 	$(B)/t_oe \
 	$(B)/t_padmap \
+	$(B)/t_picrec \
 	$(B)/t_ctl \
 	$(B)/t_events \
 	$(B)/t_interaction_diag \
@@ -140,6 +141,7 @@ run: \
 	$(B)/t_mv_restore
 	$(B)/t_modetx
 	$(B)/t_padmap
+	$(B)/t_picrec
 	$(B)/t_unit_level
 	$(B)/t_widget
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
@@ -163,6 +165,8 @@ $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_textbox.c ../dm_textbox_core.c
 $(B)/t_scrub: t_scrub.c ../dm_scrub.c ../dm_scrub.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_scrub.c ../dm_scrub.c
+$(B)/t_picrec: t_picrec.c t_picrec_cases.h ../dm_picrec.c ../dm_picrec.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_picrec.c ../dm_picrec.c -lm
 $(B)/t_video: t_video.c ../dm_video.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_video.c ../dm_video.c
 $(B)/t_widget: t_widget.c ../dm_widget.h | $(B)

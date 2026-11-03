@@ -40,7 +40,7 @@ static result run(const char *txt) {
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
 #define ES(e, re) "envsh=" #e "\nrec_envsh=" #re "\n"
 #define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\n"
-#define RV "rec_v=6\n"   // recommendation version (REC_V in dm_video.c); without it = version 1, recalculated at load
+#define RV "rec_v=7\n"   // recommendation version (REC_V in dm_video.c); without it = version 1, recalculated at load
 #define NEWREC TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV   // how the later keys are filled when missing (front_video_rec)
 
 int main(void) {
@@ -105,10 +105,10 @@ int main(void) {
     CHECK(r.v[8] == 0 && r.fb == 0 && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(0, 2) RV), "(15) shq=0 kept, actually %d (asked %d times)\n%s", r.v[8], r.fb, r.file);
     r = run(FULL(1, 1, 1, 1, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(3, 2) RV);
     CHECK(r.v[8] == 2, "(15) shq=3 out of range: back to the recommendation 2, actually %d", r.v[8]);
-    // (16) a version-5 file (before the iPhone-chip Mac recommendation): an M-chip Mac's recommendation is unchanged, so its values stay and only rec_v moves to 6;
+    // (16) a version-5 file: with this test's front end (the same recommendation as before) its values stay and only rec_v moves to the current version;
     // a setting the player changed (environment shadows off) stays changed
     r = run(FULL(1, 1, 1, 1, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) "rec_v=5\n");
-    CHECK(r.v[7] == 1 && r.v[8] == 2 && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) NEWREC), "(16) version 5 on Recommended: same values, rec_v 6, actually envsh %d shq %d\n%s", r.v[7], r.v[8], r.file);
+    CHECK(r.v[7] == 1 && r.v[8] == 2 && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) NEWREC), "(16) version 5 on Recommended: same values, current rec_v, actually envsh %d shq %d\n%s", r.v[7], r.v[8], r.file);
     r = run(FULL(1, 1, 1, 1, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(0, 1) SQ(2, 2) "rec_v=5\n");
     CHECK(r.v[7] == 0 && r.v[8] == 2, "(16) version 5 with environment shadows turned off: kept off, actually envsh %d shq %d", r.v[7], r.v[8]);
     file_put(NULL); rmdir(g_dir);

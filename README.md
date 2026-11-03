@@ -160,8 +160,7 @@ Every setting lives in the game's own Options, drawn with its own selectors, che
   - On iPhone and iPad: 3D Resolution (50 to 100%), Color, Graphic Presets and Upscaling.
   - On both: **Anti-Aliasing** (the game's FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Environment Shadows** and **Shadow Quality** (Standard, the Switch's own shadow map, up to Ultra; both take effect at the next start), **Frame Rate** (60 fps, or 30 to save power) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
 - **Recommended** is worked out for your device:
-  - on a Mac, full screen at Native with the 3D resolution chosen for its chip, MetalFX, SMAA, 16x filtering, Accurate color, Environment Shadows and Ultra shadows;
-  - on a Mac with an iPhone chip (the MacBook Neo), the iPhone's lighter choices: the 3D at 67%, no Environment Shadows, Standard shadows, and the 3D resolution lowered for a while when frames drop;
+  - on a Mac, full screen at Native with MetalFX, SMAA, 16x filtering and Accurate color, and as much 3D resolution, Environment Shadows and shadow detail as its chip carries at 60 fps: the App reads the chip's generation and tier, its GPU core count and the screen at first launch (3D at 100% on an M6 or a recent Pro, Max or Ultra; 75% on an M1–M3 MacBook Air or a MacBook Neo, with the 3D lowered for a while when frames drop);
   - on iPhone and iPad, 3D at 75% with MetalFX, SMAA, 16x filtering and Accurate color.
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
 - **Apply, Discard and Default** work like the game's own option pages; Default resets only the tab you are on.
