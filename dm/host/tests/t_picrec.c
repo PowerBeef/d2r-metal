@@ -1,6 +1,8 @@
-// The Mac App's Recommended picture (dm_picrec.c) for made-up machines: what each machine gets from the model (t_picrec_cases.h; the M6 rows are
-// the measured ones and must stay within the capacity). Also checked: the chip as read from its name, per-core speeds and core-count fallbacks, and
-// dm_picrec_real (the gate that keeps the CLI host and test copies on the original picture). Pass -v to print every machine's choice.
+// The Mac App's Recommended picture (dm_picrec.c), checked two ways.
+// Expected rows: what each machine gets from the model (t_picrec_cases.h; the M6 rows are the measured ones and must stay within the capacity).
+// Invariants: properties the model must keep whatever its constants, over a grid of chips, GPU core counts, screens and MetalFX support.
+// Also checked: the chip as read from its name, per-core speeds and core-count fallbacks, and dm_picrec_real (the gate that keeps the CLI host
+// and test copies on the original picture). Pass -v to print every machine's choice.
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -9,6 +11,7 @@
 
 typedef struct { const char *what, *gpu; int cores, w, h, mfx; int native, tier_res, s3d, envsh, shq, q3d; } want;   // tier_res counts only without Native
 static const int k_pct[5] = { 100, 85, 75, 67, 50 };
+static const double k_scale[5] = { 1.0, 0.85, 0.75, 0.67, 0.5 };
 static const int k_fixed_w[3] = { 1600, 1920, 2560 };
 static int n, fails;
 
@@ -23,6 +26,87 @@ __attribute__((format(printf, 3, 4))) static void check(int ok, int *shown, cons
     fails++;
     if (shown && (*shown)++ >= 5) return;
     va_list ap; va_start(ap, fmt); printf("✗ "); vprintf(fmt, ap); printf("\n"); va_end(ap);
+}
+
+// Frame Drops levels the 3D scale controller keeps below a chosen 3D scale. Today this copies hle_oe.c's rule (s3_max_level: the table's 0.05 steps
+// below the chosen scale, down to S3_FLOOR_DEF 0.60). When the controller's levels follow the chosen scale (dm_3d_scale_levels), call that here
+// instead, so invariant I3 checks the levels the game really has.
+static int drop_levels(double scale) {
+    static const double k_lv[] = { 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50 };
+    const double floor = 0.60; int m = 0;
+    for (size_t i = 0; i < sizeof k_lv / sizeof *k_lv; i++) m += k_lv[i] < scale - 1e-4 && k_lv[i] >= floor - 1e-4;
+    return m;
+}
+#define MIN_DROP_LEVELS 2   // Frame Drops = lower must have somewhere to go: dm_picrec.c LIGHT_MIN is chosen so that it does
+
+// The grid: every M generation the model knows and one past it, in each tier; the iPhone chips' Pro parts; core counts from below the smallest
+// real part to above the largest; screens from the 1600 floor to 16:10 4K, sorted by area (then width).
+static const int k_grid_cores[] = { 4, 5, 6, 7, 8, 10, 12, 14, 16, 18, 19, 20, 24, 30, 32, 38, 40, 48, 60, 64, 76, 80 };
+static const int k_grid_scr[][2] = { { 1600, 900 }, { 2400, 1500 }, { 2560, 1440 }, { 2560, 1600 }, { 2560, 1664 }, { 2880, 1800 }, { 2928, 1904 },
+                                     { 3024, 1964 }, { 3408, 2216 }, { 3456, 2234 }, { 3840, 2160 }, { 3840, 2400 } };
+#define NCORES ((int)(sizeof k_grid_cores / sizeof *k_grid_cores))
+#define NSCR ((int)(sizeof k_grid_scr / sizeof *k_grid_scr))
+
+static void grid(void) {
+    static const char *const k_tiers[4] = { "", " Pro", " Max", " Ultra" };
+    char chips[64][32]; int nchips = 0;
+    for (int g = 1; g <= 7; g++) for (int t = 0; t < 4; t++) snprintf(chips[nchips++], sizeof chips[0], "Apple M%d%s", g, k_tiers[t]);
+    for (int a = 14; a <= 21; a++) snprintf(chips[nchips++], sizeof chips[0], "Apple A%d Pro GPU", a);
+    int shown[10] = { 0 };
+    static dm_mac_rec r[NCORES][NSCR];
+    for (int c = 0; c < nchips; c++)
+        for (int mfx = 0; mfx < 2; mfx++) {
+            for (int k = 0; k < NCORES; k++)
+                for (int s = 0; s < NSCR; s++) {
+                    const dm_mac_rec *x = &r[k][s]; int cores = k_grid_cores[k], w = k_grid_scr[s][0], h = k_grid_scr[s][1];
+                    rec_of(chips[c], cores, w, h, mfx, &r[k][s]);
+#define AT " (%s, %d cores, %dx%d, mfx %d)"
+#define AT_ARGS chips[c], cores, w, h, mfx
+                    // I1: a GPU at least as fast as the slowest real chip (the 7-core M1, speed 0.273) always gets a picture within its capacity
+                    check(x->speed < 0.27 || x->load <= 1.0, &shown[1], "I1 load %.3f at speed %.3f" AT, x->load, x->speed, AT_ARGS);
+                    // I2: Frame Drops lowers the 3D exactly when the light picture was needed or the choice is close to the capacity
+                    check(x->q3d == !(!x->envsh || x->load > 0.85), &shown[2], "I2 q3d %d with envsh %d, load %.3f" AT, x->q3d, x->envsh, x->load, AT_ARGS);
+                    // I3: wherever Frame Drops = lower is recommended, the controller has levels below the chosen 3D scale to lower to
+                    check(x->q3d || drop_levels(k_scale[x->s3d]) >= MIN_DROP_LEVELS, &shown[3], "I3 Frame Drops lower at 3D %d%% with %d levels below" AT,
+                          k_pct[x->s3d], drop_levels(k_scale[x->s3d]), AT_ARGS);
+                    // I6: an iPhone chip keeps the phone's shadows (environment shadows off, the Standard map)
+                    check(x->tier != -1 || (!x->envsh && !x->shq), &shown[6], "I6 iPhone chip with envsh %d shq %d" AT, x->envsh, x->shq, AT_ARGS);
+                    // I8: Native never goes down to a 50% 3D (the fixed resolution takes over before that)
+                    check(!x->native || x->s3d != 4, &shown[8], "I8 Native at 3D 50%%" AT, AT_ARGS);
+                    // I9: Shadow Quality is Standard or Ultra, and Ultra exactly with the environment shadows
+                    check((x->shq == 0 || x->shq == 2) && (x->shq == 2) == (x->envsh != 0), &shown[9], "I9 shq %d with envsh %d" AT, x->shq, x->envsh, AT_ARGS);
+#undef AT
+#undef AT_ARGS
+                }
+            // I4: for one chip, screen and MetalFX, more GPU cores never give a lesser recommendation
+            for (int k = 1; k < NCORES; k++)
+                for (int s = 0; s < NSCR; s++) {
+                    const dm_mac_rec *a = &r[k - 1][s], *b = &r[k][s];
+#define AT " (%s, %d → %d cores, %dx%d, mfx %d)"
+#define AT_ARGS chips[c], k_grid_cores[k - 1], k_grid_cores[k], k_grid_scr[s][0], k_grid_scr[s][1], mfx
+                    check(!a->native || b->native, &shown[4], "I4 Native lost" AT, AT_ARGS);
+                    check(!(a->native && b->native) || k_pct[b->s3d] >= k_pct[a->s3d], &shown[4], "I4 3D %d%% → %d%%" AT, k_pct[a->s3d], k_pct[b->s3d], AT_ARGS);
+                    check(a->native != b->native || !a->envsh || b->envsh, &shown[4], "I4 environment shadows lost" AT, AT_ARGS);
+                    check(a->native || b->native || b->tier_res >= a->tier_res, &shown[4], "I4 fixed %d → %d" AT, k_fixed_w[a->tier_res], k_fixed_w[b->tier_res], AT_ARGS);
+                    check(b->speed >= a->speed, &shown[4], "I4 speed %.3f → %.3f" AT, a->speed, b->speed, AT_ARGS);
+#undef AT
+#undef AT_ARGS
+                }
+            // I5: for one chip, core count and MetalFX, a screen at least as large both ways never gives a heavier choice
+            for (int k = 0; k < NCORES; k++)
+                for (int s = 1; s < NSCR; s++)
+                    for (int p = 0; p < s; p++) {
+                        if (k_grid_scr[s][0] < k_grid_scr[p][0] || k_grid_scr[s][1] < k_grid_scr[p][1]) continue;
+                        const dm_mac_rec *a = &r[k][p], *b = &r[k][s];
+#define AT " (%s, %d cores, %dx%d → %dx%d, mfx %d)"
+#define AT_ARGS chips[c], k_grid_cores[k], k_grid_scr[p][0], k_grid_scr[p][1], k_grid_scr[s][0], k_grid_scr[s][1], mfx
+                        check(a->native || !b->native, &shown[5], "I5 fixed turned Native" AT, AT_ARGS);
+                        check(!(a->native && b->native) || k_pct[b->s3d] <= k_pct[a->s3d], &shown[5], "I5 3D %d%% → %d%%" AT, k_pct[a->s3d], k_pct[b->s3d], AT_ARGS);
+                        check(!(a->native && b->native) || a->envsh || !b->envsh, &shown[5], "I5 environment shadows turned on" AT, AT_ARGS);
+#undef AT
+#undef AT_ARGS
+                    }
+        }
 }
 
 int main(int argc, char **argv) {
@@ -64,6 +148,7 @@ int main(int argc, char **argv) {
         check(dm_picrec_real(app, sup, fb) == want_real, NULL, "dm_picrec_real(app %d, support %d, firstboot %d) = %d, expected %d", app, sup, fb,
               dm_picrec_real(app, sup, fb), want_real);
     }
+    grid();
     printf("t_picrec: %d checks, %d failed\n", n, fails);
     return fails != 0;
 }
