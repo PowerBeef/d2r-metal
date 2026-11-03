@@ -7349,6 +7349,11 @@ void mtl_present_discard(int on) { atomic_store(&g_present_discard, on != 0); if
 void mtl_present_inactive(int on) { atomic_store(&g_present_inactive, on != 0); link_do(^(CAMetalDisplayLink *l) { l.paused = atomic_load(&g_present_inactive) != 0; }); }
 // Presents are not shown right now (discarded, or paused for an inactive shell): Frame Drops does not judge such frames (hle_oe.c dm_3d_scale_feed)
 int mtl_present_hidden(void) { return atomic_load(&g_present_discard) || atomic_load(&g_present_inactive); }
+// The picture is out of view for a while (the Mac window covered; not set while quitting): the game loop slows to DM_HIDDEN_HZ (hle_nvn.c hidden_hz).
+// The iOS inactive and background save-wait paths do not set it (unmeasured on the phone)
+static _Atomic int g_present_idle;
+void mtl_present_idle_set(int on) { atomic_store(&g_present_idle, on != 0); }
+int mtl_present_idle(void) { return atomic_load(&g_present_idle); }
 uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     // Dropped at the door (ticket 0 = no pending present, so the swapchain acquire does not wait): while discarding, and while the shell is inactive
     // with no present link to pause (classic or rescue mode), so nothing is presented to a covered picture. That also keeps link_sync, and with it

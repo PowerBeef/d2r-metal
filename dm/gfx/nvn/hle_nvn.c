@@ -1287,6 +1287,13 @@ static void trow(uint64_t f, const char *name, double v);
 static void sleep_until_ns(uint64_t dl);
 static uint64_t present_period(const win_t *o);
 static int link_wait(uint64_t timeout_ns);
+// The game loop's rate while nothing is on screen (mtl_present_idle: a covered Mac window): DM_HIDDEN_HZ, read once; 0 = off (the loop keeps the
+// link wait's timeout rate, about 30 Hz); outside 0-60, or unset: 15. The default is provisional until the covered-window energy ABBA (P1 LIF-5)
+static int hidden_hz(void) {
+    static int hz = -1;
+    if (hz < 0) { const char *e = getenv("DM_HIDDEN_HZ"); int v = e ? atoi(e) : 15; hz = v >= 0 && v <= 60 ? v : 15; if (e) LOG("[nvn] DM_HIDDEN_HZ=%s: the loop runs at %d Hz while nothing is on screen%s", e, hz, hz ? "" : " (off)"); }
+    return hz;
+}
 __attribute__((weak)) void dm_main_yield_stats(uint64_t *n, uint64_t *ns) { *n = 0; *ns = 0; }   // 宿主 hle_thread.c 提供真值；图形单测里为 0 | The host's hle_thread.c provides the ground truth; 0 in graphics unit tests
 __attribute__((weak)) uint32_t dm_guest_work_qos(unsigned *count) { if (count) *count = 0; return QOS_CLASS_UNSPECIFIED; }
 __attribute__((weak)) void dm_hle_wake_counts(uint64_t *wakes, uint64_t *skips) { *wakes = 0; *skips = 0; }
@@ -1308,7 +1315,10 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
         rt_comp_tick(&g_rt_main, decl);
         // 等节拍的超时取两个实际帧周期（decl：省电模式是 30 帧的 33.3 ms）：原先按 60 档取 2 × 16.7 ms，正好等于 30 Hz 节拍间隔，节拍稍晚一点就落到 60 Hz 兜底、提前开工
         // the display-link wait times out after two actual frame periods (decl: 33.3 ms for the 30 fps power-saving mode): it used to be 2 x 16.7 ms from the 60 tier, exactly the 30 Hz tick spacing, so a slightly late tick fell through to the 60 Hz fallback and the frame started early
-        if (mtl_link_active()) { if (!link_wait(decl ? 2 * decl : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
+        // Nothing is on screen (a covered Mac window, mtl_present_idle): the loop runs at DM_HIDDEN_HZ instead of rendering full frames that are
+        // thrown away at the link wait's timeout rate (about 30 Hz); game logic still ticks at 25 Hz through catch-up ticks, as in power saving
+        if (hidden_hz() && mtl_present_idle()) { static uint64_t idle_last; uint64_t dl = idle_last + 1000000000ull / (uint64_t)hidden_hz(); if (dl > now_ns()) sleep_until_ns(dl); idle_last = now_ns(); }
+        else if (mtl_link_active()) { if (!link_wait(decl ? 2 * decl : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK: pacing fully follows the display link (wait for the next tick when running fast, go at once when behind); our own 60 Hz clock is only the fallback when no tick arrives
         else if (wait) sleep_until_ns(at);
     } else {   // DM_DETCLOCK_PACE=1（画面闸门用）：客体时钟按帧走的同时，每帧墙钟不短于一个步长——帧数与游戏内时间确定，后台加载线程每帧至少有一个步长的墙钟可用； | DM_DETCLOCK_PACE=1 (used by the screenshot gate): while the guest clock advances per frame, each frame's wall clock is no shorter than one step -- frame count and in-game time are deterministic, and the background loading thread has at least one step of wall clock available per frame;
                // 机器满载时帧只会更慢、后台得到的墙钟只会更多，所以「消息后第 N 帧」截到的画面与负载无关

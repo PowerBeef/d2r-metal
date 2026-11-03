@@ -264,6 +264,7 @@ static void text_input_handoff_pad(void), text_input_test(NSString *text, int ok
 static void app_quit(const char *why) {   // 主线程 | main thread
     static int once; if (once++) return;
     atomic_store(&g_quitting, 1);
+    { void mtl_present_idle_set(int on); mtl_present_idle_set(0); }   // a quit while covered saves at full speed: the loop leaves DM_HIDDEN_HZ
     { uint64_t dm_audio_render_calls(void); LOG("窗口：退出（%s）；声卡回调累计 %llu（0 = 这次没出声）", why, (unsigned long long)dm_audio_render_calls()); }
     DM_EV("quit", "why:s", why);
     // 数量 / 起名输入框（或手柄屏幕键盘）开着：先按「取消」关掉，放走等它的键盘线程、解冻客体时钟，下面才存得了盘（见 front_text_input）
@@ -826,10 +827,11 @@ void front_run(void (*guest)(void)) {
         // DM_TEST_COVER=<seconds>,<duration>: at that time, cover the game window entirely with an opaque window and remove it after the duration (for acceptance testing, not set in the product)
         { const char *e = getenv("DM_OCCL"); int on = !(e && !strcmp(e, "0"));
           [nc addObserverForName:NSWindowDidChangeOcclusionStateNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n;
-              int hidden = !(win.occlusionState & NSWindowOcclusionStateVisible); void mtl_present_discard(int on);
+              int hidden = !(win.occlusionState & NSWindowOcclusionStateVisible); void mtl_present_discard(int on), mtl_present_idle_set(int on);
               LOG("前端：窗口%s（遮挡处理%s）", hidden ? "整个被盖住 / 不可见" : "露出来了", on ? "开" : "关 DM_OCCL=0");
               DM_EV("app", "state:s", hidden ? "occluded" : "visible");
-              if (on) mtl_present_discard(hidden); }];
+              // Covered: presents are dropped and the game loop slows to DM_HIDDEN_HZ (hle_nvn.c), unless a quit is saving
+              if (on) { mtl_present_discard(hidden); mtl_present_idle_set(hidden && !atomic_load(&g_quitting)); } }];
           double at = 0, dur = 0;
           if ((e = getenv("DM_TEST_COVER")) && sscanf(e, "%lf,%lf", &at, &dur) == 2 && at > 0 && dur > 0)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
