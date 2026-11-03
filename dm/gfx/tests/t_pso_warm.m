@@ -4,7 +4,8 @@
 // the user manifest's dedupe treating an old raw row and its normalised form as one; the warm-up plan (priority order, background marker, dedupe
 // across files, a file of another layout), the warm-up end to end with every shader missing (counters end at 0, one done line, background QoS) for
 // each source combination, marker position and worker count, and the two waits; host pass builds counted apart from the game's pipelines; the
-// dedupe set leaving out the seed's background rows (so one drawn before it was built is recorded).
+// dedupe set leaving out the seed's background rows (so one drawn before it was built is recorded); one load per shader when two workers need it
+// at once, and bf_fn handing out a cached function while another thread is inside a library load (both held up by a FIFO in place of a library).
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -63,6 +64,13 @@ static NSString *nrow(NSString *hex) {   // a row in its checked, normalised for
     if (pso_skey_parse(hex.UTF8String, &sk) || pso_skey_check(&sk)) return nil;
     pso_skey_hex(&sk, h); return @(h);
 }
+// Opens a FIFO for writing, without blocking, whenever a reader is waiting in open(), until done() or about 10 s: every load held up on it then
+// sees an empty file and fails
+static void fifo_release_until(const char *fifo, int (*done)(void)) {
+    for (int i = 0; i < 10000 && !done(); i++) { int fd = open(fifo, O_WRONLY | O_NONBLOCK); if (fd >= 0) close(fd); usleep(1000); }
+}
+static int warm_idle(void) { return atomic_load(&g_warm_running) == 0; }
+static dispatch_semaphore_t g_bf_a_done; static int bf_a_done(void) { return !dispatch_semaphore_wait(g_bf_a_done, DISPATCH_TIME_NOW); }
 static NSString *plan_str(NSArray<WarmRow *> *plan) {
     NSMutableArray *o = [NSMutableArray array];
     for (WarmRow *r in plan) [o addObject:r->tag == 'R' ? [NSString stringWithFormat:@"R%u", r->sk.k.cfmt[0]] : [NSString stringWithFormat:@"%c %@", r->tag, [r->key substringToIndex:4]]];
@@ -256,6 +264,54 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
         e2e("(h) both, 16 workers asked (2 used)", tmp, seed5, user4, "16", 9, 1, QOS_CLASS_UTILITY, 0);
         CHECK(g_warm_workers == 2, "an out-of-range DM_PSO_WARM_WORKERS gives 2 workers (%d)", g_warm_workers);
         g_msl_dir = keep_msl; unsetenv("DM_PSO_USER"); unsetenv("DM_PSO_WARM_WORKERS"); g_shmap_path = nil;
+    }
+
+    // Two workers that need one shader at once load it once: the second waits for the first's load. The vertex library is a FIFO, so the first
+    // load is held in open() until the test writes to it; an S row and three R rows share that shader
+    {
+        NSString *msl = [tmp stringByAppendingPathComponent:@"msl_fifo"]; [fm createDirectoryAtPath:msl withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *fifo = [msl stringByAppendingPathComponent:@"aaaaaaaaaaaaaaaa_b.metallib"]; mkfifo(fifo.fileSystemRepresentation, 0600);
+        NSString *keep_msl = g_msl_dir; g_msl_dir = msl; g_shmap_path = [tmp stringByAppendingPathComponent:@"shader_map.tsv"];
+        [[NSString stringWithFormat:@"%s\nS\taaaaaaaaaaaaaaaa_b\t0\nR\t%@\nR\t%@\nR\t%@\n", PSO_MANIFEST_HEAD, rrow(70, 0, 0), rrow(80, 0, 0), rrow(90, 0, 0)]
+            writeToFile:[tmp stringByAppendingPathComponent:@"pso_manifest.tsv"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        setenv("DM_PSO_USER", "off", 1); setenv("DM_PSO_WARM_WORKERS", "2", 1);
+        warm_reset(); atomic_store(&g_warm_loads, 0); atomic_store(&g_warm_load_waits, 0);
+        warm_start();
+        for (int i = 0; i < 3000 && !atomic_load(&g_warm_load_waits) && atomic_load(&g_warm_loads) < 2; i++) usleep(1000);
+        usleep(100000);   // time for a second load to start, if a worker could start one
+        uint64_t loads = atomic_load(&g_warm_loads), waits = atomic_load(&g_warm_load_waits);
+        fifo_release_until(fifo.fileSystemRepresentation, warm_idle);
+        mtl_warm_wait(10000); warm_wait_all(10000);
+        CHECK(loads == 1 && waits >= 1 && atomic_load(&g_warm_loads) == 1 && g_warm_missing == 4 && warm_idle(),
+              "two workers, one shader: loads while held %llu (want 1), waits %llu (want >= 1), loads in all %llu (want 1), missing %llu (want 4)",
+              (unsigned long long)loads, (unsigned long long)waits, (unsigned long long)atomic_load(&g_warm_loads), (unsigned long long)g_warm_missing);
+        g_msl_dir = keep_msl; unsetenv("DM_PSO_USER"); unsetenv("DM_PSO_WARM_WORKERS"); g_shmap_path = nil;
+        [fm removeItemAtPath:[tmp stringByAppendingPathComponent:@"pso_manifest.tsv"] error:nil]; [fm removeItemAtPath:msl error:nil];
+    }
+
+    // bf_fn loads and compiles outside its cache lock: while one thread is held in a library load (a FIFO again), another gets a cached function
+    {
+        NSString *msl = [tmp stringByAppendingPathComponent:@"msl_bf"]; [fm createDirectoryAtPath:msl withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *fifo = [msl stringByAppendingPathComponent:@"zzzzzzzzzzzzzzzz_bf.metallib"]; mkfifo(fifo.fileSystemRepresentation, 0600);
+        NSString *keep_msl = g_msl_dir; g_msl_dir = msl;
+        NvShader *fa = [NvShader new], *fb = [NvShader new]; strcpy(fa->key, "zzzzzzzzzzzzzzzz_b"); strcpy(fb->key, "yyyyyyyyyyyyyyyy_b");
+        static int fx[32]; static const uint8_t lm0[8];
+        NSObject *cached = [NSObject new]; NSString *ck = @"yyyyyyyyyyyyyyyy|00/00/00/00/00/00/00/00/00";
+        os_unfair_lock_lock(&g_fz_fn_lock);
+        if (!g_bf_fn_cache) { g_bf_fn_cache = [NSMutableDictionary dictionary]; g_bf_lib_cache = [NSMutableDictionary dictionary]; }
+        g_bf_fn_cache[ck] = (id<MTLFunction>)cached;
+        os_unfair_lock_unlock(&g_fz_fn_lock);
+        __block id a_res = @1, b_res = nil; g_bf_a_done = dispatch_semaphore_create(0); dispatch_semaphore_t b_done = dispatch_semaphore_create(0), a_sem = g_bf_a_done;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ a_res = bf_fn(fa, fx, 0, lm0); dispatch_semaphore_signal(a_sem); });
+        usleep(100000);   // thread A is now held in the library load
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ b_res = bf_fn(fb, fx, 0, lm0); dispatch_semaphore_signal(b_done); });
+        long b_late = dispatch_semaphore_wait(b_done, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC));
+        fifo_release_until(fifo.fileSystemRepresentation, bf_a_done);
+        if (b_late) dispatch_semaphore_wait(b_done, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+        CHECK(!b_late && b_res == cached && a_res == nil, "a cached readable-tile function while another thread loads a library: %s, %s; the load that failed gives nil (%s)",
+              b_late ? "waited for the load" : "returned at once", b_res == cached ? "the cached one" : "another", a_res ? "not nil" : "nil");
+        os_unfair_lock_lock(&g_fz_fn_lock); [g_bf_fn_cache removeObjectForKey:ck]; os_unfair_lock_unlock(&g_fz_fn_lock);
+        g_msl_dir = keep_msl; [fm removeItemAtPath:msl error:nil];
     }
 
     // Host pass builds are counted apart from the game's shaders and pipelines

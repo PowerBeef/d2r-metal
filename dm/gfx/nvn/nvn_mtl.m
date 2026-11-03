@@ -3066,17 +3066,32 @@ static NSString *warm_key(const char *s, size_t n) {
     size_t z = strnlen(s, n);
     return [[NSString alloc] initWithBytes:s length:z encoding:NSUTF8StringEncoding];
 }
-// The shader dictionary the warm-up workers share: looked up under the lock, loaded outside it, inserted only if the key is still absent (a racing
-// loser's copy is dropped). A shader that did not load is kept as NSNull, so it is neither loaded nor logged again. Released when the warm-up ends
+// The shader dictionary the warm-up workers share. The first worker that needs a key puts a WarmPending in its place under the lock and loads the
+// shader outside it; a worker that needs the same key meanwhile waits for that load instead of starting its own (a second load would repeat the
+// library load or compile and take a second c1 store, which is never given back). A shader that did not load is kept as NSNull, so it is neither
+// loaded nor logged again. Released when the warm-up ends
+@interface WarmPending : NSObject { @public dispatch_group_t done; id result; } @end
+@implementation WarmPending @end
 static NSMutableDictionary *g_warm_dict; static os_unfair_lock g_warm_dict_lock = OS_UNFAIR_LOCK_INIT;
+static _Atomic uint64_t g_warm_loads, g_warm_load_waits;   // shader loads the warm-up started; times a worker waited for another worker's load
 static NvShader *warm_shader(NSString *key, int stage) {
-    os_unfair_lock_lock(&g_warm_dict_lock); id have = g_warm_dict[key]; os_unfair_lock_unlock(&g_warm_dict_lock);
-    if (!have) {
+    WarmPending *mine = nil;
+    os_unfair_lock_lock(&g_warm_dict_lock);
+    id have = g_warm_dict[key];
+    if (!have && g_warm_dict) { mine = [WarmPending new]; mine->done = dispatch_group_create(); dispatch_group_enter(mine->done); g_warm_dict[key] = mine; }
+    os_unfair_lock_unlock(&g_warm_dict_lock);
+    if (mine || !have) {
+        g_warm_loads++;
         NvShader *sh = shader_load(key, stage);
-        os_unfair_lock_lock(&g_warm_dict_lock);
-        have = g_warm_dict[key];
-        if (!have) { have = sh ?: (id)NSNull.null; g_warm_dict[key] = have; }
-        os_unfair_lock_unlock(&g_warm_dict_lock);
+        have = sh ?: (id)NSNull.null;
+        if (mine) {
+            os_unfair_lock_lock(&g_warm_dict_lock); if (g_warm_dict) g_warm_dict[key] = have; os_unfair_lock_unlock(&g_warm_dict_lock);
+            mine->result = have; dispatch_group_leave(mine->done);   // the result is written before the group is left, read after the wait
+        }
+    } else if ([have isKindOfClass:WarmPending.class]) {
+        WarmPending *p = have; g_warm_load_waits++;
+        dispatch_group_wait(p->done, DISPATCH_TIME_FOREVER);
+        have = p->result;
     }
     return have == NSNull.null ? nil : have;
 }
@@ -4695,31 +4710,39 @@ planned:
     if (!g_fz_n++) MLOG("可读 tile 通道合并：首例 通道 %llu（物理附件 %d 个）", g_stat_pass + 1, n);
     PD("F %llu 合并下一个通道（可读 tile）：物理附件 %d 个，前一个通道 %d 个", g_stat_pass + 1, n, R.rt.n == n ? g_fz.n1 : g_fz.n1);
 }
-static id<MTLFunction> bf_fn(NvShader *fs, const int *fx, uint8_t fbmask, const uint8_t *lmap) {   // 可读 tile 版本按常量特化（缓存） | The readable tile version is specialized by constants (cached)
-    os_unfair_lock_lock(&g_fz_fn_lock);
-    if (!g_bf_fn_cache) { g_bf_fn_cache = [NSMutableDictionary dictionary]; g_bf_lib_cache = [NSMutableDictionary dictionary]; }
+// The readable-tile version of a fragment shader, specialised by constants (cached). The caches are read and filled under g_fz_fn_lock, but the
+// library load and the specialising compile run outside it: warm-up workers specialise rows here too, in the background during play, and the submit
+// thread must not wait behind one of their compiles for a cached function. Two threads compiling the same function keep the first one cached
+static id<MTLFunction> bf_fn(NvShader *fs, const int *fx, uint8_t fbmask, const uint8_t *lmap) {
     size_t kl = strlen(fs->key); NSString *base = [NSString stringWithFormat:@"%.*s", (int)(kl > 2 ? kl - 2 : kl), fs->key];
-    id<MTLLibrary> lib = g_bf_lib_cache[base];
-    if (!lib) {
-        NSError *e = nil; NSString *path = [NSString stringWithFormat:@"%@/%@_bf", g_msl_dir, base];
-        lib = lib_load(path, &e);
-        if (!lib) MLOG("【红】可读 tile 版本载入失败 %s：%s", path.UTF8String, e.localizedDescription.UTF8String);
-        else g_bf_lib_cache[base] = lib;
-    }
-    if (!lib) { os_unfair_lock_unlock(&g_fz_fn_lock); return nil; }
     NSMutableString *k = [NSMutableString stringWithFormat:@"%02x", fbmask];
     for (int i = 0; i < fs->rf.nfc; i++) [k appendFormat:@",%d", fx[i]];
     for (int j = 0; j < 8; j++) [k appendFormat:@"/%02x", lmap[j]];
     NSString *cacheKey = [NSString stringWithFormat:@"%@|%@", base, k];
-    id<MTLFunction> f = g_bf_fn_cache[cacheKey];
-    if (f) { os_unfair_lock_unlock(&g_fz_fn_lock); return f; }
+    os_unfair_lock_lock(&g_fz_fn_lock);
+    if (!g_bf_fn_cache) { g_bf_fn_cache = [NSMutableDictionary dictionary]; g_bf_lib_cache = [NSMutableDictionary dictionary]; }
+    id<MTLFunction> f = g_bf_fn_cache[cacheKey]; id<MTLLibrary> lib = g_bf_lib_cache[base];
+    os_unfair_lock_unlock(&g_fz_fn_lock);
+    if (f) return f;
+    if (!lib) {
+        NSError *e = nil; NSString *path = [NSString stringWithFormat:@"%@/%@_bf", g_msl_dir, base];
+        lib = lib_load(path, &e);
+        if (!lib) { MLOG("【红】readable-tile library did not load %s: %s", path.UTF8String, e.localizedDescription.UTF8String); return nil; }
+        os_unfair_lock_lock(&g_fz_fn_lock);
+        if (g_bf_lib_cache[base]) lib = g_bf_lib_cache[base]; else g_bf_lib_cache[base] = lib;
+        os_unfair_lock_unlock(&g_fz_fn_lock);
+    }
     MTLFunctionConstantValues *cv = [MTLFunctionConstantValues new];
     for (int i = 0; i < fs->rf.nfc; i++) { int v = fx[i]; [cv setConstantValue:&v type:MTLDataTypeInt atIndex:(NSUInteger)i]; }
     for (int q = 0; q < 8; q++) { bool b = fbmask >> q & 1; [cv setConstantValue:&b type:MTLDataTypeBool atIndex:(NSUInteger)(32 + q)]; }
     for (int j = 0; j < fs->rf.nfo; j++) for (int q = 0; q < 8; q++) { bool b = lmap[q] == fs->rf.fo_color[j]; [cv setConstantValue:&b type:MTLDataTypeBool atIndex:(NSUInteger)(64 + 8 * j + q)]; }
     NSError *e = nil; f = [lib newFunctionWithName:@"main0" constantValues:cv error:&e];
-    if (!f) { MLOG("【红】可读 tile 版本特化失败 %s（%s）：%s", fs->key, k.UTF8String, e.localizedDescription.UTF8String); os_unfair_lock_unlock(&g_fz_fn_lock); return nil; }
-    g_bf_fn_cache[cacheKey] = f; os_unfair_lock_unlock(&g_fz_fn_lock); return f;
+    if (!f) { MLOG("【红】readable-tile version did not specialise %s (%s): %s", fs->key, k.UTF8String, e.localizedDescription.UTF8String); return nil; }
+    os_unfair_lock_lock(&g_fz_fn_lock);
+    id<MTLFunction> have = g_bf_fn_cache[cacheKey];
+    if (have) f = have; else g_bf_fn_cache[cacheKey] = f;
+    os_unfair_lock_unlock(&g_fz_fn_lock);
+    return f;
 }
 static int ubo_float(int slot, uint16_t ref, float *out) {   // uniform 槽的第 vec 个向量第 cmp 分量（CPU 侧读；落在本提交待执行的缓冲写里就不读） | Component cmp of vector vec of the uniform slot (read on the CPU side; not read if it falls within a buffer write pending execution in this submit)
     int sl = ref >> 8, vec = ref >> 2 & 63, cmp = ref & 3;
