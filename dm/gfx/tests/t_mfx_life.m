@@ -1,7 +1,7 @@
-// MetalFX 放大器生命期单测：新尺寸连续要够 MFX_SETTLE 次才建（拉窗口的每一步不各建一套）；换尺寸 / 关掉「放大方式」时，
-// 换下的放大器与两张贴图在出图那份等之后 4 次出图、3D 放大趟那份等本次提交跑完才真正释放（Metal 4 命令缓冲不持有它们）。用弱引用看对象何时没了
-// Unit test for the MetalFX scaler lifetime: a new size is built only after MFX_SETTLE requests in a row (not one set per window-resize step); on a size change / "Upscaling" turned off,
-// the replaced scaler and both textures are really released only after 4 more presents (present copy) or after this submission has run (3D upscale pass copy), since Metal 4 command buffers do not retain them. Weak references show when the objects are gone
+// Unit test for the MetalFX scaler lifetime. Only the present set settles: a new size is built after MFX_SETTLE requests in a row (not one set per
+// window-resize step); the 3D-pass set and the screenshot set build on the first request. On a size change / "Upscaling" turned off, the replaced
+// scaler and both textures are really released only after 4 more presents (present copy) or after this submission has run (3D upscale pass copy),
+// since Metal 4 command buffers do not retain them. Weak references show when the objects are gone
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -49,14 +49,17 @@ int main(void) { setvbuf(stdout, NULL, _IONBF, 0);
     EXPECT("关掉当帧仍活着", 1, (uint64_t)(ws != nil && wi != nil));
     for (int i = 0; i < 4; i++) @autoreleasepool { mfx_retire_tick(); }
     EXPECT("关掉后 4 次出图释放", 0, (uint64_t)(ws != nil || wi != nil));
-    // ⑤ 3D 放大趟那份（编在主命令缓冲里）：换下的走回放的延迟释放，等本次提交完成
-    // ⑤ The 3D upscale pass copy (encoded in the main command buffer): what is replaced goes through the replay's deferred release and waits for this submission to complete
+    // (5) The 3D upscale pass copy (encoded in the main command buffer, no settle): what is replaced goes through the replay's deferred release and waits for this submission to complete
     @autoreleasepool {
-        for (int i = 0; i < MFX_SETTLE; i++) ready(&g_mfx_3d, 480, 640);
-        EXPECT("3D 放大趟：稳定后建好", 1, (uint64_t)(g_mfx_3d.scaler != nil));
+        int b0 = g_mfx_3d.builds;
+        EXPECT("5a 3D pass: the first request builds", 1, (uint64_t)ready(&g_mfx_3d, 480, 640));   // 5a
+        EXPECT("5a 3D pass: one build", 1, (uint64_t)(g_mfx_3d.builds - b0));
         ws = g_mfx_3d.scaler; wi = g_mfx_3d.in;
-        for (int i = 0; i < MFX_SETTLE; i++) ready(&g_mfx_3d, 400, 640);   // 动态 3D 比例换了一档 | the dynamic 3D scale moved one step
-        EXPECT("3D 放大趟：新尺寸重建", 400, (uint64_t)g_mfx_3d.iw);
+        int same = 1; for (int i = 0; i < 20; i++) same &= ready(&g_mfx_3d, 480, 640) && g_mfx_3d.scaler == ws;   // 5b
+        EXPECT("5b 3D pass: 20 more requests at the same size reuse the set", 1, (uint64_t)same);
+        EXPECT("5b 3D pass: still one build", 1, (uint64_t)(g_mfx_3d.builds - b0));
+        EXPECT("5c 3D pass: another allocation rebuilds on the first request", 1, (uint64_t)ready(&g_mfx_3d, 400, 640));   // 5c
+        EXPECT("5c 3D pass: the new allocation", 400, (uint64_t)g_mfx_3d.iw);
         defer_drain();
     }
     EXPECT("3D 放大趟：提交没完成前旧的仍活着", 1, (uint64_t)(ws != nil && wi != nil));
@@ -65,6 +68,9 @@ int main(void) { setvbuf(stdout, NULL, _IONBF, 0);
     EXPECT("3D 放大趟：提交完成后旧放大器释放", 0, (uint64_t)(ws != nil));
     @autoreleasepool { res_commit(); }   // 贴图移出驻留集要等下一次提交驻留集才生效（驻留集持有它到那时） | a texture leaving the residency set takes effect at the next residency-set commit (the set holds it until then)
     EXPECT("3D 放大趟：驻留集提交后旧贴图释放", 0, (uint64_t)(wi != nil));
+    @autoreleasepool { int b0 = g_mfx_3d.builds;   // 5d
+        EXPECT("5d 3D pass: a new output builds on the first request", 1, (uint64_t)ready(&g_mfx_3d, 400, 720));
+        EXPECT("5d 3D pass: the new output", 720, (uint64_t)g_mfx_3d.ow); EXPECT("5d 3D pass: one build", 1, (uint64_t)(g_mfx_3d.builds - b0)); }
     @autoreleasepool { ws = g_mfx_3d.scaler; mfx3d_sub_begin(); }   // 开关关着：提交开头放下 | switch off: put down at the start of the submission
     EXPECT("3D 放大趟：开关关着，提交开头放下", 0, (uint64_t)(g_mfx_3d.scaler != nil));
     EXPECT("3D 放大趟：放下当时仍活着", 1, (uint64_t)(ws != nil));

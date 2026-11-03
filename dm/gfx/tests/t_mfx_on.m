@@ -4,6 +4,11 @@
 //   compiler  every Metal 4 scaler is built with one shared compiler; mtl_mfx_supported answers yes on this Mac
 //   fail      a failed build keeps the installed set, is remembered per request key and tried again after MFX_RETRY requests, or at once at
 //             another size; turning Upscaling off forgets the failure
+//   alloc     the 3D set's input allocation (mfx3d_alloc): sized for the configured 3D scale + MFX_PAD, grow-only without one, and an Apply
+//             (configured scale changed) rebuilds once, also when replayed through mfx_ready
+//   equiv     content inside a larger allocation gives the same picture as an exact-size set (inputContentWidth), and no texel of the unused part of
+//             the allocation (filled with NaN by an earlier frame) reaches the output
+//   content   Frame Drops steps inside the allocation reuse the set: no build, one content event each
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -93,8 +98,118 @@ static void c_fail(void) {
     for (int i = 0; i < 4; i++) mfx_retire_tick();
 }
 
+// ---- 3D set helpers: a source / mask texture with given texels, a colour-0 target, one encode in its own submission, read-backs
+static id<MTLTexture> mk_tex(MTLPixelFormat f, NSUInteger w, NSUInteger h, const void *px, NSUInteger row) {
+    MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:f width:w height:h mipmapped:NO];
+    d.storageMode = MTLStorageModeShared; d.usage = MTLTextureUsageShaderRead;
+    id<MTLTexture> t = [g_dev newTextureWithDescriptor:d];
+    [t replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:px bytesPerRow:row];
+    res_add(t); res_commit(); return t;
+}
+static id<MTLTexture> mk_h4(NSUInteger w, NSUInteger h, void (^f)(NSUInteger x, NSUInteger y, __fp16 v[4])) {   // RGBA16F
+    __fp16 *px = calloc(w * h * 4, sizeof *px); for (NSUInteger y = 0; y < h; y++) for (NSUInteger x = 0; x < w; x++) f(x, y, px + (y * w + x) * 4);
+    id<MTLTexture> t = mk_tex(MTLPixelFormatRGBA16Float, w, h, px, w * 8); free(px); return t;
+}
+static id<MTLTexture> mk_r8(NSUInteger w, NSUInteger h, const uint8_t *px) { return mk_tex(MTLPixelFormatR8Unorm, w, h, px, w); }
+static id<MTLTexture> mk_r8_flat(NSUInteger w, NSUInteger h, uint8_t v) { uint8_t *px = malloc(w * h); memset(px, v, w * h); id<MTLTexture> t = mk_r8(w, h, px); free(px); return t; }
+static tex_t mk_dst(uint64_t serial, unsigned w, unsigned h, int fmt) {
+    tex_t t = {.serial = serial}; t.d.width = w; t.d.height = h; t.d.depth = t.d.levels = t.d.samples = 1; t.d.target = NVN_TEXTURE_TARGET_2D; t.d.format = fmt; return t;
+}
+static id<MTLBuffer> rb_copy(id<MTLTexture> t, NSUInteger bpp) {   // in the open submission: copy t into a shared buffer
+    id<MTLBuffer> b = [g_dev newBufferWithLength:t.width * t.height * bpp options:MTLResourceStorageModeShared]; res_add(b);
+    [blit() copyFromTexture:t sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(t.width, t.height, 1)
+                  toBuffer:b destinationOffset:0 destinationBytesPerRow:t.width * bpp destinationBytesPerImage:t.width * t.height * bpp];
+    return b;
+}
+static void sub_done(const char *what) {
+    if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
+    uint64_t f = mtl_sub_commit(); int ok = mtl_wait(f, 5000000000ull);
+    if (!ok || mtl_last_commit_error()) { char n[160]; snprintf(n, sizeof n, "%s: submission completes without error", what); EXPECT(n, 1, ok && !mtl_last_commit_error()); }
+}
+// One 3D encode into colour 0 = dst in its own submission; returns mfx3d_encode's answer, *px = dst read back (RGBA8), *mo = the set's output (RGBA16F)
+static int enc3d(tex_t *dst, id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInteger aw, NSUInteger ah, id<MTLTexture> mask, MTLViewport vp, id<MTLBuffer> *px, id<MTLBuffer> *mo) {
+    memset(&R, 0, sizeof R); R.has_rt = 1; R.rt.n = 1; R.rt.color[0] = dst;
+    mtl_sub_begin();
+    int r = mfx3d_encode(src, cw, ch, aw, ah, mask, vp);
+    if (px) *px = rb_copy(tex_mtl(dst), 4);
+    if (mo) *mo = r ? rb_copy(g_mfx_3d.out, 8) : nil;
+    sub_done("3D encode"); return r;
+}
+
+static void c_alloc(void) {
+    struct { NSUInteger cw, ch, ow, oh; float cfg; NSUInteger siw, sih; NSUInteger aw, ah; } k[] = {
+        {2151, 990, 2868, 1320, 0.75f, 0, 0, 2153, 992},     // level 0 at 75%: content + pad
+        {1721, 792, 2868, 1320, 0.75f, 0, 0, 2153, 992},     // a Frame Drops level inside the 75% allocation
+        {2491, 1146, 2622, 1206, 1.0f, 0, 0, 2622, 1206},    // 100%: never above the output
+        {1721, 792, 2868, 1320, 0, 2153, 992, 2153, 992},    // cfg unknown: grow only, keep the set
+        {2200, 1000, 2868, 1320, 0, 2153, 992, 2202, 1002},  // cfg unknown, content past the set: content + pad
+        {1200, 675, 1600, 900, 0, 0, 0, 1202, 677},          // cfg unknown, no set
+        {2300, 1000, 2868, 1320, 0.75f, 0, 0, 2302, 1002},   // content ahead of cfg
+        {2438, 1122, 2868, 1320, 0.75f, 2440, 1124, 2440, 1124},   // Apply 85% -> 75%, first frame: keep until the content fits
+        {2151, 990, 2868, 1320, 0.75f, 2440, 1124, 2153, 992},     // ... then the 75% allocation
+        {2438, 1122, 2868, 1320, 0.75f, 2153, 992, 2440, 1124},    // Apply 75% -> 85% seen as content first: content + pad
+        {2438, 1122, 2868, 1320, 0.85f, 2440, 1124, 2440, 1124},   // ... and the 85% allocation is the same
+    };
+    for (size_t i = 0; i < sizeof k / sizeof *k; i++) {
+        mfx_t m = {0}; if (k[i].siw) { m.scaler = [NSObject new]; m.iw = k[i].siw; m.ih = k[i].sih; m.ow = k[i].ow; m.oh = k[i].oh; m.fmt = MTLPixelFormatRGBA16Float; }
+        NSUInteger aw = 0, ah = 0; mfx3d_alloc(k[i].cw, k[i].ch, k[i].ow, k[i].oh, k[i].cfg, &m, &aw, &ah);
+        char n[160]; snprintf(n, sizeof n, "alloc: (%lu, %lu, %lux%lu, cfg %.2f, set %lux%lu) -> %lux%lu", (unsigned long)k[i].cw, (unsigned long)k[i].ch, (unsigned long)k[i].ow, (unsigned long)k[i].oh,
+                              k[i].cfg, (unsigned long)k[i].siw, (unsigned long)k[i].sih, (unsigned long)k[i].aw, (unsigned long)k[i].ah);
+        EXPECT(n, 1, aw == k[i].aw && ah == k[i].ah);
+    }
+    // Both Apply sequences through mfx_ready on 1/8-scale sizes (output 359x165): 85% content 305x140, 75% content 269x124
+    #define REQ(cw_, ch_, cfg_) do { NSUInteger aw_, ah_; mfx3d_alloc(cw_, ch_, 359, 165, cfg_, &g_mfx_3d, &aw_, &ah_); mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, aw_, ah_, 359, 165); } while (0)
+    REQ(305, 140, 0.85f);
+    int b0 = g_mfx_3d.builds, ev0 = g_ntev;
+    REQ(305, 140, 0.75f); REQ(305, 140, 0.75f); REQ(269, 124, 0.75f); REQ(269, 124, 0.75f); REQ(254, 116, 0.75f);
+    EXPECT("alloc: Apply 85% -> 75% (then a Frame Drops level) rebuilds once", 1, g_mfx_3d.builds - b0);
+    EXPECT("alloc: ... why = alloc", 1, ev_count(ev0, "mfx who=3d op=build why=alloc iw=271 ih=126"));
+    b0 = g_mfx_3d.builds; ev0 = g_ntev;
+    REQ(269, 124, 0.85f); REQ(305, 140, 0.85f); REQ(305, 140, 0.85f); REQ(286, 132, 0.85f);
+    EXPECT("alloc: Apply 75% -> 85% (then a Frame Drops level) rebuilds once", 1, g_mfx_3d.builds - b0);
+    EXPECT("alloc: ... why = alloc", 1, ev_count(ev0, "mfx who=3d op=build why=alloc iw=307 ih=142"));
+    #undef REQ
+    mtl_sub_begin(); mfx_drop(&g_mfx_3d, "off"); sub_done("alloc: put the set down");   // released at the next submission's start (never fake g_done: later cases submit)
+}
+
+static int px_diff(id<MTLBuffer> a, id<MTLBuffer> b, size_t n) { int d = 0; const uint8_t *p = a.contents, *q = b.contents; for (size_t i = 0; i < n; i++) { int e = abs((int)p[i] - (int)q[i]); if (e > d) d = e; } return d; }
+static void c_equiv(void) {
+    id<MTLTexture> pat = mk_h4(48, 27, ^(NSUInteger x, NSUInteger y, __fp16 v[4]) { v[0] = x / 47.0f; v[1] = y / 26.0f; v[2] = x < 24 ? 0 : 1; v[3] = 1; });
+    id<MTLTexture> nan = mk_h4(48, 27, ^(NSUInteger x, NSUInteger y, __fp16 v[4]) { (void)x; (void)y; uint16_t q = 0x7E00; for (int i = 0; i < 4; i++) memcpy(&v[i], &q, 2); });
+    id<MTLTexture> mask = mk_r8_flat(48, 27, 255);
+    tex_t dst = mk_dst(7101, 64, 36, NVN_FORMAT_RGBA8); MTLViewport vp = {0, 0, 64, 36, 0, 1};
+    id<MTLBuffer> a = nil, b = nil, mo = nil;
+    EXPECT("equiv: A, an exact-size set (48x27 in 48x27)", 1, enc3d(&dst, pat, 48, 27, 48, 27, mask, vp, &a, NULL));
+    int b0 = g_mfx_3d.builds, ev0 = g_ntev;
+    EXPECT("equiv: B, NaN content 48x27 in a 56x32 allocation", 1, enc3d(&dst, nan, 48, 27, 56, 32, mask, vp, NULL, NULL));
+    EXPECT("equiv: ... builds the 56x32 set (why alloc)", 1, g_mfx_3d.builds - b0 == 1 && ev_count(ev0, "mfx who=3d op=build why=alloc iw=56 ih=32 ow=64 oh=36") == 1);
+    id s0 = g_mfx_3d.scaler;
+    EXPECT("equiv: B, the pattern 48x27 in the same allocation", 1, enc3d(&dst, pat, 48, 27, 56, 32, mask, vp, &b, &mo));
+    EXPECT("equiv: ... same scaler", 1, g_mfx_3d.scaler == s0);
+    EXPECT("equiv: ... inputContentWidth 48", 48, ((id<MTLFXSpatialScalerBase>)g_mfx_3d.scaler).inputContentWidth);
+    int nonfinite = 0; const __fp16 *h = mo.contents; for (size_t i = 0; i < 64 * 36 * 4; i++) nonfinite += !isfinite((float)h[i]);
+    EXPECT("equiv: no NaN / Inf in the MetalFX output", 0, nonfinite);
+    int d = px_diff(a, b, 64 * 36 * 4); printf("  (largest A/B difference: %d)\n", d);
+    EXPECT("equiv: A and B agree within 2 per channel", 1, d <= 2);
+}
+static void c_content(void) {
+    id<MTLTexture> pat = mk_h4(48, 27, ^(NSUInteger x, NSUInteger y, __fp16 v[4]) { v[0] = x / 47.0f; v[1] = y / 26.0f; v[2] = 0.5f; v[3] = 1; });
+    id<MTLTexture> mask = mk_r8_flat(48, 27, 255);
+    tex_t dst = mk_dst(7102, 64, 36, NVN_FORMAT_RGBA8); MTLViewport vp = {0, 0, 64, 36, 0, 1};
+    enc3d(&dst, pat, 48, 27, 56, 32, mask, vp, NULL, NULL);   // the set at 56x32 (built here when the case runs alone)
+    int b0 = g_mfx_3d.builds, k0 = g_mfx_3d.kc, ev0 = g_ntev; id s0 = g_mfx_3d.scaler;
+    EXPECT("content: 45x25 drawn", 1, enc3d(&dst, pat, 45, 25, 56, 32, mask, vp, NULL, NULL));
+    EXPECT("content: 42x24 drawn", 1, enc3d(&dst, pat, 42, 24, 56, 32, mask, vp, NULL, NULL));
+    EXPECT("content: same scaler", 1, g_mfx_3d.scaler == s0 && s0 != nil);
+    EXPECT("content: no build", 0, g_mfx_3d.builds - b0);
+    EXPECT("content: two content changes", 2, g_mfx_3d.kc - k0);
+    EXPECT("content: inputContentWidth 42", 42, ((id<MTLFXSpatialScalerBase>)g_mfx_3d.scaler).inputContentWidth);
+    EXPECT("content: content events k+1, k+2", 2, ev_count(ev0, "mfx who=3d op=content cw=45 ch=25 iw=56 ih=32") + ev_count(ev0, "mfx who=3d op=content cw=42 ch=24 iw=56 ih=32"));
+    EXPECT("content: no build event", 0, ev_count(ev0, "mfx who=3d op=build"));
+}
+
 static const struct { const char *name; void (*fn)(void); } k_cases[] = {
-    {"compiler", c_compiler}, {"fail", c_fail},
+    {"compiler", c_compiler}, {"fail", c_fail}, {"alloc", c_alloc}, {"equiv", c_equiv}, {"content", c_content},
 };
 int main(int argc, char **argv) { setvbuf(stdout, NULL, _IONBF, 0);
     setenv("DM_MFX", "1", 1); setenv("DM_MFX3D", "1", 1);   // before any mfx_on / mfx3d_on call: both latch their switch once
