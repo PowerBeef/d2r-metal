@@ -244,17 +244,20 @@ static void cap_tex_read(const tex_t *t, int rec) {
             (unsigned long)mt.width, (unsigned long)mt.height, (unsigned long)mt.pixelFormat, (unsigned long)mt.sampleCount, mt.sampleCount > 1 ? "multisampled" : "format the capture cannot read back");
         return;
     }
-    cap_tsub *subs; uint32_t nsub; id<MTLBuffer> b = cap_tex_readback(mt, &subs, &nsub);
-    if (!b) { free(subs); cap_fail("a texture readback buffer could not be made"); return; }
-    cap_tpix h = {*t, (uint32_t)mt.pixelFormat, (uint32_t)mt.textureType, (uint32_t)mt.width, (uint32_t)mt.height, (uint32_t)mt.depth, (uint32_t)mt.mipmapLevelCount,
-                  (uint32_t)(mt.textureType == MTLTextureTypeCube || mt.textureType == MTLTextureTypeCubeArray ? 6 * mt.arrayLength : mt.arrayLength), (uint32_t)mt.sampleCount, nsub, 0};
-    cap_tex_fields(&h.t, &g_cap_enc, NULL);
-    cap_buf c = {0}; cap_buf_put(&c, &h, sizeof h); cap_buf_put(&c, subs, nsub * sizeof *subs);
-    uint64_t total = 0; for (uint32_t i = 0; i < nsub; i++) total += subs[i].bytes;
-    cap_buf_put(&c, b.contents, (size_t)total);
-    cap_put(&g_cap_w, CAP_TPIX, g_cap_cur_submit, c.p, c.n, 1);
-    g_cap_tex_bytes += total; g_cap_tex_n++;
-    cap_buf_free(&c); free(subs);
+    // The capture hooks run on the translation thread outside any submission's autorelease pool: anything the readback autoreleases (its command buffer
+    // retains the buffer) is released here, not whenever that thread next drains
+    @autoreleasepool {
+        cap_tsub *subs; uint32_t nsub; id<MTLBuffer> b = cap_tex_readback(mt, &subs, &nsub);
+        if (!b) { free(subs); cap_fail("a texture readback buffer could not be made"); return; }
+        cap_tpix h = {*t, (uint32_t)mt.pixelFormat, (uint32_t)mt.textureType, (uint32_t)mt.width, (uint32_t)mt.height, (uint32_t)mt.depth, (uint32_t)mt.mipmapLevelCount,
+                      (uint32_t)(mt.textureType == MTLTextureTypeCube || mt.textureType == MTLTextureTypeCubeArray ? 6 * mt.arrayLength : mt.arrayLength), (uint32_t)mt.sampleCount, nsub, 0};
+        cap_tex_fields(&h.t, &g_cap_enc, NULL);
+        cap_buf c = {0}; cap_buf_put(&c, &h, sizeof h); cap_buf_put(&c, subs, nsub * sizeof *subs);
+        uint64_t total = 0; for (uint32_t i = 0; i < nsub; i++) total += subs[i].bytes;
+        cap_put2(&g_cap_w, CAP_TPIX, g_cap_cur_submit, c.p, c.n, b.contents, total);   // the texels straight from the readback buffer: no copy
+        g_cap_tex_bytes += total; g_cap_tex_n++;
+        cap_buf_free(&c); free(subs);
+    }
 }
 
 // ---------- Registries ----------
@@ -387,7 +390,7 @@ void nvn_cap_submit(int n, const uint64_t *h, uint64_t host) {
 
 // The presented texture's digest: wait for the GPU, read level 0 slice 0 into a tightly packed buffer, SHA-256 of those bytes; pix (optional) receives the bytes
 // too, for the pixel comparison. The replayer calls the same function
-static int cap_digest(const tex_t *t, uint8_t md[32], uint64_t *bytes, uint32_t *w, uint32_t *hh, uint32_t *pf, const char *png, cap_buf *pix) {
+static int cap_digest(const tex_t *t, uint8_t md[32], uint64_t *bytes, uint32_t *w, uint32_t *hh, uint32_t *pf, const char *png, cap_buf *pix) { @autoreleasepool {   // see cap_tex_read
     mtl_finish();
     id o = t && t->serial ? serial_get(t->serial) : nil; if ([o isKindOfClass:[NvPkg class]]) o = ((NvPkg *)o)->tex;
     if (![o conformsToProtocol:@protocol(MTLTexture)]) return 0;
@@ -403,7 +406,7 @@ static int cap_digest(const tex_t *t, uint8_t md[32], uint64_t *bytes, uint32_t 
     *bytes = n; *w = (uint32_t)mt.width; *hh = (uint32_t)mt.height; *pf = (uint32_t)mt.pixelFormat;
     if (png) shot(mt, png, 0, NULL);
     return 1;
-}
+} }
 static void cap_hex(const uint8_t *md, char out[65]) { for (int i = 0; i < 32; i++) snprintf(out + 2 * i, 3, "%02x", md[i]); }
 
 // Every table the capture built, freed once the file is closed (g_cap_done keeps every hook off afterwards)
