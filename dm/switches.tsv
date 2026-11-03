@@ -11,7 +11,7 @@ DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_padmode.c host/front_mac.m	-
 DM_APP_POOL_ADD_MB	host	host/hle_svc.c	-
 DM_APP_ROMFS	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	-
-DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/front_mac.m	y
+DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/dm_padmode.c host/front_mac.m	y
 DM_ASC_ENV	ios-tools	ios/tools/asc_env.sh	-
 DM_ASSETS_TEST	ios	ios/Sources/main.m	-
 DM_ASSET_BASE	ios,ios-tools	ios/Sources/asset_dl.m ios/Sources/main.m ios/run.sh	y
@@ -225,10 +225,11 @@ DM_OPMODE	host,ios-tools	host/hle_oe.c ios/TouchSmokeTests/TouchSmoke.swift	-
 DM_ORIG_DIR	tools	tools/sampagg.py	-
 DM_OUT	ios-tools	ios/run.sh ios/tools/frame_cmp.sh	y
 DM_OVERLAY_IOS	ios-tools	ios/tools/touch_layout.py	-
-DM_OVERLAY_MAC	ios-tools	ios/tools/gen_romfs_overlay.py ios/tools/touch_layout.py	-
+DM_OVERLAY_MAC	ios-tools	ios/tools/gen_romfs_overlay.py ios/tools/touch_layout.py	y
 DM_PACE_ADAPT	gfx	gfx/nvn/hle_nvn.c	-
 DM_PANEL_FREEZE	host	host/diag.c host/dm_cursor.c	-
 DM_PC_DATA	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	y
+DM_PC_MODE	host	host/dm_padmode.c host/front_mac.m	y
 DM_PERF_FILE	host	host/diag.c	-
 DM_PLAYERS	host	host/diag.c	y
 DM_POSCHK	host	host/diag.c	-
@@ -258,7 +259,7 @@ DM_RES_CENSUS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RES_CHECK	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RE_PORT	tools	tools/re/q.py tools/re/re.sh	y
 DM_ROMFS	host,ios,tools	host/app_mac.m host/hle_fs.c host/hle_tact.c host/tests/t_fs.c …	y
-DM_ROMFS_OVERLAY	host,ios,tools,verify	host/app_mac.m host/dm_padmode.c host/dm_textbox.c host/hle_fs.c …	y
+DM_ROMFS_OVERLAY	host,ios,tools,verify	host/app_mac.m host/dm_padmode.c host/dm_textbox.c host/front_mac.m …	y
 DM_ROMFS_SKIP_LOCAL	ios	ios/Sources/main.m	-
 DM_ROMFS_SRC	host,ios-tools,tools,verify	host/Makefile ios/run.sh ios/tests/Makefile ios/tests/test_native_art_capture.py …	y
 DM_ROMFS_TEST_CLEAN	ios	ios/Sources/main.m	-

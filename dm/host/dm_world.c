@@ -600,11 +600,33 @@ void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at th
 #endif
     { uint64_t pl = w_player(); atomic_store(&g_has_target, pl && ((uint64_t (*)(uint64_t, uint32_t))(b + 0x2f7a0c))(((uint64_t (*)(void))(b + 0x2acecc))(), *(uint32_t *)(b + 0x2d20e4c)) != 0); }
 }
+#if TARGET_OS_OSX
+// PC control mode (dm_kbm.c): a world click the way D2R on PC makes it. The screen point picks the unit under it (any selectable one, hostile
+// monsters included; as the designated target, as w_interact does) or else the ground tile under it (the same screen-to-tile formula as
+// w_walk_step), and the game's click entry main+0x4ace20 gets the PC action: 0 left press (move to / left skill on), 2 left release, 3 right press
+// (right skill at the point or on the unit), 5 right release; flags 0x1 = stand still (Shift). The click-ground move drop (diag.c c2s_deliver) is
+// exempted for a second after each click. Game main thread only; sx, sy normalized to the whole rendered picture
+void dm_world_pc_click(int action, int flags, float sx, float sy) {
+    uint8_t *b = wb(); uint64_t pl = w_player(), scene = b ? *(uint64_t *)(b + 0x2e2a698) : 0; int W = 0, H = 0, px = 0, py = 0, x = 0, y = 0; float f[2];
+    dm_screen_real(&W, &H); if (!b || !pl || !scene || W <= 0 || H <= 0 || !w_unit_xy(pl, &px, &py) || !w_project(b, scene, pl, f, 0)) return;
+    float X = sx * W, Y = sy * H, d = 0; int lab = 0; uint64_t u = 0;
+    if (action == 0 || action == 3) { g_hit_mon = 1; u = w_hit(b, X, Y, H * 0.10f, &d, &lab); g_hit_mon = 0; }
+    if (u && w_unit_xy(u, &x, &y)) {}
+    else { float k = H * 0.00206f, a = (X - f[0]) / k / 16, c = (Y - f[1]) / k / 8; x = px + (int)lroundf((a + c) / 2); y = py + (int)lroundf((c - a) / 2); u = 0; }
+    uint64_t mgr = ((uint64_t (*)(void))(b + 0x2acecc))(), keep = *(uint64_t *)(mgr + 0xd10);
+    atomic_store(&g_dm_move_allow_until_ns, w_now_ns() + 1000000000ull);
+    if (u) *(uint64_t *)(mgr + 0xd10) = u;
+    int r = ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, action, x, y, (uint64_t)flags);
+    *(uint64_t *)(mgr + 0xd10) = keep;
+    static int lg; if (lg++ < 200) LOG("PC mouse: action %d flags %d at tile %d,%d (%s) -> %d", action, flags, x, y, u ? "unit" : "ground", r);
+}
+#endif
 // PC-mode probe (DM_UI_TAPS E<action>, dm/verify/debugging.md "PC mode probes"): the game's click entry main+0x4ace20 with any action code at a
 // ground point beside the player, with the click-ground move exemption held open for 2 s. Game main thread only
-void dm_probe_click(int action, int dx, int dy) {
+void dm_probe_click(int action, int dx, int dy) {   // action = code | flags << 8 (the click entry's flags argument)
+    int flags = action >> 8; action &= 0xff;
     uint8_t *b = wb(); uint64_t pl = w_player(); int x = 0, y = 0; if (!b || !pl || !w_unit_xy(pl, &x, &y)) return;
     atomic_store(&g_dm_move_allow_until_ns, w_now_ns() + 2000000000ull);
-    int r = ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, action, x + dx, y + dy, 0);
-    LOG("PC probe: click entry action %d at (%d,%d) from (%d,%d) -> %d", action, x + dx, y + dy, x, y, r);
+    int r = ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, action, x + dx, y + dy, (uint64_t)flags);
+    LOG("PC probe: click entry action %d flags %#x at (%d,%d) from (%d,%d) -> %d", action, flags, x + dx, y + dy, x, y, r);
 }

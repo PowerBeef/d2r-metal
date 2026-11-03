@@ -17,7 +17,7 @@ D2R Metal runs the game's own program, the Nintendo Switch release, built from f
 
 It is not an emulator, cloud gaming or streaming, and it plays fully offline. The game itself stays as Blizzard shipped it.
 
-<p align="center"><b><a href="https://github.com/PowerBeef/d2r-metal/releases/latest">Download D2R Metal Launcher 1.0</a></b> for the Mac: choose your game files, press Install, and it builds the game on your Mac and keeps it up to date. No Xcode, Homebrew or developer account. <a href="#getting-started">Getting started</a>.</p>
+<p align="center"><b><a href="https://github.com/PowerBeef/d2r-metal/releases/latest">Download D2R Metal Launcher 1.1</a></b> for the Mac: choose your game files, press Install, and it builds the game on your Mac and keeps it up to date. No Xcode, Homebrew or developer account. <a href="#getting-started">Getting started</a>.</p>
 
 <p align="center">
   <img src="docs/images/r2-plaques.jpg" width="100%" alt="Native: Apple silicon, Metal 4, no emulation. Sharper: MetalFX, SMAA, 16x filtering, native-resolution interface. 60 fps: steady on the Mac and on iPhone. As shipped: rules, drops, skills, economy and stash.">
@@ -106,8 +106,8 @@ One stop in every act, each split at 1:1 pixels from the same moment: the Switch
 <h2 align="center" id="a-true-mac-game"><img src="docs/images/r2-plate-mac.jpg" width="100%" alt="A True Mac Game"></h2>
 
 - **Full screen at your display's own resolution** from the first launch. View → Full Screen (⌃⌘F) switches, and the App remembers it. The window can be resized freely, and the picture fills it at its own aspect ratio.
-- **Mouse, trackpad, keyboard and controller, all at once.** The wheel and trackpad scroll the game's lists, scroll bars and sliders drag, and the keyboard or a controller moves a highlight drawn like the game's own. Button hints follow what you hold: Xbox, PlayStation or Switch.
-- **The pointer steps aside.** It hides after resting over the game for a few seconds and returns the moment the mouse moves.
+- **Plays like D2R on PC with a mouse and keyboard:** the game's own PC HUD, PC menus and gauntlet pointer, and D2R's PC keys. Click to walk and attack, right click for your right skill, 1 – 4 for the belt, Shift to compare, Esc for the game menu.
+- **Pick up a controller and the console interface comes up instead,** with button hints for what you hold: Xbox, PlayStation or Switch. The wheel and trackpad scroll the game's lists, and scroll bars and sliders drag.
 - **It saves like a Mac app should:** on every quit, from the Dock, at logout, even with a text box open. Minimizing counts as going to the background.
 - **iCloud save sync** with your iPhone or iPad, in an App you build and sign with a paid developer account. An app the launcher installs keeps its saves on the Mac; moving a character over by hand takes a minute ([docs/MAC.md](docs/MAC.md#saves-logs-and-icloud)).
 
@@ -287,6 +287,7 @@ A tour of the code is in [dm/README.md](dm/README.md).
 
 - D2R Metal began in October 2026 as a fork of D2R Mobile. Its first changes went back upstream (four were adopted in D2R Mobile v2.0); since 2026-10-28 it is developed on its own, for Apple platforms only.
 - **1.0** (2026-10-31) is the first release, with D2R Metal Launcher for the Mac. Releases are listed on the [releases page](https://github.com/PowerBeef/d2r-metal/releases).
+- **1.1** (2026-11-02) plays with a mouse and keyboard as D2R does on PC: the game's own PC interface, gauntlet pointer and PC keys; a controller brings the console interface back.
 - `main` is the trunk. Changes are checked by the project's own gate ([dm/verify/FORK_GATE.md](dm/verify/FORK_GATE.md)); see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>

@@ -1,0 +1,73 @@
+# PC control mode on the command-line host (dm/host/dm_kbm.c, the PC interface set of the Mac overlay; docs/MAC.md): the PC HUD, a live switch to
+# the console interface and back, PC hotkeys (I and T open and close their pages, Space closes them with their panel group, then 1 drinks from the
+# belt; Esc opens the game menu, and from Options' Extras tab, the PC set's own copy from pc_panels.py, backs out and closes it), a left click on the
+# ground walks there, in the Blood Moor a right click casts the right skill (Fire Bolt, given by the test switches) and Shift + left click attacks in place
+name pc_mode
+requires cli mac-app
+save warlock
+timeout 300
+env DM_ROMFS_OVERLAY=auto-mac DM_PC_MODE=1 DM_GAME_SEED=305419896 DM_TEST_STAT=5=5 DM_TEST_SKILL_ADD=300:36:1 DM_TEST_C2S=420:3c24000000ffffffff
+
+expect main_menu timeout=120
+enter_game
+sleep 4
+screenshot pc_hud.png
+inputmode mode=controller
+expect padmode mode=controller timeout=20
+inputmode mode=pc
+expect padmode mode=pc timeout=20
+kbm key=73
+sleep 1.5
+expect_state panels~=PlayerInventoryExpansionLayout timeout=5
+kbm key=73
+expect panel act=ClosePanel name=UISwitcher timeout=5
+kbm key=84
+sleep 1.5
+expect_state panels~=SkillsTreePanel timeout=5
+kbm key=84
+expect panel act=ClosePanel name=SkillsTreePanel timeout=5
+sleep 1
+kbm key=73
+sleep 1.5
+expect_state panels~=PlayerInventoryExpansionLayout timeout=5
+kbm key=32
+expect panel act=ClosePanel name=UISwitcher timeout=5
+kbm key=49
+sleep 1.5
+expect_state belt0=0 timeout=5
+kbm key=27
+expect pause_open timeout=8
+sleep 1
+tap_ui Settings
+sleep 2
+msg SettingsPanelMessage:CheckChanges:5pc_base_lay/ExtrasOptionsPanel
+sleep 1.5
+expect_state panels~=5pc_base_lay/ExtrasOptionsPanel timeout=5
+screenshot pc_options_extras.png
+kbm key=27
+sleep 1
+kbm key=27
+expect panel act=ClosePanel name=UISwitcher timeout=5
+sleep 1
+kbm btn=left x=0.62 y=0.42
+sleep 0.2
+kbm btn=left x=0.62 y=0.42 up=1
+sleep 2
+expect_state y<=4410 timeout=5
+walk_to 5789 4495 timeout=20
+walk_to 5791 4523 timeout=25
+expect_state area=2 timeout=10
+walk_to 5791 4560 timeout=25
+expect_state skill_right=36 timeout=10
+kbm btn=right x=0.65 y=0.45
+sleep 0.2
+kbm btn=right x=0.65 y=0.45 up=1
+sleep 1
+expect_state mp<=33 timeout=5
+kbm btn=left x=0.75 y=0.45 shift=1
+sleep 0.2
+kbm btn=left x=0.75 y=0.45 up=1 shift=1
+sleep 1.5
+quit
+check no_red
+check no_red_log

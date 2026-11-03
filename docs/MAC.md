@@ -1,6 +1,6 @@
 # Playing on a Mac (macOS App)
 
-On an Apple silicon Mac D2R Metal is a native macOS App, `D2R Metal.app`, with keyboard, mouse, trackpad and gamepad all working. It runs the same game and the same features as on iPhone and iPad (the Extras page, the Video tab and so on), using the game's own gamepad interface. Most players install it with **D2R Metal Launcher**; it can also be built from source.
+On an Apple silicon Mac D2R Metal is a native macOS App, `D2R Metal.app`, with keyboard, mouse, trackpad and gamepad all working. It runs the same game and the same features as on iPhone and iPad (the Extras page, the Video tab and so on). With the mouse and keyboard it shows the game's own PC interface and plays as D2R does on PC; with a controller, the console interface. Most players install it with **D2R Metal Launcher**; it can also be built from source.
 
 **How it has been tried**: the App is played on an M6 Mac with the keyboard, the mouse and an Xbox Wireless Controller, windowed and in full screen, and quit from the menu and the Dock. Where this page says "verified" without more, the check was an unattended run: keys and mouse events injected by a test script, quitting, full screen and resizing through test switches. What nobody has tried by hand yet is listed under [Known shortcomings](#known-shortcomings); if you try one of those, please open an Issue and tell us how it went.
 
@@ -39,25 +39,47 @@ A key reference is then shown once; afterwards it is under Help in the menu bar.
 
 Language: the first launch follows the system language (Chinese systems start in Chinese, Spanish in Spanish, Russian in Russian, everything else in English). To change it: Options → Extras, the language switch in the first row → Apply → close and reopen the App.
 
-## Keyboard ↔ gamepad
+## Mouse and keyboard, or a controller
 
-With a keyboard, the button prompts on screen (the hint bar at the bottom, skill slots, the ends of tab rows) show the keyboard keys directly: J K U I Q E Z C = Tab and so on; press a button on a connected gamepad and they switch back to gamepad letters. The full mapping:
+The App has two interfaces and switches between them by what you play with, as D2R does on PC:
 
-| What you want / gamepad button | Keyboard |
+- **Mouse and keyboard: the PC interface.** The PC HUD (the orbs with their angel and demon, skill buttons, belt and mini panel), the PC main menu and character screens, the game's own gauntlet pointer and D2R's PC keys.
+- **A controller: the console interface,** the Switch's own, with its button prompts.
+
+Press a button on a connected controller and the console interface comes up; move the mouse or press a key and the PC one comes back. The switch takes a moment while the game rebuilds its screens; nothing you were doing is lost. The App starts in the PC interface.
+
+### In game with the mouse and keyboard
+
+The keys are D2R's PC defaults:
+
+| Keys | What they do |
 |---|---|
-| Confirm (A) | Space or J |
-| Back (B) | Esc or K (in game with no panel open, Esc opens the inventory group of pages) |
-| Return | confirm; acts as + when the bottom of the page shows a "+" hint (such as "Accept" after naming); on the main menu Return = enter the game |
-| + (menu / new character) | the = key |
-| − (map) | Tab |
-| Left stick (move) | W A S D |
-| D-pad | Arrow keys |
-| X / Y | U / I |
-| L / R | Q / E |
-| ZL / ZR | Z / C |
-| Left stick press / right stick press | F / G |
+| Left click | Walk there; on a monster attack it; on a character, chest, waypoint or item on the ground, use it. Hold to keep walking or attacking towards the pointer |
+| Right click | Cast the right skill at the pointer; on an item in a panel, use it (drink, read, open) |
+| Shift + left click | Attack without moving |
+| Shift held | Compare the item under the pointer with what you wear |
+| 1 – 4 | Drink from the belt |
+| F1 – F8 | Select skills |
+| Mouse wheel | Previous / next skill; over a list, scroll it |
+| I or B, C or A, T, Q | Inventory, character, skill tree, quests; press again to close |
+| Tab | Map |
+| Alt | Show items on the ground |
+| W | Swap weapons |
+| R | Run / walk |
+| Space | Close all panels |
+| Esc | Close what is open; with nothing open, the game menu (Save and Exit, Quick Restart, Options, Chronicle); in Options, back. After death, continue |
 
-**Creating a character, start to finish**: on the main menu press `=` (or click "New Character") → choose a class with the arrow keys and press Return (or click that class's figure) → on the mode page press Return or Space → on the naming page press Return to open the text box, type, Return → press Return once more to create. With a gamepad, A on the naming page brings up the on-screen keyboard instead (see below).
+**Panels** (inventory, character, stash, vendors, the cube) are the console ones, drawn so they end above the PC HUD, and worked with the mouse: hover an item for its description, hold Shift to compare, right click to use; press and drag to move it (between cells, onto a body slot, into the stash or cube, onto a vendor's shelf = sell, into the inventory = buy); a double click also uses, puts on or takes off. Descriptions use the PC wording ("Right Click to Use", "Hold Shift to Compare"). The PC HUD's mini panel and run / walk button take clicks.
+
+The pointer is the game's own gauntlet in the PC interface. In the console interface it is the macOS arrow, which hides itself after it has rested over the game window for 3 seconds and comes back the moment the mouse moves; to change the delay: `defaults write org.d2rmobile.mac CursorHideSeconds -float 5` (seconds; `0` turns it off), then restart the App.
+
+### In the menus, and with a controller
+
+Outside a game the menus take clicks, and the keyboard works them too: the arrow keys move, Return confirms (it acts as + where the bottom of the page shows a "+" hint, such as Accept after naming), Esc goes back and `=` is + (new character). The other controller buttons are also on keys there: Space or J = A, K = B, U / I = X / Y, Q / E = L / R, Z / C = ZL / ZR, Tab = −.
+
+A controller works as soon as it is connected, alongside the keyboard: the console interface, its buttons as on the Switch and the button prompts of the controller you use (Switch, Xbox or PlayStation).
+
+**Creating a character, start to finish**: on the main menu click "New Character" (or press `=`) → click a class's figure (or choose one with the arrow keys and press Return) → on the mode page press Return → on the naming page press Return to open the text box, type, Return → press Return once more to create. With a controller, A on the naming page brings up the on-screen keyboard instead (see below).
 
 ### Typing names and amounts
 
@@ -69,9 +91,11 @@ When the game asks for text — a character name, an amount of gold to drop or m
 - **The game's rules apply in both**: a name is 2 – 15 letters (or Chinese characters) with at most one `-` or `_`, not at either end, and OK stays greyed until it fits; an empty name gets a random one, as with the game's own button. An amount can't go above what you have.
 - While either is open the game waits, as on the Switch; quitting the App answers Cancel first, so the save still goes through.
 
-A gamepad works as soon as it is connected, alongside the keyboard. The menu bar has View → Full Screen (⌃⌘F) and Quit (⌘Q). The window can be resized freely. In game the picture fills the window or screen at its own aspect ratio (on a 16:10 MacBook both windowed and full screen are filled, with the interface along the bottom, centred while a large panel is open); the front-end pages such as the main menu and character select stay 16:9 with bars above and below.
+## Window and Options
 
-Options has five tabs: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**. **Picture settings** are on the **Video** tab, in the **Display** and **Graphics** sections; the features this port adds (language, light beams and the rest) are on **Extras**. **Default** resets only the tab you are on. The Options pages have the same roomy rows as on iPhone, with **Apply**, **Default** and **Discard** buttons at the bottom. Click them, or press the key shown under each one: the hint follows what you are playing with (on an Xbox controller X = Apply, Y = Default, B = Discard; the keyboard and the Switch and PlayStation controllers get their own keys). Back (B, Esc) on this page is Discard: unapplied changes are dropped and the page closes, without the "apply or discard?" prompt.
+The menu bar has View → Full Screen (⌃⌘F), Quit (⌘Q) and, under Help, the key reference. The window can be resized freely. In game the picture fills the window or screen at its own aspect ratio (on a 16:10 MacBook both windowed and full screen are filled, with the interface along the bottom, centred while a large panel is open); the front-end pages such as the main menu and character select stay 16:9 with bars above and below.
+
+Options has five tabs: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**. **Picture settings** are on the **Video** tab, in the **Display** and **Graphics** sections; the features this port adds (language, light beams and the rest) are on **Extras**. **Default** resets only the tab you are on. The Options pages have the same roomy rows as on iPhone, with **Apply**, **Default** and **Discard** buttons at the bottom. Click them; with a controller, press the button shown under each one (on an Xbox controller X = Apply, Y = Default, B = Discard; the Switch and PlayStation controllers get their own). Back (B, or Esc) on this page is Discard: unapplied changes are dropped and the page closes, without the "apply or discard?" prompt.
 - **Display Mode** (Windowed / Fullscreen) switches as soon as you press Apply, and the App opens that way next time. Switching with View → Full Screen (⌃⌘F) updates the setting too.
 - **Resolution** (1600 × 900 / 1920 × 1080 / 2560 × 1440 / Native) is the size the game renders at; on a screen narrower than 16:9 the height follows the screen. *Native* is your main screen's own width in pixels (up to 3840): the interface and text are then drawn at the screen's resolution and never enlarged. It takes effect the next time the App starts, and the page says so until then.
 - **Color** (Vivid / Accurate): *Accurate* tags the picture as sRGB, the color space the game was made in, so macOS maps it to your display; on the wide-gamut (P3) screens of recent Macs *Vivid* shows the same values stretched to the display's wider primaries, which is how the App looked before. The picture itself (and every screenshot) is the same either way. It changes as soon as you press Apply.
@@ -86,33 +110,6 @@ Options has five tabs: **Video**, **Audio**, **Gameplay**, **Settings** and **Ex
 - **Graphic Presets**: *Recommended* is what the App picks for this Mac: full screen, Native with the 3D Resolution chosen for the chip (the world at up to 1920 pixels wide on base chips, 2560 on Pro, full size on Max and Ultra), MetalFX, SMAA, 16x filtering, Accurate color, Environment Shadows and Ultra shadows. On a screen too wide for the chip (over 2560 pixels on a base chip, 3456 on a Pro) it keeps the highest of the three fixed resolutions up to three quarters of the screen's width instead. If you were on Recommended before this version, the App moves you to the new Recommended; settings you changed stay. *Performance* is 1600 × 900 with FXAA, no environment shadows and Standard shadows, and *Quality* Native with the 3D at 100%, SMAA, 16x filtering, environment shadows and Ultra shadows, both with MetalFX. Choosing a preset fills in the rows; changing a row shows which preset matches, or *Custom*.
 - **Default** at the bottom of the panel puts the Display rows and the Graphics rows above Frame Rate back to Recommended, Frame Rate to 60 fps and Frame Drops to Keep 3D Res; press Apply to keep it.
 - The settings live in `sw_video.txt` next to the App's saves (Frame Rate and Frame Drops with the Extras options in `sw_custom.txt`). Delete `sw_video.txt` to have the App work out Recommended again.
-
-The mouse pointer hides itself after it has rested over the game window for 3 seconds (handy when playing with the keyboard or a gamepad) and comes back the moment the mouse moves. It never hides over the menu bar, other windows or a dialog. To change the delay: `defaults write org.d2rmobile.mac CursorHideSeconds -float 5` (seconds; `0` turns it off), then restart the App.
-
-## Mouse
-
-What it can do now:
-
-- **Click empty ground to walk there**: a left click on empty ground walks the character to that point, finding its way around obstacles; a click inside a wall or water walks to the nearest reachable spot.
-- **Hold to keep walking**: hold the left button and the character keeps walking towards the pointer, following it as it moves. W A S D / the gamepad stick take priority: press a direction key while walking and the keyboard takes over at once.
-- **Click a monster = attack**: a left click on a monster attacks it with whatever is bound to the main attack key (J) — a melee character walks over and hits, spells and ranged attacks are used on it directly. Holding keeps attacking and chasing; when it is not a monster under the pointer, holding walks towards it as before. Right click is still back.
-- **Click a target in the world** (NPC, chest, waypoint, item on the ground): the character walks over and interacts. With a panel open, a click outside it only closes the panel.
-- **Items take the mouse now**: a click selects and shows the description; a double click = use / put on / take off (a potion in the belt = drink, the cube = open, a vendor's goods = buy); press and drag = pick up, release = put down (move between cells, equip, into the stash / cube, into the inventory = buy, onto the vendor's shelf = sell), with the item image right on the pointer; press and hold on an empty cell = tidy this page.
-- **Click the bottom row**: a skill icon = use that skill (the same as pressing the key shown under it), a potion cell = drink it, the middle button = open the inventory group of pages, the run / walk button = toggle.
-- **Click the interface**: buttons, checkboxes and tabs in panels (including the in-page tabs of the skill tree), the pause menu and the settings pages.
-- **Click a key hint at the bottom**: clicking an entry presses that key.
-- **Click a figure when creating a character**: the class you click is selected.
-- **Top-right minimap**: opens automatically on entering a game; Tab toggles it; clicking the area name at its top switches to the full-screen map, and another click returns.
-- Right click = back (B). The mouse wheel and the trackpad scroll the list under the pointer (a trackpad follows your fingers); in game with no panel open, the wheel pushes the right stick as before.
-- In lists you can also drag: drag the list itself, or drag a scroll bar's thumb (it follows the pointer). Dragging sideways on a volume slider sets its value.
-
-What it cannot do yet:
-
-- Click-to-walk was verified only in the camp, on empty ground and the waypoint; complex terrain in the wild and clicking NPCs are unverified.
-- Switching input device (keyboard ↔ gamepad) while the settings page or the stash is open: the prompts change only after the panel closes.
-- A **long press** on an item (more details / take one) is press-and-hold with the mouse; these are the same gestures as on touch.
-- "Hold …" key hints need longer than a click, so hold the key on the keyboard; a hint with two key caps is not recognised.
-- The life orb, mana orb and experience bar do nothing when clicked.
 
 ## Saves, logs and iCloud
 
@@ -161,6 +158,8 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 ## Known shortcomings
 
 - Not tried by hand yet: the resource-folder dialog on a fresh install, and PlayStation or Switch controllers on the Mac (an Xbox Wireless Controller is what has been used).
-- Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class is unverified. There is no right-click skill as on PC.
+- The keys can't be rebound yet: the game's own Key Bindings page opens in the PC interface, but it doesn't take a new key, so the App doesn't offer it. The keys are D2R's PC defaults.
+- The PC interface's panels are the console ones (the Switch build's own PC inventory and stash grids take no clicks), drawn a little smaller and higher than on a console so they end above the PC HUD. The panel group's tab bar keeps the tab it opened on when a key (C, T, Q) switches the page.
+- Click-to-walk and clicks on monsters were verified in the camp and the Blood Moor. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. The party, message log, help and mercenary keys (P, M, H, O) are untested.
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
 - An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud"). The App the launcher installs checks the project's releases and shows a new version on the main menu, but keeps its saves on this Mac.

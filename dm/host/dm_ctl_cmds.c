@@ -131,19 +131,35 @@ static int cmd_fe(const ctl_args *a, char *out, size_t cap, char *err, size_t ec
 
 // inputmode mode=touch|controller、glyph=switch|keyboard|xbox|playstation（可只给一个）：请求切手柄 / 触屏布局与键帽样式，同前端看到输入换了时调的那两个（dm_padmode.c）；
 // 切换是事务、要几帧，做完发 padmode 事件。宿主得带界面覆盖层（场景 env DM_ROMFS_OVERLAY=auto），没有覆盖层时请求不起作用
-// inputmode mode=touch|controller, glyph=switch|keyboard|xbox|playstation (either may be given alone): request the controller / touch layout and the key cap style, through the same two calls the front ends make when the input changes (dm_padmode.c);
+// inputmode mode=touch|controller|pc (pc = the PC interface set of the Mac overlay), glyph=switch|keyboard|xbox|playstation (either may be given alone): request the controller / touch layout and the key cap style, through the same two calls the front ends make when the input changes (dm_padmode.c);
 // the switch is a transaction taking a few frames and emits a padmode event when done. The host needs the UI overlay (scenario env DM_ROMFS_OVERLAY=auto); without it requests have no effect
 void dm_padmode_request(int pad);
 void dm_padmode_request_glyph(int g);
+void dm_padmode_request_pc(int pc);
 static int cmd_inputmode(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     const char *m = dm_ctl_get(a, "mode"), *g = dm_ctl_get(a, "glyph"); (void)out; (void)cap;
-    if (!m && !g) ERR("give mode=touch|controller and/or glyph=switch|keyboard|xbox|playstation");
+    if (!m && !g) ERR("give mode=touch|controller|pc and/or glyph=switch|keyboard|xbox|playstation");
     static const char *const gl[] = { "switch", "keyboard", "xbox", "playstation" }; int k = -1;
     if (g) { for (int i = 0; i < 4; i++) if (!strcmp(g, gl[i])) k = i; if (k < 0) ERR("glyph must be switch, keyboard, xbox or playstation"); }
-    if (m && strcmp(m, "touch") && strcmp(m, "controller")) ERR("mode must be touch or controller");
+    if (m && strcmp(m, "touch") && strcmp(m, "controller") && strcmp(m, "pc")) ERR("mode must be touch, controller or pc");
     if (k >= 0) dm_padmode_request_glyph(k);
-    if (m) dm_padmode_request(!strcmp(m, "controller"));
+    if (m) { dm_padmode_request(strcmp(m, "touch") != 0); dm_padmode_request_pc(!strcmp(m, "pc")); }   // pc = controller mode with the PC interface set (Mac overlay)
     return 1;
+}
+
+// kbm key=<vk> [down=1|0] | kbm btn=left|right|m3|m4|m5 x y [up=1] [shift=1] | kbm move x y | kbm wheel=±1 x y: the PC input layer (dm_kbm.c) as the Mac front
+// end feeds it (x / y normalized to the interface rectangle; a key without down= is pressed and released). Acts only in game with the PC interface set
+#include "dm_kbm.h"
+static int cmd_kbm(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    (void)out; (void)cap; double x = dm_ctl_num(a, "x", .5), y = dm_ctl_num(a, "y", .5); int mods = dm_ctl_num(a, "shift", 0) ? 1 : 0;
+    const char *b = dm_ctl_get(a, "btn"), *mv = dm_ctl_get(a, "move");
+    if (dm_ctl_get(a, "key")) { int vk = (int)dm_ctl_num(a, "key", 0), d = (int)dm_ctl_num(a, "down", -1); if (d != 0) dm_kbm_key(vk, 1, mods); if (d != 1) { wait_frames(2, 5); dm_kbm_key(vk, 0, mods); } }
+    else if (b) { int k = !strcmp(b, "left") ? 0 : !strcmp(b, "right") ? 1 : !strcmp(b, "m3") ? 2 : !strcmp(b, "m4") ? 3 : !strcmp(b, "m5") ? 4 : -1; if (k < 0) ERR("btn must be left, right, m3, m4 or m5");
+        dm_kbm_mouse(0, (float)x, (float)y, 0, mods); dm_kbm_mouse(dm_ctl_num(a, "up", 0) ? 2 : 1, (float)x, (float)y, k, mods); }
+    else if (mv || dm_ctl_get(a, "x")) dm_kbm_mouse(0, (float)x, (float)y, 0, mods);
+    else if (dm_ctl_get(a, "wheel")) dm_kbm_wheel((float)x, (float)y, (int)dm_ctl_num(a, "wheel", 0));
+    else ERR("give key=, btn=, move or wheel=");
+    wait_frames(2, 5); return 1;
 }
 
 static int cmd_dump(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {   // 把各线程在等什么导进日志（同日志端口的 dump） | dump what each thread is waiting on into the log (same as the log port's dump)
@@ -463,6 +479,7 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("fault", cmd_fault);
     dm_ctl_register("fe", cmd_fe);
     dm_ctl_register("inputmode", cmd_inputmode);
+    dm_ctl_register("kbm", cmd_kbm);
     dm_ctl_register("dump", cmd_dump);
     dm_ctl_register("quit", cmd_quit);
     dm_ctl_register("press", cmd_press);

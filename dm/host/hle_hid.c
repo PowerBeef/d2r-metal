@@ -70,6 +70,7 @@ void dm_input_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t 
 //   PC-mode probes (dm/verify/debugging.md "PC mode probes"): K<vk> KeyDown/KeyUp to the UI root; Y<vk> key, L / R left / right click,
 //   H<frames> left held, M move, as platform events into the game's input translator main+0x248e90; E<action> the world click entry
 //   (dm_probe_click); X<id> run key binding <id> (Input_ExecuteHotkey main+0x3700e0); Z<mode> the game's hotkey mode (main+0x36b370)
+__attribute__((weak)) int dm_kbm_step(uint64_t *buttons) { (void)buttons; return 0; }   // dm_kbm.c has the real one; tests that link this file without it get this default
 __attribute__((weak)) void dm_probe_click(int action, int dx, int dy) { (void)action; (void)dx; (void)dy; }   // dm_world.c has the real one; tests that link this file without it get this default
 static void ui_taps_step(void) {
     static struct { uint64_t fr; float x, y, x2, y2; int st, kind, arg, shift; } tp[128]; static int n = -1;
@@ -435,6 +436,7 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     if (ctl_on) s->buttons |= atomic_load(&g_ctl_btn);
     { int dm_padmode_input_gate(uint64_t *); if (dm_padmode_input_gate(&s->buttons)) s->lx = s->ly = s->rx = s->ry = 0; }   // 手柄 / 触屏切换事务进行中：键和摇杆都不交给游戏；触发切换时按着的键松开前也不交（dm_padmode.c） | Controller / touch switch transaction in progress: neither keys nor sticks are handed to the game; keys held when the switch was triggered are not handed over either until released (dm_padmode.c)
     if (dm_pad_hook) dm_pad_hook(guest_ns(), &s->buttons, &s->lx, &s->ly, &s->rx, &s->ry);
+    else { int dm_kbm_step(uint64_t *buttons); dm_kbm_step(&s->buttons); }   // the PC input layer without the Mac pointer hook (command-line host: control port kbm)
     { uint64_t dm_padmode_page_filter(uint64_t); s->buttons = dm_padmode_page_filter(s->buttons); }   // 手柄模式我们自己的页（自定义页等）开着时，页声明的键归页（dm_padmode.c） | While one of our own pages (the Custom page etc.) is open in controller mode, the buttons the page declares belong to the page (dm_padmode.c)
     { uint64_t dm_swapskill_filter(uint64_t); s->buttons = dm_swapskill_filter(s->buttons); }   // 副手组技能：换武器好之前压住那个键（dm_actions.c） | off-hand set skill: hold that key back until the weapon swap is done (dm_actions.c)
     { uint64_t dm_settings_back_filter(uint64_t); s->buttons = dm_settings_back_filter(s->buttons); }   // 选项页的返回 = 「放弃」（返回键图标挂在「放弃」上时，dm_cursor.c） | back on the options page = "Discard" (when the back icon sits on "Discard", dm_cursor.c)

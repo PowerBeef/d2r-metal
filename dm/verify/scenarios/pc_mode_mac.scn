@@ -1,0 +1,26 @@
+# PC control mode through the Mac App's real event path (front_mac.m -> dm_kbm.c): synthesized AppKit key presses run the PC bindings (I inventory,
+# Space close all, 1 belt) and a synthesized left click on the ground walks there. Test copy with DM_PC_MODE=1 (test copies stay console otherwise)
+name pc_mode_mac
+requires mac-app
+save warlock
+timeout 240
+env DM_PC_MODE=1
+
+expect main_menu timeout=120
+enter_game
+sleep 4
+fe "0 key 18"
+sleep 1.5
+expect_state belt0=0 timeout=5
+fe "0 key 34"
+sleep 1.5
+expect_state panels~=PlayerInventoryExpansionLayout timeout=5
+fe "0 key 49"
+sleep 1
+fe "0 down 820,300"
+sleep 0.15
+fe "0 up 820,300"
+sleep 2
+expect_state x!=5789 timeout=5
+quit
+check no_red

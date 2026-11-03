@@ -71,6 +71,7 @@ enum { DM_PS_BANK = 1, DM_PS_VENDOR = 2, DM_PS_DEAD = 4, DM_PS_TEXT = 8, DM_PS_I
 int dm_ui_panel_state(void);
 void dm_ui_lifecycle(int background);   /* 前端进 / 出后台时调：位置守卫自检（dm_cursor.c mv_audit） | Called when the front end enters / leaves the background: position guard self-check (dm_cursor.c mv_audit) */   // 面板状态位（每帧读游戏面板树发布；变化时发合成界面消息 DM:PanelState） | Panel state bits (published by reading the game's panel tree every frame; on change the synthetic UI message DM:PanelState is sent)
 int dm_ui_panel_shown(const char *name);   // 这个面板此刻在游戏面板树里可见（游戏主线程调） | This panel is visible in the game's panel tree right now (called from the game main thread)
+int dm_ui_open_panels(void);   // game main thread: how many non-resident panels are open (UI messages, with the visible-panel safety valve), the panel group's frame not counted
 int dm_ui_tap_box(void);   // 最近一次单击的物品是不是魔盒 | Whether the most recently single-tapped item is the Horadric Cube
 uint32_t dm_ui_cur_stack_id(void);   // 仓库开着时光标此刻指着的若是背包里的物品 = 它的单位 id，否则 0 | While the stash is open, if the cursor is pointing at an item in the inventory right now = its unit id, otherwise 0
 int dm_ui_free_cursor(void);   // 当前页有没有自由光标 | Whether the current page has a free cursor

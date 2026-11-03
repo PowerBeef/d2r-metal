@@ -24,6 +24,7 @@ __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn
 #include "front.h"
 #include "hle.h"
 #include "dm_ctl.h"
+#include "dm_kbm.h"
 #include "../ios/Sources/dm_vkbd_ui.h"
 #include "../ios/Sources/dm_vkbd.h"
 #include <signal.h>
@@ -343,8 +344,53 @@ uint64_t front_game_res(int docked) {
 }
 
 static int g_mouse_down;      // 这一笔左键的按下收了（落在画面里）：随后的拖动 / 抬起才交下去 | the press of this left-button gesture was taken (inside the picture): only then are its drags / release passed on
-static NSPoint g_test_last;   // 合成鼠标脚本：上一条带坐标的指令落在视图里的点（dragto 从这里起拖） | synthetic mouse script: the point in the view where the last instruction with coordinates landed (dragto starts dragging from here)
+static NSPoint g_test_last;
+// PC control mode (dm_kbm.c): in game with the PC interface set, keys run the game's own PC key bindings and the mouse clicks the world as on PC;
+// the front end keeps the keyboard-as-controller mapping. Any keyboard or mouse input asks for the PC set, a controller press for the console one (dm_padmode.c)
+static int kbm_mods(void) { NSEventModifierFlags f = NSEvent.modifierFlags; return (f & NSEventModifierFlagShift ? 1 : 0) | (f & NSEventModifierFlagControl ? 2 : 0) | (f & NSEventModifierFlagOption ? 4 : 0); }
+void dm_padmode_request_pc(int pc);
+static void kbm_wants_pc(void) { static int ok = -1; if (ok < 0) ok = !getenv("DM_APP_SUPPORT") || (getenv("DM_PC_MODE") && atoi(getenv("DM_PC_MODE")) == 1); if (g_live && ok) dm_padmode_request_pc(1); }   // test copies switch only with DM_PC_MODE=1
+static void live_mouse(int op, float x, float y) {   // the Mac pointer path, or the PC input layer in PC mode (op 0 down 1 drag 2 up 3 hover)
+    kbm_wants_pc();
+    if (dm_kbm_live()) { dm_kbm_mouse(op == 0 ? 1 : op == 2 ? 2 : 0, x, y, op == 1, kbm_mods()); return; }
+    dm_touch_host_live(op, x, y);
+}   // 合成鼠标脚本：上一条带坐标的指令落在视图里的点（dragto 从这里起拖） | synthetic mouse script: the point in the view where the last instruction with coordinates landed (dragto starts dragging from here)
 static int g_wheel;   // 滚轮：+1 / −1 = 右摇杆向上 / 向下推一小会儿（原版手柄版用右摇杆滚列表） | Wheel: +1 / -1 = push the right stick up / down for a short while (the original gamepad UI scrolls lists with the right stick)
+static float g_kbm_x = .5f, g_kbm_y = .5f;   // the last pointer point (interface-normalized): where right / other buttons and the wheel act in PC mode
+// PC mode pointer: macOS draws the game's own PC cursor, the gauntlet (frame 0 of cursor/ohand.sprite, which gen_romfs_overlay.py writes beside the
+// overlay as pc_cursor.png), over the game window while the PC interface set is on screen; the arrow otherwise, and when the overlay has no picture.
+// Its size is a share of the picture's height on screen (the gauntlet about one inventory cell tall), so it keeps its place in the picture at any render resolution,
+// window size or display scaling; it is redrawn at the screen's pixel density, so it stays smooth on a Retina screen
+#define PC_CURSOR_SHARE 0.06
+static NSCursor *pc_hand(void) {
+    static NSBitmapImageRep *rep; static NSPoint tip; static int tried; static NSCursor *cur; static CGFloat cur_h, cur_sc;
+    if (!tried) { tried = 1; const char *ov = getenv("DM_ROMFS_OVERLAY");
+        NSData *d = ov ? [NSData dataWithContentsOfFile:[@(ov) stringByAppendingPathComponent:@"pc_cursor.png"]] : nil;
+        rep = d ? (NSBitmapImageRep *)[NSBitmapImageRep imageRepWithData:d] : nil;
+        if (rep) { NSInteger best = NSIntegerMax;   // the hot spot is the fingertip: the opaque pixel nearest the top left corner
+            for (NSInteger y = 0; y < rep.pixelsHigh; y++) for (NSInteger x = 0; x < rep.pixelsWide; x++) if (x + y < best && [rep colorAtX:x y:y].alphaComponent > .5) { best = x + y; tip = NSMakePoint(x, y); }
+            LOG("PC cursor: the game's gauntlet, %ldx%ld px, tip %.0f,%.0f", (long)rep.pixelsWide, (long)rep.pixelsHigh, tip.x, tip.y); } }
+    if (!rep) return nil;
+    CGFloat h = round(fmin(fmax(game_rect().size.height * PC_CURSOR_SHARE, 24), 160)), sc = g_view.window.backingScaleFactor ?: 2;   // points
+    if (!cur || h != cur_h || sc != cur_sc) {
+        CGFloat s = h / rep.pixelsHigh; NSSize pt = NSMakeSize(round(rep.pixelsWide * s), h);
+        NSBitmapImageRep *r = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)(pt.width * sc) pixelsHigh:(NSInteger)(pt.height * sc) bitsPerSample:8
+                                                                 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+        NSImage *src = [[NSImage alloc] initWithSize:NSMakeSize(rep.pixelsWide, rep.pixelsHigh)]; [src addRepresentation:rep];
+        [NSGraphicsContext saveGraphicsState]; NSGraphicsContext *g = [NSGraphicsContext graphicsContextWithBitmapImageRep:r]; NSGraphicsContext.currentContext = g; g.imageInterpolation = NSImageInterpolationHigh;
+        [src drawInRect:NSMakeRect(0, 0, r.pixelsWide, r.pixelsHigh) fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1];
+        [NSGraphicsContext restoreGraphicsState];
+        r.size = pt; NSImage *im = [[NSImage alloc] initWithSize:pt]; [im addRepresentation:r];
+        cur = [[NSCursor alloc] initWithImage:im hotSpot:NSMakePoint(tip.x * s, tip.y * s)]; cur_h = h; cur_sc = sc;
+        LOG("PC cursor: %.0f pt tall at %.0fx (picture %.0f pt)", h, sc, game_rect().size.height); }
+    return cur;
+}
+static void pc_cursor_sync(void) {   // main thread, from the pointer monitor and a quarter-second timer (mode changes, window size)
+    static BOOL on; NSWindow *w = g_view.window; NSCursor *hand = nil;
+    BOOL want = dm_padmode_pc() && NSApp.isActive && w.isKeyWindow && !text_input_up() && NSPointInRect([g_view convertPoint:w.mouseLocationOutsideOfEventStream fromView:nil], g_view.bounds) && (hand = pc_hand());
+    if (want) { if (NSCursor.currentCursor != hand) [hand set]; if (!on) LOG("PC cursor: on"); on = YES; }
+    else if (on) { on = NO; if (NSApp.isActive) [NSCursor.arrowCursor set]; }
+}
 static void push(void) {
     int32_t lx = (g_d - g_a) * 32767, ly = (g_w - g_s) * 32767;
     dm_input_set(g_btn, lx, ly, 0, g_wheel * 32767);
@@ -364,6 +410,9 @@ static int key_bit(unsigned short code) {
 }
 static void on_key(NSEvent *e, int down) {
     unsigned short c = e.keyCode;
+    if (g_live) { kbm_wants_pc(); if (dm_kbm_live()) {
+        if (g_w | g_a | g_s | g_d | (int)(g_btn != 0)) { g_w = g_a = g_s = g_d = 0; g_btn = 0; push(); }   // nothing stays held on the virtual controller
+        if (!e.isARepeat || !down) dm_kbm_key(dm_kbm_vk_from_mac(c), down, kbm_mods()); return; } }
     switch (c) { case 13: g_w = down; break; case 0: g_a = down; break; case 1: g_s = down; break; case 2: g_d = down; break; }
     int b = key_bit(c);
     if (down && (b >= 0 || c == 13 || c <= 2)) dm_padmode_request_glyph(DM_GLYPH_KBD);   // 按了游戏用的键：键位图标换成键盘键帽（鼠标移动 / 点击不算） | a key used by the game was pressed: switch the key icons to keyboard key caps (mouse moves / clicks do not count)
@@ -414,6 +463,7 @@ void front_run(void (*guest)(void)) {
         if (g_live) {
             win.acceptsMouseMovedEvents = YES;
             [v addTrackingArea:[[NSTrackingArea alloc] initWithRect:NSZeroRect options:NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect owner:v userInfo:nil]];
+            [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *t) { (void)t; pc_cursor_sync(); }];   // the PC cursor follows mode changes and the window size without pointer motion
         }
         { // 菜单栏：应用（退出 ⌘Q）/ 显示（全屏 ⌃⌘F）/ 帮助（键位对照） | Menu bar: application (Quit ⌘Q) / View (Full Screen ⌃⌘F) / Help (key mapping)
           NSMenu *bar = [NSMenu new];
@@ -453,6 +503,7 @@ void front_run(void (*guest)(void)) {
         // Left clicks reuse single-point touch; Mac App button-free hover only submits coordinates using the same window / full-screen conversion, without synthesizing clicks.
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp | NSEventMaskMouseMoved | NSEventMaskMouseExited handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;
+            pc_cursor_sync();
             if (dm_vkbd_ui_active() && e.type != NSEventTypeLeftMouseUp) {   // 手柄屏幕键盘开着时鼠标点了：收起屏幕键盘、换成表单；悬停 / 拖动不交给游戏 | a mouse click while the on-screen keyboard is open: it closes and the sheet takes over; hover / drags do not go to the game
                 if (e.type == NSEventTypeLeftMouseDown) dm_vkbd_ui_handoff();
                 return e.type == NSEventTypeLeftMouseDown || e.type == NSEventTypeLeftMouseDragged ? nil : e; }
@@ -461,7 +512,7 @@ void front_run(void (*guest)(void)) {
             if (hover && getenv("DM_TEST_HOVER_LOG")) LOG("鼠标悬停输入：类型 %ld", (long)e.type);
             if (hover && !g_live) return e;
             if (e.type == NSEventTypeMouseExited) { dm_touch_host_live(3, -1, -1); return e; }
-            if (e.type == NSEventTypeLeftMouseUp) { if (!g_mouse_down) return nil; g_mouse_down = 0; if (g_live) dm_touch_host_live(2, 0, 0); else dm_touch_set(NULL, 0); return nil; }
+            if (e.type == NSEventTypeLeftMouseUp) { if (!g_mouse_down) return nil; g_mouse_down = 0; if (g_live) live_mouse(2, 0, 0); else dm_touch_set(NULL, 0); return nil; }
             if (e.type == NSEventTypeLeftMouseDragged && !g_mouse_down) return nil;   // 按在黑边上没收的那一笔：拖动夹到画面边上会被当成按下，抬起就成了一下点击 | a gesture whose press on the black bars was not taken: a drag clamped to the picture edge would count as a press and its release as a click
             NSPoint p = [v convertPoint:e.locationInWindow fromView:nil]; NSRect gr = game_rect();
             if (hover && getenv("DM_TEST_HOVER_LOG")) LOG("鼠标悬停坐标：窗口 %.1f,%.1f 视图 %.1f,%.1f 画面 %.1f,%.1f %.1fx%.1f", e.locationInWindow.x, e.locationInWindow.y, p.x, p.y, gr.origin.x, gr.origin.y, gr.size.width, gr.size.height);
@@ -475,18 +526,29 @@ void front_run(void (*guest)(void)) {
                 // (2) then map to the interface rectangle (along the bottom in game). In game, outside the interface rectangle is the 3D world, passed down with a sign (tapping the world maps back to the whole screen, touch_mac.c); outside the game the area beyond the shown block is the black bars, not counted as a tap
                 float vx, uy; full_ui_point(gr, nx, ny, &vx, &uy);
                 if (e.type == NSEventTypeLeftMouseDown && !dm_uiscreen_ingame() && (vx < 0 || vx > 1 || uy < 0 || uy > 1)) { g_mouse_down = 0; return nil; }
-                dm_touch_host_live(hover ? 3 : e.type == NSEventTypeLeftMouseDown ? 0 : 1, vx, uy); return hover ? e : nil; }
-            if (hover) { dm_touch_host_live(3, nx, ny); return e; }
+                live_mouse(hover ? 3 : e.type == NSEventTypeLeftMouseDown ? 0 : 1, vx, uy); g_kbm_x = vx; g_kbm_y = uy; return hover ? e : nil; }
+            if (hover) { live_mouse(3, nx, ny); g_kbm_x = nx; g_kbm_y = ny; return e; }
             dm_touch t = {0, nx < 0 ? 0 : nx > 1 ? 1 : nx, ny < 0 ? 0 : ny > 1 ? 1 : ny};
-            if (g_live) { dm_touch_host_live(e.type == NSEventTypeLeftMouseDown ? 0 : 1, t.x, t.y); return nil; }
+            if (g_live) { live_mouse(e.type == NSEventTypeLeftMouseDown ? 0 : 1, t.x, t.y); g_kbm_x = t.x; g_kbm_y = t.y; return nil; }
             dm_touch_set(&t, 1); return nil;
         }];
         // 右键 = 手柄 B（返回 / 关面板）；滚轮 = 界面上在指针处发原版滚轮（touch_mac.c dm_wheel_ui），局内没开面板时右摇杆上下推 0.12 秒。只在 App 形态接（命令行宿主的测试不受影响）
         // Right click = gamepad B (back / close panel); wheel = over the UI, the original wheel at the pointer (touch_mac.c dm_wheel_ui); in game with no panel open, push the right stick up or down for 0.12 s. Only wired in App form (tests of the command-line host are unaffected)
         if (g_live) {
+            [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp handler:^NSEvent *(NSEvent *e) {   // PC mode: mouse buttons 3-5 run their key bindings
+                if (e.window != win || e.buttonNumber < 2 || e.buttonNumber > 4) return e;
+                kbm_wants_pc(); if (dm_kbm_live()) { dm_kbm_mouse(e.type == NSEventTypeOtherMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, (int)e.buttonNumber, kbm_mods()); return nil; }
+                return e;
+            }];
+            [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:^NSEvent *(NSEvent *e) {   // PC mode: Shift (stand still), Ctrl and Option (Alt: show items) as keys
+                static int was; int now = kbm_mods();
+                if (e.window == win && dm_kbm_live()) { static const int vk[3] = { 0x10, 0x11, 0x12 }; for (int i = 0; i < 3; i++) if ((was ^ now) >> i & 1) dm_kbm_key(vk[i], now >> i & 1, now); }
+                was = now; return e;
+            }];
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown | NSEventMaskRightMouseUp handler:^NSEvent *(NSEvent *e) {
                 if (e.type == NSEventTypeRightMouseDown && e.window == win && dm_vkbd_ui_active()) { dm_vkbd_ui_handoff(); return nil; }   // 同左键：换成表单 | as the left button: hand over to the sheet
                 if (e.window != win || (text_input_up() && e.type == NSEventTypeRightMouseDown)) return e;   // 输入框开着不按 B，松开照收 | no B press while the input box is open; the release is still taken
+                kbm_wants_pc(); if (dm_kbm_live()) { dm_kbm_mouse(e.type == NSEventTypeRightMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, 1, kbm_mods()); return nil; }   // PC mode: the right skill / use an item
                 if (e.type == NSEventTypeRightMouseDown) g_btn |= DM_BTN_B; else g_btn &= ~(uint64_t)DM_BTN_B;
                 push(); return nil;
             }];
@@ -498,6 +560,7 @@ void front_run(void (*guest)(void)) {
                     if (g_full) full_ui_point(gr, nx, ny, &ux, &uy);
                     int dm_wheel_ui(float, float, double, int, double);
                     if (dm_wheel_ui(ux, uy, e.scrollingDeltaY, e.hasPreciseScrollingDeltas, gr.size.height)) return nil;
+                    if (dm_kbm_live()) { static double acc; acc += e.scrollingDeltaY; int n = e.hasPreciseScrollingDeltas ? (int)(acc / 12) : (int)acc; if (n) { acc = 0; dm_kbm_wheel(ux, uy, n > 0 ? 1 : -1); } return nil; }   // PC mode, over the world: previous / next skill
                 }
                 static int gen; int my = ++gen; g_wheel = e.scrollingDeltaY > 0 ? 1 : -1; push();
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (my == gen) { g_wheel = 0; push(); } });
@@ -515,7 +578,7 @@ void front_run(void (*guest)(void)) {
                   LOG("鼠标指针：静止 %.1f 秒自动隐藏 | pointer auto-hides after %.1f s at rest", idle, idle);
                   [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *t) { (void)t;
                       NSPoint m = NSEvent.mouseLocation; double now = NSProcessInfo.processInfo.systemUptime;
-                      if (!NSEqualPoints(m, last) || NSEvent.pressedMouseButtons || !NSApp.isActive || !win.isKeyWindow) { last = m; since = now; hid = NO; return; }   // 动过、按着键或不在前台：重新计时 | moved, a button held or not frontmost: restart the clock
+                      if (!NSEqualPoints(m, last) || NSEvent.pressedMouseButtons || !NSApp.isActive || !win.isKeyWindow || dm_padmode_pc()) { last = m; since = now; hid = NO; return; }   // moved, a button held, not frontmost, or PC mode (the cursor aims the skills, as on PC): restart the clock
                       if (hid || now - since < idle || !NSPointInRect(m, [win convertRectToScreen:v.frame])) return;   // 已藏过、没到时长、指针不在内容区：不动 | already hidden, not long enough, or pointer outside the content area: leave it
                       [NSCursor setHiddenUntilMouseMoves:YES]; hid = YES; }]; } }
         }
@@ -635,7 +698,7 @@ void front_run(void (*guest)(void)) {
                           if (dbl) { for (int i = 0; i < 2; i++) { [NSApp postEvent:mk(NSEventTypeLeftMouseDown, to, i + 1) atStart:NO]; usleep(60000); [NSApp postEvent:mk(NSEventTypeLeftMouseUp, to, i + 1) atStart:NO]; usleep(150000); } }
                           else { for (int i = 1; i <= 12; i++) { [NSApp postEvent:mk(NSEventTypeLeftMouseDragged, NSMakePoint(from.x + (to.x - from.x) * i / 12, from.y + (to.y - from.y) * i / 12), 1) atStart:NO]; usleep(50000); } usleep(200000); [NSApp postEvent:mk(NSEventTypeLeftMouseUp, to, 1) atStart:NO]; } });
                       return 1; }
-                  NSEventType ty = !strcmp(op, "hover") ? NSEventTypeMouseMoved : !strcmp(op, "down") ? NSEventTypeLeftMouseDown : !strcmp(op, "up") ? NSEventTypeLeftMouseUp : NSEventTypeLeftMouseDragged; int has = !strcmp(op, "up") ? 0 : 1;
+                  NSEventType ty = !strcmp(op, "hover") ? NSEventTypeMouseMoved : !strcmp(op, "down") ? NSEventTypeLeftMouseDown : !strcmp(op, "up") ? NSEventTypeLeftMouseUp : !strcmp(op, "rdown") ? NSEventTypeRightMouseDown : !strcmp(op, "rup") ? NSEventTypeRightMouseUp : NSEventTypeLeftMouseDragged; int has = !strcmp(op, "up") || !strcmp(op, "rup") ? 0 : 1;   // rdown / rup: the right button (PC mode: the right skill)
                   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ static NSPoint last;
                       if (has) { last = NSMakePoint(x, v.bounds.size.height - (y + anc * (v.bounds.size.height - 720))); g_test_last = last; }   // 内容区的点 → 窗口坐标（原点左下） | point in the content area -> window coordinates (origin at bottom-left)
                       NSEvent *ev = [NSEvent mouseEventWithType:ty location:[v convertPoint:last toView:nil] modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber context:nil eventNumber:0 clickCount:1 pressure:ty == NSEventTypeLeftMouseUp ? 0 : 1];
@@ -748,6 +811,7 @@ static void text_input_test(NSString *text, int ok) {   // 测试（DM_TEST_NSMO
     if (b.enabled) [b performClick:nil];
 }
 static void text_input_handoff_pad(void) {   // dm_gamepad.m 的按键回调（主线程）：表单开着时手柄有按键 → 换成屏幕键盘 | dm_gamepad.m's press callback (main thread): a controller press while the sheet is open → hand over to the on-screen keyboard
+    if (g_live) dm_padmode_request_pc(0);   // a controller press: back to the console interface (PC mode, dm_padmode.c)
     DmTextReq *q = g_text_req; if (q && !q->done) [g_win endSheet:q->alert.window returnCode:SHEET_TO_PAD];
 }
 static int text_input_cancel(void) {   // 主线程：有开着的输入框就按「取消」交结果并收起表单；返回 1 = 有 | main thread: if an input box is open, hand over "Cancel" and close the sheet; returns 1 if there was one

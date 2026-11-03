@@ -51,6 +51,7 @@ SRC=\
 	dm_events.c \
 	dm_hud.c \
 	dm_i18n.c \
+	dm_kbm.c \
 	dm_movie_decode.c \
 	dm_namegen.c \
 	dm_padmode.c \
