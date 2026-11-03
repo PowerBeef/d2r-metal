@@ -1,6 +1,6 @@
 """Unit tests for pso_seed.py: the byte-level key normaliser against hand-made rows and against the C one (one hash over t_pso_skey's random keys),
 the row check (pso_skey_check's port), normalise, diff, check with the allow-list, merge, the route matrix and its generated scenarios, the cold-run
-summary and the cleanup planners, on synthetic files; no game files, nothing is run."""
+summary and the cleanup planners, the harvest's PSO-7 evidence on ios-mac, on synthetic files; no game files, nothing is run."""
 import json
 import os
 from pathlib import Path
@@ -140,6 +140,24 @@ class RunToolsTest(unittest.TestCase):
             empty = d / 'empty'; empty.mkdir()
             self.assertEqual(pso_seed.check([str(empty)], str(seed), None), ([], [], []))   # a run that built nothing wrote no manifest
             self.assertEqual(len(pso_seed.check([str(d / 'nope')], str(seed), None)[2]), 1)
+
+    def test_harvest_needs_pso7_on_ios_mac(self):
+        from unittest import mock   # noqa: PLC0415
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d); run = d / 'run'; run.mkdir(); man = d / 'container' / 'settings.test' / 'pso_user.tsv'; dest = d / 'h.tsv'
+            with mock.patch.object(pso_seed, 'run_manifest', return_value=str(man)):
+                (run / 'port.log').write_text('[dm] boot\n', encoding='utf-8')   # a package from before PSO-7: no manifest, no boot line
+                self.assertIsNone(pso_seed.harvest('ios-mac', str(run), str(dest)))
+                self.assertFalse(dest.exists())
+                (run / 'port.log').write_text(f'[dm] {pso_seed.PSO7_LINE} (the player\'s is untouched)\n', encoding='utf-8')
+                self.assertEqual(pso_seed.harvest('ios-mac', str(run), str(dest)), str(dest))   # PSO-7 and no manifest: it built nothing
+                self.assertEqual(dest.read_text(encoding='utf-8'), pso_seed.HEAD + '\n')
+                man.parent.mkdir(parents=True); man.write_text(f'{pso_seed.HEAD}\nS\tssss_b\t0\n', encoding='utf-8'); (run / 'port.log').unlink()
+                self.assertEqual(pso_seed.harvest('ios-mac', str(run), str(dest)), str(dest))   # a manifest there is evidence enough
+                self.assertEqual(dest.read_text(encoding='utf-8'), man.read_text(encoding='utf-8'))
+            dest.unlink()
+            self.assertEqual(pso_seed.harvest('cli', str(run), str(dest)), str(dest))   # the CLI host: no manifest is an empty one
+            self.assertEqual(dest.read_text(encoding='utf-8'), pso_seed.HEAD + '\n')
 
     def test_merge_order(self):
         s1, s2 = 'S\tseed1_b\t0', 'S\tseed2_b\t1'

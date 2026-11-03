@@ -269,14 +269,31 @@ def run_manifest(backend, run_dir):
     return os.path.join(c, 'Documents', 'settings.test', 'pso_user.tsv') if c else None
 
 
+PSO7_LINE = 'boot: pipeline manifest in Documents/settings.test'   # main.m logs it at boot in a test run (PSO-7)
+
+
+def ios_pso7(run_dir):
+    """Whether an ios-mac run's package keeps the test run's pipeline manifest in Documents/settings.test: its port.log has PSO7_LINE. A package
+    built before that writes a test run's rows to the player's Documents/pso_user.tsv, so a missing settings.test manifest proves nothing there."""
+    try:
+        with open(os.path.join(run_dir, 'port.log'), encoding='utf-8', errors='replace') as f: return PSO7_LINE in f.read()
+    except OSError: return False
+
+
 def harvest(backend, run_dir, dest):
-    """Copies a run's manifest to dest; a run that built nothing synchronously wrote none, which is an empty manifest. Returns dest."""
+    """Copies a run's manifest to dest; a run that built nothing synchronously wrote none, which is an empty manifest. Returns dest, or None (and
+    writes nothing) for an ios-mac run without a manifest whose package does not log PSO7_LINE: its rows, if any, went elsewhere."""
     import shutil   # noqa: PLC0415
     src = run_manifest(backend, run_dir)
     if src and os.path.isfile(src): shutil.copyfile(src, dest)
+    elif backend == 'ios-mac' and not ios_pso7(run_dir): return None
     else:
         with open(dest, 'w', encoding='utf-8') as f: f.write(HEAD + '\n')
     return dest
+
+
+NO_PSO7 = ("the iOS package's run left no Documents/settings.test/pso_user.tsv and its port.log lacks '" + PSO7_LINE +
+           "': the package predates the test runs' own manifest, rebuild it (dm/ios/tools/smoke_mac.sh 1)")
 
 
 def find_manifest(p):
@@ -555,8 +572,12 @@ def cmd_record(a, argv):
                 else:
                     res, code = run_scn(row_text(r, a.front), r['backend'], run)
                     dest = harvest(r['backend'], run, os.path.join(out, name + '.tsv'))
-                    new, _, _ = check([dest])
-                    verdict, n = ('OK' if code == 0 else 'RED'), len(new)
+                    if dest is None:
+                        if code == 0: print(f'🔴 {NO_PSO7}')
+                        verdict, n = 'RED', 0
+                    else:
+                        new, _, _ = check([dest])
+                        verdict, n = ('OK' if code == 0 else 'RED'), len(new)
                     if verdict == 'OK' and not a.keep: trash(run)
                 print(f"RUN {r['nn']} {r['name']} {verdict} rows={n}", flush=True)
                 led.write(f"{r['nn']}\t{r['name']}\t{r['backend']}\t{verdict}\t{n}\t{env_line(r['env'])}\n"); led.flush()
@@ -620,8 +641,9 @@ def cmd_gate(a, argv):
     out = a.out or os.path.join(DM_ROOT, 'run', 'pso', f'gate_{a.backend}_{stamp_now()}')
     env = {'mac-app': REC_ENV, 'cli': CLI_REC, 'ios-mac': {}}[a.backend]
     res, code = run_scn(route_text(a.route, env), a.backend, out, a.headless)
-    if a.backend == 'ios-mac': harvest('ios-mac', out, os.path.join(out, HARVEST))
-    rows, bad, errors = check([out], a.seed, a.allow)
+    rows, bad, errors = [], [], []
+    if a.backend == 'ios-mac' and harvest('ios-mac', out, os.path.join(out, HARVEST)) is None: errors = [NO_PSO7]   # nothing was measured: never OK
+    else: rows, bad, errors = check([out], a.seed, a.allow)
     print_check(rows, bad, errors)
     ok = code == 0 and not rows and not bad and not errors
     print(f"PSO_GATE {'OK' if ok else 'RED'} rows={len(rows)}" + ('' if code == 0 else f" (scenario RED: {res.get('reason')})"))
@@ -670,6 +692,9 @@ def cold_mac(a, out, env, stamp, plan):
 
 
 def cold_ios(a, out, env, stamp, plan):
+    # No lock is taken here: the game lock cmd_cold holds is the iOS-on-Mac device lock itself (mlock.sh takes $DM_ROOT/run/ios/macsmoke.lock,
+    # the lock smoke_mac.sh and scenario_launch.sh take), so the check that the package is not running, the cache move, the run and the size read
+    # after it are serialised with every other iOS-on-Mac run, and scenario_launch.sh re-enters the lock (DM_DEVLOCK_HELD, a descendant)
     import shutil, subprocess   # noqa: E401, PLC0415
     bid = local_env('DM_BUNDLE_ID')
     if not bid: raise RuntimeError('DM_BUNDLE_ID is not set (dm/ios/local.env)')
