@@ -314,6 +314,17 @@ static void test_feed(void) {
     printf("  (F4: back to Lower: %d windows, need_good %d, last_up %llu, hold %+.3f s)\n", g_s3f.c.nw, g_s3f.c.need_good, (unsigned long long)g_s3f.c.last_up, ((double)g_s3f.c.hold_until - (double)t_now) / 1e9);
     CHECK(g_s3f.c.nw == 0 && g_s3f.c.need_good == 0 && g_s3f.c.last_up == 0 && g_s3f.c.hold_until == t_now + 3 * S3_SEC, "F4: back to Lower: history cleared and judging held 3 s");
     CHECK(feed_n(119, D60) == 0, "F4: 4 s of drops after that: no step on stale windows");
+    // F4b: the game entered in Keep (the Mac's default) 25 s ago, then Lower: the 3 s of the switch, not a fresh 20 s entry hold
+    feed_reset(); dm_3d_quality_mode_set(1); feed_n(1500, F60);
+    dm_3d_quality_mode_set(0); feed_n(1, F60);
+    printf("  (F4b: Lower after 25 s in a game in Keep: hold %+.3f s)\n", ((double)g_s3f.c.hold_until - (double)t_now) / 1e9);
+    CHECK(g_s3f.c.hold_until == t_now + 3 * S3_SEC, "F4b: game entered in Keep, then Lower: judging held 3 s, not 20");
+    // F4c: the game entered in Keep 5 s ago, then Lower: the entry hold set in Keep still runs out 20 s after entering
+    feed_reset(); dm_3d_quality_mode_set(1); feed_n(1, F60);
+    uint64_t h_entry = g_s3f.c.hold_until;
+    CHECK(h_entry == t_now + 20 * S3_SEC, "F4c: entering a game in Keep sets the 20 s entry hold");
+    feed_n(299, F60); dm_3d_quality_mode_set(0); feed_n(1, F60);
+    CHECK(g_s3f.c.hold_until == h_entry, "F4c: Lower 5 s after entering in Keep: judging waits for the rest of the entry hold");
     dm_3d_quality_mode_set(0);
     // F5: the feed judges against the pacer's frame period (nvn_frame_period_ms), not one derived from the screen (S3D-8)
     feed_reset(); t_period = 1000.0 / 72; feed_n(1500, 13.889);

@@ -288,6 +288,24 @@ void dm_3d_scale_resumed(void) { atomic_store(&g_scale3d_resumed, 1); }   // 前
 typedef struct { scale3d_ctl c; int on, qm_was, was_in, was_hidden, inj_rel; long inj0, inj1, inj_base; float fl, cfg_at; uint64_t last_feed; } s3_feed_state;
 #define S3_FEED_INIT { .on = -1, .qm_was = -1, .inj0 = -1, .inj1 = -1, .inj_base = -1 }
 static s3_feed_state g_s3f = S3_FEED_INIT;
+// The picture and in-game gates; returns 1 when the frame is not judged. Frames not shown are not judged: presents discarded (a covered Mac window,
+// the iOS background save wait) or paused for an inactive shell (iOS resign active, mtl_present_inactive). A Mac window that is visible but not key
+// keeps being judged: its frames are on screen. When the picture is visible again, judging waits 3 s with the history cleared (an explicit signal,
+// as returning to the foreground). Not judged outside a game (menus) or under a loading screen, nor in the first 20 s of a game or after a loading
+// screen (slow frames then are loading, not GPU pressure).
+// The world freeze (diag.c freeze_tick; DM_PANEL_FREEZE / DM_TEST_FREEZE) is dormant for players. If it is ever enabled, its frozen frames present
+// at full rate and would count as clean windows: gate them here like hidden frames and hold 3 s after unfreezing.
+// Keep runs the gates too (judging = 0), so their state and holds are current when Frame Drops goes back to Lower: a game entered in Keep long ago
+// does not get a fresh 20 s entry hold, and one entered in Keep moments ago keeps the rest of it
+static int s3_gates(s3_feed_state *f, uint64_t now, int judging) {
+    scale3d_ctl *c = &f->c; int mtl_present_hidden(void), dm_loadscreen_up(void);
+    if (mtl_present_hidden()) { f->was_hidden = 1; scale3d_ctl_hold(c, now, S3_SEC); return 1; }
+    if (f->was_hidden) { f->was_hidden = 0; scale3d_ctl_hold(c, now, 3 * S3_SEC); if (judging) LOG("Frame Drops: picture visible again, judging resumes in 3 s"); }
+    int in = dm_ingame_now() && !dm_loadscreen_up();
+    if (!in) { f->was_in = 0; scale3d_ctl_hold(c, now, S3_SEC); return 1; }
+    if (!f->was_in) { f->was_in = 1; if (f->inj0 < 0) scale3d_ctl_hold(c, now, 20 * S3_SEC); }
+    return 0;
+}
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
     s3_feed_state *f = &g_s3f; scale3d_ctl *c = &f->c;
     if (f->on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); f->on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
@@ -302,27 +320,17 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     uint64_t now = now_ns();
     if (f->last_feed && now - f->last_feed > S3_GAP_NS) scale3d_ctl_pause(c, now, 3 * S3_SEC);
     f->last_feed = now;
-    if (s3_qmode() == 1) { if (c->level) { c->level = 0; s3_rates_clear(); LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); f->qm_was = 1; return; }
-    // Keep -> Lower: judge from fresh history (the windows, the clean run and the raise debounce from before Keep are stale) after 3 s. qm_was starts
-    // at -1, so the first frame in Lower does not retarget
-    if (f->qm_was == 1) { float cfg = s3_cfg(); scale3d_ctl_retarget(c, cfg, f->fl, now); f->cfg_at = cfg; LOG("Frame Drops set to Lower: history cleared, judging resumes in 3 s"); }
+    if (s3_qmode() == 1) { if (c->level) { c->level = 0; s3_rates_clear(); LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); f->qm_was = 1; s3_gates(f, now, 0); return; }
+    // Keep -> Lower: judge from fresh history (the windows, the clean run and the raise debounce from before Keep are stale) after 3 s, or after what
+    // is left of a gate's hold (the 20 s after entering a game). qm_was starts at -1, so the first frame in Lower does not retarget
+    if (f->qm_was == 1) { float cfg = s3_cfg(); scale3d_ctl_retarget(c, cfg, f->fl, now); f->cfg_at = cfg;
+        if (f->was_in && !f->was_hidden) LOG("Frame Drops set to Lower: history cleared, judging resumes in %.0f s", (double)(c->hold_until - now) / S3_SEC);
+        else LOG("Frame Drops set to Lower: history cleared, judging starts once a game is on screen (after its holds)"); }
     f->qm_was = 0;
     { float cfg = s3_cfg(); if (cfg != f->cfg_at) { scale3d_ctl_retarget(c, cfg, f->fl, now); s3_rates_clear(); atomic_store(&g_scale3d_level, 0);   // a new 3D Resolution: levels recomputed for it
         LOG("3D 比例控制：配置 %.2f → %.2f，回到配置值，下限 %.2f（第 %d 档）", f->cfg_at, cfg, s3_level_scale(cfg, c->max_level), c->max_level); f->cfg_at = cfg; } }
     if (atomic_exchange(&g_scale3d_resumed, 0)) scale3d_ctl_hold(c, now, 3 * S3_SEC);
-    // Frames not shown are not judged: presents discarded (a covered Mac window, the iOS background save wait) or paused for an inactive shell
-    // (iOS resign active, mtl_present_inactive). A Mac window that is visible but not key keeps being judged: its frames are on screen. When the
-    // picture is visible again, judging waits 3 s with the history cleared (an explicit signal, as returning to the foreground).
-    // The world freeze (diag.c freeze_tick; DM_PANEL_FREEZE / DM_TEST_FREEZE) is dormant for players. If it is ever enabled, its frozen frames present
-    // at full rate and would count as clean windows: gate them here like hidden frames and hold 3 s after unfreezing
-    { int mtl_present_hidden(void);
-      if (mtl_present_hidden()) { f->was_hidden = 1; scale3d_ctl_hold(c, now, S3_SEC); return; }
-      if (f->was_hidden) { f->was_hidden = 0; scale3d_ctl_hold(c, now, 3 * S3_SEC); LOG("Frame Drops: picture visible again, judging resumes in 3 s"); } }
-    // Not judged outside a game (menus) or under a loading screen, nor in the first 20 s of a game or after a loading screen (slow frames then are
-    // loading, not GPU pressure)
-    { int dm_loadscreen_up(void), in = dm_ingame_now() && !dm_loadscreen_up();
-      if (!in) { f->was_in = 0; scale3d_ctl_hold(c, now, S3_SEC); return; }
-      if (!f->was_in) { f->was_in = 1; if (f->inj0 < 0) scale3d_ctl_hold(c, now, 20 * S3_SEC); } }
+    if (s3_gates(f, now, 1)) return;   // frames not shown, menus, loading screens and their holds
     // The target period is the pacer's real frame period (hle_nvn.c nvn_frame_period_ms: the power saver, DM_PRESENT_HZ, the adaptive tier, 72 fps
     // on a 144 Hz screen); 0 (uncapped) judges against 60 fps. Judging pauses 2 s after it changes
     { double nvn_frame_period_ms(void), p = nvn_frame_period_ms(); if (fabs(p - c->period_ms) > 0.01) { c->period_ms = p; scale3d_ctl_hold(c, now, 2 * S3_SEC); } }
