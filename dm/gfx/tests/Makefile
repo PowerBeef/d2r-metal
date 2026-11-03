@@ -188,6 +188,7 @@ run: \
 	./t_mfx_life
 	MTL_DEBUG_LAYER=1 ./t_mfx_on
 	DM_MFX_STACK=1 MTL_DEBUG_LAYER=1 ./t_mfx_on after3d   # the A/B switch keeps MetalFX at the present
+	DM_MFX_STACK=1 MTL_DEBUG_LAYER=1 ./t_mfx_on gpu_note   # ... and the present GPU-time line counts it
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
 	MTL_DEBUG_LAYER=1 ./t_replay_fix

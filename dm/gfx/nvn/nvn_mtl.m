@@ -6847,15 +6847,24 @@ static int mfx_scale(mfx_t *m, id cb, id<MTLTexture> src, NSUInteger cx, NSUInte
     [(id<MTLFXSpatialScaler>)m->scaler encodeToCommandBuffer:(id<MTLCommandBuffer>)cb];
     return 1;
 }
-// GPU time of the present command buffer (when DM_MFX is given, 0 or 1): one p50 / p95 line every 300 presents, to A/B the cost of MetalFX; the game frame's "GPU" reading does not include the present
-static void mfx_gpu_note(double sec) {
+// Presents encoded with MetalFX since the last GPU-time line: mfx_want counts each present it sends through the present set (present thread),
+// mfx_gpu_note takes the count (feedback queue)
+static _Atomic int g_mfx_pres_n;
+// GPU time of the present command buffer (when DM_MFX is given, 0 or 1): one p50 / p95 line every 300 presents, to A/B the cost of MetalFX; the game
+// frame's "GPU" reading does not include the present. The line says how many of those presents really ran MetalFX (after a 3D MetalFX frame the
+// present enlarges with bilinear filtering whatever the switch says; the count covers the presents encoded since the last line, at most 3 apart from
+// the 300 timed) and how the Upscaling switch stands. Returns that count when it printed a line, else -1 (tests)
+static int mfx_gpu_note(double sec) {
     static int on; static dispatch_once_t once; dispatch_once(&once, ^{ on = getenv("DM_MFX") != NULL; });
-    if (!on || !(sec > 0)) return;
+    if (!on || !(sec > 0)) return -1;
     static double ring[300]; static int n; ring[n++] = sec * 1000;
-    if (n < 300) return;
+    if (n < 300) return -1;
     n = 0; double a[300]; memcpy(a, ring, sizeof a);
     for (int i = 1; i < 300; i++) { double v = a[i]; int j = i - 1; while (j >= 0 && a[j] > v) { a[j + 1] = a[j]; j--; } a[j + 1] = v; }
-    MLOG("present GPU (300 presents): p50 %.3f / p95 %.3f / max %.3f ms (MetalFX %s)", a[149], a[284], a[299], atomic_load(&g_mfx_on_now) ? "on" : "off");
+    int k = MIN(atomic_exchange(&g_mfx_pres_n, 0), 300);
+    MLOG("present GPU (300 presents): p50 %.3f / p95 %.3f / max %.3f ms (MetalFX at the present in %d of 300; Upscaling switch %s)", a[149], a[284], a[299], k,
+         atomic_load(&g_mfx_on_now) ? "on" : "off");
+    return k;
 }
 // Whether the present uses MetalFX: switch on, viewport more than 5% larger than the valid area on both sides, no 3D MetalFX frame in the last
 // MFX_3D_RECENT presents (unless DM_MFX_STACK=1), scaler ready
@@ -6867,6 +6876,7 @@ static int mfx_want(mfx_t *m, int m4, NSUInteger cw, NSUInteger ch, MTLViewport 
         MLOG("present: %s", after3d ? "the 3D pass already used MetalFX on this picture; the present enlarges it with bilinear filtering" : "MetalFX at the present");
     if (after3d) return 0;
     if (!mfx_ready(m, m4, MTLPixelFormatRGBA8Unorm, cw, ch, (NSUInteger)vp.width, (NSUInteger)vp.height)) return 0;
+    if (m == &g_mfx_pres) atomic_fetch_add(&g_mfx_pres_n, 1);   // for the GPU-time line (mfx_gpu_note)
     m->last_use = g_mfx_calls; return 1;
 }
 // Per-present bookkeeping (present thread, at the start of the present's MetalFX block): the retire list, presents since the last 3D MetalFX frame,

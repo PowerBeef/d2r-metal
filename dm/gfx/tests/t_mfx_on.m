@@ -20,6 +20,8 @@
 //   grab_crop the screenshot path's crop through the copy pass, MetalFX and the present pass: no texel outside the crop bleeds in
 //   after3d   no second MetalFX at the present within MFX_3D_RECENT presents of a 3D MetalFX frame (the screenshot path too);
 //             with DM_MFX_STACK=1 (make run's second line) the present keeps MetalFX
+//   gpu_note  the present GPU-time line (DM_MFX) counts the presents that really ran MetalFX, not the Upscaling switch: 292 of 300 with one 3D
+//             MetalFX frame in the window, 0 of 300 with one before every present; with DM_MFX_STACK=1 (make run's third line) 300 both times
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -406,10 +408,32 @@ static void c_after3d(void) {
     EXPECT("after3d: the screenshot path follows the same rule (no screenshot set built)", 1, px != nil && g_mfx_grab.scaler == nil);
 }
 
+// The GPU-time line's count over two 300-present windows of fake presents (tick, mfx_want, a completed 1 ms present); the first mfx_gpu_note calls of
+// the process, so its ring starts empty
+static void c_gpu_note(void) {
+    MTLViewport vp = {0, 0, 96, 54, 0, 1}; int stack = getenv("DM_MFX_STACK") && atoi(getenv("DM_MFX_STACK")) > 0;
+    for (int i = 0; i < MFX_3D_RECENT + 1; i++) mfx_pres_tick();
+    EXPECT("gpu_note: the present set builds with no recent 3D MetalFX frame", 1, pres_build(64, 36, 96, 54));
+    atomic_store(&g_mfx_pres_n, 0);
+    int used = 0, k = -1, lines = 0;
+    for (int i = 0; i < 300; i++) { if (i == 100) atomic_fetch_add(&g_mfx3d_gen, 1);
+        mfx_pres_tick(); used += mfx_want(&g_mfx_pres, MFX_M4, 64, 36, vp); int r = mfx_gpu_note(0.001); if (r >= 0) { k = r; lines++; } }
+    EXPECT("gpu_note: one line after 300 presents", 1, lines);
+    EXPECT(stack ? "gpu_note (DM_MFX_STACK=1): one 3D MetalFX frame in the window: MetalFX at all 300 presents" : "gpu_note: one 3D MetalFX frame in the window: 292 presents ran MetalFX",
+           stack ? 300 : 300 - MFX_3D_RECENT, used);
+    EXPECT("gpu_note: ... and the line says so", used, k);
+    used = 0; k = -1; lines = 0;
+    for (int i = 0; i < 300; i++) { atomic_fetch_add(&g_mfx3d_gen, 1);
+        mfx_pres_tick(); used += mfx_want(&g_mfx_pres, MFX_M4, 64, 36, vp); int r = mfx_gpu_note(0.001); if (r >= 0) { k = r; lines++; } }
+    EXPECT(stack ? "gpu_note (DM_MFX_STACK=1): a 3D MetalFX frame before every present: MetalFX at all 300" : "gpu_note: a 3D MetalFX frame before every present: no present ran MetalFX",
+           stack ? 300 : 0, used);
+    EXPECT("gpu_note: ... and the line says so (Upscaling switch on throughout)", 1, lines == 1 && k == used && atomic_load(&g_mfx_on_now));
+}
+
 static const struct { const char *name; void (*fn)(void); } k_cases[] = {
     {"compiler", c_compiler}, {"fail", c_fail}, {"alloc", c_alloc}, {"equiv", c_equiv}, {"content", c_content}, {"idle", c_idle},
     {"wb_full", c_wb_full}, {"wb_offset", c_wb_offset}, {"wb_clear", c_wb_clear}, {"wb_view", c_wb_view}, {"wb_mask", c_wb_mask},
-    {"draw", c_draw}, {"grab_crop", c_grab_crop}, {"after3d", c_after3d},
+    {"draw", c_draw}, {"grab_crop", c_grab_crop}, {"after3d", c_after3d}, {"gpu_note", c_gpu_note},
 };
 int main(int argc, char **argv) { setvbuf(stdout, NULL, _IONBF, 0);
     setenv("DM_MFX", "1", 1); setenv("DM_MFX3D", "1", 1);   // before any mfx_on / mfx3d_on call: both latch their switch once
