@@ -28,15 +28,10 @@ __attribute__((format(printf, 3, 4))) static void check(int ok, int *shown, cons
     va_list ap; va_start(ap, fmt); printf("✗ "); vprintf(fmt, ap); printf("\n"); va_end(ap);
 }
 
-// Frame Drops levels the 3D scale controller keeps below a chosen 3D scale. Today this copies hle_oe.c's rule (s3_max_level: the table's 0.05 steps
-// below the chosen scale, down to S3_FLOOR_DEF 0.60). When the controller's levels follow the chosen scale (dm_3d_scale_levels), call that here
-// instead, so invariant I3 checks the levels the game really has.
-static int drop_levels(double scale) {
-    static const double k_lv[] = { 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50 };
-    const double floor = 0.60; int m = 0;
-    for (size_t i = 0; i < sizeof k_lv / sizeof *k_lv; i++) m += k_lv[i] < scale - 1e-4 && k_lv[i] >= floor - 1e-4;
-    return m;
-}
+// Frame Drops levels the 3D scale controller keeps below a chosen 3D scale: the controller's own rule (dm_s3lv.h dm_3d_scale_levels, which hle_oe.c
+// uses), so invariant I3 checks the levels the game really has
+#include "dm_s3lv.h"
+static int drop_levels(double scale) { return dm_3d_scale_levels((float)scale); }
 #define MIN_DROP_LEVELS 2   // Frame Drops = lower must have somewhere to go: dm_picrec.c LIGHT_MIN is chosen so that it does
 
 // The grid: every M generation the model knows and one past it, in each tier; the iPhone chips' Pro parts; core counts from below the smallest

@@ -1,0 +1,18 @@
+# Quitting while the window is covered still saves (LIF-5, Mac): a covered window slows the game loop to DM_HIDDEN_HZ, and the quit puts it back to
+# full speed before asking the game for its save, so the save commits within the quit's wait. Windowed: the cover window has to sit on the game's
+# Space (the CLI host, and the Mac App test copy, which starts windowed with the original picture settings).
+name quit_while_covered_saves
+requires cli mac-app
+save warlock
+timeout 180
+
+enter_game
+stick 0 1 frames=30
+app cover
+expect app state=occluded timeout=5
+sleep 3
+system_quit
+check saved
+check exit 0
+check event quit_save saved=true
+check no_red

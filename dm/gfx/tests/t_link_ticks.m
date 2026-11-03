@@ -59,7 +59,7 @@ static void acquire_ticks(int hz, int display, int interval, double want, const 
     CHECK(got == want, label);
 }
 int main(void) { @autoreleasepool {
-    g_dm_present_link = 2; g_link = (CAMetalDisplayLink *)[NSObject new];   // a link is "on" while the object is set; nothing calls it here
+    g_dm_present_link = 2; g_link = (CAMetalDisplayLink *)[NSObject new]; g_link_live = 1;   // a link is "on" while it is published; nothing calls it here
     CHECK(mtl_link_active(), "the link counts as active");
     g_link_mode = 2;
     CHECK(mtl_link_rate() == 120, "a 120 Hz link reports 120");
@@ -91,5 +91,23 @@ int main(void) { @autoreleasepool {
     CHECK(g_link_tick_n == tick && test_now - start == 5000000ull, "timeout reaches its deadline without inventing ticks");
     test_silent = 0;
     CHECK(mtl_link_wait_ticks(2, 10000000ull) && g_link_tick_n - tick == 2, "ticks resume from the last successful wait after timeout");
+    // The rate the link delivers (M4P-8), measured from its target timestamps (the median of the last 8 tick intervals): a 120 Hz request the system
+    // delivers at 60 Hz must give 60 frames, not 30, and a 60 Hz request on a 72 Hz panel reports 72. Gaps over 50 ms are not intervals
+    g_dm_present_link = 2; g_link_mode = 2; link_rate_reset();
+    CHECK(mtl_link_rate() == 120, "M4P-8: before any tick a 120 Hz link reports the requested 120");
+    for (int i = 0; i <= 20; i++) link_tick_note(1000.0 + i / 60.0);
+    CHECK(mtl_link_rate() == 60, "M4P-8: a 120 Hz request delivered at 60 Hz reports 60");
+    CHECK(per_wait(0, 1) == 1, "M4P-8: a 120 Hz request delivered at 60 Hz: one tick per frame, 60 frames, not 30");
+    CHECK(mtl_link_rate_requested() == 120, "M4P-8: the requested rate stays 120");
+    for (int i = 1; i <= 40; i++) link_tick_note(1000.0 + 20 / 60.0 + i / 120.0);
+    CHECK(mtl_link_rate() == 120 && per_wait(0, 1) == 2, "M4P-8: delivered at 120 Hz: reports 120, two ticks per 60 Hz frame");
+    link_rate_reset(); g_dm_present_link = 1; g_link_mode = 1;
+    for (int i = 0; i <= 20; i++) link_tick_note(2000.0 + i / 72.0);
+    CHECK(mtl_link_rate() == 72, "M4P-8: a 60 Hz link the system runs at 72 Hz reports 72");
+    link_tick_note(2000.0 + 20 / 72.0 + 0.2);
+    CHECK(mtl_link_rate() == 72, "M4P-8: a 0.2 s gap is not an interval: still 72");
+    link_rate_reset(); g_link_mode = 3;
+    CHECK(mtl_link_rate() == 30 && mtl_link_rate_requested() == 30, "M4P-8: the power-saving link on a screen with no refresh rate (no window) reports 30");
+    link_rate_reset();
     printf("t_link_ticks: %d checks, %d failed\n", checks, failed); return failed != 0;
 } }

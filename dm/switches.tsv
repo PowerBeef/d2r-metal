@@ -2,9 +2,7 @@
 DM_3D_SCALE	host	host/hle_oe.c host/tests/t_oe.c	y
 DM_3D_SCALE_DYN	host	host/hle_oe.c	y
 DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c host/tests/t_oe.c	-
-DM_3D_SCALE_FLOOR	host	host/hle_oe.c	-
-DM_3D_SCALE_GPU	host	host/hle_oe.c	-
-DM_3D_SCALE_GPU_FLOOR	host	host/hle_oe.c	-
+DM_3D_SCALE_FLOOR	host	host/hle_oe.c	y
 DM_AA_MODE	host	host/hle_oe.c host/tests/t_oe.c	y
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
@@ -96,6 +94,7 @@ DM_GRANNY_THREADS	host	host/hle_granny.c	-
 DM_GRANNY_VERIFY	host	host/hle_granny.c	-
 DM_GUEST_SPAWN_TEST	host	host/hle_guestthread.c	-
 DM_HEAT	ios	ios/Sources/front_ios.m	-
+DM_HIDDEN_HZ	gfx	gfx/nvn/hle_nvn.c	-
 DM_HID_RECEIPT_LOG	host	host/hle_hid.c host/tests/t_hid_receipt.c	-
 DM_HLECOUNT	host	host/hle_count.c	-
 DM_HLE_SPIN_AB	host	host/hle_thread.c	-

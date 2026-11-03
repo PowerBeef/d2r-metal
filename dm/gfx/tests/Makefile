@@ -199,6 +199,7 @@ run: \
 	./t_replay_tsan rtrange
 	./t_replay_tsan mfxcomp
 	./t_replay_tsan mfxon
+	./t_replay_tsan link
 	./t_replay_asan bloom
 	./t_replay_asan fx9
 	./t_replay_asan fx19

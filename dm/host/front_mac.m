@@ -290,6 +290,7 @@ static void text_input_handoff_pad(void), text_input_test(NSString *text, int ok
 static void app_quit(const char *why) {   // 主线程 | main thread
     static int once; if (once++) return;
     atomic_store(&g_quitting, 1);
+    { void mtl_present_idle_set(int on); mtl_present_idle_set(0); }   // a quit while covered saves at full speed: the loop leaves DM_HIDDEN_HZ
     { uint64_t dm_audio_render_calls(void); LOG("窗口：退出（%s）；声卡回调累计 %llu（0 = 这次没出声）", why, (unsigned long long)dm_audio_render_calls()); }
     DM_EV("quit", "why:s", why);
     // 数量 / 起名输入框（或手柄屏幕键盘）开着：先按「取消」关掉，放走等它的键盘线程、解冻客体时钟，下面才存得了盘（见 front_text_input）
@@ -302,8 +303,8 @@ static void app_quit(const char *why) {   // 主线程 | main thread
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ app_quit_finish(why, ingame); });
 }
 // The control port's app command (dm_ctl_cmds.c), done on the main thread:
-// - minimize / restore (background / foreground on the Mac) and terminate: the same actions as DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT. Like DM_TEST_MINI_AT,
-//   minimizing temporarily makes the window minimizable (the game window is not by itself);
+// - minimize / restore (background / foreground on the Mac) and terminate: the same actions as DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT. Minimizing
+//   first adds Miniaturizable to the window's style, which does nothing once the window is created minimizable (as a Window menu's Minimize needs);
 // - cover / uncover (tests): an opaque window over the whole game window and away again, as DM_TEST_COVER does, so the occlusion handling below runs;
 // - link_inactive / link_active (tests): what iOS does on resign / become active, on the Mac: the present link paused (mtl_present_inactive) and focus 2,
 //   then resumed with focus 1, for the Frame Drops checks; link_inactive fails (【红】 log) when no present link drives presents;
@@ -852,16 +853,24 @@ void front_run(void (*guest)(void)) {
         // DM_TEST_COVER=<seconds>,<duration>: at that time, cover the game window entirely with an opaque window and remove it after the duration (for acceptance testing, not set in the product)
         { const char *e = getenv("DM_OCCL"); int on = !(e && !strcmp(e, "0"));
           [nc addObserverForName:NSWindowDidChangeOcclusionStateNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n;
-              int hidden = !(win.occlusionState & NSWindowOcclusionStateVisible); void mtl_present_discard(int on);
+              int hidden = !(win.occlusionState & NSWindowOcclusionStateVisible); void mtl_present_discard(int on), mtl_present_idle_set(int on);
               LOG("前端：窗口%s（遮挡处理%s）", hidden ? "整个被盖住 / 不可见" : "露出来了", on ? "开" : "关 DM_OCCL=0");
               DM_EV("app", "state:s", hidden ? "occluded" : "visible");
-              if (on) mtl_present_discard(hidden); }];
+              // Covered: presents are dropped and the game loop slows to DM_HIDDEN_HZ (hle_nvn.c), unless a quit is saving
+              if (on) { mtl_present_discard(hidden); mtl_present_idle_set(hidden && !atomic_load(&g_quitting)); } }];
           double at = 0, dur = 0;
           if ((e = getenv("DM_TEST_COVER")) && sscanf(e, "%lf,%lf", &at, &dur) == 2 && at > 0 && dur > 0)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                   test_cover(1); LOG("DM_TEST_COVER：盖上 %.1f 秒，游戏窗口%s是主窗口", dur, win.isKeyWindow ? "" : "不");
                   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(dur * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ test_cover(0); LOG("DM_TEST_COVER：拿开"); });
               }); }
+        // Thermal state and Low Power Mode changes (REC-13): logged only, as on iOS. The launch values are on the picture line (mac_rec); whether a hot
+        // Mac or Low Power Mode should lower the picture at run time needs a fanless Mac under a sustained load to decide
+        { static _Atomic long thermal; atomic_store(&thermal, (long)NSProcessInfo.processInfo.thermalState);
+          [nc addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n;
+              long t = (long)NSProcessInfo.processInfo.thermalState, was = atomic_exchange(&thermal, t); if (t != was) LOG("thermal state %ld → %ld", was, t); }];
+          [nc addObserverForName:NSProcessInfoPowerStateDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n;
+              LOG("Low Power Mode %s", NSProcessInfo.processInfo.lowPowerModeEnabled ? "on" : "off"); }]; }
         [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "resign"); if (!win.miniaturized && !atomic_load(&g_quitting)) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
         [nc addObserverForName:NSWindowDidBecomeKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "active"); dm_focus_set(1); }];
         // 最小化：客体时钟一并冻结（同 iOS 进后台）。否则游戏线程挡在图形挂起处、墙钟照走，恢复时主循环把整段最小化时长的拍一口气补跑完——角色站着不动、怪照打（专家模式死了就没了）

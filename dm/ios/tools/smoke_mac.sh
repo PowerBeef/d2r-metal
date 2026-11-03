@@ -32,7 +32,7 @@ DEVP=""; [ "${DM_MAC_DEVICE_PROFILE:-1}" != 0 ] && DEVP="--env DM_GAME_RES=2868x
 # 新加一个 source / 调用的同目录文件，就加进这里—— 漏了后加的三份，远端一起就报「DM_BUNDLE_ID 未设」，在台账留了假红。
 # The same-directory files this script needs at run time, listed in this one place only: before starting, each is checked to be present (a missing one is a failure on the spot, not reported halfway through the run), and when dispatching to the remote machine the sync also goes by this list.
 # When a new same-directory file is sourced / called, add it here -- the three added later were missed, the remote side reported 「DM_BUNDLE_ID 未设」(DM_BUNDLE_ID not set) as soon as it started, and a false failure was left in the ledger.
-SMOKE_MAC_DEPS="local_env.sh logport.py devlock.sh macwin.sh devbattery.sh cloud_guard.sh save_key.sh launch_guard.sh smoke_touch.txt uireg"
+SMOKE_MAC_DEPS="local_env.sh logport.py s3_steps.py devlock.sh macwin.sh devbattery.sh cloud_guard.sh save_key.sh launch_guard.sh smoke_touch.txt uireg"
 _sm_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); _sm_miss=
 for _sm_f in $SMOKE_MAC_DEPS; do [ -e "$_sm_dir/$_sm_f" ] || _sm_miss="$_sm_miss $_sm_f"; done
 [ -z "$_sm_miss" ] || { echo "SMOKE-MAC RED 0/${1:-1} 用时 0 秒"; echo "【红】冒烟脚本的依赖文件缺了：${_sm_miss}（目录 ${_sm_dir}），没有起跑"; exit 2; }
@@ -147,8 +147,10 @@ run_stage() {
     # 玩家路径日志不许有红行（产品缺省路径上的常驻红行 = 没人看的告警；曾经每次启动有 14 条面板栈假红）
     # The player path log must have no failure lines (a permanent failure line on the product default path = an alarm nobody looks at; there used to be 14 false panel-stack failures at every launch)
     red_n=$(LC_ALL=C grep -a -c '【红】' "$RUN/player.txt" 2>/dev/null)
-    if [[ "$pr" == result=0* ]] && [ "${au_real:-0}" -gt 0 ] && [ "${au_null:-0}" = 0 ] && [ "${hud_ok:-0}" -gt 0 ] && [ "${red_n:-0}" = 0 ]; then PLAYER_RES=OK; echo "玩家路径 OK：进局 35 s + 暂停菜单 20 s 仍活着；AudioOut 真出声 ${au_real} 路（${pr}）"
-    else PLAYER_RES=RED; echo "玩家路径 RED：${pr}；AudioOut 真出声 ${au_real:-0} 路 / 静音接收端 ${au_null:-0} 路（须真出声 > 0、静音 0）；读到玩家状态 ${hud_ok:-0} 行（须 > 0）；红行 ${red_n:-0} 条（须 0）：$(LC_ALL=C grep -a -m1 '【红】' "$RUN/player.txt" 2>/dev/null | cut -c1-80)"; fi
+    # Frame Drops steps judged by the [perf] windows around them (s3_steps.py has the rules): prints "bad notjudged"
+    read -r s3bad s3nj <<< "$(python3 -I "$TOOLS/s3_steps.py" "$RUN/player.txt")"
+    if [[ "$pr" == result=0* ]] && [ "${au_real:-0}" -gt 0 ] && [ "${au_null:-0}" = 0 ] && [ "${hud_ok:-0}" -gt 0 ] && [ "${red_n:-0}" = 0 ] && [ "${s3bad:-1}" = 0 ]; then PLAYER_RES=OK; echo "玩家路径 OK：进局 35 s + 暂停菜单 20 s 仍活着；AudioOut 真出声 ${au_real} 路（${pr}）；Frame Drops steps judged bad: 0 (not judged: ${s3nj:-0})"
+    else PLAYER_RES=RED; echo "玩家路径 RED：${pr}；AudioOut 真出声 ${au_real:-0} 路 / 静音接收端 ${au_null:-0} 路（须真出声 > 0、静音 0）；读到玩家状态 ${hud_ok:-0} 行（须 > 0）；红行 ${red_n:-0} 条（须 0）：$(LC_ALL=C grep -a -m1 '【红】' "$RUN/player.txt" 2>/dev/null | cut -c1-80)；Frame Drops stepped down with nothing on screen or at full frame rate: ${s3bad:-?} (not judged: ${s3nj:-?})"; fi
     segs="${segs:+${segs}；}玩家路径:$PLAYER_RES"
   fi
   # 触摸玩家路径：从空存档起，只用触点——点职业、创建、选模式、起名 → 进局；不碰摇杆点三下空地坐标不变；点脚下的小站开小站面板（进局落在小站上，营地 NPC 都不在画面里；按类号 tap_unit 落真实触点，走世界点按 → 交互同一条路）。

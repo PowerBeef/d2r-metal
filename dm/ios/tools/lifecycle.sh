@@ -101,7 +101,13 @@ dbmax=$(python3 -c "import math; print(math.ceil((float('$cb') - float('$cr')) *
 chk "回前台那一窗上了屏的帧没有间隔超 25 ms 的：${1:-无读数} 帧" $([ "${1:--1}" = 0 ] && echo 1 || echo 0)
 chk "回前台后完整显示节拍窗 ≥ 2 个、空节拍不新增、合并丢弃不比进后台前多：${3:-0} 窗（每窗 300 节拍），空节拍 +${4:-?}，丢弃 +${5:-?}（上限 ${ddmax}，按进后台前 ${pre:-无读数}）" $([ "${3:-0}" -ge 2 ] && [ "${4:--1}" = 0 ] && [ "${5:--1}" -ge 0 ] && [ "${5:-99}" -le "$ddmax" ] && echo 1 || echo 0)
 chk "进后台那一刻丢弃的帧数在上限内（只防失控，≤ ${dbmax}：失活 ${cr:-?} → 进后台 ${cb:-?} s）：${2:-无读数} 帧" $([ "${2:--1}" -ge 0 ] && [ "${2:-99}" -le "$dbmax" ] && echo 1 || echo 0)
-chk "回前台后 3D 比例没有因此降档" $(echo "$post" | grep -q "3D 渲染比例 0.7[02]" && echo 0 || echo 1)
+# Frame Drops after returning: no step-down line at all (the old check grepped the 3D render scale lines for 0.70 / 0.72, which the
+# relative levels no longer produce, and passed while the controller was frozen by the present-time drift, S3D-1)
+chk "Frame Drops did not step down after returning" $(echo "$post" | grep -q '3D 比例控制：.*→ 降到第' && echo 0 || echo 1)
+# Present readings came back after returning: on-screen intervals in the [perf] windows after the foreground line. The first one is skipped:
+# it still holds frames from before the background (by hand over lifecycle run 1028_142323_1872: 331 without the skip, 0 in 2 windows with it)
+read -r prn prk <<< "$(echo "$post" | sed -nE 's/.*\[perf\].*三档 ([0-9]+)\/([0-9]+)\/([0-9]+).*/\1 \2 \3/p' | tail -n +2 | awk '{s+=$1+$2+$3; k++} END{print s+0, k+0}')"
+chk "present readings came back after returning: ${prn:-0} intervals in ${prk:-0} windows (the first [perf] line after returning is skipped: it holds frames from before the background)" $([ "${prk:-0}" -ge 1 ] && [ "${prn:-0}" -gt 0 ] && echo 1 || echo 0)
 chk "红行 0（实得 $(grep -c '【红】' "$L")）" $(grep -q '【红】' "$L" && echo 0 || echo 1)
 chk "动作序列做完、进程还在（退出码 / 存活标志 ${trc}）" $([ "$trc" = 0 ] && echo 1 || echo 0)
 chk "模拟回前台后 2 秒声卡回调有增量：$(grep -o '测试回前台后 2 s 声卡回调 +[0-9]*' "$L" | tail -1)" $([ "$MODE" != sim ] || grep -qE '测试回前台后 2 s 声卡回调 \+[1-9]' "$L" && echo 1 || echo 0)
