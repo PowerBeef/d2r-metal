@@ -230,6 +230,22 @@ static void reuse_case(void) {
     step(&tF, 8, ID_B0, &p_apply, 1); EXPECT("a second apply after a completed chain still reads B1", ID_B1, S.tex[1][0]); commit();
     EXPECT("a second apply after a completed chain: counted as reused", 1, g_bloomq_stat.reused);
 }
+// B0 under bloom 1/4 is often never allocated. The cutoff's pipeline check takes B0's format from its description and does not allocate it; a chain left at
+// a frame boundary still clears it (allocating it, as its next reader would) so the rest of the chain reads black; a B0 the game released since is not recreated
+static void fresh_b0_case(void) {
+    uint8_t px[256]; tex_t b0 = tex(8, NVN_FORMAT_RGBA8); case_begin();
+    step(&b0, 8, ID_S, &p_cut, 1); EXPECT("fresh B0: the cutoff engages", 1, g_bloomq.state);
+    EXPECT("fresh B0: the cutoff's pipeline check does not allocate B0", 0, serial_get(b0.serial) != nil); commit();
+    mtl_set_frame(++t_frame); step(&tT, 8, 0, &p_other, 1); commit();
+    EXPECT("fresh B0 left at a frame boundary: counted", 1, g_bloomq_stat.midchain);
+    EXPECT("fresh B0 left at a frame boundary: allocated and cleared", 1, serial_get(b0.serial) != nil);
+    readback(&b0, px); EXPECT("fresh B0 left at a frame boundary: black", 64, count_px(px, 0, 0, 0));
+    tex_t b0r = tex(8, NVN_FORMAT_RGBA8); case_begin();
+    step(&b0r, 8, ID_S, &p_cut, 1); commit(); mtl_tex_release(&b0r);
+    mtl_set_frame(++t_frame); step(&tT, 8, 0, &p_other, 1); commit();
+    EXPECT("released B0 left at a frame boundary: counted", 1, g_bloomq_stat.midchain);
+    EXPECT("released B0 left at a frame boundary: not recreated", 0, serial_get(b0r.serial) != nil);
+}
 // The health summary: the first window prints after 600 frames, later ones after 3600; new targets flush the window early; an empty window stays closed
 static char g_log[8192];
 static void log_cap(const char *file, int line, const char *fmt, ...) { (void)file; (void)line; char b[1024]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
@@ -255,5 +271,5 @@ static void summary_case(void) {
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init(); lib_init(); bloom_init();
     aux_case(); bright_case(); chain_case(); abort61_case(); abort62_case(); abort63_case(); midchain_case(); broken_case(); vp_case(); summary_case();
-    reuse_case();
+    reuse_case(); fresh_b0_case();
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0; } }

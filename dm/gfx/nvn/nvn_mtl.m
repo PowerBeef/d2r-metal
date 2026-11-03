@@ -1433,8 +1433,9 @@ void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb, int heap_
 void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads) { *uploads = g_pkg_uploads; *reuploads = g_pkg_reuploads; }
 uint64_t mtl_pkg_miss(void) { return g_pkg_miss; }
 static void mp_lut_forget(uint64_t ser);
+static void bloomq_forget(uint64_t ser);
 static void treg_forget(uint64_t ser);
-void mtl_tex_release(tex_t *t) { if (t->serial) { mp_lut_forget(t->serial); serial_del(t->serial); treg_forget(t->serial); } }
+void mtl_tex_release(tex_t *t) { if (t->serial) { mp_lut_forget(t->serial); bloomq_forget(t->serial); serial_del(t->serial); treg_forget(t->serial); } }
 
 // ---------- 渲染通道：SetRenderTargets 开新通道；通道里第一条命令之前的清除并进 load 动作 ----------
 // ---------- Render passes: SetRenderTargets opens a new pass; clears before the first command in the pass are folded into the load action ----------
@@ -4649,6 +4650,10 @@ static void bloomq_reset(void) { memset(&g_bloomq, 0, sizeof g_bloomq); }
 // The frame in which the apply must read the game's own B0: a cutoff that did not engage (the game's chain drew B0) or an abort (B0 cleared to black).
 // The apply at state 0 reuses the last B1 only in other frames: the extrapolated frame, whose chain never started, or a second apply after a completed chain
 static uint64_t g_bloomq_own_f = UINT64_MAX;   // UINT64_MAX: none
+// The B0 a chain holds (published at the cutoff, replay thread) and the last such B0 the game released (mtl_tex_release, game thread): the clear of a chain
+// left at a frame boundary must not recreate a released B0 as an untracked texture for a dead serial
+static _Atomic uint64_t g_bloomq_watch, g_bloomq_gone;
+static void bloomq_forget(uint64_t ser) { if (atomic_load_explicit(&g_bloomq_watch, memory_order_acquire) == ser) atomic_store_explicit(&g_bloomq_gone, ser, memory_order_release); }
 static int g_bloomq_broken;   // the capture shader or a capture pipeline could not be built: bloom 1/4 stays off for this session (the game's own chain runs)
 // Kept on everywhere: on 2026-10-27 the look set against the game's full chain (DM_NVN_BLOOM_Q=0) gave FLIP 0.0049 (run-to-run noise), lava identical, and the full chain costs +0.06 ms GPU on the Mac
 static int bloomq_enabled(void) {
@@ -4705,16 +4710,16 @@ static int bloomq_capture(void) {
 }
 // B0 was never drawn while bloom 1/4 held the chain (its cutoff was skipped and its pending clear dropped): when the chain aborts or is left in the middle,
 // clear that level to black so the draws that still read B0 (the rest of the game's chain at state 0, the apply) read no bloom instead of undefined memory.
-// live = 1: B0 is a target of this frame's command stream, so it is made if it does not exist yet (tex_mtl), as its next reader would make it, uninitialised.
-// live = 0 (a chain left at a frame boundary): only a texture that still exists is cleared (serial_get): tex_mtl would create one for a B0 released since,
-// e.g. by a resolution change, and a B0 never made was never read
-static void bloomq_clear_b0(const tex_t *b0, int lv, int sl, int live) {
-    __unsafe_unretained id o = live ? nil : serial_get(b0->serial); id<MTLTexture> t = live ? tex_mtl(b0) : [o conformsToProtocol:@protocol(MTLTexture)] ? (id<MTLTexture>)o : nil;
+// Under bloom 1/4 B0 is often never allocated: it is made here (tex_mtl), as its next reader would make it, uninitialised. A B0 the game has released
+// since (e.g. by a resolution change between frames) is skipped, so no untracked texture is made for its dead serial (g_bloomq_gone)
+static void bloomq_clear_b0(const tex_t *b0, int lv, int sl) {
+    if (!b0->serial || atomic_load_explicit(&g_bloomq_gone, memory_order_acquire) == b0->serial) return;
+    id<MTLTexture> t = tex_mtl(b0);
     if (!t || !(t.usage & MTLTextureUsageRenderTarget) || (NSUInteger)lv >= t.mipmapLevelCount || (NSUInteger)sl >= (t.textureType == MTLTextureType2DArray ? t.arrayLength : 1)) return;
     zskip_del(b0->serial); rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     RPD *rp = [RPD new]; rp.colorAttachments[0].texture = t; rp.colorAttachments[0].level = lv; rp.colorAttachments[0].slice = sl;
     rp.colorAttachments[0].loadAction = MTLLoadActionClear; rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0); rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    ser_gate(); enc_r_end(enc_r_begin(rp));
+    enc_r_end(enc_r_begin(rp));
     PD("X %llu bloom 1/4: B0 ser=%llu level %d slice %d cleared to black", g_stat_pass, (unsigned long long)b0->serial, lv, sl);
 }
 // The health summary: "bloom 1/4, frames ...". There is no reliable exit hook (quits leave through _exit, which skips atexit), so the first window is short
@@ -4735,7 +4740,7 @@ static void bloomq_summary(uint64_t f, int force) {
 static void bloomq_abort(int id, const char *why, uint64_t f) {
     if (id == 61) g_bloomq_stat.ab61++; else if (id == 62) g_bloomq_stat.ab62++; else g_bloomq_stat.ab63++;
     RED_ONCE(id, "bloom 1/4: %s; B0 ser=%llu cleared to black, this frame has no bloom (first case, frame %llu)", why, (unsigned long long)g_bloomq.b0_ser, (unsigned long long)f);
-    bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl, 1); bloomq_reset(); g_bloomq_own_f = f;   // the apply reads the black B0, not the last B1
+    bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl); bloomq_reset(); g_bloomq_own_f = f;   // the apply reads the black B0, not the last B1
 }
 // ---------- 拖货跟手图：商人货架上的货没有「拿起」态，拖动时由回放层把「画这件货图标的那次绘制」在同一趟末尾平移到手指处再画一遍 ----------
 // 界面那一趟每个矩形是一次 4 顶点绘制（顶点 20 字节：位置 3 浮点 + 贴图坐标 2 浮点，位置经顶点常量 0 号的矩阵到裁剪坐标）。
@@ -4888,7 +4893,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         // A new frame (checked here, where every chain draw passes, so the reset still comes before any chain draw of the new frame and no clear is encoded during a
         // deferred replay): a chain left in the middle leaves B0 undefined for whatever still reads it, so clear it
         uint64_t f_ = atomic_load(&g_cur_frame);
-        if (bloomq_frame != f_) { bloomq_frame = f_; if (g_bloomq.state) { g_bloomq_stat.midchain++; bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl, 0); } bloomq_reset(); bloomq_summary(f_, 0); }
+        if (bloomq_frame != f_) { bloomq_frame = f_; if (g_bloomq.state) { g_bloomq_stat.midchain++; bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl); } bloomq_reset(); bloomq_summary(f_, 0); }
         NvShader *f = pr->sh[1]; uint64_t tgt = 0; int lv = 0, sl = 0;
         if (!strncmp(f->key, "2938a5b71b8e21b2", 16)) {
             int had = g_bloomq.state, engage = 0; tex_t pb0 = g_bloomq.b0_tex; int plv = g_bloomq.b0_lv, psl = g_bloomq.b0_sl;
@@ -4921,9 +4926,10 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
                 if (engage) { uint32_t pf = 0; uint8_t swz[4]; if (!nvn_fmt_to_mtl(R.rt.color[0]->d.format, &pf, swz) || !pf || !bloomq_pso((MTLPixelFormat)pf)) { engage = 0; g_bloomq_stat.pso++; } }
             }
             // The previous chain's B0 stays undefined unless this cutoff engages again on the very same level
-            if (had && !(engage && pb0.serial == R.rt.color[0]->serial && plv == lv && psl == sl)) bloomq_clear_b0(&pb0, plv, psl, 1);
+            if (had && !(engage && pb0.serial == R.rt.color[0]->serial && plv == lv && psl == sl)) bloomq_clear_b0(&pb0, plv, psl);
             g_bloomq_own_f = engage ? UINT64_MAX : f_;   // not engaged: the game's chain draws B0 this frame, and its apply must read it
             if (engage) {
+                atomic_store_explicit(&g_bloomq_watch, tgt, memory_order_release);
                 g_bloomq.s_tex = st; g_bloomq.s_h = h; g_bloomq.s_ser = st.serial; g_bloomq.b0_ser = tgt; g_bloomq.b0_tex = *R.rt.color[0]; g_bloomq.b0_lv = lv; g_bloomq.b0_sl = sl;
                 g_bloomq.coeff_g = c1[0]; g_bloomq.coeff_b = c1[1]; g_bloomq.state = 1;
                 PD("A %llu 泛光 1/4 起点 S=%llu B0=%llu", g_stat_pass, (unsigned long long)g_bloomq.s_ser, (unsigned long long)g_bloomq.b0_ser); R.clear_c[0] = 0;   // the whole B0 level is not needed: drop its pending clear too, otherwise a clear-only pass would be opened just for it
