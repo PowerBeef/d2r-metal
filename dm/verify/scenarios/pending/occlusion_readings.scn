@@ -2,7 +2,7 @@
 # lookup the game-present count and the present-thread tickets drift apart for good, so every reading after the cover is "no reading"
 # (perf blind=true) and Frame Drops freezes. The 12 s cover is longer than a perf window, so the second expect only sees frames from after the
 # uncover. Windowed on the CLI host: the cover window has to sit on the game's Space.
-# Pending: RED on the current code by design (the RED baseline of the fix); it moves to dm/verify/scenarios/ with the fix. The gate does not run it.
+# Pending: RED on the current code by design (the RED baseline of the fix); it moves to dm/verify/scenarios/ with the fix. The gate does not run it; the host suite parse-checks it.
 name occlusion_readings
 requires cli
 save warlock

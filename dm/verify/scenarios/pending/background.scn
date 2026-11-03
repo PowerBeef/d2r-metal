@@ -2,7 +2,9 @@
 # Pending version of dm/verify/scenarios/background.scn with the present-time checks (S3D-1): after the return, present readings come back
 # (perf blind=false) and Frame Drops does not step down (no scale3d lv=1; DM_TEST_Q3D=0 turns the controller on). The first perf window after the
 # return still holds frames from before it, so the log step separates the two expects. On ios-mac the iOS background save wait discards presents,
-# and the unfixed lookup reads "no reading" from then on: RED there by design until the fix, which replaces background.scn with this file.
+# and the unfixed lookup reads "no reading" from then on: RED there by design until the fix. The fix applies this file's added lines (the
+# comment pair made English, env, the perf expects and the scale3d check: diff the two) to background.scn rather than copying this file over it,
+# so edits made to background.scn in the meantime survive. Parse-checked by the host suite (dm/host/tests/Makefile), not run by the gate.
 name background
 save warlock
 timeout 180
