@@ -18,6 +18,7 @@
     { "MacBook Air 13 M2 (8-core GPU), 1280 x 832", "Apple M2", 8, 2560, 1664, 1, 1, 0, 2, 1, 2, 0 },
     { "MacBook Air 13 M2 (8-core GPU), default", "Apple M2", 8, 2928, 1904, 1, 1, 0, 3, 0, 0, 0 },
     { "MacBook Air 15 M2, default", "Apple M2", 10, 3408, 2216, 1, 0, 1, 0, 1, 2, 1 },
+    { "MacBook Air 13 M3 (8-core GPU), 1280 x 832", "Apple M3", 8, 2560, 1664, 1, 1, 0, 2, 1, 2, 0 },
     { "MacBook Air 13 M3 (8-core GPU), default", "Apple M3", 8, 2928, 1904, 1, 1, 0, 3, 0, 0, 0 },
     { "MacBook Air 15 M3, default", "Apple M3", 10, 3408, 2216, 1, 1, 0, 3, 0, 0, 0 },
     { "MacBook Pro 14 M3 Pro", "Apple M3 Pro", 14, 3024, 1964, 1, 1, 0, 0, 1, 2, 0 },

@@ -13,6 +13,8 @@ import picture  # noqa: E402
 
 S3D = {0: '1.0', 1: '0.85', 2: '0.75', 3: '0.67', 4: '0.5'}   # dm_video.c dm_video_scale3d (Mac s3d)
 SHQ = {0: '2100', 1: '3072', 2: '4096'}                       # dm_video.c k_shq_px
+THIS_MAC = 'Mac mini M6, 2560 display (measured)'               # t_picrec_cases.h row names: rename them here too
+BASE_2560 = ('MacBook Air M1, 1280 x 800', 'MacBook Air 13 M2 (8-core GPU), 1280 x 832', 'MacBook Air 13 M3 (8-core GPU), 1280 x 832')
 
 
 def picrec_rows():
@@ -60,7 +62,7 @@ class PictureTest(unittest.TestCase):
         for k in list(picture.KEYS) + list(picture.MAC_APP_REC) + list(picture.FULLSCREEN): self.assertIn(k, reads, f'{k} is read by nothing (dm/switches.tsv)')
 
     def test_rec_is_this_macs_recommended(self):
-        r = picrec_rows()['Mac mini M6, 2560 display']
+        r = picrec_rows()[THIS_MAC]
         self.assertEqual((r['native'], picture.REC['DM_GAME_RES']), (1, f"{r['w']}x{r['h']}"))
         self.assertEqual(picture.REC['DM_3D_SCALE'], S3D[r['s3d']])
         self.assertEqual(picture.REC['DM_ENV_SHADOWS'], str(r['envsh']))
@@ -70,7 +72,7 @@ class PictureTest(unittest.TestCase):
 
     def test_rec75_is_the_base_chips_recommended(self):
         rows = picrec_rows()
-        for n in ('MacBook Air M1', 'MacBook Air 13 M2 (8-core GPU)', 'MacBook Air 13 M3 (8-core GPU)'):
+        for n in BASE_2560:
             r = rows[n]
             self.assertEqual((r['native'], r['mfx']), (1, 1), n)
             self.assertEqual(picture.REC75['DM_3D_SCALE'], S3D[r['s3d']], n)
@@ -103,7 +105,7 @@ class PictureTest(unittest.TestCase):
         self.assertRegex(mac_fb, r'rec\[0\] = 1;')   # full screen: picture.env adds FULLSCREEN on the cli backend
         self.assertEqual(picture.env('rec', 'cli', {})['DM_TEST_FULLSCREEN_AT'], '1')
         self.assertRegex(mac_fb, r'rec\[2\] = front_video_mfx_ok\(\) && \(nres >= 0 \|\|')   # with Native (nres >= 0) up = MetalFX support alone
-        r = picrec_rows()['Mac mini M6, 2560 display']
+        r = picrec_rows()[THIS_MAC]
         self.assertEqual((r['native'], r['mfx']), (1, 1))   # this Mac's row: Native, MetalFX supported
         for name in ('REC', 'REC75'): self.assertEqual((getattr(picture, name)['DM_MFX'], getattr(picture, name)['DM_MFX3D']), ('1', '1'), name)
 

@@ -21,13 +21,13 @@ Each Video-tab key and the switch that pins it:
 Brightening of dark 3D areas (DM_BRIGHT_K) is not a Video-tab key and stays at the host's default, which the Mac App has too.
 
 The sets:
-  REC    this Mac's Recommended (a Mac mini M6 with a 12-core GPU on a 2560 x 1440 screen): the t_picrec row "Mac mini M6, 2560 display"
+  REC    this Mac's Recommended (a Mac mini M6 with a 12-core GPU on a 2560 x 1440 screen): the t_picrec row "Mac mini M6, 2560 display (measured)"
          (Native 2560 x 1440, 3D 100%, environment shadows on, Ultra shadows, Frame Drops keep) plus what front_mac.m front_video_firstboot /
          front_video_rec give every Mac (full screen, MetalFX, SMAA, 16x, Accurate). The Mac App picks exactly this on this Mac: its log line
          reads "picture: Apple M6 ..., 12 GPU cores ..., screen 2560x1440 ... -> Recommended Native 2560, 3D 100%, environment shadows on,
          shadows Ultra, Frame Drops keep".
   REC75  REC with the 3D at 75%, so MetalFX does the 3D upscale: the base M chips' Recommended at a 2560-class screen (the t_picrec rows
-         "MacBook Air M1", "MacBook Air 13 M2 (8-core GPU)" and "MacBook Air 13 M3 (8-core GPU)"). Two deliberate differences: those Airs
+         "MacBook Air M1, 1280 x 800" and the M2 and M3 13-inch 8-core rows at 1280 x 832). Two deliberate differences: those Airs
          are 16:10 (2560 x 1600 / 1664), and REC75 keeps 2560 x 1440 so it compares with REC; and their Frame Drops default is lower (q3d 0),
          while REC75 keeps the 3D scale fixed (DM_3D_SCALE_DYN=0), because a scale that moves can have no picture baseline.
   PHONE  the iPhone 17 Pro's Recommended, drawn by the Mac host: its native 2622 x 1206, 3D 75% with MetalFX (front_ios.m front_video_firstboot),
