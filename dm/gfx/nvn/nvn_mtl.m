@@ -4702,9 +4702,11 @@ static int bloomq_capture(void) {
 }
 // B0 was never drawn while bloom 1/4 held the chain (its cutoff was skipped and its pending clear dropped): when the chain aborts or is left in the middle,
 // clear that level to black so the draws that still read B0 (the rest of the game's chain at state 0, the apply) read no bloom instead of undefined memory.
-// Only a texture that still exists is cleared (serial_get, not tex_mtl, which would create one for a B0 released since, e.g. by a resolution change)
-static void bloomq_clear_b0(const tex_t *b0, int lv, int sl) {
-    __unsafe_unretained id o = serial_get(b0->serial); id<MTLTexture> t = [o conformsToProtocol:@protocol(MTLTexture)] ? (id<MTLTexture>)o : nil;
+// live = 1: B0 is a target of this frame's command stream, so it is made if it does not exist yet (tex_mtl), as its next reader would make it, uninitialised.
+// live = 0 (a chain left at a frame boundary): only a texture that still exists is cleared (serial_get): tex_mtl would create one for a B0 released since,
+// e.g. by a resolution change, and a B0 never made was never read
+static void bloomq_clear_b0(const tex_t *b0, int lv, int sl, int live) {
+    __unsafe_unretained id o = live ? nil : serial_get(b0->serial); id<MTLTexture> t = live ? tex_mtl(b0) : [o conformsToProtocol:@protocol(MTLTexture)] ? (id<MTLTexture>)o : nil;
     if (!t || !(t.usage & MTLTextureUsageRenderTarget) || (NSUInteger)lv >= t.mipmapLevelCount || (NSUInteger)sl >= (t.textureType == MTLTextureType2DArray ? t.arrayLength : 1)) return;
     zskip_del(b0->serial); rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     RPD *rp = [RPD new]; rp.colorAttachments[0].texture = t; rp.colorAttachments[0].level = lv; rp.colorAttachments[0].slice = sl;
@@ -4729,7 +4731,7 @@ static void bloomq_summary(uint64_t f, int force) {
 static void bloomq_abort(int id, const char *why) {
     if (id == 61) g_bloomq_stat.ab61++; else if (id == 62) g_bloomq_stat.ab62++; else g_bloomq_stat.ab63++;
     RED_ONCE(id, "bloom 1/4: %s; B0 ser=%llu cleared to black, this frame has no bloom (first case, frame %llu)", why, (unsigned long long)g_bloomq.b0_ser, (unsigned long long)atomic_load(&g_cur_frame));
-    bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl); bloomq_reset();
+    bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl, 1); bloomq_reset();
 }
 // ---------- 拖货跟手图：商人货架上的货没有「拿起」态，拖动时由回放层把「画这件货图标的那次绘制」在同一趟末尾平移到手指处再画一遍 ----------
 // 界面那一趟每个矩形是一次 4 顶点绘制（顶点 20 字节：位置 3 浮点 + 贴图坐标 2 浮点，位置经顶点常量 0 号的矩阵到裁剪坐标）。
@@ -4882,7 +4884,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         // A new frame (checked here, where every chain draw passes, so the reset still comes before any chain draw of the new frame and no clear is encoded during a
         // deferred replay): a chain left in the middle leaves B0 undefined for whatever still reads it, so clear it
         uint64_t f_ = atomic_load(&g_cur_frame);
-        if (bloomq_frame != f_) { bloomq_frame = f_; if (g_bloomq.state) { g_bloomq_stat.midchain++; bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl); } bloomq_reset(); bloomq_summary(f_, 0); }
+        if (bloomq_frame != f_) { bloomq_frame = f_; if (g_bloomq.state) { g_bloomq_stat.midchain++; bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl, 0); } bloomq_reset(); bloomq_summary(f_, 0); }
         NvShader *f = pr->sh[1]; uint64_t tgt = 0; int lv = 0, sl = 0;
         if (!strncmp(f->key, "2938a5b71b8e21b2", 16)) {
             int had = g_bloomq.state, engage = 0; tex_t pb0 = g_bloomq.b0_tex; int plv = g_bloomq.b0_lv, psl = g_bloomq.b0_sl;
@@ -4910,10 +4912,12 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
                             MLOG("bloom 1/4: the cutoff draws a %.0fx%.0f viewport at %.0f,%.0f (scissor %s) into a %ux%u target: not engaged, the game's own chain runs (first case, frame %llu)",
                                  S.has_vp ? S.vp[0][2] : (float)W, S.has_vp ? S.vp[0][3] : (float)H, S.has_vp ? S.vp[0][0] : 0.0f, S.has_vp ? S.vp[0][1] : 0.0f, sc, W, H, (unsigned long long)f_); } }
                 }
-                if (engage) { id<MTLTexture> b0t = tex_mtl(R.rt.color[0]); if (!b0t || !bloomq_pso(b0t.pixelFormat)) { engage = 0; g_bloomq_stat.pso++; } }   // the capture pipeline is not ready (or broken): the game's chain runs
+                // The capture pipeline must be ready (or it is broken): otherwise the game's chain runs. The format comes from B0's description, not tex_mtl:
+                // under bloom 1/4 B0 is never drawn, and looking it up would allocate it
+                if (engage) { uint32_t pf = 0; uint8_t swz[4]; if (!nvn_fmt_to_mtl(R.rt.color[0]->d.format, &pf, swz) || !pf || !bloomq_pso((MTLPixelFormat)pf)) { engage = 0; g_bloomq_stat.pso++; } }
             }
             // The previous chain's B0 stays undefined unless this cutoff engages again on the very same level
-            if (had && !(engage && pb0.serial == R.rt.color[0]->serial && plv == lv && psl == sl)) bloomq_clear_b0(&pb0, plv, psl);
+            if (had && !(engage && pb0.serial == R.rt.color[0]->serial && plv == lv && psl == sl)) bloomq_clear_b0(&pb0, plv, psl, 1);
             if (engage) {
                 g_bloomq.s_tex = st; g_bloomq.s_h = h; g_bloomq.s_ser = st.serial; g_bloomq.b0_ser = tgt; g_bloomq.b0_tex = *R.rt.color[0]; g_bloomq.b0_lv = lv; g_bloomq.b0_sl = sl;
                 g_bloomq.coeff_g = c1[0]; g_bloomq.coeff_b = c1[1]; g_bloomq.state = 1;
