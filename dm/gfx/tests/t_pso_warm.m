@@ -3,7 +3,7 @@
 // where the user manifest lives (DM_PSO_USER, off, beside DM_SAVE), which manifests the warm-up reads (DM_PSO_MANIFEST off / path / default), and
 // the user manifest's dedupe treating an old raw row and its normalised form as one; the warm-up plan (priority order, background marker, dedupe
 // across files, a file of another layout), the warm-up end to end with every shader missing (counters end at 0, one done line, background QoS) for
-// each source combination, marker position and worker count, and the two waits.
+// each source combination, marker position and worker count, and the two waits; host pass builds counted apart from the game's pipelines.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -234,6 +234,19 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
         e2e("(h) both, 16 workers asked (2 used)", tmp, seed5, user4, "16", 9, 1, QOS_CLASS_UTILITY, 0);
         CHECK(g_warm_workers == 2, "an out-of-range DM_PSO_WARM_WORKERS gives 2 workers (%d)", g_warm_workers);
         g_msl_dir = keep_msl; unsetenv("DM_PSO_USER"); unsetenv("DM_PSO_WARM_WORKERS"); g_shmap_path = nil;
+    }
+
+    // Host pass builds are counted apart from the game's shaders and pipelines
+    {
+        uint64_t l0, p0, l1, p1, hl0, hp0, hln0, hpn0, hl1, hp1, hln1, hpn1, hl2, hp2, hln2, hpn2;
+        mtl_create_stats(&l0, &p0); mtl_host_create_stats(&hl0, &hp0, &hln0, &hpn0);
+        host_built(1, bp_now() - 5000000, "test");
+        mtl_create_stats(&l1, &p1); mtl_host_create_stats(&hl1, &hp1, &hln1, &hpn1);
+        CHECK(hp1 - hp0 == 1 && hpn1 - hpn0 >= 5000000 && hl1 == hl0 && l1 == l0 && p1 == p0, "a host pipeline build: host pipelines +%llu (%.1f ms), host libraries +%llu, game counters +%llu / +%llu",
+              (unsigned long long)(hp1 - hp0), (hpn1 - hpn0) / 1e6, (unsigned long long)(hl1 - hl0), (unsigned long long)(l1 - l0), (unsigned long long)(p1 - p0));
+        host_built(0, bp_now(), "test");
+        mtl_host_create_stats(&hl2, &hp2, &hln2, &hpn2);
+        CHECK(hl2 - hl1 == 1 && hp2 == hp1, "a host library build: host libraries +%llu", (unsigned long long)(hl2 - hl1));
     }
 
     // The two waits, counters set directly

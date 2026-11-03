@@ -727,6 +727,15 @@ static uint64_t g_bp_t0;   // 进程启动（本模块装入）时刻 | Time of 
 __attribute__((constructor)) static void bp_t0(void) { g_bp_t0 = bp_now(); }
 static int bootprof(void) { static int v = -1; if (v < 0) v = getenv("DM_BOOTPROF") != NULL; return v; }
 static uint64_t g_bp_lib_n, g_bp_lib_ns, g_bp_pso_n, g_bp_pso_ns, g_bp_up_bytes, g_bp_first_present;
+// The host's own passes (texture helpers, present, MetalFX, bloom, the brightness LUT) build their libraries and pipelines at first use, on the
+// submit or present thread, outside the warm-up. They are counted here, apart from the game's shaders and pipelines (g_bp_lib_* / g_bp_pso_*,
+// @lib_new / @pso_new), which keep their meaning; a build over 4 ms is logged, so a cold run shows which one stalls a frame
+static _Atomic uint64_t g_bp_host_lib_n, g_bp_host_lib_ns, g_bp_host_pso_n, g_bp_host_pso_ns;
+static void host_built(int pso, uint64_t t0, const char *what) {
+    uint64_t dt = bp_now() - t0;
+    if (pso) { g_bp_host_pso_n++; g_bp_host_pso_ns += dt; } else { g_bp_host_lib_n++; g_bp_host_lib_ns += dt; }
+    if (dt > 4000000) MLOG("host %s %s built in %.1f ms (%s)", what, pso ? "pipeline" : "library", dt / 1e6, on_sub_thread() ? "submit thread" : "another thread");
+}
 static uint64_t g_up_total_ns;   // 上传累计耗时（与逐帧 @upload_ms 同源） | Cumulative upload time (same source as the per-frame @upload_ms)
 // ---------- 按帧归集 GPU 时间 ----------
 // ---------- Per-frame GPU time aggregation ----------
@@ -1088,8 +1097,8 @@ static int bcd_fmt(uint32_t f) {   // NVN 格式 → bcd 的 fmt；0 = GPU 不�
 }
 static id<MTLComputePipelineState> bcd_pso(void) {
     static id<MTLComputePipelineState> ps; static int failed;
-    if (!ps && !failed) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_bcd_msl) options:nil error:&e]; id<MTLFunction> fn = lib ? [lib newFunctionWithName:@"bcd"] : nil;
-        ps = fn ? [g_dev newComputePipelineStateWithFunction:fn error:&e] : nil;
+    if (!ps && !failed) { NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_bcd_msl) options:nil error:&e]; host_built(0, t0, "bcd"); id<MTLFunction> fn = lib ? [lib newFunctionWithName:@"bcd"] : nil;
+        t0 = bp_now(); ps = fn ? [g_dev newComputePipelineStateWithFunction:fn error:&e] : nil; if (ps) host_built(1, t0, "bcd");
         if (!ps) { failed = 1; MLOG("【红】无 BC：GPU 解压管线建不出 %s（退回 CPU 解压）", e.localizedDescription.UTF8String); } else MLOG("无 BC：BC1–5 改在 GPU 上解压"); }
     return ps;
 }
@@ -1248,6 +1257,7 @@ static id<MTLTexture> pkg_upload(const tex_t *t, uint64_t *stamp) {
 uint64_t mtl_upload_ns_take(void) { return atomic_exchange(&g_upload_ns, 0); }
 uint64_t mtl_upload_gpu_ns_take(void) { return atomic_exchange(&g_upload_gpu_ns, 0); }
 void mtl_create_stats(uint64_t *lib, uint64_t *pso) { *lib = g_bp_lib_n; *pso = g_bp_pso_n; }
+void mtl_host_create_stats(uint64_t *lib, uint64_t *pso, uint64_t *lib_ns, uint64_t *pso_ns) { *lib = g_bp_host_lib_n; *pso = g_bp_host_pso_n; *lib_ns = g_bp_host_lib_ns; *pso_ns = g_bp_host_pso_ns; }
 void mtl_create_ns(uint64_t *lib_ns, uint64_t *pso_ns) { *lib_ns = g_bp_lib_ns; *pso_ns = g_bp_pso_ns; }   // 同步现建着色器库 / 管线的累计耗时（长帧日志按帧取差） | Cumulative time spent synchronously creating shader libraries / pipelines on the spot (the long-frame log takes the per-frame difference)
 uint64_t mtl_upload_bytes(void) { return g_bp_up_bytes; }   // 贴图上传累计字节 | Cumulative texture upload bytes
 static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp) {
@@ -5534,8 +5544,8 @@ static int copy_t2t_astc(id<MTLTexture> s, id<MTLTexture> d, unsigned sl, unsign
     static int failed; static id<MTLComputePipelineState> ps;
     static id<MTL4ArgumentTable> at;
     if (failed) return 0;
-    if (!ps) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_a2u_msl) options:nil error:&e]; id<MTLFunction> f = lib ? [lib newFunctionWithName:@"a2u"] : nil;
-        ps = f ? [g_dev newComputePipelineStateWithFunction:f error:&e] : nil;
+    if (!ps) { NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_a2u_msl) options:nil error:&e]; host_built(0, t0, "a2u"); id<MTLFunction> f = lib ? [lib newFunctionWithName:@"a2u"] : nil;
+        t0 = bp_now(); ps = f ? [g_dev newComputePipelineStateWithFunction:f error:&e] : nil; if (ps) host_built(1, t0, "a2u");
         MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxBufferBindCount = 1; at = [g_dev newArgumentTableWithDescriptor:ad error:&e];
         if (!ps M4_ONLY(|| !at)) { failed = 1; MLOG("【红】无 BC：ASTC → 解压格式拷贝的计算管线建不出 %s", e.localizedDescription.UTF8String); return 0; } }
     MTLTextureType tt = MTLTextureType2D;
@@ -6693,10 +6703,11 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     if (bootprof() && (g_present_n == 1 || g_present_n % 120 == 0)) {
         if (g_present_n == 1) g_bp_first_present = bp_now() - g_bp_t0;
         MLOG("[bootprof] t=%.3f s 出图第 %llu 次：metallib 载入 %llu 个 / %.1f ms；管线创建 %llu 个 / %.1f ms（均在提交线程同步）；预热领用 着色器 %llu / 渲染管线 %llu / 计算管线 %llu；"
-             "贴图上传 %.1f MB / %llu 张首传 + %llu 次重传 / %.1f ms；首帧出图 t=%.3f s；并行预编 丢出 %llu / 领用 %llu / 过期回收 %llu / 表满没丢 %llu / 在表 %d；predictor %s, merged-draw kicks %llu", (bp_now() - g_bp_t0) / 1e9, g_present_n,
+             "贴图上传 %.1f MB / %llu 张首传 + %llu 次重传 / %.1f ms；首帧出图 t=%.3f s；并行预编 丢出 %llu / 领用 %llu / 过期回收 %llu / 表满没丢 %llu / 在表 %d；predictor %s, merged-draw kicks %llu；host builds lib %llu / pso %llu / %.1f ms", (bp_now() - g_bp_t0) / 1e9, g_present_n,
              g_bp_lib_n, g_bp_lib_ns / 1e6, g_bp_pso_n, g_bp_pso_ns / 1e6, g_warm_claim_shaders, g_warm_claim_rps, g_warm_claim_cps,
              g_bp_up_bytes / 1048576.0, g_pkg_uploads, g_pkg_reuploads,
-             g_up_total_ns / 1e6, g_bp_first_present / 1e9, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full, g_pp_live, g_pp_mode == 0 || g_pp_off ? "off" : "on", g_pp_merged);
+             g_up_total_ns / 1e6, g_bp_first_present / 1e9, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full, g_pp_live, g_pp_mode == 0 || g_pp_off ? "off" : "on", g_pp_merged,
+             (unsigned long long)g_bp_host_lib_n, (unsigned long long)g_bp_host_pso_n, (g_bp_host_lib_ns + g_bp_host_pso_ns) / 1e6);
     }
     PD("X ser=%llu", t->serial);
     id<MTLTexture> src = tex_mtl(t);
