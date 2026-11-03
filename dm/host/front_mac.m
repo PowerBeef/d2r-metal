@@ -183,7 +183,8 @@ int front_video_firstboot(int rec[3], int cur[3]) {
 }
 // Recommendations for the picture keys after the first three (asked by dm_video.c together with front_video_firstboot): SMAA, 16x and Accurate colour,
 // and from dm_picrec.c environment shadows, the shadow map and the 3D Resolution (an iPhone chip keeps the phone's shadows: none, the Standard map);
-// cost: docs/MAC.md. 0 on the CLI host and test copies (dm_picrec_real), so automated runs, golden baselines and benchmarks stay as they were
+// cost: docs/MAC.md. 0 on the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1 (dm_picrec_real), so automated runs, golden baselines and
+// benchmarks stay as they were
 int front_video_rec(const char *key) {
     if (!real_recommendation()) return 0;
     if (!strcmp(key, "aa")) return 1;
@@ -195,10 +196,10 @@ int front_video_rec(const char *key) {
     return -1;
 }
 // Frame Drops' default (dm_custom.c q3d): the recommendation's choice (lower when the light picture is needed or the choice uses more than 85% of the
-// estimated capacity); -1 on the CLI host and test copies (k_def, keep)
+// estimated capacity); -1 on the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1 (k_def, keep)
 int front_q3d_default(void) { return real_recommendation() ? mac_rec().q3d : -1; }
 // Which machine Recommended was worked out for (dm_video.c rec_id: works it out again at launch when the main screen or the GPU changed); -1 on the CLI
-// host and test copies, whose original look does not depend on the machine
+// host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1, whose original look does not depend on the machine
 int front_video_rec_id(void) { if (!real_recommendation()) return -1; (void)mac_rec(); return g_mac_rec_id; }
 // 「色彩」：准确 = 层标 sRGB（游戏写的就是 sRGB 编码的字节），系统把它配到屏幕的色域；鲜艳 = 不标（原先的样子：宽色域屏把 sRGB 原色当屏幕原色，偏艳）。
 // 画面字节不变（截图、比对照旧），只改合成器怎么解释。DM_COLORSPACE=srgb|none 定死（测试、对照）

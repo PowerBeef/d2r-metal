@@ -2,7 +2,8 @@
 // The Mac page has two sections: Display (Display Mode, Resolution, Color) and Graphics (Graphic Presets, 3D Resolution, Upscaling, Anti-Aliasing,
 // Anisotropic Filtering, Environment Shadows, Shadow Quality, Frame Rate, Frame Drops). The phone page (DM_PHONE, overlay DM_OVERLAY_IOS) has the Graphics
 // section only: no Display Mode or Resolution (phones render at the screen's native size), and its 3D Resolution is the res row.
-// Keys, saved by name (new keys go at the end); value 0 is always the original look, which the CLI host and Mac test copies keep:
+// Keys, saved by name (new keys go at the end); value 0 is always the original look, which the CLI host and Mac test copies
+// (without DM_TEST_VIDEO_FIRSTBOOT=1) keep:
 //   mode   0 windowed / 1 full screen (Mac). Switched at once on Apply; the menu and ⌃⌘F write it back (dm_video_fullscreen_note)
 //   res    Mac: the output width, 0 = 1600 / 1 = 1920 / 2 = 2560 / 3 = Native (the main screen's backing-store width, front_mac.m native_w), at the next
 //          launch. Phones: the 3D resolution, stored 0..4 = 75 / 85 / 100 / 67 / 50 % (the first three are the oldest values) and listed 50 .. 100 %
@@ -15,10 +16,10 @@
 //   envsh  environment shadows; shq the shadow map, 0 Standard 2100 / 1 High 3072 / 2 Ultra 4096 texels. Both are latched at launch, because every guest
 //          thread gets them through thread.c's KESHADOW and KSHSIZE slots (dm_video_env_shadows / dm_video_shadow_size); a change shows the restart hint
 // Recommended: rec_<key> holds the recommendation, rec_v its version (REC_V) and rec_id the machine it was worked out for (front_video_rec_id: the Mac
-// App's GPU and main screen; none on iOS, the CLI host and test copies). It is worked out (front_video_firstboot for the first three keys, front_video_rec
-// for the others) on first boot, for a missing or out-of-range key (only that key is filled), and when rec_v is older or rec_id differs (a move): a player
-// still on Recommended moves with it, changed settings stay. A file that cannot be read, or that a newer version wrote, is not rewritten at load; lines
-// with a key this build does not know are kept, and lines longer than 62 characters are skipped.
+// App's GPU and main screen; none on iOS, the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1). It is worked out (front_video_firstboot for
+// the first three keys, front_video_rec for the others) on first boot, for a missing or out-of-range key (only that key is filled), and when rec_v is
+// older or rec_id differs (a move): a player still on Recommended moves with it, changed settings stay. A file that cannot be read, or that a newer
+// version wrote, is not rewritten at load; lines with a key this build does not know are kept, and lines longer than 62 characters are skipped.
 // Display preferences (pref_key: Display Mode, and Color on the Mac) never decide whether the picture is on Recommended: first launch and Default set
 // them, the Graphic Presets row leaves them alone, and a move changes one only while it still equals its old recommendation.
 // Graphic Presets is derived: the preset the player last picked while the values still match it, else Recommended, Performance or Quality (tier_of),
@@ -83,7 +84,7 @@ __attribute__((weak)) int front_video_mfx_ok(void) { return 0; }
 __attribute__((weak)) int front_video_rec(const char *key) { (void)key; return -1; }   // the recommendation for the keys after front_video_firstboot's three; -1 = none (0, the old look)
 __attribute__((weak)) void front_video_color(int accurate) { (void)accurate; }   // Color applied, or Accurate read at load
 // Which machine the recommendation is worked out for (front_mac.m: dm_picrec_id of the GPU and the main screen); -1 = the recommendation does not depend on
-// the machine (iOS, the CLI host, test copies)
+// the machine (iOS, the CLI host, test copies without DM_TEST_VIDEO_FIRSTBOOT=1)
 __attribute__((weak)) int front_video_rec_id(void) { return -1; }
 
 static const char *vals_str(const int *v) {   // "mode=1 res=1 ...": for logs (static buffer, not thread-safe; only used under g_mu or at launch)
