@@ -165,7 +165,8 @@ int mtl_fps_target(void);
 int mtl_link_active(void);
 int mtl_link_wait_tick(uint64_t timeout_ns);
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns);   // the same wait in the link's own ticks
-int mtl_link_rate(void);                                    // 120, 60, or 30 in power-saving mode
+int mtl_link_rate(void);                                    // the rate the link delivers, measured from its target timestamps; the requested rate until 8 ticks are seen
+int mtl_link_rate_requested(void);                          // the rate the link was asked for: 120 (DM_PRESENT_LINK=2), the screen's tier at or above 60, or the power saver's
 double mtl_presented_time(uint64_t n);
    // 第 n 次出图（从 1 计）的实际呈现时刻（秒）；0 = 未就绪，−1 = 被丢弃
    // Actual presentation time (seconds) of the n-th present (counted from 1); 0 = not ready, −1 = dropped

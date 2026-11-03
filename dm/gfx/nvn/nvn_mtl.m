@@ -7153,6 +7153,20 @@ static int g_rescue_mode; static uint64_t g_rescue_back_at, g_rescue_back_ns = 3
 // but it is not counted as stuck and no failure is reported; the stall is measured from the later of "the most recent callback / the most recent activation" (A16 logs: 8–17 seconds inactive and 17 seconds in the background were both reported as 「前台卡住」(stuck in foreground))
 __attribute__((weak)) int dm_focus_now(void) { return 1; }   // 宿主 hle_oe.c 提供强定义；图形单测不链宿主时视为一直激活 | The host's hle_oe.c provides the strong definition; when graphics unit tests do not link the host it is treated as always active
 __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
+// The rate the link really delivers, measured from its target timestamps (all under g_link_mu): the system may run a link at another rate than
+// the one asked for (a 120 Hz request delivered at 60 Hz, a 60 Hz request on a 72 Hz panel). The median of the last 8 tick intervals, so one late
+// or early tick does not move it; gaps of 50 ms or more (a pause, a stall) are not intervals. Reset whenever the requested range changes
+static double g_link_prev_ts; static uint64_t g_link_dt[8]; static unsigned g_link_dt_n; static int g_link_rate_meas;
+static int u64cmp(const void *a, const void *b) { uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b; return (x > y) - (x < y); }
+static void link_tick_note(double ts) {   // ts: the tick's target presentation time (s); the caller holds g_link_mu
+    double d = ts - g_link_prev_ts;
+    if (g_link_prev_ts > 0 && d > 0 && d < 0.05) {
+        g_link_dt[g_link_dt_n++ % 8] = (uint64_t)(d * 1e9);
+        if (g_link_dt_n >= 8) { uint64_t v[8]; memcpy(v, g_link_dt, sizeof v); qsort(v, 8, sizeof *v, u64cmp); double med = (v[3] + v[4]) / 2.0; if (med > 0) g_link_rate_meas = (int)(1e9 / med + 0.5); }
+    }
+    g_link_prev_ts = ts;
+}
+static void link_rate_reset(void) { pthread_mutex_lock(&g_link_mu); g_link_prev_ts = 0; g_link_dt_n = 0; g_link_rate_meas = 0; pthread_mutex_unlock(&g_link_mu); }
 @implementation NvMetalDisplayLinkDelegate
 - (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update {
     (void)link;
@@ -7163,6 +7177,7 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
     pthread_mutex_lock(&g_link_mu);
     g_link_tick_ns = now_ns();
     g_link_tick_n++;
+    link_tick_note(update.targetPresentationTimestamp);
     pthread_cond_broadcast(&g_link_cv);
     pthread_mutex_unlock(&g_link_mu);
     pthread_mutex_lock(&g_pq_mu);
@@ -7201,7 +7216,7 @@ static void *link_main(void *arg) {   // 显示节拍线程：切到节拍模式
     pthread_mutex_lock(&g_pq_mu); g_link_owns_layer = 1; while (g_classic_busy) pthread_cond_wait(&g_pq_cv, &g_pq_mu); pthread_mutex_unlock(&g_pq_mu);   // 等出图线程手上那一帧交完 | Wait for the present thread to finish handing over the frame it holds
     NvMetalDisplayLinkDelegate *delegate = [NvMetalDisplayLinkDelegate new];
     CAMetalDisplayLink *link = [[CAMetalDisplayLink alloc] initWithMetalLayer:layer];
-    link.preferredFrameRateRange = link_range(g_link_mode);
+    link.preferredFrameRateRange = link_range(g_link_mode); link_rate_reset();
     link.preferredFrameLatency = g_present_latency;
     link.delegate = delegate;
     link.paused = atomic_load(&g_present_inactive) != 0;   // a link made while the shell is inactive (rescue expiry, a mode switch) starts paused, as mtl_present_inactive left the old one
@@ -7221,7 +7236,7 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
     if (want && mtl_fps_target() == 30) want = 3;   // 省电模式：显示节拍 30 Hz（按屏幕刷新率取整除档） | Power saving mode: display pacing 30 Hz (evenly dividing tier by screen refresh rate)
     if (want == applied && want && want != 2 && g_link) {   // 窗口换了屏 / 屏幕改了刷新率：节拍跟着换到新的整除档 | Window moved to another screen / screen refresh rate changed: pacing switches to the new evenly dividing tier
         double hz = mtl_pace_hz();
-        if (hz != applied_hz) { CAMetalDisplayLink *link = g_link; link.preferredFrameRateRange = link_range(want);
+        if (hz != applied_hz) { CAMetalDisplayLink *link = g_link; link.preferredFrameRateRange = link_range(want); link_rate_reset();
             if (applied_hz) MLOG("出图节拍换档 %.2f → %.2f Hz（屏幕刷新率 %.2f Hz，帧 %llu）", applied_hz, hz, mtl_display_refresh(), (unsigned long long)atomic_load(&g_cur_frame));
             applied_hz = hz; }
         return;
@@ -7235,7 +7250,7 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
         return;   // 节拍对象在新线程里建，下一帧再对齐 | The display link object is created on a new thread; align again next frame
     }
     CAMetalDisplayLink *link = g_link; if (!link) return;
-    if (want) link.preferredFrameRateRange = link_range(want);
+    if (want) { link.preferredFrameRateRange = link_range(want); link_rate_reset(); }
     else { CFRunLoopRef rl = g_link_rl; g_link = nil; CFRunLoopPerformBlock(rl, kCFRunLoopDefaultMode, ^{ [link invalidate]; pthread_mutex_lock(&g_pq_mu); g_link_owns_layer = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); CFRunLoopStop(rl); }); CFRunLoopWakeUp(rl); }
     MLOG("出图节拍模式 %d → %d（帧 %llu）", applied, want, (unsigned long long)atomic_load(&g_cur_frame));
     applied = want;
@@ -7385,10 +7400,17 @@ int mtl_link_active(void) { return link_on(); }
 double mtl_link_tick_age_ms(void) { uint64_t t = __atomic_load_n(&g_link_tick_ns, __ATOMIC_RELAXED); return t ? (now_ns() - t) / 1e6 : -1; }
 void mtl_link_pause(int on) { CAMetalDisplayLink *l = g_link; if (l) l.paused = on != 0; }   // 测试用（DM_TEST_BG）：模仿系统在后台停掉节拍回调 | For testing (DM_TEST_BG): imitates the system stopping the display-link callback in the background
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns);
-// The display link's rate: 120 Hz (DM_PRESENT_LINK=2), 60, or 30 in power-saving mode
-int mtl_link_rate(void) { return g_link_mode == 3 ? 30 : g_link_mode == 2 ? 120 : 60; }
-// One game frame at 60 Hz: one tick of a 60 Hz link, two of a 120 Hz link (the game still presents 60 frames)
-int mtl_link_wait_tick(uint64_t timeout_ns) { return mtl_link_wait_ticks(g_dm_present_link == 2 ? 2 : 1, timeout_ns); }
+// The rate the display link was asked for: 120 Hz (DM_PRESENT_LINK=2), the screen's even fraction at or above 60 (dm_pace_hz), or the power
+// saver's rate (dm_eco_hz)
+int mtl_link_rate_requested(void) {
+    int m = g_link_mode; if (m == 2) return 120;
+    double r = mtl_display_refresh(); return (int)((m == 3 ? dm_eco_hz(r) : dm_pace_hz(r, 60)) + 0.5);
+}
+// The rate the display link delivers, measured from its target timestamps (link_tick_note); the requested rate until 8 ticks are seen
+int mtl_link_rate(void) { pthread_mutex_lock(&g_link_mu); int m = g_link_rate_meas; pthread_mutex_unlock(&g_link_mu); return m > 0 ? m : mtl_link_rate_requested(); }
+// One game frame at 60 Hz: one tick of the link, or two in the 120 Hz test mode (DM_PRESENT_LINK=2) when the link really delivers 90 Hz or more.
+// A 120 Hz request the system delivers at 60 Hz then gives 60 frames, not 30; delivered at 80 Hz this opt-in mode gives 80
+int mtl_link_wait_tick(uint64_t timeout_ns) { int rate = mtl_link_rate(); return mtl_link_wait_ticks(g_dm_present_link == 2 && rate >= 90 ? 2 : 1, timeout_ns); }
 // The same wait counted in the link's own ticks: one tick per frame lets DM_PRESENT_HZ=120 reach 120 frames on a 120 Hz link (hle_nvn.c link_wait).
 // Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds).
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns) {
