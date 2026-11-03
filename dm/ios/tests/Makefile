@@ -58,6 +58,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_vkbd 
 	./t_joy_travel
 	./t_native_art
 	python3 test_slowframe.py
+	python3 test_s3_steps.py
 	python3 test_soak_report.py
 	python3 test_native_art_capture.py
 	python3 test_touch_layout_options.py
