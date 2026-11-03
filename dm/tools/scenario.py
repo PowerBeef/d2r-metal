@@ -661,8 +661,9 @@ class Runner:
         t0 = time.time(); fail: dict[str, Any] | None = None; name = self.meta['name']; unsupported = ''
         self.say(f'场景 | scenario {name}（{self.backend.name}，{len(self.steps)} 步 | steps）→ {self.run}')
         if self.meta['schemes'] and self.scheme not in self.meta['schemes']:
-            self.say(f"SCENARIO {name} SKIP not written for the {self.scheme} scheme (its schemes: {','.join(self.meta['schemes'])})")
-            return dict(name=name, verdict='SKIP', backend=self.backend.name, dir=self.run), 0
+            line = f"SCENARIO {name} SKIP not written for the {self.scheme} scheme (its schemes: {','.join(self.meta['schemes'])})"
+            self.say(line)
+            return dict(name=name, verdict='SKIP', backend=self.backend.name, dir=self.run, line=line), 0
         if self.meta['requires'] and self.backend.name not in self.meta['requires']:
             line = f"SCENARIO {name} SKIP 只在 {','.join(self.meta['requires'])} 上跑 | only runs on {','.join(self.meta['requires'])}"
             self.say(line)
