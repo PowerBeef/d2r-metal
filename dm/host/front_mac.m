@@ -276,7 +276,7 @@ static void app_quit(const char *why) {   // 主线程 | main thread
 //   minimizing temporarily makes the window minimizable (the game window is not by itself);
 // - cover / uncover (tests): an opaque window over the whole game window and away again, as DM_TEST_COVER does, so the occlusion handling below runs;
 // - link_inactive / link_active (tests): what iOS does on resign / become active, on the Mac: the present link paused (mtl_present_inactive) and focus 2,
-//   then resumed with focus 1, for the Frame Drops checks;
+//   then resumed with focus 1, for the Frame Drops checks; link_inactive fails (【红】 log) when no present link drives presents;
 // - resign / active are not supported (on the Mac, focus is lost by another window taking it).
 // 测试用：给自己发一次系统的「退出」Apple 事件（同程序坞「退出」走的那条，见 quitEvent:reply:） | for tests: send ourselves the system "quit" Apple event (the same path as Quit in the Dock, see quitEvent:reply:)
 static void send_quit_event(void) {
@@ -298,10 +298,15 @@ static int ctl_app(const char *w) {
     if (!strcmp(w, "cover") || !strcmp(w, "uncover")) { int on = !strcmp(w, "cover");
         dispatch_sync(dispatch_get_main_queue(), ^{ test_cover(on); LOG("control port: test cover %s (the game window %s the key window)", on ? "on" : "off", g_win.isKeyWindow ? "is" : "is not"); });
         return 0; }
-    if (!strcmp(w, "link_inactive") || !strcmp(w, "link_active")) { int on = !strcmp(w, "link_inactive"); void mtl_present_inactive(int on);
-        dispatch_sync(dispatch_get_main_queue(), ^{ mtl_present_inactive(on); dm_focus_set(on ? 2 : 1);
+    if (!strcmp(w, "link_inactive") || !strcmp(w, "link_active")) { int on = !strcmp(w, "link_inactive"); void mtl_present_inactive(int on); int mtl_link_active(void);
+        __block int ok = 1;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            // With no present link driving presents (DM_PRESENT_LINK=0, no window, a stall rescue) there is nothing to pause: presents would go on,
+            // and a test that expects nothing on screen would pass for the wrong reason, so the verb fails
+            if (on && !mtl_link_active()) { ok = 0; LOG("【红】control port: link_inactive: no present link drives presents (DM_PRESENT_LINK=0, no window, or a stall rescue), nothing paused"); return; }
+            mtl_present_inactive(on); dm_focus_set(on ? 2 : 1);
             LOG("control port: %s (present link %s, focus %d)", on ? "inactive as on iOS resign" : "active again", on ? "paused" : "running", on ? 2 : 1); });
-        return 0; }
+        return ok ? 0 : -1; }
     if (!strcmp(w, "terminate")) { dispatch_async(dispatch_get_main_queue(), ^{ send_quit_event(); }); return 0; }   // 同程序坞「退出」：退出 Apple 事件 → app_quit（存盘再退），不返回 | as Quit in the Dock: the quit Apple event -> app_quit (save, then quit), does not return
     if (!mini && !rest) return -1;
     dispatch_sync(dispatch_get_main_queue(), ^{ if (mini) { g_win.styleMask |= NSWindowStyleMaskMiniaturizable; [g_win miniaturize:nil]; } else [g_win deminiaturize:nil]; });

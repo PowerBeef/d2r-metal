@@ -417,7 +417,7 @@ static int cmd_app(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     const char *w = dm_ctl_get(a, "do"); (void)out; (void)cap;
     if (!w) ERR("missing do");
     if (!g_dm_ctl_app_fn) ERR("no front end to drive (headless host?)");
-    if (g_dm_ctl_app_fn(w)) ERR("'%s' is not supported by this front end", w);
+    if (g_dm_ctl_app_fn(w)) ERR("'%s' failed or is not supported by this front end (see the host log)", w);
     return 1;
 }
 
