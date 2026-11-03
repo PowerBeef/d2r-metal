@@ -1,11 +1,11 @@
 开关 | switch	读它的部分 | read by	文件 | files	文档 | documented
 DM_3D_SCALE	host	host/hle_oe.c host/tests/t_oe.c	y
-DM_3D_SCALE_DYN	host	host/hle_oe.c	-
+DM_3D_SCALE_DYN	host	host/hle_oe.c	y
 DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c host/tests/t_oe.c	-
 DM_3D_SCALE_FLOOR	host	host/hle_oe.c	-
 DM_3D_SCALE_GPU	host	host/hle_oe.c	-
 DM_3D_SCALE_GPU_FLOOR	host	host/hle_oe.c	-
-DM_AA_MODE	host	host/hle_oe.c	-
+DM_AA_MODE	host	host/hle_oe.c	y
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_padmode.c host/front_mac.m	-
@@ -154,8 +154,8 @@ DM_MEMSTAT_DUMP	host	host/memstat.m	-
 DM_MEM_CAP_GB	gfx	gfx/nvn/hle_nvn.c	-
 DM_MEM_STAT_ALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_METAL_COLD	ios	ios/Sources/main.m	-
-DM_MFX	gfx	gfx/nvn/nvn_mtl.m	-
-DM_MFX3D	gfx	gfx/nvn/nvn_mtl.m	-
+DM_MFX	gfx	gfx/nvn/nvn_mtl.m	y
+DM_MFX3D	gfx	gfx/nvn/nvn_mtl.m	y
 DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
 DM_MOVIE_FFMPEG_PREFIX	ios-tools	ios/run.sh	y
@@ -167,7 +167,7 @@ DM_NICK	host	host/hle_account.c	-
 DM_NOTARY_PROFILE	tools	tools/release_mac.sh	-
 DM_NO_PRELOAD	ios	ios/Sources/main.m	-
 DM_NSO_DIR	tools,verify	tools/product.sh tools/sampagg.py verify/regress.sh	y
-DM_NVN_ANISO	gfx	gfx/nvn/nvn_mtl.m	-
+DM_NVN_ANISO	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_BARRIER	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BF_WANT	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BINDFILT	gfx	gfx/nvn/hle_nvn.c	-
@@ -335,7 +335,7 @@ DM_TEST_FREEZE	host	host/diag.c	-
 DM_TEST_FRZ	host	host/diag.c	-
 DM_TEST_FS_FAIL	host	host/hle_fs.c host/tests/t_fs.c host/tests/t_save_hooks.c	-
 DM_TEST_FS_FAILAT	host	host/hle_fs.c host/tests/t_fs.c	y
-DM_TEST_FULLSCREEN_AT	host	host/front_mac.m	-
+DM_TEST_FULLSCREEN_AT	host	host/front_mac.m	y
 DM_TEST_GHOST	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_GIVE	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	y
 DM_TEST_GIVE_INV	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	-
@@ -397,7 +397,7 @@ DM_TEST_POS_LOG	host	host/diag.c	-
 DM_TEST_POTPICK_BURST	host	host/dm_potpick.c	-
 DM_TEST_POTPICK_FROM	host	host/dm_potpick.c	-
 DM_TEST_PRESENT_RGB	gfx	gfx/nvn/nvn_mtl.m	-
-DM_TEST_PRESENT_SHOT	host	host/front_mac.m	-
+DM_TEST_PRESENT_SHOT	host	host/front_mac.m	y
 DM_TEST_Q3D	host	host/hle_oe.c host/tests/t_oe.c	-
 DM_TEST_QUIT_AT	host	host/front_mac.m	-
 DM_TEST_RESIGN	ios	ios/Sources/front_ios.m	-
@@ -438,12 +438,12 @@ DM_TEST_UPDATE_OPEN	ios	ios/Sources/dm_update.m	-
 DM_TEST_UPDATE_URL	host,ios	host/app_mac.m ios/Sources/dm_update.m	-
 DM_TEST_UP_LEAK	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_UP_LOST	gfx	gfx/nvn/nvn_mtl.m	-
-DM_TEST_VIDEO_FIRSTBOOT	host	host/front_mac.m	-
+DM_TEST_VIDEO_FIRSTBOOT	host	host/front_mac.m	y
 DM_TEST_VOICE	host	host/dm_custom.c	-
 DM_TEST_WALK_CAL	host	host/dm_world.c	-
 DM_TEST_WARP_DIAG	host	host/diag.c	-
 DM_TEST_WINDOW_PX	ios	ios/Sources/front_ios.m	-
-DM_TEST_WINSIZE	host	host/front_mac.m	-
+DM_TEST_WINSIZE	host	host/front_mac.m	y
 DM_TEST_WORLD_GO	host	host/dm_world.c	-
 DM_TEST_WORLD_GO2	host	host/dm_world.c	-
 DM_TEST_WORLD_GO3	host	host/dm_world.c	-

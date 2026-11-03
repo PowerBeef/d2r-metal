@@ -4,10 +4,19 @@
 What goes (each regenerable or done with):
   - shader libraries of older translation-chain versions (build/cache/metal_shader_cache/b-<V>, all but the version dm/gfx/nvn/dmsh_chain.h names);
   - rewrite products of older revisions (build/cache/dm/out/<P>-<kind>, all but dm/PRODUCT's);
-  - test runs older than --days (run/<area>/<entry>: scenarios, captures, measurements, gate results, ...), never run/bench/baseline;
+  - test runs older than --days (run/<area>/<entry>: scenarios, captures, measurements, gate results, ...);
+  - bench baselines older than --days other than the current one (run/bench/baseline/<rev>; never `current` or the folder it points to);
   - local test releases older than --days (release/<version>), never the newest one, the release cache or the notes;
   - Mac App test copies older than a day (out/macapp_test, out/macapp-<name>; never out/macapp, the player's App).
 The game files (data/), the engine-analysis database (re/), the Python environment and the current outputs are never touched.
+
+Rules for run/ (rules, not a list, so a tool's new state file is safe without an edit here):
+  - only folders under run/<area>/ are run outputs; plain files directly in an area (ledgers such as run/bench/ledger.tsv, histories,
+    markers such as run/ios/device_low_battery, small logs) are never listed;
+  - an entry whose name ends in .lock or .queue (the game and device locks and their queues) is never listed, whatever its type;
+  - a `.keep` file protects what holds it: run/<area>/.keep the whole area, run/<area>/<entry>/.keep that entry,
+    run/bench/baseline/<rev>/.keep that baseline (bench.py --keep writes one into a result folder cited as evidence);
+  - a `latest` link and the folder it points to stay.
 
 Usage: workspace_prune.py [--apply] [--days N] [--quiet]
   without --apply it only lists; the last line is "PRUNE <total> GB in use, <n> GB to free"
@@ -50,6 +59,16 @@ def current_chain():
     return m.group(1) if m else None
 
 
+def old_baselines(base, days, now):   # run/bench/baseline: every <rev> folder older than days except the one `current` points to and any holding .keep
+    cur = os.path.realpath(os.path.join(base, 'current')) if os.path.islink(os.path.join(base, 'current')) else None
+    out = []
+    for n in sorted(os.listdir(base)):
+        p = os.path.join(base, n)
+        if os.path.islink(p) or not os.path.isdir(p) or os.path.realpath(p) == cur or os.path.exists(os.path.join(p, '.keep')): continue
+        if now - newest(p) > days * DAY: out.append((p, 'older bench baseline'))
+    return out
+
+
 def candidates(days):
     now = time.time(); out = []   # (path, why)
     shaders = os.path.join(ROOT, 'build', 'cache', 'metal_shader_cache'); chain = current_chain()
@@ -62,15 +81,16 @@ def candidates(days):
     if prod and os.path.isdir(products):
         for n in sorted(os.listdir(products)):
             if not n.startswith(prod + '-'): out.append((os.path.join(products, n), 'older rewrite product'))
-    run = os.path.join(ROOT, 'run'); keep = {os.path.join(run, 'bench', 'baseline')}
+    run = os.path.join(ROOT, 'run')
     if os.path.isdir(run):
         for area in sorted(os.listdir(run)):
             a = os.path.join(run, area)
-            if not os.path.isdir(a) or os.path.islink(a): continue
+            if not os.path.isdir(a) or os.path.islink(a) or os.path.exists(os.path.join(a, '.keep')): continue
             latest = os.path.realpath(os.path.join(a, 'latest')) if os.path.islink(os.path.join(a, 'latest')) else None
             for n in sorted(os.listdir(a)):
                 p = os.path.join(a, n)
-                if p in keep or os.path.realpath(p) == latest or os.path.islink(p): continue
+                if os.path.islink(p) or not os.path.isdir(p) or n.endswith(('.lock', '.queue')) or os.path.realpath(p) == latest or os.path.exists(os.path.join(p, '.keep')): continue
+                if area == 'bench' and n == 'baseline': out += old_baselines(p, days, now); continue
                 if now - newest(p) > days * DAY: out.append((p, 'test run older than %d days' % days))
     rel = os.path.join(ROOT, 'release')
     if os.path.isdir(rel):

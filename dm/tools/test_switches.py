@@ -52,5 +52,19 @@ class SwitchesTest(unittest.TestCase):
         self.assertEqual(rc, 1); self.assertIn('switches.py gen', out)
 
 
+    def test_scenario_env_lines_are_sets(self):   # a scenario's env line sets switches: one nothing reads is reported with its file and line
+        (self.root / 'verify').mkdir(exist_ok=True)
+        (self.root / 'verify/x.scn').write_text('env DM_NOT_READ=1 DM_A=2 "DM_QUOTED=a b"  # DM_IN_COMMENT=1\nlog env DM_NOT_ENV=1\nenv SCN_X=1\n', encoding='utf-8')
+        subprocess.run(['git', '-C', str(self.root), 'add', '.'], check=True)
+        sys.path.insert(0, str(TOOL.parent)); import switches   # noqa: PLC0415
+        _, sets, _ = switches.scan(str(self.root))
+        self.assertEqual(sets['DM_NOT_READ'], [('verify/x.scn', 1)]); self.assertEqual(sets['DM_QUOTED'], [('verify/x.scn', 1)])
+        self.assertNotIn('DM_IN_COMMENT', sets); self.assertNotIn('DM_NOT_ENV', sets)
+        self.run_tool('gen'); rc, out = self.run_tool('check')
+        unread = sorted(line.split()[0] for line in out.splitlines() if 'never read' in line)
+        self.assertIn('DM_NOT_READ', unread); self.assertIn('DM_QUOTED', unread); self.assertNotIn('DM_A', unread)
+        self.assertIn('dm/verify/x.scn:1', out)
+
+
 if __name__ == '__main__':
     unittest.main()

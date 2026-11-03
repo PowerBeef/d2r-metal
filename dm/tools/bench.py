@@ -7,8 +7,6 @@
 #   show <bench.json>    打印各段摘要
 #   profile <路线> [--ms 4] [--hitch-ms 25]   跑一遍并对全部客体线程采样（DM_SAMPLE=<ms>:*）：按段、按线程角色（主线程 / 任务线程 / 读写池 / 音频 / 其他）出在跑占比与最热的游戏函数
 #        （名字来自本机的引擎符号表 guestsyms.py），再把超过 --hitch-ms 的帧（nvn.tsv 的帧时间）各自那段时间里在跑的函数列出来；写 profile.json
-#   baseline save [--host 宿主]               把当前宿主（缺省本树 dm/host/dmhost）留一份作基线：$DM_ROOT/run/bench/baseline/<提交>/host/dmhost（旁边带它的着色器映射表），current 指向它
-#   regress <路线> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]   基线宿主（A）对当前宿主（B）按 ABBA 跑，各指标同 ab 判；只有「B 显著变慢」才 RED，结论记账本
 #   每遍之前看温控（Mac：pmset -g therm；过热就等，最多 --cool 秒）与游戏模式（gamepolicyctl），都记进结果；末行 RESULT {json}
 # Performance benchmark: runs a fixed route (dm/verify/bench/*.scn, scenario format, segments cut by mark) N times, reports per-segment statistics of the per-frame present intervals (DM_FRAMES), writes bench.json; A/B runs interleaved with a significance judgement, the conclusion recorded in a ledger.
 #   run <route> [--backend cli|mac-app] [--reps 3] [--env K=V ...] [--host host executable] [--out bench.json] [--cool seconds]
@@ -18,12 +16,24 @@
 #   show <bench.json>    print the per-segment summary
 #   profile <route> [--ms 4] [--hitch-ms 25]  one run with all guest threads sampled (DM_SAMPLE=<ms>:*): per segment and thread role (main / job workers / IO pool / audio / other), the running share and the hottest game functions
 #        (names from the local engine symbol table, guestsyms.py); then, for every frame longer than --hitch-ms (frame time in nvn.tsv), the functions running during it; writes profile.json
-#   baseline save [--host host]               keeps a copy of the current host (default this tree's dm/host/dmhost) as the baseline: $DM_ROOT/run/bench/baseline/<rev>/host/dmhost (with its shader map beside it), with current pointing at it
-#   regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]   baseline host (A) against the current host (B) in ABBA order, each metric judged as in ab; RED only when B is significantly slower; conclusions go to the ledger
+#   baseline save [--host host] [--name N]    keeps the current host (default this tree's dm/host/dmhost) with everything it runs on as $DM_ROOT/run/bench/baseline/<N, default the rev>/:
+#        host/dmhost and its tables, the rewrite output it was built against (product/) and its shader library (msl/b-<chain>/, APFS clones), meta.json; current points at it
+#   regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50]   baseline host (A, on its own rewrite output and shader library) against the current host (B) in ABBA order,
+#        each metric judged as in ab, then Holm-corrected over every segment x metric; RED only when B is significantly slower after Holm; conclusions go to the ledger.
+#        Refused before any run: a baseline without that snapshot is ⚪ (exit 3); --reps too few to reach significance over the comparisons is red (exit 2, it names the --reps needed).
+#        After the runs, a segment x metric that got no p (fewer than 2 runs a side with a value, e.g. present.* where the present is not measured) makes it ⚪ (exit 3), never OK; a slowdown is still red.
+#        gpu_ms is not in the defaults: on a fast Mac the GPU lowers its clock when it has room, so it is clock-scaled (--metrics gpu_ms.p50 still works)
+#   run / ab / regress --keep: a .keep file in the result folder, so workspace_prune.py never takes it
+#   {dir} in an env value (--env, --a-env, --b-env) becomes the run's own folder, e.g. DM_NVN_PASSGPU={dir}/passgpu.tsv: one file per run and variant
+#   run / ab / profile / regress --picture rec|orig|rec75|phone: the picture (dm/tools/picture.py). rec, the default, is this Mac's Recommended in full screen
+#        (cli: every picture key pinned + DM_TEST_FULLSCREEN_AT=1; mac-app: the test copy's own Recommended); orig is the host's own defaults, windowed.
+#        --env / --a-env / --b-env win over it. The picture goes into bench.json / ab.json / regress.json and the ledger's route column (<route>@<picture>)
 #   Before each run the thermal state (Mac: pmset -g therm; wait while hot, at most --cool seconds) and Game Mode (gamepolicyctl) are checked and recorded in the result; last line RESULT {json}
 import argparse
 import collections
 import datetime
+import glob
+import hashlib
 import itertools
 import json
 import math
@@ -32,6 +42,7 @@ import platform
 import random
 import re
 import shlex
+import shutil
 import statistics
 import subprocess
 import sys
@@ -41,7 +52,9 @@ from typing import Any
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import dmevents  # noqa: E402
+import picture  # noqa: E402
 import scenario  # noqa: E402
+import workspace_prune  # noqa: E402
 
 DM_ROOT = scenario.DM_ROOT
 PRESENT = ('mean_ms', 'p50_ms', 'p95_ms', 'p99_ms', 'max_ms', 'slow_share', 'fps')
@@ -96,6 +109,20 @@ def mann_whitney(a, b):
     if var <= 0: return u, 1.0
     z = (abs(u - mu) - 0.5) / math.sqrt(var)
     return u, math.erfc(z / math.sqrt(2))
+
+
+def holm(rows, alpha=0.05):
+    """Holm's step-down correction over every row that carries a p: sorted by p, the row of rank k (from 0) stays significant while p <= alpha / (m - k);
+    after the first that fails, every later one fails too. Sets row['holm'] True / False; rows without p (too few runs) are left as they are."""
+    ps = sorted((r for r in rows if isinstance(r.get('p'), (int, float))), key=lambda r: r['p']); m = len(ps); ok = True
+    for k, r in enumerate(ps):
+        ok = ok and r['p'] <= alpha / (m - k); r['holm'] = ok
+    return rows
+
+
+def min_reps(m, alpha=0.05):
+    """The fewest runs per side (2..20) at which the exact two-sided Mann-Whitney test can reach Holm's strictest level alpha / m: its smallest p is 2 / C(2n, n)."""
+    return next((n for n in range(2, 21) if 2 / math.comb(2 * n, n) <= alpha / m), 21)
 
 
 def boot_median_diff(a, b, rounds=4000, seed=7):
@@ -189,6 +216,7 @@ def metric(seg, path):
 
 
 def run_once(route, backend, out_dir, env, host, cool, mpt=False):
+    env = {k: v.replace('{dir}', out_dir) for k, v in env.items()}   # {dir} in a value = this run's own folder (DM_NVN_PASSGPU={dir}/passgpu.tsv)
     th0, waited = wait_cool(cool)
     saved = {k: os.environ.get(k) for k in list(env) + ['DM_FRAMES', 'DM_STATEREP', 'SCN_DMHOST', 'DM_NVN_TSV', 'DM_NVN_TSV_CALLS']}
     os.environ.update(env); os.environ['DM_FRAMES'] = os.path.join(out_dir, 'frames.tsv'); os.environ['DM_STATEREP'] = '1'
@@ -238,16 +266,24 @@ def parse_env(items):
     return out
 
 
+def picture_env(name, backend, user_env):
+    """The picture a run uses (dm/tools/picture.py): 'rec' (default) = this Mac's Recommended in full screen (cli: every picture key pinned +
+    DM_TEST_FULLSCREEN_AT=1; mac-app: the test copy takes its own Recommended, DM_TEST_VIDEO_FIRSTBOOT=1), rec75 / phone likewise, 'orig' = the
+    host's own defaults, windowed. The caller's env wins; it may size or switch the window itself (DM_TEST_WINSIZE / DM_TEST_FULLSCREEN_AT)."""
+    return picture.env(name, backend, user_env)
+
+
 def cmd_run(a):
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
     base = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_{stamp}')
-    env = parse_env(a.env); reps = []
+    env = picture_env(a.picture, a.backend, parse_env(a.env)); reps = []
     for i in range(a.reps):
         print(f'== 第 {i + 1}/{a.reps} 遍 | run {i + 1}/{a.reps}', flush=True)
         reps.append(run_once(a.route, a.backend, os.path.join(base, f'r{i + 1}'), env, a.host, a.cool, a.mpt))
-    res = dict(schema='bench/1', route=name, backend=a.backend, started=stamp, env=env, host=a.host, environment=environment(), reps=reps, summary=summarize(reps))
+    res = dict(schema='bench/1', route=name, backend=a.backend, picture=a.picture, started=stamp, env=env, host=a.host, environment=environment(), reps=reps, summary=summarize(reps))
     out = a.out or os.path.join(base, 'bench.json')
     with open(out, 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
+    keep(base, a)
     show(res)
     ok = all(r['ok'] for r in reps)
     print(f"BENCH {'OK' if ok else 'RED'} {name} {sum(r['ok'] for r in reps)}/{len(reps)} 遍 | runs → {out}")
@@ -265,7 +301,7 @@ def show(res):
 def cmd_ab(a):
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
     base = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_ab_{stamp}')
-    var = {'A': (parse_env([a.a_env]), a.a_host), 'B': (parse_env([a.b_env]), a.b_host)}
+    var = {'A': (picture_env(a.picture, a.backend, parse_env([a.a_env])), a.a_host), 'B': (picture_env(a.picture, a.backend, parse_env([a.b_env])), a.b_host)}
     order = ''.join('ABBA' for _ in range(math.ceil(a.reps / 2)))[:2 * a.reps]   # 每个变体 reps 遍 | reps runs per variant
     reps = {'A': [], 'B': []}
     for i, v in enumerate(order, 1):
@@ -273,11 +309,12 @@ def cmd_ab(a):
         env, host = var[v]; reps[v].append(run_once(a.route, a.backend, os.path.join(base, f'{i:02d}{v}'), env, host, a.cool))
     rows = compare(reps, a.metric)
     envinfo = environment()
-    res = dict(schema='bench-ab/1', route=name, backend=a.backend, started=stamp, order=order, a=dict(env=var['A'][0], host=a.a_host), b=dict(env=var['B'][0], host=a.b_host),
+    res = dict(schema='bench-ab/1', route=name, backend=a.backend, picture=a.picture, started=stamp, order=order, a=dict(env=var['A'][0], host=a.a_host), b=dict(env=var['B'][0], host=a.b_host),
                environment=envinfo, rows=rows, reps=reps)
     out = a.out or os.path.join(base, 'ab.json')
     with open(out, 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
-    ledger = ledger_write(stamp, envinfo, name, a.metric, a.a_env or a.a_host or '-', a.b_env or a.b_host or '-', rows)
+    keep(base, a)
+    ledger = ledger_write(stamp, envinfo, f'{name}@{a.picture}', a.metric, a.a_env or a.a_host or '-', a.b_env or a.b_host or '-', rows)
     ok = all(r['ok'] for v in reps.values() for r in v)
     print(f"BENCH-AB {'OK' if ok else 'RED'} {name} → {out}（账本 | ledger {ledger}）")
     print('RESULT ' + json.dumps(dict(name='bench-ab', verdict='OK' if ok else 'RED', route=name, rows=[{k: r.get(k) for k in ('segment', 'diff', 'ci95', 'p', 'verdict')} for r in rows], file=out), ensure_ascii=False))
@@ -309,7 +346,8 @@ def ledger_write(stamp, envinfo, name, m, a_label, b_label, rows):
         rev = envinfo['git']['rev']
         for r in rows:
             if 'diff' not in r: continue
-            f.write(f"{stamp}\t{rev}\t{name}\t{r['segment']}\t{m}\t{a_label}\t{b_label}\t{len(r['a'])}/{len(r['b'])}\t{r['median_a']:.4f}\t{r['median_b']:.4f}\t{r['diff']:+.4f}\t[{r['ci95'][0]:+.4f}, {r['ci95'][1]:+.4f}]\t{r['p']:.4f}\t{r['verdict']}\n")
+            verdict = r['verdict'] + (f" (Holm {'ok' if r['holm'] else 'n.s.'})" if 'holm' in r else '')
+            f.write(f"{stamp}\t{rev}\t{name}\t{r['segment']}\t{m}\t{a_label}\t{b_label}\t{len(r['a'])}/{len(r['b'])}\t{r['median_a']:.4f}\t{r['median_b']:.4f}\t{r['diff']:+.4f}\t[{r['ci95'][0]:+.4f}, {r['ci95'][1]:+.4f}]\t{r['p']:.4f}\t{verdict}\n")
     return ledger
 
 
@@ -372,8 +410,8 @@ def attribute(run_dir, hitch_ms):
 def cmd_profile(a):
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
     out = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_profile_{stamp}')
-    r = run_once(a.route, a.backend, out, {'DM_SAMPLE': f'{a.ms}:*'}, a.host, a.cool)
-    prof = attribute(out, a.hitch_ms); prof.update(route=name, ms=a.ms, hitch_ms=a.hitch_ms, ok=r['ok'], segments_timing=r['segments'])
+    r = run_once(a.route, a.backend, out, picture_env(a.picture, a.backend, {'DM_SAMPLE': f'{a.ms}:*'}), a.host, a.cool)
+    prof = attribute(out, a.hitch_ms); prof.update(route=name, picture=a.picture, ms=a.ms, hitch_ms=a.hitch_ms, ok=r['ok'], segments_timing=r['segments'])
     with open(os.path.join(out, 'profile.json'), 'w', encoding='utf-8') as f: json.dump(prof, f, ensure_ascii=False, indent=1)
     for seg, tab in prof['segments'].items():
         print(f'== {seg}')
@@ -394,43 +432,129 @@ def current_host():
     return h
 
 
+def clone(src, dst):
+    """Copies the folder src to dst (which must not exist): an APFS clone (cp -cR, blocks shared until either side changes), else a plain copy."""
+    if subprocess.run(['cp', '-cR', src, dst], capture_output=True, check=False).returncode == 0: return
+    shutil.rmtree(dst, ignore_errors=True); shutil.copytree(src, dst, symlinks=True)
+
+
+def snapshot(src_host, product_dir, msl_root, chain, product, d, git=None):
+    """Keeps a host with everything it runs on as baseline folder d: the host and the tables it reads beside itself (host/tables, ../gfx/nvn/*.tsv,
+    nvn_mtl.m exe_rel), the rewrite output it was built against (product/) and its shader library (msl/b-<chain>/), plus meta.json.
+    The whole snapshot is built in d.new and renamed into place at the end, so saving twice into one folder never nests a copy inside an old one.
+    Returns (ok, d or the reason); on a refusal d is left as it was."""
+    lib = os.path.join(msl_root, 'b-' + chain)
+    if not os.path.isdir(lib): return False, f'shader library {lib} is missing (./setup.sh)'
+    if not os.path.isdir(product_dir): return False, f'rewrite output {product_dir} is missing (./setup.sh)'
+    with open(src_host, 'rb') as f:
+        if chain.encode() not in f.read(): return False, 'host was built from another shader chain'
+    t = d + '.new'; shutil.rmtree(t, ignore_errors=True)
+    os.makedirs(os.path.join(t, 'host')); os.makedirs(os.path.join(t, 'gfx', 'nvn')); os.makedirs(os.path.join(t, 'msl'))
+    shutil.copy2(src_host, os.path.join(t, 'host', 'dmhost'))
+    if os.path.isdir(os.path.join(os.path.dirname(src_host), 'tables')):   # the game-derived tables it reads beside itself (dm/host/dm_tables.h)
+        shutil.copytree(os.path.join(os.path.dirname(src_host), 'tables'), os.path.join(t, 'host', 'tables'))
+    for x in glob.glob(os.path.join(os.path.dirname(src_host), '..', 'gfx', 'nvn', '*.tsv')): shutil.copy2(x, os.path.join(t, 'gfx', 'nvn', os.path.basename(x)))   # shader map, c1 list...
+    clone(product_dir, os.path.join(t, 'product')); clone(lib, os.path.join(t, 'msl', 'b-' + chain))
+    with open(src_host, 'rb') as f: sha = hashlib.sha256(f.read()).hexdigest()
+    meta = dict(rev=(git or {}).get('rev'), dirty=(git or {}).get('dirty'), product=product, chain=chain, saved=datetime.datetime.now().isoformat(timespec='seconds'), host_sha256=sha)
+    with open(os.path.join(t, 'meta.json'), 'w', encoding='utf-8') as f: json.dump(meta, f, indent=1)
+    old = d + '.old'; shutil.rmtree(old, ignore_errors=True)
+    if os.path.exists(d): os.rename(d, old)
+    os.rename(t, d); shutil.rmtree(old, ignore_errors=True)
+    return True, d
+
+
+def baseline_meta(d):
+    try:
+        with open(os.path.join(d, 'meta.json'), encoding='utf-8') as f: return json.load(f)
+    except (OSError, ValueError): return None
+
+
+def baseline_env(d):
+    """The environment that runs a kept host on its own rewrite output and shader library; None when the baseline has no such snapshot."""
+    m = baseline_meta(d)
+    if not m or not m.get('chain') or not os.path.isdir(os.path.join(d, 'product')) or not os.path.isdir(os.path.join(d, 'msl', 'b-' + m['chain'])): return None
+    return {'SCN_PRODUCT': os.path.join(d, 'product'), 'DM_MSL_DIR': os.path.join(d, 'msl')}
+
+
+def current_product():
+    with open(os.path.join(scenario.DM, 'PRODUCT'), encoding='utf-8') as f: return f.read().strip()
+
+
 def cmd_baseline(a):
+    if a.name and (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', a.name) or a.name == 'current' or a.name.endswith(('.new', '.old'))):
+        print(f'🔴 BENCH-BASELINE bad name {a.name!r} (letters, digits, . _ -; not current, not *.new / *.old)'); return 2
     src = os.path.abspath(a.host) if a.host else current_host()
-    rev = environment()['git'].get('rev') or 'unknown'; d = os.path.join(BASE, rev)
-    import shutil   # noqa: PLC0415
-    # 宿主按自己所在位置找「../gfx/nvn/」下的表（着色器映射 shader_map.tsv、c1_full.tsv…，nvn_mtl.m exe_rel）：照仓库的相对布局留一份 | the host finds the tables under "../gfx/nvn/" relative to itself (shader_map.tsv, c1_full.tsv..., nvn_mtl.m exe_rel): keep a copy in the repository's relative layout
-    os.makedirs(os.path.join(d, 'host'), exist_ok=True); os.makedirs(os.path.join(d, 'gfx', 'nvn'), exist_ok=True)
-    shutil.copy2(src, os.path.join(d, 'host', 'dmhost'))
-    if os.path.isdir(os.path.join(os.path.dirname(src), 'tables')):   # the game-derived tables it reads beside itself (dm/host/dm_tables.h)
-        shutil.copytree(os.path.join(os.path.dirname(src), 'tables'), os.path.join(d, 'host', 'tables'), dirs_exist_ok=True)
-    import glob   # noqa: PLC0415
-    for t in glob.glob(os.path.join(os.path.dirname(src), '..', 'gfx', 'nvn', '*.tsv')): shutil.copy2(t, os.path.join(d, 'gfx', 'nvn', os.path.basename(t)))   # 着色器映射、c1 清单… | shader map, c1 list...
+    git = environment()['git']; name = a.name or git.get('rev') or 'unknown'; d = os.path.join(BASE, name)
+    chain = workspace_prune.current_chain()
+    if not chain: print('🔴 BENCH-BASELINE no DMSH_CHAIN in dm/gfx/nvn/dmsh_chain.h (./setup.sh)'); return 1
+    product_dir = subprocess.run(['bash', os.path.join(scenario.DM, 'tools', 'product.sh'), 'path', 'touch'], capture_output=True, text=True, check=False).stdout.strip()
+    msl_root = os.environ.get('DM_MSL_DIR') or os.path.join(DM_ROOT, 'build', 'cache', 'metal_shader_cache')
+    os.makedirs(BASE, exist_ok=True)
+    ok, why = snapshot(src, product_dir, msl_root, chain, current_product(), d, git)
+    if not ok: print(f'🔴 BENCH-BASELINE {why}'); return 1
     cur = os.path.join(BASE, 'current')
     if os.path.lexists(cur): os.remove(cur)
-    os.symlink(rev, cur)
-    print(f'BENCH-BASELINE OK {rev} → {d}/host/dmhost'); return 0
+    os.symlink(name, cur)
+    print(f"BENCH-BASELINE OK {name} → {d} (rev {git.get('rev')}{' dirty' if git.get('dirty') else ''}, product {current_product()}, chain b-{chain}); current → {name}"); return 0
 
 
 def cmd_regress(a):
     base = os.path.join(BASE, 'current', 'host', 'dmhost')
-    if not os.path.exists(base): print('⚪ BENCH-REGRESS 没有基线 | no baseline (bench.py baseline save)'); return 3
+    if not os.path.exists(base): print('⚪ BENCH-REGRESS no baseline (bench.py baseline save)'); return 3
+    bdir = os.path.realpath(os.path.join(BASE, 'current')); bname = os.path.basename(bdir); benv = baseline_env(bdir)
+    if benv is None:
+        print(f'⚪ BENCH-REGRESS the kept baseline {bname} has no rewrite output / shader library snapshot (bench.py baseline save again)'); return 3
+    metrics = [m for m in a.metrics.split(',') if m]; bad = [m for m in metrics if m not in METRICS]
+    if bad or not metrics: print(f'🔴 BENCH-REGRESS unknown metric {bad or a.metrics!r}'); return 2
+    # Runs guard: the route's segments x the metrics are the comparisons Holm corrects for; with too few runs no row could ever be significant
+    segs = [st['kw'].get('name') for st in scenario.parse(a.route)[1] if st['op'] == 'mark' and st['kw'].get('name') != 'end']
+    ncmp = len(metrics) * max(len(segs), 1); need = min_reps(ncmp)
+    if a.reps < need:
+        print(f'🔴 BENCH-REGRESS --reps {a.reps} cannot reach significance over {ncmp} comparisons (smallest p {2 / math.comb(2 * a.reps, a.reps):.4f} > {0.05 / ncmp:.4f}); use --reps {need}'); return 2
+    bmeta = baseline_meta(bdir) or {}
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
     out = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_regress_{stamp}')
     hosts = {'A': os.path.realpath(base), 'B': current_host()}
+    sides = dict(baseline=dict(name=bname, rev=bmeta.get('rev'), product=bmeta.get('product'), chain=bmeta.get('chain')),
+                 current=dict(rev=environment()['git'].get('rev'), product=current_product(), chain=workspace_prune.current_chain()))
+    print(f"baseline {bname}: {sides['baseline']['product']} b-{sides['baseline']['chain']}; current: {sides['current']['product']} b-{sides['current']['chain']}", flush=True)
     order = ''.join('ABBA' for _ in range(math.ceil(a.reps / 2)))[:2 * a.reps]; reps: dict[str, list] = {'A': [], 'B': []}
     for i, v in enumerate(order, 1):
         print(f'== {i}/{len(order)} 变体 | variant {v}', flush=True)
-        reps[v].append(run_once(a.route, a.backend, os.path.join(out, f'{i:02d}{v}'), {}, hosts[v], a.cool))
-    envinfo = environment(); rows = []
-    for m in a.metrics.split(','):
-        if m not in METRICS: print(f'🔴 unknown metric {m}'); return 2
-        rr = compare(reps, m); rows += rr; ledger_write(stamp, envinfo, name, m, f"baseline {os.path.basename(os.path.dirname(os.path.dirname(hosts['A'])))}", 'current', rr)
-    slower = [r for r in rows if r.get('verdict') == 'B slower']; ok = all(r['ok'] for v in reps.values() for r in v)
-    with open(os.path.join(out, 'regress.json'), 'w', encoding='utf-8') as f: json.dump(dict(route=name, hosts=hosts, order=order, rows=rows, environment=envinfo), f, ensure_ascii=False, indent=1)
-    verdict = 'RED' if slower or not ok else 'OK'
-    print(f"BENCH-REGRESS {verdict} {name}：{len(slower)} 项显著变慢 | significantly slower" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower))
-    print('RESULT ' + json.dumps(dict(name='bench-regress', verdict=verdict, route=name, slower=[(r['segment'], r['metric'], r['diff']) for r in slower]), ensure_ascii=False))
-    return 1 if verdict == 'RED' else 0
+        reps[v].append(run_once(a.route, a.backend, os.path.join(out, f'{i:02d}{v}'), picture_env(a.picture, a.backend, benv if v == 'A' else {}), hosts[v], a.cool))
+    keep(out, a)
+    envinfo = environment(); by = {m: compare(reps, m) for m in metrics}; rows = [r for rr in by.values() for r in rr]
+    holm(rows)   # one family: every segment x metric of this regression
+    for m, rr in by.items(): ledger_write(stamp, envinfo, f'{name}@{a.picture}', m, f'baseline {bname}', 'current', rr)
+    for r in rows:
+        if 'holm' in r: print(f"  {r['segment']:<10} {r['metric']}: {r['verdict']}, p {r['p']:.3f} → Holm {'ok' if r['holm'] else 'n.s.'}")
+        else: print(f"  {r['segment']:<10} {r['metric']}: {r['verdict']}")
+    slower = [r for r in rows if r.get('verdict') == 'B slower' and r.get('holm')]; ok = all(r['ok'] for v in reps.values() for r in v)
+    unjudged = not_judged(rows, metrics, segs)
+    verdict = 'RED' if slower or not ok else 'UNAVAILABLE' if unjudged else 'OK'
+    with open(os.path.join(out, 'regress.json'), 'w', encoding='utf-8') as f:
+        json.dump(dict(route=name, picture=a.picture, hosts=hosts, sides=sides, order=order, verdict=verdict, not_judged=unjudged, rows=rows, environment=envinfo), f, ensure_ascii=False, indent=1)
+    gap = '; '.join(f"{m} ({', '.join(s)})" for m, s in unjudged.items())
+    if verdict == 'UNAVAILABLE': print(f'⚪ BENCH-REGRESS {name}: not judged, fewer than 2 runs a side with a value: {gap}')
+    else: print(f"BENCH-REGRESS {verdict} {name}: {len(slower)} significantly slower after Holm" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower) + (f'\n  not judged: {gap}' if gap else ''))
+    print('RESULT ' + json.dumps(dict(name='bench-regress', verdict=verdict, route=name, slower=[(r['segment'], r['metric'], r['diff']) for r in slower], not_judged=unjudged), ensure_ascii=False))
+    return 1 if verdict == 'RED' else 3 if verdict == 'UNAVAILABLE' else 0
+
+
+def not_judged(rows, metrics, segs):
+    """The comparisons a regression asked for (every route segment x metric) that carry no p, by metric: too few runs had a value
+    (present.* at a picture whose present is not measured, a segment missing from the data). An OK needs every one judged."""
+    judged = {(r['segment'], r['metric']) for r in rows if isinstance(r.get('p'), (int, float))}
+    want = segs or sorted({r['segment'] for r in rows}) or ['(no segment)']
+    out = {m: [s for s in want if (s, m) not in judged] for m in metrics}
+    return {m: s for m, s in out.items() if s}
+
+
+def keep(folder, a):
+    """--keep: a .keep file in the result folder, so workspace_prune.py never takes it (A/B evidence cited in a commit or the README)."""
+    if getattr(a, 'keep', False) and os.path.isdir(folder):
+        open(os.path.join(folder, '.keep'), 'w', encoding='utf-8').close()
 
 
 def main(argv):
@@ -439,16 +563,20 @@ def main(argv):
     r = sub.add_parser('run'); r.add_argument('route'); r.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); r.add_argument('--reps', type=int, default=3)
     r.add_argument('--env', action='append'); r.add_argument('--host'); r.add_argument('--out'); r.add_argument('--cool', type=float, default=120)
     r.add_argument('--mpt', action='store_true', help='also record metalperftrace listen (on-glass intervals, lateness, skipped frames) per run')
+    r.add_argument('--keep', action='store_true', help='write .keep into the result folder so workspace_prune.py never takes it')
     b = sub.add_parser('ab'); b.add_argument('route'); b.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); b.add_argument('--reps', type=int, default=6)
     b.add_argument('--a-env', default=''); b.add_argument('--b-env', default=''); b.add_argument('--a-host'); b.add_argument('--b-host'); b.add_argument('--metric', default='nvn_ms.p50', choices=METRICS)
-    b.add_argument('--out'); b.add_argument('--cool', type=float, default=120)
+    b.add_argument('--out'); b.add_argument('--cool', type=float, default=120); b.add_argument('--keep', action='store_true', help='write .keep into the result folder')
     s = sub.add_parser('show'); s.add_argument('file')
     s.add_argument('--metric', action='append', default=[], help='ab.json：按这些指标重比 A / B（可多给，或逗号分隔）| ab.json: compare A / B again on these metrics (repeat or comma-separate)')
     pr = sub.add_parser('profile'); pr.add_argument('route'); pr.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); pr.add_argument('--ms', type=int, default=4)
     pr.add_argument('--hitch-ms', type=float, default=25); pr.add_argument('--host'); pr.add_argument('--cool', type=float, default=120)
-    bl = sub.add_parser('baseline'); bl.add_argument('op', choices=('save',)); bl.add_argument('--host')
-    rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); rg.add_argument('--reps', type=int, default=6)
-    rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,gpu_ms.p50,proc_cpu_ms.p50'); rg.add_argument('--cool', type=float, default=120)
+    bl = sub.add_parser('baseline'); bl.add_argument('op', choices=('save',)); bl.add_argument('--host'); bl.add_argument('--name', help='baseline folder name (default: the git revision)')
+    rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli',), help='the kept host runs on the command-line host only'); rg.add_argument('--reps', type=int, default=6)
+    rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50', help='comma-separated; gpu_ms is left out by default: on a fast Mac it is clock-scaled'); rg.add_argument('--cool', type=float, default=120); rg.add_argument('--keep', action='store_true', help='write .keep into the result folder')
+    for sp in (r, b, pr, rg):
+        sp.add_argument('--picture', default='rec', choices=('rec', 'orig', 'rec75', 'phone'),
+                        help="rec (default): this Mac's Recommended in full screen (dm/tools/picture.py); orig: the host's own defaults, windowed; rec75 / phone: those sets")
     a = ap.parse_args(argv)
     held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * 2} min", a.cmd in ('run', 'ab', 'profile', 'regress'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
     if held is not None: return held

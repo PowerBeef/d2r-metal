@@ -31,6 +31,7 @@ run: \
 	$(B)/t_hud_dead \
 	$(B)/t_i18n \
 	$(B)/t_minimap_lift \
+	$(B)/t_loader_layout \
 	$(B)/t_loader_reloc \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
@@ -72,6 +73,7 @@ run: \
 	$(B)/t_thread_leak
 	$(B)/t_loader_weak
 	$(B)/t_loader_reloc 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_loader_layout
 	$(B)/t_mac_overlay
 	TMPDIR="$(abspath $(B))" $(B)/t_app_mac
 	$(PY) test_mac_features.py
@@ -81,6 +83,8 @@ run: \
 	python3 ../../tools/test_scenario.py
 	python3 ../../tools/test_imgdiff.py
 	python3 ../../tools/test_bench.py
+	python3 ../../tools/test_workspace_prune.py
+	python3 ../../tools/test_picture.py
 	python3 ../../tools/test_boothist.py
 	python3 ../../tools/test_guestsyms.py
 	python3 ../../tools/re/test_nso2elf.py
@@ -288,6 +292,9 @@ $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 
 $(B)/t_loader_reloc: t_loader_reloc.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_reloc.c ../hle.c
+
+$(B)/t_loader_layout: t_loader_layout.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
+	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_layout.c ../hle.c
 
 $(B)/t_unimpl: t_unimpl.c ../hle.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-unused-function -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_unimpl.c
