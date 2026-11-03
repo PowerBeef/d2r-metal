@@ -506,8 +506,12 @@ static const char *resign_cause(void) {
 }
 // Desk changes as `desk` events (event_stream.md), so a test harness can tell whether a run kept the front and saw the screen as a player would:
 // this app coming to the front or leaving it, another app activating, a Space switch, display sleep and the login session going inactive (fast user switching, lock).
-// Notifications only: no window-list polling and no screen reads
-static void desk_ev(const char *what, const char *by) { LOG("desk: %s%s%s", what, by ? " by " : "", by ?: ""); DM_EV("desk", "what:s by:s", what, by); }
+// Notifications only: no window-list polling and no screen reads. The log line is written for test runs only (DM_TEST_BGRUN set): a player's log never
+// lists the other apps they use
+static void desk_ev(const char *what, const char *by) {
+    if (getenv("DM_TEST_BGRUN")) LOG("desk: %s%s%s", what, by ? " by " : "", by ?: "");
+    DM_EV("desk", "what:s by:s", what, by);
+}
 static double g_launch_t, g_sheet_t;   // CACurrentMediaTime of the window's creation and of the last sheet beginning (background-run guard)
 static void desk_watch(void) {
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter, *wc = NSWorkspace.sharedWorkspace.notificationCenter;
