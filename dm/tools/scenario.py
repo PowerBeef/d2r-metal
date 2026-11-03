@@ -98,8 +98,7 @@ def parse(path):
             pos = POS['mem'] if op == 'expect_mem' else POS[op]
             if len(args) > len(pos): raise ScenarioError(f'{path}:{n}: {op} takes at most {len(pos)} positional arguments ({" ".join(pos)})')
             kw = {**dict(zip(pos, args, strict=False)), **kw}; args = []
-        if op == 'expect_mem' and (not kw.get('at') or not re.fullmatch(r'(?:[0-9a-fA-F]{2})+', kw.get('hex', ''))):
-            raise ScenarioError(f'{path}:{n}: expect_mem needs <at> and hex=<bytes as an even number of hex digits>')
+        if op == 'expect_mem': expect_mem_parse(path, n, kw)
         if op in ('expect', 'expect_no') and not args: raise ScenarioError(f'{path}:{n}: {op} needs an event type')
         if op == 'sleep' and (not args or not re.fullmatch(r'[\d.]+', args[0])): raise ScenarioError(f'{path}:{n}: sleep needs seconds')
         if op == 'remember' and not args: raise ScenarioError(f'{path}:{n}: remember needs a state field')
@@ -108,17 +107,33 @@ def parse(path):
     return meta, steps, checks
 
 
+def expect_mem_parse(path, n, kw):
+    """expect_mem <at> [len] [chain=...] hex=<bytes> [timeout=5]: the read length is the byte count of hex. Without len the control port's mem
+    reads 8 bytes, which a shorter hex could never equal, so a missing len becomes that count and a len that disagrees with hex is refused."""
+    if not kw.get('at') or not re.fullmatch(r'(?:[0-9a-fA-F]{2})+', kw.get('hex', '')):
+        raise ScenarioError(f'{path}:{n}: expect_mem needs <at> and hex=<bytes as an even number of hex digits>')
+    nb = len(kw['hex']) // 2
+    if nb > 4096: raise ScenarioError(f'{path}:{n}: expect_mem hex= holds {nb} bytes; the control port reads at most 4096')
+    if 'len' not in kw: kw['len'] = str(nb)
+    elif not re.fullmatch(r'\d+', kw['len']) or int(kw['len']) != nb:
+        raise ScenarioError(f'{path}:{n}: expect_mem len {kw["len"]} does not match hex= ({nb} bytes); leave len out to read exactly the bytes of hex')
+
+
 def log_has_parse(path, n, args, kw):
-    """check log_has <regex> | re=<regex> [file=<run-relative file>] [min=1] [last=<regex>]: the regexes must compile; a regex holding = goes in re=."""
+    """check log_has <regex> | re=<regex> [file=<run-relative file>] [min=1] [last=<regex>]: the regexes must compile; a regex holding = goes in re=.
+    Refused: a positional regex together with re= (one would be ignored), min=0 (always passes), and last= with a min other than 1 (last= judges one line)."""
     bad = [k for k in kw if k not in LOG_HAS_KW]
     if bad: raise ScenarioError(f'{path}:{n}: log_has takes re= file= min= last= (got {bad[0]}=; a regex containing = goes in re="...")')
     if len(args) > 1: raise ScenarioError(f'{path}:{n}: log_has takes one regex (quote a regex with spaces)')
+    if args and 're' in kw: raise ScenarioError(f'{path}:{n}: log_has takes the regex either as an argument or as re=, not both')
     rx = kw.get('re') or (args[0] if args else '')
     if not rx: raise ScenarioError(f'{path}:{n}: log_has needs a regex')
     for x in [rx] + ([kw['last']] if 'last' in kw else []):
         try: re.compile(x)
         except re.error as e: raise ScenarioError(f'{path}:{n}: log_has: bad regex {x!r}: {e}') from e
     if not re.fullmatch(r'\d+', kw.get('min', '1')): raise ScenarioError(f'{path}:{n}: log_has min= takes a whole number')
+    if int(kw.get('min', '1')) < 1: raise ScenarioError(f'{path}:{n}: log_has min=0 always passes (use min=1 or more)')
+    if 'last' in kw and int(kw.get('min', '1')) != 1: raise ScenarioError(f'{path}:{n}: log_has last= judges one line, so min= can only be 1')
 
 
 # ---------- 后端 | Backends ----------
@@ -421,10 +436,12 @@ class Runner:
             raise ScenarioError(f'unexpected event: {json.dumps(e, ensure_ascii=False)}')
         if op == 'expect_state': return self.expect_state(kw)
         if op == 'expect_mem':   # expect_mem <at> [len] [chain=...] hex=<bytes> [timeout=5]: polls the control port's mem until the bytes read are these
+            # an error reply (a null pointer on the chain before the object exists, main not loaded yet) is polled again too; the last one is reported at the timeout
             want = str(kw['hex']).lower(); t = float(kw.get('timeout', 5)); q = {k: kw[k] for k in ('at', 'len', 'chain') if k in kw}
             end = time.time() + t
             while True:
-                got = str(self.ctl('mem', **q).get('hex', '')).lower()
+                try: got = str(self.ctl('mem', **q).get('hex', '')).lower()
+                except dmctl.CtlError as e: got = f'error reply ({e})'
                 if got == want: return f"{q['at']}: {got}"
                 if time.time() > end: raise ScenarioError(f"{q['at']}: {got} (want {want})")
                 time.sleep(0.2)
