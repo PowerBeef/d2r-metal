@@ -1,0 +1,53 @@
+# pc_npc_mac.scn on a fake MacBook Neo: 16:10 main screen (true full screen: the 16:9 interface band at the bottom of the taller picture, on
+# this 16:9 Mac pillarboxed to 1152 x 720 points at x 64), Apple A18 Pro GPU with 5 cores, its own Recommended. Also opens the inventory: the band
+# must stay at the bottom (it used to jump to the centre at every large panel, PC HUD included; compare npc_world.png and inventory.png)
+name pc_npc_mac_1610
+requires mac-app
+save warlock
+timeout 600
+env DM_PC_MODE=1 DM_TEST_SCREEN_ASPECT=16x10 DM_TEST_GPU_NAME='Apple A18 Pro GPU' DM_TEST_GPU_CORES=5 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_WORLD_GO=near:1:c150@150
+
+expect main_menu timeout=120
+enter_game
+# DM_TEST_WORLD_GO walks the hero near Kashya (within 4 cells, no talking) from tick 150
+sleep 16
+fe "0 hover 640,330"
+sleep 1
+screenshot path=npc_world.png
+fe "0 key 34"
+sleep 1.5
+screenshot path=inventory.png
+fe "0 key 34"
+sleep 1.5
+fe "0 unit 1,150"
+expect panel act=OpenPanel name=NpcDialogPanel timeout=20
+expect panel act=OpenPanel name=ScrollSpeechPanel timeout=5
+sleep 1.5
+screenshot path=npc_speech.png
+# Return over the speech: nothing
+fe "0 key 36"
+sleep 1
+fe "0 key 53"
+expect panel act=ClosePanel name=ScrollSpeechPanel timeout=5
+sleep 1
+screenshot path=npc_menu.png
+fe "0 key 53"
+expect panel act=ClosePanel name=NpcDialogPanel timeout=5
+sleep 1
+# the game menu, a mouse click on Options (interface 0.5, 0.406: the 16:9 band, 648 points tall, sits at the bottom of the 720-point window)
+fe "0 key 53"
+expect pause_open timeout=8
+sleep 1
+fe "0 down 640,335"
+sleep 0.15
+fe "0 up 640,335"
+expect_state panels~=SettingsPanel timeout=5
+screenshot path=options.png
+fe "0 key 53"
+sleep 1
+fe "0 key 53"
+sleep 1
+quit
+check no_event panel act=OpenPanel name=MessageLogPanel_800x600
+check no_red
+check no_red_log

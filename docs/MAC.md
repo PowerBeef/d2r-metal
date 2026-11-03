@@ -54,8 +54,8 @@ The keys are D2R's PC defaults:
 
 | Keys | What they do |
 |---|---|
-| Left click | Walk there; on a monster attack it; on a character, chest, waypoint or item on the ground, use it. Hold to keep walking or attacking towards the pointer |
-| Right click | Cast the right skill at the pointer; on an item in a panel, use it (drink, read, open) |
+| Left click | Walk there; on a monster attack it; on a character, chest, waypoint or item on the ground, use it. Held after a click on a monster, keep attacking that monster; held on the ground, keep walking towards the pointer |
+| Right click | Cast the right skill at the pointer (held: again and again, following the pointer); on an item in a panel, use it (drink, read, open) |
 | Shift + left click | Attack without moving |
 | Shift held | Compare the item under the pointer with what you wear |
 | 1 – 4 | Drink from the belt |
@@ -66,10 +66,10 @@ The keys are D2R's PC defaults:
 | Alt | Show items on the ground |
 | W | Swap weapons |
 | R | Run / walk |
-| Space | Close all panels |
-| Esc | Close what is open; with nothing open, the game menu (Save and Exit, Quick Restart, Options, Chronicle); in Options, back. After death, continue |
+| Space | Close all panels (with an NPC, as Esc) |
+| Esc | Close what is open (with an NPC, its speech, then its menu); with nothing open, the game menu (Save and Exit, Quick Restart, Options, Chronicle); in Options, back. After death, continue |
 
-**Panels** (inventory, character, stash, vendors, the cube) are the console ones, drawn so they end above the PC HUD, and worked with the mouse: hover an item for its description, hold Shift to compare, right click to use; press and drag to move it (between cells, onto a body slot, into the stash or cube, onto a vendor's shelf = sell, into the inventory = buy); a double click also uses, puts on or takes off. Descriptions use the PC wording ("Right Click to Use", "Hold Shift to Compare"). The PC HUD's mini panel and run / walk button take clicks.
+**Panels** (inventory, character, stash, vendors, the cube) are the console ones, drawn so they end above the PC HUD, and worked with the mouse as on PC: a left click picks an item up onto the pointer and the next one puts it down (or swaps it); Shift + left click equips or unequips (a potion goes into the belt); Ctrl + left click moves an item to the other side (stash or cube) or sells it with a vendor open, takes off a worn one, and with nothing else open drops it; a right click uses, reads or opens (the cube) and buys from a vendor. Hover an item for its description and hold Shift to compare. Descriptions use the PC wording ("Right Click to Use", "Hold Shift to Compare"). The PC HUD's mini panel and run / walk button take clicks.
 
 The pointer is the game's own gauntlet in the PC interface. In the console interface it is the macOS arrow, which hides itself after it has rested over the game window for 3 seconds and comes back the moment the mouse moves; to change the delay: `defaults write org.d2rmobile.mac CursorHideSeconds -float 5` (seconds; `0` turns it off), then restart the App.
 

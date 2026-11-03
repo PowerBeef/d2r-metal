@@ -1,0 +1,35 @@
+# PC item clicks at the stash (dm_kbm.c item_click; the game's PC tooltips "Ctrl + Left Click to Move" / "to Move to Inventory"), on the Mac App
+# test copy at this Mac's Recommended in full screen. A real click on the stash opens it and keeps it open (a world press that opens a panel ends
+# its hold); Ctrl + left click moves a rune from the inventory into the stash (the game puts it in the stash's bottom right cell) and back
+name pc_stash_mac
+requires mac-app
+save warlock
+timeout 300
+env DM_PC_MODE=1 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_GIVE=r01:2:3@60 DM_TEST_GIVE_INV=1 DM_TEST_WORLD_GO=near2:2:c267@200
+
+expect main_menu timeout=120
+enter_game
+# DM_TEST_WORLD_GO walks the hero next to the stash from tick 200
+sleep 14
+fe "0 hover 640,330"
+sleep 1
+fe "0 unit 2,267"
+expect panel act=OpenPanel name=BankExpansionLayout timeout=20
+sleep 2
+expect_state panels~=BankExpansionLayout timeout=5
+kbm btn=left x=0.7815 y=0.495 ctrl=1
+expect pc_item did=move item=r01 at=1 timeout=5
+kbm btn=left x=0.7815 y=0.495 up=1 ctrl=1
+sleep 2
+screenshot path=rune_in_stash.png
+kbm btn=left x=0.43 y=0.5618 ctrl=1
+expect pc_item did=move item=r01 at=4 timeout=5
+kbm btn=left x=0.43 y=0.5618 up=1 ctrl=1
+sleep 2
+screenshot path=rune_back.png
+fe "0 key 53"
+expect panel act=ClosePanel name=BankExpansionLayout timeout=5
+sleep 1
+quit
+check no_red
+check no_red_log

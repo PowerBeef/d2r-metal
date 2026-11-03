@@ -1,0 +1,44 @@
+# PC item clicks at a vendor (dm_kbm.c item_click; the game's PC tooltips "Right Click to Buy" / "Ctrl + Left Click to Sell"), on the Mac App
+# test copy at this Mac's Recommended in full screen: a real click on Charsi, Trade/Repair in his PC menu, a right click on the hand axe on his
+# shelf buys it (gold goes down), Ctrl + left click on a rune in the inventory sells it (gold goes up)
+name pc_vendor_mac
+requires mac-app
+save warlock
+timeout 300
+env DM_PC_MODE=1 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_GOLD=1300 DM_TEST_GIVE=r01:2:3@60 DM_TEST_GIVE_INV=1 DM_TEST_WORLD_GO=near2:1:c154@400
+
+expect main_menu timeout=120
+enter_game
+# DM_TEST_WORLD_GO walks the hero next to Charsi from tick 400
+sleep 32
+fe "0 hover 640,330"
+sleep 1
+fe "0 unit 1,154"
+expect panel act=OpenPanel name=NpcDialogPanel timeout=20
+sleep 2
+# Esc skips his speech; the menu stays
+fe "0 key 53"
+sleep 1.5
+# Trade/Repair, the menu's second row (it shows up beside the NPC, wherever he stands)
+ui_click ListItem1@NpcDialogPanel
+expect panel act=OpenPanel name=VendorPanelLayout timeout=8
+sleep 2
+remember gold as=g0
+kbm btn=right x=0.2125 y=0.218
+expect pc_item btn=right did=buy timeout=5
+kbm btn=right x=0.2125 y=0.218 up=1
+expect_state gold<$g0 timeout=5
+sleep 1
+screenshot path=bought.png
+remember gold as=g1
+kbm btn=left x=0.7815 y=0.495 ctrl=1
+expect pc_item did=move item=r01 timeout=5
+kbm btn=left x=0.7815 y=0.495 up=1 ctrl=1
+expect_state gold>$g1 timeout=5
+sleep 1
+screenshot path=sold.png
+fe "0 key 53"
+sleep 1
+quit
+check no_red
+check no_red_log

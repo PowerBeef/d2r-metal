@@ -1,0 +1,66 @@
+# PC item clicks (dm_kbm.c item_click, the game's own PC item tooltips: "Right Click to Use", "Shift + Left Click to Equip / Unequip", "Ctrl +
+# Left Click to Drop"), on the Mac App test copy at this Mac's Recommended in full screen, in the inventory (warlock save: two scrolls in the
+# right column, a two-handed staff in the main hand). A left click picks an item up onto the cursor and the next one puts it down; Shift + left click
+# takes the staff off; a click on the empty hand slot does nothing; Ctrl + left click on a scroll drops it; a right click on the cube opens it
+name pc_items_mac
+requires mac-app
+save warlock
+timeout 300
+env DM_PC_MODE=1 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_GIVE=box:2:1,r01:2:3@60 DM_TEST_GIVE_INV=1
+
+expect main_menu timeout=120
+enter_game
+sleep 3
+kbm move=1 x=0.5 y=0.45
+sleep 0.5
+kbm key=73
+sleep 1.5
+expect_state panels~=PlayerInventoryExpansionLayout timeout=5
+screenshot path=p0_open.png
+remember items as=n0
+# a left click on the top scroll: on the cursor
+kbm btn=left x=0.6086 y=0.578
+expect pc_item did=pick_up timeout=5
+kbm btn=left x=0.6086 y=0.578 up=1
+expect_state holding!=0 timeout=5
+kbm move=1 x=0.44 y=0.53
+sleep 0.8
+screenshot path=p1_scroll_on_cursor.png
+# a left click on an empty cell: put down there
+kbm btn=left x=0.3906 y=0.493
+expect pc_item did=put_down timeout=5
+kbm btn=left x=0.3906 y=0.493 up=1
+expect_state holding=0 timeout=5
+sleep 0.5
+screenshot path=p2_scroll_put_down.png
+# Shift + left click on the staff in the main hand: off into the inventory, then back on
+kbm btn=left x=0.405 y=0.25 shift=1
+expect pc_item did=unequip timeout=5
+kbm btn=left x=0.405 y=0.25 up=1 shift=1
+sleep 1.5
+screenshot path=p3_staff_off.png
+# Shift + left click on the empty hand slot: nothing; a right click there: nothing
+kbm btn=left x=0.405 y=0.25 shift=1
+kbm btn=left x=0.405 y=0.25 up=1 shift=1
+kbm btn=right x=0.405 y=0.25
+kbm btn=right x=0.405 y=0.25 up=1
+sleep 0.5
+# Ctrl + left click on the scroll put down above: dropped on the ground
+kbm btn=left x=0.3906 y=0.493 ctrl=1
+expect pc_item did=drop timeout=5
+kbm btn=left x=0.3906 y=0.493 up=1 ctrl=1
+sleep 1.5
+expect_state items=$n0-1 timeout=5
+screenshot path=p4_scroll_dropped.png
+# a right click on the cube opens it
+kbm btn=right x=0.5975 y=0.515
+expect pc_item btn=right did=use item=box timeout=5
+kbm btn=right x=0.5975 y=0.515 up=1
+expect panel act=OpenPanel name=HoradricCubeLayout timeout=5
+sleep 1.5
+screenshot path=p6_cube_open.png
+kbm key=73
+sleep 1
+quit
+check no_red
+check no_red_log

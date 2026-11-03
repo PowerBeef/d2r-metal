@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in D2R Metal doesn't work as it should (Mac, iPhone or iPad)
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please don't attach game files, keys or save files: D2R Metal never contains any of the game, and the logs below are all that's needed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you saw instead. Steps to make it happen again help a lot.
+      placeholder: |
+        1. Talked to Kashya with the mouse
+        2. Pressed Esc
+        3. The speech stayed on screen
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Device
+      options:
+        - Mac
+        - iPhone
+        - iPad
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model and system version
+      placeholder: "MacBook Air M3, macOS 27.2 / iPhone 17 Pro, iOS 27.1"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: D2R Metal version
+      description: "Mac: shown at the top right of the D2R Metal Launcher. iPhone / iPad: the build you installed. The log file below records it too."
+      placeholder: "1.2.0"
+  - type: dropdown
+    id: input
+    attributes:
+      label: Controls in use
+      multiple: true
+      options:
+        - Mouse and keyboard (or trackpad)
+        - Controller
+        - Touch
+  - type: dropdown
+    id: display
+    attributes:
+      label: Window
+      options:
+        - Full screen
+        - Window
+        - Not sure
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Mac: in the menu bar, Help › Share Logs… packs the game's logs into one file; drag it here.
+        iPhone / iPad: Share Diagnostics in the game menu does the same.
+        Both hold only the logs and version details, with your user name removed; no saves. Nothing is sent until you attach it here.
+      placeholder: Drag the file here.
+  - type: textarea
+    id: screens
+    attributes:
+      label: Screenshots or a video
+      description: Optional, but often the fastest way to show what's wrong.
