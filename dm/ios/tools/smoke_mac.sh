@@ -147,8 +147,37 @@ run_stage() {
     # 玩家路径日志不许有红行（产品缺省路径上的常驻红行 = 没人看的告警；曾经每次启动有 14 条面板栈假红）
     # The player path log must have no failure lines (a permanent failure line on the product default path = an alarm nobody looks at; there used to be 14 false panel-stack failures at every launch)
     red_n=$(LC_ALL=C grep -a -c '【红】' "$RUN/player.txt" 2>/dev/null)
-    if [[ "$pr" == result=0* ]] && [ "${au_real:-0}" -gt 0 ] && [ "${au_null:-0}" = 0 ] && [ "${hud_ok:-0}" -gt 0 ] && [ "${red_n:-0}" = 0 ]; then PLAYER_RES=OK; echo "玩家路径 OK：进局 35 s + 暂停菜单 20 s 仍活着；AudioOut 真出声 ${au_real} 路（${pr}）"
-    else PLAYER_RES=RED; echo "玩家路径 RED：${pr}；AudioOut 真出声 ${au_real:-0} 路 / 静音接收端 ${au_null:-0} 路（须真出声 > 0、静音 0）；读到玩家状态 ${hud_ok:-0} 行（须 > 0）；红行 ${red_n:-0} 条（须 0）：$(LC_ALL=C grep -a -m1 '【红】' "$RUN/player.txt" 2>/dev/null | cut -c1-80)"; fi
+    # Frame Drops steps judged by the [perf] windows around them (the one before and the one after the step line; the step was decided across them).
+    # A window is blank when 99% or more of its presents were not shown (丢弃), full when under 1% were and it ran at 58 fps or more.
+    # A step is bad when both neighbours are blank (nothing on screen: the controller must not judge such windows) or both are full with the 60 s
+    # rate at 1.5% or less (under 1% not shown at >= 58 fps, at most about 4.4% of frames can count, below the 5% rule; the 60 s rule can fire
+    # legitimately at about 59 fps, so a step it took is left alone). A step with no window after it is not judged, nor is one in partly covered
+    # windows (occlusion flicker of the iOS-on-Mac window is a test artefact). Prints "bad notjudged"
+    read -r s3bad s3nj <<< "$(python3 -I - "$RUN/player.txt" <<'PY'
+import re, sys
+perf = re.compile(r"\[perf\].*帧率 ([0-9.]+) 三档 (\d+)/(\d+)/(\d+) 丢弃 (\d+)")
+step = re.compile(r"3D 比例控制：最近 10 秒掉帧 ([0-9.]+)%、60 秒 ([0-9.]+)% → 降到第")
+ev = []
+try: lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().split("\n")
+except OSError: lines = []
+for l in lines:
+    m = perf.search(l)
+    if m:
+        f = float(m.group(1)); a, b, c, d = map(int, m.groups()[1:]); t = a + b + c + d
+        ev.append(("p", d >= 0.99 * t, d < 0.01 * t and f >= 58.0)); continue
+    m = step.search(l)
+    if m: ev.append(("s", float(m.group(2))))
+bad = nj = 0
+for i, e in enumerate(ev):
+    if e[0] != "s": continue
+    pre = next((x for x in reversed(ev[:i]) if x[0] == "p"), None); post = next((x for x in ev[i + 1:] if x[0] == "p"), None)
+    if not pre or not post: nj += 1; continue
+    bad += (pre[1] and post[1]) or (pre[2] and post[2] and e[1] <= 1.5)
+print(bad, nj)
+PY
+)"
+    if [[ "$pr" == result=0* ]] && [ "${au_real:-0}" -gt 0 ] && [ "${au_null:-0}" = 0 ] && [ "${hud_ok:-0}" -gt 0 ] && [ "${red_n:-0}" = 0 ] && [ "${s3bad:-1}" = 0 ]; then PLAYER_RES=OK; echo "玩家路径 OK：进局 35 s + 暂停菜单 20 s 仍活着；AudioOut 真出声 ${au_real} 路（${pr}）；Frame Drops steps judged bad: 0 (not judged: ${s3nj:-0})"
+    else PLAYER_RES=RED; echo "玩家路径 RED：${pr}；AudioOut 真出声 ${au_real:-0} 路 / 静音接收端 ${au_null:-0} 路（须真出声 > 0、静音 0）；读到玩家状态 ${hud_ok:-0} 行（须 > 0）；红行 ${red_n:-0} 条（须 0）：$(LC_ALL=C grep -a -m1 '【红】' "$RUN/player.txt" 2>/dev/null | cut -c1-80)；Frame Drops stepped down with nothing on screen or at full frame rate: ${s3bad:-?} (not judged: ${s3nj:-?})"; fi
     segs="${segs:+${segs}；}玩家路径:$PLAYER_RES"
   fi
   # 触摸玩家路径：从空存档起，只用触点——点职业、创建、选模式、起名 → 进局；不碰摇杆点三下空地坐标不变；点脚下的小站开小站面板（进局落在小站上，营地 NPC 都不在画面里；按类号 tap_unit 落真实触点，走世界点按 → 交互同一条路）。
