@@ -169,6 +169,7 @@ run: \
 	./t_replay_asan fx19
 	./t_replay_asan fx11
 	python3 test_tbdr_budget.py
+	python3 test_passgpu_top.py
 	python3 test_ub_table.py
 	python3 test_dmsh_rules.py
 .PHONY: run

@@ -95,7 +95,7 @@ The scripts in `tools/`; usage is written in each file's header:
 | `shader_map.py`, `maxwell_refs.py` | Generates the shader map; reads resource references from the machine code |
 | `nvn_slots.py`, `gen_protos.py` | Generate `nvn_slots.tsv` / `names.txt`, and `nvn_protos.h` / the thunks |
 | `tbdr_budget.py`, `tbdr_load_dead.py`, `tbdr_store_dead.py`, `tbdr_pass_merge.py` | Read the `DM_NVN_PASSDUMP` log and analyze the load / store volume of each render pass's attachments per frame |
-| `passgpu_top.py` | Reads the `DM_NVN_PASSGPU` output and ranks GPU time by pass shape, for a whole run or one segment between scenario marks (`--from town --to wild`); `--tsv` writes the full table |
+| `passgpu_top.py` | Reads the `DM_NVN_PASSGPU` output and ranks GPU time by pass shape, for a whole run or one segment between scenario marks (`--from town --to wild`); `--tsv` writes the full table. span_ms is shown as excl_ms only for a `DM_NVN_PASSGPU_SERIAL` record whose passes don't overlap |
 
 ## Building
 
@@ -116,7 +116,7 @@ make -C dm/gfx/tex/tests run    # texture submodule unit tests; the real-data it
 make -C dm/gfx/metal run        # offscreen example self-test, see metal/README.md
 ```
 
-The tests in `dm/gfx/tests` compile the production code in directly and need a Metal device on the local machine; a few of them run under `MTL_DEBUG_LAYER=1` (the Metal validation layer). Most tests do not read the workspace; the exceptions are `t_refl` and `t_rt_range_ro`, which read the translated shader reflection json under `$DM_ROOT/build/cache/metal_shader_cache`, and `test_tbdr_budget.py`, which creates a temporary directory under `$DM_ROOT/run/gfx`. Main contents:
+The tests in `dm/gfx/tests` compile the production code in directly and need a Metal device on the local machine; a few of them run under `MTL_DEBUG_LAYER=1` (the Metal validation layer). Most tests do not read the workspace; the exceptions are `t_refl` and `t_rt_range_ro`, which read the translated shader reflection json under `$DM_ROOT/build/cache/metal_shader_cache`, and `test_tbdr_budget.py` / `test_passgpu_top.py`, which create a temporary directory under `$DM_ROOT/run/gfx`. Main contents:
 
 | Test | What it checks |
 |---|---|
@@ -128,6 +128,7 @@ The tests in `dm/gfx/tests` compile the production code in directly and need a M
 | `t_mip_extent` | Effective size when rendering to a mip level other than level 0 |
 | `t_fuse_check`, `t_reorder_chain`, `t_defer_chain`, `t_zskip`, `t_xv`, `t_ub`, `t_pfv`, `t_rt_range`, `t_rt_range_shape`, `t_rt_range_ro`, `t_rt_depth_ro` | Compile the replay layer `nvn_mtl.m` in directly and check the various optimization and diagnostic logic inside the replay layer |
 | `test_tbdr_budget.py` | The parsing in `tools/tbdr_budget.py` |
+| `test_passgpu_top.py` | `tools/passgpu_top.py`: a record's spans count as exclusive costs only with the serial header and no overlap between passes |
 | `t_capture` | Frame capture (`nvn_capture.c`): every record op's pointers encode to region offsets and object indices and decode back; unknown ops are refused; the capture file round-trips its chunks |
 | `nvn_replay` (built on demand, not in `run`) | Replays a `DM_NVN_CAPTURE` frame against this tree's replay layer and compares the presented frame with the live one (see `dm/verify/debugging.md`) |
 
@@ -169,6 +170,8 @@ Comparison and testing:
 | `DM_TEST_NO_BC=1` | Forces the decompression path for "the GPU does not support BC compressed textures" on any machine |
 | `DM_FPS=30` or `60` | Pins the target frame rate |
 | `DM_PRESENT_HZ=N` | The frequency of presentation pacing (default 60); 0 means no frame limit and is for performance profiling only |
+| `DM_NVN_BARRIER=0\|1` | Pass-barrier level (default 1): 0 = every encoder waits for all earlier work and holds back all later work; 1 = a render pass's vertex stage waits only for compute and copies (see `bar_r_begin`) |
+| `DM_NVN_PASSGPU_SERIAL=1` | Measurement only: holds the pass-barrier level at 0, so passes run one after another and each `DM_NVN_PASSGPU` span is that pass's exclusive cost (frame totals are inflated); the record's first line says so for `passgpu_top.py` |
 
 ## Known limitations
 
