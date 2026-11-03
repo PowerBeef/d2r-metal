@@ -1,8 +1,8 @@
 // The Mac App's Recommended picture, from this Mac's chip: its family and generation (from the GPU's name), its GPU core count, the main screen.
 // 1. Speed: GPU cores × the per-core speed of that generation, against the M6 (12 cores) the model is anchored on. Per-core speeds are Geekbench 6
 //    Metal points per core of base chips (public results, 2025–2026): M1 31.8k / 8 cores, M2 45k / 10, M3 46.9k / 10, M4 53k / 10, M5 70k / 10,
-//    M6 102k / 12. iPhone chips: the A18 Pro as measured in the MacBook Neo (31.3k / 5, about an M1's); the others as the M generation with the
-//    same GPU design (A14 = M1, A15 and A16 = M2, A17 = M3, A18 = M4, A19 = M5, A20 = M6). A newer generation than the table knows counts as the
+//    M6 102k / 12. iPhone chips: every A18 as the A18 Pro measured in the MacBook Neo (31.3k / 5, about an M1's); the others as the M generation
+//    with the same GPU design (A14 = M1, A15 and A16 = M2, A17 = M3, A19 = M5, A20 = M6). A newer generation than the table knows counts as the
 //    newest one known (it is at least that fast). Without a core count, the smallest part of the tier.
 // 2. Load of a picture: 3D megapixels + half the output megapixels (the interface, the MetalFX enlargement and the final compose run at the
 //    output size, lighter per pixel). The light picture (no environment shadows, Standard shadows) carries 15% more: at Native 2560 x 1440, 67%,
@@ -40,8 +40,9 @@ static const int k_fixed_w[3] = { 1600, 1920, 2560 };                   // the R
 
 static double core_speed(int iphone, int gen) {
     if (iphone) {
-        static const int k_a_to_m[7] = { 1, 2, 2, 3, 4, 5, 6 };   // A14 … A20: the M generation built on the same GPU design
-        if (gen == 18) return 6257;
+        // A14 … A20: the M generation built on the same GPU design. The A18's slot (M4) is never read: the A18 uses its own measurement
+        static const int k_a_to_m[7] = { 1, 2, 2, 3, 4, 5, 6 };
+        if (gen == 18) return 6257;   // the A18 Pro in the MacBook Neo: 31.3k / 5 cores
         gen = gen < 14 ? 0 : gen > 20 ? M_KNOWN : k_a_to_m[gen - 14];
     }
     if (gen < 1) return k_core_m[1];

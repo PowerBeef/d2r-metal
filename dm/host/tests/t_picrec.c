@@ -129,6 +129,7 @@ int main(int argc, char **argv) {
     struct { const char *gpu; int cores, gen, tier; double speed; } names[] = {
         { "Apple M4 Max", 40, 4, 2, 40 * 5300 / 102000.0 },
         { "Apple A18 Pro GPU", 5, 18, -1, 5 * 6257 / 102000.0 },
+        { "Apple A18 GPU", 5, 18, -1, 5 * 6257 / 102000.0 },     // every A18 takes the Neo's measurement, not the A-to-M table's M4 slot
         { "Apple A19 Pro GPU", 6, 19, -1, 0.41176 },   // the A19 is an M5's GPU design
         { "Apple A15 GPU", 5, 15, -1, 0.22059 },       // the A15 is an M2's
         { "Apple A21 Pro GPU", 6, 21, -1, 0.5 },       // newer than the table: counted as an M6

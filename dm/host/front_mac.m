@@ -121,9 +121,10 @@ static void rec_native(int *res, int *s3d) {
 // test copies keep the original look for every picture key, so automated runs, golden baselines and benchmarks stay as they were
 static int real_recommendation(void) { return dm_picrec_real(getenv("DM_APP") != NULL, getenv("DM_APP_SUPPORT") != NULL, getenv("DM_TEST_VIDEO_FIRSTBOOT") != NULL); }
 // Recommended values for the first three keys (asked by dm_video.c for a key missing from sw_video.txt or an older rec_v; on the main thread at
-// launch): full screen; Native with the 3D Resolution from dm_picrec.c, or its fixed width when Native is too heavy; MetalFX when it is supported
-// and the render is smaller than the screen. The older StartFullScreen / RenderScale / MetalFXUpscale preferences carry over once as the current
-// values. The CLI host and test copies (unless DM_TEST_VIDEO_FIRSTBOOT=1) get the original look: windowed, 1600, Standard
+// launch): full screen; Native with the 3D Resolution from dm_picrec.c, or its fixed width when Native is too heavy; MetalFX when it is supported:
+// with Native for the 3D upscale pass, with a fixed width when it is smaller than the screen. The older StartFullScreen / RenderScale /
+// MetalFXUpscale preferences carry over once as the current values. The CLI host and test copies (unless DM_TEST_VIDEO_FIRSTBOOT=1) get the
+// original look: windowed, 1600, Standard
 int front_video_firstboot(int rec[3], int cur[3]) {
     if (!real_recommendation()) {
         for (int i = 0; i < 3; i++) rec[i] = cur[i] = 0;

@@ -3,6 +3,9 @@
 // Native width x height is what the model is fed: the main screen's backing store in its current mode, the width 16-aligned as front_mac.m native_w()
 // does. A built-in screen at macOS's default display setting ("looks like" 1440 x 900 on the M1 Air, 1470 x 956 on the 13-inch Air from the M2 on,
 // 1710 x 1112 on the 15-inch Air) has more pixels than its panel, and Native renders all of them.
+// Known to change: the model takes a fixed width at 16:9 (here 1920 x 1080, 81% of the capacity), but true full screen on this 16:10 screen
+// draws 1920 x 1200 (about 90%, past the 85% line). Once dm_picrec.c gives the fixed height the screen's aspect, this row expects Frame Drops
+// lower (last field 0).
     { "MacBook Air M1 (7-core GPU), default 1440 x 900", "Apple M1", 7, 2880, 1800, 1, 0, 1, 0, 1, 2, 1 },
     { "MacBook Air M1 (7-core GPU), 1280 x 800", "Apple M1", 7, 2560, 1600, 1, 1, 0, 2, 0, 0, 0 },
     { "MacBook Air M1, default 1440 x 900", "Apple M1", 8, 2880, 1800, 1, 1, 0, 3, 0, 0, 0 },
