@@ -7,11 +7,20 @@ A benchmark route is a [scenario](../scenarios/README.md) with `mark <segment>` 
 The results are statistics per segment.
 
 ```bash
-python3 dm/tools/bench.py run dm/verify/bench/town_loop.scn --reps 3                 # bench.json in $DM_ROOT/run/bench/
+python3 dm/tools/bench.py run dm/verify/bench/town_loop.scn --reps 3                 # bench.json in $DM_ROOT/run/bench/; this Mac's Recommended in full screen
 python3 dm/tools/bench.py ab dm/verify/bench/town_loop.scn --reps 6 \
     --a-env DM_3D_SCALE=1.0 --b-env DM_3D_SCALE=0.5 --metric gpu_ms.p50             # or --a-host / --b-host: two dmhost builds
 python3 dm/tools/bench.py show bench.json
 ```
+
+## Picture
+
+Runs default to **this Mac's Recommended picture in full screen** (`--picture rec`), the picture players get here; `--picture orig` keeps the host's own defaults in a window, as runs had before. The sets live in `dm/tools/picture.py`, which says how each key is pinned and how the sets differ:
+- `rec` on the `cli` backend pins every picture key through its forcing switch (Native `DM_GAME_RES=2560x1440`, 3D 100%, MetalFX `DM_MFX` / `DM_MFX3D`, SMAA, 16x, Accurate colour, environment shadows, Ultra shadows, Frame Drops keep with `DM_3D_SCALE_DYN=0`) and adds `DM_TEST_FULLSCREEN_AT=1`. On `mac-app` it is `DM_TEST_VIDEO_FIRSTBOOT=1`: the test copy works out its own Recommended and starts full screen.
+- `rec75` (the base M chips' 3D 75% with MetalFX) and `phone` (the iPhone 17 Pro's picture at 2622 × 1206) pin their sets the same way.
+- `--env`, `--a-env` and `--b-env` win over the picture; a run that sets `DM_TEST_WINSIZE` or `DM_TEST_FULLSCREEN_AT` itself gets no full-screen switch.
+
+The picture is recorded in `bench.json`, `ab.json`, `regress.json` and the ledger's route column (`town_loop@rec`). Results from before this default (the original look in a window: the command-line host drew its picture at 1170 × 658 points inside a 1280 × 658 point window) are not comparable with it.
 
 ## What is measured
 

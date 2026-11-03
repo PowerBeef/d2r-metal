@@ -23,6 +23,9 @@
 #        Refused before any run: a baseline without that snapshot is ⚪ (exit 3); --reps too few to reach significance over the comparisons is red (exit 2, it names the --reps needed).
 #        gpu_ms is not in the defaults: on a fast Mac the GPU lowers its clock when it has room, so it is clock-scaled (--metrics gpu_ms.p50 still works)
 #   run / ab / regress --keep: a .keep file in the result folder, so workspace_prune.py never takes it
+#   run / ab / profile / regress --picture rec|orig|rec75|phone: the picture (dm/tools/picture.py). rec, the default, is this Mac's Recommended in full screen
+#        (cli: every picture key pinned + DM_TEST_FULLSCREEN_AT=1; mac-app: the test copy's own Recommended); orig is the host's own defaults, windowed.
+#        --env / --a-env / --b-env win over it. The picture goes into bench.json / ab.json / regress.json and the ledger's route column (<route>@<picture>)
 #   Before each run the thermal state (Mac: pmset -g therm; wait while hot, at most --cool seconds) and Game Mode (gamepolicyctl) are checked and recorded in the result; last line RESULT {json}
 import argparse
 import collections
@@ -47,6 +50,7 @@ from typing import Any
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import dmevents  # noqa: E402
+import picture  # noqa: E402
 import scenario  # noqa: E402
 import workspace_prune  # noqa: E402
 
@@ -259,14 +263,21 @@ def parse_env(items):
     return out
 
 
+def picture_env(name, backend, user_env):
+    """The picture a run uses (dm/tools/picture.py): 'rec' (default) = this Mac's Recommended in full screen (cli: every picture key pinned +
+    DM_TEST_FULLSCREEN_AT=1; mac-app: the test copy takes its own Recommended, DM_TEST_VIDEO_FIRSTBOOT=1), rec75 / phone likewise, 'orig' = the
+    host's own defaults, windowed. The caller's env wins; it may size or switch the window itself (DM_TEST_WINSIZE / DM_TEST_FULLSCREEN_AT)."""
+    return picture.env(name, backend, user_env)
+
+
 def cmd_run(a):
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
     base = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_{stamp}')
-    env = parse_env(a.env); reps = []
+    env = picture_env(a.picture, a.backend, parse_env(a.env)); reps = []
     for i in range(a.reps):
         print(f'== 第 {i + 1}/{a.reps} 遍 | run {i + 1}/{a.reps}', flush=True)
         reps.append(run_once(a.route, a.backend, os.path.join(base, f'r{i + 1}'), env, a.host, a.cool, a.mpt))
-    res = dict(schema='bench/1', route=name, backend=a.backend, started=stamp, env=env, host=a.host, environment=environment(), reps=reps, summary=summarize(reps))
+    res = dict(schema='bench/1', route=name, backend=a.backend, picture=a.picture, started=stamp, env=env, host=a.host, environment=environment(), reps=reps, summary=summarize(reps))
     out = a.out or os.path.join(base, 'bench.json')
     with open(out, 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
     keep(base, a)
@@ -287,7 +298,7 @@ def show(res):
 def cmd_ab(a):
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
     base = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_ab_{stamp}')
-    var = {'A': (parse_env([a.a_env]), a.a_host), 'B': (parse_env([a.b_env]), a.b_host)}
+    var = {'A': (picture_env(a.picture, a.backend, parse_env([a.a_env])), a.a_host), 'B': (picture_env(a.picture, a.backend, parse_env([a.b_env])), a.b_host)}
     order = ''.join('ABBA' for _ in range(math.ceil(a.reps / 2)))[:2 * a.reps]   # 每个变体 reps 遍 | reps runs per variant
     reps = {'A': [], 'B': []}
     for i, v in enumerate(order, 1):
@@ -295,12 +306,12 @@ def cmd_ab(a):
         env, host = var[v]; reps[v].append(run_once(a.route, a.backend, os.path.join(base, f'{i:02d}{v}'), env, host, a.cool))
     rows = compare(reps, a.metric)
     envinfo = environment()
-    res = dict(schema='bench-ab/1', route=name, backend=a.backend, started=stamp, order=order, a=dict(env=var['A'][0], host=a.a_host), b=dict(env=var['B'][0], host=a.b_host),
+    res = dict(schema='bench-ab/1', route=name, backend=a.backend, picture=a.picture, started=stamp, order=order, a=dict(env=var['A'][0], host=a.a_host), b=dict(env=var['B'][0], host=a.b_host),
                environment=envinfo, rows=rows, reps=reps)
     out = a.out or os.path.join(base, 'ab.json')
     with open(out, 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
     keep(base, a)
-    ledger = ledger_write(stamp, envinfo, name, a.metric, a.a_env or a.a_host or '-', a.b_env or a.b_host or '-', rows)
+    ledger = ledger_write(stamp, envinfo, f'{name}@{a.picture}', a.metric, a.a_env or a.a_host or '-', a.b_env or a.b_host or '-', rows)
     ok = all(r['ok'] for v in reps.values() for r in v)
     print(f"BENCH-AB {'OK' if ok else 'RED'} {name} → {out}（账本 | ledger {ledger}）")
     print('RESULT ' + json.dumps(dict(name='bench-ab', verdict='OK' if ok else 'RED', route=name, rows=[{k: r.get(k) for k in ('segment', 'diff', 'ci95', 'p', 'verdict')} for r in rows], file=out), ensure_ascii=False))
@@ -396,8 +407,8 @@ def attribute(run_dir, hitch_ms):
 def cmd_profile(a):
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
     out = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_profile_{stamp}')
-    r = run_once(a.route, a.backend, out, {'DM_SAMPLE': f'{a.ms}:*'}, a.host, a.cool)
-    prof = attribute(out, a.hitch_ms); prof.update(route=name, ms=a.ms, hitch_ms=a.hitch_ms, ok=r['ok'], segments_timing=r['segments'])
+    r = run_once(a.route, a.backend, out, picture_env(a.picture, a.backend, {'DM_SAMPLE': f'{a.ms}:*'}), a.host, a.cool)
+    prof = attribute(out, a.hitch_ms); prof.update(route=name, picture=a.picture, ms=a.ms, hitch_ms=a.hitch_ms, ok=r['ok'], segments_timing=r['segments'])
     with open(os.path.join(out, 'profile.json'), 'w', encoding='utf-8') as f: json.dump(prof, f, ensure_ascii=False, indent=1)
     for seg, tab in prof['segments'].items():
         print(f'== {seg}')
@@ -508,15 +519,15 @@ def cmd_regress(a):
     order = ''.join('ABBA' for _ in range(math.ceil(a.reps / 2)))[:2 * a.reps]; reps: dict[str, list] = {'A': [], 'B': []}
     for i, v in enumerate(order, 1):
         print(f'== {i}/{len(order)} 变体 | variant {v}', flush=True)
-        reps[v].append(run_once(a.route, a.backend, os.path.join(out, f'{i:02d}{v}'), benv if v == 'A' else {}, hosts[v], a.cool))
+        reps[v].append(run_once(a.route, a.backend, os.path.join(out, f'{i:02d}{v}'), picture_env(a.picture, a.backend, benv if v == 'A' else {}), hosts[v], a.cool))
     keep(out, a)
     envinfo = environment(); by = {m: compare(reps, m) for m in metrics}; rows = [r for rr in by.values() for r in rr]
     holm(rows)   # one family: every segment x metric of this regression
-    for m, rr in by.items(): ledger_write(stamp, envinfo, name, m, f'baseline {bname}', 'current', rr)
+    for m, rr in by.items(): ledger_write(stamp, envinfo, f'{name}@{a.picture}', m, f'baseline {bname}', 'current', rr)
     for r in rows:
         if 'holm' in r: print(f"  {r['segment']:<10} {r['metric']}: {r['verdict']}, p {r['p']:.3f} → Holm {'ok' if r['holm'] else 'n.s.'}")
     slower = [r for r in rows if r.get('verdict') == 'B slower' and r.get('holm')]; ok = all(r['ok'] for v in reps.values() for r in v)
-    with open(os.path.join(out, 'regress.json'), 'w', encoding='utf-8') as f: json.dump(dict(route=name, hosts=hosts, sides=sides, order=order, rows=rows, environment=envinfo), f, ensure_ascii=False, indent=1)
+    with open(os.path.join(out, 'regress.json'), 'w', encoding='utf-8') as f: json.dump(dict(route=name, picture=a.picture, hosts=hosts, sides=sides, order=order, rows=rows, environment=envinfo), f, ensure_ascii=False, indent=1)
     verdict = 'RED' if slower or not ok else 'OK'
     print(f"BENCH-REGRESS {verdict} {name}: {len(slower)} significantly slower after Holm" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower))
     print('RESULT ' + json.dumps(dict(name='bench-regress', verdict=verdict, route=name, slower=[(r['segment'], r['metric'], r['diff']) for r in slower]), ensure_ascii=False))
@@ -546,6 +557,9 @@ def main(argv):
     bl = sub.add_parser('baseline'); bl.add_argument('op', choices=('save',)); bl.add_argument('--host'); bl.add_argument('--name', help='baseline folder name (default: the git revision)')
     rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli',), help='the kept host runs on the command-line host only'); rg.add_argument('--reps', type=int, default=6)
     rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50', help='comma-separated; gpu_ms is left out by default: on a fast Mac it is clock-scaled'); rg.add_argument('--cool', type=float, default=120); rg.add_argument('--keep', action='store_true', help='write .keep into the result folder')
+    for sp in (r, b, pr, rg):
+        sp.add_argument('--picture', default='rec', choices=('rec', 'orig', 'rec75', 'phone'),
+                        help="rec (default): this Mac's Recommended in full screen (dm/tools/picture.py); orig: the host's own defaults, windowed; rec75 / phone: those sets")
     a = ap.parse_args(argv)
     held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * 2} min", a.cmd in ('run', 'ab', 'profile', 'regress'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
     if held is not None: return held

@@ -12,6 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench  # noqa: E402
+import picture  # noqa: E402
 
 ROUTE = str(Path(__file__).resolve().parents[1] / 'verify' / 'bench' / 'town_loop.scn')
 CHAIN = 'add73ceeb333'
@@ -153,6 +154,51 @@ class BenchTest(unittest.TestCase):
                      mock.patch.object(bench.scenario, 'Runner', raise_if_called), mock.patch.object(bench, 'current_host', raise_if_called), contextlib.redirect_stdout(out):
                     rc = bench.main(['regress', ROUTE] + argv)
             self.assertEqual(rc, 2, out.getvalue()); self.assertIn(want, out.getvalue())
+
+
+    def test_picture_env(self):
+        self.assertEqual(bench.picture_env('rec', 'cli', {}), {**picture.REC, 'DM_TEST_FULLSCREEN_AT': '1'})
+        self.assertEqual(bench.picture_env('rec', 'mac-app', {}), {'DM_TEST_VIDEO_FIRSTBOOT': '1'})
+        self.assertEqual(bench.picture_env('orig', 'cli', {}), {})
+        e = bench.picture_env('rec', 'cli', {'DM_TEST_WINSIZE': '1280x720'})
+        self.assertEqual(e['DM_TEST_WINSIZE'], '1280x720'); self.assertNotIn('DM_TEST_FULLSCREEN_AT', e)
+
+    def test_picture_reaches_host(self):   # run, ab, profile and regress all hand the picture to the host; regress's A runs also get the baseline's snapshot
+        seen = []
+        class FakeRunner:
+            def __init__(self, route, backend, out_dir, headless): seen.append((out_dir, dict(os.environ))); self.on_started = None
+            def go(self): return {}, 0
+        with tempfile.TemporaryDirectory() as t:
+            host = Path(t, 'dmhost'); host.write_bytes(b'x')
+            base = os.path.join(t, 'baseline'); os.makedirs(base); self.snapshotted(base)
+            patches = [mock.patch.object(bench.scenario, 'Runner', FakeRunner), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None),
+                       mock.patch.object(bench, 'wait_cool', lambda s: (None, 0)), mock.patch.object(bench, 'thermal', lambda: None),
+                       mock.patch.object(bench, 'environment', lambda: {'git': {'rev': 'x'}}), mock.patch.object(bench, 'DM_ROOT', t), mock.patch.object(bench, 'BASE', base),
+                       mock.patch.object(bench, 'current_host', lambda: str(host)), mock.patch.object(bench, 'attribute', lambda d, h: dict(threads={}, segments={}, hitches=[]))]
+            with contextlib.ExitStack() as st, contextlib.redirect_stdout(io.StringIO()):
+                for pt in patches: st.enter_context(pt)
+                def call(argv):
+                    seen.clear(); rc = bench.main(argv); self.assertEqual(rc, 0, argv); self.assertNotIn('DM_GAME_RES', os.environ); return list(seen)
+                rec = {k: v for k, v in picture.REC.items()}
+                [(_, e)] = call(['run', ROUTE, '--reps', '1'])
+                self.assertEqual((e['DM_GAME_RES'], e['DM_TEST_FULLSCREEN_AT']), ('2560x1440', '1')); self.assertLessEqual(rec.items(), e.items())
+                [(_, e)] = call(['run', ROUTE, '--reps', '1', '--env', 'DM_GAME_RES=1600x900'])
+                self.assertEqual(e['DM_GAME_RES'], '1600x900')
+                [(_, e)] = call(['run', ROUTE, '--reps', '1', '--picture', 'orig'])
+                self.assertNotIn('DM_AA_MODE', e)
+                runs = call(['ab', ROUTE, '--reps', '1', '--b-env', 'DM_AA_MODE=1'])
+                self.assertEqual(len(runs), 2); self.assertTrue(all(e['DM_NVN_ANISO'] == '16' for _, e in runs))
+                self.assertEqual([e['DM_AA_MODE'] for _, e in runs], ['2', '1'])
+                [(_, e)] = call(['profile', ROUTE])
+                self.assertEqual((e['DM_SAMPLE'], e['DM_SHADOW_SIZE']), ('4:*', '4096'))
+                runs = call(['regress', ROUTE, '--reps', '6'])
+                self.assertEqual(len(runs), 12)
+                for d, e in runs:
+                    self.assertEqual(e['DM_ENV_SHADOWS'], '1', d)
+                    if d.endswith('A'): self.assertEqual((e['SCN_PRODUCT'], e['DM_MSL_DIR']), (os.path.join(os.path.realpath(base), 'r1', 'product'), os.path.join(os.path.realpath(base), 'r1', 'msl')))
+                    else: self.assertNotIn('SCN_PRODUCT', e)
+                rj = json.load(open(next(Path(t, 'run', 'bench').glob('town_loop_regress_*/regress.json')), encoding='utf-8'))
+                self.assertEqual(rj['picture'], 'rec')
 
 
 if __name__ == '__main__':
