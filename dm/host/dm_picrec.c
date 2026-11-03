@@ -21,6 +21,7 @@
 // No MetalFX: a fixed resolution, the picture by its load.
 // Memory is not an input: no 8 GB Mac has been measured (the GPU heap is a fixed 768 MiB).
 #include "dm_picrec.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +51,14 @@ static double core_speed(int iphone, int gen) {
 }
 
 int dm_picrec_real(int app, int app_support, int test_firstboot) { return app && (!app_support || test_firstboot); }
+
+int dm_picrec_id(const dm_mac_spec *s) {
+    uint32_t h = 2166136261u;
+    for (const unsigned char *g = (const unsigned char *)(s->gpu ? s->gpu : ""); *g; g++) h = (h ^ *g) * 16777619u;
+    const int v[4] = { s->cores, s->out_w, s->out_h, s->mfx };
+    for (int i = 0; i < 4; i++) for (int b = 0; b < 4; b++) h = (h ^ ((uint32_t)v[i] >> (8 * b) & 0xff)) * 16777619u;
+    return (int)(h & 0x7fffffff);
+}
 
 // load of a picture: 3D at `scale` of an output w x h
 static double load(int w, int h, double scale) { double out = (double)w * h / 1e6; return out * scale * scale + OUT_WEIGHT * out; }

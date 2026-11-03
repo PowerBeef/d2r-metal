@@ -39,16 +39,21 @@ static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 0, !DM_PHONE, 0, 1 };   // defaults: power saver (30 fps) off; 3D quality smoothness first on phones (q3d=0) and quality first on the Mac (q3d=1: a desktop GPU has headroom, and at 60 fps drops are mostly CPU hitches that a lower 3D resolution does not help); the group swap sits left of the portal; everything else on, bright (Brighten dark areas, dm_bright.c, read live: no apply hook) included (voice's default is unused: it follows the current language on load, and "Default" leaves it alone)
-// q3d（3D 画质）：0 = 流畅优先（掉帧就自动降 3D 比例）、1 = 画质优先（不自动降）。生效 = 调 hle_oe.c 的 dm_3d_quality_mode_set，读盘与点「应用」时当场调，下一帧控制器就按新档走。
-// 页上是上下两项单选（同语言行）：TouchCustom_q3d 是「画质优先」那格（勾上 = 1），TouchCustom_q3d_smooth 是它的反面
-// q3d (3D quality): 0 = smoothness first (automatically lowers the 3D scale on frame drops), 1 = quality first (no automatic lowering). Applied by calling hle_oe.c's dm_3d_quality_mode_set, immediately on load and on tapping "Apply", so the controller follows the new setting from the next frame.
-// On the page it is a stacked two-option radio (like the language row): TouchCustom_q3d is the "Quality first" cell (checked = 1), TouchCustom_q3d_smooth is its inverse
+    1, 1, 1, 1, 1, 0, !DM_PHONE, 0, 1 };   // defaults: power saver (30 fps) off; Frame Drops (q3d) 0 = lower on phones, 1 = keep on the CLI host and Mac test copies (the Mac App takes the recommendation's, front_q3d_default); the group swap sits left of the portal; everything else on, bright (Brighten dark areas, dm_bright.c, read live: no apply hook) included (voice's default is unused: it follows the current language on load, and Default leaves it alone)
+// q3d (Frame Drops): 0 = lower the 3D resolution for a while when frames drop, 1 = keep it; applied through hle_oe.c dm_3d_quality_mode_set on load and on
+// Apply, so the controller follows it from the next frame; saved only while it differs from its default (CUSTOM_V 2). On the Video tab it is the Frame
+// Drops selector (dm_video.c row drops); the default overlay's single Custom page shows it as a stacked two-option radio (like the language row):
+// TouchCustom_q3d is the "keep" cell (checked = 1), TouchCustom_q3d_smooth its inverse
+// sw_custom.txt format version (the custom_v line): 2 = q3d is written only while it differs from its default, so it follows the device's default (the
+// Mac App's recommendation) until the player picks the other value. A version-1 file's q3d that equals the old default (k_def) follows today's default
+// instead. Older builds skip the custom_v line as an unknown key, so going back a version is safe
+#define CUSTOM_V 2
+// The custom_v saved: CUSTOM_V, or a newer file's own, so an older build never stamps its format onto a newer file (as sw_video.txt keeps a newer rec_v)
+static _Atomic int g_cv_keep = CUSTOM_V;
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
 #define K_Q3D (7 + VOICE_ROW)
 #define K_TOUCH_SWAP (8 + VOICE_ROW)
-// The front end may change Frame Drops' default (q3d) for its device: front_mac.m gives a Mac on an iPhone chip the phone's 0, the 3D resolution
-// dropping for a while when frames drop; -1 = keep k_def
+// The front end may set Frame Drops' default for its device (front_mac.m: the recommendation's choice from dm_picrec.c); -1 = keep k_def
 __attribute__((weak)) int front_q3d_default(void) { return -1; }
 static int def_of(int i) { if (i == K_Q3D) { int x = front_q3d_default(); if (x == 0 || x == 1) return x; } return k_def[i]; }
 void dm_3d_quality_mode_set(int mode);
@@ -88,14 +93,21 @@ static void load_once(void) {
     char p[1100]; if (!file_path(p, sizeof p)) return;   // 存档还没挂上：先按缺省开答，挂上后再读 | The save is not mounted yet: answer with the default (on) for now, and read again after it is mounted
     int v[NK]; for (int i = 0; i < NK; i++) v[i] = def_of(i);
     FILE *f = fopen(p, "r"); char ln[128];
-    int lang = -1, voice = -1;
-    while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
+    int lang = -1, voice = -1, q3d_file = -1, cv = 1;   // q3d as stored (-1 = absent); cv = the file's format (custom_v; absent = 1)
+    while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0;
+        if (!strcmp(ln, "custom_v")) { cv = atoi(eq + 1); continue; }
+        int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0'; if (i == K_Q3D) q3d_file = v[i];
         if (i == 0) { int l = atoi(eq + 1); if (l >= 0 && l < LANG_N) lang = v[0] = l; }
 #if VOICE_ROW
         if (i == K_VOICE) { int x = atoi(eq + 1); if (x == 0 || x == 1) voice = v[K_VOICE] = x; }
 #endif
     }
     if (f) fclose(f);
+    atomic_store(&g_cv_keep, cv > CUSTOM_V ? cv : CUSTOM_V);
+    // An older file saved q3d with every key, at the default of its day (k_def: keep on the Mac, lower on phones): that value follows today's default
+    // (the Mac App's recommendation). Only a value that differs from both the old and today's default is the player's own choice
+    if (q3d_file >= 0 && cv < CUSTOM_V && q3d_file == k_def[K_Q3D] && q3d_file != def_of(K_Q3D)) { v[K_Q3D] = def_of(K_Q3D);
+        LOG("custom settings: q3d=%d in an older sw_custom.txt was the old default; Frame Drops follows the recommendation (%d)", q3d_file, v[K_Q3D]); }
     { const char *tl = getenv("DM_TEST_LANG"); if (tl && *tl >= '0' && *tl < '0' + LANG_N) { lang = v[0] = *tl - '0'; g_lang_test = 1; LOG("自定义设置：测试开关 DM_TEST_LANG=%d（当作语言行选了 %s 并应用，不写回文件）", lang, k_lang_name[lang]); } }
 #if VOICE_ROW
     { const char *tv = getenv("DM_TEST_VOICE"); if (tv && *tv >= '0' && *tv <= '1') { voice = v[K_VOICE] = *tv - '0'; g_voice_test = 1; LOG("自定义设置：测试开关 DM_TEST_VOICE=%d（当作配音行选了 %s 并应用，不写回文件）", voice, voice ? "English" : "中文"); } }
@@ -129,8 +141,12 @@ int dm_custom_default(const char *key) { int i = key_index(key); return i >= 0 ?
 int dm_fps_setting(void) { return dm_custom_get("eco_fps") ? 30 : 60; }   // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义） | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol)
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
-    snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
-    for (int i = 0; ok && i < NK; i++) { if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue; if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue; ok = fprintf(f, "%s=%d\n", k_keys[i], atomic_load(&g_val[i])) > 0; }   // lang / voice 只在玩家真改过之后才写进文件
+    snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL && fprintf(f, "custom_v=%d\n", atomic_load(&g_cv_keep)) > 0;
+    for (int i = 0; ok && i < NK; i++) {
+        if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue;   // lang and voice are written only after the player picked them
+        if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue;
+        if (i == K_Q3D && atomic_load(&g_val[i]) == def_of(i)) continue;   // Frame Drops at its default follows the default (CUSTOM_V 2)
+        ok = fprintf(f, "%s=%d\n", k_keys[i], atomic_load(&g_val[i])) > 0; }
     if (f) ok = fclose(f) == 0 && ok;
     if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名：写到一半被杀也不会留下半个文件 | Write a temporary file first and then rename: being killed halfway through the write does not leave half a file behind
     LOG("自定义设置：存盘%s", ok ? "" : "【红】失败");

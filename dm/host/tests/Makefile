@@ -21,6 +21,7 @@ run: \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
+	$(B)/t_custom \
 	$(B)/t_dump \
 	$(B)/t_dump_asan \
 	$(B)/t_fs \
@@ -158,6 +159,7 @@ run: \
 	TMPDIR="$(abspath $(B))" $(B)/t_scrub
 	TMPDIR="$(abspath $(B))" $(B)/t_video 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_video_phone 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_custom 2>/dev/null
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
 	$(PY) movie_cut.py $(B)/main.orig.bin $(B)/subsdk0.orig.bin
 	$(PY) oe_notify.py $(B)/main.orig.bin
@@ -177,8 +179,12 @@ $(B)/t_scrub: t_scrub.c ../dm_scrub.c ../dm_scrub.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_scrub.c ../dm_scrub.c
 $(B)/t_picrec: t_picrec.c t_picrec_cases.h ../dm_picrec.c ../dm_picrec.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_picrec.c ../dm_picrec.c -lm
-$(B)/t_video: t_video.c ../dm_video.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_video.c ../dm_video.c
+# the Mac build of dm_video.c (t_video.c includes dm_video.c; t_video_fe.c holds the front-end stubs: generic and front_mac.m on this M6)
+$(B)/t_video: t_video.c t_video_fe.c ../dm_video.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_video.c t_video_fe.c
+# dm_custom.c: Frame Drops follows its default unless the player picked the other value (custom_v 2), the Extras key bright
+$(B)/t_custom: t_custom.c ../dm_custom.c ../dm_custom.h ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_custom.c ../dm_custom.c
 # the phone build of dm_video.c (DM_PHONE=1 on the Mac; t_video_phone.c includes dm_video.c, the stubs mirror front_ios.m)
 $(B)/t_video_phone: t_video_phone.c t_video_phone_stubs.c ../dm_video.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -DDM_PHONE=1 -I.. -Wl,-dead_strip -o $@ t_video_phone.c t_video_phone_stubs.c

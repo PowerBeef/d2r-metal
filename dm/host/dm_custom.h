@@ -2,19 +2,15 @@
 // 「自定义」(Custom) settings: on/off switches for the features we added ourselves, all read and written here. Each module only calls dm_custom_get and does not read files / environment variables as settings on its own.
 #pragma once
 
-// 已生效的值 0 / 1：只在玩家点选项页「应用」后变，「放弃」不变，「默认」= 各键缺省（省电模式关，其余开）。键不认识返回 1。
-// 任意线程可调：第一次调用读一次文件，之后只是原子量读 + 几项字符串比较，无锁。iOS 上启动期（存档挂上之前）就能读。
-// 键：drop_light 高价值掉落光柱 / item_notes 物品注释与旧译名 / icloud iCloud 同步存档（cloud_ios.m，启动时读）/ pot_pick 药水自动拾取（dm_potpick.c）/ drop_haptic 高价值掉落震动（dm_drophaptic.c） / eco_fps 省电模式 30 帧（nvn_mtl.m，缺省关）
-// touch_swap_above：0 = 传送门左侧（默认），1 = 技能区上方；点「应用」后生效。
 // Effective value 0 / 1: changes only after the player taps Apply on the options page; Discard leaves it unchanged; Default = each key's default (power-saving mode off, the rest on). Returns 1 for an unknown key.
 // Callable from any thread: the first call reads the file once, after that it is an atomic read plus a few string comparisons, lock-free. On iOS it can be read during startup (before the save is mounted).
 // Keys: drop_light light beam on high-value drops / item_notes item notes and old translated names / icloud iCloud save sync (cloud_ios.m, read at startup) / pot_pick potion auto-pickup (dm_potpick.c) / drop_haptic haptics on high-value drops (dm_drophaptic.c) / eco_fps power-saving mode at 30 fps (nvn_mtl.m, off by default)
-// touch_swap_above: 0 = left of portal (default), 1 = above the skill fan; applies after Apply.
+// / q3d Frame Drops (below) / touch_swap_above 0 = left of the portal (default), 1 = above the skill fan / bright Brighten dark areas (dm_bright.c, read live, on by default).
 int dm_custom_get(const char *key);
 int dm_custom_lang_explicit(void);   // 语言开关（键 lang_en）在设置文件里写着的值：-1 没写过（不动原版设置）/ 0 简中 / 1 英文；hle_fs.c 挂存档时读 | Value of the language switch (key lang_en) as written in the settings file: -1 never written (original settings left alone) / 0 Simplified Chinese / 1 English; read by hle_fs.c at save mount
 int dm_custom_voice_explicit(void);   // 单独配音开关（键 voice）：-1 没写过 / 0 中文配音 / 1 英文配音；hle_fs.c 挂存档时读
-// q3d 3D 画质（0 = 流畅优先：掉帧自动降 3D 比例，手机缺省；1 = 画质优先：不自动降，Mac 缺省），读盘 / 应用时调 hle_oe.c 的 dm_3d_quality_mode_set 生效
-// q3d 3D quality (0 = smoothness first: automatically lowers the 3D scale on frame drops, the default on phones; 1 = quality first: no automatic lowering, the default on the Mac); applied on load / apply by calling hle_oe.c's dm_3d_quality_mode_set
+// q3d Frame Drops (0 = lower the 3D resolution for a while when frames drop, 1 = keep it): the default is 0 on phones, the recommendation's choice in the Mac App and 1 on the CLI host;
+// saved only when it differs from that default (custom_v 2); applied on load / Apply through hle_oe.c dm_3d_quality_mode_set
 int dm_fps_setting(void);   // 省电模式（键 eco_fps，缺省关）：开 = 30 帧、关 = 60；nvn_mtl.m mtl_fps_target 读 | Power-saving mode (key eco_fps, off by default): on = 30 fps, off = 60; read by mtl_fps_target in nvn_mtl.m
 
 void dm_custom_init(const char *dir);   // 设置文件所在目录（iOS 外壳启动时给 Documents）；不调则用存档提交目录的上一级（Mac 宿主） | Directory holding the settings file (the iOS shell passes Documents at startup); if not called, the parent of the save commit directory is used (Mac host)

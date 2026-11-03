@@ -14,6 +14,7 @@ int dm_thermal_now(void) { return g_dm_thermal; }   // 最近的温控档位（0
 #import <Metal/Metal.h>
 #import <MetalFX/MetalFX.h>
 #include <signal.h>
+#include <sys/sysctl.h>
 #include "front.h"
 #include "dm_input.h"
 void dm_gamepad_start(void (*on_mode)(int pad)); void dm_gamepad_touched(void); void dm_gamepad_on_press(void (*fn)(void));   // dm_gamepad.m
@@ -942,16 +943,19 @@ void front_video_color(int accurate) { dispatch_async(dispatch_get_main_queue(),
 int front_video_mfx_ok(void) { int mtl_mfx_supported(void); return mtl_mfx_supported(); }
 int front_video_firstboot(int rec[3], int cur[3]) {
     rec[0] = 0; rec[1] = 0; rec[2] = front_video_mfx_ok() ? 1 : 0; for (int i = 0; i < 3; i++) cur[i] = rec[i];
-    LOG("画面设置：首次启动 → 推荐 3D 清晰度 75%%、%s", rec[2] ? "MetalFX" : "标准（本机不支持 MetalFX）");
+    // the same choice on every iPhone and iPad; the log names the device, its GPU and screen, so later device runs can be matched to what it got.
+    // front_game_res (cached on the main thread at launch) rather than UIScreen, since dm_video.c may ask from a game thread
+    char hw[64] = ""; size_t n = sizeof hw; sysctlbyname("hw.machine", hw, &n, NULL, 0);
+    id<MTLDevice> d = MTLCreateSystemDefaultDevice(); uint64_t res = front_game_res(1);
+    LOG("picture settings: Recommended for %s (%s, %s), screen %ux%u → 3D 75%%, %s", hw[0] ? hw : "?", d.name.UTF8String ?: "?",
+        d.supportsBCTextureCompression ? "BC textures" : "no BC textures", (unsigned)(res & 0xffffffff), (unsigned)(res >> 32), rec[2] ? "MetalFX" : "Standard (no MetalFX)");
     return 1;
 }
-// 之后加的画质键的推荐值（dm_video.c 读盘缺这个键、或推荐版本旧了时问）：SMAA、16× 各向异性、准确色彩，同 Mac。
-// iPhone 17 Pro 上量过（城镇站定、3D 75%，MetalFX 开 / 关各一轮）：都稳 60 帧，帧间隔 p95、CPU、温控与原版一样；手机让 App 看得到的读数里看不出开销
-//（GPU 降频把每帧 GPU 时间撑满帧间隔，进程能量跟着 CPU 走）。3D 清晰度那一档（s3d）只配 Mac 的原生出图，手机不推荐
-// Recommendations for the picture keys added later (asked by dm_video.c when the file lacks the key or holds an older recommendation version): SMAA, 16x anisotropy and accurate colour, as on the Mac.
-// Measured on an iPhone 17 Pro (standing in town, 3D at 75%, one pass with MetalFX on and one off): steady 60 fps, with frame-interval p95, CPU and the thermal state the same as the original;
-// none of the readings the phone gives an app shows a cost (the GPU clocks down until each frame's GPU time fills the frame interval, and process energy follows the CPU). The 3D resolution step (s3d)
-// only goes with the Mac's native output, so the phone recommends none
+// Recommendations for the picture keys added later (asked when the file lacks the key or holds an older rec_v): SMAA, 16x and Accurate colour on every
+// iPhone and iPad (rec_v 3). The rec_v 3 check on an iPhone 17 Pro (steady 60 fps; frame pacing, CPU and thermal state unchanged) could not see GPU cost:
+// the GPU lowers its clock to fill the frame. A later per-pass reading (DM_NVN_PASSGPU), taken before e070b94 specialised SMAA's shaders on the HDR switch
+// (about half the edge-pass cost on the Mac), put SMAA edge + blend at about 18% of the phone's GPU work. The cost after e070b94 is not measured on a
+// phone. The 3D Resolution step (s3d) only goes with the Mac's Native output, so the phone recommends none
 int front_video_rec(const char *key) {
     if (!strcmp(key, "aa")) return 1;
     if (!strcmp(key, "aniso")) return 3;

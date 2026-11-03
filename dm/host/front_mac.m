@@ -11,6 +11,7 @@
 #import <MetalFX/MetalFX.h>
 #import <ImageIO/ImageIO.h>
 #include <IOKit/IOKitLib.h>
+#include <IOKit/graphics/IOGraphicsTypes.h>
 #include "dm.h"
 #include "dm_input.h"
 #include "dm_uiscreen.h"
@@ -109,8 +110,26 @@ static int gpu_cores(void) {
     }
     return n;
 }
-// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores) and the main screen's backing-store size; memory
-// and the Mac's model are only logged. Worked out once per launch
+// The main screen's panel in pixels, for the log only: its native mode, else the largest 1x mode (a mode whose pixels equal its points, so HiDPI
+// duplicates larger than the panel are skipped); 0 x 0 when unknown. In a scaled mode ("looks like" on a MacBook Air) Native renders the backing
+// store, which is larger than the panel
+static void panel_px(int *w, int *h) {
+    *w = *h = 0; NSScreen *sc = NSScreen.mainScreen; if (!sc) return;
+    CGDirectDisplayID id = [sc.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
+    CFArrayRef ms = CGDisplayCopyAllDisplayModes(id, (__bridge CFDictionaryRef)@{ (__bridge NSString *)kCGDisplayShowDuplicateLowResolutionModes: @YES });
+    if (!ms) return;
+    for (CFIndex i = 0; i < CFArrayGetCount(ms); i++) {
+        CGDisplayModeRef m = (CGDisplayModeRef)CFArrayGetValueAtIndex(ms, i);
+        int pw = (int)CGDisplayModeGetPixelWidth(m), ph = (int)CGDisplayModeGetPixelHeight(m);
+        if (CGDisplayModeGetIOFlags(m) & kDisplayModeNativeFlag) { *w = pw; *h = ph; break; }
+        if (pw == (int)CGDisplayModeGetWidth(m) && (long)pw * ph > (long)*w * *h) { *w = pw; *h = ph; }
+    }
+    CFRelease(ms);
+}
+static int g_mac_rec_id = -1;   // dm_picrec_id of the spec mac_rec worked from (set once, inside its dispatch_once)
+// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores) and the main screen's backing-store size; memory,
+// the Mac's model, the panel size, the thermal state and Low Power Mode are only logged. Worked out once per launch: first in main.c cloud_boot_start
+// (dm_custom's Frame Drops default, on the main thread, after NSApplication exists), then reused by dm_video.c's load
 static dm_mac_rec mac_rec(void) {
     static dm_mac_rec r; static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -119,14 +138,16 @@ static dm_mac_rec mac_rec(void) {
         double px = main_px(), ph = main_px_h();
         int w = native_w(), h = (int)lround(w * ph / fmax(px, 1));
         NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), w, h, front_video_mfx_ok() };
-        dm_mac_recommend(&spec, &r);
+        dm_mac_recommend(&spec, &r); g_mac_rec_id = dm_picrec_id(&spec);
+        int pw, pnh; panel_px(&pw, &pnh); NSProcessInfo *pi = NSProcessInfo.processInfo;
         static const char *const tiers[] = { "iPhone chip", "base", "Pro", "Max", "Ultra" };
         static const int pct[5] = { 100, 85, 75, 67, 50 };
         static const int fixed_w[3] = { 1600, 1920, 2560 };
-        LOG("picture: %s (%s, generation %d), %d GPU cores, %.0f GB, %s, screen %dx%d; about %.2fx the M6's GPU → Recommended %s %d, 3D %d%%, environment shadows %s, "
-            "shadows %s, Frame Drops %s (%.0f%% of the estimated capacity)", g.UTF8String, tiers[r.tier + 1], r.gen, spec.cores, mem / 1073741824.0, model, w, h, r.speed,
-            r.native ? "Native" : "fixed", r.native ? w : fixed_w[r.tier_res], pct[r.s3d], r.envsh ? "on" : "off", r.shq == 2 ? "Ultra" : r.shq ? "High" : "Standard",
-            r.q3d ? "keep" : "lower", r.load * 100);
+        LOG("picture: %s (%s, generation %d), %d GPU cores, %.0f GB, %s, screen %dx%d (backing %.0fx%.0f%s, panel %dx%d), thermal state %ld, Low Power Mode %s; "
+            "about %.2fx the M6's GPU → Recommended %s %d, 3D %d%%, environment shadows %s, shadows %s, Frame Drops %s (%.0f%% of the estimated capacity); rec_id %d",
+            g.UTF8String, tiers[r.tier + 1], r.gen, spec.cores, mem / 1073741824.0, model, w, h, px, ph, test_screen_px(NULL, NULL, NULL) ? " from DM_TEST_SCREEN_PX" : "",
+            pw, pnh, (long)pi.thermalState, pi.lowPowerModeEnabled ? "on" : "off", r.speed, r.native ? "Native" : "fixed", r.native ? w : fixed_w[r.tier_res], pct[r.s3d],
+            r.envsh ? "on" : "off", r.shq == 2 ? "Ultra" : r.shq ? "High" : "Standard", r.q3d ? "keep" : "lower", r.load * 100, g_mac_rec_id);
     });
     return r;
 }
@@ -137,8 +158,8 @@ static void rec_native(int *res, int *s3d) {
 // Who gets the real recommendation (dm_picrec_real): the Mac App, and a test copy only with DM_TEST_VIDEO_FIRSTBOOT=1. The CLI host (no DM_APP) and
 // test copies keep the original look for every picture key, so automated runs, golden baselines and benchmarks stay as they were
 static int real_recommendation(void) { return dm_picrec_real(getenv("DM_APP") != NULL, getenv("DM_APP_SUPPORT") != NULL, getenv("DM_TEST_VIDEO_FIRSTBOOT") != NULL); }
-// Recommended values for the first three keys (asked by dm_video.c for a key missing from sw_video.txt or an older rec_v; on the main thread at
-// launch): full screen; Native with the 3D Resolution from dm_picrec.c, or its fixed width when Native is too heavy; MetalFX when it is supported:
+// Recommended values for the first three keys (asked by dm_video.c on first boot, for a key missing from sw_video.txt, an older rec_v or another
+// main screen / GPU (rec_id); on the main thread at launch): full screen; Native with the 3D Resolution from dm_picrec.c, or its fixed width when Native is too heavy; MetalFX when it is supported:
 // with Native for the 3D upscale pass, with a fixed width when it is smaller than the screen. The older StartFullScreen / RenderScale /
 // MetalFXUpscale preferences carry over once as the current values. The CLI host and test copies (unless DM_TEST_VIDEO_FIRSTBOOT=1) get the
 // original look: windowed, 1600, Standard
@@ -157,26 +178,30 @@ int front_video_firstboot(int rec[3], int cur[3]) {
     id rs = [ud objectForKey:@"RenderScale"]; double k = [rs respondsToSelector:@selector(doubleValue)] ? [rs doubleValue] : 0;   // 手写的设置可能是任何类型 | a hand-written default can be any type
     if (k > 0 && isfinite(k)) { double w = fmin(fmax(px * fmin(k, 1.0), 1600), 2560); cur[1] = 0; for (int i = 0; i < 3; i++) if (k_render_w[i] <= w) cur[1] = i; legacy = 1; }
     if ([ud objectForKey:@"MetalFXUpscale"]) { cur[2] = [ud boolForKey:@"MetalFXUpscale"] && front_video_mfx_ok(); legacy = 1; }
-    LOG("画面设置：首次启动 主屏 %.0f 像素宽、显卡 %s → 推荐 全屏 / %d%s / %s%s", px, gpu.UTF8String, nres >= 0 ? native_w() : k_render_w[t], nres >= 0 ? "（原生）" : "", rec[2] ? "MetalFX" : "标准", legacy ? "；旧版偏好设过的接着用" : "");
+    LOG("picture settings: Recommended for this Mac: main screen %.0f px wide, GPU %s → full screen / %d%s / %s%s", px, gpu.UTF8String, nres >= 0 ? native_w() : k_render_w[t],
+        nres >= 0 ? " (Native)" : "", rec[2] ? "MetalFX" : "Standard", legacy ? "; values from the older preferences fill missing keys" : "");
     return 1;
 }
-// Recommendations for the picture keys added later (asked by dm_video.c when the file lacks the key or holds an older recommendation version): SMAA, 16x
-// anisotropy, accurate colour and environment shadows (+0.5 ms GPU in town at Recommended on an M6, still a steady 60 fps) in the Mac App; an iPhone
-// chip leaves environment shadows off and keeps the Switch's shadow map, as the phone does. The CLI host (no DM_APP) and test copies keep the original
-// (0), so automated runs, golden baselines and benchmarks stay as they were
+// Recommendations for the picture keys after the first three (asked by dm_video.c together with front_video_firstboot): SMAA, 16x and Accurate colour,
+// and from dm_picrec.c environment shadows, the shadow map and the 3D Resolution (an iPhone chip keeps the phone's shadows: none, the Standard map);
+// cost: docs/MAC.md. 0 on the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1 (dm_picrec_real), so automated runs, golden baselines and
+// benchmarks stay as they were
 int front_video_rec(const char *key) {
     if (!real_recommendation()) return 0;
     if (!strcmp(key, "aa")) return 1;
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "color")) return 1;
     if (!strcmp(key, "envsh")) return mac_rec().envsh;
-    if (!strcmp(key, "shq")) return mac_rec().shq;   // Ultra shadows: 4096-texel map, about +1 ms of shadow passes on an M6 (frame total +0.25 ms)
+    if (!strcmp(key, "shq")) return mac_rec().shq;   // 2 = Ultra (a 4096-texel map) with the full picture, 0 = Standard (the Switch's 2100) with the light one
     if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
     return -1;
 }
-// Frame Drops' default (dm_custom.c q3d): a GPU with little headroom at its Recommended lowers the 3D resolution for a while when frames drop, as the phone does;
-// -1 = the Mac's own (keep it)
+// Frame Drops' default (dm_custom.c q3d): the recommendation's choice (lower when the light picture is needed or the choice uses more than 85% of the
+// estimated capacity); -1 on the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1 (k_def, keep)
 int front_q3d_default(void) { return real_recommendation() ? mac_rec().q3d : -1; }
+// Which machine Recommended was worked out for (dm_video.c rec_id: works it out again at launch when the main screen or the GPU changed); -1 on the CLI
+// host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1, whose original look does not depend on the machine
+int front_video_rec_id(void) { if (!real_recommendation()) return -1; (void)mac_rec(); return g_mac_rec_id; }
 // 「色彩」：准确 = 层标 sRGB（游戏写的就是 sRGB 编码的字节），系统把它配到屏幕的色域；鲜艳 = 不标（原先的样子：宽色域屏把 sRGB 原色当屏幕原色，偏艳）。
 // 画面字节不变（截图、比对照旧），只改合成器怎么解释。DM_COLORSPACE=srgb|none 定死（测试、对照）
 // "Colour": Accurate = the layer is tagged sRGB (the game writes sRGB-encoded bytes) and the system maps it to the panel's gamut; Vivid = untagged (the old look: wide-gamut panels take the sRGB primaries as their own,

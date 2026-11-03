@@ -1,0 +1,43 @@
+# Video tab at this Mac's Recommended (a fresh test copy with DM_TEST_VIDEO_FIRSTBOOT=1: full screen, this Mac's own Recommended):
+# the controller steps Graphic Presets to Quality, which must stay shown (on an M6 at 2560 x 1440 Recommended equals Quality, which used to snap back),
+# Discard drops it, then Performance is applied (dm_video.c: dm_video_pump, apply_preset and AcceptChanges with live selectors).
+# The selection frame starts on the first Video-tab row when the page appears; the Mac rows are mode, res, color, preset, so three DOWN presses reach
+# Graphic Presets (a video_row event naming another row means the row order changed). RIGHT steps the options; Custom is skipped while disabled.
+# A test copy already runs the controller layouts (no padmode event follows inputmode). msg sends the same OptionsPanelMessage the page's buttons send.
+# The screenshot is a second, visual check: the row must read Quality. The first-boot check takes only keys every Mac's Recommended shares and no older
+# preference seeds (SMAA, 16x, Accurate; the original look a test copy keeps has 0 there): Resolution, Upscaling and the shadows depend on the chip and
+# the screen (dm_picrec.c), so the scenario holds on any Mac
+name video_presets_mac
+requires mac-app
+save warlock
+env DM_TEST_VIDEO_FIRSTBOOT=1
+timeout 240
+
+enter_game
+sleep 3
+open_pause
+tap_ui Settings
+sleep 2
+inputmode mode=controller
+sleep 1
+press DOWN
+press DOWN
+press DOWN
+press RIGHT
+sleep 0.5
+press RIGHT
+sleep 1
+screenshot video_quality.png
+msg OptionsPanelMessage:CancelChanges
+sleep 1
+press RIGHT
+sleep 1
+msg OptionsPanelMessage:AcceptChanges
+sleep 1
+quit
+check event picture how=first aa=1 aniso=3 color=1
+check event video_row row=preset value=1 preset=1
+check event video_row row=preset value=2 preset=2
+check event picture how=apply res=0 up=1 aa=0 envsh=0 shq=0
+check no_red
+check no_red_log
