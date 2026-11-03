@@ -7,7 +7,10 @@ python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn              
 python3 dm/tools/scenario.py run dm/verify/scenarios/*.scn --headless                   # every scenario, no window
 python3 dm/tools/scenario.py run dm/verify/scenarios/background.scn --backend ios-mac   # the iOS package on this Mac
 python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                           # parse only
+python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn --env "DM_AA_MODE=1 DM_NVN_ANISO=0"   # extra env, wins over the file's
 ```
+
+`--env "K=V …"` (repeatable; shell quoting keeps a value with spaces whole) is merged into every scenario's `env` and wins over it: a negative control or a one-off variant without editing the file.
 
 Each scenario prints `STEP` lines, `CHECK` lines, a `SCENARIO <name> OK|RED <reason>` verdict and a final `RESULT {json}`. The result folder (`$DM_ROOT/run/scenario/<name>_<backend>_<time>/`) holds `host.log`, `events.ndjson` (CLI host), `port.log`, `steps.tsv`, `result.json` and the screenshots.
 
@@ -32,7 +35,7 @@ Header lines (anywhere in the file):
 |---|---|
 | `name <name>` | Scenario name (default: the file name). |
 | `save <name>` | Save to start from: `save_ref_<name>` under `$DM_ROOT/data/switch/` (default `warlock`), `empty`, or an absolute path. The runner always uses a copy. |
-| `env K=V …` | Extra environment for the game. |
+| `env K=V …` | Extra environment for the game. `{run}` in a value becomes the run's result folder on the `cli` and `mac-app` backends (`DM_TEST_PRESENT_SHOT=15:{run}/present.png`); the iOS backends pass it unchanged. |
 | `timeout <s>` | Limit for the whole scenario (default 300). |
 | `window 0` | Run the CLI host without a window. |
 | `requires <backend> …` | Skip on other backends. |
@@ -45,6 +48,7 @@ Steps (any step can be prefixed with `try`: its failure is noted as `try` in the
 | Any control-port command | as in [control_port.md](../control_port.md); positional forms: `press KEYS [frames]`, `stick X Y [frames]`, `tap X Y`, `wheel X Y DY [precise] [view]`, `drag X0 Y0 X1 Y1 [frames]`, `msg SPEC`, `world_tap X Y`, `walk_to X Y [timeout]`, `screenshot PATH` (alias `shot`), `ui_dump [want]`, `step [n]`, `save_now`, `tap_ui NAME`, `await_ui NAME`, `tap_unit TYPE CLS`, `app DO`, `mark NAME`, `crash KIND`, `quit` | Sends the command; red if the reply is `ok:false`. A relative screenshot path lands in the result folder (CLI) or in `Documents/` (iOS). |
 | `expect <event> [field=value …] [timeout=30]` | | Waits for the event since the previous step started (so an event triggered by that step is not missed). |
 | `expect_no <event> [field=value …] [for=3]` | | Red if the event appears within `for` seconds. |
+| `expect_mem <at> [len] [chain=…] hex=<bytes> [timeout=5]` | `at`, `len` and `chain` as the control port's `mem` | Reads guest memory every 0.2 s until the bytes read are `hex` (an even number of hex digits, compared case-blind); red with what it read otherwise. For a value the host or the game writes, e.g. the renderer's anti-aliasing byte: `expect_mem main+0x31e0848 1 chain=0x6614 hex=02`. `hex` and `timeout` are never sent to the host. |
 | `expect_state field=value …  [timeout=5]` | `field>=n`, `field<=n`, `field!=v`, `field~=v` too (`~=`: the list holds `v` / the string contains it, e.g. `panels~=PauseLayoutGarden`) | Polls `state` until every condition holds. |
 | `sleep <s>`, `log <text>` | | |
 | `remember <field> [as=name]` | | Keeps a `state` field; later values can say `$name`, `$name+N` or `$name-N` (e.g. `expect_state tick<=$tick+30`). |
@@ -68,8 +72,11 @@ Final checks (`check …`, evaluated after the run):
 | `check actions seq=a,b,…` | These controller actions (`action` events, `begin`) happened in this order, others allowed between; names or numbers. |
 | `check saves_valid` | The run's committed save passes `dm/verify/d2save.py` (the game's load rules). On `cli` / `mac-app` every run also does this as `saves valid` unless the scenario has its own `check saves_valid`; the iOS backends have no save directory to read. |
 | `check save_pairs` | Every host save request (`save_request`) got at least two commits (character + shared stash) before the next request. |
+| `check log_has <regex> [file=<file>] [min=1] [last=<regex>]` | At least `min` lines of the game log (`host.log`, the Mac App's `support/Logs/host.log`, `port.log` on the iOS backends) match the regex (`re.search`), or of `file`, relative to the result folder (`file=nvn.tsv`). With `last=`, only the last line matching `last` is judged: it passes when that line matches the regex, so a check reads the final state rather than any earlier one (an early windowed layout line cannot pass a full-screen check). A regex containing `=` goes in `re="…"`; one with a backslash must be in double quotes (`"放在 \(0,0\)"`; unquoted, shell rules drop the backslash). The regexes are compiled when the file is parsed. Prefer an event check (`check event …`) when the host emits one: a reworded log line turns this red. |
 
 `mem <at> [len] [chain=…]` steps (guest memory reads for engine checks, `control_port.md`) are kept whole in `mem.ndjson` in the run folder, since `steps.tsv` cuts details at 300 characters.
+
+Full-screen geometry: the live Metal 4 present logs neither its crop nor its viewport, so check what the window and a grab of the live drawable report. `env DM_TEST_PRESENT_SHOT=<s>:{run}/present.png` grabs the next live present at that time (count it from the window's creation, after the full-screen switch has settled) and logs the drawable size, content area and picture placement (`DM_TEST_PRESENT_SHOT：<path> WxH（内容区 …，游戏画面 … 在 (x,y)…）`); judge the window with `check log_has last="窗口：内容区" "…"`, since the first layout line reads the same before the switch.
 
 At the first red event, or when a step fails, the runner asks the host for the `engine` snapshot (panels, focus, save state, the latest actions and UI messages) and stores it as `engine.json` in the run folder, beside `crash.txt` when the process crashed.
 

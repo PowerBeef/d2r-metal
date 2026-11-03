@@ -38,6 +38,7 @@ class FakeHost:
                 if r['cmd'] == 'press' and r.get('keys') == 'PLUS': self.ev('panel', act='OpenPanel', name='PlayerInventoryExpansionLayout')
                 if r['cmd'] == 'state': out = dict(in_game=self.in_game, hp=40, panel='AutoMap')
                 if r['cmd'] == 'boom': self.ev('crash', sig=11)
+                if r['cmd'] == 'mem': out = dict(at='0x7100000010', hex='02')
                 ok = r['cmd'] != self.fail_cmd
                 rep = dict(id=r['id'], cmd=r['cmd'], ok=ok, **out, **({} if ok else {'err': 'nope'}))
                 self.s.sendall(b'[dm] RE ' + json.dumps(rep).encode() + b'\n')
@@ -137,6 +138,57 @@ class ScenarioTest(unittest.TestCase):
         self.assertFalse(by['no sanitizer reports']['ok']); self.assertIn('heap-use-after-free', by['no sanitizer reports']['detail'])
         self.assertTrue(by['metal validation (lint)']['ok']); self.assertIn('1 messages', by['metal validation (lint)']['detail'])
         self.assertTrue((self.dir / 'out' / 'sanitizer.txt').exists() and (self.dir / 'out' / 'metal_validation.txt').exists())
+
+
+    def test_parse_log_has_and_expect_mem(self):
+        _, _, checks = scenario.parse(self.scn('check log_has "Shadow map: 4096 px" file=p.tsv min=2\ncheck log_has re="a=1 b"\ncheck log_has last="窗口：内容区" "x"\n'))
+        self.assertEqual([(c['op'], c['args'], c['kw']) for c in checks], [('log_has', ['Shadow map: 4096 px'], {'file': 'p.tsv', 'min': '2'}),
+                                                                           ('log_has', [], {'re': 'a=1 b'}), ('log_has', ['x'], {'last': '窗口：内容区'})])
+        _, _, checks = scenario.parse(self.scn('check log_has "放在 \\(0,0\\)"\n'))   # double quotes keep the backslash
+        self.assertEqual(checks[0]['args'], ['放在 \\(0,0\\)'])
+        _, steps, _ = scenario.parse(self.scn('expect_mem main+0x10 1 chain=0x8 hex=02\n'))
+        self.assertEqual((steps[0]['op'], steps[0]['kw']), ('expect_mem', {'at': 'main+0x10', 'len': '1', 'chain': '0x8', 'hex': '02'}))
+        for bad in ('check log_has\n', 'check log_has "("\n', 'check log_has last="(" x\n', 'check log_has x min=two\n', 'check log_has a=1\n',
+                    'expect_mem main+0x10 hex=0\n', 'expect_mem hex=02\n', 'expect_mem main+0x10 1 2 hex=02\n'):
+            with self.assertRaises(scenario.ScenarioError, msg=bad): scenario.parse(self.scn(bad, 'b.scn'))
+
+    def test_expect_mem(self):   # polls the control port's mem until the bytes match; hex and timeout are never sent to the host
+        res, code, host = self.run_scn('expect_mem main+0x10 1 hex=02\n')
+        self.assertEqual((code, res['verdict']), (0, 'OK'), res)
+        mem = [g for g in host.got if g['cmd'] == 'mem'][0]
+        self.assertEqual((mem['at'], mem['len']), ('main+0x10', 1)); self.assertNotIn('hex', mem); self.assertNotIn('timeout', mem)
+        res, code, _ = self.run_scn('expect_mem main+0x10 1 hex=01 timeout=0.5\n')
+        self.assertEqual((code, res['failed']['step']), (1, 1)); self.assertIn('want 01', res['reason'])
+
+    def run_log(self, text, lines, files=None):
+        log = self.dir / 'host.log'; log.write_text(''.join(x + '\n' for x in lines), encoding='utf-8')
+        r = scenario.Runner(self.scn(text), 'cli', str(self.dir / 'out'), True)
+        for name, body in (files or {}).items(): (self.dir / 'out' / name).write_text(body, encoding='utf-8')
+        fb = FakeBackend(); fb.log_file = lambda: str(log); r.backend = fb   # type: ignore[assignment,method-assign]
+        return r.go()
+
+    def test_log_has(self):
+        lines = ['Shadow map: 4096 px', 'x', 'Shadow map: 4096 px']
+        res, code = self.run_log('ping\ncheck log_has "Shadow map: 4096 px" min=2\n', lines)
+        self.assertEqual(code, 0, res); self.assertTrue(res['checks'][0]['detail'].startswith('2 lines'), res['checks'][0])
+        res, code = self.run_log('ping\ncheck log_has "Shadow map: 4096 px" min=3\n', lines)
+        self.assertEqual((code, res['checks'][0]['ok']), (1, False))
+        res, code = self.run_log('ping\ncheck log_has "\\t@mfx3d\\t1" file=nvn.tsv min=2\n', lines, {'nvn.tsv': '5\t@mfx3d\t1\n6\t@mfx3d\t1\n'})
+        self.assertEqual(code, 0, res)
+        res, code = self.run_log('ping\ncheck log_has x file=nope.tsv\n', lines)
+        self.assertEqual(code, 1); self.assertIn('nope.tsv', res['checks'][0]['detail'])
+
+    def test_log_has_last(self):   # last= judges only the last line matching it: an earlier windowed layout line cannot pass a full-screen check
+        full, win = '窗口：内容区 1280×720，游戏画面 1280×720 放在 (0,0)', '窗口：内容区 1280×658，游戏画面 1170×658 放在 (55,0)'
+        scn = 'ping\ncheck log_has last="窗口：内容区" "内容区 1280×720，游戏画面 1280×720 放在 \\(0,0\\)"\n'
+        res, code = self.run_log(scn, [full, win]); self.assertEqual(code, 1); self.assertIn('1170×658', res['checks'][0]['detail'])
+        res, code = self.run_log(scn, [win, full]); self.assertEqual(code, 0, res)
+        res, code = self.run_log(scn, ['nothing']); self.assertEqual(code, 1)
+
+    def test_run_token_and_extra_env(self):
+        self.assertEqual(scenario.scn_env({'A': '{run}/p.tsv', 'B': 'x'}, '/r'), {'A': '/r/p.tsv', 'B': 'x'})
+        r = scenario.Runner(self.scn('env A=1\nping\n'), 'cli', str(self.dir / 'out'), True, extra_env={'A': '2', 'B': '3'})
+        self.assertEqual(r.meta['env'], {'A': '2', 'B': '3'})
 
 
 if __name__ == '__main__':
