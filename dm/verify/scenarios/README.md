@@ -42,6 +42,7 @@ Header lines (anywhere in the file):
 | `window 0` | Run the CLI host without a window. |
 | `front <why>` | Run this scenario in front (`DM_TEST_BGRUN=0`), judged for disturbances and redone; `<why>` is required (`visibility`, `focus`, `fullscreen`, `timing` …). Not with `env DM_TEST_BGRUN`. |
 | `requires <backend> …` | Skip on other backends. |
+| `schemes <scheme> …` | The control schemes this scenario is written for (`pc`, `controller`, `touch`): the scheme-neutral steps below are carried out through the run's scheme (`--scheme`, else the first one listed); a run in another scheme is skipped. `pc` runs with the PC interface set (`DM_PC_MODE=1`). |
 | `env DM_ROMFS_OVERLAY=auto` | `cli`: generate the iOS package's UI overlay into the run folder (about 3 s) and run with it, as `touchchain.sh` does; the controller / touch switch (`inputmode`) and the touch pages need it. |
 
 Steps (any step can be prefixed with `try`: its failure is noted as `try` in the step list and the scenario goes on; for long runs such as the soak, where one blocked bot walk should not end the run):
@@ -57,7 +58,11 @@ Steps (any step can be prefixed with `try`: its failure is noted as `try` in the
 | `gpu_capture [frames=1] [path=frame.gputrace] [keep=1]` | | `cli` / `mac-app`: captures GPU frames with `gpucapture` and returns the `gpudebug` summary (command buffers, encoders, draws, dispatches). The trace (about 4 GB a frame) is deleted unless `keep=1`. The run gets `MTL_CAPTURE_ENABLED=1` automatically. Capturing stalls presentation, so add `check no_red allow=e6db5cb6`. |
 | `export_save <name> [overwrite=1]` | | `cli` / `mac-app`: saves, waits for the commit and copies this run's committed save to `$DM_ROOT/data/switch/save_ref_<name>/` (local only, never committed). `warlock` is never replaced. |
 | `enter_game [slot=0]` | | From the main menu into a run: `X` on the main menu, load the character in `slot`, wait for `loading_done`. Does nothing when already in a run. |
-| `ui_click <widget[@panel]> [timeout=10]` | | Waits for the widget and clicks its centre through the run's own pointer: the PC mouse (`kbm`) in a PC-mode run (`env DM_PC_MODE=1`), else a touch tap (`tap_ui`). For widgets that move, such as an NPC's menu (`ListItem1@NpcDialogPanel` = its second row). |
+| `menu_pick <widget[@panel]> [timeout=10]` | | Waits for the widget and picks it through the run's scheme: pc clicks its centre with the PC mouse (`kbm`), touch taps it (`tap_ui`). The controller can't pick a named widget yet (not judged). Its first name `ui_click` still works. |
+| `use_unit <type> <cls> [btn=left\|right] [hold=<s>]` | | Uses the first such unit on screen through the run's scheme: pc presses on it with the mouse (on the Mac App through real AppKit events, `fe unit` / `unith`; elsewhere the host's `act`); controller and touch walk up and interact (a world tap). A right click is pc only. |
+| `open pause\|inventory` | | pc: the PC binding (Esc, I); controller and touch: the console way (+, then the pause tab for pause). |
+| `back` | | pc: Esc; controller and touch: B. |
+| `key <name>` | | A PC key (`esc`, `return`, `space`, `i`, `c`, `t`, `1`): through AppKit on the Mac App, into the PC layer elsewhere. pc only; give it `only=pc`. |
 | `open_pause`, `close_pause` | | `+` opens the combined panel and `L` three times reaches the pause page (`pause_open`); `B` closes it. |
 | `background [for=3]` | | To the background and back: iOS scene events as `DM_TEST_BG`; on the Mac, minimize and restore. |
 | `system_quit` | | Quits through the system path (Mac: the quit Apple event, as Quit in the Dock; iOS `applicationWillTerminate`: save, then quit) and waits for the process to end. |
@@ -79,6 +84,8 @@ Final checks (`check …`, evaluated after the run):
 `mem <at> [len] [chain=…]` steps (guest memory reads for engine checks, `control_port.md`) are kept whole in `mem.ndjson` in the run folder, since `steps.tsv` cuts details at 300 characters.
 
 At the first red event, or when a step fails, the runner asks the host for the `engine` snapshot (panels, focus, save state, the latest actions and UI messages) and stores it as `engine.json` in the run folder, beside `crash.txt` when the process crashed.
+
+**Control schemes.** One scenario per behaviour, written once: the scheme-neutral steps (`use_unit`, `open`, `back`, `menu_pick`, `key`) are carried out through the control scheme of the run, `scenario.py run … --scheme pc|controller|touch` (default: the first of the scenario's `schemes`). `only=<scheme>[,<scheme>]` on any step runs it in those schemes only. A step a scheme cannot do yet ends the run as not judged for that scheme (⚪, exit 3), never RED. `--aspect 16x10` fakes a MacBook-shaped main screen (`DM_TEST_SCREEN_ASPECT`). Example: `npc_talk.scn` runs in all three schemes and replaces the PC-only NPC scenarios.
 
 Fault scenarios live in `faults/` (see [faults/README.md](faults/README.md)): they arm save faults with the `fault` command and check that the player is told, saves keep committing and the save stays valid.
 

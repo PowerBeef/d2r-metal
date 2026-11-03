@@ -408,7 +408,7 @@ DM_TEST_SAFE_R	ios	ios/Sources/front_ios.m	-
 DM_TEST_SAVE_AT	host,verify	host/diag.c verify/golden.py	y
 DM_TEST_SAVE_DELAY	host	host/hle_fs.c	y
 DM_TEST_SCREEN	ios	ios/Sources/front_ios.m	-
-DM_TEST_SCREEN_ASPECT	host	host/front_mac.m	-
+DM_TEST_SCREEN_ASPECT	host	host/front_mac.m	y
 DM_TEST_SEEK_BIAS	host	host/diag.c	-
 DM_TEST_SEEK_NOACT	host	host/dm_world.c	-
 DM_TEST_SHARELOG	host	host/front_mac.m	-
