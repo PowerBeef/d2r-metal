@@ -11,6 +11,8 @@
 //   content   Frame Drops steps inside the allocation reuse the set: no build, one content event each
 //   idle      unused sets are put down: the 3D set after MFX_IDLE_3D submissions without a 3D draw, the present and screenshot sets after MFX_IDLE
 //             presents without use; then released once the frames that may have used them have run
+//   wb_*      the 3D write-back: full viewport (closed form v x mask), a partial viewport keeps the rest of the target, a pending colour-0
+//             clear lands outside the viewport and is consumed, an sRGB format view of the target encodes, the mask is filtered (linear)
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -128,9 +130,11 @@ static void sub_done(const char *what) {
     uint64_t f = mtl_sub_commit(); int ok = mtl_wait(f, 5000000000ull);
     if (!ok || mtl_last_commit_error()) { char n[160]; snprintf(n, sizeof n, "%s: submission completes without error", what); EXPECT(n, 1, ok && !mtl_last_commit_error()); }
 }
-// One 3D encode into colour 0 = dst in its own submission; returns mfx3d_encode's answer, *px = dst read back (RGBA8), *mo = the set's output (RGBA16F)
+// One 3D encode into colour 0 = dst in its own submission; returns mfx3d_encode's answer, *px = dst read back (RGBA8), *mo = the set's output (RGBA16F).
+// g_rsetup (when set) runs after R is set up, before the encode (a pending clear, a format view)
+static void (^g_rsetup)(void);
 static int enc3d(tex_t *dst, id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInteger aw, NSUInteger ah, id<MTLTexture> mask, MTLViewport vp, id<MTLBuffer> *px, id<MTLBuffer> *mo) {
-    memset(&R, 0, sizeof R); R.has_rt = 1; R.rt.n = 1; R.rt.color[0] = dst;
+    memset(&R, 0, sizeof R); R.has_rt = 1; R.rt.n = 1; R.rt.color[0] = dst; if (g_rsetup) g_rsetup();
     mtl_sub_begin();
     int r = mfx3d_encode(src, cw, ch, aw, ah, mask, vp);
     if (px) *px = rb_copy(tex_mtl(dst), 4);
@@ -250,8 +254,69 @@ static void c_idle(void) {
     EXPECT("idle screenshot: released 4 presents later", 1, ws == nil);
 }
 
+// ---- write-back cases. Source RGBA16F 48x27 flat (0.6, 0.3, 0.9, 1) (fp16 0.600098 / 0.300049 / 0.899902), mask R8 flat 190, target RGBA8:
+// rgb = v x 190 / 255 -> 114.02, 57.01, 170.98 (x 255), alpha 255; +-2 per channel
+static id<MTLTexture> wb_src(float r, float g, float b) { return mk_h4(48, 27, ^(NSUInteger x, NSUInteger y, __fp16 v[4]) { (void)x; (void)y; v[0] = r; v[1] = g; v[2] = b; v[3] = 1; }); }
+// Pixels of an RGBA8 read-back (w wide) inside [x0, x1) x [y0, y1) (inside = 1) or outside it (inside = 0) that are not want +- tol
+static int px_off(id<MTLBuffer> b, NSUInteger w, NSUInteger h, int x0, int y0, int x1, int y1, int inside, const int want[4], int tol) {
+    const uint8_t *p = b.contents; int bad = 0;
+    for (NSUInteger y = 0; y < h; y++) for (NSUInteger x = 0; x < w; x++) {
+        int in = (int)x >= x0 && (int)x < x1 && (int)y >= y0 && (int)y < y1; if (in != inside) continue;
+        const uint8_t *q = p + (y * w + x) * 4; for (int c = 0; c < 4; c++) if (abs((int)q[c] - want[c]) > tol) { bad++; break; } }
+    return bad;
+}
+static const int k_wb[4] = {114, 57, 171, 255};
+static void wb_clear_to(tex_t *dst, MTLClearColor c) {   // its own submission, committed and waited on
+    memset(&R, 0, sizeof R); R.has_rt = 1; R.rt.n = 1; R.rt.color[0] = dst; R.clear_c[0] = 1; R.cc[0] = c;
+    mtl_sub_begin(); rp_begin_ex(1); rp_end(); sub_done("wb: clear the target");
+}
+static void c_wb_full(void) {
+    tex_t dst = mk_dst(7201, 64, 36, NVN_FORMAT_RGBA8); id<MTLBuffer> px = nil;
+    EXPECT("wb_full: drawn", 1, enc3d(&dst, wb_src(0.6f, 0.3f, 0.9f), 48, 27, 50, 29, mk_r8_flat(48, 27, 190), (MTLViewport){0, 0, 64, 36, 0, 1}, &px, NULL));
+    EXPECT("wb_full: every pixel (114, 57, 171, 255) +-2", 0, px_off(px, 64, 36, 0, 0, 64, 36, 1, k_wb, 2));
+}
+static void c_wb_offset(void) {
+    tex_t dst = mk_dst(7202, 80, 48, NVN_FORMAT_RGBA8); id<MTLBuffer> px = nil;
+    wb_clear_to(&dst, MTLClearColorMake(10 / 255.0, 20 / 255.0, 30 / 255.0, 40 / 255.0));
+    EXPECT("wb_offset: drawn", 1, enc3d(&dst, wb_src(0.6f, 0.3f, 0.9f), 48, 27, 50, 29, mk_r8_flat(48, 27, 190), (MTLViewport){8, 6, 64, 36, 0, 1}, &px, NULL));
+    EXPECT("wb_offset: inside the viewport (114, 57, 171, 255) +-2", 0, px_off(px, 80, 48, 8, 6, 72, 42, 1, k_wb, 2));
+    EXPECT("wb_offset: outside, the earlier content exactly", 0, px_off(px, 80, 48, 8, 6, 72, 42, 0, (const int[4]){10, 20, 30, 40}, 0));
+}
+static void c_wb_clear(void) {
+    tex_t dst = mk_dst(7203, 80, 48, NVN_FORMAT_RGBA8); id<MTLBuffer> px = nil;
+    wb_clear_to(&dst, MTLClearColorMake(10 / 255.0, 20 / 255.0, 30 / 255.0, 40 / 255.0));
+    g_rsetup = ^{ R.clear_c[0] = 1; R.cc[0] = MTLClearColorMake(0, 1, 0, 1); };
+    EXPECT("wb_clear: drawn with a colour-0 clear pending", 1, enc3d(&dst, wb_src(0.6f, 0.3f, 0.9f), 48, 27, 50, 29, mk_r8_flat(48, 27, 190), (MTLViewport){8, 6, 64, 36, 0, 1}, &px, NULL));
+    g_rsetup = nil;
+    EXPECT("wb_clear: inside the viewport (114, 57, 171, 255) +-2", 0, px_off(px, 80, 48, 8, 6, 72, 42, 1, k_wb, 2));
+    EXPECT("wb_clear: outside, the pending clear (0, 255, 0, 255)", 0, px_off(px, 80, 48, 8, 6, 72, 42, 0, (const int[4]){0, 255, 0, 255}, 0));
+    EXPECT("wb_clear: the clear is consumed", 0, R.clear_c[0]);
+}
+static void c_wb_view(void) {
+    id<MTLBuffer> px = nil; id<MTLTexture> src = wb_src(0.6f, 0.3f, 0.9f), mask = mk_r8_flat(48, 27, 190);
+    tex_t dst = mk_dst(7204, 64, 36, NVN_FORMAT_RGBA8);
+    EXPECT("wb_view: negative control, no view", 1, enc3d(&dst, src, 48, 27, 50, 29, mask, (MTLViewport){0, 0, 64, 36, 0, 1}, &px, NULL));
+    EXPECT("wb_view: ... stores the linear value (114, 57, 171, 255) +-2", 0, px_off(px, 64, 36, 0, 0, 64, 36, 1, k_wb, 2));
+    g_rsetup = ^{ R.rt.has_cview[0] = 1; R.rt.cview[0].set_format = 1; R.rt.cview[0].format = NVN_FORMAT_RGBA8_SRGB; };
+    EXPECT("wb_view: drawn through an RGBA8_SRGB view", 1, enc3d(&dst, src, 48, 27, 50, 29, mask, (MTLViewport){0, 0, 64, 36, 0, 1}, &px, NULL));
+    g_rsetup = nil;
+    EXPECT("wb_view: ... stores the sRGB encoding (178, 130, 214, 255) +-2", 0, px_off(px, 64, 36, 0, 0, 64, 36, 1, (const int[4]){178, 130, 214, 255}, 2));
+}
+static void c_wb_mask(void) {
+    tex_t dst = mk_dst(7205, 64, 36, NVN_FORMAT_RGBA8); id<MTLBuffer> px = nil; const uint8_t m2[2] = {0, 255};
+    EXPECT("wb_mask: drawn", 1, enc3d(&dst, wb_src(1, 1, 1), 48, 27, 50, 29, mk_r8(2, 1, m2), (MTLViewport){0, 0, 64, 36, 0, 1}, &px, NULL));
+    const uint8_t *row = (const uint8_t *)px.contents + 18 * 64 * 4; int mono = 1, seen[256] = {0}, distinct = 0;
+    for (int x = 0; x < 64; x++) { if (x && row[x * 4] + 1 < row[(x - 1) * 4]) mono = 0; if (!seen[row[x * 4]]++) distinct++; }
+    printf("  (row 18: R[0] %d, R[63] %d, %d distinct values)\n", row[0], row[63 * 4], distinct);
+    EXPECT("wb_mask: R[0] <= 2", 1, row[0] <= 2);
+    EXPECT("wb_mask: R[63] >= 253", 1, row[63 * 4] >= 253);
+    EXPECT("wb_mask: R non-decreasing across the row (a step of -1 allowed)", 1, mono);
+    EXPECT("wb_mask: a filtered ramp (>= 25 distinct values; nearest sampling gives 2)", 1, distinct >= 25);
+}
+
 static const struct { const char *name; void (*fn)(void); } k_cases[] = {
     {"compiler", c_compiler}, {"fail", c_fail}, {"alloc", c_alloc}, {"equiv", c_equiv}, {"content", c_content}, {"idle", c_idle},
+    {"wb_full", c_wb_full}, {"wb_offset", c_wb_offset}, {"wb_clear", c_wb_clear}, {"wb_view", c_wb_view}, {"wb_mask", c_wb_mask},
 };
 int main(int argc, char **argv) { setvbuf(stdout, NULL, _IONBF, 0);
     setenv("DM_MFX", "1", 1); setenv("DM_MFX3D", "1", 1);   // before any mfx_on / mfx3d_on call: both latch their switch once

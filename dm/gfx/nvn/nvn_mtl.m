@@ -6913,25 +6913,28 @@ static void mfx3d_alloc(NSUInteger cw, NSUInteger ch, NSUInteger ow, NSUInteger 
 static id<MTL4ArgumentTable> g_mfx3d_args;
 // Encode half (replay thread): the 3D set at allocation aw x ah for output vp.width x vp.height, the copy + MetalFX for content cw x ch of src, then the
 // write-back into colour 0 over vp: rgb = MetalFX(uv) x mask(uv), alpha = 1. 0 = not drawn (the original draw goes on in the open pass when it fails
-// before rp_end)
+// before rp_end). The write-back attaches colour 0 as rp_begin does (attach: the target's format view), lands a pending colour-0 clear outside a
+// partial viewport, and filters the mask (linear, like the game's pass)
 static int mfx3d_encode(id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInteger aw, NSUInteger ah, id<MTLTexture> mask, MTLViewport vp) {
-    id<MTLTexture> dst = tex_mtl(R.rt.color[0]); if (!dst) return 0;
+    RPD *rp = [RPD new]; attach(rp.colorAttachments[0], R.rt.color[0], &R.rt.cview[0], R.rt.has_cview[0], 1);
+    id<MTLTexture> dst = rp.colorAttachments[0].texture; if (!dst) return 0;   // a format view has its base's size
     NSUInteger ow = (NSUInteger)llround(vp.width), oh = (NSUInteger)llround(vp.height);
     if (!mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, aw, ah, ow, oh)) return 0;
     id<MTLRenderPipelineState> pso = mfx3d_pso(dst.pixelFormat); if (!pso) return 0;
     rp_end();
     if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0;
     int full = vp.originX == 0 && vp.originY == 0 && ow == dst.width && oh == dst.height;
-    RPD *rp = [RPD new]; rp.colorAttachments[0].texture = dst; rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : MTLLoadActionLoad; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : R.clear_c[0] ? MTLLoadActionClear : MTLLoadActionLoad;
+    rp.colorAttachments[0].clearColor = R.cc[0]; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; if (!en) { MLOG("【红】3D upscale: the write-back encoder could not be created"); return 0; }
     if (!g_mfx3d_args) { MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxSamplerStateBindCount = 2; NSError *e = nil; g_mfx3d_args = [g_dev newArgumentTableWithDescriptor:ad error:&e]; }
     [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
     [en waitForFence:g_mfx_3d.fence beforeEncoderStages:MTLStageFragment];   // wait for MetalFX to finish writing
     [en setArgumentTable:g_mfx3d_args atStages:MTLRenderStageFragment];
     [g_mfx3d_args setTexture:g_mfx_3d.out.gpuResourceID atIndex:0]; [g_mfx3d_args setTexture:mask.gpuResourceID atIndex:1];
-    [g_mfx3d_args setSamplerState:mfx_samp(1).gpuResourceID atIndex:0]; [g_mfx3d_args setSamplerState:mfx_samp(0).gpuResourceID atIndex:1];
+    [g_mfx3d_args setSamplerState:mfx_samp(1).gpuResourceID atIndex:0]; [g_mfx3d_args setSamplerState:mfx_samp(1).gpuResourceID atIndex:1];
     [en setViewport:vp]; [en setRenderPipelineState:pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; enc_host_r_end(en);
-    R.clear_c[0] = 0; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;
+    R.clear_c[0] = 0; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;   // colour 0's pending clear landed (or was covered); other pending clears land at the next pass
     mfx_t *m = &g_mfx_3d;
     if (cw != m->lcw || ch != m->lch) {   // a Frame Drops step: new content inside the same set
         if (m->lcw) { m->kc++;
