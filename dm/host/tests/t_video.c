@@ -69,7 +69,7 @@ static result run(const char *txt) { return run_do(txt, NULL); }
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
 #define ES(e, re) "envsh=" #e "\nrec_envsh=" #re "\n"
 #define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\n"
-#define RV "rec_v=7\n"   // REC_V in dm_video.c (without it = version 1, worked out again at load): a bump changes this line, t_video_phone's and the cases below in one commit
+#define RV "rec_v=8\n"   // REC_V in dm_video.c (without it = version 1, worked out again at load): a bump changes this line, t_video_phone's and the cases below in one commit
 #define NEWREC TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV   // how the later keys are filled when missing (G's front_video_rec)
 
 // (21) the shadow latch: the first answers once the settings are known hold for the session. In a child: set or clear DM_ENV_SHADOWS / DM_SHADOW_SIZE
