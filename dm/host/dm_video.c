@@ -53,6 +53,8 @@
 #include "dm.h"
 #include "dm_cursor.h"
 #include "dm_widget.h"
+#include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -99,11 +101,14 @@ static const char *vals_str(const int *v) {   // 「mode=1 res=1 …」：日志
     for (int i = 0; i < NV && L < sizeof b; i++) L += (size_t)snprintf(b + L, sizeof b - L, "%s%s=%d", i ? " " : "", k_keys[i], v[i]);
     return b;
 }
+static _Atomic int g_rv_keep = REC_V;   // the rec_v saved: REC_V, or a newer file's own (an older build must not claim a newer file's values as its own)
+static char g_extra[512];               // whole lines of the file whose key this build does not know (a newer version's), written back after ours (under g_mu)
 static void save_locked(void) {
     char p[1100], t[1120]; if (!dm_custom_path("sw_video.txt", p, sizeof p)) { LOG("【红】画面设置：设置目录还不知道，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
     for (int i = 0; ok && i < NV; i++) ok = fprintf(f, "%s=%d\nrec_%s=%d\n", k_keys[i], atomic_load(&g_val[i]), k_keys[i], atomic_load(&g_rec[i])) > 0;
-    if (ok) ok = fprintf(f, "rec_v=%d\n", REC_V) > 0;
+    if (ok) ok = fprintf(f, "rec_v=%d\n", atomic_load(&g_rv_keep)) > 0;
+    if (ok && g_extra[0]) ok = fputs(g_extra, f) >= 0;
     if (f) ok = fclose(f) == 0 && ok;
     if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名（同 sw_custom.txt） | write a temporary file, then rename (as sw_custom.txt)
     int v[NV], r[NV]; for (int i = 0; i < NV; i++) { v[i] = atomic_load(&g_val[i]); r[i] = atomic_load(&g_rec[i]); }
@@ -115,14 +120,29 @@ static void load_once(void) {
     pthread_mutex_lock(&g_mu);
     char p[1100];
     if (!atomic_load(&g_loaded) && dm_custom_path("sw_video.txt", p, sizeof p)) {
-        // 逐键读：缺的、越界的那一个键才按首次启动的值补，其余照读到的用。原先任一 rec_* 缺 / 越界就整份当首次启动，玩家设好的三项全被推荐值盖掉
-        // Read key by key: only a missing or out-of-range key is filled from the first-boot values, the rest keep what was read. Before, one missing / out-of-range rec_* treated the whole file as a first boot and the recommendation overwrote all three of the player's settings
-        int v[NV], r[NV], rv_file = 1; for (int i = 0; i < NV; i++) v[i] = r[i] = -1;   // rv_file：文件里的推荐版本（没写 = 1） | rv_file: the recommendation version in the file (absent = 1)
-        FILE *f = fopen(p, "r"); char ln[64];
-        while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int x = atoi(eq + 1), rec = !strncmp(ln, "rec_", 4);
-            for (int i = 0; i < NV; i++) if (!strcmp(rec ? ln + 4 : ln, k_keys[i]) && x >= 0 && x < kn(i)) { if (rec) r[i] = x; else v[i] = x; }
-            if (!strcmp(ln, "rec_v")) rv_file = x; }
+        // Read key by key: only a missing or out-of-range key is filled from the first-boot values, the rest keep what was read (one missing rec_* used to
+        // treat the whole file as a first boot). A value that is not a whole number counts as out of range. An unreadable file (anything but "no such
+        // file") counts as a first boot for this launch and is not rewritten; a newer version's file is filled in memory only. Lines with a key this build
+        // does not know are kept (g_extra); a line longer than the read buffer cannot hold a known key and is skipped whole
+        int v[NV], r[NV], rv_file = 1; for (int i = 0; i < NV; i++) v[i] = r[i] = -1;   // rv_file: the recommendation version in the file (absent = 1)
+        errno = 0; FILE *f = fopen(p, "r"); int err = errno, ro = !f && err != ENOENT;
+        char ln[64]; int cont = 0; size_t xn = 0; g_extra[0] = 0;
+        while (f && fgets(ln, sizeof ln, f)) {
+            size_t L = strlen(ln); int nl = L && ln[L - 1] == '\n';
+            if (cont || (!nl && !feof(f))) { cont = !nl; continue; }   // a piece of an over-long line, up to and including the piece that ends it
+            char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0;
+            char *end; long lx = strtol(eq + 1, &end, 10);
+            int num = end != eq + 1 && (*end == '\n' || *end == '\r' || !*end) && lx >= INT_MIN && lx <= INT_MAX, x = num ? (int)lx : -1;
+            int rec = !strncmp(ln, "rec_", 4), known = 0;
+            for (int i = 0; i < NV; i++) if (!strcmp(rec ? ln + 4 : ln, k_keys[i])) { known = 1; if (x >= 0 && x < kn(i)) { if (rec) r[i] = x; else v[i] = x; } }
+            if (!strcmp(ln, "rec_v")) { known = 1; if (num) rv_file = x; }   // junk = absent: version 1, worked out again
+            *eq = '=';
+            if (!known && xn + L + !nl < sizeof g_extra) { memcpy(g_extra + xn, ln, L); xn += L; if (!nl) g_extra[xn++] = '\n'; g_extra[xn] = 0; }
+        }
         if (f) fclose(f);
+        if (ro) LOG("【红】picture settings: cannot read %s (%s): this launch uses the recommendation and leaves the file as it is", p, strerror(err));
+        int newer = rv_file > REC_V;   // written by a newer version: filled in memory, never rewritten at load, and its rec_v is kept by a later Apply
+        atomic_store(&g_rv_keep, newer ? rv_file : REC_V);
         int miss = 0, first = 1; for (int i = 0; i < NV; i++) { miss |= (v[i] < 0) << i | (r[i] < 0) << (i + NV); first &= v[i] < 0 && r[i] < 0; }   // first = 一个键都没读到（真首次启动） | first = not a single key read (a real first boot)
         int bump = !first && rv_file < REC_V, s3d_missing = v[K_S3D] < 0;   // 推荐值版本旧了：按这一版重算 | the recommendation is from an older version: work it out again
         if (miss || bump) {   // 定推荐值（前端没有 = 原版：窗口、1600、标准），只补缺的键 | work out the recommendation (no front end = the original: windowed, 1600, standard), filling only the missing keys
@@ -146,7 +166,7 @@ static void load_once(void) {
         if (miss && !first) { char mk[128] = ""; for (int i = 0; i < 2 * NV; i++) if (miss >> i & 1) snprintf(mk + strlen(mk), sizeof mk - strlen(mk), "%s%s%s", mk[0] ? " " : "", i >= NV ? "rec_" : "", k_keys[i % NV]);
             LOG("画面设置：%s 缺 / 越界的键 %s → 只补这几个（其余照读）", p, mk); }
         { char rs[160]; strlcpy(rs, vals_str(r), sizeof rs); LOG("画面设置：%s %s %s，推荐 %s", first ? "首次启动定推荐值" : miss ? "读盘（补过缺的键）" : "读盘", p, vals_str(v), rs); }
-        if (miss || bump) save_locked();   // 补齐 / 换了推荐的整份写回 | write the completed / updated file back
+        if ((miss || bump) && !ro && !newer) save_locked();   // write the completed / updated file back (not over a file this build could not read, or a newer one)
         if (v[K_COLOR] == 1) front_video_color(1);   // 存着「准确」：交给前端标出图层（前端建层时设置目录可能还不知道，见 front_ios.m） | "Accurate" is stored: hand it to the front end for the present layer (the front end may not know the settings directory when it creates the layer, see front_ios.m)
     }
     pthread_mutex_unlock(&g_mu);

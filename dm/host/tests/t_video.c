@@ -7,6 +7,8 @@
 //   (1)-(8)   sw_video.txt is read key by key: only a missing or out-of-range key is filled from the first-boot values; only a file with no key at all
 //             counts as a first boot
 //   (9)-(16)  the recommendation version (rec_v): a player still on the old Recommended moves to the new one, changed settings stay
+//   (19)      loading is hardened: an unreadable file, junk values, a newer version, unknown keys, over-long lines
+//   (18)      M: the presets, Apply / Discard / Default and the display preferences on this M6
 //   (18j)     the Mac's rows map their values to the selector one to one
 //   (21)      the environment-shadow and shadow-map answers are latched once the settings are known (thread.c's KESHADOW / KSHSIZE slots)
 #include <stdarg.h>
@@ -86,7 +88,8 @@ static latch run_latch(const char *txt, const char *esh, const char *shsz, int n
     close(pp[1]); if (read(pp[0], &l, sizeof l) != (ssize_t)sizeof l) l.e1 = -9; close(pp[0]); waitpid(pid, NULL, 0); return l;
 }
 
-// The M cases' steps, run in the child after the load
+// A case's steps, run in the child after the load
+static void act_aa0(result *x) { (void)x; atomic_store(&g_pend[K_AA], 0); dm_video_on_uimsg("OptionsPanelMessage", "AcceptChanges", ""); }
 static void act_preset(result *x) { x->x[0] = preset_of(); }
 static void cancel(void) { dm_video_on_uimsg("OptionsPanelMessage", "CancelChanges", ""); }
 static void accept(void) { dm_video_on_uimsg("OptionsPanelMessage", "AcceptChanges", ""); }
@@ -187,6 +190,36 @@ int main(void) {
     CHECK(r.v[7] == 1 && r.v[8] == 2 && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) NEWREC), "(16) version 5 on Recommended: same values, current rec_v, got envsh %d shq %d\n%s", r.v[7], r.v[8], r.file);
     r = run(FULL(1, 1, 1, 1, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(0, 1) SQ(2, 2) "rec_v=5\n");
     CHECK(r.v[7] == 0 && r.v[8] == 2, "(16) version 5 with environment shadows turned off: kept off, got envsh %d shq %d", r.v[7], r.v[8]);
+
+    // ---- (19) loading is hardened (G)
+    // (19a) an unreadable file: this launch uses the first-boot values and leaves the file as it is
+    if (geteuid() != 0) {   // root reads any file
+        char fp[600]; snprintf(fp, sizeof fp, "%s/sw_video.txt", g_dir); file_put(FULL(0, 1, 2, 1, 0, 1) NEWREC); chmod(fp, 0);
+        r = child(NULL); chmod(fp, 0644);
+        CHECK(r.v[0] == 1 && r.v[1] == 2 && r.v[2] == 0 && r.fb == 1 && !strcmp(file_get(), FULL(0, 1, 2, 1, 0, 1) NEWREC),
+              "(19a) unreadable: first-boot values 1/2/0 (%d/%d/%d, asked %d times), file left alone\n%s", r.v[0], r.v[1], r.v[2], r.fb, file_get()); }
+    // (19b) junk values count as out of range: back to the stored recommendation
+    r = run("mode=yes\nrec_mode=1\nres=\nrec_res=1\nup=0\nrec_up=1\n" TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV);
+    CHECK(r.v[0] == 1 && r.v[1] == 1 && r.v[2] == 0 && strstr(r.file, FULL(1, 1, 1, 1, 0, 1)) == r.file, "(19b) mode=yes, res=: back to 1 / 1, up 0 read; got %d/%d/%d\n%s", r.v[0], r.v[1], r.v[2], r.file);
+    r = run("mode=1\nrec_mode=1\nres=2x\nrec_res=1\nup=0\nrec_up=1\n" TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV);
+    CHECK(r.v[1] == 1, "(19b) res=2x: back to 1, got %d", r.v[1]);
+    // (19c) a newer file (rec_v 99) with a key out of range: filled in memory, the file is not rewritten (a newer version wrote it)
+#define NEWER(m, rm, s, rs, u, ru) FULL(m, rm, s, rs, u, ru) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) "rec_v=99\n"
+    r = run(NEWER(0, 1, 9, 1, 0, 1));
+    CHECK(r.v[1] == 1 && !strcmp(r.file, NEWER(0, 1, 9, 1, 0, 1)), "(19c) newer file, res=9: res 1 in memory (%d), file unchanged\n%s", r.v[1], r.file);
+    // (19d) an unknown line is kept: not rewritten at load, and written back after the known keys by the next Apply
+    r = run_do(FULL(0, 1, 2, 1, 0, 1) NEWREC "future=3\n", act_aa0);
+    CHECK(!strcmp(r.file0, FULL(0, 1, 2, 1, 0, 1) NEWREC "future=3\n") && !strcmp(r.file, FULL(0, 1, 2, 1, 0, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "future=3\n"),
+          "(19d) unknown line kept\n%s", r.file);
+    // (19e) the same in a newer file: its rec_v and the unknown line survive the Apply
+    r = run_do(NEWER(0, 1, 2, 1, 0, 1) "future=3\n", act_aa0);
+    CHECK(strstr(r.file, "rec_v=99\n") && strstr(r.file, "future=3\n") && strstr(r.file, "\naa=0\n"), "(19e) newer file: rec_v=99 and future=3 kept\n%s", r.file);
+    // (19f) lines longer than the read buffer (63 characters) are skipped whole: no piece of one is read as a key or kept
+    r = run_do(FULL(0, 1, 1, 1, 0, 1) NEWREC "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxres=2\n"
+               "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=123456789\n", act_aa0);
+    CHECK(r.v[1] == 1 && !strncmp(r.file0, FULL(0, 1, 1, 1, 0, 1) NEWREC, strlen(FULL(0, 1, 1, 1, 0, 1) NEWREC)) && strstr(r.file0, "res=2\n") &&
+          !strcmp(r.file, FULL(0, 1, 1, 1, 0, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
+          "(19f) over-long lines: res stays 1 (%d), not rewritten at load, gone after the Apply\n%s", r.v[1], r.file);
 
     // ---- M: front_mac.m on this M6 (Recommended = Native 100%, MetalFX, SMAA, 16x, Accurate, environment shadows, Ultra: the same values as Quality)
     g_fe = 'M';
