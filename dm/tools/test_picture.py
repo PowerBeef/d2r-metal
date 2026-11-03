@@ -77,8 +77,8 @@ class PictureTest(unittest.TestCase):
         self.assertEqual(picture.env('rec', 'cli', {}), {**picture.REC, 'DM_TEST_FULLSCREEN_AT': '1'})
         self.assertEqual(picture.env('rec', 'mac-app', {}), {'DM_TEST_VIDEO_FIRSTBOOT': '1'})
         self.assertEqual(picture.env('orig', 'cli', {}), {})
-        e = picture.env('rec', 'cli', {'DM_TEST_WINSIZE': '1280x720', 'DM_GAME_RES': '1600x900'})
-        self.assertEqual((e['DM_TEST_WINSIZE'], e['DM_GAME_RES']), ('1280x720', '1600x900')); self.assertNotIn('DM_TEST_FULLSCREEN_AT', e)
+        got = picture.env('rec', 'cli', {'DM_TEST_WINSIZE': '1280x720', 'DM_GAME_RES': '1600x900'})
+        self.assertEqual((got['DM_TEST_WINSIZE'], got['DM_GAME_RES']), ('1280x720', '1600x900')); self.assertNotIn('DM_TEST_FULLSCREEN_AT', got)
         self.assertEqual(picture.env('rec75', 'mac-app', {})['DM_3D_SCALE'], '0.75')
         with self.assertRaises(ValueError): picture.env('nope')
 

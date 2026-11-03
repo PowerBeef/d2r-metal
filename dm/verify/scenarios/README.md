@@ -35,7 +35,7 @@ Header lines (anywhere in the file):
 |---|---|
 | `name <name>` | Scenario name (default: the file name). |
 | `save <name>` | Save to start from: `save_ref_<name>` under `$DM_ROOT/data/switch/` (default `warlock`), `empty`, or an absolute path. The runner always uses a copy. |
-| `env K=V …` | Extra environment for the game. `{run}` in a value becomes the run's result folder on the `cli` and `mac-app` backends (`DM_TEST_PRESENT_SHOT=15:{run}/present.png`); the iOS backends pass it unchanged. |
+| `env K=V …` | Extra environment for the game. `{run}` in a value becomes the run's result folder on the `cli` and `mac-app` backends (`DM_TEST_PRESENT_SHOT=15:{run}/present.png`); the iOS backends pass it unchanged. Every `DM_*` name set here counts as a switch set for `switches.py check`, which turns red when nothing reads it (a misspelt switch would otherwise do nothing). |
 | `timeout <s>` | Limit for the whole scenario (default 300). |
 | `window 0` | Run the CLI host without a window. |
 | `requires <backend> …` | Skip on other backends. |
