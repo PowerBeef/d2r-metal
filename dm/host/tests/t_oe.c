@@ -115,6 +115,10 @@ static void test_scale3d(void) {
     CHECK(s3_max_level(0.5f, 0) == 0 && dm_3d_scale_levels(0.5f) == 0, "levels: 50% -> none");
     CHECK(s3_max_level(0.55f, 0) == 1 && LV(0.55f, 1, 0.51f), "levels: 55% -> one (0.51)");
     CHECK(s3_max_level(1.0f, 0.60f) == 8 - S3_FIRST_AT_FULL && LV(1.0f, 8 - S3_FIRST_AT_FULL, 0.60f), "levels: DM_3D_SCALE_FLOOR=0.60 at 100% -> down to 0.60 (7 levels with S3_FIRST_AT_FULL 1)");
+    // The floor is compared with the scale a level runs at (rounded): 0.75 x 0.93 = 0.6975 runs at 0.70, so a floor of 0.70 keeps that level
+    CHECK(s3_max_level(0.75f, 0.70f) == 1 && LV(0.75f, 1, 0.70f), "levels: DM_3D_SCALE_FLOOR=0.70 at 75% -> one level, 0.70");
+    CHECK(s3_max_level(0.75f, 0.65f) == 2 && LV(0.75f, 2, 0.65f), "levels: DM_3D_SCALE_FLOOR=0.65 at 75% -> 0.70 / 0.65");
+    CHECK(s3_max_level(0.62f, 0) == 3 && LV(0.62f, 3, 0.50f), "levels: 62% (DM_3D_SCALE) -> 0.58 / 0.54 / 0.50, the last one at the floor");
     CHECK(LV(0.75f, 10, 0.50f), "levels: past the last one the scale is clamped at 0.50");
     CHECK(dm_3d_scale_levels(1.0f) == 3 && dm_3d_scale_levels(0.67f) == 3 && dm_3d_scale_levels(0.75f) == 3, "dm_3d_scale_levels: 3 at 100%, 75% and 67%");
     // A new configured value (the 3D Resolution setting applied): the deepest level is recomputed for it, back to level 0, judging paused 3 s;

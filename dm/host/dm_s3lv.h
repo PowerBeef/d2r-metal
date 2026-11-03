@@ -15,17 +15,20 @@
 #define S3_FIRST_AT_FULL 1
 #endif
 static inline int dm_s3_k0(float cfg) { return cfg >= 0.95f ? S3_FIRST_AT_FULL - 1 : 0; }
+// Level lv's scale rounded to hundredths, before the S3_MIN clamp (lv >= 1)
+static inline float dm_s3_rounded(float cfg, int lv) { return roundf(cfg * powf(S3_STEP, (float)(lv + dm_s3_k0(cfg))) * 100) / 100; }
 // The scale of level lv (0 = the configured value)
 static inline float dm_s3_level_scale(float cfg, int lv) {
     if (lv <= 0) return cfg;
-    float v = roundf(cfg * powf(S3_STEP, (float)(lv + dm_s3_k0(cfg))) * 100) / 100;
+    float v = dm_s3_rounded(cfg, lv);
     return v < S3_MIN ? S3_MIN : v;
 }
-// The deepest level: levels 1, 2, ... while the unrounded scale stays at or above the floor. floor_env > 0 is DM_3D_SCALE_FLOOR (device sweeps):
-// that floor (never below S3_MIN) and up to 12 levels; otherwise S3_MIN and S3_LEVELS
+// The deepest level: levels 1, 2, ... while the scale the level runs at (rounded, as dm_s3_level_scale gives it) stays at or above the floor, so a
+// floor equal to a level's scale keeps that level. floor_env > 0 is DM_3D_SCALE_FLOOR (device sweeps): that floor (never below S3_MIN) and up to 12
+// levels; otherwise S3_MIN and S3_LEVELS
 static inline int dm_s3_max_level(float cfg, float floor_env) {
     float fl = floor_env > 0 ? (floor_env > S3_MIN ? floor_env : S3_MIN) : S3_MIN; int cap = floor_env > 0 ? 12 : S3_LEVELS, n = 0;
-    for (int lv = 1; lv <= cap && cfg * powf(S3_STEP, (float)(lv + dm_s3_k0(cfg))) >= fl - 1e-4f; lv++) n = lv;
+    for (int lv = 1; lv <= cap && dm_s3_rounded(cfg, lv) >= fl - 1e-4f; lv++) n = lv;
     return n;
 }
 // How many Frame Drops levels a chosen 3D Resolution has (0 at 50%: Lower can do nothing there)
