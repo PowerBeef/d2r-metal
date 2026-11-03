@@ -125,9 +125,10 @@ int main(void) {
           "(7) changed settings kept: expect res 2, aa / aniso / color 0, no colour call; got res %d aa %d aniso %d color %d, %d colour calls\n%s",
           r.v[K_RES], r.v[K_AA], r.v[K_ANISO], r.v[K_COLOR], r.cc, r.file);
 
-    // (8) the phone ignores s3d: res 0 with s3d 2 stored is still 75%
-    r = child_run(FULL(0, 0, 0, 0, 1, 1) TAIL(1, 1, 3, 3, 1, 1) S3(2, 0) ES(0, 0) SQ(0, 0) RV, NULL);
-    CHECK(r.v[K_S3D] == 2 && r.s3 == 0.75f, "(8) s3d=2 stored, res 0: 3D scale 0.75, got s3d %d scale %g", r.v[K_S3D], r.s3);
+    // (8) the phone ignores s3d: res 0 with s3d 4 stored is still 75%. s3d 4 is 50% on the Mac, so a phone build that honoured s3d would answer 0.5
+    //     (s3d 2 would not catch it: the Mac's 75% tier gives the same 0.75 as res 0)
+    r = child_run(FULL(0, 0, 0, 0, 1, 1) TAIL(1, 1, 3, 3, 1, 1) S3(4, 0) ES(0, 0) SQ(0, 0) RV, NULL);
+    CHECK(r.v[K_S3D] == 4 && r.s3 == 0.75f, "(8) s3d=4 stored, res 0: 3D scale 0.75 (not the Mac's 0.5), got s3d %d scale %g", r.v[K_S3D], r.s3);
 
     file_put(NULL); rmdir(g_dir);
     printf("t_video_phone: %d checks, %d failed\n", checks, fails);
