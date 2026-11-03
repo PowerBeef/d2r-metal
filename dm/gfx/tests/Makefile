@@ -51,6 +51,8 @@ t_zskip: t_zskip.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_zskip.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_xv: t_xv.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_xv.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_aniso: t_aniso.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_aniso.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_bar: t_bar.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_bar.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_ub: t_ub.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -89,6 +91,7 @@ t_replay_asan: t_replay_san.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H
 # Dependencies one per line in alphabetical order (so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
 	t_adaptive_pace \
+	t_aniso \
 	t_bar \
 	t_copy_pitch \
 	t_builtin \
@@ -148,6 +151,7 @@ run: \
 	./t_xv
 	./t_ub
 	MTL_DEBUG_LAYER=1 ./t_bar
+	MTL_DEBUG_LAYER=1 ./t_aniso
 	MTL_DEBUG_LAYER=1 ./t_mip_extent
 	./t_link_ticks
 	MTL_DEBUG_LAYER=1 ./t_mip_extent --stencil-only

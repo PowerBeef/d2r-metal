@@ -127,6 +127,7 @@ The tests in `dm/gfx/tests` compile the production code in directly and need a M
 | `t_present_crop` | Presentation cropping |
 | `t_mip_extent` | Effective size when rendering to a mip level other than level 0 |
 | `t_fuse_check`, `t_reorder_chain`, `t_defer_chain`, `t_zskip`, `t_xv`, `t_ub`, `t_pfv`, `t_rt_range`, `t_rt_range_shape`, `t_rt_range_ro`, `t_rt_depth_ro` | Compile the replay layer `nvn_mtl.m` in directly and check the various optimization and diagnostic logic inside the replay layer |
+| `t_aniso` | Anisotropy override: `aniso_eff` and `samp_desc` cases, the `aniso_want` mapping, the level changed mid-run (deferred release, new state, `g_reg_gen`), deferred release on sampler re-registration |
 | `t_bar` | Pass-barrier decisions (levels 0 / 1, the `DM_NVN_PASSGPU_SERIAL` pin, encoders that write memory), through their counters under the Metal validation layer |
 | `test_tbdr_budget.py` | The parsing in `tools/tbdr_budget.py` |
 | `test_passgpu_top.py` | `tools/passgpu_top.py`: a record's spans count as exclusive costs only with the serial header and no overlap between passes |

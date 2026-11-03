@@ -2566,7 +2566,8 @@ void mtl_reg_samp(int sid, const samp_par *sp) {
     pthread_mutex_lock(&g_rmu);
     if (id_ >= g_nsreg) { int n = id_ + 256; g_sreg = realloc(g_sreg, n * sizeof *g_sreg); g_sreg_ok = realloc(g_sreg_ok, n); g_sview = realloc(g_sview, n * sizeof *g_sview); g_srid = realloc(g_srid, n * sizeof *g_srid);
         memset(g_sreg_ok + g_nsreg, 0, n - g_nsreg); memset(g_sview + g_nsreg, 0, (n - g_nsreg) * sizeof *g_sview); memset(g_srid + g_nsreg, 0, (n - g_nsreg) * sizeof *g_srid); g_nsreg = n; }
-    if (g_sview[id_]) { CFRelease(g_sview[id_]); g_sview[id_] = NULL; g_srid[id_] = 0; }
+    // deferred like treg_view_drop: submissions in flight may still hold this sampler's gpuResourceID in their argument blocks
+    if (g_sview[id_]) { defer_obj_unref((__bridge id)g_sview[id_]); CFRelease(g_sview[id_]); g_sview[id_] = NULL; g_srid[id_] = 0; }
     g_reg_gen++;
     g_sreg[id_] = *sp; g_sreg_ok[id_] = 1;
     pthread_mutex_unlock(&g_rmu);
@@ -2646,17 +2647,22 @@ static MTLSamplerAddressMode wrapm(int w) {
         case 6: return MTLSamplerAddressModeMirrorRepeat; }
     return MTLSamplerAddressModeRepeat;
 }
-// 纹理过滤（选项页「各向异性过滤」，画质计划 1.4）：缩小、放大都线性且 mip 线性、不做比较的采样器，各向异性至少取这一档（游戏自己要得更高的照它的）。
-// 原版 Switch 上这类采样器几乎都是 1（只有一种镜像环绕的要 4）；阴影比较、最近点与不带 mip 线性的（界面、查表）一概不动，屏幕对齐的后处理趟足迹各向同性，开了也不变。
-// 换档在提交开头（mtl_sub_begin → aniso_latch）：已建的采样器全部延后放掉（用过它们的提交做完才放），参数缓冲按 g_reg_gen 重填。
-// 定档：g_aniso（DM_NVN_UB 同进程交替用）> DM_NVN_ANISO > 宿主 dm_video_aniso()；0 = 原版
-// Texture filtering (options "Anisotropic Filtering", picture plan 1.4): samplers with linear min and mag, a linear mip filter and no compare get at least this anisotropy (a game sampler asking for more keeps its own).
-// On the original Switch these samplers are almost all 1 (one mirrored-repeat kind asks for 4); shadow compares, nearest-point and samplers without a linear mip (UI, lookups) are left alone, and screen-aligned post
-// passes have an isotropic footprint, so they look the same with it on.
-// The level changes at the start of a submission (mtl_sub_begin → aniso_latch): every sampler already built is released later (after the submissions that used it complete) and argument buffers refill through g_reg_gen.
-// Level: g_aniso (DM_NVN_UB in-process alternation) > DM_NVN_ANISO > the host's dm_video_aniso(); 0 = the original
+// Texture filtering (options Anisotropic Filtering, picture plan 1.4): every sampler with linear min and mag filters, a linear mip filter and no compare gets at least
+// this anisotropy (aniso_eff); a sampler that asks for more keeps its own (the game asks for 1, and for 4 on one mirrored-repeat kind). Every linear sampler seen with
+// DM_NVN_SAMPHIST in town and the Blood Moor has a linear mip filter, so in practice that is every linear non-compare sampler, the clamp-to-border and mirrored ones
+// included (wrap modes aren't consulted; t_aniso pins that). Point samplers (the UI composite's among them) and shadow compares are left alone. Screen-aligned passes
+// have an isotropic footprint and look the same. The level changes at the start of a submission (mtl_sub_begin → aniso_latch): every sampler already built is released
+// after the submissions that used it complete, and argument blocks refill through g_reg_gen.
+// Level: g_aniso (DM_NVN_UB in-process alternation) > DM_NVN_ANISO > the host dm_video_aniso(); 0 = the original.
 int g_aniso = -1;
 static int g_aniso_cur;   // 已建的采样器按这一档（g_rmu 下读写） | the level the samplers built so far use (read and written under g_rmu)
+static int g_aniso_rebuilt;   // samplers the last level change released (t_aniso)
+// The anisotropy a sampler gets at this level: its own ask clamped to 1..16 (NaN or below 1 = 1), raised to the level for linear min / mag / mip without compare
+static inline NSUInteger aniso_eff(const samp_par *p, int level) {
+    NSUInteger own = !(p->aniso >= 1) ? 1 : p->aniso > 16 ? 16 : (NSUInteger)p->aniso;
+    if (level > 0 && p->minf == 5 && p->magf != 0 && !p->cmp_mode && own < (NSUInteger)level) return (NSUInteger)level;
+    return own;
+}
 __attribute__((weak)) int dm_video_aniso(void) { return 0; }   // 宿主 dm_video.c 提供强定义；图形单测不链宿主时 = 原版 | the host's dm_video.c provides the strong definition; graphics unit tests without the host = the original
 static int aniso_want(void) {
     static int env = -2; if (env == -2) { const char *e = getenv("DM_NVN_ANISO"); env = e && *e ? atoi(e) : -1; }
@@ -2668,7 +2674,7 @@ static void aniso_latch(void) {   // 提交线程，mtl_sub_begin | submission t
     pthread_mutex_lock(&g_rmu);
     int n = 0, was = g_aniso_cur;
     for (int i = 0; i < g_nsreg; i++) if (g_sview[i]) { defer_obj_unref((__bridge id)g_sview[i]); CFRelease(g_sview[i]); g_sview[i] = NULL; g_srid[i] = 0; n++; }
-    g_aniso_cur = a; g_reg_gen++;
+    g_aniso_cur = a; g_aniso_rebuilt = n; g_reg_gen++;
     pthread_mutex_unlock(&g_rmu);
     MLOG("纹理过滤：各向异性 %d → %d（0 = 原版；%s；重建 %d 个采样器） | texture filtering: anisotropy %d → %d (0 = original; %s; %d samplers rebuilt)", was, a,
          g_aniso >= 0 ? "g_aniso" : getenv("DM_NVN_ANISO") ? "DM_NVN_ANISO" : "选项页", n, was, a, g_aniso >= 0 ? "g_aniso" : getenv("DM_NVN_ANISO") ? "DM_NVN_ANISO" : "options page", n);
@@ -2692,10 +2698,9 @@ static void samp_hist(int sid, const samp_par *p) {
         for (int j = 0; j < n && L < sizeof o - 16; j++) L += (size_t)snprintf(o + L, sizeof o - L, " #%d×%d", j, t[j].count);
         MLOG("采样器组合：已建 %d 个，%d 种：%s", made, n, o); }
 }
-static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Caller holds g_rmu
-    if (sid < 0 || sid >= g_nsreg || !g_sreg_ok[sid]) { RED_ONCE(12, "采样器号 %d 未登记", sid); return nil; }
-    if (g_sview[sid]) return (__bridge id<MTLSamplerState>)g_sview[sid];
-    samp_par p = g_sreg[sid];
+// The Metal descriptor of an NVN sampler at an anisotropy level (pure: no device, no tables)
+static MTLSamplerDescriptor *samp_desc(const samp_par *pp, int aniso_cur) {
+    samp_par p = *pp;
     MTLSamplerDescriptor *d = [MTLSamplerDescriptor new];
     d.magFilter = p.magf ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     d.minFilter = (p.minf == 1 || p.minf == 3 || p.minf == 5) ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
@@ -2703,12 +2708,17 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     d.sAddressMode = wrapm(p.ws); d.tAddressMode = wrapm(p.wt); d.rAddressMode = wrapm(p.wr);
     d.lodMinClamp = p.lod_min < 0 ? 0 : p.lod_min; d.lodMaxClamp = p.lod_max;
     d.lodBias = p.lod_bias;   // NVN applies the sampler's LOD bias (0 for every sampler D2R created in town and the Blood Moor, 2026-10-29)
-    d.maxAnisotropy = p.aniso < 1 ? 1 : p.aniso > 16 ? 16 : (NSUInteger)p.aniso;
-    if (g_aniso_cur && p.minf == 5 && p.magf && !p.cmp_mode && d.maxAnisotropy < (NSUInteger)g_aniso_cur) d.maxAnisotropy = (NSUInteger)g_aniso_cur;   // 纹理过滤覆盖（见 aniso_latch） | texture filtering override (see aniso_latch)
+    d.maxAnisotropy = aniso_eff(&p, aniso_cur);   // texture filtering override (see aniso_latch)
     if (p.cmp_mode) d.compareFunction = (MTLCompareFunction)(p.cmp_func - 1);
     d.borderColor = p.border[3] > 0.5f ? (p.border[0] > 0.5f ? MTLSamplerBorderColorOpaqueWhite : MTLSamplerBorderColorOpaqueBlack) : MTLSamplerBorderColorTransparentBlack;
     d.supportArgumentBuffers = YES;
-    id<MTLSamplerState> s = [g_dev newSamplerStateWithDescriptor:d];
+    return d;
+}
+static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Caller holds g_rmu
+    if (sid < 0 || sid >= g_nsreg || !g_sreg_ok[sid]) { RED_ONCE(12, "采样器号 %d 未登记", sid); return nil; }
+    if (g_sview[sid]) return (__bridge id<MTLSamplerState>)g_sview[sid];
+    samp_par p = g_sreg[sid];
+    id<MTLSamplerState> s = [g_dev newSamplerStateWithDescriptor:samp_desc(&p, g_aniso_cur)];
     if (s) { g_sview[sid] = (void *)CFBridgingRetain(s); g_srid[sid] = s.gpuResourceID._impl; }
     samp_hist(sid, &p);
     return s;
