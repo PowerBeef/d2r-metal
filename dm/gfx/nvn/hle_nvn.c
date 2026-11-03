@@ -1056,7 +1056,7 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
 int mtl_fps_target(void);
 static uint64_t rt_decl_period(uint64_t period_ns) {
     if (!period_ns || mtl_fps_target() != 30 || !mtl_link_active()) return period_ns;
-    double hz = dm_pace_hz(mtl_display_refresh(), 30); uint64_t eco = hz > 0 ? (uint64_t)(1e9 / hz) : 0;
+    double hz = dm_eco_hz(mtl_display_refresh()); uint64_t eco = hz > 0 ? (uint64_t)(1e9 / hz) : 0;   // the power saver's real rate (nvn_eco_hz)
     return eco > period_ns ? eco : period_ns;
 }
 // ---------- 翻译队列（B 方案第二期）：提交 / 出图 / 设帧号按序排给翻译线程，游戏线程只登记、立刻返回 ----------

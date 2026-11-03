@@ -140,6 +140,7 @@ int mtl_display_hz(void);                                   // 有窗口时屏�
 double mtl_display_refresh(void);                           // 同上，不取整（窗口所在屏） | Same as above, not rounded (screen the window is on)
 double mtl_pace_hz(void);                                   // 出图帧率：刷新率的整数分之一里不低于目标（60 / 省电 30）的最小一档 | Present frame rate: the smallest tier among integer fractions of the refresh rate that is not below the target (60 / power saving 30)
 double dm_pace_hz(double screen_hz, double floor_hz);       // 上面的纯算式（单测用） | Pure formula of the above (for unit tests)
+double dm_eco_hz(double screen_hz);                         // the power saver's rate (nvn_pace.h nvn_eco_hz): the 30 tier, at most 3/4 of the normal rate
 void mtl_set_tex_pool_n(int n);                            // 贴图描述符池容量：池外的贴图号按「空槽」处理（读出 0） | Texture descriptor pool capacity: texture IDs outside the pool are treated as 'empty slots' (read 0)
 // 计时埋点（Mac / iOS 共用）：提交按帧号打标；GPU 时间 = 该帧全部命令缓冲 GPUEnd−GPUStart 之和，全部完成后才可读（否则 −1）
 // Timing instrumentation (shared by Mac / iOS): submissions are tagged with the frame number; GPU time = sum of GPUEnd−GPUStart over all of that frame's command buffers, readable only after all complete (otherwise −1)

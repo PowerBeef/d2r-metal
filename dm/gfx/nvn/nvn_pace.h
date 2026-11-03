@@ -29,3 +29,12 @@ static inline double nvn_pace_hz(double screen_hz, double floor_hz) {
     if (screen_hz <= 0 || floor_hz <= 0) return floor_hz;
     double k = (double)(long)(screen_hz / floor_hz + 0.02); return k >= 1 ? screen_hz / k : screen_hz;
 }
+
+// The power saver's frame rate: the 30 fps tier (nvn_pace_hz(screen, 30)), but always at or below 3/4 of the normal rate, so it saves power on every
+// screen: where the 30 tier is above that (50 Hz: both tiers are 50; 48 Hz: 48), it takes the next even fraction down (50 -> 25, 48 -> 24). Other
+// screens are unchanged (60 / 120 -> 30, 144 -> 36, 165 -> 33, 100 -> 33.3, 75 -> 37.5); no refresh rate (0) -> 30
+static inline double nvn_eco_hz(double screen_hz) {
+    double n = nvn_pace_hz(screen_hz, 60), e = nvn_pace_hz(screen_hz, 30);
+    if (screen_hz > 0 && e > 0.75 * n) { double k = (double)(long)(screen_hz / e + 0.5) + 1; e = screen_hz / k; }
+    return e;
+}

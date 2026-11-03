@@ -38,6 +38,18 @@ int main(void) {
         double got = nvn_pace_hz(h[i].scr, h[i].floor); int ok = got > h[i].want - 1e-9 && got < h[i].want + 1e-9;
         printf("%-52s 期望 %7.3f Hz → 真结果 %7.3f Hz %s\n", h[i].why, h[i].want, got, ok ? "✓" : "✗"); fail += !ok; n++;
     }
+    // The power saver's rate (nvn_eco_hz): the 30 fps tier, and on screens where that is above 3/4 of the normal rate (it would save little or
+    // nothing: 50 Hz gave 50 for both) the next even fraction down. Expected values worked out by hand: refresh / k
+    struct { double scr, want; const char *why; } e[] = {
+        {60, 30, "power saver, 60 Hz: 30"}, {120, 30, "power saver, 120 Hz: 30"}, {144, 36, "power saver, 144 Hz: 36 (/ 4)"},
+        {165, 33, "power saver, 165 Hz: 33 (/ 5)"}, {100, 100.0 / 3, "power saver, 100 Hz: 33.33 (/ 3)"}, {75, 37.5, "power saver, 75 Hz: 37.5 (/ 2)"},
+        {90, 30, "power saver, 90 Hz: 30 (/ 3)"}, {50, 25, "power saver, 50 Hz: 25 (/ 2; the 30 tier is 50, no saving)"}, {48, 24, "power saver, 48 Hz: 24 (/ 2)"},
+        {59.94, 29.97, "power saver, 59.94 Hz: 29.97"}, {119.88, 29.97, "power saver, 119.88 Hz: 29.97"}, {0, 30, "power saver, no refresh rate: 30"},
+    };
+    for (int i = 0; i < (int)(sizeof e / sizeof *e); i++) {
+        double got = nvn_eco_hz(e[i].scr); int ok = got > e[i].want - 1e-3 && got < e[i].want + 1e-3;
+        printf("%-52s want %7.3f Hz -> got %7.3f Hz %s\n", e[i].why, e[i].want, got, ok ? "✓" : "✗"); fail += !ok; n++;
+    }
     printf("== %d 项，失败 %d ==\n", n, fail);
     return fail != 0;
 }

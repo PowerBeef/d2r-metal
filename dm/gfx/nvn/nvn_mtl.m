@@ -6571,7 +6571,8 @@ int mtl_display_hz(void) { return (int)(mtl_display_refresh() + 0.5); }
 // 原先固定 60：144 Hz 屏上 60 不整除，系统只能 2 拍 / 3 拍交替（13.9 / 20.8 ms），看着一顿一顿。算式见 nvn_pace.h nvn_pace_hz
 // Previously fixed at 60: 60 does not evenly divide a 144 Hz screen, so the system can only alternate 2 / 3 refreshes (13.9 / 20.8 ms), which looks stuttery. Formula in nvn_pace.h nvn_pace_hz
 double dm_pace_hz(double screen_hz, double floor_hz) { return nvn_pace_hz(screen_hz, floor_hz); }
-double mtl_pace_hz(void) { return dm_pace_hz(mtl_display_refresh(), mtl_fps_target() == 30 ? 30 : 60); }
+double dm_eco_hz(double screen_hz) { return nvn_eco_hz(screen_hz); }   // the power saver's rate: at or below 3/4 of the normal one (50 Hz -> 25)
+double mtl_pace_hz(void) { double r = mtl_display_refresh(); return mtl_fps_target() == 30 ? dm_eco_hz(r) : dm_pace_hz(r, 60); }
 static _Atomic uint64_t g_present_stall_ns;   // 单测用：出图线程每次出图前额外停顿（模拟 drawable 迟迟不可用） | For unit tests: an extra pause before each present on the present thread (simulating a drawable that stays unavailable)
 static CAMetalLayer *g_present_layer_resident;
 void mtl_present_test_stall(uint64_t ns) { g_present_stall_ns = ns; }
