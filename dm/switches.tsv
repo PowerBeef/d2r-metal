@@ -397,7 +397,7 @@ DM_TEST_POS_LOG	host	host/diag.c	-
 DM_TEST_POTPICK_BURST	host	host/dm_potpick.c	-
 DM_TEST_POTPICK_FROM	host	host/dm_potpick.c	-
 DM_TEST_PRESENT_RGB	gfx	gfx/nvn/nvn_mtl.m	-
-DM_TEST_PRESENT_SHOT	host	host/front_mac.m	-
+DM_TEST_PRESENT_SHOT	host	host/front_mac.m	y
 DM_TEST_QUIT_AT	host	host/front_mac.m	-
 DM_TEST_RESIGN	ios	ios/Sources/front_ios.m	-
 DM_TEST_RSTICK	host	host/hle_hid.c	-

@@ -87,6 +87,9 @@ class BgRunTest(unittest.TestCase):
         self.assertEqual(run('ping\n', 'device'), (None, False, None))
         self.assertEqual(run('ping\n', 'ios-mac'), ('0', True, '0'))              # the iOS package on the Mac takes the front anyway: always a front run
         self.assertEqual(run('ping\n', 'ios-mac', env='1'), ('0', True, '0'))
+        # a capture of the presented picture (graphical analysis, README images) is a front run: the real game window, in front and in real full screen
+        self.assertEqual(run('env DM_TEST_PRESENT_SHOT=10:{run}/x.png\nping\n'), ('0', True, '0'))
+        self.assertEqual(run('env DM_TEST_PRESENT_SHOT=10:{run}/x.png\nping\n', 'mac-app', env='1'), ('0', True, '0'))
 
     # ---- the detector, synthetic streams
     def test_detector_front(self):
