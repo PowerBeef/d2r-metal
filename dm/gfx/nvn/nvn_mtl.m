@@ -3447,6 +3447,9 @@ static int ds_scan(const uint8_t *p, ds_st *ds, int depth) {
 static const uint8_t *g_exec_cur;   // 回放中当前这条操作（含） | The op currently being replayed (inclusive)
 static void sd_need(sd_att *t, int why) { if (!t->state) { t->state = 1; t->why = (uint8_t)why; } }   // why：1 绘制作贴图读 2 作附件先画后清 3 拷贝 4 清贴图 5 扫到末尾未定 6 无起点 / 索引不可用 | why: 1 a draw reads it as a texture 2 as an attachment, drawn before cleared 3 copy 4 texture clear 5 scanned to the end undecided 6 no start point / index unavailable
 static int sdx_decide(uint8_t st[SD_MAX]);   // 写回前瞻判定（索引见 mtl_sub_index） | Store lookahead decision (for the index see mtl_sub_index)
+// 1 while a pass is cut short in the middle of a draw and its draws go on in a reopened pass that loads every attachment (bloomq_clear_b0): the lookahead
+// skips the cut pass's own attachment events (they predate the end), so it could drop a store the reopened half needs; store them all instead
+static int g_sd_keep;
 static void sd_finish(void) {
     if (!g_nsd) return;
     if (!tbdr_on()) {   // 优化全关：一律写回 | All optimizations off: always write back
@@ -3454,7 +3457,8 @@ static void sd_finish(void) {
             if (t->depth == 1) [g_enc setDepthStoreAction:MTLStoreActionStore]; else if (t->depth == 2) [g_enc setStencilStoreAction:MTLStoreActionStore]; else [g_enc setColorStoreAction:MTLStoreActionStore atIndex:(NSUInteger)t->idx]; }
         g_nsd = 0; return; }
     uint8_t nst[SD_MAX];
-    if (sdx_decide(nst)) { for (int i = 0; i < g_nsd; i++) if (nst[i] == 2) g_sd[i].state = 2; else sd_need(&g_sd[i], nst[i] >> 2); }
+    if (g_sd_keep) for (int i = 0; i < g_nsd; i++) sd_need(&g_sd[i], 6);
+    else if (sdx_decide(nst)) { for (int i = 0; i < g_nsd; i++) if (nst[i] == 2) g_sd[i].state = 2; else sd_need(&g_sd[i], nst[i] >> 2); }
     else for (int i = 0; i < g_nsd; i++) sd_need(&g_sd[i], 6);   // 列表外结束的通道 / 索引不可用：一律写回 | Pass ended outside the list / index unavailable: always write back
     for (int i = 0; i < g_nsd; i++) {
         sd_att *t = &g_sd[i]; int udc_dead = udc_on() && t->load && !t->wrote;
@@ -4711,12 +4715,13 @@ static int bloomq_capture(void) {
 // B0 was never drawn while bloom 1/4 held the chain (its cutoff was skipped and its pending clear dropped): when the chain aborts or is left in the middle,
 // clear that level to black so the draws that still read B0 (the rest of the game's chain at state 0, the apply) read no bloom instead of undefined memory.
 // Under bloom 1/4 B0 is often never allocated: it is made here (tex_mtl), as its next reader would make it, uninitialised. A B0 the game has released
-// since (e.g. by a resolution change between frames) is skipped, so no untracked texture is made for its dead serial (g_bloomq_gone)
+// since (e.g. by a resolution change between frames) is skipped, so no untracked texture is made for its dead serial (g_bloomq_gone).
+// A pass open here (the current draw continues it) is cut short; its draws go on in a reopened pass that loads its attachments, so all of them are stored
 static void bloomq_clear_b0(const tex_t *b0, int lv, int sl) {
     if (!b0->serial || atomic_load_explicit(&g_bloomq_gone, memory_order_acquire) == b0->serial) return;
     id<MTLTexture> t = tex_mtl(b0);
     if (!t || !(t.usage & MTLTextureUsageRenderTarget) || (NSUInteger)lv >= t.mipmapLevelCount || (NSUInteger)sl >= (t.textureType == MTLTextureType2DArray ? t.arrayLength : 1)) return;
-    zskip_del(b0->serial); rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
+    zskip_del(b0->serial); g_sd_keep = 1; rp_end(); g_sd_keep = 0; if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     RPD *rp = [RPD new]; rp.colorAttachments[0].texture = t; rp.colorAttachments[0].level = lv; rp.colorAttachments[0].slice = sl;
     rp.colorAttachments[0].loadAction = MTLLoadActionClear; rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0); rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     enc_r_end(enc_r_begin(rp));

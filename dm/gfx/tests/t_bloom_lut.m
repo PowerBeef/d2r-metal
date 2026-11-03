@@ -43,14 +43,15 @@ static NvShader *shader(NSString *fn, int stage) { NvShader *s = [NvShader new];
 static void prog(prog_t *pg, NvShader *vs, NvShader *fs) { memset(pg, 0, sizeof *pg); pg->serial = g_pser++; NvProg *p = [NvProg new]; p->sh[0] = vs; p->sh[1] = fs; if (t_nkeep < 32) t_keep[t_nkeep++] = p; serial_put(pg->serial, p); }
 static void lib_init(void) { NSError *e = nil; g_lib = [g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;\n"
     "vertex float4 v(uint n [[vertex_id]]) { float2 p[3] = {float2(-1,-1), float2(3,-1), float2(-1,3)}; return float4(p[n], 0, 1); }\n"
-    "fragment float4 red() { return float4(1, 0, 0, 1); }\n" options:nil error:&e];
+    "fragment float4 red() { return float4(1, 0, 0, 1); }\n"
+    "fragment float4 blue() { return float4(0, 0, 1, 1); }\n" options:nil error:&e];
     if (!g_lib) { fprintf(stderr, "%s\n", e.localizedDescription.UTF8String); abort(); } }
 // The bloom chain's fragment shaders, identified by key; each draws red when it is really drawn
 static NvShader *fs_key(const char *key, int ntex) { NvShader *s = shader(@"red", 1); s->rf.color_mask = 1; snprintf(s->key, sizeof s->key, "%s", key);
     if (ntex) { s->rf.nb = 1; s->rf.b[0] = (nvn_rbind){.kind = NVN_RB_TEX, .reg = 0, .dtt = 2}; } return s; }
 enum { ID_S = 1601, ID_B0, ID_B1, ID_B2, ID_T, ID_F };
 static tex_t tS, tB0, tB1, tB2, tT, tF;
-static prog_t p_cut, p_down, p_up, p_apply, p_other;
+static prog_t p_cut, p_down, p_up, p_apply, p_other, p_blue;
 static void bloom_init(void) {
     g_ub = (float *)pool_mem(4096); g_ub[0] = 0.5f;
     tS = tex(8, NVN_FORMAT_RGBA8); tB0 = tex(8, NVN_FORMAT_RGBA8); tB1 = tex(4, NVN_FORMAT_RGBA8); tB2 = tex(2, NVN_FORMAT_RGBA8); tT = tex(8, NVN_FORMAT_RGBA8); tF = tex(8, NVN_FORMAT_RGBA8);
@@ -58,6 +59,7 @@ static void bloom_init(void) {
     NvShader *cut = fs_key("2938a5b71b8e21b2_t", 1); cut->rf.nb = 2; cut->rf.b[1] = (nvn_rbind){.kind = NVN_RB_CBUF, .reg = 7}; cut->rf.c1_len = 256; float c1[2] = {0.7152f, 0.0722f}; memcpy(cut->rf.c1, c1, sizeof c1);
     prog(&p_cut, shader(@"v", 0), cut); prog(&p_down, shader(@"v", 0), fs_key("019ce2f82edbda84_t", 1)); prog(&p_up, shader(@"v", 0), fs_key("cc264583f2000c81_t", 1));
     prog(&p_apply, shader(@"v", 0), fs_key("2e2d6700a2569795_t", 1)); prog(&p_other, shader(@"v", 0), fs_key("0123456789abcdef_t", 0));
+    NvShader *blue = shader(@"blue", 1); blue->rf.color_mask = 1; snprintf(blue->key, sizeof blue->key, "fedcba9876543210_t"); prog(&p_blue, shader(@"v", 0), blue);
 }
 // One draw of program pg into a w x w target rt, sampling texture id tid (0 = none)
 static void step(const tex_t *rt, int w, int tid, prog_t *pg, int first) { chain c = chain_new(); set_rt_sz(&c, rt, w); ds_off(&c); bind_ubo7(&c); if (tid) bind_tex(&c, tid); bind_prog(&c, pg); draw_cmd(&c); run(&c, first); }
@@ -246,6 +248,26 @@ static void fresh_b0_case(void) {
     EXPECT("released B0 left at a frame boundary: counted", 1, g_bloomq_stat.midchain);
     EXPECT("released B0 left at a frame boundary: not recreated", 0, serial_get(b0r.serial) != nil);
 }
+// The B0 clear can come inside an open pass (here a second draw into the same targets aborts the chain). That pass ends early and its draws go on in a reopened
+// pass, which loads its attachments: they must be stored, even though the store lookahead sees D cleared later in the submit. The pass [T, D] writes depth 0
+// with its first draw; the aborting draw is blue, depth-tested LESS at depth 0, and must fail. D holds 1.0 in memory from before. The GPU may store a DontCare
+// attachment anyway (this Mac's did), so the store decision is checked directly: no attachment may be dropped by the lookahead (dropped bytes other than
+// the unwritten-attachment rule's, which is safe because memory already holds that content)
+static void ds_state(chain *c, int dt, int dw, int df) { ds_st d = {dt, dw, df, 0, NVN_STENCIL_FUNC_ALWAYS, NVN_STENCIL_FUNC_ALWAYS, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_KEEP}; p_bind_state x = {.kind = 5}; memcpy(x.bytes, &d, sizeof d); emit(c, OP_BIND_STATE, &x, sizeof x); }
+static void set_rt_ds(chain *c, const tex_t *a, const tex_t *ds) { p_set_rt r = {.n = 1}; r.color[0] = a; r.depth = ds; emit(c, OP_SET_RT, &r, sizeof r); p_viewports v = {.n = 1}; v.v[0][2] = v.v[0][3] = 8; emit(c, OP_VIEWPORTS, &v, sizeof v); p_scissor sc = {0, 0, 8, 8}; emit(c, OP_SCISSOR, &sc, sizeof sc); }
+static void split_case(void) {
+    uint8_t px[256]; tex_t d = tex(8, NVN_FORMAT_DEPTH32F), x = tex(8, NVN_FORMAT_RGBA8); p_clear_ds one = {1.0f, 1, 0, 0};
+    clear_green(&tT); { chain c = chain_new(); set_rt_ds(&c, &x, &d); emit(&c, OP_CLEAR_DS, &one, sizeof one); run(&c, 1); commit(); }   // D = 1.0 in memory
+    case_begin();
+    step(&tB0, 8, ID_S, &p_cut, 1); step(&tB1, 4, ID_B0, &p_down, 0); EXPECT("split pass: the chain reaches state 2", 2, g_bloomq.state);
+    chain c = chain_new(); set_rt_ds(&c, &tT, &d); ds_state(&c, 1, 1, NVN_DEPTH_FUNC_ALWAYS); bind_ubo7(&c); bind_tex(&c, ID_B1); bind_prog(&c, &p_down); draw_cmd(&c);   // opens [T, D]: red, depth 0
+    ds_state(&c, 1, 0, NVN_DEPTH_FUNC_LESS); bind_prog(&c, &p_blue); draw_cmd(&c);   // another draw mid-chain, same pass: abort 61 clears B0 inside the open pass
+    set_rt_ds(&c, &x, &d); emit(&c, OP_CLEAR_DS, &one, sizeof one);   // D cleared later in the same submit
+    uint64_t dropped0 = g_sd_dead_bytes - g_udc_saved_bytes; run(&c, 0); commit();
+    EXPECT("split pass: abort counted", 1, g_bloomq_stat.ab61);
+    EXPECT("split pass: the interrupted pass's depth is stored (no lookahead DontCare)", 0, g_sd_dead_bytes - g_udc_saved_bytes - dropped0);
+    readback(&tT, px); EXPECT("split pass: the blue draw fails its depth test against the stored depth", 64, count_px(px, 255, 0, 0));
+}
 // The health summary: the first window prints after 600 frames, later ones after 3600; new targets flush the window early; an empty window stays closed
 static char g_log[8192];
 static void log_cap(const char *file, int line, const char *fmt, ...) { (void)file; (void)line; char b[1024]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
@@ -271,5 +293,5 @@ static void summary_case(void) {
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init(); lib_init(); bloom_init();
     aux_case(); bright_case(); chain_case(); abort61_case(); abort62_case(); abort63_case(); midchain_case(); broken_case(); vp_case(); summary_case();
-    reuse_case(); fresh_b0_case();
+    reuse_case(); fresh_b0_case(); split_case();
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0; } }
