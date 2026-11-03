@@ -6,7 +6,8 @@
 # the increments of one frame sum to the GPU's busy time, which @gpu_ms (the sum of the frame's command buffer spans) should match within queueing gaps.
 # A pass's own span is its exclusive cost (shown as excl_ms) only when the record's first line says serial=1 barrier_level=0 (DM_NVN_PASSGPU_SERIAL=1 holds the
 # pass barriers at level 0) and its spans don't overlap (overlap = 1 - sum(inc_ms) / sum(span), at most 2 %); compare those only with each other.
-# Older records, which have no such line, are never exclusive: rank them by mean_ms.
+# Older records, which have no such line, are never exclusive: rank them by mean_ms. Clear-only render passes (no draws) are left out of the overlap: their start
+# stamp (after a vertex stage they don't have) is written before their start barrier waits, so their span overlaps the previous pass even when nothing runs in parallel.
 # Usage: passgpu_top.py <run dir | passgpu.tsv> [--from MARK|FRAME] [--to MARK|FRAME] [--top N] [--tsv OUT [--join FRAME]]   (old form: passgpu_top.py <dir> [first frame] [N])
 import argparse, collections, json, os, statistics as S, sys
 
@@ -67,7 +68,7 @@ def main(argv):
         if not f0 < f <= f1: continue
         shape = (r[2], r[5], r[6], r[7], r[8], r[9]); k = shape + (seen[f][shape],); seen[f][shape] += 1
         inc[k][f] = float(r[4]); span[k][f] = float(r[3]); draws[k].append(int(r[10])); per[f] += float(r[4])
-        span_sum += float(r[3]); inc_sum += float(r[4])
+        if r[2] != 'R' or int(r[10]) > 0: span_sum += float(r[3]); inc_sum += float(r[4])   # clear-only passes: see the header
         if len(r) > 13: gpass[k][f] = r[13]
     if not per: sys.exit(f'🔴 no passes between frames {f0} and {f1}')
     # The spans are exclusive costs only if the record was made serialised and its passes really ran one after another: then each pass's span equals its

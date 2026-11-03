@@ -16,12 +16,14 @@ HEAD = 'frame\tidx\tkind\tgpu_ms\tinc_ms\tw\th\tfmt0\tdfmt\tload\tdraws\tt0_ns\t
 
 
 class PassgpuTop(unittest.TestCase):
-    def run_top(self, first, span, inc):
-        """Writes a record of frames 301 and 302 (one 1600x900 render pass each) and returns (stdout, RESULT dict)"""
+    def run_top(self, first, span, inc, clear=None):
+        """Writes a record of frames 301 and 302 (one 1600x900 render pass each, plus a clear-only pass (span, inc) when clear is given) and returns
+        (stdout, RESULT dict)"""
         root = Path(DM_ROOT) / 'run/gfx'
         root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='passgpu_test_', dir=root) as tmp:
             rows = ''.join(f'{f}\t0\tR\t{span}\t{inc}\t1600\t900\t70\t0\tC\t10\t{f * 1000}\t{f * 1000 + 400}\t{f - 300}\n' for f in (301, 302))
+            if clear: rows += ''.join(f'{f}\t1\tR\t{clear[0]}\t{clear[1]}\t1600\t900\t53\t0\tC\t0\t{f * 1000 + 100}\t{f * 1000 + 500}\t{f - 300}\n' for f in (301, 302))
             (Path(tmp) / 'passgpu.tsv').write_text((first + '\n' if first else '') + HEAD + rows)
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
@@ -60,6 +62,13 @@ class PassgpuTop(unittest.TestCase):
         self.assertIs(r['exclusive'], False, text)
         self.assertEqual(r['barrier_level'], 0)
         self.assertIn('record says serial but passes overlap 20 %: not an exclusive cost', text)
+
+    def test_e_clear_only_passes_are_left_out_of_the_overlap(self):
+        # A pass with no draws writes its start stamp (after a vertex stage it doesn't have) before its start barrier waits, so its span overlaps the
+        # previous pass even when passes run one after another (seen on a serialised town_loop record: 6 % "overlap", all from such passes)
+        text, r = self.run_top('# barrier_level=0 serial=1', 0.4, 0.4, clear=(0.33, 0.0002))
+        self.assertIs(r['exclusive'], True, text)
+        self.assertEqual(r['overlap'], 0.0)
 
 
 if __name__ == '__main__':
