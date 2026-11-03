@@ -1907,6 +1907,10 @@ int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms) {
     *commits = last - c0; *froze = bg; *ms = (now_ns() - t0) / 1e6;
     return asked;
 }
+// Dormant for players: only DM_TEST_FREEZE or DM_PANEL_FREEZE attach the freeze here, and no app shell sets either; the paused background save
+// (save_unpause_begin) attaches the gates without telling the renderer. Before it is ever enabled: frozen frames present at full rate and count as clean
+// windows for the 3D-scale controller (hle_oe.c scale3d_ctl_step), so hold it with scale3d_ctl_hold while frozen and for a few seconds after; and add a
+// scenario that keeps a panel open for more than 30 s at Frame Drops = lower.
 static void freeze_tick(uint64_t G) {   // 拍入口：定这一拍冻不冻，冻就把拍号先减 1 | Tick entry: decide whether this tick is frozen; if so, decrement the tick number by 1 first
     static struct { uint32_t at, n; int st; } w[8]; static int nw = -1, panel, cur = -1; static uint32_t left, calls;
     if (nw < 0) { nw = 0; const char *e = getenv("DM_TEST_FREEZE"); char buf[160]; if (e) { strlcpy(buf, e, sizeof buf); for (char *sv, *t = strtok_r(buf, ";", &sv); t && nw < 8; t = strtok_r(NULL, ";", &sv)) if (sscanf(t, "%u:%u", &w[nw].at, &w[nw].n) == 2) nw++; }
