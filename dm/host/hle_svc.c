@@ -13,14 +13,12 @@ __attribute__((weak)) void dm_probe_summary(const char *why) { (void)why; }   //
 #include <sched.h>
 #include <time.h>
 
-// 预留一整块客体地址空间，按 Horizon 分区（地址值直接用宿主 mmap 得到的真地址）。只占地址、不占内存。
-// 大小从 5 GB 起降档重试（部分设备预留 5 GB 返回 ENOMEM(12)），下限 4864 MiB（游戏要 1 GB 别名+栈 + 3728 MB 堆，4864 − 1024 = 3840 > 3728 + 余量）。
-// iOS 上不带「扩展虚拟寻址」权限时上限随设备型号不同（实测：有的 6 GB 成、有的 5120 MiB 不成，需要降到 4864 MiB）——
-// 留到 8 GB 的话，签不了那项权限的开发者账号（免费账号）出的包在这一步就退出。
-// Reserve one contiguous guest address space, partitioned like Horizon (address values are the real addresses returned by the host mmap). It only takes address space, not memory.
-// The size starts at 5 GB and steps down on retry (on some devices reserving 5 GB returns ENOMEM(12)), floor 4864 MiB (the game needs 1 GB alias+stack + a 3728 MB heap; 4864 − 1024 = 3840 > 3728 + margin).
-// On iOS without the extended virtual addressing entitlement the limit depends on the device model (measured: 6 GB works on some, 5120 MiB fails on others and must drop to 4864 MiB) —
-// reserving up to 8 GB would make builds from developer accounts that cannot sign that entitlement (free accounts) exit at this step.
+// Reserve one contiguous guest address space, partitioned like Horizon (address values are the real host mmap addresses); it takes address space, not memory.
+// The size starts at 5120 MiB and steps down by 128 MiB (some devices return ENOMEM(12) for 5 GB) to a floor of 4864 MiB. The heap region is the reservation minus 1 GB
+// for alias + stack: 4096 / 3968 / 3840 MB. With the +768 pool the game's heap is 3984 MB at 5120 MiB (the 4053 MB pool minus the 68 MB image, rounded down to 2 MB);
+// on a stepped-down reservation app_pool trims the pool to the region plus the image, so the heap ends at the region and the main heap has 16 MB (4992) or 144 MB (4864)
+// less free space than at 5120 MiB, still far above the original 138 MB. On iOS without the extended virtual addressing entitlement the limit depends on the device model
+// (measured: 6 GB works on some, 5120 MiB fails on others and must drop to 4864 MiB); reserving up to 8 GB would make free-account builds exit at this step.
 static size_t g_reserve;           // 实际预留大小（逐档降级后成功的值） | Actual reserved size (the value that succeeded after stepping down)
 static uint8_t *g_as;              // ASLR 区基址 = 整块 | ASLR region base = the whole block
 static uint8_t *g_heap; static size_t g_heap_cur, g_heap_cap; static int g_heap_rejects;
@@ -32,8 +30,7 @@ static uint8_t *g_stack; static size_t g_stack_cap;
 
 static void mem_init(void) {
     if (g_as) return;
-    // 从 5120 MiB 起逐档降级（每档减 128 MiB），下限 4864 MiB（堆容量 = reserve − 1 GB ≥ 3728 MB + 余量）
-    // Step down from 5120 MiB (128 MiB per step), floor 4864 MiB (heap capacity = reserve − 1 GB ≥ 3728 MB + margin)
+    // Step down from 5120 MiB in 128 MiB steps to a floor of 4864 MiB (heap region = reservation − 1 GB; app_pool trims the pool to it)
     const size_t start = 5ull << 30, step = 128ull << 20, limit = 4864ull << 20;
     for (size_t sz = start; sz >= limit; sz -= step) {
         g_as = mmap(NULL, sz, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -63,12 +60,21 @@ static void mem_init(void) {
 // Why more is given: the game carves out a fixed 3.08 GB or so for itself, leaving the main heap only 100-180 MB of free space on entering a game, a floor of thirty to forty MB when changing maps and a
 // largest allocatable block of twenty-odd MB; when it runs out the original game writes through null without checking in many places (see also dm_guest_heap_stat below). Measured: the extra
 // amount turns one-to-one into main heap free space (+512: 138 -> 649 MB), while what the game carves out does not change with it. Of the 768, 256 pay for the larger GPU heap 0 budget
-// (patch_nso.py cut at main+0x8524c4, 512 -> 768 MiB, taken out of this pool at boot) so the main heap keeps the same free space as with +512.
-// Heap pages never touched do not count toward resident memory, which grows only when they are actually used; on phones heap 0 never fills past 512 MiB, so their resident memory does not
-// change. The heap region is the reservation minus 1 GB (mem_init): 4096 MB with the usual 5120 MiB reservation, which fits 4053 - 68 (image) = 3985 MB; on a reservation stepped down to
-// 4864 MiB the game's own retry loop (2 MB less per refused SetHeapSize) settles at the cap.
-static uint64_t app_pool(void) { static uint64_t v; if (!v) { const char *e = getenv("DM_APP_POOL_ADD_MB"); long add = e ? atol(e) : 768; v = APP_POOL + ((uint64_t)add << 20); if (e) LOG("DM_APP_POOL_ADD_MB：应用内存池报 %llu MB（Switch 的 3285 MB %+ld）", (unsigned long long)(v >> 20), add); } return v; }
+// (patch_nso.py cut at main+0x8524c4, 512 -> 768 MiB, taken out of this pool at boot) so the main heap keeps the same free space as with +512 at the 5120 MiB reservation (mem_init gives the stepped-down ones).
+// Heap pages never touched do not count toward resident memory, which grows only when they are actually used; on the phone heap 0 stayed under 512 MiB in the last device
+// reading, taken before r49 (not rechecked since; on the roadmap's phone checks). The heap region is the reservation minus 1 GB (mem_init): 4096 MB at 5120 MiB, which holds the
+// game's 3984 MB heap (4053 − 68 image, rounded down to 2 MB); on 4992 / 4864 MiB the pool is trimmed (pool_fit) so the game's retry loop stops at the region without reaching
+// the region check.
 static size_t image_bytes(void) { size_t n = 0; for (int i = 0; i < g_nmod; i++) n += g_mod[i].size; return (n + 0x1fffff) & ~(size_t)0x1fffff; }
+static uint64_t pool_fit(uint64_t pool, uint64_t heap_cap, uint64_t image) { return heap_cap && pool > heap_cap + image ? heap_cap + image : pool; }   // the pool the game is told: never more than the heap region plus the image, so its retry loop stops at the region
+static uint64_t app_pool(void) {
+    static uint64_t base; static int trim_said;
+    if (!base) { const char *e = getenv("DM_APP_POOL_ADD_MB"); long add = e ? atol(e) : 768; base = APP_POOL + ((uint64_t)add << 20); if (e) LOG("DM_APP_POOL_ADD_MB：应用内存池报 %llu MB（Switch 的 3285 MB %+ld）", (unsigned long long)(base >> 20), add); }
+    uint64_t p = pool_fit(base, g_heap_cap, image_bytes());
+    if (p < base && !trim_said) { trim_said = 1; LOG("App pool: the %zu MiB guest reservation has a %zu MB heap region, so the pool reported to the game is trimmed from %llu to %llu MB",
+                                                     g_reserve >> 20, g_heap_cap >> 20, (unsigned long long)(base >> 20), (unsigned long long)(p >> 20)); }
+    return p;
+}
 
 // 游戏主堆读数：主堆 = main+0x32137a0 那个 nn::mem::StandardAllocator（启动时把整块堆交给它）。申请失败返回空，原版多处不判空直接写
 // （公开仓库 连战 82 分钟后异步读盘回调 main+0x27ecdc 要 765 KB 连续块得空，memset 写 0 地址；进程常驻内存看不出这件事）。
@@ -180,8 +186,10 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
     switch (num) {
     case 0x01: {  // SetHeapSize(out_addr*, size)  → x1 = heap base
         size_t size = regs[1];
+        // Pool check first: exceeding the application memory pool is ResultLimitReached, silent. At startup the game retries in 2 MB decrements until it fits (main+0x1b66184)
+        if (size + image_bytes() > app_pool()) { g_heap_rejects++; regs[0] = 0x10801; return 0; }
+        // Then the heap region: app_pool never reports more than the region plus the image (pool_fit), so this fires only on an inconsistent state
         if (size > g_heap_cap) { LOG("SetHeapSize OOM: req %#zx > cap %#zx", size, g_heap_cap); regs[0] = 0xD401; return 0; }
-        if (size + image_bytes() > app_pool()) { g_heap_rejects++; regs[0] = 0x10801; return 0; }   // 超出应用内存池：ResultLimitReached。游戏启动时按 2 MB 递减重试直到放得下（main+0x1b66184） | exceeds the application memory pool: ResultLimitReached. At startup the game retries in 2 MB decrements until it fits (main+0x1b66184)
         int rc = 0;
         if (size > g_heap_cur) rc = mprotect(g_heap + g_heap_cur, size - g_heap_cur, PROT_READ | PROT_WRITE);
         else if (size < g_heap_cur) rc = mprotect(g_heap + size, g_heap_cur - size, PROT_NONE);

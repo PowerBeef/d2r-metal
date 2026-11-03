@@ -9,7 +9,7 @@ DM_AA_MODE	host	host/hle_oe.c	-
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_padmode.c host/front_mac.m	-
-DM_APP_POOL_ADD_MB	host	host/hle_svc.c	-
+DM_APP_POOL_ADD_MB	host	host/hle_svc.c host/tests/t_svc_mem.c	-
 DM_APP_ROMFS	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	-
 DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/dm_padmode.c host/front_mac.m	y
 DM_ASC_ENV	ios-tools	ios/tools/asc_env.sh	-
