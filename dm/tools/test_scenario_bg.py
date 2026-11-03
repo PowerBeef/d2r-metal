@@ -166,6 +166,14 @@ class BgRunTest(unittest.TestCase):
         self.assertEqual(sc.verdicts, [])
         self.assertEqual(len(sc.unavailable), 1); self.assertIn('not judged: disturbed', sc.unavailable[0])
 
+    def test_front_skip(self):   # a front scenario for another backend (mfx3d_dyn: front, requires ios-mac) is skipped cleanly, its verdict line printed bare once
+        path = self.scn('front visibility\nrequires ios-mac device\nping\n')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): res, code = scenario.run_scenario(path, 'cli', None, False, None, 2, make=lambda o: scenario.Runner(path, 'cli', o or str(self.dir / 'out'), False))
+        text = out.getvalue()
+        self.assertEqual((code, res['verdict']), (0, 'SKIP'), text)
+        self.assertIn('· SCENARIO t SKIP', text); self.assertEqual([ln for ln in text.splitlines() if ln.startswith('SCENARIO t SKIP')][:1], [res['line']])
+
     def test_final_code(self):
         self.assertEqual(scenario.final_rc([0, 3, 1]), 1)   # RED wins over not judged
         self.assertEqual(scenario.final_rc([0, 3]), 3)
