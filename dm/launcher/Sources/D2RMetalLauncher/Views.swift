@@ -333,7 +333,7 @@ struct WhatsNewCard: View {
             if let l = model.latest {
                 SectionTitle(text: model.updateAvailable ? "Version \(l.version) is available" : "What's new in version \(l.version)")
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(notes(l.notes)).font(.body).lineSpacing(3).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    NotesText(blocks: ReleaseNotes.blocks(l.notes))
                         .frame(maxWidth: 720, alignment: .leading)   // a readable line length in a wide window
                     HStack {
                         Link(destination: URL(string: "https://github.com/PowerBeef/d2r-metal/releases")!) { Label("Release notes on GitHub", systemImage: "arrow.up.right") }
@@ -354,8 +354,56 @@ struct WhatsNewCard: View {
         }
     }
 
-    private func notes(_ s: String) -> AttributedString {   // the release notes are Markdown; show their inline styling and links
-        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+}
+
+/// The release notes, block by block (ReleaseNotes): headings as the card's own small titles, list items hanging from their markers, tables on a
+/// grid. List items sit closer together than paragraphs, and a heading gets more room above it than below
+struct NotesText: View {
+    let blocks: [NotesBlock]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
+                block(b).padding(.top, i == 0 ? 0 : gap(blocks[i - 1], b))
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    private func gap(_ before: NotesBlock, _ b: NotesBlock) -> CGFloat {
+        switch (before, b) {
+        case (_, .heading): 16
+        case (.heading, _): 6
+        case (.item, .item): 5
+        default: 10
+        }
+    }
+
+    @ViewBuilder private func block(_ b: NotesBlock) -> some View {
+        switch b {
+        case .heading(let t):
+            Text(t).font(.headline).foregroundStyle(Theme.text).accessibilityAddTraits(.isHeader)
+        case .paragraph(let t):
+            Text(t).font(.body).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+        case .item(let depth, let marker, let t):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(marker).font(.body).foregroundStyle(Theme.text2).frame(width: 18, alignment: .trailing).accessibilityHidden(marker.isEmpty)
+                Text(t).font(.body).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.leading, CGFloat(depth) * 26)
+        case .quote(let t):
+            Text(t).font(.body).lineSpacing(3).foregroundStyle(Theme.text2).fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 12).overlay(alignment: .leading) { Theme.line.frame(width: 2) }
+        case .code(let s):
+            Text(s).font(.callout.monospaced()).fixedSize(horizontal: false, vertical: true).padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading).background(RoundedRectangle(cornerRadius: 8).fill(Theme.raised))
+        case .table(let header, let rows):
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 18, verticalSpacing: 6) {
+                GridRow { ForEach(header.indices, id: \.self) { Text(header[$0]).font(.callout.weight(.semibold)).foregroundStyle(Theme.text2) } }
+                ForEach(rows.indices, id: \.self) { r in
+                    GridRow { ForEach(rows[r].indices, id: \.self) { Text(rows[r][$0]).font(.callout).fixedSize(horizontal: false, vertical: true) } }
+                }
+            }
+        }
     }
 }
 

@@ -158,6 +158,9 @@ dm/tools/release_mac.sh 1.0.0 --no-upload        # a signed dry run (it still no
   `org.d2rmetal.manifest-signing`); `release_mac.sh` signs `manifest.json` with it. **Rotating it:** make a new key on the release Mac (delete the
   old item first), add its public key (`manifest_sign.swift public`) to `ManifestSignature.publicKeys` beside the old one, ship that launcher in a
   release signed with the old key, sign the next releases with the new key, and drop the old public key a release later.
+- **The release notes** (`--notes`, Markdown) become the GitHub release's text as written. The signed manifest carries them for the launcher's
+  "What's new" card, which lays out their headings, lists and tables, without the sections about the release page itself (`## Install`,
+  `## Update`, `## Files`).
 - **The releases page holds only D2R Metal releases.** The launcher and the in-game notice read GitHub's latest release, so nothing else may become
   "latest" (`--check-latest` says so); the README's images live in `docs/images`, not on a release.
 - **Publishing:** check the draft on github.com, then publish it (or `gh release edit v<version> --draft=false --latest`) and run `--check-latest`.

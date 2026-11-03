@@ -669,7 +669,7 @@ extension LauncherModel {
     func showPreview(_ which: String) {
         let json = #"""
         {"schema": 1, "version": "1.1.0", "build": 420, "commit": "abc1234", "date": "2026-11-02", "macos_min": "27.0", "chain": "", "product": "",
-         "notes": "**Sharper shadows** on characters, and a faster first launch. See the release page for everything in this version.",
+         "notes": "D2R Metal 1.1 plays with a mouse and keyboard the way Diablo II: Resurrected plays on PC.\n\n## What's new\n\n- **PC mouse and keyboard controls.** The game shows its own PC interface, and the keys are D2R's PC defaults:\n  - left click walks, attacks and picks up; right click casts your right skill;\n  - I, C, T and Q open the inventory, character, skill tree and quests.\n- **A controller brings the console interface back** the moment you press a button.\n\n**Not yet:** the keys can't be rebound. Everything about the controls is in [docs/MAC.md](https://github.com/PowerBeef/d2r-metal/blob/main/docs/MAC.md).",
          "runtime": {"name": "r", "version": "1.1.0", "sha256": "", "size": 0}, "tools": {"name": "t", "version": "1", "sha256": "", "size": 0}}
         """#
         let sample = try? JSONDecoder().decode(Manifest.self, from: Data(json.utf8))

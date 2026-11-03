@@ -11,6 +11,8 @@
 #                 the manifest signature when the release key is in this keychain); DM_LAUNCHER_FEED=file://<out>/manifest.json points a launcher
 #                 at it. Implies --no-upload
 #   --no-upload   build everything into <out> and stop before GitHub (a signed dry run still notarizes: it uploads the app to Apple's notary service)
+#   --notes       the release notes (Markdown): the GitHub release body as is; the manifest, which the launcher's "What's new" card shows, gets them
+#                 without the sections about the release page itself (## Install, ## Update, ## Files)
 #   --min-build   the oldest launcher build that may install this release (default: LAUNCHER_MIN_BUILD in dm/tools/install.py)
 #   --replace-draft  delete a draft v<version> left by an earlier run (never a published release) before uploading
 #   --update-nuget-pins  record the NuGet packages of this build in dm/tools/release_nuget.tsv instead of refusing a change
@@ -227,7 +229,13 @@ def asset(name, path, version, url=None):
     a = {'name': name, 'version': version, 'sha256': h, 'size': os.path.getsize(path) if full else 0}
     if url: a['url'] = url
     return a
-notes = open('$NOTES').read() if '$NOTES' else 'D2R Metal $VERSION'
+def for_launcher(md):   # the launcher's "What's new" card shows the notes without the release page's own sections: how to install or update, the files
+    keep, out = True, []
+    for line in md.splitlines(keepends=True):
+        if line.startswith('## '): keep = line[3:].strip().lower() not in ('install', 'update', 'files')
+        if keep: out.append(line)
+    return ''.join(out).strip()
+notes = for_launcher(open('$NOTES').read()) if '$NOTES' else 'D2R Metal $VERSION'
 m = {'schema': 1, 'version': '$VERSION', 'build': $BUILD, 'commit': '$COMMIT', 'date': '$(date +%F)', 'notes': notes, 'macos_min': '27.0',
      'update_url': '$UPDATE_URL', 'chain': '$CHAIN', 'product': '$(head -1 "$WT/dm/PRODUCT")'}
 if not '$UNSIGNED': m['team_id'] = '$TEAM'
