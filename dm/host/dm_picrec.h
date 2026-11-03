@@ -23,3 +23,9 @@ typedef struct {
 } dm_mac_rec;
 
 void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r);
+
+// Whether a run gets the real recommendation (dm_mac_recommend, front_mac.m): only the Mac App (app = DM_APP set), and a test copy
+// (app_support = DM_APP_SUPPORT set) only with test_firstboot (DM_TEST_VIDEO_FIRSTBOOT=1). The CLI host and test copies keep the original look
+// for every picture key (windowed, 1600, Standard, no MetalFX), so automated runs, golden baselines and benchmarks don't move; runs that want
+// MetalFX set DM_MFX / DM_MFX3D.
+int dm_picrec_real(int app, int app_support, int test_firstboot);

@@ -116,16 +116,19 @@ static dm_mac_rec mac_rec(void) {
 static void rec_native(int *res, int *s3d) {
     dm_mac_rec r = mac_rec(); *res = r.native ? 3 : -1; *s3d = r.native ? r.s3d : 0;
 }
-// 首次启动的推荐值（dm_video.c 读到的 sw_video.txt 缺键或越界时调，只取缺的那几个，启动时在主线程）：全屏；分辨率取「不超过主屏像素宽的 3/4」的最高一档，2560 那档只给 Pro / Max / Ultra
-// 显卡（名字里带；M6 实测 1920 出图 + MetalFX 每帧约 13.7 ms，2560 约 14.5 ms，60 帧只有 16.7 ms）；出图比画布小又支持 MetalFX 就开 MetalFX。
-// 旧版偏好（StartFullScreen / RenderScale / MetalFXUpscale）设过的当作当前值接着用。测试副本（DM_APP_SUPPORT）缺省全按原版（窗口、1600、标准），
-// 自动跑的局才稳定；DM_TEST_VIDEO_FIRSTBOOT=1 让测试也走真推荐
-// Recommended values on first boot (called by dm_video.c when sw_video.txt lacks a key or has one out of range, only the missing ones are used, on the main thread at launch): full screen; resolution = the highest tier not wider than 3/4 of the main screen's pixel width, the 2560 tier only for
-// Pro / Max / Ultra GPUs (going by the name; on an M6 a 1920 render + MetalFX took about 13.7 ms per frame and 2560 about 14.5 ms, against 16.7 ms at 60 fps); MetalFX on when the render is smaller than the canvas and MetalFX is supported.
-// Values from the older preferences (StartFullScreen / RenderScale / MetalFXUpscale) carry over as the current values when set. The test copy (DM_APP_SUPPORT) defaults to the original throughout (windowed, 1600, standard)
-// so automated runs stay stable; DM_TEST_VIDEO_FIRSTBOOT=1 makes a test take the real recommendation
+// Who gets the real recommendation (dm_picrec_real): the Mac App, and a test copy only with DM_TEST_VIDEO_FIRSTBOOT=1. The CLI host (no DM_APP) and
+// test copies keep the original look for every picture key, so automated runs, golden baselines and benchmarks stay as they were
+static int real_recommendation(void) { return dm_picrec_real(getenv("DM_APP") != NULL, getenv("DM_APP_SUPPORT") != NULL, getenv("DM_TEST_VIDEO_FIRSTBOOT") != NULL); }
+// Recommended values for the first three keys (asked by dm_video.c for a key missing from sw_video.txt or an older rec_v; on the main thread at
+// launch): full screen; Native with the 3D Resolution from dm_picrec.c, or its fixed width when Native is too heavy; MetalFX when it is supported
+// and the render is smaller than the screen. The older StartFullScreen / RenderScale / MetalFXUpscale preferences carry over once as the current
+// values. The CLI host and test copies (unless DM_TEST_VIDEO_FIRSTBOOT=1) get the original look: windowed, 1600, Standard
 int front_video_firstboot(int rec[3], int cur[3]) {
-    if (getenv("DM_APP_SUPPORT") && !getenv("DM_TEST_VIDEO_FIRSTBOOT")) { for (int i = 0; i < 3; i++) rec[i] = cur[i] = 0; LOG("画面设置：测试副本，推荐值按原版（窗口 / 1600 / 标准）"); return 1; }
+    if (!real_recommendation()) {
+        for (int i = 0; i < 3; i++) rec[i] = cur[i] = 0;
+        LOG("picture settings: %s, the original look (windowed / 1600 / Standard)", getenv("DM_APP") ? "test copy" : "CLI host");
+        return 1;
+    }
     double px = main_px(); NSString *gpu = gpu_name();
     int t = mac_rec().tier_res, nres, ns3d; rec_native(&nres, &ns3d);
     rec[0] = 1; rec[1] = nres >= 0 ? nres : t; rec[2] = front_video_mfx_ok() && (nres >= 0 || k_render_w[t] < px) ? 1 : 0;   // 原生时 MetalFX 管 3D 放大趟 | with Native, MetalFX does the 3D upscale pass
@@ -142,7 +145,6 @@ int front_video_firstboot(int rec[3], int cur[3]) {
 // anisotropy, accurate colour and environment shadows (+0.5 ms GPU in town at Recommended on an M6, still a steady 60 fps) in the Mac App; an iPhone
 // chip leaves environment shadows off and keeps the Switch's shadow map, as the phone does. The CLI host (no DM_APP) and test copies keep the original
 // (0), so automated runs, golden baselines and benchmarks stay as they were
-static int real_recommendation(void) { return getenv("DM_APP") && (!getenv("DM_APP_SUPPORT") || getenv("DM_TEST_VIDEO_FIRSTBOOT")); }
 int front_video_rec(const char *key) {
     if (!real_recommendation()) return 0;
     if (!strcmp(key, "aa")) return 1;

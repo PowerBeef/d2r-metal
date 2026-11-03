@@ -38,6 +38,8 @@ static double core_speed(int iphone, int gen) {
     return k_core_m[gen > M_KNOWN ? M_KNOWN : gen];
 }
 
+int dm_picrec_real(int app, int app_support, int test_firstboot) { return app && (!app_support || test_firstboot); }
+
 // load of a picture: 3D at `scale` of an output w x h
 static double load(int w, int h, double scale) { double out = (double)w * h / 1e6; return out * scale * scale + OUT_WEIGHT * out; }
 

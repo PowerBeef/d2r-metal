@@ -1,6 +1,7 @@
 // The Mac App's Recommended picture for made-up machines (dm_picrec.c): each real configuration's chip name, GPU cores and Native screen size,
 // and the 3D Resolution, shadows and Frame Drops it should get. Expectations follow the measured costs and the per-generation speeds in
-// dm_picrec.c; when those change, so do these. Pass -v to print every machine's choice.
+// dm_picrec.c; when those change, so do these. Also checks dm_picrec_real, the gate that keeps the CLI host and test copies on the original picture.
+// Pass -v to print every machine's choice.
 #include <stdio.h>
 #include <string.h>
 #include "../dm_picrec.h"
@@ -26,6 +27,11 @@ int main(int argc, char **argv) {
     n++; if (r.gen != 4 || r.tier != 2) { fails++; printf("✗ Apple M4 Max read as generation %d tier %d\n", r.gen, r.tier); }
     s.gpu = "Apple A18 Pro GPU"; dm_mac_recommend(&s, &r);
     n++; if (r.gen != 18 || r.tier != -1) { fails++; printf("✗ Apple A18 Pro GPU read as generation %d tier %d\n", r.gen, r.tier); }
+    // who gets the real recommendation: the Mac App (DM_APP), and a test copy (DM_APP_SUPPORT) only with DM_TEST_VIDEO_FIRSTBOOT=1; never the CLI host
+    for (int bits = 0; bits < 8; bits++) {
+        int app = bits >> 2 & 1, sup = bits >> 1 & 1, fb = bits & 1, want_real = app && (!sup || fb), got = dm_picrec_real(app, sup, fb);
+        n++; if (got != want_real) { fails++; printf("✗ dm_picrec_real(app %d, support %d, firstboot %d) = %d, expected %d\n", app, sup, fb, got, want_real); }
+    }
     printf("t_picrec: %d checks, %d failed\n", n, fails);
     return fails != 0;
 }
