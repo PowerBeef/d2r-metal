@@ -40,6 +40,7 @@
 #include "nvn_cover.h"
 #include "dmsh_chain.h"   // DMSH_CHAIN：本源码树期望的 B 着色器库翻译链版本 | DMSH_CHAIN: the translation chain version of the B shader library expected by this source tree
 #include "nvn_hmap.h"
+#include "nvn_ratelog.h"   // GPU error lines: the first 8 of a kind in full, then one summary every 10 s (gerr_flush)
 #include "../../host/dm.h"
 #import <CommonCrypto/CommonDigest.h>
 #include <stdarg.h>
@@ -534,6 +535,7 @@ static void pso_pend_age(void);
 static void mfx3d_sub_begin(void);
 static void aniso_latch(void);
 static void bar_stats(void);
+static void gerr_flush(void);
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
     pso_pend_age();   // 并行预编：回收过期没人领的预测槽 | parallel precompile: recycle stale untaken prediction slots
@@ -543,6 +545,7 @@ void mtl_sub_begin(void) {
     defer_drain();
     aniso_latch();   // 「各向异性过滤」换档：在这里换掉已建的采样器 | "Anisotropic Filtering" changed: swap out the samplers built so far here
     bar_stats();   // pass-barrier counts, one line every 600 submissions
+    if (g_sub_serial % 600 == 0) gerr_flush();   // GPU errors no line has counted yet (about every 10 s)
     defer_reset();
     warm_claim();
     if (g_cb) MDIE("提交重入");
@@ -862,6 +865,17 @@ int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1) {
     *t0 = atomic_load(&g_gpu[k].t0); *t1 = atomic_load(&g_gpu[k].t1);
     return *t1 >= *t0 && *t1;
 }
+// GPU command buffer errors, rate-limited per kind (nvn_ratelog.h): a GPU fault can fail every command buffer for a while, and each red line also emits a red event
+// (and on iOS an fsync'd log line). The first 8 of a kind print in full (1 for innocent victims, which only repeat another submit's fault), then at most one
+// summary per 10 s; gerr_flush (every 600 submissions and in mtl_drain) reports what a quiet window left, so a storm that stops is still counted in full
+enum { GERR_MAIN, GERR_VICTIM, GERR_UP, GERR_PRESENT, GERR_N };
+#define GERR_PERIOD_NS 10000000000ull
+static nvn_ratelog g_gerr[GERR_N];
+static void gerr_flush(void) {
+    static const char *const what[GERR_N] = {"submits", "submits (innocent victims)", "upload command buffers", "present command buffers"};
+    for (int i = 0; i < GERR_N; i++) { uint64_t more, total;
+        if (nvn_ratelog_flush(&g_gerr[i], &more, &total)) MLOG("【红】GPU errors in %s: %llu more since the last line (%llu in all)", what[i], (unsigned long long)more, (unsigned long long)total); }
+}
 static void rp_flush(void);
 static const char *cctx_snap(void);   // 这次提交里有什么（出错时打进红行；定义在 mtl_exec 之前） | What is in this submission (printed into the failure line on error; defined before mtl_exec)
 uint64_t mtl_sub_commit(void) {
@@ -882,7 +896,12 @@ uint64_t mtl_sub_commit(void) {
     NSString *cctx = @(cctx_snap());
     [FB_ON(o, g_cb) FB_SEL:^(FB_ARG cb) {
         gpu_tag_done(gpu_f, cb.GPUStartTime, cb.GPUEndTime);
-        if (cb.error) { atomic_store(&g_last_commit_error, 1); static int n, nv; int victim = [cb.error.description containsString:@"InnocentVictim"]; if (victim ? nv++ < 1 : n++ < 8) MLOG("【红】命令缓冲错误详情 fence=%llu：%s | GPU %.3f→%.3f", (unsigned long long)fence, cb.error.description.UTF8String, cb.GPUStartTime, cb.GPUEndTime); if (!victim) MLOG("【红】出错那次提交的现场 fence=%llu：%s", (unsigned long long)fence, cctx.UTF8String); MLOG("【红】命令缓冲执行出错：%s", cb.error.localizedDescription.UTF8String); }
+        if (cb.error) { atomic_store(&g_last_commit_error, 1); int victim = [cb.error.description containsString:@"InnocentVictim"]; uint64_t more, total;
+            int t = nvn_ratelog_take(&g_gerr[victim ? GERR_VICTIM : GERR_MAIN], victim ? 1 : 8, GERR_PERIOD_NS, bp_now(), &more, &total);
+            if (t == NVN_RL_FULL) { MLOG("【红】GPU error in submit fence=%llu (%llu so far): %s | GPU %.3f→%.3f", (unsigned long long)fence, (unsigned long long)total, cb.error.description.UTF8String, cb.GPUStartTime, cb.GPUEndTime);
+                if (!victim) MLOG("【红】the failed submit held: %s", cctx.UTF8String); }
+            else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in submits%s: %llu more since the last line (%llu in all); latest: %s", victim ? " (innocent victims)" : "",
+                                                 (unsigned long long)more, (unsigned long long)total, cb.error.localizedDescription.UTF8String); }
         for (int i = 0; i < n; i++) {
             if (ops[i].kind == 1) { if (ops[i].mode == 1) *ops[i].val += ops[i].v; else *ops[i].val = ops[i].v; }
             else if (ops[i].kind == 3) {   // 通过采样数：自清零以来各槽之和 | Samples passed: the sum of all slots since the reset
@@ -937,7 +956,8 @@ static void present_drop_for_suspend(void);
 // Created only once: the game threads (pool registration, submit) and the main thread (drain before suspending) may each get here first; previously only an unlocked "is g_dev set" check guarded it, and two threads arriving together would each create a device and queue
 void mtl_init(void) { static dispatch_once_t once; dispatch_once(&once, ^{ mtl_init_once(); }); }
 // 图形还没初始化（开机头几秒就进后台）：没有在途工作要清，也别在这条线程上替游戏初始化 | Graphics not initialized yet (going to the background in the first seconds of boot): there is no in-flight work to drain, and do not initialize it on this thread on the game's behalf
-void mtl_drain(void) { if (!g_dev) return; present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu(); }
+void mtl_drain(void) { if (!g_dev) return; present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu();
+    gerr_flush(); }   // the handlers have run: count the GPU errors no line reported (suspend and teardown)
 
 // ================= 渲染回放 =================
 // ================= Render replay =================
@@ -1160,11 +1180,14 @@ static void up_flush(void) {
     MTL4CommitOptions *o = [MTL4CommitOptions new];
     atomic_fetch_add(&g_up_pending, 1);
     [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
-        if (f.error) MLOG("【红】上传命令缓冲执行出错：%s", f.error.description.UTF8String);
-        if (f.error || fake_lost) {
+        int t = NVN_RL_FULL; uint64_t more = 0, total = 0;
+        if (f.error) { t = nvn_ratelog_take(&g_gerr[GERR_UP], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
+            if (t == NVN_RL_FULL) MLOG("【红】GPU error in an upload command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
+            else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in upload command buffers: %llu more since the last line (%llu in all)", (unsigned long long)more, (unsigned long long)total); }
+        if (f.error || fake_lost) {   // the recovery runs every time; its line prints with the full error lines only
             os_unfair_lock_lock(&g_up_lost_lk); if (!g_up_lost) g_up_lost = [NSHashTable weakObjectsHashTable]; for (id d in dsts) [g_up_lost addObject:d]; int n = (int)g_up_lost.allObjects.count; atomic_store(&g_up_lost_n, n); os_unfair_lock_unlock(&g_up_lost_lk);
             pthread_mutex_lock(&g_smu); g_ser_gen++; pthread_mutex_unlock(&g_smu);   // 让各贴图号的视图缓存走一次慢路（缓存命中时不会经过 tex_mtl，看不到这份记录） | Make the view cache of every texture ID take the slow path once (on a cache hit tex_mtl is not passed through and this record is not seen)
-            MLOG("%s上传命令缓冲被丢：这一批 %lu 张贴图记为内容未写，下次取用时重传（待重传共 %d 张）", fake_lost ? "DM_TEST_UP_LOST：" : "", (unsigned long)dsts.count, n);
+            if (fake_lost || t == NVN_RL_FULL) MLOG("%s上传命令缓冲被丢：这一批 %lu 张贴图记为内容未写，下次取用时重传（待重传共 %d 张）", fake_lost ? "DM_TEST_UP_LOST：" : "", (unsigned long)dsts.count, n);
         }
         double d = f.GPUEndTime - f.GPUStartTime;
         if (d > 0) atomic_fetch_add(&g_upload_gpu_ns, (uint64_t)(d * 1e9));
@@ -6614,7 +6637,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     [cb endCommandBuffer];
     MTL4CommitOptions *o = [MTL4CommitOptions new];
     [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
-        if (f.error) MLOG("【红】上屏命令缓冲错误：%s", f.error.description.UTF8String);
+        if (f.error) { uint64_t more, total; int t = nvn_ratelog_take(&g_gerr[GERR_PRESENT], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
+            if (t == NVN_RL_FULL) MLOG("【红】GPU error in a present command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
+            else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in present command buffers: %llu more since the last line (%llu in all)", (unsigned long long)more, (unsigned long long)total); }
         else mp_check(alloc_i, ticket);
 #if TARGET_OS_OSX
         if (!f.error) mfx_gpu_note(f.GPUEndTime - f.GPUStartTime);

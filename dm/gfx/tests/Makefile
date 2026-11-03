@@ -30,6 +30,9 @@ t_pace: t_pace.c ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_pace.c
 t_timestamp: t_timestamp.c ../nvn/nvn_timestamp.h
 	clang -O1 -Wall -o $@ t_timestamp.c
+# Built with ThreadSanitizer: a race report exits non-zero
+t_ratelog: t_ratelog.c ../nvn/nvn_ratelog.h
+	clang -O1 -g -fsanitize=thread -Wall -Werror -o $@ t_ratelog.c
 t_capture: t_capture.c ../nvn/nvn_capture.c ../nvn/nvn_capture.h ../nvn/nvn_obj.h
 	clang -O1 -Wall -I../nvn/include -o $@ t_capture.c ../nvn/nvn_capture.c
 # DM_NVN_CAPTURE replayer (nvn_capture.inc): not in run, it needs a capture: ./nvn_replay <file.nvncap> [--repeat n] [--max-pixels n] [--png path]
@@ -114,6 +117,7 @@ run: \
 	t_prog_key \
 	t_pso_pend \
 	t_pso_skey \
+	t_ratelog \
 	t_refl \
 	t_refl_lib \
 	t_reorder_chain \
@@ -138,6 +142,7 @@ run: \
 	./t_pace
 	./t_timestamp
 	./t_capture
+	./t_ratelog
 	./t_adaptive_pace
 	./t_refl
 	./t_refl_lib
