@@ -2,7 +2,8 @@
 # 75% + MetalFX are forced by env (the phone's first-boot picture; not this Mac's Recommended, where the 3D is 100% and this pass never runs).
 # DM_TEST_Q3D=0 runs the Frame Drops controller whatever the settings say, and the injection counts every frame from 5 s after the first judged one
 # as dropped, so the controller steps down: each step must reuse the scaler set (an mfx content event), with no rebuild and no replaced set.
-# The scale3d lv=1 expectation fails first, and clearly, when the controller does not step.
+# The scale3d lv=1 expectation fails first, and clearly, when the controller does not step. The set's first build is checked at the end, not
+# expected after enter_game: the main menu's 3D scene already builds it, before or after the enter_game step starts.
 name mfx3d_dyn
 requires ios-mac device
 env DM_3D_SCALE=0.75 DM_MFX3D=1 DM_TEST_Q3D=0 DM_3D_SCALE_DYN_INJECT=+300-100000000
@@ -10,7 +11,6 @@ timeout 300
 
 expect main_menu timeout=120
 enter_game
-expect mfx who=3d op=build timeout=60
 expect scale3d lv=1 timeout=60
 expect mfx who=3d op=content k=1 timeout=30
 expect scale3d lv=2 timeout=60
