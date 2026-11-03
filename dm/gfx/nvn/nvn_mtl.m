@@ -4646,6 +4646,9 @@ static int fz_p2_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, uint8_
     g_fz_draws++; return 1;
 }
 static void bloomq_reset(void) { memset(&g_bloomq, 0, sizeof g_bloomq); }
+// The frame in which the apply must read the game's own B0: a cutoff that did not engage (the game's chain drew B0) or an abort (B0 cleared to black).
+// The apply at state 0 reuses the last B1 only in other frames: the extrapolated frame, whose chain never started, or a second apply after a completed chain
+static uint64_t g_bloomq_own_f = UINT64_MAX;   // UINT64_MAX: none
 static int g_bloomq_broken;   // the capture shader or a capture pipeline could not be built: bloom 1/4 stays off for this session (the game's own chain runs)
 // Kept on everywhere: on 2026-10-27 the look set against the game's full chain (DM_NVN_BLOOM_Q=0) gave FLIP 0.0049 (run-to-run noise), lava identical, and the full chain costs +0.06 ms GPU on the Mac
 static int bloomq_enabled(void) {
@@ -4729,10 +4732,10 @@ static void bloomq_summary(uint64_t f, int force) {
 }
 // An abort in the middle of the chain (RED 61 another draw, 62 the capture not drawn, 63 no B1 handle at the apply): B0 to black, back to state 0.
 // The current draw then goes on and opens its own pass, as after bloomq_capture's rp_end
-static void bloomq_abort(int id, const char *why) {
+static void bloomq_abort(int id, const char *why, uint64_t f) {
     if (id == 61) g_bloomq_stat.ab61++; else if (id == 62) g_bloomq_stat.ab62++; else g_bloomq_stat.ab63++;
-    RED_ONCE(id, "bloom 1/4: %s; B0 ser=%llu cleared to black, this frame has no bloom (first case, frame %llu)", why, (unsigned long long)g_bloomq.b0_ser, (unsigned long long)atomic_load(&g_cur_frame));
-    bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl, 1); bloomq_reset();
+    RED_ONCE(id, "bloom 1/4: %s; B0 ser=%llu cleared to black, this frame has no bloom (first case, frame %llu)", why, (unsigned long long)g_bloomq.b0_ser, (unsigned long long)f);
+    bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl, 1); bloomq_reset(); g_bloomq_own_f = f;   // the apply reads the black B0, not the last B1
 }
 // ---------- 拖货跟手图：商人货架上的货没有「拿起」态，拖动时由回放层把「画这件货图标的那次绘制」在同一趟末尾平移到手指处再画一遍 ----------
 // 界面那一趟每个矩形是一次 4 顶点绘制（顶点 20 字节：位置 3 浮点 + 贴图坐标 2 浮点，位置经顶点常量 0 号的矩阵到裁剪坐标）。
@@ -4919,6 +4922,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
             }
             // The previous chain's B0 stays undefined unless this cutoff engages again on the very same level
             if (had && !(engage && pb0.serial == R.rt.color[0]->serial && plv == lv && psl == sl)) bloomq_clear_b0(&pb0, plv, psl, 1);
+            g_bloomq_own_f = engage ? UINT64_MAX : f_;   // not engaged: the game's chain draws B0 this frame, and its apply must read it
             if (engage) {
                 g_bloomq.s_tex = st; g_bloomq.s_h = h; g_bloomq.s_ser = st.serial; g_bloomq.b0_ser = tgt; g_bloomq.b0_tex = *R.rt.color[0]; g_bloomq.b0_lv = lv; g_bloomq.b0_sl = sl;
                 g_bloomq.coeff_g = c1[0]; g_bloomq.coeff_b = c1[1]; g_bloomq.state = 1;
@@ -4928,7 +4932,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         } else if (g_bloomq.state == 1 && !strncmp(f->key, "019ce2f82edbda84", 16)) {
             uint64_t src = 0; for (int i = 0; i < f->rf.nb; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128) { src = h_ser(S.tex[1][f->rf.b[i].reg]); break; }
             if (src == g_bloomq.b0_ser && bloomq_target(&tgt, &lv, &sl) && bloomq_capture()) { R.clear_c[0] = 0; g_bloomq.b1_ser = tgt; g_bloomq.state = 2; PD("B %llu 泛光 1/4 原生截取 B0=%llu B1=%llu", g_stat_pass, (unsigned long long)g_bloomq.b0_ser, (unsigned long long)g_bloomq.b1_ser); return; }
-            bloomq_abort(62, "the capture into B1 was not drawn");
+            bloomq_abort(62, "the capture into B1 was not drawn", f_);
         } else if (g_bloomq.state == 2 && !strncmp(f->key, "019ce2f82edbda84", 16)) {
             for (int i = 0; i < f->rf.nb; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128 && h_ser(S.tex[1][f->rf.b[i].reg]) == g_bloomq.b1_ser) { g_bloomq.b1_h = S.tex[1][f->rf.b[i].reg]; break; }
         } else if (g_bloomq.state == 2 && !strncmp(f->key, "cc264583f2000c81", 16)) {
@@ -4943,13 +4947,13 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
                     MLOG("bloom 1/4: applied on new targets: S ser=%llu %ux%u, B0 ser=%llu %ux%u level %d, B1 ser=%llu format %lu (frame %llu)", (unsigned long long)g_bloomq.s_ser, g_bloomq.s_tex.d.width, g_bloomq.s_tex.d.height,
                          (unsigned long long)g_bloomq.b0_ser, MAX(g_bloomq.b0_tex.d.width >> g_bloomq.b0_lv, 1u), MAX(g_bloomq.b0_tex.d.height >> g_bloomq.b0_lv, 1u), g_bloomq.b0_lv, (unsigned long long)g_bloomq.b1_ser, (unsigned long)g_bloomq_fmt, (unsigned long long)f_); }
                 g_bloomq_stat.applied++; bloomq_reset(); }
-            else bloomq_abort(63, "no handle for B1 at the apply");
-        } else if (!g_bloomq.state && g_bloomq_last_b1h && h_ser(g_bloomq_last_b1h) == g_bloomq_last_b1s && !strncmp(f->key, "2e2d6700a2569795", 16)) {   // the B1 handle still points to the same texture (not recognized after a rebuild on a resolution change)
+            else bloomq_abort(63, "no handle for B1 at the apply", f_);
+        } else if (!g_bloomq.state && g_bloomq_own_f != f_ && g_bloomq_last_b1h && h_ser(g_bloomq_last_b1h) == g_bloomq_last_b1s && !strncmp(f->key, "2e2d6700a2569795", 16)) {   // the B1 handle still points to the same texture (not recognized after a rebuild on a resolution change)
             // The bloom overlay is reached without the bloom chain having run this frame (the extrapolated frame of runtime extrapolation skipped it: outside the region the input 469 is the previous frame's LDR, so it cannot run): redirect the read to B1 as last time, overlaying the previous frame's bloom.
             // Without the redirect it would read B0 -- with bloom 1/4 on, B0's upsample is always skipped and never written, so what is read is uninitialized video memory (on M4 Pro the units in the region turn entirely green; elsewhere it is mostly 0, i.e. missing bloom)
             int hit = 0; for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq_last_b0) { S.tex[1][r] = g_bloomq_last_b1h; hit = 1; g_args_dirty[1] = 1; }
             if (hit) { PD("D %llu 泛光链没跑：叠加沿用上一帧 B1", g_stat_pass); g_bloomq_stat.reused++; }
-        } else if (g_bloomq.state) bloomq_abort(61, "another draw came in the middle of the chain");
+        } else if (g_bloomq.state) bloomq_abort(61, "another draw came in the middle of the chain", f_);
       }
     }
     if (pr->sh[1] && !strncmp(pr->sh[1]->key, "52aac1f2306b8fc5", 16) && mfx3d_draw(pr->sh[1])) return;   // 游戏的 3D 放大趟（ps_upsample_p）改用 MetalFX | the game's 3D upscale pass (ps_upsample_p) through MetalFX

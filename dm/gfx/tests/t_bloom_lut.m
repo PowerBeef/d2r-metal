@@ -207,6 +207,29 @@ static void vp_case(void) {
     EXPECT("viewport 7x8 on an 8x8 target (within 1 px): engaged", 1, g_bloomq.state);
     bloomq_reset();
 }
+// The apply at state 0 reuses the last B1 only in a frame whose chain never started (the extrapolated frame). After a cutoff that did not engage
+// the game's own chain drew B0, and after an abort B0 is black (that frame has no bloom): both read B0. A second apply after a completed chain still
+// reads B1, as B0 was never drawn in that frame
+static void reuse_case(void) {
+    case_begin(); chain_once();
+    mtl_set_frame(++t_frame); memset(&g_bloomq_stat, 0, sizeof g_bloomq_stat);
+    step(&tF, 8, ID_B0, &p_apply, 1); EXPECT("reuse: a frame without a chain reads the last B1", ID_B1, S.tex[1][0]); commit();
+    EXPECT("reuse: counted", 1, g_bloomq_stat.reused);
+    mtl_set_frame(++t_frame); memset(&g_bloomq_stat, 0, sizeof g_bloomq_stat);
+    { chain c = chain_new(); set_rt_sz(&c, &tB0, 8); viewport(&c, 0, 0, 4, 8); ds_off(&c); bind_ubo7(&c); bind_tex(&c, ID_S); bind_prog(&c, &p_cut); draw_cmd(&c); run(&c, 1); }
+    EXPECT("cutoff not engaged after an engaged frame: counted", 1, g_bloomq_stat.vp);
+    step(&tB1, 4, ID_B0, &p_down, 0); step(&tB0, 8, ID_B1, &p_up, 0);   // the game's own chain
+    step(&tF, 8, ID_B0, &p_apply, 0); EXPECT("cutoff not engaged: the apply reads the game's B0", ID_B0, S.tex[1][0]); commit();
+    EXPECT("cutoff not engaged: not counted as reused", 0, g_bloomq_stat.reused);
+    mtl_set_frame(++t_frame); memset(&g_bloomq_stat, 0, sizeof g_bloomq_stat);
+    step(&tB0, 8, ID_S, &p_cut, 1); step(&tB1, 4, ID_B0, &p_down, 0); step(&tT, 8, 0, &p_other, 0);   // abort 61 at state 2
+    step(&tF, 8, ID_B0, &p_apply, 0); EXPECT("abort at state 2: the apply reads B0 (black)", ID_B0, S.tex[1][0]); commit();
+    EXPECT("abort at state 2: counted", 1, g_bloomq_stat.ab61);
+    EXPECT("abort at state 2: not counted as reused", 0, g_bloomq_stat.reused);
+    mtl_set_frame(++t_frame); memset(&g_bloomq_stat, 0, sizeof g_bloomq_stat); chain_once();
+    step(&tF, 8, ID_B0, &p_apply, 1); EXPECT("a second apply after a completed chain still reads B1", ID_B1, S.tex[1][0]); commit();
+    EXPECT("a second apply after a completed chain: counted as reused", 1, g_bloomq_stat.reused);
+}
 // The health summary: the first window prints after 600 frames, later ones after 3600; new targets flush the window early; an empty window stays closed
 static char g_log[8192];
 static void log_cap(const char *file, int line, const char *fmt, ...) { (void)file; (void)line; char b[1024]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
@@ -232,4 +255,5 @@ static void summary_case(void) {
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init(); lib_init(); bloom_init();
     aux_case(); bright_case(); chain_case(); abort61_case(); abort62_case(); abort63_case(); midchain_case(); broken_case(); vp_case(); summary_case();
+    reuse_case();
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0; } }
