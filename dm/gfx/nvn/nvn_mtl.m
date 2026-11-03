@@ -6655,11 +6655,12 @@ static id<MTLTexture> present_src(id<MTLTexture> src) {
 // bad: no MetalFX for this path on this device, for the session (capability only). fail_*: the last request key that failed to build, how many requests
 // for it since (fail_n), and how many times it was logged (fail_logs); the installed set stays in use meanwhile.
 // iw x ih is the input allocation; the content encoded into it (lcw x lch, the last one) can be smaller (the 3D set); kc counts content changes.
-// last_use: when the set was last used, in presents (g_mfx_calls) for the present / screenshot sets and in submissions (g_sub_serial) for the 3D set
+// last_use: when the set was last used, in presents (g_mfx_calls) for the present / screenshot sets and in submissions (g_sub_serial) for the 3D set.
+// acfg: the configured 3D scale the 3D set was built under (mfx3d_ready; mfx3d_alloc keeps such a set while the content fits)
 typedef struct { id scaler; id<MTLTexture> in, out; id<MTLFence> fence; NSUInteger iw, ih, ow, oh; MTLPixelFormat fmt; int m4, bad, main_cb, uvi; id args; id<MTLBuffer> uv[3]; const char *who, *tag, *why;
                  int settle, pn; NSUInteger piw, pih, pow_, poh; MTLPixelFormat pfmt;
                  int builds, tries, fail_on, fail_n, fail_logs; MTLPixelFormat ffmt; NSUInteger fiw, fih, fow, foh;
-                 NSUInteger lcw, lch; int kc; uint64_t last_use; } mfx_t;
+                 NSUInteger lcw, lch; int kc; uint64_t last_use; float acfg; } mfx_t;
 // Only the present set settles (window drags change its output at every step). The 3D set's output is the game's output resolution, which never
 // changes continuously (fixed at launch on the Mac, discrete fold steps on phones), so it builds on the first request
 static mfx_t g_mfx_pres = { .who = "present", .tag = "pres", .settle = MFX_SETTLE }, g_mfx_grab = { .who = "present screenshot", .tag = "grab" },
@@ -6923,28 +6924,36 @@ static id<MTLRenderPipelineState> mfx3d_pso(MTLPixelFormat fmt) {   // write-bac
 }
 // The 3D set's input allocation (aw x ah) for content cw x ch and output ow x oh: sized for the configured 3D scale (cfg, without the Frame Drops level)
 // plus MFX_PAD texels, so a Frame Drops step only changes the content inside it (no rebuild). The pad also absorbs a rounding difference between the
-// game's target size and round(output x scale). cfg 0 (unknown): grow only. A content larger than the cfg allocation (the frame before the game rebuilds
-// its targets after an Apply that lowered the scale) keeps the installed set until the content fits, so an Apply rebuilds once
+// game's target size and round(output x scale). cfg 0 (unknown): grow only. A set built under the current cfg is kept while the content fits, so a set
+// sized for a level-0 target ahead of the cfg allocation (content + pad) also survives Frame Drops steps and the way back. A content larger than the cfg
+// allocation (the frame before the game rebuilds its targets after an Apply that lowered the scale) keeps the installed set until the content fits, and
+// a set built under another cfg then moves to the cfg allocation, so an Apply rebuilds once
 #define MFX_PAD 2
 __attribute__((weak)) float dm_3d_scale_cfg(void) { return 0; }   // the host's hle_oe.c gives the strong one; a weak definition, not a declaration (Apple's linker needs one)
 static void mfx3d_alloc(NSUInteger cw, NSUInteger ch, NSUInteger ow, NSUInteger oh, float cfg, const mfx_t *m, NSUInteger *aw, NSUInteger *ah) {
     NSUInteger a0 = cfg > 0 ? (NSUInteger)llround(ow * (double)cfg) + MFX_PAD : 0, b0 = cfg > 0 ? (NSUInteger)llround(oh * (double)cfg) + MFX_PAD : 0;
     int inst = m->scaler && m->ow == ow && m->oh == oh && m->fmt == MTLPixelFormatRGBA16Float && m->iw >= cw && m->ih >= ch;
-    if (inst && (cfg <= 0 || a0 < cw || b0 < ch)) { *aw = m->iw; *ah = m->ih; }   // cfg unknown: grow only; content above the cfg allocation (Apply): keep until it fits
+    if (inst && (cfg <= 0 || a0 < cw || b0 < ch || m->acfg == cfg)) { *aw = m->iw; *ah = m->ih; }   // cfg unknown: grow only; content above the cfg allocation (Apply): keep until it fits; built under this cfg: keep
     else if (cfg > 0 && a0 >= cw && b0 >= ch) { *aw = a0; *ah = b0; }
     else { *aw = cw + MFX_PAD; *ah = ch + MFX_PAD; }   // content ahead of cfg: cw + pad is the next cfg allocation when the game sizes its target as round(output x scale)
     *aw = MIN(MAX(*aw, cw), ow); *ah = MIN(MAX(*ah, ch), oh);
 }
+// The 3D set at aw x ah for output ow x oh (mfx_ready); a build records the configured scale it was sized under (acfg, read by mfx3d_alloc)
+static int mfx3d_ready(NSUInteger aw, NSUInteger ah, NSUInteger ow, NSUInteger oh, float cfg) {
+    int b = g_mfx_3d.builds, r = mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, aw, ah, ow, oh);
+    if (g_mfx_3d.builds != b) g_mfx_3d.acfg = cfg;
+    return r;
+}
 static id<MTL4ArgumentTable> g_mfx3d_args;
-// Encode half (replay thread): the 3D set at allocation aw x ah for output vp.width x vp.height, the copy + MetalFX for content cw x ch of src, then the
-// write-back into colour 0 over vp: rgb = MetalFX(uv) x mask(uv), alpha = 1. 0 = not drawn (the original draw goes on in the open pass when it fails
-// before rp_end). The write-back attaches colour 0 as rp_begin does (attach: the target's format view), lands a pending colour-0 clear outside a
-// partial viewport, and filters the mask (linear, like the game's pass)
-static int mfx3d_encode(id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInteger aw, NSUInteger ah, id<MTLTexture> mask, MTLViewport vp) {
+// Encode half (replay thread): the 3D set at allocation aw x ah (chosen under the configured scale cfg) for output vp.width x vp.height, the copy +
+// MetalFX for content cw x ch of src, then the write-back into colour 0 over vp: rgb = MetalFX(uv) x mask(uv), alpha = 1. 0 = not drawn (the original
+// draw goes on in the open pass when it fails before rp_end). The write-back attaches colour 0 as rp_begin does (attach: the target's format view), lands
+// a pending colour-0 clear outside a partial viewport, and filters the mask (linear, like the game's pass)
+static int mfx3d_encode(id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInteger aw, NSUInteger ah, float cfg, id<MTLTexture> mask, MTLViewport vp) {
     RPD *rp = [RPD new]; attach(rp.colorAttachments[0], R.rt.color[0], &R.rt.cview[0], R.rt.has_cview[0], 1);
     id<MTLTexture> dst = rp.colorAttachments[0].texture; if (!dst) return 0;   // a format view has its base's size
     NSUInteger ow = (NSUInteger)llround(vp.width), oh = (NSUInteger)llround(vp.height);
-    if (!mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, aw, ah, ow, oh)) return 0;
+    if (!mfx3d_ready(aw, ah, ow, oh, cfg)) return 0;
     id<MTLRenderPipelineState> pso = mfx3d_pso(dst.pixelFormat); if (!pso) return 0;
     rp_end();
     if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0;
@@ -6983,8 +6992,8 @@ static int mfx3d_draw(NvShader *f) {   // replay thread, at the game's ps_upsamp
     double vx = S.vp[0][0], vy = S.vp[0][1], vw = S.vp[0][2], vh = S.vp[0][3];
     NSUInteger cw = (NSUInteger)llround(c[0] * src.width), ch = (NSUInteger)llround(c[1] * src.height);
     if (!cw || !ch || cw > src.width || ch > src.height || vw < cw * 1.05 || vh < ch * 1.05 || vx + vw > dst.width + 0.5 || vy + vh > dst.height + 0.5) return 0;
-    NSUInteger aw, ah; mfx3d_alloc(cw, ch, (NSUInteger)llround(vw), (NSUInteger)llround(vh), dm_3d_scale_cfg(), &g_mfx_3d, &aw, &ah);
-    if (!mfx3d_encode(src, cw, ch, aw, ah, mask, (MTLViewport){vx, vy, vw, vh, 0, 1})) return 0;
+    float cfg = dm_3d_scale_cfg(); NSUInteger aw, ah; mfx3d_alloc(cw, ch, (NSUInteger)llround(vw), (NSUInteger)llround(vh), cfg, &g_mfx_3d, &aw, &ah);
+    if (!mfx3d_encode(src, cw, ch, aw, ah, cfg, mask, (MTLViewport){vx, vy, vw, vh, 0, 1})) return 0;
     g_mfx_3d.last_use = g_sub_serial; atomic_fetch_add(&g_mfx3d_gen, 1);
     { static int once; if (!once++) MLOG("3D upscale: MetalFX replaces ps_upsample_p: content %lux%lu (%.0f%% wide) -> viewport %.0fx%.0f, original sharpen %.3f", (unsigned long)cw, (unsigned long)ch, 100.0 * cw / vw, vw, vh, c[6]); }
     PD("U %llu 3D 放大改用 MetalFX %lux%lu → %.0fx%.0f", g_stat_pass, (unsigned long)cw, (unsigned long)ch, vw, vh);

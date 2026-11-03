@@ -4,8 +4,9 @@
 //   compiler  every Metal 4 scaler is built with one shared compiler; mtl_mfx_supported answers yes on this Mac
 //   fail      a failed build keeps the installed set, is remembered per request key and tried again after MFX_RETRY requests, or at once at
 //             another size; turning Upscaling off forgets the failure
-//   alloc     the 3D set's input allocation (mfx3d_alloc): sized for the configured 3D scale + MFX_PAD, grow-only without one, and an Apply
-//             (configured scale changed) rebuilds once, also when replayed through mfx_ready
+//   alloc     the 3D set's input allocation (mfx3d_alloc): sized for the configured 3D scale + MFX_PAD, grow-only without one, an Apply
+//             (configured scale changed) rebuilds once, also when replayed through mfx3d_ready, and a set sized for a level-0 target ahead of the
+//             configured allocation is kept through Frame Drops levels and back (one build)
 //   equiv     content inside a larger allocation gives the same picture as an exact-size set (inputContentWidth), and no texel of the unused part of
 //             the allocation (filled with NaN by an earlier frame) reaches the output
 //   content   Frame Drops steps inside the allocation reuse the set: no build, one content event each
@@ -142,14 +143,15 @@ static void (^g_rsetup)(void);
 static int enc3d(tex_t *dst, id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInteger aw, NSUInteger ah, id<MTLTexture> mask, MTLViewport vp, id<MTLBuffer> *px, id<MTLBuffer> *mo) {
     memset(&R, 0, sizeof R); R.has_rt = 1; R.rt.n = 1; R.rt.color[0] = dst; if (g_rsetup) g_rsetup();
     mtl_sub_begin();
-    int r = mfx3d_encode(src, cw, ch, aw, ah, mask, vp);
+    int r = mfx3d_encode(src, cw, ch, aw, ah, 0, mask, vp);
     if (px) *px = rb_copy(tex_mtl(dst), 4);
     if (mo) *mo = r ? rb_copy(g_mfx_3d.out, 8) : nil;
     sub_done("3D encode"); return r;
 }
 
 static void c_alloc(void) {
-    struct { NSUInteger cw, ch, ow, oh; float cfg; NSUInteger siw, sih; NSUInteger aw, ah; } k[] = {
+    // scfg: the configured scale the installed set (siw x sih) was built under
+    struct { NSUInteger cw, ch, ow, oh; float cfg; NSUInteger siw, sih; NSUInteger aw, ah; float scfg; } k[] = {
         {2151, 990, 2868, 1320, 0.75f, 0, 0, 2153, 992},     // level 0 at 75%: content + pad
         {1721, 792, 2868, 1320, 0.75f, 0, 0, 2153, 992},     // a Frame Drops level inside the 75% allocation
         {2491, 1146, 2622, 1206, 1.0f, 0, 0, 2622, 1206},    // 100%: never above the output
@@ -157,20 +159,25 @@ static void c_alloc(void) {
         {2200, 1000, 2868, 1320, 0, 2153, 992, 2202, 1002},  // cfg unknown, content past the set: content + pad
         {1200, 675, 1600, 900, 0, 0, 0, 1202, 677},          // cfg unknown, no set
         {2300, 1000, 2868, 1320, 0.75f, 0, 0, 2302, 1002},   // content ahead of cfg
-        {2438, 1122, 2868, 1320, 0.75f, 2440, 1124, 2440, 1124},   // Apply 85% -> 75%, first frame: keep until the content fits
-        {2151, 990, 2868, 1320, 0.75f, 2440, 1124, 2153, 992},     // ... then the 75% allocation
-        {2438, 1122, 2868, 1320, 0.75f, 2153, 992, 2440, 1124},    // Apply 75% -> 85% seen as content first: content + pad
-        {2438, 1122, 2868, 1320, 0.85f, 2440, 1124, 2440, 1124},   // ... and the 85% allocation is the same
+        {2438, 1122, 2868, 1320, 0.75f, 2440, 1124, 2440, 1124, 0.85f},   // Apply 85% -> 75%, first frame: keep until the content fits
+        {2151, 990, 2868, 1320, 0.75f, 2440, 1124, 2153, 992, 0.85f},     // ... then the 75% allocation
+        {2438, 1122, 2868, 1320, 0.75f, 2153, 992, 2440, 1124, 0.75f},    // Apply 75% -> 85% seen as content first: content + pad
+        {2438, 1122, 2868, 1320, 0.85f, 2440, 1124, 2440, 1124, 0.75f},   // ... and the 85% allocation is the same
+        {2160, 994, 2868, 1320, 0.75f, 0, 0, 2162, 996},                  // a level-0 target ahead of the 75% allocation (2153x992): content + pad
+        {2008, 924, 2868, 1320, 0.75f, 2162, 996, 2162, 996, 0.75f},      // ... a Frame Drops level keeps that set (built under 75%)
+        {2160, 994, 2868, 1320, 0.75f, 2162, 996, 2162, 996, 0.75f},      // ... and so does the way back
+        {2008, 924, 2868, 1320, 0.75f, 2162, 996, 2153, 992, 0.85f},      // the same set built under another scale: the 75% allocation
     };
     for (size_t i = 0; i < sizeof k / sizeof *k; i++) {
-        mfx_t m = {0}; if (k[i].siw) { m.scaler = [NSObject new]; m.iw = k[i].siw; m.ih = k[i].sih; m.ow = k[i].ow; m.oh = k[i].oh; m.fmt = MTLPixelFormatRGBA16Float; }
+        mfx_t m = {0}; if (k[i].siw) { m.scaler = [NSObject new]; m.iw = k[i].siw; m.ih = k[i].sih; m.ow = k[i].ow; m.oh = k[i].oh; m.fmt = MTLPixelFormatRGBA16Float; m.acfg = k[i].scfg; }
         NSUInteger aw = 0, ah = 0; mfx3d_alloc(k[i].cw, k[i].ch, k[i].ow, k[i].oh, k[i].cfg, &m, &aw, &ah);
-        char n[160]; snprintf(n, sizeof n, "alloc: (%lu, %lu, %lux%lu, cfg %.2f, set %lux%lu) -> %lux%lu", (unsigned long)k[i].cw, (unsigned long)k[i].ch, (unsigned long)k[i].ow, (unsigned long)k[i].oh,
-                              k[i].cfg, (unsigned long)k[i].siw, (unsigned long)k[i].sih, (unsigned long)k[i].aw, (unsigned long)k[i].ah);
+        char n[180]; snprintf(n, sizeof n, "alloc: (%lu, %lu, %lux%lu, cfg %.2f, set %lux%lu built at %.2f) -> %lux%lu", (unsigned long)k[i].cw, (unsigned long)k[i].ch, (unsigned long)k[i].ow,
+                              (unsigned long)k[i].oh, k[i].cfg, (unsigned long)k[i].siw, (unsigned long)k[i].sih, k[i].scfg, (unsigned long)k[i].aw, (unsigned long)k[i].ah);
         EXPECT(n, 1, aw == k[i].aw && ah == k[i].ah);
     }
-    // Both Apply sequences through mfx_ready on 1/8-scale sizes (output 359x165): 85% content 305x140, 75% content 269x124
-    #define REQ(cw_, ch_, cfg_) do { NSUInteger aw_, ah_; mfx3d_alloc(cw_, ch_, 359, 165, cfg_, &g_mfx_3d, &aw_, &ah_); mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, aw_, ah_, 359, 165); } while (0)
+    // Both Apply sequences through mfx3d_ready (mfx_ready + the scale a build was made under) on 1/8-scale sizes (output 359x165): 85% content 305x140,
+    // 75% content 269x124
+    #define REQ(cw_, ch_, cfg_) do { NSUInteger aw_, ah_; mfx3d_alloc(cw_, ch_, 359, 165, cfg_, &g_mfx_3d, &aw_, &ah_); mfx3d_ready(aw_, ah_, 359, 165, cfg_); } while (0)
     REQ(305, 140, 0.85f);
     int b0 = g_mfx_3d.builds, ev0 = g_ntev;
     REQ(305, 140, 0.75f); REQ(305, 140, 0.75f); REQ(269, 124, 0.75f); REQ(269, 124, 0.75f); REQ(254, 116, 0.75f);
@@ -180,6 +187,12 @@ static void c_alloc(void) {
     REQ(269, 124, 0.85f); REQ(305, 140, 0.85f); REQ(305, 140, 0.85f); REQ(286, 132, 0.85f);
     EXPECT("alloc: Apply 75% -> 85% (then a Frame Drops level) rebuilds once", 1, g_mfx_3d.builds - b0);
     EXPECT("alloc: ... why = alloc", 1, ev_count(ev0, "mfx who=3d op=build why=alloc iw=307 ih=142"));
+    // A level-0 target ahead of the 75% allocation (276x128 > 271x126): its set (278x130) is kept through a Frame Drops level and back
+    mtl_sub_begin(); mfx_drop(&g_mfx_3d, "off"); sub_done("alloc: put the set down");
+    b0 = g_mfx_3d.builds; ev0 = g_ntev;
+    REQ(276, 128, 0.75f); REQ(251, 116, 0.75f); REQ(276, 128, 0.75f); REQ(251, 116, 0.75f);
+    EXPECT("alloc: content ahead of the 75% allocation, a Frame Drops level and back: one build", 1, g_mfx_3d.builds - b0);
+    EXPECT("alloc: ... the 278x130 set, never rebuilt (no why=alloc)", 1, g_mfx_3d.iw == 278 && g_mfx_3d.ih == 130 && ev_count(ev0, "mfx who=3d op=build why=alloc") == 0);
     #undef REQ
     mtl_sub_begin(); mfx_drop(&g_mfx_3d, "off"); sub_done("alloc: put the set down");   // released at the next submission's start (never fake g_done: later cases submit)
 }
