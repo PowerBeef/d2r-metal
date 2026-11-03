@@ -500,6 +500,7 @@ DM_UI_TAPS	host	host/hle_hid.c	y
 DM_UI_TAPS_AT	host	host/dm_cursor.c host/hle_hid.c	-
 DM_UI_YPOS	host	host/dm_uiscreen.c	-
 DM_UPDATE_URL	ios-tools	ios/project.yml	-
+DM_UPSHARP	host	host/hle_oe.c	-
 DM_VCACHE	verify	verify/structck.py	-
 DM_VKBD	ios	ios/Sources/dm_vkbd_ui.m	-
 DM_WARM_JOBS	gfx	gfx/nvn/nvn_mtl.m	-

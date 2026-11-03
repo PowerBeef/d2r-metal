@@ -338,6 +338,12 @@ static void test_feed(void) {
     CHECK(g_s3f.c.hold_until == t_now + 2 * S3_SEC, "F5: the pacer's period changes (power saving 30 fps): judging held 2 s");
     t_period = 1000.0 / 60;
 }
+// The game's own upscale sharpen for a 3D scale (s3_sharpen, MFX-7): 0.06 at 100%, plus 0.64 x (1 - scale) down to the game's 2/3 floor
+static void sharpen_cases(void) {
+    CHECK(fabsf(s3_sharpen(1.0f) - 0.06f) < 1e-4f, "sharpen: 100% keeps the game's 0.06");
+    CHECK(fabsf(s3_sharpen(0.75f) - 0.22f) < 1e-4f, "sharpen: 75% -> 0.22");
+    CHECK(fabsf(s3_sharpen(0.6f) - 0.2733f) < 1e-4f && fabsf(s3_sharpen(0.5f) - 0.2733f) < 1e-4f, "sharpen: below 2/3 it stays at the 2/3 value (0.273)");
+}
 // DM_AA_MODE parsing (aa_env_parse): only 0, 1, 2 and off are taken; 3-5 crash the game in its SMAA pass, anything else is malformed
 static void aa_parse_cases(void) {
     CHECK(aa_env_parse(NULL) == -1 && aa_env_parse("") == -1, "DM_AA_MODE unset or empty: the picture setting decides (-1)");
@@ -379,6 +385,7 @@ static void aa_tick_cases(void) {
     CHECK(aa_case("2", 1, 30, 1) == 2, "aa_tick: DM_AA_MODE=2 beats the picture setting");
 }
 int main(void) {
+    sharpen_cases();
     aa_parse_cases();
     aa_tick_cases();   // first: aa_tick latches DM_AA_MODE into a static on its first call (every h_oe_TryPopMsg runs it), so the forked cases need an unlatched parent
     test_scale3d();

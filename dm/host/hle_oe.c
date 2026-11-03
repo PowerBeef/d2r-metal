@@ -375,6 +375,24 @@ static void scale3d_tick(void) {
             round(r10 * 10) / 10.0, round(r60 * 10) / 10.0);
       cur_lv = lv; }
 }
+// Upscale sharpen (MFX-7): the game's own 3D upscale (ps_upsample_p, Standard upscaling below 100%) sharpens by the float renderer+0x6618. The game's
+// dynamic-resolution code (main+0x16640b4) raises it as the scale falls, but this host sets the scale itself through +0x66a4, so the field stayed at the
+// 0.06 the game starts with. sharpen_tick writes the game's own rule for the 3D scale in use: 0.06 + 0.64 x (1 - scale), the extra part clamped at the
+// game's 2/3 floor (0.22 at 75%, 0.273 at 2/3 and below, 0.06 at 100%). It checks every tick, so a rewrite by the game is caught. MetalFX replaces that pass
+// and ignores the field. Chosen by the user on 2026-11-03 from a 75% screenshot pair; DM_UPSHARP=0 leaves the field to the game
+static float s3_sharpen(float scale) { return 0.06f + 0.64f * fminf(fmaxf(1.0f - scale, 0.0f), 1.0f / 3); }
+static void sharpen_tick(void) {
+    static int on = -1; static module_t *main;
+    if (on < 0) { const char *e = getenv("DM_UPSHARP"); on = !(e && !strcmp(e, "0")); }
+    if (!on) return;
+    if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
+    if (!main || dm_nvn_frame_count() < 30) return;
+    uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;
+    float *sh = (float *)(renderer + 0x6618), want = s3_sharpen(atomic_load(&g_scale3d_cur));
+    if (*sh == want) return;
+    float was = *sh; dm_guest_write_prepare(sh, sizeof *sh); *sh = want;
+    static float logged = -1; if (want != logged) { logged = want; LOG("upscale sharpen: %.3f -> %.3f for the 3D scale %.2f (frame %llu)", was, want, atomic_load(&g_scale3d_cur), (unsigned long long)dm_nvn_frame_count()); }
+}
 // Anti-aliasing mode: the game's own byte renderer+0x6614 (0 none / 1 FXAA / 2 SMAA / 3 SMAA T2x; the console config is 1). The scene setup (main+0x162f738)
 // copies it into each frame's settings block, and the post-processing node (main+0x166e710) picks FXAA (1) or SMAA (>= 2) from it. The targets SMAA needs
 // (edges, blending weights, plus previous colour / depth / velocity and luma history for T2x) are created by the SMAA pass (main+0x16aa23c) on first use, so no
@@ -409,6 +427,7 @@ static void aa_tick(void) {
 }
 HLE_FORCE("_ZN2nn2oe25TryPopNotificationMessageEPj", "系统通知队列；前端状态变化入队", unsigned, h_oe_TryPopMsg, uint32_t *msg) {
     scale3d_tick();
+    sharpen_tick();
     aa_tick();
     pthread_once(&g_oe_once, oe_script_start);
     pthread_mutex_lock(&g_mq_lock);
