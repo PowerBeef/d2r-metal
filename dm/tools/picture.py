@@ -37,8 +37,8 @@ The sets:
   MAC_APP_REC   the Mac App test copy takes this Mac's real Recommended at first boot and starts full screen by itself
   FULLSCREEN    the command-line host goes full screen one second after its window opens
 
-A change to Recommended (dm/host/dm_picrec.c, its cases in dm/host/tests/t_picrec_cases.h, front_video_rec in front_mac.m or front_ios.m)
-updates this file in the same commit; test_picture.py ties them together.
+A change to Recommended (dm/host/dm_picrec.c, its cases in dm/host/tests/t_picrec_cases.h, front_video_firstboot or front_video_rec in front_mac.m
+or front_ios.m, dm_video.c's 3D-scale tables) updates this file in the same commit; test_picture.py ties them together.
 Standard library only.
 """
 
