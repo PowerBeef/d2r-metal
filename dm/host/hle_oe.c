@@ -191,8 +191,10 @@ static float s3_cfg(void) {   // 配置的 3D 比例：DM_3D_SCALE 定死；没�
 #define S3_FLOOR_DEF 0.60f   // 待真机扫档（热机稳态最后 30 秒掉帧 ≤ 1%）定 | To be set by a device level sweep (dropped frames ≤ 1% in the last 30 s of warm steady state)
 // Pure-function controller (the unit test t_oe.c feeds it sequences directly): level 0 = the configured value, higher = lower. It judges only what
 // reached the screen:
-// - A dropped frame = a present interval over 1.5 x the target period (25 ms at 60 fps), or a frame not shown (-1); one window every 2 s records
-//   its frames and dropped frames, and the last 30 windows (60 s) are kept.
+// - A dropped frame = a present interval over 1.5 x the pacer's frame period + 0.25 ms (25.25 ms at 60 fps), or a frame not shown (-1); one window
+//   every 2 s records its frames and dropped frames, and the last 30 windows (60 s) are kept. The margin matters on screens that are not
+//   multiples of 60: at 72 fps one refresh late is exactly 1.5 periods (20.83 ms), so without it timestamp jitter decided whether it counted;
+//   two refreshes late (27.8 ms) always count.
 // - Lower: dropped-frame rate over the last 5 windows (10 s) > 5% (fast: lower as soon as a heavy scene arrives), or over the last 30 windows (60 s)
 //   > 1.5% (slow: also lower on long-term minor drops) -> down one level, pause judging for 3 s, clear the window records.
 // - Raise: 15 consecutive windows (30 s) without a dropped frame -> up one level; if knocked back within 15 s of being raised, the next raise needs
@@ -214,6 +216,7 @@ typedef struct { int level, max_level; double period_ms; uint64_t hold_until, la
                  uint16_t wn[30], wd[30]; int nw; int good_run, need_good; double last_r10, last_r60; unsigned run_n; double run_ms; int run_late; } scale3d_ctl;
 #define S3_SEC 1000000000ull
 #define S3_GAP_NS 500000000ull   // presents stopped for longer than this (no explicit signal): judging pauses, the history stays
+#define S3_LATE_MARGIN_MS 0.25   // above 1.5 periods: a frame one refresh late plus timestamp jitter is not a drop
 // Runs of dropped frames: only the first S3_BURST_FRAMES count until the run has lasted S3_BURST_MS with a late frame on screen in it
 #define S3_BURST_FRAMES 3u
 #define S3_BURST_MS 1000.0
@@ -236,7 +239,7 @@ static int scale3d_ctl_step(scale3d_ctl *c, double iv_ms, uint64_t now) {   // r
     double per = c->period_ms > 0 ? c->period_ms : 1000.0 / 60;
     // A frame not shown (-1) counts as a dropped frame too; how runs of dropped frames count (R1 included): see above
     c->win_n++; if (iv_ms > 0) c->win_s++;
-    if (iv_ms < 0 || iv_ms > per * 1.5) { c->run_n++; c->run_ms += iv_ms > 0 ? iv_ms : per; if (iv_ms > 0) c->run_late = 1;
+    if (iv_ms < 0 || iv_ms > per * 1.5 + S3_LATE_MARGIN_MS) { c->run_n++; c->run_ms += iv_ms > 0 ? iv_ms : per; if (iv_ms > 0) c->run_late = 1;
         if (c->run_n <= S3_BURST_FRAMES || (c->run_ms >= S3_BURST_MS && c->run_late)) c->win_d++; }
     else { c->run_n = 0; c->run_ms = 0; c->run_late = 0; }
     c->win_ms += iv_ms > 0 ? iv_ms : per;
@@ -261,8 +264,9 @@ static int scale3d_ctl_step(scale3d_ctl *c, double iv_ms, uint64_t now) {   // r
 static void scale3d_ctl_retarget(scale3d_ctl *c, float cfg, float floor, uint64_t now) {
     c->max_level = s3_max_level(cfg, floor); c->level = 0; c->last_up = 0; c->need_good = 0; scale3d_ctl_hold(c, now, 3 * S3_SEC);
 }
-// 画质设置（做界面，这里给接口）：0 = 流畅优先（缺省，掉帧就自动降 3D 比例）；1 = 画质优先（不自动降，保持配置值）。档位名与缺省值等
-// Quality setting (UI to be built; this provides the interface): 0 = smoothness first (default; automatically lowers the 3D scale on frame drops); 1 = quality first (no automatic lowering, keeps the configured value). Level names, defaults, etc.
+// The Frame Drops setting: 0 = Lower (the 3D scale steps down on dropped frames), 1 = Keep (the configured value stays). The Video tab's Frame Drops
+// row sets it (dm_video.c row "drops", custom key q3d in sw_custom.txt, dm_custom.c); the default is Lower on phones and comes from the Mac's
+// recommendation (front_q3d_default)
 static _Atomic int g_3d_quality_mode;
 void dm_3d_quality_mode_set(int mode) { atomic_store(&g_3d_quality_mode, mode == 1 ? 1 : 0); }
 int dm_3d_quality_mode_get(void) { return atomic_load(&g_3d_quality_mode); }
@@ -337,6 +341,7 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
         if (j) f->inj_rel = s3_inject_parse(j, &f->inj0, &f->inj1);
         const char *fe = getenv("DM_3D_SCALE_FLOOR"); f->fl = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
         f->cfg_at = s3_cfg(); c->max_level = s3_max_level(f->cfg_at, f->fl);
+        { double nvn_frame_period_ms(void); c->period_ms = nvn_frame_period_ms(); }   // the period at the first frame is no change (no 2 s hold)
         LOG("3D 比例控制：%s，配置 %.2f，下限 %.2f（第 %d 档）", f->on ? "开" : "关", f->cfg_at, s3_level_scale(f->cfg_at, c->max_level), c->max_level); }
     if (!f->on) return;
     // Presents stopped for over S3_GAP_NS (graphics suspended for the background or a minimize, or a long stall): pause judging 3 s and keep the
@@ -345,7 +350,11 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     if (f->last_feed && now - f->last_feed > S3_GAP_NS) scale3d_ctl_pause(c, now, 3 * S3_SEC);
     f->last_feed = now;
     if (s3g_on() && s3_qmode() != 1) { s3g_feed(iv_ms); return; }
-    if (s3_qmode() == 1) { if (c->level) { c->level = 0; s3_rates_clear(); LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); return; }
+    if (s3_qmode() == 1) { if (c->level) { c->level = 0; s3_rates_clear(); LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); f->qm_was = 1; return; }
+    // Keep -> Lower: judge from fresh history (the windows, the clean run and the raise debounce from before Keep are stale) after 3 s. qm_was starts
+    // at -1, so the first frame in Lower does not retarget
+    if (f->qm_was == 1) { float cfg = s3_cfg(); scale3d_ctl_retarget(c, cfg, f->fl, now); f->cfg_at = cfg; LOG("Frame Drops set to Lower: history cleared, judging resumes in 3 s"); }
+    f->qm_was = 0;
     { float cfg = s3_cfg(); if (cfg != f->cfg_at) { scale3d_ctl_retarget(c, cfg, f->fl, now); s3_rates_clear(); atomic_store(&g_scale3d_level, 0);   // 选项页换了 3D 清晰度：档位按新值重算 | the options page changed the 3D resolution: levels recomputed for the new value
         LOG("3D 比例控制：配置 %.2f → %.2f，回到配置值，下限 %.2f（第 %d 档）", f->cfg_at, cfg, s3_level_scale(cfg, c->max_level), c->max_level); f->cfg_at = cfg; } }
     if (atomic_exchange(&g_scale3d_resumed, 0)) scale3d_ctl_hold(c, now, 3 * S3_SEC);
@@ -362,8 +371,9 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     { int dm_loadscreen_up(void), in = dm_ingame_now() && !dm_loadscreen_up();
       if (!in) { f->was_in = 0; scale3d_ctl_hold(c, now, S3_SEC); return; }
       if (!f->was_in) { f->was_in = 1; if (f->inj0 < 0) scale3d_ctl_hold(c, now, 20 * S3_SEC); } }
-    { int mtl_fps_target(void); double mtl_display_refresh(void), dm_pace_hz(double, double), r = mtl_display_refresh(), hz = dm_pace_hz(r, 60);
-      double p = mtl_fps_target() == 30 ? 1000.0 / dm_pace_hz(r, 30) : hz != 60 ? 1000.0 / hz : 0; if (p != c->period_ms) { c->period_ms = p; scale3d_ctl_hold(c, now, 2 * S3_SEC); } }   // 目标周期跟着出图帧率换（省电 30 帧、非 60 倍数的屏取整除档，如 144 Hz 屏 72），切换后停判 2 秒 | The target period follows the present frame rate (power saving 30 fps; screens not a multiple of 60 take the evenly dividing tier, e.g. 72 on a 144 Hz screen); checking pauses for 2 seconds after a switch
+    // The target period is the pacer's real frame period (hle_nvn.c nvn_frame_period_ms: the power saver, DM_PRESENT_HZ, the adaptive tier, 72 fps
+    // on a 144 Hz screen); 0 (uncapped) judges against 60 fps. Judging pauses 2 s after it changes
+    { double nvn_frame_period_ms(void), p = nvn_frame_period_ms(); if (fabs(p - c->period_ms) > 0.01) { c->period_ms = p; scale3d_ctl_hold(c, now, 2 * S3_SEC); } }
     // Injection: every frame within the segment counts as a dropped frame (two periods). The + form is latched at the first frame scale3d_ctl_step
     // judges (no hold left: the holds above are all set by now), and frames before it count as clean
     if (f->inj0 >= 0) { double per = c->period_ms > 0 ? c->period_ms : 1000.0 / 60;
