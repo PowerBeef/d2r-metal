@@ -81,6 +81,7 @@ run: \
 	python3 ../../tools/test_scenario.py
 	python3 ../../tools/test_imgdiff.py
 	python3 ../../tools/test_bench.py
+	python3 ../../tools/test_workspace_prune.py
 	python3 ../../tools/test_boothist.py
 	python3 ../../tools/test_guestsyms.py
 	python3 ../../tools/re/test_nso2elf.py
