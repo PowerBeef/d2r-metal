@@ -13,6 +13,12 @@
 //             presents without use; then released once the frames that may have used them have run
 //   wb_*      the 3D write-back: full viewport (closed form v x mask), a partial viewport keeps the rest of the target, a pending colour-0
 //             clear lands outside the viewport and is consumed, an sRGB format view of the target encodes, the mask is filtered (linear)
+//   draw      mfx3d_draw end to end from the replay state (textures 10 / 11, the c7 uniform block, viewport): the world at 75% of a 1152x648
+//             viewport inside a 1280x720 target is drawn as src x mask and nothing outside the viewport changes; a viewport no larger than the
+//             content leaves the original draw (returns 0, target untouched)
+//   grab_crop the screenshot path's crop through the copy pass, MetalFX and the present pass: no texel outside the crop bleeds in
+//   after3d   no second MetalFX at the present within MFX_3D_RECENT presents of a 3D MetalFX frame (the screenshot path too);
+//             with DM_MFX_STACK=1 (make run's second line) the present keeps MetalFX
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -314,9 +320,83 @@ static void c_wb_mask(void) {
     EXPECT("wb_mask: a filtered ramp (>= 25 distinct values; nearest sampling gives 2)", 1, distinct >= 25);
 }
 
+// ---- mfx3d_draw from the replay state: RG11B10F world (0.5, 0.25, 0.125) at 75%, R8 mask 0.5 (128 / 255), RGBA8 target filled magenta
+static void c_draw(void) {
+    float *ub = NULL; if (posix_memalign((void **)&ub, (size_t)getpagesize(), 4096)) abort(); memset(ub, 0, 4096); mtl_pool_add(ub, 4096);
+    ub[0] = 0.75f; ub[1] = 0.75f; ub[6] = 0.06f;   // c7[0].xy = the content's share of the texture; c7[1].z = the game's sharpen (only logged)
+    tex_t src = mk_dst(7301, 1152, 648, NVN_FORMAT_R11G11B10F), mask = mk_dst(7302, 1152, 648, NVN_FORMAT_R8);
+    wb_clear_to(&src, MTLClearColorMake(0.5, 0.25, 0.125, 1)); wb_clear_to(&mask, MTLClearColorMake(0.5, 0, 0, 1));
+    mtl_reg_tex(301, &src, NULL); mtl_reg_tex(302, &mask, NULL);
+    NvShader *f = [NvShader new]; f->rf.nb = 3;
+    f->rf.b[0] = (nvn_rbind){.kind = NVN_RB_TEX, .reg = 10}; f->rf.b[1] = (nvn_rbind){.kind = NVN_RB_TEX, .reg = 11}; f->rf.b[2] = (nvn_rbind){.kind = NVN_RB_CBUF, .reg = 7};
+    for (int neg = 0; neg < 2; neg++) {
+        tex_t dst = mk_dst(neg ? 7305 : 7304, 1280, 720, NVN_FORMAT_RGBA8); wb_clear_to(&dst, MTLClearColorMake(1, 0, 1, 1));
+        memset(&R, 0, sizeof R); R.has_rt = 1; R.rt.n = 1; R.rt.color[0] = &dst;
+        mtl_sub_begin(); state_reset();
+        p_bind_handles th = {.stage = 1, .first = 10, .n = 2}; th.h[0] = 301; th.h[1] = 302; state_op(OP_BIND_TEX, &th);
+        p_bind_buf u = {.stage = 1, .index = 7, .addr = (uint64_t)ub, .size = 4096}; state_op(OP_BIND_UBO, &u);
+        p_viewports v = {.first = 0, .n = 1}; v.v[0][0] = 64; v.v[0][1] = 32; v.v[0][2] = neg ? 864 : 1152; v.v[0][3] = neg ? 486 : 648; v.v[0][5] = 1; state_op(OP_VIEWPORTS, &v);
+        int r = mfx3d_draw(f); rp_end(); id<MTLBuffer> px = rb_copy(tex_mtl(&dst), 4); sub_done("draw");
+        if (!neg) {
+            EXPECT("draw: drawn with MetalFX", 1, r);
+            EXPECT("draw: inside the viewport (0.25, 0.125, 0.0625, 1) = (64, 32, 16, 255) +-2", 0, px_off(px, 1280, 720, 64, 32, 64 + 1152, 32 + 648, 1, (const int[4]){64, 32, 16, 255}, 2));
+            EXPECT("draw: outside the viewport untouched (magenta)", 0, px_off(px, 1280, 720, 64, 32, 64 + 1152, 32 + 648, 0, (const int[4]){255, 0, 255, 255}, 0));
+        } else {
+            EXPECT("draw: a viewport no larger than the content: not drawn", 0, r);
+            EXPECT("draw: ... target untouched", 0, px_off(px, 1280, 720, 0, 0, 1280, 720, 1, (const int[4]){255, 0, 255, 255}, 0));
+        }
+    }
+    mtl_pool_del(ub);
+}
+// ---- the present side. Old-API screenshot path: present_encode on its own command buffer, read back in it
+static id<MTLBuffer> grab_run(const uint8_t *src_px, NSUInteger sw, NSUInteger sh, const int crop[4], NSUInteger dw, NSUInteger dh) {
+    id<MTLTexture> src = mk_tex(MTLPixelFormatRGBA8Unorm, sw, sh, src_px, sw * 4);
+    MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:dw height:dh mipmapped:NO];
+    d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead; d.storageMode = MTLStorageModePrivate;
+    id<MTLTexture> dst = [g_dev newTextureWithDescriptor:d]; id<MTLBuffer> b = [g_dev newBufferWithLength:dw * dh * 4 options:MTLResourceStorageModeShared];
+    id<MTLCommandBuffer> cb = [g_q commandBuffer];
+    if (!present_encode(cb, src, dst, crop)) return nil;
+    id<MTLBlitCommandEncoder> be = [cb blitCommandEncoder];
+    [be copyFromTexture:dst sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(dw, dh, 1) toBuffer:b destinationOffset:0 destinationBytesPerRow:dw * 4 destinationBytesPerImage:dw * dh * 4];
+    [be endEncoding]; [cb commit]; [cb waitUntilCompleted];
+    return cb.status == MTLCommandBufferStatusCompleted ? b : nil;
+}
+static uint8_t *crop_src(void) {   // 64x36, magenta except a flat (200, 100, 50) block at 8,4 48x27
+    static uint8_t px[64 * 36 * 4];
+    for (int y = 0; y < 36; y++) for (int x = 0; x < 64; x++) { uint8_t *q = px + (y * 64 + x) * 4; int in = x >= 8 && x < 56 && y >= 4 && y < 31;
+        q[0] = in ? 200 : 255; q[1] = in ? 100 : 0; q[2] = in ? 50 : 255; q[3] = 255; }
+    return px;
+}
+static void c_grab_crop(void) {
+    for (int i = 0; i < MFX_3D_RECENT + 1; i++) mfx_pres_tick();   // no 3D MetalFX frame recently
+    int b0 = g_mfx_grab.builds; static const int crop[4] = {8, 4, 48, 27};
+    id<MTLBuffer> px = grab_run(crop_src(), 64, 36, crop, 96, 54);
+    EXPECT("grab_crop: encoded", 1, px != nil);
+    EXPECT("grab_crop: the screenshot set built at once (no settle)", 1, g_mfx_grab.scaler != nil && g_mfx_grab.builds - b0 >= 0 && g_mfx_grab.iw == 48 && g_mfx_grab.ow == 96);
+    if (px) EXPECT("grab_crop: every pixel (200, 100, 50, 255) +-2: nothing outside the crop bleeds in", 0, px_off(px, 96, 54, 0, 0, 96, 54, 1, (const int[4]){200, 100, 50, 255}, 2));
+}
+static void c_after3d(void) {
+    MTLViewport vp = {0, 0, 96, 54, 0, 1}; int stack = getenv("DM_MFX_STACK") && atoi(getenv("DM_MFX_STACK")) > 0;
+    for (int i = 0; i < MFX_3D_RECENT + 1; i++) mfx_pres_tick();
+    EXPECT("after3d: the present set builds with no recent 3D MetalFX frame", 1, pres_build(64, 36, 96, 54));
+    atomic_fetch_add(&g_mfx3d_gen, 1); mfx_pres_tick(); uint64_t lu = g_mfx_pres.last_use;
+    if (stack) { EXPECT("after3d (DM_MFX_STACK=1): right after a 3D MetalFX frame the present keeps MetalFX", 1, mfx_want(&g_mfx_pres, MFX_M4, 64, 36, vp)); return; }
+    EXPECT("after3d: right after a 3D MetalFX frame: no MetalFX at the present", 0, mfx_want(&g_mfx_pres, MFX_M4, 64, 36, vp));
+    EXPECT("after3d: ... and the set is not counted as used", 1, g_mfx_pres.last_use == lu);
+    int any = 0; for (int i = 0; i < MFX_3D_RECENT - 1; i++) { mfx_pres_tick(); any += mfx_want(&g_mfx_pres, MFX_M4, 64, 36, vp); }
+    EXPECT("after3d: the next 7 presents: still none", 0, any);
+    mfx_pres_tick();
+    EXPECT("after3d: the 8th present after it: MetalFX again", 1, mfx_want(&g_mfx_pres, MFX_M4, 64, 36, vp));
+    mfx_drop(&g_mfx_grab, "off"); for (int i = 0; i < 4; i++) mfx_pres_tick();
+    atomic_fetch_add(&g_mfx3d_gen, 1); mfx_pres_tick();
+    static const int crop[4] = {8, 4, 48, 27}; id<MTLBuffer> px = grab_run(crop_src(), 64, 36, crop, 96, 54);
+    EXPECT("after3d: the screenshot path follows the same rule (no screenshot set built)", 1, px != nil && g_mfx_grab.scaler == nil);
+}
+
 static const struct { const char *name; void (*fn)(void); } k_cases[] = {
     {"compiler", c_compiler}, {"fail", c_fail}, {"alloc", c_alloc}, {"equiv", c_equiv}, {"content", c_content}, {"idle", c_idle},
     {"wb_full", c_wb_full}, {"wb_offset", c_wb_offset}, {"wb_clear", c_wb_clear}, {"wb_view", c_wb_view}, {"wb_mask", c_wb_mask},
+    {"draw", c_draw}, {"grab_crop", c_grab_crop}, {"after3d", c_after3d},
 };
 int main(int argc, char **argv) { setvbuf(stdout, NULL, _IONBF, 0);
     setenv("DM_MFX", "1", 1); setenv("DM_MFX3D", "1", 1);   // before any mfx_on / mfx3d_on call: both latch their switch once

@@ -6658,6 +6658,18 @@ typedef struct { id scaler; id<MTLTexture> in, out; id<MTLFence> fence; NSUInteg
 // changes continuously (fixed at launch on the Mac, discrete fold steps on phones), so it builds on the first request
 static mfx_t g_mfx_pres = { .who = "present", .tag = "pres", .settle = MFX_SETTLE }, g_mfx_grab = { .who = "present screenshot", .tag = "grab" },
              g_mfx_3d = { .who = "3D upscale", .tag = "3d", .main_cb = 1 };   // present / whole-window screenshot (older API) / the game's 3D upscale pass
+// No second MetalFX on the world (MFX-2): when the 3D pass already upscaled it with MetalFX, the present enlarges the frame with bilinear filtering for
+// MFX_3D_RECENT presents after the last such frame (screenshots too, so they show what the player sees); DM_MFX_STACK=1 keeps MetalFX at the present
+// (the double path, for A/B). g_mfx3d_gen counts 3D MetalFX draws (replay thread); g_mfx3d_since is presents since the count last moved (present thread)
+#define MFX_3D_RECENT 8
+static _Atomic uint64_t g_mfx3d_gen;
+static _Atomic int g_mfx3d_since = 1 << 30;
+static int mfx_stack(void) {
+    static int on; static dispatch_once_t once;
+    dispatch_once(&once, ^{ const char *e = getenv("DM_MFX_STACK"); on = e && atoi(e) > 0;
+        if (on) MLOG("DM_MFX_STACK=1: the present keeps MetalFX after a 3D MetalFX frame (the world is upscaled twice; for A/B)"); });
+    return on;
+}
 // The Metal 4 compiler every Metal 4 scaler is built with: the present thread and the replay thread both build scalers, so it is created once
 static id<MTL4Compiler> mfx_compiler(void) {
     static id<MTL4Compiler> c; static dispatch_once_t once;
@@ -6843,13 +6855,21 @@ static void mfx_gpu_note(double sec) {
 // 要不要走 MetalFX：开关开、视口两边都比有效区大 5% 以上、放大器备好 | Whether to use MetalFX: switch on, viewport more than 5% larger than the valid area on both sides, scaler ready
 static int mfx_want(mfx_t *m, int m4, NSUInteger cw, NSUInteger ch, MTLViewport vp) {
     if (!mfx_on() || !(vp.width > cw * 1.05 && vp.height > ch * 1.05)) return 0;
+    int after3d = atomic_load(&g_mfx3d_since) < MFX_3D_RECENT && !mfx_stack();
+    static _Atomic int was = -1;
+    if (atomic_exchange(&was, after3d) != after3d)
+        MLOG("present: %s", after3d ? "the 3D pass already used MetalFX on this picture; the present enlarges it with bilinear filtering" : "MetalFX at the present");
+    if (after3d) return 0;
     if (!mfx_ready(m, m4, MTLPixelFormatRGBA8Unorm, cw, ch, (NSUInteger)vp.width, (NSUInteger)vp.height)) return 0;
     m->last_use = g_mfx_calls; return 1;
 }
-// Per-present bookkeeping (present thread, at the start of the present's MetalFX block): the retire list, Upscaling turned off (both sets put down,
-// remembered failures forgotten) and the idle release of the present and screenshot sets
+// Per-present bookkeeping (present thread, at the start of the present's MetalFX block): the retire list, presents since the last 3D MetalFX frame,
+// Upscaling turned off (both sets put down, remembered failures forgotten) and the idle release of the present and screenshot sets
 static void mfx_pres_tick(void) {
     mfx_retire_tick();
+    static uint64_t seen; uint64_t g = atomic_load(&g_mfx3d_gen); int since = atomic_load(&g_mfx3d_since);
+    if (g != seen) { seen = g; since = 0; } else if (since < (1 << 30)) since++;
+    atomic_store(&g_mfx3d_since, since);
     if (!mfx_on()) { mfx_off(&g_mfx_pres); mfx_off(&g_mfx_grab); return; }
     mfx_t *ms[2] = {&g_mfx_pres, &g_mfx_grab};
     for (int i = 0; i < 2; i++) if (ms[i]->scaler && g_mfx_calls - ms[i]->last_use > MFX_IDLE) mfx_drop(ms[i], "idle");
@@ -6960,7 +6980,7 @@ static int mfx3d_draw(NvShader *f) {   // replay thread, at the game's ps_upsamp
     if (!cw || !ch || cw > src.width || ch > src.height || vw < cw * 1.05 || vh < ch * 1.05 || vx + vw > dst.width + 0.5 || vy + vh > dst.height + 0.5) return 0;
     NSUInteger aw, ah; mfx3d_alloc(cw, ch, (NSUInteger)llround(vw), (NSUInteger)llround(vh), dm_3d_scale_cfg(), &g_mfx_3d, &aw, &ah);
     if (!mfx3d_encode(src, cw, ch, aw, ah, mask, (MTLViewport){vx, vy, vw, vh, 0, 1})) return 0;
-    g_mfx_3d.last_use = g_sub_serial;
+    g_mfx_3d.last_use = g_sub_serial; atomic_fetch_add(&g_mfx3d_gen, 1);
     { static int once; if (!once++) MLOG("3D upscale: MetalFX replaces ps_upsample_p: content %lux%lu (%.0f%% wide) -> viewport %.0fx%.0f, original sharpen %.3f", (unsigned long)cw, (unsigned long)ch, 100.0 * cw / vw, vw, vh, c[6]); }
     PD("U %llu 3D 放大改用 MetalFX %lux%lu → %.0fx%.0f", g_stat_pass, (unsigned long)cw, (unsigned long)ch, vw, vh);
     return 1;
