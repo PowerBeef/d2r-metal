@@ -2,9 +2,7 @@
 DM_3D_SCALE	host	host/hle_oe.c host/tests/t_oe.c	y
 DM_3D_SCALE_DYN	host	host/hle_oe.c	y
 DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c host/tests/t_oe.c	-
-DM_3D_SCALE_FLOOR	host	host/hle_oe.c	-
-DM_3D_SCALE_GPU	host	host/hle_oe.c	-
-DM_3D_SCALE_GPU_FLOOR	host	host/hle_oe.c	-
+DM_3D_SCALE_FLOOR	host	host/hle_oe.c	y
 DM_AA_MODE	host	host/hle_oe.c host/tests/t_oe.c	y
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_AOC_OWNED	host	host/hle_misc.c	-

@@ -278,35 +278,10 @@ static void s3_rates_clear(void) { atomic_store(&g_s3_r10, 0.0f); atomic_store(&
 static _Atomic int g_scale3d_level;
 static _Atomic int g_scale3d_resumed;
 void dm_3d_scale_resumed(void) { atomic_store(&g_scale3d_resumed, 1); }   // 前端：刚回前台。回来头几秒的慢帧是恢复（表面重建、缓存变冷），不是 GPU 吃紧：停判 3 秒 | front end: just returned to foreground. Slow frames in the first few seconds back are recovery (surface rebuild, caches gone cold), not GPU pressure: suspend judging for 3 seconds
-// 按 GPU 耗时的动态 3D 比例（DM_3D_SCALE_GPU=1）：上面的控制器按「60 帧、超 25 ms 算掉帧」判，帧率在 30 上下时一进局就降到底，且档位是绝对值。
-// 这里每 2 秒看一次：帧时间 > 35 ms 且 GPU 占帧时间 ≥ 85%（卡在 GPU，发热后常见）→ 降一档；GPU 只占 < 75%（有富余）连续 10 秒 → 升一档。档位 = 配置值 × 系数，
-// 下限 DM_3D_SCALE_GPU_FLOOR（缺省 0.40）。卡在 CPU 时不降（降分辨率不省 CPU）。
-// GPU-time-driven dynamic 3D scale (DM_3D_SCALE_GPU=1): the controller above judges by "60 fps, > 25 ms is a drop", so around 30 fps it hits the bottom as soon as
-// a run starts, and its levels are absolute. Here, every 2 s: frame time > 35 ms with the GPU at >= 85% of it (GPU-bound, common once hot) -> one level down; GPU below 75% (headroom)
-// for 10 s in a row -> one level up. Level = configured value x factor, floor DM_3D_SCALE_GPU_FLOOR (default 0.40). CPU-bound frames do not lower it (resolution does not save CPU).
-static const float g_s3g_mult[] = {0.92f, 0.85f, 0.78f, 0.72f, 0.66f, 0.60f};
-static _Atomic float g_s3g_scale;   // > 0：覆盖动态档（scale3d_tick）| > 0: overrides the dynamic level (scale3d_tick)
-__attribute__((weak)) double xbg_recent_gpu_ms(void) { return -1; }   // 空的弱定义（不是弱声明）：苹果链接器要求弱引用链接时有定义；Vulkan 后端 / 鸿蒙平台层给强定义 | empty weak definitions (not declarations): Apple's linker needs a weak reference to resolve; the Vulkan backend / HarmonyOS platform give the strong ones
-static int s3g_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_3D_SCALE_GPU"); on = e && *e == '1'; } return on; }
-static void s3g_feed(double iv_ms) {
-    static double acc; static unsigned n; static uint64_t hold; static int lv, good, maxlv = -1, was_in; static float cfg;
-    if (maxlv < 0) { const char *e = getenv("DM_3D_SCALE"), *f = getenv("DM_3D_SCALE_GPU_FLOOR"); cfg = e ? strtof(e, NULL) : 0.75f; float fl = f ? strtof(f, NULL) : 0.40f;
-        maxlv = 0; for (int k = 0; k < (int)(sizeof g_s3g_mult / sizeof g_s3g_mult[0]); k++) if (cfg * g_s3g_mult[k] >= fl - 1e-4f) maxlv = k + 1;
-        LOG("3D 比例控制（按 GPU 耗时）：配置 %.2f，最多降 %d 档（最低 %.2f）", cfg, maxlv, maxlv ? cfg * g_s3g_mult[maxlv - 1] : cfg); }
-    uint64_t now = now_ns();
-    if (!dm_ingame_now()) { was_in = 0; acc = 0; n = 0; return; }
-    if (!was_in) { was_in = 1; hold = now + 20 * S3_SEC; }   // 刚进局的 20 秒是装载 | the first 20 s of a run are loading
-    if (iv_ms > 0) { acc += iv_ms; n++; }
-    if (acc < 2000 || !n) return;
-    double fr = acc / n, g = xbg_recent_gpu_ms ? xbg_recent_gpu_ms() : -1; acc = 0; n = 0;
-    if (now < hold || g <= 0) return;
-    int old = lv;
-    if (fr > 35.0 && g >= 0.85 * fr && lv < maxlv) { lv++; good = 0; }
-    else if (lv > 0 && g < 0.75 * fr) { if (++good >= 5) { lv--; good = 0; } }
-    else good = 0;
-    if (lv != old) { hold = now + 4 * S3_SEC; atomic_store(&g_s3g_scale, lv ? cfg * g_s3g_mult[lv - 1] : 0.0f);
-        LOG("3D 比例控制（按 GPU 耗时）：帧 %.1f ms、GPU %.1f ms → %s到第 %d 档（3D 比例 %.2f）", fr, g, lv > old ? "降" : "升", lv, lv ? cfg * g_s3g_mult[lv - 1] : cfg); }
-}
+// No CPU-bound veto: a lower 3D resolution does not help a frame late on the CPU, but GPU time cannot tell CPU-bound drops apart on a phone (the
+// GPU clocks down until each frame's GPU time fills the frame) and on a phone CPU and GPU share one power budget, so a lower scale may still help.
+// A veto waits for device data (game-thread CPU time against the period on the iPhone). The old GPU-time controller and its switches were removed:
+// its GPU time had no source on these platforms, so the switch only turned Frame Drops off.
 // The feed's state, at file scope so the unit test (t_oe.c) can reset it: the controller, whether it runs (-1 = not read yet), the Frame Drops mode
 // of the last frame, whether the last frame was in a game, DM_3D_SCALE_DYN_INJECT's range (+ form: rel, latched at base), DM_3D_SCALE_FLOOR, the
 // configured value c.max_level was computed for, and the time of the last frame fed
@@ -327,7 +302,6 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     uint64_t now = now_ns();
     if (f->last_feed && now - f->last_feed > S3_GAP_NS) scale3d_ctl_pause(c, now, 3 * S3_SEC);
     f->last_feed = now;
-    if (s3g_on() && s3_qmode() != 1) { s3g_feed(iv_ms); return; }
     if (s3_qmode() == 1) { if (c->level) { c->level = 0; s3_rates_clear(); LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); f->qm_was = 1; return; }
     // Keep -> Lower: judge from fresh history (the windows, the clean run and the raise debounce from before Keep are stale) after 3 s. qm_was starts
     // at -1, so the first frame in Lower does not retarget
@@ -363,7 +337,6 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
                        s3_level_scale(s3_cfg(), lv), c->need_good ? "（刚升又掉：下次升档要 90 秒）" : "");
     atomic_store(&g_scale3d_level, lv);
 }
-void dm_3d_scale_hot(int hot) { (void)hot; }   // 过热不再直接降档（改按实际掉帧）；保留符号给前端 | overheating no longer lowers the level directly (now by actual dropped frames); the symbol is kept for the front end
 static _Atomic float g_scale3d_cur = 1.0f;
 float dm_3d_scale_cur(void) { return atomic_load(&g_scale3d_cur); }
 // The configured 3D scale (DM_3D_SCALE, else the 3D Resolution setting, else the platform default), without the Frame Drops level; any thread
@@ -372,10 +345,8 @@ static void scale3d_tick(void) {
     static float cur = 1.0f; static module_t *main; static int cur_lv;   // cur_lv: the Frame Drops level of the last rebuild
     if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
     float want_cfg = s3_cfg();   // 每拍读：手机选项页改了 3D 清晰度，下一拍就按新值重建 3D 目标 | read every tick: when the phone options page changes the 3D resolution, the 3D targets are rebuilt at the new value on the next tick
-    // 动态档：0 = 配置值，k = 表里第 k 个低于配置值的比例
-    // Dynamic level: 0 = configured value, k = the k-th table scale below the configured value
+    // The Frame Drops level: 0 = the configured value, k = its k-th level below it (dm_s3lv.h)
     int lv = atomic_load(&g_scale3d_level); float dyn = s3_level_scale(want_cfg, lv);
-    if (s3g_on()) { float g = atomic_load(&g_s3g_scale); dyn = g > 0 && g < want_cfg ? g : want_cfg; }   // GPU 时间控制器（DM_3D_SCALE_GPU=1）覆盖帧间隔档 | GPU-time controller (DM_3D_SCALE_GPU=1) overrides the frame-interval level
     float want = dm_nvn_ruler_truth() ? 1.0f : dyn;
     if (want == cur || !main || dm_nvn_frame_count() < 30) return;
     uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;
