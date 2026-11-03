@@ -59,7 +59,7 @@ static void acquire_ticks(int hz, int display, int interval, double want, const 
     CHECK(got == want, label);
 }
 int main(void) { @autoreleasepool {
-    g_dm_present_link = 2; g_link = (CAMetalDisplayLink *)[NSObject new];   // a link is "on" while the object is set; nothing calls it here
+    g_dm_present_link = 2; g_link = (CAMetalDisplayLink *)[NSObject new]; g_link_live = 1;   // a link is "on" while it is published; nothing calls it here
     CHECK(mtl_link_active(), "the link counts as active");
     g_link_mode = 2;
     CHECK(mtl_link_rate() == 120, "a 120 Hz link reports 120");

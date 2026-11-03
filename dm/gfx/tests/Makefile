@@ -190,6 +190,7 @@ run: \
 	./t_replay_tsan treg
 	./t_replay_tsan gfxuse
 	./t_replay_tsan rtrange
+	./t_replay_tsan link
 	./t_replay_asan bloom
 	./t_replay_asan fx9
 	./t_replay_asan fx19

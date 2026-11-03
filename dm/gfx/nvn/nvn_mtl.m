@@ -7146,7 +7146,12 @@ static uint64_t g_stall_t0, g_stall_drop, g_stall_n; static int g_stall_red, g_s
 // after g_rescue_back_ns, switch back to the display link once more, and if it stalls again double the interval (cap 60 s). Two logs: on iPhone the display link stalled while active and never came back,
 // and the old fallback only dropped frames, freezing the picture for 80 s (players saw a "black screen / lockup"). All changes are made under g_pq_mu; mode switching is done by link_sync on the game present thread
 #define LINK_RESCUE_NS 500000000ull
-static int g_rescue_mode; static uint64_t g_rescue_back_at, g_rescue_back_ns = 3000000000ull, g_rescue_n;
+static int g_rescue_mode; static uint64_t g_rescue_back_at, g_rescue_back_ns = 3000000000ull, g_rescue_n;   // under g_pq_mu
+// The present-link switch g_dm_present_link is read without a lock on the game thread (the acquire's link wait), the translation thread (link_sync,
+// the door drop) and the main thread, and changed by stall rescues (game thread) and their expiry (translation thread): every access outside the
+// one-time setup is atomic (relaxed: a reader that sees the old mode for one more frame is harmless)
+#define LINK_WANT() __atomic_load_n(&g_dm_present_link, __ATOMIC_RELAXED)
+#define LINK_SET(v) __atomic_store_n(&g_dm_present_link, (v), __ATOMIC_RELAXED)
 // 显示节拍看门狗只认「激活」状态：App 失去活跃（下拉控制中心 / 通知、来电、系统弹窗）和后台里系统本来就不回调，画面也被盖住——丢帧兜底照旧，
 // 但不算卡住、不报红；停顿从「最近一次回调 / 最近一次激活」较晚的那个算起（A16 日志：失活 8–17 秒、后台 17 秒都被报成「前台卡住」）
 // The display link watchdog only recognizes the "active" state: when the App loses active status (pulling down Control Center / notifications, incoming call, system popup) and in the background the system does not call back anyway, and the picture is covered too -- the frame-drop fallback stays as before,
@@ -7175,13 +7180,13 @@ static void link_rate_reset(void) { pthread_mutex_lock(&g_link_mu); g_link_prev_
         MLOG("显示节拍恢复：这段停了 %.0f ms（其中激活中 %.0f ms），兜底丢了 %llu 帧（第 %llu 段）", (t - g_stall_t0) / 1e6, (t - (g_stall_t0 > since ? g_stall_t0 : since)) / 1e6, (unsigned long long)g_stall_drop, (unsigned long long)g_stall_n); g_stall_t0 = 0; }
     pthread_mutex_unlock(&g_pq_mu);
     pthread_mutex_lock(&g_link_mu);
-    g_link_tick_ns = now_ns();
+    __atomic_store_n(&g_link_tick_ns, now_ns(), __ATOMIC_RELAXED);   // read without g_link_mu by the stall watchdog (mtl_present_wait)
     g_link_tick_n++;
     link_tick_note(update.targetPresentationTimestamp);
     pthread_cond_broadcast(&g_link_cv);
     pthread_mutex_unlock(&g_link_mu);
     pthread_mutex_lock(&g_pq_mu);
-    if (!g_dm_present_link || g_pq_read == g_pq_in) { pthread_mutex_unlock(&g_pq_mu); return; }
+    if (!LINK_WANT() || g_pq_read == g_pq_in) { pthread_mutex_unlock(&g_pq_mu); return; }
     uint64_t first = g_pq_read + 1, ticket = g_pq_in;
     pq_item it = g_pq[(g_pq_in - 1) % PQ]; g_link_it_tin = it.t_in;
     g_pq_read = g_pq_in;
@@ -7200,14 +7205,26 @@ static void link_rate_reset(void) { pthread_mutex_lock(&g_link_mu); g_link_prev_
 }
 @end
 
-static CAMetalDisplayLink *g_link; static CFRunLoopRef g_link_rl; static int g_link_started;
+// The link object and its run loop: set by the link thread (link_main), cleared by link_sync on the translation thread, used by the main thread
+// (mtl_present_inactive) and the game thread. Both live under g_link_obj_mu, a leaf lock (nothing else is taken under it); g_link_rl holds a
+// retain, so a run loop whose thread has ended is never touched. link_on() reads g_link_live instead of the pointer. The link's own properties
+// (paused, preferredFrameRateRange) are changed only on its run loop (link_do), as CAMetalDisplayLink is not made for other threads to set them
+static pthread_mutex_t g_link_obj_mu = PTHREAD_MUTEX_INITIALIZER;
+static CAMetalDisplayLink *g_link; static CFRunLoopRef g_link_rl; static _Atomic int g_link_live, g_link_started;
 static _Atomic int g_present_inactive;   // the shell is inactive (iOS resign; the Mac test verb link_inactive): mtl_present_inactive
 static int g_link_owns_layer, g_classic_busy;   // 持 g_pq_mu：图层挂着节拍对象期间 nextDrawable 会抛异常，自取 drawable 的出图线程与节拍对象互斥 | Under g_pq_mu: nextDrawable throws while the layer has the display link object attached, so the present thread that takes its own drawable and the display link object are mutually exclusive
-static int link_on(void) { return g_dm_present_link && g_link != nil; }
+static int link_on(void) { return LINK_WANT() && atomic_load(&g_link_live); }
+// Run fn on the link's own thread (its run loop), with the link; nothing when there is no link
+static void link_do(void (^fn)(CAMetalDisplayLink *)) {
+    pthread_mutex_lock(&g_link_obj_mu); CAMetalDisplayLink *l = g_link; CFRunLoopRef rl = g_link_rl; if (rl) CFRetain(rl); pthread_mutex_unlock(&g_link_obj_mu);
+    if (!rl) return;
+    if (l) { CFRunLoopPerformBlock(rl, kCFRunLoopDefaultMode, ^{ fn(l); }); CFRunLoopWakeUp(rl); }
+    CFRelease(rl);
+}
 static CAFrameRateRange link_range(int mode) {   // 1 / 3 按屏幕刷新率选整除的那一档（mtl_pace_hz）；2（120 Hz 节拍、测试档）不变 | 1 / 3 pick the evenly dividing tier by screen refresh rate (mtl_pace_hz); 2 (120 Hz pacing, test tier) unchanged
     if (mode == 2) return CAFrameRateRangeMake(60, 120, 120);
     float r = (float)mtl_pace_hz(); return CAFrameRateRangeMake(r, r, r); }
-static int g_link_mode = 1;   // 节拍对象当前的模式：1 / 2 同 g_dm_present_link，3 = 省电模式 30 Hz | Current mode of the display link object: 1 / 2 same as g_dm_present_link, 3 = power-saving mode 30 Hz
+static _Atomic int g_link_mode = 1;   // the link's current mode: 1 / 2 as g_dm_present_link, 3 = the power saver; set by link_sync, read on the game, main and link threads
 static void *link_main(void *arg) {   // 显示节拍线程：切到节拍模式时起，切回 0 时退出 | Display link thread: started when switching to display-link mode, exits when switching back to 0
     (void)arg;
     pthread_setname_np("nvn-present-link");
@@ -7219,39 +7236,46 @@ static void *link_main(void *arg) {   // 显示节拍线程：切到节拍模式
     link.preferredFrameRateRange = link_range(g_link_mode); link_rate_reset();
     link.preferredFrameLatency = g_present_latency;
     link.delegate = delegate;
-    link.paused = atomic_load(&g_present_inactive) != 0;   // a link made while the shell is inactive (rescue expiry, a mode switch) starts paused, as mtl_present_inactive left the old one
     [link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
-    g_link_rl = CFRunLoopGetCurrent(); g_link = link;
+    pthread_mutex_lock(&g_link_obj_mu); g_link_rl = (CFRunLoopRef)CFRetain(CFRunLoopGetCurrent()); g_link = link; atomic_store(&g_link_live, 1); pthread_mutex_unlock(&g_link_obj_mu);
+    // A link made while the shell is inactive (a rescue expiring, a mode switch) starts paused, as mtl_present_inactive left the old one. Read after
+    // the link is published: a mtl_present_inactive that saw no link stored its flag first; one that saw it queued a block that runs after this
+    link.paused = atomic_load(&g_present_inactive) != 0;
     CFRunLoopRun();   // 切回模式 0 时节拍对象作废、本线程退出（图层还挂着节拍对象时 nextDrawable 取不到图，不能只暂停） | When switching back to mode 0 the display link object is invalidated and this thread exits (nextDrawable cannot get a drawable while the layer still has the display link object attached, so pausing alone is not enough)
-    g_link_started = 0;
+    atomic_store(&g_link_started, 0);
     return NULL;
 }
 static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象的状态对齐到 g_dm_present_link、省电模式与屏幕刷新率（运行中可改） | Called every frame by the game present thread: aligns the pacing object state with g_dm_present_link, power saving mode and screen refresh rate (changeable at runtime)
     static int applied; static double applied_hz;
-    if (g_rescue_mode && now_ns() >= g_rescue_back_at) {   // 抢救期满：换回节拍再试（停顿计时从头算，免得刚换回就按旧停顿再抢救） | Rescue period expired: switch back to the display link and retry (stall timing restarts, so we do not rescue again right after switching back based on the old stall)
-        pthread_mutex_lock(&g_pq_mu); g_dm_present_link = g_rescue_mode; g_rescue_mode = 0; g_stall_t0 = 0; g_link_tick_ns = now_ns(); pthread_mutex_unlock(&g_pq_mu);
-        MLOG("显示节拍：抢救期满，换回节拍模式 %d 再试（帧 %llu）", g_dm_present_link, (unsigned long long)atomic_load(&g_cur_frame)); }
-    int want = g_dm_present_link;
-    if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
+    // A stall rescue's time is up: back to the link to try again (the stall timing restarts, so the old stall does not rescue again at once). The
+    // rescue state is the game thread's too (mtl_present_wait): checked and changed under g_pq_mu
+    { int back = 0; pthread_mutex_lock(&g_pq_mu);
+      if (g_rescue_mode && now_ns() >= g_rescue_back_at) { back = g_rescue_mode; LINK_SET(g_rescue_mode); g_rescue_mode = 0; g_stall_t0 = 0; __atomic_store_n(&g_link_tick_ns, now_ns(), __ATOMIC_RELAXED); }
+      pthread_mutex_unlock(&g_pq_mu);
+      if (back) MLOG("显示节拍：抢救期满，换回节拍模式 %d 再试（帧 %llu）", back, (unsigned long long)atomic_load(&g_cur_frame)); }
+    int want = LINK_WANT();
+    if (want < 0 || want > 2) { LINK_SET(applied == 3 ? 1 : applied); return; }
     if (want && mtl_fps_target() == 30) want = 3;   // 省电模式：显示节拍 30 Hz（按屏幕刷新率取整除档） | Power saving mode: display pacing 30 Hz (evenly dividing tier by screen refresh rate)
-    if (want == applied && want && want != 2 && g_link) {   // 窗口换了屏 / 屏幕改了刷新率：节拍跟着换到新的整除档 | Window moved to another screen / screen refresh rate changed: pacing switches to the new evenly dividing tier
+    if (want == applied && want && want != 2 && atomic_load(&g_link_live)) {   // the window moved to another screen / the screen changed its refresh rate: the link follows to the new even fraction
         double hz = mtl_pace_hz();
-        if (hz != applied_hz) { CAMetalDisplayLink *link = g_link; link.preferredFrameRateRange = link_range(want); link_rate_reset();
+        if (hz != applied_hz) { CAFrameRateRange r = link_range(want); link_do(^(CAMetalDisplayLink *l) { l.preferredFrameRateRange = r; link_rate_reset(); });
             if (applied_hz) MLOG("出图节拍换档 %.2f → %.2f Hz（屏幕刷新率 %.2f Hz，帧 %llu）", applied_hz, hz, mtl_display_refresh(), (unsigned long long)atomic_load(&g_cur_frame));
             applied_hz = hz; }
         return;
     }
     if (want == applied) return;
     g_link_mode = want;
-    if (!g_link_started) {
+    if (!atomic_load(&g_link_started)) {
         if (!want) { applied = 0; return; }
         if (!front_metal_layer()) return;
-        g_link_started = 1; pthread_t th; if (pthread_create(&th, NULL, link_main, NULL)) MDIE("显示节拍线程起不来"); pthread_detach(th);
+        atomic_store(&g_link_started, 1); pthread_t th; if (pthread_create(&th, NULL, link_main, NULL)) MDIE("显示节拍线程起不来"); pthread_detach(th);
         return;   // 节拍对象在新线程里建，下一帧再对齐 | The display link object is created on a new thread; align again next frame
     }
-    CAMetalDisplayLink *link = g_link; if (!link) return;
-    if (want) { link.preferredFrameRateRange = link_range(want); link_rate_reset(); }
-    else { CFRunLoopRef rl = g_link_rl; g_link = nil; CFRunLoopPerformBlock(rl, kCFRunLoopDefaultMode, ^{ [link invalidate]; pthread_mutex_lock(&g_pq_mu); g_link_owns_layer = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); CFRunLoopStop(rl); }); CFRunLoopWakeUp(rl); }
+    if (!atomic_load(&g_link_live)) return;   // still being made on its thread: align again next frame
+    if (want) { CAFrameRateRange r = link_range(want); link_do(^(CAMetalDisplayLink *l) { l.preferredFrameRateRange = r; link_rate_reset(); }); }
+    else {   // back to mode 0: unpublish the link, then invalidate it on its run loop, which also ends its thread
+        pthread_mutex_lock(&g_link_obj_mu); CAMetalDisplayLink *link = g_link; CFRunLoopRef rl = g_link_rl; g_link = nil; g_link_rl = NULL; atomic_store(&g_link_live, 0); pthread_mutex_unlock(&g_link_obj_mu);
+        if (rl) { CFRunLoopPerformBlock(rl, kCFRunLoopDefaultMode, ^{ [link invalidate]; pthread_mutex_lock(&g_pq_mu); g_link_owns_layer = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); CFRunLoopStop(rl); }); CFRunLoopWakeUp(rl); CFRelease(rl); } }
     MLOG("出图节拍模式 %d → %d（帧 %llu）", applied, want, (unsigned long long)atomic_load(&g_cur_frame));
     applied = want;
     pthread_mutex_lock(&g_pq_mu); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
@@ -7322,7 +7346,7 @@ void mtl_link_pause(int on);
 void mtl_present_discard(int on) { atomic_store(&g_present_discard, on != 0); if (on) present_drop_for_suspend(0); }
 // The shell went inactive (iOS resign active; the Mac control port's app link_inactive) or active again: remember it, and pause or resume the present link
 // exactly as mtl_link_pause does. Queued frames are kept (the link's stall fallback drops them) and the calling thread never waits
-void mtl_present_inactive(int on) { atomic_store(&g_present_inactive, on != 0); CAMetalDisplayLink *l = g_link; if (l) l.paused = on != 0; }
+void mtl_present_inactive(int on) { atomic_store(&g_present_inactive, on != 0); link_do(^(CAMetalDisplayLink *l) { l.paused = atomic_load(&g_present_inactive) != 0; }); }
 // Presents are not shown right now (discarded, or paused for an inactive shell): Frame Drops does not judge such frames (hle_oe.c dm_3d_scale_feed)
 int mtl_present_hidden(void) { return atomic_load(&g_present_discard) || atomic_load(&g_present_inactive); }
 uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
@@ -7375,8 +7399,8 @@ void mtl_present_wait(uint64_t tk) {
         int active = dm_focus_now() == 1; uint64_t since = dm_focus_in_since(), from = g_stall_t0 > since ? g_stall_t0 : since;
         if (active && !g_stall_logged && now - from >= STALL_NS) { g_stall_logged = 1;
             MLOG("显示节拍 %.0f ms 没回调（激活中）：丢掉排队未上屏的 %llu 帧，游戏继续（第 %llu 段；节拍回来自动照常）", (now - from) / 1e6, (unsigned long long)n, (unsigned long long)g_stall_n); }
-        if (active && !g_rescue_mode && g_dm_present_link && now - from >= LINK_RESCUE_NS) {
-            g_rescue_mode = g_dm_present_link; g_dm_present_link = 0; g_rescue_n++; g_rescue_back_at = now + g_rescue_back_ns;
+        if (active && !g_rescue_mode && LINK_WANT() && now - from >= LINK_RESCUE_NS) {
+            g_rescue_mode = LINK_WANT(); LINK_SET(0); g_rescue_n++; g_rescue_back_at = now + g_rescue_back_ns;
             MLOG("显示节拍激活中停了 %.0f ms：改为自己取 drawable 出图（第 %llu 次），%.0f 秒后再换回节拍试", (now - from) / 1e6, (unsigned long long)g_rescue_n, g_rescue_back_ns / 1e9);
             if (g_rescue_back_ns < 60000000000ull) g_rescue_back_ns *= 2;
         }
@@ -7398,7 +7422,7 @@ uint64_t mtl_udc_saved_bytes(void) { return g_udc_saved_bytes; }
 int mtl_has_window(void) { return front_metal_layer() != NULL; }
 int mtl_link_active(void) { return link_on(); }
 double mtl_link_tick_age_ms(void) { uint64_t t = __atomic_load_n(&g_link_tick_ns, __ATOMIC_RELAXED); return t ? (now_ns() - t) / 1e6 : -1; }
-void mtl_link_pause(int on) { CAMetalDisplayLink *l = g_link; if (l) l.paused = on != 0; }   // 测试用（DM_TEST_BG）：模仿系统在后台停掉节拍回调 | For testing (DM_TEST_BG): imitates the system stopping the display-link callback in the background
+void mtl_link_pause(int on) { link_do(^(CAMetalDisplayLink *l) { l.paused = on != 0; }); }   // tests (DM_TEST_BG, DM_TEST_LINK_STALL): imitates the system stopping the link's callbacks in the background
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns);
 // The rate the display link was asked for: 120 Hz (DM_PRESENT_LINK=2), the screen's even fraction at or above 60 (dm_pace_hz), or the power
 // saver's rate (dm_eco_hz)
@@ -7410,7 +7434,7 @@ int mtl_link_rate_requested(void) {
 int mtl_link_rate(void) { pthread_mutex_lock(&g_link_mu); int m = g_link_rate_meas; pthread_mutex_unlock(&g_link_mu); return m > 0 ? m : mtl_link_rate_requested(); }
 // One game frame at 60 Hz: one tick of the link, or two in the 120 Hz test mode (DM_PRESENT_LINK=2) when the link really delivers 90 Hz or more.
 // A 120 Hz request the system delivers at 60 Hz then gives 60 frames, not 30; delivered at 80 Hz this opt-in mode gives 80
-int mtl_link_wait_tick(uint64_t timeout_ns) { int rate = mtl_link_rate(); return mtl_link_wait_ticks(g_dm_present_link == 2 && rate >= 90 ? 2 : 1, timeout_ns); }
+int mtl_link_wait_tick(uint64_t timeout_ns) { int rate = mtl_link_rate(); return mtl_link_wait_ticks(LINK_WANT() == 2 && rate >= 90 ? 2 : 1, timeout_ns); }
 // The same wait counted in the link's own ticks: one tick per frame lets DM_PRESENT_HZ=120 reach 120 frames on a 120 Hz link (hle_nvn.c link_wait).
 // Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds).
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns) {

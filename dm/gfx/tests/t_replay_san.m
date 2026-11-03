@@ -14,11 +14,14 @@
 //   fx9    (undefined) the store lookahead table has 9 entries, 8 colors + depth + stencil = 10
 //   fx19   (undefined) negative indices from the game (first viewport / vertex buffer, stage, slot) must be stopped on both the record and the replay side
 //   fx11   vertex stream 15 aborts the process inside Metal's own descriptor setter (buffer index 31 out of range)
+//   link   (thread) the display link's mode, the link object and the present-link switch: the translation thread (link_sync) changes them while
+//          the game thread (acquire: mtl_link_active, mtl_link_rate) and the main thread (iOS resign: mtl_present_inactive) read them (LIF-6)
 #include "../nvn/nvn_mtl.m"
 #include "../nvn/hle_nvn.c"
 #include <pthread.h>
 uint64_t g_t0_ns;   // 宿主 main.c 的进程起点（hle_nvn 逐帧 @t_s 用），单测替身 | process start time from host main.c (used by hle_nvn's per-frame @t_s); unit test stub
-void *front_metal_layer(void) { return NULL; }
+static void *g_t_layer;   // a layer only for the link case (NULL elsewhere: presents only count)
+void *front_metal_layer(void) { return g_t_layer; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
 module_t g_mod[MAX_MOD]; int g_nmod;
 void svc_thread_dump(void) {}
@@ -48,6 +51,9 @@ static void *treg_reader(void *a) {   // 翻译线程替身：调真实的两个
 }
 static void *use_reader(void *a) { (void)a; for (int i = 0; i < 200000; i++) use_rec("buf", 0x1000, 16, 0, NULL); return NULL; }
 static void *rt_reader(void *a) { (void)a; int n = 0; for (int i = 0; i < 1000; i++) n += rt_range_on(); return (void *)(intptr_t)n; }
+static _Atomic int g_lk_stop;
+static void *lk_game(void *a) { (void)a; long n = 0; while (!atomic_load(&g_lk_stop)) { n += mtl_link_rate(); n += mtl_link_active(); } return (void *)n; }   // game thread: the acquire's link wait
+static void *lk_main(void *a) { (void)a; for (int i = 0; i < 4000; i++) mtl_present_inactive(i & 1); mtl_present_inactive(0); return NULL; }   // main thread: iOS resign / become active
 
 int main(int argc, char **argv) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     const char *mode = argc > 1 ? argv[1] : "";
@@ -127,5 +133,15 @@ int main(int argc, char **argv) { @autoreleasepool { setvbuf(stdout, NULL, _IONB
             k.attr[0].fmt = 0x2E; k.attr[0].stream = streams[q]; if (streams[q] < 16) k.stream[streams[q]].stride = 16;
             MTLRenderPipelineDescriptor *d = pso_desc(&k, vs, fs, nil, 0); NSError *e = nil; id ps = d ? [g_dev newRenderPipelineStateWithDescriptor:d error:&e] : nil;
             char n[128]; snprintf(n, sizeof n, "顶点流 %d：管线建得出、进程不中止 | stream %d: the pipeline builds and the process does not abort", streams[q], streams[q]); EXPECT(n, 1, ps != nil); }
-    } else { fprintf(stderr, "用法 | usage: t_replay_san treg|gfxuse|rtrange|bloom|fx9|fx19|fx11\n"); return 2; }
+    } else if (!strcmp(mode, "link")) {
+        CAMetalLayer *layer = [CAMetalLayer layer]; layer.device = g_dev; layer.drawableSize = CGSizeMake(64, 64); g_t_layer = (__bridge void *)layer;
+        __atomic_store_n(&g_dm_present_link, 1, __ATOMIC_RELAXED); g_rescue_mode = 1; g_rescue_back_at = 0;   // the first link_sync ends a stall rescue: a write the game thread reads
+        pthread_t g, m; pthread_create(&g, NULL, lk_game, NULL); pthread_create(&m, NULL, lk_main, NULL);
+        int made = 0;
+        for (int i = 0; i < 3000; i++) { link_sync(); made |= mtl_link_active(); if (i % 100 == 0) usleep(1000); }   // the translation thread: link_sync before each present
+        pthread_join(m, NULL); atomic_store(&g_lk_stop, 1); pthread_join(g, NULL);
+        EXPECT("link: the present link was made on its own thread", 1, made);
+        __atomic_store_n(&g_dm_present_link, 0, __ATOMIC_RELAXED); link_sync();   // back to mode 0: the link is invalidated on its run loop and its thread ends
+        EXPECT("link: mode 0 takes the link down", 0, mtl_link_active());
+    } else { fprintf(stderr, "用法 | usage: t_replay_san treg|gfxuse|rtrange|bloom|fx9|fx19|fx11|link\n"); return 2; }
     printf("== %s：%d 项，失败 %d ==\n", mode, count, fail); return fail != 0; } }
