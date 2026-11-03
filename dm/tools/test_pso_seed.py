@@ -1,5 +1,5 @@
 """Unit tests for pso_seed.py: the byte-level key normaliser against hand-made rows and against the C one (one hash over t_pso_skey's random keys),
-and diff on synthetic manifests; no game files, nothing is run."""
+the row check (pso_skey_check's port), normalise and diff on synthetic manifests; no game files, nothing is run."""
 import json
 import os
 from pathlib import Path
@@ -85,6 +85,32 @@ class NormTest(unittest.TestCase):
             self.assertEqual(pso_seed.norm_row(n), n)
             for c in n: h = ((h ^ c) * 0x100000001b3) & M64
         self.assertEqual(h, PSO_NORM_FNV)
+
+
+class CheckTest(unittest.TestCase):
+    def test_check_row(self):
+        for raw, merged in ((n1(), 0), (n2(), 1)):
+            why, h = pso_seed.check_row(raw.hex())
+            self.assertIsNone(why); self.assertEqual(h, pso_seed.norm_row(raw).hex())
+        b = bytearray(n1()); b[86] = b[87] = 0xff
+        self.assertEqual(pso_seed.check_row(b.hex())[0], 'pad')
+        b = bytearray(n2()); b[51] = 1; b[52] = 2
+        self.assertEqual(pso_seed.check_row(b.hex())[0], 'kind')
+        b = bytearray(n2()); b[416] = 9
+        self.assertEqual(pso_seed.check_row(b.hex())[0], 'lmap')
+        b = bytearray(n1()); b[416] = 9   # an unmerged row's lmap is cleared, not refused
+        self.assertIsNone(pso_seed.check_row(b.hex())[0])
+        b = bytearray(n1()); b[0] = 0
+        self.assertEqual(pso_seed.check_row(b.hex())[0], 'key')
+        self.assertEqual(pso_seed.check_row('00')[0], 'parse')
+
+    def test_normalise(self):
+        bad = bytearray(n1()); bad[86] = 0xff
+        lines = ['# old comment', f'R\t{n1().hex()}', 'S\tssss_b\t0', f'R\t{bad.hex()}', 'C\t', pso_seed.BG_MARK, f'R\t{pso_seed.norm_row(n1()).hex()}', 'C\tcccc_b']
+        out, dropped, kept = pso_seed.normalise(lines)
+        self.assertEqual(out, [f'R\t{pso_seed.norm_row(n1()).hex()}', 'S\tssss_b\t0', pso_seed.BG_MARK, 'C\tcccc_b'])
+        self.assertEqual([(t, w) for t, w, _ in dropped], [('R', 'pad'), ('C', 'empty'), ('R', 'duplicate')])
+        self.assertEqual(kept, {'S': 1, 'R': 1, 'C': 1})
 
 
 class DiffTest(unittest.TestCase):

@@ -2176,16 +2176,23 @@ static _Atomic int g_warm_ready;
 static int g_warm_started;
 static uint64_t g_warm_t0;
 static _Atomic int g_warm_running;   // 后台预热还没跑完（进局读取画面据此多等一会儿，见 mtl_warm_wait） | Background warm-up has not finished yet (the loading screen on entering a run waits a little longer based on this, see mtl_warm_wait)
-static uint64_t g_warm_shaders, g_warm_rps, g_warm_cps, g_warm_skip_fz;
+// Warm-up counts for its done line: built shaders / render / compute pipelines; skipped rows: malformed or of another layout (bad), repeated
+// (dup), specialised rows whose function did not build (skip_fz), rows whose shader did not load (missing), manifests not read (files)
+static _Atomic uint64_t g_warm_shaders, g_warm_rps, g_warm_cps, g_warm_skip_fz, g_warm_bad, g_warm_dup, g_warm_missing, g_warm_files;
 static uint64_t g_warm_claim_shaders, g_warm_claim_rps, g_warm_claim_cps;
 static id<MTLFunction> bf_fn(NvShader *fs, const int *fx, uint8_t fbmask, const uint8_t *lmap);
 static int rt_range_bindings_ro(NSDictionary *j);
+static void pso_head(FILE *f) {   // a manifest starts with its key layout line (PSO_MANIFEST_HEAD)
+    struct stat st;
+    if (f && !fstat(fileno(f), &st) && st.st_size == 0) { fputs(PSO_MANIFEST_HEAD "\n", f); fflush(f); }
+}
 static FILE *g_pso_record; static int g_pso_record_checked;
 static FILE *pso_record_file(void) {
     if (g_pso_record_checked) return g_pso_record;
     g_pso_record_checked = 1;
     const char *path = getenv("DM_PSO_RECORD");
     if (path && *path) g_pso_record = fopen(path, "a");
+    pso_head(g_pso_record);
     return g_pso_record;
 }
 static void pso_record(const char *fmt, ...) {
@@ -2199,28 +2206,62 @@ static void pso_record(const char *fmt, ...) {
 // Path = DM_PSO_USER, or pso_user.tsv under the parent of the save directory (DM_SAVE, Documents/save on iOS); tests use a fresh save copy per run, so they do not pollute each other
 static NSString *pso_user_path(void) {
     const char *u = getenv("DM_PSO_USER"), *save = getenv("DM_SAVE");
+    if (u && !strcmp(u, "off")) return nil;
     if (u && *u) return @(u);
     return save && *save ? [[@(save) stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"pso_user.tsv"] : nil;
 }
 static FILE *g_pso_user; static int g_pso_user_checked;
 static NSMutableSet<NSString *> *g_pso_user_seen;
+// The manifests the warm-up reads. DM_PSO_MANIFEST=off: none (no warm-up at all); DM_PSO_MANIFEST=<path>: only that file, and no user manifest;
+// otherwise the seed pso_manifest.tsv beside the shader map and the user manifest (pso_user_path), each when the file exists. A missing seed no
+// longer stops the user manifest from being warmed
+static void pso_warm_sources(NSString **seed, NSString **user) {
+    *seed = *user = nil;
+    const char *e = getenv("DM_PSO_MANIFEST");
+    if (e && !strcmp(e, "off")) return;
+    if (e && *e) { *seed = @(e); return; }
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *s = g_shmap_path ? [g_shmap_path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"pso_manifest.tsv"] : nil;
+    if (s && [fm fileExistsAtPath:s]) *seed = s;
+    NSString *u = pso_user_path();
+    if (u && [fm fileExistsAtPath:u]) *user = u;
+}
+// 1 when a manifest's text is of this build's key layout (no layout line counts as v2); otherwise logs and returns 0
+static int pso_layout_ok(NSString *txt, NSString *name) {
+    NSRange nl = [txt rangeOfString:@"\n"]; NSString *first = nl.location == NSNotFound ? txt : [txt substringToIndex:nl.location];
+    if (![first hasPrefix:@"# pso_skey "] || [first isEqualToString:@PSO_MANIFEST_HEAD]) return 1;
+    MLOG("pipeline manifest %s: key layout %s, this build reads v2/432: skipped", name.UTF8String, first.UTF8String);
+    return 0;
+}
 static FILE *pso_user_file(void) {
     if (g_pso_user_checked) return g_pso_user;
     g_pso_user_checked = 1;
     NSString *path = pso_user_path();
-    if (path) g_pso_user = fopen(path.fileSystemRepresentation, "a");
+    if (!path) return NULL;
+    char first[128] = ""; FILE *r = fopen(path.fileSystemRepresentation, "r");
+    if (r) { if (fgets(first, sizeof first, r)) first[strcspn(first, "\r\n")] = 0; fclose(r); }
+    int restart = !strncmp(first, "# pso_skey ", 11) && strcmp(first, PSO_MANIFEST_HEAD);   // rows of another key layout cannot be read: start the file again
+    if (restart) MLOG("pipeline manifest %s: key layout %s, this build writes v2/432: started again", path.fileSystemRepresentation, first);
+    g_pso_user = fopen(path.fileSystemRepresentation, restart ? "w" : "a");
+    pso_head(g_pso_user);
     return g_pso_user;
 }
 static void pso_user_record(const char *fmt, ...) {
     FILE *f = pso_user_file();
     if (!f) return;
     char line[8192]; va_list ap; va_start(ap, fmt); vsnprintf(line, sizeof line, fmt, ap); va_end(ap);
-    if (!g_pso_user_seen) {
+    if (!g_pso_user_seen) {   // what the warm-up already builds, plus the user file itself (so its own rows are never appended twice); R rows by their checked, normalised form
         g_pso_user_seen = [NSMutableSet set];
-        NSString *seed = g_shmap_path ? [g_shmap_path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"pso_manifest.tsv"] : nil;
-        NSMutableArray<NSString *> *paths = [NSMutableArray array]; if (seed) [paths addObject:seed]; NSString *user = pso_user_path(); if (user) [paths addObject:user];
-        for (NSString *path in paths) { NSString *txt = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-            for (NSString *old in [txt componentsSeparatedByString:@"\n"]) if (old.length && ![old hasPrefix:@"#"]) [g_pso_user_seen addObject:old]; }
+        NSString *seed, *user; pso_warm_sources(&seed, &user); user = pso_user_path();
+        for (NSString *path in @[seed ?: @"", user ?: @""]) { NSString *txt = path.length ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] : nil;
+            if (!txt || !pso_layout_ok(txt, path)) continue;
+            for (NSString *old in [txt componentsSeparatedByString:@"\n"]) {
+                if (!old.length || [old hasPrefix:@"#"]) continue;
+                pso_skey sk; char hex[sizeof sk * 2 + 1];
+                if ([old hasPrefix:@"R\t"] && !pso_skey_parse([old substringFromIndex:2].UTF8String, &sk) && !pso_skey_check(&sk)) { pso_skey_hex(&sk, hex); [g_pso_user_seen addObject:[@"R\t" stringByAppendingString:@(hex)]]; }
+                else [g_pso_user_seen addObject:old];
+            }
+        }
     }
     size_t ll = strlen(line); NSString *s = [[NSString alloc] initWithBytes:line length:ll && line[ll - 1] == '\n' ? ll - 1 : ll encoding:NSUTF8StringEncoding];   // 与清单文件按行（不含换行）比 | Compared with the manifest file line by line (without the newline)
     if (!s || [g_pso_user_seen containsObject:s]) return;
@@ -2966,9 +3007,12 @@ static __unsafe_unretained id<MTLRenderPipelineState> pso_get(NvProg *pr, MTLRen
     }
     g_bp_pso_n++; g_bp_pso_ns += bp_now() - bt;
     if (!ps) { MLOG("【红】建渲染管线失败：%s", e.localizedDescription.UTF8String); return nil; }
-    pso_skey sk; char shex[sizeof sk * 2 + 1]; pso_skey_from(&k, vs, fs, g_pso_lmap != NULL, g_pso_lmap ? &g_pso_fz : NULL, &sk); pso_skey_hex(&sk, shex);
-    pso_record("R\t%s\n", shex);
-    pso_user_record("R\t%s\n", shex);
+    pso_skey sk; char shex[sizeof sk * 2 + 1]; pso_skey_from(&k, vs, fs, g_pso_lmap != NULL, g_pso_lmap ? &g_pso_fz : NULL, &sk);
+    if (pso_skey_check(&sk) == PSO_SKEY_OK) {   // rows are written in the canonical form the warm-up and the dedupe read
+        pso_skey_hex(&sk, shex);
+        pso_record("R\t%s\n", shex);
+        pso_user_record("R\t%s\n", shex);
+    } else { static int logged; if (!logged++) MLOG("pipeline manifest: a pipeline of %s / %s has no recordable key, not written", vs->key, fs ? fs->key : "-"); }
     hm_put_id(&g_pso, &k, ps);
     return ps;
 }
@@ -2987,55 +3031,63 @@ static void warm_enqueue(WarmItem *item) {
     atomic_store_explicit(&g_warm_ready, 1, memory_order_release);
     os_unfair_lock_unlock(&g_warm_lock);
 }
+// One manifest row: 'S' (shader key, stage), 'R' (pso_skey parsed, checked and normalised) or 'C' (compute shader key); 0 for a malformed row
+// (an S row without its stage, an empty key, a key of another layout or with impossible fields, an unknown tag)
+static char warm_parse(NSString *line, NSString **key, int *stage, pso_skey *sk) {
+    NSArray<NSString *> *c = [line componentsSeparatedByString:@"\t"];
+    if ([c[0] isEqualToString:@"S"]) { if (c.count < 3 || !c[1].length) return 0; *key = c[1]; *stage = c[2].intValue; return 'S'; }
+    if ([c[0] isEqualToString:@"R"]) return c.count >= 2 && !pso_skey_parse(c[1].UTF8String, sk) && pso_skey_check(sk) == PSO_SKEY_OK ? 'R' : 0;
+    if ([c[0] isEqualToString:@"C"]) { if (c.count < 2 || !c[1].length) return 0; *key = c[1]; return 'C'; }
+    return 0;
+}
 static void warm_worker(NSArray<NSString *> *paths) {
     @autoreleasepool {
         NSMutableDictionary<NSString *, NvShader *> *dict = [NSMutableDictionary dictionary];
-        NSMutableSet<NSString *> *seen = [NSMutableSet set]; NSMutableSet<NSData *> *seen_r = [NSMutableSet set];
+        NSMutableSet *seen = [NSMutableSet set];
         for (NSString *path in paths) {
             NSString *txt = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-            if (!txt) { MLOG("【红】预热清单读取失败：%s", path.UTF8String); continue; }
+            if (!txt) { MLOG("【红】pipeline manifest %s could not be read", path.UTF8String); g_warm_files++; continue; }
+            if (!pso_layout_ok(txt, path)) { g_warm_files++; continue; }
             for (NSString *line in [txt componentsSeparatedByString:@"\n"]) {
-                if (!line.length || [line hasPrefix:@"#"] || [seen containsObject:line]) continue;
-                [seen addObject:line];
-                NSArray<NSString *> *c = [line componentsSeparatedByString:@"\t"];
-                if (!c.count) continue;
-                if ([c[0] isEqualToString:@"S"] && c.count >= 3) {
-                    NSString *key = c[1]; NvShader *sh = warm_shader(dict, key, c[2].intValue);
-                    if (!sh) continue;
+                if (!line.length || [line hasPrefix:@"#"]) continue;
+                NSString *key = nil; int stage = 0; pso_skey sk; char tag = warm_parse(line, &key, &stage, &sk);
+                if (!tag) { g_warm_bad++; continue; }
+                id dk = tag == 'R' ? [NSData dataWithBytes:&sk length:sizeof sk] : [NSString stringWithFormat:@"%c\t%@", tag, key];   // R rows dedupe on the normalised key
+                if ([seen containsObject:dk]) { g_warm_dup++; continue; }
+                [seen addObject:dk];
+                if (tag == 'S') {
+                    NvShader *sh = warm_shader(dict, key, stage);
+                    if (!sh) { g_warm_missing++; continue; }
                     WarmItem *item = [WarmItem new]; item->kind = 0; item->key = key; item->shader = sh;
                     warm_enqueue(item); g_warm_shaders++;
-                } else if ([c[0] isEqualToString:@"R"] && c.count >= 2) {
-                    pso_skey sk; if (pso_skey_parse(c[1].UTF8String, &sk)) continue;
-                    pso_key_norm(&sk.k, sk.merged);   // rows recorded before the key was normalised build the key the submit thread now looks up
-                    NSData *nb = [NSData dataWithBytes:&sk length:sizeof sk]; if ([seen_r containsObject:nb]) continue;
-                    [seen_r addObject:nb];
+                } else if (tag == 'R') {
                     NSString *vkey = warm_key(sk.vs, sizeof sk.vs), *fkey = warm_key(sk.fs, sizeof sk.fs);
-                    NvShader *vs = vkey.length ? warm_shader(dict, vkey, sk.vs_stage) : nil;
+                    NvShader *vs = warm_shader(dict, vkey, sk.vs_stage);
                     NvShader *fs = fkey.length ? warm_shader(dict, fkey, sk.fs_stage) : nil;
-                    if (!vs || (fkey.length && !fs)) continue;
+                    if (!vs || (fkey.length && !fs)) { g_warm_missing++; continue; }
                     id<MTLFunction> fsfn = nil;
                     if (sk.fz) {
-                        if (sk.fz_desc.kind == 1 && fs) { int fx[32]; for (int i = 0; i < 32; i++) fx[i] = sk.fz_desc.fx[i]; fsfn = bf_fn(fs, fx, sk.fz_desc.fbmask, sk.k.lmap); }
-                                                if (!fsfn) { g_warm_skip_fz++; continue; }
+                        if (fs) { int fx[32]; for (int i = 0; i < 32; i++) fx[i] = sk.fz_desc.fx[i]; fsfn = bf_fn(fs, fx, sk.fz_desc.fbmask, sk.k.lmap); }
+                        if (!fsfn) { g_warm_skip_fz++; continue; }
                     }
                     pso_key k = sk.k; k.vs = (__bridge void *)vs; k.fs = (__bridge void *)fs; k.fsfn = (__bridge void *)fsfn;
                     NSError *e = nil; id ps = [g_dev newRenderPipelineStateWithDescriptor:pso_desc(&k, vs, fs, fsfn, sk.merged) error:&e];
-                    if (!ps) { MLOG("【红】后台建渲染管线失败：%s", e.localizedDescription.UTF8String); continue; }
+                    if (!ps) { MLOG("【红】pipeline warm-up: a render pipeline did not build: %s", e.localizedDescription.UTF8String); continue; }
                     WarmItem *item = [WarmItem new]; item->kind = 1; item->vs_key = vkey; item->fs_key = fkey; item->vs = vs; item->fs = fs; item->fsfn = fsfn; item->pso = k; item->object = ps;
                     warm_enqueue(item); g_warm_rps++;
-                } else if ([c[0] isEqualToString:@"C"] && c.count >= 2) {
-                    NSString *key = c[1]; if (!key.length) continue;
+                } else {
                     NvShader *cs = warm_shader(dict, key, 5);
-                    if (!cs) continue;
+                    if (!cs) { g_warm_missing++; continue; }
                     NSError *e = nil; id ps = [g_dev newComputePipelineStateWithFunction:cs->fn error:&e];
-                    if (!ps) { MLOG("【红】后台建计算管线失败：%s", e.localizedDescription.UTF8String); continue; }
+                    if (!ps) { MLOG("【红】pipeline warm-up: a compute pipeline did not build: %s", e.localizedDescription.UTF8String); continue; }
                     WarmItem *item = [WarmItem new]; item->kind = 2; item->key = key; item->shader = cs; item->object = ps;
                     warm_enqueue(item); g_warm_cps++;
                 }
             }
         }
-        MLOG("管线预热完成：着色器 %llu 个 / 渲染管线 %llu 个（跳过特化片元 %llu）/ 计算管线 %llu 个，后台用时 %.1f ms",
-             g_warm_shaders, g_warm_rps, g_warm_skip_fz, g_warm_cps, (bp_now() - g_warm_t0) / 1e6);
+        MLOG("pipeline warm-up done: shaders %llu, render pipelines %llu, compute pipelines %llu; skipped: bad rows %llu, duplicates %llu, specialised %llu, missing shaders %llu, files %llu; %.1f ms",
+             (unsigned long long)g_warm_shaders, (unsigned long long)g_warm_rps, (unsigned long long)g_warm_cps, (unsigned long long)g_warm_bad, (unsigned long long)g_warm_dup,
+             (unsigned long long)g_warm_skip_fz, (unsigned long long)g_warm_missing, (unsigned long long)g_warm_files, (bp_now() - g_warm_t0) / 1e6);
     }
     atomic_store(&g_warm_running, 0);
 }
@@ -3051,19 +3103,9 @@ int mtl_warm_wait(int timeout_ms) {
 }
 static void warm_start(void) {
     if (g_warm_started++) return;
-    const char *e = getenv("DM_PSO_MANIFEST");
-    if (e && !strcmp(e, "off")) return;
-    NSArray<NSString *> *paths;
-    if (e && *e) {
-        paths = @[@(e)];
-    } else {
-        NSString *seed = [g_shmap_path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"pso_manifest.tsv"];
-        NSMutableArray<NSString *> *all = [NSMutableArray arrayWithObject:seed];
-        NSString *user = pso_user_path();
-        if (user && [NSFileManager.defaultManager fileExistsAtPath:user]) [all addObject:user];
-        if (![NSFileManager.defaultManager fileExistsAtPath:seed]) return;
-        paths = all;
-    }
+    NSString *seed, *user; pso_warm_sources(&seed, &user);
+    if (!seed && !user) return;
+    NSMutableArray<NSString *> *paths = [NSMutableArray array]; if (seed) [paths addObject:seed]; if (user) [paths addObject:user];
     if (!g_warm_items) g_warm_items = [NSMutableArray array];
     g_warm_t0 = bp_now();
     dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);   // 不是可有可无的后台活：它决定玩家进局前管线是否就绪 | Not optional background work: it decides whether the pipelines are ready before the player enters a run
@@ -5209,8 +5251,7 @@ static void dispatch(const p_dispatch *dp) {
         NSError *e = nil; uint64_t bt = bp_now(); ps = [g_dev newComputePipelineStateWithFunction:cs->fn error:&e];
         g_bp_pso_n++; g_bp_pso_ns += bp_now() - bt;
         if (!ps) { MLOG("【红】建计算管线失败：%s", e.localizedDescription.UTF8String); return; }
-        pso_record("C\t%s\n", cs->key);
-        if (cs->key[0]) pso_user_record("C\t%s\n", cs->key);
+        if (cs->key[0]) { pso_record("C\t%s\n", cs->key); pso_user_record("C\t%s\n", cs->key); }   // built-in kernels have no key and no row
         hm_put_id(&g_cps, &k, ps);
     }
     if (cs->builtin) {   // 内嵌计算核：n = uniform 缓冲 0，src = 存储缓冲 0，dst = 存储缓冲 1 | Built-in compute kernel: n = uniform buffer 0, src = storage buffer 0, dst = storage buffer 1

@@ -1,5 +1,7 @@
 // Pipeline key and warm-up unit tests (includes nvn_mtl.m; no game files): pso_key_fill hands pso_desc normalised keys (pso_key_norm), and a
-// normalised key builds the same descriptor as the raw one, for two hand-made keys and the first 2,000 random keys of t_pso_skey's generator.
+// normalised key builds the same descriptor as the raw one, for two hand-made keys and the first 2,000 random keys of t_pso_skey's generator;
+// where the user manifest lives (DM_PSO_USER, off, beside DM_SAVE), which manifests the warm-up reads (DM_PSO_MANIFEST off / path / default), and
+// the user manifest's dedupe treating an old raw row and its normalised form as one.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -85,6 +87,57 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     S.blend[1] = (blend_st){1, 2, 3, 4, 5, 1, 1}; pso_key_fill(&c1, t_vsh, t_fsh, nil, cf2, 0, 0, 1, NULL);
     S.blend[1] = (blend_st){2, 9, 9, 9, 9, 2, 2}; pso_key_fill(&c2, t_vsh, t_fsh, nil, cf2, 0, 0, 1, NULL);
     CHECK(!memcmp(&c1, &c2, sizeof c1), "(c) two fills that differ only in blend[1] with its blending off give equal keys");
+
+    // pso_user_path
+    NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"t_pso_warm_%d", getpid()]];
+    NSFileManager *fm = NSFileManager.defaultManager; [fm createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:nil];
+    unsetenv("DM_PSO_MANIFEST");
+    setenv("DM_PSO_USER", "off", 1); CHECK(pso_user_path() == nil, "DM_PSO_USER=off: no user manifest");
+    setenv("DM_PSO_USER", "/tmp/x.tsv", 1); CHECK([pso_user_path() isEqualToString:@"/tmp/x.tsv"], "DM_PSO_USER=<path>: that path");
+    unsetenv("DM_PSO_USER"); setenv("DM_SAVE", "/a/b/save", 1); CHECK([pso_user_path() isEqualToString:@"/a/b/pso_user.tsv"], "default: pso_user.tsv beside the save folder");
+    // pso_warm_sources
+    NSString *seedf = [tmp stringByAppendingPathComponent:@"pso_manifest.tsv"], *userf = [tmp stringByAppendingPathComponent:@"user.tsv"], *other = [tmp stringByAppendingPathComponent:@"other.tsv"];
+    [@PSO_MANIFEST_HEAD "\n" writeToFile:seedf atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [@PSO_MANIFEST_HEAD "\n" writeToFile:userf atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [@PSO_MANIFEST_HEAD "\n" writeToFile:other atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    g_shmap_path = [tmp stringByAppendingPathComponent:@"shader_map.tsv"]; setenv("DM_PSO_USER", userf.fileSystemRepresentation, 1);
+    NSString *sd, *us;
+    setenv("DM_PSO_MANIFEST", "off", 1); pso_warm_sources(&sd, &us); CHECK(!sd && !us, "DM_PSO_MANIFEST=off: no manifest at all");
+    setenv("DM_PSO_MANIFEST", other.fileSystemRepresentation, 1); pso_warm_sources(&sd, &us); CHECK([sd isEqualToString:other] && !us, "DM_PSO_MANIFEST=<path>: only that file, no user manifest");
+    unsetenv("DM_PSO_MANIFEST"); pso_warm_sources(&sd, &us); CHECK([sd isEqualToString:seedf] && [us isEqualToString:userf], "default: the seed beside the shader map and the user manifest");
+    [fm removeItemAtPath:seedf error:nil]; pso_warm_sources(&sd, &us); CHECK(!sd && [us isEqualToString:userf], "default without a seed file: the user manifest alone");
+    // The user manifest's dedupe: an old raw row and its normalised form are one row
+    {
+        NvShader *v = [NvShader new]; strcpy(v->key, "aaaaaaaaaaaaaaaa_b");
+        pso_key raw; memset(&raw, 0, sizeof raw); raw.cfmt[0] = 70; raw.chmask = 0xffffffff; raw.blend[3] = pat(3); raw.samples = 1;
+        pso_skey a; char hraw[sizeof a * 2 + 1], hn[sizeof a * 2 + 1];
+        pso_skey_from(&raw, v, nil, 0, NULL, &a); pso_skey_hex(&a, hraw);
+        pso_skey_check(&a); pso_skey_hex(&a, hn);
+        CHECK(strcmp(hraw, hn) != 0, "the raw row and its normalised form differ as text");
+        NSString *body = [NSString stringWithFormat:@"R\t%s\n", hraw];
+        [body writeToFile:userf atomically:YES encoding:NSUTF8StringEncoding error:nil];   // a headerless file from before the layout line
+        g_pso_user = NULL; g_pso_user_checked = 0; g_pso_user_seen = nil;
+        pso_user_record("R\t%s\n", hn);
+        NSString *after = [NSString stringWithContentsOfFile:userf encoding:NSUTF8StringEncoding error:nil];
+        CHECK([after isEqualToString:body], "recording the normalised form of the user file's raw row writes nothing (%lu bytes before, %lu after)", (unsigned long)body.length, (unsigned long)after.length);
+        pso_user_record("S\tbbbbbbbbbbbbbbbb_b\t1\n");
+        after = [NSString stringWithContentsOfFile:userf encoding:NSUTF8StringEncoding error:nil];
+        CHECK([after hasSuffix:@"S\tbbbbbbbbbbbbbbbb_b\t1\n"] && [after hasPrefix:body], "a new row is appended to the old file");
+        if (g_pso_user) fclose(g_pso_user);
+        // an empty file gets the layout line; a file of another layout starts again
+        [fm removeItemAtPath:userf error:nil]; g_pso_user = NULL; g_pso_user_checked = 0; g_pso_user_seen = nil;
+        pso_user_record("S\tbbbbbbbbbbbbbbbb_b\t1\n"); fclose(g_pso_user);
+        after = [NSString stringWithContentsOfFile:userf encoding:NSUTF8StringEncoding error:nil];
+        CHECK([after isEqualToString:@PSO_MANIFEST_HEAD "\nS\tbbbbbbbbbbbbbbbb_b\t1\n"], "a new user manifest starts with the layout line");
+        [@"# pso_skey v3 432\nS\tcccccccccccccccc_b\t1\n" writeToFile:userf atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        g_pso_user = NULL; g_pso_user_checked = 0; g_pso_user_seen = nil;
+        pso_user_record("S\tbbbbbbbbbbbbbbbb_b\t1\n"); fclose(g_pso_user);
+        after = [NSString stringWithContentsOfFile:userf encoding:NSUTF8StringEncoding error:nil];
+        CHECK([after isEqualToString:@PSO_MANIFEST_HEAD "\nS\tbbbbbbbbbbbbbbbb_b\t1\n"], "a user manifest of another key layout starts again");
+        g_pso_user = NULL; g_pso_user_checked = 0; g_pso_user_seen = nil;
+    }
+    unsetenv("DM_PSO_USER"); unsetenv("DM_SAVE"); g_shmap_path = nil;
+    [fm removeItemAtPath:tmp error:nil];
 
     printf("== t_pso_warm %d checks, %d failed ==\n", checks, fails);
     return fails != 0; } }
