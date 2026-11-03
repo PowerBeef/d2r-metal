@@ -681,6 +681,9 @@ void front_run(void (*guest)(void)) {
         if (bg) { [win orderBack:nil]; dispatch_async(dispatch_get_main_queue(), ^{ key_gained(1); }); }
         // Background: the system reports no presented time for an off-screen window; the link's target timestamps stand in (nvn_mtl.m, nvn_presproj.h)
         if (bg) { void mtl_present_project(int on); mtl_present_project(1); }
+        // Background: no App Nap. An app whose only window is off screen gets napped: its timers are coalesced (measured: the test input's 50 ms waits ran
+        // about twice as long, so fe lines queued behind a `unit` wait went out late, together). The activity lasts for the run; idle system sleep is allowed
+        if (bg) { static id act; act = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical reason:@"background test run"]; (void)act; }
         else [win makeKeyAndOrderFront:nil];
         screen_note();
         [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note();
@@ -900,7 +903,7 @@ void front_run(void (*guest)(void)) {
                       double hold = !strcmp(op, "unith") ? 2.5 : 0.1;
                       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ void dm_world_watch(int, uint32_t); int dm_world_watch_pos(float *, float *); float nx = 0, ny = 0; int ok = 0;
                           dm_world_watch((int)x, (uint32_t)y); for (int i = 0; i < 60 && !(ok = dm_world_watch_pos(&nx, &ny)); i++) usleep(50000); dm_world_watch(-1, 0);
-                          if (!ok) { LOG("DM_TEST_NSMOUSE：unit %d,%u 3 秒内没进画面，不点", (int)x, (unsigned)y); return; }
+                          if (!ok) { LOG("DM_TEST_NSMOUSE: %.2f s unit %d,%u not on screen within 3 s, no click", NSProcessInfo.processInfo.systemUptime - t0, (int)x, (unsigned)y); return; }
                           __block NSPoint pt; dispatch_sync(dispatch_get_main_queue(), ^{ pt = [v convertPoint:NSMakePoint(nx * v.bounds.size.width, (1 - ny) * v.bounds.size.height) toView:nil]; });
                           LOG("DM_TEST_NSMOUSE：%.2f 秒 unit %d,%u 在画面 (%.3f,%.3f) → 投按下，%.1f 秒后抬起", NSProcessInfo.processInfo.systemUptime - t0, (int)x, (unsigned)y, nx, ny, hold);
                           for (int dn = 1; dn >= 0; dn--) { if (!dn) usleep((useconds_t)(hold * 1e6));
