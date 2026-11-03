@@ -1,0 +1,25 @@
+# Background test run on the CLI host (DM_TEST_BGRUN=1): the window sits off every screen and never becomes key, so the run takes no focus and switches no Space,
+# while the game still gets the focus sequence it would get in front (an emulated `app state=active` at launch, an emulated minimize and restore for `background`).
+# fe makes the gate run it windowed; the hover is a no-op on the CLI host (no live pointer), it only proves the front end takes input without a key window
+name bg_window
+requires cli
+save warlock
+timeout 180
+env DM_TEST_BGRUN=1
+
+enter_game
+fe "0 hover 640,360"
+screenshot in_game.png
+stick 1 0 frames=60
+expect_state in_game=true dead=false
+background for=2
+expect_state in_game=true dead=false
+quit
+check event app state=active emu=true
+check event app state=minimized emu=true
+check event app state=restored emu=true
+check no_event desk what=front by=self
+check event window emu=true full=false
+check event shot ok=true
+check no_red
+check no_red_log
