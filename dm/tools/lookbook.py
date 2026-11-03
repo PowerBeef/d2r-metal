@@ -41,7 +41,9 @@ LB_PAGES = golden.LB_PAGES   # the look set's own 3D pages and their recipe live
 def pages(names):
     names = list(names or [])
     lb = [p for p in LB_PAGES if not names or p in names]
-    return [p for p in golden.shot_pages([n for n in names if n not in LB_PAGES]) if p not in FRONT and (not names or p in names)] + lb
+    gate = [n for n in names if n not in LB_PAGES]
+    if names and not gate: return lb   # only look-set pages asked for: the screenshot-gate pages are not listed (nor their unavailable notes)
+    return [p for p in golden.shot_pages(gate) if p not in FRONT and (not names or p in names)] + lb
 
 
 def spec(p):
