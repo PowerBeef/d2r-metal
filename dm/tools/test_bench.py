@@ -1,13 +1,33 @@
 """bench.py 的单测：统计（Mann-Whitney U 精确 / 近似、自助法区间、段统计）与按 mark 切段，用合成数据，不跑游戏。 | Unit tests for bench.py: statistics (exact / approximate Mann-Whitney U, bootstrap interval, segment statistics) and cutting segments by mark, on synthetic data; the game is not run."""
+import contextlib
+import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench  # noqa: E402
+
+ROUTE = str(Path(__file__).resolve().parents[1] / 'verify' / 'bench' / 'town_loop.scn')
+CHAIN = 'add73ceeb333'
+
+
+def fake_tree(root, chain=CHAIN, fixups='v1'):
+    """A host, its gfx tables, a rewrite output and a shader library laid out as in the repository and the workspace."""
+    r = Path(root)
+    for rel, data in (('host/dmhost', b'\x00..' + chain.encode() + b'..\x00'), ('gfx/nvn/shader_map.tsv', b'map\n'), ('product/main.fixups.tsv', fixups.encode()),
+                      (f'msl/b-{CHAIN}/x.metallib', b'lib')):
+        (r / rel).parent.mkdir(parents=True, exist_ok=True); (r / rel).write_bytes(data)
+    return str(r / 'host' / 'dmhost'), str(r / 'product'), str(r / 'msl')
+
+
+def raise_if_called(*a, **k):
+    raise AssertionError('must not be called')
 
 
 class BenchTest(unittest.TestCase):
@@ -78,6 +98,38 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(sorted(f for f, _ in prof['hitches'][0]['running']), ['main+0x100', 'main+0x400'])   # 那 80 ms 里两条线程在跑 | two threads were running during those 80 ms
         self.assertEqual(prof['threads']['0x1007'], 'AIO Pool Thread')
         self.assertEqual((bench.role('主线程'), bench.role('Thread_0x01'), bench.role('FMOD mixer thread'), bench.role('BGS Thread')), ('main', 'workers', 'audio', 'other'))
+
+
+    def test_baseline_snapshot(self):   # the snapshot keeps the host, its tables, the rewrite output and the shader library; saving twice into one folder never nests
+        with tempfile.TemporaryDirectory() as t:
+            host, prod, msl = fake_tree(t); d = os.path.join(t, 'base', 'r1')
+            ok, why = bench.snapshot(host, prod, msl, CHAIN, '3.3.94012-r49', d, git={'rev': 'r1', 'dirty': False})
+            self.assertTrue(ok, why)
+            for rel in ('host/dmhost', 'gfx/nvn/shader_map.tsv', 'product/main.fixups.tsv', f'msl/b-{CHAIN}/x.metallib'): self.assertTrue(os.path.isfile(os.path.join(d, rel)), rel)
+            meta = json.load(open(os.path.join(d, 'meta.json'), encoding='utf-8'))
+            self.assertEqual((meta['chain'], meta['product'], meta['rev']), (CHAIN, '3.3.94012-r49', 'r1'))
+            self.assertEqual(bench.baseline_env(d), {'SCN_PRODUCT': os.path.join(d, 'product'), 'DM_MSL_DIR': os.path.join(d, 'msl')})
+            Path(prod, 'main.fixups.tsv').write_text('v2', encoding='utf-8')
+            ok, why = bench.snapshot(host, prod, msl, CHAIN, '3.3.94012-r49', d, git={'rev': 'r1', 'dirty': True})
+            self.assertTrue(ok, why)
+            self.assertEqual(Path(d, 'product', 'main.fixups.tsv').read_text(encoding='utf-8'), 'v2')
+            self.assertFalse(os.path.exists(os.path.join(d, 'product', 'product')))
+            self.assertFalse(os.path.exists(d + '.new') or os.path.exists(d + '.old'))
+            other, _, _ = fake_tree(os.path.join(t, 'other'), chain='0123456789ab')
+            before = sorted(os.listdir(d))
+            self.assertEqual(bench.snapshot(other, prod, msl, CHAIN, '3.3.94012-r49', d), (False, 'host was built from another shader chain'))
+            self.assertEqual(sorted(os.listdir(d)), before)
+            self.assertFalse(bench.snapshot(host, prod, os.path.join(t, 'nolib'), CHAIN, '3.3.94012-r49', d)[0])
+            os.remove(os.path.join(d, 'meta.json')); self.assertIsNone(bench.baseline_env(d))
+
+    def test_regress_unsnapshotted(self):   # a kept host without its rewrite output / shader library is grey before any run starts
+        with tempfile.TemporaryDirectory() as t:
+            Path(t, 'r1', 'host').mkdir(parents=True); Path(t, 'r1', 'host', 'dmhost').write_bytes(b'x'); os.symlink('r1', os.path.join(t, 'current'))
+            out = io.StringIO()
+            with mock.patch.object(bench, 'BASE', t), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None), \
+                 mock.patch.object(bench.scenario, 'Runner', raise_if_called), mock.patch.object(bench, 'current_host', raise_if_called), contextlib.redirect_stdout(out):
+                rc = bench.main(['regress', ROUTE, '--reps', '6'])
+        self.assertEqual(rc, 3, out.getvalue()); self.assertIn('no rewrite output / shader library snapshot', out.getvalue())
 
 
 if __name__ == '__main__':

@@ -53,11 +53,21 @@ Checked on this tree (Apple M6, macOS 27):
 ## Regression against a kept baseline
 
 ```bash
-python3 dm/tools/bench.py baseline save                 # keep this tree's dmhost (and its gfx/nvn tables) as $DM_ROOT/run/bench/baseline/<rev>, current → it
+python3 dm/tools/bench.py baseline save [--name N]      # keep this tree's dmhost with what it runs on as $DM_ROOT/run/bench/baseline/<N, default the rev>, current → it
 python3 dm/tools/bench.py regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]
 ```
 
-`regress` runs the baseline host (A) against the current one (B) in ABBA order and judges each metric as `ab` does. Only "B slower" (p < 0.05, interval on one side of 0) is red; every row goes to the ledger. With no baseline it is ⚪ (exit code 3).
+A baseline is a snapshot of everything the host runs on, so a later regression compares hosts and nothing else:
+- `host/dmhost` and the tables it reads beside itself (`host/tables`, `gfx/nvn/*.tsv`);
+- `product/`: the rewrite output it was built against (`product.sh path touch`);
+- `msl/b-<chain>/`: its shader library;
+- `meta.json`: the git revision (and whether the tree was dirty), `dm/PRODUCT`, the shader chain, the time and the host's SHA-256.
+
+The product and the library are APFS clones (`cp -cR`), so they share blocks with the workspace copies until those change; after a chain or product change the baseline keeps its own (a 523 MB library). The snapshot is built in `<N>.new` and renamed into place at the end, so saving twice into one folder never nests a copy in an old one. `baseline save` refuses (red, exit 1) when the shader library is missing or the host was built from another shader chain.
+
+`regress` runs the baseline host (A) on its own rewrite output and shader library (`SCN_PRODUCT`, `DM_MSL_DIR`) against the current host (B) on the current ones, in ABBA order, and judges each metric as `ab` does. It prints both sides (`baseline <N>: <product> b-<chain>; current: …`) and records them in `regress.json`. Only "B slower" (p < 0.05, interval on one side of 0) is red; every row goes to the ledger. With no baseline, or a baseline kept before snapshots existed (a host alone), it is ⚪ (exit code 3) before any run starts: an old host on a newer rewrite output would read thread slots it does not fill. `regress` runs on the `cli` backend only, since the kept host is a command-line host.
+
+`run`, `ab` and `regress` take `--keep`: it writes `.keep` into the result folder so `workspace_prune.py` never takes it (A/B evidence cited in a commit or the README). `workspace_prune.py` lists baselines other than `current` once they are older than its `--days`.
 
 ## Boot-time history
 

@@ -87,7 +87,7 @@ python3 dm/verify/golden.py list
 - **Routes** (`dm/verify/bench/`): `town_loop`, `combat` (`tap_unit` fights in the Blood Moor), `ui_heavy` (panels and tabs), `rejoin` (Save and Exit, then rejoin).
 - **New per-frame counters** in `nvn.tsv`: `@binds` (bind commands recorded: textures, samplers, buffers, programs, state) and `@cmdmem_cb` (the game's out-of-command-memory callbacks); `bench.py` reports them per segment with `@draws`. Counting *redundant* binds needs per-command-buffer shadow state and belongs to the s38 work.
 - **`bench.py profile`**: one sampled run (`DM_SAMPLE=4:*`, with a `SAMPLE-THR` line naming each guest thread): per segment and thread role, the running share and the hottest functions under their engine names; every frame over 25 ms with what was running during it.
-- **`bench.py baseline save` / `regress`**: ABBA against a kept copy of an earlier host; red only on a significant slowdown; the ledger keeps every comparison.
+- **`bench.py baseline save` / `regress`**: ABBA against a kept copy of an earlier host, run on its own rewrite output and shader library (the snapshot `baseline save` takes); red only on a significant slowdown; the ledger keeps every comparison. A baseline kept before snapshots existed is ⚪ until it is saved again.
 - `long` runs the four routes, one profile and the regression (⚪ without a saved baseline).
 
 ## Touch cases and fixture saves
