@@ -1,5 +1,7 @@
 """Unit tests for scenario.py's scheme-neutral steps: the `schemes` header, `only=` on a step, the run's scheme (--scheme / the header), what each
 step sends in each scheme, and a step a scheme cannot do ending the run as not judged (exit 3) rather than red. A fake host, no game."""
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -73,7 +75,7 @@ class SchemeTest(unittest.TestCase):
         else: os.environ.pop('SCN_SCHEME', None)
         r = scenario.Runner(self.scn(text), 'cli', str(self.dir / 'out'), True)
         b = Backend(); r.backend = b   # type: ignore[assignment]
-        res, code = r.go()
+        with contextlib.redirect_stdout(io.StringIO()): res, code = r.go()   # its ⚪ lines are expected here: the gate must not count them as unavailable
         return res, code, [(g['cmd'], {k: v for k, v in g.items() if k not in ('id', 'cmd')}) for g in (b.host.got if b.host else [])], r
 
     def test_parse(self):
