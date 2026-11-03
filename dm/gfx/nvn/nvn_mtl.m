@@ -544,7 +544,7 @@ void mtl_sub_begin(void) {
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
     defer_drain();
     aniso_latch();   // 「各向异性过滤」换档：在这里换掉已建的采样器 | "Anisotropic Filtering" changed: swap out the samplers built so far here
-    bar_stats();   // pass-barrier counts, one line every 600 submissions
+    bar_stats();   // pass-barrier counts, two 'pass barriers:' lines every 600 submissions (the replay's own barriers, then the game's)
     if (g_sub_serial % 600 == 0) gerr_flush();   // GPU errors no line has counted yet (about every 10 s)
     defer_reset();
     warm_claim();
@@ -608,9 +608,11 @@ extern int g_bar_lv;
 //       (possibly an attachment an earlier pass just drew) or writes memory: one more barrier before the draw (bar_draw).
 //       Writes: a draw whose vertex, fragment or other stage writes memory (a writable image or storage buffer) makes its encoder end with the full producer barrier,
 //       vertex stages included (enc_r_end → m4_end_ex). That barrier holds back the vertex stage of every later encoder, whatever passes come between, so later
-//       passes still open with vertex free. Other render encoders' end barriers no longer hold back later vertex stages. Compute and copy encoders and the host's
-//       own passes still start and end with the full barrier; MetalFX waits for its copy pass through a fence. So the next pass's vertex stage can overlap the
-//       previous pass's fragment work (the bulk on a TBDR GPU). An unsafe probe with everything open measured the ceiling: GPU -0.5 ms (-8 %) per frame on town_loop.
+//       passes still open with vertex free. Other render encoders' end barriers no longer hold back later vertex stages. Compute and copy encoders still start
+//       and end with the full barrier. The host's own render passes (bloom quarter, the MetalFX copy pass, the 3D write-back) start with it and, like other render
+//       encoders that write no memory, leave later vertex stages free at their end; MetalFX waits for its copy pass through a fence. So the next pass's vertex stage
+//       can overlap the previous pass's fragment work (the bulk on a TBDR GPU). An unsafe probe with everything open measured the ceiling: GPU -0.5 ms (-8 %) per
+//       frame on town_loop.
 //   Known limit, the same at both levels: there are no barriers between two draws of one render encoder.
 static int g_enc_vfree;   // the current render encoder's vertex stage did not wait for earlier fragment work (bar_r_begin; bar_draw adds the barrier when a draw needs it)
 static int g_enc_wrote;   // submit thread only: the current game render encoder ran a draw whose shaders write memory (bar_draw → enc_r_end)
@@ -619,16 +621,29 @@ static uint64_t g_bar_nwend;   // encoders that ended with vertex stages held (t
 static MTLStages g_bar_last_end;   // the stages the last enc_r_end held back (t_bar)
 // The game's own NVN barriers (nvnCommandBufferBarrier → OP_BARRIER → bar_game) are counted only; behaviour doesn't change. Classes by what a level-1 pass start covers:
 //   BAR_GAME_VTX  order primitives, indirect data, invalidate shader, invalidate texture descriptor: nothing at a level-1 pass start orders the vertex stage after them
-//                 (vertex, index, indirect and storage-buffer reads that bar_draw doesn't test). Pending at a pass start that leaves vertex open = g_bar_gopen, the count
-//                 that decides whether honouring them is worth a prototype.
+//                 (vertex, index, indirect and storage-buffer reads that bar_draw doesn't test).
 //   BAR_GAME_TEX  invalidate texture: covered (fragment work waits at the start barrier; vertex texture reads take bar_draw's lazy barrier), counted on its own.
-//   BAR_GAME_FRAG fragment ordering. Inside an open render encoder every class is a different limit (no barrier between two draws of one encoder, at either level).
-// A compute or copy encoder in between opens and ends with full barriers, so it clears the pending bits too.
+//   BAR_GAME_FRAG fragment ordering.
+// Where a barrier sits, in Metal terms:
+//   - Mid-pass: a draw follows it in the same render encoder (bar_draw counts it then). Every class there is a different limit: no barrier between two draws of one
+//     encoder, at either level.
+//   - Between encoders: issued with no render encoder open, or in one after its last draw (the replay keeps a pass's encoder open past its last draw until the next
+//     target, copy, dispatch or the end of the submit; enc_r_end carries those bits on). Its bits wait for the next encoder:
+//       a compute or copy encoder (enc_c_begin, blit) opens and ends with full barriers, so it orders everything before it: the bits are dropped;
+//       a game pass start that leaves vertex open (bar_r_begin, level 1) counts them: vertex-relevant bits that a full end barrier doesn't order = g_bar_gopen,
+//       the count that decides whether honouring them is worth a prototype; vertex-relevant bits that one does = g_bar_gcov; texture invalidate only = g_bar_gtex_open.
+//     A barrier's earlier work is ordered before a later vertex stage by the last full end barrier (a compute or copy encoder, a render encoder that wrote memory)
+//     unless a render encoder has ended with vertex free since (g_bar_vend; the host's own render passes included) and no copy encoder is still open. Work on the
+//     upload and present command buffers is left out, so this is the submit thread's view.
 #define BAR_GAME_VTX (NVN_BARRIER_ORDER_PRIMITIVES_BIT | NVN_BARRIER_ORDER_INDIRECT_DATA_BIT | NVN_BARRIER_INVALIDATE_SHADER_BIT | NVN_BARRIER_INVALIDATE_TEXTURE_DESCRIPTOR_BIT)
 #define BAR_GAME_TEX NVN_BARRIER_INVALIDATE_TEXTURE_BIT
 #define BAR_GAME_FRAG (NVN_BARRIER_ORDER_FRAGMENTS_BIT | NVN_BARRIER_ORDER_FRAGMENTS_TILED_BIT)
-static uint64_t g_bar_gn, g_bar_gbit[8], g_bar_gopen, g_bar_gtex_open, g_bar_gmid, g_bar_gvtx_mid, g_bar_gtex_mid, g_bar_gfrag_mid;   // submit thread only
-static int g_bar_gpend;   // game barrier bits since the last encoder that opened with a full or level-1 start barrier
+// Counts, submit thread only: barriers, per bit, at a pass start (uncovered / ordered by a full end / texture invalidate only), mid-pass by class, and after an encoder's last draw
+static uint64_t g_bar_gn, g_bar_gbit[8], g_bar_gopen, g_bar_gcov, g_bar_gtex_open, g_bar_gmid, g_bar_gvtx_mid, g_bar_gtex_mid, g_bar_gfrag_mid, g_bar_gtail;
+static int g_bar_gpend;   // game barrier bits waiting for the next encoder (between encoders)
+static int g_bar_gunc;    // the part of g_bar_gpend issued while no full end barrier ordered the earlier work (g_bar_vend set, no copy encoder open)
+static int g_bar_vend;    // a render encoder on the submit command buffer has ended with later vertex stages free since the last full end barrier
+static int g_bar_gdraw, g_bar_gdn[4];   // barriers in the open render encoder since its last draw: their bits, and how many (all, vertex-relevant, texture, fragment)
 #define BAR_VTX (MTLStageVertex | MTLStageObject | MTLStageMesh)
 static int g_bar_ser = -1;   // DM_NVN_PASSGPU_SERIAL (bar_init): 1 holds the effective level at 0, whatever g_bar_lv says
 // The effective level, a plain read: bar_init resolves it once in mtl_init_once, before any encoder exists, so the submit, present and upload threads only read it.
@@ -651,29 +666,42 @@ static inline MTLStages m4_end_ex(id e, int keep_vtx) {
     [e endEncoding];
     return before;
 }
-// Every direct caller (upload, present, MetalFX, bloom quarter, LUT) behaves as before and never touches g_enc_wrote, so only the submit thread uses that state
+// Every direct caller (upload, present, MetalFX, LUT) and enc_host_r_end behave as before and never touch g_enc_wrote, so only the submit thread uses that state
 static inline void m4_end(id e) { (void)m4_end_ex(e, 0); }
 static void bar_stats(void) {
     if (bar_lv() > 0 && g_sub_serial % 600 == 0)
         MLOG("pass barriers: vertex open %llu, encoders that wrote memory (vertex held at their end) %llu, added before a draw %llu (texture reads %llu / vertex writes %llu), draws writing memory %llu (total)",
              (unsigned long long)g_bar_nfree, (unsigned long long)g_bar_nwend, (unsigned long long)g_bar_nlazy, (unsigned long long)g_bar_ntex, (unsigned long long)g_bar_nvw, (unsigned long long)g_bar_nwr);
     if (bar_lv() > 0 && g_sub_serial % 600 == 0)
-        MLOG("pass barriers: game barriers %llu (at a pass start that left vertex open: uncovered %llu, texture-invalidate only %llu; mid-pass %llu: vertex-relevant %llu, texture %llu, fragment ordering %llu); "
+        MLOG("pass barriers: game barriers %llu (at a pass start that left vertex open: uncovered %llu, ordered by a full end barrier %llu, texture-invalidate only %llu; "
+             "after an encoder's last draw %llu; mid-pass, a draw after them %llu: vertex-relevant %llu, texture %llu, fragment ordering %llu); "
              "bits prim %llu frag %llu tiled %llu indirect %llu tex %llu shader %llu desc %llu zcull %llu",
-             (unsigned long long)g_bar_gn, (unsigned long long)g_bar_gopen, (unsigned long long)g_bar_gtex_open, (unsigned long long)g_bar_gmid, (unsigned long long)g_bar_gvtx_mid,
-             (unsigned long long)g_bar_gtex_mid, (unsigned long long)g_bar_gfrag_mid, (unsigned long long)g_bar_gbit[0], (unsigned long long)g_bar_gbit[1], (unsigned long long)g_bar_gbit[2],
-             (unsigned long long)g_bar_gbit[3], (unsigned long long)g_bar_gbit[4], (unsigned long long)g_bar_gbit[5], (unsigned long long)g_bar_gbit[6], (unsigned long long)g_bar_gbit[7]);
+             (unsigned long long)g_bar_gn, (unsigned long long)g_bar_gopen, (unsigned long long)g_bar_gcov, (unsigned long long)g_bar_gtex_open, (unsigned long long)g_bar_gtail,
+             (unsigned long long)g_bar_gmid, (unsigned long long)g_bar_gvtx_mid, (unsigned long long)g_bar_gtex_mid, (unsigned long long)g_bar_gfrag_mid,
+             (unsigned long long)g_bar_gbit[0], (unsigned long long)g_bar_gbit[1], (unsigned long long)g_bar_gbit[2], (unsigned long long)g_bar_gbit[3],
+             (unsigned long long)g_bar_gbit[4], (unsigned long long)g_bar_gbit[5], (unsigned long long)g_bar_gbit[6], (unsigned long long)g_bar_gbit[7]);
 }
 static inline void bar_r_begin(id<MTL4RenderCommandEncoder> e) {
-    if (bar_lv() <= 0) { [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_enc_vfree = 0; g_bar_gpend = 0; return; }
+    if (bar_lv() <= 0) { [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_enc_vfree = 0; g_bar_gpend = g_bar_gunc = 0; return; }
     [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll & ~BAR_VTX visibilityOptions:MTL4VisibilityOptionDevice];
-    if (g_bar_gpend & BAR_GAME_VTX) g_bar_gopen++; else if (g_bar_gpend & BAR_GAME_TEX) g_bar_gtex_open++;   // counted only (see BAR_GAME_VTX)
-    g_bar_gpend = 0;
+    if (g_bar_gunc & BAR_GAME_VTX) g_bar_gopen++;   // counted only (see BAR_GAME_VTX)
+    else if (g_bar_gpend & BAR_GAME_VTX) g_bar_gcov++;
+    else if (g_bar_gpend & BAR_GAME_TEX) g_bar_gtex_open++;
+    g_bar_gpend = g_bar_gunc = 0;
     g_enc_vfree = 1; g_bar_nfree++;   // vertex waits for nothing more: the full end barrier of earlier compute / copy passes and of render passes that wrote memory already holds it
 }
 static inline RENC enc_r_begin(RPD *d) { RENC e = [g_cb renderCommandEncoderWithDescriptor:d]; bar_r_begin(e); [e setArgumentTable:g_vt atStages:MTLRenderStageVertex]; [e setArgumentTable:g_ft atStages:MTLRenderStageFragment]; return e; }
-// Game render encoders (rp_end, defer_fallback, clear_tex; all on the submit thread): one that ran a draw writing memory keeps vertex stages in its end barrier
-static inline void enc_r_end(id e) { int w = g_enc_wrote; g_enc_wrote = 0; if (w) g_bar_nwend++; g_bar_last_end = m4_end_ex(e, w); }
+// A game barrier between encoders: its bits wait for the next encoder, uncovered unless a full end barrier orders the work before it (see BAR_GAME_VTX)
+static inline void bar_gpend_add(int bits) { g_bar_gpend |= bits; if (g_bar_vend && !g_blit) g_bar_gunc |= bits; }
+// Game render encoders (rp_end, defer_fallback, clear_tex; all on the submit thread): one that ran a draw writing memory keeps vertex stages in its end barrier.
+// Game barriers issued after the encoder's last draw were between encoders all along: they wait for the next one, judged against this encoder's end
+static inline void enc_r_end(id e) {
+    int w = g_enc_wrote; g_enc_wrote = 0; if (w) g_bar_nwend++;
+    g_bar_last_end = m4_end_ex(e, w); g_bar_vend = !(g_bar_last_end & BAR_VTX);
+    if (g_bar_gdn[0]) { g_bar_gtail += g_bar_gdn[0]; bar_gpend_add(g_bar_gdraw); g_bar_gdraw = 0; memset(g_bar_gdn, 0, sizeof g_bar_gdn); }
+}
+// The host's own render passes on the submit command buffer (bloom quarter, the 3D write-back): full start, an end that leaves later vertex stages free at level 1
+static inline void enc_host_r_end(id e) { g_bar_vend = !(m4_end_ex(e, 0) & BAR_VTX); }
 static inline void enc_r_pso(RENC e, id<MTLRenderPipelineState> p) { [e setRenderPipelineState:p]; }
 static inline void enc_r_dss(RENC e, id<MTLDepthStencilState> s) { [e setDepthStencilState:s]; }
 static inline void enc_r_viewport(RENC e, MTLViewport v) { [e setViewport:v]; }
@@ -691,7 +719,7 @@ static inline void enc_r_args(RENC e, MTLRenderStages s, uint64_t gpu, NSUIntege
 static inline void enc_r_draw(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n) { [e drawPrimitives:p vertexStart:v vertexCount:n]; }
 static inline void enc_r_draw_instanced(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n, NSUInteger i, NSUInteger b) { [e drawPrimitives:p vertexStart:v vertexCount:n instanceCount:i baseInstance:b]; }
 static inline void enc_r_draw_indexed(RENC e, MTLPrimitiveType p, NSUInteger n, MTLIndexType t, uint64_t gpu, NSUInteger len, NSUInteger i, NSInteger bv, NSUInteger bi) { [e drawIndexedPrimitives:p indexCount:n indexType:t indexBuffer:gpu indexBufferLength:len instanceCount:i baseVertex:bv baseInstance:bi]; }
-static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [(CBUF)g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; g_bar_gpend = 0; return e; }
+static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [(CBUF)g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; g_bar_gpend = g_bar_gunc = 0; g_bar_vend = 0; return e; }   // full start and end: orders everything before it, game barriers included
 static inline id<MTLComputeCommandEncoder> enc_c_begin_concurrent(id<MTLCommandBuffer> cb) { return [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent]; }
 static inline void enc_c_end(id e) { m4_end(e); }
 static inline void enc_c_pso(id e, id<MTLComputePipelineState> p) { [e setComputePipelineState:p]; }
@@ -710,7 +738,7 @@ extern int g_blit_bar;
 // When reusing the same blit encoder, a barrier is also needed between two copies: Metal 4 does not guarantee commands within one encoder run in recording order,
 // so write-then-read / two writes to the same range can be reordered (without it, t_nvn 5c read a stale value 1 time in 3). The barrier at encoder creation only covers it against earlier encoders
 static BENC blit(void) { blit_note(); rp_end();
-    if (!g_blit) { g_blit = enc_b_begin(g_cb); [g_blit barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_bar_gpend = 0; }
+    if (!g_blit) { g_blit = enc_b_begin(g_cb); [g_blit barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_bar_gpend = g_bar_gunc = 0; g_bar_vend = 0; }
     else if (g_blit_bar) [g_blit barrierAfterEncoderStages:MTLStageBlit | MTLStageDispatch beforeEncoderStages:MTLStageBlit | MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];   // 拷贝编码器在 Metal 4 下是计算编码器，两种阶段都挡 | With Metal 4 the copy encoder is a compute encoder, so both stages are blocked
     return g_blit; }
 
@@ -4738,7 +4766,7 @@ static int bloomq_capture(void) {
     [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [en setArgumentTable:g_bloomq_args atStages:MTLRenderStageFragment];
     [g_bloomq_args setTexture:src.gpuResourceID atIndex:0]; [g_bloomq_args setSamplerState:g_bloomq_samp.gpuResourceID atIndex:0];
     float *p = g_bloomq_const[g_bloomq_i].contents; p[0] = g_bloomq.threshold; p[1] = g_bloomq.coeff_g; p[2] = g_bloomq.coeff_b; p[3] = src.width; p[4] = src.height; [g_bloomq_args setAddress:g_bloomq_const[g_bloomq_i].gpuAddress atIndex:0];
-    [en setViewport:(MTLViewport){0,0,dst.width,dst.height,0,1}]; [en setRenderPipelineState:g_bloomq_pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en);
+    [en setViewport:(MTLViewport){0,0,dst.width,dst.height,0,1}]; [en setRenderPipelineState:g_bloomq_pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; enc_host_r_end(en);
     g_bloomq_i = (g_bloomq_i + 1) % 3; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; return 1;
 }
 // ---------- 拖货跟手图：商人货架上的货没有「拿起」态，拖动时由回放层把「画这件货图标的那次绘制」在同一趟末尾平移到手指处再画一遍 ----------
@@ -4842,6 +4870,9 @@ static uint8_t sh_memf(NvShader *sh) {
 // Before a draw (level 1): the vertex shader reads textures or writes memory while this encoder's vertex stage did not wait for earlier fragment work → add "every earlier
 // stage → vertex"; a shader writes memory → this encoder ends with the full producer barrier, vertex stages included (enc_r_end)
 static inline void bar_draw(RENC en, NvProg *pr) {
+    if (g_bar_gdn[0]) {   // game barriers since this encoder's last draw: a draw follows them in the same encoder, so they are mid-pass (at either level)
+        g_bar_gmid += g_bar_gdn[0]; g_bar_gvtx_mid += g_bar_gdn[1]; g_bar_gtex_mid += g_bar_gdn[2]; g_bar_gfrag_mid += g_bar_gdn[3];
+        g_bar_gdraw = 0; memset(g_bar_gdn, 0, sizeof g_bar_gdn); }
     if (bar_lv() <= 0) return;
     uint8_t vf = sh_memf(pr->sh[0]), w = vf & MF_WRITE;
     for (int i = 1; i < 6; i++) w |= sh_memf(pr->sh[i]) & MF_WRITE;
@@ -5736,12 +5767,13 @@ static int frz_op(unsigned op, const void *a) {   // 返回 1 = 这条操作不�
     return 0;
 }
 
-// The game's own barrier (OP_BARRIER): counted by class only (see BAR_GAME_VTX). Inside an open render encoder it is mid-pass; otherwise its bits wait for the next encoder
+// The game's own barrier (OP_BARRIER): counted by class only (see BAR_GAME_VTX). Inside an open render encoder it waits for the next draw there (mid-pass, bar_draw)
+// or the encoder's end (enc_r_end); otherwise its bits wait for the next encoder
 static void bar_game(int bits) {
     g_bar_gn++;
     for (int i = 0; i < 8; i++) if (bits & (1 << i)) g_bar_gbit[i]++;
-    if (g_enc) { g_bar_gmid++; if (bits & BAR_GAME_VTX) g_bar_gvtx_mid++; if (bits & BAR_GAME_TEX) g_bar_gtex_mid++; if (bits & BAR_GAME_FRAG) g_bar_gfrag_mid++; }
-    else g_bar_gpend |= bits;
+    if (g_enc) { g_bar_gdraw |= bits; g_bar_gdn[0]++; if (bits & BAR_GAME_VTX) g_bar_gdn[1]++; if (bits & BAR_GAME_TEX) g_bar_gdn[2]++; if (bits & BAR_GAME_FRAG) g_bar_gdn[3]++; }
+    else bar_gpend_add(bits);
 }
 void mtl_exec(const uint8_t *p) {
     static int inited; if (!inited) { inited = 1; state_reset(); }
@@ -6432,7 +6464,7 @@ static int mfx3d_draw(NvShader *f) {   // 回放线程，游戏那次 ps_upsampl
     [en setArgumentTable:g_mfx3d_args atStages:MTLRenderStageFragment];
     [g_mfx3d_args setTexture:g_mfx_3d.out.gpuResourceID atIndex:0]; [g_mfx3d_args setTexture:mask.gpuResourceID atIndex:1];
     [g_mfx3d_args setSamplerState:mfx_samp(1).gpuResourceID atIndex:0]; [g_mfx3d_args setSamplerState:mfx_samp(0).gpuResourceID atIndex:1];
-    [en setViewport:(MTLViewport){vx, vy, vw, vh, 0, 1}]; [en setRenderPipelineState:pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en);
+    [en setViewport:(MTLViewport){vx, vy, vw, vh, 0, 1}]; [en setRenderPipelineState:pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; enc_host_r_end(en);
     R.clear_c[0] = 0; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;
     { static int once; if (!once++) MLOG("3D 放大：MetalFX 取代 ps_upsample_p：有效区 %lux%lu（%.0f%% 宽）→ 视口 %.0fx%.0f，锐化强度原为 %.3f", (unsigned long)cw, (unsigned long)ch, 100.0 * cw / vw, vw, vh, c[6]); }
     PD("U %llu 3D 放大改用 MetalFX %lux%lu → %.0fx%.0f", g_stat_pass, (unsigned long)cw, (unsigned long)ch, vw, vh);

@@ -77,33 +77,59 @@ int main(void) { setvbuf(stdout, NULL, _IONBF, 0); @autoreleasepool {
     f = mtl_sub_commit();
     EXPECT("serial submission completes", 1, mtl_wait(f, 5000000000ull)); EXPECT("serial submission: no command buffer error", 0, mtl_last_commit_error());
 
-    // The game's own NVN barriers (OP_BARRIER → bar_game) are counted only, by what a level-1 pass start covers (behaviour doesn't change)
+    // The game's own NVN barriers (OP_BARRIER → bar_game) are counted only, by what orders their earlier work before a level-1 pass's vertex stage (behaviour doesn't change)
     g_bar_ser = 0; g_bar_lv = 1;
-    g_bar_gn = g_bar_gopen = g_bar_gtex_open = g_bar_gmid = g_bar_gvtx_mid = g_bar_gtex_mid = g_bar_gfrag_mid = 0; memset(g_bar_gbit, 0, sizeof g_bar_gbit); g_bar_gpend = 0;
+    g_bar_gn = g_bar_gopen = g_bar_gcov = g_bar_gtex_open = g_bar_gmid = g_bar_gvtx_mid = g_bar_gtex_mid = g_bar_gfrag_mid = g_bar_gtail = 0; memset(g_bar_gbit, 0, sizeof g_bar_gbit);
+    g_bar_gpend = g_bar_gunc = g_bar_gdraw = 0; memset(g_bar_gdn, 0, sizeof g_bar_gdn);
     mtl_sub_begin();
+    bar_game(0x1); pass(NULL, NULL);   // the serial section's last encoder ended with the full barrier: everything before it is ordered
+    EXPECT("full render end (level 0) → barrier → pass: not uncovered", 0, g_bar_gopen); EXPECT("... counted as ordered by a full end barrier", 1, g_bar_gcov);
+    pass(plain, NULL);   // a render encoder whose end leaves later vertex stages free: its work is not ordered before the next pass's vertex stage
     g_enc = nil; bar_game(0x21);   // order primitives + invalidate shader, between passes
-    EXPECT("game barrier: counted", 1, g_bar_gn); EXPECT("game barrier: bit 0 counted", 1, g_bar_gbit[0]); EXPECT("game barrier: bit 5 counted", 1, g_bar_gbit[5]);
+    EXPECT("game barrier: counted", 2, g_bar_gn); EXPECT("game barrier: bit 0 counted", 2, g_bar_gbit[0]); EXPECT("game barrier: bit 5 counted", 1, g_bar_gbit[5]);
     EXPECT("game barrier between passes is not mid-pass", 0, g_bar_gmid);
     pass(NULL, NULL);
-    EXPECT("uncovered bits pending at a pass start that leaves vertex open: counted", 1, g_bar_gopen); EXPECT("the pass start consumes the pending bits", 0, g_bar_gpend);
+    EXPECT("vertex-free render end → barrier → pass start that leaves vertex open: uncovered", 1, g_bar_gopen); EXPECT("the pass start consumes the pending bits", 0, g_bar_gpend);
     bar_game(0x10); pass(NULL, NULL);   // texture invalidate only: covered at a pass start
     EXPECT("texture invalidate only: not counted as uncovered", 1, g_bar_gopen); EXPECT("texture invalidate only: counted in its own class", 1, g_bar_gtex_open);
     EXPECT("texture invalidate: consumed", 0, g_bar_gpend);
     bar_game(0x1); { CENC ce = enc_c_begin(NULL); enc_c_end(ce); } pass(NULL, NULL);
-    EXPECT("a compute encoder in between (full barriers) clears the pending bits", 1, g_bar_gopen);
+    EXPECT("barrier → compute encoder (full start and end) → pass: not uncovered", 1, g_bar_gopen);
     bar_game(0x8); (void)blit(); enc_b_end(g_blit); g_blit = nil; pass(NULL, NULL);
-    EXPECT("a copy encoder in between (full barriers) clears the pending bits", 1, g_bar_gopen);
+    EXPECT("barrier → copy encoder (full start and end) → pass: not uncovered", 1, g_bar_gopen);
+    EXPECT("barriers before a compute or copy encoder are dropped there: the pass start counts nothing (ordered-by-full-end count unchanged)", 1, g_bar_gcov);
+    pass(plain, NULL); { CENC ce = enc_c_begin(NULL); enc_c_end(ce); } bar_game(0x1); pass(NULL, NULL);
+    EXPECT("dispatch → barrier → pass: the compute encoder's full end orders everything before the barrier, not uncovered", 1, g_bar_gopen);
+    pass(plain, NULL); (void)blit(); bar_game(0x1); enc_b_end(g_blit); g_blit = nil; pass(NULL, NULL);
+    EXPECT("copy encoder open → barrier → pass: its full end orders everything before the barrier, not uncovered", 1, g_bar_gopen);
+    pass(fwrite, NULL); bar_game(0x1); pass(NULL, NULL);
+    EXPECT("encoder that wrote memory (full end) → barrier → pass: not uncovered", 1, g_bar_gopen);
+    EXPECT("dispatch, open copy encoder, writer: each counted as ordered by a full end barrier", 4, g_bar_gcov);
+    { CENC ce = enc_c_begin(NULL); enc_c_end(ce); }
+    { RENC h = [g_cb renderCommandEncoderWithDescriptor:g_rp]; [h barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; enc_host_r_end(h); }
+    bar_game(0x1); pass(NULL, NULL);
+    EXPECT("dispatch → host render pass (full start, vertex-free end) → barrier → pass: uncovered", 2, g_bar_gopen);
     bar_game(0x80); pass(NULL, NULL);   // zcull only
-    EXPECT("zcull only: not uncovered", 1, g_bar_gopen); EXPECT("zcull only: not texture", 1, g_bar_gtex_open);
-    { RENC e = enc_r_begin(g_rp); g_enc = e;   // inside an open render encoder: mid-pass, at either level
-      bar_game(0x2); EXPECT("mid-pass fragment ordering: mid-pass", 1, g_bar_gmid); EXPECT("mid-pass fragment ordering: its class", 1, g_bar_gfrag_mid);
-      bar_game(0x10); EXPECT("mid-pass texture invalidate: mid-pass", 2, g_bar_gmid); EXPECT("mid-pass texture invalidate: its class", 1, g_bar_gtex_mid);
-      bar_game(0x20); EXPECT("mid-pass shader invalidate: mid-pass", 3, g_bar_gmid); EXPECT("mid-pass shader invalidate: vertex-relevant class", 1, g_bar_gvtx_mid);
+    EXPECT("zcull only: not uncovered", 2, g_bar_gopen); EXPECT("zcull only: not texture", 1, g_bar_gtex_open); EXPECT("zcull only: not vertex-relevant", 4, g_bar_gcov);
+    { RENC e = enc_r_begin(g_rp); g_enc = e;   // inside an open render encoder: mid-pass once a draw follows, at either level
+      bar_game(0x2); EXPECT("fragment ordering in an open encoder, no draw after it yet: not mid-pass yet", 0, g_bar_gmid);
+      bar_draw(e, plain); EXPECT("a draw follows: mid-pass", 1, g_bar_gmid); EXPECT("mid-pass fragment ordering: its class", 1, g_bar_gfrag_mid);
+      bar_game(0x10); bar_draw(e, plain); EXPECT("mid-pass texture invalidate: mid-pass", 2, g_bar_gmid); EXPECT("mid-pass texture invalidate: its class", 1, g_bar_gtex_mid);
+      bar_game(0x20); bar_draw(e, plain); EXPECT("mid-pass shader invalidate: mid-pass", 3, g_bar_gmid); EXPECT("mid-pass shader invalidate: vertex-relevant class", 1, g_bar_gvtx_mid);
       EXPECT("mid-pass barriers leave nothing pending", 0, g_bar_gpend);
-      g_enc = nil; enc_r_end(e); }
+      bar_game(0x1);   // after the encoder's last draw
+      enc_r_end(e); g_enc = nil;
+      EXPECT("barrier after an encoder's last draw: not mid-pass", 3, g_bar_gmid); EXPECT("barrier after an encoder's last draw: not in the vertex-relevant mid-pass class", 1, g_bar_gvtx_mid);
+      EXPECT("barrier after an encoder's last draw: counted on its own", 1, g_bar_gtail); EXPECT("... and its bits wait for the next pass start", 0x1, g_bar_gpend); }
+    pass(NULL, NULL);
+    EXPECT("barrier after the last draw of an encoder ending with vertex free → next pass start: uncovered", 3, g_bar_gopen);
+    { RENC e = enc_r_begin(g_rp); g_enc = e; bar_draw(e, fwrite); bar_game(0x1); enc_r_end(e); g_enc = nil; } pass(NULL, NULL);
+    EXPECT("barrier after the last draw of an encoder that wrote memory (full end) → next pass start: not uncovered", 3, g_bar_gopen);
+    EXPECT("... ordered by that encoder's full end barrier", 5, g_bar_gcov);
+    EXPECT("barriers after the last draw: never mid-pass", 3, g_bar_gmid); EXPECT("barriers after the last draw: two", 2, g_bar_gtail);
     g_bar_lv = 0; bar_game(0x1); pass(NULL, NULL);
-    EXPECT("level 0: a full pass start is not counted as uncovered", 1, g_bar_gopen); EXPECT("level 0: the pass start still clears the pending bits", 0, g_bar_gpend);
-    EXPECT("game barriers counted in all", 9, g_bar_gn);
+    EXPECT("level 0: a full pass start is not counted as uncovered", 3, g_bar_gopen); EXPECT("level 0: the pass start still clears the pending bits", 0, g_bar_gpend);
+    EXPECT("game barriers counted in all", 16, g_bar_gn);
     f = mtl_sub_commit();
     EXPECT("game-barrier submission completes", 1, mtl_wait(f, 5000000000ull)); EXPECT("game-barrier submission: no command buffer error", 0, mtl_last_commit_error());
     g_bar_lv = 1;

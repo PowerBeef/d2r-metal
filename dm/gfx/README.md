@@ -128,7 +128,7 @@ The tests in `dm/gfx/tests` compile the production code in directly and need a M
 | `t_mip_extent` | Effective size when rendering to a mip level other than level 0 |
 | `t_fuse_check`, `t_reorder_chain`, `t_defer_chain`, `t_zskip`, `t_xv`, `t_ub`, `t_pfv`, `t_rt_range`, `t_rt_range_shape`, `t_rt_range_ro`, `t_rt_depth_ro` | Compile the replay layer `nvn_mtl.m` in directly and check the various optimization and diagnostic logic inside the replay layer |
 | `t_aniso` | Anisotropy override: `aniso_eff` and `samp_desc` cases, the `aniso_want` mapping, the level changed mid-run (deferred release, new state, `g_reg_gen`), deferred release on sampler re-registration |
-| `t_bar` | Pass-barrier decisions (levels 0 / 1, the `DM_NVN_PASSGPU_SERIAL` pin, encoders that write memory), through their counters under the Metal validation layer |
+| `t_bar` | Pass-barrier decisions (levels 0 / 1, the `DM_NVN_PASSGPU_SERIAL` pin, encoders that write memory) and the game-barrier counts (mid-pass only when a draw follows; between encoders, ordered by a full end barrier or not), through their counters under the Metal validation layer |
 | `test_tbdr_budget.py` | The parsing in `tools/tbdr_budget.py` |
 | `test_c1_guard.py` | `tools/c1_guard.py`: integer conversions that can wrap leave an index unproven; bounded values still prove; the list header names the guard's hash |
 | `test_dmsh_rules.py` | `tools/dmsh_rules.py`: the HDR-switch split on synthetic MSL; rules read no module-level names; every HDR-switch key exists in `shader_map.tsv` with its role |
