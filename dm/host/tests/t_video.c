@@ -30,6 +30,7 @@ extern int g_tshown, g_cdef_q3d, g_cval[2], g_cpend[2], g_cset[2];
 static int fails, checks;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("  ✗ "); printf(__VA_ARGS__); printf("\n"); } } while (0)
 static void file_put(const char *txt) { char p[600]; snprintf(p, sizeof p, "%s/sw_video.txt", g_dir); if (!txt) { unlink(p); return; } FILE *f = fopen(p, "w"); fputs(txt, f); fclose(f); }
+static void file_putn(const char *b, size_t n) { char p[600]; snprintf(p, sizeof p, "%s/sw_video.txt", g_dir); FILE *f = fopen(p, "w"); fwrite(b, 1, n, f); fclose(f); }   // bytes, NULs included
 static const char *file_get(void) { static char b[1200]; char p[600]; snprintf(p, sizeof p, "%s/sw_video.txt", g_dir); FILE *f = fopen(p, "r"); if (!f) return ""; size_t n = fread(b, 1, sizeof b - 1, f); b[n] = 0; fclose(f); return b; }
 
 // The event recorder: the last 'picture' event (how and its eleven values) and the last 'video_row' event, plus how many of each were sent
@@ -224,12 +225,24 @@ int main(void) {
     // (19e) the same in a newer file: its rec_v and the unknown line survive the Apply
     r = run_do(NEWER(0, 1, 2, 1, 0, 1) "future=3\n", act_aa0);
     CHECK(strstr(r.file, "rec_v=99\n") && strstr(r.file, "future=3\n") && strstr(r.file, "\naa=0\n"), "(19e) newer file: rec_v=99 and future=3 kept\n%s", r.file);
-    // (19f) lines longer than the read buffer (63 characters) are skipped whole: no piece of one is read as a key or kept
+    // (19f) lines longer than 62 characters (the old 64-byte read buffer) are skipped whole: no piece of one is read as a key or kept
     r = run_do(FULL(0, 1, 1, 1, 0, 1) NEWREC "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxres=2\n"
                "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy=123456789\n", act_aa0);
     CHECK(r.v[1] == 1 && !strncmp(r.file0, FULL(0, 1, 1, 1, 0, 1) NEWREC, strlen(FULL(0, 1, 1, 1, 0, 1) NEWREC)) && strstr(r.file0, "res=2\n") &&
           !strcmp(r.file, FULL(0, 1, 1, 1, 0, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
           "(19f) over-long lines: res stays 1 (%d), not rewritten at load, gone after the Apply\n%s", r.v[1], r.file);
+    // (19h) a line with a NUL byte in it is read up to the NUL ('res=2'), and the line after it is read as usual: the over-long test counts the bytes
+    // read, not strlen (which took the NUL for the end of a long line's first piece and skipped the intact rec_res line after it)
+    { static const char nul[] = "mode=0\nrec_mode=1\nres=2\0junk\nrec_res=1\nup=0\nrec_up=1\n" NEWREC;
+      file_putn(nul, sizeof nul - 1); r = child(NULL);
+      CHECK(r.v[K_RES] == 2 && r.fb == 0 && !strcmp(r.how, "read"), "(19h) NUL in a line: res 2 (%d), rec_res read (asked %d times), how=read ('%s')", r.v[K_RES], r.fb, r.how); }
+    // (19i) the limit, as the old 64-byte buffer had it: an unknown line of 62 characters is kept, one of 63 is skipped; a last line of 62 characters
+    // without its newline is kept too (written back with one)
+    { char a[63], b[64], c[63], txt[700]; memset(a, 'a', 62); memcpy(a, "keep=", 5); a[62] = 0; memset(b, 'b', 63); memcpy(b, "drop=", 5); b[63] = 0;
+      memset(c, 'c', 62); memcpy(c, "last=", 5); c[62] = 0;
+      snprintf(txt, sizeof txt, "%s%s\n%s\n%s", FULL(0, 1, 2, 1, 0, 1) NEWREC, a, b, c); r = run_do(txt, act_aa0);
+      char an[64], cn[64]; snprintf(an, sizeof an, "%s\n", a); snprintf(cn, sizeof cn, "%s\n", c);
+      CHECK(strstr(r.file, an) && strstr(r.file, cn) && !strstr(r.file, "drop="), "(19i) 62 characters kept, 63 skipped, a last line without its newline kept\n%s", r.file); }
 
     // (19g) a newer file keeps its own rec_id: no move on another machine, nothing written at load, and an Apply keeps both its rec_v and its rec_id
     g_fe_rec_id = 2222;

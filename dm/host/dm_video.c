@@ -18,7 +18,7 @@
 // App's GPU and main screen; none on iOS, the CLI host and test copies). It is worked out (front_video_firstboot for the first three keys, front_video_rec
 // for the others) on first boot, for a missing or out-of-range key (only that key is filled), and when rec_v is older or rec_id differs (a move): a player
 // still on Recommended moves with it, changed settings stay. A file that cannot be read, or that a newer version wrote, is not rewritten at load; lines
-// with a key this build does not know are kept, and lines longer than the read buffer are skipped.
+// with a key this build does not know are kept, and lines longer than 62 characters are skipped.
 // Display preferences (pref_key: Display Mode, and Color on the Mac) never decide whether the picture is on Recommended: first launch and Default set
 // them, the Graphic Presets row leaves them alone, and a move changes one only while it still equals its old recommendation.
 // Graphic Presets is derived: the preset the player last picked while the values still match it, else Recommended, Performance or Quality (tier_of),
@@ -121,13 +121,15 @@ static void load_once(void) {
         // Read key by key: only a missing or out-of-range key is filled from the first-boot values, the rest keep what was read (one missing rec_* used to
         // treat the whole file as a first boot). A value that is not a whole number counts as out of range. An unreadable file (anything but "no such
         // file") counts as a first boot for this launch and is not rewritten; a newer version's file is filled in memory only. Lines with a key this build
-        // does not know are kept (g_extra); a line longer than the read buffer cannot hold a known key and is skipped whole
+        // does not know are kept (g_extra); a line longer than 62 characters cannot hold a known key and is skipped whole
         int v[NV], r[NV], rv_file = 1, id_file = -1; for (int i = 0; i < NV; i++) v[i] = r[i] = -1;   // rv_file: the recommendation version in the file (absent = 1); id_file: its rec_id
         errno = 0; FILE *f = fopen(p, "r"); int err = errno, ro = !f && err != ENOENT;
-        char ln[64]; int cont = 0; size_t xn = 0; g_extra[0] = 0;
-        while (f && fgets(ln, sizeof ln, f)) {
+        char *ln = NULL; size_t cap = 0, xn = 0; ssize_t got; g_extra[0] = 0;
+        while (f && (got = getline(&ln, &cap, f)) > 0) {
+            // Over-long: more than 62 characters before the newline (the 64-byte buffer this parser used to read with), judged by the bytes read, so a
+            // NUL inside a line does not make it look like the first piece of a longer one. Past that, the line is read as a string, up to a NUL
+            if (got - (ln[got - 1] == '\n') > 62) continue;
             size_t L = strlen(ln); int nl = L && ln[L - 1] == '\n';
-            if (cont || (!nl && !feof(f))) { cont = !nl; continue; }   // a piece of an over-long line, up to and including the piece that ends it
             char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0;
             char *end; long lx = strtol(eq + 1, &end, 10);
             int num = end != eq + 1 && (*end == '\n' || *end == '\r' || !*end) && lx >= INT_MIN && lx <= INT_MAX, x = num ? (int)lx : -1;
@@ -138,7 +140,7 @@ static void load_once(void) {
             *eq = '=';
             if (!known && xn + L + !nl < sizeof g_extra) { memcpy(g_extra + xn, ln, L); xn += L; if (!nl) g_extra[xn++] = '\n'; g_extra[xn] = 0; }
         }
-        if (f) fclose(f);
+        free(ln); if (f) fclose(f);
         if (ro) LOG("【红】picture settings: cannot read %s (%s): this launch uses the recommendation and leaves the file as it is", p, strerror(err));
         int newer = rv_file > REC_V;   // written by a newer version: filled in memory, never rewritten at load, and its rec_v is kept by a later Apply
         atomic_store(&g_rv_keep, newer ? rv_file : REC_V);
