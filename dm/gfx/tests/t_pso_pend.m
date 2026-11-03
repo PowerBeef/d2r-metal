@@ -69,6 +69,12 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     g_pp_taken = 100; EXPECT("auto: off stays off for the run", 0, (uint64_t)pso_predict_allowed());
     g_pp_mode = 1; EXPECT("DM_PSO_PREDICT=1: always on", 1, (uint64_t)pso_predict_allowed());
     g_pp_mode = 0; EXPECT("DM_PSO_PREDICT=0: never", 0, (uint64_t)pso_predict_allowed());
+    // The cutoff is judged when predictions age out, not only at the next miss
+    g_pp_mode = 1; g_sub_serial += 2 * PSO_PEND_AGE; pso_pend_age();
+    g_pp_mode = 2; g_pp_off = 0; g_pp_taken = g_pp_aged = 0;
+    for (int i = 0; i < 30; i++) kick(6000 + i);
+    wait_done(); g_sub_serial += PSO_PEND_AGE; pso_pend_age();
+    EXPECT("30 untaken predictions aged out: off at the start of that submission", 1, (uint64_t)g_pp_off);
     // Attribution: an untaken prediction whose program then misses in a merged pass is counted once
     g_pp_merged = 0; g_sub_serial += 2 * PSO_PEND_AGE; pso_pend_age();
     kick(5000); wait_done();

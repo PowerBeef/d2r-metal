@@ -3001,6 +3001,7 @@ static void pso_pend_age(void) {   // 提交开头（提交线程）调：回收
     pthread_mutex_unlock(&g_pp_mu);
     static int logged; if (n && logged++ < 5) MLOG("并行预编：回收 %d 条过期没人领的预测（累计丢出 %llu / 领用 %llu / 回收 %llu / 表满没丢 %llu） | parallel precompile: recycled %d stale untaken predictions (kicked / taken / recycled / not kicked, table full)",
         n, (unsigned long long)g_pp_kicked, (unsigned long long)g_pp_taken, (unsigned long long)g_pp_aged, (unsigned long long)g_pp_full, n);
+    if (n) (void)pso_predict_allowed();   // judge the cutoff as soon as predictions resolve, not only at the next miss (which may never come)
 }
 static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // 提交线程调：没在缓存、没在表里才丢 | Called by the submit thread: kick only if it is neither in the cache nor in the table
     if (hm_get_id(&g_pso, k)) return;
