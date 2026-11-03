@@ -18,8 +18,10 @@
 #        (names from the local engine symbol table, guestsyms.py); then, for every frame longer than --hitch-ms (frame time in nvn.tsv), the functions running during it; writes profile.json
 #   baseline save [--host host] [--name N]    keeps the current host (default this tree's dm/host/dmhost) with everything it runs on as $DM_ROOT/run/bench/baseline/<N, default the rev>/:
 #        host/dmhost and its tables, the rewrite output it was built against (product/) and its shader library (msl/b-<chain>/, APFS clones), meta.json; current points at it
-#   regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]   baseline host (A, on its own rewrite output and shader library) against the current host (B) in ABBA order,
-#        each metric judged as in ab; RED only when B is significantly slower; conclusions go to the ledger; a baseline without that snapshot is ⚪ (exit 3) before any run
+#   regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50]   baseline host (A, on its own rewrite output and shader library) against the current host (B) in ABBA order,
+#        each metric judged as in ab, then Holm-corrected over every segment x metric; RED only when B is significantly slower after Holm; conclusions go to the ledger.
+#        Refused before any run: a baseline without that snapshot is ⚪ (exit 3); --reps too few to reach significance over the comparisons is red (exit 2, it names the --reps needed).
+#        gpu_ms is not in the defaults: on a fast Mac the GPU lowers its clock when it has room, so it is clock-scaled (--metrics gpu_ms.p50 still works)
 #   run / ab / regress --keep: a .keep file in the result folder, so workspace_prune.py never takes it
 #   Before each run the thermal state (Mac: pmset -g therm; wait while hot, at most --cool seconds) and Game Mode (gamepolicyctl) are checked and recorded in the result; last line RESULT {json}
 import argparse
@@ -101,6 +103,20 @@ def mann_whitney(a, b):
     if var <= 0: return u, 1.0
     z = (abs(u - mu) - 0.5) / math.sqrt(var)
     return u, math.erfc(z / math.sqrt(2))
+
+
+def holm(rows, alpha=0.05):
+    """Holm's step-down correction over every row that carries a p: sorted by p, the row of rank k (from 0) stays significant while p <= alpha / (m - k);
+    after the first that fails, every later one fails too. Sets row['holm'] True / False; rows without p (too few runs) are left as they are."""
+    ps = sorted((r for r in rows if isinstance(r.get('p'), (int, float))), key=lambda r: r['p']); m = len(ps); ok = True
+    for k, r in enumerate(ps):
+        ok = ok and r['p'] <= alpha / (m - k); r['holm'] = ok
+    return rows
+
+
+def min_reps(m, alpha=0.05):
+    """The fewest runs per side (2..20) at which the exact two-sided Mann-Whitney test can reach Holm's strictest level alpha / m: its smallest p is 2 / C(2n, n)."""
+    return next((n for n in range(2, 21) if 2 / math.comb(2 * n, n) <= alpha / m), 21)
 
 
 def boot_median_diff(a, b, rounds=4000, seed=7):
@@ -316,7 +332,8 @@ def ledger_write(stamp, envinfo, name, m, a_label, b_label, rows):
         rev = envinfo['git']['rev']
         for r in rows:
             if 'diff' not in r: continue
-            f.write(f"{stamp}\t{rev}\t{name}\t{r['segment']}\t{m}\t{a_label}\t{b_label}\t{len(r['a'])}/{len(r['b'])}\t{r['median_a']:.4f}\t{r['median_b']:.4f}\t{r['diff']:+.4f}\t[{r['ci95'][0]:+.4f}, {r['ci95'][1]:+.4f}]\t{r['p']:.4f}\t{r['verdict']}\n")
+            verdict = r['verdict'] + (f" (Holm {'ok' if r['holm'] else 'n.s.'})" if 'holm' in r else '')
+            f.write(f"{stamp}\t{rev}\t{name}\t{r['segment']}\t{m}\t{a_label}\t{b_label}\t{len(r['a'])}/{len(r['b'])}\t{r['median_a']:.4f}\t{r['median_b']:.4f}\t{r['diff']:+.4f}\t[{r['ci95'][0]:+.4f}, {r['ci95'][1]:+.4f}]\t{r['p']:.4f}\t{verdict}\n")
     return ledger
 
 
@@ -474,6 +491,13 @@ def cmd_regress(a):
     bdir = os.path.realpath(os.path.join(BASE, 'current')); bname = os.path.basename(bdir); benv = baseline_env(bdir)
     if benv is None:
         print(f'⚪ BENCH-REGRESS the kept baseline {bname} has no rewrite output / shader library snapshot (bench.py baseline save again)'); return 3
+    metrics = [m for m in a.metrics.split(',') if m]; bad = [m for m in metrics if m not in METRICS]
+    if bad or not metrics: print(f'🔴 BENCH-REGRESS unknown metric {bad or a.metrics!r}'); return 2
+    # Runs guard: the route's segments x the metrics are the comparisons Holm corrects for; with too few runs no row could ever be significant
+    segs = [st['kw'].get('name') for st in scenario.parse(a.route)[1] if st['op'] == 'mark' and st['kw'].get('name') != 'end']
+    ncmp = len(metrics) * max(len(segs), 1); need = min_reps(ncmp)
+    if a.reps < need:
+        print(f'🔴 BENCH-REGRESS --reps {a.reps} cannot reach significance over {ncmp} comparisons (smallest p {2 / math.comb(2 * a.reps, a.reps):.4f} > {0.05 / ncmp:.4f}); use --reps {need}'); return 2
     bmeta = baseline_meta(bdir) or {}
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
     out = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_regress_{stamp}')
@@ -486,14 +510,15 @@ def cmd_regress(a):
         print(f'== {i}/{len(order)} 变体 | variant {v}', flush=True)
         reps[v].append(run_once(a.route, a.backend, os.path.join(out, f'{i:02d}{v}'), benv if v == 'A' else {}, hosts[v], a.cool))
     keep(out, a)
-    envinfo = environment(); rows = []
-    for m in a.metrics.split(','):
-        if m not in METRICS: print(f'🔴 unknown metric {m}'); return 2
-        rr = compare(reps, m); rows += rr; ledger_write(stamp, envinfo, name, m, f'baseline {bname}', 'current', rr)
-    slower = [r for r in rows if r.get('verdict') == 'B slower']; ok = all(r['ok'] for v in reps.values() for r in v)
+    envinfo = environment(); by = {m: compare(reps, m) for m in metrics}; rows = [r for rr in by.values() for r in rr]
+    holm(rows)   # one family: every segment x metric of this regression
+    for m, rr in by.items(): ledger_write(stamp, envinfo, name, m, f'baseline {bname}', 'current', rr)
+    for r in rows:
+        if 'holm' in r: print(f"  {r['segment']:<10} {r['metric']}: {r['verdict']}, p {r['p']:.3f} → Holm {'ok' if r['holm'] else 'n.s.'}")
+    slower = [r for r in rows if r.get('verdict') == 'B slower' and r.get('holm')]; ok = all(r['ok'] for v in reps.values() for r in v)
     with open(os.path.join(out, 'regress.json'), 'w', encoding='utf-8') as f: json.dump(dict(route=name, hosts=hosts, sides=sides, order=order, rows=rows, environment=envinfo), f, ensure_ascii=False, indent=1)
     verdict = 'RED' if slower or not ok else 'OK'
-    print(f"BENCH-REGRESS {verdict} {name}：{len(slower)} 项显著变慢 | significantly slower" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower))
+    print(f"BENCH-REGRESS {verdict} {name}: {len(slower)} significantly slower after Holm" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower))
     print('RESULT ' + json.dumps(dict(name='bench-regress', verdict=verdict, route=name, slower=[(r['segment'], r['metric'], r['diff']) for r in slower]), ensure_ascii=False))
     return 1 if verdict == 'RED' else 0
 
@@ -520,7 +545,7 @@ def main(argv):
     pr.add_argument('--hitch-ms', type=float, default=25); pr.add_argument('--host'); pr.add_argument('--cool', type=float, default=120)
     bl = sub.add_parser('baseline'); bl.add_argument('op', choices=('save',)); bl.add_argument('--host'); bl.add_argument('--name', help='baseline folder name (default: the git revision)')
     rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli',), help='the kept host runs on the command-line host only'); rg.add_argument('--reps', type=int, default=6)
-    rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,gpu_ms.p50,proc_cpu_ms.p50'); rg.add_argument('--cool', type=float, default=120); rg.add_argument('--keep', action='store_true', help='write .keep into the result folder')
+    rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50', help='comma-separated; gpu_ms is left out by default: on a fast Mac it is clock-scaled'); rg.add_argument('--cool', type=float, default=120); rg.add_argument('--keep', action='store_true', help='write .keep into the result folder')
     a = ap.parse_args(argv)
     held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * 2} min", a.cmd in ('run', 'ab', 'profile', 'regress'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
     if held is not None: return held

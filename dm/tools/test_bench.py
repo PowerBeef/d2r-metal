@@ -132,5 +132,28 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(rc, 3, out.getvalue()); self.assertIn('no rewrite output / shader library snapshot', out.getvalue())
 
 
+    def test_holm_and_min_reps(self):
+        rows = [dict(p=p) for p in (0.001, 0.01, 0.02, 0.04)]; bench.holm(rows)
+        self.assertEqual([r['holm'] for r in rows], [True, True, True, True])
+        rows = [dict(p=p) for p in (0.04, 0.03, 0.02, 0.01)] + [dict(verdict='not enough runs')]; bench.holm(rows)   # in any order; a row without p is left alone
+        self.assertEqual([r.get('holm') for r in rows], [False, False, False, True, None]); self.assertNotIn('holm', rows[4])
+        self.assertEqual([bench.min_reps(m) for m in (1, 4, 6, 8)], [4, 5, 5, 6])   # 2/70 = 0.0286; 2/252 = 0.0079 <= 0.0125 and <= 0.00833; 2/924 = 0.0022 <= 0.00625
+
+    def snapshotted(self, t):
+        host, prod, msl = fake_tree(os.path.join(t, 'src'))
+        ok, why = bench.snapshot(host, prod, msl, CHAIN, '3.3.94012-r49', os.path.join(t, 'r1'), git={'rev': 'r1'}); self.assertTrue(ok, why)
+        os.symlink('r1', os.path.join(t, 'current'))
+
+    def test_regress_runs_guard(self):   # too few runs for the comparisons regress makes: refused before any run, naming the reps it needs
+        for argv, want in ((['--reps', '4'], 'use --reps 5'), (['--metrics', 'cpu_ms.p50,nvn_ms.p50,gpu_ms.p50,proc_cpu_ms.p50', '--reps', '5'], 'use --reps 6'),
+                           (['--metrics', 'cpu_ms.p50,nope.p50'], 'unknown metric')):
+            with tempfile.TemporaryDirectory() as t:
+                self.snapshotted(t); out = io.StringIO()
+                with mock.patch.object(bench, 'BASE', t), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None), \
+                     mock.patch.object(bench.scenario, 'Runner', raise_if_called), mock.patch.object(bench, 'current_host', raise_if_called), contextlib.redirect_stdout(out):
+                    rc = bench.main(['regress', ROUTE] + argv)
+            self.assertEqual(rc, 2, out.getvalue()); self.assertIn(want, out.getvalue())
+
+
 if __name__ == '__main__':
     unittest.main()

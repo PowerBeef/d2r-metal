@@ -54,7 +54,7 @@ Checked on this tree (Apple M6, macOS 27):
 
 ```bash
 python3 dm/tools/bench.py baseline save [--name N]      # keep this tree's dmhost with what it runs on as $DM_ROOT/run/bench/baseline/<N, default the rev>, current → it
-python3 dm/tools/bench.py regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]
+python3 dm/tools/bench.py regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50]
 ```
 
 A baseline is a snapshot of everything the host runs on, so a later regression compares hosts and nothing else:
@@ -65,7 +65,11 @@ A baseline is a snapshot of everything the host runs on, so a later regression c
 
 The product and the library are APFS clones (`cp -cR`), so they share blocks with the workspace copies until those change; after a chain or product change the baseline keeps its own (a 523 MB library). The snapshot is built in `<N>.new` and renamed into place at the end, so saving twice into one folder never nests a copy in an old one. `baseline save` refuses (red, exit 1) when the shader library is missing or the host was built from another shader chain.
 
-`regress` runs the baseline host (A) on its own rewrite output and shader library (`SCN_PRODUCT`, `DM_MSL_DIR`) against the current host (B) on the current ones, in ABBA order, and judges each metric as `ab` does. It prints both sides (`baseline <N>: <product> b-<chain>; current: …`) and records them in `regress.json`. Only "B slower" (p < 0.05, interval on one side of 0) is red; every row goes to the ledger. With no baseline, or a baseline kept before snapshots existed (a host alone), it is ⚪ (exit code 3) before any run starts: an old host on a newer rewrite output would read thread slots it does not fill. `regress` runs on the `cli` backend only, since the kept host is a command-line host.
+`regress` runs the baseline host (A) on its own rewrite output and shader library (`SCN_PRODUCT`, `DM_MSL_DIR`) against the current host (B) on the current ones, in ABBA order, and judges each metric as `ab` does. It prints both sides (`baseline <N>: <product> b-<chain>; current: …`) and records them in `regress.json`.
+
+Every segment × metric of one regression is one family of comparisons, and the p values get **Holm's correction**: sorted by p, the k-th smallest (from 0) of m stays significant while p ≤ 0.05 / (m − k). Only "B slower" (interval on one side of 0) that also passes Holm is red; the ledger's verdict column says `(Holm ok)` or `(Holm n.s.)`. A **runs guard** refuses (red, exit 2, before any run) a `--reps` too small to ever reach Holm's strictest level: the exact test's smallest p is 2 / C(2n, n), so the defaults (3 metrics × 2 `town_loop` segments = 6 comparisons) need 5 runs a side, and the long tier's 6 keep a margin; 4 metrics need 6.
+
+`gpu_ms` is not in the default metrics: on a fast Mac the GPU lowers its clock when it has room, so a GPU-side change shows up as a clock change rather than as time (the M6 holds 60 fps at 40% of its capacity in town). Pass `--metrics gpu_ms.p50` with an ABBA when a change is GPU-bound, and read it with that in mind. With no baseline, or a baseline kept before snapshots existed (a host alone), it is ⚪ (exit code 3) before any run starts: an old host on a newer rewrite output would read thread slots it does not fill. `regress` runs on the `cli` backend only, since the kept host is a command-line host.
 
 `run`, `ab` and `regress` take `--keep`: it writes `.keep` into the result folder so `workspace_prune.py` never takes it (A/B evidence cited in a commit or the README). `workspace_prune.py` lists baselines other than `current` once they are older than its `--days`.
 
