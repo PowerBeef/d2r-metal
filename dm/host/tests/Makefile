@@ -175,7 +175,7 @@ $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_textbox.c ../dm_textbox_core.c
 $(B)/t_scrub: t_scrub.c ../dm_scrub.c ../dm_scrub.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_scrub.c ../dm_scrub.c
-$(B)/t_picrec: t_picrec.c t_picrec_cases.h ../dm_picrec.c ../dm_picrec.h | $(B)
+$(B)/t_picrec: t_picrec.c t_picrec_cases.h ../dm_picrec.c ../dm_picrec.h ../dm_s3lv.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_picrec.c ../dm_picrec.c -lm
 $(B)/t_video: t_video.c ../dm_video.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_video.c ../dm_video.c
@@ -268,7 +268,7 @@ $(B)/t_romfs_validate: t_romfs_validate.c ../romfs_validate.c ../romfs_validate.
 $(B)/t_hid_script: t_hid_script.c t_touch_tick_stub.c ../hle_hid.c ../dm_cursor.c ../dm_hud.c ../dm_hud.h ../touch_mac.c ../../ios/Sources/dm_touch_controls.c ../hle.h ../dm.h ../dm_input.h ../front.h | $(B) ../dm_prof.c
 	clang -O1 -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_hid_script.c t_touch_tick_stub.c ../dm_cursor.c ../dm_hud.c ../touch_mac.c ../../ios/Sources/dm_touch_controls.c -lm ../dm_prof.c
 
-$(B)/t_oe: t_oe.c t_oe_stub.c ../hle_oe.c ../hle.h ../dm.h | $(B)
+$(B)/t_oe: t_oe.c t_oe_stub.c ../hle_oe.c ../hle.h ../dm.h ../dm_s3lv.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_oe.c t_oe_stub.c
 
 $(B)/t_kbm: t_kbm.c ../dm_kbm.c ../dm_kbm.h

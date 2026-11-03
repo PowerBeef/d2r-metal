@@ -102,20 +102,30 @@ static void test_scale3d(void) {
     CHECK(s3_n(299, D60) == 1 && s3_n(1, D60) == 2, "快降：停判后历史清空，再满 5 窗 → 降到 2 档");
     s3_hold_pass();
     CHECK(s3_n(3000, D60) == 2, "下限：已到第 2 档（max_level），再掉也不动");
-    // 档位表：配置 0.75 仍是 0.75 / 0.70 / 0.65 / 0.60（下限 0.60 时最深第 3 档）；配置 0.85 时中间多出 0.80 / 0.75
-    // Level table: with the configured 0.75 still 0.75 / 0.70 / 0.65 / 0.60 (deepest level 3 at floor 0.60); with 0.85, 0.80 / 0.75 in between
-    CHECK(s3_max_level(0.75f, 0.60f) == 3 && s3_level_scale(0.75f, 0) == 0.75f && s3_level_scale(0.75f, 1) == 0.70f && s3_level_scale(0.75f, 3) == 0.60f, "档位：配置 0.75 → 0.70 / 0.65 / 0.60，最深第 3 档");
-    CHECK(s3_max_level(0.85f, 0.60f) == 5 && s3_level_scale(0.85f, 1) == 0.80f && s3_level_scale(0.85f, 2) == 0.75f && s3_level_scale(0.85f, 5) == 0.60f, "档位：配置 0.85 → 0.80 / 0.75 / 0.70 / 0.65 / 0.60，最深第 5 档");
-    CHECK(s3_max_level(1.0f, 0.70f) == 6 && s3_level_scale(1.0f, 1) == 0.95f && s3_level_scale(1.0f, 9) == 0.55f && s3_level_scale(0.72f, 1) == 0.70f, "档位：配置 1.0 的第 1 档 0.95；超出取最低；配置 0.72 的第 1 档 0.70");
-    // 改配置值（选项页「3D 清晰度」点「应用」）：最深档按新值重算、回 0 档、停判 3 秒；之后一直掉帧也停在下限 0.60（配置 1.0 下限 0.60 时最深第 8 档，0.75 时第 3 档）
-    // Changing the configured value (options page "3D Resolution" applied): the deepest level is recomputed for the new value, back to level 0, judging paused for 3 s; constant dropped frames afterwards still stop at the 0.60 floor (with floor 0.60: deepest level 8 for 1.0, level 3 for 0.75)
-    s3 = (scale3d_ctl){.max_level = s3_max_level(1.0f, 0.60f), .level = 6}; s3_now = 1500 * S3_SEC;
-    scale3d_ctl_retarget(&s3, 0.75f, 0.60f, s3_now);
-    CHECK(s3.max_level == 3 && s3.level == 0 && s3.hold_until == s3_now + 3 * S3_SEC, "改配置 1.0 → 0.75：最深档 8 → 3，从第 6 档回到 0 档并停判 3 秒");
+    // Levels (dm_s3lv.h): up to three steps of x0.93 below the configured value, rounded to hundredths, never below 0.50
+#define LV(cfg, lv, want) (fabsf(s3_level_scale(cfg, lv) - (want)) < 1e-4f)
+    CHECK(s3_max_level(0.75f, 0) == 3 && LV(0.75f, 0, 0.75f) && LV(0.75f, 1, 0.70f) && LV(0.75f, 2, 0.65f) && LV(0.75f, 3, 0.60f), "levels: 75% -> 0.70 / 0.65 / 0.60 (as before)");
+#if S3_FIRST_AT_FULL == 1
+    CHECK(s3_max_level(1.0f, 0) == 3 && LV(1.0f, 1, 0.93f) && LV(1.0f, 2, 0.86f) && LV(1.0f, 3, 0.80f), "levels: 100% -> 0.93 / 0.86 / 0.80 (S3_FIRST_AT_FULL 1)");
+#else   // the exit ABBA's other outcome: the first step at 95% or more is 0.86
+    CHECK(s3_max_level(1.0f, 0) == 3 && LV(1.0f, 1, 0.86f) && LV(1.0f, 2, 0.80f) && LV(1.0f, 3, 0.75f), "levels: 100% -> 0.86 / 0.80 / 0.75 (S3_FIRST_AT_FULL 2)");
+#endif
+    CHECK(s3_max_level(0.85f, 0) == 3 && LV(0.85f, 1, 0.79f) && LV(0.85f, 2, 0.74f) && LV(0.85f, 3, 0.68f), "levels: 85% -> 0.79 / 0.74 / 0.68");
+    CHECK(s3_max_level(0.67f, 0) == 3 && LV(0.67f, 1, 0.62f) && LV(0.67f, 2, 0.58f) && LV(0.67f, 3, 0.54f), "levels: 67% -> 0.62 / 0.58 / 0.54");
+    CHECK(s3_max_level(0.5f, 0) == 0 && dm_3d_scale_levels(0.5f) == 0, "levels: 50% -> none");
+    CHECK(s3_max_level(0.55f, 0) == 1 && LV(0.55f, 1, 0.51f), "levels: 55% -> one (0.51)");
+    CHECK(s3_max_level(1.0f, 0.60f) == 8 - S3_FIRST_AT_FULL && LV(1.0f, 8 - S3_FIRST_AT_FULL, 0.60f), "levels: DM_3D_SCALE_FLOOR=0.60 at 100% -> down to 0.60 (7 levels with S3_FIRST_AT_FULL 1)");
+    CHECK(LV(0.75f, 10, 0.50f), "levels: past the last one the scale is clamped at 0.50");
+    CHECK(dm_3d_scale_levels(1.0f) == 3 && dm_3d_scale_levels(0.67f) == 3 && dm_3d_scale_levels(0.75f) == 3, "dm_3d_scale_levels: 3 at 100%, 75% and 67%");
+    // A new configured value (the 3D Resolution setting applied): the deepest level is recomputed for it, back to level 0, judging paused 3 s;
+    // drops after that stop at its last level
+    s3 = (scale3d_ctl){.max_level = s3_max_level(1.0f, 0), .level = 2}; s3_now = 1500 * S3_SEC;
+    scale3d_ctl_retarget(&s3, 0.75f, 0, s3_now);
+    CHECK(s3.max_level == 3 && s3.level == 0 && s3.hold_until == s3_now + 3 * S3_SEC, "retarget 100% -> 75%: 3 levels, from level 2 back to 0, judging held 3 s");
     s3_hold_pass(); s3_n(6000, D60);
-    CHECK(s3.level == 3 && s3_level_scale(0.75f, s3.level) == 0.60f, "改配置后一直掉帧：停在第 3 档 0.60，不再降到 0.55 / 0.50");
-    scale3d_ctl_retarget(&s3, 1.0f, 0.60f, s3_now);
-    CHECK(s3.max_level == 8 && s3.level == 0, "改回 1.0：最深档 3 → 8（能一路降到 0.60），回 0 档");
+    CHECK(s3.level == 3 && LV(0.75f, s3.level, 0.60f), "after retargeting, constant drops stop at level 3 (0.60)");
+    scale3d_ctl_retarget(&s3, 1.0f, 0, s3_now);
+    CHECK(s3.max_level == 3 && s3.level == 0, "retarget back to 100%: 3 levels, level 0");
     // 慢降：每窗 3 帧掉帧 + 114 帧正常（3 × 33.4 + 114 × 16.6667 = 2000.2 ms，一窗 117 帧，掉帧率 2.56%）
     // Slow lowering: per window 3 dropped frames + 114 normal frames (3 × 33.4 + 114 × 16.6667 = 2000.2 ms, 117 frames per window, dropped-frame rate 2.56%)
     s3 = (scale3d_ctl){.max_level = 2}; s3_now = 2000 * S3_SEC;

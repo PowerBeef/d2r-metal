@@ -129,52 +129,32 @@ static pthread_once_t g_oe_once = PTHREAD_ONCE_INIT;
 HLE_FORCE("_ZN2nn2oe20GetCurrentFocusStateEv", "前后台状态；由前端 dm_focus_set 驱动", int, h_oe_GetFocus, void) { return g_focus; }
 HLE_FORCE("_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE", "前后台切换策略；游戏设 1（收焦点通知），宿主按通知语义实现", void, h_oe_SetFocusMode, int m) { LOG("oe::SetFocusHandlingMode %d", m); }
 
-// 通知：返回 bool（w0），宿主没有系统通知
-// ---------- 3D 内部渲染比例 ----------
-// 游戏自带一个静态的 3D 渲染比例：渲染器对象（全局指针 [main+0x31e0848]）成员 +0x66a4（float，原版恒 1.0）。
-// 改分辨率函数 main+0x8582f0(输出宽, 输出高) → main+0x1627ef0 按「比例 × 输出宽高」重建 3D 目标（+0xee78 / +0xee7c），
-// 界面层与 Final Result 仍按输出尺寸（+0xee88 / +0xee8c）建，末端由游戏自己的放大着色器 ps_upsample_p 放回输出尺寸。
-// 启动流程不调 0x8582f0，所以要主动调一次；调用点必须是游戏主线程取系统通知处——游戏自己处理模式切换的同一上下文
-// （在出图 HLE 里调会自锁：渲染锁已被出图路径持有）。
-// 动态比例（系统降频看的是占用率，温控档位只是粗信号 → 按实际掉帧调）：控制器吃出图线程报来的实际上屏间隔
-// （与 perf.txt 同源），三级 配置值(0.75) → 0.72 → 0.70；下限 0.70（实看 0.65 有差别）。规则见 scale3d_ctl_step。
-// 开关：DM_3D_SCALE_DYN=0 关；DM_THERMAL_NOFALLBACK=1（功耗 / 帧时间测量）也关——测量时比例必须钉住。
-// DM_3D_SCALE_DYN_INJECT=帧起-帧止（按 dm_nvn_frame_count 计）：诊断，这段帧里把喂给控制器的间隔一律当两个周期（掉帧），段外当一个周期
-// （Mac 上没有上屏时刻，用它验降级 / 回升的整条链）。只在局内生效（不在局内不判），满 10 秒（5 窗）降第一档。
 // Notification: returns bool (w0); the host has no system notifications
 // ---------- 3D internal render scale ----------
 // The game has a built-in static 3D render scale: renderer object (global pointer [main+0x31e0848]) member +0x66a4 (float, always 1.0 in the original game).
-// The resolution-change function main+0x8582f0(output width, output height) → main+0x1627ef0 rebuilds the 3D targets at "scale × output size" (+0xee78 / +0xee7c),
-// while the UI layer and Final Result are still built at the output size (+0xee88 / +0xee8c), and at the end the game's own upscale shader ps_upsample_p scales back to the output size.
-// The startup flow does not call 0x8582f0, so it must be called once proactively; the call site must be where the game main thread fetches system notifications, the same context in which the game itself handles mode switches
-// (calling it inside the present HLE self-deadlocks: the render lock is already held by the present path).
-// Default: iOS 0.75, Mac host 1.0 (the screen baselines were recorded at 1.0); DM_3D_SCALE=0.5–1.0 overrides.
-// During the visual ruler's reference phase (A / B of DM_NVN_RULER=1) it is forced to 1.0 and takes effect only after switching to the mode under test.
-// Dynamic scale (system throttling looks at utilization and the thermal level is only a coarse signal → adjust by actual dropped frames): the controller consumes the actual present intervals reported by the present thread
-// (same source as perf.txt), three levels: configured value (0.75) → 0.72 → 0.70; floor 0.70 (0.65 is visibly different). Rules: see scale3d_ctl_step.
-// Switches: DM_3D_SCALE_DYN=0 disables it; DM_THERMAL_NOFALLBACK=1 (power / frame-time measurement) also disables it, since the scale must be pinned during measurement.
-// DM_3D_SCALE_DYN_INJECT=start frame-end frame (counted by dm_nvn_frame_count): diagnostics; within that frame range every interval fed to the controller is treated as two periods (dropped), outside it as one period
-// (the Mac has no present timestamps, so this verifies the whole downgrade / recovery chain). Active only in-game (no judging outside a game); the first level drops after a full 10 s (5 windows).
+// The resolution-change function main+0x8582f0(output width, output height) -> main+0x1627ef0 rebuilds the 3D targets at "scale x output size"
+// (+0xee78 / +0xee7c), while the UI layer and Final Result are still built at the output size (+0xee88 / +0xee8c), and at the end the game's own upscale
+// shader ps_upsample_p (or MetalFX, nvn_mtl.m mfx3d_draw) scales back to the output size.
+// The startup flow does not call 0x8582f0, so it must be called once proactively; the call site must be where the game main thread fetches system
+// notifications, the same context in which the game itself handles mode switches (calling it inside the present HLE self-deadlocks: the render lock is
+// already held by the present path).
+// The configured value: DM_3D_SCALE=0.5-1.0, else the 3D Resolution setting (dm_video.c), else 0.75 on phones and 1.0 on the Mac host. During the
+// visual ruler's reference phase (A / B of DM_NVN_RULER=1) it is forced to 1.0 and takes effect only after switching to the mode under test.
+// Frame Drops (the dynamic scale, on with Frame Drops = Lower; Keep pins the configured value): the controller judges the actual on-screen present
+// intervals hle_nvn.c reports for every present (diag.c dm_perf_present, the same source as perf.txt and the perf event), on the Mac as on iOS. Its
+// levels are up to three steps of x0.93 below the configured value, never below 50% (dm_s3lv.h): 0.70 / 0.65 / 0.60 at 75%, 0.93 / 0.86 / 0.80 at
+// 100%, none at 50%. Its rules: scale3d_ctl_step; frames not shown, loading screens and gaps in the presents: dm_3d_scale_feed.
+// Switches: DM_3D_SCALE_DYN=0 disables it; DM_THERMAL_NOFALLBACK=1 (power / frame-time measurement) also disables it, since the scale must be pinned
+// while measuring. DM_3D_SCALE_FLOOR=<scale> allows deeper levels for device sweeps (up to 12, never below 50%).
+// DM_3D_SCALE_DYN_INJECT=<a>-<b> (frames counted by dm_nvn_frame_count) tests the whole step-down / step-up chain: in that range every interval fed to
+// the controller counts as two periods (a drop), outside it as one; +<a>-<b> counts from the first frame the controller judges in a game
+// (s3_inject_parse). It acts only in a game, and the first step comes after a full 10 s (5 windows). While it is set, Keep does not stop the controller
+// unless DM_TEST_Q3D=1 says so (s3_qmode), so an injection run steps on the Mac too.
 #include <TargetConditionals.h>
-// 3D 比例的档位表：0 档 = 配置值（iPhone 0.75），往下依次是表里低于配置值的各档（每档 0.05）；下限由 DM_3D_SCALE_FLOOR（缺省见 S3_FLOOR_DEF）截断。
-// 配置值 0.75 时档位仍是 0.75 / 0.70 / 0.65 / 0.60；配得更高（如 DM_3D_SCALE=0.85）时中间多出 0.80、0.75 两档，重场景一档档往下退。只动 3D 渲染比例，界面和文字不降
-// 3D scale level table: level 0 = configured value (iPhone 0.75), then in order the table's scales below the configured value (0.05 apart); the floor is clamped by DM_3D_SCALE_FLOOR (default: see S3_FLOOR_DEF).
-// With the configured 0.75 the levels stay 0.75 / 0.70 / 0.65 / 0.60; a higher setting (e.g. DM_3D_SCALE=0.85) gains 0.80 and 0.75 in between, so heavy scenes step down one level at a time. Only the 3D render scale changes; UI and text are not lowered
-static const float g_s3_levels[] = {0.95f, 0.90f, 0.85f, 0.80f, 0.75f, 0.70f, 0.65f, 0.60f, 0.55f, 0.50f};
-#define S3_NLV ((int)(sizeof g_s3_levels / sizeof g_s3_levels[0]))
-// 第 lv 档的比例：0 = 配置值，lv ≥ 1 = 表里第 lv 个低于配置值的比例（超出取最低的那个）
-// Scale of level lv: 0 = configured value, lv >= 1 = the lv-th table scale below the configured value (past the end: the lowest)
-static float s3_level_scale(float cfg, int lv) {
-    float last = cfg; int n = 0; if (lv <= 0) return cfg;
-    for (int k = 0; k < S3_NLV; k++) if (g_s3_levels[k] < cfg - 1e-4f) { last = g_s3_levels[k]; if (++n == lv) return last; }
-    return last;
-}
-// 最深一档：表里低于配置值、不低于下限的档数
-// Deepest level: the number of table scales below the configured value and not below the floor
-static int s3_max_level(float cfg, float floor) {
-    int n = 0; for (int k = 0; k < S3_NLV; k++) if (g_s3_levels[k] < cfg - 1e-4f && g_s3_levels[k] >= floor - 1e-4f) n++;
-    return n;
-}
+#include "dm_s3lv.h"
+// The scale of level lv and the deepest level for a configured value (dm_s3lv.h); floor_env = DM_3D_SCALE_FLOOR, 0 when unset
+static float s3_level_scale(float cfg, int lv) { return dm_s3_level_scale(cfg, lv); }
+static int s3_max_level(float cfg, float floor_env) { return dm_s3_max_level(cfg, floor_env); }
 // 配置值：DM_3D_SCALE（0.5–1.0，读一次），否则 iOS 选项页的「3D 清晰度」，再否则缺省手机 0.75、Mac 宿主 1.0
 // Configured value: DM_3D_SCALE (0.5–1.0, read once), else the iOS options page's "3D Resolution", else the default: 0.75 on phones, 1.0 on the Mac host
 __attribute__((weak)) float dm_video_scale3d(void) { return 0; }   // 宿主 dm_video.c 给强定义（手机选项页「3D 清晰度」）；单测不链它时恒 0 | the host's dm_video.c gives the strong definition (phone options page "3D Resolution"); 0 when a unit test does not link it
@@ -188,7 +168,6 @@ static float s3_cfg(void) {   // 配置的 3D 比例：DM_3D_SCALE 定死；没�
     if (g_s3_env > 0) return g_s3_env;
     float v = dm_video_scale3d(); return v >= 0.5f && v <= 1.0f ? v : DM_PHONE ? 0.75f : 1.0f;
 }
-#define S3_FLOOR_DEF 0.60f   // 待真机扫档（热机稳态最后 30 秒掉帧 ≤ 1%）定 | To be set by a device level sweep (dropped frames ≤ 1% in the last 30 s of warm steady state)
 // Pure-function controller (the unit test t_oe.c feeds it sequences directly): level 0 = the configured value, higher = lower. It judges only what
 // reached the screen:
 // - A dropped frame = a present interval over 1.5 x the pacer's frame period + 0.25 ms (25.25 ms at 60 fps), or a frame not shown (-1); one window
@@ -257,10 +236,9 @@ static int scale3d_ctl_step(scale3d_ctl *c, double iv_ms, uint64_t now) {   // r
     else c->good_run = 0;
     return c->level;
 }
-// 配置值变了（手机选项页「3D 清晰度」点了「应用」）：最深一档按新配置值和下限重算，回到 0 档（新配置值）并停判 3 秒——
-// 档位是相对配置值数的，旧的最深档套在新配置上会越过下限（100% → 75% 时能降到 0.50）或降不够（75% → 100% 时最低只到 0.85）。
-// The configured value changed (the phone options page's "3D Resolution" was applied): recompute the deepest level from the new value and the floor, go back to level 0 (the new value) and pause judging for 3 s.
-// Levels count down from the configured value, so the old deepest level applied to a new value goes past the floor (100% → 75% could drop to 0.50) or not far enough (75% → 100% only reached 0.85).
+// The configured value changed (the 3D Resolution setting was applied), or Frame Drops went from Keep back to Lower: recompute the deepest level for
+// the value, go back to level 0 (the value itself) and pause judging for 3 s with the history cleared. Levels are relative to the configured value,
+// so an old level kept across a change would be a different scale.
 static void scale3d_ctl_retarget(scale3d_ctl *c, float cfg, float floor, uint64_t now) {
     c->max_level = s3_max_level(cfg, floor); c->level = 0; c->last_up = 0; c->need_good = 0; scale3d_ctl_hold(c, now, 3 * S3_SEC);
 }
@@ -339,7 +317,7 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     s3_feed_state *f = &g_s3f; scale3d_ctl *c = &f->c;
     if (f->on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); f->on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
         if (j) f->inj_rel = s3_inject_parse(j, &f->inj0, &f->inj1);
-        const char *fe = getenv("DM_3D_SCALE_FLOOR"); f->fl = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
+        const char *fe = getenv("DM_3D_SCALE_FLOOR"); f->fl = fe ? strtof(fe, NULL) : 0;   // a deeper floor for device sweeps (dm_s3_max_level); 0 = the levels of dm_s3lv.h
         f->cfg_at = s3_cfg(); c->max_level = s3_max_level(f->cfg_at, f->fl);
         { double nvn_frame_period_ms(void); c->period_ms = nvn_frame_period_ms(); }   // the period at the first frame is no change (no 2 s hold)
         LOG("3D 比例控制：%s，配置 %.2f，下限 %.2f（第 %d 档）", f->on ? "开" : "关", f->cfg_at, s3_level_scale(f->cfg_at, c->max_level), c->max_level); }
