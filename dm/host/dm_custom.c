@@ -48,6 +48,8 @@ static const int k_def[NK] = { 0,
 // Mac App's recommendation) until the player picks the other value. A version-1 file's q3d that equals the old default (k_def) follows today's default
 // instead. Older builds skip the custom_v line as an unknown key, so going back a version is safe
 #define CUSTOM_V 2
+// The custom_v saved: CUSTOM_V, or a newer file's own, so an older build never stamps its format onto a newer file (as sw_video.txt keeps a newer rec_v)
+static _Atomic int g_cv_keep = CUSTOM_V;
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
 #define K_Q3D (7 + VOICE_ROW)
 #define K_TOUCH_SWAP (8 + VOICE_ROW)
@@ -101,6 +103,7 @@ static void load_once(void) {
 #endif
     }
     if (f) fclose(f);
+    atomic_store(&g_cv_keep, cv > CUSTOM_V ? cv : CUSTOM_V);
     // An older file saved q3d with every key, at the default of its day (k_def: keep on the Mac, lower on phones): that value follows today's default
     // (the Mac App's recommendation). Only a value that differs from both the old and today's default is the player's own choice
     if (q3d_file >= 0 && cv < CUSTOM_V && q3d_file == k_def[K_Q3D] && q3d_file != def_of(K_Q3D)) { v[K_Q3D] = def_of(K_Q3D);
@@ -138,7 +141,7 @@ int dm_custom_default(const char *key) { int i = key_index(key); return i >= 0 ?
 int dm_fps_setting(void) { return dm_custom_get("eco_fps") ? 30 : 60; }   // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义） | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol)
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
-    snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL && fprintf(f, "custom_v=%d\n", CUSTOM_V) > 0;
+    snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL && fprintf(f, "custom_v=%d\n", atomic_load(&g_cv_keep)) > 0;
     for (int i = 0; ok && i < NK; i++) {
         if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue;   // lang and voice are written only after the player picked them
         if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue;

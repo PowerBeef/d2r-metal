@@ -79,6 +79,12 @@ int main(void) {
     CHECK(r.bright == 1 && strstr(r.file, "bright=0\n"), "(c8) bright: default on (%d), saved off\n%s", r.bright, r.file);
     r = run("custom_v=2\nbright=0\n", 0, NULL, 0);
     CHECK(r.bright == 0, "(c8) bright=0 read back, got %d", r.bright);
+    // (c9) a newer build's file (custom_v 3): an Apply here keeps its custom_v, as sw_video.txt keeps a newer rec_v, so this build never claims a
+    //      newer file's format as its own; junk or an older custom_v is saved as this build's 2
+    r = run("custom_v=3\neco_fps=0\n", 0, "eco_fps", 1);
+    CHECK(strstr(r.file, "custom_v=3\n") == r.file && strstr(r.file, "eco_fps=1\n"), "(c9) custom_v 3 kept by an Apply\n%s", r.file);
+    r = run("custom_v=x\neco_fps=0\n", 0, "eco_fps", 1);
+    CHECK(strstr(r.file, "custom_v=2\n") == r.file, "(c9) custom_v junk: saved as 2\n%s", r.file);
     file_put(NULL); rmdir(g_tdir);
     printf("t_custom: %d checks, %d failed\n", checks, fails);
     return fails != 0;
