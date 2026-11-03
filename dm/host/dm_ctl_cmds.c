@@ -411,6 +411,35 @@ static int cmd_tap_unit(const ctl_args *a, char *out, size_t cap, char *err, siz
     dm_json_fields(out, cap, "x:f y:f target:s", (double)xy[0], (double)xy[1], r >= 0 && r <= 4 ? kind[r] : "?");
     return 1;
 }
+// act do=use_unit type=<t> cls=<c> [btn=left|right] [hold=<s>] [timeout=10]: use a unit the way the live control scheme does, for the scheme-neutral
+// scenario steps (scenario.py use_unit). PC interface: the PC mouse goes to the unit's point in the picture and presses there (dm_kbm.c: the game's own
+// hover target, press / held / release), holding `hold` seconds; console interface (controller or touch): a world tap on it (dm_world_tap: walk up and
+// interact, as a touch tap does). Reply: x, y (the unit in the picture), scheme (pc / console), target (what a world tap reached; pc: the button)
+static int cmd_act(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *what = dm_ctl_get(a, "do"), *ts = dm_ctl_get(a, "type"), *cs = dm_ctl_get(a, "cls"), *bs = dm_ctl_get(a, "btn"); float xy[2];
+    if (!what || strcmp(what, "use_unit")) ERR("do must be use_unit");
+    if (!ts || !cs) ERR("missing type / cls");
+    int btn = !bs || !strcmp(bs, "left") ? 0 : !strcmp(bs, "right") ? 1 : -1; if (btn < 0) ERR("btn must be left or right");
+    dm_world_watch(atoi(ts), (uint32_t)(strcmp(cs, "any") ? strtoul(cs, NULL, 0) : 0xffffff));
+    int ok = wait_until(c_unit_seen, xy, dm_ctl_num(a, "timeout", 10)); dm_world_watch(-1, 0);
+    if (!ok) ERR("no unit type %s class %s on screen", ts, cs);
+    if (dm_kbm_live()) {
+        // the PC layer takes points in the interface rectangle: x spans the picture, y is the picture's y mapped into the 16:9 band (16:10 screens)
+        int rx, ry, rw, rh, sw = 0, sh = 0; dm_ui_rect(&rx, &ry, &rw, &rh);
+        float uy = dm_screen_real(&sw, &sh) && sh > 0 && rh > 0 ? (xy[1] * sh - ry) / rh : xy[1];
+        dm_kbm_mouse(0, xy[0], uy, 0, 0); wait_frames(3, 5);   // hover first: the press takes the game's hover target
+        dm_kbm_mouse(1, xy[0], uy, btn, 0);
+        double hold = dm_ctl_num(a, "hold", 0); if (hold > 0) usleep((useconds_t)(hold * 1e6)); else wait_frames(3, 5);
+        dm_kbm_mouse(2, xy[0], uy, btn, 0); wait_frames(2, 5);
+        dm_json_fields(out, cap, "x:f y:f scheme:s target:s", (double)xy[0], (double)xy[1], "pc", btn ? "right" : "left");
+        return 1;
+    }
+    unsigned seq = dm_world_tap(xy[0], xy[1]);
+    if (!wait_until(c_tap_done, &seq, 3)) ERR("tap not handled within 3 s");
+    static const char *kind[] = {"none", "item", "npc", "object", "exit"}; int r = dm_world_tap_result(seq);
+    dm_json_fields(out, cap, "x:f y:f scheme:s target:s", (double)xy[0], (double)xy[1], "console", r >= 0 && r <= 4 ? kind[r] : "?");
+    return 1;
+}
 // app do=background|foreground|resign|active|minimize|restore|terminate：前端生命周期（见 dm_ctl.h g_dm_ctl_app_fn） | app do=...: front-end lifecycle (see g_dm_ctl_app_fn in dm_ctl.h)
 static int cmd_app(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     const char *w = dm_ctl_get(a, "do"); (void)out; (void)cap;
@@ -499,6 +528,7 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("tap_ui", cmd_tap_ui);
     dm_ctl_register("await_ui", cmd_await_ui);
     dm_ctl_register("tap_unit", cmd_tap_unit);
+    dm_ctl_register("act", cmd_act);
     dm_ctl_register("app", cmd_app);
     dm_ctl_register("mark", cmd_mark);
     dm_ctl_register("crash", cmd_crash);
