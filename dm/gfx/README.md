@@ -145,6 +145,7 @@ Resource locations:
 | `DM_PSO_MANIFEST=path` or `off` | `path`: warm only that manifest (the player's `pso_user.tsv` is then neither warmed nor used for dedupe); `off`: no warm-up |
 | `DM_PSO_USER=path` or `off` | The user manifest (default `pso_user.tsv` beside the save folder): shaders and pipelines this machine had to build while drawing, warmed at the next launch; `off` = neither read nor written |
 | `DM_PSO_WARM_WORKERS=1`–`4` | Workers building the warm-up plan in priority order (default 2) |
+| `DM_PSO_PREDICT=0`, `1` | The parallel precompile (predicted pipelines compiled in the background): `0` off, `1` always on; default auto, off for the rest of the run once at least 24 predictions are resolved and fewer than 10% were taken |
 | `DM_PSO_RECORD=path` | Appends the shaders and pipelines used in this run to a file, for re-recording the warm-up manifest |
 
 Logging and capture:

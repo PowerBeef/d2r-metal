@@ -2952,11 +2952,35 @@ static void pso_key_fill(pso_key *k, NvShader *vs, NvShader *fs, id<MTLFunction>
 // An entry still compiling in the background is left alone (the background block writes back by slot index). The counters g_pp_aged (recycled) / g_pp_full (not kicked, table full) go into the DM_BOOTPROF line.
 #define PSO_PEND_MAX 384
 #define PSO_PEND_AGE 8   // 丢出后过这么多次提交仍没人领就回收：预测只覆盖本次提交余下的绘制，多留几次提交给隔一两帧才走到的同一绘制 | recycle when still untaken this many submissions after the kick: a prediction only covers the rest of its own submission, and a few more submissions leave room for the same draw reached a frame or two later
-static struct { pso_key k; id<MTLRenderPipelineState> ps; uint64_t ser; int used, done; } g_pp[PSO_PEND_MAX];   // ser：丢出时的提交序号 | ser: submission serial at the kick
+static struct { pso_key k; id<MTLRenderPipelineState> ps; uint64_t ser; int used, done, merged; } g_pp[PSO_PEND_MAX];   // ser: submission serial at the kick; merged: its program later drew in a merged pass
 static pthread_mutex_t g_pp_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_pp_cv = PTHREAD_COND_INITIALIZER;
 static uint64_t g_pp_submit_mark, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full;   // 本次提交是否已预测过（按提交序号）；累计丢出 / 领用 / 过期回收 / 表满没丢的条数 | Whether this submission has already been predicted (by submission serial); cumulative kicked / taken / recycled as stale / not kicked because the table was full counts
 static int g_pp_live;   // 表里占着的槽数（只在提交线程上改，持 g_pp_mu） | Slots in use (changed only on the submit thread, under g_pp_mu)
 static void pso_predict_rest(void);
+// The predictor turns itself off when its predictions go unused: measured runs take 1-4% of them (likely because most passes now draw as merged
+// passes, whose keys the scan cannot predict; not confirmed), so the background compiles cost CPU and heat for nothing. Auto mode (default): once at least
+// PSO_PREDICT_MIN predictions are resolved (taken + recycled untaken) and fewer than 10% were taken, it is off for the rest of the run.
+// DM_PSO_PREDICT=1 keeps it always on (the old behaviour), 0 turns it off. g_pp_merged counts untaken predictions whose program later missed in a
+// merged pass, to tell how much of the waste that explains
+#define PSO_PREDICT_MIN 24
+static int g_pp_mode = -1, g_pp_off;   // mode 0 never, 1 always, 2 auto; g_pp_off: auto mode has switched it off (sticky)
+static uint64_t g_pp_merged;
+static int pso_predict_on(uint64_t taken, uint64_t aged) { uint64_t resolved = taken + aged; return resolved < PSO_PREDICT_MIN || taken * 10 >= resolved; }
+static int pso_predict_allowed(void) {
+    if (g_pp_mode < 0) { const char *e = getenv("DM_PSO_PREDICT"); g_pp_mode = e && !strcmp(e, "0") ? 0 : e && !strcmp(e, "1") ? 1 : 2; }
+    if (g_pp_mode != 2) return g_pp_mode;
+    if (g_pp_off) return 0;
+    if (pso_predict_on(g_pp_taken, g_pp_aged)) return 1;
+    g_pp_off = 1;
+    MLOG("parallel precompile off for this run: %llu of %llu resolved predictions taken (kicked %llu, not kicked because the table was full %llu; untaken ones whose program later drew in a merged pass %llu)",
+         (unsigned long long)g_pp_taken, (unsigned long long)(g_pp_taken + g_pp_aged), (unsigned long long)g_pp_kicked, (unsigned long long)g_pp_full, (unsigned long long)g_pp_merged);
+    return 0;
+}
+static void pso_pend_note_merged(void *vs, void *fs) {   // submit thread, on a synchronous miss in a merged pass (rare): flag the untaken predictions of that program
+    pthread_mutex_lock(&g_pp_mu);
+    for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && !g_pp[i].merged && g_pp[i].k.vs == vs && g_pp[i].k.fs == fs) { g_pp[i].merged = 1; g_pp_merged++; }
+    pthread_mutex_unlock(&g_pp_mu);
+}
 static int pso_pend_find(const pso_key *k) { for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && !memcmp(&g_pp[i].k, k, sizeof *k)) return i; return -1; }
 static void pso_pend_age(void) {   // 提交开头（提交线程）调：回收过期没人领的预测 | Called at the start of a submission (submit thread): recycle stale untaken predictions
     if (!g_pp_live) return;
@@ -2977,7 +3001,7 @@ static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // �
         for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].done && g_pp[i].ser < g_sub_serial && (slot < 0 || g_pp[i].ser < g_pp[slot].ser)) slot = i;
         if (slot >= 0) { g_pp[slot].ps = nil; g_pp[slot].used = 0; g_pp_live--; g_pp_aged++; } else g_pp_full++;
     }
-    if (at < 0 && slot >= 0) { g_pp[slot].k = *k; g_pp[slot].ps = nil; g_pp[slot].ser = g_sub_serial; g_pp[slot].done = 0; g_pp[slot].used = 1; g_pp_live++; }
+    if (at < 0 && slot >= 0) { g_pp[slot].k = *k; g_pp[slot].ps = nil; g_pp[slot].ser = g_sub_serial; g_pp[slot].done = 0; g_pp[slot].merged = 0; g_pp[slot].used = 1; g_pp_live++; }
     pthread_mutex_unlock(&g_pp_mu);
     if (at >= 0 || slot < 0) return;
     MTLRenderPipelineDescriptor *d = pso_desc(k, vs, fs, nil, 0); g_pp_kicked++;
@@ -3003,6 +3027,7 @@ static __unsafe_unretained id<MTLRenderPipelineState> pso_get(NvProg *pr, MTLRen
     id<MTLRenderPipelineState> ps;
     NSError *e = nil; uint64_t bt = bp_now();
     ps = g_pso_lmap ? nil : pso_pend_take(&k);
+    if (g_pso_lmap) pso_pend_note_merged((__bridge void *)vs, (__bridge void *)fs);
     if (ps) g_pp_taken++;
     else {
         if (g_pp_submit_mark != g_sub_serial) { g_pp_submit_mark = g_sub_serial; pso_predict_rest(); }   // 本次提交第一次缺：先把后面的丢出去并行编，再同步编眼前这条 | First miss in this submission: first kick the later ones out to compile in parallel, then synchronously compile the one at hand
@@ -3747,6 +3772,7 @@ static void rt_sub(const p_set_rt *r, int k, uint64_t *ser, int *lv, int *sl);
 // Prediction for parallel precompilation (see the note before pso_get): scan from after the current operation to the end of this submit, replaying only state; at a draw, compute the pipeline key from "the state at that time + that render pass's attachment formats" and dispatch those not yet built to the background.
 // Whether a render pass actually attaches depth / stencil is only decided at replay (depth-only / stencil-only / neither attached are omitted), so one key is computed for each possible attach mode -- guessing too many only means wasted background compiles and does not affect the result.
 static void pso_predict_rest(void) {
+    if (!pso_predict_allowed()) return;
     if (!g_exec_next) return;
     static typeof(S) Ssave; memcpy(&Ssave, &S, sizeof S);
     p_scissor sc0 = R.sc; int has_sc0 = R.has_sc;   // 状态重放里的 OP_SCISSOR 写 R.sc（剪裁不在 S 里），扫完一并恢复，否则眼前这次绘制用上后面的剪裁 | OP_SCISSOR in the state replay writes R.sc (the scissor is not in S); restore it after the scan too, otherwise the draw at hand uses a later scissor
@@ -6667,10 +6693,10 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     if (bootprof() && (g_present_n == 1 || g_present_n % 120 == 0)) {
         if (g_present_n == 1) g_bp_first_present = bp_now() - g_bp_t0;
         MLOG("[bootprof] t=%.3f s 出图第 %llu 次：metallib 载入 %llu 个 / %.1f ms；管线创建 %llu 个 / %.1f ms（均在提交线程同步）；预热领用 着色器 %llu / 渲染管线 %llu / 计算管线 %llu；"
-             "贴图上传 %.1f MB / %llu 张首传 + %llu 次重传 / %.1f ms；首帧出图 t=%.3f s；并行预编 丢出 %llu / 领用 %llu / 过期回收 %llu / 表满没丢 %llu / 在表 %d", (bp_now() - g_bp_t0) / 1e9, g_present_n,
+             "贴图上传 %.1f MB / %llu 张首传 + %llu 次重传 / %.1f ms；首帧出图 t=%.3f s；并行预编 丢出 %llu / 领用 %llu / 过期回收 %llu / 表满没丢 %llu / 在表 %d；predictor %s, merged-draw kicks %llu", (bp_now() - g_bp_t0) / 1e9, g_present_n,
              g_bp_lib_n, g_bp_lib_ns / 1e6, g_bp_pso_n, g_bp_pso_ns / 1e6, g_warm_claim_shaders, g_warm_claim_rps, g_warm_claim_cps,
              g_bp_up_bytes / 1048576.0, g_pkg_uploads, g_pkg_reuploads,
-             g_up_total_ns / 1e6, g_bp_first_present / 1e9, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full, g_pp_live);
+             g_up_total_ns / 1e6, g_bp_first_present / 1e9, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full, g_pp_live, g_pp_mode == 0 || g_pp_off ? "off" : "on", g_pp_merged);
     }
     PD("X ser=%llu", t->serial);
     id<MTLTexture> src = tex_mtl(t);
