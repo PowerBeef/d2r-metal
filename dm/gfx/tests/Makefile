@@ -80,6 +80,8 @@ t_pso_pend: t_pso_pend.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_pend.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_skey.m -framework Foundation
+t_pso_warm: t_pso_warm.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_warm.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pfv.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_replay_fix: t_replay_fix.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -118,6 +120,7 @@ run: \
 	t_pso_pend \
 	t_pso_skey \
 	t_ratelog \
+	t_pso_warm \
 	t_refl \
 	t_refl_lib \
 	t_reorder_chain \
@@ -170,6 +173,7 @@ run: \
 	DM_NVN_UNWRITTEN_DC=0 MTL_DEBUG_LAYER=1 ./t_rt_range --sample-attachment --both-flags
 	./t_pso_skey
 	./t_pso_pend
+	./t_pso_warm
 	./t_mfx_life
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view

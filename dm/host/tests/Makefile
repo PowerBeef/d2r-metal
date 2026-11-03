@@ -87,6 +87,7 @@ run: \
 	python3 ../../tools/test_workspace_prune.py
 	python3 ../../tools/test_picture.py
 	python3 ../../tools/test_boothist.py
+	python3 ../../tools/test_pso_seed.py
 	python3 ../../tools/test_guestsyms.py
 	python3 ../../tools/re/test_nso2elf.py
 	python3 ../../tools/re/test_addrcheck.py

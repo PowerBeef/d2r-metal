@@ -1,7 +1,6 @@
-// 并行预编槽位回收单测：384 个槽被没人领的预测占满后，新提交里的预测仍能丢出（回收更早提交里已编完的最老一条），
-// 过了 PSO_PEND_AGE 次提交没人领的在提交开头被回收；同一次提交里丢满时不回收本次的（表满没丢计数 +1）。
 // Unit test for parallel precompile slot recycling: once the 384 slots are full of predictions nobody takes, a prediction in a new submission can still be kicked (the oldest finished entry from an earlier submission is recycled),
 // entries untaken for PSO_PEND_AGE submissions are recycled at the start of a submission; when the table fills within one submission, entries of that submission are not recycled (the not-kicked-table-full count goes up by 1).
+// The predictor's cutoff (pso_predict_on / pso_predict_allowed: auto, always, never), its [bootprof] label, and the merged-pass attribution of untaken predictions.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -60,4 +59,34 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     pthread_mutex_lock(&g_pp_mu); if (at >= 0) g_pp[at].done = 1; pthread_mutex_unlock(&g_pp_mu);
     g_sub_serial++; pso_pend_age();
     EXPECT("编完后下次提交开头回收", 0, (uint64_t)in_table(3000));
+    // The predictor's cutoff: on until 24 predictions are resolved, then only while at least 10% of them were taken
+    EXPECT("cutoff (0,0) on", 1, (uint64_t)pso_predict_on(0, 0)); EXPECT("cutoff (0,23) on", 1, (uint64_t)pso_predict_on(0, 23));
+    EXPECT("cutoff (0,24) off", 0, (uint64_t)pso_predict_on(0, 24)); EXPECT("cutoff (3,21) on", 1, (uint64_t)pso_predict_on(3, 21));
+    EXPECT("cutoff (2,25) off", 0, (uint64_t)pso_predict_on(2, 25)); EXPECT("cutoff (4,36) on", 1, (uint64_t)pso_predict_on(4, 36));
+    EXPECT("cutoff (4,37) off", 0, (uint64_t)pso_predict_on(4, 37));
+    g_pp_mode = 2; g_pp_off = 0; g_pp_taken = 2; g_pp_aged = 25;
+    EXPECT("auto: 2 of 27 taken switches it off", 0, (uint64_t)pso_predict_allowed()); EXPECT("auto: the switch is recorded", 1, (uint64_t)g_pp_off);
+    g_pp_taken = 100; EXPECT("auto: off stays off for the run", 0, (uint64_t)pso_predict_allowed());
+    g_pp_mode = 1; EXPECT("DM_PSO_PREDICT=1: always on", 1, (uint64_t)pso_predict_allowed());
+    g_pp_mode = 0; EXPECT("DM_PSO_PREDICT=0: never", 0, (uint64_t)pso_predict_allowed());
+    // The [bootprof] label reads DM_PSO_PREDICT itself, so it is right before the first miss has resolved the mode
+    setenv("DM_PSO_PREDICT", "0", 1); g_pp_mode = -1; g_pp_off = 0;
+    EXPECT("DM_PSO_PREDICT=0: the [bootprof] label is off before any miss", 1, (uint64_t)!strcmp(pso_predict_label(), "off"));
+    setenv("DM_PSO_PREDICT", "1", 1); g_pp_mode = -1;
+    EXPECT("DM_PSO_PREDICT=1: the label is on", 1, (uint64_t)!strcmp(pso_predict_label(), "on"));
+    unsetenv("DM_PSO_PREDICT"); g_pp_mode = -1;
+    EXPECT("auto: the label is on until it switches off", 1, (uint64_t)!strcmp(pso_predict_label(), "on"));
+    g_pp_off = 1; EXPECT("auto, switched off: the label is off", 1, (uint64_t)!strcmp(pso_predict_label(), "off")); g_pp_off = 0;
+    // The cutoff is judged when predictions age out, not only at the next miss
+    g_pp_mode = 1; g_sub_serial += 2 * PSO_PEND_AGE; pso_pend_age();
+    g_pp_mode = 2; g_pp_off = 0; g_pp_taken = g_pp_aged = 0;
+    for (int i = 0; i < 30; i++) kick(6000 + i);
+    wait_done(); g_sub_serial += PSO_PEND_AGE; pso_pend_age();
+    EXPECT("30 untaken predictions aged out: off at the start of that submission", 1, (uint64_t)g_pp_off);
+    // Attribution: an untaken prediction whose program then misses in a merged pass is counted once
+    g_pp_merged = 0; g_sub_serial += 2 * PSO_PEND_AGE; pso_pend_age();
+    kick(5000); wait_done();
+    pso_pend_note_merged((__bridge void *)t_vsh, (__bridge void *)t_fsh); EXPECT("merged-pass miss of a predicted program: counted", 1, g_pp_merged);
+    pso_pend_note_merged((__bridge void *)t_vsh, (__bridge void *)t_fsh); EXPECT("the same prediction again: not counted twice", 1, g_pp_merged);
+    pso_pend_note_merged((__bridge void *)t_fsh, (__bridge void *)t_vsh); EXPECT("another program: no match", 1, g_pp_merged);
     printf("== %d 项，失败 %d ==\n", count, fail); return fail != 0; } }

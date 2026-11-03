@@ -1,0 +1,4 @@
+# Reviewed pipeline-manifest rows that 'dm/tools/pso_seed.py check' and 'gate' accept although the warm-up seed (pso_manifest.tsv) lacks them.
+# A row goes here only after review, with a '# why' line right above it saying why it is not in the seed (for example a pipeline built once
+# by a diagnostic path). Rows use the manifest forms (S<TAB>shader key<TAB>stage, R<TAB>pso_skey hex, C<TAB>compute shader key); R rows are
+# compared after normalisation, so a row may be pasted as recorded. The warm-up never reads this file.

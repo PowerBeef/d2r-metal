@@ -75,6 +75,27 @@ int main(void) {
         CHECK(!r && [why containsString:@"build_manifest.psv"] && !g_romfs_title, "不是资源文件夹：原因与标题照旧 | not a resource folder: reason and title as before");
         [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
 
+        // The launcher's warm pass (no DM_SAVE) points the pipeline warm-up at the player's own manifest, in the folder a game start uses
+        {
+            const char *keep[] = {"DM_APP_SUPPORT", "DM_SAVE", "DM_PSO_USER"}; char *was[3];
+            for (int i = 0; i < 3; i++) { const char *v = getenv(keep[i]); was[i] = v ? strdup(v) : NULL; }
+            NSString *sup = [NSTemporaryDirectory() stringByAppendingPathComponent:@"sup"];
+            setenv("DM_APP_SUPPORT", sup.fileSystemRepresentation, 1); unsetenv("DM_SAVE"); unsetenv("DM_PSO_USER");
+            warm_pso_user_env();
+            CHECK(getenv("DM_PSO_USER") && [@(getenv("DM_PSO_USER")) isEqualToString:[sup stringByAppendingPathComponent:@"pso_user.tsv"]], "warm pass: DM_PSO_USER = <support folder>/pso_user.tsv (%s)", getenv("DM_PSO_USER") ?: "unset");
+            setenv("DM_PSO_USER", "/x/given.tsv", 1); warm_pso_user_env();
+            CHECK(!strcmp(getenv("DM_PSO_USER"), "/x/given.tsv"), "warm pass: a given DM_PSO_USER stays");
+            unsetenv("DM_PSO_USER"); setenv("DM_SAVE", "/y/save", 1); warm_pso_user_env();
+            CHECK(!getenv("DM_PSO_USER"), "warm pass: with DM_SAVE set the warm-up finds the manifest itself (DM_PSO_USER stays unset)");
+            unsetenv("DM_SAVE"); setenv("DM_APP_SUPPORT", "", 1); warm_pso_user_env();
+            CHECK([app_support_dir() isEqualToString:@""] && !getenv("DM_PSO_USER"), "DM_APP_SUPPORT set but empty: the support folder is \"\" as before, and no DM_PSO_USER");
+            unsetenv("DM_APP_SUPPORT"); warm_pso_user_env();
+            NSString *real = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/" APP_NAME];
+            CHECK([app_support_dir() isEqualToString:real] && getenv("DM_PSO_USER") && [@(getenv("DM_PSO_USER")) isEqualToString:[real stringByAppendingPathComponent:@"pso_user.tsv"]],
+                  "no DM_APP_SUPPORT: the player's support folder and its pso_user.tsv (%s)", getenv("DM_PSO_USER") ?: "unset");
+            for (int i = 0; i < 3; i++) { if (was[i]) { setenv(keep[i], was[i], 1); free(was[i]); } else unsetenv(keep[i]); }
+        }
+
         // 更新检查：两个入口同时到（启动时的后台队列 + 游戏线程的选角页回调），另一个线程一直在点「更新」 | update check: both entry points at once (the launch background queue + the game thread's character-select callback), while another thread keeps tapping "Update"
         setenv("DM_TEST_UPDATE_NOOPEN", "1", 1); g_upd_url = @"http://dmtest.invalid/latest_mac.json"; g_upd_own = 1;
         dispatch_group_t g = dispatch_group_create();

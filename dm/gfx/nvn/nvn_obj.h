@@ -177,7 +177,11 @@ void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads);
 uint64_t mtl_pkg_miss(void);
 uint64_t mtl_upload_ns_take(void);   // 取走并清零：上次以来提交线程上预排布贴图上传耗时   // DM_NVN_DIRTYCHECK 诊断：漏检次数   // 预排布贴图：首传次数、因池内容变化而重传次数 | Take and zero: time spent uploading packaged textures on the submit thread since last time   // DM_NVN_DIRTYCHECK diagnostic: number of missed detections   // Packaged textures: number of first uploads, number of re-uploads due to pool content changes
 uint64_t mtl_upload_gpu_ns_take(void);   // 取走并清零：上传命令缓冲的显卡执行耗时（GPUEndTime − GPUStartTime 累加） | Take and zero: GPU execution time of upload command buffers (sum of GPUEndTime − GPUStartTime)
-void mtl_create_stats(uint64_t *lib, uint64_t *pso);   // 累计：提交线程上同步载入的着色器库数、同步新建的渲染 + 计算管线数（预热领用的不算） | Cumulative: number of shader libraries loaded synchronously on the submit thread, number of render + compute pipelines created synchronously (those taken from warm-up do not count)
+// Cumulative, game shaders and pipelines only: shader libraries loaded and render + compute pipelines built while a frame waited for them: synchronous
+// builds on the submit thread and pipelines the submit thread took from the parallel precompile (it waited for the rest of their compile). Pipelines
+// taken from the warm-up do not count; the host's own passes are counted apart (mtl_host_create_stats)
+void mtl_create_stats(uint64_t *lib, uint64_t *pso);
+void mtl_host_create_stats(uint64_t *lib, uint64_t *pso, uint64_t *lib_ns, uint64_t *pso_ns);   // the host's own pass builds: libraries, pipelines and their total times
 // CPU 读贴图：level / layer0 起，按 row / img 字节步长写进 dst
 // CPU texture read: starting at level / layer0, written into dst with row / img byte strides
 void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, uint8_t *dst, size_t row, size_t img);
