@@ -11,10 +11,13 @@
 #endif
 // Phone product (iOS): the package players install -- touch default settings, real sound, performance logging, 3D render scale etc. are on by default; the counterpart is the Mac development host (gates / A-B comparisons, all off by default).
 // It only means "product defaults"; branches that truly depend on the iOS system (embedded signed code segments, CoreFoundation, etc.) still use TARGET_OS_IPHONE.
+// A test may build the phone branches on the Mac with -DDM_PHONE=1 (t_video_phone).
+#ifndef DM_PHONE
 #if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
 #define DM_PHONE 1
 #else
 #define DM_PHONE 0
+#endif
 #endif
 
 #define MAX_MOD 8
