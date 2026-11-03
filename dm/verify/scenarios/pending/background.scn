@@ -1,0 +1,21 @@
+# To the background and back (on the Mac = minimize then restore; on iOS = the same scene events as DM_TEST_BG): after returning the run is still there, the player can move, no red markers
+# Pending version of dm/verify/scenarios/background.scn with the present-time checks (S3D-1): after the return, present readings come back
+# (perf blind=false) and Frame Drops does not step down (no scale3d lv=1; DM_TEST_Q3D=0 turns the controller on). The first perf window after the
+# return still holds frames from before it, so the log step separates the two expects. On ios-mac the iOS background save wait discards presents,
+# and the unfixed lookup reads "no reading" from then on: RED there by design until the fix, which replaces background.scn with this file.
+name background
+save warlock
+timeout 180
+env DM_TEST_Q3D=0
+
+enter_game
+background for=3
+stick 1 0 frames=30
+expect_state in_game=true dead=false
+expect perf timeout=25
+log skip the first window after returning: it still holds frames from before the background
+expect perf blind=false timeout=25
+quit
+check no_red
+check no_red_log
+check no_event scale3d lv=1
