@@ -8,7 +8,7 @@ DM_3D_SCALE_GPU_FLOOR	host	host/hle_oe.c	-
 DM_AA_MODE	host	host/hle_oe.c	-
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
-DM_APP	host	host/app_mac.m host/dm_bright.c host/dm_padmode.c host/front_mac.m	-
+DM_APP	host	host/app_mac.m host/dm_bright.c host/dm_padmode.c host/front_mac.m …	-
 DM_APP_POOL_ADD_MB	host	host/hle_svc.c	-
 DM_APP_ROMFS	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	-
 DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/dm_padmode.c host/front_mac.m	y
@@ -31,7 +31,7 @@ DM_BINDING_DIAG	ios	ios/Sources/dm_touch_game_bridge.c	-
 DM_BOOTPROF	gfx,host,ios	gfx/nvn/nvn_mtl.m host/main.c ios/Sources/bootprof_ios.m	y
 DM_BREAK_AT_TICK	host	host/diag.c	y
 DM_BRIGHTNESS	ios	ios/Sources/front_ios.m	-
-DM_BRIGHT_K	host	host/dm_bright.c	y
+DM_BRIGHT_K	host	host/dm_bright.c host/tests/t_bright.c	y
 DM_BRIGHT_TRACE	host	host/dm_bright.c	-
 DM_BUILD_NUMBER	ios-tools	ios/project.yml	-
 DM_BUNDLE_ID	ios-tools	ios/project.yml ios/run.sh ios/tools/bootprof.sh ios/tools/frame_cmp.sh …	y
@@ -295,7 +295,7 @@ DM_STATE	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	-
 DM_STATEREP	host	host/dm_staterep.m	y
 DM_SVC	host	host/main.c	y
 DM_SYMCHECK	host	host/loader.c	-
-DM_TABLES	host	host/app_mac.m host/dm_tables.h	-
+DM_TABLES	host	host/app_mac.m host/dm_tables.h host/tests/t_bright.c	-
 DM_TACTCHK	host	host/hle_tact.c	-
 DM_TACT_PREFETCH	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_LAG	host	host/hle_tact.c	-

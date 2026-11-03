@@ -181,6 +181,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomTouchSwapNearHint", "沿传送门外侧弧线排布，松手后切换", "On the portal arc; release to switch", "En el arco del portal; suelta y cambia", "En el arco del portal; suelta y cambia", "По дуге портала, отпустить — переключение", "포탈 호를 따라 배치, 손을 떼면 전환" },
     { "dmCustomTouchSwapFar", "换组键：技能区上方", "Skill-set switch: above skills", "Cambio de grupo: sobre habilidades", "Cambio de grupo: sobre habilidades", "Переключатель: над скиллами", "전환: 스킬 위" },
     { "dmCustomTouchSwapFarHint", "位于技能区左上，松手后切换", "Above-left of skills; release to switch", "Arriba-izq. de habilidades; suelta y cambia", "Arriba-izq. de habilidades; suelta y cambia", "Слева над скиллами, отпустить — переключение", "스킬 영역 왼쪽 위, 손을 떼면 전환" },
+    { "dmCustomBright", "暗处加亮", "Brighten dark areas", "Aclarar zonas oscuras", "Aclarar zonas oscuras", "Осветлять тёмные места", "어두운 곳 밝게" },
     { "dmVideoUpscale", "放大方式", "Upscaling", "Escalado", "Escalado", "Масштабирование", "업스케일링" },
     { "dmVideoUpStandard", "标准", "Standard", "Estándar", "Estándar", "Стандартное", "표준" },
     { "dmVideoUpMetalFX", "MetalFX", "MetalFX", "MetalFX", "MetalFX", "MetalFX", "MetalFX" },
