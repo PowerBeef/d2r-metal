@@ -86,6 +86,27 @@ static latch run_latch(const char *txt, const char *esh, const char *shsz, int n
     close(pp[1]); if (read(pp[0], &l, sizeof l) != (ssize_t)sizeof l) l.e1 = -9; close(pp[0]); waitpid(pid, NULL, 0); return l;
 }
 
+// The M cases' steps, run in the child after the load
+static void act_preset(result *x) { x->x[0] = preset_of(); }
+static void cancel(void) { dm_video_on_uimsg("OptionsPanelMessage", "CancelChanges", ""); }
+static void accept(void) { dm_video_on_uimsg("OptionsPanelMessage", "AcceptChanges", ""); }
+static void act_18b(result *x) {
+    apply_preset(P_PERF); static const int k[9] = { K_RES, K_UP, K_AA, K_S3D, K_ESH, K_SHQ, K_ANISO, K_MODE, K_COLOR };
+    for (int i = 0; i < 9; i++) x->x[i] = atomic_load(&g_pend[k[i]]);
+    x->x[9] = preset_of(); x->x[10] = dm_video_dirty(); cancel(); x->x[11] = preset_of(); x->x[12] = dm_video_dirty();
+}
+static void act_18c(result *x) { apply_preset(P_QUAL); x->x[0] = dm_video_dirty(); x->x[1] = preset_of(); cancel(); x->x[2] = preset_of(); }
+static void act_18d(result *x) { apply_preset(P_QUAL); accept(); x->x[0] = preset_of(); }
+static void act_18i(result *x) { apply_preset(P_PERF); x->x[0] = atomic_load(&g_pend[K_UP]); cancel(); apply_preset(P_QUAL); x->x[1] = atomic_load(&g_pend[K_UP]); }
+static void act_18e(result *x) { x->x[0] = preset_of(); apply_preset(P_REC); x->x[1] = atomic_load(&g_pend[K_MODE]); accept(); x->x[2] = g_full_calls; x->x[3] = preset_of(); }
+static void act_18f(result *x) {
+    g_tshown = 1; atomic_store(&g_crows, (1 << 10) | (1 << 11));   // the Video tab is on screen with its Frame Rate and Frame Drops rows
+    dm_video_on_uimsg("OptionsPanelMessage", "ResetToDefaults", "");
+    x->x[0] = atomic_load(&g_pend[K_MODE]); x->x[1] = g_cset[0]; x->x[2] = g_cset[1]; x->x[3] = preset_of(); accept();
+}
+static void act_18g(result *x) { (void)x; atomic_store(&g_pend[K_COLOR], 0); accept(); }
+static void act_18k(result *x) { x->x[0] = preset_of(); apply_preset(P_REC); x->x[1] = atomic_load(&g_pend[K_COLOR]); }
+
 int main(void) {
     snprintf(g_dir, sizeof g_dir, "%s/t_video.%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", getpid()); mkdir(g_dir, 0755);
     g_dm_event_fn = ev_rec;
@@ -128,10 +149,19 @@ int main(void) {
     r = run(FULL(0, 0, 0, 0, 0, 0) TAIL(0, 0, 0, 0, 0, 0));
     CHECK(r.v[0] == 1 && r.v[1] == 1 && r.v[2] == 1 && r.v[3] == 1 && r.v[4] == 3 && r.v[5] == 0 && r.v[6] == 0 && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) NEWREC),
           "(9) on the old recommendation: moved to 1/1/1 1/3/0 0, got %d/%d/%d %d/%d/%d %d\n%s", r.v[0], r.v[1], r.v[2], r.v[3], r.v[4], r.v[5], r.v[6], r.file);
-    // (10) old version, player changed a setting (mode=1 ≠ old recommendation 0): settings kept, only the recommendation updated
+    // (10) old version, Display Mode changed (mode=1 ≠ old recommendation 0) but every graphics key on the old Recommended: Display Mode and Color are
+    // display preferences that never decide "on Recommended" (pref_key), so the graphics keys move to the new recommendation and mode stays
     r = run(FULL(1, 0, 0, 0, 0, 0) TAIL(0, 0, 0, 0, 0, 0));
-    CHECK(r.v[0] == 1 && r.v[1] == 0 && r.v[2] == 0 && r.v[3] == 0 && r.v[4] == 0 && !strcmp(r.file, FULL(1, 1, 0, 1, 0, 1) TAIL(0, 1, 0, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
-          "(10) changed settings kept, recommendation updated, got %d/%d/%d %d/%d\n%s", r.v[0], r.v[1], r.v[2], r.v[3], r.v[4], r.file);
+    CHECK(r.v[0] == 1 && r.v[1] == 1 && r.v[2] == 1 && r.v[3] == 1 && r.v[4] == 3 && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
+          "(10) display mode changed, graphics on the old Recommended: graphics moved to 1/1 1/3, mode kept 1; got %d/%d/%d %d/%d\n%s", r.v[0], r.v[1], r.v[2], r.v[3], r.v[4], r.file);
+    // (10b) old version, a graphics key changed (res 2 ≠ 0): settings kept, only the recommendation updated
+    r = run(FULL(1, 0, 2, 0, 0, 0) TAIL(0, 0, 0, 0, 0, 0));
+    CHECK(r.v[0] == 1 && r.v[1] == 2 && r.v[2] == 0 && r.v[3] == 0 && r.v[4] == 0 && !strcmp(r.file, FULL(1, 1, 2, 1, 0, 1) TAIL(0, 1, 0, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
+          "(10b) a graphics key changed: settings kept, recommendation updated; got %d/%d/%d %d/%d\n%s", r.v[0], r.v[1], r.v[2], r.v[3], r.v[4], r.file);
+    // (10c) old version, a windowed player (mode 0 ≠ recommended 1) on the old graphics recommendation: the graphics keys move, the window stays
+    r = run(FULL(0, 1, 0, 0, 0, 0) TAIL(0, 0, 0, 0, 0, 0));
+    CHECK(r.v[0] == 0 && r.v[1] == 1 && r.v[2] == 1 && !strcmp(r.file, FULL(0, 1, 1, 1, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
+          "(10c) windowed on the old graphics Recommended: graphics moved, still windowed; got %d/%d/%d\n%s", r.v[0], r.v[1], r.v[2], r.file);
     // (11) native output (res=3) is accepted; s3d read as stored
     r = run(FULL(0, 1, 3, 1, 0, 1) NEWREC);
     CHECK(r.v[1] == 3 && r.fb == 0, "(11) res=3 (Native) read as stored, nothing asked, got %d (asked %d times)", r.v[1], r.fb);
@@ -158,7 +188,48 @@ int main(void) {
     r = run(FULL(1, 1, 1, 1, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(0, 1) SQ(2, 2) "rec_v=5\n");
     CHECK(r.v[7] == 0 && r.v[8] == 2, "(16) version 5 with environment shadows turned off: kept off, got envsh %d shq %d", r.v[7], r.v[8]);
 
-    // ---- M: front_mac.m on this M6
+    // ---- M: front_mac.m on this M6 (Recommended = Native 100%, MetalFX, SMAA, 16x, Accurate, environment shadows, Ultra: the same values as Quality)
+    g_fe = 'M';
+    // (18a) first boot shows Recommended
+    r = run_do(NULL, act_preset);
+    CHECK(r.x[0] == P_REC && r.v[K_MODE] == 1 && r.v[K_RES] == 3 && r.v[K_COLOR] == 1, "(18a) first boot: Recommended (mode 1, Native, Accurate); got preset %d, mode %d res %d color %d", r.x[0], r.v[K_MODE], r.v[K_RES], r.v[K_COLOR]);
+    // (18b) Performance: pending res 1600, MetalFX, FXAA, 3D 100%, no environment shadows, Standard; anisotropy and the display keys left alone;
+    // shown as Performance and dirty; Discard → Recommended, clean
+    r = run_do(NULL, act_18b);
+    CHECK(r.x[0] == 0 && r.x[1] == 1 && r.x[2] == 0 && r.x[3] == 0 && r.x[4] == 0 && r.x[5] == 0 && r.x[6] == -1 && r.x[7] == -1 && r.x[8] == -1,
+          "(18b) Performance pending: res 0 up 1 aa 0 s3d 0 envsh 0 shq 0, aniso / mode / color untouched; got %d %d %d %d %d %d, %d / %d / %d", r.x[0], r.x[1], r.x[2], r.x[3], r.x[4], r.x[5], r.x[6], r.x[7], r.x[8]);
+    CHECK(r.x[9] == P_PERF && r.x[10] == 1 && r.x[11] == P_REC && r.x[12] == 0, "(18b) shown as Performance (%d), dirty (%d); after Discard Recommended (%d), clean (%d)", r.x[9], r.x[10], r.x[11], r.x[12]);
+    // (18c) Quality on this M6 equals Recommended: nothing to apply, but the row keeps showing Quality (it used to snap back to Recommended); Discard → Recommended
+    r = run_do(NULL, act_18c);
+    CHECK(r.x[0] == 0 && r.x[1] == P_QUAL && r.x[2] == P_REC, "(18c) Quality picked: clean (%d), shown as Quality (%d); after Discard Recommended (%d)", r.x[0], r.x[1], r.x[2]);
+    // (18d) Quality applied: still shown as Quality, and nothing changed, so the file is not rewritten
+    r = run_do(NULL, act_18d);
+    CHECK(r.x[0] == P_QUAL && !strcmp(r.file, r.file0), "(18d) Quality applied: shown as Quality (%d), file unchanged\n%s", r.x[0], r.file);
+    // (18i) without MetalFX: Performance and Quality both set Standard upscaling
+    g_mfx = 0; r = run_do(NULL, act_18i); g_mfx = 1;
+    CHECK(r.x[0] == 0 && r.x[1] == 0, "(18i) no MetalFX: Performance up %d, Quality up %d (both 0)", r.x[0], r.x[1]);
+#define M_REC(mode, color) "mode=" #mode "\nrec_mode=1\nres=3\nrec_res=3\nup=1\nrec_up=1\naa=1\nrec_aa=1\naniso=3\nrec_aniso=3\ncolor=" #color "\nrec_color=1\n" S3(0, 0) ES(1, 1) SQ(2, 2) RV
+    // (18e) a windowed player with every other key on this Mac's Recommended: on Recommended; picking Recommended leaves the window alone, and Apply
+    // does not switch to full screen
+    r = run_do(M_REC(0, 1), act_18e);
+    CHECK(r.x[0] == P_REC && r.x[1] == -1 && r.x[2] == 0 && r.x[3] == P_REC, "(18e) windowed on Recommended: shown as Recommended (%d), mode not pending (%d), no full-screen switch (%d calls), still Recommended (%d)",
+          r.x[0], r.x[1], r.x[2], r.x[3]);
+    // (18f) Default on the Video tab (windowed file): every key back to the recommendation, the window included, and the page's Frame Rate / Frame Drops
+    // rows back to their defaults; Apply then switches to full screen
+    r = run_do(M_REC(0, 1), act_18f);
+    CHECK(r.x[0] == 1 && r.x[1] == 0 && r.x[2] == 1 && r.x[3] == P_REC, "(18f) Default: mode pending 1 (%d), eco_fps set to 0 (%d), q3d to its default 1 (%d), shown as Recommended (%d)", r.x[0], r.x[1], r.x[2], r.x[3]);
+    CHECK(r.full == 1 && r.full_last == 1 && strstr(r.file, "mode=1\n") == r.file, "(18f) Apply: full screen once (%d calls, last %d), mode=1 saved\n%s", r.full, r.full_last, r.file);
+    // (18g) Colour applied: handed to the front end and saved
+    r = run_do(M_REC(1, 1), act_18g);
+    CHECK(r.cl == 0 && strstr(r.file, "\ncolor=0\n"), "(18g) Vivid applied: front end told %d, saved\n%s", r.cl, r.file);
+    // (18h) a windowed player across a rec_v bump, with 3D 75% the old recommendation: the graphics keys move to the new one (3D 100%), the window stays
+    r = run("mode=0\nrec_mode=1\nres=3\nrec_res=3\nup=1\nrec_up=1\n" TAIL(1, 1, 3, 3, 1, 1) S3(2, 2) ES(1, 1) SQ(2, 2) "rec_v=6\n");   // an older version than REC_V
+    CHECK(r.v[K_MODE] == 0 && r.v[K_S3D] == 0 && !strcmp(r.file, FULL(0, 1, 3, 3, 1, 1) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
+          "(18h) windowed across a bump: s3d moved to 0 (%d), still windowed (%d)\n%s", r.v[K_S3D], r.v[K_MODE], r.file);
+    // (18k) a Vivid player with every graphics key on Recommended: on Recommended (Colour is a display preference on the Mac), and picking
+    // Recommended leaves the colour alone
+    r = run_do(M_REC(1, 0), act_18k);
+    CHECK(r.x[0] == P_REC && r.x[1] == -1, "(18k) Vivid on Recommended: shown as Recommended (%d), colour not pending (%d)", r.x[0], r.x[1]);
     // (18j) the Mac's rows map values to the selector one to one (only the phone's 3D Resolution row is reordered)
     for (int v = 0; v < 4; v++) CHECK(car_of(1, v) == v && val_of(1, v) == v, "(18j) res row on the Mac is the identity: car_of(1, %d) = %d, val_of = %d", v, car_of(1, v), val_of(1, v));
 

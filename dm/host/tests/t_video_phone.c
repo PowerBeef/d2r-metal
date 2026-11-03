@@ -10,6 +10,7 @@
 //   (6) a recommendation-version bump while on the old Recommended: moved to the new one
 //   (7) the same bump with a resolution the player chose: settings kept, only the recommendation updated
 //   (8) the phone's 3D scale comes from res and ignores s3d
+//   (20h) Colour still decides "on Recommended" on phones (the Mac leaves its display preferences out)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,6 +65,10 @@ static void presets(result *x) {
     atomic_store(&g_pend[K_RES], 1); x->x[n++] = preset_of();                                    // 15
     apply_preset(P_REC); x->x[n++] = preset_of(); x->x[n++] = dm_video_dirty();                // 16, 17
 }
+
+// (20h) a Vivid phone player with the graphics keys on Recommended: on phones Colour sits in the Graphics section next to Graphic Presets, so it still
+// decides "on Recommended" (only the Mac leaves its display preferences out), and picking Recommended restores Accurate
+static void vivid(result *x) { x->x[0] = preset_of(); apply_preset(P_REC); x->x[1] = atomic_load(&g_pend[K_COLOR]); x->x[2] = preset_of(); }
 
 int main(void) {
     snprintf(g_dir, sizeof g_dir, "%s/t_video_phone.%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", getpid()); mkdir(g_dir, 0755);
@@ -129,6 +134,10 @@ int main(void) {
     //     (s3d 2 would not catch it: the Mac's 75% tier gives the same 0.75 as res 0)
     r = child_run(FULL(0, 0, 0, 0, 1, 1) TAIL(1, 1, 3, 3, 1, 1) S3(4, 0) ES(0, 0) SQ(0, 0) RV, NULL);
     CHECK(r.v[K_S3D] == 4 && r.s3 == 0.75f, "(8) s3d=4 stored, res 0: 3D scale 0.75 (not the Mac's 0.5), got s3d %d scale %g", r.v[K_S3D], r.s3);
+
+    // (20h) see vivid()
+    r = child_run(FULL(0, 0, 0, 0, 1, 1) TAIL(1, 1, 3, 3, 0, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV, vivid);
+    CHECK(r.x[0] == P_CUSTOM && r.x[1] == 1 && r.x[2] == P_REC, "(20h) Vivid on the phone: Custom (%d); Recommended sets colour 1 (%d) and shows Recommended (%d)", r.x[0], r.x[1], r.x[2]);
 
     file_put(NULL); rmdir(g_dir);
     printf("t_video_phone: %d checks, %d failed\n", checks, fails);

@@ -69,6 +69,11 @@ static const int k_n[NV] = { 2, 4, 2, 2, 4, 2, 5, 2, 3 };
 #define REC_V 7   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);
                   // 6 = a Mac on an iPhone chip (MacBook Neo) gets the phone's (front_mac.m); 7 = chosen from the chip's generation, GPU cores and the screen (dm_picrec.c)
 static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on phones res is the five 3D-resolution tiers; on the Mac res has the extra "Native" tier
+// Display preferences: the Mac's Display section (Display Mode, Color). First launch and Default set them from the recommendation, but they never decide
+// whether the picture is on Recommended, the Graphic Presets row leaves them alone (as Performance and Quality always did), and a rec_v or screen move
+// changes one only while it still equals its old recommendation. On phones Color sits in the Graphics section next to Graphic Presets, so it stays part
+// of Recommended there; phones have no Display Mode row (mode is always 0, its recommendation)
+static int pref_key(int k) { return k == K_MODE || (k == K_COLOR && !DM_PHONE); }
 #define NR 12
 static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "shq", "fps", "drops" };   // row order on the page (rows the page lacks are skipped)
 static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, K_SHQ, -2, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
@@ -125,8 +130,9 @@ static void load_once(void) {
             if (!front_video_firstboot(rec, cur)) memcpy(cur, rec, 3 * sizeof cur[0]);
             for (int i = 3; i < NV; i++) { int x = front_video_rec(k_keys[i]); rec[i] = cur[i] = x >= 0 && x < kn(i) ? x : 0; }
             if (bump) {   // 还停在旧推荐上（读到的键都等于旧推荐）：一起换成新推荐；改过的照留，只换推荐 | still on the old recommendation (every key read equals it): move to the new one; changed settings stay, only the recommendation changes
-                int on_rec = 1; for (int i = 0; i < NV; i++) if (v[i] >= 0 && r[i] >= 0 && v[i] != r[i]) on_rec = 0;
-                for (int i = 0; i < NV; i++) { int nr = rec[i] >= 0 && rec[i] < kn(i) ? rec[i] : 0; if (on_rec && v[i] >= 0) v[i] = nr; r[i] = nr; }
+                int on_rec = 1; for (int i = 0; i < NV; i++) if (!pref_key(i) && v[i] >= 0 && r[i] >= 0 && v[i] != r[i]) on_rec = 0;   // judged by the graphics keys
+                for (int i = 0; i < NV; i++) { int nr = rec[i] >= 0 && rec[i] < kn(i) ? rec[i] : 0, was = v[i] >= 0 && r[i] >= 0 && v[i] == r[i];
+                    if (v[i] >= 0 && (pref_key(i) ? was : on_rec)) v[i] = nr; r[i] = nr; }   // a display preference moves only while it equals its old recommendation
                 LOG("画面设置：推荐值第 %d 版 → 第 %d 版，%s | picture settings: recommendation version %d → %d, %s", rv_file, REC_V, on_rec ? "原先停在推荐上，一起换成新推荐" : "改过的设置照留，只换推荐",
                     rv_file, REC_V, on_rec ? "was on the recommendation, moved to the new one" : "changed settings kept, only the recommendation updated");
             }
@@ -199,15 +205,26 @@ static int tier_of(int k, int t) {
     default: return -1;
     }
 }
-static int preset_of(void) {
-    int rec = 1; for (int k = 0; k < NV; k++) rec &= shown(k) == atomic_load(&g_rec[k]);
-    if (rec) return P_REC;
-    for (int t = 0; t < 2; t++) { int m = 1; for (int k = 0; k < NV; k++) { int x = tier_of(k, t); if (x >= 0) m &= shown(k) == x; } if (m) return t ? P_QUAL : P_PERF; }
+// The preset the player last applied (kept in memory for the session only) and the one picked on the page but not applied yet; -1 = none.
+// While the values still match it, the row keeps showing the player's pick: on a Mac whose Recommended equals Quality, picking Quality used to snap back to Recommended
+static _Atomic int g_pick = -1, g_pick_pend = -1;
+static int matches(int p) {   // the values shown match preset p: Recommended over every key but the display preferences, Performance / Quality over the keys tier_of lists
+    for (int k = 0; k < NV; k++) {
+        int x = p == P_REC ? (pref_key(k) ? -1 : atomic_load(&g_rec[k])) : tier_of(k, p == P_QUAL);
+        if (x >= 0 && shown(k) != x) return 0;
+    }
+    return 1;
+}
+static int preset_of(void) {   // the Graphic Presets row: the player's pick while it matches, else the first match of Recommended, Performance, Quality; else Custom
+    int p = atomic_load(&g_pick_pend); if (p < 0) p = atomic_load(&g_pick);
+    if (p >= 0 && p != P_CUSTOM && matches(p)) return p;
+    for (int q = P_REC; q < P_CUSTOM; q++) if (matches(q)) return q;
     return P_CUSTOM;
 }
-static void apply_preset(int p) {   // 选了某档：改待定值（推荐 = 全部回推荐；性能 / 品质只管 tier_of 列的键） | a preset was chosen: change pending values (Recommended = everything back to the recommendation; Performance / Quality only the keys tier_of lists)Quality set only resolution and upscaling)
-    if (p == P_REC) for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i]));
+static void apply_preset(int p) {   // a preset was picked: set the pending values (Recommended: every key but the display preferences back to the recommendation; Performance / Quality: the keys tier_of lists)
+    if (p == P_REC) { for (int i = 0; i < NV; i++) if (!pref_key(i)) atomic_store(&g_pend[i], atomic_load(&g_rec[i])); }
     else if (p == P_PERF || p == P_QUAL) for (int k = 0; k < NV; k++) { int x = tier_of(k, p == P_QUAL); if (x >= 0) atomic_store(&g_pend[k], x); }
+    if (p >= 0 && p != P_CUSTOM) atomic_store(&g_pick_pend, p);
 }
 int dm_video_dirty(void) { int d = 0; for (int i = 0; i < NV; i++) { int p = atomic_load(&g_pend[i]); d |= p >= 0 && p != atomic_load(&g_val[i]); } return d; }
 void dm_video_on_uimsg(const char *cat, const char *act, const char *arg) {
@@ -216,12 +233,14 @@ void dm_video_on_uimsg(const char *cat, const char *act, const char *arg) {
     if (!strcmp(act, "AcceptChanges")) { int ch = 0, mode = -1, color = -1;
         for (int i = 0; i < NV; i++) { int p = atomic_exchange(&g_pend[i], -1); if (p >= 0 && p != atomic_load(&g_val[i])) { atomic_store(&g_val[i], p); ch = 1; if (i == K_MODE) mode = p; if (i == K_COLOR) color = p; } }
         if (ch) { pthread_mutex_lock(&g_mu); save_locked(); pthread_mutex_unlock(&g_mu); }
+        { int pk = atomic_exchange(&g_pick_pend, -1); if (pk >= 0) atomic_store(&g_pick, pk); }   // the picked preset is now the applied one
         if (mode >= 0) front_video_fullscreen(mode);   // 显示模式当场切 | display mode switches at once
         if (color >= 0) front_video_color(color);   // 色彩当场换（抗锯齿、各向异性由各自读设置的地方下一帧接上） | colour changes at once (anti-aliasing and anisotropy follow from where they read the setting, next frame)
         atomic_store(&g_repaint, 1); }
-    else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_repaint, 1); }
+    else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_pick_pend, -1); atomic_store(&g_repaint, 1); }
     // 「默认」只管当前页签那一节（「附加」页签上不动画面设置，同原版各页签各管各的） | Default covers only the current tab's section (on the "Extras" tab it leaves the picture settings alone, as each original tab covers its own)
-    else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 1)) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i]));
+    else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 1)) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i]));   // every key, the display preferences included
+        atomic_store(&g_pick_pend, P_REC);
         for (int i = 0; i < NR; i++) if (k_row_ckey[i] && (atomic_load(&g_crows) >> i & 1)) dm_custom_set_pending(k_row_ckey[i], dm_custom_default(k_row_ckey[i]));
         atomic_store(&g_repaint, 1); LOG("画面设置：默认 → 推荐值、帧率与掉帧时回缺省（点「应用」生效）"); }
 }
@@ -276,7 +295,7 @@ void dm_video_pump(uint64_t sp) {   // 自定义页在屏上时每帧调（dm_cu
     uint64_t w[NR] = { 0 }; int ok = sp != 0 && dm_video_rows(sp) > 0;
     for (int i = 0; ok && i < NR; i++) { w[i] = row_w(sp, i); if (w[i] && !*(uint8_t *)(w[i] + 0x50)) w[i] = 0; }   // 页上没有的行 = 0，下面跳过 | rows the page lacks = 0, skipped below
     if (!ok) { int was = 0; for (int i = 0; i < NR; i++) was |= seen[i].w != 0;   // 页没了：没点「应用」的改动作废（同自定义页） | the page is gone: changes without "Apply" are dropped (as the custom page)
-        if (was) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); for (int i = 0; i < NR; i++) if (k_row_ckey[i]) dm_custom_set_pending(k_row_ckey[i], -1); }
+        if (was) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_pick_pend, -1); for (int i = 0; i < NR; i++) if (k_row_ckey[i]) dm_custom_set_pending(k_row_ckey[i], -1); }
         memset(seen, 0, sizeof seen); atomic_store(&g_crows, 0); return; }
     for (int i = 0; i < NR; i++) if (w[i] && !car_ok(w[i], row_n(i))) return;
     { int cr = 0; for (int i = 0; i < NR; i++) if (w[i] && k_row_ckey[i]) cr |= 1 << i; atomic_store(&g_crows, cr); }
@@ -296,6 +315,7 @@ void dm_video_pump(uint64_t sp) {   // 自定义页在屏上时每帧调（dm_cu
         else if (k < 0) { if (cur != P_CUSTOM) apply_preset(cur); LOG("画面设置：图形预设 → %d（点「应用」生效）", cur); }
         else { atomic_store(&g_pend[k], cur); LOG("画面设置：%s → %d（点「应用」生效）", k_keys[k], cur); }
         for (int i = 0; i < NR; i++) { if (!w[i]) continue; int v = row_want(i); if (k_row_key[i] == -1) preset_enable(w[i], v == P_CUSTOM); car_set(w[i], car_of(i, v)); }   // 预设带动其余几项、其余几项带动预设 | presets move the other rows, and the other rows move the preset
+        DM_EV("video_row", "row:s value:d preset:d", k_rows[ch], cur, preset_of());   // the player's change and what the Graphic Presets row shows after it
     }
     hint(sp);
 }
