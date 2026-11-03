@@ -29,7 +29,7 @@ Several tiers can be given at once; they run in the order given.
 | quick | `scan_literals.py`, `dm_i18n.py --check`, `switches.py check`, `scenario.py check` on every scenario, `check_hud_gen.sh`, `addrcheck.py` (cited game addresses; ⚪ without the analysis export) |
 | unit | host, gfx and iOS suites; `regress.sh`; the Mac packaging tools (`test_mac_bundle.py`, `test_install.py`, the launcher's core tests) |
 | core | builds the host; the scenarios without front-end steps run headless, three at a time; the ones that minimize, background or quit (or carry the `front` header) run windowed, one at a time, in the background; then the touch cases |
-| full | rebuilds the Mac App test copy for the current commit, runs the scenarios on it; `smoke_mac.sh 1` (which also rebuilds the iOS package for the Mac), the scenarios on that package; one scenario under Metal API validation; the fault scenarios |
+| full | rebuilds the Mac App test copy for the current commit, runs the scenarios on it at this Mac's Recommended picture (`DM_TEST_VIDEO_FIRSTBOOT=1`; full screen emulated in the background); `smoke_mac.sh 1` (which also rebuilds the iOS package for the Mac), the scenarios on that package; one scenario under Metal API validation; the fault scenarios |
 | long | `bench.py` on the town route (first, while the machine is cool; in front, a disturbed rep is redone and otherwise ⚪ not judged); `explore.py` on the ASan and UBSan hosts; TSan alone; `fnfuzz.py` |
 | device | `smoke.sh`, `lifecycle.sh` on the iPhone; ⚪ when it isn't reachable |
 

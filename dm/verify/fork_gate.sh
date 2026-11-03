@@ -116,7 +116,8 @@ for tier in "${TIERS[@]}"; do
   full)
     lock_on 15
     step full_macapp_build 900 -- bash -c fresh_mac_app
-    step full_macapp_scenarios 1800 -- bash -c 'scn_run "$@" --backend mac-app' _ $(scenarios)   # background runs
+    # Background runs at this Mac's Recommended picture (DM_TEST_VIDEO_FIRSTBOOT=1: Display Mode = full screen, emulated off screen, the same drawable as real full screen)
+    step full_macapp_scenarios 1800 -- bash -c 'DM_TEST_VIDEO_FIRSTBOOT=1 scn_run "$@" --backend mac-app' _ $(scenarios)
     step full_smoke_mac 900 -- bash "$DM/ios/tools/smoke_mac.sh" 1   # 也按 HEAD 重出 iOS 包的 Mac 版（ios-mac 场景用它） | also rebuilds the iOS package for the Mac from HEAD (the ios-mac scenarios use it)
     step full_iosmac_scenarios 1800 -- bash -c 'scn_run "$@" --backend ios-mac' _ $(scenarios)   # front runs (the iOS package takes the front): a disturbed one is redone, then ⚪
     step full_metal_validation 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/enter_game.scn" --backend cli --headless --metal-validation api
