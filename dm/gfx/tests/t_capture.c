@@ -3,6 +3,7 @@
 // Adapted from nxnative's t_capture.c (github.com/seedds/nxnative, MIT, (c) 2026 seedds), rewritten for d2r-metal's record set.
 #include "../nvn/nvn_capture.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -100,6 +101,62 @@ int main(void) {
     int last = 0; while ((last = cap_next(&r, &c, &d)) == 1) free(d);
     CHECK(last == -1, "a cut file ends in a corrupt chunk, not a clean end");
     cap_unload(&r); unlink(path);
+
+    // Per-submit state text (CAP_STAT): the latched switches, the brightening factor, the anisotropy level and the MetalFX 3D pass the submit is drawn with
+    char st[160]; size_t sl = cap_stat_text(st, sizeof st, 0x100000002ull, 1.25, 16, 1);
+    CHECK(!strcmp(st, "host_latch\t4294967298\nbright_k\t1.25\naniso\t16\nmfx3d\t1\n"), "cap_stat_text writes the four key/value lines");
+    CHECK(sl == strlen(st), "cap_stat_text returns the text's length");
+    char v[32];
+    CHECK(cap_kv(st, sl, "host_latch", v, sizeof v) && !strcmp(v, "4294967298"), "cap_kv: host_latch");
+    CHECK(cap_kv(st, sl, "bright_k", v, sizeof v) && !strcmp(v, "1.25"), "cap_kv: bright_k");
+    CHECK(cap_kv(st, sl, "aniso", v, sizeof v) && !strcmp(v, "16"), "cap_kv: aniso");
+    CHECK(cap_kv(st, sl, "mfx3d", v, sizeof v) && !strcmp(v, "1"), "cap_kv: mfx3d");
+    CHECK(!cap_kv(st, sl, "tex_pool_n", v, sizeof v), "cap_kv: a missing key gives NULL");
+    { const char *t2 = "anisox\t3\naniso\t8\n"; CHECK(cap_kv(t2, strlen(t2), "aniso", v, sizeof v) && !strcmp(v, "8"), "cap_kv: whole-key match, not a prefix"); }
+    // Precedence in the replayer: the recorded level beats the live run's env line (applied after it, both without overwriting); a value given to the replayer wins
+    unsetenv("DM_NVN_ANISO"); unsetenv("DM_MFX3D");
+    cap_stat_env(st, sl);
+    CHECK(getenv("DM_NVN_ANISO") && !strcmp(getenv("DM_NVN_ANISO"), "16"), "cap_stat_env sets DM_NVN_ANISO from the record");
+    CHECK(getenv("DM_MFX3D") && !strcmp(getenv("DM_MFX3D"), "1"), "cap_stat_env sets DM_MFX3D from the record");
+    setenv("DM_NVN_ANISO", "4", 0);   // apply_env's live env line, applied afterwards
+    CHECK(!strcmp(getenv("DM_NVN_ANISO"), "16"), "the recorded level beats the live run's env line");
+    unsetenv("DM_NVN_ANISO"); unsetenv("DM_MFX3D"); setenv("DM_NVN_ANISO", "4", 1);   // given to the replayer
+    cap_stat_env(st, sl);
+    CHECK(!strcmp(getenv("DM_NVN_ANISO"), "4"), "a value given to the replayer wins over the record");
+    unsetenv("DM_NVN_ANISO"); unsetenv("DM_MFX3D");
+    { const char *old = "host_latch\t0\nbright_k\t1\n"; cap_stat_env(old, strlen(old)); }
+    CHECK(!getenv("DM_NVN_ANISO") && !getenv("DM_MFX3D"), "an older capture without the keys changes nothing");
+
+    // Two-part chunks (cap_put2): a region header and the region's bytes compressed as one LZ4 stream straight from where they lie. 16 MiB with 13 MiB of noise
+    // forces several full 4 MiB output flushes; 5 + 5 MiB of noise puts a flush inside part a and the a → b switch on a partly full output buffer
+    char path2[] = "/tmp/t_capture_XXXXXX"; fd = mkstemp(path2); CHECK(fd >= 0, "temporary file 2"); close(fd);
+    CHECK(cap_open(&w, path2), "open file 2");
+    size_t big_n = 16u << 20, half = 5u << 20; uint8_t hd[32]; for (int i = 0; i < 32; i++) hd[i] = (uint8_t)i;
+    uint8_t *b1 = malloc(big_n), *n2 = malloc(half), *n3 = malloc(half);
+    CHECK(b1 && n2 && n3, "test buffers");
+    for (size_t i = 0; i < (3u << 20); i++) b1[i] = (uint8_t)(i / 97);
+    uint64_t x = 1; for (size_t i = 3u << 20; i < big_n; i++) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; b1[i] = (uint8_t)x; }
+    x = 2; for (size_t i = 0; i < half; i++) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; n2[i] = (uint8_t)x; }
+    x = 3; for (size_t i = 0; i < half; i++) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; n3[i] = (uint8_t)x; }
+    uint64_t raw0 = w.raw;
+    cap_put(&w, CAP_HEAD, 0, text, strlen(text), 0);
+    cap_put2(&w, CAP_REGN, 1, hd, sizeof hd, b1, big_n);
+    cap_put2(&w, CAP_REGN, 2, n2, half, n3, half);
+    cap_put(&w, CAP_SUBM, 2, "\0\0\0\0", 4, 0);
+    CHECK(w.raw - raw0 == strlen(text) + sizeof hd + big_n + 2 * half + 4, "w.raw counts every chunk's raw size");
+    CHECK(!w.err && cap_close(&w), "close file 2");
+    CHECK(cap_load(&r, path2) == 1, "load file 2");
+    n = 0; int ok2 = 1, nregn = 0, subm_ok = 0;
+    while (cap_next(&r, &c, &d) == 1) {
+        n++;
+        if (c.tag == CAP_REGN && c.submit == 1) { nregn++; ok2 &= c.codec == CAP_LZ4 && c.raw == sizeof hd + big_n && !memcmp(d, hd, sizeof hd) && !memcmp(d + sizeof hd, b1, big_n); }
+        else if (c.tag == CAP_REGN && c.submit == 2) { nregn++; ok2 &= c.codec == CAP_LZ4 && c.raw == 2 * half && !memcmp(d, n2, half) && !memcmp(d + half, n3, half); }
+        else if (c.tag == CAP_SUBM) subm_ok = c.submit == 2 && c.raw == 4 && !memcmp(d, "\0\0\0\0", 4);
+        free(d);
+    }
+    CHECK(n == 4, "four chunks back from file 2"); CHECK(nregn == 2 && ok2, "both two-part chunks decode to a || b, LZ4, with their submit and raw size");
+    CHECK(subm_ok, "the chunk after them reads intact (each header patch-back left the file position right)");
+    cap_unload(&r); unlink(path2); free(b1); free(n2); free(n3);
     printf("t_capture: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

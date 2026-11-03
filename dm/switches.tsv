@@ -155,7 +155,7 @@ DM_MEM_CAP_GB	gfx	gfx/nvn/hle_nvn.c	-
 DM_MEM_STAT_ALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_METAL_COLD	ios	ios/Sources/main.m	-
 DM_MFX	gfx	gfx/nvn/nvn_mtl.m	-
-DM_MFX3D	gfx	gfx/nvn/nvn_mtl.m	-
+DM_MFX3D	gfx	gfx/nvn/nvn_capture.c gfx/nvn/nvn_mtl.m gfx/tests/t_capture.c	-
 DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
 DM_MOVIE_FFMPEG_PREFIX	ios-tools	ios/run.sh	y
@@ -167,7 +167,7 @@ DM_NICK	host	host/hle_account.c	-
 DM_NOTARY_PROFILE	tools	tools/release_mac.sh	-
 DM_NO_PRELOAD	ios	ios/Sources/main.m	-
 DM_NSO_DIR	tools,verify	tools/product.sh tools/sampagg.py verify/regress.sh	y
-DM_NVN_ANISO	gfx	gfx/nvn/nvn_mtl.m	-
+DM_NVN_ANISO	gfx	gfx/nvn/nvn_capture.c gfx/nvn/nvn_mtl.m gfx/tests/t_aniso.m gfx/tests/t_capture.c	-
 DM_NVN_BARRIER	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_BF_WANT	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BINDFILT	gfx	gfx/nvn/hle_nvn.c	-

@@ -22,7 +22,7 @@
 enum {
     CAP_HEAD = CAP_TAG('H', 'E', 'A', 'D'),   // text: key \t value lines (chain, commit, frame, DM_* settings, format)
     CAP_LAYT = CAP_TAG('L', 'A', 'Y', 'T'),   // text: the record layout fingerprint (cap_layout); a replayer built against another nvn_obj.h refuses the capture
-    CAP_STAT = CAP_TAG('S', 'T', 'A', 'T'),   // text: replay-layer state set outside records (texture pool capacity, host latch)
+    CAP_STAT = CAP_TAG('S', 'T', 'A', 'T'),   // text: replay-layer state set outside records (texture pool capacity; per submit: host latch, brightening, anisotropy, MetalFX 3D)
     CAP_REGN = CAP_TAG('R', 'E', 'G', 'N'),   // one memory region: cap_regn + its bytes
     CAP_PADD = CAP_TAG('P', 'A', 'D', 'D'),   // the replay layer's pool list (mtl_pool_add calls): cap_padd[]
     CAP_PDIF = CAP_TAG('P', 'D', 'I', 'F'),   // region bytes that changed before submit k: {u32 region, u32 0, u64 off, u64 len, bytes}...
@@ -89,12 +89,22 @@ const char *cap_layout(void);
 typedef struct { FILE *f; uint64_t raw, stored; int err; } cap_writer;
 int cap_open(cap_writer *w, const char *path);
 void cap_put(cap_writer *w, uint32_t tag, uint32_t submit, const void *data, uint64_t n, int compress);
+// One chunk whose raw bytes are a then b, LZ4-compressed as one stream straight from where the two parts lie (a region header and the region: no copy of
+// a pool that can be a gigabyte). Any failure sets w->err
+void cap_put2(cap_writer *w, uint32_t tag, uint32_t submit, const void *a, size_t an, const void *b, uint64_t bn);
 int cap_close(cap_writer *w);
 // Reading: the whole file into memory, then chunk by chunk (data decompressed)
 typedef struct { uint8_t *buf; size_t n, pos; } cap_reader;
 int cap_load(cap_reader *r, const char *path);               // 1 = loaded, 0 = unreadable, -1 = not a capture of this format version
 int cap_next(cap_reader *r, cap_chunk *c, uint8_t **data);   // 1 = a chunk (*data malloc'd, free it), 0 = end, -1 = corrupt
 void cap_unload(cap_reader *r);
+// The per-submit state text (CAP_STAT of submit k): host_latch, bright_k, aniso and mfx3d lines (key, tab, value, newline); returns the length
+size_t cap_stat_text(char *out, size_t n, uint64_t host_latch, double bright_k, int aniso, int mfx3d);
+// The value of "key\tvalue\n" in a text chunk (whole-key match), copied into out; NULL when the key isn't there
+const char *cap_kv(const char *text, size_t n, const char *key, char *out, size_t on);
+// The replayer: the recorded anisotropy and MetalFX 3D levels as DM_NVN_ANISO / DM_MFX3D, without overwriting (a value given to the replayer wins; called
+// before the live run's env lines, so the recorded level beats those). An older capture without the keys changes nothing
+void cap_stat_env(const char *text, size_t n);
 // A growable byte buffer for building chunk payloads
 typedef struct { uint8_t *p; size_t n, cap; } cap_buf;
 void cap_buf_put(cap_buf *b, const void *data, size_t n);

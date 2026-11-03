@@ -6,7 +6,10 @@
 //
 // From the frame's first submit until its present: every live pool's bytes, the registries, the programs' stage keys, the contents of every texture whose content
 // lives only in Metal that the frame can reach (registered or named by a record), and each submission's record bytes with pointers written as region offsets and
-// object indices. Before each later submit of the frame, the pool bytes that changed (GPU writes included) and the registry entries that changed. At the present:
+// object indices. Before each later submit of the frame, the pool bytes that changed (GPU writes included) and the registry entries that changed. With each submit,
+// its state set outside records (CAP_STAT): the latched host switches, the 3D brightening factor, the anisotropy level and whether the MetalFX 3D pass is on, the levels
+// it is drawn with; the replayer applies the first submit's anisotropy and MetalFX 3D before the live run's settings. Regions stream from the pools into the file
+// (cap_put2), so a capture adds no copy of a pool to the host's footprint, and every capture table is freed once the file is closed (cap_release). At the present:
 // the presented texture's SHA-256, read back the way the replayer reads its own (cap_digest). Each capture step first waits for the GPU (mtl_finish), so what is
 // read is what the next submit sees; that changes the frame's timing, not what it renders. Unset, the hooks cost one load and a branch per submit and present.
 // Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds) for d2r-metal's replay layer (serial table, registries under g_rmu, Metal 4).
@@ -71,9 +74,7 @@ static int cap_reg_add(uint64_t lo, uint64_t size, uint32_t kind, uint32_t submi
     memmove(g_cap_reg + pos + 1, g_cap_reg + pos, (g_cap_nreg - pos) * sizeof *g_cap_reg); memmove(g_cap_rid + pos + 1, g_cap_rid + pos, (g_cap_nreg - pos) * sizeof *g_cap_rid);
     g_cap_reg[pos] = (cap_region){lo, size, kind, NULL}; g_cap_rid[pos] = g_cap_nrid++; g_cap_nreg++;
     cap_region *r = &g_cap_reg[pos]; cap_regn hh = {g_cap_rid[pos], r->kind, r->lo, r->size};
-    uint8_t *b = malloc(sizeof hh + r->size); if (!b) { cap_fail("out of memory for a region"); return pos; }
-    memcpy(b, &hh, sizeof hh); memcpy(b + sizeof hh, (const void *)(uintptr_t)r->lo, (size_t)r->size);
-    cap_put(&g_cap_w, CAP_REGN, submit, b, sizeof hh + r->size, 1); free(b);
+    cap_put2(&g_cap_w, CAP_REGN, submit, &hh, sizeof hh, (const void *)(uintptr_t)r->lo, r->size);   // straight from the pool: no copy
     cap_reg_hash(r);
     return pos;
 }
@@ -376,8 +377,9 @@ void nvn_cap_submit(int n, const uint64_t *h, uint64_t host) {
     for (int i = 0; i < n; i++) top[i] = (uint32_t)cap_seg_get(h[i]);
     for (uint32_t i = 0; i < g_cap_nseg; i++) cap_seg_write(i);   // segments jumped to are queued while the earlier ones are written
     cap_flush_objs(g_cap_cur_submit);
-    char latch[96]; snprintf(latch, sizeof latch, "host_latch\t%llu\nbright_k\t%.9g\n", (unsigned long long)host, (double)bright_k());   // the host settings this submit is drawn with
-    cap_put(&g_cap_w, CAP_STAT, g_cap_cur_submit, latch, strlen(latch), 0);
+    // the host settings this submit is drawn with: mtl_sub_begin latches aniso_want right after this hook, on this thread, and mfx3d_draw reads mfx3d_on
+    char latch[160]; size_t ll = cap_stat_text(latch, sizeof latch, host, bright_k(), aniso_want(), mfx3d_on());
+    cap_put(&g_cap_w, CAP_STAT, g_cap_cur_submit, latch, ll, 0);
     cap_buf s = {0}; uint32_t nn = (uint32_t)n; cap_buf_put(&s, &nn, 4); cap_buf_put(&s, top, (size_t)n * 4);
     cap_put(&g_cap_w, CAP_SUBM, g_cap_cur_submit, s.p, s.n, 0); cap_buf_free(&s); free(top);
     g_cap_ns += now_ns() - t0;
@@ -404,6 +406,17 @@ static int cap_digest(const tex_t *t, uint8_t md[32], uint64_t *bytes, uint32_t 
 }
 static void cap_hex(const uint8_t *md, char out[65]) { for (int i = 0; i < 32; i++) snprintf(out + 2 * i, 3, "%02x", md[i]); }
 
+// Every table the capture built, freed once the file is closed (g_cap_done keeps every hook off afterwards)
+static void cap_release(void) {
+    for (uint32_t i = 0; i < g_cap_nreg; i++) free(g_cap_reg[i].hash);
+    free(g_cap_reg); g_cap_reg = NULL; free(g_cap_rid); g_cap_rid = NULL; g_cap_nreg = g_cap_nrid = 0;
+    nvn_hmap *maps[] = {&g_cap_tex, &g_cap_prog, &g_cap_dpol, &g_cap_pool, &g_cap_seg, &g_cap_read, &g_cap_mtex};   // values are small integers: nothing to release
+    for (size_t i = 0; i < sizeof maps / sizeof *maps; i++) { uint32_t kl = maps[i]->klen; free(maps[i]->keys); free(maps[i]->vals); nvn_hm_init(maps[i], kl); }
+    free(g_cap_segq); g_cap_segq = NULL; g_cap_segq_cap = g_cap_nseg = 0;
+    free(g_cap_treg0); g_cap_treg0 = NULL; g_cap_ntreg0 = 0;
+    free(g_cap_sreg0); g_cap_sreg0 = NULL; free(g_cap_sreg0_ok); g_cap_sreg0_ok = NULL; g_cap_nsreg0 = 0;
+    cap_buf_free(&g_cap_tobj); cap_buf_free(&g_cap_pobj); cap_buf_free(&g_cap_progb); cap_buf_free(&g_cap_dpolb);
+}
 // Hook: the translation thread, before a present is queued (hle_nvn.c x_run)
 void nvn_cap_present(const tex_t *t, const int crop[4]) {
     if (!nvn_cap_enabled()) return;
@@ -438,4 +451,5 @@ void nvn_cap_present(const tex_t *t, const int crop[4]) {
          g_cap_failed || !ok ? "【红】" : "", g_cap_frame, g_cap_submit, (unsigned long long)g_cap_segs, g_cap_nreg, g_cap_ntex, (unsigned long long)g_cap_tex_n, g_cap_tex_bytes / 1048576.0,
          (unsigned long long)g_cap_tex_skip, (unsigned long long)g_cap_unmapped, stored / 1048576.0, raw / 1048576.0, p.capture_ms, g_cap_path, ok ? "" : " (write failed)", hex, p.width, p.height, p.pixfmt);
     g_cap_active = 0; g_cap_done = 1;
+    cap_release();
 }

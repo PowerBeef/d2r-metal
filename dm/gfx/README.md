@@ -131,7 +131,7 @@ The tests in `dm/gfx/tests` compile the production code in directly and need a M
 | `t_bar` | Pass-barrier decisions (levels 0 / 1, the `DM_NVN_PASSGPU_SERIAL` pin, encoders that write memory), through their counters under the Metal validation layer |
 | `test_tbdr_budget.py` | The parsing in `tools/tbdr_budget.py` |
 | `test_passgpu_top.py` | `tools/passgpu_top.py`: a record's spans count as exclusive costs only with the serial header and no overlap between passes |
-| `t_capture` | Frame capture (`nvn_capture.c`): every record op's pointers encode to region offsets and object indices and decode back; unknown ops are refused; the capture file round-trips its chunks |
+| `t_capture` | Frame capture (`nvn_capture.c`): every record op's pointers encode to region offsets and object indices and decode back; unknown ops are refused; the capture file round-trips its chunks, two-part chunks streamed through LZ4 included; the per-submit state text (anisotropy, MetalFX 3D) and its precedence in the replayer |
 | `nvn_replay` (built on demand, not in `run`) | Replays a `DM_NVN_CAPTURE` frame against this tree's replay layer and compares the presented frame with the live one (see `dm/verify/debugging.md`) |
 
 ## Common run-time switches
