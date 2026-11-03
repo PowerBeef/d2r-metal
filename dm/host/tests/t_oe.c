@@ -21,6 +21,7 @@ void mtl_rt_force_full(int n) { (void)n; }   // nvn_mtl.m, weak in hle_oe.c: wit
 int dm_nvn_ruler_truth(void) { return 0; }
 static int t_ingame = 1; int dm_ingame_now(void) { return t_ingame; }   // in a game unless a Frame Drops feed case says otherwise
 static int t_hidden; int mtl_present_hidden(void) { return t_hidden; }   // presents not shown (nvn_mtl.m): the feed cases set it
+static int t_offscreen; int mtl_present_offscreen(void) { return t_offscreen; }   // a background run's unreadable classic presents (nvn_mtl.m): the feed cases set it
 static int t_load; int dm_loadscreen_up(void) { return t_load; }          // a loading screen up (diag.c): the feed cases set it
 static double t_period = 1000.0 / 60; double nvn_frame_period_ms(void) { return t_period; }   // the pacer's frame period (hle_nvn.c): the feed cases set it
 pthread_key_t g_keyres[2];                                   // 分辨率参数位（loader.c）的桩：没建键，取走 31 时不写线程槽 | stub for the resolution parameter slot (loader.c): no key created, so taking 31 does not write the thread slot
@@ -278,7 +279,7 @@ static void test_scale3d_hooks(void) {
 // a gap over 0.5 s pauses judging 3 s and keeps the history
 static void feed_reset(void) {
     g_s3f = (s3_feed_state)S3_FEED_INIT; atomic_store(&g_3d_quality_mode, 0); atomic_store(&g_scale3d_level, 0); atomic_store(&g_scale3d_resumed, 0); s3_rates_clear();
-    t_now = 10000 * S3_SEC; t_hidden = t_load = 0; t_ingame = 1;
+    t_now = 10000 * S3_SEC; t_hidden = t_offscreen = t_load = 0; t_ingame = 1;
 }
 static void test_feed(void) {
     feed_reset();
@@ -288,6 +289,10 @@ static void test_feed(void) {
     CHECK(lv == 0 && g_s3f.c.nw == 0, "F1: frames while presents are hidden are not judged: no step, no windows");
     t_hidden = 0; feed_n(1, F60);
     CHECK(g_s3f.c.hold_until == t_now + 3 * S3_SEC, "F1: the picture visible again holds judging 3 s");
+    feed_reset(); feed_n(1500, F60);
+    t_offscreen = 1; lv = feed_n(900, D60);
+    CHECK(lv == 0 && g_s3f.c.nw == 0, "F1: a background run's unreadable classic presents (off screen, no link) are not judged: no step, no windows");
+    t_offscreen = 0;
     feed_reset(); feed_n(1500, F60);
     CHECK(feed_n(900, D60) >= 1, "F1 control: the same slow frames shown step down");
     feed_reset(); feed_n(1500, F60);

@@ -16,7 +16,9 @@
 #   merge --dir DIR [--seed FILE] [--write]   the new seed from a record folder: front rows, the seed's rows, Act 1 rows, the background marker, tour rows
 #   cold [--backend mac-app|ios-mac] [--route FILE] [--env K=V]... [--user-manifest FILE] [--launcher-warm] [--keep]   one true cold start (mac-app: a
 #                                    fresh bundle ID; ios-mac: the package's Metal cache moved to the Trash first) with DM_BOOTPROF; appends a row to
-#                                    $DM_ROOT/run/pso/cold.tsv: 'PSO_COLD OK|RED'
+#                                    $DM_ROOT/run/pso/cold.tsv: 'PSO_COLD OK|RED'. It runs in front (timing); a disturbed attempt is redone from a fresh cold
+#                                    state, then reported '⚪ PSO_COLD <backend> not judged' (exit 3). gate and record run windowed scenarios in the background
+#                                    (scenario.py's default: the same drawable and pixel formats, so the same pipelines)
 # Every command that runs the game takes the Mac game lock itself. Run folders and test copies go to the Trash ('dm-work pso <date>'), never rm.
 # Every row form (S<TAB>shader key<TAB>stage, R<TAB>pso_skey hex, C<TAB>compute shader key) and the byte offsets below follow nvn_pso_skey.h;
 # norm_row and pso_key_norm must change together (t_pso_skey and test_pso_seed.py check both against one hash).
@@ -182,6 +184,7 @@ TOUR = [('a1_darkwood', 0, 0.446), ('a1_catacombs', 0, 0.822), ('a2_town', 1, 0.
         ('a3_flayer', 2, 0.446), ('a4_town', 3, 0.222), ('a4_riverflame', 3, 0.371), ('a5_town', 4, 0.222), ('a5_frigid', 4, 0.296), ('a5_arreat', 4, 0.371)]
 LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 COLD_ID = 'org.d2rmobile.mac.cold'   # cold runs' Mac App bundle IDs: COLD_ID + timestamp, removed afterwards
+COLD_REDO = 2   # a cold start the desk disturbed is redone this many times, each from a fresh cold state, before it is reported not judged
 
 
 def matrix():
@@ -678,7 +681,9 @@ def cold_mac(a, out, env, stamp, plan):
             subprocess.run([app_exe(app), '--warm-shaders'], env=dict(os.environ, DM_WARM_PROCS='1', DM_APP_SUPPORT=warm_sup), stdout=lf, stderr=subprocess.STDOUT, check=False)
         res['launcher_warm_s'] = round(time.time() - t0, 1)
     old = os.environ.get('DM_MAC_APP'); os.environ['DM_MAC_APP'] = app
-    try: r = bench.run_once(a.route, 'mac-app', run, env, None, 120)
+    # In front (bench.run_once sets DM_TEST_BGRUN=0: a cold start is timing), with no redo of its own: a redo would reuse this bundle's now warm
+    # Metal cache. cmd_cold redoes a disturbed attempt with a fresh bundle ID instead
+    try: r = bench.run_once(a.route, 'mac-app', run, env, None, 120, redo=0)
     finally:
         if old is None: os.environ.pop('DM_MAC_APP', None)
         else: os.environ['DM_MAC_APP'] = old
@@ -686,7 +691,7 @@ def cold_mac(a, out, env, stamp, plan):
     log = os.path.join(run, 'support', 'Logs', 'host.log')
     with open(log, encoding='utf-8', errors='replace') if os.path.exists(log) else open(os.devnull, encoding='utf-8') as f: text = f.read()
     res.update(cold_summary(text, nvn_series(os.path.join(run, 'nvn.tsv')), run_marks(os.path.join(run, 'events.ndjson'))))
-    res['scenario_ok'] = r['ok']; res['reason'] = r.get('reason')
+    res['scenario_ok'] = r['ok']; res['reason'] = r.get('reason'); res['disturbed'] = r.get('disturbed') or []
     res['cold_ok'] = res['cache_after_bytes'] > 0
     return res
 
@@ -714,7 +719,7 @@ def cold_ios(a, out, env, stamp, plan):
     log = os.path.join(run, 'port.log')
     with open(log, encoding='utf-8', errors='replace') if os.path.exists(log) else open(os.devnull, encoding='utf-8') as f: text = f.read()
     res.update(cold_summary(text))
-    res['scenario_ok'] = code == 0; res['reason'] = r.get('reason')
+    res['scenario_ok'] = code == 0; res['reason'] = r.get('reason'); res['disturbed'] = r.get('disturbed') or []   # ios-mac runs are front runs, judged for disturbances
     res['cold_ok'] = os.path.isdir(os.path.join(root, 'com.apple.metal')) and res['cache_after_bytes'] > 0
     return res
 
@@ -726,17 +731,32 @@ def run_plan(plan):
 
 
 def cmd_cold(a, argv):
-    import json as _json, scenario   # noqa: E401, PLC0415
+    import json as _json, scenario, time   # noqa: E401, PLC0415
     held = scenario.game_lock(__file__, argv, f'pso_seed cold {a.backend} ~8 min', True)
     if held is not None: return held
     stamp = stamp_now(); out = a.out or os.path.join(DM_ROOT, 'run', 'pso', f'cold_{a.backend}_{stamp}'); os.makedirs(out, exist_ok=True)
-    env = parse_env(a.env); plan = {}; res = {}
-    try:
-        res = (cold_mac if a.backend == 'mac-app' else cold_ios)(a, out, env, stamp, plan)
-    except RuntimeError as e:
-        res = dict(scenario_ok=False, cold_ok=False, reason=str(e))
-    finally:
-        if not a.keep: run_plan(plan)
+    env = parse_env(a.env); res = {}; attempt = 0
+    while True:
+        plan = {}
+        try:
+            res = (cold_mac if a.backend == 'mac-app' else cold_ios)(a, out, env, stamp, plan)
+        except RuntimeError as e:
+            res = dict(scenario_ok=False, cold_ok=False, reason=str(e))
+        finally:
+            if not a.keep: run_plan(plan)
+        # A cold start runs in front and is judged for disturbances (scenario.disturbed). A disturbed attempt is redone from a fresh cold state (a new
+        # COLD_ID bundle on the Mac; the package's Metal cache moved away again on ios-mac), its run folder kept as run.disturbedK, at most COLD_REDO times
+        if not res.get('disturbed') or attempt >= COLD_REDO: break
+        attempt += 1
+        if os.path.isdir(os.path.join(out, 'run')): os.rename(os.path.join(out, 'run'), os.path.join(out, f'run.disturbed{attempt}'))
+        print(f"  disturbed ({'; '.join(x['what'] for x in res['disturbed'])[:120]}), redo {attempt}/{COLD_REDO} from a fresh cold state", flush=True)
+        while stamp_now() == stamp: time.sleep(0.2)
+        stamp = stamp_now()
+    if res.get('disturbed'):   # still disturbed: not judged, and no row in cold.tsv (its numbers are the desk's)
+        what = '; '.join(x['what'] for x in res['disturbed'])[:160]
+        print(f'⚪ PSO_COLD {a.backend} not judged: disturbed ({what})')
+        print('RESULT ' + _json.dumps(dict(name='pso_seed cold', verdict='UNAVAILABLE', dir=out, attempts=attempt + 1, **res)))
+        return 3
     if not res.get('cold_ok') and res.get('scenario_ok'): res['reason'] = 'cold path not used: the Metal cache was not recreated'
     ok = bool(res.get('scenario_ok') and res.get('cold_ok'))
     row = dict(date=stamp, rev=git_short(), backend=a.backend, env=' '.join(f'{k}={v}' for k, v in env.items()), **{k: v for k, v in res.items() if k not in ('host_built',)})

@@ -1,0 +1,20 @@
+# Background test run of the Mac App test copy at this Mac's Recommended picture (DM_TEST_VIDEO_FIRSTBOOT=1: Display Mode = full screen): full screen is emulated,
+# a borderless window the size of the screen's full-screen content area, placed off every screen, so the drawable is the one real full screen gives
+# without a Space switch, and the app never comes to the front
+name bg_window_mac
+requires mac-app
+save warlock
+timeout 240
+env DM_TEST_BGRUN=1 DM_TEST_VIDEO_FIRSTBOOT=1
+
+expect main_menu timeout=120
+enter_game
+expect_state in_game=true hp>=1
+screenshot in_game.png
+quit
+check event app state=active emu=true
+check event window emu=true full=true fit=true
+check no_event desk what=front by=self
+check event shot ok=true
+check no_red
+check no_red_log

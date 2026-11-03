@@ -19,7 +19,8 @@ Several tiers can be given at once; they run in the order given.
 - `steps.tsv` lists every step: name, verdict (OK / RED / ERROR / UNAVAIL), seconds, unavailable items.
 - `summary.json` and the last line, `FORKGATE OK|RED {json}`, give the tiers, the commit, the time, the red steps and the number of unavailable items.
 - `$DM_ROOT/run/gate/latest` points at the most recent run.
-- Unavailable items (⚪) are not red: a missing recording, a fixture save without what a case needs, or no phone.
+- Unavailable items (⚪) are not red: a missing recording, a fixture save without what a case needs, or no phone, or a front run still disturbed after its redos (exit 3: another app took the front, a Space switch, display sleep; `scenarios/README.md`).
+- **What takes the front:** the long tier's benchmarks (by design) and, in `full`, the iOS package on the Mac (`smoke_mac.sh`, the `ios-mac` scenarios: it takes the front even when launched with `open -g`; its scenarios are front runs, redone when disturbed). Every windowed scenario of `core` and the Mac App scenarios of `full` are background runs (`DM_TEST_BGRUN=1`): no focus taken, no Space switched, the window off screen.
 
 ## Tiers
 
@@ -27,9 +28,9 @@ Several tiers can be given at once; they run in the order given.
 |---|---|
 | quick | `scan_literals.py`, `dm_i18n.py --check`, `switches.py check`, `scenario.py check` on every scenario, `check_hud_gen.sh`, `addrcheck.py` (cited game addresses; ⚪ without the analysis export) |
 | unit | host, gfx and iOS suites; `regress.sh`; the Mac packaging tools (`test_mac_bundle.py`, `test_install.py`, the launcher's core tests) |
-| core | builds the host; the scenarios without front-end steps run headless, three at a time; the ones that minimize, background or quit run windowed, one at a time; then the touch cases |
-| full | rebuilds the Mac App test copy for the current commit, runs the scenarios on it; `smoke_mac.sh 1` (which also rebuilds the iOS package for the Mac), the scenarios on that package; one scenario under Metal API validation; the fault scenarios |
-| long | `bench.py` on the town route (first, while the machine is cool); `explore.py` on the ASan and UBSan hosts; TSan alone; `fnfuzz.py` |
+| core | builds the host; the scenarios without front-end steps run headless, three at a time; the ones that minimize, background or quit (or carry the `front` header) run windowed, one at a time, in the background; then the touch cases |
+| full | rebuilds the Mac App test copy for the current commit, runs the scenarios on it at this Mac's Recommended picture (`DM_TEST_VIDEO_FIRSTBOOT=1`; full screen emulated in the background); `smoke_mac.sh 1` (which also rebuilds the iOS package for the Mac), the scenarios on that package; one scenario under Metal API validation; the fault scenarios |
+| long | `bench.py` on the four routes, one profile and the regression (first, while the machine is cool; at this Mac's Recommended in real full screen, in front; a disturbed rep is redone and otherwise ⚪ not judged); `explore.py` on the ASan and UBSan hosts; TSan alone; `fnfuzz.py` |
 | device | `smoke.sh`, `lifecycle.sh` on the iPhone; ⚪ when it isn't reachable |
 
 ## Rules it keeps
@@ -88,7 +89,7 @@ python3 dm/verify/golden.py list
 - **New per-frame counters** in `nvn.tsv`: `@binds` (bind commands recorded: textures, samplers, buffers, programs, state) and `@cmdmem_cb` (the game's out-of-command-memory callbacks); `bench.py` reports them per segment with `@draws`. Counting *redundant* binds needs per-command-buffer shadow state and belongs to the s38 work.
 - **`bench.py profile`**: one sampled run (`DM_SAMPLE=4:*`, with a `SAMPLE-THR` line naming each guest thread): per segment and thread role, the running share and the hottest functions under their engine names; every frame over 25 ms with what was running during it.
 - **`bench.py baseline save` / `regress`**: ABBA against a kept copy of an earlier host, run on its own rewrite output and shader library (the snapshot `baseline save` takes); red only on a slowdown that stays significant after Holm's correction over every segment × metric (default metrics `cpu_ms.p50`, `nvn_ms.p50`, `proc_cpu_ms.p50`; `gpu_ms` is clock-scaled on this Mac); a `--reps` too small to reach significance is refused before any run, and a segment × metric left without a judgement (too few runs with a value) is ⚪, never OK; the ledger keeps every comparison. A baseline kept before snapshots existed is ⚪ until it is saved again.
-- `long` runs the four routes, one profile and the regression (⚪ without a saved baseline), all at this Mac's Recommended picture in full screen (`bench.py --picture rec`, the default; `dm/tools/picture.py`).
+- `long` runs the four routes, one profile and the regression (⚪ without a saved baseline, or with a rep still disturbed after its redos), all in front at this Mac's Recommended picture in real full screen (`bench.py --picture rec`, the default; `dm/tools/picture.py`).
 
 ## Touch cases and fixture saves
 

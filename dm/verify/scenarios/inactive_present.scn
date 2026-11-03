@@ -2,7 +2,9 @@
 # (the present link paused, focus 2), so every present falls back and reads "not shown" (-1). Frame Drops used to count those as drops and
 # stepped down while nothing was on screen (the negative control: RED on the unfixed controller). DM_TEST_Q3D=0 turns the controller on (the
 # Mac's default is Keep); the 22 s in game get past the 20 s entry hold, and 40 s inactive would give it four 10 s windows to step in.
+# In front: the presents it judges must really reach the screen, and link_active restores the real key state.
 name inactive_present
+front visibility
 requires cli
 save warlock
 timeout 240

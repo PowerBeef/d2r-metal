@@ -35,7 +35,8 @@ The sets:
          the Switch's 2100 map. Frame Drops is pinned off as in REC75 (the phone's default is lower). It is the phone's picture chain, not a
          phone capture: the Mac host lays out the interface for that size itself.
   MAC_APP_REC   the Mac App test copy takes this Mac's real Recommended at first boot and starts full screen by itself
-  FULLSCREEN    the command-line host goes full screen one second after its window opens
+  FULLSCREEN    the command-line host goes full screen one second after its window opens: real full screen in a front run (bench.py), emulated in
+                a background run (scenario.py's default for windowed runs: the off-screen window takes the screen's full-screen size, no Space switch)
 
 A change to Recommended (dm/host/dm_picrec.c, its cases in dm/host/tests/t_picrec_cases.h, front_video_firstboot or front_video_rec in front_mac.m
 or front_ios.m, dm_video.c's 3D-scale tables) updates this file in the same commit; test_picture.py ties them together.

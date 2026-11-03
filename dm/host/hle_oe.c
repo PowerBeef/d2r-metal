@@ -289,7 +289,8 @@ typedef struct { scale3d_ctl c; int on, qm_was, was_in, was_hidden, inj_rel; lon
 #define S3_FEED_INIT { .on = -1, .qm_was = -1, .inj0 = -1, .inj1 = -1, .inj_base = -1 }
 static s3_feed_state g_s3f = S3_FEED_INIT;
 // The picture and in-game gates; returns 1 when the frame is not judged. Frames not shown are not judged: presents discarded (a covered Mac window,
-// the iOS background save wait) or paused for an inactive shell (iOS resign active, mtl_present_inactive). A Mac window that is visible but not key
+// the iOS background save wait) or paused for an inactive shell (iOS resign active, mtl_present_inactive), and a background test run's classic
+// presents, which nobody can read (mtl_present_offscreen; its projected link frames are judged). A Mac window that is visible but not key
 // keeps being judged: its frames are on screen. When the picture is visible again, judging waits 3 s with the history cleared (an explicit signal,
 // as returning to the foreground). Not judged outside a game (menus) or under a loading screen, nor in the first 20 s of a game or after a loading
 // screen (slow frames then are loading, not GPU pressure).
@@ -298,8 +299,8 @@ static s3_feed_state g_s3f = S3_FEED_INIT;
 // Keep runs the gates too (judging = 0), so their state and holds are current when Frame Drops goes back to Lower: a game entered in Keep long ago
 // does not get a fresh 20 s entry hold, and one entered in Keep moments ago keeps the rest of it
 static int s3_gates(s3_feed_state *f, uint64_t now, int judging) {
-    scale3d_ctl *c = &f->c; int mtl_present_hidden(void), dm_loadscreen_up(void);
-    if (mtl_present_hidden()) { f->was_hidden = 1; scale3d_ctl_hold(c, now, S3_SEC); return 1; }
+    scale3d_ctl *c = &f->c; int mtl_present_hidden(void), mtl_present_offscreen(void), dm_loadscreen_up(void);
+    if (mtl_present_hidden() || mtl_present_offscreen()) { f->was_hidden = 1; scale3d_ctl_hold(c, now, S3_SEC); return 1; }
     if (f->was_hidden) { f->was_hidden = 0; scale3d_ctl_hold(c, now, 3 * S3_SEC); if (judging) LOG("Frame Drops: picture visible again, judging resumes in 3 s"); }
     int in = dm_ingame_now() && !dm_loadscreen_up();
     if (!in) { f->was_in = 0; scale3d_ctl_hold(c, now, S3_SEC); return 1; }

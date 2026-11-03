@@ -103,6 +103,7 @@ static NSString *res_item(NSString *name) {
     return nil;
 }
 static void upd_start(void);   // 更新检查（在文件后面） | update check (later in this file)
+static int g_bgrun;   // a background test run (DM_TEST_BGRUN=1): no activation, no window of our own (front_mac.m)
 // After a macOS update the system's Metal compiler, and with it the app's shader cache, is new: a source-form library (the launcher's installs, see
 // nvn_mtl.m lib_load) is compiled again before the game starts, by this executable's --warm-shaders (a few minutes, once), behind a small window that
 // shows the progress, so the game doesn't compile while it draws. The window appears only when the pass takes longer than a second (after a minor
@@ -125,7 +126,7 @@ static void warm_with_window(void) {
     if (![t launchAndReturnError:&e]) { LOG("【红】App: the shader warm pass did not start: %s", e.localizedDescription.UTF8String); return; }
     NSWindow *w = nil; NSProgressIndicator *bar = nil; NSModalSession s = NULL;
     while (t.isRunning) {
-        if (!w && CACurrentMediaTime() - t0 > 1.0) {
+        if (!w && !g_bgrun && CACurrentMediaTime() - t0 > 1.0) {   // a background test run waits without the window
             w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 440, 132) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
             w.title = T("dmAppWarmTitle"); w.releasedWhenClosed = NO;
             NSTextField *l = [NSTextField wrappingLabelWithString:T("dmAppWarm")]; l.frame = NSMakeRect(20, 52, 400, 60);
@@ -213,8 +214,12 @@ int dm_app_bootstrap(int *argc, char ***argv) {
         // 框却挡着主窗口收不到鼠标键盘（游戏在后面照跑）。等同于带启动参数 -ApplePersistenceIgnoreState YES；要在建 NSApplication 之前设
         // No system "window state restoration": after a forced quit / crash the system shows a modal "the app quit unexpectedly, reopen windows?" at launch - the game has no window to restore,
         // yet the dialog covers the main window, which then receives no mouse or keyboard (the game keeps running behind it). Equivalent to the launch argument -ApplePersistenceIgnoreState YES; must be set before NSApplication is created
-        [NSUserDefaults.standardUserDefaults setVolatileDomain:@{ @"ApplePersistenceIgnoreState": @YES } forName:NSArgumentDomain];
-        [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]; [NSApp activateIgnoringOtherApps:YES];
+        // A background test run (DM_TEST_BGRUN=1, front_mac.m) never asks for activation: no activate call, and argv words are not opened as documents
+        // (AppKit's own launch activation request). The argument domain is replaced as a whole, so both keys go in one dictionary
+        { const char *bge = getenv("DM_TEST_BGRUN"); g_bgrun = bge && !strcmp(bge, "1"); }
+        NSMutableDictionary *argd = [NSMutableDictionary dictionaryWithObject:@YES forKey:@"ApplePersistenceIgnoreState"]; if (g_bgrun) argd[@"NSTreatUnknownArgumentsAsOpen"] = @"NO";
+        [NSUserDefaults.standardUserDefaults setVolatileDomain:argd forName:NSArgumentDomain];
+        [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]; if (!g_bgrun) [NSApp activateIgnoringOtherApps:YES];
         NSString *prod = res_item(@"product");
         if (!prod || ![fm fileExistsAtPath:[prod stringByAppendingPathComponent:@"main.patched.bin"]]) {
             alert(T("dmAppBrokenTitle"), T("dmAppBroken")); exit(1);

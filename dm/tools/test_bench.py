@@ -133,12 +133,12 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(rc, 3, out.getvalue()); self.assertIn('no rewrite output / shader library snapshot', out.getvalue())
 
 
-    def regress_out(self, argv, segs):
-        """bench.py regress over fake runs whose segments come from segs(run number): (exit code, output, regress.json)."""
-        n = [0]
+    def regress_out(self, argv, segs, go=None):
+        """bench.py regress over fake runs whose segments come from segs(run number): (exit code, output, regress.json). go(attempt) gives a run's (result, code)."""
+        n = [0]; tries = [0]
         class FakeRunner:
             def __init__(self, route, backend, out_dir, headless): self.on_started = None
-            def go(self): return {}, 0
+            def go(self): tries[0] += 1; return go(tries[0]) if go else ({}, 0)
         def fake_segments(d): n[0] += 1; return segs(n[0])
         with tempfile.TemporaryDirectory() as t:
             self.snapshotted(t); host = Path(t, 'dmhost'); host.write_bytes(b'x'); out = io.StringIO()
@@ -167,6 +167,16 @@ class BenchTest(unittest.TestCase):
         rc, out, rj = self.regress_out(['--metrics', 'cpu_ms.p50,present.p95_ms'], lambda i: {**slow(i), 'wild': seg(i)})   # a slowdown is red even with a comparison not judged
         self.assertEqual((rc, rj['verdict']), (1, 'RED'), out); self.assertIn('town cpu_ms.p50 +', out); self.assertIn('not judged: present.p95_ms (town, wild)', out)
         self.assertEqual(bench.not_judged([], ['cpu_ms.p50'], []), {'cpu_ms.p50': ['(no segment)']})
+
+    def test_regress_disturbed(self):   # a run the desk still disturbed after its redos is a not_judged reason: grey (exit 3), never OK; a slowdown stays red
+        def seg(i):
+            v = 1.0 + (i % 3) * 0.01
+            return {'town': {k: {'p50': v} for k in ('cpu_ms', 'nvn_ms', 'proc_cpu_ms')}, 'wild': {k: {'p50': v} for k in ('cpu_ms', 'nvn_ms', 'proc_cpu_ms')}}
+        dist = dict(disturbed=[dict(t=1.0, step=1, what='desk other_app by com.example')])
+        with mock.patch.object(bench, 'REDO', bench.REDO):   # main() sets the module's REDO from --redo: put it back afterwards
+            rc, out, rj = self.regress_out(['--redo', '0'], seg, go=lambda k: (dist, 0) if k == 3 else ({}, 0))
+        self.assertEqual((rc, rj['verdict']), (3, 'UNAVAILABLE'), out); self.assertIn('⚪ BENCH-REGRESS town_loop: not judged, 1 runs disturbed', out)
+        self.assertEqual(rj['not_judged'], {'disturbed': ['03B: desk other_app by com.example']}); self.assertNotIn('BENCH-REGRESS OK', out)
 
     def test_holm_and_min_reps(self):
         rows = [dict(p=p) for p in (0.001, 0.01, 0.02, 0.04)]; bench.holm(rows)
@@ -249,6 +259,93 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(len(seen), 2)
         for d, v in seen: self.assertEqual(v, os.path.join(d, 'pg.tsv'))
         self.assertNotIn('DM_NVN_PASSGPU', os.environ)
+
+
+class FakeRunner:
+    """Stands in for scenario.Runner in run_once: each go() takes the next outcome of OUTCOMES ('ok', 'red' or 'disturbed'), records the
+    DM_TEST_BGRUN it saw and leaves a marker file naming its attempt in its run folder."""
+    OUTCOMES: list = []
+    seen: list = []
+
+    def __init__(self, route, backend, out, headless, metal=None):
+        self.out, self.on_started = out, None
+
+    def go(self):
+        what = FakeRunner.OUTCOMES.pop(0); FakeRunner.seen.append((self.out, os.environ.get('DM_TEST_BGRUN')))
+        Path(self.out, 'attempt.txt').write_text(f'{len(FakeRunner.seen)} {what}\n', encoding='utf-8')
+        Path(self.out, 'events.ndjson').write_text(json.dumps(dict(seq=1, t=0.2, ev='window', cw=1280, ch=720, full=True, emu=False, active=True)) + '\n', encoding='utf-8')
+        res = dict(reason=what, disturbed=[dict(t=1.0, step=1, what='desk other_app by com.example')] if what == 'disturbed' else [])
+        return res, 1 if what == 'red' else 0
+
+
+class BenchRedoTest(unittest.TestCase):
+    """bench.py runs in front (DM_TEST_BGRUN=0); a disturbed rep is redone in its own slot after cooling, its folder renamed .disturbedK, then not judged."""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='bench redo '); self.dir = Path(self.temp.name)
+        self.saved = (bench.scenario.Runner, bench.wait_cool, bench.thermal, bench.DM_ROOT, bench.environment, bench.ledger_write, sys.modules.get('boothist'))
+        self.records: list = []
+        bench.scenario.Runner = FakeRunner   # type: ignore[misc]
+        bench.wait_cool = lambda s: (dict(nominal=True), 0.0)   # type: ignore[assignment]
+        bench.thermal = lambda: dict(nominal=True)   # type: ignore[assignment]
+        bench.DM_ROOT = str(self.dir)
+        bench.environment = lambda: dict(git=dict(rev='test', dirty=False), bgrun=0)   # type: ignore[assignment]
+        bench.ledger_write = lambda *a: 'ledger'   # type: ignore[assignment]
+        sys.modules['boothist'] = types.SimpleNamespace(record=lambda files, label: self.records.append(files))   # type: ignore[assignment]
+        FakeRunner.seen = []
+        os.environ.pop('DM_TEST_BGRUN', None)
+
+    def tearDown(self):
+        (bench.scenario.Runner, bench.wait_cool, bench.thermal, bench.DM_ROOT, bench.environment, bench.ledger_write, bh) = self.saved
+        if bh is None: sys.modules.pop('boothist', None)
+        else: sys.modules['boothist'] = bh
+        self.temp.cleanup()
+
+    def once(self, outcomes, redo=2):
+        FakeRunner.OUTCOMES = list(outcomes)
+        out = str(self.dir / 'r1')
+        with contextlib.redirect_stdout(io.StringIO()):
+            return bench.run_once('route.scn', 'cli', out, {}, None, 0, redo=redo), out
+
+    def test_disturbed_then_ok_is_accepted(self):
+        r, out = self.once(['disturbed', 'ok'])
+        self.assertTrue(r['ok']); self.assertEqual((r['attempts'], r['disturbed']), (2, []))
+        self.assertEqual(Path(out + '.disturbed1', 'attempt.txt').read_text(encoding='utf-8'), '1 disturbed\n')
+        self.assertEqual(Path(out, 'attempt.txt').read_text(encoding='utf-8'), '2 ok\n')   # the same out_dir: DM_FRAMES and DM_NVN_TSV stay valid
+        self.assertEqual([s[1] for s in FakeRunner.seen], ['0', '0'])                          # every attempt in front
+        self.assertNotIn('DM_TEST_BGRUN', os.environ)                                         # restored afterwards
+        self.assertEqual(len(self.records), 1)                                                # boot history only for the accepted rep
+        self.assertEqual((r['window']['cw'], r['window']['full']), (1280, True))               # the rep's last window state: in front, real full screen or not
+
+    def test_disturbed_every_time(self):
+        r, out = self.once(['disturbed'] * 3)
+        self.assertFalse(r['ok']); self.assertEqual(r['attempts'], 3); self.assertEqual(len(r['disturbed']), 1)
+        self.assertTrue(Path(out + '.disturbed1').is_dir() and Path(out + '.disturbed2').is_dir())
+        self.assertEqual(self.records, [])
+        self.assertEqual(bench.rep_verdict([r]), 'NOT_JUDGED')
+
+    def test_rep_verdict(self):
+        ok, red, dist = dict(ok=True, disturbed=[]), dict(ok=False, disturbed=[]), dict(ok=False, disturbed=[dict(what='x')])
+        self.assertEqual(bench.rep_verdict([ok, ok]), 'OK')
+        self.assertEqual(bench.rep_verdict([ok, dist]), 'NOT_JUDGED')
+        self.assertEqual(bench.rep_verdict([dist, red]), 'RED')   # a real failure wins
+
+    def test_cmd_run_not_judged(self):
+        FakeRunner.OUTCOMES = ['ok'] + ['disturbed'] * 3
+        a = types.SimpleNamespace(route='town.scn', backend='cli', reps=2, env=None, host=None, out=str(self.dir / 'bench.json'), cool=0, mpt=False, picture='rec')
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = bench.cmd_run(a)
+        self.assertEqual(rc, 3); self.assertIn('⚪ BENCH town not judged: 1 of 2 runs disturbed', buf.getvalue())
+        self.assertEqual(json.loads(Path(a.out).read_text(encoding='utf-8'))['verdict'], 'NOT_JUDGED')
+
+    def test_ab_slot_order_after_redo(self):
+        FakeRunner.OUTCOMES = ['ok', 'disturbed', 'ok', 'ok', 'ok']   # the second slot (B) is redone once in place
+        a = types.SimpleNamespace(route='town.scn', backend='cli', reps=2, a_env='', b_env='', a_host=None, b_host=None, metric='gpu_ms.p50', out=str(self.dir / 'ab.json'), cool=0, picture='rec')
+        with contextlib.redirect_stdout(io.StringIO()): rc = bench.cmd_ab(a)
+        self.assertEqual(rc, 0)
+        slots = [os.path.basename(o) for o, _ in FakeRunner.seen]
+        self.assertEqual(slots, ['01A', '02B', '02B', '03B', '04A'])   # ABBA kept: the redo runs in its own slot before the next one
+        res = json.loads(Path(a.out).read_text(encoding='utf-8'))
+        self.assertEqual(res['order'], 'ABBA'); self.assertEqual([r['attempts'] for r in res['reps']['B']], [2, 1])
 
 
 if __name__ == '__main__':

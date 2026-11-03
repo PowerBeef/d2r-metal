@@ -5,6 +5,7 @@
 # The scale3d lv=1 expectation fails first, and clearly, when the controller does not step. The set's first build is checked at the end, not
 # expected after enter_game: the main menu's 3D scene already builds it, before or after the enter_game step starts.
 name mfx3d_dyn
+front visibility
 requires ios-mac device
 env DM_3D_SCALE=0.75 DM_MFX3D=1 DM_TEST_Q3D=0 DM_3D_SCALE_DYN_INJECT=+300-100000000
 timeout 300

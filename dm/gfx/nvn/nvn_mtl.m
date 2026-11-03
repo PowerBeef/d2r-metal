@@ -29,6 +29,7 @@
 #define FB_ARG id<MTL4CommitFeedback>
 #include "nvn_pace.h"
 #include "nvn_timestamp.h"
+#include "nvn_presproj.h"
 #include "nvn_obj.h"
 #include "../tex/nvn_fmt_mtl.h"
 #include "../tex/nvn_deswizzle.h"
@@ -6547,6 +6548,11 @@ static pres_ent g_pres[PRING];
 // Get the actual presentation time of the nth present (returns 0 if not ready, -1 if dropped)
 double mtl_presented_time(uint64_t n) { pres_ent e = g_pres[n % PRING]; return e.n == n ? e.t : 0; }
 void mtl_presented_test_set(uint64_t tk, double t) { g_pres[tk % PRING] = (pres_ent){tk, t}; }   // unit tests (t_nvn): record ticket tk's presentation time, as the presented handler does
+// Background test runs (front_mac.m, DM_TEST_BGRUN=1): the window sits off every screen and the system reports presentedTime 0 for every frame, so the
+// display link's target timestamp is recorded instead (nvn_presproj.h); classic / rescue presents have no target and still read -1 (mtl_present_offscreen
+// keeps Frame Drops from judging them). Never set on iOS
+static _Atomic int g_present_project;
+void mtl_present_project(int on) { atomic_store(&g_present_project, on != 0); }
 static _Atomic uint64_t g_drawable_ns;   // 出图里等 nextDrawable 的累计墙钟（计时埋点） | Accumulated wall clock waiting for nextDrawable in present (timing instrumentation)
 uint64_t mtl_drawable_ns_take(void) { return atomic_exchange(&g_drawable_ns, 0); }
 // 窗口所在屏的刷新率与名字：Mac 前端在主线程上读 AppKit 存一份（front_mac.m screen_note）；没有这份的前端回 0，走下面的退路
@@ -7249,11 +7255,11 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 #else
     // Presentation times are recorded by present-thread ticket (the n-th present this thread was given, mtl_present), not by what reached the screen:
     // in the display-link path old frames get merged and dropped, and those tickets read -1. The game's present count runs ahead of the tickets
-    // (presents dropped at the door get none), so hle_nvn.c maps each game present to its job and the job to its ticket (present_time_of)
-    uint64_t pn = ticket;
-    [dr addPresentedHandler:^(id<MTLDrawable> d) {   // the actual presentation time (when this frame really replaced the previous one on screen; CACurrentMediaTime base)
-        CFTimeInterval tt = d.presentedTime;
-        g_pres[pn % PRING] = (pres_ent){pn, tt > 0 ? tt : -1};
+    // (presents dropped at the door get none), so hle_nvn.c maps each game present to its job and the job to its ticket (present_time_of).
+    // A background test run projects the link's target timestamp when the system reports none (nvn_presproj.h, mtl_present_project)
+    uint64_t pn = ticket; int proj = atomic_load(&g_present_project);
+    [dr addPresentedHandler:^(id<MTLDrawable> d) {   // the actual presentation time (when this frame really replaced the previous one on screen; CACurrentMediaTime base); projected in background runs
+        g_pres[pn % PRING] = (pres_ent){pn, nvn_presented_or_projected(d.presentedTime, proj, target_ts)};
     }];
     // 每张至少显示一个出图周期：GPU 完成时刻在 120 Hz 刷新边界附近抖动时，不再出现「25 ms + 8.33 ms」成对的顿挫
     // Each frame is displayed for at least one present period: when the GPU completion time jitters around a 120 Hz refresh boundary, the paired "25 ms + 8.33 ms" stutter no longer appears
@@ -7503,6 +7509,10 @@ void mtl_present_discard(int on) { atomic_store(&g_present_discard, on != 0); if
 void mtl_present_inactive(int on) { atomic_store(&g_present_inactive, on != 0); link_do(^(CAMetalDisplayLink *l) { l.paused = atomic_load(&g_present_inactive) != 0; }); }
 // Presents are not shown right now (discarded, or paused for an inactive shell): Frame Drops does not judge such frames (hle_oe.c dm_3d_scale_feed)
 int mtl_present_hidden(void) { return atomic_load(&g_present_discard) || atomic_load(&g_present_inactive); }
+// A background test run's presents that nobody can read (projection on, but no present link drives presents: DM_PRESENT_LINK=0 or a stall
+// rescue): the off-screen window reports no presented time and a classic present has no link target, so every frame reads -1. Frame Drops
+// treats them as hidden (hle_oe.c s3_gates), so unreadable frames are never judged as drops. Projected link frames stay judged. Always 0 on iOS
+int mtl_present_offscreen(void) { return atomic_load(&g_present_project) && !link_on(); }
 // The picture is out of view for a while (the Mac window covered; not set while quitting): the game loop slows to DM_HIDDEN_HZ (hle_nvn.c hidden_hz).
 // The iOS inactive and background save-wait paths do not set it (unmeasured on the phone)
 static _Atomic int g_present_idle;

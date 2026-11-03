@@ -39,7 +39,7 @@ POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 
 ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away', 'ui_click')
 LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture', 'expect_mem')
-HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires')
+HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires', 'front')
 CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event', 'actions', 'saves_valid', 'save_pairs', 'log_has')
 LOG_HAS_KW = ('re', 'file', 'min', 'last')
 BAD = ('red', 'fatal', 'crash', 'watchdog')
@@ -70,9 +70,10 @@ def value(v):
 
 def parse(path):
     """返回 (表头, 步骤, 检查)；步骤 = {op, args, kw, line, n}。 | Returns (header, steps, checks); a step = {op, args, kw, line, n}."""
-    meta: dict[str, Any] = dict(name=os.path.splitext(os.path.basename(path))[0], save='warlock', env={}, timeout=300, window=1, requires=[])
+    meta: dict[str, Any] = dict(name=os.path.splitext(os.path.basename(path))[0], save='warlock', env={}, timeout=300, window=1, requires=[], front='')
     steps: list[dict[str, Any]] = []; checks: list[dict[str, Any]] = []
-    for n, raw in enumerate(open(path, encoding='utf-8'), 1):
+    with open(path, encoding='utf-8') as fh: lines = fh.readlines()
+    for n, raw in enumerate(lines, 1):
         try: tok = shlex.split(raw, comments=True)
         except ValueError as e: raise ScenarioError(f'{path}:{n}: {e}') from e
         if not tok: continue
@@ -86,6 +87,9 @@ def parse(path):
         if op in HEADER:
             if op == 'env': meta['env'].update(kw)
             elif op == 'requires': meta['requires'] = args
+            elif op == 'front':   # front <why>: this scenario runs in front (DM_TEST_BGRUN=0), judged for disturbances and redone
+                if not rest: raise ScenarioError(f'{path}:{n}: front needs a reason (visibility, focus, fullscreen, timing ...)')
+                meta['front'] = ' '.join(rest)
             elif op in ('timeout', 'window'): meta[op] = int(args[0]) if args else meta[op]
             elif args: meta[op] = args[0]
             continue
@@ -104,6 +108,7 @@ def parse(path):
         if op == 'remember' and not args: raise ScenarioError(f'{path}:{n}: remember needs a state field')
         if op == 'export_save' and (not args or not re.fullmatch(r'[a-z0-9_]+', args[0])): raise ScenarioError(f'{path}:{n}: export_save needs a name of a-z 0-9 _')
         steps.append(dict(op=op, args=args, kw=kw, line=raw.split('#')[0].strip(), n=n, soft=soft))
+    if meta['front'] and 'DM_TEST_BGRUN' in meta['env']: raise ScenarioError(f'{path}: front and env DM_TEST_BGRUN contradict each other')
     return meta, steps, checks
 
 
@@ -134,6 +139,69 @@ def log_has_parse(path, n, args, kw):
     if not re.fullmatch(r'\d+', kw.get('min', '1')): raise ScenarioError(f'{path}:{n}: log_has min= takes a whole number')
     if int(kw.get('min', '1')) < 1: raise ScenarioError(f'{path}:{n}: log_has min=0 always passes (use min=1 or more)')
     if 'last' in kw and int(kw.get('min', '1')) != 1: raise ScenarioError(f'{path}:{n}: log_has last= judges one line, so min= can only be 1')
+
+
+# ---------- 前台与后台跑局 | Front and background runs ----------
+# Windowed runs (cli with a window, mac-app, ios-mac) are background runs by default (DM_TEST_BGRUN=1: the game never takes the front, front_mac.m).
+# A front run (the scenario's `front <why>` header, --front, or DM_TEST_BGRUN=0 from the caller, as bench.py sets) is judged for disturbances:
+# something of the user's desk that changed what the game saw. A disturbed front run is redone, and after the redo bound reported "not judged" (exit 3)
+REQUESTING = ('app', 'background', 'system_quit', 'swipe_away', 'fe')   # steps that ask for lifecycle / focus changes themselves
+FS_GRACE = 3.0   # seconds of real full-screen transition (the Space switch) after a window event whose `full` changed
+LAUNCH_S = 3.0   # a background run that comes to the front this soon after launch took it by itself
+
+
+def disturbed(events, marks, ops, front, fs_at=()):
+    """The disturbance detector, a pure function. events = the run's event stream; marks[i] = the event seq mark taken before step i + 1; ops[i] = its op;
+    fs_at = DM_TEST_FULLSCREEN_AT times (scheduled real full-screen switches, for hosts without `window` events).
+    Front run: disturbed by another app taking the front, a Space switch, display sleep, the session going inactive, a resign whose cause is not the run's own
+    sheet or minimize, occlusion or minimize outside a step that asked for it (requesting steps and the step after them: the events arrive asynchronously),
+    except the real full-screen switch (within FS_GRACE s of a window `full` change or a scheduled switch); and by never getting the front before the first
+    step ended. Background run: `desk front by=self` within LAUNCH_S s of launch or inside a requesting step's reach is the run taking the front (red);
+    a later one is the user's own, only noted. Events after the quit started are consequences of it and are not judged.
+    Returns dict(disturbed=[{t, step, what}], took_front=[...], front_by_user=[...])."""
+    out: dict[str, list] = dict(disturbed=[], took_front=[], front_by_user=[])
+    def step_of(seq): return sum(1 for m in marks if m < seq)   # 0 = launch, before the first step
+    def requested(s): return s >= 1 and (ops[s - 1] in REQUESTING or (s >= 2 and ops[s - 2] in REQUESTING))
+    t0 = next((e.get('t', 0) for e in events if e.get('ev') == 'start'), 0)
+    fs_win = [(at - 0.5, at + FS_GRACE + 1) for at in fs_at]; prev_full = False
+    for e in events:
+        if e.get('ev') == 'window' and bool(e.get('full')) != prev_full: prev_full = bool(e.get('full')); fs_win.append((e.get('t', 0) - 0.5, e.get('t', 0) + FS_GRACE))
+    def in_fs(t): return any(a <= t <= b for a, b in fs_win)
+    first_end = marks[1] if len(marks) > 1 else float('inf'); active = False
+    for e in events:
+        k, seq, t = e.get('ev'), e.get('seq', 0), e.get('t', 0)
+        if k in ('quit', 'shutdown', 'exit'): break
+        s = step_of(seq); emu = bool(e.get('emu'))
+        hit = dict(t=t, step=s)
+        if k == 'app' and e.get('state') == 'active' and not emu and seq <= first_end: active = True
+        if not front:
+            if k == 'desk' and e.get('what') == 'front':
+                (out['took_front'] if t - t0 < LAUNCH_S or requested(s) else out['front_by_user']).append(dict(hit, what=f"desk front by {e.get('by')}"))
+            continue
+        what = None
+        if k == 'desk' and e.get('what') in ('other_app', 'space', 'screens_sleep', 'session_off'):
+            if not requested(s) and not (e.get('what') == 'space' and in_fs(t)): what = f"desk {e.get('what')}" + (f" by {e['by']}" if e.get('by') else '')
+        elif k == 'app' and not emu and e.get('state') == 'resign':
+            if e.get('cause') not in ('sheet', 'minimize') and not requested(s): what = f"app resign cause={e.get('cause', '?')}"
+        elif k == 'app' and not emu and e.get('state') in ('occluded', 'minimized'):
+            if not requested(s) and not (e.get('state') == 'occluded' and in_fs(t)): what = f"app {e.get('state')}"
+        if what: out['disturbed'].append(dict(hit, what=what))
+    if front and ops and not active: out['disturbed'].append(dict(t=None, step=1, what='never active'))
+    return out
+
+
+def final_rc(codes):
+    """The exit code of a set of scenarios: 1 when any is RED (or failed otherwise), else 3 when any was not judged, else 0. | RED wins over not judged."""
+    return 1 if any(c not in (0, 3) for c in codes) else 3 if 3 in codes else 0
+
+
+def fs_times(env):
+    """DM_TEST_FULLSCREEN_AT=<s>[;<s>...]: the scheduled real full-screen switches of a front run."""
+    out = []
+    for q in str(env.get('DM_TEST_FULLSCREEN_AT') or '').split(';'):
+        try: out.append(float(q))
+        except ValueError: pass
+    return tuple(out)
 
 
 # ---------- 后端 | Backends ----------
@@ -170,6 +238,7 @@ class CliBackend:
 
     def __init__(self, meta, run, headless):
         self.meta, self.run, self.headless, self.proc, self.log = meta, run, headless, None, None
+        self.bgrun: str | None = None   # DM_TEST_BGRUN for this run (Runner.bgrun): '1' background, '0' front, None = not set (headless)
 
     def start(self):
         dmhost = os.environ.get('SCN_DMHOST')   # 另指一个宿主可执行文件（基准 A/B 比两个构建时用），不重编 | point at another host executable (benchmark A/B between two builds), without rebuilding
@@ -188,6 +257,7 @@ class CliBackend:
         env = dict(os.environ, DM_ROMFS=romfs, DM_SAVE=prepare_save(self.meta, self.run), DM_TEMP=os.path.join(self.run, 'tmp'),
                    DM_MSL_DIR=os.environ.get('DM_MSL_DIR') or os.path.join(DM_ROOT, 'build', 'cache', 'metal_shader_cache'), DM_CTL_PORT=str(port),   # a given library folder wins (another chain, e.g. a source-form one)
                    DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_WATCH=str(self.meta['timeout'] + 60), DM_CRASH_JSON=os.path.join(self.run, 'crash.json'))
+        if self.bgrun is not None: env['DM_TEST_BGRUN'] = self.bgrun   # background (or front) test run: the scenario's own env below still wins
         if self.meta['window'] and not self.headless: env['DM_WINDOW'] = '1'
         env.update(scn_env(self.meta['env'], self.run))
         if env.get('DM_ROMFS_OVERLAY') == 'auto-mac':   # env DM_ROMFS_OVERLAY=auto-mac: the Mac App's overlay (DM_OVERLAY_MAC: Video tab, key caps, the PC interface set for DM_PC_MODE), about 25 s
@@ -242,6 +312,7 @@ class MacAppBackend(CliBackend):
         env = {k: v for k, v in os.environ.items() if k not in ('DM_SAVE', 'DM_TEMP', 'DM_ROMFS', 'DM_ROOT')}
         env.update(DM_APP_SUPPORT=sup, DM_APP_ROMFS=romfs, DM_CTL_PORT=str(port), DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_AUDIO='0', DM_WATCH=str(self.meta['timeout'] + 60),
                    DM_CRASH_JSON=os.path.join(self.run, 'crash.json'))
+        if self.bgrun is not None: env['DM_TEST_BGRUN'] = self.bgrun   # background (or front) test run: the scenario's own env below still wins
         env.update(scn_env(self.meta['env'], self.run))
         self.log = open(os.path.join(self.run, 'launch.log'), 'wb')
         self.proc = subprocess.Popen([exe], env=env, stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
@@ -259,6 +330,7 @@ class LaunchBackend:
 
     def __init__(self, name, meta, run):
         self.name, self.meta, self.run, self.ended, self.p = name, meta, run, False, None
+        self.bgrun: str | None = None
 
     def _ask(self, cmd, timeout=60):
         if not self.p or self.p.poll() is not None or not self.p.stdin or not self.p.stdout: return ''
@@ -324,10 +396,20 @@ class Runner:
         self.path = path
         self.meta, self.steps, self.checks = parse(path)
         self.meta['env'].update(extra_env or {})   # run --env: the command line wins over the scenario's own env
+        if self.meta['front'] and 'DM_TEST_BGRUN' in (extra_env or {}): raise ScenarioError(f'{path}: front and --env DM_TEST_BGRUN contradict each other')
         stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         self.run = out or os.path.join(DM_ROOT, 'run', 'scenario', f"{self.meta['name']}_{backend_name}_{stamp}_{os.getpid()}")
         os.makedirs(self.run, exist_ok=True)
         self.backend = CliBackend(self.meta, self.run, headless) if backend_name == 'cli' else MacAppBackend(self.meta, self.run, headless) if backend_name == 'mac-app' else LaunchBackend(backend_name, self.meta, self.run)
+        # Windowed runs are background runs unless they run in front: the `front` header, then the scenario's own env, then DM_TEST_BGRUN from the caller
+        # (--front, bench.py), else 1. ios-mac always runs in front: the iOS package on the Mac takes the front even when launched with open -g (measured:
+        # UserInteractiveFocal 0.5 s after launch, scene active), so its runs are front runs, judged for disturbances. Headless and device runs set nothing
+        self.windowed = backend_name == 'mac-app' or backend_name == 'ios-mac' or (backend_name == 'cli' and bool(self.meta['window']) and not headless)
+        self.bgrun = None if not self.windowed else '0' if self.meta['front'] or backend_name == 'ios-mac' else str(self.meta['env']['DM_TEST_BGRUN']) if 'DM_TEST_BGRUN' in self.meta['env'] \
+            else os.environ['DM_TEST_BGRUN'] if os.environ.get('DM_TEST_BGRUN') in ('0', '1') else '1'
+        self.front = self.bgrun == '0'
+        self.backend.bgrun = self.bgrun
+        self.marks: list[int] = []   # the event seq mark before each step (the disturbance detector's step ranges)
         if any(st['op'] == 'gpu_capture' for st in self.steps): self.meta['env'].setdefault('MTL_CAPTURE_ENABLED', '1')   # 进程得带它起才截得了帧 | the process must start with it to be capturable
         self.metal = metal
         for k, v in METAL_VALIDATION.get(metal or '', {}).items(): self.meta['env'].setdefault(k, v)
@@ -341,8 +423,8 @@ class Runner:
         assert self.c is not None
         return self.c
 
-    def say(self, line):
-        print(line, flush=True)
+    def say(self, line):   # a front attempt's lines carry a '· ' prefix: only the judged attempt's verdict line is printed bare (run_scenario), so dmtest.py counts it once
+        print(('· ' if self.front else '') + line, flush=True)
 
     # 步骤 | steps
     def ctl(self, cmdname, **kw):   # 参数可能就叫 name（mark、tap_ui）：命令名用别的名字 | an argument may be called name (mark, tap_ui): the command name uses another name
@@ -603,7 +685,7 @@ class Runner:
             deadline = t0 + self.meta['timeout']
             for i, st in enumerate(self.steps, 1):
                 if time.time() > deadline: fail = dict(step=i, line=st['line'], reason=f"scenario timeout {self.meta['timeout']} s"); break
-                mark = self.cc.mark(); s = time.time()
+                mark = self.cc.mark(); s = time.time(); self.marks.append(mark)
                 try: r = self.do(st); ok, detail = True, r
                 except (ScenarioError, dmctl.CtlError, dmctl.BadEvent, TimeoutError, OSError) as e: ok, detail = False, str(e)
                 dt = time.time() - s
@@ -642,13 +724,40 @@ class Runner:
             what = f"crash {cr.get('signal', '?')} at " + (' '.join(x for x in (top.get('where'), top.get('name')) if x) or '?')
             fail = dict(step=(fail or {}).get('step', len(self.steps)), line=(fail or {}).get('line', '(after the steps)'), reason=what + (f"; {fail['reason']}" if fail else ''))
         checks = (self.final_checks() if not fail or fail['step'] else []) + self.log_scans()
+        det = disturbed(self.events(), self.marks, [st['op'] for st in self.steps], self.front, fs_times({**os.environ, **self.meta['env']})) if self.windowed and self.c else dict(disturbed=[], took_front=[], front_by_user=[])
+        if det['took_front']:   # a background run that took the front by itself is a bug of the run's own (front_mac.m), red
+            why = '; '.join(f"t={x['t']:.2f} step {x['step']}: {x['what']}" for x in det['took_front'])[:200]
+            checks.append(dict(check='background run kept the background', ok=False, detail=why)); self.say(f'CHECK ✗ background run kept the background — {why}')
+        for x in det['front_by_user']: self.say(f"  # note: the app came to the front at t={x['t']:.2f} (step {x['step']}), after launch and outside the run's own requests: the user's")
         bad_ck = [c for c in checks if not c['ok']]
         verdict = 'OK' if not fail and not bad_ck else 'RED'
         why = f"step {fail['step']} ({fail['line']}): {fail['reason'][:160]}" if fail else f'check: {bad_ck[0]["check"]} — {bad_ck[0]["detail"][:120]}' if bad_ck else f'{len(self.steps)} steps, {len(checks)} checks'
-        self.say(f'SCENARIO {name} {verdict} {why} 用时 {time.time() - t0:.0f} 秒')
-        res = dict(name=name, backend=self.backend.name, verdict=verdict, reason=why, failed=fail, steps=self.records, checks=checks, dir=self.run, elapsed_s=round(time.time() - t0, 1))
+        line = f'SCENARIO {name} {verdict} {why} 用时 {time.time() - t0:.0f} 秒'
+        self.say(line)
+        res = dict(name=name, backend=self.backend.name, verdict=verdict, reason=why, failed=fail, steps=self.records, checks=checks, dir=self.run, elapsed_s=round(time.time() - t0, 1),
+                   bgrun=self.bgrun, disturbed=det['disturbed'] if self.front else [], front_by_user=det['front_by_user'], line=line)
         with open(os.path.join(self.run, 'result.json'), 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
         return res, 0 if verdict == 'OK' else 1
+
+
+def run_scenario(path, backend, out, headless, metal, redo, make=None, extra_env=None):
+    """One scenario file. A front run that came out disturbed is redone in a new run folder (the disturbed one is kept), at most `redo` times, then
+    reported "not judged" (⚪ line, verdict UNAVAILABLE, code 3). Only the judged front attempt's verdict line is printed bare. make(out) builds the Runner (tests);
+    extra_env = run --env, merged into the scenario's env (the command line wins)."""
+    mk = make or (lambda o: Runner(path, backend, o, headless, metal=metal, extra_env=extra_env))
+    attempt = 0
+    while True:
+        r = mk(out if not attempt or out is None else f'{out}_redo{attempt}')
+        res, code = r.go()
+        if not res.get('disturbed'):
+            if r.front: print(res['line'], flush=True)
+            return dict(res, attempts=attempt + 1), code
+        what = '; '.join(x['what'] for x in res['disturbed'])[:160]
+        if attempt >= redo:
+            print(f"⚪ SCENARIO {res['name']} not judged: disturbed ({what})", flush=True)
+            return dict(res, verdict='UNAVAILABLE', reason=f'not judged: disturbed ({what})', attempts=attempt + 1), 3
+        attempt += 1
+        print(f"SCENARIO {res['name']} DISTURBED {what} (redo {attempt}/{redo})", flush=True)
 
 
 def main(argv):
@@ -658,6 +767,8 @@ def main(argv):
     r.add_argument('--out'); r.add_argument('--headless', action='store_true')
     r.add_argument('--metal-validation', choices=sorted(METAL_VALIDATION), help='turn on the Metal validation layers; messages go to metal_validation.txt (lint: summary only)')
     r.add_argument('--env', action='append', default=[], help='K=V words (repeatable, shell-quoted) merged into every scenario\'s env; the command line wins')
+    r.add_argument('--front', action='store_true', help='run windowed scenarios in front (DM_TEST_BGRUN=0), to watch them; judged for disturbances and redone')
+    r.add_argument('--redo', type=int, default=2, help='how many times a disturbed front run is redone before it is reported not judged (default 2)')
     c = sub.add_parser('check'); c.add_argument('files', nargs='+')
     a = ap.parse_args(argv)
     if a.cmd == 'check':
@@ -671,9 +782,10 @@ def main(argv):
         for kv in shlex.split(it):
             if '=' not in kv or kv.startswith('='): print(f'🔴 --env takes K=V words (got {kv!r})'); return 2
             k, v = kv.split('=', 1); extra[k] = v
+    if a.front: os.environ['DM_TEST_BGRUN'] = '0'
     held = game_lock(__file__, argv, f"scenario {' '.join(os.path.basename(f) for f in a.files)[:60]} ~{len(a.files) * 2} min", a.backend == 'mac-app' or (a.backend == 'cli' and not a.headless))
     if held is not None: return held
-    results, rc = [], 0
+    results: list[dict[str, Any]] = []; codes: list[int] = []
     if a.metal_validation in ('shader', 'all') and not a.headless:
         # macOS 27（27.0.1 仍在）实测：开着着色器校验的有窗口运行，第一次出图提交就崩在 Metal 自己的 -[MTL4GPUDebugCommandBuffer applyResidencySets:] 里；
         # 无窗口运行没有出图这一步，游戏的全部渲染照样校验。本分支只走 Metal 4，不再有旧接口宿主可换
@@ -683,10 +795,11 @@ def main(argv):
     for f in a.files:
         try:
             ensure_save(parse(f)[0]['save'], a.headless)
-            res, code = Runner(f, a.backend, a.out if len(a.files) == 1 else None, a.headless, metal=a.metal_validation, extra_env=extra).go()
+            res, code = run_scenario(f, a.backend, a.out if len(a.files) == 1 else None, a.headless, a.metal_validation, a.redo, extra_env=extra)
         except ScenarioError as e: res, code = dict(name=os.path.basename(f), verdict='RED', reason=str(e)), 1; print(f'SCENARIO {os.path.basename(f)} RED {e}')
-        results.append(res); rc = max(rc, code)
-    print('RESULT ' + json.dumps(dict(name='scenario', verdict='OK' if rc == 0 else 'RED', scenarios=[dict(name=r['name'], verdict=r['verdict'], reason=r.get('reason'), dir=r.get('dir')) for r in results]), ensure_ascii=False))
+        results.append(res); codes.append(code)
+    rc = final_rc(codes)
+    print('RESULT ' + json.dumps(dict(name='scenario', verdict={0: 'OK', 3: 'UNAVAILABLE'}.get(rc, 'RED'), scenarios=[dict(name=r['name'], verdict=r['verdict'], reason=r.get('reason'), dir=r.get('dir')) for r in results]), ensure_ascii=False))
     return rc
 
 
