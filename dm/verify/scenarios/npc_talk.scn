@@ -1,0 +1,55 @@
+# An NPC and the game menu in every control scheme, on the Mac App test copy at this Mac's Recommended (emulated full screen in the background).
+# The hero is walked near Kashya (DM_TEST_WORLD_GO, within 4 cells, no talking). The inventory opens and closes; using Kashya opens her dialog and
+# speech (pc: a real mouse click on her through AppKit: the PC left press on an NPC used to walk up without talking); in PC mode Return over her
+# speech opens no chat (the chat used to freeze the speech); back closes the speech, then her menu; in the game menu Options opens (pc: a mouse
+# click the hit test could not place used to go to the world). Run it with --aspect 16x10 for a MacBook-shaped screen: the 16:9 interface band
+# must stay at the bottom when a large panel opens (compare npc_world.png and inventory.png). Replaces pc_npc_mac.scn and pc_npc_mac_1610.scn
+name npc_talk
+requires mac-app
+schemes pc touch controller
+save warlock
+timeout 600
+env DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_WORLD_GO=near:1:c150@150
+
+expect main_menu timeout=120
+enter_game
+# DM_TEST_WORLD_GO walks the hero near Kashya from tick 150
+sleep 16
+screenshot path=npc_world.png
+open inventory
+expect_state panels~=PlayerInventoryExpansionLayout timeout=5
+sleep 1.5
+screenshot path=inventory.png
+back
+expect panel act=ClosePanel name=PlayerInventoryExpansionLayout timeout=5
+sleep 1
+use_unit 1 150
+expect panel act=OpenPanel name=NpcDialogPanel timeout=20
+expect panel act=OpenPanel name=ScrollSpeechPanel timeout=5
+sleep 1.5
+screenshot path=npc_speech.png
+# Return over the speech: nothing (PC only: the other schemes have no Return)
+key return only=pc
+sleep 1
+back
+expect panel act=ClosePanel name=ScrollSpeechPanel timeout=5
+sleep 1
+screenshot path=npc_menu.png
+back
+expect panel act=ClosePanel name=NpcDialogPanel timeout=5
+sleep 1
+open pause
+expect pause_open timeout=8
+sleep 1
+# Options from the game menu (the controller's way to a named button is not written yet)
+menu_pick Settings only=pc,touch
+expect_state panels~=SettingsPanel timeout=5 only=pc,touch
+screenshot path=options.png only=pc,touch
+back only=pc,touch
+sleep 1
+back
+sleep 1
+quit
+check no_event panel act=OpenPanel name=MessageLogPanel_800x600
+check no_red
+check no_red_log

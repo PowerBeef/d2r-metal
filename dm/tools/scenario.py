@@ -34,12 +34,19 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 # 控制口命令的位置参数（其余用 名=值） | positional arguments of the control-port commands (the rest as name=value)
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'wheel': ['x', 'y', 'dy', 'precise', 'view'], 'drag': ['x0', 'y0', 'x1', 'y1', 'frames'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
-       'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'ui_click': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
+       'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'menu_pick': ['name', 'timeout'], 'use_unit': ['type', 'cls'], 'open': ['what'], 'back': [], 'key': ['name'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
        'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': []}
-ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
-MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away', 'ui_click')
+ALIAS = {'shot': 'screenshot', 'ui_click': 'menu_pick'}   # touch-script names; ui_click is menu_pick's first name
+MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away', 'menu_pick', 'use_unit', 'open', 'back', 'key')
+# Scheme-neutral steps (use_unit, open, back, menu_pick) are carried out through the run's control scheme: `scenario.py run --scheme pc|controller|touch`,
+# else the first of the scenario's `schemes` header. A scenario without that header keeps its own env (DM_PC_MODE=1 = pc). A step a scheme cannot do yet
+# ends the run as not judged for that scheme (⚪, exit 3), never RED; `only=<scheme>[,<scheme>]` on a step runs it in those schemes only
+SCHEMES = ('pc', 'controller', 'touch')
+OPEN_KEYS = {'pause': 'esc', 'inventory': 'i'}   # the PC bindings that open them
+# PC keys by name: (Mac key code, Windows virtual key). On the Mac App a PC key goes through AppKit (the fe line, front_mac.m), elsewhere into the PC layer (kbm)
+PC_KEYS = {'esc': (53, 27), 'return': (36, 13), 'space': (49, 32), 'i': (34, 73), 'c': (8, 67), 't': (17, 84), '1': (18, 49)}
 LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture', 'expect_mem')
-HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires', 'front')
+HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires', 'front', 'schemes')
 CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event', 'actions', 'saves_valid', 'save_pairs', 'log_has')
 LOG_HAS_KW = ('re', 'file', 'min', 'last')
 BAD = ('red', 'fatal', 'crash', 'watchdog')
@@ -53,6 +60,10 @@ def game_lock(script, argv, what, needed):
     if not needed or os.environ.get('XT_LOCK_HELD') == '1': return None
     sh = 'source "$1" && mlock_acquire "$2" || exit 2; trap mlock_release EXIT; shift 2; "$@"'
     return subprocess.call(['bash', '-c', sh, 'game_lock', os.path.join(DM, 'ios', 'tools', 'mlock.sh'), what, sys.executable, os.path.abspath(script)] + list(argv))
+
+
+class Unsupported(Exception):
+    """A scheme-neutral step this run's control scheme cannot carry out yet: the run is not judged for that scheme."""
 
 
 class ScenarioError(Exception):
@@ -70,7 +81,7 @@ def value(v):
 
 def parse(path):
     """返回 (表头, 步骤, 检查)；步骤 = {op, args, kw, line, n}。 | Returns (header, steps, checks); a step = {op, args, kw, line, n}."""
-    meta: dict[str, Any] = dict(name=os.path.splitext(os.path.basename(path))[0], save='warlock', env={}, timeout=300, window=1, requires=[], front='')
+    meta: dict[str, Any] = dict(name=os.path.splitext(os.path.basename(path))[0], save='warlock', env={}, timeout=300, window=1, requires=[], front='', schemes=[])
     steps: list[dict[str, Any]] = []; checks: list[dict[str, Any]] = []
     with open(path, encoding='utf-8') as fh: lines = fh.readlines()
     for n, raw in enumerate(lines, 1):
@@ -87,6 +98,9 @@ def parse(path):
         if op in HEADER:
             if op == 'env': meta['env'].update(kw)
             elif op == 'requires': meta['requires'] = args
+            elif op == 'schemes':
+                if not args or any(x not in SCHEMES for x in args): raise ScenarioError(f'{path}:{n}: schemes takes {", ".join(SCHEMES)}')
+                meta['schemes'] = args
             elif op == 'front':   # front <why>: this scenario runs in front (DM_TEST_BGRUN=0), judged for disturbances and redone
                 if not rest: raise ScenarioError(f'{path}:{n}: front needs a reason (visibility, focus, fullscreen, timing ...)')
                 meta['front'] = ' '.join(rest)
@@ -107,7 +121,9 @@ def parse(path):
         if op == 'sleep' and (not args or not re.fullmatch(r'[\d.]+', args[0])): raise ScenarioError(f'{path}:{n}: sleep needs seconds')
         if op == 'remember' and not args: raise ScenarioError(f'{path}:{n}: remember needs a state field')
         if op == 'export_save' and (not args or not re.fullmatch(r'[a-z0-9_]+', args[0])): raise ScenarioError(f'{path}:{n}: export_save needs a name of a-z 0-9 _')
-        steps.append(dict(op=op, args=args, kw=kw, line=raw.split('#')[0].strip(), n=n, soft=soft))
+        only = kw.pop('only', '').split(',') if 'only' in kw else []
+        if any(x not in SCHEMES for x in only): raise ScenarioError(f'{path}:{n}: only= takes {", ".join(SCHEMES)}')
+        steps.append(dict(op=op, args=args, kw=kw, line=raw.split('#')[0].strip(), n=n, soft=soft, only=only))
     if meta['front'] and 'DM_TEST_BGRUN' in meta['env']: raise ScenarioError(f'{path}: front and env DM_TEST_BGRUN contradict each other')
     return meta, steps, checks
 
@@ -403,11 +419,17 @@ class Runner:
         self.backend = CliBackend(self.meta, self.run, headless) if backend_name == 'cli' else MacAppBackend(self.meta, self.run, headless) if backend_name == 'mac-app' else LaunchBackend(backend_name, self.meta, self.run)
         # Windowed runs are background runs unless they run in front: the `front` header, then the scenario's own env, then DM_TEST_BGRUN from the caller
         # (--front, bench.py), else 1. ios-mac always runs in front: the iOS package on the Mac takes the front even when launched with open -g (measured:
-        # UserInteractiveFocal 0.5 s after launch, scene active), so its runs are front runs, judged for disturbances. Headless and device runs set nothing
+        # UserInteractiveFocal 0.5 s after launch, scene active), so its runs are front runs, judged for disturbances. Headless and device runs set nothing.
+        # A capture of the presented picture (DM_TEST_PRESENT_SHOT: picture analysis, README images) is a front run too, as performance measurements are
+        # (bench.py): the user's rule is that those see the real game window, in front and in real full screen, never the emulated one
         self.windowed = backend_name == 'mac-app' or backend_name == 'ios-mac' or (backend_name == 'cli' and bool(self.meta['window']) and not headless)
-        self.bgrun = None if not self.windowed else '0' if self.meta['front'] or backend_name == 'ios-mac' else str(self.meta['env']['DM_TEST_BGRUN']) if 'DM_TEST_BGRUN' in self.meta['env'] \
+        capture = 'DM_TEST_PRESENT_SHOT' in self.meta['env']
+        self.bgrun = None if not self.windowed else '0' if self.meta['front'] or backend_name == 'ios-mac' or capture else str(self.meta['env']['DM_TEST_BGRUN']) if 'DM_TEST_BGRUN' in self.meta['env'] \
             else os.environ['DM_TEST_BGRUN'] if os.environ.get('DM_TEST_BGRUN') in ('0', '1') else '1'
         self.front = self.bgrun == '0'
+        # The control scheme of the scheme-neutral steps: --scheme (SCN_SCHEME), else the first of the scenario's `schemes`; pc runs with the PC interface set
+        self.scheme = os.environ.get('SCN_SCHEME') or (self.meta['schemes'][0] if self.meta['schemes'] else None)
+        if self.scheme == 'pc': self.meta['env'].setdefault('DM_PC_MODE', '1')
         self.backend.bgrun = self.bgrun
         self.marks: list[int] = []   # the event seq mark before each step (the disturbance detector's step ranges)
         if any(st['op'] == 'gpu_capture' for st in self.steps): self.meta['env'].setdefault('MTL_CAPTURE_ENABLED', '1')   # 进程得带它起才截得了帧 | the process must start with it to be capturable
@@ -476,11 +498,31 @@ class Runner:
             for _ in range(3): self.ctl('press', keys='L')
             self.cc.wait_for('pause_open', timeout=10, after=m)
             return 'pause menu open'
-        if op == 'ui_click':   # a widget clicked through the run's own pointer: PC mode (env DM_PC_MODE=1) clicks its centre with the PC mouse (kbm), else a touch tap
+        if op == 'menu_pick':   # menu_pick <widget>@<panel>: a widget picked through the run's scheme (pc: the PC mouse clicks its centre; touch: a tap)
             at = self.ctl('await_ui', name=kw['name'], timeout=kw.get('timeout', 10))
-            if str(self.meta['env'].get('DM_PC_MODE', '')) != '1': self.ctl('tap_ui', name=kw['name'], timeout=kw.get('timeout', 10)); return f"tapped {kw['name']}"
+            if self.scheme_name() == 'controller': raise Unsupported('menu_pick: moving the controller focus to a named widget is not written yet')
+            if self.scheme_name() == 'touch': self.ctl('tap_ui', name=kw['name'], timeout=kw.get('timeout', 10)); return f"tapped {kw['name']}"
             for up in (0, 1): self.ctl('kbm', btn='left', x=at['x'], y=at['y'], up=up)
             return f"clicked {kw['name']} at {at['x']:.3f},{at['y']:.3f}"
+        if op == 'use_unit':   # use_unit <type> <cls> [btn=left|right] [hold=<s>]: use a unit through the run's scheme
+            if self.scheme_name() == 'controller' and kw.get('btn', 'left') != 'left': raise Unsupported('use_unit btn=right: the controller casts at its own target, not at a unit picked by the test')
+            if self.scheme_name() == 'pc' and self.backend.name == 'mac-app' and kw.get('btn', 'left') == 'left':   # the Mac App: real mouse events through AppKit (front_mac.m fe unit / unith)
+                self.ctl('fe', line=f"0 {'unith' if float(kw.get('hold', 0)) else 'unit'} {kw['type']},{kw['cls']}"); return 'mouse on the unit (AppKit events)'
+            q = {k: kw[k] for k in ('type', 'cls', 'btn', 'hold', 'timeout') if k in kw}   # elsewhere the host does it (dm_ctl_cmds.c act)
+            return {k: v for k, v in self.ctl('act', do='use_unit', **q).items() if k not in ('id', 'cmd', 'ok')}
+        if op == 'open':   # open pause|inventory: pc: the PC binding (Esc / I); controller and touch: the console way (+, then the pause tab for pause)
+            what = kw.get('what')
+            if what not in OPEN_KEYS: raise ScenarioError(f"open takes {', '.join(OPEN_KEYS)}")
+            if self.scheme_name() == 'pc': return self.pc_key(OPEN_KEYS[what])
+            if what == 'pause': return self.macro('open_pause', {})
+            m = self.cc.mark(); self.ctl('press', keys='PLUS')
+            self.cc.wait_for('panel', timeout=10, after=m, act='OpenPanel', name='PlayerInventoryExpansionLayout'); return 'inventory open'
+        if op == 'back':   # back: pc: Esc; controller and touch: B (the touch close button sends the same B)
+            if self.scheme_name() == 'pc': return self.pc_key('esc')
+            self.ctl('press', keys='B'); return 'B'
+        if op == 'key':   # key <name>: a PC key (PC_KEYS); only the pc scheme has a keyboard
+            if self.scheme_name() != 'pc': raise Unsupported(f"key {kw.get('name')}: only the pc scheme has a keyboard (give the step only=pc)")
+            return self.pc_key(kw.get('name', ''))
         if op == 'close_pause':
             m = self.cc.mark(); self.ctl('press', keys='B')
             self.cc.wait_for('panel', timeout=10, after=m, act='ClosePanel', name='UISwitcher')
@@ -503,6 +545,16 @@ class Runner:
             time.sleep(float(kw.get('after', 0.5))); self.backend.kill()
             return 'killed'
         raise ScenarioError(f'unknown macro {op}')
+
+    def pc_key(self, name):
+        if name not in PC_KEYS: raise ScenarioError(f"unknown PC key {name!r} (known: {', '.join(PC_KEYS)})")
+        mac, vk = PC_KEYS[name]
+        if self.backend.name == 'mac-app': self.ctl('fe', line=f'0 key {mac}'); return f'{name} (AppKit)'
+        self.ctl('kbm', key=vk); return f'{name} (PC layer)'
+
+    def scheme_name(self):
+        """The scheme the scheme-neutral steps use: the run's, else pc when the scenario's env asks for the PC set, else controller."""
+        return self.scheme or ('pc' if str(self.meta['env'].get('DM_PC_MODE', '')) == '1' else 'controller')
 
     def subst(self, v):
         if not isinstance(v, str) or '$' not in v: return v
@@ -673,8 +725,12 @@ class Runner:
         return out
 
     def go(self):
-        t0 = time.time(); fail: dict[str, Any] | None = None; name = self.meta['name']
+        t0 = time.time(); fail: dict[str, Any] | None = None; name = self.meta['name']; unsupported = ''
         self.say(f'场景 | scenario {name}（{self.backend.name}，{len(self.steps)} 步 | steps）→ {self.run}')
+        if self.meta['schemes'] and self.scheme not in self.meta['schemes']:
+            line = f"SCENARIO {name} SKIP not written for the {self.scheme} scheme (its schemes: {','.join(self.meta['schemes'])})"
+            self.say(line)
+            return dict(name=name, verdict='SKIP', backend=self.backend.name, dir=self.run, line=line), 0
         if self.meta['requires'] and self.backend.name not in self.meta['requires']:
             line = f"SCENARIO {name} SKIP 只在 {','.join(self.meta['requires'])} 上跑 | only runs on {','.join(self.meta['requires'])}"
             self.say(line)
@@ -687,7 +743,10 @@ class Runner:
             for i, st in enumerate(self.steps, 1):
                 if time.time() > deadline: fail = dict(step=i, line=st['line'], reason=f"scenario timeout {self.meta['timeout']} s"); break
                 mark = self.cc.mark(); s = time.time(); self.marks.append(mark)
+                if st.get('only') and self.scheme_name() not in st['only']:
+                    self.say(f"STEP {i:>2} skip         {st['line']}  → only in {','.join(st['only'])}"); tsv.write(f"{i}\t{st['line']}\tskip\t0\tonly {','.join(st['only'])}\n"); continue
                 try: r = self.do(st); ok, detail = True, r
+                except Unsupported as e: unsupported = f'step {i} ({st["line"]}): {e}'; self.say(f"STEP {i:>2} ⚪   {st['line']}  → {e}"); break
                 except (ScenarioError, dmctl.CtlError, dmctl.BadEvent, TimeoutError, OSError) as e: ok, detail = False, str(e)
                 dt = time.time() - s
                 text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False) if detail else ''
@@ -732,6 +791,12 @@ class Runner:
         for x in det['front_by_user']: self.say(f"  # note: the app came to the front at t={x['t']:.2f} (step {x['step']}), after launch and outside the run's own requests: the user's")
         bad_ck = [c for c in checks if not c['ok']]
         verdict = 'OK' if not fail and not bad_ck else 'RED'
+        if unsupported and verdict == 'OK':   # the steps before it passed: the scenario is not judged for this scheme (⚪, exit 3), never RED
+            line = f'⚪ SCENARIO {name} not judged for the {self.scheme_name()} scheme: {unsupported[:160]}'; self.say(line)
+            res = dict(name=name, backend=self.backend.name, verdict='UNAVAILABLE', reason=f'not judged: {unsupported}', steps=self.records, checks=checks, dir=self.run, line=line,
+                       bgrun=self.bgrun, disturbed=det['disturbed'] if self.front else [], front_by_user=det['front_by_user'])
+            with open(os.path.join(self.run, 'result.json'), 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
+            return res, 3
         why = f"step {fail['step']} ({fail['line']}): {fail['reason'][:160]}" if fail else f'check: {bad_ck[0]["check"]} — {bad_ck[0]["detail"][:120]}' if bad_ck else f'{len(self.steps)} steps, {len(checks)} checks'
         line = f'SCENARIO {name} {verdict} {why} 用时 {time.time() - t0:.0f} 秒'
         self.say(line)
@@ -770,6 +835,8 @@ def main(argv):
     r.add_argument('--env', action='append', default=[], help='K=V words (repeatable, shell-quoted) merged into every scenario\'s env; the command line wins')
     r.add_argument('--front', action='store_true', help='run windowed scenarios in front (DM_TEST_BGRUN=0), to watch them; judged for disturbances and redone')
     r.add_argument('--redo', type=int, default=2, help='how many times a disturbed front run is redone before it is reported not judged (default 2)')
+    r.add_argument('--scheme', choices=SCHEMES, help='the control scheme of the scheme-neutral steps (default: the first of a scenario\'s schemes header)')
+    r.add_argument('--aspect', help='a fake main-screen shape for the run, e.g. 16x10 (DM_TEST_SCREEN_ASPECT)')
     c = sub.add_parser('check'); c.add_argument('files', nargs='+')
     a = ap.parse_args(argv)
     if a.cmd == 'check':
@@ -784,6 +851,8 @@ def main(argv):
             if '=' not in kv or kv.startswith('='): print(f'🔴 --env takes K=V words (got {kv!r})'); return 2
             k, v = kv.split('=', 1); extra[k] = v
     if a.front: os.environ['DM_TEST_BGRUN'] = '0'
+    if a.scheme: os.environ['SCN_SCHEME'] = a.scheme
+    if a.aspect: os.environ['DM_TEST_SCREEN_ASPECT'] = a.aspect
     held = game_lock(__file__, argv, f"scenario {' '.join(os.path.basename(f) for f in a.files)[:60]} ~{len(a.files) * 2} min", a.backend == 'mac-app' or (a.backend == 'cli' and not a.headless))
     if held is not None: return held
     results: list[dict[str, Any]] = []; codes: list[int] = []

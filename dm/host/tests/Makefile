@@ -85,6 +85,7 @@ run: \
 	python3 ../../tools/test_dmctl.py
 	python3 ../../tools/test_scenario_bg.py
 	python3 ../../tools/test_scenario.py
+	python3 ../../tools/test_scenario_schemes.py
 	python3 ../../tools/test_imgdiff.py
 	python3 ../../tools/test_bench.py
 	python3 ../../tools/test_workspace_prune.py
