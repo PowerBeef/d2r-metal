@@ -377,21 +377,31 @@ static void scale3d_tick(void) {
             round(r10 * 10) / 10.0, round(r60 * 10) / 10.0);
       cur_lv = lv; }
 }
-// 抗锯齿档：游戏自己的 renderer+0x6614（0 无 / 1 FXAA / 2 SMAA / 3 SMAA T2x；主机版配置是 1）。准备场景那一步（main+0x162f738）每帧把它抄进本帧的设置块，
-// 后处理节点（main+0x166e710）按它选 FXAA（1）或 SMAA（≥ 2）；SMAA 要的目标（边缘、混合权重，T2x 另加上一帧颜色 / 深度 / 速度与亮度历史）
-// 由 SMAA 那一趟（main+0x16aa23c）头一次用到时自己建，不用另调重建。T2x 要的速度目标主机版从来不建，选 3 会在游戏里出错，所以只用 1 / 2。
-// 画面设置 aa（dm_video.c）给值；DM_AA_MODE=0..3 强制。-1 = 不动（游戏自己的值）
-// Anti-aliasing mode: the game's own renderer+0x6614 (0 none / 1 FXAA / 2 SMAA / 3 SMAA T2x; the console config is 1). The scene setup (main+0x162f738) copies it into each
-// frame's settings block, and the post-processing node (main+0x166e710) picks FXAA (1) or SMAA (>= 2) from it; the targets SMAA needs (edges, blending weights, plus
-// previous colour / depth / velocity and luma history for T2x) are created by the SMAA pass (main+0x16aa23c) on first use, so no rebuild call is needed. T2x needs a
-// velocity target the console build never creates, and 3 fails inside the game, so only 1 / 2 are used.
-// The picture setting aa (dm_video.c) gives the value; DM_AA_MODE=0..3 forces it. -1 = leave it (the game's own value)
+// Anti-aliasing mode: the game's own byte renderer+0x6614 (0 none / 1 FXAA / 2 SMAA / 3 SMAA T2x; the console config is 1). The scene setup (main+0x162f738)
+// copies it into each frame's settings block, and the post-processing node (main+0x166e710) picks FXAA (1) or SMAA (>= 2) from it. The targets SMAA needs
+// (edges, blending weights, plus previous colour / depth / velocity and luma history for T2x) are created by the SMAA pass (main+0x16aa23c) on first use, so no
+// rebuild call is needed. T2x needs a velocity target the console build never creates, so 3 (and the unused 4-5) crash inside the game: only 0-2 are ever written.
+// The picture setting (dm_video.c dm_video_aa_mode) always answers 1 or 2 on the CLI host, the Mac App and iOS, so the host always writes the byte; only
+// DM_AA_MODE=off leaves it to the game (or to a test's control-port mem write). DM_AA_MODE=0, 1 or 2 forces the mode; anything else is refused with a red line
+// and the picture setting decides. The weak default below (-1: leave it) is for builds without dm_video.c (the t_oe unit test).
 __attribute__((weak)) int dm_video_aa_mode(void) { return -1; }
+enum { AA_ENV_UNSET = -1, AA_ENV_OFF = -3, AA_ENV_CRASH = -4, AA_ENV_BAD = -5 };
+// DM_AA_MODE: unset or empty, exactly "off", or a single digit 0-2 (forced); 3-5 crash the game; anything else is malformed (no trimming, case-sensitive)
+static int aa_env_parse(const char *e) {
+    if (!e || !*e) return AA_ENV_UNSET;
+    if (!strcmp(e, "off")) return AA_ENV_OFF;
+    if (!e[1] && *e >= '0' && *e <= '2') return *e - '0';
+    if (!e[1] && *e >= '3' && *e <= '5') return AA_ENV_CRASH;
+    return AA_ENV_BAD;
+}
 static void aa_tick(void) {
     static int force = -2; static module_t *main;
-    if (force == -2) { const char *e = getenv("DM_AA_MODE"); force = e && !strcmp(e, "off") ? -3 : e && *e >= '0' && *e <= '3' && !e[1] ? *e - '0' : -1; }
-    if (force == -3) return;   // DM_AA_MODE=off: leave the byte to the game (or to a test's control-port mem write)
-    int want = force >= 0 ? force : dm_video_aa_mode(); if (want < 0 || want > 3) return;
+    if (force == -2) { const char *e = getenv("DM_AA_MODE"); force = aa_env_parse(e);
+        if (force == AA_ENV_CRASH) LOG("【红】DM_AA_MODE=%s refused: modes 3-5 (SMAA T2x) crash the game in its SMAA pass (main+0x16aa23c), which copies from a velocity target the console build never creates; the picture setting decides", e);
+        else if (force == AA_ENV_BAD) LOG("【红】DM_AA_MODE=%s is not 0, 1, 2 or off: ignored, the picture setting decides", e);
+        if (force == AA_ENV_CRASH || force == AA_ENV_BAD) force = AA_ENV_UNSET; }
+    if (force == AA_ENV_OFF) return;   // DM_AA_MODE=off: leave the byte to the game (or to a test's control-port mem write)
+    int want = force >= 0 ? force : dm_video_aa_mode(); if (want < 0 || want > 2) return;
     if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
     if (!main || dm_nvn_frame_count() < 30) return;
     uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;

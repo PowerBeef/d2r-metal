@@ -40,6 +40,7 @@
 #include "nvn_cover.h"
 #include "dmsh_chain.h"   // DMSH_CHAIN：本源码树期望的 B 着色器库翻译链版本 | DMSH_CHAIN: the translation chain version of the B shader library expected by this source tree
 #include "nvn_hmap.h"
+#include "nvn_ratelog.h"   // GPU error lines: the first 8 of a kind in full, then one summary every 10 s (gerr_flush)
 #include "../../host/dm.h"
 #import <CommonCrypto/CommonDigest.h>
 #include <stdarg.h>
@@ -287,6 +288,7 @@ static void udc_selftest(void) {
     }
 }
 static void use_init(void);
+static void bar_init(void);
 static void mtl_init_once(void) {
     if (g_dev) return;
     const char *link = getenv("DM_PRESENT_LINK");
@@ -357,6 +359,7 @@ static void mtl_init_once(void) {
     g_nvn_deswz_gpu = nvn_deswz_gpu_init(g_dev) == 0;
     dm_res_report_register(mtl_res_counts);
     if (!g_nvn_deswz_gpu) MLOG("【红】显卡解排布初始化失败，预排布贴图回退 CPU");
+    bar_init();   // pass-barrier level and DM_NVN_PASSGPU_SERIAL, resolved once before any encoder exists (bar_lv)
     use_init();   // DM_GFXUSE（诊断）：在任何出图 / 提交线程起来之前读开关 | DM_GFXUSE (diagnostic): read the switch before any present / submit thread starts
     MLOG("Metal 设备 %s", g_dev.name.UTF8String);
     udc_selftest();
@@ -532,6 +535,7 @@ static void pso_pend_age(void);
 static void mfx3d_sub_begin(void);
 static void aniso_latch(void);
 static void bar_stats(void);
+static void gerr_flush(void);
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
     pso_pend_age();   // 并行预编：回收过期没人领的预测槽 | parallel precompile: recycle stale untaken prediction slots
@@ -540,7 +544,8 @@ void mtl_sub_begin(void) {
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
     defer_drain();
     aniso_latch();   // 「各向异性过滤」换档：在这里换掉已建的采样器 | "Anisotropic Filtering" changed: swap out the samplers built so far here
-    bar_stats();   // 通道间屏障的计数，每 3600 次提交一行 | pass-barrier counts, one line every 3600 submissions
+    bar_stats();   // pass-barrier counts, two 'pass barriers:' lines every 600 submissions (the replay's own barriers, then the game's)
+    if (g_sub_serial % 600 == 0) gerr_flush();   // GPU errors no line has counted yet (about every 10 s)
     defer_reset();
     warm_claim();
     if (g_cb) MDIE("提交重入");
@@ -585,68 +590,118 @@ void mtl_sub_begin(void) {
 
 static void rp_end(void);
 extern int g_frz_on; static int g_frz_state;   // 世界冻结：本帧锁存的状态（0 正常 / 1 完整帧 / 2 冻结帧），见 frz_op 上方的说明 | World freeze: the state latched for this frame (0 normal / 1 full frame / 2 frozen frame), see the note above frz_op
-// DM_NVN_PASSGPU_SERIAL=1（测量用）：主命令缓冲上每建一个编码器前编「发信号 n+1 → 等信号 n+1」——信号要等此前全部工作完成才发出，
-// 后面的编码器因此等前一个彻底跑完才开始；TBDR 上通道不再流水重叠，DM_NVN_PASSGPU 的逐通道起止跨度即该通道独占耗时（整帧总时长偏大，只看相对开销）
-// DM_NVN_PASSGPU_SERIAL=1 (for measurement): before creating each encoder on the main command buffer, encode 'signal n+1 → wait for signal n+1' - the signal is only raised once all prior work has completed,
-// so the following encoder starts only after the previous one has fully finished; on TBDR passes no longer overlap in the pipeline, and the per-pass start-to-end span of DM_NVN_PASSGPU is that pass's exclusive time (the whole-frame total is inflated; look only at relative cost)
-static void ser_gate(void) {
-    static int on = -1; static id<MTLEvent> ev; static uint64_t n;
-    if (on < 0) { on = getenv("DM_NVN_PASSGPU_SERIAL") != NULL; if (on) { ev = [g_dev newEvent]; MLOG("DM_NVN_PASSGPU_SERIAL：通道串行化（测量用，耗时偏大）"); } }
-    if (!on) return;
-    // Metal 4：每个编码器开头本来就有一道全队列屏障（enc_r_begin / enc_c_begin / blit），通道不会重叠，这里不用再加
-    // Metal 4: every encoder already begins with a full queue barrier (enc_r_begin / enc_c_begin / blit), so passes never overlap and nothing needs to be added here
-    (void)ev; (void)n;
-}
-// Metal 4 保守屏障（第一版）：编码器开头一道消费者屏障（之前全部工作 → 本编码器），结束处一道生产者屏障（本编码器及之前 → 后续编码器）。
-// 只放开头不够：t_rt_range「通道 1 → 通道 2 → 拷贝」读回黑色，补上结束处屏障后 19/19。旧队列的编码器（上传 / 诊断 / 上屏）不走这里的屏障。
-// Metal 4 conservative barriers (first version): a consumer barrier at the start of an encoder (all prior work → this encoder) and a producer barrier at the end (this encoder and earlier → later encoders).
-// Only the one at the start is not enough: t_rt_range 'pass 1 → pass 2 → copy' read back black, and after adding the end barrier it is 19/19. Old-queue encoders (upload / diagnostics / present) do not go through these barriers.
+// DM_NVN_PASSGPU_SERIAL=1 (measurement only) holds the effective pass-barrier level at 0 (bar_init, bar_lv). Every encoder on the main command buffer then waits for all earlier
+// GPU work at its start and holds back all later work at its end, so passes run one after another, and a DM_NVN_PASSGPU span is that pass's exclusive cost. Frame totals are
+// inflated, so compare passes only with each other. Uploads and the present are committed to the same Metal 4 queue and open with full barriers, so they are serialised too.
+// Only MetalFX's own encoded passes are ordered by fences alone.
+// Metal 4 conservative barriers (first version): a consumer barrier at the start of an encoder (all prior work → this encoder) and a producer barrier at the end (this encoder
+// and earlier → later encoders). Only the one at the start is not enough: t_rt_range 'pass 1 → pass 2 → copy' read back black, and after adding the end barrier it is 19/19.
+// The old queue (q_cb) carries only readbacks, screenshots and diagnostics the CPU waits for, and the drain before suspend; none of them goes through these barriers.
 extern int g_bar_lv;
-static inline void m4_end(id e) {   // 结尾屏障：第 1 档起渲染编码器不再挡之后的顶点阶段；计算 / 拷贝编码器照旧整道（之后的顶点靠它等拷贝与计算，见 bar_r_begin） | end barrier: from level 1 render encoders no longer hold back later vertex stages; compute / copy encoders keep the full one (later vertex stages wait for copies and compute through it, see bar_r_begin)
+// Barriers between passes (picture plan phase 5, DM_NVN_BARRIER; g_bar_lv for DM_NVN_UB in-process alternation):
+//   0 = each encoder starts with "all earlier stages → all stages of this pass" and ends with "all stages of this pass → all later stages", so passes run one after
+//       another on the GPU.
+//   1 = a render pass's start holds back only fragment / tile and the like (until every earlier stage; attachment loads and stores happen in fragment), and the vertex
+//       stage waits for nothing more: compute and copy encoders (which may write vertex buffers and uniforms) still end with the full barrier, so later vertex stages
+//       wait for those copies (and everything before them) through it. Measured: making vertex wait at the pass's start for "only earlier compute and copy stages"
+//       also ate the whole overlap, so it doesn't wait there. The vertex stage also waits for every earlier stage when this draw's vertex shader reads textures
+//       (possibly an attachment an earlier pass just drew) or writes memory: one more barrier before the draw (bar_draw).
+//       Writes: a draw whose vertex, fragment or other stage writes memory (a writable image or storage buffer) makes its encoder end with the full producer barrier,
+//       vertex stages included (enc_r_end → m4_end_ex). That barrier holds back the vertex stage of every later encoder, whatever passes come between, so later
+//       passes still open with vertex free. Other render encoders' end barriers no longer hold back later vertex stages. Compute and copy encoders still start
+//       and end with the full barrier. The host's own render passes (bloom quarter, the MetalFX copy pass, the 3D write-back) start with it and, like other render
+//       encoders that write no memory, leave later vertex stages free at their end; MetalFX waits for its copy pass through a fence. So the next pass's vertex stage
+//       can overlap the previous pass's fragment work (the bulk on a TBDR GPU). An unsafe probe with everything open measured the ceiling: GPU -0.5 ms (-8 %) per
+//       frame on town_loop.
+//   Known limit, the same at both levels: there are no barriers between two draws of one render encoder.
+static int g_enc_vfree;   // the current render encoder's vertex stage did not wait for earlier fragment work (bar_r_begin; bar_draw adds the barrier when a draw needs it)
+static int g_enc_wrote;   // submit thread only: the current game render encoder ran a draw whose shaders write memory (bar_draw → enc_r_end)
+static uint64_t g_bar_nfree, g_bar_nlazy, g_bar_ntex, g_bar_nvw, g_bar_nwr;   // counts: vertex left open at a pass start / added before a draw (texture reads / vertex writes) / draws writing memory
+static uint64_t g_bar_nwend;   // encoders that ended with vertex stages held (they wrote memory)
+static MTLStages g_bar_last_end;   // the stages the last enc_r_end held back (t_bar)
+// The game's own NVN barriers (nvnCommandBufferBarrier → OP_BARRIER → bar_game) are counted only; behaviour doesn't change. Classes by what a level-1 pass start covers:
+//   BAR_GAME_VTX  order primitives, indirect data, invalidate shader, invalidate texture descriptor: nothing at a level-1 pass start orders the vertex stage after them
+//                 (vertex, index, indirect and storage-buffer reads that bar_draw doesn't test).
+//   BAR_GAME_TEX  invalidate texture: covered (fragment work waits at the start barrier; vertex texture reads take bar_draw's lazy barrier), counted on its own.
+//   BAR_GAME_FRAG fragment ordering.
+// Where a barrier sits, in Metal terms:
+//   - Mid-pass: a draw follows it in the same render encoder (bar_draw counts it then). Every class there is a different limit: no barrier between two draws of one
+//     encoder, at either level.
+//   - Between encoders: issued with no render encoder open, or in one after its last draw (the replay keeps a pass's encoder open past its last draw until the next
+//     target, copy, dispatch or the end of the submit; enc_r_end carries those bits on). Its bits wait for the next encoder:
+//       a compute or copy encoder (enc_c_begin, blit) opens and ends with full barriers, so it orders everything before it: the bits are dropped;
+//       a game pass start that leaves vertex open (bar_r_begin, level 1) counts them: vertex-relevant bits that a full end barrier doesn't order = g_bar_gopen,
+//       the count that decides whether honouring them is worth a prototype; vertex-relevant bits that one does = g_bar_gcov; texture invalidate only = g_bar_gtex_open.
+//     A barrier's earlier work is ordered before a later vertex stage by the last full end barrier (a compute or copy encoder, a render encoder that wrote memory)
+//     unless a render encoder has ended with vertex free since (g_bar_vend; the host's own render passes included) and no copy encoder is still open. Work on the
+//     upload and present command buffers is left out, so this is the submit thread's view.
+#define BAR_GAME_VTX (NVN_BARRIER_ORDER_PRIMITIVES_BIT | NVN_BARRIER_ORDER_INDIRECT_DATA_BIT | NVN_BARRIER_INVALIDATE_SHADER_BIT | NVN_BARRIER_INVALIDATE_TEXTURE_DESCRIPTOR_BIT)
+#define BAR_GAME_TEX NVN_BARRIER_INVALIDATE_TEXTURE_BIT
+#define BAR_GAME_FRAG (NVN_BARRIER_ORDER_FRAGMENTS_BIT | NVN_BARRIER_ORDER_FRAGMENTS_TILED_BIT)
+// Counts, submit thread only: barriers, per bit, at a pass start (uncovered / ordered by a full end / texture invalidate only), mid-pass by class, and after an encoder's last draw
+static uint64_t g_bar_gn, g_bar_gbit[8], g_bar_gopen, g_bar_gcov, g_bar_gtex_open, g_bar_gmid, g_bar_gvtx_mid, g_bar_gtex_mid, g_bar_gfrag_mid, g_bar_gtail;
+static int g_bar_gpend;   // game barrier bits waiting for the next encoder (between encoders)
+static int g_bar_gunc;    // the part of g_bar_gpend issued while no full end barrier ordered the earlier work (g_bar_vend set, no copy encoder open)
+static int g_bar_vend;    // a render encoder on the submit command buffer has ended with later vertex stages free since the last full end barrier
+static int g_bar_gdraw, g_bar_gdn[4];   // barriers in the open render encoder since its last draw: their bits, and how many (all, vertex-relevant, texture, fragment)
+#define BAR_VTX (MTLStageVertex | MTLStageObject | MTLStageMesh)
+static int g_bar_ser = -1;   // DM_NVN_PASSGPU_SERIAL (bar_init): 1 holds the effective level at 0, whatever g_bar_lv says
+// The effective level, a plain read: bar_init resolves it once in mtl_init_once, before any encoder exists, so the submit, present and upload threads only read it.
+// A level still at -1 (a test without mtl_init) acts as 0, with full barriers. Under DM_NVN_PASSGPU_SERIAL a DM_NVN_UB write to g_bar_lv can't bring overlap back.
+static inline int bar_lv(void) { return g_bar_ser > 0 ? 0 : g_bar_lv; }
+static void bar_init(void) {
+    if (g_bar_ser < 0) g_bar_ser = getenv("DM_NVN_PASSGPU_SERIAL") != NULL;
+    if (g_bar_lv < 0) { const char *e = getenv("DM_NVN_BARRIER"); g_bar_lv = e && *e ? atoi(e) : 1; }   // a value a test or DM_NVN_UB already wrote is kept
+    int lv = bar_lv();
+    MLOG("pass barriers: level %d%s", lv, g_bar_ser > 0 ? " (DM_NVN_PASSGPU_SERIAL holds it at 0: passes run one after another; DM_NVN_BARRIER and DM_NVN_UB g_bar_lv are ignored)"
+                                                         : " (0 = full, 1 = vertex waits only for compute and copies)");
+}
+// End barrier: from level 1 a render encoder no longer holds back later vertex stages unless keep_vtx (it wrote memory); compute / copy encoders keep the full one
+// (later vertex stages wait for copies and compute through it, see bar_r_begin). Returns the stages held back.
+static inline MTLStages m4_end_ex(id e, int keep_vtx) {
+    MTLStages before = MTLStageAll;
     if ([e conformsToProtocol:@protocol(MTL4CommandEncoder)]) {
-        MTLStages before = MTLStageAll;
-        if (g_bar_lv > 0 && [e conformsToProtocol:@protocol(MTL4RenderCommandEncoder)]) before &= ~(MTLStageVertex | MTLStageObject | MTLStageMesh);
+        if (!keep_vtx && [e conformsToProtocol:@protocol(MTL4RenderCommandEncoder)] && bar_lv() > 0) before &= ~BAR_VTX;
         [(id<MTL4CommandEncoder>)e barrierAfterStages:MTLStageAll beforeQueueStages:before visibilityOptions:MTL4VisibilityOptionDevice]; }
     [e endEncoding];
+    return before;
 }
-// 通道间屏障（画质计划第 5 阶段，DM_NVN_BARRIER；g_bar_lv 供 DM_NVN_UB 同进程交替）：
-//   0 = 原先：每个编码器开头「之前全部阶段 → 本通道全部阶段」、结尾「本通道全部阶段 → 之后全部阶段」，GPU 上各通道一个接一个跑完。
-//   1 = 渲染通道开头只挡片元 / tile 等（之前的全部阶段；附件的读写都在片元），顶点阶段不另等：计算与拷贝编码器（可能写顶点缓冲、uniform）结尾照旧整道，
-//       之后的顶点阶段经它等到这些拷贝（以及更早的一切）。实测要点：顶点阶段在通道开头「只等之前的计算与拷贝阶段」也把重叠全吃掉了，所以不在开头等。
-//       顶点阶段在三种情况下也等之前的全部阶段：这次绘制的顶点着色器读贴图（可能是前面通道刚画的附件）或写内存——绘制前补一道（bar_draw）；
-//       前面有片元 / 顶点着色器写过存储缓冲或可写贴图（g_bar_vhz）——下一个渲染通道开头就用整道。渲染编码器结尾的屏障不再挡之后的顶点阶段。
-//       计算、拷贝编码器与宿主自己插的通道开头照旧整道；MetalFX 经围栏等它的拷贝趟。这样下一通道的顶点阶段能和上一通道的片元重叠（TBDR 上片元是大头）。
-//       全放开的探针量得上限：town_loop 每帧 GPU −0.5 ms（−8%）
-// Barriers between passes (picture plan phase 5, DM_NVN_BARRIER; g_bar_lv for DM_NVN_UB in-process alternation):
-//   0 = as before: each encoder starts with "all earlier stages → all stages of this pass" and ends with "all stages of this pass → all later stages", so passes run one after another on the GPU.
-//   1 = a render pass's start holds back only fragment / tile and the like (until every earlier stage; attachment loads and stores happen in fragment), and the vertex stage waits for nothing more: compute
-//       and copy encoders (which may write vertex buffers and uniforms) still end with the full barrier, so later vertex stages wait for those copies (and everything before them) through it. Measured:
-//       making vertex wait at the pass's start for "only earlier compute and copy stages" also ate the whole overlap, so it doesn't wait there. The vertex stage also waits for every earlier stage in three cases: this draw's vertex shader reads textures (possibly an attachment an earlier pass just drew) or
-//       writes memory -- one more barrier before the draw (bar_draw); an earlier fragment / vertex shader wrote a storage buffer or writable texture (g_bar_vhz) -- the next render pass starts with the full
-//       one. The barrier at a render encoder's end no longer holds back later vertex stages. Compute and copy encoders and the host's own passes still start with the full barrier; MetalFX waits for its copy pass
-//       through a fence. So the next pass's vertex stage can overlap the previous pass's fragment work (the bulk on a TBDR GPU). An unsafe probe with everything open measured the ceiling: GPU -0.5 ms
-//       (-8 %) per frame on town_loop
-static int g_bar_vhz, g_enc_vfree;   // g_bar_vhz：有片元 / 顶点写过存储内存、还没被整道顶点屏障盖住；g_enc_vfree：当前渲染编码器的顶点阶段没等前面的片元 | g_bar_vhz: a fragment / vertex shader wrote storage memory not yet covered by a full vertex barrier; g_enc_vfree: the current render encoder's vertex stage did not wait for earlier fragment work
-static uint64_t g_bar_nfree, g_bar_nfull, g_bar_nlazy, g_bar_ntex, g_bar_nvw, g_bar_nwr;   // 计数：顶点放开 / 整道开头 / 绘制前补的 | counts: vertex left open / full at the start / added before a draw
-#define BAR_VTX (MTLStageVertex | MTLStageObject | MTLStageMesh)
-static inline int bar_lv(void) {
-    if (g_bar_lv < 0) { const char *e = getenv("DM_NVN_BARRIER"); g_bar_lv = e && *e ? atoi(e) : 1;
-        MLOG("通道间屏障：第 %d 档（0 = 整道、1 = 顶点只等计算与拷贝） | pass barriers: level %d (0 = full, 1 = vertex waits only for compute and copies)", g_bar_lv, g_bar_lv); }
-    return g_bar_lv;
-}
+// Every direct caller (upload, present, MetalFX, LUT) and enc_host_r_end behave as before and never touch g_enc_wrote, so only the submit thread uses that state
+static inline void m4_end(id e) { (void)m4_end_ex(e, 0); }
 static void bar_stats(void) {
-    if (g_bar_lv > 0 && g_sub_serial % 600 == 0) MLOG("通道间屏障：顶点放开 %llu、整道开头 %llu、绘制前补 %llu（读贴图 %llu / 顶点写内存 %llu）、写内存的绘制 %llu（累计） | pass barriers: vertex open %llu, full at start %llu, added before a draw %llu (texture reads %llu / vertex writes %llu), draws writing memory %llu (total)",
-        (unsigned long long)g_bar_nfree, (unsigned long long)g_bar_nfull, (unsigned long long)g_bar_nlazy, (unsigned long long)g_bar_ntex, (unsigned long long)g_bar_nvw, (unsigned long long)g_bar_nwr,
-        (unsigned long long)g_bar_nfree, (unsigned long long)g_bar_nfull, (unsigned long long)g_bar_nlazy, (unsigned long long)g_bar_ntex, (unsigned long long)g_bar_nvw, (unsigned long long)g_bar_nwr);
+    if (bar_lv() > 0 && g_sub_serial % 600 == 0)
+        MLOG("pass barriers: vertex open %llu, encoders that wrote memory (vertex held at their end) %llu, added before a draw %llu (texture reads %llu / vertex writes %llu), draws writing memory %llu (total)",
+             (unsigned long long)g_bar_nfree, (unsigned long long)g_bar_nwend, (unsigned long long)g_bar_nlazy, (unsigned long long)g_bar_ntex, (unsigned long long)g_bar_nvw, (unsigned long long)g_bar_nwr);
+    if (bar_lv() > 0 && g_sub_serial % 600 == 0)
+        MLOG("pass barriers: game barriers %llu (at a pass start that left vertex open: uncovered %llu, ordered by a full end barrier %llu, texture-invalidate only %llu; "
+             "after an encoder's last draw %llu; mid-pass, a draw after them %llu: vertex-relevant %llu, texture %llu, fragment ordering %llu); "
+             "bits prim %llu frag %llu tiled %llu indirect %llu tex %llu shader %llu desc %llu zcull %llu",
+             (unsigned long long)g_bar_gn, (unsigned long long)g_bar_gopen, (unsigned long long)g_bar_gcov, (unsigned long long)g_bar_gtex_open, (unsigned long long)g_bar_gtail,
+             (unsigned long long)g_bar_gmid, (unsigned long long)g_bar_gvtx_mid, (unsigned long long)g_bar_gtex_mid, (unsigned long long)g_bar_gfrag_mid,
+             (unsigned long long)g_bar_gbit[0], (unsigned long long)g_bar_gbit[1], (unsigned long long)g_bar_gbit[2], (unsigned long long)g_bar_gbit[3],
+             (unsigned long long)g_bar_gbit[4], (unsigned long long)g_bar_gbit[5], (unsigned long long)g_bar_gbit[6], (unsigned long long)g_bar_gbit[7]);
 }
 static inline void bar_r_begin(id<MTL4RenderCommandEncoder> e) {
-    if (bar_lv() <= 0) { [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_enc_vfree = 0; return; }
+    if (bar_lv() <= 0) { [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_enc_vfree = 0; g_bar_gpend = g_bar_gunc = 0; return; }
     [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll & ~BAR_VTX visibilityOptions:MTL4VisibilityOptionDevice];
-    if (g_bar_vhz) { [e barrierAfterQueueStages:MTLStageAll beforeStages:BAR_VTX visibilityOptions:MTL4VisibilityOptionDevice]; g_bar_vhz = 0; g_enc_vfree = 0; g_bar_nfull++; }
-    else { g_enc_vfree = 1; g_bar_nfree++; }   // 顶点不另等：之前的计算 / 拷贝结尾的整道屏障已经挡着它 | vertex waits for nothing more: the full barrier at the end of earlier compute / copy passes already holds it
+    if (g_bar_gunc & BAR_GAME_VTX) g_bar_gopen++;   // counted only (see BAR_GAME_VTX)
+    else if (g_bar_gpend & BAR_GAME_VTX) g_bar_gcov++;
+    else if (g_bar_gpend & BAR_GAME_TEX) g_bar_gtex_open++;
+    g_bar_gpend = g_bar_gunc = 0;
+    g_enc_vfree = 1; g_bar_nfree++;   // vertex waits for nothing more: the full end barrier of earlier compute / copy passes and of render passes that wrote memory already holds it
 }
 static inline RENC enc_r_begin(RPD *d) { RENC e = [g_cb renderCommandEncoderWithDescriptor:d]; bar_r_begin(e); [e setArgumentTable:g_vt atStages:MTLRenderStageVertex]; [e setArgumentTable:g_ft atStages:MTLRenderStageFragment]; return e; }
-static inline void enc_r_end(id e) { m4_end(e); }
+// A game barrier between encoders: its bits wait for the next encoder, uncovered unless a full end barrier orders the work before it (see BAR_GAME_VTX)
+static inline void bar_gpend_add(int bits) { g_bar_gpend |= bits; if (g_bar_vend && !g_blit) g_bar_gunc |= bits; }
+// Game render encoders (rp_end, defer_fallback, clear_tex; all on the submit thread): one that ran a draw writing memory keeps vertex stages in its end barrier.
+// Game barriers issued after the encoder's last draw were between encoders all along: they wait for the next one, judged against this encoder's end
+static inline void enc_r_end(id e) {
+    int w = g_enc_wrote; g_enc_wrote = 0; if (w) g_bar_nwend++;
+    g_bar_last_end = m4_end_ex(e, w); g_bar_vend = !(g_bar_last_end & BAR_VTX);
+    if (g_bar_gdn[0]) { g_bar_gtail += g_bar_gdn[0]; bar_gpend_add(g_bar_gdraw); g_bar_gdraw = 0; memset(g_bar_gdn, 0, sizeof g_bar_gdn); }
+}
+// The host's own render passes on the submit command buffer (bloom quarter, the 3D write-back): full start, an end that leaves later vertex stages free at level 1
+static inline void enc_host_r_end(id e) { g_bar_vend = !(m4_end_ex(e, 0) & BAR_VTX); }
 static inline void enc_r_pso(RENC e, id<MTLRenderPipelineState> p) { [e setRenderPipelineState:p]; }
 static inline void enc_r_dss(RENC e, id<MTLDepthStencilState> s) { [e setDepthStencilState:s]; }
 static inline void enc_r_viewport(RENC e, MTLViewport v) { [e setViewport:v]; }
@@ -664,7 +719,7 @@ static inline void enc_r_args(RENC e, MTLRenderStages s, uint64_t gpu, NSUIntege
 static inline void enc_r_draw(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n) { [e drawPrimitives:p vertexStart:v vertexCount:n]; }
 static inline void enc_r_draw_instanced(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n, NSUInteger i, NSUInteger b) { [e drawPrimitives:p vertexStart:v vertexCount:n instanceCount:i baseInstance:b]; }
 static inline void enc_r_draw_indexed(RENC e, MTLPrimitiveType p, NSUInteger n, MTLIndexType t, uint64_t gpu, NSUInteger len, NSUInteger i, NSInteger bv, NSUInteger bi) { [e drawIndexedPrimitives:p indexCount:n indexType:t indexBuffer:gpu indexBufferLength:len instanceCount:i baseVertex:bv baseInstance:bi]; }
-static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [(CBUF)g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; return e; }
+static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [(CBUF)g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; g_bar_gpend = g_bar_gunc = 0; g_bar_vend = 0; return e; }   // full start and end: orders everything before it, game barriers included
 static inline id<MTLComputeCommandEncoder> enc_c_begin_concurrent(id<MTLCommandBuffer> cb) { return [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent]; }
 static inline void enc_c_end(id e) { m4_end(e); }
 static inline void enc_c_pso(id e, id<MTLComputePipelineState> p) { [e setComputePipelineState:p]; }
@@ -683,7 +738,7 @@ extern int g_blit_bar;
 // When reusing the same blit encoder, a barrier is also needed between two copies: Metal 4 does not guarantee commands within one encoder run in recording order,
 // so write-then-read / two writes to the same range can be reordered (without it, t_nvn 5c read a stale value 1 time in 3). The barrier at encoder creation only covers it against earlier encoders
 static BENC blit(void) { blit_note(); rp_end();
-    if (!g_blit) { ser_gate(); g_blit = enc_b_begin(g_cb); [g_blit barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; }
+    if (!g_blit) { g_blit = enc_b_begin(g_cb); [g_blit barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_bar_gpend = g_bar_gunc = 0; g_bar_vend = 0; }
     else if (g_blit_bar) [g_blit barrierAfterEncoderStages:MTLStageBlit | MTLStageDispatch beforeEncoderStages:MTLStageBlit | MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];   // 拷贝编码器在 Metal 4 下是计算编码器，两种阶段都挡 | With Metal 4 the copy encoder is a compute encoder, so both stages are blocked
     return g_blit; }
 
@@ -713,6 +768,11 @@ void mtl_counter_stats(uint64_t rep[32], uint64_t rst[32]) { memcpy(rep, g_cnt_r
 
 // Counter reports carry NVN's 614.4 MHz ticks on the guest clock (nvn_timestamp.h), the same clock cntpct and the svc tick use;
 // the weak guest_ns below answers 0 in the graphics tests, which then use the monotonic clock.
+// Reports are written on the CPU when the submission completes (mtl_sub_commit's feedback handler), not at the GPU stage the game asked for. A frame's begin and
+// end timestamp reports therefore land in one submit and differ by about 0. The game's dynamic resolution reads its GPU frame time from such a pair and stays at
+// 1.0 / 1.0 (bb88916: frame statistic about 0.2 µs). True GPU timestamps (an MTL4CounterHeap per report) could hand the game real GPU times and let it lower its
+// own 3D resolution, on top of the host's 3D-scale controller (hle_oe.c dm_3d_scale_feed). The game's response is unprobed, so such a change has to be measured
+// and decided together with that controller. t_nvn (5b) pins the ~0 span.
 uint64_t guest_ns(void);
 static uint64_t gpu_ticks(void) {
     uint64_t ns = guest_ns();
@@ -838,6 +898,17 @@ int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1) {
     *t0 = atomic_load(&g_gpu[k].t0); *t1 = atomic_load(&g_gpu[k].t1);
     return *t1 >= *t0 && *t1;
 }
+// GPU command buffer errors, rate-limited per kind (nvn_ratelog.h): a GPU fault can fail every command buffer for a while, and each red line also emits a red event
+// (and on iOS an fsync'd log line). The first 8 of a kind print in full (1 for innocent victims, which only repeat another submit's fault), then at most one
+// summary per 10 s; gerr_flush (every 600 submissions and in mtl_drain) reports what a quiet window left, so a storm that stops is still counted in full
+enum { GERR_MAIN, GERR_VICTIM, GERR_UP, GERR_PRESENT, GERR_N };
+#define GERR_PERIOD_NS 10000000000ull
+static nvn_ratelog g_gerr[GERR_N];
+static void gerr_flush(void) {
+    static const char *const what[GERR_N] = {"submits", "submits (innocent victims)", "upload command buffers", "present command buffers"};
+    for (int i = 0; i < GERR_N; i++) { uint64_t more, total;
+        if (nvn_ratelog_flush(&g_gerr[i], &more, &total)) MLOG("【红】GPU errors in %s: %llu more since the last line (%llu in all)", what[i], (unsigned long long)more, (unsigned long long)total); }
+}
 static void rp_flush(void);
 static const char *cctx_snap(void);   // 这次提交里有什么（出错时打进红行；定义在 mtl_exec 之前） | What is in this submission (printed into the failure line on error; defined before mtl_exec)
 uint64_t mtl_sub_commit(void) {
@@ -858,7 +929,12 @@ uint64_t mtl_sub_commit(void) {
     NSString *cctx = @(cctx_snap());
     [FB_ON(o, g_cb) FB_SEL:^(FB_ARG cb) {
         gpu_tag_done(gpu_f, cb.GPUStartTime, cb.GPUEndTime);
-        if (cb.error) { atomic_store(&g_last_commit_error, 1); static int n, nv; int victim = [cb.error.description containsString:@"InnocentVictim"]; if (victim ? nv++ < 1 : n++ < 8) MLOG("【红】命令缓冲错误详情 fence=%llu：%s | GPU %.3f→%.3f", (unsigned long long)fence, cb.error.description.UTF8String, cb.GPUStartTime, cb.GPUEndTime); if (!victim) MLOG("【红】出错那次提交的现场 fence=%llu：%s", (unsigned long long)fence, cctx.UTF8String); MLOG("【红】命令缓冲执行出错：%s", cb.error.localizedDescription.UTF8String); }
+        if (cb.error) { atomic_store(&g_last_commit_error, 1); int victim = [cb.error.description containsString:@"InnocentVictim"]; uint64_t more, total;
+            int t = nvn_ratelog_take(&g_gerr[victim ? GERR_VICTIM : GERR_MAIN], victim ? 1 : 8, GERR_PERIOD_NS, bp_now(), &more, &total);
+            if (t == NVN_RL_FULL) { MLOG("【红】GPU error in submit fence=%llu (%llu so far): %s | GPU %.3f→%.3f", (unsigned long long)fence, (unsigned long long)total, cb.error.description.UTF8String, cb.GPUStartTime, cb.GPUEndTime);
+                if (!victim) MLOG("【红】the failed submit held: %s", cctx.UTF8String); }
+            else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in submits%s: %llu more since the last line (%llu in all); latest: %s", victim ? " (innocent victims)" : "",
+                                                 (unsigned long long)more, (unsigned long long)total, cb.error.localizedDescription.UTF8String); }
         for (int i = 0; i < n; i++) {
             if (ops[i].kind == 1) { if (ops[i].mode == 1) *ops[i].val += ops[i].v; else *ops[i].val = ops[i].v; }
             else if (ops[i].kind == 3) {   // 通过采样数：自清零以来各槽之和 | Samples passed: the sum of all slots since the reset
@@ -913,7 +989,8 @@ static void present_drop_for_suspend(void);
 // Created only once: the game threads (pool registration, submit) and the main thread (drain before suspending) may each get here first; previously only an unlocked "is g_dev set" check guarded it, and two threads arriving together would each create a device and queue
 void mtl_init(void) { static dispatch_once_t once; dispatch_once(&once, ^{ mtl_init_once(); }); }
 // 图形还没初始化（开机头几秒就进后台）：没有在途工作要清，也别在这条线程上替游戏初始化 | Graphics not initialized yet (going to the background in the first seconds of boot): there is no in-flight work to drain, and do not initialize it on this thread on the game's behalf
-void mtl_drain(void) { if (!g_dev) return; present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu(); }
+void mtl_drain(void) { if (!g_dev) return; present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu();
+    gerr_flush(); }   // the handlers have run: count the GPU errors no line reported (suspend and teardown)
 
 // ================= 渲染回放 =================
 // ================= Render replay =================
@@ -1136,11 +1213,14 @@ static void up_flush(void) {
     MTL4CommitOptions *o = [MTL4CommitOptions new];
     atomic_fetch_add(&g_up_pending, 1);
     [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
-        if (f.error) MLOG("【红】上传命令缓冲执行出错：%s", f.error.description.UTF8String);
-        if (f.error || fake_lost) {
+        int t = NVN_RL_FULL; uint64_t more = 0, total = 0;
+        if (f.error) { t = nvn_ratelog_take(&g_gerr[GERR_UP], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
+            if (t == NVN_RL_FULL) MLOG("【红】GPU error in an upload command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
+            else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in upload command buffers: %llu more since the last line (%llu in all)", (unsigned long long)more, (unsigned long long)total); }
+        if (f.error || fake_lost) {   // the recovery runs every time; its line prints with the full error lines only
             os_unfair_lock_lock(&g_up_lost_lk); if (!g_up_lost) g_up_lost = [NSHashTable weakObjectsHashTable]; for (id d in dsts) [g_up_lost addObject:d]; int n = (int)g_up_lost.allObjects.count; atomic_store(&g_up_lost_n, n); os_unfair_lock_unlock(&g_up_lost_lk);
             pthread_mutex_lock(&g_smu); g_ser_gen++; pthread_mutex_unlock(&g_smu);   // 让各贴图号的视图缓存走一次慢路（缓存命中时不会经过 tex_mtl，看不到这份记录） | Make the view cache of every texture ID take the slow path once (on a cache hit tex_mtl is not passed through and this record is not seen)
-            MLOG("%s上传命令缓冲被丢：这一批 %lu 张贴图记为内容未写，下次取用时重传（待重传共 %d 张）", fake_lost ? "DM_TEST_UP_LOST：" : "", (unsigned long)dsts.count, n);
+            if (fake_lost || t == NVN_RL_FULL) MLOG("%s上传命令缓冲被丢：这一批 %lu 张贴图记为内容未写，下次取用时重传（待重传共 %d 张）", fake_lost ? "DM_TEST_UP_LOST：" : "", (unsigned long)dsts.count, n);
         }
         double d = f.GPUEndTime - f.GPUStartTime;
         if (d > 0) atomic_fetch_add(&g_upload_gpu_ns, (uint64_t)(d * 1e9));
@@ -1601,6 +1681,7 @@ static int pg_on(void) {
     for (int i = 0; i < PG_RING; i++) { NSError *er = nil; g_pg_buf[i] = [g_dev newCounterHeapWithDescriptor:hd error:&er]; if (!g_pg_buf[i]) { MLOG("【红】时间戳计数堆建不出：%s", er.localizedDescription.UTF8String ?: "?"); return 0; } }
     { uint64_t fq = [g_dev queryTimestampFrequency]; g_pg_ns_tick = fq ? 1e9 / (double)fq : 1; }
     if (!(g_pg_f = fopen(e, "w"))) { MLOG("【红】DM_NVN_PASSGPU 打不开 %s", e); return 0; }
+    int lv = bar_lv(); fprintf(g_pg_f, "# barrier_level=%d serial=%d\n", lv, g_bar_ser > 0);   // passgpu_top.py: spans are exclusive costs only at level 0 with the serial pin
     fprintf(g_pg_f, "frame\tidx\tkind\tgpu_ms\tinc_ms\tw\th\tfmt0\tdfmt\tload\tdraws\tt0_ns\tt1_ns\tpass\n");
     MLOG("[passgpu] 逐通道 GPU 计时 → %s", e);
     return g_pg = 1;
@@ -1644,7 +1725,6 @@ static void pg_render_finish(RENC e) {   // 收渲染编码器之前：写通道
 }
 static CENC pg_compute(void) {
     pg_pass *p = pg_new(1, 2);
-    ser_gate();
     if (!p) { args_dirty_all(); return enc_c_begin(NULL); }
     p->draws = 0; args_dirty_all();
     CENC ce = enc_c_begin(NULL);   // Metal 4：开编码器后写起点，收编码器前写终点（pg_compute_end） | Metal 4: write the start point after opening the encoder, write the end point before ending it (pg_compute_end)
@@ -2035,7 +2115,6 @@ static RENC rp_begin_ex(int clear_only) {
     pg_render(pd, (NSUInteger)R.rt.n);
     { void td_note(id pd, NSUInteger nc); td_note(pd, (NSUInteger)R.rt.n);
       void ts_note(id pd, NSUInteger nc); ts_note(pd, (NSUInteger)R.rt.n); }
-    ser_gate();
     g_enc = enc_r_begin(pd); pg_render_begin(g_enc);
     args_dirty_all();
     g_stat_pass++;
@@ -2543,7 +2622,8 @@ void mtl_reg_samp(int sid, const samp_par *sp) {
     pthread_mutex_lock(&g_rmu);
     if (id_ >= g_nsreg) { int n = id_ + 256; g_sreg = realloc(g_sreg, n * sizeof *g_sreg); g_sreg_ok = realloc(g_sreg_ok, n); g_sview = realloc(g_sview, n * sizeof *g_sview); g_srid = realloc(g_srid, n * sizeof *g_srid);
         memset(g_sreg_ok + g_nsreg, 0, n - g_nsreg); memset(g_sview + g_nsreg, 0, (n - g_nsreg) * sizeof *g_sview); memset(g_srid + g_nsreg, 0, (n - g_nsreg) * sizeof *g_srid); g_nsreg = n; }
-    if (g_sview[id_]) { CFRelease(g_sview[id_]); g_sview[id_] = NULL; g_srid[id_] = 0; }
+    // deferred like treg_view_drop: submissions in flight may still hold this sampler's gpuResourceID in their argument blocks
+    if (g_sview[id_]) { defer_obj_unref((__bridge id)g_sview[id_]); CFRelease(g_sview[id_]); g_sview[id_] = NULL; g_srid[id_] = 0; }
     g_reg_gen++;
     g_sreg[id_] = *sp; g_sreg_ok[id_] = 1;
     pthread_mutex_unlock(&g_rmu);
@@ -2623,17 +2703,22 @@ static MTLSamplerAddressMode wrapm(int w) {
         case 6: return MTLSamplerAddressModeMirrorRepeat; }
     return MTLSamplerAddressModeRepeat;
 }
-// 纹理过滤（选项页「各向异性过滤」，画质计划 1.4）：缩小、放大都线性且 mip 线性、不做比较的采样器，各向异性至少取这一档（游戏自己要得更高的照它的）。
-// 原版 Switch 上这类采样器几乎都是 1（只有一种镜像环绕的要 4）；阴影比较、最近点与不带 mip 线性的（界面、查表）一概不动，屏幕对齐的后处理趟足迹各向同性，开了也不变。
-// 换档在提交开头（mtl_sub_begin → aniso_latch）：已建的采样器全部延后放掉（用过它们的提交做完才放），参数缓冲按 g_reg_gen 重填。
-// 定档：g_aniso（DM_NVN_UB 同进程交替用）> DM_NVN_ANISO > 宿主 dm_video_aniso()；0 = 原版
-// Texture filtering (options "Anisotropic Filtering", picture plan 1.4): samplers with linear min and mag, a linear mip filter and no compare get at least this anisotropy (a game sampler asking for more keeps its own).
-// On the original Switch these samplers are almost all 1 (one mirrored-repeat kind asks for 4); shadow compares, nearest-point and samplers without a linear mip (UI, lookups) are left alone, and screen-aligned post
-// passes have an isotropic footprint, so they look the same with it on.
-// The level changes at the start of a submission (mtl_sub_begin → aniso_latch): every sampler already built is released later (after the submissions that used it complete) and argument buffers refill through g_reg_gen.
-// Level: g_aniso (DM_NVN_UB in-process alternation) > DM_NVN_ANISO > the host's dm_video_aniso(); 0 = the original
+// Texture filtering (options Anisotropic Filtering, picture plan 1.4): every sampler with linear min and mag filters, a linear mip filter and no compare gets at least
+// this anisotropy (aniso_eff); a sampler that asks for more keeps its own (the game asks for 1, and for 4 on one mirrored-repeat kind). Every linear sampler seen with
+// DM_NVN_SAMPHIST in town and the Blood Moor has a linear mip filter, so in practice that is every linear non-compare sampler, the clamp-to-border and mirrored ones
+// included (wrap modes aren't consulted; t_aniso pins that). Point samplers (the UI composite's among them) and shadow compares are left alone. Screen-aligned passes
+// have an isotropic footprint and look the same. The level changes at the start of a submission (mtl_sub_begin → aniso_latch): every sampler already built is released
+// after the submissions that used it complete, and argument blocks refill through g_reg_gen.
+// Level: g_aniso (DM_NVN_UB in-process alternation) > DM_NVN_ANISO > the host dm_video_aniso(); 0 = the original.
 int g_aniso = -1;
 static int g_aniso_cur;   // 已建的采样器按这一档（g_rmu 下读写） | the level the samplers built so far use (read and written under g_rmu)
+static int g_aniso_rebuilt;   // samplers the last level change released (t_aniso)
+// The anisotropy a sampler gets at this level: its own ask clamped to 1..16 (NaN or below 1 = 1), raised to the level for linear min / mag / mip without compare
+static inline NSUInteger aniso_eff(const samp_par *p, int level) {
+    NSUInteger own = !(p->aniso >= 1) ? 1 : p->aniso > 16 ? 16 : (NSUInteger)p->aniso;
+    if (level > 0 && p->minf == 5 && p->magf != 0 && !p->cmp_mode && own < (NSUInteger)level) return (NSUInteger)level;
+    return own;
+}
 __attribute__((weak)) int dm_video_aniso(void) { return 0; }   // 宿主 dm_video.c 提供强定义；图形单测不链宿主时 = 原版 | the host's dm_video.c provides the strong definition; graphics unit tests without the host = the original
 static int aniso_want(void) {
     static int env = -2; if (env == -2) { const char *e = getenv("DM_NVN_ANISO"); env = e && *e ? atoi(e) : -1; }
@@ -2645,7 +2730,7 @@ static void aniso_latch(void) {   // 提交线程，mtl_sub_begin | submission t
     pthread_mutex_lock(&g_rmu);
     int n = 0, was = g_aniso_cur;
     for (int i = 0; i < g_nsreg; i++) if (g_sview[i]) { defer_obj_unref((__bridge id)g_sview[i]); CFRelease(g_sview[i]); g_sview[i] = NULL; g_srid[i] = 0; n++; }
-    g_aniso_cur = a; g_reg_gen++;
+    g_aniso_cur = a; g_aniso_rebuilt = n; g_reg_gen++;
     pthread_mutex_unlock(&g_rmu);
     MLOG("纹理过滤：各向异性 %d → %d（0 = 原版；%s；重建 %d 个采样器） | texture filtering: anisotropy %d → %d (0 = original; %s; %d samplers rebuilt)", was, a,
          g_aniso >= 0 ? "g_aniso" : getenv("DM_NVN_ANISO") ? "DM_NVN_ANISO" : "选项页", n, was, a, g_aniso >= 0 ? "g_aniso" : getenv("DM_NVN_ANISO") ? "DM_NVN_ANISO" : "options page", n);
@@ -2669,10 +2754,9 @@ static void samp_hist(int sid, const samp_par *p) {
         for (int j = 0; j < n && L < sizeof o - 16; j++) L += (size_t)snprintf(o + L, sizeof o - L, " #%d×%d", j, t[j].count);
         MLOG("采样器组合：已建 %d 个，%d 种：%s", made, n, o); }
 }
-static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Caller holds g_rmu
-    if (sid < 0 || sid >= g_nsreg || !g_sreg_ok[sid]) { RED_ONCE(12, "采样器号 %d 未登记", sid); return nil; }
-    if (g_sview[sid]) return (__bridge id<MTLSamplerState>)g_sview[sid];
-    samp_par p = g_sreg[sid];
+// The Metal descriptor of an NVN sampler at an anisotropy level (pure: no device, no tables)
+static MTLSamplerDescriptor *samp_desc(const samp_par *pp, int aniso_cur) {
+    samp_par p = *pp;
     MTLSamplerDescriptor *d = [MTLSamplerDescriptor new];
     d.magFilter = p.magf ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     d.minFilter = (p.minf == 1 || p.minf == 3 || p.minf == 5) ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
@@ -2680,12 +2764,17 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     d.sAddressMode = wrapm(p.ws); d.tAddressMode = wrapm(p.wt); d.rAddressMode = wrapm(p.wr);
     d.lodMinClamp = p.lod_min < 0 ? 0 : p.lod_min; d.lodMaxClamp = p.lod_max;
     d.lodBias = p.lod_bias;   // NVN applies the sampler's LOD bias (0 for every sampler D2R created in town and the Blood Moor, 2026-10-29)
-    d.maxAnisotropy = p.aniso < 1 ? 1 : p.aniso > 16 ? 16 : (NSUInteger)p.aniso;
-    if (g_aniso_cur && p.minf == 5 && p.magf && !p.cmp_mode && d.maxAnisotropy < (NSUInteger)g_aniso_cur) d.maxAnisotropy = (NSUInteger)g_aniso_cur;   // 纹理过滤覆盖（见 aniso_latch） | texture filtering override (see aniso_latch)
+    d.maxAnisotropy = aniso_eff(&p, aniso_cur);   // texture filtering override (see aniso_latch)
     if (p.cmp_mode) d.compareFunction = (MTLCompareFunction)(p.cmp_func - 1);
     d.borderColor = p.border[3] > 0.5f ? (p.border[0] > 0.5f ? MTLSamplerBorderColorOpaqueWhite : MTLSamplerBorderColorOpaqueBlack) : MTLSamplerBorderColorTransparentBlack;
     d.supportArgumentBuffers = YES;
-    id<MTLSamplerState> s = [g_dev newSamplerStateWithDescriptor:d];
+    return d;
+}
+static id<MTLSamplerState> samp_by_id(int sid) {   // Caller holds g_rmu
+    if (sid < 0 || sid >= g_nsreg || !g_sreg_ok[sid]) { RED_ONCE(12, "采样器号 %d 未登记", sid); return nil; }
+    if (g_sview[sid]) return (__bridge id<MTLSamplerState>)g_sview[sid];
+    samp_par p = g_sreg[sid];
+    id<MTLSamplerState> s = [g_dev newSamplerStateWithDescriptor:samp_desc(&p, g_aniso_cur)];
     if (s) { g_sview[sid] = (void *)CFBridgingRetain(s); g_srid[sid] = s.gpuResourceID._impl; }
     samp_hist(sid, &p);
     return s;
@@ -4677,7 +4766,7 @@ static int bloomq_capture(void) {
     [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [en setArgumentTable:g_bloomq_args atStages:MTLRenderStageFragment];
     [g_bloomq_args setTexture:src.gpuResourceID atIndex:0]; [g_bloomq_args setSamplerState:g_bloomq_samp.gpuResourceID atIndex:0];
     float *p = g_bloomq_const[g_bloomq_i].contents; p[0] = g_bloomq.threshold; p[1] = g_bloomq.coeff_g; p[2] = g_bloomq.coeff_b; p[3] = src.width; p[4] = src.height; [g_bloomq_args setAddress:g_bloomq_const[g_bloomq_i].gpuAddress atIndex:0];
-    [en setViewport:(MTLViewport){0,0,dst.width,dst.height,0,1}]; [en setRenderPipelineState:g_bloomq_pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en);
+    [en setViewport:(MTLViewport){0,0,dst.width,dst.height,0,1}]; [en setRenderPipelineState:g_bloomq_pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; enc_host_r_end(en);
     g_bloomq_i = (g_bloomq_i + 1) % 3; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; return 1;
 }
 // ---------- 拖货跟手图：商人货架上的货没有「拿起」态，拖动时由回放层把「画这件货图标的那次绘制」在同一趟末尾平移到手指处再画一遍 ----------
@@ -4778,16 +4867,18 @@ static uint8_t sh_memf(NvShader *sh) {
         sh->memf = f | 0x80; }
     return sh->memf & 0x7f;
 }
-// 绘制前（第 1 档）：顶点着色器读贴图或写内存而本编码器的顶点阶段没等前面的片元 → 补一道「之前全部 → 顶点」；有着色器写内存 → 之后的渲染通道开头用整道
-// Before a draw (level 1): the vertex shader reads textures or writes memory while this encoder's vertex stage did not wait for earlier fragment work → add "every earlier stage → vertex"; a shader writes
-// memory → later render passes start with the full barrier
+// Before a draw (level 1): the vertex shader reads textures or writes memory while this encoder's vertex stage did not wait for earlier fragment work → add "every earlier
+// stage → vertex"; a shader writes memory → this encoder ends with the full producer barrier, vertex stages included (enc_r_end)
 static inline void bar_draw(RENC en, NvProg *pr) {
-    if (g_bar_lv <= 0) return;
+    if (g_bar_gdn[0]) {   // game barriers since this encoder's last draw: a draw follows them in the same encoder, so they are mid-pass (at either level)
+        g_bar_gmid += g_bar_gdn[0]; g_bar_gvtx_mid += g_bar_gdn[1]; g_bar_gtex_mid += g_bar_gdn[2]; g_bar_gfrag_mid += g_bar_gdn[3];
+        g_bar_gdraw = 0; memset(g_bar_gdn, 0, sizeof g_bar_gdn); }
+    if (bar_lv() <= 0) return;
     uint8_t vf = sh_memf(pr->sh[0]), w = vf & MF_WRITE;
     for (int i = 1; i < 6; i++) w |= sh_memf(pr->sh[i]) & MF_WRITE;
     if (g_enc_vfree && (vf & (MF_TEX | MF_WRITE))) { [en barrierAfterQueueStages:MTLStageAll beforeStages:BAR_VTX visibilityOptions:MTL4VisibilityOptionDevice]; g_enc_vfree = 0; g_bar_nlazy++;
         if (vf & MF_TEX) g_bar_ntex++; else g_bar_nvw++; }
-    if (w) { g_bar_vhz = 1; g_bar_nwr++; }
+    if (w) { g_enc_wrote = 1; g_bar_nwr++; }
 }
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
@@ -5447,7 +5538,7 @@ static void clear_tex(const p_clear_tex *c) {
                            rp.stencilAttachment.storeAction = MTLStoreActionStore; rp.stencilAttachment.clearStencil = c->c.u[1]; } }
         else if (stencil) rp.stencilAttachment.clearStencil = c->c.u[0];
         else rp.colorAttachments[0].clearColor = c->is_uint ? MTLClearColorMake(c->c.u[0], c->c.u[1], c->c.u[2], c->c.u[3]) : MTLClearColorMake(c->c.f[0], c->c.f[1], c->c.f[2], c->c.f[3]);
-        ser_gate(); enc_r_end(enc_r_begin(rp));
+        enc_r_end(enc_r_begin(rp));
     }
 }
 
@@ -5676,6 +5767,14 @@ static int frz_op(unsigned op, const void *a) {   // 返回 1 = 这条操作不�
     return 0;
 }
 
+// The game's own barrier (OP_BARRIER): counted by class only (see BAR_GAME_VTX). Inside an open render encoder it waits for the next draw there (mid-pass, bar_draw)
+// or the encoder's end (enc_r_end); otherwise its bits wait for the next encoder
+static void bar_game(int bits) {
+    g_bar_gn++;
+    for (int i = 0; i < 8; i++) if (bits & (1 << i)) g_bar_gbit[i]++;
+    if (g_enc) { g_bar_gdraw |= bits; g_bar_gdn[0]++; if (bits & BAR_GAME_VTX) g_bar_gdn[1]++; if (bits & BAR_GAME_TEX) g_bar_gdn[2]++; if (bits & BAR_GAME_FRAG) g_bar_gdn[3]++; }
+    else bar_gpend_add(bits);
+}
 void mtl_exec(const uint8_t *p) {
     static int inited; if (!inited) { inited = 1; state_reset(); }
     static int dump_all = -1; if (dump_all < 0) dump_all = getenv("DM_NVN_PASSDUMP_ALL") != NULL;
@@ -5765,7 +5864,8 @@ void mtl_exec(const uint8_t *p) {
             case OP_COPY_T2T: copy_t2t(a); break;
             case OP_CLEAR_TEX: clear_tex(a); break;
             case OP_DISPATCH: dispatch(a); break;
-            case OP_BARRIER: case OP_SET_TEX_POOL: case OP_SET_SAMP_POOL: break;
+            case OP_BARRIER: bar_game(*(const int32_t *)a); break;
+            case OP_SET_TEX_POOL: case OP_SET_SAMP_POOL: break;
             default: break;
         }
         p += h.size;
@@ -6365,7 +6465,7 @@ static int mfx3d_draw(NvShader *f) {   // 回放线程，游戏那次 ps_upsampl
     [en setArgumentTable:g_mfx3d_args atStages:MTLRenderStageFragment];
     [g_mfx3d_args setTexture:g_mfx_3d.out.gpuResourceID atIndex:0]; [g_mfx3d_args setTexture:mask.gpuResourceID atIndex:1];
     [g_mfx3d_args setSamplerState:mfx_samp(1).gpuResourceID atIndex:0]; [g_mfx3d_args setSamplerState:mfx_samp(0).gpuResourceID atIndex:1];
-    [en setViewport:(MTLViewport){vx, vy, vw, vh, 0, 1}]; [en setRenderPipelineState:pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en);
+    [en setViewport:(MTLViewport){vx, vy, vw, vh, 0, 1}]; [en setRenderPipelineState:pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; enc_host_r_end(en);
     R.clear_c[0] = 0; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;
     { static int once; if (!once++) MLOG("3D 放大：MetalFX 取代 ps_upsample_p：有效区 %lux%lu（%.0f%% 宽）→ 视口 %.0fx%.0f，锐化强度原为 %.3f", (unsigned long)cw, (unsigned long)ch, 100.0 * cw / vw, vw, vh, c[6]); }
     PD("U %llu 3D 放大改用 MetalFX %lux%lu → %.0fx%.0f", g_stat_pass, (unsigned long)cw, (unsigned long)ch, vw, vh);
@@ -6575,7 +6675,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     [cb endCommandBuffer];
     MTL4CommitOptions *o = [MTL4CommitOptions new];
     [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
-        if (f.error) MLOG("【红】上屏命令缓冲错误：%s", f.error.description.UTF8String);
+        if (f.error) { uint64_t more, total; int t = nvn_ratelog_take(&g_gerr[GERR_PRESENT], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
+            if (t == NVN_RL_FULL) MLOG("【红】GPU error in a present command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
+            else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in present command buffers: %llu more since the last line (%llu in all)", (unsigned long long)more, (unsigned long long)total); }
         else mp_check(alloc_i, ticket);
 #if TARGET_OS_OSX
         if (!f.error) mfx_gpu_note(f.GPUEndTime - f.GPUStartTime);

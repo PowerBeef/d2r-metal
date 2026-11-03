@@ -192,8 +192,10 @@ shaders() {
   shaders_ok say || { echo "  $(m "有着色器没翻译成功或库文件不全，完整输出在 ${log}" "some shaders failed or library files are missing; full output in ${log}")"; return 1; }
 }
 shaders_ok || step "翻译全部着色器（首次较久）" shaders
-# 随着色器库走的清单：哪些着色器的运行时下标没能证明有界（宿主按库版本核对这份清单，版本对不上会报红并退回保守做法）
-head -1 "$HERE/dm/gfx/nvn/c1_full.tsv" 2> /dev/null | grep -q "b-$V " || step "出着色器下标清单" "$PY" "$T/c1_guard.py" "$DM_ROOT/build/cache/metal_shader_cache/b-$V" "$HERE/dm/gfx/nvn/c1_full.tsv"
+# The list that goes with the shader library: the shaders whose run-time indices could not be proven bounded (the host checks it against the library's version and,
+# when they differ, reports red and falls back to the conservative path). Its header also names the guard's own hash, so a changed c1_guard.py regenerates it too
+C1G=$(shasum -a 256 "$T/c1_guard.py" | cut -c1-12)
+head -1 "$HERE/dm/gfx/nvn/c1_full.tsv" 2> /dev/null | grep -q "b-$V .* guard $C1G\$" || step "出着色器下标清单" "$PY" "$T/c1_guard.py" "$DM_ROOT/build/cache/metal_shader_cache/b-$V" "$HERE/dm/gfx/nvn/c1_full.tsv"
 
 # The tracked pre-commit guard (dm/tools/git-hooks/pre-commit): link it into the clone's hooks, which worktrees share;
 # the link points at the main checkout's copy so it survives removing a worktree

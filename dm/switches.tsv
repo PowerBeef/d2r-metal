@@ -5,7 +5,7 @@ DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c host/tests/t_oe.c	-
 DM_3D_SCALE_FLOOR	host	host/hle_oe.c	-
 DM_3D_SCALE_GPU	host	host/hle_oe.c	-
 DM_3D_SCALE_GPU_FLOOR	host	host/hle_oe.c	-
-DM_AA_MODE	host	host/hle_oe.c	y
+DM_AA_MODE	host	host/hle_oe.c host/tests/t_oe.c	y
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_padmode.c host/front_mac.m	-
@@ -155,7 +155,7 @@ DM_MEM_CAP_GB	gfx	gfx/nvn/hle_nvn.c	-
 DM_MEM_STAT_ALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_METAL_COLD	ios	ios/Sources/main.m	-
 DM_MFX	gfx	gfx/nvn/nvn_mtl.m	y
-DM_MFX3D	gfx	gfx/nvn/nvn_mtl.m	y
+DM_MFX3D	gfx	gfx/nvn/nvn_capture.c gfx/nvn/nvn_mtl.m gfx/tests/t_capture.c	y
 DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
 DM_MOVIE_FFMPEG_PREFIX	ios-tools	ios/run.sh	y
@@ -167,8 +167,8 @@ DM_NICK	host	host/hle_account.c	-
 DM_NOTARY_PROFILE	tools	tools/release_mac.sh	-
 DM_NO_PRELOAD	ios	ios/Sources/main.m	-
 DM_NSO_DIR	tools,verify	tools/product.sh tools/sampagg.py verify/regress.sh	y
-DM_NVN_ANISO	gfx	gfx/nvn/nvn_mtl.m	y
-DM_NVN_BARRIER	gfx	gfx/nvn/nvn_mtl.m	-
+DM_NVN_ANISO	gfx	gfx/nvn/nvn_capture.c gfx/nvn/nvn_mtl.m gfx/tests/t_aniso.m gfx/tests/t_capture.c	y
+DM_NVN_BARRIER	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_BF_WANT	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BINDFILT	gfx	gfx/nvn/hle_nvn.c	-
 DM_NVN_BLOOM_Q	gfx	gfx/nvn/nvn_mtl.m	-
@@ -188,7 +188,7 @@ DM_NVN_NOFXAA	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_PASSDUMP	gfx	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m	y
 DM_NVN_PASSDUMP_ALL	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_PASSGPU	gfx	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m	y
-DM_NVN_PASSGPU_SERIAL	gfx	gfx/nvn/nvn_mtl.m	-
+DM_NVN_PASSGPU_SERIAL	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_PROF	gfx	gfx/nvn/hle_nvn.c	y
 DM_NVN_REGLUM	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_RT_RANGE	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_rt_depth_ro.m gfx/tests/t_rt_range.m	-

@@ -192,8 +192,10 @@ int main(void) {
         NVNmemoryPoolBuilder hb; NVNmemoryPool hp; P(nvnMemoryPoolBuilderSetDefaults)(&hb); P(nvnMemoryPoolBuilderSetStorage)(&hb, heap, 4 * big);
         P(nvnMemoryPoolInitialize)(&hp, &hb);
         P(nvnCommandBufferBeginRecording)(&cb);
+        P(nvnCommandBufferReportCounter)(&cb, NVN_COUNTER_TYPE_TIMESTAMP, (NVNbufferAddress)(cnt + 0x100));   // a frame's begin and end reports, as the game writes them
         for (int i = 0; i < 24; i++) P(nvnCommandBufferCopyBufferToBuffer)(&cb, (NVNbufferAddress)busy_a, (NVNbufferAddress)busy_b, big, 0);
         P(nvnCommandBufferCopyBufferToBuffer)(&cb, (NVNbufferAddress)bsrc, (NVNbufferAddress)bdst, big, 0);
+        P(nvnCommandBufferReportCounter)(&cb, NVN_COUNTER_TYPE_TIMESTAMP, (NVNbufferAddress)(cnt + 0x110));
         NVNcommandHandle hb2 = P(nvnCommandBufferEndRecording)(&cb);
         NVNsync sb; P(nvnSyncInitialize)(&sb, &dev);
         uint64_t t0 = now_ns();
@@ -207,6 +209,14 @@ int main(void) {
         EXPECT("刚提交时零超时等待 = 超时(2)", 2, w0);
         EXPECT("长等待 = 满足(1)", 1, w1);
         EXPECT("dst 全为改写前的值（抽 16384 处）", 0, bad);
+        // Counter reports are written on the CPU when the submission completes (nvn_mtl.m gpu_ticks), so begin and end land together: the game's dynamic
+        // resolution reads its GPU frame time from such a pair and stays at 1.0 / 1.0
+        uint64_t rb, re; memcpy(&rb, cnt + 0x100, 8); memcpy(&re, cnt + 0x110, 8);
+        double span_ns = re >= rb ? (double)(re - rb) * 625 / 384 : -1;
+        printf("（begin/end report span %.0f ns）\n", span_ns);
+        EXPECT("begin/end timestamp reports of one submit are both written", 1, rb != 0 && re >= rb);
+        EXPECT("the busy submit took over 2 ms", 1, ms > 2);
+        EXPECT("begin/end reports of one submit differ by under 1/4 of its GPU time (completion-time stamps keep the game's dynamic resolution off; bb88916)", 1, span_ns >= 0 && span_ns * 4 < ms * 1e6);
         P(nvnMemoryPoolFinalize)(&hp); free(heap);
     }
 

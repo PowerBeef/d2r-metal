@@ -30,6 +30,9 @@ t_pace: t_pace.c ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_pace.c
 t_timestamp: t_timestamp.c ../nvn/nvn_timestamp.h
 	clang -O1 -Wall -o $@ t_timestamp.c
+# Built with ThreadSanitizer: a race report exits non-zero
+t_ratelog: t_ratelog.c ../nvn/nvn_ratelog.h
+	clang -O1 -g -fsanitize=thread -Wall -Werror -o $@ t_ratelog.c
 t_capture: t_capture.c ../nvn/nvn_capture.c ../nvn/nvn_capture.h ../nvn/nvn_obj.h
 	clang -O1 -Wall -I../nvn/include -o $@ t_capture.c ../nvn/nvn_capture.c
 # DM_NVN_CAPTURE replayer (nvn_capture.inc): not in run, it needs a capture: ./nvn_replay <file.nvncap> [--repeat n] [--max-pixels n] [--png path]
@@ -51,6 +54,10 @@ t_zskip: t_zskip.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_zskip.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_xv: t_xv.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_xv.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_aniso: t_aniso.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_aniso.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_bar: t_bar.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_bar.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_ub: t_ub.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_ub.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_mip_extent: t_mip_extent.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
@@ -87,6 +94,8 @@ t_replay_asan: t_replay_san.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H
 # Dependencies one per line in alphabetical order (so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
 	t_adaptive_pace \
+	t_aniso \
+	t_bar \
 	t_copy_pitch \
 	t_builtin \
 	t_cover \
@@ -108,6 +117,7 @@ run: \
 	t_prog_key \
 	t_pso_pend \
 	t_pso_skey \
+	t_ratelog \
 	t_refl \
 	t_refl_lib \
 	t_reorder_chain \
@@ -132,6 +142,7 @@ run: \
 	./t_pace
 	./t_timestamp
 	./t_capture
+	./t_ratelog
 	./t_adaptive_pace
 	./t_refl
 	./t_refl_lib
@@ -144,6 +155,8 @@ run: \
 	./t_zskip
 	./t_xv
 	./t_ub
+	MTL_DEBUG_LAYER=1 ./t_bar
+	MTL_DEBUG_LAYER=1 ./t_aniso
 	MTL_DEBUG_LAYER=1 ./t_mip_extent
 	./t_link_ticks
 	MTL_DEBUG_LAYER=1 ./t_mip_extent --stencil-only
@@ -169,8 +182,11 @@ run: \
 	./t_replay_asan fx19
 	./t_replay_asan fx11
 	python3 test_tbdr_budget.py
+	python3 test_passgpu_top.py
+	python3 test_c1_guard.py
 	python3 test_ub_table.py
 	python3 test_dmsh_rules.py
+	python3 test_compile_convention.py
 .PHONY: run
 
 t_copy_pitch: t_copy_pitch.c ../nvn/nvn_copy_pitch.h

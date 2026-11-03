@@ -109,6 +109,36 @@ void cap_put(cap_writer *w, uint32_t tag, uint32_t submit, const void *data, uin
     w->raw += n; w->stored += c.stored + sizeof c;
     free(z);
 }
+void cap_put2(cap_writer *w, uint32_t tag, uint32_t submit, const void *a, size_t an, const void *b, uint64_t bn) {
+    if (!w->f) return;
+    enum { OUT = 4 << 20 };   // the output buffer: written out each time it fills
+    uint64_t raw = (uint64_t)an + bn, stored = 0;
+    off_t at = ftello(w->f);
+    cap_chunk c = {tag, CAP_LZ4, raw, 0, submit, 0};
+    if (at < 0 || fwrite(&c, sizeof c, 1, w->f) != 1) { w->err = 1; return; }
+    uint8_t *o = malloc(OUT); compression_stream s;
+    int ok = o && compression_stream_init(&s, COMPRESSION_STREAM_ENCODE, COMPRESSION_LZ4) == COMPRESSION_STATUS_OK, inited = ok;
+    if (ok) { s.dst_ptr = o; s.dst_size = OUT; }
+    for (int part = 0; ok && part < 2; part++) {
+        s.src_ptr = part ? b : a; s.src_size = part ? (size_t)bn : an;
+        for (;;) {
+            compression_status st = compression_stream_process(&s, part ? COMPRESSION_STREAM_FINALIZE : 0);
+            if (st == COMPRESSION_STATUS_ERROR) { ok = 0; break; }
+            if (!s.dst_size || st == COMPRESSION_STATUS_END) {   // the output is full, or the stream ended: write what it holds
+                size_t k = OUT - s.dst_size;
+                if (k && fwrite(o, 1, k, w->f) != k) { ok = 0; break; }
+                stored += k; s.dst_ptr = o; s.dst_size = OUT;
+            }
+            if (st == COMPRESSION_STATUS_END) break;
+            if (!part && !s.src_size) break;   // part a consumed (the output may be partly full: part b continues it)
+        }
+    }
+    if (inited) compression_stream_destroy(&s);
+    free(o);
+    c.stored = stored;
+    if (!ok || fseeko(w->f, at, SEEK_SET) || fwrite(&c, sizeof c, 1, w->f) != 1 || fseeko(w->f, 0, SEEK_END)) w->err = 1;
+    w->raw += raw; w->stored += stored + sizeof c;
+}
 int cap_close(cap_writer *w) {
     if (!w->f) return 0;
     cap_put(w, CAP_END_, 0, NULL, 0, 0);
@@ -139,6 +169,24 @@ int cap_next(cap_reader *r, cap_chunk *c, uint8_t **data) {
     r->pos += c->stored; *data = d; return 1;
 }
 void cap_unload(cap_reader *r) { free(r->buf); memset(r, 0, sizeof *r); }
+size_t cap_stat_text(char *out, size_t n, uint64_t host_latch, double bright_k, int aniso, int mfx3d) {
+    int l = snprintf(out, n, "host_latch\t%llu\nbright_k\t%.9g\naniso\t%d\nmfx3d\t%d\n", (unsigned long long)host_latch, bright_k, aniso, mfx3d);
+    return l < 0 ? 0 : (size_t)l < n ? (size_t)l : n ? n - 1 : 0;
+}
+const char *cap_kv(const char *text, size_t n, const char *key, char *out, size_t on) {
+    size_t kl = strlen(key);
+    for (size_t i = 0; i < n;) {
+        const char *e = memchr(text + i, '\n', n - i); size_t ln = e ? (size_t)(e - text - i) : n - i;
+        if (ln > kl && !memcmp(text + i, key, kl) && text[i + kl] == '\t') { size_t vl = ln - kl - 1; if (vl > on - 1) vl = on - 1; memcpy(out, text + i + kl + 1, vl); out[vl] = 0; return out; }
+        i += ln + 1;
+    }
+    return NULL;
+}
+void cap_stat_env(const char *text, size_t n) {
+    static const char *const k[][2] = {{"aniso", "DM_NVN_ANISO"}, {"mfx3d", "DM_MFX3D"}};
+    char v[32];
+    for (unsigned i = 0; i < sizeof k / sizeof k[0]; i++) if (cap_kv(text, n, k[i][0], v, sizeof v)) setenv(k[i][1], v, 0);
+}
 void cap_buf_put(cap_buf *b, const void *data, size_t n) {
     if (b->n + n > b->cap) { size_t c = b->cap ? b->cap : 4096; while (c < b->n + n) c *= 2; b->p = realloc(b->p, c); b->cap = c; }
     memcpy(b->p + b->n, data, n); b->n += n;

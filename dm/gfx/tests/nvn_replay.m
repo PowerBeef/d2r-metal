@@ -4,8 +4,8 @@
 //   make -C dm/gfx/tests nvn_replay
 //   ./nvn_replay <capture> [--repeat n] [--max-pixels n] [--png path] [--list]
 // --repeat n: n replays, each in a fresh process. --max-pixels n: a replay whose frame differs from the live one in at most n pixels still counts as a match (default 0,
-// bit for bit). Shaders come from the same libraries the host loads (DM_MSL_DIR, default $DM_ROOT/build/cache/metal_shader_cache); the capture's DM_* settings are
-// applied first, and a setting given to the replayer wins.
+// bit for bit). Shaders come from the same libraries the host loads (DM_MSL_DIR, default $DM_ROOT/build/cache/metal_shader_cache). The anisotropy and MetalFX 3D
+// levels recorded with the first submit are applied first, then the live run's DM_* settings; a setting given to the replayer wins over both.
 // Exit status: 0 the replayed frame equals the live one (within --max-pixels), 1 it differs, 2 the capture cannot be replayed by this build (record layout or shader
 // interface changed, a corrupt file): a 【红】 line says which. Captures hold game memory: keep them in $DM_ROOT, never in git.
 // Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds).
@@ -61,15 +61,6 @@ static int dec_obj(void *ctx, int kind, uint64_t *field) {
     *field = (uint64_t)(uintptr_t)p; return 1;
 }
 
-static const char *head_get(const char *head, size_t n, const char *key, char *out, size_t on) {   // value of "key\tvalue\n" in a text chunk
-    size_t kl = strlen(key);
-    for (size_t i = 0; i < n;) {
-        const char *e = memchr(head + i, '\n', n - i); size_t ln = e ? (size_t)(e - head - i) : n - i;
-        if (ln > kl && !memcmp(head + i, key, kl) && head[i + kl] == '\t') { size_t vl = MIN(ln - kl - 1, on - 1); memcpy(out, head + i + kl + 1, vl); out[vl] = 0; return out; }
-        i += ln + 1;
-    }
-    return NULL;
-}
 static void apply_env(const char *head, size_t n) {   // the live run's DM_* settings, so the replay takes the same paths (a setting given to the replayer wins)
     static const char *const skip[] = {"DM_NVN_SHOT", "DM_NVN_TSV", "DM_NVN_PASSGPU", "DM_NVN_PASSDUMP", "DM_EVENTS", "DM_CTL", "DM_WINDOW", "DM_WATCH", "DM_FRAMES", "DM_SAVE", "DM_TEMP", "DM_CRASH_JSON"};
     for (size_t i = 0; i < n;) {
@@ -183,15 +174,17 @@ int main(int argc, char **argv) { @autoreleasepool {
         return 0;
     }
     // header: layout, chain; then the live run's settings
-    char *head = NULL; size_t hn = 0; const char *lay = NULL; size_t ln = 0; const char *stat0 = ""; size_t sn0 = 0;
+    char *head = NULL; size_t hn = 0; const char *lay = NULL; size_t ln = 0; const char *stat0 = "", *stat1 = ""; size_t sn0 = 0, sn1 = 0;
     for (size_t i = 0; i < rp_nch; i++) { if (rp_ch[i].c.tag == CAP_HEAD) { head = (char *)rp_ch[i].d; hn = rp_ch[i].c.raw; } else if (rp_ch[i].c.tag == CAP_LAYT) { lay = (const char *)rp_ch[i].d; ln = rp_ch[i].c.raw; }
-        else if (rp_ch[i].c.tag == CAP_STAT && rp_ch[i].c.submit == 0) { stat0 = (const char *)rp_ch[i].d; sn0 = rp_ch[i].c.raw; } }
+        else if (rp_ch[i].c.tag == CAP_STAT && rp_ch[i].c.submit == 0) { stat0 = (const char *)rp_ch[i].d; sn0 = rp_ch[i].c.raw; }
+        else if (rp_ch[i].c.tag == CAP_STAT && rp_ch[i].c.submit == 1) { stat1 = (const char *)rp_ch[i].d; sn1 = rp_ch[i].c.raw; } }
     if (!head || !lay) RFAIL("%s: no header", path);
     char chain[64] = "?", commit[128] = "?", frame[32] = "?", v[64];
-    head_get(head, hn, "chain", chain, sizeof chain); head_get(head, hn, "commit", commit, sizeof commit); head_get(head, hn, "frame", frame, sizeof frame);
-    uint64_t mtl_frame = head_get(head, hn, "mtl_frame", v, sizeof v) ? strtoull(v, NULL, 10) : 0;
+    cap_kv(head, hn, "chain", chain, sizeof chain); cap_kv(head, hn, "commit", commit, sizeof commit); cap_kv(head, hn, "frame", frame, sizeof frame);
+    uint64_t mtl_frame = cap_kv(head, hn, "mtl_frame", v, sizeof v) ? strtoull(v, NULL, 10) : 0;
     if (ln != strlen(cap_layout()) || memcmp(lay, cap_layout(), ln)) RFAIL("the capture's record layout differs from this build's (nvn_obj.h changed since the capture): capture again");
     printf("capture %s: frame %s, host %s, chain %s (this build: chain %s)\n", path, frame, commit, chain, DMSH_CHAIN);
+    cap_stat_env(stat1, sn1);   // the levels the frame was drawn with, before the live env lines (aniso_want caches DM_NVN_ANISO on its first call, at the first submit)
     apply_env(head, hn);
     {   // the host's defaults resolve from its own folder: from dm/gfx/tests, name the repo's shader map and the workspace's libraries unless given
         char self[1024], p[1200]; uint32_t sl = sizeof self;
@@ -199,7 +192,8 @@ int main(int argc, char **argv) { @autoreleasepool {
         if (!getenv("DM_MSL_DIR")) { const char *r = getenv("DM_ROOT"); snprintf(p, sizeof p, "%s/build/cache/metal_shader_cache", r && *r ? r : [NSHomeDirectory() stringByAppendingPathComponent:@"dm-work"].UTF8String); setenv("DM_MSL_DIR", p, 0); }
     }
     mtl_init();
-    if (head_get(stat0, sn0, "tex_pool_n", v, sizeof v)) mtl_set_tex_pool_n(atoi(v));
+    g_mfx_3d.settle = 0;   // one frame: the live run's 3D MetalFX scaler had long settled at this size, so build it on the first request (as the screenshot path does)
+    if (cap_kv(stat0, sn0, "tex_pool_n", v, sizeof v)) mtl_set_tex_pool_n(atoi(v));
     // regions first (every later decode needs them), then the object tables, sized before any is filled (objects point at each other)
     uint32_t nsub = 0; const cap_pres *pres = NULL;
 #define GROW(n, idx) do { if ((idx) >= (n)) n = (idx) + 1; } while (0)
@@ -270,8 +264,8 @@ int main(int argc, char **argv) { @autoreleasepool {
             else if (c->tag == CAP_SREG) for (size_t o = 0; o + sizeof(cap_sreg) <= c->raw; o += sizeof(cap_sreg)) { cap_sreg e; memcpy(&e, d + o, sizeof e); mtl_reg_samp(e.sid, &e.p); }
             else if (c->tag == CAP_TPIX) fill_tex(d, c->raw);
             else if (c->tag == CAP_STAT) {   // the host settings the submit was drawn with: the latched drawing switches, the 3D brightening factor (dm_bright_k)
-                if (head_get((const char *)d, c->raw, "host_latch", v, sizeof v)) latch = strtoull(v, NULL, 10);
-                if (head_get((const char *)d, c->raw, "bright_k", v, sizeof v)) g_bright_fixed = strtof(v, NULL); }
+                if (cap_kv((const char *)d, c->raw, "host_latch", v, sizeof v)) latch = strtoull(v, NULL, 10);
+                if (cap_kv((const char *)d, c->raw, "bright_k", v, sizeof v)) g_bright_fixed = strtof(v, NULL); }
         }
         // this submit's segments: copied, decoded (jumps point at the copies), handed to the replay as the host hands the game's handles
         uint32_t nh = 0; const uint32_t *top = NULL; rp_nseg = 0;
