@@ -938,14 +938,8 @@ static void layer_color_ios(int accurate) {   // 主线程 | main thread
 }
 void front_video_color(int accurate) { dispatch_async(dispatch_get_main_queue(), ^{ layer_color_ios(accurate); }); }   // 应用 / 读盘（任何线程） | Apply / load (any thread)
 // Platform hooks for the picture settings (dm_video.c): whether MetalFX is available; recommended values on first boot = 3D resolution 75% (the previous default) + MetalFX when available.
-// supportsMetal4FX exists only from iOS 26, so it is called behind @available.
-int front_video_mfx_ok(void) {
-    static int ok = -1;
-    if (ok < 0) { id<MTLDevice> d = MTLCreateSystemDefaultDevice(); ok = d && [MTLFXSpatialScalerDescriptor supportsDevice:d];
-        if (d && !ok) { if (@available(iOS 26.0, *)) ok = [MTLFXSpatialScalerDescriptor supportsMetal4FX:d]; }
-    }
-    return ok;
-}
+// It asks nvn_mtl.m's mtl_mfx_supported, the check the renderer itself uses.
+int front_video_mfx_ok(void) { int mtl_mfx_supported(void); return mtl_mfx_supported(); }
 int front_video_firstboot(int rec[3], int cur[3]) {
     rec[0] = 0; rec[1] = 0; rec[2] = front_video_mfx_ok() ? 1 : 0; for (int i = 0; i < 3; i++) cur[i] = rec[i];
     LOG("画面设置：首次启动 → 推荐 3D 清晰度 75%%、%s", rec[2] ? "MetalFX" : "标准（本机不支持 MetalFX）");

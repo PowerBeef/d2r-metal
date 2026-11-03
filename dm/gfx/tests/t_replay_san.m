@@ -14,6 +14,9 @@
 //   fx9    (undefined) the store lookahead table has 9 entries, 8 colors + depth + stencil = 10
 //   fx19   (undefined) negative indices from the game (first viewport / vertex buffer, stage, slot) must be stopped on both the record and the replay side
 //   fx11   vertex stream 15 aborts the process inside Metal's own descriptor setter (buffer index 31 out of range)
+//   mfxcomp (thread) the present thread (present scaler) and the replay thread (3D-pass scaler) build their first MetalFX scalers at the same time:
+//          the Metal 4 compiler they share must be created once (it was a function-static with an unlocked check-then-create)
+//   mfxon  (thread) the Upscaling switches (mfx_on / mfx3d_on) are read from the present, replay and feedback threads: their env latch and last-logged value
 #include "../nvn/nvn_mtl.m"
 #include "../nvn/hle_nvn.c"
 #include <pthread.h>
@@ -48,6 +51,14 @@ static void *treg_reader(void *a) {   // 翻译线程替身：调真实的两个
 }
 static void *use_reader(void *a) { (void)a; for (int i = 0; i < 200000; i++) use_rec("buf", 0x1000, 16, 0, NULL); return NULL; }
 static void *rt_reader(void *a) { (void)a; int n = 0; for (int i = 0; i < 1000; i++) n += rt_range_on(); return (void *)(intptr_t)n; }
+static _Atomic int g_mfx_bar;   // start gate (macOS has no pthread_barrier): each thread checks in, then spins until both have, so their first calls overlap
+static void mfx_gate(void) { atomic_fetch_add(&g_mfx_bar, 1); while (atomic_load(&g_mfx_bar) < 2) {} }
+static void *g_mfx_comp[2];   // the compiler each builder thread saw (mfx_compiler), compared after the join
+static void *mfx_pres_builder(void *a) { (void)a; mfx_gate(); int ok = 0; g_mfx_comp[0] = (__bridge void *)mfx_compiler();
+    for (int i = 0; i < MFX_SETTLE; i++) @autoreleasepool { ok = mfx_ready(&g_mfx_pres, MFX_M4, MTLPixelFormatRGBA8Unorm, 64, 36, 96, 54); } return (void *)(intptr_t)ok; }
+static void *mfx_3d_builder(void *a) { (void)a; mfx_gate(); int ok = 0; g_mfx_comp[1] = (__bridge void *)mfx_compiler();
+    for (int i = 0; i < MFX_SETTLE; i++) @autoreleasepool { ok = mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, 48, 27, 64, 36); } return (void *)(intptr_t)ok; }
+static void *mfx_switch_reader(void *a) { (void)a; mfx_gate(); int n = 0; for (int i = 0; i < 1000; i++) n += mfx_on() + mfx3d_on(); return (void *)(intptr_t)n; }
 
 int main(int argc, char **argv) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     const char *mode = argc > 1 ? argv[1] : "";
@@ -127,5 +138,19 @@ int main(int argc, char **argv) { @autoreleasepool { setvbuf(stdout, NULL, _IONB
             k.attr[0].fmt = 0x2E; k.attr[0].stream = streams[q]; if (streams[q] < 16) k.stream[streams[q]].stride = 16;
             MTLRenderPipelineDescriptor *d = pso_desc(&k, vs, fs, nil, 0); NSError *e = nil; id ps = d ? [g_dev newRenderPipelineStateWithDescriptor:d error:&e] : nil;
             char n[128]; snprintf(n, sizeof n, "顶点流 %d：管线建得出、进程不中止 | stream %d: the pipeline builds and the process does not abort", streams[q], streams[q]); EXPECT(n, 1, ps != nil); }
-    } else { fprintf(stderr, "用法 | usage: t_replay_san treg|gfxuse|rtrange|bloom|fx9|fx19|fx11\n"); return 2; }
+    } else if (!strcmp(mode, "mfxcomp")) {
+        if (![MTLFXSpatialScalerDescriptor supportsMetal4FX:g_dev]) { printf("no Metal 4 MetalFX spatial scaler on this machine: skipped\n== mfxcomp: 0 checks, 0 failed ==\n"); return 0; }
+        mfx_on(); mfx3d_on();   // the switches' own latches are mfxon's subject: take them here, before the threads start
+        atomic_store(&g_mfx_bar, 0); pthread_t a, b; void *ra, *rb;
+        pthread_create(&a, NULL, mfx_pres_builder, NULL); pthread_create(&b, NULL, mfx_3d_builder, NULL);
+        pthread_join(a, &ra); pthread_join(b, &rb);
+        EXPECT("MetalFX: the present scaler built on its thread", 1, (uint64_t)(g_mfx_pres.scaler != nil && ra));
+        EXPECT("MetalFX: the 3D-pass scaler built on its thread", 1, (uint64_t)(g_mfx_3d.scaler != nil && rb));
+        EXPECT("MetalFX: both threads got the same Metal 4 compiler", 1, (uint64_t)(g_mfx_comp[0] && g_mfx_comp[0] == g_mfx_comp[1]));
+    } else if (!strcmp(mode, "mfxon")) {
+        atomic_store(&g_mfx_bar, 0); pthread_t a, b; void *ra, *rb;
+        pthread_create(&a, NULL, mfx_switch_reader, NULL); pthread_create(&b, NULL, mfx_switch_reader, NULL);
+        pthread_join(a, &ra); pthread_join(b, &rb);
+        EXPECT("MetalFX switches: both threads read the same answers (off in the unit test)", 0, (uint64_t)((intptr_t)ra + (intptr_t)rb));
+    } else { fprintf(stderr, "用法 | usage: t_replay_san treg|gfxuse|rtrange|bloom|fx9|fx19|fx11|mfxcomp|mfxon\n"); return 2; }
     printf("== %s：%d 项，失败 %d ==\n", mode, count, fail); return fail != 0; } }
