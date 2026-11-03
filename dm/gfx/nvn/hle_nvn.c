@@ -1767,8 +1767,9 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     static uint64_t prev_slot; if (prev_slot && period) trow(f, "@display_ms", (slot - prev_slot) / 1e6); prev_slot = slot;   // 屏幕上相邻两帧的显示间隔（掉帧看这个） | display interval between two adjacent frames on screen (this is the one to look at for dropped frames)
     // Actual presentation interval (windowed mode): taken 8 presents late (the presented callback has arrived by then), as the difference between the
     // game's n-th and (n-1)-th presents; -1 = not shown. The lookup goes game present -> job -> present-thread ticket (present_time_of): the present
-    // thread numbers only the presents it was given, so a present without a ticket (dropped at the door while discarding, or with an index past the
-    // swapchain) gives "no reading" for itself and for the next present, and the count never drifts from the tickets
+    // thread numbers only the presents it was given, so a present without a ticket (dropped at the door while discarding or while an inactive shell
+    // has no present link to pause, or with an index past the swapchain) gives "no reading" for itself and for the next present, and the count never
+    // drifts from the tickets
     if (o->presents > 9) { uint64_t n = o->presents - 8; double a_ = present_time_of(n), b_ = present_time_of(n - 1);
         if (a_ < 0) trow(f - 8, "@presented_ms", -1); else if (a_ > 0 && b_ > 0) trow(f - 8, "@presented_ms", (a_ - b_) * 1e3);
         g_pres_iv[g_presn++ % TWIN] = a_ < 0 ? -1 : (a_ > 0 && b_ > 0 ? (a_ - b_) * 1e3 : 0);

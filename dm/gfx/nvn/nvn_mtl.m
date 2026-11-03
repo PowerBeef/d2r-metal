@@ -998,12 +998,12 @@ static void mtl_finish_gpu(void) {
 }
 void mtl_present_flush(void);
 void mtl_finish(void) { mtl_present_flush(); mtl_finish_gpu(); }   // 队列语义：已入队的出图也算队列工作 | Queue semantics: already-enqueued presents also count as queue work
-static void present_drop_for_suspend(void);
+static void present_drop_for_suspend(int classic);
 // 只建一次：游戏线程（登记内存池、提交）和主线程（挂起前清空）都可能先到这里，原先只靠没加锁的「g_dev 有没有」挡，两边同时进来会各建一套设备与队列
 // Created only once: the game threads (pool registration, submit) and the main thread (drain before suspending) may each get here first; previously only an unlocked "is g_dev set" check guarded it, and two threads arriving together would each create a device and queue
 void mtl_init(void) { static dispatch_once_t once; dispatch_once(&once, ^{ mtl_init_once(); }); }
 // 图形还没初始化（开机头几秒就进后台）：没有在途工作要清，也别在这条线程上替游戏初始化 | Graphics not initialized yet (going to the background in the first seconds of boot): there is no in-flight work to drain, and do not initialize it on this thread on the game's behalf
-void mtl_drain(void) { if (!g_dev) return; present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu();
+void mtl_drain(void) { if (!g_dev) return; present_drop_for_suspend(1); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu();
     gerr_flush(); }   // the handlers have run: count the GPU errors no line reported (suspend and teardown)
 
 // ================= 渲染回放 =================
@@ -7203,6 +7203,7 @@ static void *link_main(void *arg) {   // 显示节拍线程：切到节拍模式
     link.preferredFrameRateRange = link_range(g_link_mode);
     link.preferredFrameLatency = g_present_latency;
     link.delegate = delegate;
+    link.paused = atomic_load(&g_present_inactive) != 0;   // a link made while the shell is inactive (rescue expiry, a mode switch) starts paused, as mtl_present_inactive left the old one
     [link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
     g_link_rl = CFRunLoopGetCurrent(); g_link = link;
     CFRunLoopRun();   // 切回模式 0 时节拍对象作废、本线程退出（图层还挂着节拍对象时 nextDrawable 取不到图，不能只暂停） | When switching back to mode 0 the display link object is invalidated and this thread exits (nextDrawable cannot get a drawable while the layer still has the display link object attached, so pausing alone is not enough)
@@ -7239,13 +7240,16 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
     applied = want;
     pthread_mutex_lock(&g_pq_mu); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
 }
-// 进后台前（mtl_drain）：显示节拍驱动出图时，排着队还没上屏的帧只能由节拍回调取走，而后台里系统不再回调——
-// 原样等「出图队列清空」会永远等下去，进后台的回调不返回，系统把进程杀掉（切到别的 App 后 22 秒内进程消失）。
-// 这些帧反正不会被看到：直接丢弃（按掉帧记账），只等已经提交给 GPU 的那一次上屏做完。
-// Before going to the background (mtl_drain): when the display link drives presents, frames queued but not yet presented can only be taken by the display-link callback, and in the background the system no longer calls back --
-// waiting as-is for "the present queue to empty" would wait forever, the enter-background callback would not return, and the system would kill the process (the process disappears within 22 seconds after switching to another App).
-// These frames will not be seen anyway: discard them directly (accounted as dropped frames) and only wait for the one present already submitted to the GPU to finish.
-static void present_drop_for_suspend(void) {
+// Before going to the background (mtl_drain) or while discarding (mtl_present_discard): when the display link drives presents, frames queued but
+// not yet presented can only be taken by the display-link callback, and in the background the system no longer calls back. Waiting as-is for "the
+// present queue to empty" would wait forever, the enter-background callback would not return, and the system would kill the process (gone within
+// 22 s after switching to another App). These frames will not be seen anyway: drop them (accounted as not shown) and only wait for the present
+// already submitted to the GPU to finish.
+// classic (mtl_drain only): without the link (DM_PRESENT_LINK=0, a stall rescue) the present thread takes the queue itself, each nextDrawable
+// waiting up to about 1 s in the background. Drop what it has not taken too: it takes items with ++g_pq_read under g_pq_mu, so it skips them, and
+// the one already in its hands still completes before the drain returns (no GPU work after the suspend). mtl_present_discard passes 0: its caller
+// (the Mac occlusion handler, the iOS save wait) must never wait on the present thread
+static void present_drop_for_suspend(int classic) {
     pthread_mutex_lock(&g_pq_mu);
     if (g_link_owns_layer) {
         uint64_t n = g_pq_in - g_pq_read;
@@ -7255,6 +7259,14 @@ static void present_drop_for_suspend(void) {
         if (g_pq_done < g_pq_in) g_pq_done = g_pq_in;
         pthread_cond_broadcast(&g_pq_cv);
         if (n) MLOG("进后台：丢弃排队中未上屏的 %llu 帧（显示节拍在后台不回调）", (unsigned long long)n);
+    } else if (classic && g_pq_read < g_pq_in) {
+        uint64_t n = g_pq_in - g_pq_read;
+        for (uint64_t k = g_pq_read + 1; k <= g_pq_in; k++) g_pres[k % PRING] = (pres_ent){k, -1};
+        g_pq_read = g_pq_in;
+        while (g_classic_busy || g_pq_inflight) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
+        if (g_pq_done < g_pq_in) g_pq_done = g_pq_in;
+        pthread_cond_broadcast(&g_pq_cv);
+        MLOG("Suspend: dropped %llu queued presents the present thread had not taken (classic mode)", (unsigned long long)n);
     }
     pthread_mutex_unlock(&g_pq_mu);
 }
@@ -7291,14 +7303,17 @@ void mtl_link_pause(int on);
 // The short period when the front end goes to the background and waits for the game to save: presents are dropped directly (the display link does not call back in the background, enqueueing would block the game thread; nobody sees the picture anyway).
 // When turned on, also clear the frames already queued: the system first stops the display-link callback and only afterwards notifies about going to the background, and in that gap the game has already filled the swapchain and is stuck at "before acquiring the next texture, wait for its previous present to be processed"
 // (hle_nvn.c nvnWindowAcquireTexture -> mtl_present_wait). Without clearing, the game cannot advance a single tick during those 2.5 seconds of waiting for the save, and the save is not written (the same pattern three times in player logs: 3 frames queued, 0 submits)
-void mtl_present_discard(int on) { atomic_store(&g_present_discard, on != 0); if (on) present_drop_for_suspend(); }
+void mtl_present_discard(int on) { atomic_store(&g_present_discard, on != 0); if (on) present_drop_for_suspend(0); }
 // The shell went inactive (iOS resign active; the Mac control port's app link_inactive) or active again: remember it, and pause or resume the present link
 // exactly as mtl_link_pause does. Queued frames are kept (the link's stall fallback drops them) and the calling thread never waits
 void mtl_present_inactive(int on) { atomic_store(&g_present_inactive, on != 0); CAMetalDisplayLink *l = g_link; if (l) l.paused = on != 0; }
 // Presents are not shown right now (discarded, or paused for an inactive shell): Frame Drops does not judge such frames (hle_oe.c dm_3d_scale_feed)
 int mtl_present_hidden(void) { return atomic_load(&g_present_discard) || atomic_load(&g_present_inactive); }
 uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
-    if (atomic_load(&g_present_discard)) return 0;   // 票号 0 = 没有待完成的上屏，取交换链贴图处不等 | Ticket number 0 = no pending present; the swapchain texture acquire does not wait
+    // Dropped at the door (ticket 0 = no pending present, so the swapchain acquire does not wait): while discarding, and while the shell is inactive
+    // with no present link to pause (classic or rescue mode), so nothing is presented to a covered picture. That also keeps link_sync, and with it
+    // the rescue expiry, from running until the shell is active again
+    if (atomic_load(&g_present_discard) || (atomic_load(&g_present_inactive) && !link_on())) return 0;
     if (t) { xv_check(t->serial, 0, 0, "出图"); if (g_xv_npresent < 128) g_xv_present[g_xv_npresent++] = t->serial; }
     static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, present_start);
     link_sync();

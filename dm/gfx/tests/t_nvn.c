@@ -465,6 +465,29 @@ int main(void) {
         EXPECT("6g ordinal 62 (after a present with no job) reads no reading", 0, got[62]);
         EXPECT("6g ordinal 63 reads 16.667 ms", 16667, got[63]);
     }
+    // 6h. Classic (no present link) presents across the lifecycle (LIF-7): while the shell is inactive a present is dropped at the door (no
+    //     ticket), as the link's pause does in link mode; and a suspend drops the queued presents the present thread has not taken, waiting only
+    //     for the one in its hands (each present stalls 200 ms here: waiting for all four took about 800 ms)
+    {
+        nvn_present_config(0, 0);
+        NVNwindowBuilder wb6; NVNwindow w6; P(nvnWindowBuilderSetDevice)(&wb6, &dev); P(nvnWindowBuilderSetDefaults)(&wb6);
+        NVNtexture *sc6[4] = {&sc[0], &sc[1], &sc[0], &sc[1]};
+        P(nvnWindowBuilderSetTextures)(&wb6, 4, sc6); P(nvnWindowInitialize)(&w6, &wb6);
+        win_t *o6 = (win_t *)&w6; int ix;
+        mtl_present_inactive(1);
+        P(nvnWindowAcquireTexture)(&w6, NULL, &ix); P(nvnQueuePresentTexture)(&q, &w6, ix);
+        EXPECT("6h inactive, classic mode: the present is dropped at the door (ticket 0)", 0, (long long)x_present_ticket(o6->ticket[ix]));
+        mtl_present_inactive(0);
+        P(nvnWindowAcquireTexture)(&w6, NULL, &ix); P(nvnQueuePresentTexture)(&q, &w6, ix);
+        EXPECT("6h active again: the present gets a ticket", 1, x_present_ticket(o6->ticket[ix]) > 0);
+        mtl_present_flush(); mtl_present_test_stall(200000000ull);
+        uint64_t last = 0;
+        for (int k = 0; k < 4; k++) { P(nvnWindowAcquireTexture)(&w6, NULL, &ix); P(nvnQueuePresentTexture)(&q, &w6, ix); last = x_present_ticket(o6->ticket[ix]); }
+        uint64_t t0 = now_ns(); dm_gfx_suspend(1); double ms = (now_ns() - t0) / 1e6; dm_gfx_suspend(0); mtl_present_test_stall(0);
+        printf("  (6h suspend with four classic presents queued, 200 ms each: %.0f ms)\n", ms);
+        EXPECT("6h the queued present the present thread never took reads not shown (-1)", -1, (long long)mtl_presented_time(last));
+        EXPECT("6h the suspend waits only for the present in hand (< 450 ms)", 1, ms < 450);
+    }
 
     // 8. 对象副本：录完命令后游戏 Finalize 并在同址重建贴图 / 换程序着色器，已录命令里读到的仍是录制时的内容；退役副本过 SNAP_KEEP 次提交才回收
     // 8. Object snapshots: after commands are recorded the game Finalizes and rebuilds a texture at the same address / swaps a program's shaders; recorded commands still read what was there at record time; retired snapshots are reclaimed only after SNAP_KEEP submits
