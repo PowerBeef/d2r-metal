@@ -4,8 +4,6 @@
 #   replay check [路线…] [--dmhost 宿主]…   在每个宿主（缺省 dmhost）上回放，逐拍比录制；回放里在录制请存盘的那一拍也请一次，
 #                                           回放存下的档与录制的档用 savecmp.py 比（校验和自洽、时间核来源、其余逐字节相同）；
 #                                           每条路线再跑一次负对照：从中间那条客户端命令包起往后全删，回放必须在某一拍分叉，否则说明比对是瞎的、判红
-#   shots record [页…] --reason 原因        dm/verify/shotgate_pages 里不用录制输入的页，用本工作树的宿主截图存成基线（按渲染接口分目录：m4 / m3）
-#   shots check [页…]                       再截一次，与基线用 shotgate.py 比（阈值同页规格）
 #   prefix [--reason 原因]                   触屏用例的野外前缀：按 golden/prefix_wild.scn 从原版出生点录一段命令包，写成 $DM_ROOT/data/switch/gate/prefix_wild_warlock，
 #                                           并给 save_ref_warlock 写 MANIFEST.sha256（touchchain.sh 按它的指纹找起跑存档）
 #   list                                    列出已有基线与重录记录
@@ -16,8 +14,14 @@
 #   replay check [route...] [--dmhost host]...  replays on each host (default dmhost) and compares tick by tick with the recording; the replay also asks for a save at the tick the recording did,
 #                                             and the replay's save is compared with the recorded one by savecmp.py (checksums self-consistent, times checked against their source, everything else byte for byte);
 #                                             each route also runs a negative control: the client packets from the middle one onward are dropped and the replay must diverge at some tick, otherwise the comparison is blind and the check is red
-#   shots record [page...] --reason why       screenshots the pages in dm/verify/shotgate_pages that need no recorded input with this tree's host and keeps them as the baseline (one folder per rendering API: m4 / m3)
-#   shots check [page...]                     screenshots again and compares with the baseline using shotgate.py (thresholds as in the page spec)
+#   shots record [page...] [--set S[,S...]] --reason why [--no-controls] [--allow-blind control=why]...
+#                                             screenshots a set's pages with this tree's host and keeps them as its baseline. Set 'pages' (the default): the pages in
+#                                             dm/verify/shotgate_pages that need no recorded input, judged by shotgate.py (shots/m4). The FLIP sets (SETS below: orig, rec,
+#                                             rec75, bright, phone) shoot each page twice (it must be frame-stable, with a clean log), then run the set's controls: each
+#                                             turns one setting back off and must read RED on at least one page, unless --allow-blind gives a measured reason
+#   shots controls --set S                    re-runs only a FLIP set's controls against its baseline
+#   shots check [page...] [--set S[,S...]|all]  screenshots again and judges against the baseline: shotgate.py for 'pages', FLIP per region for the FLIP sets
+#                                             (RED pages keep their shot, log and <page>.flip.png; OK pages leave nothing behind)
 #   prefix [--reason why]                     the wilderness prefix for the touch cases: records the packets of golden/prefix_wild.scn from the original spawn point as $DM_ROOT/data/switch/gate/prefix_wild_warlock,
 #                                             and writes MANIFEST.sha256 for save_ref_warlock (touchchain.sh finds the starting save by its fingerprint)
 #   list                                      lists the baselines and the re-record log
@@ -39,6 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DM = os.path.normpath(os.path.join(HERE, '..'))
 sys.path.insert(0, os.path.join(DM, 'tools'))
 import dmevents   # noqa: E402  # pyright: ignore[reportMissingImports]
+import picture    # noqa: E402  # pyright: ignore[reportMissingImports]
 import replay     # noqa: E402  # pyright: ignore[reportMissingImports]
 import scenario   # noqa: E402  # pyright: ignore[reportMissingImports]
 import tickdiff   # noqa: E402  # pyright: ignore[reportMissingImports]
@@ -210,17 +215,263 @@ def shot_pages(names):
     return [p for p in ok if p not in NO_FIXTURE]
 
 
-def take_shot(host, p, png):
-    """One page from its spec: the trigger, key script and environment, plus the deterministic clock."""
-    h = page_spec(p)['host']; env = dict(os.environ)
-    env.update({k: os.path.expanduser(v) for k, v in h.get('env', {}).items()})
-    env.update(DM_BRIGHT_K='1', DM_DETCLOCK=env.get('DM_DETCLOCK', '16666667'))
-    if h.get('keys'): env['DM_KEYS'] = h['keys']
-    # DM_SHOT_PRODUCT=<产物目录>：换一份改写产物截（比较改写变体，如阴影图边长）；缺省 keypage | DM_SHOT_PRODUCT=<output dir>: shoot another rewrite output (to compare rewrite variants such as the shadow-map size); default keypage
-    prod = os.environ.get('DM_SHOT_PRODUCT') or subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'keypage'], capture_output=True, text=True, check=False).stdout.strip()
+# The look set's own 3D pages (moved from lookbook.py) follow the screenshot gate's recipe (hostshot.sh, the keypage product, the deterministic clock): the
+# standard save's Warlock enters camp and, except for lb_town_a1 (the Rogue Encampment itself), switches to the given level at tick 150 with the test switch
+# DM_TEST_GOTO_LEVEL; the game clock freezes at tick E (DM_TICK_HOLD=E:SHOT, released once the screenshot is written), the host sends "DM:Tick:E#" at tick E and
+# the screenshot is taken 2 frames later, so frame-driven animation (fire, idle poses, orb liquid) lands on the same frame too. DM_STATE is only there to install
+# the full tick entry (where the freeze lives). With a fixed random seed and time, the same host captures nearly the same picture twice. Levels: 2 Blood Moor
+# (distant wilderness), 34 Catacombs (dark), 76 Spider Forest (foliage detail), 107 River of Flame (fire and bloom). The Den of Evil (8) and the Lut Gholein
+# sewers (47) are not used: bats, torch flicker and a timed quest prompt differ every run (FLIP about 0.02 between two runs of the same host)
+LB_KEYS = 'X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterSelectPanel,DOWN@%0.5+0.03>UpdateCharacterInfo,A@%0.5>SelectCharacter,A@%1>FrontEndNavigation:ToGame'
+LB_PAGES = {f'lb_{n}': dict(level=lv, tick=e, viewport=[0, 0, 1, 0.82])
+            for n, lv, e in (('town_a1', None, 420), ('wild_a1', 2, 420), ('crypt_a1', 34, 420), ('jungle_a3', 76, 420), ('lava_a4', 107, 420))}
+LB_ALL = list(LB_PAGES)
+
+
+def shot_env(page_env, extra):
+    """A shot's environment. Brightening is fixed at k=1 so a stray shell value never changes the gate; the page spec's env wins over that, and the
+    caller's or set's env (extra) wins over both. The deterministic clock unless the shell, the page or the caller sets its own."""
+    env = dict(os.environ); env['DM_BRIGHT_K'] = '1'; env.setdefault('DM_DETCLOCK', '16666667')
+    env.update(page_env or {}); env.update(extra or {})
+    return env
+
+
+def take_shot(host, p, png, extra=None):
+    """One page: a screenshot-gate page from its spec (trigger, key script, environment) or a look-set 3D page (LB_PAGES), with extra (a set's or the
+    caller's env) over both."""
     os.makedirs(os.path.dirname(png), exist_ok=True)
-    p_ = subprocess.run(['bash', os.path.join(HERE, 'hostshot.sh'), host, prod, h['trigger'], png, '240'], env=env, capture_output=True, text=True, check=False)
+    if p in LB_PAGES:
+        h = LB_PAGES[p]; e = h['tick']
+        page_env = dict(DM_TOWNWP_OFF='1', DM_GAME_SEED='0x12345678', DM_FIXED_TIME='1790000000', DM_TICK_HOLD=f'{e}:SHOT', DM_STATE=png[:-4] + '.state.jsonl', DM_KEYS=LB_KEYS)
+        if h['level'] is not None: page_env['DM_TEST_GOTO_LEVEL'] = f"150:{h['level']}"
+        trigger, timeout = f'DM:Tick:{e}#+2', '300'
+    else:
+        h = page_spec(p)['host']
+        page_env = {k: os.path.expanduser(v) for k, v in h.get('env', {}).items()}
+        if h.get('keys'): page_env['DM_KEYS'] = h['keys']
+        trigger, timeout = h['trigger'], '240'
+    env = shot_env(page_env, extra)
+    if env['DM_BRIGHT_K'] != '1': print(f"  {p}: brightening fixed at k={env['DM_BRIGHT_K']}")
+    # DM_SHOT_PRODUCT=<output dir>: shoot another rewrite output (to compare rewrite variants such as the shadow-map size); default keypage
+    prod = os.environ.get('DM_SHOT_PRODUCT') or subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'keypage'], capture_output=True, text=True, check=False).stdout.strip()
+    p_ = subprocess.run(['bash', os.path.join(HERE, 'hostshot.sh'), host, prod, trigger, png, timeout], env=env, capture_output=True, text=True, check=False)
     return p_.returncode == 0 and os.path.exists(png), (p_.stderr.strip().splitlines() or [''])[-1]
+
+
+def drop_shot(png, keep=()):
+    """Removes a shot and what hostshot.sh / the tick freeze leave beside it (.log, .pid, .state.jsonl), except the extensions in keep."""
+    for ext in ('.png', '.log', '.pid', '.state.jsonl'):
+        if ext in keep: continue
+        try: os.remove(png[:-4] + ext)
+        except FileNotFoundError: pass
+
+
+# ---------- FLIP picture sets ----------
+# Each set shoots its pages at one picture (dm/tools/picture.py pins every Video-tab key through its switch) and keeps its baselines in shots/<dir>/. A page
+# is judged per region with FLIP (imgdiff.py, 67 pixels per degree): the look-set pages as the 3D view and the HUD band, so a HUD change is not diluted by the
+# 3D area; a screenshot-gate page as the whole frame without its spec's mask rects. Pixels that moved between the two recording shots are left out too.
+# Controls turn one setting back off: each must read RED on at least one page, so a set that cannot see its own setting is caught (--allow-blind takes a
+# measured reason). The REC75 and PHONE sets keep the 3D scale fixed (Frame Drops off): a scale that moves can have no picture baseline.
+SETS: dict[str, dict[str, Any]] = {
+    'pages': dict(env={}, pages=None, judge='ssim', dir='m4', controls={}, log_allow=()),
+    'orig': dict(env={}, pages=LB_ALL + ['charselect'], judge='flip', dir='orig', log_allow=(),
+                 controls={'aa_off': {'DM_AA_MODE': '0'}, 'shadow_1024': {'DM_SHADOW_SIZE': '1024'}}),
+    'rec': dict(env=picture.REC, pages=LB_ALL + ['inventory', 'charselect'], judge='flip', dir='rec', log_allow=(),
+                controls={'fxaa': {'DM_AA_MODE': '1'}, 'aniso_off': {'DM_NVN_ANISO': '0'}, 'envsh_off': {'DM_ENV_SHADOWS': '0'}, 'shadow_2100': {'DM_SHADOW_SIZE': '2100'}}),
+    'rec75': dict(env=picture.REC75, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
+    'bright': dict(env=dict(picture.REC, DM_BRIGHT_K='4'), pages=['lb_crypt_a1'], judge='flip', dir='bright', log_allow=(), controls={'bright_off': {'DM_BRIGHT_K': '1'}}),
+    'phone': dict(env=picture.PHONE, pages=['lb_town_a1', 'lb_crypt_a1'], judge='flip', dir='phone', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
+}
+FLIP_SETS = [s for s in SETS if SETS[s]['judge'] == 'flip']
+# A region passes when at most FLIP_HOT_MAX of its pixels have FLIP above FLIP_HOT and its mean is at most FLIP_MEAN_MAX. Measured with imgdiff on synthetic
+# images: a uniform +1/+2 LSB shift gives a per-pixel FLIP of at most 0.062 (mean 0.03-0.057) and passes; +3 LSB everywhere fails on the mean; +6 LSB marks
+# every pixel hot; a 100 x 100 patch at +0.3 marks 5.9% of a 640 x 295 view hot. Recording needs two shots whose regions agree to REPEAT_MAX, with at most
+# UNSTABLE_MAX of the frame moving between them
+FLIP_HOT, FLIP_HOT_MAX, FLIP_MEAN_MAX, REPEAT_MAX, UNSTABLE_MAX = 0.1, 0.0005, 0.06, 0.001, 0.02
+NOT_ALLOWED = 'not allowed'
+LB_REGIONS = {'view': [0, 0, 1, 0.82], 'hud': [0, 0.82, 1, 1]}
+
+
+def page_regions(p):
+    return dict(LB_REGIONS) if p in LB_PAGES else {'frame': [0, 0, 1, 1]}
+
+
+def _rect(rect, shape):
+    h, w = shape[:2]; x0, y0, x1, y1 = rect
+    return slice(int(round(y0 * h)), int(round(y1 * h))), slice(int(round(x0 * w)), int(round(x1 * w)))
+
+
+def page_keep(p, shape):
+    """The pixels a page is judged on: everything but its spec's mask rects (look-set pages have none)."""
+    import numpy as np   # noqa: PLC0415
+    keep = np.ones(shape[:2], bool)
+    if p not in LB_PAGES:
+        for r in page_spec(p).get('mask', []): keep[_rect(r, shape)] = False
+    return keep
+
+
+def unstable_mask(a, b, grow=4, tol=2 / 255):
+    """Pixels whose largest channel differs by more than tol between two captures (things that move on their own: critters, flicker, timed text),
+    grown by `grow` pixels."""
+    import numpy as np   # noqa: PLC0415
+    d = np.abs(a - b).max(2) > tol; m = d.copy()
+    for dy in range(-grow, grow + 1):
+        for dx in range(-grow, grow + 1): m |= np.roll(np.roll(d, dy, 0), dx, 1)
+    return m
+
+
+def flip_region(base, test, keep, rect, hot=FLIP_HOT, hot_max=FLIP_HOT_MAX, mean_max=FLIP_MEAN_MAX, fmap=None) -> dict[str, Any]:
+    """FLIP of test against base inside rect, over the keep pixels: dict(mean, hot = share of pixels above `hot`, p99, n, ok, why)."""
+    import numpy as np   # noqa: PLC0415
+    import imgdiff       # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    f = imgdiff.flip(base, test) if fmap is None else fmap
+    ys, xs = _rect(rect, f.shape)
+    v = f[ys, xs][keep[ys, xs]]
+    if not v.size: return dict(mean=0.0, hot=0.0, p99=0.0, n=0, ok=True, why='no pixels to judge')
+    mean, hs = float(v.mean()), float((v > hot).mean()); ok = hs <= hot_max and mean <= mean_max
+    return dict(mean=round(mean, 5), hot=round(hs, 5), p99=round(float(np.percentile(v, 99)), 5), n=int(v.size), ok=ok,
+                why='' if ok else f'FLIP mean {mean:.4f} (max {mean_max}), {hs:.3%} of pixels above {hot} (max {hot_max:.3%})')
+
+
+def judge_page(base, test, keep, regions, fmap=None) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Every region judged on its own: ({region: flip_region result}, ok when every region is ok)."""
+    import imgdiff   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    f = imgdiff.flip(base, test) if fmap is None else fmap
+    res = {r: flip_region(base, test, keep, rect, fmap=f) for r, rect in regions.items()}
+    return res, all(x['ok'] for x in res.values())
+
+
+def set_dir(s):
+    return os.path.join(GOLD, 'shots', SETS[s]['dir'])
+
+
+def set_names(sets):
+    """'all' or a comma list; unknown names stop the run."""
+    out = list(SETS) if sets == 'all' else [s for s in sets.split(',') if s]
+    bad = [s for s in out if s not in SETS]
+    if bad: raise SystemExit(f'🔴 unknown set: {", ".join(bad)} (known: {", ".join(SETS)})')
+    return out
+
+
+def set_pages(s, names):
+    pages = SETS[s]['pages']; bad = [n for n in names if n not in pages]
+    if bad: raise SystemExit(f'🔴 not in set {s}: {", ".join(bad)} (its pages: {", ".join(pages)})')
+    return [p for p in pages if not names or p in names]
+
+
+def red_lines(png, st):
+    """The shot's host log lines with red markers that the set does not allow (the first three, as text)."""
+    import assertlib   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    lp = png[:-4] + '.log'
+    return [t for _, t in assertlib.logred(lp, allow=st['log_allow'])][:3] if os.path.exists(lp) else []
+
+
+def stored_keep(s, p, shape):
+    """page_keep without the pixels recorded as moving (<page>.unstable.png beside the baseline)."""
+    import numpy as np   # noqa: PLC0415
+    from PIL import Image   # noqa: PLC0415
+    keep = page_keep(p, shape); up = os.path.join(set_dir(s), p + '.unstable.png')
+    if os.path.exists(up): keep &= ~(np.asarray(Image.open(up).convert('L')) > 0)
+    return keep
+
+
+def run_dir(tag):
+    return os.path.join(scenario.DM_ROOT, 'run', 'golden', datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + tag)
+
+
+def flip_record(s, names, reason, host, controls=True, allow_blind=None):
+    import numpy as np   # noqa: PLC0415
+    import imgdiff       # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    from PIL import Image   # noqa: PLC0415
+    st, d, runs, bad = SETS[s], set_dir(s), run_dir(f'rec_{s}'), 0
+    os.makedirs(d, exist_ok=True)
+    for p in set_pages(s, names):
+        shots, why, un, rep = [os.path.join(runs, p + '.png'), os.path.join(runs, p + '.2.png')], None, None, {}
+        for png in shots:
+            ok, w = take_shot(host, p, png, st['env'])
+            if not ok: why = f'screenshot failed: {w}'; break
+            red = red_lines(png, st)
+            if red: why = f"red lines in a clean baseline run: {' | '.join(red)}; fix them, or add a regex with a reason to SETS[{s!r}]['log_allow']"; break
+        if why is None:
+            a, b = imgdiff.load(shots[0]), imgdiff.load(shots[1])
+            if a.shape != b.shape: why = f'the two shots differ in size ({a.shape[1]}x{a.shape[0]} vs {b.shape[1]}x{b.shape[0]})'
+            else:
+                un = unstable_mask(a, b); share = float(un.mean())
+                rep, _ = judge_page(a, b, page_keep(p, a.shape) & ~un, page_regions(p))
+                worst = max(float(r['mean']) for r in rep.values())
+                if share > UNSTABLE_MAX or worst > REPEAT_MAX:
+                    why = f'page moves between two shots ({share:.1%} moving, repeat FLIP mean {worst:.4f}): not stable enough for a FLIP baseline'
+        if why: bad += 1; print(f'GOLDEN-REC {s}/{p} RED {why}'); continue
+        dst = os.path.join(d, p + '.png'); shutil.copy(shots[0], dst + '.new.png'); os.replace(dst + '.new.png', dst)
+        up = os.path.join(d, p + '.unstable.png')
+        if un is not None and un.any(): Image.fromarray(un.astype(np.uint8) * 255, 'L').save(up)
+        elif os.path.exists(up): os.remove(up)
+        with open(os.path.join(d, p + '.meta.json'), 'w', encoding='utf-8') as f:
+            json.dump(dict(set=s, page=p, env=st['env'], regions=page_regions(p), sha=head(), reason=reason, recorded=datetime.datetime.now().isoformat(timespec='seconds'),
+                           repeat_mean={r: v['mean'] for r, v in rep.items()}, unstable_share=round(float(un.mean()), 5) if un is not None else 0.0), f, indent=1)
+        for png in shots: drop_shot(png)
+        log('shot', f"{st['dir']}/{p}", reason); print(f"GOLDEN-REC shot {st['dir']}/{p} OK")
+    if controls and not bad: bad += flip_controls(s, names, host, allow_blind or {}, reason)
+    return bad
+
+
+def flip_controls(s, names, host, allow_blind, reason='controls'):
+    """Each control's env over the set's, on every recorded page, judged against the baseline: seen = RED on at least one page."""
+    import imgdiff   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    st, d, runs = SETS[s], set_dir(s), run_dir(f'controls_{s}')
+    pages = [p for p in set_pages(s, names) if os.path.exists(os.path.join(d, p + '.png'))]
+    if not pages: print(f'⚪ GOLDEN no {s} baselines to run controls against'); return 1
+    table: dict[str, Any] = {}; errors = 0
+    for c, cenv in st['controls'].items():
+        row: dict[str, Any] = {}
+        for p in pages:
+            png = os.path.join(runs, f'{p}.{c}.png'); ok, w = take_shot(host, p, png, dict(st['env'], **cenv))
+            if not ok: row[p] = dict(error=w); errors += 1; print(f'  control {c} on {p}: screenshot failed: {w}'); continue
+            base, test = imgdiff.load(os.path.join(d, p + '.png')), imgdiff.load(png)
+            if base.shape != test.shape: row[p] = dict(red=True, why='size differs'); drop_shot(png); continue
+            res, okp = judge_page(base, test, stored_keep(s, p, base.shape), page_regions(p))
+            row[p] = {r: dict(mean=v['mean'], hot=v['hot']) for r, v in res.items()}; row[p]['red'] = not okp
+            drop_shot(png)
+        row['seen'] = any(isinstance(v, dict) and v.get('red') for v in row.values())
+        table[c] = row
+        print(f"  control {c}: {'seen' if row['seen'] else 'BLIND'}" + (f' (allowed: {allow_blind[c]})' if not row['seen'] and c in allow_blind else ''))
+    blind = [c for c in table if not table[c]['seen']]
+    with open(os.path.join(d, 'controls.json'), 'w', encoding='utf-8') as f: json.dump(dict(table, _allowed_blind={c: allow_blind[c] for c in blind if c in allow_blind}), f, indent=1)
+    log('controls', s, f"{reason}; seen {','.join(c for c in table if table[c]['seen']) or '-'}; blind {','.join(f'{c}={allow_blind.get(c, NOT_ALLOWED)}' for c in blind) or '-'}")
+    unallowed = [c for c in blind if c not in allow_blind]
+    if unallowed: print(f"GOLDEN-REC {s} RED control(s) {', '.join(unallowed)} read OK on every page: the set cannot see that setting (--allow-blind {unallowed[0]}=<measured reason>)")
+    return len(unallowed) + errors
+
+
+def flip_check(s, names, host):
+    import numpy as np   # noqa: PLC0415
+    import imgdiff       # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    from PIL import Image   # noqa: PLC0415
+    st, d = SETS[s], set_dir(s)
+    pages = [p for p in set_pages(s, names) if os.path.exists(os.path.join(d, p + '.png')) and os.path.exists(os.path.join(d, p + '.meta.json'))]
+    if not pages: print(f'⚪ GOLDEN no {s} baselines (golden.py shots record --set {s} --reason …)'); return None, []
+    runs, results, bad = run_dir(f'check_{s}'), [], 0
+    for p in pages:
+        with open(os.path.join(d, p + '.meta.json'), encoding='utf-8') as f: meta = json.load(f)
+        res: dict[str, Any] = dict(page=f'{s}/{p}', kind='shot'); png = os.path.join(runs, p + '.png')
+        if meta.get('env') != st['env']: res.update(ok=False, why='environment changed: record again with --reason')
+        else:
+            ok, w = take_shot(host, p, png, st['env'])
+            if not ok: res.update(ok=False, why=f'screenshot failed: {w}')
+            else:
+                base, test = imgdiff.load(os.path.join(d, p + '.png')), imgdiff.load(png); red = red_lines(png, st)
+                if base.shape != test.shape: res.update(ok=False, why=f'size {test.shape[1]}x{test.shape[0]}, baseline {base.shape[1]}x{base.shape[0]}')
+                else:
+                    fmap = imgdiff.flip(base, test)
+                    rr, okp = judge_page(base, test, stored_keep(s, p, base.shape), page_regions(p), fmap=fmap)
+                    why = '; '.join(f"{r}: " + (v['why'] or 'mean %.4f, hot %.3f%%' % (v['mean'], 100 * v['hot'])) for r, v in rr.items())
+                    if red: why += f"; red lines: {' | '.join(red)}"
+                    res.update(ok=okp and not red, why=why, regions=rr)
+                    if not res['ok']: Image.fromarray((np.clip(fmap, 0, 1) * 255).astype(np.uint8), 'L').save(png[:-4] + '.flip.png')
+                drop_shot(png, keep=() if res['ok'] else ('.png', '.log'))   # a RED page keeps its shot and log beside <page>.flip.png
+        bad += not res['ok']; results.append(res)
+        print(f"  shot {s}/{p}: {'OK' if res['ok'] else 'RED'} {res['why']}")
+    return bad, results
 
 
 def shots_record(names, reason, host):
@@ -248,6 +499,7 @@ def shots_check(names, host):
             g = subprocess.run([sys.executable, os.path.join(HERE, 'shotgate.py'), os.path.join(PAGES, p + '.json'), os.path.join(GOLD, 'shots', r, p + '.png'), png, os.path.join(runs, p)],
                                capture_output=True, text=True, check=False)
             res.update(ok=g.returncode == 0, why=(g.stdout.strip().splitlines() or ['?'])[-1][:200])
+        drop_shot(png, keep=('.png', '.log', '.state.jsonl'))   # the pid file hostshot.sh wrote is of no use once the host is gone
         bad += not res['ok']; results.append(res)
         print(f"  shot {r}/{p}: {'OK' if res['ok'] else 'RED'} {res['why']}")
     return bad, results
@@ -260,28 +512,53 @@ def main(argv):
         k = sub.add_parser(kind); ks = k.add_subparsers(dest='cmd', required=True)
         rec = ks.add_parser('record'); rec.add_argument('names', nargs='*'); rec.add_argument('--reason', required=True, help='why the baseline is (re)recorded; goes into LOG.tsv')
         chk = ks.add_parser('check'); chk.add_argument('names', nargs='*')
-        for x in (rec, chk): x.add_argument('--dmhost', action='append', help='host executable (repeatable)')
+        xs = [rec, chk]
+        if kind == 'shots':
+            ctl = ks.add_parser('controls'); ctl.add_argument('names', nargs='*'); xs.append(ctl)
+            for x in xs: x.add_argument('--set', default='pages', help="'pages' (shotgate.py, the default), a FLIP set, a comma list, or 'all' (check)")
+            for x in (rec, ctl): x.add_argument('--allow-blind', action='append', default=[], metavar='CONTROL=WHY', help='accept a control that reads OK on every page, with the measured reason')
+            rec.add_argument('--no-controls', action='store_true', help='record the FLIP baselines without running their controls')
+        for x in xs: x.add_argument('--dmhost', action='append', help='host executable (repeatable)')
     sub.add_parser('list')
     pf = sub.add_parser('prefix'); pf.add_argument('--reason', default='touch case prefix')
     a = ap.parse_args(argv)
     if a.kind == 'prefix':
         rc = make_prefix(a.reason); print(f"GOLDEN {'RED' if rc else 'OK'} " + json.dumps(dict(kind='prefix'))); return rc
     if a.kind == 'list':
-        for kind in ('replay', 'shots'):
-            for p in sorted(glob.glob(os.path.join(GOLD, kind, '**', '*.json'), recursive=True)): print(os.path.relpath(p, GOLD))
+        for p in sorted(glob.glob(os.path.join(GOLD, 'replay', '**', '*.json'), recursive=True)): print(os.path.relpath(p, GOLD))
+        for s, st in SETS.items():
+            have = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(set_dir(s), '*.png')) if not p.endswith(('.unstable.png', '.new.png')))
+            print(f"set {s} (shots/{st['dir']}): {', '.join(have) or 'no baselines'}")
         lp = os.path.join(GOLD, 'LOG.tsv')
         if os.path.exists(lp): print(open(lp, encoding='utf-8').read().rstrip())
         return 0
-    if a.cmd == 'record':
-        bad = replay_record(a.names, a.reason) if a.kind == 'replay' else sum(shots_record(a.names, a.reason, h) for h in host_bins(a.dmhost))
-        print(f"GOLDEN {'RED' if bad else 'OK'} " + json.dumps(dict(kind=a.kind, cmd='record', bad=bad)))
+    sets = set_names(a.set) if a.kind == 'shots' else []
+    if a.kind == 'shots' and a.cmd != 'check' and 'all' in a.set.split(','): raise SystemExit("🔴 --set all is for check only")
+    blind = dict(x.split('=', 1) for x in getattr(a, 'allow_blind', []) if '=' in x)
+    per_set = {}   # the given pages that belong to each set ([] = all of its pages); a set holding none of them is skipped
+    for s in sets:
+        known = SETS[s]['pages'] if s != 'pages' else [os.path.basename(p)[:-5] for p in glob.glob(os.path.join(PAGES, '*.json'))]
+        mine = [n for n in a.names if n in known]
+        if not a.names or mine: per_set[s] = mine
+    stray = [n for n in getattr(a, 'names', []) if not any(n in v for v in per_set.values())]
+    if a.kind == 'shots' and stray: raise SystemExit(f"🔴 not in the set(s) {', '.join(sets)}: {', '.join(stray)}")
+    if a.cmd in ('record', 'controls'):
+        bad = 0
+        for h in host_bins(a.dmhost):
+            if a.kind == 'replay': bad += replay_record(a.names, a.reason); break
+            for s, nm in per_set.items():
+                if s == 'pages': bad += shots_record(nm, a.reason, h) if a.cmd == 'record' else 0
+                elif a.cmd == 'record': bad += flip_record(s, nm, a.reason, h, controls=not a.no_controls, allow_blind=blind)
+                else: bad += flip_controls(s, nm, h, blind)
+        print(f"GOLDEN {'RED' if bad else 'OK'} " + json.dumps(dict(kind=a.kind, cmd=a.cmd, sets=sets, bad=bad)))
         return 1 if bad else 0
     if a.kind == 'replay': bad, res = replay_check(a.names, host_bins(a.dmhost))
     else:
         bad, res = 0, []
         for h in host_bins(a.dmhost):
-            b, rr = shots_check(a.names, h)
-            if b is not None: bad += b; res += rr
+            for s, nm in per_set.items():
+                b, rr = shots_check(nm, h) if s == 'pages' else flip_check(s, nm, h)
+                if b is not None: bad += b; res += rr
         if not res: bad = None
     if bad is None: print('GOLDEN UNAVAIL ' + json.dumps(dict(kind=a.kind, cmd='check'))); return 3
     print(f"GOLDEN {'RED' if bad else 'OK'} " + json.dumps(dict(kind=a.kind, cmd='check', bad=bad, n=len(res), red=[x.get('route', x.get('page')) + ('/' + x['kind']) for x in res if not x['ok']])))

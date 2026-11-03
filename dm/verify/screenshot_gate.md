@@ -41,7 +41,7 @@ A few more:
 
 Why ⑤ is needed: the average over a large region hides "one small element not drawn". The static pages of the UI layer (skill tree, options, stash, character stats, inventory, quest log, etc.) all carry a fine grid.
 
-When `golden.py` runs the host it always sets `DM_BRIGHT_K=1`, turning off "3D scene brightening", a post-processing effect that deliberately deviates from the original, so that only the picture translation itself is checked.
+When `golden.py` runs the host it sets `DM_BRIGHT_K=1` by default, turning off "3D scene brightening", a post-processing effect that deliberately deviates from the original, so that only the picture translation itself is checked. A page spec or the caller can set `DM_BRIGHT_K` (the caller wins), and a shell value never reaches a shot. The FLIP set `bright` checks the brightened picture at a fixed k=4.
 
 ## Page spec
 
@@ -91,3 +91,21 @@ Things the client itself animates (flames, ambient critters) don't line up betwe
 2. Write `shotgate_pages/<page>.json`: mark out the viewport, the named regions and the expected elements; for static UI-layer pages add `fine_grid`.
 3. Record it: `golden.py shots record --reason "new page <page>" <page>`.
 4. Do a negative control: erase some element from a copy of the baseline and compare again; the page must report red. An omission the criteria fail to catch means the regions or thresholds are not set right.
+
+## FLIP picture sets
+
+The pages above are judged at the original look only, on grayscale SSIM. `golden.py shots … --set <set>` also checks the picture players get, with FLIP (`imgdiff.py`, 67 pixels per degree) at full resolution. Each set pins every picture key through its switch (`dm/tools/picture.py`):
+
+| Set | Picture | Pages | Controls (each must read RED on some page) |
+|---|---|---|---|
+| `orig` | the original look (the host's own defaults) | the five look-set pages, `charselect` | AA off, the 1024 shadow map |
+| `rec` | this Mac's Recommended (`picture.REC`) | the five look-set pages, `inventory`, `charselect` | FXAA, 1x filtering, environment shadows off, the 2100 map |
+| `rec75` | Recommended at 75% 3D with MetalFX (the base M chips) | `lb_town_a1`, `lb_wild_a1` | the 3D MetalFX pass off |
+| `bright` | Recommended with brightening fixed at k=4 | `lb_crypt_a1` | brightening off (k=1) |
+| `phone` | the iPhone 17 Pro's Recommended at 2622 x 1206, drawn by the Mac host | `lb_town_a1`, `lb_crypt_a1` | the 3D MetalFX pass off |
+
+- The look-set pages (`lb_town_a1`, `lb_wild_a1`, `lb_crypt_a1`, `lb_jungle_a3`, `lb_lava_a4`) freeze the game clock at a fixed tick, so two shots of one build are nearly identical. Their 3D view and HUD band are judged as separate regions; a screenshot-gate page is judged as one frame without its mask rects.
+- A region passes when at most 0.05% of its pixels have FLIP above 0.1 and its mean FLIP is at most 0.06: a uniform shift of 1-2 levels passes, a visible local change fails.
+- `record` shoots each page twice. The page must not move between the shots (at most 2% of the frame, repeat FLIP mean at most 0.001), and both host logs must be free of red lines. Pixels that moved are kept as `<page>.unstable.png` and left out of every later comparison. Then each control runs; a control that reads OK on every page is RED unless `--allow-blind <control>=<measured reason>` is given.
+- `check` takes one shot per page. A RED page keeps its shot, its log and `<page>.flip.png` (the FLIP map); an OK page leaves nothing behind. A set whose environment no longer matches its baselines' `meta.json` is RED until it is recorded again with `--reason`.
+- Baselines live in `$DM_ROOT/data/switch/golden/shots/<set>/`, local only. Record them again (with `--reason`) after a change to SMAA, filtering, shadows, MetalFX, the LUT or bloom, the shader translator, or the Recommended picture.

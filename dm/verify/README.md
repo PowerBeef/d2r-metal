@@ -68,6 +68,7 @@ Related standalone tools:
 
 ```
 python3 dm/verify/golden.py replay|shots check        # compare with the kept baselines
+python3 dm/verify/golden.py shots check --set orig,rec,rec75,bright,phone   # the FLIP picture sets (screenshot_gate.md)
 python3 dm/verify/golden.py replay|shots record --reason "…"
 python3 dm/verify/golden.py prefix [--reason "…"]     # the wilderness prefix for the touch cases
 ```

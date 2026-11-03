@@ -3,7 +3,7 @@ DM_3D_SCALE	host	host/hle_oe.c host/tests/t_oe.c	y
 DM_3D_SCALE_DYN	host	host/hle_oe.c	y
 DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c host/tests/t_oe.c	-
 DM_3D_SCALE_FLOOR	host	host/hle_oe.c	y
-DM_AA_MODE	host	host/hle_oe.c host/tests/t_oe.c	y
+DM_AA_MODE	host,verify	host/hle_oe.c host/tests/t_oe.c verify/test_golden.py	y
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_bright.c host/dm_padmode.c host/front_mac.m …	-
@@ -29,7 +29,7 @@ DM_BINDING_DIAG	ios	ios/Sources/dm_touch_game_bridge.c	-
 DM_BOOTPROF	gfx,host,ios	gfx/nvn/nvn_mtl.m host/main.c ios/Sources/bootprof_ios.m	y
 DM_BREAK_AT_TICK	host	host/diag.c	y
 DM_BRIGHTNESS	ios	ios/Sources/front_ios.m	-
-DM_BRIGHT_K	host	host/dm_bright.c host/tests/t_bright.c	y
+DM_BRIGHT_K	host,verify	host/dm_bright.c host/tests/t_bright.c verify/golden.py verify/test_golden.py	y
 DM_BRIGHT_TRACE	host	host/dm_bright.c	-
 DM_BUILD_NUMBER	ios-tools	ios/project.yml	-
 DM_BUNDLE_ID	ios-tools	ios/project.yml ios/run.sh ios/tools/bootprof.sh ios/tools/frame_cmp.sh …	y
@@ -46,7 +46,7 @@ DM_DBG	host	host/main.c	y
 DM_DBG_COVER	host	host/dm_cursor.c	-
 DM_DBG_FE_SEND	host	host/dm_cursor.c	-
 DM_DESWIZZLE_LIB	ios-tools	ios/tools/dxt5.py ios/tools/romfs_art.py	-
-DM_DETCLOCK	gfx,host,tools,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c tools/lookbook.py …	y
+DM_DETCLOCK	gfx,host,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c verify/test_golden.py	y
 DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	-
 DM_DEVBATTERY	ios-tools	ios/run.sh ios/tools/devlock.sh	-
 DM_DEVBATTERY_APP_MAX_AGE_S	ios-tools	ios/tools/devbattery.sh	-
@@ -287,7 +287,7 @@ DM_SAVE_THROTTLE	host	host/main.c	-
 DM_SCREEN_SHOT	ios,ios-tools	ios/Sources/front_ios.m ios/TouchSmokeTests/TouchSmoke.swift	-
 DM_SCREEN_WANT	ios-tools	ios/tools/frame_cmp.sh	-
 DM_SHADOW_SIZE	host	host/dm_video.c host/tests/t_video.c	-
-DM_SHOT_PRODUCT	tools,verify	tools/lookbook.py verify/golden.py	y
+DM_SHOT_PRODUCT	verify	verify/golden.py verify/test_golden.py	y
 DM_SKILL_AIM_LOG	host	host/hle_private_aim.c	-
 DM_SKILL_RENDER_GATE_LOG	host	host/hle_tact.c	-
 DM_SLOWFRAME	gfx	gfx/nvn/hle_nvn.c	y
