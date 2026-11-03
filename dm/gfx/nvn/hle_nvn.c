@@ -1288,7 +1288,8 @@ static void sleep_until_ns(uint64_t dl);
 static uint64_t present_period(const win_t *o);
 static int link_wait(uint64_t timeout_ns);
 // The game loop's rate while nothing is on screen (mtl_present_idle: a covered Mac window): DM_HIDDEN_HZ, read once; 0 = off (the loop keeps the
-// link wait's timeout rate, about 30 Hz); outside 0-60, or unset: 15. The default is provisional until the covered-window energy ABBA (P1 LIF-5)
+// link's rate: about 60 Hz on this Mac while covered, the wait's 2-period timeout when the link stops); outside 0-60, or unset: 15. The default is
+// provisional until the covered-window energy ABBA (P1 LIF-5)
 static int hidden_hz(void) {
     static int hz = -1;
     if (hz < 0) { const char *e = getenv("DM_HIDDEN_HZ"); int v = e ? atoi(e) : 15; hz = v >= 0 && v <= 60 ? v : 15; if (e) LOG("[nvn] DM_HIDDEN_HZ=%s: the loop runs at %d Hz while nothing is on screen%s", e, hz, hz ? "" : " (off)"); }
@@ -1316,7 +1317,8 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
         // 等节拍的超时取两个实际帧周期（decl：省电模式是 30 帧的 33.3 ms）：原先按 60 档取 2 × 16.7 ms，正好等于 30 Hz 节拍间隔，节拍稍晚一点就落到 60 Hz 兜底、提前开工
         // the display-link wait times out after two actual frame periods (decl: 33.3 ms for the 30 fps power-saving mode): it used to be 2 x 16.7 ms from the 60 tier, exactly the 30 Hz tick spacing, so a slightly late tick fell through to the 60 Hz fallback and the frame started early
         // Nothing is on screen (a covered Mac window, mtl_present_idle): the loop runs at DM_HIDDEN_HZ instead of rendering full frames that are
-        // thrown away at the link wait's timeout rate (about 30 Hz); game logic still ticks at 25 Hz through catch-up ticks, as in power saving
+        // thrown away at the link's rate (about 60 Hz on this Mac while covered; the wait's 2-period timeout when the link stops); game logic still
+        // ticks at 25 Hz through catch-up ticks, as in power saving
         if (hidden_hz() && mtl_present_idle()) { static uint64_t idle_last; uint64_t dl = idle_last + 1000000000ull / (uint64_t)hidden_hz(); if (dl > now_ns()) sleep_until_ns(dl); idle_last = now_ns(); }
         else if (mtl_link_active()) { if (!link_wait(decl ? 2 * decl : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK: pacing fully follows the display link (wait for the next tick when running fast, go at once when behind); our own 60 Hz clock is only the fallback when no tick arrives
         else if (wait) sleep_until_ns(at);
