@@ -79,3 +79,7 @@ t_aniso
 t_aniso.dSYM/
 t_ratelog
 t_ratelog.dSYM/
+t_bloom_lut
+t_bloom_lut.dSYM/
+t_bloom_lut_asan
+t_bloom_lut_asan.dSYM/

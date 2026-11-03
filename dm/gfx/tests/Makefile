@@ -86,6 +86,11 @@ t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pfv.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_replay_fix: t_replay_fix.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_replay_fix.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+# Bloom 1/4 and 3D brightening (t_bloom_lut.m), plain and with AddressSanitizer + UndefinedBehaviorSanitizer (the first report aborts)
+t_bloom_lut: t_bloom_lut.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_bloom_lut.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_bloom_lut_asan: t_bloom_lut.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=all -fobjc-arc -o $@ t_bloom_lut.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 # 同一份源码编两份消毒版：线程消毒（t_replay_tsan）、地址 + 未定义行为消毒（t_replay_asan，首个报告即中止）；有报告即非 0 退出
 # The same source built as two sanitizer binaries: ThreadSanitizer (t_replay_tsan) and AddressSanitizer + UndefinedBehaviorSanitizer (t_replay_asan, aborts at the first report); any report exits non-0
 t_replay_tsan: t_replay_san.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
@@ -98,6 +103,8 @@ run: \
 	t_adaptive_pace \
 	t_aniso \
 	t_bar \
+	t_bloom_lut \
+	t_bloom_lut_asan \
 	t_copy_pitch \
 	t_builtin \
 	t_cover \
@@ -178,6 +185,8 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
 	MTL_DEBUG_LAYER=1 ./t_replay_fix
+	MTL_DEBUG_LAYER=1 ./t_bloom_lut
+	./t_bloom_lut_asan
 	./t_replay_tsan treg
 	./t_replay_tsan gfxuse
 	./t_replay_tsan rtrange

@@ -179,6 +179,7 @@ dmCustomTouchSwapNear	换组键：传送门左侧	Skill-set switch: left of port
 dmCustomTouchSwapNearHint	沿传送门外侧弧线排布，松手后切换	On the portal arc; release to switch	En el arco del portal; suelta y cambia		По дуге портала, отпустить — переключение	포탈 호를 따라 배치, 손을 떼면 전환	换组近位说明
 dmCustomTouchSwapFar	换组键：技能区上方	Skill-set switch: above skills	Cambio de grupo: sobre habilidades		Переключатель: над скиллами	전환: 스킬 위	分离位置，touch_swap_above=1
 dmCustomTouchSwapFarHint	位于技能区左上，松手后切换	Above-left of skills; release to switch	Arriba-izq. de habilidades; suelta y cambia		Слева над скиллами, отпустить — переключение	스킬 영역 왼쪽 위, 손을 떼면 전환	换组上位说明
+dmCustomBright	暗处加亮	Brighten dark areas	Aclarar zonas oscuras		Осветлять тёмные места	어두운 곳 밝게	Extras row bright (dm_custom.c; dm_bright.c): 3D brightening of caves, crypts, Act IV and nights; off = the game's own exposure, live
 dmVideoUpscale	放大方式	Upscaling	Escalado		Масштабирование	업스케일링	Mac 选项页「图形」节「放大方式」行的标签（touch_layout.py _VIDEO，dm_video.c）
 dmVideoUpStandard	标准	Standard	Estándar		Стандартное	표준	「放大方式」第一项：双线性拉伸（dm_video.c）
 dmVideoUpMetalFX	MetalFX	MetalFX	MetalFX		MetalFX	MetalFX	「放大方式」第二项：MetalFX 空间放大（nvn_mtl.m mfx_ready）

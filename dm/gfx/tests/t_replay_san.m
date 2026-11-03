@@ -69,6 +69,9 @@ int main(int argc, char **argv) { @autoreleasepool { setvbuf(stdout, NULL, _IONB
         pthread_join(th, NULL);
         EXPECT("DM_NVN_RT_RANGE：未设置时关 | DM_NVN_RT_RANGE: off when unset", 0, (uint64_t)on);
     } else if (!strcmp(mode, "bloom")) {
+        // The capture's pipeline comes from the helper kernels built on a background queue; the product waits for them once, for at most 3 s.
+        // Wait for the build here (up to 60 s) so this case does not depend on how loaded the machine is
+        for (int i = 0; i < 60000 && !atomic_load(&g_aux_done); i++) usleep(1000);
         // 泛光 1/4：起点（片元 2938a5b71b8e21b2，采样 S 画进 B0）只记下状态、不画；原生截取（019ce2f82edbda84，采样 B0）时从记下的 S 画。两次之间游戏登记了更高的贴图号（登记表搬家）
         // Bloom 1/4: the start (fragment 2938a5b71b8e21b2, samples S into B0) only records state and does not draw; the native capture (019ce2f82edbda84, samples B0) draws from the recorded S. Between the two the game registers a higher texture ID (the table moves)
         NvShader *f0 = shader(@"red", 1), *f1 = shader(@"red", 1); snprintf(f0->key, sizeof f0->key, "2938a5b71b8e21b2_b"); snprintf(f1->key, sizeof f1->key, "019ce2f82edbda84_b");

@@ -8,16 +8,19 @@
 #include <TargetConditionals.h>
 #if TARGET_OS_IOS
 #include "dm_hud_exp.h"
+int dm_hud_exp_rows(void) { return 100; }   // compiled in (dm_hud_exp.h)
 #else
 #include "dm_tables.h"
 static uint32_t k_exp[100];
 static pthread_once_t g_exp_once = PTHREAD_ONCE_INIT;
-static int g_exp_ok;
+static int g_exp_ok, g_exp_rows = -2;   // rows read from hud_exp.tsv: -2 not read yet, -1 missing
 static void exp_load(void) {   // the experience table from hud_exp.tsv (dm_tables.h); without it the experience bar stays empty
     long v[100]; char path[PATH_MAX]; int n = dm_table_read("hud_exp.tsv", 1, v, 100, path);
+    g_exp_rows = n < 0 ? -1 : n;
     if (n == 100) { for (int i = 0; i < 100; i++) k_exp[i] = (uint32_t)v[i]; g_exp_ok = 1; }
     else LOG("Tables: %s %s: the experience bar stays empty", path, n < 0 ? "is missing" : "is incomplete");
 }
+int dm_hud_exp_rows(void) { pthread_once(&g_exp_once, exp_load); return g_exp_rows; }   // for dm_bright.c dm_tables_status (the Tables: line at start, Share Logs)
 #endif
 #include <fcntl.h>
 #include <dirent.h>
@@ -1912,6 +1915,10 @@ int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms) {
     *commits = last - c0; *froze = bg; *ms = (now_ns() - t0) / 1e6;
     return asked;
 }
+// Dormant for players: only DM_TEST_FREEZE or DM_PANEL_FREEZE attach the freeze here, and no app shell sets either; the paused background save
+// (save_unpause_begin) attaches the gates without telling the renderer. Before it is ever enabled: frozen frames present at full rate and count as clean
+// windows for the 3D-scale controller (hle_oe.c scale3d_ctl_step), so hold it with scale3d_ctl_hold while frozen and for a few seconds after; and add a
+// scenario that keeps a panel open for more than 30 s at Frame Drops = lower.
 static void freeze_tick(uint64_t G) {   // 拍入口：定这一拍冻不冻，冻就把拍号先减 1 | Tick entry: decide whether this tick is frozen; if so, decrement the tick number by 1 first
     static struct { uint32_t at, n; int st; } w[8]; static int nw = -1, panel, cur = -1; static uint32_t left, calls;
     if (nw < 0) { nw = 0; const char *e = getenv("DM_TEST_FREEZE"); char buf[160]; if (e) { strlcpy(buf, e, sizeof buf); for (char *sv, *t = strtok_r(buf, ";", &sv); t && nw < 8; t = strtok_r(NULL, ";", &sv)) if (sscanf(t, "%u:%u", &w[nw].at, &w[nw].n) == 2) nw++; }
