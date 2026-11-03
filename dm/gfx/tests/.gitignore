@@ -6,6 +6,7 @@ t_deswz_gpu.dSYM/
 t_builtin.dSYM/
 t_pace
 t_timestamp
+t_presproj
 t_adaptive_pace
 t_completion_wait
 .precommit.err

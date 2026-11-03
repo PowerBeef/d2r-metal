@@ -78,6 +78,7 @@ run: \
 	python3 ../../tools/test_dmtest.py
 	python3 ../../tools/test_dmevents.py
 	python3 ../../tools/test_dmctl.py
+	python3 ../../tools/test_scenario_bg.py
 	python3 ../../tools/test_scenario.py
 	python3 ../../tools/test_imgdiff.py
 	python3 ../../tools/test_bench.py

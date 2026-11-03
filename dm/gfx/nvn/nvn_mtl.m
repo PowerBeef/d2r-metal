@@ -29,6 +29,7 @@
 #define FB_ARG id<MTL4CommitFeedback>
 #include "nvn_pace.h"
 #include "nvn_timestamp.h"
+#include "nvn_presproj.h"
 #include "nvn_obj.h"
 #include "../tex/nvn_fmt_mtl.h"
 #include "../tex/nvn_deswizzle.h"
@@ -6063,6 +6064,10 @@ static pres_ent g_pres[PRING];
 // 取第 n 次出图的实际呈现时刻（未就绪返回 0，被丢弃返回 −1）
 // Get the actual presentation time of the nth present (returns 0 if not ready, -1 if dropped)
 double mtl_presented_time(uint64_t n) { pres_ent e = g_pres[n % PRING]; return e.n == n ? e.t : 0; }
+// Background test runs (front_mac.m, DM_TEST_BGRUN=1): the window sits off every screen and the system reports presentedTime 0 for every frame, so the
+// display link's target timestamp is recorded instead (nvn_presproj.h); classic / rescue presents have no target and still read -1. Never set on iOS
+static _Atomic int g_present_project;
+void mtl_present_project(int on) { atomic_store(&g_present_project, on != 0); }
 static _Atomic uint64_t g_drawable_ns;   // 出图里等 nextDrawable 的累计墙钟（计时埋点） | Accumulated wall clock waiting for nextDrawable in present (timing instrumentation)
 uint64_t mtl_drawable_ns_take(void) { return atomic_exchange(&g_drawable_ns, 0); }
 // 窗口所在屏的刷新率与名字：Mac 前端在主线程上读 AppKit 存一份（front_mac.m screen_note）；没有这份的前端回 0，走下面的退路
@@ -6606,9 +6611,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     (void)period; M3_PRESENT(cb, dr);
 #else
     uint64_t pn = ticket;   // 按游戏出图序号（票号）记上屏时刻：hle 的上屏统计按「游戏第 n 次出图」取；显示节拍路径里实际出图次数 ≠ 游戏出图次数（旧帧会被合并丢弃） | Record the present time by the game's present sequence number (ticket number): hle's present statistics are taken by "the game's nth present"; in the display link path the actual present count != the game's present count (old frames get merged and dropped)
-    [dr addPresentedHandler:^(id<MTLDrawable> d) {   // 真实呈现时刻（屏幕上真正换上这一帧的时间，CACurrentMediaTime 基准） | Actual presentation time (the time this frame is really put on screen, CACurrentMediaTime base)
-        CFTimeInterval tt = d.presentedTime;
-        g_pres[pn % PRING] = (pres_ent){pn, tt > 0 ? tt : -1};
+    int proj = atomic_load(&g_present_project);
+    [dr addPresentedHandler:^(id<MTLDrawable> d) {   // the actual presentation time (when this frame really went on screen, CACurrentMediaTime base); projected in background runs
+        g_pres[pn % PRING] = (pres_ent){pn, nvn_presented_or_projected(d.presentedTime, proj, target_ts)};
     }];
     // 每张至少显示一个出图周期：GPU 完成时刻在 120 Hz 刷新边界附近抖动时，不再出现「25 ms + 8.33 ms」成对的顿挫
     // Each frame is displayed for at least one present period: when the GPU completion time jitters around a 120 Hz refresh boundary, the paired "25 ms + 8.33 ms" stutter no longer appears

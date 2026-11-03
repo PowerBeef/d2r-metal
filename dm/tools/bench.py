@@ -54,6 +54,9 @@ SERIES = ('frame_ms', 'work_ms', 'nvn_ms', 'gpu_ms', 'rec_ms', 'submit_ms', 'cpu
 STATS = ('mean', 'p50', 'p95', 'p99')
 METRICS = tuple(f'present.{m}' for m in PRESENT) + tuple(f'{s}.{t}' for s in SERIES for t in STATS)
 SLOW_MS = 20.8   # 超过这个算慢帧（60 Hz 下两个刷新以上，同 perf.txt 的档） | above this a frame is slow (more than two refreshes at 60 Hz, as the perf.txt buckets)
+# Benchmarks run in front (DM_TEST_BGRUN=0: real activation, real full screen, real presented times). A rep the desk disturbed (scenario.disturbed: another app
+# took the front, a Space switch, display sleep ...) is redone in its own slot, after cooling, up to REDO times (--redo); then the benchmark is not judged (exit 3)
+REDO = 2
 
 
 # ---------- 统计 | Statistics ----------
@@ -123,7 +126,7 @@ def thermal():
 
 def environment() -> dict[str, Any]:
     rev = sh('git', '-C', scenario.DM, 'rev-parse', '--short=12', 'HEAD'); dirty = bool(sh('git', '-C', scenario.DM, 'status', '--porcelain', '--untracked-files=no'))
-    return dict(git=dict(rev=rev, dirty=dirty), model=sh('sysctl', '-n', 'hw.model'), os=f"{platform.system()} {platform.mac_ver()[0]}",
+    return dict(git=dict(rev=rev, dirty=dirty), bgrun=0, model=sh('sysctl', '-n', 'hw.model'), os=f"{platform.system()} {platform.mac_ver()[0]}",
                 cpu=sh('sysctl', '-n', 'machdep.cpu.brand_string'), game_mode=re.sub(r'\x1b\[[0-9;]*m', '', sh('xcrun', 'gamepolicyctl', 'game-mode', 'status')).splitlines()[:2])
 
 
@@ -188,31 +191,62 @@ def metric(seg, path):
     return v if isinstance(v, (int, float)) else None
 
 
-def run_once(route, backend, out_dir, env, host, cool, mpt=False):
+def window_info(run_dir):
+    """The rep's last `window` event and whether the game really had the front (a real `app state=active`): was it in front and in real full screen."""
+    f = os.path.join(run_dir, 'events.ndjson')
+    evs = dmevents.load(f) if os.path.exists(f) else []
+    w = next((e for e in reversed(evs) if e.get('ev') == 'window'), None)
+    return dict({k: w.get(k) for k in ('cw', 'ch', 'dw', 'dh', 'full', 'emu', 'active', 'key')} if w else {},
+                had_front=any(e.get('ev') == 'app' and e.get('state') == 'active' and not e.get('emu') for e in evs))
+
+
+def run_once(route, backend, out_dir, env, host, cool, mpt=False, redo=None):
+    redo = REDO if redo is None else redo
     th0, waited = wait_cool(cool)
-    saved = {k: os.environ.get(k) for k in list(env) + ['DM_FRAMES', 'DM_STATEREP', 'SCN_DMHOST', 'DM_NVN_TSV', 'DM_NVN_TSV_CALLS']}
+    saved = {k: os.environ.get(k) for k in list(env) + ['DM_FRAMES', 'DM_STATEREP', 'SCN_DMHOST', 'DM_NVN_TSV', 'DM_NVN_TSV_CALLS', 'DM_TEST_BGRUN']}
     os.environ.update(env); os.environ['DM_FRAMES'] = os.path.join(out_dir, 'frames.tsv'); os.environ['DM_STATEREP'] = '1'
     os.environ['DM_NVN_TSV'] = os.path.join(out_dir, 'nvn.tsv'); os.environ['DM_NVN_TSV_CALLS'] = '0'
+    os.environ['DM_TEST_BGRUN'] = '0'   # benchmarks run in front: real activation, real full screen, real presented times
     if host: os.environ['SCN_DMHOST'] = host
+    lst: dict[str, Any] = {}; attempt = 0
     try:
-        os.makedirs(out_dir, exist_ok=True)
-        runner = scenario.Runner(route, backend, out_dir, False); lst: dict[str, Any] = {}
-        if mpt:   # 系统的 Metal 读数（metalperftrace listen）陪跑整遍 | the system's Metal readings (metalperftrace listen) for the whole run
-            import gpucap   # noqa: PLC0415
-            def attach(b):
-                pid = b.pid()
-                if pid: lst['l'] = gpucap.Listener(pid)
-            runner.on_started = attach
-        res, code = runner.go()
-        if 'l' in lst: lst['mpt'] = lst.pop('l').stop(os.path.join(out_dir, 'metalperftrace.json'))
-        if code == 0 and os.path.exists(os.path.join(out_dir, 'events.ndjson')):   # 启动各阶段记进历史账本（boothist.py） | boot stages go into the history ledger (boothist.py)
+        while True:
+            if attempt:   # a disturbed attempt: cool down, keep its folder as .disturbedK and redo the rep in a fresh folder of the same name (DM_FRAMES, DM_NVN_TSV stay valid)
+                wait_cool(cool); os.rename(out_dir, f'{out_dir}.disturbed{attempt}')
+            os.makedirs(out_dir, exist_ok=True)
+            runner = scenario.Runner(route, backend, out_dir, False)
+            if mpt:   # 系统的 Metal 读数（metalperftrace listen）陪跑整遍 | the system's Metal readings (metalperftrace listen) for the whole run
+                import gpucap   # noqa: PLC0415
+                def attach(b):
+                    pid = b.pid()
+                    if pid: lst['l'] = gpucap.Listener(pid)
+                runner.on_started = attach
+            res, code = runner.go()
+            if 'l' in lst: lst['mpt'] = lst.pop('l').stop(os.path.join(out_dir, 'metalperftrace.json'))
+            dist = res.get('disturbed') or []
+            if not dist or attempt >= redo: break
+            attempt += 1
+            print(f"  disturbed ({'; '.join(x['what'] for x in dist)[:120]}), redo {attempt}/{redo}", flush=True)
+        if code == 0 and not dist and os.path.exists(os.path.join(out_dir, 'events.ndjson')):   # boot stages go into the history ledger (boothist.py): accepted reps only
             import boothist   # noqa: PLC0415
             boothist.record([os.path.join(out_dir, 'events.ndjson')], f'bench:{backend}')
     finally:
         for k, v in saved.items():
             if v is None: os.environ.pop(k, None)
             else: os.environ[k] = v
-    return dict(ok=code == 0, reason=res.get('reason'), thermal_before=th0, cooled_s=waited, thermal_after=thermal(), segments=segments(out_dir), metalperftrace=lst.get('mpt'), dir=out_dir)
+    return dict(ok=code == 0 and not dist, reason=res.get('reason'), disturbed=dist, attempts=attempt + 1, window=window_info(out_dir), thermal_before=th0, cooled_s=waited,
+                thermal_after=thermal(), segments=segments(out_dir), metalperftrace=lst.get('mpt'), dir=out_dir)
+
+
+def rep_verdict(reps):
+    """OK, RED (a rep failed for real) or NOT_JUDGED (the only failures are reps still disturbed after their redos)."""
+    if any(not r['ok'] and not r.get('disturbed') for r in reps): return 'RED'
+    return 'NOT_JUDGED' if any(r.get('disturbed') for r in reps) else 'OK'
+
+
+def not_judged_line(tag, name, reps):
+    bad = [r for r in reps if r.get('disturbed')]
+    return f"⚪ {tag} {name} not judged: {len(bad)} of {len(reps)} runs disturbed ({'; '.join(x['what'] for r in bad for x in r['disturbed'])[:160]})"
 
 
 def summarize(reps):
@@ -245,14 +279,15 @@ def cmd_run(a):
     for i in range(a.reps):
         print(f'== 第 {i + 1}/{a.reps} 遍 | run {i + 1}/{a.reps}', flush=True)
         reps.append(run_once(a.route, a.backend, os.path.join(base, f'r{i + 1}'), env, a.host, a.cool, a.mpt))
-    res = dict(schema='bench/1', route=name, backend=a.backend, started=stamp, env=env, host=a.host, environment=environment(), reps=reps, summary=summarize(reps))
+    verdict = rep_verdict(reps)
+    res = dict(schema='bench/1', route=name, backend=a.backend, started=stamp, env=env, host=a.host, environment=environment(), verdict=verdict, reps=reps, summary=summarize(reps))
     out = a.out or os.path.join(base, 'bench.json')
     with open(out, 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
     show(res)
-    ok = all(r['ok'] for r in reps)
-    print(f"BENCH {'OK' if ok else 'RED'} {name} {sum(r['ok'] for r in reps)}/{len(reps)} 遍 | runs → {out}")
-    print('RESULT ' + json.dumps(dict(name='bench', verdict='OK' if ok else 'RED', route=name, summary=res['summary'], file=out), ensure_ascii=False))
-    return 0 if ok else 1
+    if verdict == 'NOT_JUDGED': print(not_judged_line('BENCH', name, reps) + f' → {out}')
+    else: print(f"BENCH {verdict} {name} {sum(r['ok'] for r in reps)}/{len(reps)} 遍 | runs → {out}")
+    print('RESULT ' + json.dumps(dict(name='bench', verdict={'NOT_JUDGED': 'UNAVAILABLE'}.get(verdict, verdict), route=name, summary=res['summary'], file=out), ensure_ascii=False))
+    return {'OK': 0, 'NOT_JUDGED': 3}.get(verdict, 1)
 
 
 def show(res):
@@ -278,10 +313,11 @@ def cmd_ab(a):
     out = a.out or os.path.join(base, 'ab.json')
     with open(out, 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
     ledger = ledger_write(stamp, envinfo, name, a.metric, a.a_env or a.a_host or '-', a.b_env or a.b_host or '-', rows)
-    ok = all(r['ok'] for v in reps.values() for r in v)
-    print(f"BENCH-AB {'OK' if ok else 'RED'} {name} → {out}（账本 | ledger {ledger}）")
-    print('RESULT ' + json.dumps(dict(name='bench-ab', verdict='OK' if ok else 'RED', route=name, rows=[{k: r.get(k) for k in ('segment', 'diff', 'ci95', 'p', 'verdict')} for r in rows], file=out), ensure_ascii=False))
-    return 0 if ok else 1
+    verdict = rep_verdict([r for v in reps.values() for r in v])
+    if verdict == 'NOT_JUDGED': print(not_judged_line('BENCH-AB', name, [r for v in reps.values() for r in v]) + f' → {out}')
+    else: print(f"BENCH-AB {verdict} {name} → {out}（账本 | ledger {ledger}）")
+    print('RESULT ' + json.dumps(dict(name='bench-ab', verdict={'NOT_JUDGED': 'UNAVAILABLE'}.get(verdict, verdict), route=name, rows=[{k: r.get(k) for k in ('segment', 'diff', 'ci95', 'p', 'verdict')} for r in rows], file=out), ensure_ascii=False))
+    return {'OK': 0, 'NOT_JUDGED': 3}.get(verdict, 1)
 
 
 def compare(reps, m):
@@ -379,9 +415,11 @@ def cmd_profile(a):
         print(f'== {seg}')
         for rl, v in tab.items(): print(f"  {rl:<8} 在跑 | running {v['running_pct']:5.1f}%  " + '; '.join(f'{fn} {n}' for fn, n in v['hot'][:4]))
     print(f"  卡顿 | hitches > {a.hitch_ms} ms: {len(prof['hitches'])}" + ''.join(f"\n    帧 | frame {h['frame']} {h['ms']} ms: " + '; '.join(f'{fn} {n}' for fn, n in h['running'][:4]) for h in prof['hitches'][:8]))
-    print(f"BENCH-PROFILE {'OK' if r['ok'] else 'RED'} {name} → {os.path.join(out, 'profile.json')}")
-    print('RESULT ' + json.dumps(dict(name='bench-profile', verdict='OK' if r['ok'] else 'RED', route=name, hitches=len(prof['hitches']), file=os.path.join(out, 'profile.json')), ensure_ascii=False))
-    return 0 if r['ok'] else 1
+    verdict = rep_verdict([r])
+    if verdict == 'NOT_JUDGED': print(not_judged_line('BENCH-PROFILE', name, [r]))
+    else: print(f"BENCH-PROFILE {verdict} {name} → {os.path.join(out, 'profile.json')}")
+    print('RESULT ' + json.dumps(dict(name='bench-profile', verdict={'NOT_JUDGED': 'UNAVAILABLE'}.get(verdict, verdict), route=name, hitches=len(prof['hitches']), file=os.path.join(out, 'profile.json')), ensure_ascii=False))
+    return {'OK': 0, 'NOT_JUDGED': 3}.get(verdict, 1)
 
 
 # ---------- 对留存基线的回归 A/B | regression A/B against a kept baseline ----------
@@ -425,15 +463,17 @@ def cmd_regress(a):
     for m in a.metrics.split(','):
         if m not in METRICS: print(f'🔴 unknown metric {m}'); return 2
         rr = compare(reps, m); rows += rr; ledger_write(stamp, envinfo, name, m, f"baseline {os.path.basename(os.path.dirname(os.path.dirname(hosts['A'])))}", 'current', rr)
-    slower = [r for r in rows if r.get('verdict') == 'B slower']; ok = all(r['ok'] for v in reps.values() for r in v)
+    slower = [r for r in rows if r.get('verdict') == 'B slower']; rv = rep_verdict([r for v in reps.values() for r in v])
     with open(os.path.join(out, 'regress.json'), 'w', encoding='utf-8') as f: json.dump(dict(route=name, hosts=hosts, order=order, rows=rows, environment=envinfo), f, ensure_ascii=False, indent=1)
-    verdict = 'RED' if slower or not ok else 'OK'
-    print(f"BENCH-REGRESS {verdict} {name}：{len(slower)} 项显著变慢 | significantly slower" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower))
-    print('RESULT ' + json.dumps(dict(name='bench-regress', verdict=verdict, route=name, slower=[(r['segment'], r['metric'], r['diff']) for r in slower]), ensure_ascii=False))
-    return 1 if verdict == 'RED' else 0
+    verdict = 'RED' if slower or rv == 'RED' else 'NOT_JUDGED' if rv == 'NOT_JUDGED' else 'OK'
+    if verdict == 'NOT_JUDGED': print(not_judged_line('BENCH-REGRESS', name, [r for v in reps.values() for r in v]))
+    else: print(f"BENCH-REGRESS {verdict} {name}：{len(slower)} 项显著变慢 | significantly slower" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower))
+    print('RESULT ' + json.dumps(dict(name='bench-regress', verdict={'NOT_JUDGED': 'UNAVAILABLE'}.get(verdict, verdict), route=name, slower=[(r['segment'], r['metric'], r['diff']) for r in slower]), ensure_ascii=False))
+    return {'OK': 0, 'NOT_JUDGED': 3}.get(verdict, 1)
 
 
 def main(argv):
+    global REDO
     ap = argparse.ArgumentParser(prog='bench.py', description='Fixed-route benchmarks over the control port (dm/verify/bench).')
     sub = ap.add_subparsers(dest='cmd', required=True)
     r = sub.add_parser('run'); r.add_argument('route'); r.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); r.add_argument('--reps', type=int, default=3)
@@ -449,7 +489,9 @@ def main(argv):
     bl = sub.add_parser('baseline'); bl.add_argument('op', choices=('save',)); bl.add_argument('--host')
     rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); rg.add_argument('--reps', type=int, default=6)
     rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,gpu_ms.p50,proc_cpu_ms.p50'); rg.add_argument('--cool', type=float, default=120)
+    for x in (r, b, pr, rg): x.add_argument('--redo', type=int, default=REDO, help=f'how many times a disturbed rep is redone in its slot before the benchmark is not judged (default {REDO})')
     a = ap.parse_args(argv)
+    REDO = getattr(a, 'redo', REDO)
     held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * 2} min", a.cmd in ('run', 'ab', 'profile', 'regress'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
     if held is not None: return held
     if a.cmd == 'run': return cmd_run(a)

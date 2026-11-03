@@ -37,6 +37,21 @@ static int g_live;   // App 形态（或 DM_TOUCH_LIVE=1）：鼠标进我们的
 static CAMetalLayer *g_layer;
 static NSWindow *g_win;
 static NSView *g_view;
+// Background test runs (DM_TEST_BGRUN=1 with a window; the test harness sets it for windowed cli / mac-app runs): the window can never become key and never
+// asks for activation; it sits outside every screen at the size it would have on screen, and full screen, minimize, sheets and the test cover are emulated
+// through the same handler bodies AppKit would trigger. The game sees the same geometry, focus sequence and presents as in front, while the run takes
+// no focus and switches no Space. Unset = the product; 0 = a front test run (the product's behaviour)
+static int g_bg = -1;
+static int bgrun(void) {
+    if (g_bg < 0) { if (!getenv("DM_WINDOW")) return 0; const char *e = getenv("DM_TEST_BGRUN"); g_bg = e && !strcmp(e, "1"); }
+    return g_bg;
+}
+static int g_emul_full, g_mini_emul;   // background runs: emulated full screen / minimize
+static int win_full(void) { return (g_win.styleMask & NSWindowStyleMaskFullScreen) || g_emul_full; }
+static int win_mini(void) { return g_win.miniaturized || g_mini_emul; }
+// The screen the picture is sized for: the main screen (the one with the keyboard focus) in the product; a background run pins the first screen (the one
+// with the menu bar), so neither Recommended nor the emulated full-screen frame follows the user around a multi-display desk
+static NSScreen *dm_screen(void) { return bgrun() ? NSScreen.screens.firstObject : NSScreen.mainScreen; }
 // 真全屏（App 形态，屏幕比 16:9 窄——16:10 的 MacBook，「不能全屏」：全屏后上下各 56 点黑边）：照 iPad 那套（front_ios.m、dm_uiscreen.c）——
 // 启动时按屏幕比例（全屏时的内容区：屏幕扣掉刘海安全区）定游戏分辨率，局内 3D 铺满、界面按 16:9 贴底（开大面板居中），前端各页与读取画面游戏自己按 16:9 出、上下留边。
 // 窗口锁成同一比例，窗口态与全屏态都铺满。屏幕不比 16:9 窄（外接 16:9 / 更宽的屏）：照旧全程 16:9。比例在启动时按主屏定，之后挪到别的屏不重算（游戏分辨率只在启动时定）。
@@ -49,7 +64,7 @@ static double g_aspect = 16.0 / 9;   // 游戏画面比例（宽 ÷ 高） | asp
 static int g_full;                    // 1 = 真全屏已开 | 1 = true full screen is on
 static void full_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
-    NSScreen *sc = NSScreen.mainScreen; double w = sc.frame.size.width, h = sc.frame.size.height - sc.safeAreaInsets.top; const char *e = getenv("DM_TEST_SCREEN_ASPECT"); unsigned tw, th;
+    NSScreen *sc = dm_screen(); double w = sc.frame.size.width, h = sc.frame.size.height - sc.safeAreaInsets.top; const char *e = getenv("DM_TEST_SCREEN_ASPECT"); unsigned tw, th;
     if (e && sscanf(e, "%ux%u", &tw, &th) == 2 && tw && th) { w = tw; h = th; }
     if (h <= 0 || w / h >= 16.0 / 9 - 0.01) { LOG("画面：主屏 %.0fx%.0f 不比 16:9 窄 → 全程 16:9", w, h); return; }
     g_aspect = w / h; g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM);
@@ -65,7 +80,7 @@ static const int k_render_w[3] = { 1600, 1920, 2560 };
 static int g_render_w = 1600, g_render_tier = -1;   // 这次启动用的那一档（-1 = 没按设置定） | the tier used for this launch (-1 = not set from the settings)
 int dm_video_get(const char *key);
 void dm_video_fullscreen_note(int on);
-static double main_px(void) { NSScreen *sc = NSScreen.mainScreen; return sc ? sc.frame.size.width * sc.backingScaleFactor : 1600; }   // 主屏的像素宽 | the main screen's width in pixels
+static double main_px(void) { NSScreen *sc = dm_screen(); return sc ? sc.frame.size.width * sc.backingScaleFactor : 1600; }   // 主屏的像素宽 | the main screen's width in pixels
 static int native_w(void) { int w = (int)main_px() / 16 * 16; return w < 1600 ? 1600 : w > 3840 ? 3840 : w; }
 static void render_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
@@ -98,7 +113,7 @@ static dm_mac_rec mac_rec(void) {
     dispatch_once(&once, ^{
         uint64_t mem = 0; size_t n = sizeof mem; sysctlbyname("hw.memsize", &mem, &n, NULL, 0);
         char model[64] = ""; n = sizeof model; sysctlbyname("hw.model", model, &n, NULL, 0);
-        NSScreen *sc = NSScreen.mainScreen; double px = main_px(), ph = sc ? sc.frame.size.height * sc.backingScaleFactor : 900;
+        NSScreen *sc = dm_screen(); double px = main_px(), ph = sc ? sc.frame.size.height * sc.backingScaleFactor : 900;
         int w = native_w(), h = (int)lround(w * ph / fmax(px, 1));
         NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), mem, w, h, front_video_mfx_ok() };
         dm_mac_recommend(&spec, &r);
@@ -169,7 +184,7 @@ static void layer_color(int accurate) {   // 主线程 | main thread
 }
 void front_video_color(int accurate) { dispatch_async(dispatch_get_main_queue(), ^{ layer_color(accurate); }); }   // 选项页点了应用（游戏线程） | Apply on the options page (game thread)
 void front_video_fullscreen(int on) {   // 选项页「显示模式」点了应用：当场切（游戏线程调，切到主线程做） | "Display Mode" applied on the options page: switch at once (called on the game thread, done on the main thread)
-    dispatch_async(dispatch_get_main_queue(), ^{ NSWindow *w = g_win; if (w && ((w.styleMask & NSWindowStyleMaskFullScreen) != 0) != (on != 0)) [w toggleFullScreen:nil]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ NSWindow *w = g_win; if (w && win_full() != (on != 0)) [w toggleFullScreen:nil]; });
 }
 // 游戏画面在视图里的位置：按游戏画面比例放进视图（比例对得上就是整个视图；对不上的四周留黑边）
 // Where the game picture sits in the view: fitted into the view by the picture's aspect ratio (if the ratios match, the whole view; otherwise black bars around)
@@ -190,12 +205,23 @@ static NSRect game_rect(void) {
 static void vkbd_where(dm_vkbd_host *h) {   // 手柄屏幕键盘画在视图层上、游戏画面里（视图层坐标向上增） | the on-screen controller keyboard is drawn on the view layer, inside the game picture (view layer coordinates grow upward)
     h->layer = (__bridge void *)g_view.layer; h->pic = NSRectToCGRect(game_rect()); h->y_up = 1; h->scale = g_win.backingScaleFactor > 0 ? g_win.backingScaleFactor : 2;
 }
+// The window's geometry as an event (event_stream.md `window`), beside the 窗口：内容区 line that scripts read: content size (pt), picture rect (pt), drawable (px),
+// backing scale, full screen, emulated, fit (the content equals the screen's full-screen content area) and AppKit's real active / key state
+static void window_event(NSRect r, CGFloat sc) {
+    NSScreen *s = dm_screen(); NSSize b = g_view.bounds.size; CGSize d = g_layer.drawableSize;
+    int full = win_full();
+    int fit = s && fabs(b.width - s.frame.size.width) < 1.5 && fabs(b.height - (s.frame.size.height - s.safeAreaInsets.top)) < 1.5;
+    DM_EV("window", "cw:d ch:d px:d py:d pw:d ph:d dw:d dh:d scale:f full:b emu:b fit:b active:b key:b", (int)lround(b.width), (int)lround(b.height),
+          (int)lround(r.origin.x), (int)lround(r.origin.y), (int)lround(r.size.width), (int)lround(r.size.height), (int)lround(d.width), (int)lround(d.height),
+          (double)sc, full, bgrun(), fit, (int)NSApp.isActive, (int)g_win.isKeyWindow);
+}
 static void layout_game(void) {
     NSRect r = game_rect(); if (NSEqualRects(r, g_layer.frame)) return;
     CGFloat sc = g_view.window.backingScaleFactor ?: 2;   // 画布跟着改：作为子层的 CAMetalLayer 改 frame 不会自己改 drawableSize，原先进全屏后一直用窗口态的画布放大显示（发糊） | the canvas follows: a CAMetalLayer used as a sublayer does not change its drawableSize when its frame changes, so after going full screen it used to keep the windowed canvas and scale it up (blurry)
     [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = sc; g_layer.drawableSize = CGSizeMake(round(r.size.width * sc), round(r.size.height * sc)); [CATransaction commit];
     dm_vkbd_ui_relayout();   // 屏幕键盘跟着画面走 | the on-screen keyboard follows the picture
     LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
+    window_event(r, sc);
 }
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
 // 暂停菜单这类开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
@@ -239,7 +265,7 @@ static void app_quit(const char *why) {   // 主线程 | main thread
     int dm_ingame_now(void), ingame = dm_ingame_now() || dm_uiscreen_ingame();
     // 最小化着退出：游戏线程挡在图形挂起处（dm_gfx_suspend）、客体时钟冻着，拍不走就存不了盘。先恢复（出图照丢，不画到看不见的窗口），再请存盘
     // Quitting while minimized: the game thread is blocked at the graphics suspend (dm_gfx_suspend) and the guest clock is frozen, so no tick runs and nothing can be saved. Resume first (frames are still dropped, nothing is drawn to the hidden window), then ask for the save
-    if (ingame && g_win.miniaturized) { void mtl_present_discard(int on); void guest_clock_freeze_for(int reason, int on); mtl_present_discard(1); dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); LOG("窗口：最小化着退出，先恢复图形与客体时钟再存盘"); }
+    if (ingame && win_mini()) { void mtl_present_discard(int on); void guest_clock_freeze_for(int reason, int on); mtl_present_discard(1); dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); LOG("窗口：最小化着退出，先恢复图形与客体时钟再存盘"); }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ app_quit_finish(why, ingame); });
 }
 // 控制口 app 命令（dm_ctl_cmds.c）：在主线程上做与 DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT 相同的动作。最小化与 DM_TEST_MINI_AT 一样临时给窗口加上可最小化（游戏窗口本身没有）；
@@ -252,12 +278,22 @@ static void send_quit_event(void) {
                                                                          returnID:kAutoGenerateReturnID transactionID:kAnyTransactionID];
     NSError *err = nil; if (![ev sendEventWithOptions:NSAppleEventSendNoReply timeout:5 error:&err]) LOG("【红】测试退出：退出 Apple 事件发不出去：%s", err.localizedDescription.UTF8String);
 }
+static void key_lost(const char *cause, int emu), key_gained(int emu), mini_enter(int emu), mini_leave(int emu);
+// A background test run emulates minimize / restore (no Dock animation, no deminiaturize that could activate the app or swap the user's stage), in the
+// order AppKit gives them: minimize = key lost (focus stays) then minimized (focus 3); restore = restored (focus 2) then key regained (focus 1)
+static void emu_minimize(int on) {
+    if (on == g_mini_emul) return;
+    if (on) { g_mini_emul = 1; key_lost("minimize", 1); mini_enter(1); }
+    else { mini_leave(1); key_gained(1); }
+}
 static int ctl_app(const char *w) {
     if (!g_win) return -1;
     int mini = !strcmp(w, "minimize") || !strcmp(w, "background"), rest = !strcmp(w, "restore") || !strcmp(w, "foreground");
     if (!strcmp(w, "terminate")) { dispatch_async(dispatch_get_main_queue(), ^{ send_quit_event(); }); return 0; }   // 同程序坞「退出」：退出 Apple 事件 → app_quit（存盘再退），不返回 | as Quit in the Dock: the quit Apple event -> app_quit (save, then quit), does not return
     if (!mini && !rest) return -1;
-    dispatch_sync(dispatch_get_main_queue(), ^{ if (mini) { g_win.styleMask |= NSWindowStyleMaskMiniaturizable; [g_win miniaturize:nil]; } else [g_win deminiaturize:nil]; });
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        if (bgrun()) emu_minimize(mini);
+        else if (mini) { g_win.styleMask |= NSWindowStyleMaskMiniaturizable; [g_win miniaturize:nil]; } else [g_win deminiaturize:nil]; });
     return 0;
 }
 static const char *ui(const char *k) { const char *dm_ui(const char *key); return dm_ui(k); }
@@ -326,7 +362,7 @@ static void share_logs_ui(void) { NSString *e = share_logs(nil); if (e) { LOG("�
 // Re-read when the window moves to another screen or screen parameters change (refresh rate change, display plugged / unplugged). The refresh rate comes from the display mode; when the built-in screen gives none (0), the screen's maximum frame rate is used
 static pthread_mutex_t g_scr_mu = PTHREAD_MUTEX_INITIALIZER; static double g_scr_hz; static char g_scr_name[128];
 static void screen_note(void) {
-    NSScreen *sc = g_win.screen ?: NSScreen.mainScreen; if (!sc) return;
+    NSScreen *sc = g_win.screen ?: dm_screen(); if (!sc) return;
     CGDirectDisplayID id_ = [sc.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
     CGDisplayModeRef m = CGDisplayCopyDisplayMode(id_); double hz = m ? CGDisplayModeGetRefreshRate(m) : 0; if (m) CGDisplayModeRelease(m);
     if (hz <= 0) hz = (double)sc.maximumFramesPerSecond;
@@ -382,12 +418,14 @@ static int g_mouse_down;      // 这一笔左键的按下收了（落在画面�
 static NSPoint g_test_last;
 // PC control mode (dm_kbm.c): in game with the PC interface set, keys run the game's own PC key bindings and the mouse clicks the world as on PC;
 // the front end keeps the keyboard-as-controller mapping. Any keyboard or mouse input asks for the PC set, a controller press for the console one (dm_padmode.c)
-static int kbm_mods(void) { NSEventModifierFlags f = NSEvent.modifierFlags; return (f & NSEventModifierFlagShift ? 1 : 0) | (f & NSEventModifierFlagControl ? 2 : 0) | (f & NSEventModifierFlagOption ? 4 : 0); }
+// The modifiers of the event itself, not the global keyboard state: a synthesized test event must not pick up a Shift the user holds in another app
+// (for real events the two are the same)
+static int kbm_mods_of(NSEventModifierFlags f) { return (f & NSEventModifierFlagShift ? 1 : 0) | (f & NSEventModifierFlagControl ? 2 : 0) | (f & NSEventModifierFlagOption ? 4 : 0); }
 void dm_padmode_request_pc(int pc);
 static void kbm_wants_pc(void) { static int ok = -1; if (ok < 0) ok = !getenv("DM_APP_SUPPORT") || (getenv("DM_PC_MODE") && atoi(getenv("DM_PC_MODE")) == 1); if (g_live && ok) dm_padmode_request_pc(1); }   // test copies switch only with DM_PC_MODE=1
-static void live_mouse(int op, float x, float y) {   // the Mac pointer path, or the PC input layer in PC mode (op 0 down 1 drag 2 up 3 hover)
+static void live_mouse(int op, float x, float y, int mods) {   // the Mac pointer path, or the PC input layer in PC mode (op 0 down 1 drag 2 up 3 hover; mods = the event's kbm_mods_of)
     kbm_wants_pc();
-    if (dm_kbm_live()) { dm_kbm_mouse(op == 0 ? 1 : op == 2 ? 2 : 0, x, y, op == 1, kbm_mods()); return; }
+    if (dm_kbm_live()) { dm_kbm_mouse(op == 0 ? 1 : op == 2 ? 2 : 0, x, y, op == 1, mods); return; }
     dm_touch_host_live(op, x, y);
 }   // 合成鼠标脚本：上一条带坐标的指令落在视图里的点（dragto 从这里起拖） | synthetic mouse script: the point in the view where the last instruction with coordinates landed (dragto starts dragging from here)
 static int g_wheel;   // 滚轮：+1 / −1 = 右摇杆向上 / 向下推一小会儿（原版手柄版用右摇杆滚列表） | Wheel: +1 / -1 = push the right stick up / down for a short while (the original gamepad UI scrolls lists with the right stick)
@@ -454,12 +492,123 @@ static void on_key(NSEvent *e, int down) {
     unsigned short c = e.keyCode;
     if (g_live) { kbm_wants_pc(); if (dm_kbm_live()) {
         if (g_w | g_a | g_s | g_d | (int)(g_btn != 0)) { g_w = g_a = g_s = g_d = 0; g_btn = 0; push(); }   // nothing stays held on the virtual controller
-        if (!e.isARepeat || !down) dm_kbm_key(dm_kbm_vk_from_mac(c), down, kbm_mods()); return; } }
+        if (!e.isARepeat || !down) dm_kbm_key(dm_kbm_vk_from_mac(c), down, kbm_mods_of(e.modifierFlags)); return; } }
     switch (c) { case 13: g_w = down; break; case 0: g_a = down; break; case 1: g_s = down; break; case 2: g_d = down; break; }
     int b = key_bit(c);
     if (down && (b >= 0 || c == 13 || c <= 2)) dm_padmode_request_glyph(DM_GLYPH_KBD);   // 按了游戏用的键：键位图标换成键盘键帽（鼠标移动 / 点击不算） | a key used by the game was pressed: switch the key icons to keyboard key caps (mouse moves / clicks do not count)
     if (b >= 0) g_btn = down ? (g_btn | 1ull << b) : (g_btn & ~(1ull << b));
     push();
+}
+
+// Why the game window lost key status (the `cause` of `app state=resign`): its own sheet, another app taking the front, minimize, or another window of ours
+static const char *resign_cause(void) {
+    return g_win.attachedSheet ? "sheet" : !NSApp.isActive ? "app" : g_win.miniaturized ? "minimize" : "window";
+}
+// Desk changes as `desk` events (event_stream.md), so a test harness can tell whether a run kept the front and saw the screen as a player would:
+// this app coming to the front or leaving it, another app activating, a Space switch, display sleep and the login session going inactive (fast user switching, lock).
+// Notifications only: no window-list polling and no screen reads. The log line is written for test runs only (DM_TEST_BGRUN set): a player's log never
+// lists the other apps they use
+static void desk_ev(const char *what, const char *by) {
+    if (getenv("DM_TEST_BGRUN")) LOG("desk: %s%s%s", what, by ? " by " : "", by ?: "");
+    DM_EV("desk", "what:s by:s", what, by);
+}
+static double g_launch_t, g_sheet_t;   // CACurrentMediaTime of the window's creation and of the last sheet beginning (background-run guard)
+static void desk_watch(void) {
+    NSNotificationCenter *nc = NSNotificationCenter.defaultCenter, *wc = NSWorkspace.sharedWorkspace.notificationCenter;
+    [nc addObserverForName:NSApplicationDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("front", "self");
+        // A background run that comes to the front by itself (within 3 s of launch, or 1 s of a sheet beginning) is a bug of this mode: say so in red and give
+        // the front back at once. A later activation is the user's own (Dock icon, Cmd-Tab): only logged, never fought
+        double now = CACurrentMediaTime();
+        if (bgrun() && (now - g_launch_t < 3 || now - g_sheet_t < 1)) { LOG("【红】background run came to the front by itself (%.2f s after launch) | handing the front back", now - g_launch_t); [NSApp deactivate]; } }];
+    [nc addObserverForName:NSApplicationDidResignActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("back", "self"); }];
+    [wc addObserverForName:NSWorkspaceDidActivateApplicationNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
+        NSRunningApplication *a = n.userInfo[NSWorkspaceApplicationKey]; if (!a || a.processIdentifier == getpid()) return;
+        desk_ev("other_app", (a.bundleIdentifier ?: a.localizedName ?: @"?").UTF8String); }];
+    [wc addObserverForName:NSWorkspaceActiveSpaceDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("space", NULL); }];
+    [wc addObserverForName:NSWorkspaceScreensDidSleepNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("screens_sleep", NULL); }];
+    [wc addObserverForName:NSWorkspaceScreensDidWakeNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("screens_wake", NULL); }];
+    [wc addObserverForName:NSWorkspaceSessionDidResignActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("session_off", NULL); }];
+    [wc addObserverForName:NSWorkspaceSessionDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("session_on", NULL); }];
+}
+
+// Lifecycle handler bodies (hle.h / dm.h): focus lost -> 2, focus regained -> 1; minimized -> 3 + audio paused + GPU suspended, restored -> resume.
+// AppKit's notifications call them with emu = 0; a background run calls them with emu = 1 at the moments AppKit would (launch, sheets, minimize)
+static void key_lost(const char *cause, int emu) {   // focus lost: clear the keys held on keyboard and controller (their releases will not arrive)
+    DM_EV("app", "state:s cause:s emu:b", "resign", cause, emu);
+    if (!win_mini() && !atomic_load(&g_quitting)) dm_focus_set(2);
+    g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); }
+}
+static void key_gained(int emu) { DM_EV("app", "state:s emu:b", "active", emu); dm_focus_set(1); }
+// Minimize: the guest clock freezes too (as when iOS goes to the background). Otherwise the game thread is blocked at the graphics suspend while the wall clock keeps running,
+// and on restore the main loop catches up on every tick of the minimized period in one burst -- the character stands still while monsters keep attacking (a death in Hardcore is permanent)
+static void mini_enter(int emu) {
+    void guest_clock_freeze_for(int reason, int on); uint64_t guest_ns(void); void dm_game_state_background(int);
+    dm_focus_set(3); dm_audio_suspend(1); guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); LOG("窗口：最小化（客体时钟 %.3f s，冻结）%s", guest_ns() / 1e9, emu ? " (emulated)" : "");
+    DM_EV("app", "state:s emu:b", "minimized", emu); dm_game_state_background(1);
+}
+static void mini_leave(int emu) {
+    void guest_clock_freeze_for(int reason, int on); uint64_t guest_ns(void); void dm_game_state_background(int);
+    if (emu) g_mini_emul = 0;
+    dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); dm_audio_suspend(0); dm_focus_set(2); LOG("窗口：恢复（客体时钟 %.3f s）%s", guest_ns() / 1e9, emu ? " (emulated)" : "");
+    DM_EV("app", "state:s emu:b", "restored", emu); dm_game_state_background(0);
+}
+// Occlusion (the window wholly covered, its occlusion state without Visible): the system gives a hidden window no display-link callbacks, so frames are
+// discarded (mtl_present_discard, as the iOS background save wait does); game logic, audio and focus go on. DM_OCCL=0 turns the handling off (comparisons)
+static int g_occl_on = 1;
+static void occl_apply(int hidden, int emu) {
+    void mtl_present_discard(int on);
+    LOG("前端：窗口%s（遮挡处理%s）%s", hidden ? "整个被盖住 / 不可见" : "露出来了", g_occl_on ? "开" : "关 DM_OCCL=0", emu ? " (virtual cover)" : "");
+    DM_EV("app", "state:s emu:b", hidden ? "occluded" : "visible", emu);
+    if (g_occl_on) mtl_present_discard(hidden);
+}
+
+// Background runs: the window class, its off-screen placement and emulated full screen
+static NSSize g_emu_win;   // the windowed content size AppKit would give the titled window on the pinned screen
+@interface DmWindow : NSWindow @end
+static void emu_full_toggle(void);
+// Off every screen: left of the union of all screens, at the given content size (a borderless window's frame is its content)
+static NSPoint bg_origin(NSSize sz) {
+    CGFloat minx = INFINITY; for (NSScreen *s in NSScreen.screens) minx = fmin(minx, s.frame.origin.x); if (!isfinite(minx)) minx = 0;
+    return NSMakePoint(minx - sz.width - 4000, dm_screen().frame.origin.y);
+}
+@implementation DmWindow
+- (BOOL)canBecomeKeyWindow { return bgrun() ? NO : [super canBecomeKeyWindow]; }
+- (BOOL)canBecomeMainWindow { return bgrun() ? NO : [super canBecomeMainWindow]; }
+- (NSRect)constrainFrameRect:(NSRect)r toScreen:(NSScreen *)s { return bgrun() ? r : [super constrainFrameRect:r toScreen:s]; }   // the off-screen origin sticks
+// Pinned off screen whatever moves it: AppKit moves a sheet's parent window onto the screen so the sheet can be seen (measured: the name sheet brought the
+// game window and the sheet partly onto the screen for its whole life); every move keeps the requested size at the off-screen origin
+- (void)setFrame:(NSRect)f display:(BOOL)d { if (bgrun()) f.origin = bg_origin(f.size); [super setFrame:f display:d]; }
+- (void)setFrame:(NSRect)f display:(BOOL)d animate:(BOOL)a { if (bgrun()) f.origin = bg_origin(f.size); [super setFrame:f display:d animate:a]; }
+- (void)setFrameOrigin:(NSPoint)p { [super setFrameOrigin:bgrun() ? bg_origin(self.frame.size) : p]; }
+- (void)setFrameTopLeftPoint:(NSPoint)p { if (bgrun()) [super setFrameOrigin:bg_origin(self.frame.size)]; else [super setFrameTopLeftPoint:p]; }
+// One override catches every route into full screen: Display Mode at launch, DM_TEST_FULLSCREEN_AT, the options page (front_video_fullscreen) and the menu
+- (void)toggleFullScreen:(id)sender { if (bgrun()) emu_full_toggle(); else [super toggleFullScreen:sender]; }
+@end
+// The windowed content size: a titled window (never ordered in) of the product's size, centred on the pinned screen and constrained to it as AppKit does when
+// it orders the window in, so the windowed picture is the same as in front
+static NSSize emu_window_size(NSRect content, NSWindowStyleMask sm) {
+    NSScreen *sc = dm_screen();
+    NSWindow *t = [[NSWindow alloc] initWithContentRect:content styleMask:sm backing:NSBackingStoreBuffered defer:YES screen:sc]; t.releasedWhenClosed = NO;
+    t.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); if (g_full) t.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
+    [t center];
+    NSRect f = [t constrainFrameRect:t.frame toScreen:sc];
+    return [t contentRectForFrameRect:f].size;
+}
+static NSSize full_size(void) { NSScreen *sc = dm_screen(); return NSMakeSize(sc.frame.size.width, sc.frame.size.height - sc.safeAreaInsets.top); }   // what real full screen gives
+static void bg_place(NSSize sz) {
+    NSPoint o = bg_origin(sz); NSRect f = NSMakeRect(o.x, o.y, sz.width, sz.height);
+    if (!NSEqualRects(f, g_win.frame)) [g_win setFrame:f display:NO];
+}
+// Emulated full screen: the screen's full-screen content area (the band below the notch on a notched MacBook), off screen, through the same layout path and
+// delegate callbacks as real full screen; no Space switch and no animation
+static void emu_full_toggle(void) {
+    int on = !g_emul_full; g_emul_full = on;   // first, so layout_game's window event says full
+    bg_place(on ? full_size() : g_emu_win);
+    LOG("window: %s emulated full screen (background run), content %.0fx%.0f", on ? "entered" : "left", g_win.frame.size.width, g_win.frame.size.height);
+    NSNotification *n = [NSNotification notificationWithName:on ? NSWindowDidEnterFullScreenNotification : NSWindowDidExitFullScreenNotification object:g_win];
+    id<NSWindowDelegate> d = g_win.delegate;
+    if (on && [d respondsToSelector:@selector(windowDidEnterFullScreen:)]) [d windowDidEnterFullScreen:n];
+    if (!on && [d respondsToSelector:@selector(windowDidExitFullScreen:)]) [d windowDidExitFullScreen:n];
 }
 
 typedef struct { void (*fn)(void); } guest_arg;
@@ -481,17 +630,27 @@ static void *guest_tramp(void *p) {
 void front_run(void (*guest)(void)) {
     if (!getenv("DM_WINDOW")) { guest(); return; }
     @autoreleasepool {
+        int bg = bgrun(); g_launch_t = CACurrentMediaTime();
+        // A background run kills AppKit's own launch activation request at its source: argv words (dmhost's product path, main, sdk) are not opened as
+        // documents. Merged into the argument domain (the Mac App has already set ApplePersistenceIgnoreState there)
+        if (bg) { NSUserDefaults *ud = NSUserDefaults.standardUserDefaults; NSMutableDictionary *ad = [[ud volatileDomainForName:NSArgumentDomain] mutableCopy] ?: [NSMutableDictionary dictionary];
+            ad[@"NSTreatUnknownArgumentsAsOpen"] = @"NO"; [ud setVolatileDomain:ad forName:NSArgumentDomain]; }
         [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];   // a background run stays Regular too: accessory / prohibited apps with nothing visible get the Background role (timers ~100 ms late)
         full_setup(); render_setup();
         NSRect r = NSMakeRect(0, 0, 1280, floor(1280 / g_aspect));
-        NSWindow *win = [[NSWindow alloc] initWithContentRect:r
-                                                    styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
-                                                      backing:NSBackingStoreBuffered defer:NO];
+        NSWindowStyleMask sm = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
+        if (bg) { g_emu_win = r.size = emu_window_size(r, sm); sm = NSWindowStyleMaskBorderless; }   // background: borderless (never key), at the size AppKit gives the titled window
+        NSWindow *win = [[DmWindow alloc] initWithContentRect:r styleMask:sm backing:NSBackingStoreBuffered defer:NO];
         win.title = @"D2R Metal"; win.restorable = NO; g_win = win; g_dm_ctl_app_fn = ctl_app;
         NSView *v = win.contentView; g_view = v;
         v.wantsLayer = YES; v.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
         win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary; win.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); if (g_full) win.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
+        // Background: on every Space (its display link keeps ticking when the user switches Spaces or opens a full-screen app), out of Mission Control,
+        // Cmd-` cycling and the Stage Manager layout
+        if (bg) { win.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle |
+                                           NSWindowCollectionBehaviorFullScreenNone | NSWindowCollectionBehaviorCanJoinAllApplications;
+                  win.hasShadow = NO; win.excludedFromWindowsMenu = YES; bg_place(r.size); }
         static DmWinCtl *ctl; ctl = [DmWinCtl new]; win.delegate = ctl; NSApp.delegate = ctl;
         g_layer = [CAMetalLayer layer];
         g_layer.device = MTLCreateSystemDefaultDevice();
@@ -500,7 +659,9 @@ void front_run(void (*guest)(void)) {
         layer_color(dm_video_get("color") == 1);
         [v.layer addSublayer:g_layer]; layout_game();
         dm_vkbd_ui_set_host(vkbd_where);
-        [win center];
+        if (!bg) [win center];
+        else if (fabs(win.backingScaleFactor - dm_screen().backingScaleFactor) > 0.01)   // a window on no screen takes its scale from elsewhere: never run with a picture unlike the screen's
+            LOG("【红】background run: the off-screen window's backing scale %.1f differs from the screen's %.1f", win.backingScaleFactor, dm_screen().backingScaleFactor);
         g_live = getenv("DM_APP") || getenv("DM_TOUCH_LIVE"); if (g_live) dm_touch_host_live_enable();
         if (g_live) {
             win.acceptsMouseMovedEvents = YES;
@@ -515,17 +676,26 @@ void front_run(void (*guest)(void)) {
           { NSMenu *hm = add(ui("dmAppMenuHelp")); [[hm addItemWithTitle:@(ui("dmAppKeysTitle")) action:@selector(keys:) keyEquivalent:@""] setTarget:ctl]; [[hm addItemWithTitle:@(ui("dmAppShareLog")) action:@selector(share:) keyEquivalent:@""] setTarget:ctl]; }
           NSApp.mainMenu = bar; }
         { void dm_gamepad_start(void (*on_mode)(int pad)), dm_gamepad_on_press(void (*fn)(void)); dm_gamepad_start(NULL); dm_gamepad_on_press(text_input_handoff_pad); }   // 手柄（与 iOS 壳共用 ios/Sources/dm_gamepad.m）：连上即用，与键盘并存 | Gamepad (ios/Sources/dm_gamepad.m, shared with the iOS shell): works as soon as it is connected, alongside the keyboard
-        [win makeKeyAndOrderFront:nil];
+        // Background: ordered in behind everything, never made key, no activation; the launch's key gain is emulated, so the stream has the same shape
+        // as the foreground's `app active` at about 0.2 s (focus is already 1)
+        if (bg) { [win orderBack:nil]; dispatch_async(dispatch_get_main_queue(), ^{ key_gained(1); }); }
+        // Background: the system reports no presented time for an off-screen window; the link's target timestamps stand in (nvn_mtl.m, nvn_presproj.h)
+        if (bg) { void mtl_present_project(int on); mtl_present_project(1); }
+        // Background: no App Nap. An app whose only window is off screen gets napped: its timers are coalesced (measured: the test input's 50 ms waits ran
+        // about twice as long, so fe lines queued behind a `unit` wait went out late, together). The activity lasts for the run; idle system sleep is allowed
+        if (bg) { static id act; act = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical reason:@"background test run"]; (void)act; }
+        else [win makeKeyAndOrderFront:nil];
         screen_note();
-        [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note(); }];
-        [NSApp activateIgnoringOtherApps:YES];
+        [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note();
+            if (bgrun()) bg_place(g_emul_full ? full_size() : g_emu_win); }];   // a display change may move a window that sits off every screen: put it back
+        if (!bg) [NSApp activateIgnoringOtherApps:YES];
         // 启动即全屏：选项页「显示模式」是全屏（dm_video.c 的 mode；旧版偏好 StartFullScreen 首次启动时接过来）。全屏测试开关（DM_TEST_FULLSCREEN_AT）在时不理它，
         // 来回切的时刻表才不被打乱。等运行循环转起来再切，窗口那时已上屏
         // Start in full screen: the options page "Display Mode" is Fullscreen (mode in dm_video.c; the older StartFullScreen preference is taken over on first boot). Ignored with the full-screen test switch
         // (DM_TEST_FULLSCREEN_AT) so its toggle schedule stays intact. The switch waits for the run loop, when the window is on screen.
         if (getenv("DM_APP") && !getenv("DM_TEST_FULLSCREEN_AT") && dm_video_get("mode") == 1) {
             LOG("窗口：启动即全屏（显示模式 = 全屏） | window: starts in full screen (Display Mode = Fullscreen)");
-            dispatch_async(dispatch_get_main_queue(), ^{ if (!(win.styleMask & NSWindowStyleMaskFullScreen)) [win toggleFullScreen:nil]; });
+            dispatch_async(dispatch_get_main_queue(), ^{ if (!win_full()) [win toggleFullScreen:nil]; });
         }
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;   // 只吃游戏窗口的键；软键盘输入框等其他窗口照常收字 | Only swallow keys for the game window; other windows such as the software keyboard input box receive typing as usual
@@ -554,7 +724,7 @@ void front_run(void (*guest)(void)) {
             if (hover && getenv("DM_TEST_HOVER_LOG")) LOG("鼠标悬停输入：类型 %ld", (long)e.type);
             if (hover && !g_live) return e;
             if (e.type == NSEventTypeMouseExited) { dm_touch_host_live(3, -1, -1); return e; }
-            if (e.type == NSEventTypeLeftMouseUp) { if (!g_mouse_down) return nil; g_mouse_down = 0; if (g_live) live_mouse(2, 0, 0); else dm_touch_set(NULL, 0); return nil; }
+            if (e.type == NSEventTypeLeftMouseUp) { if (!g_mouse_down) return nil; g_mouse_down = 0; if (g_live) live_mouse(2, 0, 0, kbm_mods_of(e.modifierFlags)); else dm_touch_set(NULL, 0); return nil; }
             if (e.type == NSEventTypeLeftMouseDragged && !g_mouse_down) return nil;   // 按在黑边上没收的那一笔：拖动夹到画面边上会被当成按下，抬起就成了一下点击 | a gesture whose press on the black bars was not taken: a drag clamped to the picture edge would count as a press and its release as a click
             NSPoint p = [v convertPoint:e.locationInWindow fromView:nil]; NSRect gr = game_rect();
             if (hover && getenv("DM_TEST_HOVER_LOG")) LOG("鼠标悬停坐标：窗口 %.1f,%.1f 视图 %.1f,%.1f 画面 %.1f,%.1f %.1fx%.1f", e.locationInWindow.x, e.locationInWindow.y, p.x, p.y, gr.origin.x, gr.origin.y, gr.size.width, gr.size.height);
@@ -568,10 +738,10 @@ void front_run(void (*guest)(void)) {
                 // (2) then map to the interface rectangle (along the bottom in game). In game, outside the interface rectangle is the 3D world, passed down with a sign (tapping the world maps back to the whole screen, touch_mac.c); outside the game the area beyond the shown block is the black bars, not counted as a tap
                 float vx, uy; full_ui_point(gr, nx, ny, &vx, &uy);
                 if (e.type == NSEventTypeLeftMouseDown && !dm_uiscreen_ingame() && (vx < 0 || vx > 1 || uy < 0 || uy > 1)) { g_mouse_down = 0; return nil; }
-                live_mouse(hover ? 3 : e.type == NSEventTypeLeftMouseDown ? 0 : 1, vx, uy); g_kbm_x = vx; g_kbm_y = uy; return hover ? e : nil; }
-            if (hover) { live_mouse(3, nx, ny); g_kbm_x = nx; g_kbm_y = ny; return e; }
+                live_mouse(hover ? 3 : e.type == NSEventTypeLeftMouseDown ? 0 : 1, vx, uy, kbm_mods_of(e.modifierFlags)); g_kbm_x = vx; g_kbm_y = uy; return hover ? e : nil; }
+            if (hover) { live_mouse(3, nx, ny, kbm_mods_of(e.modifierFlags)); g_kbm_x = nx; g_kbm_y = ny; return e; }
             dm_touch t = {0, nx < 0 ? 0 : nx > 1 ? 1 : nx, ny < 0 ? 0 : ny > 1 ? 1 : ny};
-            if (g_live) { live_mouse(e.type == NSEventTypeLeftMouseDown ? 0 : 1, t.x, t.y); g_kbm_x = t.x; g_kbm_y = t.y; return nil; }
+            if (g_live) { live_mouse(e.type == NSEventTypeLeftMouseDown ? 0 : 1, t.x, t.y, kbm_mods_of(e.modifierFlags)); g_kbm_x = t.x; g_kbm_y = t.y; return nil; }
             dm_touch_set(&t, 1); return nil;
         }];
         // 右键 = 手柄 B（返回 / 关面板）；滚轮 = 界面上在指针处发原版滚轮（touch_mac.c dm_wheel_ui），局内没开面板时右摇杆上下推 0.12 秒。只在 App 形态接（命令行宿主的测试不受影响）
@@ -579,18 +749,18 @@ void front_run(void (*guest)(void)) {
         if (g_live) {
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp handler:^NSEvent *(NSEvent *e) {   // PC mode: mouse buttons 3-5 run their key bindings
                 if (e.window != win || e.buttonNumber < 2 || e.buttonNumber > 4) return e;
-                kbm_wants_pc(); if (dm_kbm_live()) { kbm_event_point(e); dm_kbm_mouse(e.type == NSEventTypeOtherMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, (int)e.buttonNumber, kbm_mods()); return nil; }
+                kbm_wants_pc(); if (dm_kbm_live()) { kbm_event_point(e); dm_kbm_mouse(e.type == NSEventTypeOtherMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, (int)e.buttonNumber, kbm_mods_of(e.modifierFlags)); return nil; }
                 return e;
             }];
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:^NSEvent *(NSEvent *e) {   // PC mode: Shift (stand still), Ctrl and Option (Alt: show items) as keys
-                static int was; int now = kbm_mods();
+                static int was; int now = kbm_mods_of(e.modifierFlags);
                 if (e.window == win && dm_kbm_live()) { static const int vk[3] = { 0x10, 0x11, 0x12 }; for (int i = 0; i < 3; i++) if ((was ^ now) >> i & 1) dm_kbm_key(vk[i], now >> i & 1, now); }
                 was = now; return e;
             }];
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown | NSEventMaskRightMouseUp handler:^NSEvent *(NSEvent *e) {
                 if (e.type == NSEventTypeRightMouseDown && e.window == win && dm_vkbd_ui_active()) { dm_vkbd_ui_handoff(); return nil; }   // 同左键：换成表单 | as the left button: hand over to the sheet
                 if (e.window != win || (text_input_up() && e.type == NSEventTypeRightMouseDown)) return e;   // 输入框开着不按 B，松开照收 | no B press while the input box is open; the release is still taken
-                kbm_wants_pc(); if (dm_kbm_live()) { kbm_event_point(e); dm_kbm_mouse(e.type == NSEventTypeRightMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, 1, kbm_mods()); return nil; }   // PC mode: the right skill / use an item
+                kbm_wants_pc(); if (dm_kbm_live()) { kbm_event_point(e); dm_kbm_mouse(e.type == NSEventTypeRightMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, 1, kbm_mods_of(e.modifierFlags)); return nil; }   // PC mode: the right skill / use an item
                 if (e.type == NSEventTypeRightMouseDown) g_btn |= DM_BTN_B; else g_btn &= ~(uint64_t)DM_BTN_B;
                 push(); return nil;
             }];
@@ -626,7 +796,7 @@ void front_run(void (*guest)(void)) {
         }
         if (getenv("DM_APP") && !getenv("DM_APP_ROMFS") && ![NSUserDefaults.standardUserDefaults boolForKey:@"KeysShown"]) { show_keys(); [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"KeysShown"]; }   // 第一次启动给一次键位对照（界面上的按键提示是手柄字母）；以后在「帮助」菜单里 | Show the key mapping once on first launch (button prompts on screen are gamepad letters); afterwards it is in the Help menu
         { const char *e;   // 测试（没人点窗口时用）：DM_TEST_WINSIZE=宽x高 设内容区大小；DM_TEST_FULLSCREEN_AT=<秒> 进全屏；DM_TEST_QUIT_AT=<秒> 走一次退出 | Tests (for when nobody is there to click the window): DM_TEST_WINSIZE=WxH sets the content size; DM_TEST_FULLSCREEN_AT=<seconds> enters full screen; DM_TEST_QUIT_AT=<seconds> goes through one quit
-          int w, h; if ((e = getenv("DM_TEST_WINSIZE")) && sscanf(e, "%dx%d", &w, &h) == 2) { [win setContentSize:NSMakeSize(w, h)]; layout_game(); }
+          int w, h; if ((e = getenv("DM_TEST_WINSIZE")) && sscanf(e, "%dx%d", &w, &h) == 2) { [win setContentSize:NSMakeSize(w, h)]; if (bg) { g_emu_win = NSMakeSize(w, h); bg_place(g_emu_win); } layout_game(); }
           if ((e = getenv("DM_TEST_FULLSCREEN_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)   // 「秒[;秒…]」：每个时刻切一次全屏（来回切） | "seconds[;seconds...]": toggle full screen at each time (back and forth)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [win toggleFullScreen:nil]; });
           // DM_TEST_PRESENT_SHOT=<秒>:<路径>[;<秒>:<路径>…]：到点取下一次上屏的画面（图形层与上屏同一套编码，见 nvn_mtl.m mtl_grab_next_present）写成 PNG——
@@ -704,26 +874,36 @@ void front_run(void (*guest)(void)) {
                           if (pad) dm_gamepad_inject(m, 0, 0, 0, 0); else on_key(kev(NSEventTypeKeyDown), 1);
                           dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), tq, ^{ perform(^{ if (pad) dm_gamepad_inject(0, 0, 0, 0, 0); else on_key(kev(NSEventTypeKeyUp), 0); }); }); }); });
                       return 1; }
-                  if (!strcmp(op, "key") || !strcmp(op, "type")) {   // 「秒 key <键码>」：合成一次真正的键盘按下 / 0.08 秒后松开（键码 = 苹果的虚拟键码，如回车 36、Tab 48、J 38）；「秒 type <字>」：逐字打字。 | "<seconds> key <key code>": synthesise a real key press / release 0.08 s later (key code = Apple virtual key code, e.g. Return 36, Tab 48, J 38); "<seconds> type <text>": type character by character.
-                      // 都投给当时的键窗口（真键盘就是这样：弹着输入框时进输入框），并记一行键窗口是不是游戏窗口
-                      // All are posted to the key window at that moment (which is what a real keyboard does: into the input field while it is shown), and one line records whether the key window is the game window
+                  if (!strcmp(op, "key") || !strcmp(op, "type")) {
+                      // "<seconds> key <key code>": a real key press, released 0.08 s later (Apple virtual key codes: Return 36, Tab 48, J 38); "<seconds> type <text>": the text
+                      // as an input method would commit it. Both go where a real keyboard would: the key window, or with none (a background run, the app not in
+                      // front) the window that would be key - the sheet when one is attached, else the game window. AppKit routes keys to the key window only, so
+                      // a key for a sheet with no key window is handed to that window directly, and typing goes to its first responder. One line records the target.
+                      // Run in the main run loop's common modes (they also run while a modal dialog is up; the main queue does not)
                       int ty = !strcmp(op, "type"); char word[64] = ""; if (ty) sscanf(ln.UTF8String, "%*lf %*7s %63s", word); NSString *chars = ty ? @(word) : (x == 36 ? @"\r" : @"");
-                      if (ty) {   // 打字：在主线程的运行循环里执行（模态框开着时也走——主队列那时不走），记下第一响应者是谁，再把字经响应链送进去（等于输入法提交了这些字） | typing: executed in the main thread's run loop (which also runs while a modal dialog is open - the main queue does not), noting who the first responder is, then sending the text through the responder chain (as if an input method committed it)
-                          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
-                              NSWindow *kw = NSApp.keyWindow; id fr = kw.firstResponder; BOOL ok = [NSApp sendAction:@selector(insertText:) to:nil from:chars];
-                              LOG("DM_TEST_NSMOUSE：%.2f 秒打字「%s」（键窗口%s，第一响应者 %s，%s）", NSProcessInfo.processInfo.systemUptime - t0, chars.UTF8String, kw == win ? "是游戏窗口" : kw ? "是弹框" : "没有", fr ? NSStringFromClass([fr class]).UTF8String : "无", ok ? "有人收" : "没人收"); });
-                              CFRunLoopWakeUp(CFRunLoopGetMain()); });
+                      NSWindow *(^target)(void) = ^NSWindow *{ return NSApp.keyWindow ?: (win.attachedSheet ?: win); };
+                      const char *(^tname)(NSWindow *) = ^const char *(NSWindow *w) { return w == NSApp.keyWindow ? (w == win ? "the key game window" : "the key window (a dialog)") : w == win ? "the game window (not key)" : "the sheet (no key window)"; };
+                      void (^perform)(void (^)(void)) = ^(void (^b)(void)) { CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, b); CFRunLoopWakeUp(CFRunLoopGetMain()); };
+                      if (ty) {
+                          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ perform(^{
+                              NSWindow *tw = target(); id fr = tw.firstResponder; BOOL ok;
+                              if (NSApp.keyWindow) ok = [NSApp sendAction:@selector(insertText:) to:nil from:chars];
+                              else if ((ok = [fr respondsToSelector:@selector(insertText:)])) [(NSResponder *)fr insertText:chars];
+                              LOG("DM_TEST_NSMOUSE: %.2f s typed \"%s\" into %s, first responder %s, %s", NSProcessInfo.processInfo.systemUptime - t0, chars.UTF8String, tname(tw),
+                                  fr ? NSStringFromClass([fr class]).UTF8String : "none", ok ? "taken" : "nobody took it"); }); });
                           return 1; }
-                      for (NSUInteger ci = 0; ci < (ty ? chars.length : 1); ci++) { NSString *one = ty ? [chars substringWithRange:NSMakeRange(ci, 1)] : chars; double at = sec + ci * 0.15;
-                          for (int dn = 1; dn >= 0; dn--) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((at + (dn ? 0 : 0.08)) * NSEC_PER_SEC)), tq, ^{ NSWindow *kw = NSApp.keyWindow;
-                              if (dn) LOG("DM_TEST_NSMOUSE：%.2f 秒投 键盘 %s%s（键窗口%s）", NSProcessInfo.processInfo.systemUptime - t0, ty ? "字 " : "键码 ", ty ? one.UTF8String : [NSString stringWithFormat:@"%d", (int)x].UTF8String, kw == win ? "是游戏窗口" : kw ? "是别的窗口（弹框）" : "没有：App 里没有键窗口");
-                              [NSApp postEvent:[NSEvent keyEventWithType:dn ? NSEventTypeKeyDown : NSEventTypeKeyUp location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:(kw ?: win).windowNumber context:nil characters:one charactersIgnoringModifiers:one isARepeat:NO keyCode:ty ? 0 : (unsigned short)x] atStart:NO]; }); }
+                      for (int dn = 1; dn >= 0; dn--) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((sec + (dn ? 0 : 0.08)) * NSEC_PER_SEC)), tq, ^{ perform(^{
+                          NSWindow *tw = target(); int direct = !NSApp.keyWindow && tw != win;
+                          NSEvent *ev = [NSEvent keyEventWithType:dn ? NSEventTypeKeyDown : NSEventTypeKeyUp location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:tw.windowNumber
+                                                          context:nil characters:chars charactersIgnoringModifiers:chars isARepeat:NO keyCode:(unsigned short)x];
+                          if (dn) LOG("DM_TEST_NSMOUSE: %.2f s key code %d to %s%s", NSProcessInfo.processInfo.systemUptime - t0, (int)x, tname(tw), direct ? ", handed to it directly" : "");
+                          if (direct) [tw sendEvent:ev]; else [NSApp postEvent:ev atStart:NO]; }); });
                       return 1; }
                   if (!strcmp(op, "unit") || !strcmp(op, "unith")) {   // 「秒 unit <类型>,<类号>」：盯住这类单位（类号 16777214 = 敌对且可选中的怪、16777215 = 任意），它一在画面里就在它身体框中心投一次真正的鼠标点击；unith = 按住 2.5 秒才抬起 | "<seconds> unit <type>,<class>": watch for units of this kind (class 16777214 = hostile and selectable monster, 16777215 = any) and post one real mouse click at the centre of its body box as soon as it is on screen; unith = hold for 2.5 seconds before releasing
                       double hold = !strcmp(op, "unith") ? 2.5 : 0.1;
                       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ void dm_world_watch(int, uint32_t); int dm_world_watch_pos(float *, float *); float nx = 0, ny = 0; int ok = 0;
                           dm_world_watch((int)x, (uint32_t)y); for (int i = 0; i < 60 && !(ok = dm_world_watch_pos(&nx, &ny)); i++) usleep(50000); dm_world_watch(-1, 0);
-                          if (!ok) { LOG("DM_TEST_NSMOUSE：unit %d,%u 3 秒内没进画面，不点", (int)x, (unsigned)y); return; }
+                          if (!ok) { LOG("DM_TEST_NSMOUSE: %.2f s unit %d,%u not on screen within 3 s, no click", NSProcessInfo.processInfo.systemUptime - t0, (int)x, (unsigned)y); return; }
                           __block NSPoint pt; dispatch_sync(dispatch_get_main_queue(), ^{ pt = [v convertPoint:NSMakePoint(nx * v.bounds.size.width, (1 - ny) * v.bounds.size.height) toView:nil]; });
                           LOG("DM_TEST_NSMOUSE：%.2f 秒 unit %d,%u 在画面 (%.3f,%.3f) → 投按下，%.1f 秒后抬起", NSProcessInfo.processInfo.systemUptime - t0, (int)x, (unsigned)y, nx, ny, hold);
                           for (int dn = 1; dn >= 0; dn--) { if (!dn) usleep((useconds_t)(hold * 1e6));
@@ -760,42 +940,43 @@ void front_run(void (*guest)(void)) {
           // The quit goes through the main run loop's common modes (not the main queue): a modal dialog's (such as the key map's) modal loop runs inside a main-queue block, during which the main queue does not run, yet a real "Quit in the Dock" still comes in
           if ((e = getenv("DM_TEST_TERMINATE_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
               CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ send_quit_event(); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
-          if ((e = getenv("DM_TEST_MINI_AT"))) win.styleMask |= NSWindowStyleMaskMiniaturizable;
-          if ((e = getenv("DM_TEST_MINI_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)
-              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (win.miniaturized) [win deminiaturize:nil]; else [win miniaturize:nil]; }); }
+          if ((e = getenv("DM_TEST_MINI_AT")) && !bg) win.styleMask |= NSWindowStyleMaskMiniaturizable;
+          if ((e = getenv("DM_TEST_MINI_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)   // background: emulated (emu_minimize)
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (bg) emu_minimize(!g_mini_emul); else if (win.miniaturized) [win deminiaturize:nil]; else [win miniaturize:nil]; }); }
         // 生命周期（hle.h / dm.h）：失焦 → 2、拿回焦点 → 1；最小化 → 3 + 音频暂停 + GPU 挂起，还原 → 恢复（随后拿回焦点 → 1）
         // Lifecycle (hle.h / dm.h): focus lost → 2, focus regained → 1; minimized → 3 + audio paused + GPU suspended, restored → resume (followed by focus regained → 1)
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
-        // 窗口被别的窗口整个盖住（遮挡状态不含 Visible）：系统不给看不见的窗口显示节拍回调。按「看不见」处理——出图直接丢（mtl_present_discard，
-        // 同 iOS 进后台等存盘那段），游戏逻辑照走、声音照放、焦点不变；露出来就照常出图。不处理的话节拍停着、出图全靠兜底丢帧，日志报假红
-        // （mini 整表被 Mac App 窗口盖住坐实）。DM_OCCL=0 关掉这项（对照用）；
-        // DM_TEST_COVER=<秒>,<时长>：到点用一个不透明窗口把游戏窗口整个盖住，时长到了拿开（验收用，产品不设）
-        // Window fully covered by other windows (occlusion state lacks Visible): the system does not deliver display-link callbacks to invisible windows. Treat it as "not visible": discard frames directly (mtl_present_discard,
-        // same as the iOS background save-wait period); game logic keeps running, audio keeps playing, focus unchanged; once uncovered, present normally. Without this the display link stalls, presentation relies entirely on fallback frame drops, and the log reports false reds
-        // (confirmed when a full regression table on the test Mac was covered by the Mac App window). DM_OCCL=0 disables this (for comparison);
-        // DM_TEST_COVER=<seconds>,<duration>: at that time, cover the game window entirely with an opaque window and remove it after the duration (for acceptance testing, not set in the product)
-        { const char *e = getenv("DM_OCCL"); int on = !(e && !strcmp(e, "0"));
+        // Occlusion (occl_apply). DM_TEST_COVER=<seconds>,<duration>: at that time the game window is wholly covered and uncovered after the duration (acceptance
+        // tests, never set in the product). A front run covers it with an opaque window ordered just above the game window (never above another app's
+        // window); a background run's window is off every screen, so its cover is virtual (the same handling, no window), and real occlusion only shows as
+        // `desk covered|uncovered` (it never discards a background run's presents: the off-screen window reads "not visible" from the start)
+        { const char *e = getenv("DM_OCCL"); g_occl_on = !(e && !strcmp(e, "0"));
           [nc addObserverForName:NSWindowDidChangeOcclusionStateNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n;
-              int hidden = !(win.occlusionState & NSWindowOcclusionStateVisible); void mtl_present_discard(int on);
-              LOG("前端：窗口%s（遮挡处理%s）", hidden ? "整个被盖住 / 不可见" : "露出来了", on ? "开" : "关 DM_OCCL=0");
-              DM_EV("app", "state:s", hidden ? "occluded" : "visible");
-              if (on) mtl_present_discard(hidden); }];
+              int hidden = !(win.occlusionState & NSWindowOcclusionStateVisible);
+              if (bgrun()) { desk_ev(hidden ? "covered" : "uncovered", NULL); return; }
+              occl_apply(hidden, 0); }];
           double at = 0, dur = 0;
           if ((e = getenv("DM_TEST_COVER")) && sscanf(e, "%lf,%lf", &at, &dur) == 2 && at > 0 && dur > 0)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                  if (bgrun()) { LOG("DM_TEST_COVER: virtual cover for %.1f s (background run)", dur); occl_apply(1, 1);
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(dur * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ occl_apply(0, 1); LOG("DM_TEST_COVER: virtual cover removed"); });
+                      return; }
                   NSWindow *c = [[NSWindow alloc] initWithContentRect:NSInsetRect(win.frame, -40, -40) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
-                  c.opaque = YES; c.backgroundColor = NSColor.grayColor; c.releasedWhenClosed = NO; [c orderFrontRegardless];
+                  c.opaque = YES; c.backgroundColor = NSColor.grayColor; c.releasedWhenClosed = NO; [c orderWindow:NSWindowAbove relativeTo:win.windowNumber];
                   LOG("DM_TEST_COVER：盖上 %.1f 秒，游戏窗口%s是主窗口", dur, win.isKeyWindow ? "" : "不");
                   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(dur * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [c orderOut:nil]; LOG("DM_TEST_COVER：拿开"); });
               }); }
-        [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "resign"); if (!win.miniaturized && !atomic_load(&g_quitting)) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
-        [nc addObserverForName:NSWindowDidBecomeKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "active"); dm_focus_set(1); }];
-        // 最小化：客体时钟一并冻结（同 iOS 进后台）。否则游戏线程挡在图形挂起处、墙钟照走，恢复时主循环把整段最小化时长的拍一口气补跑完——角色站着不动、怪照打（专家模式死了就没了）
-        // Minimize: the guest clock is frozen as well (as when iOS goes to the background). Otherwise the game thread is blocked at the graphics suspend while the wall clock keeps running, and on restore the main loop catches up on every tick of the minimized period in one burst -- the character stands still while monsters keep attacking (a death in Hardcore is permanent)
-        [nc addObserverForName:NSWindowDidMiniaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; void guest_clock_freeze_for(int reason, int on); uint64_t guest_ns(void);
-            dm_focus_set(3); dm_audio_suspend(1); guest_clock_freeze_for(1, 1); dm_gfx_suspend(1); LOG("窗口：最小化（客体时钟 %.3f s，冻结）", guest_ns() / 1e9); DM_EV("app", "state:s", "minimized"); void dm_game_state_background(int); dm_game_state_background(1); }];
-        [nc addObserverForName:NSWindowDidDeminiaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; void guest_clock_freeze_for(int reason, int on); uint64_t guest_ns(void);
-            dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); dm_audio_suspend(0); dm_focus_set(2); LOG("窗口：恢复（客体时钟 %.3f s）", guest_ns() / 1e9); DM_EV("app", "state:s", "restored"); void dm_game_state_background(int); dm_game_state_background(0); }];
+        desk_watch();
+        [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; key_lost(resign_cause(), 0); }];
+        [nc addObserverForName:NSWindowDidBecomeKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; key_gained(0); }];
+        [nc addObserverForName:NSWindowDidMiniaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; mini_enter(0); }];
+        [nc addObserverForName:NSWindowDidDeminiaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; mini_leave(0); }];
+        // Background: the window never becomes key, so a sheet (the name / quantity box, the save-failed notice) takes the key state as AppKit would give it:
+        // lost when the sheet begins, regained when it ends (the 2 -> 1 focus sequence of a front run)
+        if (bg) {
+            [nc addObserverForName:NSWindowWillBeginSheetNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; g_sheet_t = CACurrentMediaTime(); key_lost("sheet", 1); }];
+            [nc addObserverForName:NSWindowDidEndSheetNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; key_gained(1); }];
+        }
         // 客体线程：栈 64 MiB（Switch 主线程栈由 npdm 指定，宿主给足）
         // Guest thread: 64 MiB stack (the Switch main thread stack is specified by npdm; the host gives plenty)
         static guest_arg ga; ga.fn = guest;
@@ -882,6 +1063,7 @@ static int text_sheet(const char *title, const char *sub, const char *guide, con
         [q controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:f]];   // 带过来的字（屏幕键盘交过来的）也按规则量一次 | text carried over (handed over by the on-screen keyboard) is checked by the rules once too
         [a beginSheetModalForWindow:g_win completionHandler:^(NSModalResponse m) {
             if (g_text_req == q) g_text_req = nil;
+            DM_EV("sheet", "result:s len:d", m == NSAlertFirstButtonReturn ? "ok" : m == SHEET_TO_PAD ? "pad" : "cancel", (int)f.stringValue.length);   // tests: how the box closed and how much text it held (never the text)
             text_req_finish(q, m == NSAlertFirstButtonReturn ? 1 : m == SHEET_TO_PAD ? 2 : 0, f.stringValue);   // 退出时已按取消交过结果的，这里不再交 | if the quit already handed over "Cancel", nothing more is handed over here
         }];
         // 表单出来后光标要在输入框里：只指定「初始第一响应者」不保险（模态框时实测第一响应者是弹框自己，要先点一下输入框才能打字），显式指定一次
