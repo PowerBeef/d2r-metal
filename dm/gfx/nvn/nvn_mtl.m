@@ -2175,7 +2175,10 @@ static os_unfair_lock g_warm_lock = OS_UNFAIR_LOCK_INIT;
 static _Atomic int g_warm_ready;
 static int g_warm_started;
 static uint64_t g_warm_t0;
-static _Atomic int g_warm_running;   // 后台预热还没跑完（进局读取画面据此多等一会儿，见 mtl_warm_wait） | Background warm-up has not finished yet (the loading screen on entering a run waits a little longer based on this, see mtl_warm_wait)
+static _Atomic int g_warm_running;   // live warm-up workers, the planner included: the launcher's pass waits for 0 (warm_wait_all)
+static _Atomic int g_warm_fg_left;   // foreground rows not built yet, plus the planner's placeholder: the first loading screen waits for 0 (mtl_warm_wait)
+static int g_warm_pass;              // 1 in the launcher's --warm-shaders pass, which builds the background rows at full priority too
+static int warm_wait_all(int timeout_ms);
 // Warm-up counts for its done line: built shaders / render / compute pipelines; skipped rows: malformed or of another layout (bad), repeated
 // (dup), specialised rows whose function did not build (skip_fz), rows whose shader did not load (missing), manifests not read (files)
 static _Atomic uint64_t g_warm_shaders, g_warm_rps, g_warm_cps, g_warm_skip_fz, g_warm_bad, g_warm_dup, g_warm_missing, g_warm_files;
@@ -2389,12 +2392,13 @@ int nvn_mtl_warm_shaders(const char *shard) {   // shard = "k/n" in a worker, NU
             for (int w = 0; w < procs; w++) { int st = 0; while (waitpid(pid[w], &st, 0) < 0 && errno == EINTR) {}
                 if (!WIFEXITED(st) || WEXITSTATUS(st)) bad += WIFEXITED(st) ? WEXITSTATUS(st) : 1; }
         }
-        // Then the game's own pipeline warm-up (pso_manifest.tsv, what the loading screen waits for): the system caches each pipeline's GPU code too,
-        // which a new install (or a new bundle id) lacks. Measured on a fresh install: 19.8 s of warm-up at the first loading screen, 0.2 s once cached
+        // Then the game's own pipeline warm-up (pso_manifest.tsv and the player's pso_user.tsv): the system caches each pipeline's GPU code too,
+        // which a new install (or a new bundle id) lacks. Measured on a fresh install: 19.8 s of warm-up at the first loading screen, 0.2 s once cached.
+        // The seed's foreground rows are what the loading screen waits for; this pass waits for all rows, background ones at full priority
         if (!bad) {
-            int mtl_warm_wait(int timeout_ms); double tp = CACurrentMediaTime();
+            double tp = CACurrentMediaTime();
             if (!g_dev) g_dev = MTLCreateSystemDefaultDevice();   // the workers compiled the libraries; this process has had no device yet
-            shmap_load(); mtl_warm_wait(600000);
+            g_warm_pass = 1; shmap_load(); warm_wait_all(600000);
             printf("WARM pipelines done, %.1f s\n", CACurrentMediaTime() - tp); fflush(stdout);
         }
         char osb[64] = ""; size_t ol = sizeof osb; sysctlbyname("kern.osversion", osb, &ol, NULL, 0);
@@ -3020,10 +3024,19 @@ static NSString *warm_key(const char *s, size_t n) {
     size_t z = strnlen(s, n);
     return [[NSString alloc] initWithBytes:s length:z encoding:NSUTF8StringEncoding];
 }
-static NvShader *warm_shader(NSMutableDictionary<NSString *, NvShader *> *dict, NSString *key, int stage) {
-    NvShader *sh = dict[key];
-    if (!sh) { sh = shader_load(key, stage); if (sh) dict[key] = sh; }
-    return sh;
+// The shader dictionary the warm-up workers share: looked up under the lock, loaded outside it, inserted only if the key is still absent (a racing
+// loser's copy is dropped). A shader that did not load is kept as NSNull, so it is neither loaded nor logged again. Released when the warm-up ends
+static NSMutableDictionary *g_warm_dict; static os_unfair_lock g_warm_dict_lock = OS_UNFAIR_LOCK_INIT;
+static NvShader *warm_shader(NSString *key, int stage) {
+    os_unfair_lock_lock(&g_warm_dict_lock); id have = g_warm_dict[key]; os_unfair_lock_unlock(&g_warm_dict_lock);
+    if (!have) {
+        NvShader *sh = shader_load(key, stage);
+        os_unfair_lock_lock(&g_warm_dict_lock);
+        have = g_warm_dict[key];
+        if (!have) { have = sh ?: (id)NSNull.null; g_warm_dict[key] = have; }
+        os_unfair_lock_unlock(&g_warm_dict_lock);
+    }
+    return have == NSNull.null ? nil : have;
 }
 static void warm_enqueue(WarmItem *item) {
     os_unfair_lock_lock(&g_warm_lock);
@@ -3040,78 +3053,186 @@ static char warm_parse(NSString *line, NSString **key, int *stage, pso_skey *sk)
     if ([c[0] isEqualToString:@"C"]) { if (c.count < 2 || !c[1].length) return 0; *key = c[1]; return 'C'; }
     return 0;
 }
-static void warm_worker(NSArray<NSString *> *paths) {
-    @autoreleasepool {
-        NSMutableDictionary<NSString *, NvShader *> *dict = [NSMutableDictionary dictionary];
-        NSMutableSet *seen = [NSMutableSet set];
-        for (NSString *path in paths) {
-            NSString *txt = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-            if (!txt) { MLOG("【红】pipeline manifest %s could not be read", path.UTF8String); g_warm_files++; continue; }
-            if (!pso_layout_ok(txt, path)) { g_warm_files++; continue; }
-            for (NSString *line in [txt componentsSeparatedByString:@"\n"]) {
-                if (!line.length || [line hasPrefix:@"#"]) continue;
-                NSString *key = nil; int stage = 0; pso_skey sk; char tag = warm_parse(line, &key, &stage, &sk);
-                if (!tag) { g_warm_bad++; continue; }
-                id dk = tag == 'R' ? [NSData dataWithBytes:&sk length:sizeof sk] : [NSString stringWithFormat:@"%c\t%@", tag, key];   // R rows dedupe on the normalised key
-                if ([seen containsObject:dk]) { g_warm_dup++; continue; }
-                [seen addObject:dk];
-                if (tag == 'S') {
-                    NvShader *sh = warm_shader(dict, key, stage);
-                    if (!sh) { g_warm_missing++; continue; }
-                    WarmItem *item = [WarmItem new]; item->kind = 0; item->key = key; item->shader = sh;
-                    warm_enqueue(item); g_warm_shaders++;
-                } else if (tag == 'R') {
-                    NSString *vkey = warm_key(sk.vs, sizeof sk.vs), *fkey = warm_key(sk.fs, sizeof sk.fs);
-                    NvShader *vs = warm_shader(dict, vkey, sk.vs_stage);
-                    NvShader *fs = fkey.length ? warm_shader(dict, fkey, sk.fs_stage) : nil;
-                    if (!vs || (fkey.length && !fs)) { g_warm_missing++; continue; }
-                    id<MTLFunction> fsfn = nil;
-                    if (sk.fz) {
-                        if (fs) { int fx[32]; for (int i = 0; i < 32; i++) fx[i] = sk.fz_desc.fx[i]; fsfn = bf_fn(fs, fx, sk.fz_desc.fbmask, sk.k.lmap); }
-                        if (!fsfn) { g_warm_skip_fz++; continue; }
-                    }
-                    pso_key k = sk.k; k.vs = (__bridge void *)vs; k.fs = (__bridge void *)fs; k.fsfn = (__bridge void *)fsfn;
-                    NSError *e = nil; id ps = [g_dev newRenderPipelineStateWithDescriptor:pso_desc(&k, vs, fs, fsfn, sk.merged) error:&e];
-                    if (!ps) { MLOG("【红】pipeline warm-up: a render pipeline did not build: %s", e.localizedDescription.UTF8String); continue; }
-                    WarmItem *item = [WarmItem new]; item->kind = 1; item->vs_key = vkey; item->fs_key = fkey; item->vs = vs; item->fs = fs; item->fsfn = fsfn; item->pso = k; item->object = ps;
-                    warm_enqueue(item); g_warm_rps++;
-                } else {
-                    NvShader *cs = warm_shader(dict, key, 5);
-                    if (!cs) { g_warm_missing++; continue; }
-                    NSError *e = nil; id ps = [g_dev newComputePipelineStateWithFunction:cs->fn error:&e];
-                    if (!ps) { MLOG("【红】pipeline warm-up: a compute pipeline did not build: %s", e.localizedDescription.UTF8String); continue; }
-                    WarmItem *item = [WarmItem new]; item->kind = 2; item->key = key; item->shader = cs; item->object = ps;
-                    warm_enqueue(item); g_warm_cps++;
-                }
-            }
+// ---- The warm-up plan: one list in priority order, built by DM_PSO_WARM_WORKERS workers (1-4, default 2) ----
+// Order: the seed's rows before PSO_WARM_BG_MARK (front end, Act 1), the player's own manifest, then the seed's rows after the marker. The first
+// loading screen waits only for the first two parts (mtl_warm_wait); the background part builds afterwards at utility priority, so later acts'
+// compiles cost less CPU and heat during play (the launcher's pass builds it at full priority and waits for it, warm_wait_all)
+@interface WarmRow : NSObject { @public char tag; NSString *key; int stage; pso_skey sk; } @end
+@implementation WarmRow @end
+typedef struct { uint64_t bad, dup, files_skipped; } warm_counts;
+// The plan over the two manifest texts (either may be nil; the names are for the log). Rows are read as warm_parse does (failures count in bad); a
+// text of another key layout is skipped (files_skipped); the seed's marker splits it, a marker in the user text is ignored. Repeated rows are dropped
+// in priority order (dup): S and C by key, R by the normalised key, so a row both in the user manifest and after the seed's marker builds in the
+// foreground. *fg = the number of foreground rows, which come first
+static NSArray<WarmRow *> *warm_plan(NSString *seed, NSString *user, NSString *seed_name, NSString *user_name, int *fg, warm_counts *n) {
+    NSMutableArray<WarmRow *> *part[3] = {[NSMutableArray array], [NSMutableArray array], [NSMutableArray array]};   // seed foreground, user, seed background
+    for (int src = 0; src < 2; src++) {
+        NSString *txt = src ? user : seed;
+        if (!txt) continue;
+        if (!pso_layout_ok(txt, (src ? user_name : seed_name) ?: (src ? @"(user)" : @"(seed)"))) { n->files_skipped++; continue; }
+        int bg = 0;
+        for (NSString *line in [txt componentsSeparatedByString:@"\n"]) {
+            if (!line.length) continue;
+            if ([line hasPrefix:@"#"]) { if (!src && [line isEqualToString:@PSO_WARM_BG_MARK]) bg = 1; continue; }
+            WarmRow *r = [WarmRow new]; NSString *key = nil; int stage = 0;
+            r->tag = warm_parse(line, &key, &stage, &r->sk);
+            if (!r->tag) { n->bad++; continue; }
+            r->key = key; r->stage = stage;
+            [part[src ? 1 : bg ? 2 : 0] addObject:r];
         }
-        MLOG("pipeline warm-up done: shaders %llu, render pipelines %llu, compute pipelines %llu; skipped: bad rows %llu, duplicates %llu, specialised %llu, missing shaders %llu, files %llu; %.1f ms",
-             (unsigned long long)g_warm_shaders, (unsigned long long)g_warm_rps, (unsigned long long)g_warm_cps, (unsigned long long)g_warm_bad, (unsigned long long)g_warm_dup,
-             (unsigned long long)g_warm_skip_fz, (unsigned long long)g_warm_missing, (unsigned long long)g_warm_files, (bp_now() - g_warm_t0) / 1e6);
     }
-    atomic_store(&g_warm_running, 0);
+    NSMutableSet *seen = [NSMutableSet set]; NSMutableArray<WarmRow *> *out = [NSMutableArray array];
+    *fg = 0;
+    for (int p = 0; p < 3; p++) {
+        for (WarmRow *r in part[p]) {
+            id dk = r->tag == 'R' ? [NSData dataWithBytes:&r->sk length:sizeof r->sk] : [NSString stringWithFormat:@"%c\t%@", r->tag, r->key];
+            if ([seen containsObject:dk]) { n->dup++; continue; }
+            [seen addObject:dk]; [out addObject:r];
+        }
+        if (p == 1) *fg = (int)out.count;
+    }
+    return out;
 }
-// 等后台预热跑完（最多 timeout_ms）：返回实际等了多少毫秒，没在跑返回 0。首装时系统着色器缓存全冷，预热慢于玩家进局的话，
-// 没预热到的管线会在提交线程现编 = 局内卡顿；进局读取画面本来就挡着玩家，让它多读一会儿（hle_nvn.c 出图处调）。
-// Wait for the background warm-up to finish (at most timeout_ms): returns how many milliseconds were actually waited, 0 if it is not running. On first install the system shader cache is fully cold; if warm-up is slower than the player entering a run,
-// pipelines not yet warmed are compiled on the spot on the submit thread = in-run stutter; the loading screen on entering a run blocks the player anyway, so let it load a little longer (called where hle_nvn.c presents).
+// Builds one row as the warm-up always has: S -> the shader (WarmItem kind 0), R -> the render pipeline (kind 1; a specialised row builds its
+// function first), C -> the compute pipeline (kind 2), each handed to the submit thread through warm_enqueue. A row whose shader does not load
+// counts as missing
+static void warm_row(WarmRow *r) {
+    if (r->tag == 'S') {
+        NvShader *sh = warm_shader(r->key, r->stage);
+        if (!sh) { g_warm_missing++; return; }
+        WarmItem *item = [WarmItem new]; item->kind = 0; item->key = r->key; item->shader = sh;
+        warm_enqueue(item); g_warm_shaders++;
+    } else if (r->tag == 'R') {
+        const pso_skey *sk = &r->sk;
+        NSString *vkey = warm_key(sk->vs, sizeof sk->vs), *fkey = warm_key(sk->fs, sizeof sk->fs);
+        NvShader *vs = warm_shader(vkey, sk->vs_stage), *fs = fkey.length ? warm_shader(fkey, sk->fs_stage) : nil;
+        if (!vs || (fkey.length && !fs)) { g_warm_missing++; return; }
+        id<MTLFunction> fsfn = nil;
+        if (sk->fz) {
+            if (fs) { int fx[32]; for (int i = 0; i < 32; i++) fx[i] = sk->fz_desc.fx[i]; fsfn = bf_fn(fs, fx, sk->fz_desc.fbmask, sk->k.lmap); }
+            if (!fsfn) { g_warm_skip_fz++; return; }
+        }
+        pso_key k = sk->k; k.vs = (__bridge void *)vs; k.fs = (__bridge void *)fs; k.fsfn = (__bridge void *)fsfn;
+        NSError *e = nil; id ps = [g_dev newRenderPipelineStateWithDescriptor:pso_desc(&k, vs, fs, fsfn, sk->merged) error:&e];
+        if (!ps) { MLOG("【红】pipeline warm-up: a render pipeline did not build: %s", e.localizedDescription.UTF8String); return; }
+        WarmItem *item = [WarmItem new]; item->kind = 1; item->vs_key = vkey; item->fs_key = fkey; item->vs = vs; item->fs = fs; item->fsfn = fsfn; item->pso = k; item->object = ps;
+        warm_enqueue(item); g_warm_rps++;
+    } else {
+        NvShader *cs = warm_shader(r->key, 5);
+        if (!cs) { g_warm_missing++; return; }
+        NSError *e = nil; id ps = [g_dev newComputePipelineStateWithFunction:cs->fn error:&e];
+        if (!ps) { MLOG("【红】pipeline warm-up: a compute pipeline did not build: %s", e.localizedDescription.UTF8String); return; }
+        WarmItem *item = [WarmItem new]; item->kind = 2; item->key = r->key; item->shader = cs; item->object = ps;
+        warm_enqueue(item); g_warm_cps++;
+    }
+}
+static NSArray<WarmRow *> *g_warm_plan; static int g_warm_fg, g_warm_n, g_warm_workers;   // set by the planner before any worker starts
+static dispatch_queue_t g_warm_q;   // concurrent, user-initiated: the planner and the foreground workers
+static _Atomic int g_warm_next_fg, g_warm_next_bg, g_warm_fg_workers;
+static _Atomic int g_warm_underflow, g_warm_done_lines, g_warm_bg_qos_seen;   // for the tests: counter errors, done lines printed, the background workers' QoS
+static _Atomic uint64_t g_warm_fg_done_ns, g_warm_all_done_ns;
+// Releases one unit of a warm-up counter and returns the count before it. The caller holding the last unit runs last() first and then releases it,
+// so whoever waits for 0 also sees what last() did (a counter only grows while its caller still holds a unit). Releasing below zero is a
+// bookkeeping error: counted in g_warm_underflow, logged once, and the counter stays at 0
+static int warm_dec(_Atomic int *c, void (*last)(void)) {
+    int cur = atomic_load(c);
+    for (;;) {
+        if (cur <= 0) { if (!atomic_fetch_add(&g_warm_underflow, 1)) MLOG("【红】pipeline warm-up: a counter went below zero"); return cur; }
+        if (cur == 1) { if (last) last(); atomic_fetch_sub(c, 1); return 1; }
+        if (atomic_compare_exchange_weak(c, &cur, cur - 1)) return cur;
+    }
+}
+static void warm_fg_done(void) {
+    uint64_t now = bp_now(); atomic_store(&g_warm_fg_done_ns, now);
+    MLOG("pipeline warm-up: foreground rows done in %.1f ms (%d rows, %d workers)", (now - g_warm_t0) / 1e6, g_warm_fg, g_warm_workers);
+}
+static void warm_all_done(void) {
+    uint64_t now = bp_now(); atomic_store(&g_warm_all_done_ns, now);
+    MLOG("pipeline warm-up done: shaders %llu, render pipelines %llu, compute pipelines %llu; skipped: bad rows %llu, duplicates %llu, specialised %llu, missing shaders %llu, files %llu; %.1f ms; workers %d, foreground %.1f ms",
+         (unsigned long long)g_warm_shaders, (unsigned long long)g_warm_rps, (unsigned long long)g_warm_cps, (unsigned long long)g_warm_bad, (unsigned long long)g_warm_dup,
+         (unsigned long long)g_warm_skip_fz, (unsigned long long)g_warm_missing, (unsigned long long)g_warm_files, (now - g_warm_t0) / 1e6, g_warm_workers,
+         ((double)atomic_load(&g_warm_fg_done_ns) - (double)g_warm_t0) / 1e6);
+    atomic_fetch_add(&g_warm_done_lines, 1);
+    os_unfair_lock_lock(&g_warm_dict_lock); g_warm_dict = nil; g_warm_plan = nil; os_unfair_lock_unlock(&g_warm_dict_lock);
+}
+static void warm_worker_end(void) { warm_dec(&g_warm_running, warm_all_done); }
+static void warm_bg_worker(void) {
+    @autoreleasepool {
+        for (int i, first = 1; (i = atomic_fetch_add(&g_warm_next_bg, 1)) < g_warm_n; first = 0) {
+            if (first) atomic_store(&g_warm_bg_qos_seen, (int)qos_class_self());
+            @autoreleasepool { warm_row(g_warm_plan[(NSUInteger)i]); }
+        }
+    }
+    warm_worker_end();
+}
+static void warm_start_bg(void) {   // after the foreground rows: min(workers, rows) background workers, at utility priority except in the launcher's pass
+    int left = g_warm_n - g_warm_fg;
+    if (left <= 0) return;
+    int k = MIN(g_warm_workers, left);
+    atomic_fetch_add(&g_warm_running, k);
+    dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT, g_warm_pass ? QOS_CLASS_USER_INITIATED : QOS_CLASS_UTILITY, 0);
+    dispatch_queue_t q = dispatch_queue_create("dm.nvn.pso-warm-bg", attr);
+    for (int w = 0; w < k; w++) dispatch_async(q, ^{ warm_bg_worker(); });
+}
+static void warm_fg_worker(void) {
+    @autoreleasepool {
+        for (int i; (i = atomic_fetch_add(&g_warm_next_fg, 1)) < g_warm_fg; ) {
+            @autoreleasepool { warm_row(g_warm_plan[(NSUInteger)i]); }
+            warm_dec(&g_warm_fg_left, warm_fg_done);
+        }
+    }
+    warm_dec(&g_warm_fg_workers, warm_start_bg);   // the last foreground worker to finish starts the background part
+    warm_worker_end();
+}
+static void warm_planner(NSString *seed_path, NSString *user_path) {
+    @autoreleasepool {
+        NSString *seed = nil, *user = nil;
+        if (seed_path && !(seed = [NSString stringWithContentsOfFile:seed_path encoding:NSUTF8StringEncoding error:nil])) { MLOG("【红】pipeline manifest %s could not be read", seed_path.UTF8String); g_warm_files++; }
+        if (user_path && !(user = [NSString stringWithContentsOfFile:user_path encoding:NSUTF8StringEncoding error:nil])) { MLOG("【红】pipeline manifest %s could not be read", user_path.UTF8String); g_warm_files++; }
+        warm_counts n = {0}; int fg = 0;
+        NSArray<WarmRow *> *plan = warm_plan(seed, user, seed_path, user_path, &fg, &n);
+        g_warm_bad += n.bad; g_warm_dup += n.dup; g_warm_files += n.files_skipped;
+        const char *w = getenv("DM_PSO_WARM_WORKERS");
+        int workers = w && w[0] >= '1' && w[0] <= '4' && !w[1] ? w[0] - '0' : 2;
+        g_warm_plan = plan; g_warm_fg = fg; g_warm_n = (int)plan.count; g_warm_workers = workers;
+        int k_fg = fg ? MIN(workers, fg) : 0;
+        atomic_store(&g_warm_next_fg, 0); atomic_store(&g_warm_next_bg, fg); atomic_store(&g_warm_fg_workers, k_fg);
+        atomic_fetch_add(&g_warm_fg_left, fg); atomic_fetch_add(&g_warm_running, k_fg);   // added before anything is released
+        for (int i = 0; i < k_fg; i++) dispatch_async(g_warm_q, ^{ warm_fg_worker(); });
+        if (!k_fg) warm_start_bg();
+    }
+    warm_dec(&g_warm_fg_left, warm_fg_done);   // the planner's placeholders
+    warm_worker_end();
+}
+// Waits (at most timeout_ms) for the warm-up's foreground rows; returns the milliseconds waited, 0 at once when nothing is pending. On a first
+// install the system's shader cache is cold, and rows not built before the player enters a run would compile on the submit thread (stutter in
+// game); the loading screen hides the wait (hle_nvn.c, at present)
 int mtl_warm_wait(int timeout_ms) {
-    if (!atomic_load(&g_warm_running)) return 0;
+    if (atomic_load(&g_warm_fg_left) <= 0) return 0;
     uint64_t t0 = bp_now();
-    while (atomic_load(&g_warm_running) && (bp_now() - t0) / 1000000ull < (uint64_t)timeout_ms) usleep(2000);
+    while (atomic_load(&g_warm_fg_left) > 0 && (bp_now() - t0) / 1000000ull < (uint64_t)timeout_ms) usleep(2000);
     return (int)((bp_now() - t0) / 1000000ull) + 1;
 }
+static int warm_wait_all(int timeout_ms) {   // the same for every row (the launcher's pass)
+    if (atomic_load(&g_warm_running) <= 0) return 0;
+    uint64_t t0 = bp_now();
+    while (atomic_load(&g_warm_running) > 0 && (bp_now() - t0) / 1000000ull < (uint64_t)timeout_ms) usleep(2000);
+    return (int)((bp_now() - t0) / 1000000ull) + 1;
+}
+// Starts the warm-up once (shmap_load): nothing when there is no manifest to read; otherwise the planner runs on the warm-up queue, holding one unit
+// of each counter until the plan's workers have been started
 static void warm_start(void) {
     if (g_warm_started++) return;
     NSString *seed, *user; pso_warm_sources(&seed, &user);
     if (!seed && !user) return;
-    NSMutableArray<NSString *> *paths = [NSMutableArray array]; if (seed) [paths addObject:seed]; if (user) [paths addObject:user];
     if (!g_warm_items) g_warm_items = [NSMutableArray array];
+    g_warm_dict = [NSMutableDictionary dictionary];
     g_warm_t0 = bp_now();
-    dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);   // 不是可有可无的后台活：它决定玩家进局前管线是否就绪 | Not optional background work: it decides whether the pipelines are ready before the player enters a run
-    dispatch_queue_t q = dispatch_queue_create("dm.nvn.pso-warm", attr);
-    atomic_store(&g_warm_running, 1);
-    dispatch_async(q, ^{ warm_worker(paths); });
+    atomic_store(&g_warm_fg_left, 1); atomic_store(&g_warm_running, 1);
+    // Not optional background work: it decides whether the pipelines are ready before the player enters a run
+    dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT, QOS_CLASS_USER_INITIATED, 0);
+    g_warm_q = dispatch_queue_create("dm.nvn.pso-warm", attr);
+    dispatch_async(g_warm_q, ^{ warm_planner(seed, user); });
 }
 static int g_rt_ovr;   // 运行时外推的模板覆盖：0 不覆盖；1 只在单位 / 特效 / 外推洞位（0xD0）上通过、不写模板；3 照常深度测试，通过处写特效位 0x40 | Stencil override for runtime extrapolation: 0 no override; 1 pass only on the unit / effect / extrapolation-hole bits (0xD0), no stencil write; 3 depth test as usual, write the effect bit 0x40 where it passes
 static id<MTLDepthStencilState> dss_get(int has_depth, int has_stencil) {

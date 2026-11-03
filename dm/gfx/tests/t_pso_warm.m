@@ -1,7 +1,9 @@
 // Pipeline key and warm-up unit tests (includes nvn_mtl.m; no game files): pso_key_fill hands pso_desc normalised keys (pso_key_norm), and a
 // normalised key builds the same descriptor as the raw one, for two hand-made keys and the first 2,000 random keys of t_pso_skey's generator;
 // where the user manifest lives (DM_PSO_USER, off, beside DM_SAVE), which manifests the warm-up reads (DM_PSO_MANIFEST off / path / default), and
-// the user manifest's dedupe treating an old raw row and its normalised form as one.
+// the user manifest's dedupe treating an old raw row and its normalised form as one; the warm-up plan (priority order, background marker, dedupe
+// across files, a file of another layout), the warm-up end to end with every shader missing (counters end at 0, one done line, background QoS) for
+// each source combination, marker position and worker count, and the two waits.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -45,6 +47,53 @@ static int same_desc(const pso_key *raw, int merged, const char *what) {
         }
     }
     return 1;
+}
+
+// An R row of the plan tests: vertex key aaaa…_b, one colour attachment of format f, junk blend factors on output 1 (normalised away)
+static NSString *rrow(uint32_t f, unsigned junk, int pad) {
+    NvShader *v = [NvShader new]; strcpy(v->key, "aaaaaaaaaaaaaaaa_b");
+    pso_key k; memset(&k, 0, sizeof k); k.cfmt[0] = f; k.chmask = 0xf; k.samples = 1; k.blend[1] = (blend_st){1, junk, junk, junk, junk, 1, 1};
+    pso_skey sk; char h[sizeof sk * 2 + 1]; pso_skey_from(&k, v, nil, 0, NULL, &sk);
+    if (pad) ((uint8_t *)&sk)[86] = ((uint8_t *)&sk)[87] = 0xff;
+    pso_skey_hex(&sk, h); return @(h);
+}
+static NSString *plan_str(NSArray<WarmRow *> *plan) {
+    NSMutableArray *o = [NSMutableArray array];
+    for (WarmRow *r in plan) [o addObject:r->tag == 'R' ? [NSString stringWithFormat:@"R%u", r->sk.k.cfmt[0]] : [NSString stringWithFormat:@"%c %@", r->tag, [r->key substringToIndex:4]]];
+    return [o componentsJoinedByString:@","];
+}
+static void warm_reset(void) {
+    g_warm_started = 0; g_warm_shaders = g_warm_rps = g_warm_cps = g_warm_skip_fz = g_warm_bad = g_warm_dup = g_warm_missing = g_warm_files = 0;
+    atomic_store(&g_warm_underflow, 0); atomic_store(&g_warm_done_lines, 0); atomic_store(&g_warm_bg_qos_seen, 0);
+    atomic_store(&g_warm_fg_done_ns, 0); atomic_store(&g_warm_all_done_ns, 0); g_warm_pass = 0;
+}
+// n distinct rows (S, R and C in turn) for a manifest body
+static NSString *rows(int from, int n) {
+    NSMutableString *t = [NSMutableString string];
+    for (int i = from; i < from + n; i++) {
+        if (i % 3 == 0) [t appendFormat:@"S\ts%015d_b\t0\n", i];
+        else if (i % 3 == 1) [t appendFormat:@"R\t%@\n", rrow(100u + (uint32_t)i, 9, 0)];
+        else [t appendFormat:@"C\tc%015d_b\n", i];
+    }
+    return t;
+}
+// One end-to-end warm-up with every shader missing: seed (nil = no file), user (nil = DM_PSO_USER=off), worker count; checks the counters
+static void e2e(const char *name, NSString *dir, NSString *seed, NSString *user, const char *workers, int want_missing, int want_lines, int want_qos, int pass) {
+    NSFileManager *fm = NSFileManager.defaultManager; NSString *sp = [dir stringByAppendingPathComponent:@"pso_manifest.tsv"], *up = [dir stringByAppendingPathComponent:@"user.tsv"];
+    [fm removeItemAtPath:sp error:nil]; [fm removeItemAtPath:up error:nil];
+    if (seed) [seed writeToFile:sp atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    if (user) { [user writeToFile:up atomically:YES encoding:NSUTF8StringEncoding error:nil]; setenv("DM_PSO_USER", up.fileSystemRepresentation, 1); } else setenv("DM_PSO_USER", "off", 1);
+    if (workers) setenv("DM_PSO_WARM_WORKERS", workers, 1); else unsetenv("DM_PSO_WARM_WORKERS");
+    warm_reset(); g_warm_pass = pass; g_shmap_path = [dir stringByAppendingPathComponent:@"shader_map.tsv"];
+    warm_start();
+    uint64_t t0 = bp_now(); int fgw = mtl_warm_wait(10000); uint64_t t_fg = bp_now(); int allw = warm_wait_all(10000); uint64_t t_all = bp_now(); (void)fgw; (void)allw; (void)t0;
+    for (int i = 0; i < 200 && atomic_load(&g_warm_done_lines) < want_lines; i++) usleep(1000);   // (the done work runs before the last release, so this never waits)
+    int ok = atomic_load(&g_warm_running) == 0 && atomic_load(&g_warm_fg_left) == 0 && atomic_load(&g_warm_underflow) == 0 && atomic_load(&g_warm_done_lines) == want_lines
+        && (int)g_warm_missing == want_missing && t_fg <= t_all && g_warm_dict == nil
+        && (!want_lines || atomic_load(&g_warm_fg_done_ns) <= atomic_load(&g_warm_all_done_ns)) && (!want_qos || atomic_load(&g_warm_bg_qos_seen) == want_qos);
+    CHECK(ok, "end to end %s: running %d, foreground left %d, underflow %d, done lines %d (want %d), missing %llu (want %d), dictionary %s, background QoS %#x (want %#x)",
+          name, atomic_load(&g_warm_running), atomic_load(&g_warm_fg_left), atomic_load(&g_warm_underflow), atomic_load(&g_warm_done_lines), want_lines,
+          (unsigned long long)g_warm_missing, want_missing, g_warm_dict ? "kept" : "released", atomic_load(&g_warm_bg_qos_seen), want_qos);
 }
 
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
@@ -137,6 +186,63 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
         g_pso_user = NULL; g_pso_user_checked = 0; g_pso_user_seen = nil;
     }
     unsetenv("DM_PSO_USER"); unsetenv("DM_SAVE"); g_shmap_path = nil;
+
+    // warm_plan
+    {
+        NSString *R1 = rrow(70, 3, 0), *R1v = rrow(70, 7, 0), *R2 = rrow(80, 0, 0), *R3 = rrow(81, 0, 0), *R4 = rrow(90, 0, 0), *Rbad = rrow(70, 0, 1);
+        NSString *seed = [NSString stringWithFormat:@"%s\n# c\nS\tssssssssssssssss_b\t0\nR\t%@\nR\t%@\n%s\nR\t%@\n", PSO_MANIFEST_HEAD, R1, R2, PSO_WARM_BG_MARK, R3];
+        NSString *user = [NSString stringWithFormat:@"R\t%@\nR\t%@\nR\t%@\nC\t\nC\tcccccccccccccccc_b\nR\t%@\n", R1v, R4, Rbad, R3];
+        warm_counts n = {0}; int fg = -1;
+        NSArray<WarmRow *> *plan = warm_plan(seed, user, nil, nil, &fg, &n);
+        // R3 sits in the user manifest and after the seed's marker: it builds in the foreground, and the seed's copy is the second duplicate
+        CHECK([plan_str(plan) isEqualToString:@"S ssss,R70,R80,R90,C cccc,R81"] && fg == 6 && n.dup == 2 && n.bad == 2 && n.files_skipped == 0,
+              "(1) plan %s, foreground %d (want S ssss,R70,R80,R90,C cccc,R81 / 6), dup %llu (want 2: R1v and the seed's R3), bad %llu (want 2), files %llu", plan_str(plan).UTF8String, fg,
+              (unsigned long long)n.dup, (unsigned long long)n.bad, (unsigned long long)n.files_skipped);
+        n = (warm_counts){0}; plan = warm_plan(seed, [@"# pso_skey v3 432\n" stringByAppendingString:user], nil, nil, &fg, &n);
+        CHECK([plan_str(plan) isEqualToString:@"S ssss,R70,R80,R81"] && fg == 3 && n.files_skipped == 1, "(2) a user text of key layout v3 is skipped: plan %s, foreground %d, files %llu", plan_str(plan).UTF8String, fg, (unsigned long long)n.files_skipped);
+        NSString *nomark = [NSString stringWithFormat:@"%s\nS\tssssssssssssssss_b\t0\nR\t%@\nR\t%@\n", PSO_MANIFEST_HEAD, R1, R2];
+        n = (warm_counts){0}; plan = warm_plan(nomark, [NSString stringWithFormat:@"R\t%@\n", R4], nil, nil, &fg, &n);
+        CHECK(fg == 4 && plan.count == 4, "(3) a seed without a marker: every row is foreground (%d of %lu)", fg, (unsigned long)plan.count);
+        NSString *early = [NSString stringWithFormat:@"%s\n%s\nS\tssssssssssssssss_b\t0\nR\t%@\n", PSO_MANIFEST_HEAD, PSO_WARM_BG_MARK, R1];
+        n = (warm_counts){0}; plan = warm_plan(early, nil, nil, nil, &fg, &n);
+        CHECK(fg == 0 && plan.count == 2, "(4) the marker right after the layout line: no foreground row (%d of %lu)", fg, (unsigned long)plan.count);
+        NSString *late = [NSString stringWithFormat:@"%s\nS\tssssssssssssssss_b\t0\nR\t%@\n%s\n", PSO_MANIFEST_HEAD, R1, PSO_WARM_BG_MARK];
+        n = (warm_counts){0}; plan = warm_plan(late, nil, nil, nil, &fg, &n);
+        CHECK(fg == 2 && plan.count == 2, "(5) the marker as the last line: every row is foreground (%d of %lu)", fg, (unsigned long)plan.count);
+    }
+
+    // The warm-up end to end, every shader missing (an empty library folder)
+    {
+        NSString *msl = [tmp stringByAppendingPathComponent:@"msl"]; [fm createDirectoryAtPath:msl withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *keep_msl = g_msl_dir; g_msl_dir = msl;
+        NSString *H = @PSO_MANIFEST_HEAD "\n", *M = @PSO_WARM_BG_MARK "\n";
+        NSString *seed5 = [NSString stringWithFormat:@"%@%@%@%@", H, rows(0, 3), M, rows(3, 2)];
+        NSString *user4 = rows(10, 4);
+        e2e("(a) seed only, marker after 3 rows", tmp, seed5, nil, NULL, 5, 1, QOS_CLASS_UTILITY, 0);
+        e2e("(a) the same in the launcher's pass", tmp, seed5, nil, NULL, 5, 1, QOS_CLASS_USER_INITIATED, 1);
+        e2e("(b) user only", tmp, nil, user4, NULL, 4, 1, 0, 0);
+        e2e("(c) both", tmp, seed5, user4, NULL, 9, 1, QOS_CLASS_UTILITY, 0);
+        e2e("(d) neither", tmp, nil, nil, NULL, 0, 0, 0, 0);
+        CHECK(mtl_warm_wait(1000) == 0 && warm_wait_all(1000) == 0, "(d) nothing started: both waits return 0 at once");
+        e2e("(e) marker on line 2", tmp, [NSString stringWithFormat:@"%@%@%@", H, M, rows(0, 3)], nil, NULL, 3, 1, QOS_CLASS_UTILITY, 0);
+        e2e("(f) marker as the last line", tmp, [NSString stringWithFormat:@"%@%@%@", H, rows(0, 3), M], nil, NULL, 3, 1, 0, 0);
+        setenv("DM_PSO_MANIFEST", "off", 1);
+        e2e("(g) DM_PSO_MANIFEST=off", tmp, seed5, user4, NULL, 0, 0, 0, 0);
+        unsetenv("DM_PSO_MANIFEST");
+        e2e("(h) both, 1 worker", tmp, seed5, user4, "1", 9, 1, QOS_CLASS_UTILITY, 0);
+        e2e("(h) both, 4 workers", tmp, seed5, user4, "4", 9, 1, QOS_CLASS_UTILITY, 0);
+        e2e("(h) both, 16 workers asked (2 used)", tmp, seed5, user4, "16", 9, 1, QOS_CLASS_UTILITY, 0);
+        CHECK(g_warm_workers == 2, "an out-of-range DM_PSO_WARM_WORKERS gives 2 workers (%d)", g_warm_workers);
+        g_msl_dir = keep_msl; unsetenv("DM_PSO_USER"); unsetenv("DM_PSO_WARM_WORKERS"); g_shmap_path = nil;
+    }
+
+    // The two waits, counters set directly
+    atomic_store(&g_warm_running, 1); atomic_store(&g_warm_fg_left, 0);
+    CHECK(mtl_warm_wait(50) == 0, "background rows still building, foreground done: the loading screen does not wait");
+    atomic_store(&g_warm_fg_left, 1);
+    { int w = mtl_warm_wait(50); CHECK(w >= 50, "foreground rows pending: the loading screen waits (%d ms)", w); }
+    { int w = warm_wait_all(50); CHECK(w >= 50, "workers live: the launcher's pass waits (%d ms)", w); }
+    atomic_store(&g_warm_running, 0); atomic_store(&g_warm_fg_left, 0);
     [fm removeItemAtPath:tmp error:nil];
 
     printf("== t_pso_warm %d checks, %d failed ==\n", checks, fails);
