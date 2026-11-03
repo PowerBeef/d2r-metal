@@ -2200,10 +2200,10 @@ static void pso_record(const char *fmt, ...) {
     if (!f) return;
     va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap); fflush(f);
 }
-// 用户清单：本机运行中提交线程同步新建的着色器 / 管线，下次启动与种子清单一起预热。
-// 路径 = DM_PSO_USER，或存档目录（DM_SAVE，iOS 为 Documents/save）的父目录下 pso_user.tsv；测试每局用新存档副本，互不污染
-// User manifest: shaders / pipelines created synchronously on the submit thread while running on this machine, warmed up at the next launch together with the seed manifest.
-// Path = DM_PSO_USER, or pso_user.tsv under the parent of the save directory (DM_SAVE, Documents/save on iOS); tests use a fresh save copy per run, so they do not pollute each other
+// User manifest: shaders / pipelines created synchronously on the submit thread on this machine, warmed at the next launch together with the seed.
+// Path = DM_PSO_USER (off = none), else pso_user.tsv beside the save folder (DM_SAVE). The Mac's test runs get a fresh save folder and so a fresh
+// manifest per run; the iOS shell points its test runs (DM_SAVE_FRESH / DM_SAVE_TEST) at Documents/settings.test/pso_user.tsv, so they never read
+// or grow the player's Documents/pso_user.tsv
 static NSString *pso_user_path(void) {
     const char *u = getenv("DM_PSO_USER"), *save = getenv("DM_SAVE");
     if (u && !strcmp(u, "off")) return nil;

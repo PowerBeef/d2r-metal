@@ -674,6 +674,10 @@ static void boot_prepare(void) {
         setdir = [doc stringByAppendingPathComponent:@"settings.test"];
         if (getenv("DM_SAVE_FRESH")) [fm removeItemAtPath:setdir error:nil];
         [fm createDirectoryAtPath:setdir withIntermediateDirectories:YES attributes:nil error:nil];
+        // The pipeline manifest too (nvn_mtl.m pso_user_path): a test run never reads or grows the player's Documents/pso_user.tsv, and a
+        // DM_SAVE_FRESH run starts with an empty one. A DM_PSO_USER given at launch (off, or a cold-start fixture) wins
+        setenv("DM_PSO_USER", [setdir stringByAppendingPathComponent:@"pso_user.tsv"].fileSystemRepresentation, 0);
+        plog("boot: pipeline manifest in Documents/settings.test (the player's is untouched)");
         plog("boot: 本局的设置文件在 Documents/settings.test（玩家的设置未动）");
     }
     { void dm_custom_init(const char *dir); dm_custom_init(setdir.fileSystemRepresentation); }
