@@ -392,6 +392,13 @@ static void live_mouse(int op, float x, float y) {   // the Mac pointer path, or
 }   // 合成鼠标脚本：上一条带坐标的指令落在视图里的点（dragto 从这里起拖） | synthetic mouse script: the point in the view where the last instruction with coordinates landed (dragto starts dragging from here)
 static int g_wheel;   // 滚轮：+1 / −1 = 右摇杆向上 / 向下推一小会儿（原版手柄版用右摇杆滚列表） | Wheel: +1 / -1 = push the right stick up / down for a short while (the original gamepad UI scrolls lists with the right stick)
 static float g_kbm_x = .5f, g_kbm_y = .5f;   // the last pointer point (interface-normalized): where right / other buttons and the wheel act in PC mode
+static void kbm_event_point(NSEvent *e) {   // PC mode: a right / other button event's own point, converted as the left button's (picture, then the interface band in true full screen)
+    NSView *v = g_view; NSRect gr = game_rect(); if (!v || gr.size.width <= 0 || gr.size.height <= 0) return;
+    NSPoint p = [v convertPoint:e.locationInWindow fromView:nil];
+    float nx = (float)((p.x - gr.origin.x) / gr.size.width), ny = (float)(1.0 - (p.y - gr.origin.y) / gr.size.height);
+    if (g_full) { float vx, uy; full_ui_point(gr, nx, ny, &vx, &uy); g_kbm_x = vx; g_kbm_y = uy; }
+    else { g_kbm_x = nx < 0 ? 0 : nx > 1 ? 1 : nx; g_kbm_y = ny < 0 ? 0 : ny > 1 ? 1 : ny; }
+}
 // PC mode pointer: macOS draws the game's own PC cursor, the gauntlet (frame 0 of cursor/ohand.sprite, which gen_romfs_overlay.py writes beside the
 // overlay as pc_cursor.png), over the game window while the PC interface set is on screen; the arrow otherwise, and when the overlay has no picture.
 // Its size is a share of the picture's height on screen (the gauntlet about one inventory cell tall), so it keeps its place in the picture at any render resolution,
@@ -536,14 +543,14 @@ void front_run(void (*guest)(void)) {
         }];
         // 左键沿用单点触屏；Mac App 的无按键悬停只交坐标，复用同一套窗口 / 全屏换算，不合成点击。
         // Left clicks reuse single-point touch; Mac App button-free hover only submits coordinates using the same window / full-screen conversion, without synthesizing clicks.
-        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp | NSEventMaskMouseMoved | NSEventMaskMouseExited handler:^NSEvent *(NSEvent *e) {
+        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp | NSEventMaskMouseMoved | NSEventMaskMouseExited | NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDragged handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;
             pc_cursor_sync();
             if (dm_vkbd_ui_active() && e.type != NSEventTypeLeftMouseUp) {   // 手柄屏幕键盘开着时鼠标点了：收起屏幕键盘、换成表单；悬停 / 拖动不交给游戏 | a mouse click while the on-screen keyboard is open: it closes and the sheet takes over; hover / drags do not go to the game
                 if (e.type == NSEventTypeLeftMouseDown) dm_vkbd_ui_handoff();
                 return e.type == NSEventTypeLeftMouseDown || e.type == NSEventTypeLeftMouseDragged ? nil : e; }
             if (text_input_up() && e.type != NSEventTypeLeftMouseUp) return e;   // 输入框表单开着：按下 / 拖动 / 悬停交还系统（点不进游戏窗口），抬起照收，免得之前按下的那一下收不回 | input box sheet open: presses / drags / hover go back to the system (the game window takes no clicks); a release is still taken so an earlier press is not left held
-            BOOL hover = e.type == NSEventTypeMouseMoved || e.type == NSEventTypeMouseExited;
+            BOOL hover = e.type == NSEventTypeMouseMoved || e.type == NSEventTypeMouseExited || e.type == NSEventTypeRightMouseDragged || e.type == NSEventTypeOtherMouseDragged;   // a move with the right / middle button held moves the pointer too (PC mode: a held right skill follows it)
             if (hover && getenv("DM_TEST_HOVER_LOG")) LOG("鼠标悬停输入：类型 %ld", (long)e.type);
             if (hover && !g_live) return e;
             if (e.type == NSEventTypeMouseExited) { dm_touch_host_live(3, -1, -1); return e; }
@@ -572,7 +579,7 @@ void front_run(void (*guest)(void)) {
         if (g_live) {
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp handler:^NSEvent *(NSEvent *e) {   // PC mode: mouse buttons 3-5 run their key bindings
                 if (e.window != win || e.buttonNumber < 2 || e.buttonNumber > 4) return e;
-                kbm_wants_pc(); if (dm_kbm_live()) { dm_kbm_mouse(e.type == NSEventTypeOtherMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, (int)e.buttonNumber, kbm_mods()); return nil; }
+                kbm_wants_pc(); if (dm_kbm_live()) { kbm_event_point(e); dm_kbm_mouse(e.type == NSEventTypeOtherMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, (int)e.buttonNumber, kbm_mods()); return nil; }
                 return e;
             }];
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:^NSEvent *(NSEvent *e) {   // PC mode: Shift (stand still), Ctrl and Option (Alt: show items) as keys
@@ -583,7 +590,7 @@ void front_run(void (*guest)(void)) {
             [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown | NSEventMaskRightMouseUp handler:^NSEvent *(NSEvent *e) {
                 if (e.type == NSEventTypeRightMouseDown && e.window == win && dm_vkbd_ui_active()) { dm_vkbd_ui_handoff(); return nil; }   // 同左键：换成表单 | as the left button: hand over to the sheet
                 if (e.window != win || (text_input_up() && e.type == NSEventTypeRightMouseDown)) return e;   // 输入框开着不按 B，松开照收 | no B press while the input box is open; the release is still taken
-                kbm_wants_pc(); if (dm_kbm_live()) { dm_kbm_mouse(e.type == NSEventTypeRightMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, 1, kbm_mods()); return nil; }   // PC mode: the right skill / use an item
+                kbm_wants_pc(); if (dm_kbm_live()) { kbm_event_point(e); dm_kbm_mouse(e.type == NSEventTypeRightMouseDown ? 1 : 2, g_kbm_x, g_kbm_y, 1, kbm_mods()); return nil; }   // PC mode: the right skill / use an item
                 if (e.type == NSEventTypeRightMouseDown) g_btn |= DM_BTN_B; else g_btn &= ~(uint64_t)DM_BTN_B;
                 push(); return nil;
             }];

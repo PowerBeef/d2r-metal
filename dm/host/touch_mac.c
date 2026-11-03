@@ -91,17 +91,13 @@ static void touch_uimsg(const char *cat, const char *act, const char *arg) {
         scene.game = 1;
     dm_tc_set_panel_state(dm_ui_panel_state());
     int navigation = dm_tc_navigation(&scene, cat, act, arg);
-    // 面板模式与 iOS 同一个量：面板开合栈（宿主 dm_hud_stack_msg）与算式（dm_tc_panel_mode）两端共用。栈里还开着非常驻面板就算面板态——
-    // 借壳的面板不在手势层的名单里（原先的大秘境确认页就是一例），Mac 上它开着时界面不居中（iPad 居中）。
-    // 用途只有一个：真全屏（16:10 的 Mac，front_mac.m）下面板态界面整块移到正中、关掉回落贴底（iPad 的做法）；没开真全屏时宿主不动。
-    // 手势层自己的导航态（下面 dm_tc_set_navigation_mode）仍按 navigation，鼠标的点击分流不变
-    // Panel mode is the same quantity as on iOS: the panel stack (host dm_hud_stack_msg) and the formula (dm_tc_panel_mode) are shared by both ends. While a non-resident panel is still open in the stack, it is panel mode.
-    // Borrowed panels are not on the gesture layer's list (the former Greater Rift confirmation page was one), so with one of them open, the UI was not centered on Mac (it was on iPad).
-    // It has only one use: in true fullscreen (16:10 Macs, front_mac.m), panel-mode UI moves as a whole to the center and drops back to the bottom when closed (the iPad behavior); without true fullscreen the host does nothing.
-    // The gesture layer's own navigation state (dm_tc_set_navigation_mode below) still follows navigation, and mouse click routing is unchanged
-    { int dm_hud_stack_msg(const char *, const char *); static int blocked;
-      if (!strcmp(cat, "PanelManager")) blocked = dm_hud_stack_msg(act, arg ? arg : "");
-      dm_uiscreen_set_panel(dm_tc_panel_mode(navigation || (scene.game && blocked > 0), &scene, blocked) == 1); }
+    // The panel stack (dm_hud_stack_msg) follows the PanelManager messages as on iOS. On a 16:10 Mac (true full screen, front_mac.m) the 16:9
+    // interface band stays at the bottom whatever is open: the iPad moves it to the centre while a panel is open (front_ios.m, room for the touch
+    // controls), but on the Mac that made the whole interface, PC HUD included, jump up at every inventory, menu, trade or chat and back at
+    // every close, which no Mac layout needs (the PC set's panels already end above its HUD). The gesture layer's own navigation state
+    // (dm_tc_set_navigation_mode below) still follows navigation, and mouse click routing is unchanged
+    { int dm_hud_stack_msg(const char *, const char *);
+      if (!strcmp(cat, "PanelManager")) dm_hud_stack_msg(act, arg ? arg : ""); }
     if (g_touch.enabled) {
         dm_tc_set_navigation_mode(&g_touch.state, navigation);
         static int pad = -1; if (pad < 0) { const char *e = getenv("DM_TOUCH_NAV_PAD"); pad = e && e[0] == '1'; }   // 缺省不给圆钮（同 front_ios.m） | no round button by default (same as front_ios.m)

@@ -13,3 +13,5 @@ int dm_kbm_shift(void);                                                     // g
 int dm_padmode_pc(void);                                                    // dm_padmode.c
 void dm_touch_host_live(int op, float nx, float ny);                         // touch_mac.c
 void dm_world_pc_click(int action, int flags, float sx, float sy);         // dm_world.c: the click entry with a PC action at a screen point
+void dm_world_pc_hover(float sx, float sy);
+void dm_world_pc_unlock(void);                                                 // dm_world.c: end a press's lock on its unit (no release action)                                  // dm_world.c: the unit under the pointer becomes the game's hover target (sx < 0: none)
