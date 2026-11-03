@@ -1,6 +1,6 @@
 // Unit test for parallel precompile slot recycling: once the 384 slots are full of predictions nobody takes, a prediction in a new submission can still be kicked (the oldest finished entry from an earlier submission is recycled),
 // entries untaken for PSO_PEND_AGE submissions are recycled at the start of a submission; when the table fills within one submission, entries of that submission are not recycled (the not-kicked-table-full count goes up by 1).
-// The predictor's cutoff (pso_predict_on / pso_predict_allowed: auto, always, never) and the merged-pass attribution of untaken predictions.
+// The predictor's cutoff (pso_predict_on / pso_predict_allowed: auto, always, never), its [bootprof] label, and the merged-pass attribution of untaken predictions.
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -69,6 +69,14 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     g_pp_taken = 100; EXPECT("auto: off stays off for the run", 0, (uint64_t)pso_predict_allowed());
     g_pp_mode = 1; EXPECT("DM_PSO_PREDICT=1: always on", 1, (uint64_t)pso_predict_allowed());
     g_pp_mode = 0; EXPECT("DM_PSO_PREDICT=0: never", 0, (uint64_t)pso_predict_allowed());
+    // The [bootprof] label reads DM_PSO_PREDICT itself, so it is right before the first miss has resolved the mode
+    setenv("DM_PSO_PREDICT", "0", 1); g_pp_mode = -1; g_pp_off = 0;
+    EXPECT("DM_PSO_PREDICT=0: the [bootprof] label is off before any miss", 1, (uint64_t)!strcmp(pso_predict_label(), "off"));
+    setenv("DM_PSO_PREDICT", "1", 1); g_pp_mode = -1;
+    EXPECT("DM_PSO_PREDICT=1: the label is on", 1, (uint64_t)!strcmp(pso_predict_label(), "on"));
+    unsetenv("DM_PSO_PREDICT"); g_pp_mode = -1;
+    EXPECT("auto: the label is on until it switches off", 1, (uint64_t)!strcmp(pso_predict_label(), "on"));
+    g_pp_off = 1; EXPECT("auto, switched off: the label is off", 1, (uint64_t)!strcmp(pso_predict_label(), "off")); g_pp_off = 0;
     // The cutoff is judged when predictions age out, not only at the next miss
     g_pp_mode = 1; g_sub_serial += 2 * PSO_PEND_AGE; pso_pend_age();
     g_pp_mode = 2; g_pp_off = 0; g_pp_taken = g_pp_aged = 0;

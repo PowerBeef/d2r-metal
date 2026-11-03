@@ -1097,7 +1097,7 @@ static int bcd_fmt(uint32_t f) {   // NVN 格式 → bcd 的 fmt；0 = GPU 不�
 }
 static id<MTLComputePipelineState> bcd_pso(void) {
     static id<MTLComputePipelineState> ps; static int failed;
-    if (!ps && !failed) { NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_bcd_msl) options:nil error:&e]; host_built(0, t0, "bcd"); id<MTLFunction> fn = lib ? [lib newFunctionWithName:@"bcd"] : nil;
+    if (!ps && !failed) { NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_bcd_msl) options:nil error:&e]; if (lib) host_built(0, t0, "bcd"); id<MTLFunction> fn = lib ? [lib newFunctionWithName:@"bcd"] : nil;
         t0 = bp_now(); ps = fn ? [g_dev newComputePipelineStateWithFunction:fn error:&e] : nil; if (ps) host_built(1, t0, "bcd");
         if (!ps) { failed = 1; MLOG("【红】无 BC：GPU 解压管线建不出 %s（退回 CPU 解压）", e.localizedDescription.UTF8String); } else MLOG("无 BC：BC1–5 改在 GPU 上解压"); }
     return ps;
@@ -2982,9 +2982,13 @@ static void pso_predict_rest(void);
 static int g_pp_mode = -1, g_pp_off;   // mode 0 never, 1 always, 2 auto; g_pp_off: auto mode has switched it off (sticky)
 static uint64_t g_pp_merged;
 static int pso_predict_on(uint64_t taken, uint64_t aged) { uint64_t resolved = taken + aged; return resolved < PSO_PREDICT_MIN || taken * 10 >= resolved; }
-static int pso_predict_allowed(void) {
+static int pso_predict_mode(void) {   // DM_PSO_PREDICT, read once
     if (g_pp_mode < 0) { const char *e = getenv("DM_PSO_PREDICT"); g_pp_mode = e && !strcmp(e, "0") ? 0 : e && !strcmp(e, "1") ? 1 : 2; }
-    if (g_pp_mode != 2) return g_pp_mode;
+    return g_pp_mode;
+}
+static const char *pso_predict_label(void) { return pso_predict_mode() == 0 || g_pp_off ? "off" : "on"; }   // for the [bootprof] line, right before the first miss too
+static int pso_predict_allowed(void) {
+    if (pso_predict_mode() != 2) return g_pp_mode;
     if (g_pp_off) return 0;
     if (pso_predict_on(g_pp_taken, g_pp_aged)) return 1;
     g_pp_off = 1;
@@ -5574,7 +5578,7 @@ static int copy_t2t_astc(id<MTLTexture> s, id<MTLTexture> d, unsigned sl, unsign
     static int failed; static id<MTLComputePipelineState> ps;
     static id<MTL4ArgumentTable> at;
     if (failed) return 0;
-    if (!ps) { NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_a2u_msl) options:nil error:&e]; host_built(0, t0, "a2u"); id<MTLFunction> f = lib ? [lib newFunctionWithName:@"a2u"] : nil;
+    if (!ps) { NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_a2u_msl) options:nil error:&e]; if (lib) host_built(0, t0, "a2u"); id<MTLFunction> f = lib ? [lib newFunctionWithName:@"a2u"] : nil;
         t0 = bp_now(); ps = f ? [g_dev newComputePipelineStateWithFunction:f error:&e] : nil; if (ps) host_built(1, t0, "a2u");
         MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxBufferBindCount = 1; at = [g_dev newArgumentTableWithDescriptor:ad error:&e];
         if (!ps M4_ONLY(|| !at)) { failed = 1; MLOG("【红】无 BC：ASTC → 解压格式拷贝的计算管线建不出 %s", e.localizedDescription.UTF8String); return 0; } }
@@ -6736,7 +6740,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
              "贴图上传 %.1f MB / %llu 张首传 + %llu 次重传 / %.1f ms；首帧出图 t=%.3f s；并行预编 丢出 %llu / 领用 %llu / 过期回收 %llu / 表满没丢 %llu / 在表 %d；predictor %s, merged-draw kicks %llu；host builds lib %llu / pso %llu / %.1f ms", (bp_now() - g_bp_t0) / 1e9, g_present_n,
              g_bp_lib_n, g_bp_lib_ns / 1e6, g_bp_pso_n, g_bp_pso_ns / 1e6, g_warm_claim_shaders, g_warm_claim_rps, g_warm_claim_cps,
              g_bp_up_bytes / 1048576.0, g_pkg_uploads, g_pkg_reuploads,
-             g_up_total_ns / 1e6, g_bp_first_present / 1e9, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full, g_pp_live, g_pp_mode == 0 || g_pp_off ? "off" : "on", g_pp_merged,
+             g_up_total_ns / 1e6, g_bp_first_present / 1e9, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full, g_pp_live, pso_predict_label(), g_pp_merged,
              (unsigned long long)g_bp_host_lib_n, (unsigned long long)g_bp_host_pso_n, (g_bp_host_lib_ns + g_bp_host_pso_ns) / 1e6);
     }
     PD("X ser=%llu", t->serial);

@@ -247,7 +247,7 @@ DM_PROBE_MAX	host	host/diag.c	y
 DM_PROBE_PC_LAYOUTS	host	host/dm_padmode.c	y
 DM_PRODUCT_DIR	tools	tools/product.sh	-
 DM_PSO_MANIFEST	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_warm.m	y
-DM_PSO_PREDICT	gfx	gfx/nvn/nvn_mtl.m	y
+DM_PSO_PREDICT	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_pend.m	y
 DM_PSO_RECORD	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PSO_USER	gfx,host,ios	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_warm.m host/app_mac.m host/tests/t_app_mac.m …	y
 DM_PSO_WARM_WORKERS	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_warm.m	y
