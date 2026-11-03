@@ -22,7 +22,6 @@
 
 enum { BIND_LIST = 0x2086f64, BIND_TABLE = 0x2086388, EXEC_HOTKEY = 0x3700e0, RELEASE_HOTKEY = 0x36ff90, BIND_N = 138, BIND_SZ = 10 };
 enum { MOD_SHIFT = 1, MOD_CTRL = 2, MOD_ALT = 4 };
-enum { REPEAT_NS = 250000000 };
 #define HUD_BAND 0.885f   // below this (interface height: the 16:9 band, which on a taller 16:10 screen is not the whole picture) is the PC HUD: orbs, skill buttons, belt, mini panel
 
 // ---- pure helpers (t_kbm) ----
@@ -68,7 +67,6 @@ void dm_kbm_key(int vk, int down, int mods) { if (vk) push((kev){ (uint8_t)(down
 void dm_kbm_wheel(float nx, float ny, int notches) { if (notches) push((kev){ 5, 0, 0, (int16_t)notches, nx, ny }); }
 
 // ---- game main thread ----
-static uint64_t now_ns_k(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
 static module_t *mainmod(void) { for (int i = 0; i < g_nmod; ++i) if (!strcmp(g_mod[i].name, "main")) return &g_mod[i]; return NULL; }
 static int hold_binding(uint32_t id) { return id == 34 || id == 36 || id == 37; }   // Ctrl, Shift (stand still), Alt (show items): held, so their key up ends them; the
 // release runner re-fires every other binding (a panel key would toggle its panel shut again)
@@ -98,7 +96,7 @@ static int switches_page(uint8_t *b, int idx) {   // a page key while another pa
 static float ui_to_screen_y(float uy) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); return dm_screen_real(&rw, &rh) && rh > 0 && h > 0 ? (uy * h + y) / rh : uy; }
 
 static int g_use_pending;                                     // a right click on an item: use it once the hover has landed on it
-static struct { int down, ui; uint64_t next_ns; } g_btn[2];   // left, right: held, where the press went (0 world, 1 panel, 2 PC HUD, 3 a walk-up-and-interact), next world repeat
+static struct { int down, ui; } g_btn[2];                    // left, right: held, where the press went (0 world, 1 panel, 2 PC HUD)
 static int g_back;                                            // polls left to hold the console's Back (B)
 // An NPC talking (the speech scroll) or its menu (Talk / Trade / Cancel): console panels the PC bindings don't close. The game's Clear Screen
 // (Esc, Space) leaves both up and Return opens the chat over the speech, which then stops scrolling for good, so while one shows Esc and Clear
@@ -118,9 +116,9 @@ static void esc_pump(uint64_t *buttons) {
     if (g_esc_n % 6 < 3) *buttons |= DM_BTN_L;
     if (++g_esc_n >= 18) g_esc = 0;
 }
-static int world_click(int btn, int phase) {   // phase 0 press, 1 repeat while held, 2 release; 1 = the press started a walk-up-and-interact
-    static const int act[2][3] = { { 0, 0, 2 }, { 3, 3, 5 } };   // left: press / (press again: move on toward the cursor) / release; right: cast / cast / release
-    return dm_world_pc_click(act[btn][phase], g_mods & MOD_SHIFT ? 1 : 0, g_x, ui_to_screen_y(g_y));
+static void world_click(int btn, int phase) {   // phase 0 press, 1 held (every poll, as the game's own PC held logic sends it every frame), 2 release
+    static const int act[2][3] = { { 0, 1, 2 }, { 3, 4, 5 } };   // the click entry's PC actions (dm_world.c dm_world_pc_click)
+    dm_world_pc_click(act[btn][phase], g_mods & MOD_SHIFT ? 1 : 0, g_x, ui_to_screen_y(g_y));
 }
 int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the caller skips its own keyboard mapping)
     int dm_uiscreen_ingame(void), dm_ui_panel_state(void), dm_game_paused(void);
@@ -149,12 +147,12 @@ int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the c
                 // interface height (on 16:10 the band's bottom part, not the picture's)
                 int hit = dm_ui_item_at_now(g_x, g_y), ps = dm_ui_panel_state(), hud = g_y > HUD_BAND, where = (hit != 0 && hit != 3) || ps ? 1 : hud ? 2 : hit == 0 && open ? 1 : 0;
                 static int lh; if (lh++ < 50) LOG("PC input: button %d at %.3f,%.3f -> hit %d panels %d open %d -> %s", bt, g_x, g_y, hit, ps, open, where == 1 ? "panel" : where == 2 ? "HUD" : "world");
-                g_btn[bt].down = 1; g_btn[bt].ui = where; g_btn[bt].next_ns = now_ns_k() + REPEAT_NS;
+                g_btn[bt].down = 1; g_btn[bt].ui = where;
                 if (where == 1) { if (bt == 0) dm_touch_host_live(0, g_x, g_y); else { dm_touch_host_live(3, g_x, g_y); g_use_pending = 2; } }   // right click on an item: hover it, then use it (as a double click does)
                 else if (where == 2) dm_ui_ptr(bt ? DM_UP_RDOWN : DM_UP_LDOWN, g_x, g_y, 0);
-                else if (world_click(bt, 0)) g_btn[bt].ui = 3;   // walking up to an NPC / object / item: no release, no held repeats
+                else world_click(bt, 0);
             } else if (g_btn[bt].down) {
-                if (g_btn[bt].ui == 1) { if (bt == 0) dm_touch_host_live(2, g_x, g_y); } else if (g_btn[bt].ui == 2) dm_ui_ptr(bt ? DM_UP_RUP : DM_UP_LUP, g_x, g_y, 0); else if (!g_btn[bt].ui) world_click(bt, 2);
+                if (g_btn[bt].ui == 1) { if (bt == 0) dm_touch_host_live(2, g_x, g_y); } else if (g_btn[bt].ui == 2) dm_ui_ptr(bt ? DM_UP_RUP : DM_UP_LUP, g_x, g_y, 0); else world_click(bt, 2);
                 g_btn[bt].down = 0;
             }
             continue;
@@ -191,8 +189,11 @@ int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the c
     // close the frame as the game does
     { static int empty; if (!g_esc && dm_ui_panel_shown("UISwitcher") && !dm_ui_open_panels() && !dm_game_paused()) { if (++empty == 4) { dm_ui_send_queue("PanelManager:ClosePanel:UISwitcher"); LOG("PC input: the panel group was left empty: closed"); } } else empty = 0; }
     if (g_use_pending && !--g_use_pending) dm_ui_use_item();
-    uint64_t t = now_ns_k();
-    for (int bt = 0; bt < 2; bt++) if (g_btn[bt].down && !g_btn[bt].ui && t >= g_btn[bt].next_ns) { g_btn[bt].next_ns = t + REPEAT_NS; world_click(bt, 1); }
+    // The PC hover: the unit under the pointer is the game's hover target every poll (none over the interface), and a button held from a world press
+    // sends the held action every poll; both are what D2R's own PC mouse code does every frame (dm_world.c)
+    { int ui = g_y > HUD_BAND || dm_ui_panel_state() || dm_ui_open_panels() || dm_game_paused() || dm_ui_panel_shown("UISwitcher") || npc_dialog_shown();
+      dm_world_pc_hover(ui ? -1.f : g_x, ui_to_screen_y(g_y)); }
+    for (int bt = 0; bt < 2; bt++) if (g_btn[bt].down && !g_btn[bt].ui) world_click(bt, 1);
     return 1;
 }
 int dm_kbm_live(void) { int dm_uiscreen_ingame(void); return dm_padmode_pc() && dm_uiscreen_ingame(); }   // any thread: in game with the PC interface

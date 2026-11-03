@@ -54,8 +54,8 @@ The keys are D2R's PC defaults:
 
 | Keys | What they do |
 |---|---|
-| Left click | Walk there; on a monster attack it; on a character, chest, waypoint or item on the ground, use it. Hold to keep walking or attacking towards the pointer |
-| Right click | Cast the right skill at the pointer; on an item in a panel, use it (drink, read, open) |
+| Left click | Walk there; on a monster attack it; on a character, chest, waypoint or item on the ground, use it. Held after a click on a monster, keep attacking that monster; held on the ground, keep walking towards the pointer |
+| Right click | Cast the right skill at the pointer (held: again and again, following the pointer); on an item in a panel, use it (drink, read, open) |
 | Shift + left click | Attack without moving |
 | Shift held | Compare the item under the pointer with what you wear |
 | 1 – 4 | Drink from the belt |

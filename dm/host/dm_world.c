@@ -601,34 +601,34 @@ void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at th
     { uint64_t pl = w_player(); atomic_store(&g_has_target, pl && ((uint64_t (*)(uint64_t, uint32_t))(b + 0x2f7a0c))(((uint64_t (*)(void))(b + 0x2acecc))(), *(uint32_t *)(b + 0x2d20e4c)) != 0); }
 }
 #if TARGET_OS_OSX
-// PC control mode (dm_kbm.c): a world click the way D2R on PC makes it. The screen point picks the unit under it (any selectable one, hostile
-// monsters included; as the designated target, as w_interact does) or else the ground tile under it (the same screen-to-tile formula as
-// w_walk_step), and the game's click entry main+0x4ace20 gets the PC action: 0 left press (move to / left skill on), 2 left release, 3 right press
-// (right skill at the point or on the unit), 5 right release; flags 0x1 = stand still (Shift). The click-ground move drop (diag.c c2s_deliver) is
-// exempted for a second after each click. A left press on a unit that is not a hostile monster (an NPC, an object, an item) walks up and
-// interacts as a world tap does (w_go): the PC left press with that unit as the designated target only walks toward it and never starts the
-// interaction (no talk packet for an NPC), so clicking an NPC never opened its dialog. Any other click ends a pending approach.
-// Returns 1 when the click started such an approach (the caller sends no release and no held repeats for it).
+// PC control mode (dm_kbm.c): the world side of D2R's PC mouse, run through the game's own PC code. The game keeps, per player slot, the unit
+// under the mouse (the hover target, main+0x2082c90, 16 bytes a slot), set through main+0x2f3e40, which leaves a locked target alone. Its click
+// entry main+0x4ace20 takes the PC actions on that unit: 0 left press (locks it and uses the left skill on it: attacks a monster, talks to an
+// NPC, opens an object, picks up an item; with no unit it walks to the point), 1 left held (every frame: goes on with the locked unit, or keeps
+// walking toward the point; nothing without a press before it), 2 left release (unlocks); 3 / 4 / 5 the same for the right skill; flags 0x1 =
+// stand still (Shift). These actions don't read the designated target slot the controller's actions use (+0xd10). The PC hover that picks the
+// unit every frame doesn't run on the Switch build (its target is the controller's auto-target), so the host does it: dm_world_pc_hover every
+// poll, and a press picks again at its own point. The click-ground move drop (diag.c c2s_deliver) is exempted for a second after each action.
 // Game main thread only; sx, sy normalized to the whole rendered picture
-int dm_world_pc_click(int action, int flags, float sx, float sy) {
-    uint8_t *b = wb(); uint64_t pl = w_player(), scene = b ? *(uint64_t *)(b + 0x2e2a698) : 0; int W = 0, H = 0, px = 0, py = 0, x = 0, y = 0; float f[2];
-    dm_screen_real(&W, &H); if (!b || !pl || !scene || W <= 0 || H <= 0 || !w_unit_xy(pl, &px, &py) || !w_project(b, scene, pl, f, 0)) return 0;
-    float X = sx * W, Y = sy * H, d = 0; int lab = 0; uint64_t u = 0;
-    if (action == 0 || action == 3) { g_hit_mon = 1; u = w_hit(b, X, Y, H * 0.10f, &d, &lab); g_hit_mon = 0; }
-    if (action == 0 || action == 3) g_go.on = 0;
-    if (action == 0 && u && !(flags & 1)) {
-        int cat = *(uint32_t *)u == 1 ? ((int (*)(int, uint64_t, uint64_t))(b + 0x2f7b7c))(0x165, pl, u) : 0;
-        if (cat != 1 && cat != 0xa) { w_go(u); LOG("PC mouse: walk up to and interact with type %u class %u id %u", *(uint32_t *)u, *(uint32_t *)(u + 4), *(uint32_t *)(u + 8)); return 1; }
-    }
+static int w_pc_frame(uint8_t **bp, uint64_t *plp, float *f, int *W, int *H) {
+    uint8_t *b = wb(); uint64_t pl = w_player(), scene = b ? *(uint64_t *)(b + 0x2e2a698) : 0; *bp = b; *plp = pl;
+    dm_screen_real(W, H); return b && pl && scene && *W > 0 && *H > 0 && w_project(b, scene, pl, f, 0);
+}
+static uint64_t w_pc_pick(uint8_t *b, float X, float Y, int H) { float d = 0; int lab = 0; g_hit_mon = 1; uint64_t u = w_hit(b, X, Y, H * 0.10f, &d, &lab); g_hit_mon = 0; return u; }
+static void w_pc_select(uint8_t *b, uint64_t u) { ((void (*)(uint64_t, uint64_t))(b + 0x2f3e40))(*(uint32_t *)(b + 0x2d20e4c), u); }
+void dm_world_pc_hover(float sx, float sy) {   // the unit under the pointer becomes the hover target; sx < 0 = the pointer is over the interface: none
+    uint8_t *b; uint64_t pl; float f[2]; int W = 0, H = 0; if (!w_pc_frame(&b, &pl, f, &W, &H)) return;
+    w_pc_select(b, sx < 0 ? 0 : w_pc_pick(b, sx * W, sy * H, H));
+}
+void dm_world_pc_click(int action, int flags, float sx, float sy) {
+    uint8_t *b; uint64_t pl; float f[2]; int W = 0, H = 0, px = 0, py = 0, x = 0, y = 0; if (!w_pc_frame(&b, &pl, f, &W, &H) || !w_unit_xy(pl, &px, &py)) return;
+    float X = sx * W, Y = sy * H; uint64_t u = 0;
+    if (action == 0 || action == 3) { g_go.on = 0; u = w_pc_pick(b, X, Y, H); w_pc_select(b, u); }   // a press ends an approach a world tap started
     if (u && w_unit_xy(u, &x, &y)) {}
-    else { float k = H * 0.00206f, a = (X - f[0]) / k / 16, c = (Y - f[1]) / k / 8; x = px + (int)lroundf((a + c) / 2); y = py + (int)lroundf((c - a) / 2); u = 0; }
-    uint64_t mgr = ((uint64_t (*)(void))(b + 0x2acecc))(), keep = *(uint64_t *)(mgr + 0xd10);
+    else { float k = H * 0.00206f, a = (X - f[0]) / k / 16, c = (Y - f[1]) / k / 8; x = px + (int)lroundf((a + c) / 2); y = py + (int)lroundf((c - a) / 2); }
     atomic_store(&g_dm_move_allow_until_ns, w_now_ns() + 1000000000ull);
-    if (u) *(uint64_t *)(mgr + 0xd10) = u;
     int r = ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, action, x, y, (uint64_t)flags);
-    *(uint64_t *)(mgr + 0xd10) = keep;
-    static int lg; if (lg++ < 200) LOG("PC mouse: action %d flags %d at tile %d,%d (%s) -> %d", action, flags, x, y, u ? "unit" : "ground", r);
-    return 0;
+    static int lg; if ((action != 1 && action != 4) && lg++ < 200) LOG("PC mouse: action %d flags %d at tile %d,%d (%s) -> %d", action, flags, x, y, u ? "unit" : "ground", r);
 }
 #endif
 // PC-mode probe (DM_UI_TAPS E<action>, dm/verify/debugging.md "PC mode probes"): the game's click entry main+0x4ace20 with any action code at a

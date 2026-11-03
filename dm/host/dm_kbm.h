@@ -12,4 +12,5 @@ int dm_kbm_shift(void);                                                     // g
 // used by dm_kbm.c
 int dm_padmode_pc(void);                                                    // dm_padmode.c
 void dm_touch_host_live(int op, float nx, float ny);                         // touch_mac.c
-int dm_world_pc_click(int action, int flags, float sx, float sy);          // dm_world.c: the click entry with a PC action at a screen point; 1 = it started a walk-up-and-interact instead
+void dm_world_pc_click(int action, int flags, float sx, float sy);         // dm_world.c: the click entry with a PC action at a screen point
+void dm_world_pc_hover(float sx, float sy);                                  // dm_world.c: the unit under the pointer becomes the game's hover target (sx < 0: none)

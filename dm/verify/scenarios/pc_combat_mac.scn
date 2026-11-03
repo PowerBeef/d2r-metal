@@ -1,0 +1,47 @@
+# PC mode in combat (dm_kbm.c, dm_world.c: the game's own PC hover target, press / held / release actions), on the Mac App test copy at this
+# Mac's Recommended in full screen, in the Blood Moor with the warlock save and Fire Bolt as the right skill (the test switches of pc_mode.scn).
+# Holding the left button on a monster keeps attacking that monster until it dies, as on PC (experience goes up); holding the right button
+# casts again and again (mana falls by several casts); a left click on the ground walks there
+name pc_combat_mac
+requires mac-app
+save warlock
+timeout 600
+env DM_PC_MODE=1 DM_TEST_VIDEO_FIRSTBOOT=1 DM_GAME_SEED=305419896 DM_TEST_STAT=5=5 DM_TEST_SKILL_ADD=300:36:1 DM_TEST_C2S=420:3c24000000ffffffff
+
+expect main_menu timeout=120
+enter_game
+sleep 2
+walk_to 5789 4495 timeout=20
+walk_to 5791 4523 timeout=25
+expect_state area=2 timeout=10
+walk_to 5791 4600 timeout=25
+expect_state skill_right=36 timeout=10
+fe "0 hover 640,330"
+sleep 1
+remember exp_permille as=exp0
+# hold the left button on a hostile monster (2.5 s each), three times: the attacks follow the monster pressed on
+fe "0 unith 1,16777214"
+sleep 3.5
+fe "0 unith 1,16777214"
+sleep 3.5
+fe "0 unith 1,16777214"
+sleep 3.5
+screenshot path=after_melee.png
+expect_state exp_permille>$exp0 timeout=20
+# hold the right button: Fire Bolt again and again toward the pointer
+remember mp as=mp0
+fe "0 rdown 900,360"
+sleep 2
+fe "0 rup 900,360"
+sleep 0.5
+expect_state mp<=$mp0-6 timeout=5
+# a left click on the ground walks there
+remember y as=y0
+fe "0 down 640,600"
+sleep 0.15
+fe "0 up 640,600"
+sleep 2
+expect_state y>$y0 timeout=5
+quit
+check no_red
+check no_red_log
