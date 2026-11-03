@@ -8,12 +8,13 @@
 #include HLE_OE_SOURCE
 #include <signal.h>
 #include <sys/wait.h>
-uint64_t now_ns(void) { return 0; }
+static uint64_t t_now; uint64_t now_ns(void) { return t_now; }   // the Frame Drops feed cases move the clock; 0 elsewhere
 // 3D 渲染比例（scale3d_tick）的外部依赖：单测里没有模块表与图形层，桩成「没有 main 模块」→ 该函数直接返回
 // External dependencies of the 3D render scale (scale3d_tick): the unit test has no module table or graphics layer, so they are stubbed as "no main module" -> the function returns immediately
 module_t g_mod[MAX_MOD]; int g_nmod;
 void dm_guest_write_prepare(void *a, size_t n) { (void)a; (void)n; }
-uint64_t dm_nvn_frame_count(void) { return 0; }
+static uint64_t g_frames; uint64_t dm_nvn_frame_count(void) { return g_frames; }   // presented frames: 0 unless a case moves it
+void mtl_rt_force_full(int n) { (void)n; }   // weak in hle_oe.c: with a live frame count the linker needs a definition (scale3d_tick still returns early: no main module)
 int dm_nvn_ruler_truth(void) { return 0; }
 int dm_ingame_now(void) { return 1; }
 int mtl_fps_target(void) { return 60; }   // 目标帧率（nvn_mtl.m）：单测里恒为 60，30 帧档的用例直接给 period_ms | target frame rate (nvn_mtl.m): always 60 in the unit test, and the 30 fps mode cases pass period_ms directly
@@ -168,8 +169,50 @@ static void test_scale3d(void) {
     printf("  （实玩第二段回放：慢帧均匀散开换级 %d 次，挤在一起换级 %d 次）\n", a, b);
     CHECK(a == 0 && b == 0, "动态比例：实玩第二段的慢帧序列（帧率 59+）不论散开还是挤在一起都不换级");
 }
+// Frame Drops test hooks in dm_3d_scale_feed and s3_cfg: DM_TEST_Q3D, DM_3D_SCALE_DYN_INJECT's + form and its quality-first bypass, dm_3d_scale_cfg.
+// The feed and s3_cfg read their switches once, so each case runs in its own child with its own environment; the child's exit code is the level reached
+// (or 0 / 1 for the dm_3d_scale_cfg case). Expected values are worked out from the rules: the 20 s hold after entering a game (none while injecting),
+// 2 s windows, a step after 5 windows over 5% drops.
+static int feed_n(int n, double iv) {   // n frames of iv ms (iv <= 0: a 60 fps frame's worth of time); one presented frame each
+    for (int i = 0; i < n; i++) { t_now += (uint64_t)((iv > 0 ? iv : F60) * 1e6); g_frames++; dm_3d_scale_feed(iv); }
+    return atomic_load(&g_scale3d_level);
+}
+static int child_feed(int kind, const char *q3d, const char *inj, int keep) {
+    fflush(stdout); fflush(stderr); pid_t p = fork(); if (p < 0) return -1;
+    if (!p) {
+        child_kind = 100 + kind; signal(SIGALRM, abort_exit); alarm(10);
+        unsetenv("DM_TEST_Q3D"); unsetenv("DM_3D_SCALE_DYN_INJECT");
+        if (q3d) setenv("DM_TEST_Q3D", q3d, 1);
+        if (inj) setenv("DM_3D_SCALE_DYN_INJECT", inj, 1);
+        dm_3d_quality_mode_set(keep); t_now = 1000 * S3_SEC; g_frames = 5000;
+        if (kind == 0) _exit(feed_n(1500, D60));                     // 20 s hold (about 600 frames), then 5 windows of drops (300 frames)
+        if (kind == 1) { int a = feed_n(1100, F60); _exit(a ? 90 : feed_n(600, F60)); }   // + form: frames 0-1099 before the window are clean, then injected drops
+        if (kind == 2) _exit(feed_n(400, F60));                      // plain injection from frame 0: no entry hold, a step after 5 windows (300 frames)
+        if (kind == 3) {                                             // dm_3d_scale_cfg: DM_3D_SCALE read once
+            setenv("DM_3D_SCALE", "0.85", 1); float a = dm_3d_scale_cfg(); setenv("DM_3D_SCALE", "0.6", 1); float b = dm_3d_scale_cfg();
+            _exit(fabsf(a - 0.85f) < 1e-6f && fabsf(b - 0.85f) < 1e-6f ? 0 : 1);
+        }
+        _exit(99);
+    }
+    int st; if (waitpid(p, &st, 0) != p || !WIFEXITED(st)) return -1;
+    return WEXITSTATUS(st);
+}
+static void test_scale3d_hooks(void) {
+    int r;
+    r = child_feed(0, "0", NULL, 1); printf("  (DM_TEST_Q3D=0 with Keep saved: level %d)\n", r);
+    CHECK(r >= 1, "DM_TEST_Q3D=0: the controller runs although the setting is Keep, and steps down on drops");
+    CHECK(child_feed(0, NULL, NULL, 1) == 0, "control: Keep with no override never steps");
+    CHECK(child_feed(0, "1", NULL, 0) == 0, "DM_TEST_Q3D=1: Lower saved, forced to Keep, never steps");
+    r = child_feed(1, NULL, "+1100-100000000", 0); printf("  (DM_3D_SCALE_DYN_INJECT=+1100-…: exit %d; 90 = stepped before the window)\n", r);
+    CHECK(r >= 1 && r != 90, "DM_3D_SCALE_DYN_INJECT=+a-b: counted from the first judged frame (frame 5001 here), so nothing is injected before it and drops after it step down");
+    r = child_feed(2, NULL, "0-100000000", 1); printf("  (DM_3D_SCALE_DYN_INJECT=0-… with Keep saved: level %d)\n", r);
+    CHECK(r >= 1, "DM_3D_SCALE_DYN_INJECT: Keep does not stop the controller while the injection switch is set");
+    CHECK(child_feed(2, "1", "0-100000000", 0) == 0, "DM_TEST_Q3D=1 wins over the injection bypass");
+    CHECK(child_feed(3, NULL, NULL, 0) == 0, "dm_3d_scale_cfg: DM_3D_SCALE read once (0.85, then 0.6 set later is ignored)");
+}
 int main(void) {
     test_scale3d();
+    test_scale3d_hooks();
     unsetenv("DM_OE_SCRIPT"); reset();
     CHECK(empty(), "初始空队列：返回false且不改输出");
     dm_focus_set(1); dm_set_opmode(1); CHECK(empty(), "相同状态不发通知");

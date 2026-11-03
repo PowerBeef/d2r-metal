@@ -10,6 +10,7 @@
 
 // 运行模式是运行时状态（前端可改：iOS 过热降级切掌机）：唯一来源在此，启动时从 DM_OPMODE 取一次，之后不再读环境变量
 // The operation mode is runtime state (the front end can change it: iOS overheat downgrade switches to handheld): the single source is here, taken once from DM_OPMODE at startup, the environment variable is not read again afterwards
+#include <math.h>
 #include <stdatomic.h>
 static _Atomic int g_opmode = -1;
 int dm_opmode(void) {
@@ -177,11 +178,14 @@ static int s3_max_level(float cfg, float floor) {
 // 配置值：DM_3D_SCALE（0.5–1.0，读一次），否则 iOS 选项页的「3D 清晰度」，再否则缺省手机 0.75、Mac 宿主 1.0
 // Configured value: DM_3D_SCALE (0.5–1.0, read once), else the iOS options page's "3D Resolution", else the default: 0.75 on phones, 1.0 on the Mac host
 __attribute__((weak)) float dm_video_scale3d(void) { return 0; }   // 宿主 dm_video.c 给强定义（手机选项页「3D 清晰度」）；单测不链它时恒 0 | the host's dm_video.c gives the strong definition (phone options page "3D Resolution"); 0 when a unit test does not link it
+static float g_s3_env;   // DM_3D_SCALE, read once by s3_env_read (0 = not set)
+static void s3_env_read(void) {
+    const char *e = getenv("DM_3D_SCALE");
+    if (e) { char *end; float v = strtof(e, &end); if (end == e || *end || !(v >= 0.5f && v <= 1.0f)) die("DM_3D_SCALE 非法：%s（要求 0.5–1.0）", e); g_s3_env = v; }
+}
 static float s3_cfg(void) {   // 配置的 3D 比例：DM_3D_SCALE 定死；没给就按选项页（手机，点「应用」后 scale3d_tick 下一拍就换），再没有就平台缺省 | configured 3D scale: DM_3D_SCALE fixes it; otherwise the options page (phones; scale3d_tick switches on the next tick after "Apply"), otherwise the platform default
-    static float env = -1;
-    if (env < 0) { const char *e = getenv("DM_3D_SCALE"); env = 0;
-        if (e) { char *end; float v = strtof(e, &end); if (end == e || *end || !(v >= 0.5f && v <= 1.0f)) die("DM_3D_SCALE 非法：%s（要求 0.5–1.0）", e); env = v; } }
-    if (env > 0) return env;
+    static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, s3_env_read);   // the game, present and replay threads all call it
+    if (g_s3_env > 0) return g_s3_env;
     float v = dm_video_scale3d(); return v >= 0.5f && v <= 1.0f ? v : DM_PHONE ? 0.75f : 1.0f;
 }
 #define S3_FLOOR_DEF 0.60f   // 待真机扫档（热机稳态最后 30 秒掉帧 ≤ 1%）定 | To be set by a device level sweep (dropped frames ≤ 1% in the last 30 s of warm steady state)
@@ -250,6 +254,29 @@ static void scale3d_ctl_retarget(scale3d_ctl *c, float cfg, float floor, uint64_
 static _Atomic int g_3d_quality_mode;
 void dm_3d_quality_mode_set(int mode) { atomic_store(&g_3d_quality_mode, mode == 1 ? 1 : 0); }
 int dm_3d_quality_mode_get(void) { return atomic_load(&g_3d_quality_mode); }
+// The Frame Drops mode the controller goes by (1 = Keep, 0 = Lower), with two test overrides read once:
+// - DM_TEST_Q3D=0|1 forces it, so a test runs the controller (or keeps it off) whatever the settings file says (the Mac's default is Keep);
+// - with DM_3D_SCALE_DYN_INJECT set and no DM_TEST_Q3D, Keep does not stop the controller, so an injection run steps down and back up
+//   (the 3D target rebuilds it exists to test) on the Mac too.
+static int g_s3_qforce = -1;   // -1 = no override
+static void s3_qforce_read(void) {
+    const char *e = getenv("DM_TEST_Q3D");
+    if (e && (*e == '0' || *e == '1') && !e[1]) { g_s3_qforce = *e - '0'; LOG("DM_TEST_Q3D=%d: Frame Drops forced to %s", g_s3_qforce, g_s3_qforce ? "Keep" : "Lower"); }
+    else if (e) LOG("【红】DM_TEST_Q3D=%s is not 0 or 1: ignored", e);
+    else if (getenv("DM_3D_SCALE_DYN_INJECT")) { g_s3_qforce = 0; LOG("DM_3D_SCALE_DYN_INJECT: Frame Drops runs as Lower for the injection test, whatever the setting"); }
+}
+static int s3_qmode(void) {
+    static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, s3_qforce_read);
+    return g_s3_qforce >= 0 ? g_s3_qforce : atomic_load(&g_3d_quality_mode);
+}
+// DM_3D_SCALE_DYN_INJECT=<a>-<b>: frames a..b counted by dm_nvn_frame_count; +<a>-<b>: counted from the first frame the controller judges in a game
+// (latched once), so a scenario does not depend on how many frames the boot took; a single number <a> means <a>-<a>. Returns 1 for the + form
+static int s3_inject_parse(const char *j, long *a, long *b) {
+    int rel = *j == '+'; if (rel) j++;
+    *a = atol(j); const char *d = strchr(j, '-'); *b = d ? atol(d + 1) : *a;
+    return rel;
+}
+static _Atomic float g_s3_r10, g_s3_r60;   // the drop rates (percent) behind the controller's last level change, for the scale3d event
 static _Atomic int g_scale3d_level;
 static _Atomic int g_scale3d_resumed;
 void dm_3d_scale_resumed(void) { atomic_store(&g_scale3d_resumed, 1); }   // 前端：刚回前台。回来头几秒的慢帧是恢复（表面重建、缓存变冷），不是 GPU 吃紧：停判 3 秒 | front end: just returned to foreground. Slow frames in the first few seconds back are recovery (surface rebuild, caches gone cold), not GPU pressure: suspend judging for 3 seconds
@@ -284,25 +311,28 @@ static void s3g_feed(double iv_ms) {
 }
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
     static scale3d_ctl c; static int on = -1; static long inj0 = -1, inj1 = -1; static float fl, cfg_at;   // cfg_at：c.max_level 按哪个配置值算的 | cfg_at: the configured value c.max_level was computed for
+    static int inj_rel; static long inj_base = -1;   // DM_3D_SCALE_DYN_INJECT's + form: the frame count at the first judged frame
     if (on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
-        if (j) { inj0 = atol(j); inj1 = strchr(j, '-') ? atol(strchr(j, '-') + 1) : inj0; }
+        if (j) inj_rel = s3_inject_parse(j, &inj0, &inj1);
         const char *fe = getenv("DM_3D_SCALE_FLOOR"); fl = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
         cfg_at = s3_cfg(); c.max_level = s3_max_level(cfg_at, fl);
         LOG("3D 比例控制：%s，配置 %.2f，下限 %.2f（第 %d 档）", on ? "开" : "关", cfg_at, s3_level_scale(cfg_at, c.max_level), c.max_level); }
     if (!on) return;
-    if (s3g_on() && atomic_load(&g_3d_quality_mode) != 1) { s3g_feed(iv_ms); return; }
-    if (atomic_load(&g_3d_quality_mode) == 1) { if (c.level) { c.level = 0; LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); return; }
+    if (s3g_on() && s3_qmode() != 1) { s3g_feed(iv_ms); return; }
+    if (s3_qmode() == 1) { if (c.level) { c.level = 0; LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); return; }
     uint64_t now = now_ns();
     { float cfg = s3_cfg(); if (cfg != cfg_at) { scale3d_ctl_retarget(&c, cfg, fl, now); atomic_store(&g_scale3d_level, 0);   // 选项页换了 3D 清晰度：档位按新值重算 | the options page changed the 3D resolution: levels recomputed for the new value
         LOG("3D 比例控制：配置 %.2f → %.2f，回到配置值，下限 %.2f（第 %d 档）", cfg_at, cfg, s3_level_scale(cfg, c.max_level), c.max_level); cfg_at = cfg; } }
     if (atomic_exchange(&g_scale3d_resumed, 0)) scale3d_ctl_hold(&c, now, 3 * S3_SEC);
     { static int was; int in = dm_ingame_now();   // 不在局内（菜单 / 读取）不判；刚进局的 20 秒也不判（进局头十几秒的慢帧是装载，不是 GPU 吃紧） | not judged outside a run (menu / loading); not judged in the first 20 seconds of a run either (slow frames in the first ten-odd seconds of a run are loading, not GPU pressure)
       if (!in) { was = 0; scale3d_ctl_hold(&c, now, S3_SEC); return; }
-      if (!was) { was = 1; if (inj0 < 0) scale3d_ctl_hold(&c, now, 20 * S3_SEC); } }
+      if (!was) { was = 1; if (inj0 < 0) scale3d_ctl_hold(&c, now, 20 * S3_SEC);
+          if (inj_rel && inj_base < 0) { inj_base = (long)dm_nvn_frame_count(); LOG("DM_3D_SCALE_DYN_INJECT=+%ld-%ld: frames counted from frame %ld, the first judged one", inj0, inj1, inj_base); } } }
     { int mtl_fps_target(void); double mtl_display_refresh(void), dm_pace_hz(double, double), r = mtl_display_refresh(), hz = dm_pace_hz(r, 60);
       double p = mtl_fps_target() == 30 ? 1000.0 / dm_pace_hz(r, 30) : hz != 60 ? 1000.0 / hz : 0; if (p != c.period_ms) { c.period_ms = p; scale3d_ctl_hold(&c, now, 2 * S3_SEC); } }   // 目标周期跟着出图帧率换（省电 30 帧、非 60 倍数的屏取整除档，如 144 Hz 屏 72），切换后停判 2 秒 | The target period follows the present frame rate (power saving 30 fps; screens not a multiple of 60 take the evenly dividing tier, e.g. 72 on a 144 Hz screen); checking pauses for 2 seconds after a switch
-    if (inj0 >= 0) { long f = (long)dm_nvn_frame_count(); double per = c.period_ms > 0 ? c.period_ms : 1000.0 / 60; iv_ms = f >= inj0 && f <= inj1 ? 2 * per : per; }   // 注入：段内每帧当掉一帧（两个周期） | Injection: every frame within the segment counts as a dropped frame (two periods)
+    if (inj0 >= 0) { long f = (long)dm_nvn_frame_count() - (inj_rel ? inj_base : 0); double per = c.period_ms > 0 ? c.period_ms : 1000.0 / 60; iv_ms = f >= inj0 && f <= inj1 ? 2 * per : per; }   // Injection: every frame within the segment counts as a dropped frame (two periods)
     int was = c.level, lv = scale3d_ctl_step(&c, iv_ms, now);
+    if (lv != was) { atomic_store(&g_s3_r10, (float)(c.last_r10 * 100)); atomic_store(&g_s3_r60, (float)(c.last_r60 * 100)); }   // before the level, which scale3d_tick reads first
     if (lv != was) LOG("3D 比例控制：最近 10 秒掉帧 %.1f%%、60 秒 %.1f%% → %s到第 %d 档（3D 比例 %.2f）%s", c.last_r10 * 100, c.last_r60 * 100, lv > was ? "降" : "升", lv,
                        s3_level_scale(s3_cfg(), lv), c.need_good ? "（刚升又掉：下次升档要 90 秒）" : "");
     atomic_store(&g_scale3d_level, lv);
@@ -310,8 +340,10 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
 void dm_3d_scale_hot(int hot) { (void)hot; }   // 过热不再直接降档（改按实际掉帧）；保留符号给前端 | overheating no longer lowers the level directly (now by actual dropped frames); the symbol is kept for the front end
 static _Atomic float g_scale3d_cur = 1.0f;
 float dm_3d_scale_cur(void) { return atomic_load(&g_scale3d_cur); }
+// The configured 3D scale (DM_3D_SCALE, else the 3D Resolution setting, else the platform default), without the Frame Drops level; any thread
+float dm_3d_scale_cfg(void) { return s3_cfg(); }
 static void scale3d_tick(void) {
-    static float cur = 1.0f; static module_t *main;
+    static float cur = 1.0f; static module_t *main; static int cur_lv;   // cur_lv: the Frame Drops level of the last rebuild
     if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
     float want_cfg = s3_cfg();   // 每拍读：手机选项页改了 3D 清晰度，下一拍就按新值重建 3D 目标 | read every tick: when the phone options page changes the 3D resolution, the 3D targets are rebuilt at the new value on the next tick
     // 动态档：0 = 配置值，k = 表里第 k 个低于配置值的比例
@@ -328,6 +360,14 @@ static void scale3d_tick(void) {
     cur = want; atomic_store(&g_scale3d_cur, want);
     LOG("3D 渲染比例 %.2f：3D 目标 %ux%u，输出 %ux%u（帧 %llu）", want, *(uint32_t *)(renderer + 0xee78), *(uint32_t *)(renderer + 0xee7c),
         *(uint32_t *)(renderer + 0xee88), *(uint32_t *)(renderer + 0xee8c), (unsigned long long)dm_nvn_frame_count());
+    // One scale3d event per rebuild of the 3D targets (dm/verify/event_stream.md): from / to = the Frame Drops level of the last rebuild and of this one
+    // (to = lv), r10 / r60 = the drop rates behind that level change (0 when the level did not change: the boot rebuild, a new 3D Resolution)
+    { int step = lv != cur_lv;
+      DM_EV("scale3d", "from:d to:d lv:d scale:f pct:u tw:u th:u ow:u oh:u r10:f r60:f", cur_lv, lv, lv, round(want * 1000) / 1000.0, (unsigned long long)lroundf(want * 100),
+            (unsigned long long)*(uint32_t *)(renderer + 0xee78), (unsigned long long)*(uint32_t *)(renderer + 0xee7c),
+            (unsigned long long)*(uint32_t *)(renderer + 0xee88), (unsigned long long)*(uint32_t *)(renderer + 0xee8c),
+            step ? round(atomic_load(&g_s3_r10) * 10) / 10.0 : 0.0, step ? round(atomic_load(&g_s3_r60) * 10) / 10.0 : 0.0);
+      cur_lv = lv; }
 }
 // 抗锯齿档：游戏自己的 renderer+0x6614（0 无 / 1 FXAA / 2 SMAA / 3 SMAA T2x；主机版配置是 1）。准备场景那一步（main+0x162f738）每帧把它抄进本帧的设置块，
 // 后处理节点（main+0x166e710）按它选 FXAA（1）或 SMAA（≥ 2）；SMAA 要的目标（边缘、混合权重，T2x 另加上一帧颜色 / 深度 / 速度与亮度历史）

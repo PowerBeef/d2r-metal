@@ -65,7 +65,23 @@ static const int k_render_w[3] = { 1600, 1920, 2560 };
 static int g_render_w = 1600, g_render_tier = -1;   // 这次启动用的那一档（-1 = 没按设置定） | the tier used for this launch (-1 = not set from the settings)
 int dm_video_get(const char *key);
 void dm_video_fullscreen_note(int on);
-static double main_px(void) { NSScreen *sc = NSScreen.mainScreen; return sc ? sc.frame.size.width * sc.backingScaleFactor : 1600; }   // 主屏的像素宽 | the main screen's width in pixels
+// DM_TEST_SCREEN_PX=<w>x<h>[+<notch>] (tests): the main screen's backing store counts as w x h pixels, so another Mac's screen (a 13-inch Air's 2940x1912,
+// a 4K display) can be tried on this one; <notch> = the pixel rows the camera housing takes at the top, which full-screen content leaves out. Read once;
+// returns 0 when unset, and logs a red line and returns 0 when malformed
+static int test_screen_px(unsigned *w, unsigned *h, unsigned *notch) {
+    static unsigned tw, th, tn; static int ok; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        const char *e = getenv("DM_TEST_SCREEN_PX"); if (!e || !*e) return;
+        unsigned a = 0, b = 0, c = 0; int n = sscanf(e, "%ux%u+%u", &a, &b, &c);
+        if (n >= 2 && a && b > (n == 3 ? c : 0)) { tw = a; th = b; tn = n == 3 ? c : 0; ok = 1; LOG("DM_TEST_SCREEN_PX: the main screen counts as %ux%u px, %u px tall below the notch", tw, th, th - tn); }
+        else LOG("【红】DM_TEST_SCREEN_PX=%s is not <w>x<h>[+<notch>] in pixels: ignored", e);
+    });
+    if (ok) { if (w) *w = tw; if (h) *h = th; if (notch) *notch = tn; }
+    return ok;
+}
+// The main screen's size in pixels (backing store, notch included); DM_TEST_SCREEN_PX stands in for it
+static double main_px(void) { unsigned w; if (test_screen_px(&w, NULL, NULL)) return w; NSScreen *sc = NSScreen.mainScreen; return sc ? sc.frame.size.width * sc.backingScaleFactor : 1600; }
+static double main_px_h(void) { unsigned h; if (test_screen_px(NULL, &h, NULL)) return h; NSScreen *sc = NSScreen.mainScreen; return sc ? sc.frame.size.height * sc.backingScaleFactor : 900; }
 static int native_w(void) { int w = (int)main_px() / 16 * 16; return w < 1600 ? 1600 : w > 3840 ? 3840 : w; }
 static void render_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
@@ -98,7 +114,7 @@ static dm_mac_rec mac_rec(void) {
     dispatch_once(&once, ^{
         uint64_t mem = 0; size_t n = sizeof mem; sysctlbyname("hw.memsize", &mem, &n, NULL, 0);
         char model[64] = ""; n = sizeof model; sysctlbyname("hw.model", model, &n, NULL, 0);
-        NSScreen *sc = NSScreen.mainScreen; double px = main_px(), ph = sc ? sc.frame.size.height * sc.backingScaleFactor : 900;
+        double px = main_px(), ph = main_px_h();
         int w = native_w(), h = (int)lround(w * ph / fmax(px, 1));
         NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), mem, w, h, front_video_mfx_ok() };
         dm_mac_recommend(&spec, &r);
@@ -190,10 +206,23 @@ static NSRect game_rect(void) {
 static void vkbd_where(dm_vkbd_host *h) {   // 手柄屏幕键盘画在视图层上、游戏画面里（视图层坐标向上增） | the on-screen controller keyboard is drawn on the view layer, inside the game picture (view layer coordinates grow upward)
     h->layer = (__bridge void *)g_view.layer; h->pic = NSRectToCGRect(game_rect()); h->y_up = 1; h->scale = g_win.backingScaleFactor > 0 ? g_win.backingScaleFactor : 2;
 }
+// DM_TEST_DRAWABLE_PX=<w>x<h> (tests): the canvas gets this many pixels whatever the view's size, and the compositor scales it to the window, so a larger
+// screen's drawable (a 5K display's 5120x2880) can be measured on this one. Read once; returns 0 when unset (a malformed value logs a red line)
+static int test_drawable_px(CGSize *sz) {
+    static unsigned tw, th; static int ok; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        const char *e = getenv("DM_TEST_DRAWABLE_PX"); if (!e || !*e) return;
+        if (sscanf(e, "%ux%u", &tw, &th) == 2 && tw && th && tw <= 16384 && th <= 16384) { ok = 1; LOG("DM_TEST_DRAWABLE_PX: the canvas is %ux%u px whatever the window's size", tw, th); }
+        else LOG("【红】DM_TEST_DRAWABLE_PX=%s is not <w>x<h> in pixels (up to 16384): ignored", e);
+    });
+    if (ok) *sz = CGSizeMake(tw, th);
+    return ok;
+}
 static void layout_game(void) {
     NSRect r = game_rect(); if (NSEqualRects(r, g_layer.frame)) return;
     CGFloat sc = g_view.window.backingScaleFactor ?: 2;   // 画布跟着改：作为子层的 CAMetalLayer 改 frame 不会自己改 drawableSize，原先进全屏后一直用窗口态的画布放大显示（发糊） | the canvas follows: a CAMetalLayer used as a sublayer does not change its drawableSize when its frame changes, so after going full screen it used to keep the windowed canvas and scale it up (blurry)
-    [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = sc; g_layer.drawableSize = CGSizeMake(round(r.size.width * sc), round(r.size.height * sc)); [CATransaction commit];
+    CGSize ds = CGSizeMake(round(r.size.width * sc), round(r.size.height * sc)); test_drawable_px(&ds);
+    [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = sc; g_layer.drawableSize = ds; [CATransaction commit];
     dm_vkbd_ui_relayout();   // 屏幕键盘跟着画面走 | the on-screen keyboard follows the picture
     LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
 }
@@ -242,19 +271,37 @@ static void app_quit(const char *why) {   // 主线程 | main thread
     if (ingame && g_win.miniaturized) { void mtl_present_discard(int on); void guest_clock_freeze_for(int reason, int on); mtl_present_discard(1); dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); LOG("窗口：最小化着退出，先恢复图形与客体时钟再存盘"); }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ app_quit_finish(why, ingame); });
 }
-// 控制口 app 命令（dm_ctl_cmds.c）：在主线程上做与 DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT 相同的动作。最小化与 DM_TEST_MINI_AT 一样临时给窗口加上可最小化（游戏窗口本身没有）；
-// background / foreground 在 Mac 上就是最小化 / 还原；resign / active 不支持（Mac 的失焦靠别的窗口抢走焦点）
-// The control port's app command (dm_ctl_cmds.c): on the main thread, the same actions as DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT. Like DM_TEST_MINI_AT, minimizing temporarily makes the window minimizable (the game window is not by itself);
-// background / foreground on the Mac are minimize / restore; resign / active are not supported (on the Mac, focus is lost by another window taking it)
+// The control port's app command (dm_ctl_cmds.c), done on the main thread:
+// - minimize / restore (background / foreground on the Mac) and terminate: the same actions as DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT. Like DM_TEST_MINI_AT,
+//   minimizing temporarily makes the window minimizable (the game window is not by itself);
+// - cover / uncover (tests): an opaque window over the whole game window and away again, as DM_TEST_COVER does, so the occlusion handling below runs;
+// - link_inactive / link_active (tests): what iOS does on resign / become active, on the Mac: the present link paused (mtl_present_inactive) and focus 2,
+//   then resumed with focus 1, for the Frame Drops checks;
+// - resign / active are not supported (on the Mac, focus is lost by another window taking it).
 // 测试用：给自己发一次系统的「退出」Apple 事件（同程序坞「退出」走的那条，见 quitEvent:reply:） | for tests: send ourselves the system "quit" Apple event (the same path as Quit in the Dock, see quitEvent:reply:)
 static void send_quit_event(void) {
     NSAppleEventDescriptor *ev = [NSAppleEventDescriptor appleEventWithEventClass:kCoreEventClass eventID:kAEQuitApplication targetDescriptor:[NSAppleEventDescriptor currentProcessDescriptor]
                                                                          returnID:kAutoGenerateReturnID transactionID:kAnyTransactionID];
     NSError *err = nil; if (![ev sendEventWithOptions:NSAppleEventSendNoReply timeout:5 error:&err]) LOG("【红】测试退出：退出 Apple 事件发不出去：%s", err.localizedDescription.UTF8String);
 }
+// The test cover (DM_TEST_COVER, the control port's app cover / uncover): an opaque window over the whole game window; main thread
+static NSWindow *g_cover;
+static void test_cover(int on) {
+    if (on && !g_cover && g_win) {
+        NSWindow *c = [[NSWindow alloc] initWithContentRect:NSInsetRect(g_win.frame, -40, -40) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+        c.opaque = YES; c.backgroundColor = NSColor.grayColor; c.releasedWhenClosed = NO; [c orderFrontRegardless]; g_cover = c;
+    } else if (!on && g_cover) { [g_cover orderOut:nil]; g_cover = nil; }
+}
 static int ctl_app(const char *w) {
     if (!g_win) return -1;
     int mini = !strcmp(w, "minimize") || !strcmp(w, "background"), rest = !strcmp(w, "restore") || !strcmp(w, "foreground");
+    if (!strcmp(w, "cover") || !strcmp(w, "uncover")) { int on = !strcmp(w, "cover");
+        dispatch_sync(dispatch_get_main_queue(), ^{ test_cover(on); LOG("control port: test cover %s (the game window %s the key window)", on ? "on" : "off", g_win.isKeyWindow ? "is" : "is not"); });
+        return 0; }
+    if (!strcmp(w, "link_inactive") || !strcmp(w, "link_active")) { int on = !strcmp(w, "link_inactive"); void mtl_present_inactive(int on);
+        dispatch_sync(dispatch_get_main_queue(), ^{ mtl_present_inactive(on); dm_focus_set(on ? 2 : 1);
+            LOG("control port: %s (present link %s, focus %d)", on ? "inactive as on iOS resign" : "active again", on ? "paused" : "running", on ? 2 : 1); });
+        return 0; }
     if (!strcmp(w, "terminate")) { dispatch_async(dispatch_get_main_queue(), ^{ send_quit_event(); }); return 0; }   // 同程序坞「退出」：退出 Apple 事件 → app_quit（存盘再退），不返回 | as Quit in the Dock: the quit Apple event -> app_quit (save, then quit), does not return
     if (!mini && !rest) return -1;
     dispatch_sync(dispatch_get_main_queue(), ^{ if (mini) { g_win.styleMask |= NSWindowStyleMaskMiniaturizable; [g_win miniaturize:nil]; } else [g_win deminiaturize:nil]; });
@@ -776,10 +823,8 @@ void front_run(void (*guest)(void)) {
           double at = 0, dur = 0;
           if ((e = getenv("DM_TEST_COVER")) && sscanf(e, "%lf,%lf", &at, &dur) == 2 && at > 0 && dur > 0)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                  NSWindow *c = [[NSWindow alloc] initWithContentRect:NSInsetRect(win.frame, -40, -40) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
-                  c.opaque = YES; c.backgroundColor = NSColor.grayColor; c.releasedWhenClosed = NO; [c orderFrontRegardless];
-                  LOG("DM_TEST_COVER：盖上 %.1f 秒，游戏窗口%s是主窗口", dur, win.isKeyWindow ? "" : "不");
-                  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(dur * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [c orderOut:nil]; LOG("DM_TEST_COVER：拿开"); });
+                  test_cover(1); LOG("DM_TEST_COVER：盖上 %.1f 秒，游戏窗口%s是主窗口", dur, win.isKeyWindow ? "" : "不");
+                  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(dur * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ test_cover(0); LOG("DM_TEST_COVER：拿开"); });
               }); }
         [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "resign"); if (!win.miniaturized && !atomic_load(&g_quitting)) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
         [nc addObserverForName:NSWindowDidBecomeKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "active"); dm_focus_set(1); }];

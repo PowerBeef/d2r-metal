@@ -168,6 +168,8 @@ int mtl_link_rate(void);                                    // 120, 60, or 30 in
 double mtl_presented_time(uint64_t n);
    // 第 n 次出图（从 1 计）的实际呈现时刻（秒）；0 = 未就绪，−1 = 被丢弃
    // Actual presentation time (seconds) of the n-th present (counted from 1); 0 = not ready, −1 = dropped
+void mtl_presented_test_set(uint64_t tk, double t);   // unit tests: record ticket tk's presentation time (seconds; -1 = not shown)
+void mtl_present_inactive(int on);   // the shell is inactive (iOS resign; the Mac test verb link_inactive): the present link paused, as mtl_link_pause
 // 贴图释放（Finalize 时）
 // Texture release (at Finalize)
 void mtl_tex_release(tex_t *t);

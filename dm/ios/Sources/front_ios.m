@@ -1306,10 +1306,10 @@ static int ctl_app(const char *w) {
 // 在 Mac 上跑的 iOS 包不停：那里「失活」= 窗口不在最前，画面照样看得见、游戏照样在跑
 // Not stopped for the iOS package running on a Mac: there "inactive" = the window is not frontmost, and the picture is still visible with the game still running
 static void links_pause(int on) {
-    void mtl_link_pause(int on);
+    void mtl_present_inactive(int on);   // pauses the present link as mtl_link_pause does, and records the inactive state for Frame Drops
     if (NSProcessInfo.processInfo.isiOSAppOnMac) return;
-    if (on) { mtl_link_pause(1); g_rate_link.paused = YES; LOG("前端：失活，停出图与触屏控件的显示节拍"); }
-    else { g_rate_link.paused = NO; mtl_link_pause(0); LOG("前端：激活，放开显示节拍"); }
+    if (on) { mtl_present_inactive(1); g_rate_link.paused = YES; LOG("前端：失活，停出图与触屏控件的显示节拍"); }
+    else { g_rate_link.paused = NO; mtl_present_inactive(0); LOG("前端：激活，放开显示节拍"); }
 }
 // 场景生命周期（main.m 的 SceneDelegate 调）：0 失活 1 进后台 2 回前台 3 激活
 // Scene lifecycle (called by SceneDelegate in main.m): 0 resign active, 1 enter background, 2 return to foreground, 3 become active

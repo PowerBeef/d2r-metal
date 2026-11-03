@@ -1,7 +1,7 @@
 开关 | switch	读它的部分 | read by	文件 | files	文档 | documented
-DM_3D_SCALE	host	host/hle_oe.c	y
+DM_3D_SCALE	host	host/hle_oe.c host/tests/t_oe.c	y
 DM_3D_SCALE_DYN	host	host/hle_oe.c	-
-DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c	-
+DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c host/tests/t_oe.c	-
 DM_3D_SCALE_FLOOR	host	host/hle_oe.c	-
 DM_3D_SCALE_GPU	host	host/hle_oe.c	-
 DM_3D_SCALE_GPU_FLOOR	host	host/hle_oe.c	-
@@ -230,7 +230,7 @@ DM_PACE_ADAPT	gfx	gfx/nvn/hle_nvn.c	-
 DM_PANEL_FREEZE	host	host/diag.c host/dm_cursor.c	-
 DM_PC_DATA	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	y
 DM_PC_MODE	host	host/dm_padmode.c host/front_mac.m	y
-DM_PERF_FILE	host	host/diag.c	-
+DM_PERF_FILE	host	host/diag.c	y
 DM_PLAYERS	host	host/diag.c	y
 DM_POSCHK	host	host/diag.c	-
 DM_POT_PICK	host	host/dm_beltauto.c host/dm_potpick.c	-
@@ -322,9 +322,10 @@ DM_TEST_BG_RELAUNCH	ios	ios/Sources/main.m	-
 DM_TEST_BINDTBL	host	host/dm_actions.c	-
 DM_TEST_C2S	host	host/dm_actions.c	-
 DM_TEST_CM_KEYS	host	host/dm_cloudmerge.c	-
-DM_TEST_COVER	host	host/front_mac.m	-
+DM_TEST_COVER	host	host/front_mac.m	y
 DM_TEST_CURSOR	host	host/hle_hid.c	-
 DM_TEST_DAYTIME	host	host/dm_bright.c	-
+DM_TEST_DRAWABLE_PX	host	host/front_mac.m	-
 DM_TEST_DROP_SOUND	host	host/dm_dropfilter.c	-
 DM_TEST_DUR	host	host/diag.c	-
 DM_TEST_EDGE_B	ios	ios/Sources/front_ios.m	-
@@ -397,6 +398,7 @@ DM_TEST_POTPICK_BURST	host	host/dm_potpick.c	-
 DM_TEST_POTPICK_FROM	host	host/dm_potpick.c	-
 DM_TEST_PRESENT_RGB	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_PRESENT_SHOT	host	host/front_mac.m	-
+DM_TEST_Q3D	host	host/hle_oe.c host/tests/t_oe.c	-
 DM_TEST_QUIT_AT	host	host/front_mac.m	-
 DM_TEST_RESIGN	ios	ios/Sources/front_ios.m	-
 DM_TEST_RSTICK	host	host/hle_hid.c	-
@@ -408,6 +410,7 @@ DM_TEST_SAVE_AT	host,verify	host/diag.c verify/golden.py	y
 DM_TEST_SAVE_DELAY	host	host/hle_fs.c	y
 DM_TEST_SCREEN	ios	ios/Sources/front_ios.m	-
 DM_TEST_SCREEN_ASPECT	host	host/front_mac.m	-
+DM_TEST_SCREEN_PX	host	host/front_mac.m	-
 DM_TEST_SEEK_BIAS	host	host/diag.c	-
 DM_TEST_SEEK_NOACT	host	host/dm_world.c	-
 DM_TEST_SHARELOG	host	host/front_mac.m	-
