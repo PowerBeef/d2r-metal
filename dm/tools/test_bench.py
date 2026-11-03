@@ -133,6 +133,41 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(rc, 3, out.getvalue()); self.assertIn('no rewrite output / shader library snapshot', out.getvalue())
 
 
+    def regress_out(self, argv, segs):
+        """bench.py regress over fake runs whose segments come from segs(run number): (exit code, output, regress.json)."""
+        n = [0]
+        class FakeRunner:
+            def __init__(self, route, backend, out_dir, headless): self.on_started = None
+            def go(self): return {}, 0
+        def fake_segments(d): n[0] += 1; return segs(n[0])
+        with tempfile.TemporaryDirectory() as t:
+            self.snapshotted(t); host = Path(t, 'dmhost'); host.write_bytes(b'x'); out = io.StringIO()
+            with mock.patch.object(bench.scenario, 'Runner', FakeRunner), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None), \
+                 mock.patch.object(bench, 'wait_cool', lambda s: (None, 0)), mock.patch.object(bench, 'thermal', lambda: None), \
+                 mock.patch.object(bench, 'environment', lambda: {'git': {'rev': 'x'}}), mock.patch.object(bench, 'DM_ROOT', t), mock.patch.object(bench, 'BASE', t), \
+                 mock.patch.object(bench, 'current_host', lambda: str(host)), mock.patch.object(bench, 'segments', fake_segments), contextlib.redirect_stdout(out):
+                rc = bench.main(['regress', ROUTE, '--reps', '6'] + argv)
+            with open(next(Path(t, 'run', 'bench').glob('town_loop_regress_*/regress.json')), encoding='utf-8') as f: rj = json.load(f)
+        return rc, out.getvalue(), rj
+
+    def test_regress_not_judged(self):   # a requested comparison with no p (too few runs had a value) never reads OK: grey, naming it
+        def seg(i, present=False):   # values that interleave between A and B: no difference
+            v = 1.0 + (i % 3) * 0.01
+            return dict({k: {'p50': v} for k in ('cpu_ms', 'nvn_ms', 'proc_cpu_ms')}, present={'p95_ms': v} if present else {})
+        rc, out, rj = self.regress_out([], lambda i: {'town': seg(i), 'wild': seg(i)})
+        self.assertEqual(rc, 0, out); self.assertIn('BENCH-REGRESS OK', out); self.assertEqual((rj['verdict'], rj['not_judged']), ('OK', {}))
+        rc, out, rj = self.regress_out(['--metrics', 'cpu_ms.p50,present.p95_ms'], lambda i: {'town': seg(i), 'wild': seg(i)})   # present.* empty, as at Recommended
+        self.assertEqual(rc, 3, out); self.assertIn('⚪ BENCH-REGRESS town_loop: not judged', out); self.assertIn('present.p95_ms (town, wild)', out)
+        self.assertNotIn('BENCH-REGRESS OK', out); self.assertEqual(rj['not_judged'], {'present.p95_ms': ['town', 'wild']})
+        rc, out, _ = self.regress_out(['--metrics', 'present.p95_ms'], lambda i: {'town': seg(i, True), 'wild': seg(i, True)})
+        self.assertEqual(rc, 0, out)
+        rc, out, rj = self.regress_out([], lambda i: {'town': seg(i)})   # a route segment missing from every run
+        self.assertEqual(rc, 3, out); self.assertEqual(rj['not_judged'], {m: ['wild'] for m in ('cpu_ms.p50', 'nvn_ms.p50', 'proc_cpu_ms.p50')})
+        def slow(i): return {'town': dict(cpu_ms={'p50': (2.0 if ('ABBA' * 3)[i - 1] == 'B' else 1.0) + i / 1000})}   # B clearly slower (run i follows the ABBA order)
+        rc, out, rj = self.regress_out(['--metrics', 'cpu_ms.p50,present.p95_ms'], lambda i: {**slow(i), 'wild': seg(i)})   # a slowdown is red even with a comparison not judged
+        self.assertEqual((rc, rj['verdict']), (1, 'RED'), out); self.assertIn('town cpu_ms.p50 +', out); self.assertIn('not judged: present.p95_ms (town, wild)', out)
+        self.assertEqual(bench.not_judged([], ['cpu_ms.p50'], []), {'cpu_ms.p50': ['(no segment)']})
+
     def test_holm_and_min_reps(self):
         rows = [dict(p=p) for p in (0.001, 0.01, 0.02, 0.04)]; bench.holm(rows)
         self.assertEqual([r['holm'] for r in rows], [True, True, True, True])
@@ -177,8 +212,8 @@ class BenchTest(unittest.TestCase):
                        mock.patch.object(bench, 'current_host', lambda: str(host)), mock.patch.object(bench, 'attribute', lambda d, h: dict(threads={}, segments={}, hitches=[]))]
             with contextlib.ExitStack() as st, contextlib.redirect_stdout(io.StringIO()):
                 for pt in patches: st.enter_context(pt)
-                def call(argv):
-                    seen.clear(); rc = bench.main(argv); self.assertEqual(rc, 0, argv); self.assertNotIn('DM_GAME_RES', os.environ); return list(seen)
+                def call(argv, want=0):
+                    seen.clear(); rc = bench.main(argv); self.assertEqual(rc, want, argv); self.assertNotIn('DM_GAME_RES', os.environ); return list(seen)
                 rec = {k: v for k, v in picture.REC.items()}
                 [(_, got)] = call(['run', ROUTE, '--reps', '1'])
                 self.assertEqual((got['DM_GAME_RES'], got['DM_TEST_FULLSCREEN_AT']), ('2560x1440', '1')); self.assertLessEqual(rec.items(), got.items())
@@ -191,7 +226,7 @@ class BenchTest(unittest.TestCase):
                 self.assertEqual([got['DM_AA_MODE'] for _, got in runs], ['2', '1'])
                 [(_, got)] = call(['profile', ROUTE])
                 self.assertEqual((got['DM_SAMPLE'], got['DM_SHADOW_SIZE']), ('4:*', '4096'))
-                runs = call(['regress', ROUTE, '--reps', '6'])
+                runs = call(['regress', ROUTE, '--reps', '6'], 3)   # the fake runs measure nothing, so no comparison is judged: grey, not OK
                 self.assertEqual(len(runs), 12)
                 for d, got in runs:
                     self.assertEqual(got['DM_ENV_SHADOWS'], '1', d)
@@ -204,7 +239,7 @@ class BenchTest(unittest.TestCase):
     def test_dir_token(self):   # {dir} in an env value becomes the run's own folder (DM_NVN_PASSGPU={dir}/passgpu.tsv), per variant and run
         seen = []
         class FakeRunner:
-            def __init__(self, route, backend, out_dir, headless): seen.append((out_dir, dict(os.environ).get('DM_NVN_PASSGPU')))   # read through a copy: a test is not a reader in dm/switches.tsv; self.on_started = None
+            def __init__(self, route, backend, out_dir, headless): seen.append((out_dir, dict(os.environ).get('DM_NVN_PASSGPU'))); self.on_started = None   # read through a copy: a test is not a reader in dm/switches.tsv
             def go(self): return {}, 0
         with tempfile.TemporaryDirectory() as t, contextlib.redirect_stdout(io.StringIO()), \
              mock.patch.object(bench.scenario, 'Runner', FakeRunner), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None), \

@@ -21,6 +21,7 @@
 #   regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50]   baseline host (A, on its own rewrite output and shader library) against the current host (B) in ABBA order,
 #        each metric judged as in ab, then Holm-corrected over every segment x metric; RED only when B is significantly slower after Holm; conclusions go to the ledger.
 #        Refused before any run: a baseline without that snapshot is ⚪ (exit 3); --reps too few to reach significance over the comparisons is red (exit 2, it names the --reps needed).
+#        After the runs, a segment x metric that got no p (fewer than 2 runs a side with a value, e.g. present.* where the present is not measured) makes it ⚪ (exit 3), never OK; a slowdown is still red.
 #        gpu_ms is not in the defaults: on a fast Mac the GPU lowers its clock when it has room, so it is clock-scaled (--metrics gpu_ms.p50 still works)
 #   run / ab / regress --keep: a .keep file in the result folder, so workspace_prune.py never takes it
 #   {dir} in an env value (--env, --a-env, --b-env) becomes the run's own folder, e.g. DM_NVN_PASSGPU={dir}/passgpu.tsv: one file per run and variant
@@ -528,12 +529,26 @@ def cmd_regress(a):
     for m, rr in by.items(): ledger_write(stamp, envinfo, f'{name}@{a.picture}', m, f'baseline {bname}', 'current', rr)
     for r in rows:
         if 'holm' in r: print(f"  {r['segment']:<10} {r['metric']}: {r['verdict']}, p {r['p']:.3f} → Holm {'ok' if r['holm'] else 'n.s.'}")
+        else: print(f"  {r['segment']:<10} {r['metric']}: {r['verdict']}")
     slower = [r for r in rows if r.get('verdict') == 'B slower' and r.get('holm')]; ok = all(r['ok'] for v in reps.values() for r in v)
-    with open(os.path.join(out, 'regress.json'), 'w', encoding='utf-8') as f: json.dump(dict(route=name, picture=a.picture, hosts=hosts, sides=sides, order=order, rows=rows, environment=envinfo), f, ensure_ascii=False, indent=1)
-    verdict = 'RED' if slower or not ok else 'OK'
-    print(f"BENCH-REGRESS {verdict} {name}: {len(slower)} significantly slower after Holm" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower))
-    print('RESULT ' + json.dumps(dict(name='bench-regress', verdict=verdict, route=name, slower=[(r['segment'], r['metric'], r['diff']) for r in slower]), ensure_ascii=False))
-    return 1 if verdict == 'RED' else 0
+    unjudged = not_judged(rows, metrics, segs)
+    verdict = 'RED' if slower or not ok else 'UNAVAILABLE' if unjudged else 'OK'
+    with open(os.path.join(out, 'regress.json'), 'w', encoding='utf-8') as f:
+        json.dump(dict(route=name, picture=a.picture, hosts=hosts, sides=sides, order=order, verdict=verdict, not_judged=unjudged, rows=rows, environment=envinfo), f, ensure_ascii=False, indent=1)
+    gap = '; '.join(f"{m} ({', '.join(s)})" for m, s in unjudged.items())
+    if verdict == 'UNAVAILABLE': print(f'⚪ BENCH-REGRESS {name}: not judged, fewer than 2 runs a side with a value: {gap}')
+    else: print(f"BENCH-REGRESS {verdict} {name}: {len(slower)} significantly slower after Holm" + ''.join(f"\n  {r['segment']} {r['metric']} +{r['diff']}" for r in slower) + (f'\n  not judged: {gap}' if gap else ''))
+    print('RESULT ' + json.dumps(dict(name='bench-regress', verdict=verdict, route=name, slower=[(r['segment'], r['metric'], r['diff']) for r in slower], not_judged=unjudged), ensure_ascii=False))
+    return 1 if verdict == 'RED' else 3 if verdict == 'UNAVAILABLE' else 0
+
+
+def not_judged(rows, metrics, segs):
+    """The comparisons a regression asked for (every route segment x metric) that carry no p, by metric: too few runs had a value
+    (present.* at a picture whose present is not measured, a segment missing from the data). An OK needs every one judged."""
+    judged = {(r['segment'], r['metric']) for r in rows if isinstance(r.get('p'), (int, float))}
+    want = segs or sorted({r['segment'] for r in rows}) or ['(no segment)']
+    out = {m: [s for s in want if (s, m) not in judged] for m in metrics}
+    return {m: s for m, s in out.items() if s}
 
 
 def keep(folder, a):
