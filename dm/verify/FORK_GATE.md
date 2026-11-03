@@ -19,7 +19,8 @@ Several tiers can be given at once; they run in the order given.
 - `steps.tsv` lists every step: name, verdict (OK / RED / ERROR / UNAVAIL), seconds, unavailable items.
 - `summary.json` and the last line, `FORKGATE OK|RED {json}`, give the tiers, the commit, the time, the red steps and the number of unavailable items.
 - `$DM_ROOT/run/gate/latest` points at the most recent run.
-- Unavailable items (⚪) are not red: a missing recording, a fixture save without what a case needs, or no phone.
+- Unavailable items (⚪) are not red: a missing recording, a fixture save without what a case needs, or no phone, or a front run still disturbed after its redos (exit 3: another app took the front, a Space switch, display sleep; `scenarios/README.md`).
+- **Only the long tier takes the front** (the benchmarks, by design). Every windowed scenario of `core` and `full` is a background run (`DM_TEST_BGRUN=1`): no focus taken, no Space switched, the window off screen; the gate can run while you work.
 
 ## Tiers
 
@@ -27,7 +28,7 @@ Several tiers can be given at once; they run in the order given.
 |---|---|
 | quick | `scan_literals.py`, `dm_i18n.py --check`, `switches.py check`, `scenario.py check` on every scenario, `check_hud_gen.sh`, `addrcheck.py` (cited game addresses; ⚪ without the analysis export) |
 | unit | host, gfx and iOS suites; `regress.sh`; the Mac packaging tools (`test_mac_bundle.py`, `test_install.py`, the launcher's core tests) |
-| core | builds the host; the scenarios without front-end steps run headless, three at a time; the ones that minimize, background or quit run windowed, one at a time; then the touch cases |
+| core | builds the host; the scenarios without front-end steps run headless, three at a time; the ones that minimize, background or quit (or carry the `front` header) run windowed, one at a time, in the background; then the touch cases |
 | full | rebuilds the Mac App test copy for the current commit, runs the scenarios on it; `smoke_mac.sh 1` (which also rebuilds the iOS package for the Mac), the scenarios on that package; one scenario under Metal API validation; the fault scenarios |
 | long | `bench.py` on the town route (first, while the machine is cool); `explore.py` on the ASan and UBSan hosts; TSan alone; `fnfuzz.py` |
 | device | `smoke.sh`, `lifecycle.sh` on the iPhone; ⚪ when it isn't reachable |

@@ -318,12 +318,12 @@ DM_TEST_BELTFILL_SWITCH	host	host/dm_actions.c	-
 DM_TEST_BELT_DRINK	host	host/dm_beltauto.c	-
 DM_TEST_BELT_NOPUT	host	host/dm_beltauto.c	-
 DM_TEST_BG	ios	ios/Sources/front_ios.m	y
-DM_TEST_BGRUN	host	host/app_mac.m host/front_mac.m	y
+DM_TEST_BGRUN	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	y
 DM_TEST_BG_RELAUNCH	ios	ios/Sources/main.m	-
 DM_TEST_BINDTBL	host	host/dm_actions.c	-
 DM_TEST_C2S	host	host/dm_actions.c	-
 DM_TEST_CM_KEYS	host	host/dm_cloudmerge.c	-
-DM_TEST_COVER	host	host/front_mac.m	-
+DM_TEST_COVER	host	host/front_mac.m	y
 DM_TEST_CURSOR	host	host/hle_hid.c	-
 DM_TEST_DAYTIME	host	host/dm_bright.c	-
 DM_TEST_DROP_SOUND	host	host/dm_dropfilter.c	-
@@ -335,7 +335,7 @@ DM_TEST_FREEZE	host	host/diag.c	-
 DM_TEST_FRZ	host	host/diag.c	-
 DM_TEST_FS_FAIL	host	host/hle_fs.c host/tests/t_fs.c host/tests/t_save_hooks.c	-
 DM_TEST_FS_FAILAT	host	host/hle_fs.c host/tests/t_fs.c	y
-DM_TEST_FULLSCREEN_AT	host	host/front_mac.m	-
+DM_TEST_FULLSCREEN_AT	host,tools	host/front_mac.m tools/scenario.py	-
 DM_TEST_GHOST	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_GIVE	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	y
 DM_TEST_GIVE_INV	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	-

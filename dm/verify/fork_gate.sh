@@ -53,7 +53,8 @@ lock_on() {   # 开窗的层持 Mac 游戏锁；子进程见 XT_LOCK_HELD=1 就�
 scenarios() {   # 精选场景：scenarios/*.scn（不含 saves/ 生成器与 faults/） | curated scenarios: scenarios/*.scn (not the saves/ generators or faults/)
   ls "$DM/verify/scenarios/"*.scn
 }
-FRONT_RE='^[[:space:]]*(app|background|system_quit|swipe_away|fe)([[:space:]]|$)'   # 要前端的步（app 命令与它的宏、前端测试输入 fe）：无窗宿主没有前端 | steps that need a front end (the app command and its macros, front-end test input fe): a headless host has none
+# Steps that need a front end (the app command and its macros, front-end test input fe), and the `front` header: a headless host has none
+FRONT_RE='^[[:space:]]*(app|background|system_quit|swipe_away|fe|front)([[:space:]]|$)'
 headless_scenarios() { for f in "$@"; do grep -qE "$FRONT_RE" "$f" || echo "$f"; done; }
 front_scenarios() { for f in "$@"; do grep -qE "$FRONT_RE" "$f" && echo "$f"; done; }
 par_scenarios() {   # par_scenarios <backend> <并行数 | jobs> <文件… | files…>：每个场景单独一个 scenario.py 进程 | one scenario.py process per scenario
@@ -61,6 +62,10 @@ par_scenarios() {   # par_scenarios <backend> <并行数 | jobs> <文件… | fi
   printf '%s\n' "$@" | xargs -P "$jobs" -I{} python3 "$DM/tools/scenario.py" run {} --backend "$be" --headless
 }
 export -f par_scenarios
+scn_run() {   # scn_run <scenario.py run arguments…>: windowed runs are background runs; a front one that stays disturbed is not judged (exit 3, ⚪ line) = unavailable, not red
+  python3 "$DM/tools/scenario.py" run "$@"; local rc=$?; [ $rc -eq 3 ] && return 0; return $rc
+}
+export -f scn_run
 export OUT DM DM_ROOT HEAD_SHA DIRTY
 touch_cases() {   # 触屏功能用例：退出码 3 = 本机缺前缀录制（不可用，不算红） | touch function cases: exit code 3 = prefix recording missing here (unavailable, not red)
   local bad=0
@@ -105,13 +110,13 @@ for tier in "${TIERS[@]}"; do
     make -C "$DM/host" -s >/dev/null 2>&1 || { echo "🔴 宿主编译失败 | host build failed"; exit 2; }
     step core_scenarios 1200 -- bash -c 'par_scenarios cli 3 "$@"' _ $(headless_scenarios $(scenarios))
     lock_on 10
-    step core_front_scenarios 900 -- python3 "$DM/tools/scenario.py" run $(front_scenarios $(scenarios)) --backend cli   # 开窗、一个一个跑（前端生命周期：最小化 / 退出） | windowed, one at a time (front-end lifecycle: minimize / quit)
+    step core_front_scenarios 900 -- bash -c 'scn_run "$@" --backend cli' _ $(front_scenarios $(scenarios))   # windowed, one at a time, in the background (front-end lifecycle: minimize / quit)
     step core_touchcases 900 -- bash -c touch_cases
     ;;
   full)
     lock_on 15
     step full_macapp_build 900 -- bash -c fresh_mac_app
-    step full_macapp_scenarios 1800 -- python3 "$DM/tools/scenario.py" run $(scenarios) --backend mac-app
+    step full_macapp_scenarios 1800 -- bash -c 'scn_run "$@" --backend mac-app' _ $(scenarios)   # background runs
     step full_smoke_mac 900 -- bash "$DM/ios/tools/smoke_mac.sh" 1   # 也按 HEAD 重出 iOS 包的 Mac 版（ios-mac 场景用它） | also rebuilds the iOS package for the Mac from HEAD (the ios-mac scenarios use it)
     step full_iosmac_scenarios 1800 -- python3 "$DM/tools/scenario.py" run $(scenarios) --backend ios-mac
     step full_metal_validation 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/enter_game.scn" --backend cli --headless --metal-validation api
@@ -119,7 +124,7 @@ for tier in "${TIERS[@]}"; do
     step full_golden_replay 1800 -- bash -c 'python3 "$DM/verify/golden.py" replay check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
     step full_golden_shots 1200 -- bash -c 'python3 "$DM/verify/golden.py" shots check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
     step full_faults 1200 -- bash -c 'par_scenarios cli 3 "$@"' _ $(headless_scenarios "$DM/verify/scenarios/faults/"*.scn)   # 故障矩阵（scenarios/faults/README.md） | the fault matrix (scenarios/faults/README.md)
-    step full_faults_front 600 -- python3 "$DM/tools/scenario.py" run $(front_scenarios "$DM/verify/scenarios/faults/"*.scn) --backend cli
+    step full_faults_front 600 -- bash -c 'scn_run "$@" --backend cli' _ $(front_scenarios "$DM/verify/scenarios/faults/"*.scn)
     ;;
   long)
     lock_on 120

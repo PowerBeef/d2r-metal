@@ -7,9 +7,14 @@ python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn              
 python3 dm/tools/scenario.py run dm/verify/scenarios/*.scn --headless                   # every scenario, no window
 python3 dm/tools/scenario.py run dm/verify/scenarios/background.scn --backend ios-mac   # the iOS package on this Mac
 python3 dm/tools/scenario.py check dm/verify/scenarios/*.scn                           # parse only
+python3 dm/tools/scenario.py run dm/verify/scenarios/inventory.scn --front [--redo 2]  # in front, to watch it (windowed runs are background runs otherwise)
 ```
 
 Each scenario prints `STEP` lines, `CHECK` lines, a `SCENARIO <name> OK|RED <reason>` verdict and a final `RESULT {json}`. The result folder (`$DM_ROOT/run/scenario/<name>_<backend>_<time>/`) holds `host.log`, `events.ndjson` (CLI host), `port.log`, `steps.tsv`, `result.json` and the screenshots.
+
+**Windowed runs are background runs.** A windowed `cli`, `mac-app` or `ios-mac` run gets `DM_TEST_BGRUN=1`: the game window never becomes key and the app never asks for activation, so a run takes no focus and switches no Space while you work. On the Mac the window is borderless and sits outside every screen at the size it would have on screen (windowed: what AppKit gives the titled window; full screen: the screen's full-screen content area, emulated), so the drawable is the same as in front; launch focus, sheets, minimize / restore and `DM_TEST_COVER` are emulated through the same handler bodies AppKit would trigger (`app … emu=true`), the display link keeps ticking off screen and presented times are the link's target timestamps. A background run that comes to the front by itself (within 3 s of launch, or inside a step that asks for lifecycle changes) is red; a later activation is yours and only noted.
+
+**Front runs** (the `front <why>` header, `--front`, or `DM_TEST_BGRUN=0` from the caller, as `bench.py` sets) run as the product does: real activation, real full screen. They are judged for disturbances from the `desk` and `app` events: another app taking the front, a Space switch, display sleep, the session going inactive, a resign that isn't the run's own sheet or minimize, occlusion or minimize outside a step that asked for it (the real full-screen switch excepted), or the game never getting the front. A disturbed run is redone in a new run folder (`--redo N`, default 2; the disturbed folder is kept) and then reported `⚪ SCENARIO <name> not judged: disturbed (…)` with exit code 3; RED wins over not judged in the final code. A front attempt prints its lines behind a `· ` prefix, and only the judged attempt's verdict line is printed bare, so `dmtest.py` counts it once. Partial covers (notification banners, floating panels) are not detected.
 
 `SCN_DMHOST=<executable>` runs another host build on the `cli` backend, for example a sanitizer build (`make -C dm/host dmhost_asan`). Every run scans its logs for sanitizer reports; any report makes it red (`sanitizer.txt`). `--metal-validation api|shader|all|lint` turns on Metal's validation layers (`metal_validation.txt`). Both are described in [debugging.md](../debugging.md).
 
@@ -35,6 +40,7 @@ Header lines (anywhere in the file):
 | `env K=V …` | Extra environment for the game. |
 | `timeout <s>` | Limit for the whole scenario (default 300). |
 | `window 0` | Run the CLI host without a window. |
+| `front <why>` | Run this scenario in front (`DM_TEST_BGRUN=0`), judged for disturbances and redone; `<why>` is required (`visibility`, `focus`, `fullscreen`, `timing` …). Not with `env DM_TEST_BGRUN`. |
 | `requires <backend> …` | Skip on other backends. |
 | `env DM_ROMFS_OVERLAY=auto` | `cli`: generate the iOS package's UI overlay into the run folder (about 3 s) and run with it, as `touchchain.sh` does; the controller / touch switch (`inputmode`) and the touch pages need it. |
 
