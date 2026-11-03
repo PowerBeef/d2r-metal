@@ -740,6 +740,11 @@ void mtl_counter_stats(uint64_t rep[32], uint64_t rst[32]) { memcpy(rep, g_cnt_r
 
 // Counter reports carry NVN's 614.4 MHz ticks on the guest clock (nvn_timestamp.h), the same clock cntpct and the svc tick use;
 // the weak guest_ns below answers 0 in the graphics tests, which then use the monotonic clock.
+// Reports are written on the CPU when the submission completes (mtl_sub_commit's feedback handler), not at the GPU stage the game asked for. A frame's begin and
+// end timestamp reports therefore land in one submit and differ by about 0. The game's dynamic resolution reads its GPU frame time from such a pair and stays at
+// 1.0 / 1.0 (bb88916: frame statistic about 0.2 µs). True GPU timestamps (an MTL4CounterHeap per report) could hand the game real GPU times and let it lower its
+// own 3D resolution, on top of the host's 3D-scale controller (hle_oe.c dm_3d_scale_feed). The game's response is unprobed, so such a change has to be measured
+// and decided together with that controller. t_nvn (5b) pins the ~0 span.
 uint64_t guest_ns(void);
 static uint64_t gpu_ticks(void) {
     uint64_t ns = guest_ns();
