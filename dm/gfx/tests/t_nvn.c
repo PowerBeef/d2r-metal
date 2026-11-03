@@ -6,6 +6,7 @@
 uint64_t g_t0_ns;   // 宿主 main.c 的进程起点（hle_nvn 逐帧 @t_s 用），单测替身 | process start time from host main.c (used by hle_nvn's per-frame @t_s); unit test stub
 #include "../tex/nvn_deswizzle.h"
 #include <time.h>
+#include <math.h>
 void *front_metal_layer(void) { return NULL; }   // 单测无窗口：出图只计数 | no window in unit tests: present only counts
 module_t *module_of(const void *p) { (void)p; return NULL; }   // 单测无客体模块 | no guest modules in unit tests
 module_t g_mod[MAX_MOD]; int g_nmod;                            // crash.c 依赖的宿主符号 | host symbols that crash.c depends on
@@ -432,6 +433,37 @@ int main(void) {
         mtl_presented_test_set(900001, 123.25);
         EXPECT("6f2 the recorded time reads back (us)", 123250000, (long long)(mtl_presented_time(900001) * 1e6 + 0.5));
         EXPECT("6f2 another ticket in that slot reads 0 (no reading)", 0, (long long)(mtl_presented_time(900001 + 1024) * 1e6));
+    }
+    // 6g. Present-time readings after discarded presents (LIF-1): times are recorded by present-thread ticket, and a discarded present gets none, so
+    //     looking a game present up by its own count drifts for good after the first discard. Present ordinal p shows at 100 + p / 60 s; the reading
+    //     for ordinal p (taken 8 presents later) is time(p) - time(p - 1) = 16.667 ms, or 0 (no reading) when p or p - 1 has no time:
+    //     ordinals 21-40 are discarded (no ticket), 41's predecessor was, 61 has an out-of-range index (no job) and 62's predecessor is 61
+    {
+        nvn_present_config(0, 0);
+        NVNwindowBuilder wb5; NVNwindow w5; P(nvnWindowBuilderSetDevice)(&wb5, &dev); P(nvnWindowBuilderSetDefaults)(&wb5);
+        NVNtexture *sc5[3] = {&sc[0], &sc[1], &sc[0]};
+        P(nvnWindowBuilderSetTextures)(&wb5, 3, sc5); P(nvnWindowInitialize)(&w5, &wb5);
+        win_t *o5 = (win_t *)&w5; static long long got[80]; int ix;
+        for (int k = 0; k < 72; k++) {
+            if (k == 20) { mtl_present_flush(); mtl_present_discard(1); }
+            if (k == 40) mtl_present_discard(0);
+            if (k == 60) P(nvnQueuePresentTexture)(&q, &w5, 7);   // ordinal 61: an index past the swapchain, no job
+            else {
+                P(nvnWindowAcquireTexture)(&w5, NULL, &ix); P(nvnQueuePresentTexture)(&q, &w5, ix);
+                uint64_t tk = x_present_ticket(o5->ticket[ix]); if (tk) mtl_presented_test_set(tk, 100.0 + o5->presents / 60.0);
+            }
+            if (o5->presents > 9 && o5->presents - 8 < 80) got[o5->presents - 8] = llround(g_pres_iv[(g_presn - 1) % TWIN] * 1000);
+        }
+        int a = 0, b = 0, c = 0;
+        for (int p = 2; p <= 20; p++) a += got[p] == 16667;
+        for (int p = 21; p <= 41; p++) b += got[p] == 0;
+        for (int p = 42; p <= 60; p++) c += got[p] == 16667;
+        EXPECT("6g ordinals 2-20 before the discard read 16.667 ms", 19, a);
+        EXPECT("6g ordinals 21-41 (discarded, or after one) read no reading", 21, b);
+        EXPECT("6g ordinals 42-60 after the discard read 16.667 ms again", 19, c);
+        EXPECT("6g ordinal 61 (no job) reads no reading", 0, got[61]);
+        EXPECT("6g ordinal 62 (after a present with no job) reads no reading", 0, got[62]);
+        EXPECT("6g ordinal 63 reads 16.667 ms", 16667, got[63]);
     }
 
     // 8. 对象副本：录完命令后游戏 Finalize 并在同址重建贴图 / 换程序着色器，已录命令里读到的仍是录制时的内容；退役副本过 SNAP_KEEP 次提交才回收

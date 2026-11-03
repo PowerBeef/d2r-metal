@@ -1075,6 +1075,11 @@ typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int 
 #define XTK 1024
 static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done, g_xsub_done;   // g_xsub_done：已翻译完的提交号（栅栏值） | g_xsub_done: the last submit number translated (fence value)   // 入队任务数 / 已执行任务数（任务号从 1 计） | Jobs enqueued / jobs executed (job numbers start at 1)
 static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号 → 出图线程票号 | Present job number -> present thread ticket
+// Game present -> its present job: the window's present count (win_t presents) at each nvnQueuePresentTexture and the job it pushed (0 = no job: an
+// index past the swapchain). Game thread only, one NVN window, as the present-time lookup below has always assumed
+typedef struct { uint64_t ord, job; } pjob_ent;
+#define PJN 16
+static pjob_ent g_pjob[PJN];
 static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
 static int pace_adapt_enabled(void);
 static _Atomic double g_pa_xcpu_ms = -1;   // 最近60个翻译帧的真实线程CPU（不含任何等待）| Actual thread CPU per frame over the latest 60 translation frames, excluding waits
@@ -1175,6 +1180,20 @@ static uint64_t x_present_ticket(uint64_t job) {   // 出图任务执行完后�
     pthread_mutex_lock(&g_xmu); uint64_t tk = g_xtk[job % XTK].job == job ? g_xtk[job % XTK].tk : 0; int lost = g_xtk[job % XTK].job != job; pthread_mutex_unlock(&g_xmu);
     if (lost) { static int red; if (!red++) LOG("【红】翻译队列：出图任务 %llu 的票号已被覆盖（票号表 %d 项不够），这次取图不等出图线程", (unsigned long long)job, XTK); }
     return tk;
+}
+// The present-thread ticket a present job got, if it has run: never waits (0 = not run yet, the present was dropped at the door, or the job's
+// slot was reused)
+static uint64_t x_ticket_peek(uint64_t job) {
+    if (!job) return 0;
+    pthread_mutex_lock(&g_xmu); uint64_t tk = g_xtk[job % XTK].job == job ? g_xtk[job % XTK].tk : 0; pthread_mutex_unlock(&g_xmu);
+    return tk;
+}
+// The presentation time of the game's present number ord (seconds; -1 = not shown, 0 = no reading): game present -> present job -> present-thread
+// ticket -> the time the presented handler recorded for that ticket (mtl_presented_time)
+static double present_time_of(uint64_t ord) {
+    pjob_ent e = g_pjob[ord % PJN]; if (e.ord != ord) return 0;
+    uint64_t tk = x_ticket_peek(e.job);
+    return tk ? mtl_presented_time(tk) : 0;
 }
 NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h) {
     gfx_enter();
@@ -1621,9 +1640,11 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     present_cfg(o);
     gfx_enter();
     uint64_t t0 = now_ns();
+    uint64_t job = 0;   // this present's job (0: none, for an index past the swapchain), recorded for the present-time lookup (present_time_of)
     if (idx >= 0 && idx < o->ntex && idx < 4) {   // 只入队，立即返回；ticket 存翻译队列的任务号 | Enqueue only and return at once; ticket holds the translation queue's job number
         xjob j = {XJ_PRESENT, 0, NULL, snap_tex(o->tex[idx]), present_period(o) / 1e9}; memcpy(j.crop, o->crop, sizeof j.crop);
-        o->ticket[idx] = x_push(&j); }
+        job = o->ticket[idx] = x_push(&j); }
+    g_pjob[o->presents % PJN] = (pjob_ent){o->presents, job};
     gfx_leave();
     atomic_fetch_add(&g_nvn_ns, now_ns() - t0);
     uint64_t f = g_frame, ps, dr; mtl_stats(&ps, &dr);
@@ -1744,9 +1765,11 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     o->pace = pc.target;
     if (idx >= 0 && idx < 4) o->avail[idx] = period ? slot + period : 0;
     static uint64_t prev_slot; if (prev_slot && period) trow(f, "@display_ms", (slot - prev_slot) / 1e6); prev_slot = slot;   // 屏幕上相邻两帧的显示间隔（掉帧看这个） | display interval between two adjacent frames on screen (this is the one to look at for dropped frames)
-    // 实际呈现间隔（窗口模式）：滞后 8 次出图取（呈现回调已到），第 n 次与第 n−1 次之差；−1 = 被丢弃
-    // Actual presentation interval (windowed mode): taken 8 presents late (the presented callback has arrived by then), as the difference between the n-th and the (n−1)-th; −1 = discarded
-    if (o->presents > 9) { uint64_t n = o->presents - 8; double a_ = mtl_presented_time(n), b_ = mtl_presented_time(n - 1);
+    // Actual presentation interval (windowed mode): taken 8 presents late (the presented callback has arrived by then), as the difference between the
+    // game's n-th and (n-1)-th presents; -1 = not shown. The lookup goes game present -> job -> present-thread ticket (present_time_of): the present
+    // thread numbers only the presents it was given, so a present without a ticket (dropped at the door while discarding, or with an index past the
+    // swapchain) gives "no reading" for itself and for the next present, and the count never drifts from the tickets
+    if (o->presents > 9) { uint64_t n = o->presents - 8; double a_ = present_time_of(n), b_ = present_time_of(n - 1);
         if (a_ < 0) trow(f - 8, "@presented_ms", -1); else if (a_ > 0 && b_ > 0) trow(f - 8, "@presented_ms", (a_ - b_) * 1e3);
         g_pres_iv[g_presn++ % TWIN] = a_ < 0 ? -1 : (a_ > 0 && b_ > 0 ? (a_ - b_) * 1e3 : 0);
         { double iv_ = a_ < 0 ? -1 : (a_ > 0 && b_ > 0 ? (a_ - b_) * 1e3 : 0); mtl_ub_present(iv_); }   // 同进程交替测量（DM_NVN_UB）按相统计上屏间隔；没开时只是一次原子读 | same-process alternating measurement (DM_NVN_UB) tallies on-screen present intervals per phase; when off it is just one atomic read
