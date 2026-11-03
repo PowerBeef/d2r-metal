@@ -229,15 +229,16 @@ void dm_video_fullscreen_note(int on) {   // 玩家用菜单 / ⌃⌘F 切了全
 }
 static int shown(int k) { int p = atomic_load(&g_pend[k]); return p >= 0 ? p : atomic_load(&g_val[k]); }
 static int perf_up(void) { return DM_PHONE ? 0 : front_video_mfx_ok() ? 1 : 0; }   // 性能档的放大方式：手机 = 标准（省电），Mac = MetalFX（它很便宜） | Performance's upscaling: phone = Standard (saves power), Mac = MetalFX (cheap there)
-// 性能 / 品质档各键的值（t 0 = 性能，1 = 品质）；-1 = 这一档不管这个键。抗锯齿、各向异性只在 Mac 上归档管（手机页上没有这两行，档位不该暗改它们）
-// Each key's value in the Performance / Quality presets (t 0 = Performance, 1 = Quality); -1 = the preset leaves this key alone. Anti-aliasing and anisotropy belong to the presets on the Mac only (the phone page has no such rows,
-// so a preset must not change them behind the player's back)
+// Each key's value in the Performance / Quality presets (t 0 = Performance, 1 = Quality); -1 = the preset leaves this key alone. Anti-Aliasing and
+// Anisotropic Filtering follow the same tiers on both platforms (the phone page has both rows too: touch_layout.py _VIDEO, iOS list): Performance =
+// FXAA and leaves anisotropy alone, Quality = SMAA and 16x. On phones the presets leave Environment Shadows and Shadow Quality alone until their phone
+// cost is measured, and the phone Recommended already gives SMAA and 16x (front_ios.m front_video_rec)
 static int tier_of(int k, int t) {
     switch (k) {
-    case K_RES: return t ? (DM_PHONE ? 2 : 3) : 0;   // 品质：手机 100% 3D，Mac 原生出图 | Quality: 100% 3D on phones, native output on the Mac
+    case K_RES: return t ? (DM_PHONE ? 2 : 3) : 0;   // Quality: 100% 3D on phones, Native output on the Mac
     case K_UP: return t ? (front_video_mfx_ok() ? 1 : 0) : perf_up();
-    case K_AA: return DM_PHONE ? -1 : t;
-    case K_ANISO: return DM_PHONE ? -1 : t ? 3 : -1;
+    case K_AA: return t;   // Performance FXAA (SMAA was about 18% of the phone's GPU work before e070b94), Quality SMAA
+    case K_ANISO: return t ? 3 : -1;
     case K_S3D: return DM_PHONE ? -1 : 0;   // Mac：性能（出图 1600）与品质（原生）的 3D 都是 100% | Mac: both Performance (1600 output) and Quality (native) draw the 3D at 100%
     case K_ESH: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch look, Quality = environment shadows; phone presets leave it alone (cost not measured there yet)
     case K_SHQ: return DM_PHONE ? -1 : t ? 2 : 0;   // Mac: Performance = Standard (the Switch's map), Quality = Ultra; phone presets leave it alone
