@@ -73,17 +73,30 @@ static void render_setup(void) {
 }
 int front_video_running_res(void) { return g_render_tier; }
 int front_video_mfx_ok(void) { static int ok = -1; if (ok < 0) ok = [MTLFXSpatialScalerDescriptor supportsDevice:MTLCreateSystemDefaultDevice()] ? 1 : 0; return ok; }
-// 显卡档（按名字）：0 基础款、1 Pro、2 Max / Ultra | GPU class (by name): 0 base, 1 Pro, 2 Max / Ultra
-static int gpu_class(void) { NSString *g = MTLCreateSystemDefaultDevice().name ?: @""; return [g containsString:@" Max"] || [g containsString:@" Ultra"] ? 2 : [g containsString:@" Pro"] ? 1 : 0; }
-// 推荐的原生出图与 3D 清晰度：原生宽不超过这档显卡的上限（2560 / 3456 / 3840）才推荐原生；3D 取「原生宽 × 比例」不超过 1920 / 2560 / 3840 的最高一档。
-// M6 实测（town_loop，2560 屏）见 docs/MAC.md。原生不合适时 *res = -1（照旧按 1600 / 1920 / 2560 三档挑）
+// The GPU's name, which the recommendations below go by ("Apple M6", "Apple M4 Pro", "Apple A18 Pro GPU"); DM_TEST_GPU_NAME stands in for it (tests)
+static NSString *gpu_name(void) {
+    const char *t = getenv("DM_TEST_GPU_NAME");
+    return t && *t ? @(t) : MTLCreateSystemDefaultDevice().name ?: @"";
+}
+// A Mac on an iPhone chip (the MacBook Neo: A18 Pro, 5-core GPU, 8 GB). Its GPU sits below any M chip's, and nothing has been measured on one, so it
+// gets the iPhone's measured Recommended (3D lowered and enlarged by MetalFX, SMAA, 16x, no environment shadows, the Switch's shadow map) and the
+// phone's Frame Drops (the 3D resolution drops for a while when frames drop)
+static int gpu_phone_chip(void) { return [gpu_name() hasPrefix:@"Apple A"]; }
+// GPU class (by name): 0 base, 1 Pro, 2 Max / Ultra; only M chips count as Pro / Max / Ultra (an "A18 Pro" is an iPhone chip, class 0)
+static int gpu_class(void) {
+    NSString *g = gpu_name();
+    if (![g hasPrefix:@"Apple M"]) return 0;
+    return [g containsString:@" Max"] || [g containsString:@" Ultra"] ? 2 : [g containsString:@" Pro"] ? 1 : 0;
+}
 // Recommended native output and 3D resolution: Native only when the native width is within this GPU class's limit (2560 / 3456 / 3840); 3D takes the highest tier whose "native width × scale" is within
-// 1920 / 2560 / 3840. Measurements on an M6 (town_loop, 2560 screen) are in docs/MAC.md. When Native does not fit, *res = -1 (pick from the 1600 / 1920 / 2560 tiers as before)
+// 1920 / 2560 / 3840. Measurements on an M6 (town_loop, 2560 screen) are in docs/MAC.md. When Native does not fit, *res = -1 (pick from the 1600 / 1920 / 2560 tiers as before).
+// An iPhone chip keeps its 3D within 1720 pixels wide, below the iPhone 17 Pro's measured Recommended (1967 × 905 at 75%): 67% on the MacBook Neo's 2408-wide screen
+// (1608 × 1005) and on a 2560 display
 static void rec_native(int *res, int *s3d) {
     static const int lim_out[3] = { 2560, 3456, 3840 }, lim_3d[3] = { 1920, 2560, 3840 }; static const float sc[5] = { 1.0f, 0.85f, 0.75f, 0.67f, 0.5f };
-    int c = gpu_class(), w = native_w(); *res = -1; *s3d = 0;
+    int c = gpu_class(), w = native_w(), l3 = gpu_phone_chip() ? 1720 : lim_3d[c]; *res = -1; *s3d = 0;
     if (!front_video_mfx_ok() || w > lim_out[c]) return;
-    *res = 3; *s3d = 4; for (int i = 0; i < 5; i++) if (w * sc[i] <= lim_3d[c] + 0.5f) { *s3d = i; break; }
+    *res = 3; *s3d = 4; for (int i = 0; i < 5; i++) if (w * sc[i] <= l3 + 0.5f) { *s3d = i; break; }
 }
 // 首次启动的推荐值（dm_video.c 读到的 sw_video.txt 缺键或越界时调，只取缺的那几个，启动时在主线程）：全屏；分辨率取「不超过主屏像素宽的 3/4」的最高一档，2560 那档只给 Pro / Max / Ultra
 // 显卡（名字里带；M6 实测 1920 出图 + MetalFX 每帧约 13.7 ms，2560 约 14.5 ms，60 帧只有 16.7 ms）；出图比画布小又支持 MetalFX 就开 MetalFX。
@@ -95,7 +108,7 @@ static void rec_native(int *res, int *s3d) {
 // so automated runs stay stable; DM_TEST_VIDEO_FIRSTBOOT=1 makes a test take the real recommendation
 int front_video_firstboot(int rec[3], int cur[3]) {
     if (getenv("DM_APP_SUPPORT") && !getenv("DM_TEST_VIDEO_FIRSTBOOT")) { for (int i = 0; i < 3; i++) rec[i] = cur[i] = 0; LOG("画面设置：测试副本，推荐值按原版（窗口 / 1600 / 标准）"); return 1; }
-    double px = main_px(); NSString *gpu = MTLCreateSystemDefaultDevice().name ?: @"";
+    double px = main_px(); NSString *gpu = gpu_name();
     int big = gpu_class() > 0, t = 0, nres, ns3d; rec_native(&nres, &ns3d);
     for (int i = 0; i < 3; i++) if (k_render_w[i] <= fmax(px * 0.75, 1600) && (i < 2 || big)) t = i;
     rec[0] = 1; rec[1] = nres >= 0 ? nres : t; rec[2] = front_video_mfx_ok() && (nres >= 0 || k_render_w[t] < px) ? 1 : 0;   // 原生时 MetalFX 管 3D 放大趟 | with Native, MetalFX does the 3D upscale pass
@@ -109,18 +122,22 @@ int front_video_firstboot(int rec[3], int cur[3]) {
     return 1;
 }
 // Recommendations for the picture keys added later (asked by dm_video.c when the file lacks the key or holds an older recommendation version): SMAA, 16x
-// anisotropy, accurate colour and environment shadows (+0.5 ms GPU in town at Recommended on an M6, still a steady 60 fps) in the Mac App. The CLI host
-// (no DM_APP) and test copies keep the original (0), so automated runs, golden baselines and benchmarks stay as they were
+// anisotropy, accurate colour and environment shadows (+0.5 ms GPU in town at Recommended on an M6, still a steady 60 fps) in the Mac App; an iPhone
+// chip leaves environment shadows off and keeps the Switch's shadow map, as the phone does. The CLI host (no DM_APP) and test copies keep the original
+// (0), so automated runs, golden baselines and benchmarks stay as they were
+static int real_recommendation(void) { return getenv("DM_APP") && (!getenv("DM_APP_SUPPORT") || getenv("DM_TEST_VIDEO_FIRSTBOOT")); }
 int front_video_rec(const char *key) {
-    if (!getenv("DM_APP") || (getenv("DM_APP_SUPPORT") && !getenv("DM_TEST_VIDEO_FIRSTBOOT"))) return 0;
+    if (!real_recommendation()) return 0;
     if (!strcmp(key, "aa")) return 1;
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "color")) return 1;
-    if (!strcmp(key, "envsh")) return 1;
-    if (!strcmp(key, "shq")) return 2;   // Ultra shadows: 4096-texel map, about +1 ms of shadow passes on an M6 (frame total +0.25 ms)
+    if (!strcmp(key, "envsh")) return !gpu_phone_chip();
+    if (!strcmp(key, "shq")) return gpu_phone_chip() ? 0 : 2;   // Ultra shadows: 4096-texel map, about +1 ms of shadow passes on an M6 (frame total +0.25 ms)
     if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
     return -1;
 }
+// Frame Drops' default (dm_custom.c q3d): an iPhone chip lowers the 3D resolution for a while when frames drop, as the phone does; -1 = the Mac's own
+int front_q3d_default(void) { return real_recommendation() && gpu_phone_chip() ? 0 : -1; }
 // 「色彩」：准确 = 层标 sRGB（游戏写的就是 sRGB 编码的字节），系统把它配到屏幕的色域；鲜艳 = 不标（原先的样子：宽色域屏把 sRGB 原色当屏幕原色，偏艳）。
 // 画面字节不变（截图、比对照旧），只改合成器怎么解释。DM_COLORSPACE=srgb|none 定死（测试、对照）
 // "Colour": Accurate = the layer is tagged sRGB (the game writes sRGB-encoded bytes) and the system maps it to the panel's gamut; Vivid = untagged (the old look: wide-gamut panels take the sRGB primaries as their own,

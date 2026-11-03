@@ -161,6 +161,7 @@ Every setting lives in the game's own Options, drawn with its own selectors, che
   - On both: **Anti-Aliasing** (the game's FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Environment Shadows** and **Shadow Quality** (Standard, the Switch's own shadow map, up to Ultra; both take effect at the next start), **Frame Rate** (60 fps, or 30 to save power) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
 - **Recommended** is worked out for your device:
   - on a Mac, full screen at Native with the 3D resolution chosen for its chip, MetalFX, SMAA, 16x filtering, Accurate color, Environment Shadows and Ultra shadows;
+  - on a Mac with an iPhone chip (the MacBook Neo), the iPhone's lighter choices: the 3D at 67%, no Environment Shadows, Standard shadows, and the 3D resolution lowered for a while when frames drop;
   - on iPhone and iPad, 3D at 75% with MetalFX, SMAA, 16x filtering and Accurate color.
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
 - **Apply, Discard and Default** work like the game's own option pages; Default resets only the tab you are on.
@@ -232,6 +233,7 @@ D2R Metal is built for **macOS 27 and iOS / iPadOS 27 or later** and draws only 
 | Device | Plays? | What you need |
 |---|---|---|
 | Mac, M1 or later | Yes | macOS 27 or later |
+| MacBook Neo (A18 Pro) | Should; not tried on one yet | macOS 27 or later |
 | iPhone / iPad, A17 Pro or M chip | Yes | iOS / iPadOS 27 or later |
 | iPhone / iPad, A14–A16 | Yes | iOS / iPadOS 27 or later, and a [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
 | A13 and older, Intel Macs | No | — |

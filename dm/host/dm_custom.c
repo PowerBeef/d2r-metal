@@ -47,6 +47,10 @@ static const int k_def[NK] = { 0,
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
 #define K_Q3D (7 + VOICE_ROW)
 #define K_TOUCH_SWAP (8 + VOICE_ROW)
+// The front end may change Frame Drops' default (q3d) for its device: front_mac.m gives a Mac on an iPhone chip the phone's 0, the 3D resolution
+// dropping for a while when frames drop; -1 = keep k_def
+__attribute__((weak)) int front_q3d_default(void) { return -1; }
+static int def_of(int i) { if (i == K_Q3D) { int x = front_q3d_default(); if (x == 0 || x == 1) return x; } return k_def[i]; }
 void dm_3d_quality_mode_set(int mode);
 static const char *rev_box(int i) { return i == K_VOICE ? "TouchCustom_voice_zh" : i == K_Q3D ? "TouchCustom_q3d_smooth" : i == K_TOUCH_SWAP ? "TouchCustom_touch_swap_above_near" : NULL; }   // 单选行「反面那一项」的勾选框 | Checkbox of the radio row's "inverse option"
 static _Atomic int g_val[NK];        // 已生效：1 开 / 0 关 | In effect: 1 on / 0 off
@@ -82,7 +86,7 @@ static int file_path(char *p, size_t n) { return dm_custom_path("sw_custom.txt",
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
     char p[1100]; if (!file_path(p, sizeof p)) return;   // 存档还没挂上：先按缺省开答，挂上后再读 | The save is not mounted yet: answer with the default (on) for now, and read again after it is mounted
-    int v[NK]; for (int i = 0; i < NK; i++) v[i] = k_def[i];
+    int v[NK]; for (int i = 0; i < NK; i++) v[i] = def_of(i);
     FILE *f = fopen(p, "r"); char ln[128];
     int lang = -1, voice = -1;
     while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
@@ -111,7 +115,7 @@ static void load_once(void) {
 }
 int dm_custom_get(const char *key) {
     load_once(); int i = key_index(key); if (i < 0) return 1;
-    return atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : k_def[i];
+    return atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : def_of(i);
 }
 int dm_custom_lang_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_lang_explicit) : -1; }
 int dm_custom_voice_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_voice_explicit) : -1; }
@@ -119,9 +123,9 @@ int dm_custom_voice_explicit(void) { load_once(); return atomic_load(&g_loaded) 
 // 「应用 / 放弃」照自定义各行处理、存在 sw_custom.txt（存档里原来的值照用）。-1 = 撤掉待定值
 // The two selectors on the Video tab (the Frame Rate / Frame Drops rows of dm_video.c) read and write the keys eco_fps / q3d here: the value shown = the pending value, else the one in effect; a change only sets
 // the pending value, and Apply / Discard handle it as for the custom rows, saved in sw_custom.txt (values already saved carry over). -1 = drop the pending value
-int dm_custom_shown_value(const char *key) { load_once(); int i = key_index(key); if (i < 0) return 0; int p = atomic_load(&g_pend[i]); return p >= 0 ? p : atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : k_def[i]; }
+int dm_custom_shown_value(const char *key) { load_once(); int i = key_index(key); if (i < 0) return 0; int p = atomic_load(&g_pend[i]); return p >= 0 ? p : atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : def_of(i); }
 void dm_custom_set_pending(const char *key, int v) { int i = key_index(key); if (i > 0) atomic_store(&g_pend[i], v < 0 ? -1 : v); }
-int dm_custom_default(const char *key) { int i = key_index(key); return i >= 0 ? k_def[i] : 0; }
+int dm_custom_default(const char *key) { int i = key_index(key); return i >= 0 ? def_of(i) : 0; }
 int dm_fps_setting(void) { return dm_custom_get("eco_fps") ? 30 : 60; }   // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义） | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol)
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
@@ -148,7 +152,7 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
         for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd ? "画质优先" : "流畅优先", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
         if (ch) save(); }
     else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_repaint, 1); }
-    else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 2)) { uint32_t km = atomic_load(&g_page_keys); for (int i = 1 + VOICE_ROW; i < NK; i++) if (km >> i & 1) atomic_store(&g_pend[i], k_def[i]); atomic_store(&g_repaint, 1); }   // 从 1 起（有配音行时从 2 起）：语言与单独配音那一格不归「默认」管
+    else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 2)) { uint32_t km = atomic_load(&g_page_keys); for (int i = 1 + VOICE_ROW; i < NK; i++) if (km >> i & 1) atomic_store(&g_pend[i], def_of(i)); atomic_store(&g_repaint, 1); }   // 从 1 起（有配音行时从 2 起）：语言与单独配音那一格不归「默认」管
 }
 
 // ---- 选项页上的勾选框
