@@ -676,8 +676,9 @@ class Runner:
         t0 = time.time(); fail: dict[str, Any] | None = None; name = self.meta['name']
         self.say(f'场景 | scenario {name}（{self.backend.name}，{len(self.steps)} 步 | steps）→ {self.run}')
         if self.meta['requires'] and self.backend.name not in self.meta['requires']:
-            self.say(f"SCENARIO {name} SKIP 只在 {','.join(self.meta['requires'])} 上跑 | only runs on {','.join(self.meta['requires'])}")
-            return dict(name=name, verdict='SKIP', backend=self.backend.name, dir=self.run), 0
+            line = f"SCENARIO {name} SKIP 只在 {','.join(self.meta['requires'])} 上跑 | only runs on {','.join(self.meta['requires'])}"
+            self.say(line)
+            return dict(name=name, verdict='SKIP', backend=self.backend.name, dir=self.run, line=line), 0   # line: a skipped front run prints it bare too (run_scenario)
         tsv = open(os.path.join(self.run, 'steps.tsv'), 'w', encoding='utf-8'); tsv.write('步 | step\t行 | line\t结果 | result\t秒 | s\t说明 | detail\n')
         try:
             self.c = self.backend.start()
