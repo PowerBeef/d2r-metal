@@ -142,8 +142,8 @@ HLE_FORCE("_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE", "前后台
 // visual ruler's reference phase (A / B of DM_NVN_RULER=1) it is forced to 1.0 and takes effect only after switching to the mode under test.
 // Frame Drops (the dynamic scale, on with Frame Drops = Lower; Keep pins the configured value): the controller judges the actual on-screen present
 // intervals hle_nvn.c reports for every present (diag.c dm_perf_present, the same source as perf.txt and the perf event), on the Mac as on iOS. Its
-// levels are up to three steps of x0.93 below the configured value, never below 50% (dm_s3lv.h): 0.70 / 0.65 / 0.60 at 75%, 0.93 / 0.86 / 0.80 at
-// 100%, none at 50%. Its rules: scale3d_ctl_step; frames not shown, loading screens and gaps in the presents: dm_3d_scale_feed.
+// levels are up to three steps of x0.93 below the configured value, never below 50% (dm_s3lv.h): 0.70 / 0.65 / 0.60 at 75%, 0.86 / 0.80 / 0.75 at
+// 100% (the first x0.93 step is skipped there, S3_FIRST_AT_FULL), none at 50%. Its rules: scale3d_ctl_step; frames not shown, loading screens and gaps in the presents: dm_3d_scale_feed.
 // Switches: DM_3D_SCALE_DYN=0 disables it; DM_THERMAL_NOFALLBACK=1 (power / frame-time measurement) also disables it, since the scale must be pinned
 // while measuring. DM_3D_SCALE_FLOOR=<scale> allows deeper levels for device sweeps (up to 12, never below 50%).
 // DM_3D_SCALE_DYN_INJECT=<a>-<b> (frames counted by dm_nvn_frame_count) tests the whole step-down / step-up chain: in that range every interval fed to

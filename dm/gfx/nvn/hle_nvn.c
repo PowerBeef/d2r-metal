@@ -1289,7 +1289,7 @@ static uint64_t present_period(const win_t *o);
 static int link_wait(uint64_t timeout_ns);
 // The game loop's rate while nothing is on screen (mtl_present_idle: a covered Mac window): DM_HIDDEN_HZ, read once; 0 = off (the loop keeps the
 // link's rate: about 60 Hz on this Mac while covered, the wait's 2-period timeout when the link stops); outside 0-60, or unset: 15. The default is
-// provisional until the covered-window energy ABBA (P1 LIF-5)
+// measured (wave-2 exit ABBA, 2026-11-03, windowed CLI, occlusion_readings x4): 15 Hz used 0.18x and 0.26x the energy of 0 while covered, no underruns
 static int hidden_hz(void) {
     static int hz = -1;
     if (hz < 0) { const char *e = getenv("DM_HIDDEN_HZ"); int v = e ? atoi(e) : 15; hz = v >= 0 && v <= 60 ? v : 15; if (e) LOG("[nvn] DM_HIDDEN_HZ=%s: the loop runs at %d Hz while nothing is on screen%s", e, hz, hz ? "" : " (off)"); }
