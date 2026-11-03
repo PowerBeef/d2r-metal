@@ -134,7 +134,7 @@ DM_LOCAL_ENV_FILE	ios-tools	ios/tools/local_env.sh	-
 DM_LOG_PORT	host,ios	host/diag.c ios/Sources/main.m	y
 DM_LOG_TEE	ios	ios/Sources/main.m	-
 DM_LONGFRAME	gfx	gfx/nvn/hle_nvn.c	-
-DM_MAC_APP	tools	tools/scenario.py	y
+DM_MAC_APP	tools	tools/pso_seed.py tools/scenario.py	y
 DM_MAC_BUILD	tools	tools/mac_app.sh	-
 DM_MAC_BUNDLE_ID	tools	tools/mac_app.sh	-
 DM_MAC_DEVICE_PROFILE	ios-tools	ios/tools/smoke_mac.sh ios/tools/touch_e2e_mac.sh	y

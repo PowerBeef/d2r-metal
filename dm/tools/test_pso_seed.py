@@ -1,5 +1,6 @@
 """Unit tests for pso_seed.py: the byte-level key normaliser against hand-made rows and against the C one (one hash over t_pso_skey's random keys),
-the row check (pso_skey_check's port), normalise and diff on synthetic manifests; no game files, nothing is run."""
+the row check (pso_skey_check's port), normalise, diff, check with the allow-list, merge, the route matrix and its generated scenarios, the cold-run
+summary and the cleanup planners, on synthetic files; no game files, nothing is run."""
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import warnings
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -111,6 +113,105 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(out, [f'R\t{pso_seed.norm_row(n1()).hex()}', 'S\tssss_b\t0', pso_seed.BG_MARK, 'C\tcccc_b'])
         self.assertEqual([(t, w) for t, w, _ in dropped], [('R', 'pad'), ('C', 'empty'), ('R', 'duplicate')])
         self.assertEqual(kept, {'S': 1, 'R': 1, 'C': 1})
+
+
+def parse_scn(path):
+    """scenario.parse, without the ResourceWarning of its unclosed file (not this tool's)."""
+    import scenario   # noqa: PLC0415
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', ResourceWarning)
+        return scenario.parse(path)
+
+
+class RunToolsTest(unittest.TestCase):
+    def test_check_allow_and_run_dirs(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d); other = row([80, 0, 0, 0, 0, 0, 0, 0], 0, 0xf, [bytes(8)] * 8, [0] * 8)
+            seed = d / 'seed.tsv'; seed.write_text(pso_seed.HEAD + '\n', encoding='utf-8')
+            man = d / 'm.tsv'; man.write_text(f'{pso_seed.HEAD}\nR\t{n1().hex()}\nR\t{other.hex()}\n', encoding='utf-8')
+            allow = d / 'allow.tsv'; allow.write_text(f'# why: test\nR\t{n1().hex()}\n', encoding='utf-8')   # the raw, non-normalised form
+            rows, bad, errors = pso_seed.check([str(man)], str(seed), str(allow))
+            self.assertEqual(([t for t, _ in rows], bad, errors), (['R'], [], []))
+            self.assertEqual(rows[0][1], pso_seed.norm_row(other).hex())
+            allow.write_text(f'R\t{n1().hex()}\nR\t{other.hex()}\n', encoding='utf-8')
+            self.assertEqual(pso_seed.check([str(man)], str(seed), str(allow)), ([], [], []))
+            run = d / 'run'; (run / 'support').mkdir(parents=True); (run / 'support' / 'pso_user.tsv').write_text(f'S\tssss_b\t0\n', encoding='utf-8')
+            self.assertEqual(pso_seed.check([str(run)], str(seed), None)[0], [('S', 'ssss_b')])
+            empty = d / 'empty'; empty.mkdir()
+            self.assertEqual(pso_seed.check([str(empty)], str(seed), None), ([], [], []))   # a run that built nothing wrote no manifest
+            self.assertEqual(len(pso_seed.check([str(d / 'nope')], str(seed), None)[2]), 1)
+
+    def test_merge_order(self):
+        s1, s2 = 'S\tseed1_b\t0', 'S\tseed2_b\t1'
+        f1, a1, t1 = 'S\tfront1_b\t0', f'R\t{pso_seed.norm_row(n1()).hex()}', 'C\ttour1_b'
+        lines, counts = pso_seed.merge([pso_seed.HEAD + '\n', '# old note\n', s1 + '\n', s2 + '\n'],
+                                       {'front': [f1, s1], 'act1': [a1, f1], 'tour': [t1]}, ['note'])
+        body = [x for x in lines if not x.startswith('#') or x == pso_seed.BG_MARK]
+        self.assertEqual(lines[0], pso_seed.HEAD)
+        self.assertEqual(body, [f1, s1, s2, a1, pso_seed.BG_MARK, t1])
+        self.assertEqual(counts, dict(front=1, seed=2, act1=1, seed_background=0, tour=1))
+        again, _ = pso_seed.merge(lines, {'front': [], 'act1': [], 'tour': ['C\ttour2_b']}, [])
+        self.assertEqual([x for x in again if not x.startswith('#') or x == pso_seed.BG_MARK], [f1, s1, s2, a1, pso_seed.BG_MARK, t1, 'C\ttour2_b'])
+        with self.assertRaises(ValueError): pso_seed.merge([f'R\t{n1().hex()}\n'], {}, [])   # a seed row that is not normalised stops the merge
+
+    def test_matrix_and_routes(self):
+        m = pso_seed.matrix()
+        self.assertEqual(len(m), 26); self.assertEqual(len({r['nn'] for r in m}), 26)
+        self.assertEqual([r['nn'] for r in m], [f'{i:02d}' for i in range(1, 27)])
+        self.assertFalse([r for r in m if r['env'].get('DM_AA_MODE') in ('0', '3')])
+        self.assertTrue(all(r['env'].get('DM_TEST_VIDEO_FIRSTBOOT') == '1' for r in m if r['backend'] == 'mac-app'))
+        self.assertEqual(sum(r['set'] == 'tour' for r in m), 12)
+        with tempfile.TemporaryDirectory() as d:
+            texts = [pso_seed.front_text(v, b, pso_seed.REC_ENV if b == 'mac-app' else {}) for v in ('create', 'menu') for b in ('mac-app', 'ios-mac')]
+            texts += [pso_seed.row_text(r, 'create') for r in m]
+            for i, t in enumerate(texts):
+                p = Path(d) / f'{i}.scn'; p.write_text(t, encoding='utf-8')
+                meta, steps, checks = parse_scn(str(p))
+                self.assertTrue(steps and checks, t)
+            tour = pso_seed.row_text(next(r for r in m if r['name'] == 'tour_a3_flayer'), 'create')
+            self.assertEqual(tour.count('press keys=ZR'), 2); self.assertIn('tap 0.5 0.446', tour); self.assertIn('save tour', tour)
+            cli = next(r for r in m if r['name'] == 'cli_town_rec_mfx3d')
+            p = Path(d) / 'cli.scn'; p.write_text(pso_seed.row_text(cli, 'create'), encoding='utf-8')
+            self.assertEqual(parse_scn(str(p))[0]['env'], {'DM_GAME_SEED': '305419896', **pso_seed.CLI_REC})
+            self.assertNotIn('requires', pso_seed.front_text('create', 'ios-mac', {}))
+
+    def test_cold_summary(self):
+        log = '\n'.join([
+            '[dm] [nvn-mtl] pipeline warm-up: foreground rows done in 412.5 ms (377 rows, 2 workers)',
+            '[dm] [nvn-mtl] [bootprof] t=1.000 s 出图第 1 次：metallib 载入 1 个 / 2.0 ms；管线创建 2 个 / 9.0 ms（均在提交线程同步）；并行预编 丢出 30 / 领用 1 / 过期回收 0 / 表满没丢 0 / 在表 3；host builds lib 1 / pso 2 / 7.5 ms',
+            '[dm] [nvn-mtl] host mfx scaler pipeline built in 18.2 ms (submit thread)',
+            '[dm] EV {"seq":9,"t":3.0,"ev":"game_enter"}',
+            '[dm] [nvn] 进局读取画面等管线预热 812 ms',
+            '[dm] [nvn-mtl] pipeline warm-up done: shaders 181, render pipelines 184, compute pipelines 12; skipped: bad rows 0, duplicates 0, specialised 0, missing shaders 0, files 0; 1803.0 ms; workers 2, foreground 412.5 ms',
+            '[dm] [nvn-mtl] [bootprof] t=9.000 s 出图第 120 次：metallib 载入 2 个 / 3.0 ms；管线创建 5 个 / 19.0 ms（均在提交线程同步）；并行预编 丢出 44 / 领用 2 / 过期回收 0 / 表满没丢 0 / 在表 3；host builds lib 1 / pso 3 / 9.5 ms'])
+        nvn = {1: dict(frame_ms=16.7, pso_new=2, lib_new=1), 2: dict(frame_ms=41.2, pso_new=1, lib_new=0), 3: dict(frame_ms=16.6, pso_new=0, lib_new=0),
+               4: dict(frame_ms=16.7, pso_new=0), 5: dict(frame_ms=35.0, pso_new=1), 6: dict(frame_ms=16.6, pso_new=0)}
+        marks = [('town', 4), ('wild', 5), ('end', 7)]
+        r = pso_seed.cold_summary(log, nvn, marks)
+        self.assertEqual((r['warm_fg_ms'], r['warm_all_ms'], r['load_wait_ms']), (412.5, 1803.0, 812))
+        self.assertEqual((r['sync_pso_front'], r['sync_lib_front'], r['sync_pso_game']), (3, 1, 1))
+        self.assertEqual(r['game_p99_ms'], 35.0)
+        self.assertEqual(r['slow_with_creations'], [41.2, 35.0])
+        self.assertEqual((r['kicked'], r['taken'], r['host_lib'], r['host_pso'], r['host_ms']), (44, 2, 1, 3, 9.5))
+        self.assertEqual(r['host_built'], [dict(what='mfx scaler', kind='pipeline', ms=18.2)])
+        eng = pso_seed.cold_summary(log.replace('进局读取画面等管线预热 812 ms', 'loading screen waited for the pipeline warm-up 812 ms'), nvn, marks)
+        self.assertEqual(eng['load_wait_ms'], 812)
+        ios = pso_seed.cold_summary(log)   # the iOS package on the Mac: no nvn.tsv, the [bootprof] line before game_enter is the front end
+        self.assertEqual((ios['sync_pso_front'], ios['sync_lib_front'], ios['sync_pso_game']), (2, 1, 3))
+
+    def test_cleanup_planners(self):
+        bid = 'org.d2rmobile.mac.cold20261103120000'
+        root = '/w/dm-work'; copy = f'{root}/out/macapp-cold'; caches = '/var/folders/x/C'; home = '/Users/u'
+        plan = pso_seed.mac_cleanup_plan(bid, copy, [f'{root}/run/pso/c/run/support', f'{root}/run/pso/c/warm_sup'], caches, home)
+        self.assertEqual(plan['moves'], [copy, f'{caches}/{bid}', f'{root}/run/pso/c/run/support', f'{root}/run/pso/c/warm_sup'])
+        self.assertEqual(plan['optional'], [f'{home}/Library/Saved Application State/{bid}.savedState', f'{home}/Library/Caches/{bid}', f'{home}/Library/HTTPStorages/{bid}'])
+        self.assertEqual(plan['cmds'], [[pso_seed.LSREGISTER, '-u', f'{copy}/D2R Metal.app'], ['defaults', 'delete', bid]])
+        everything = plan['moves'] + plan['optional'] + [x for c in plan['cmds'] for x in c]
+        self.assertFalse([x for x in everything if '/out/macapp/' in x + '/' or '/out/macapp_test' in x or x.endswith('org.d2rmobile.mac') or 'org.d2rmobile.mac.test' in x])
+        for wrong in ('org.d2rmobile.mac', 'org.d2rmobile.mac.test', 'com.patricedery.d2rmobile', pso_seed.COLD_ID):
+            with self.assertRaises(ValueError): pso_seed.mac_cleanup_plan(wrong, copy, [], caches, home)
+        b = 'com.patricedery.d2rmobile'
+        self.assertEqual(pso_seed.ios_cache_plan(b, caches), [f'{caches}/{b}/{b}/com.apple.metal', f'{caches}/{b}/{b}/com.apple.metalfe', f'{caches}/{b}/{b}/com.apple.gpuarchiver'])
 
 
 class DiffTest(unittest.TestCase):
