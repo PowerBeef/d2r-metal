@@ -7295,6 +7295,8 @@ void mtl_present_discard(int on) { atomic_store(&g_present_discard, on != 0); if
 // The shell went inactive (iOS resign active; the Mac control port's app link_inactive) or active again: remember it, and pause or resume the present link
 // exactly as mtl_link_pause does. Queued frames are kept (the link's stall fallback drops them) and the calling thread never waits
 void mtl_present_inactive(int on) { atomic_store(&g_present_inactive, on != 0); CAMetalDisplayLink *l = g_link; if (l) l.paused = on != 0; }
+// Presents are not shown right now (discarded, or paused for an inactive shell): Frame Drops does not judge such frames (hle_oe.c dm_3d_scale_feed)
+int mtl_present_hidden(void) { return atomic_load(&g_present_discard) || atomic_load(&g_present_inactive); }
 uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     if (atomic_load(&g_present_discard)) return 0;   // 票号 0 = 没有待完成的上屏，取交换链贴图处不等 | Ticket number 0 = no pending present; the swapchain texture acquire does not wait
     if (t) { xv_check(t->serial, 0, 0, "出图"); if (g_xv_npresent < 128) g_xv_present[g_xv_npresent++] = t->serial; }

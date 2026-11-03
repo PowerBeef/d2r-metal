@@ -1,13 +1,20 @@
-# 进后台再回来（Mac 上 = 最小化再还原；iOS 上 = 与 DM_TEST_BG 同一套场景事件）：回来后局还在、能走、没有红标
 # To the background and back (on the Mac = minimize then restore; on iOS = the same scene events as DM_TEST_BG): after returning the run is still there, the player can move, no red markers
+# Present readings come back after the return (perf blind=false; S3D-1) and Frame Drops does not step down (no scale3d lv=1; DM_TEST_Q3D=0 turns
+# the controller on, the Mac's default being Keep). The first perf window after the return still holds frames from before it, so the log step
+# separates the two expects. On ios-mac the iOS background save wait discards presents, which once froze every later reading.
 name background
 save warlock
 timeout 180
+env DM_TEST_Q3D=0
 
 enter_game
 background for=3
 stick 1 0 frames=30
 expect_state in_game=true dead=false
+expect perf timeout=25
+log skip the first window after returning: it still holds frames from before the background
+expect perf blind=false timeout=25
 quit
 check no_red
 check no_red_log
+check no_event scale3d lv=1

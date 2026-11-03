@@ -171,6 +171,7 @@ double mtl_presented_time(uint64_t n);
 void mtl_presented_test_set(uint64_t tk, double t);   // unit tests: record ticket tk's presentation time (seconds; -1 = not shown)
 void mtl_present_inactive(int on);   // the shell is inactive (iOS resign; the Mac test verb link_inactive): the present link paused, as mtl_link_pause
 void mtl_present_discard(int on);    // presents are not shown (Mac window covered, iOS background save wait): dropped at the door, queued ones dropped
+int mtl_present_hidden(void);        // presents are not shown right now: discarded or paused for an inactive shell (Frame Drops skips those frames)
 // 贴图释放（Finalize 时）
 // Texture release (at Finalize)
 void mtl_tex_release(tex_t *t);
