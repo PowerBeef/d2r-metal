@@ -1,12 +1,12 @@
 # PC item clicks (dm_kbm.c item_click, the game's own PC item tooltips: "Right Click to Use", "Shift + Left Click to Equip / Unequip", "Ctrl +
 # Left Click to Drop"), on the Mac App test copy at this Mac's Recommended in full screen, in the inventory (warlock save: two scrolls in the
 # right column, a two-handed staff in the main hand). A left click picks an item up onto the cursor and the next one puts it down; Shift + left click
-# takes the staff off; a click on the empty hand slot does nothing; Ctrl + left click on a scroll drops it
+# takes the staff off; a click on the empty hand slot does nothing; Ctrl + left click on a scroll drops it; a right click on the cube opens it
 name pc_items_mac
 requires mac-app
 save warlock
 timeout 300
-env DM_PC_MODE=1 DM_TEST_VIDEO_FIRSTBOOT=1
+env DM_PC_MODE=1 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_GIVE=box:2:1,r01:2:3@60 DM_TEST_GIVE_INV=1
 
 expect main_menu timeout=120
 enter_game
@@ -52,6 +52,13 @@ kbm btn=left x=0.3906 y=0.493 up=1 ctrl=1
 sleep 1.5
 expect_state items=$n0-1 timeout=5
 screenshot path=p4_scroll_dropped.png
+# a right click on the cube opens it
+kbm btn=right x=0.5975 y=0.515
+expect pc_item btn=right did=use item=box timeout=5
+kbm btn=right x=0.5975 y=0.515 up=1
+expect panel act=OpenPanel name=HoradricCubeLayout timeout=5
+sleep 1.5
+screenshot path=p6_cube_open.png
 kbm key=73
 sleep 1
 quit

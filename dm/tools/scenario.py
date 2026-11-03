@@ -35,10 +35,10 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 # 控制口命令的位置参数（其余用 名=值） | positional arguments of the control-port commands (the rest as name=value)
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'wheel': ['x', 'y', 'dy', 'precise', 'view'], 'drag': ['x0', 'y0', 'x1', 'y1', 'frames'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
-       'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
+       'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'ui_click': ['name', 'timeout'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
        'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': []}
 ALIAS = {'shot': 'screenshot'}   # 触屏脚本的名字 | touch-script names
-MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away')
+MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away', 'ui_click')
 LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture')
 HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires')
 CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event', 'actions', 'saves_valid', 'save_pairs')
@@ -356,6 +356,11 @@ class Runner:
             for _ in range(3): self.ctl('press', keys='L')
             self.cc.wait_for('pause_open', timeout=10, after=m)
             return 'pause menu open'
+        if op == 'ui_click':   # a widget clicked through the run's own pointer: PC mode (env DM_PC_MODE=1) clicks its centre with the PC mouse (kbm), else a touch tap
+            at = self.ctl('await_ui', name=kw['name'], timeout=kw.get('timeout', 10))
+            if str(self.meta['env'].get('DM_PC_MODE', '')) != '1': self.ctl('tap_ui', name=kw['name'], timeout=kw.get('timeout', 10)); return f"tapped {kw['name']}"
+            for up in (0, 1): self.ctl('kbm', btn='left', x=at['x'], y=at['y'], up=up)
+            return f"clicked {kw['name']} at {at['x']:.3f},{at['y']:.3f}"
         if op == 'close_pause':
             m = self.cc.mark(); self.ctl('press', keys='B')
             self.cc.wait_for('panel', timeout=10, after=m, act='ClosePanel', name='UISwitcher')
@@ -388,8 +393,8 @@ class Runner:
 
     def do(self, st):
         op, kw = st['op'], {k: self.subst(v) for k, v in st['kw'].items()}
-        if op in POS: r = self.ctl(op, **kw); return {k: v for k, v in r.items() if k not in ('id', 'cmd', 'ok')}
         if op in MACROS: return self.macro(op, kw)
+        if op in POS: r = self.ctl(op, **kw); return {k: v for k, v in r.items() if k not in ('id', 'cmd', 'ok')}
         if op == 'expect': return self.expect(st['args'][0], kw, self.prev_mark)
         if op == 'expect_no':
             kw = dict(kw); t = float(kw.pop('for', kw.pop('timeout', 3)))

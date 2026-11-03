@@ -156,8 +156,8 @@ static int cmd_kbm(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     if (dm_ctl_get(a, "key")) { int vk = (int)dm_ctl_num(a, "key", 0), d = (int)dm_ctl_num(a, "down", -1); if (d != 0) dm_kbm_key(vk, 1, mods); if (d != 1) { wait_frames(2, 5); dm_kbm_key(vk, 0, mods); } }
     else if (b) { int k = !strcmp(b, "left") ? 0 : !strcmp(b, "right") ? 1 : !strcmp(b, "m3") ? 2 : !strcmp(b, "m4") ? 3 : !strcmp(b, "m5") ? 4 : -1; if (k < 0) ERR("btn must be left, right, m3, m4 or m5");
         dm_kbm_mouse(0, (float)x, (float)y, 0, mods); dm_kbm_mouse(dm_ctl_num(a, "up", 0) ? 2 : 1, (float)x, (float)y, k, mods); }
-    else if (mv || dm_ctl_get(a, "x")) dm_kbm_mouse(0, (float)x, (float)y, 0, mods);
     else if (dm_ctl_get(a, "wheel")) dm_kbm_wheel((float)x, (float)y, (int)dm_ctl_num(a, "wheel", 0));
+    else if (mv || dm_ctl_get(a, "x")) dm_kbm_mouse(0, (float)x, (float)y, 0, mods);
     else ERR("give key=, btn=, move or wheel=");
     wait_frames(2, 5); return 1;
 }

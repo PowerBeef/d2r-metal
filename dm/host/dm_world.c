@@ -620,6 +620,9 @@ void dm_world_pc_hover(float sx, float sy) {   // the unit under the pointer bec
     uint8_t *b; uint64_t pl; float f[2]; int W = 0, H = 0; if (!w_pc_frame(&b, &pl, f, &W, &H)) return;
     w_pc_select(b, sx < 0 ? 0 : w_pc_pick(b, sx * W, sy * H, H));
 }
+void dm_world_pc_unlock(void) {   // ends a press's lock on its unit without the release action (which walks to the point when the press opened nothing)
+    uint8_t *b = wb(); if (b) ((void (*)(uint64_t))(b + 0x2f3a40))(*(uint32_t *)(b + 0x2d20e4c));
+}
 void dm_world_pc_click(int action, int flags, float sx, float sy) {
     uint8_t *b; uint64_t pl; float f[2]; int W = 0, H = 0, px = 0, py = 0, x = 0, y = 0; if (!w_pc_frame(&b, &pl, f, &W, &H) || !w_unit_xy(pl, &px, &py)) return;
     float X = sx * W, Y = sy * H; uint64_t u = 0;

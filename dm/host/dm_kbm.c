@@ -98,8 +98,8 @@ static int switches_page(uint8_t *b, int idx) {   // a page key while another pa
 }
 static float ui_to_screen_y(float uy) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); return dm_screen_real(&rw, &rh) && rh > 0 && h > 0 ? (uy * h + y) / rh : uy; }
 
-static struct { int down, ui; } g_btn[2];                    // left, right: held, where the press went (0 world, 1 panel, 2 PC HUD, 3 an item area: done at the press)
-static int g_back, g_a, g_y_hold;                             // polls left to hold the console's Back (B), A, Y
+static struct { int down, ui; } g_btn[2];                    // left, right: held, where the press went (0 world, 1 panel, 2 PC HUD, 3 an item area: done at the press, 4 a world press that opened a panel)
+static int g_back, g_a, g_y_hold, g_xp;                       // polls left to hold the console's Back (B), A, Y, X
 // An NPC talking (the speech scroll) or its menu (Talk / Trade / Cancel): console panels the PC bindings don't close. The game's Clear Screen
 // (Esc, Space) leaves both up and Return opens the chat over the speech, which then stops scrolling for good, so while one shows Esc and Clear
 // Screen press the console's Back as the controller and touch paths do (touch_mac.c), and Return does nothing
@@ -126,13 +126,17 @@ static void esc_pump(uint64_t *buttons) {
 //   Shift + left click  equip / unequip; a potion goes into the belt
 //   Ctrl + left click   unequip a worn item; with the stash, the cube or a vendor open the console's held Y (move it to the other side; sell); else
 //                       the console's Y (drop)
-//   right click         buy from a vendor, open the cube, use / read; nothing on an item to wear (Shift's on PC)
+//   Ctrl + Shift + left click   on a stack in the stash's stack tabs, the console's X: one into the Horadric Cube ("%s to Move to Horadric Cube";
+//                       the console offers it only there)
+//   right click         buy from a vendor, open the cube, use / read; on a stack in the stash's stack tabs, take the whole stack into the
+//                       inventory ("Right Click to Move %u"); nothing on an item to wear (Shift's on PC)
 static void item_click(int bt, int hit) {
     int W = *(int32_t *)(mainmod()->base + 0x211da38), H = *(int32_t *)(mainmod()->base + 0x211da3c); dm_ui_hover_now((int)(g_x * W), (int)(g_y * H));
     dm_hud_info hi; dm_hud_get(&hi); int held = hi.valid && hi.holding;
     dm_cursor_item_info ci; int on = dm_cursor_item(&ci); const char *what;
     if (bt == 0 && (held || !(g_mods & (MOD_SHIFT | MOD_CTRL)))) { g_a = 3; what = held ? "put_down" : on ? "pick_up" : "nothing"; }
     else if (bt == 0 && !on) what = "no_item";
+    else if (bt == 0 && (g_mods & MOD_CTRL) && (g_mods & MOD_SHIFT)) { if (ci.container == DM_ITEM_AT_STASH && ci.stack > 0) { g_xp = 3; what = "cube"; } else what = "none_here"; }
     else if (bt == 0 && (g_mods & MOD_CTRL)) {
         if (ci.container == DM_ITEM_AT_EQUIP) { dm_item_unequip(ci.id); what = "unequip"; }
         else if ((dm_ui_panel_state() & (DM_PS_BANK | DM_PS_CUBE | DM_PS_VENDOR)) || ci.container == DM_ITEM_AT_STASH || ci.container == DM_ITEM_AT_CUBE) { g_y_hold = 40; what = "move"; }
@@ -144,6 +148,7 @@ static void item_click(int bt, int hit) {
         else if (ci.container == DM_ITEM_AT_INVENTORY && ci.belt_room) { dm_belt_put(ci.id); what = "belt"; }
         else what = "none_here";
     } else if (!on || held) what = "nothing";
+    else if (ci.container == DM_ITEM_AT_STASH && ci.stack > 0) { dm_stash_take_id(ci.id, ci.stack); what = "take_stack"; }
     else if (ci.container == DM_ITEM_AT_EQUIP || (ci.equippable && ci.container != DM_ITEM_AT_SHOP)) what = "wearable";
     else { dm_ui_use_item(); what = ci.container == DM_ITEM_AT_SHOP ? "buy" : "use"; }
     static int lg; if (lg++ < 100) LOG("PC item: %s click%s%s at %.3f,%.3f (area %d) on %s -> %s", bt ? "right" : "left", g_mods & MOD_SHIFT ? " +Shift" : "", g_mods & MOD_CTRL ? " +Ctrl" : "", g_x, g_y, hit, on ? ci.code : "-", what);
@@ -215,19 +220,24 @@ int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the c
                 run_binding(b, k, 1); }
         } else for (int i = 0; i < 16; i++) if (g_keys[i].vk == e.vk) { for (int j = 0; j < g_keys[i].n; j++) run_binding(b, g_keys[i].idx[j], 0); g_keys[i].vk = 0; }
     }
-    if (!live) { memset(g_btn, 0, sizeof g_btn); g_esc = 0; g_back = g_a = g_y_hold = 0; return 0; }
+    if (!live) { memset(g_btn, 0, sizeof g_btn); g_esc = 0; g_back = g_a = g_y_hold = g_xp = 0; return 0; }
     if (g_esc) esc_pump(buttons);
     if (g_back > 0) { *buttons |= DM_BTN_B; g_back--; }
     if (g_a > 0) { *buttons |= DM_BTN_A; g_a--; }
     if (g_y_hold > 0) { *buttons |= DM_BTN_Y; g_y_hold--; }
+    if (g_xp > 0) { *buttons |= DM_BTN_X; g_xp--; }
     // The PC bindings open and close the console pages of the panel group (I = inventory, C, T, Q; Space closes them all), but closing a page
     // leaves the group's frame (UISwitcher, its tab bar and border) on screen, empty, and taking the keys. With no page in it for a few polls,
     // close the frame as the game does
     { static int empty; if (!g_esc && dm_ui_panel_shown("UISwitcher") && !dm_ui_open_panels() && !dm_game_paused()) { if (++empty == 4) { dm_ui_send_queue("PanelManager:ClosePanel:UISwitcher"); LOG("PC input: the panel group was left empty: closed"); } } else empty = 0; }
     // The PC hover: the unit under the pointer is the game's hover target every poll (none over the interface), and a button held from a world press
     // sends the held action every poll; both are what D2R's own PC mouse code does every frame (dm_world.c)
-    { int ui = g_y > HUD_BAND || dm_ui_panel_state() || dm_ui_open_panels() || dm_game_paused() || dm_ui_panel_shown("UISwitcher") || npc_dialog_shown();
-      dm_world_pc_hover(ui ? -1.f : g_x, ui_to_screen_y(g_y)); }
+    // A world press that opened a panel (the stash, a vendor, an NPC's dialog) ends its hold there: held on, the next held action has no unit
+    // (the pointer is over the panel now) and walks, which closed the stash as soon as it opened. Only the lock ends, not with the release
+    // action, which walks to the point too
+    { int panel = dm_ui_panel_state() || dm_ui_open_panels() || dm_game_paused() || dm_ui_panel_shown("UISwitcher") || npc_dialog_shown();
+      for (int bt = 0; bt < 2; bt++) if (g_btn[bt].down && !g_btn[bt].ui && panel) { g_btn[bt].ui = 4; dm_world_pc_unlock(); LOG("PC input: a panel opened from the world press: its hold ends"); }
+      dm_world_pc_hover(panel || g_y > HUD_BAND ? -1.f : g_x, ui_to_screen_y(g_y)); }
     for (int bt = 0; bt < 2; bt++) if (g_btn[bt].down && !g_btn[bt].ui) world_click(bt, 1);
     return 1;
 }
