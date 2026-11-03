@@ -16,6 +16,7 @@ Both use NVIDIA FLIP to measure the difference between two images. FLIP is an im
 - **Switch baseline**: 900 high, bilinear upscaling. The width is taken as 1952 by the screen's aspect ratio (1952x900), not the 16:9 1600x900 — 16:9 output would be centered with black bars and the UI layout would differ as well, so it could not be matched pixel for pixel with the reference frame.
 - **G1** = the FLIP (LDR) mean, `-ppd 95`, averaged over all frames. `ppd` is the number of pixels per degree of visual angle: the iPhone 17 Pro Max is about 460 ppi at a viewing distance of 30 cm, 0.30 × tan 1° ÷ 0.0254 × 460 ≈ 95.
 - **Target**: the phone configuration's G1 ≤ half of the Switch baseline's G1.
+- **Upscaling at the present** is pinned by `shoot.sh`: bilinear (`DM_MFX=0`) by default, as the Switch baseline is defined; give `GFXQ_MFX=1` for a configuration meant to use MetalFX. G1 results taken before 2026-11-03 used MetalFX at the present by accident: the command-line host's first boot turned Upscaling on.
 
 What is measured is sharpness: the internal resolution changes only sharpness, not the field of view or the layout.
 

@@ -44,7 +44,9 @@ run_frame() {
   mkdir -p "$frame_tmp"
   : > "$frame_tmp/run.log"
 
-  env_args=(DM_NVN_SHOT_OUT=2868x1320 DM_GAME_RES="$GAME_RES" DM_TEMP="$frame_tmp")
+  # The present's upscaling is pinned, not left to the host's first-boot settings: bilinear (DM_MFX=0, the Switch baseline's definition in
+  # image_quality.md) unless GFXQ_MFX=1 is given for a configuration meant to use MetalFX at the present
+  env_args=(DM_NVN_SHOT_OUT=2868x1320 DM_GAME_RES="$GAME_RES" DM_TEMP="$frame_tmp" DM_MFX="${GFXQ_MFX:-0}")
   if [[ "$source" == shotgate_pages/*.json ]]; then
     page="$HERE/../$source"
     IFS=$'\t' read -r trigger keys env_json <<EOF2
