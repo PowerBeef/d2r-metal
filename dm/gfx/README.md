@@ -86,7 +86,7 @@ The scripts in `tools/`; usage is written in each file's header:
 |---|---|
 | `dmsh_xlate/` | The shader translation tool (C#), which references the translation library in `dm/third_party/ryujinx` |
 | `dmsh_build.py` | Drives the whole translation chain to produce the shader libraries; when the environment variable `IOSOUT=directory` is set, it also produces the iOS version |
-| `dmsh_rules.py` | MSL rewrite rules applied to `spirv-cross` output by shader key (each rule's source is part of its shaders' cache fingerprint); today one rule, which specialises the 7 fragment shaders that read the game's HDR output switch, so the SMAA edge pass no longer computes the PQ curve it throws away |
+| `dmsh_rules.py` | MSL rewrite rules applied to `spirv-cross` output by shader key (each rule's source is part of its shaders' cache fingerprint); today one rule, which specialises the 7 fragment shaders that read the game's HDR output switch: the SMAA edge pass, the three variants of the final compose pass (drawn every frame, with FXAA too) and the three SMAA resolve variants (AA modes 3-5, never drawn here), so none of them computes the PQ curve it throws away. A rule may use only `re` and builtins (the cache fingerprints only its own text); `tests/test_dmsh_rules.py` checks that and each key's role against `shader_map.tsv` |
 | `dmsh_chain.py`, `dmsh_chain.lock` | Translation chain version and tool fingerprints |
 | `dmsh_facts.py` | Generation and checking of the answer table `shader_facts.tsv` |
 | `dmsh_fetch.py` | Generates the "readable tile" versions of fragment shaders |
@@ -131,6 +131,8 @@ The tests in `dm/gfx/tests` compile the production code in directly and need a M
 | `t_bar` | Pass-barrier decisions (levels 0 / 1, the `DM_NVN_PASSGPU_SERIAL` pin, encoders that write memory), through their counters under the Metal validation layer |
 | `test_tbdr_budget.py` | The parsing in `tools/tbdr_budget.py` |
 | `test_c1_guard.py` | `tools/c1_guard.py`: integer conversions that can wrap leave an index unproven; bounded values still prove; the list header names the guard's hash |
+| `test_dmsh_rules.py` | `tools/dmsh_rules.py`: the HDR-switch split on synthetic MSL; rules read no module-level names; every HDR-switch key exists in `shader_map.tsv` with its role |
+| `test_compile_convention.py` | One shader compile convention across the Mac offline compile (`dmsh_build.py` `MAC_METAL`), the iOS one (`ios_metal.py` `METAL`) and the run-time compile of source-form libraries (`nvn_mtl.m` `src_opts`); deployment-target flags aside |
 | `test_passgpu_top.py` | `tools/passgpu_top.py`: a record's spans count as exclusive costs only with the serial header and no overlap between passes |
 | `t_ratelog` | Rate-limited GPU error lines (`nvn/nvn_ratelog.h`): the first lines in full, one summary per period, the flush that counts a quiet tail, and four threads at once under ThreadSanitizer |
 | `t_capture` | Frame capture (`nvn_capture.c`): every record op's pointers encode to region offsets and object indices and decode back; unknown ops are refused; the capture file round-trips its chunks, two-part chunks streamed through LZ4 included; the per-submit state text (anisotropy, MetalFX 3D) and its precedence in the replayer |

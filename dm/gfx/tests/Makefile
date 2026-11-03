@@ -186,6 +186,7 @@ run: \
 	python3 test_c1_guard.py
 	python3 test_ub_table.py
 	python3 test_dmsh_rules.py
+	python3 test_compile_convention.py
 .PHONY: run
 
 t_copy_pitch: t_copy_pitch.c ../nvn/nvn_copy_pitch.h
