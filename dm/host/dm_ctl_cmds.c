@@ -411,12 +411,13 @@ static int cmd_tap_unit(const ctl_args *a, char *out, size_t cap, char *err, siz
     dm_json_fields(out, cap, "x:f y:f target:s", (double)xy[0], (double)xy[1], r >= 0 && r <= 4 ? kind[r] : "?");
     return 1;
 }
-// app do=background|foreground|resign|active|minimize|restore|terminate：前端生命周期（见 dm_ctl.h g_dm_ctl_app_fn） | app do=...: front-end lifecycle (see g_dm_ctl_app_fn in dm_ctl.h)
+// app do=background|foreground|resign|active|minimize|restore|terminate: front-end lifecycle (see g_dm_ctl_app_fn in dm_ctl.h);
+// the Mac front end also takes the test verbs cover|uncover|link_inactive|link_active (front_mac.m ctl_app)
 static int cmd_app(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     const char *w = dm_ctl_get(a, "do"); (void)out; (void)cap;
     if (!w) ERR("missing do");
     if (!g_dm_ctl_app_fn) ERR("no front end to drive (headless host?)");
-    if (g_dm_ctl_app_fn(w)) ERR("'%s' is not supported by this front end", w);
+    if (g_dm_ctl_app_fn(w)) ERR("'%s' failed or is not supported by this front end (see the host log)", w);
     return 1;
 }
 

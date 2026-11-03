@@ -417,6 +417,12 @@ int main(void) {
         EXPECT("取到的是第 0 张", 0, ix);
         mtl_present_test_stall(0); mtl_present_flush();
     }
+    // 6f2. The present-time test hook (mtl_presented_test_set): a time recorded for a ticket reads back for that ticket, and not for another one in the same ring slot
+    {
+        mtl_presented_test_set(900001, 123.25);
+        EXPECT("6f2 the recorded time reads back (us)", 123250000, (long long)(mtl_presented_time(900001) * 1e6 + 0.5));
+        EXPECT("6f2 another ticket in that slot reads 0 (no reading)", 0, (long long)(mtl_presented_time(900001 + 1024) * 1e6));
+    }
 
     // 8. 对象副本：录完命令后游戏 Finalize 并在同址重建贴图 / 换程序着色器，已录命令里读到的仍是录制时的内容；退役副本过 SNAP_KEEP 次提交才回收
     // 8. Object snapshots: after commands are recorded the game Finalizes and rebuilds a texture at the same address / swaps a program's shaders; recorded commands still read what was there at record time; retired snapshots are reclaimed only after SNAP_KEEP submits

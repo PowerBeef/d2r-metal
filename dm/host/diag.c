@@ -21,6 +21,7 @@ static void exp_load(void) {   // the experience table from hud_exp.tsv (dm_tabl
 #endif
 #include <fcntl.h>
 #include <dirent.h>
+#include <math.h>
 #include <stdatomic.h>
 #include "dm_i18n.h"
 #include <signal.h>
@@ -1700,15 +1701,22 @@ void dm_longframe_note(const char *what) {
 }
 void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 帧的实际上屏间隔 ms；−1 = 被系统丢弃，0 = 无读数） | Called once per frame by the present thread (the actual present interval in ms, lagging by 8 frames; −1 = dropped by the system, 0 = no reading)
     static const char *path; static int init; static unsigned c16, c25, c33, disc; static double sum; static uint64_t t0, f0, cpu0, tstart;
+    static unsigned none;   // presents with no reading (0): their time never came back
     if (!init) { init = 1; const char *e = getenv("DM_PERF_FILE"); path = e ? (strcmp(e, "0") ? e : NULL) : (DM_PHONE ? "perf.txt" : NULL); t0 = tstart = now_ns(); f0 = dm_nvn_frame_count(); cpu0 = dm_nvn_sub_cpu_ns(); }
     dm_3d_scale_feed(iv);   // 动态 3D 比例的控制器吃同一份上屏间隔（hle_oe.c） | The dynamic 3D scale controller consumes the same present intervals (hle_oe.c)
     { static FILE *ff; static int fi;   // DM_FRAMES=<文件>：逐帧记「秒（同事件时钟）\t上屏间隔 ms」，基准测试（dm/tools/bench.py）按 mark 事件切段 | DM_FRAMES=<file>: per frame "seconds (event clock)\tpresent interval ms", cut into segments by mark events in the benchmarks (dm/tools/bench.py)
       if (!fi) { fi = 1; const char *e = getenv("DM_FRAMES"); if (e && *e && (ff = fopen(e, "w"))) { setvbuf(ff, NULL, _IOLBF, 0); fputs("t\tiv_ms\n", ff); } }
       if (ff) fprintf(ff, "%.4f\t%.3f\n", dm_events_now_s(), iv); }
-    if (!path) return;
-    if (iv < 0) disc++; else if (iv > 0) { sum += iv; if (iv <= 20.8) c16++; else if (iv <= 29.2) c25++; else c33++; }
+    // Counted whether or not perf.txt is written (DM_PERF_FILE; phones only by default): the perf event goes out every 10 s either way
+    if (iv < 0) disc++; else if (iv > 0) { sum += iv; if (iv <= 20.8) c16++; else if (iv <= 29.2) c25++; else c33++; } else none++;
     uint64_t now = now_ns(); if (now - t0 < 10000000000ull) return;
     unsigned n = c16 + c25 + c33; uint64_t f = dm_nvn_frame_count(), cpu = dm_nvn_sub_cpu_ns();
+    // The window's readings (dm/verify/event_stream.md): n frames with an on-screen interval, disc not shown (-1), none with no reading (0).
+    // blind = mostly no readings (present times lost), shown = mostly frames on screen
+    { double fps = sum > 0 ? n * 1000.0 / sum : (f - f0) / ((now - t0) / 1e9);
+      DM_EV("perf", "fps:f n:u c25:u c33:u disc:u none:u blind:b shown:b scale:f ingame:b", round(fps * 10) / 10, (unsigned long long)n, (unsigned long long)c25,
+            (unsigned long long)c33, (unsigned long long)disc, (unsigned long long)none, none > n + disc, n > none + disc, round(dm_3d_scale_cur() * 1000) / 1000.0, dm_ingame_now()); }
+    if (!path) { c16 = c25 = c33 = disc = none = 0; sum = 0; t0 = now; f0 = f; cpu0 = cpu; return; }
     struct stat st; if (!stat(path, &st) && st.st_size > 256 * 1024) rename(path, "perf.old.txt");
     FILE *fp = fopen(path, "a");
     if (fp) {
@@ -1720,7 +1728,7 @@ void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 �
         fclose(fp);
     }
     LOG("[perf] 温控 %d 3D %.2f 帧率 %.1f 三档 %u/%u/%u 丢弃 %u", dm_thermal_now(), dm_3d_scale_cur(), sum > 0 ? n * 1000.0 / sum : (f - f0) / ((now - t0) / 1e9), c16, c25, c33, disc);   // 同一行进 boot.txt（冒烟可核） | The same line goes into boot.txt (the smoke test can check it)
-    c16 = c25 = c33 = disc = 0; sum = 0; t0 = now; f0 = f; cpu0 = cpu;
+    c16 = c25 = c33 = disc = none = 0; sum = 0; t0 = now; f0 = f; cpu0 = cpu;
 }
 // 控制口 pause / resume / step（dm_ctl_cmds.c）：同 DM_TICK_HOLD 的冻结（下一拍时限拨到极远 + 客体时钟冻结），由命令解冻；冻着时 dm_server_tick 报 UINT64_MAX、按键脚本改按出图帧
 // 返回 0 成功；-1 还没有时限零点（局内至少跑过一拍、且开着控制通道才有）；-2 已被别的冻结占着（DM_TICK_HOLD / 读取画面冻结）
