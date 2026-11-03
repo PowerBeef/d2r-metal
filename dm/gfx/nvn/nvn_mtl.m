@@ -101,7 +101,10 @@ static id<MTLRenderPipelineState> g_bloomq_pso;
 static MTLPixelFormat g_bloomq_fmt;
 static id<MTLTexture> g_bloomq_view;
 static int g_bloomq_i;
-static struct { int state; uint64_t s_ser, b0_ser, b1_ser, s_h, samp_h, b1_h; tex_t s_tex; float threshold, coeff_g, coeff_b; } g_bloomq;   // s_tex：起点那张源贴图的按值副本（原先存登记表项的地址，登记表扩容搬家后悬空） | s_tex: a by-value copy of the start's source texture (it used to store the address of the table entry, which dangled once the table grew and moved)
+static struct { int state; uint64_t s_ser, b0_ser, b1_ser, s_h, samp_h, b1_h; tex_t s_tex, b0_tex; int b0_lv, b0_sl; float threshold, coeff_g, coeff_b; } g_bloomq;   // s_tex / b0_tex: by-value copies of the start's source texture and of its target B0 taken at the cutoff (the start used to store the address of the table entry, which dangled once the table grew and moved)
+// Health counters for the "bloom 1/4, frames ..." summary (bloomq_summary): f0 = the frame the current window opened (0 = closed)
+static struct { uint64_t applied, reused, ab61, ab62, ab63, midchain, vp, pso, f0; int first_done; } g_bloomq_stat;
+static uint64_t g_bloomq_seen[4][3]; static int g_bloomq_nseen, g_bloomq_seen_i;   // recent (S, B0, B1) serial triples: "applied on new targets" prints once per set
 static uint64_t g_bloomq_last_b0, g_bloomq_last_b1h, g_bloomq_last_b1s;   // 最近一次泛光 1/4 叠加改读：B0 序号 → B1 句柄（跨帧保留，见 2e2d6700a2569795 那支） | Most recent bloom 1/4 overlay read redirection: B0 serial → B1 handle (kept across frames, see the 2e2d6700a2569795 branch)
 static uint64_t g_present_alloc_fence[3];
 // 持 g_pq_mu：各出图槽上次的命令缓冲 GPU 已完成到的票号（完成回调写）。g_pq_done 不能用来判槽空不空：显示节拍合并旧帧时把它直接推到「本帧 − 1」，在途的更早一帧也被算成做完
@@ -4644,6 +4647,7 @@ static int fz_p2_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, uint8_
 }
 static void bloomq_reset(void) { memset(&g_bloomq, 0, sizeof g_bloomq); }
 static int g_bloomq_broken;   // the capture shader or a capture pipeline could not be built: bloom 1/4 stays off for this session (the game's own chain runs)
+// Kept on everywhere: on 2026-10-27 the look set against the game's full chain (DM_NVN_BLOOM_Q=0) gave FLIP 0.0049 (run-to-run noise), lava identical, and the full chain costs +0.06 ms GPU on the Mac
 static int bloomq_enabled(void) {
     if (g_bloom_q < 0) { const char *e = getenv("DM_NVN_BLOOM_Q"); g_bloom_q = !e || strcmp(e, "0"); }
     return g_bloom_q && !g_bloomq_broken;
@@ -4695,6 +4699,35 @@ static int bloomq_capture(void) {
     float *p = g_bloomq_const[g_bloomq_i].contents; p[0] = g_bloomq.threshold; p[1] = g_bloomq.coeff_g; p[2] = g_bloomq.coeff_b; p[3] = src.width; p[4] = src.height; [g_bloomq_args setAddress:g_bloomq_const[g_bloomq_i].gpuAddress atIndex:0];
     [en setViewport:(MTLViewport){0,0,dst.width,dst.height,0,1}]; [en setRenderPipelineState:g_bloomq_pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en);
     g_bloomq_i = (g_bloomq_i + 1) % 3; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; return 1;
+}
+// B0 was never drawn while bloom 1/4 held the chain (its cutoff was skipped and its pending clear dropped): when the chain aborts or is left in the middle,
+// clear that level to black so the draws that still read B0 (the rest of the game's chain at state 0, the apply) read no bloom instead of undefined memory
+static void bloomq_clear_b0(const tex_t *b0, int lv, int sl) {
+    id<MTLTexture> t = tex_mtl(b0); if (!t || !(t.usage & MTLTextureUsageRenderTarget)) return;
+    zskip_del(b0->serial); rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
+    RPD *rp = [RPD new]; rp.colorAttachments[0].texture = t; rp.colorAttachments[0].level = lv; rp.colorAttachments[0].slice = sl;
+    rp.colorAttachments[0].loadAction = MTLLoadActionClear; rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0); rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    ser_gate(); enc_r_end(enc_r_begin(rp));
+    PD("X %llu bloom 1/4: B0 ser=%llu level %d slice %d cleared to black", g_stat_pass, (unsigned long long)b0->serial, lv, sl);
+}
+// The health summary: "bloom 1/4, frames ...". There is no reliable exit hook (quits leave through _exit, which skips atexit), so the first window is short
+// (600 frames), later ones 3600, and a window is flushed (force) whenever new targets are announced. A window opens at the first frame boundary with something counted
+static void bloomq_summary(uint64_t f, int force) {
+    __typeof__(g_bloomq_stat) *st = &g_bloomq_stat;
+    if (!(st->applied | st->reused | st->ab61 | st->ab62 | st->ab63 | st->midchain | st->vp | st->pso)) { st->f0 = 0; return; }
+    if (!st->f0) st->f0 = f;
+    if (!force && f < st->f0 + (st->first_done ? 3600 : 600)) return;
+    MLOG("bloom 1/4, frames %llu-%llu: %llu applied, %llu reused the last B1, %llu not engaged (viewport %llu, pipeline %llu), %llu aborted (other draw %llu, capture %llu, no B1 %llu), %llu left mid-chain",
+         (unsigned long long)st->f0, (unsigned long long)f, (unsigned long long)st->applied, (unsigned long long)st->reused, (unsigned long long)(st->vp + st->pso), (unsigned long long)st->vp, (unsigned long long)st->pso,
+         (unsigned long long)(st->ab61 + st->ab62 + st->ab63), (unsigned long long)st->ab61, (unsigned long long)st->ab62, (unsigned long long)st->ab63, (unsigned long long)st->midchain);
+    int fd = 1; memset(st, 0, sizeof *st); st->first_done = fd;
+}
+// An abort in the middle of the chain (RED 61 another draw, 62 the capture not drawn, 63 no B1 handle at the apply): B0 to black, back to state 0.
+// The current draw then goes on and opens its own pass, as after bloomq_capture's rp_end
+static void bloomq_abort(int id, const char *why) {
+    if (id == 61) g_bloomq_stat.ab61++; else if (id == 62) g_bloomq_stat.ab62++; else g_bloomq_stat.ab63++;
+    RED_ONCE(id, "bloom 1/4: %s; B0 ser=%llu cleared to black, this frame has no bloom (first case, frame %llu)", why, (unsigned long long)g_bloomq.b0_ser, (unsigned long long)atomic_load(&g_cur_frame));
+    bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl); bloomq_reset();
 }
 // ---------- 拖货跟手图：商人货架上的货没有「拿起」态，拖动时由回放层把「画这件货图标的那次绘制」在同一趟末尾平移到手指处再画一遍 ----------
 // 界面那一趟每个矩形是一次 4 顶点绘制（顶点 20 字节：位置 3 浮点 + 贴图坐标 2 浮点，位置经顶点常量 0 号的矩阵到裁剪坐标）。
@@ -4842,44 +4875,74 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
             uint64_t h = 0; for (int i = 0; i < f->rf.nb && !h; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128) h = S.tex[1][f->rf.b[i].reg];
             if (h) { fx_from = R.rt.color[0]->serial; fx_to = h; PD("N %llu 跳过 FXAA：ser=%llu 的读者改读 ser=%llu", g_stat_pass, (unsigned long long)fx_from, (unsigned long long)h_ser(h)); return; } }
         else if (fx_from && !strncmp(f->key, "52aac1f2306b8fc5", 16)) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == fx_from) { S.tex[1][r] = fx_to; g_args_dirty[1] = 1; } fx_from = 0; } } }
-    { static uint64_t bloomq_frame; if (bloomq_frame != atomic_load(&g_cur_frame)) { bloomq_frame = atomic_load(&g_cur_frame); bloomq_reset(); }
+    { static uint64_t bloomq_frame;
       if (bloomq_enabled() && tbdr_on() && !g_defer_replaying && pr->sh[1]) {
-        NvShader *f = pr->sh[1]; uint64_t tgt = 0; int lv, sl;
+        // A new frame (checked here, where every chain draw passes, so the reset still comes before any chain draw of the new frame and no clear is encoded during a
+        // deferred replay): a chain left in the middle leaves B0 undefined for whatever still reads it, so clear it
+        uint64_t f_ = atomic_load(&g_cur_frame);
+        if (bloomq_frame != f_) { bloomq_frame = f_; if (g_bloomq.state) { g_bloomq_stat.midchain++; bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl); } bloomq_reset(); bloomq_summary(f_, 0); }
+        NvShader *f = pr->sh[1]; uint64_t tgt = 0; int lv = 0, sl = 0;
         if (!strncmp(f->key, "2938a5b71b8e21b2", 16)) {
-            if (g_bloomq.state) bloomq_reset();
+            int had = g_bloomq.state, engage = 0; tex_t pb0 = g_bloomq.b0_tex; int plv = g_bloomq.b0_lv, psl = g_bloomq.b0_sl;
+            if (had) { g_bloomq_stat.midchain++; bloomq_reset(); }   // a second cutoff in the middle of a chain
+            uint64_t h = 0; tex_t st = {0}; float c1[2] = {0};
             if (bloomq_target(&tgt, &lv, &sl) && R.rt.color[0]) {
-                uint64_t h = 0; tex_t st = {0}; int has_st = 0, cbuf = 0;
+                int has_st = 0, cbuf = 0;
                 for (int i = 0; i < f->rf.nb; i++) { nvn_rbind *b = &f->rf.b[i];
                     if (b->kind == NVN_RB_TEX && b->reg < 128 && !h) { h = S.tex[1][b->reg]; has_st = treg_copy((int)(h & 0xfffff), &st, NULL, NULL); }
                     if (b->kind == NVN_RB_SAMPT && b->reg < 128) g_bloomq.samp_h = S.tex[1][b->reg] >> 20;
                     if (b->kind == NVN_RB_SAMP && b->reg < 128) g_bloomq.samp_h = S.samp[1][b->reg] >> 20;
                     if (b->kind == NVN_RB_CBUF && !cbuf) cbuf = ubo_float(1, (uint16_t)(b->reg << 8), &g_bloomq.threshold);   // c7[0].x
                 }
-                if (h && has_st && cbuf && f->rf.c1_len >= sizeof(float) * 2) {
-                    float c1[2]; memcpy(c1, f->rf.c1, sizeof c1); g_bloomq.s_tex = st; g_bloomq.s_h = h; g_bloomq.s_ser = st.serial; g_bloomq.b0_ser = tgt; g_bloomq.coeff_g = c1[0]; g_bloomq.coeff_b = c1[1]; g_bloomq.state = 1;
-                    { static int once; if (!once++) MLOG("泛光 1/4 起点：生效（S ser=%llu B0 ser=%llu）", (unsigned long long)g_bloomq.s_ser, (unsigned long long)g_bloomq.b0_ser); } PD("A %llu 泛光 1/4 起点 S=%llu B0=%llu", g_stat_pass, (unsigned long long)g_bloomq.s_ser, (unsigned long long)g_bloomq.b0_ser); R.clear_c[0] = 0;   // B0 整级不要了：挂起的清除也丢掉，否则会为它单开一个只清除的通道 | The whole B0 level is no longer needed: drop the pending clear too, otherwise a clear-only render pass would be opened just for it
-                    return;
+                engage = h && has_st && cbuf && f->rf.c1_len >= sizeof(float) * 2;
+                if (engage) memcpy(c1, f->rf.c1, sizeof c1);
+                // The capture maps all of S into all of B1. That is what the cutoff does only while its viewport and scissor cover the whole target: true while the game's
+                // dynamic resolution stays at 1.0 on the host (bb88916) and the host's 3D scale reallocates the targets (hle_oe.c scale3d_tick → main+0x8582f0). One pixel of slack
+                // absorbs mip rounding on odd-sized targets; a smaller viewport leaves bloom 1/4 off instead of blurring stale texels into the bloom
+                if (engage) {
+                    unsigned W = MAX(R.rt.color[0]->d.width >> lv, 1u), H = MAX(R.rt.color[0]->d.height >> lv, 1u);
+                    int vp_ok = !S.has_vp || (fabsf(S.vp[0][0]) < 0.5f && fabsf(S.vp[0][1]) < 0.5f && fabsf(S.vp[0][2] - (float)W) <= 1.0f && fabsf(S.vp[0][3] - (float)H) <= 1.0f);
+                    int sc_ok = !R.has_sc || (R.sc.x <= 0 && R.sc.y <= 0 && (int64_t)R.sc.x + R.sc.w >= (int64_t)W - 1 && (int64_t)R.sc.y + R.sc.h >= (int64_t)H - 1);
+                    if (!(vp_ok && sc_ok)) { engage = 0; g_bloomq_stat.vp++;
+                        static int once; if (!once++) { char sc[64]; if (R.has_sc) snprintf(sc, sizeof sc, "%d,%d %dx%d", R.sc.x, R.sc.y, R.sc.w, R.sc.h); else snprintf(sc, sizeof sc, "none");
+                            MLOG("bloom 1/4: the cutoff draws a %.0fx%.0f viewport at %.0f,%.0f (scissor %s) into a %ux%u target: not engaged, the game's own chain runs (first case, frame %llu)",
+                                 S.has_vp ? S.vp[0][2] : (float)W, S.has_vp ? S.vp[0][3] : (float)H, S.has_vp ? S.vp[0][0] : 0.0f, S.has_vp ? S.vp[0][1] : 0.0f, sc, W, H, (unsigned long long)f_); } }
                 }
+                if (engage) { id<MTLTexture> b0t = tex_mtl(R.rt.color[0]); if (!b0t || !bloomq_pso(b0t.pixelFormat)) { engage = 0; g_bloomq_stat.pso++; } }   // the capture pipeline is not ready (or broken): the game's chain runs
+            }
+            // The previous chain's B0 stays undefined unless this cutoff engages again on the very same level
+            if (had && !(engage && pb0.serial == R.rt.color[0]->serial && plv == lv && psl == sl)) bloomq_clear_b0(&pb0, plv, psl);
+            if (engage) {
+                g_bloomq.s_tex = st; g_bloomq.s_h = h; g_bloomq.s_ser = st.serial; g_bloomq.b0_ser = tgt; g_bloomq.b0_tex = *R.rt.color[0]; g_bloomq.b0_lv = lv; g_bloomq.b0_sl = sl;
+                g_bloomq.coeff_g = c1[0]; g_bloomq.coeff_b = c1[1]; g_bloomq.state = 1;
+                PD("A %llu 泛光 1/4 起点 S=%llu B0=%llu", g_stat_pass, (unsigned long long)g_bloomq.s_ser, (unsigned long long)g_bloomq.b0_ser); R.clear_c[0] = 0;   // the whole B0 level is not needed: drop its pending clear too, otherwise a clear-only pass would be opened just for it
+                return;
             }
         } else if (g_bloomq.state == 1 && !strncmp(f->key, "019ce2f82edbda84", 16)) {
             uint64_t src = 0; for (int i = 0; i < f->rf.nb; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128) { src = h_ser(S.tex[1][f->rf.b[i].reg]); break; }
             if (src == g_bloomq.b0_ser && bloomq_target(&tgt, &lv, &sl) && bloomq_capture()) { R.clear_c[0] = 0; g_bloomq.b1_ser = tgt; g_bloomq.state = 2; PD("B %llu 泛光 1/4 原生截取 B0=%llu B1=%llu", g_stat_pass, (unsigned long long)g_bloomq.b0_ser, (unsigned long long)g_bloomq.b1_ser); return; }
-            RED_ONCE(62, "泛光 1/4 起点：截取已跳过但原生截取没画成，本帧缺泛光"); bloomq_reset();
+            bloomq_abort(62, "the capture into B1 was not drawn");
         } else if (g_bloomq.state == 2 && !strncmp(f->key, "019ce2f82edbda84", 16)) {
             for (int i = 0; i < f->rf.nb; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128 && h_ser(S.tex[1][f->rf.b[i].reg]) == g_bloomq.b1_ser) { g_bloomq.b1_h = S.tex[1][f->rf.b[i].reg]; break; }
         } else if (g_bloomq.state == 2 && !strncmp(f->key, "cc264583f2000c81", 16)) {
             if (bloomq_target(&tgt, &lv, &sl) && tgt == g_bloomq.b0_ser) { g_bloomq.state = 3; PD("C %llu 泛光 1/4 跳过 B0 上采样", g_stat_pass); return; }
         } else if (g_bloomq.state == 3 && !strncmp(f->key, "2e2d6700a2569795", 16)) {
-            if (g_bloomq.b1_h) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq.b0_ser) { S.tex[1][r] = g_bloomq.b1_h; g_args_dirty[1] = 1; } PD("D %llu 泛光 1/4 叠加改读 B1", g_stat_pass); g_bloomq_last_b0 = g_bloomq.b0_ser; g_bloomq_last_b1h = g_bloomq.b1_h; g_bloomq_last_b1s = g_bloomq.b1_ser; bloomq_reset(); }
-            else { RED_ONCE(63, "泛光 1/4 状态缺少 B1 句柄"); bloomq_reset(); }
-        } else if (!g_bloomq.state && g_bloomq_last_b1h && h_ser(g_bloomq_last_b1h) == g_bloomq_last_b1s && !strncmp(f->key, "2e2d6700a2569795", 16)) {   // B1 句柄仍指同一张贴图（换分辨率重建后不认） | The B1 handle still points to the same texture (not recognized after a rebuild on resolution change)
-            // 本帧泛光链没跑（运行时外推的外推帧跳过了它：输入 469 区域外是上一帧 LDR，不能跑）就到了泛光叠加：照最近一次改读 B1，叠上一帧的泛光。
-            // 不改读就读 B0——开了泛光 1/4 的话 B0 的上采样一直被跳过、从没写过，读到的是未初始化显存（M4 Pro 上区域里的单位整个发绿，别处多半是 0、缺泛光）
+            if (g_bloomq.b1_h) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq.b0_ser) { S.tex[1][r] = g_bloomq.b1_h; g_args_dirty[1] = 1; } PD("D %llu 泛光 1/4 叠加改读 B1", g_stat_pass); g_bloomq_last_b0 = g_bloomq.b0_ser; g_bloomq_last_b1h = g_bloomq.b1_h; g_bloomq_last_b1s = g_bloomq.b1_ser;
+                int seen = 0; for (int i = 0; i < g_bloomq_nseen; i++) seen |= g_bloomq_seen[i][0] == g_bloomq.s_ser && g_bloomq_seen[i][1] == g_bloomq.b0_ser && g_bloomq_seen[i][2] == g_bloomq.b1_ser;
+                if (!seen) {   // new (S, B0, B1): flush the window so far, then say what the chain now runs on (a later size or format mismatch shows here)
+                    int at = g_bloomq_nseen < 4 ? g_bloomq_nseen++ : g_bloomq_seen_i; g_bloomq_seen_i = (at + 1) % 4;
+                    g_bloomq_seen[at][0] = g_bloomq.s_ser; g_bloomq_seen[at][1] = g_bloomq.b0_ser; g_bloomq_seen[at][2] = g_bloomq.b1_ser;
+                    bloomq_summary(f_, 1);
+                    MLOG("bloom 1/4: applied on new targets: S ser=%llu %ux%u, B0 ser=%llu %ux%u level %d, B1 ser=%llu format %lu (frame %llu)", (unsigned long long)g_bloomq.s_ser, g_bloomq.s_tex.d.width, g_bloomq.s_tex.d.height,
+                         (unsigned long long)g_bloomq.b0_ser, MAX(g_bloomq.b0_tex.d.width >> g_bloomq.b0_lv, 1u), MAX(g_bloomq.b0_tex.d.height >> g_bloomq.b0_lv, 1u), g_bloomq.b0_lv, (unsigned long long)g_bloomq.b1_ser, (unsigned long)g_bloomq_fmt, (unsigned long long)f_); }
+                g_bloomq_stat.applied++; bloomq_reset(); }
+            else bloomq_abort(63, "no handle for B1 at the apply");
+        } else if (!g_bloomq.state && g_bloomq_last_b1h && h_ser(g_bloomq_last_b1h) == g_bloomq_last_b1s && !strncmp(f->key, "2e2d6700a2569795", 16)) {   // the B1 handle still points to the same texture (not recognized after a rebuild on a resolution change)
             // The bloom overlay is reached without the bloom chain having run this frame (the extrapolated frame of runtime extrapolation skipped it: outside the region the input 469 is the previous frame's LDR, so it cannot run): redirect the read to B1 as last time, overlaying the previous frame's bloom.
             // Without the redirect it would read B0 -- with bloom 1/4 on, B0's upsample is always skipped and never written, so what is read is uninitialized video memory (on M4 Pro the units in the region turn entirely green; elsewhere it is mostly 0, i.e. missing bloom)
             int hit = 0; for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq_last_b0) { S.tex[1][r] = g_bloomq_last_b1h; hit = 1; g_args_dirty[1] = 1; }
-            if (hit) { PD("D %llu 泛光链没跑：叠加沿用上一帧 B1", g_stat_pass); static uint64_t n; if (n++ % 600 == 0) MLOG("泛光 1/4：泛光链没跑的帧叠加沿用上一帧 B1（第 %llu 次）", (unsigned long long)n); }
-        } else if (g_bloomq.state) { RED_ONCE(61, "泛光 1/4 起点：链中途出现别的绘制，本帧泛光不完整"); bloomq_reset(); }
+            if (hit) { PD("D %llu 泛光链没跑：叠加沿用上一帧 B1", g_stat_pass); g_bloomq_stat.reused++; }
+        } else if (g_bloomq.state) bloomq_abort(61, "another draw came in the middle of the chain");
       }
     }
     if (pr->sh[1] && !strncmp(pr->sh[1]->key, "52aac1f2306b8fc5", 16) && mfx3d_draw(pr->sh[1])) return;   // 游戏的 3D 放大趟（ps_upsample_p）改用 MetalFX | the game's 3D upscale pass (ps_upsample_p) through MetalFX
