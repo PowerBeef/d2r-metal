@@ -287,6 +287,7 @@ static void udc_selftest(void) {
     }
 }
 static void use_init(void);
+static void aux_prewarm(void);
 static void mtl_init_once(void) {
     if (g_dev) return;
     const char *link = getenv("DM_PRESENT_LINK");
@@ -360,6 +361,7 @@ static void mtl_init_once(void) {
     use_init();   // DM_GFXUSE（诊断）：在任何出图 / 提交线程起来之前读开关 | DM_GFXUSE (diagnostic): read the switch before any present / submit thread starts
     MLOG("Metal 设备 %s", g_dev.name.UTF8String);
     udc_selftest();
+    aux_prewarm();   // the helper kernels (3D brightening, bloom 1/4) start compiling on a background queue
 }
 
 void dm_mtl_l3_tick(uint32_t tick) {
@@ -4641,36 +4643,50 @@ static int fz_p2_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, uint8_
     g_fz_draws++; return 1;
 }
 static void bloomq_reset(void) { memset(&g_bloomq, 0, sizeof g_bloomq); }
+static int g_bloomq_broken;   // the capture shader or a capture pipeline could not be built: bloom 1/4 stays off for this session (the game's own chain runs)
 static int bloomq_enabled(void) {
     if (g_bloom_q < 0) { const char *e = getenv("DM_NVN_BLOOM_Q"); g_bloom_q = !e || strcmp(e, "0"); }
-    return g_bloom_q;
+    return g_bloom_q && !g_bloomq_broken;
 }
 static int bloomq_target(uint64_t *ser, int *lv, int *sl) {
     if (!R.has_rt || R.rt.n != 1 || !R.rt.color[0]) return 0;
     rt_sub(&R.rt, 0, ser, lv, sl); return *ser != 0;
 }
-static int bloomq_make_pipeline(MTLPixelFormat fmt) {
-    if (g_bloomq_pso && g_bloomq_fmt == fmt) return 1;
-    static const char *src =
-        "#include <metal_stdlib>\nusing namespace metal;\n"
-        "struct V { float4 p [[position]]; float2 uv; };\n"
-        "vertex V vs(uint id [[vertex_id]]) { float2 uv=float2((id<<1)&2,id&2); V o; o.p=float4(uv*float2(2,-2)+float2(-1,1),0,1); o.uv=uv; return o; }\n"
-        "struct P { float threshold; float coeff_g; float coeff_b; float dm; float sh; };\n"
-        "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant P& p [[buffer(0)]]) { float2 d=float2(1.0/p.dm,1.0/p.sh); float3 c=0; for (int y=-1;y<=1;y+=2) for (int x=-1;x<=1;x+=2) { float3 v=t.sample(s,in.uv+float2(x,y)*d).rgb; float l=v.r*0.2126+v.g*p.coeff_g+v.b*p.coeff_b; if(l>=p.threshold) c+=v/(1.0+l); } return float4(c*0.25,1); }\n";
-    NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(src) options:nil error:&e];
-    if (!lib) { MLOG("【红】泛光 1/4 着色器编译失败：%s", e.localizedDescription.UTF8String); return 0; }
+// The capture shader: four bilinear taps of S, the game's own threshold and luma weights, written straight into B1
+static const char k_bloomq_msl[] =
+    "#include <metal_stdlib>\nusing namespace metal;\n"
+    "struct V { float4 p [[position]]; float2 uv; };\n"
+    "vertex V vs(uint id [[vertex_id]]) { float2 uv=float2((id<<1)&2,id&2); V o; o.p=float4(uv*float2(2,-2)+float2(-1,1),0,1); o.uv=uv; return o; }\n"
+    "struct P { float threshold; float coeff_g; float coeff_b; float dm; float sh; };\n"
+    "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant P& p [[buffer(0)]]) { float2 d=float2(1.0/p.dm,1.0/p.sh); float3 c=0; for (int y=-1;y<=1;y+=2) for (int x=-1;x<=1;x+=2) { float3 v=t.sample(s,in.uv+float2(x,y)*d).rgb; float l=v.r*0.2126+v.g*p.coeff_g+v.b*p.coeff_b; if(l>=p.threshold) c+=v/(1.0+l); } return float4(c*0.25,1); }\n";
+static id<MTLRenderPipelineState> bloomq_build_pso(id<MTLLibrary> lib, MTLPixelFormat fmt, NSError **e) {
     MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new]; pd.vertexFunction = [lib newFunctionWithName:@"vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"fs"]; pd.colorAttachments[0].pixelFormat = fmt;
-    g_bloomq_pso = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
-    if (!g_bloomq_pso) { MLOG("【红】泛光 1/4 管线失败：%s", e.localizedDescription.UTF8String); return 0; }
-    g_bloomq_fmt = fmt;
-    MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge; sd.supportArgumentBuffers = YES;
-    g_bloomq_samp = [g_dev newSamplerStateWithDescriptor:sd]; return g_bloomq_samp != nil;
+    return pd.vertexFunction && pd.fragmentFunction ? [g_dev newRenderPipelineStateWithDescriptor:pd error:e] : nil;
+}
+static int aux_wait(void);
+static void aux_bloom_get(id<MTLLibrary> *lib, id<MTLRenderPipelineState> *pso, MTLPixelFormat *fmt, id<MTLSamplerState> *samp);
+// The capture pipeline for the destination's format (replay thread). The shader is compiled with the other helper kernels on a background queue
+// (aux_build), which also builds the pipeline for RG11B10Float, the bloom mips' format; any other format is built here from that library (back end only).
+// Pipelines stay cached for the session (never released while command buffers in flight may use them), at most 4 formats
+static MTLPixelFormat g_bloomq_pf[4]; static id<MTLRenderPipelineState> g_bloomq_ps[4]; static int g_bloomq_np;
+static int bloomq_pso(MTLPixelFormat fmt) {
+    for (int i = 0; i < g_bloomq_np; i++) if (g_bloomq_pf[i] == fmt) { g_bloomq_pso = g_bloomq_ps[i]; g_bloomq_fmt = fmt; return 1; }
+    if (g_bloomq_np >= 4 || !aux_wait()) return 0;
+    id<MTLLibrary> lib = nil; id<MTLRenderPipelineState> pso = nil; MTLPixelFormat pf = MTLPixelFormatInvalid; id<MTLSamplerState> samp = nil;
+    aux_bloom_get(&lib, &pso, &pf, &samp);
+    if (!lib || !samp) { g_bloomq_broken = 1; return 0; }   // aux_build already printed the red line
+    if (pf != fmt || !pso) {
+        NSError *e = nil; pso = bloomq_build_pso(lib, fmt, &e);
+        if (!pso) { MLOG("【红】bloom 1/4: no capture pipeline for format %lu (%s): bloom 1/4 off for this session", (unsigned long)fmt, e ? e.localizedDescription.UTF8String : "no function"); g_bloomq_broken = 1; return 0; }
+    }
+    g_bloomq_pf[g_bloomq_np] = fmt; g_bloomq_ps[g_bloomq_np++] = pso;
+    g_bloomq_pso = pso; g_bloomq_fmt = fmt; g_bloomq_samp = samp; return 1;
 }
 static int bloomq_capture(void) {
     uint64_t ser; int lv, sl; if (!bloomq_target(&ser, &lv, &sl) || !g_bloomq.s_tex.serial) return 0;
     id<MTLTexture> base = tex_mtl(R.rt.color[0]), src = tex_mtl(&g_bloomq.s_tex); if (!base || !src) return 0;
     id<MTLTexture> dst = base; if (lv || sl) { static id<MTLTexture> vb; static int vl, vs; if (vb != base || vl != lv || vs != sl) { defer_obj_release(g_bloomq_view);   /* 旧视图退役（原先直接被覆盖：留在驻留集里，连带钉住旧底图） | retire the old view (it used to be overwritten directly: it stayed in the residency set and pinned the old base texture with it) */ g_bloomq_view = [base newTextureViewWithPixelFormat:base.pixelFormat textureType:base.textureType levels:NSMakeRange(lv, 1) slices:NSMakeRange(sl, 1)]; if (g_bloomq_view) res_add(g_bloomq_view); vb = base; vl = lv; vs = sl; } dst = g_bloomq_view; }
-    if (!dst || !bloomq_make_pipeline(dst.pixelFormat)) return 0;
+    if (!dst || !bloomq_pso(dst.pixelFormat)) return 0;
     rp_end();
     RPD *rp = [RPD new]; rp.colorAttachments[0].texture = dst; rp.colorAttachments[0].loadAction = MTLLoadActionDontCare; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; if (!en) return 0;
@@ -5143,51 +5159,92 @@ static void mp_check(int i, uint64_t ticket) {
     if (lutbad && (nl <= 30 || nl % 50 == 0)) MLOG("【红】紫闪探针：出图 %llu 调色表格子异常（非数 / 无穷 / 品红）%s；画面 5 点%s；累计 %llu 次", (unsigned long long)ticket, lt, pt, (unsigned long long)nl);
     if (n % 3600 == 0 || n == 600) MLOG("紫闪探针 至出图 %llu：取样 %llu 次，画面品红 %llu 次，调色表异常 %llu 次（本次 5 点%s，调色表 %s）", (unsigned long long)ticket, (unsigned long long)n, (unsigned long long)nm, (unsigned long long)nl, pt, lt);
 }
-// ---------- 3D 画面加亮 ----------
-// 色调映射（片元 a1b1aab66933fa8f）= 把合成后的 HDR ×0.008 做 PQ 编码、再查 32³ 调色表（每帧由计算着色器 552f45c348a61b86 按区域重算，只被色调映射读）。
-// HDR 先乘曝光 k 等价于把表换成 L'(u) = L(PQ(k · PQ⁻¹(u)))：游戏算完表的那次派发之后，拷一份再按此原地重写（32³ 一次小派发）；表每帧重算，不会越乘越亮。
-// 只动 3D 世界：界面、文字、血球在色调映射之后才合；亮部经 PQ 压缩，不会像最后整屏乘系数那样糊成一片白。普通 / 可读 tile 合并 / 冻结各条路径都只是读这张表，一处生效。
-// k 每帧由宿主 dm_bright_k() 给（dm/host/dm_bright.c：局外 1、迷宫类 4、原版画面不随昼夜 4、其余按原版环境亮度推，平滑过渡）；k ≈ 1 时不重写。
 // ---------- 3D picture brightening ----------
 // Tone mapping (fragment a1b1aab66933fa8f) = PQ-encode the composited HDR x0.008, then look up a 32^3 color lookup table (recomputed per region every frame by compute shader 552f45c348a61b86, read only by tone mapping).
 // Multiplying HDR by exposure k first is equivalent to replacing the table with L'(u) = L(PQ(k * PQ^-1(u))): after the dispatch in which the game finishes computing the table, make a copy and rewrite it in place accordingly (one small 32^3 dispatch); the table is recomputed every frame, so it does not get brighter with each multiplication.
 // Only the 3D world is touched: UI, text and the health orbs are composited after tone mapping; highlights are compressed by PQ and do not blur into a sheet of white as a final whole-screen multiply would. The normal / readable tile merge / freeze paths all just read this table, so it takes effect in one place.
 // k is given every frame by the host's dm_bright_k() (dm/host/dm_bright.c: 1 out of game, 4 for maze-type areas, 4 where the original game's picture does not follow day and night, the rest derived from the original game's ambient brightness, with smooth transitions); no rewrite when k ~= 1.
-__attribute__((weak)) float dm_bright_k(void) { return 1.0f; }   // 宿主 dm_bright.c 提供强定义；图形单测不链宿主时不加亮 | The host's dm_bright.c provides the strong definition; no brightening when graphics unit tests do not link the host
+__attribute__((weak)) float dm_bright_k(void) { return 1.0f; }   // the host's dm_bright.c provides the strong definition; graphics unit tests that do not link the host get no brightening
 static float g_bright_fixed = -1;   // dm/gfx/tests/nvn_replay: the factor the captured frame was drawn with (DM_NVN_CAPTURE records it per submit); < 0 = ask the host
 static float bright_k(void) { return g_bright_fixed >= 0 ? g_bright_fixed : dm_bright_k(); }
 static const char k_lut_msl[] =
 "#include <metal_stdlib>\nusing namespace metal;\n"
-"constant float m1 = 0.1593017578125, m2 = 78.84375, c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;\n"   // 与色调映射着色器里的 PQ 常数逐位相同 | Bit-identical to the PQ constants in the tone mapping shader
+"constant float m1 = 0.1593017578125, m2 = 78.84375, c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;\n"   // bit-identical to the PQ constants in the tone mapping shader
 "static float3 pq(float3 v) { float3 p = pow(abs(v), m1); return pow((c1 + c2 * p) / (1.0 + c3 * p), m2); }\n"
 "static float3 pq_inv(float3 u) { float3 q = pow(u, 1.0 / m2); return pow(max(q - c1, 0.0) / max(c2 - c3 * q, 1e-6), 1.0 / m1); }\n"
 "kernel void lutk(texture3d<float> src [[texture(0)]], texture3d<float, access::write> dst [[texture(1)]], constant float &k [[buffer(0)]], uint3 g [[thread_position_in_grid]]) {\n"
 "  uint3 n = uint3(dst.get_width(), dst.get_height(), dst.get_depth()); if (any(g >= n)) return;\n"
 "  constexpr sampler ls(filter::linear, address::clamp_to_edge, coord::normalized);\n"
 "  float3 u = (float3(g) + 0.5) / float3(n); float3 u2 = clamp(pq(k * pq_inv(u)), 0.0, 1.0);\n"
-"  float4 b = src.sample(ls, u2), o = src.read(g);\n"   // b：按曝光 k 提亮后的输出；o：原版这一格 | b: output after brightening by exposure k; o: this cell in the original game
-"  float s = smoothstep(0.65, 1.0, dot(b.rgb, float3(0.2126, 0.7152, 0.0722)));\n"   // 高光保护：提亮后越接近白，越收回原值（雪、天光不糊成一片白）；暗处 s = 0 照常提亮 | Highlight protection: after brightening, the closer to white, the more it is pulled back to the original value (snow and skylight do not blur into a sheet of white); in dark areas s = 0 and brightening proceeds as usual
+"  float4 b = src.sample(ls, u2), o = src.read(g);\n"   // b: the output after brightening by exposure k; o: this cell as the game computed it
+"  float s = smoothstep(0.65, 1.0, dot(b.rgb, float3(0.2126, 0.7152, 0.0722)));\n"   // highlight protection: the closer to white after brightening, the more it is pulled back to the original value (snow and skylight do not blur into a sheet of white); in dark areas s = 0 and brightening proceeds as usual
 "  dst.write(float4(max(mix(b.rgb, o.rgb, s), o.rgb), b.a), g); }\n";
+// ---------- Host-made helper kernels ----------
+// Host-made helper kernels (3D brightening's LUT rewrite, bloom 1/4's capture) are compiled on a private serial queue started from mtl_init, not on the replay
+// thread at first use: a cold system shader cache (first launch after an install or an OS update) would otherwise put the compile into the first frame that needs it.
+// The replay thread waits for them at most once, for at most 3 s (aux_wait): dispatch_block_wait on a block submitted to a serial queue lends the waiter's QoS
+// to the build. Until they are ready, or when one could not be built, that rewrite stays off and the game's own picture shows
+static os_unfair_lock g_aux_lk = OS_UNFAIR_LOCK_INIT;
+static struct { id<MTLComputePipelineState> bright_ps; id<MTLLibrary> bloom_lib; id<MTLRenderPipelineState> bloom_pso; MTLPixelFormat bloom_fmt; id<MTLSamplerState> bloom_samp; } g_aux;
+static dispatch_queue_t g_aux_q; static dispatch_block_t g_aux_blk; static dispatch_once_t g_aux_once; static _Atomic int g_aux_done;
+static void aux_build(void) {
+    uint64_t t0 = bp_now(); NSError *e = nil;
+    id<MTLLibrary> ll = [g_dev newLibraryWithSource:@(k_lut_msl) options:nil error:&e]; id<MTLFunction> lf = ll ? [ll newFunctionWithName:@"lutk"] : nil;
+    id<MTLComputePipelineState> bps = lf ? [g_dev newComputePipelineStateWithFunction:lf error:&e] : nil;
+    if (!bps) MLOG("【红】3D brightening: the LUT kernel could not be built (%s): brightening off for this session", e ? e.localizedDescription.UTF8String : "no function");
+    e = nil; id<MTLLibrary> bl = [g_dev newLibraryWithSource:@(k_bloomq_msl) options:nil error:&e]; id<MTLRenderPipelineState> bp = nil; id<MTLSamplerState> bs = nil;
+    if (bl) { NSError *pe = nil; bp = bloomq_build_pso(bl, MTLPixelFormatRG11B10Float, &pe);   // the bloom mips' format; another format is built from bl on first use (bloomq_pso)
+        MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge; sd.supportArgumentBuffers = YES;
+        bs = [g_dev newSamplerStateWithDescriptor:sd]; }
+    if (!bl || !bs) MLOG("【红】bloom 1/4: the capture shader could not be built (%s): bloom 1/4 off for this session", e ? e.localizedDescription.UTF8String : "no sampler");
+    os_unfair_lock_lock(&g_aux_lk); g_aux.bright_ps = bps; g_aux.bloom_lib = bl; g_aux.bloom_pso = bp; g_aux.bloom_fmt = bp ? MTLPixelFormatRG11B10Float : MTLPixelFormatInvalid; g_aux.bloom_samp = bs; os_unfair_lock_unlock(&g_aux_lk);
+    atomic_store_explicit(&g_aux_done, 1, memory_order_release);
+    MLOG("helper kernels: built on a background queue in %.1f ms (3D brightening %s, bloom 1/4 %s)", (bp_now() - t0) / 1e6, bps ? "ready" : "failed", bl && bs ? "ready" : "failed");
+}
+static void aux_prewarm(void) {
+    dispatch_once(&g_aux_once, ^{
+        g_aux_q = dispatch_queue_create("dm.aux_kernels", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
+        g_aux_blk = dispatch_block_create(0, ^{ @autoreleasepool { aux_build(); } });
+        dispatch_async(g_aux_q, g_aux_blk); });
+}
+// 1 = the helper kernels are built (each may still have failed: check its object). Replay thread only (the tests are single-threaded): it waits once at most,
+// never with a lock held. A wait that times out does not count as the one wait dispatch_block_wait allows, and it is never repeated
+static int aux_wait(void) {
+    if (atomic_load_explicit(&g_aux_done, memory_order_acquire)) return 1;
+    aux_prewarm(); static int waited; if (waited) return atomic_load(&g_aux_done); waited = 1;
+    uint64_t t0 = bp_now(); long r = dispatch_block_wait(g_aux_blk, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)); double ms = (bp_now() - t0) / 1e6;
+    if (r) MLOG("helper kernels: still building after 3 s; the rewrites stay off until they are ready");
+    else if (ms >= 0.5) MLOG("helper kernels: the replay thread waited %.1f ms for them", ms);
+    return atomic_load(&g_aux_done);
+}
+static void aux_bloom_get(id<MTLLibrary> *lib, id<MTLRenderPipelineState> *pso, MTLPixelFormat *fmt, id<MTLSamplerState> *samp) {
+    os_unfair_lock_lock(&g_aux_lk); *lib = g_aux.bloom_lib; *pso = g_aux.bloom_pso; *fmt = g_aux.bloom_fmt; *samp = g_aux.bloom_samp; os_unfair_lock_unlock(&g_aux_lk);
+}
 static void bright_lut(NvShader *cs) {
     static int failed; static id<MTLComputePipelineState> ps; static id<MTLTexture> tmp; static id<MTLBuffer> kb[3]; static int ki;
     static id<MTL4ArgumentTable> at;
     if (failed || strncmp(cs->key, "552f45c348a61b86", 16)) return;
     int tid = 0; for (int i = 0; i < cs->rf.nb && !tid; i++) if (cs->rf.b[i].kind == NVN_RB_IMG && cs->rf.b[i].reg < 32) tid = (int)(S.img[5][cs->rf.b[i].reg] & 0xfffff);
     pthread_mutex_lock(&g_rmu); id<MTLTexture> lut = tid ? tex_by_id(tid) : nil; uint64_t lser = lut ? g_treg[tid].t.serial : 0; pthread_mutex_unlock(&g_rmu);
-    if (lut && lut.textureType == MTLTextureType3D) { os_unfair_lock_lock(&g_mp_lk); g_mp_lut = lut; g_mp_lut_ser = lser; os_unfair_lock_unlock(&g_mp_lk); }   // 紫闪探针在出图时取这张表的几格 | The magenta probe samples a few cells of this table at present time
-    float k = bright_k(); if (!(k > 1.005f)) return;   // k ≈ 1（局外 / 正午）：表保持原版 | k ~= 1 (out of game / noon): the table stays as in the original game
+    if (lut && lut.textureType == MTLTextureType3D) { os_unfair_lock_lock(&g_mp_lk); g_mp_lut = lut; g_mp_lut_ser = lser; os_unfair_lock_unlock(&g_mp_lk); }   // the magenta probe copies a few cells of this table at present time
+    float k = bright_k(); if (!(k > 1.005f)) return;   // k ~= 1 (out of game / noon): the table stays as the game made it
     if (k > 4.0f) k = 4.0f;
-    if (!lut || lut.textureType != MTLTextureType3D || !(lut.usage & MTLTextureUsageShaderWrite)) { static int n; if (!n++) MLOG("【红】3D 画面加亮：调色表认不出（贴图号 %d），不加亮", tid); return; }
-    if (!ps) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_lut_msl) options:nil error:&e]; id<MTLFunction> f = lib ? [lib newFunctionWithName:@"lutk"] : nil;
-        ps = f ? [g_dev newComputePipelineStateWithFunction:f error:&e] : nil;
-        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxBufferBindCount = 1; at = [g_dev newArgumentTableWithDescriptor:ad error:&e];
+    if (!lut || lut.textureType != MTLTextureType3D || !(lut.usage & MTLTextureUsageShaderWrite)) { static int n; if (!n++) MLOG("【红】3D brightening: the color lookup table is not recognised (texture id %d), no brightening", tid); return; }
+    if (!ps) {
+        if (!aux_wait()) return;   // still building: this frame keeps the game's brightness
+        os_unfair_lock_lock(&g_aux_lk); id<MTLComputePipelineState> p = g_aux.bright_ps; os_unfair_lock_unlock(&g_aux_lk);
+        if (!p) { failed = 1; return; }   // aux_build already printed the red line
+        NSError *e = nil; MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxBufferBindCount = 1; at = [g_dev newArgumentTableWithDescriptor:ad error:&e];
         for (int i = 0; i < 3; i++) { kb[i] = [g_dev newBufferWithLength:16 options:MTLResourceStorageModeShared]; if (kb[i]) res_add(kb[i]); }
-        if (!ps || M4_ONLY(!at ||) !kb[0] || !kb[1] || !kb[2]) { failed = 1; MLOG("【红】3D 画面加亮：计算管线建不出 %s（退回原版亮度）", e.localizedDescription.UTF8String); return; }
-        MLOG("3D 画面加亮：建好（调色表 %lux%lux%lu，曝光每帧由 dm_bright_k 给）", (unsigned long)lut.width, (unsigned long)lut.height, (unsigned long)lut.depth); }
+        if (M4_ONLY(!at ||) !kb[0] || !kb[1] || !kb[2]) { failed = 1; MLOG("【红】3D brightening: no argument table or k buffers (%s): brightening off for this session", e ? e.localizedDescription.UTF8String : "no memory"); return; }
+        ps = p;
+        MLOG("3D brightening: first LUT rewrite (LUT %lux%lux%lu, k from dm_bright_k each frame)", (unsigned long)lut.width, (unsigned long)lut.height, (unsigned long)lut.depth); }
     if (!tmp || tmp.width != lut.width || tmp.height != lut.height || tmp.depth != lut.depth || tmp.pixelFormat != lut.pixelFormat) {
         MTLTextureDescriptor *d = [MTLTextureDescriptor new]; d.textureType = MTLTextureType3D; d.pixelFormat = lut.pixelFormat; d.width = lut.width; d.height = lut.height; d.depth = lut.depth;
-        d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModePrivate; if (tmp) defer_obj_release(tmp); tmp = [g_dev newTextureWithDescriptor:d]; if (!tmp) { failed = 1; return; } res_add(tmp); }
-    id<MTLBuffer> b0 = kb[ki]; ki = (ki + 1) % 3; *(float *)b0.contents = k;   // 三份轮换：在途的帧还在读上一份 | Three copies in rotation: in-flight frames are still reading the previous copy
+        d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModePrivate; if (tmp) defer_obj_release(tmp); tmp = [g_dev newTextureWithDescriptor:d];
+        if (!tmp) { static int nt; if (!nt++) MLOG("【红】3D brightening: no memory for the %lux%lux%lu LUT copy; frames keep the game's brightness until it can be allocated (retried each frame)", (unsigned long)lut.width, (unsigned long)lut.height, (unsigned long)lut.depth); return; }
+        res_add(tmp); }
+    id<MTLBuffer> b0 = kb[ki]; ki = (ki + 1) % 3; *(float *)b0.contents = k;   // three copies in rotation: frames in flight still read the previous one
     BENC b = blit(); enc_b_copy_texture(b, lut, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(lut.width, lut.height, lut.depth), tmp, 0, 0, MTLOriginMake(0, 0, 0)); enc_b_end(g_blit); g_blit = nil;
     CENC ce = (CENC)enc_c_begin(NULL);
     [ce setArgumentTable:at]; [at setTexture:tmp.gpuResourceID atIndex:0]; [at setTexture:lut.gpuResourceID atIndex:1]; [at setAddress:b0.gpuAddress atIndex:0];

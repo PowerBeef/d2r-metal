@@ -71,3 +71,7 @@ t_capture
 t_capture.dSYM/
 nvn_replay
 nvn_replay.dSYM/
+t_bloom_lut
+t_bloom_lut.dSYM/
+t_bloom_lut_asan
+t_bloom_lut_asan.dSYM/
