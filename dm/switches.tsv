@@ -11,7 +11,7 @@ DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_padmode.c host/front_mac.m	-
 DM_APP_POOL_ADD_MB	host	host/hle_svc.c	-
 DM_APP_ROMFS	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	-
-DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/dm_padmode.c host/front_mac.m	y
+DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/dm_padmode.c host/front_mac.m …	y
 DM_ASC_ENV	ios-tools	ios/tools/asc_env.sh	-
 DM_ASSETS_TEST	ios	ios/Sources/main.m	-
 DM_ASSET_BASE	ios,ios-tools	ios/Sources/asset_dl.m ios/Sources/main.m ios/run.sh	y
@@ -248,7 +248,7 @@ DM_PROBE_PC_LAYOUTS	host	host/dm_padmode.c	y
 DM_PRODUCT_DIR	tools	tools/product.sh	-
 DM_PSO_MANIFEST	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_warm.m	y
 DM_PSO_RECORD	gfx	gfx/nvn/nvn_mtl.m	y
-DM_PSO_USER	gfx,ios	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_warm.m ios/Sources/main.m	y
+DM_PSO_USER	gfx,host,ios	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_warm.m host/app_mac.m host/tests/t_app_mac.m …	y
 DM_PSO_WARM_WORKERS	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_warm.m	y
 DM_PUMP_PROF	host	host/dm_prof.c	-
 DM_PY	tools,verify	tools/extract_game.sh tools/product.sh verify/regress.sh	y
