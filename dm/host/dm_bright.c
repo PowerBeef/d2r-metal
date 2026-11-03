@@ -24,6 +24,7 @@
 #include "hle.h"
 #include "dm_hud.h"
 #include "dm_uiscreen.h"
+#include <limits.h>
 #include <math.h>
 #include <mach/mach.h>
 #include <stdint.h>
@@ -35,20 +36,46 @@ static const struct { uint16_t lv; uint8_t act, drlg; int8_t varies; } k_lv[] = 
 #include "dm_bright_levels.inc"
 };
 static int lv_count(void) { return (int)(sizeof k_lv / sizeof *k_lv); }
+int dm_bright_level_rows(void) { return lv_count(); }
 #else
 #include "dm_tables.h"
 #include <pthread.h>
 static struct { uint16_t lv; uint8_t act, drlg; int8_t varies; } k_lv[512];
-static int g_nlv;
+static int g_nlv = -2;   // rows read from bright_levels.tsv: -2 not read yet, -1 missing, 0 empty
+static char g_lv_path[PATH_MAX];
 static pthread_once_t g_lv_once = PTHREAD_ONCE_INIT;
 static void lv_load(void) {   // the level table from bright_levels.tsv (dm_tables.h); without it every level is treated as one whose picture follows day and night
-    static long v[512 * 4]; char path[PATH_MAX]; int n = dm_table_read("bright_levels.tsv", 4, v, 512, path);
-    if (n <= 0) { LOG("Tables: %s %s: the indoor brightening rule is off", path, n < 0 ? "is missing" : "is empty"); return; }
+    static long v[512 * 4]; int n = dm_table_read("bright_levels.tsv", 4, v, 512, g_lv_path);
+    g_nlv = n < 0 ? -1 : n;
+    if (n <= 0) { LOG("Tables: %s %s: the indoor brightening rule is off", g_lv_path, n < 0 ? "is missing" : "is empty"); return; }
     for (int i = 0; i < n; i++) { k_lv[i].lv = (uint16_t)v[4 * i]; k_lv[i].act = (uint8_t)v[4 * i + 1]; k_lv[i].drlg = (uint8_t)v[4 * i + 2]; k_lv[i].varies = (int8_t)v[4 * i + 3]; }
-    g_nlv = n;
 }
-static int lv_count(void) { pthread_once(&g_lv_once, lv_load); return g_nlv; }
+int dm_bright_level_rows(void) { pthread_once(&g_lv_once, lv_load); return g_nlv; }
+static int lv_count(void) { int n = dm_bright_level_rows(); return n > 0 ? n : 0; }
 #endif
+
+// The two game-derived tables at a glance: "bright_levels.tsv N rows, hud_exp.tsv 100 rows (<folder>)", 'missing' / 'empty' / '(needs 100)' when not.
+// Returns 1 when both are usable. The Mac host reads them at start (dm_tables.h); the iOS app compiles them in
+int dm_tables_status(char *buf, size_t n) {
+    int dm_hud_exp_rows(void);   // diag.c
+    int b = dm_bright_level_rows(), h = dm_hud_exp_rows(); char bs[32], hs[48], where[PATH_MAX + 8];
+    if (b < 0) snprintf(bs, sizeof bs, "missing"); else if (!b) snprintf(bs, sizeof bs, "empty"); else snprintf(bs, sizeof bs, "%d rows", b);
+    if (h < 0) snprintf(hs, sizeof hs, "missing"); else if (!h) snprintf(hs, sizeof hs, "empty"); else snprintf(hs, sizeof hs, h == 100 ? "%d rows" : "%d rows (needs 100)", h);
+#if TARGET_OS_IOS
+    snprintf(where, sizeof where, " (built in)");
+#else
+    { char d[PATH_MAX]; strlcpy(d, g_lv_path, sizeof d); char *sl = strrchr(d, '/'); if (sl) *sl = 0; else strlcpy(d, ".", sizeof d); snprintf(where, sizeof where, " (%s)", d); }
+#endif
+    snprintf(buf, n, "bright_levels.tsv %s, hud_exp.tsv %s%s", bs, hs, where);
+    return b > 0 && h == 100;
+}
+// One line at host start (main.c host_preload). Red only in the Mac App, where a missing table means a broken install; developer CLI hosts may run without them
+void dm_tables_report(void) {
+    int dm_hud_exp_rows(void);
+    char s[PATH_MAX + 96]; int ok = dm_tables_status(s, sizeof s), b = dm_bright_level_rows(), h = dm_hud_exp_rows();
+    LOG("%sTables: %s%s%s%s", !ok && getenv("DM_APP") ? "【红】" : "", s, b > 0 ? "" : ": dark-area brightening treats every level as one that follows day and night",
+        h == 100 ? "" : b > 0 ? ": " : "; ", h == 100 ? "" : "the experience bar stays empty");
+}
 
 static int rd(uint64_t a, void *buf, size_t n) { vm_size_t got = 0; return a && !vm_read_overwrite(mach_task_self(), a, n, (vm_address_t)buf, &got) && got == n; }
 static uint64_t main_base(void) { static uint64_t b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint64_t)g_mod[i].base; return b; }

@@ -16,6 +16,7 @@ run: \
 	$(B)/t_altstack \
 	$(B)/t_audio \
 	$(B)/t_audio_spsc \
+	$(B)/t_bright \
 	$(B)/t_cloudmerge \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
@@ -120,6 +121,7 @@ run: \
 	DM_ROMFS="$(DM_ROOT)/data/switch/3.3.94012/Update/RomFS" $(B)/t_romfs_validate
 	$(B)/t_audio
 	$(B)/t_audio_spsc
+	TMPDIR="$(abspath $(B))" $(B)/t_bright 2>/dev/null
 	$(B)/t_swkbd
 	$(B)/t_aim_cone
 	$(B)/t_altstack
@@ -195,6 +197,9 @@ $(B)/t_fs: t_fs.c t_fs_stub.c ../hle_fs.c ../hle.h ../dm.h ../dm_i18n.c | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_fs.c t_fs_stub.c ../dm_i18n.c
 $(B)/t_audio: t_audio.c ../hle_audio.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_audio.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
+# dm_bright.c alone (dm_table_read is inline in dm_tables.h): table status, the exposure smoother, the Extras switch
+$(B)/t_bright: t_bright.c ../dm_bright.c ../dm.h ../dm_tables.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bright.c ../dm_bright.c
 $(B)/t_audio_spsc: t_audio_spsc.c ../hle_audio.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_audio_spsc.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
 $(B)/t_audio_spsc_tsan: t_audio_spsc.c ../hle_audio.c ../hle.h ../dm.h | $(B)
