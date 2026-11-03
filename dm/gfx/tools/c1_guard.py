@@ -5,10 +5,13 @@
 # version (# chain b-<V>, nvn_mtl.m); ./setup.sh regenerates it when the chain changes.
 # An index is proven when interval arithmetic over the whole expression, following each variable's definition, gives 0 <= index and 16 * (index + 1) <= that span (_m0 is float4[4096]).
 # Literals, & K, % K, >> K, min, max, clamp and casts bound a value; inputs, buffer reads and anything not understood are unbounded. Every stage's c1 counts (vp_, fp_, cp_, gp_ ...).
+# Signed and unsigned conversions and declarations keep a bound only when it fits the type: int() of a uint known only as >= 0 can wrap negative, so it proves nothing.
+# The list's header names the guard's own hash (header()), so ./setup.sh (and the launcher, install.py) rerun it when the guard changes, not only when the chain does.
 # The first version followed only the last variable of an index and took any mask, min or clamp it met as proof: `_1 + (_2 & 3u)` with _1 read from an input passed,
 # masks wider than the data passed, and compute shaders (cp_c1) were never checked.
 # Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds).
 import datetime
+import hashlib
 import json
 import multiprocessing
 import os
@@ -22,6 +25,8 @@ ASSIGNMENT = re.compile(r"(?<![\w.])(_\d+)\s*(?:<<|>>|[-+*/%&|^])?=(?!=)|(?<![\w
 TOKEN = re.compile(r"\s*(0[xX][0-9a-fA-F]+[uU]?|\d+\.\d*(?:[eE][-+]?\d+)?f?|\d+[uU]?|[A-Za-z_]\w*(?:\.\w+)*|\.\w+|<<|>>|<=|>=|==|!=|&&|\|\||[-+*/%&|^~!?:(),<>\[\]])")
 UNBOUNDED = (None, None)
 CASTS = {"int", "uint", "short", "ushort", "long", "ulong"}
+SIGNED = {"int": 32, "short": 16, "long": 64}
+UNSIGNED = {"uint": 32, "ushort": 16, "ulong": 64}
 BINARY = {"||": 1, "&&": 2, "|": 3, "^": 4, "&": 5, "==": 6, "!=": 6, "<": 7, ">": 7, "<=": 7, ">=": 7, "<<": 8, ">>": 8, "+": 9, "-": 9, "*": 10, "/": 10, "%": 10}
 
 
@@ -43,6 +48,18 @@ def known(*values):
     return all(v is not None for v in values)
 
 
+def to_signed(value, bits):
+    """A value converted to a signed type of this width: its bounds hold only when both are known and fit; a conversion that can wrap says nothing"""
+    low, high = value
+    return value if known(low, high) and -(1 << (bits - 1)) <= low and high < (1 << (bits - 1)) else UNBOUNDED
+
+
+def to_unsigned(value, bits):
+    """A value converted to an unsigned type of this width: a possibly negative value wraps to a huge one, and one past the top wraps to a small one"""
+    low, high = value
+    return (0, None) if not (known(low) and low >= 0) or (known(high) and high >= (1 << bits)) else value
+
+
 class Interval:
     """Bounds of integer expressions in one shader's MSL; definitions are evaluated once each, at most 32 deep."""
     def __init__(self, definitions):
@@ -57,7 +74,8 @@ class Interval:
         try: value = self.expression(text)
         finally: self.depth -= 1
         if kind == "bool": value = (0, 1)
-        elif kind.startswith("u") and not (known(value[0]) and value[0] >= 0): value = (0, None)   # an unsigned variable: a possibly negative value wraps to a huge one
+        elif kind in UNSIGNED: value = to_unsigned(value, UNSIGNED[kind])   # a declaration converts like a cast
+        elif kind in SIGNED: value = to_signed(value, SIGNED[kind])
         self.memo[name] = value
         return value
 
@@ -157,9 +175,7 @@ class Interval:
     def call(name, args):
         if name == "as_type_u" and len(args) == 1: return (0, None)
         if name in CASTS and len(args) == 1:
-            l, h = args[0]
-            if name.startswith("u") and not (known(l) and l >= 0): return (0, None)   # a negative value wraps to a huge unsigned one
-            return (l, h)
+            return to_unsigned(args[0], UNSIGNED[name]) if name.startswith("u") else to_signed(args[0], SIGNED[name])
         if name == "min" and len(args) == 2:
             (al, ah), (bl, bh) = args
             hs = [h for h in (ah, bh) if h is not None]
@@ -214,6 +230,13 @@ def unproven(job):
     return None if all(proven(index, definitions, span) for index in accesses) else key
 
 
+def header(version_dir, stamp):
+    """The list's first line: the library's chain version, which the host checks (it reads only the '# chain b-<V>' prefix), and the guard's own hash,
+    which ./setup.sh and install.py check so a changed guard regenerates the list"""
+    with open(__file__, "rb") as stream: guard = hashlib.sha256(stream.read()).hexdigest()[:12]
+    return f"# chain {os.path.basename(version_dir)} {stamp} guard {guard}\n"
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit(f"usage: {sys.argv[0]} <dmsh_b version dir> <output tsv>")
@@ -226,7 +249,7 @@ def main():
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with open(output, "w", encoding="utf-8", newline="") as stream:
         stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
-        stream.write(f"# chain {os.path.basename(version_dir)} {stamp}\n")   # the library's chain version, which the host checks
+        stream.write(header(version_dir, stamp))
         for key in keys:
             stream.write(key + "\n")
     print(f"not proven bounded: {len(keys)} shaders")
