@@ -1,8 +1,10 @@
 # Ryujinx shader translator (vendored subset)
 
-Three projects from Ryujinx 1.3.2, unmodified: `Ryujinx.Graphics.Shader`, `Ryujinx.Common` and `Spv.Generator`.
-The shader translation tool in `dm/gfx/tools/dmsh_xlate` references them to translate the original Switch shaders to SPIR-V.
-License: MIT, see `LICENSE.txt`. Upstream: <https://github.com/Ryubing>.
+Three projects from Ryujinx, as released by Ryubing (the project's continuation, <https://git.ryujinx.app/projects/Ryubing>), unmodified:
+`Ryujinx.Graphics.Shader`, `Ryujinx.Common` and `Spv.Generator`, with the repository's `Directory.Build.props` and `Directory.Packages.props`.
+They are byte-identical to the tag `Canary-1.3.351` (commit `475615f043`, 2026-08-26; also unchanged in `Canary-1.3.352`), checked on
+2026-11-03 by diffing them against that tag's source archive.
 
-Ryujinx 1.3.2 的三个项目，未做修改：`Ryujinx.Graphics.Shader`、`Ryujinx.Common`、`Spv.Generator`。
-`dm/gfx/tools/dmsh_xlate` 的着色器翻译工具引用它们，把 Switch 原版着色器翻译成 SPIR-V。许可证 MIT，见 `LICENSE.txt`。
+The shader translation tool in `dm/gfx/tools/dmsh_xlate` references them to translate the original Switch shaders to SPIR-V.
+License: MIT (Copyright (c) Ryujinx Team and Contributors), see `LICENSE.txt`, identical to upstream's; `src/Spv.Generator/LICENSE` is that
+subproject's own MIT text.

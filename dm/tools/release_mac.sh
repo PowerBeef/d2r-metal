@@ -93,11 +93,12 @@ MIN_BUILD=${MIN_BUILD:-$(sed -n 's/^LAUNCHER_MIN_BUILD = \([0-9][0-9]*\).*/\1/p'
 say "release $VERSION build $BUILD from $COMMIT → $OUT${UNSIGNED:+ (unsigned test release)}; launchers from build $MIN_BUILD"
 
 # ---- tools pack (versioned apart; rebuilt only for a new tools_version) ----
-# Its cache is keyed by everything that goes into it: the pins, the wheel and NuGet pins, and the translator's sources. A different key under a
-# tools_version already built means an input changed without a version bump, which would give players two different packs of one version
+# Its cache is keyed by everything that goes into it: the pins, the wheel and NuGet pins, and the translator's sources (their Markdown notes go
+# nowhere near the pack, so they are left out). A different key under a tools_version already built means an input changed without a version
+# bump, which would give players two different packs of one version
 TV=$(pin tools_version); TOOLS_NAME=d2r-metal-tools-$TV.tar.gz; TC=$CACHE/tools-$TV${UNSIGNED:+-unsigned}; T=$TC/pack
-KEY=$({ cat "$HERE/release_pins.txt" "$HERE/release_requirements.txt" "$HERE/release_nuget.tsv"; git -C "$WT" rev-parse HEAD:dm/gfx/tools/dmsh_xlate HEAD:dm/third_party/ryujinx; } \
-     | shasum -a 256 | cut -c1-16)
+KEY=$({ cat "$HERE/release_pins.txt" "$HERE/release_requirements.txt" "$HERE/release_nuget.tsv"
+        git -C "$WT" ls-tree -r HEAD dm/gfx/tools/dmsh_xlate dm/third_party/ryujinx | grep -v '\.md$'; } | shasum -a 256 | cut -c1-16)
 if [ -f "$TC/key" ] && [ "$(cat "$TC/key")" != "$KEY" ]; then
   die "the tools pack's inputs changed since tools pack $TV was built: bump tools_version in dm/tools/release_pins.txt"
 fi
