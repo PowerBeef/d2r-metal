@@ -664,6 +664,8 @@ void front_run(void (*guest)(void)) {
         // Background: ordered in behind everything, never made key, no activation; the launch's key gain is emulated, so the stream has the same shape
         // as the foreground's `app active` at about 0.2 s (focus is already 1)
         if (bg) { [win orderBack:nil]; dispatch_async(dispatch_get_main_queue(), ^{ key_gained(1); }); }
+        // Background: the system reports no presented time for an off-screen window; the link's target timestamps stand in (nvn_mtl.m, nvn_presproj.h)
+        if (bg) { void mtl_present_project(int on); mtl_present_project(1); }
         else [win makeKeyAndOrderFront:nil];
         screen_note();
         [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note();
