@@ -6,8 +6,10 @@
 # the increments of one frame sum to the GPU's busy time, which @gpu_ms (the sum of the frame's command buffer spans) should match within queueing gaps.
 # A pass's own span is its exclusive cost (shown as excl_ms) only when the record's first line says serial=1 barrier_level=0 (DM_NVN_PASSGPU_SERIAL=1 holds the
 # pass barriers at level 0) and its spans don't overlap (overlap = 1 - sum(inc_ms) / sum(span), at most 2 %); compare those only with each other.
-# Older records, which have no such line, are never exclusive: rank them by mean_ms. Clear-only render passes (no draws) are left out of the overlap: their start
-# stamp (after a vertex stage they don't have) is written before their start barrier waits, so their span overlaps the previous pass even when nothing runs in parallel.
+# Older records, which have no such line, are never exclusive: rank them by mean_ms. Clear-only render passes (no draws) are left out of the overlap check, and their
+# excl_ms shows '-' (their cost is their mean_ms increment): on a serialised town_loop record their spans overlapped the previous pass (6 % "overlap", all from such
+# passes; a 1600x900 clear spanning 0.33 ms for a 0.0002 ms increment). Why is unverified: a start stamp written before the start barrier waits would explain it,
+# and so would a clear that really runs alongside its predecessor.
 # Usage: passgpu_top.py <run dir | passgpu.tsv> [--from MARK|FRAME] [--to MARK|FRAME] [--top N] [--tsv OUT [--join FRAME]]   (old form: passgpu_top.py <dir> [first frame] [N])
 import argparse, collections, json, os, statistics as S, sys
 
@@ -78,6 +80,7 @@ def main(argv):
     said_serial = m.get('serial') == '1' and lv == 0
     exclusive = said_serial and overlap <= 0.02
     col = 'excl_ms' if exclusive else 'span_ms'
+    clear_only = {k for k in draws if k[0] == 'R' and max(draws[k]) == 0}   # render passes with no draw in any frame of the segment
     frames = sorted(per); n = len(frames); g = gpu_ms(run); both = [f for f in frames if f in g]
     vals = sorted(per.values())
     print(f'frames {frames[0]}..{frames[-1]} ({n}); increments per frame p50 {S.median(vals):.2f} / p95 {vals[int(n * .95)]:.2f} ms'
@@ -87,11 +90,13 @@ def main(argv):
     print(f'pass groups {len(cost)}; mean per frame {tot:.2f} ms; overlap between passes {100 * overlap:.1f} %')
     if said_serial and not exclusive: print(f'record says serial but passes overlap {100 * overlap:.0f} %: not an exclusive cost')
     elif not exclusive: print(f'span_ms overlaps neighbouring passes (barrier level {"unknown" if lv is None else lv}): not an exclusive cost; rank by mean_ms')
+    if exclusive and any(k in clear_only for k in cost): print("clear-only passes (no draws): excl_ms '-', their span overlaps the previous pass; their cost is mean_ms")
     print(f'rank  mean_ms  share  present  {col}  draws  kind  size        fmt0  dfmt  load   #')
     ranked = sorted(cost, key=lambda k: -cost[k])
     for i, k in enumerate(ranked[:a.top], 1):
         kind, w, h, fmt0, dfmt, load, ordn = k
-        print(f'{i:4}  {cost[k]:7.3f}  {100 * cost[k] / tot:4.1f}%  {len(inc[k]) / n:6.0%}  {S.mean(span[k].values()):7.3f}  {S.median(draws[k]):5.0f}'
+        sp = f'{"-":>7}' if exclusive and k in clear_only else f'{S.mean(span[k].values()):7.3f}'
+        print(f'{i:4}  {cost[k]:7.3f}  {100 * cost[k] / tot:4.1f}%  {len(inc[k]) / n:6.0%}  {sp}  {S.median(draws[k]):5.0f}'
               f'  {kind:4}  {w + "x" + h:10}  {fmt0:4}  {dfmt:4}  {load:5}  {ordn}')
     if a.tsv:
         # pass_at: the group's global pass number in frame --join (the pass number DM_NVN_PASSDUMP lines carry), to join a dump of that frame

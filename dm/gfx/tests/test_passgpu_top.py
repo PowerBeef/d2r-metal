@@ -69,6 +69,21 @@ class PassgpuTop(unittest.TestCase):
         text, r = self.run_top('# barrier_level=0 serial=1', 0.4, 0.4, clear=(0.33, 0.0002))
         self.assertIs(r['exclusive'], True, text)
         self.assertEqual(r['overlap'], 0.0)
+        # ... and their span is not shown as an exclusive cost: '-' in the excl_ms column, the drawing pass keeps its own
+        rows = [l.split() for l in text.splitlines() if l[:4].strip().isdigit()]
+        self.assertEqual(len(rows), 2, text)
+        by_draws = {row[5]: row for row in rows}   # rank, mean_ms, share, present, excl_ms, draws, ...
+        self.assertEqual(by_draws['0'][4], '-', text)
+        self.assertEqual(by_draws['10'][4], '0.400', text)
+        self.assertNotIn('0.330', text)
+        self.assertIn("clear-only passes (no draws): excl_ms '-'", text)
+
+    def test_f_clear_only_span_shown_when_not_exclusive(self):
+        # Outside an exclusive record the column is span_ms, which never claims an exclusive cost: clear-only rows keep their span there
+        text, r = self.run_top('# barrier_level=1 serial=0', 0.5, 0.4, clear=(0.33, 0.0002))
+        self.assertIs(r['exclusive'], False, text)
+        self.assertIn('0.330', text)
+        self.assertNotIn("excl_ms '-'", text)
 
 
 if __name__ == '__main__':

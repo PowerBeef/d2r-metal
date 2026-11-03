@@ -95,7 +95,7 @@ The scripts in `tools/`; usage is written in each file's header:
 | `shader_map.py`, `maxwell_refs.py` | Generates the shader map; reads resource references from the machine code |
 | `nvn_slots.py`, `gen_protos.py` | Generate `nvn_slots.tsv` / `names.txt`, and `nvn_protos.h` / the thunks |
 | `tbdr_budget.py`, `tbdr_load_dead.py`, `tbdr_store_dead.py`, `tbdr_pass_merge.py` | Read the `DM_NVN_PASSDUMP` log and analyze the load / store volume of each render pass's attachments per frame |
-| `passgpu_top.py` | Reads the `DM_NVN_PASSGPU` output and ranks GPU time by pass shape, for a whole run or one segment between scenario marks (`--from town --to wild`); `--tsv` writes the full table. span_ms is shown as excl_ms only for a `DM_NVN_PASSGPU_SERIAL` record whose passes don't overlap |
+| `passgpu_top.py` | Reads the `DM_NVN_PASSGPU` output and ranks GPU time by pass shape, for a whole run or one segment between scenario marks (`--from town --to wild`); `--tsv` writes the full table. span_ms is shown as excl_ms only for a `DM_NVN_PASSGPU_SERIAL` record whose passes don't overlap; clear-only passes (no draws) are left out of that check and show `-` there, since their spans overlap the previous pass |
 
 ## Building
 
@@ -133,7 +133,7 @@ The tests in `dm/gfx/tests` compile the production code in directly and need a M
 | `test_c1_guard.py` | `tools/c1_guard.py`: integer conversions that can wrap leave an index unproven; bounded values still prove; the list header names the guard's hash |
 | `test_dmsh_rules.py` | `tools/dmsh_rules.py`: the HDR-switch split on synthetic MSL; rules read no module-level names; every HDR-switch key exists in `shader_map.tsv` with its role |
 | `test_compile_convention.py` | One shader compile convention across the Mac offline compile (`dmsh_build.py` `MAC_METAL`), the iOS one (`ios_metal.py` `METAL`) and the run-time compile of source-form libraries (`nvn_mtl.m` `src_opts`); deployment-target flags aside |
-| `test_passgpu_top.py` | `tools/passgpu_top.py`: a record's spans count as exclusive costs only with the serial header and no overlap between passes |
+| `test_passgpu_top.py` | `tools/passgpu_top.py`: a record's spans count as exclusive costs only with the serial header and no overlap between passes; clear-only passes never show one |
 | `t_ratelog` | Rate-limited GPU error lines (`nvn/nvn_ratelog.h`): the first lines in full, one summary per period, the flush that counts a quiet tail, and four threads at once under ThreadSanitizer |
 | `t_capture` | Frame capture (`nvn_capture.c`): every record op's pointers encode to region offsets and object indices and decode back; unknown ops are refused; the capture file round-trips its chunks, two-part chunks streamed through LZ4 included; the per-submit state text (anisotropy, MetalFX 3D) and its precedence in the replayer |
 | `nvn_replay` (built on demand, not in `run`) | Replays a `DM_NVN_CAPTURE` frame against this tree's replay layer and compares the presented frame with the live one (see `dm/verify/debugging.md`) |
