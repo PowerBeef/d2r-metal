@@ -76,7 +76,37 @@ int main(void) { setvbuf(stdout, NULL, _IONBF, 0); @autoreleasepool {
     EXPECT("serial pin: end holds every later stage", MTLStageAll, g_bar_last_end);
     f = mtl_sub_commit();
     EXPECT("serial submission completes", 1, mtl_wait(f, 5000000000ull)); EXPECT("serial submission: no command buffer error", 0, mtl_last_commit_error());
-    g_bar_ser = 0;
+
+    // The game's own NVN barriers (OP_BARRIER → bar_game) are counted only, by what a level-1 pass start covers (behaviour doesn't change)
+    g_bar_ser = 0; g_bar_lv = 1;
+    g_bar_gn = g_bar_gopen = g_bar_gtex_open = g_bar_gmid = g_bar_gvtx_mid = g_bar_gtex_mid = g_bar_gfrag_mid = 0; memset(g_bar_gbit, 0, sizeof g_bar_gbit); g_bar_gpend = 0;
+    mtl_sub_begin();
+    g_enc = nil; bar_game(0x21);   // order primitives + invalidate shader, between passes
+    EXPECT("game barrier: counted", 1, g_bar_gn); EXPECT("game barrier: bit 0 counted", 1, g_bar_gbit[0]); EXPECT("game barrier: bit 5 counted", 1, g_bar_gbit[5]);
+    EXPECT("game barrier between passes is not mid-pass", 0, g_bar_gmid);
+    pass(NULL, NULL);
+    EXPECT("uncovered bits pending at a pass start that leaves vertex open: counted", 1, g_bar_gopen); EXPECT("the pass start consumes the pending bits", 0, g_bar_gpend);
+    bar_game(0x10); pass(NULL, NULL);   // texture invalidate only: covered at a pass start
+    EXPECT("texture invalidate only: not counted as uncovered", 1, g_bar_gopen); EXPECT("texture invalidate only: counted in its own class", 1, g_bar_gtex_open);
+    EXPECT("texture invalidate: consumed", 0, g_bar_gpend);
+    bar_game(0x1); { CENC ce = enc_c_begin(NULL); enc_c_end(ce); } pass(NULL, NULL);
+    EXPECT("a compute encoder in between (full barriers) clears the pending bits", 1, g_bar_gopen);
+    bar_game(0x8); (void)blit(); enc_b_end(g_blit); g_blit = nil; pass(NULL, NULL);
+    EXPECT("a copy encoder in between (full barriers) clears the pending bits", 1, g_bar_gopen);
+    bar_game(0x80); pass(NULL, NULL);   // zcull only
+    EXPECT("zcull only: not uncovered", 1, g_bar_gopen); EXPECT("zcull only: not texture", 1, g_bar_gtex_open);
+    { RENC e = enc_r_begin(g_rp); g_enc = e;   // inside an open render encoder: mid-pass, at either level
+      bar_game(0x2); EXPECT("mid-pass fragment ordering: mid-pass", 1, g_bar_gmid); EXPECT("mid-pass fragment ordering: its class", 1, g_bar_gfrag_mid);
+      bar_game(0x10); EXPECT("mid-pass texture invalidate: mid-pass", 2, g_bar_gmid); EXPECT("mid-pass texture invalidate: its class", 1, g_bar_gtex_mid);
+      bar_game(0x20); EXPECT("mid-pass shader invalidate: mid-pass", 3, g_bar_gmid); EXPECT("mid-pass shader invalidate: vertex-relevant class", 1, g_bar_gvtx_mid);
+      EXPECT("mid-pass barriers leave nothing pending", 0, g_bar_gpend);
+      g_enc = nil; enc_r_end(e); }
+    g_bar_lv = 0; bar_game(0x1); pass(NULL, NULL);
+    EXPECT("level 0: a full pass start is not counted as uncovered", 1, g_bar_gopen); EXPECT("level 0: the pass start still clears the pending bits", 0, g_bar_gpend);
+    EXPECT("game barriers counted in all", 9, g_bar_gn);
+    f = mtl_sub_commit();
+    EXPECT("game-barrier submission completes", 1, mtl_wait(f, 5000000000ull)); EXPECT("game-barrier submission: no command buffer error", 0, mtl_last_commit_error());
+    g_bar_lv = 1;
 }
     printf("t_bar: %d checks, %d failed\n", count, fail); return fail != 0;
 }

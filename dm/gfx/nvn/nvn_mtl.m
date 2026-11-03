@@ -614,6 +614,18 @@ static int g_enc_wrote;   // submit thread only: the current game render encoder
 static uint64_t g_bar_nfree, g_bar_nlazy, g_bar_ntex, g_bar_nvw, g_bar_nwr;   // counts: vertex left open at a pass start / added before a draw (texture reads / vertex writes) / draws writing memory
 static uint64_t g_bar_nwend;   // encoders that ended with vertex stages held (they wrote memory)
 static MTLStages g_bar_last_end;   // the stages the last enc_r_end held back (t_bar)
+// The game's own NVN barriers (nvnCommandBufferBarrier → OP_BARRIER → bar_game) are counted only; behaviour doesn't change. Classes by what a level-1 pass start covers:
+//   BAR_GAME_VTX  order primitives, indirect data, invalidate shader, invalidate texture descriptor: nothing at a level-1 pass start orders the vertex stage after them
+//                 (vertex, index, indirect and storage-buffer reads that bar_draw doesn't test). Pending at a pass start that leaves vertex open = g_bar_gopen, the count
+//                 that decides whether honouring them is worth a prototype.
+//   BAR_GAME_TEX  invalidate texture: covered (fragment work waits at the start barrier; vertex texture reads take bar_draw's lazy barrier), counted on its own.
+//   BAR_GAME_FRAG fragment ordering. Inside an open render encoder every class is a different limit (no barrier between two draws of one encoder, at either level).
+// A compute or copy encoder in between opens and ends with full barriers, so it clears the pending bits too.
+#define BAR_GAME_VTX (NVN_BARRIER_ORDER_PRIMITIVES_BIT | NVN_BARRIER_ORDER_INDIRECT_DATA_BIT | NVN_BARRIER_INVALIDATE_SHADER_BIT | NVN_BARRIER_INVALIDATE_TEXTURE_DESCRIPTOR_BIT)
+#define BAR_GAME_TEX NVN_BARRIER_INVALIDATE_TEXTURE_BIT
+#define BAR_GAME_FRAG (NVN_BARRIER_ORDER_FRAGMENTS_BIT | NVN_BARRIER_ORDER_FRAGMENTS_TILED_BIT)
+static uint64_t g_bar_gn, g_bar_gbit[8], g_bar_gopen, g_bar_gtex_open, g_bar_gmid, g_bar_gvtx_mid, g_bar_gtex_mid, g_bar_gfrag_mid;   // submit thread only
+static int g_bar_gpend;   // game barrier bits since the last encoder that opened with a full or level-1 start barrier
 #define BAR_VTX (MTLStageVertex | MTLStageObject | MTLStageMesh)
 static int g_bar_ser = -1;   // DM_NVN_PASSGPU_SERIAL (bar_init): 1 holds the effective level at 0, whatever g_bar_lv says
 // The effective level, a plain read: bar_init resolves it once in mtl_init_once, before any encoder exists, so the submit, present and upload threads only read it.
@@ -642,10 +654,18 @@ static void bar_stats(void) {
     if (bar_lv() > 0 && g_sub_serial % 600 == 0)
         MLOG("pass barriers: vertex open %llu, encoders that wrote memory (vertex held at their end) %llu, added before a draw %llu (texture reads %llu / vertex writes %llu), draws writing memory %llu (total)",
              (unsigned long long)g_bar_nfree, (unsigned long long)g_bar_nwend, (unsigned long long)g_bar_nlazy, (unsigned long long)g_bar_ntex, (unsigned long long)g_bar_nvw, (unsigned long long)g_bar_nwr);
+    if (bar_lv() > 0 && g_sub_serial % 600 == 0)
+        MLOG("pass barriers: game barriers %llu (at a pass start that left vertex open: uncovered %llu, texture-invalidate only %llu; mid-pass %llu: vertex-relevant %llu, texture %llu, fragment ordering %llu); "
+             "bits prim %llu frag %llu tiled %llu indirect %llu tex %llu shader %llu desc %llu zcull %llu",
+             (unsigned long long)g_bar_gn, (unsigned long long)g_bar_gopen, (unsigned long long)g_bar_gtex_open, (unsigned long long)g_bar_gmid, (unsigned long long)g_bar_gvtx_mid,
+             (unsigned long long)g_bar_gtex_mid, (unsigned long long)g_bar_gfrag_mid, (unsigned long long)g_bar_gbit[0], (unsigned long long)g_bar_gbit[1], (unsigned long long)g_bar_gbit[2],
+             (unsigned long long)g_bar_gbit[3], (unsigned long long)g_bar_gbit[4], (unsigned long long)g_bar_gbit[5], (unsigned long long)g_bar_gbit[6], (unsigned long long)g_bar_gbit[7]);
 }
 static inline void bar_r_begin(id<MTL4RenderCommandEncoder> e) {
-    if (bar_lv() <= 0) { [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_enc_vfree = 0; return; }
+    if (bar_lv() <= 0) { [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_enc_vfree = 0; g_bar_gpend = 0; return; }
     [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll & ~BAR_VTX visibilityOptions:MTL4VisibilityOptionDevice];
+    if (g_bar_gpend & BAR_GAME_VTX) g_bar_gopen++; else if (g_bar_gpend & BAR_GAME_TEX) g_bar_gtex_open++;   // counted only (see BAR_GAME_VTX)
+    g_bar_gpend = 0;
     g_enc_vfree = 1; g_bar_nfree++;   // vertex waits for nothing more: the full end barrier of earlier compute / copy passes and of render passes that wrote memory already holds it
 }
 static inline RENC enc_r_begin(RPD *d) { RENC e = [g_cb renderCommandEncoderWithDescriptor:d]; bar_r_begin(e); [e setArgumentTable:g_vt atStages:MTLRenderStageVertex]; [e setArgumentTable:g_ft atStages:MTLRenderStageFragment]; return e; }
@@ -668,7 +688,7 @@ static inline void enc_r_args(RENC e, MTLRenderStages s, uint64_t gpu, NSUIntege
 static inline void enc_r_draw(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n) { [e drawPrimitives:p vertexStart:v vertexCount:n]; }
 static inline void enc_r_draw_instanced(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n, NSUInteger i, NSUInteger b) { [e drawPrimitives:p vertexStart:v vertexCount:n instanceCount:i baseInstance:b]; }
 static inline void enc_r_draw_indexed(RENC e, MTLPrimitiveType p, NSUInteger n, MTLIndexType t, uint64_t gpu, NSUInteger len, NSUInteger i, NSInteger bv, NSUInteger bi) { [e drawIndexedPrimitives:p indexCount:n indexType:t indexBuffer:gpu indexBufferLength:len instanceCount:i baseVertex:bv baseInstance:bi]; }
-static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [(CBUF)g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; return e; }
+static inline CENC enc_c_begin(MTLComputePassDescriptor *d) { (void)d; CENC e = [(CBUF)g_cb computeCommandEncoder]; [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e setArgumentTable:g_ct]; g_bar_gpend = 0; return e; }
 static inline id<MTLComputeCommandEncoder> enc_c_begin_concurrent(id<MTLCommandBuffer> cb) { return [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent]; }
 static inline void enc_c_end(id e) { m4_end(e); }
 static inline void enc_c_pso(id e, id<MTLComputePipelineState> p) { [e setComputePipelineState:p]; }
@@ -687,7 +707,7 @@ extern int g_blit_bar;
 // When reusing the same blit encoder, a barrier is also needed between two copies: Metal 4 does not guarantee commands within one encoder run in recording order,
 // so write-then-read / two writes to the same range can be reordered (without it, t_nvn 5c read a stale value 1 time in 3). The barrier at encoder creation only covers it against earlier encoders
 static BENC blit(void) { blit_note(); rp_end();
-    if (!g_blit) { g_blit = enc_b_begin(g_cb); [g_blit barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; }
+    if (!g_blit) { g_blit = enc_b_begin(g_cb); [g_blit barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; g_bar_gpend = 0; }
     else if (g_blit_bar) [g_blit barrierAfterEncoderStages:MTLStageBlit | MTLStageDispatch beforeEncoderStages:MTLStageBlit | MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];   // 拷贝编码器在 Metal 4 下是计算编码器，两种阶段都挡 | With Metal 4 the copy encoder is a compute encoder, so both stages are blocked
     return g_blit; }
 
@@ -5678,6 +5698,13 @@ static int frz_op(unsigned op, const void *a) {   // 返回 1 = 这条操作不�
     return 0;
 }
 
+// The game's own barrier (OP_BARRIER): counted by class only (see BAR_GAME_VTX). Inside an open render encoder it is mid-pass; otherwise its bits wait for the next encoder
+static void bar_game(int bits) {
+    g_bar_gn++;
+    for (int i = 0; i < 8; i++) if (bits & (1 << i)) g_bar_gbit[i]++;
+    if (g_enc) { g_bar_gmid++; if (bits & BAR_GAME_VTX) g_bar_gvtx_mid++; if (bits & BAR_GAME_TEX) g_bar_gtex_mid++; if (bits & BAR_GAME_FRAG) g_bar_gfrag_mid++; }
+    else g_bar_gpend |= bits;
+}
 void mtl_exec(const uint8_t *p) {
     static int inited; if (!inited) { inited = 1; state_reset(); }
     static int dump_all = -1; if (dump_all < 0) dump_all = getenv("DM_NVN_PASSDUMP_ALL") != NULL;
@@ -5767,7 +5794,8 @@ void mtl_exec(const uint8_t *p) {
             case OP_COPY_T2T: copy_t2t(a); break;
             case OP_CLEAR_TEX: clear_tex(a); break;
             case OP_DISPATCH: dispatch(a); break;
-            case OP_BARRIER: case OP_SET_TEX_POOL: case OP_SET_SAMP_POOL: break;
+            case OP_BARRIER: bar_game(*(const int32_t *)a); break;
+            case OP_SET_TEX_POOL: case OP_SET_SAMP_POOL: break;
             default: break;
         }
         p += h.size;
