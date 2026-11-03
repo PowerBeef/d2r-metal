@@ -71,3 +71,5 @@ t_capture
 t_capture.dSYM/
 nvn_replay
 nvn_replay.dSYM/
+t_bar
+t_bar.dSYM/
