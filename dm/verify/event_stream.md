@@ -59,6 +59,7 @@ UTF-8, one object per line, terminated by `\n`, written with a single `write()` 
 | `language` | `name` (`enUS`, `esES`, `zhCN`, …), `idx` | The game switched its text language (SetLanguage; at boot from the settings file, or from the options page). |
 | `opmode` | `from`, `to` (1 docked, 0 handheld) | The operation mode changed (`dm_set_opmode`: the front end's overheat downgrade, `DM_OE_SCRIPT`); the game is notified through 30 / 31. |
 | `padmode` | `mode` (`controller`, `touch`), `glyph` (`Switch`, `keyboard`, `Xbox`, `PlayStation`), `frames`, `timeouts` | A controller / touch layout or key cap switch finished (`dm_padmode.c`); `timeouts` > 0 means a UI rebuild was not seen in time. |
+| `pc_item` | `btn` (`left`, `right`), `mods` (1 Shift, 2 Ctrl), `item` (its code, empty for none), `at` (where it is: 1 inventory, 2 belt, 3 worn, 4 stash, 5 cube, 6 vendor), `did` (`pick_up`, `put_down`, `equip`, `unequip`, `belt`, `move` (the console's held Y), `drop` (Y), `use`, `buy`; nothing done: `nothing`, `no_item`, `none_here`, `wearable`) | PC control mode: a click on an item area (`dm_kbm.c` `item_click`, the game's own PC item rules). |
 | `focus` | `panel`, `widget` | The focused widget changed (`dm_engine.c`, the game's focus manager); null = no focus. |
 | `shutdown` | `why` | `dm_host_shutdown` started (SIGTERM, iOS terminate / scene disconnect, Mac quit). |
 | `shot` | `path`, `ok` | A screenshot file was written (`DM_NVN_SHOT_UI`, the control port's `screenshot`). |
