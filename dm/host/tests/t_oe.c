@@ -7,13 +7,17 @@
 #endif
 #include HLE_OE_SOURCE
 #include <signal.h>
+#include <sys/mman.h>
 #include <sys/wait.h>
 uint64_t now_ns(void) { return 0; }
 // 3D 渲染比例（scale3d_tick）的外部依赖：单测里没有模块表与图形层，桩成「没有 main 模块」→ 该函数直接返回
 // External dependencies of the 3D render scale (scale3d_tick): the unit test has no module table or graphics layer, so they are stubbed as "no main module" -> the function returns immediately
 module_t g_mod[MAX_MOD]; int g_nmod;
 void dm_guest_write_prepare(void *a, size_t n) { (void)a; (void)n; }
-uint64_t dm_nvn_frame_count(void) { return 0; }
+static uint64_t g_frames;   // frames presented, for aa_tick's 30-frame wait (0 in every case but the anti-aliasing ones)
+uint64_t dm_nvn_frame_count(void) { return g_frames; }
+extern int g_aa_want;   // the picture setting's answer (t_oe_stub.c)
+void mtl_rt_force_full(int frames) { (void)frames; }   // nvn_mtl.m, weak in hle_oe.c: linked once the fake main module makes scale3d_tick reachable
 int dm_nvn_ruler_truth(void) { return 0; }
 int dm_ingame_now(void) { return 1; }
 int mtl_fps_target(void) { return 60; }   // 目标帧率（nvn_mtl.m）：单测里恒为 60，30 帧档的用例直接给 period_ms | target frame rate (nvn_mtl.m): always 60 in the unit test, and the 30 fps mode cases pass period_ms directly
@@ -168,7 +172,46 @@ static void test_scale3d(void) {
     printf("  （实玩第二段回放：慢帧均匀散开换级 %d 次，挤在一起换级 %d 次）\n", a, b);
     CHECK(a == 0 && b == 0, "动态比例：实玩第二段的慢帧序列（帧率 59+）不论散开还是挤在一起都不换级");
 }
+// DM_AA_MODE parsing (aa_env_parse): only 0, 1, 2 and off are taken; 3-5 crash the game in its SMAA pass, anything else is malformed
+static void aa_parse_cases(void) {
+    CHECK(aa_env_parse(NULL) == -1 && aa_env_parse("") == -1, "DM_AA_MODE unset or empty: the picture setting decides (-1)");
+    CHECK(aa_env_parse("off") == -3, "DM_AA_MODE=off: leave the byte to the game (-3)");
+    CHECK(aa_env_parse("0") == 0 && aa_env_parse("1") == 1 && aa_env_parse("2") == 2, "DM_AA_MODE=0 / 1 / 2: forced");
+    CHECK(aa_env_parse("3") == -4 && aa_env_parse("4") == -4 && aa_env_parse("5") == -4, "DM_AA_MODE=3 / 4 / 5: refused, they crash the game (-4)");
+    CHECK(aa_env_parse("6") == -5 && aa_env_parse("2 ") == -5 && aa_env_parse("smaa") == -5 && aa_env_parse("-1") == -5 && aa_env_parse("OFF") == -5 && aa_env_parse("02") == -5,
+          "DM_AA_MODE=6 / '2 ' / smaa / -1 / OFF / 02: malformed (-5), no trimming, case-sensitive");
+}
+// aa_tick against a fake main module whose renderer has the AA mode byte at +0x6614 (the console config, 1): each case in a forked child, because aa_tick reads
+// DM_AA_MODE once into a static. Returns the byte the child saw after one tick, or -1 when the child failed. scale3d_tick isn't called (its output size reads 0)
+static int aa_case(const char *env, int want, uint64_t frames) {
+    fflush(stdout); pid_t p = fork(); if (p < 0) return -1;
+    if (!p) {
+        signal(SIGALRM, abort_exit); alarm(10);
+        if (env) setenv("DM_AA_MODE", env, 1); else unsetenv("DM_AA_MODE");
+        uint8_t *base = mmap(NULL, 0x3200000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); if (base == MAP_FAILED) _exit(255);
+        uint8_t *renderer = calloc(1, 0x7000); renderer[0x6614] = 1;
+        *(uintptr_t *)(base + 0x31e0848) = (uintptr_t)renderer;
+        memset(&g_mod[0], 0, sizeof g_mod[0]); strcpy(g_mod[0].name, "main"); g_mod[0].base = base; g_nmod = 1;
+        g_frames = frames; g_aa_want = want;
+        aa_tick();
+        _exit(renderer[0x6614]);
+    }
+    int st; if (waitpid(p, &st, 0) != p || !WIFEXITED(st) || WEXITSTATUS(st) == 255) return -1;
+    return WEXITSTATUS(st);
+}
+static void aa_tick_cases(void) {
+    CHECK(aa_case(NULL, 2, 0) == 1, "aa_tick: before frame 30 the byte stays (1)");
+    CHECK(aa_case(NULL, 2, 30) == 2, "aa_tick: the picture setting's SMAA (2) is written from frame 30");
+    CHECK(aa_case(NULL, 1, 30) == 1, "aa_tick: the picture setting's FXAA (1)");
+    CHECK(aa_case("off", 2, 30) == 1, "aa_tick: DM_AA_MODE=off leaves the byte to the game");
+    CHECK(aa_case("3", 2, 30) == 2, "aa_tick: DM_AA_MODE=3 is refused (it crashes the game); the picture setting decides (2)");
+    CHECK(aa_case("smaa", 2, 30) == 2, "aa_tick: a malformed DM_AA_MODE is ignored; the picture setting decides (2)");
+    CHECK(aa_case("0", 2, 30) == 0, "aa_tick: DM_AA_MODE=0 forces no anti-aliasing");
+    CHECK(aa_case("2", 1, 30) == 2, "aa_tick: DM_AA_MODE=2 beats the picture setting");
+}
 int main(void) {
+    aa_parse_cases();
+    aa_tick_cases();   // first: aa_tick latches DM_AA_MODE into a static on its first call (every h_oe_TryPopMsg runs it), so the forked cases need an unlatched parent
     test_scale3d();
     unsetenv("DM_OE_SCRIPT"); reset();
     CHECK(empty(), "初始空队列：返回false且不改输出");

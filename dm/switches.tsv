@@ -5,7 +5,7 @@ DM_3D_SCALE_DYN_INJECT	host	host/hle_oe.c	-
 DM_3D_SCALE_FLOOR	host	host/hle_oe.c	-
 DM_3D_SCALE_GPU	host	host/hle_oe.c	-
 DM_3D_SCALE_GPU_FLOOR	host	host/hle_oe.c	-
-DM_AA_MODE	host	host/hle_oe.c	-
+DM_AA_MODE	host	host/hle_oe.c host/tests/t_oe.c	-
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
 DM_APP	host	host/app_mac.m host/dm_padmode.c host/front_mac.m	-
