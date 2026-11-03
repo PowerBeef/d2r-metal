@@ -190,12 +190,23 @@ static NSRect game_rect(void) {
 static void vkbd_where(dm_vkbd_host *h) {   // 手柄屏幕键盘画在视图层上、游戏画面里（视图层坐标向上增） | the on-screen controller keyboard is drawn on the view layer, inside the game picture (view layer coordinates grow upward)
     h->layer = (__bridge void *)g_view.layer; h->pic = NSRectToCGRect(game_rect()); h->y_up = 1; h->scale = g_win.backingScaleFactor > 0 ? g_win.backingScaleFactor : 2;
 }
+// The window's geometry as an event (event_stream.md `window`), beside the 窗口：内容区 line that scripts read: content size (pt), picture rect (pt), drawable (px),
+// backing scale, full screen, emulated, fit (the content equals the screen's full-screen content area) and AppKit's real active / key state
+static void window_event(NSRect r, CGFloat sc) {
+    NSScreen *s = NSScreen.mainScreen; NSSize b = g_view.bounds.size; CGSize d = g_layer.drawableSize;
+    int full = (g_win.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    int fit = s && fabs(b.width - s.frame.size.width) < 1.5 && fabs(b.height - (s.frame.size.height - s.safeAreaInsets.top)) < 1.5;
+    DM_EV("window", "cw:d ch:d px:d py:d pw:d ph:d dw:d dh:d scale:f full:b emu:b fit:b active:b key:b", (int)lround(b.width), (int)lround(b.height),
+          (int)lround(r.origin.x), (int)lround(r.origin.y), (int)lround(r.size.width), (int)lround(r.size.height), (int)lround(d.width), (int)lround(d.height),
+          (double)sc, full, 0, fit, (int)NSApp.isActive, (int)g_win.isKeyWindow);
+}
 static void layout_game(void) {
     NSRect r = game_rect(); if (NSEqualRects(r, g_layer.frame)) return;
     CGFloat sc = g_view.window.backingScaleFactor ?: 2;   // 画布跟着改：作为子层的 CAMetalLayer 改 frame 不会自己改 drawableSize，原先进全屏后一直用窗口态的画布放大显示（发糊） | the canvas follows: a CAMetalLayer used as a sublayer does not change its drawableSize when its frame changes, so after going full screen it used to keep the windowed canvas and scale it up (blurry)
     [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = sc; g_layer.drawableSize = CGSizeMake(round(r.size.width * sc), round(r.size.height * sc)); [CATransaction commit];
     dm_vkbd_ui_relayout();   // 屏幕键盘跟着画面走 | the on-screen keyboard follows the picture
     LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
+    window_event(r, sc);
 }
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
 // 暂停菜单这类开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
@@ -460,6 +471,28 @@ static void on_key(NSEvent *e, int down) {
     if (down && (b >= 0 || c == 13 || c <= 2)) dm_padmode_request_glyph(DM_GLYPH_KBD);   // 按了游戏用的键：键位图标换成键盘键帽（鼠标移动 / 点击不算） | a key used by the game was pressed: switch the key icons to keyboard key caps (mouse moves / clicks do not count)
     if (b >= 0) g_btn = down ? (g_btn | 1ull << b) : (g_btn & ~(1ull << b));
     push();
+}
+
+// Why the game window lost key status (the `cause` of `app state=resign`): its own sheet, another app taking the front, minimize, or another window of ours
+static const char *resign_cause(void) {
+    return g_win.attachedSheet ? "sheet" : !NSApp.isActive ? "app" : g_win.miniaturized ? "minimize" : "window";
+}
+// Desk changes as `desk` events (event_stream.md), so a test harness can tell whether a run kept the front and saw the screen as a player would:
+// this app coming to the front or leaving it, another app activating, a Space switch, display sleep and the login session going inactive (fast user switching, lock).
+// Notifications only: no window-list polling and no screen reads
+static void desk_ev(const char *what, const char *by) { LOG("desk: %s%s%s", what, by ? " by " : "", by ?: ""); DM_EV("desk", "what:s by:s", what, by); }
+static void desk_watch(void) {
+    NSNotificationCenter *nc = NSNotificationCenter.defaultCenter, *wc = NSWorkspace.sharedWorkspace.notificationCenter;
+    [nc addObserverForName:NSApplicationDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("front", "self"); }];
+    [nc addObserverForName:NSApplicationDidResignActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("back", "self"); }];
+    [wc addObserverForName:NSWorkspaceDidActivateApplicationNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
+        NSRunningApplication *a = n.userInfo[NSWorkspaceApplicationKey]; if (!a || a.processIdentifier == getpid()) return;
+        desk_ev("other_app", (a.bundleIdentifier ?: a.localizedName ?: @"?").UTF8String); }];
+    [wc addObserverForName:NSWorkspaceActiveSpaceDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("space", NULL); }];
+    [wc addObserverForName:NSWorkspaceScreensDidSleepNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("screens_sleep", NULL); }];
+    [wc addObserverForName:NSWorkspaceScreensDidWakeNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("screens_wake", NULL); }];
+    [wc addObserverForName:NSWorkspaceSessionDidResignActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("session_off", NULL); }];
+    [wc addObserverForName:NSWorkspaceSessionDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n) { (void)n; desk_ev("session_on", NULL); }];
 }
 
 typedef struct { void (*fn)(void); } guest_arg;
@@ -788,7 +821,8 @@ void front_run(void (*guest)(void)) {
                   LOG("DM_TEST_COVER：盖上 %.1f 秒，游戏窗口%s是主窗口", dur, win.isKeyWindow ? "" : "不");
                   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(dur * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [c orderOut:nil]; LOG("DM_TEST_COVER：拿开"); });
               }); }
-        [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "resign"); if (!win.miniaturized && !atomic_load(&g_quitting)) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
+        desk_watch();
+        [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s cause:s", "resign", resign_cause()); if (!win.miniaturized && !atomic_load(&g_quitting)) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
         [nc addObserverForName:NSWindowDidBecomeKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; DM_EV("app", "state:s", "active"); dm_focus_set(1); }];
         // 最小化：客体时钟一并冻结（同 iOS 进后台）。否则游戏线程挡在图形挂起处、墙钟照走，恢复时主循环把整段最小化时长的拍一口气补跑完——角色站着不动、怪照打（专家模式死了就没了）
         // Minimize: the guest clock is frozen as well (as when iOS goes to the background). Otherwise the game thread is blocked at the graphics suspend while the wall clock keeps running, and on restore the main loop catches up on every tick of the minimized period in one burst -- the character stands still while monsters keep attacking (a death in Hardcore is permanent)
