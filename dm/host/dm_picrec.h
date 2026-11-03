@@ -1,13 +1,11 @@
 // The Mac App's Recommended picture, worked out from this Mac's chip (dm_picrec.c). Pure C: the front end (front_mac.m) reads the machine,
 // t_picrec feeds made-up machines.
 #pragma once
-#include <stdint.h>
 
 typedef struct {
     const char *gpu;      // the GPU's Metal name: "Apple M6", "Apple M4 Pro", "Apple A18 Pro GPU"
     int cores;            // GPU cores (IORegistry gpu-core-count; 0 = unknown)
-    uint64_t mem;         // unified memory, bytes (0 = unknown)
-    int out_w, out_h;     // the picture at Native: the main screen's pixel size (out_w 16-aligned, 1600–3840)
+    int out_w, out_h;     // the picture at Native: the main screen's backing-store size in its current mode (out_w 16-aligned, 1600–3840)
     int mfx;              // MetalFX can enlarge on this GPU
 } dm_mac_spec;
 
@@ -23,3 +21,9 @@ typedef struct {
 } dm_mac_rec;
 
 void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r);
+
+// Whether a run gets the real recommendation (dm_mac_recommend, front_mac.m): only the Mac App (app = DM_APP set), and a test copy
+// (app_support = DM_APP_SUPPORT set) only with test_firstboot (DM_TEST_VIDEO_FIRSTBOOT=1). The CLI host and test copies keep the original look
+// for every picture key (windowed, 1600, Standard, no MetalFX), so automated runs, golden baselines and benchmarks don't move; runs that want
+// MetalFX set DM_MFX / DM_MFX3D.
+int dm_picrec_real(int app, int app_support, int test_firstboot);
