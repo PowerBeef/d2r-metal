@@ -307,7 +307,7 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     // at -1, so the first frame in Lower does not retarget
     if (f->qm_was == 1) { float cfg = s3_cfg(); scale3d_ctl_retarget(c, cfg, f->fl, now); f->cfg_at = cfg; LOG("Frame Drops set to Lower: history cleared, judging resumes in 3 s"); }
     f->qm_was = 0;
-    { float cfg = s3_cfg(); if (cfg != f->cfg_at) { scale3d_ctl_retarget(c, cfg, f->fl, now); s3_rates_clear(); atomic_store(&g_scale3d_level, 0);   // 选项页换了 3D 清晰度：档位按新值重算 | the options page changed the 3D resolution: levels recomputed for the new value
+    { float cfg = s3_cfg(); if (cfg != f->cfg_at) { scale3d_ctl_retarget(c, cfg, f->fl, now); s3_rates_clear(); atomic_store(&g_scale3d_level, 0);   // a new 3D Resolution: levels recomputed for it
         LOG("3D 比例控制：配置 %.2f → %.2f，回到配置值，下限 %.2f（第 %d 档）", f->cfg_at, cfg, s3_level_scale(cfg, c->max_level), c->max_level); f->cfg_at = cfg; } }
     if (atomic_exchange(&g_scale3d_resumed, 0)) scale3d_ctl_hold(c, now, 3 * S3_SEC);
     // Frames not shown are not judged: presents discarded (a covered Mac window, the iOS background save wait) or paused for an inactive shell

@@ -148,7 +148,7 @@ run_stage() {
     # The player path log must have no failure lines (a permanent failure line on the product default path = an alarm nobody looks at; there used to be 14 false panel-stack failures at every launch)
     red_n=$(LC_ALL=C grep -a -c '【红】' "$RUN/player.txt" 2>/dev/null)
     # Frame Drops steps judged by the [perf] windows around them (the one before and the one after the step line; the step was decided across them).
-    # A window is blank when 99% or more of its presents were not shown (丢弃), full when under 1% were and it ran at 58 fps or more.
+    # A window is blank when 99% or more of its presents were not shown (the line's discarded count), full when under 1% were and it ran at 58 fps or more.
     # A step is bad when both neighbours are blank (nothing on screen: the controller must not judge such windows) or both are full with the 60 s
     # rate at 1.5% or less (under 1% not shown at >= 58 fps, at most about 4.4% of frames can count, below the 5% rule; the 60 s rule can fire
     # legitimately at about 59 fps, so a step it took is left alone). A step with no window after it is not judged, nor is one in partly covered
