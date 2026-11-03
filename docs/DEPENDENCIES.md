@@ -70,11 +70,12 @@ These are already in the repository; nothing to download. Each keeps its license
 
 | Path | What | License | Upstream |
 |---|---|---|---|
-| `dm/brand/fonts` | Cinzel, the lettering of the logo and the launcher's headings (also inside the launcher) | SIL Open Font License 1.1 | <https://github.com/NDISCOVER/Cinzel> |
+| `dm/brand/fonts` | Cinzel, the lettering of the logo and wordmark (drawn into the brand art; no release ships the font) | SIL Open Font License 1.1 | <https://github.com/NDISCOVER/Cinzel> |
 | `dm/third_party/bcdec` | BC texture decompression | MIT or Unlicense (your choice) | <https://github.com/iOrange/bcdec> |
 | `dm/third_party/flip` | Image difference metric | BSD 3-Clause | <https://github.com/NVlabs/flip> |
 | `dm/third_party/libdeflate` | Decompression | MIT | <https://github.com/ebiggers/libdeflate> |
 | `dm/third_party/ryujinx` | The shader translator from Ryujinx 1.3.2 (three projects, unmodified), which translates the original Switch shaders to SPIR-V | MIT | <https://github.com/Ryubing> |
 | `dm/gfx/nvn/include/nvn.h` | Graphics interface declarations | MIT | Author named in the file header |
-| Layout size algorithm in `dm/gfx/nvn/nvn_tex.c` | Ported from deko3d | zlib | <https://github.com/devkitPro/deko3d> |
+| Layout size algorithm in `dm/gfx/nvn/nvn_tex.c` | Ported from deko3d (an altered version; the file carries deko3d's notice, also in `dm/third_party/notices/deko3d.txt`) | zlib | <https://github.com/devkitPro/deko3d> |
+| GPU timestamps, display-link timing, NVN frame capture and replay, the Metal compile cache, the shader bounds guard, the function map and the fuzzing tools (the files are listed in `dm/third_party/notices/README.md`) | Adapted from nxnative; each file names it in its opening comment | MIT (`dm/third_party/notices/nxnative.txt`) | <https://github.com/seedds/nxnative> |
 | The two rewrites in `dm/tools/patch_nso.py` that let the game run offline | Taken from a community offline fix (LFS Mod Offline Fix) | Unknown | We have no reliable record of where it was first published or by whom; if you know, please open an issue, see [DERIVED.md](DERIVED.md) |

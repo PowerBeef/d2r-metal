@@ -206,7 +206,9 @@ find "$RT/repo" -name __pycache__ -prune -exec rm -rf {} +   # the checks above 
 [ -f "$RT/app/Assets.car" ] || die "the app icon did not compile (dm/brand/icon.sh needs Xcode's actool)"
 cp "$WT/LICENSE" "$RT/licenses/LICENSE"; cp "$WT/docs/THIRD_PARTY_NOTICES.md" "$RT/licenses/"
 cp "$WT/dm/third_party/bcdec/LICENSE" "$RT/licenses/bcdec.txt"; cp "$WT/dm/third_party/libdeflate/COPYING" "$RT/licenses/libdeflate.txt"
-for f in LICENSE THIRD_PARTY_NOTICES.md bcdec.txt libdeflate.txt; do need_file "$RT/licenses/$f"; done
+# code adapted into the host and the install scripts (dm/third_party/notices)
+cp "$WT/dm/third_party/notices/nxnative.txt" "$WT/dm/third_party/notices/deko3d.txt" "$RT/licenses/"
+for f in LICENSE THIRD_PARTY_NOTICES.md bcdec.txt libdeflate.txt nxnative.txt deko3d.txt; do need_file "$RT/licenses/$f"; done
 sign "$RT/host/D2RMobile" "$RT/lib/libnvn_deswizzle.dylib"
 RUNTIME_NAME=d2r-metal-runtime-$VERSION.tar.gz; LAUNCHER_ZIP=D2R-Metal-Launcher-$VERSION.zip; DMG=D2R-Metal-Launcher-$VERSION.dmg
 UPDATE_URL=https://github.com/$GH_REPO/releases/latest/download/latest_mac.json

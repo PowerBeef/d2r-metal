@@ -22,6 +22,9 @@ The game host (`host/D2RMobile`), the texture library (`lib/libnvn_deswizzle.dyl
 | D2R Metal | MIT | `licenses/LICENSE` |
 | bcdec (BC texture decoding, in the host) | MIT or public domain (Unlicense), at the user's choice | `licenses/bcdec.txt` |
 | libdeflate (decompression, in the host) | MIT | `licenses/libdeflate.txt` |
+| nxnative (code adapted into the host: GPU timestamps, display-link timing, frame capture; and into the install scripts: the shader cache and bounds-guard tools) | MIT | `licenses/nxnative.txt` |
+| deko3d (the texture layout algorithm, ported into the host; source `repo/dm/gfx/nvn/nvn_tex.c`, which carries the notice too) | zlib | `licenses/deko3d.txt` |
+| The NVN API declarations the host is built with (`repo/dm/gfx/nvn/include/nvn.h`, h1k421) | MIT | in the file itself |
 
 ## Tools pack (`d2r-metal-tools-<version>.tar.gz`)
 

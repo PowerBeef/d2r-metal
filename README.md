@@ -319,9 +319,10 @@ D2R Metal exists because of **[D2R Mobile](https://github.com/jhaizhou-ops/d2r-m
 The project stands on the open-source work below. Thank you to its authors and maintainers.
 
 - **Ryujinx** (Ryubing 1.3.2, MIT): `dm/third_party/ryujinx` bundles its shader translator unchanged (the Ryujinx.Graphics.Shader, Spv.Generator and Ryujinx.Common projects), which translates the Switch game's shaders to SPIR-V.
-- **deko3d** (devkitPro, zlib): the texture layout size algorithm in `dm/gfx/nvn/nvn_tex.c` is ported from it.
+- **deko3d** (fincs, devkitPro, zlib): the texture layout size algorithm in `dm/gfx/nvn/nvn_tex.c` is ported from it; the file carries deko3d's notice.
 - **nvn.h** (h1k421, MIT): the graphics API declarations in `dm/gfx/nvn/include/nvn.h`.
 - **nxnative** (seedds, MIT): GPU timestamps, the 120 Hz display-link timing, the Metal compile cache, the shader bounds guard, NVN frame capture and replay, the function-map and fuzzing tools are adapted from it; each adapted file says so in its header.
+- The full texts of these two licenses are in [dm/third_party/notices](dm/third_party/notices), and every release pack that carries the adapted code carries them too.
 - **libdeflate** (Eric Biggers, MIT): decompressing game data.
 - **bcdec** (iOrange, MIT or Unlicense): decoding BC textures on devices that do not support the BC formats.
 - **FLIP** (NVIDIA, BSD 3-Clause): the image difference metric used in image-quality checks.

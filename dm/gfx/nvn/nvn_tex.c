@@ -1,13 +1,29 @@
-// NVN 贴图的存储尺寸 / 对齐 / 各级偏移（Tegra X1 块线性布局）。
-// 算法移植自 deko3d source/dk_image.cpp（zlib 许可，Copyright (C) 2018-2020 fincs）：
-//   一个 GOB = 64 字节 × 8 行 = 512 字节；块高（tileH，单位 GOB）按「高度×1.5」挑；各级按块对齐累加。
-// 游戏的预排布贴图（SetPackagedTextureLayout）带 8 字节布局参数：第 0 字节 = 块高 log2（真游戏 16 例对照得出，
-// 其中 4 例与自动算法不同），有它时以它为准。
 // Storage size / alignment / per-level offsets of NVN textures (Tegra X1 block-linear layout).
-// The algorithm is ported from deko3d source/dk_image.cpp (zlib license, Copyright (C) 2018-2020 fincs):
+// The algorithm is ported from deko3d source/dk_image.cpp (https://github.com/devkitPro/deko3d, zlib license; notice below):
 //   one GOB = 64 bytes × 8 rows = 512 bytes; the block height (tileH, in GOBs) is picked by 'height×1.5'; levels are accumulated with block alignment.
-// The game's packaged textures (SetPackagedTextureLayout) carry 8 bytes of layout parameters: byte 0 = log2 of the block height (derived by comparing 16 cases from the real game,
+// This is an altered version, not deko3d's original: rewritten in C for NVN's formats, and the game's packaged textures
+// (SetPackagedTextureLayout) carry 8 bytes of layout parameters: byte 0 = log2 of the block height (derived by comparing 16 cases from the real game,
 // 4 of which differ from the automatic algorithm); when present it takes precedence.
+//
+// deko3d's license (also in dm/third_party/notices/deko3d.txt):
+//   Copyright (C) 2018-2020 fincs
+//
+//   This software is provided 'as-is', without any express or implied
+//   warranty.  In no event will the authors be held liable for any
+//   damages arising from the use of this software.
+//
+//   Permission is granted to anyone to use this software for any
+//   purpose, including commercial applications, and to alter it and
+//   redistribute it freely, subject to the following restrictions:
+//
+//   1. The origin of this software must not be misrepresented; you
+//      must not claim that you wrote the original software. If you use
+//      this software in a product, an acknowledgment in the product
+//      documentation would be appreciated but is not required.
+//   2. Altered source versions must be plainly marked as such, and
+//      must not be misrepresented as being the original software.
+//   3. This notice may not be removed or altered from any source
+//      distribution.
 #include "nvn_tex.h"
 
 typedef struct { uint8_t bpb, bw, bh; } fmt_t;   // 每块字节、块宽、块高（非压缩格式块宽高 = 1） | Bytes per block, block width, block height (for uncompressed formats block width and height = 1)
