@@ -1,6 +1,6 @@
 // Bloom 1/4 and 3D brightening on a real Metal replay with closed-form expectations: the full A→B→C→D chain, every abort and mid-chain reset leaving B0 black,
-// the cutoff viewport guard, a broken capture pipeline falling back to the game's chain, the health summary's windows, background helper-kernel readiness
-// and the LUT rewrite's output at k = 2.
+// the cutoff viewport guard, a broken capture pipeline falling back to the game's chain, the health summary's windows, background helper-kernel readiness,
+// the LUT rewrite's output at k = 2 and the exposure k the magenta probe reads.
 // Built twice: t_bloom_lut (run under MTL_DEBUG_LAYER=1) and t_bloom_lut_asan (AddressSanitizer + UndefinedBehaviorSanitizer, the first report aborts).
 #include "../nvn/nvn_mtl.m"
 #include <math.h>
@@ -113,10 +113,12 @@ static void bright_case(void) {
     cell_expect(px, 0, 0, 0, 0.1589, 0.1589, 0.1589); cell_expect(px, 1, 1, 1, 0.4386, 0.4386, 0.4386); cell_expect(px, 2, 2, 2, 0.6954, 0.6954, 0.6954); cell_expect(px, 3, 3, 3, 0.8750, 0.8750, 0.8750);
     cell_expect(px, 3, 3, 0, 0.8750, 0.8750, 0.1422);   // blue pulled back by the luma of the other two (s 0.493)
     cell_expect(px, 1, 3, 0, 0.4301, 0.8750, 0.1543);   // s 0.134
+    EXPECT("applied k after the k = 2 rewrite (what the magenta probe reads)", 1, atomic_load(&g_bright_applied) == 2.0f);
     // No-dispatch control: at k = 1 bright_lut returns at the k check, so the cells keep their values. This proves only that k ~= 1 leaves the table alone
     lut_upload(&t); lut_run(1.0f); lut_read(&t, px);
     EXPECT_NEAR("LUT k=1 (no-dispatch control): cell (0,0,0) red", 0.125, (double)px[0], 0.001);
     EXPECT_NEAR("LUT k=1 (no-dispatch control): cell (3,3,3) green", 0.875, (double)px[4 * 63 + 1], 0.001);
+    EXPECT("applied k after the k = 1 control", 1, atomic_load(&g_bright_applied) == 1.0f);
     g_bright_fixed = -1;
 }
 // The full chain in one submit: A (the cutoff, skipped: state 1), B (the first downsample, drawn by the capture: state 2), the downsample that reads B1

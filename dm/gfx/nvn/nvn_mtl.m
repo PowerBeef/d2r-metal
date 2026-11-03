@@ -5177,7 +5177,7 @@ static void mp_lut_forget(uint64_t ser) { id old = nil; os_unfair_lock_lock(&g_m
 static MTLPixelFormat g_mp_fmt[3]; static int g_mp_haslut[3];
 static _Atomic uint64_t g_mp_n, g_mp_mag, g_mp_lutbad;
 static uint64_t g_stall_t0, g_stall_n;   // 定义在显示节拍那段 | Defined in the display-link section
-float dm_bright_k(void);   // 定义在下面 3D 画面加亮（弱定义，宿主 dm_bright.c 给强定义） | Defined below in the 3D brightening section (weak definition; the host dm_bright.c provides the strong one)
+static _Atomic float g_bright_applied = 1.0f;   // the exposure k the last LUT rewrite used (1 = none); written by bright_lut on the replay thread, read by the magenta probe's completion handler
 static int mp_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_MAGENTA_PROBE_OFF"); v = !(e && *e && strcmp(e, "0")); } return v; }
 static int mp_fmt_ok(MTLPixelFormat f) { return f == MTLPixelFormatRGBA8Unorm || f == MTLPixelFormatRGBA8Unorm_sRGB || f == MTLPixelFormatBGRA8Unorm || f == MTLPixelFormatBGRA8Unorm_sRGB || f == MTLPixelFormatRGB10A2Unorm || f == MTLPixelFormatRGBA16Float; }
 static void mp_encode(CBUF cb, id<MTLTexture> src, int i) {
@@ -5218,7 +5218,7 @@ static void mp_check(int i, uint64_t ticket) {
         o += snprintf(lt + o, sizeof lt - o, "%s(%.3f,%.3f,%.3f)", k ? " " : "", c[0], c[1], c[2]); } }
     uint64_t n = atomic_fetch_add(&g_mp_n, 1) + 1, nm = mag >= 3 ? atomic_fetch_add(&g_mp_mag, 1) + 1 : atomic_load(&g_mp_mag), nl = lutbad ? atomic_fetch_add(&g_mp_lutbad, 1) + 1 : atomic_load(&g_mp_lutbad);
     if (mag >= 3 && (nm <= 30 || nm % 50 == 0)) MLOG("【红】紫闪探针：出图 %llu 画面品红（5 点%s，%d 点品红）；调色表 4 格 %s；加亮 k=%.2f；显示节拍停回调累计 %llu 段，此刻%s停顿中；累计品红 %llu 次",
-        (unsigned long long)ticket, pt, mag, lt, dm_bright_k(), (unsigned long long)g_stall_n, g_stall_t0 ? "在" : "不在", (unsigned long long)nm);
+        (unsigned long long)ticket, pt, mag, lt, (double)atomic_load_explicit(&g_bright_applied, memory_order_relaxed), (unsigned long long)g_stall_n, g_stall_t0 ? "在" : "不在", (unsigned long long)nm);
     if (lutbad && (nl <= 30 || nl % 50 == 0)) MLOG("【红】紫闪探针：出图 %llu 调色表格子异常（非数 / 无穷 / 品红）%s；画面 5 点%s；累计 %llu 次", (unsigned long long)ticket, lt, pt, (unsigned long long)nl);
     if (n % 3600 == 0 || n == 600) MLOG("紫闪探针 至出图 %llu：取样 %llu 次，画面品红 %llu 次，调色表异常 %llu 次（本次 5 点%s，调色表 %s）", (unsigned long long)ticket, (unsigned long long)n, (unsigned long long)nm, (unsigned long long)nl, pt, lt);
 }
@@ -5290,29 +5290,33 @@ static void bright_lut(NvShader *cs) {
     int tid = 0; for (int i = 0; i < cs->rf.nb && !tid; i++) if (cs->rf.b[i].kind == NVN_RB_IMG && cs->rf.b[i].reg < 32) tid = (int)(S.img[5][cs->rf.b[i].reg] & 0xfffff);
     pthread_mutex_lock(&g_rmu); id<MTLTexture> lut = tid ? tex_by_id(tid) : nil; uint64_t lser = lut ? g_treg[tid].t.serial : 0; pthread_mutex_unlock(&g_rmu);
     if (lut && lut.textureType == MTLTextureType3D) { os_unfair_lock_lock(&g_mp_lk); g_mp_lut = lut; g_mp_lut_ser = lser; os_unfair_lock_unlock(&g_mp_lk); }   // the magenta probe copies a few cells of this table at present time
-    float k = bright_k(); if (!(k > 1.005f)) return;   // k ~= 1 (out of game / noon): the table stays as the game made it
+    // From the k read on, every return that leaves the table as the game made it tells the magenta probe k = 1 (NO_K)
+#define NO_K() atomic_store_explicit(&g_bright_applied, 1.0f, memory_order_relaxed)
+    float k = bright_k(); if (!(k > 1.005f)) { NO_K(); return; }   // k ~= 1 (out of game / noon): the table stays as the game made it
     if (k > 4.0f) k = 4.0f;
-    if (!lut || lut.textureType != MTLTextureType3D || !(lut.usage & MTLTextureUsageShaderWrite)) { static int n; if (!n++) MLOG("【红】3D brightening: the color lookup table is not recognised (texture id %d), no brightening", tid); return; }
+    if (!lut || lut.textureType != MTLTextureType3D || !(lut.usage & MTLTextureUsageShaderWrite)) { static int n; if (!n++) MLOG("【红】3D brightening: the color lookup table is not recognised (texture id %d), no brightening", tid); NO_K(); return; }
     if (!ps) {
-        if (!aux_wait()) return;   // still building: this frame keeps the game's brightness
+        if (!aux_wait()) { NO_K(); return; }   // still building: this frame keeps the game's brightness
         os_unfair_lock_lock(&g_aux_lk); id<MTLComputePipelineState> p = g_aux.bright_ps; os_unfair_lock_unlock(&g_aux_lk);
-        if (!p) { failed = 1; return; }   // aux_build already printed the red line
+        if (!p) { failed = 1; NO_K(); return; }   // aux_build already printed the red line
         NSError *e = nil; MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxBufferBindCount = 1; at = [g_dev newArgumentTableWithDescriptor:ad error:&e];
         for (int i = 0; i < 3; i++) { kb[i] = [g_dev newBufferWithLength:16 options:MTLResourceStorageModeShared]; if (kb[i]) res_add(kb[i]); }
-        if (M4_ONLY(!at ||) !kb[0] || !kb[1] || !kb[2]) { failed = 1; MLOG("【红】3D brightening: no argument table or k buffers (%s): brightening off for this session", e ? e.localizedDescription.UTF8String : "no memory"); return; }
+        if (M4_ONLY(!at ||) !kb[0] || !kb[1] || !kb[2]) { failed = 1; MLOG("【红】3D brightening: no argument table or k buffers (%s): brightening off for this session", e ? e.localizedDescription.UTF8String : "no memory"); NO_K(); return; }
         ps = p;
         MLOG("3D brightening: first LUT rewrite (LUT %lux%lux%lu, k from dm_bright_k each frame)", (unsigned long)lut.width, (unsigned long)lut.height, (unsigned long)lut.depth); }
     if (!tmp || tmp.width != lut.width || tmp.height != lut.height || tmp.depth != lut.depth || tmp.pixelFormat != lut.pixelFormat) {
         MTLTextureDescriptor *d = [MTLTextureDescriptor new]; d.textureType = MTLTextureType3D; d.pixelFormat = lut.pixelFormat; d.width = lut.width; d.height = lut.height; d.depth = lut.depth;
         d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModePrivate; if (tmp) defer_obj_release(tmp); tmp = [g_dev newTextureWithDescriptor:d];
-        if (!tmp) { static int nt; if (!nt++) MLOG("【红】3D brightening: no memory for the %lux%lux%lu LUT copy; frames keep the game's brightness until it can be allocated (retried each frame)", (unsigned long)lut.width, (unsigned long)lut.height, (unsigned long)lut.depth); return; }
+        if (!tmp) { static int nt; if (!nt++) MLOG("【红】3D brightening: no memory for the %lux%lux%lu LUT copy; frames keep the game's brightness until it can be allocated (retried each frame)", (unsigned long)lut.width, (unsigned long)lut.height, (unsigned long)lut.depth); NO_K(); return; }
         res_add(tmp); }
     id<MTLBuffer> b0 = kb[ki]; ki = (ki + 1) % 3; *(float *)b0.contents = k;   // three copies in rotation: frames in flight still read the previous one
     BENC b = blit(); enc_b_copy_texture(b, lut, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(lut.width, lut.height, lut.depth), tmp, 0, 0, MTLOriginMake(0, 0, 0)); enc_b_end(g_blit); g_blit = nil;
     CENC ce = (CENC)enc_c_begin(NULL);
     [ce setArgumentTable:at]; [at setTexture:tmp.gpuResourceID atIndex:0]; [at setTexture:lut.gpuResourceID atIndex:1]; [at setAddress:b0.gpuAddress atIndex:0];
     enc_c_pso(ce, ps); enc_c_dispatch(ce, MTLSizeMake((lut.width + 3) / 4, (lut.height + 3) / 4, (lut.depth + 3) / 4), MTLSizeMake(4, 4, 4)); enc_c_end(ce);
+    atomic_store_explicit(&g_bright_applied, k, memory_order_relaxed);   // already clamped to 4
     args_dirty_all();
+#undef NO_K
 }
 static void dispatch(const p_dispatch *dp) {
     zskip_clear();

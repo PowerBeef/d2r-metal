@@ -73,7 +73,7 @@ static double target_logk(int *why, int *area, int *I, double *ang) {
     return e * log(4.0);
 }
 
-float dm_bright_k(void) {   // 图形层每帧调（单线程：出图 / 回放线程） | called every frame by the graphics layer (single thread: the present / replay thread)
+float dm_bright_k(void) {   // called once per LUT dispatch by the graphics layer (bright_lut) and per submit by the frame capture, both on the translation / replay thread; other threads read nvn_mtl.m's g_bright_applied
     static int fixed = -2; static float kf;
     if (fixed == -2) { const char *e = getenv("DM_BRIGHT_K"); fixed = e != NULL; if (e) { kf = (float)atof(e); LOG("DM_BRIGHT_K=%g：3D 画面曝光由测试开关固定", kf); } }
     if (fixed) return kf;
