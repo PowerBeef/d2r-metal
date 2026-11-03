@@ -44,7 +44,7 @@ int main(void) { setvbuf(stdout, NULL, _IONBF, 0);
     EXPECT("第 4 次出图后放大器释放", 0, (uint64_t)(ws != nil)); EXPECT("第 4 次出图后两张贴图释放", 0, (uint64_t)(wi != nil || wo != nil));
     // ④ 关掉「放大方式」：出图路径每帧见开关关着就放下，同样等 4 次出图
     // ④ "Upscaling" turned off: the present path puts the set down once it sees the switch off, again waiting 4 presents
-    @autoreleasepool { ws = g_mfx_pres.scaler; wi = g_mfx_pres.in; EXPECT("单测里开关恒关（没链宿主）", 0, (uint64_t)mfx_on()); mfx_drop(&g_mfx_pres); }
+    @autoreleasepool { ws = g_mfx_pres.scaler; wi = g_mfx_pres.in; EXPECT("单测里开关恒关（没链宿主）", 0, (uint64_t)mfx_on()); mfx_drop(&g_mfx_pres, "off"); }
     EXPECT("关掉后表项清空", 0, (uint64_t)(g_mfx_pres.scaler != nil || g_mfx_pres.in != nil || g_mfx_pres.out != nil || g_mfx_pres.ow != 0));
     EXPECT("关掉当帧仍活着", 1, (uint64_t)(ws != nil && wi != nil));
     for (int i = 0; i < 4; i++) @autoreleasepool { mfx_retire_tick(); }
@@ -73,5 +73,5 @@ int main(void) { setvbuf(stdout, NULL, _IONBF, 0);
     EXPECT("3D 放大趟：放下后提交完成即释放", 0, (uint64_t)(ws != nil));
     // ⑥ 截图那份不等稳定（一次截图只要一次）
     // ⑥ The screenshot copy does not wait for the size to settle (one screenshot makes one request)
-    @autoreleasepool { EXPECT("截图：第一次要就建好", 1, (uint64_t)mfx_ready(&g_mfx_grab, 0, MTLPixelFormatRGBA8Unorm, 320, 180, 640, 360)); mfx_drop(&g_mfx_grab); for (int i = 0; i < 4; i++) mfx_retire_tick(); }
+    @autoreleasepool { EXPECT("截图：第一次要就建好", 1, (uint64_t)mfx_ready(&g_mfx_grab, 0, MTLPixelFormatRGBA8Unorm, 320, 180, 640, 360)); mfx_drop(&g_mfx_grab, "off"); for (int i = 0; i < 4; i++) mfx_retire_tick(); }
     printf("== %d 项，失败 %d ==\n", count, fail); return fail != 0; }

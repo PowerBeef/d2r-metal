@@ -76,6 +76,9 @@ t_prog_key: t_prog_key.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_prog_key.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_mfx_life: t_mfx_life.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_mfx_life.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+# MetalFX policy and pixel checks (t_mfx_on.m): ./t_mfx_on [case]
+t_mfx_on: t_mfx_on.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_mfx_on.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pso_pend: t_pso_pend.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_pend.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
@@ -115,6 +118,7 @@ run: \
 	t_fuse_check \
 	t_hmap \
 	t_mfx_life \
+	t_mfx_on \
 	t_mip_extent \
 	t_link_ticks \
 	t_nvn \
@@ -182,6 +186,7 @@ run: \
 	./t_pso_pend
 	./t_pso_warm
 	./t_mfx_life
+	MTL_DEBUG_LAYER=1 ./t_mfx_on
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
 	MTL_DEBUG_LAYER=1 ./t_replay_fix
@@ -190,6 +195,8 @@ run: \
 	./t_replay_tsan treg
 	./t_replay_tsan gfxuse
 	./t_replay_tsan rtrange
+	./t_replay_tsan mfxcomp
+	./t_replay_tsan mfxon
 	./t_replay_asan bloom
 	./t_replay_asan fx9
 	./t_replay_asan fx19
