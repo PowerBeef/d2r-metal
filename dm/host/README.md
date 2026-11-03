@@ -70,7 +70,8 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 
 | File | What it does |
 |---|---|
-| `dm_video.c` | The picture settings on the Options Video tab (Mac: Display Mode, Resolution, Graphic Presets, Upscaling; iOS: 3D Resolution, Graphic Presets, Upscaling; both: Frame Rate and Frame Drops), stored in `sw_video.txt` with a first-launch Recommended copy. Frame Rate and Frame Drops hold the custom keys `eco_fps` / `q3d`, saved in `sw_custom.txt` through `dm_custom.c` |
+| `dm_video.c` | The picture settings on the Options Video tab (Mac: Display Mode, Resolution incl. Native, Color, Graphic Presets, 3D Resolution, Upscaling, Anti-Aliasing, Anisotropic Filtering, Environment Shadows, Shadow Quality; iOS: the Graphics rows, with 3D Resolution as `res`; both: Frame Rate and Frame Drops), stored in `sw_video.txt` with the Recommended copy (`rec_*`, `rec_v`, `rec_id`). Frame Rate and Frame Drops hold the custom keys `eco_fps` / `q3d`, saved in `sw_custom.txt` through `dm_custom.c` |
+| `dm_picrec.c`, `dm_picrec.h` | The Mac App's Recommended picture from the chip's generation, tier and GPU cores and the main screen (pure C; cases and invariants in `tests/t_picrec`) |
 
 ### Convenience features
 

@@ -181,22 +181,21 @@ int front_video_firstboot(int rec[3], int cur[3]) {
         nres >= 0 ? " (Native)" : "", rec[2] ? "MetalFX" : "Standard", legacy ? "; values from the older preferences fill missing keys" : "");
     return 1;
 }
-// Recommendations for the picture keys added later (asked by dm_video.c when the file lacks the key or holds an older recommendation version): SMAA, 16x
-// anisotropy, accurate colour and environment shadows (+0.5 ms GPU in town at Recommended on an M6, still a steady 60 fps) in the Mac App; an iPhone
-// chip leaves environment shadows off and keeps the Switch's shadow map, as the phone does. The CLI host (no DM_APP) and test copies keep the original
-// (0), so automated runs, golden baselines and benchmarks stay as they were
+// Recommendations for the picture keys after the first three (asked by dm_video.c together with front_video_firstboot): SMAA, 16x and Accurate colour,
+// and from dm_picrec.c environment shadows, the shadow map and the 3D Resolution (an iPhone chip keeps the phone's shadows: none, the Standard map);
+// cost: docs/MAC.md. 0 on the CLI host and test copies (dm_picrec_real), so automated runs, golden baselines and benchmarks stay as they were
 int front_video_rec(const char *key) {
     if (!real_recommendation()) return 0;
     if (!strcmp(key, "aa")) return 1;
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "color")) return 1;
     if (!strcmp(key, "envsh")) return mac_rec().envsh;
-    if (!strcmp(key, "shq")) return mac_rec().shq;   // Ultra shadows: 4096-texel map, about +1 ms of shadow passes on an M6 (frame total +0.25 ms)
+    if (!strcmp(key, "shq")) return mac_rec().shq;   // 2 = Ultra (a 4096-texel map) with the full picture, 0 = Standard (the Switch's 2100) with the light one
     if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
     return -1;
 }
-// Frame Drops' default (dm_custom.c q3d): a GPU with little headroom at its Recommended lowers the 3D resolution for a while when frames drop, as the phone does;
-// -1 = the Mac's own (keep it)
+// Frame Drops' default (dm_custom.c q3d): the recommendation's choice (lower when the light picture is needed or the choice uses more than 85% of the
+// estimated capacity); -1 on the CLI host and test copies (k_def, keep)
 int front_q3d_default(void) { return real_recommendation() ? mac_rec().q3d : -1; }
 // Which machine Recommended was worked out for (dm_video.c rec_id: works it out again at launch when the main screen or the GPU changed); -1 on the CLI
 // host and test copies, whose original look does not depend on the machine
