@@ -13,7 +13,7 @@
 
 <p align="center"><b>Diablo II: Resurrected with Reign of the Warlock, running natively on Apple silicon,<br>drawn sharper than the Switch ever showed it, at a steady 60 fps.</b></p>
 
-D2R Metal runs the game's own program, the Nintendo Switch release, built from files you own, directly on your Mac, iPhone or iPad. Every frame goes through a renderer rebuilt on Metal 4. The interface is drawn at your screen's own resolution. MetalFX enlarges the 3D world. The game's PC anti-aliasing and texture filtering are switched on, and the scenery casts its shadows. Around that picture: a Mac App that behaves like a Mac game, touch and controller play on iPhone and iPad, saves that survive quitting, the background and a full disk, and every setting inside the game's own Options.
+D2R Metal runs the game's own program, the Nintendo Switch release, built from files you own, directly on your Mac, iPhone or iPad. Every frame goes through a renderer rebuilt on Metal 4. The interface is drawn at your screen's own resolution. MetalFX enlarges the 3D world. The game's PC anti-aliasing and texture filtering are switched on, and the scenery casts its shadows. Around that picture: a Mac App that plays with a mouse and keyboard as D2R does on PC, with the game's own PC interface, or with a controller as on a console; touch and controller play on iPhone and iPad; saves that survive quitting, the background and a full disk, and every setting inside the game's own Options.
 
 It is not an emulator, cloud gaming or streaming, and it plays fully offline. The game itself stays as Blizzard shipped it.
 
@@ -106,10 +106,24 @@ One stop in every act, each split at 1:1 pixels from the same moment: the Switch
 <h2 align="center" id="a-true-mac-game"><img src="docs/images/r2-plate-mac.jpg" width="100%" alt="A True Mac Game"></h2>
 
 - **Full screen at your display's own resolution** from the first launch. View → Full Screen (⌃⌘F) switches, and the App remembers it. The window can be resized freely, and the picture fills it at its own aspect ratio.
-- **Plays like D2R on PC with a mouse and keyboard:** the game's own PC HUD, PC menus and gauntlet pointer, and D2R's PC keys. Click to walk and attack, right click for your right skill, 1 – 4 for the belt, Shift to compare, Esc for the game menu.
-- **Pick up a controller and the console interface comes up instead,** with button hints for what you hold: Xbox, PlayStation or Switch. The wheel and trackpad scroll the game's lists, and scroll bars and sliders drag.
+- **Mouse and keyboard, or a controller:** the App switches between the game's PC interface and its console one by what you play with (below). Controller button hints follow what you hold: Xbox, PlayStation or Switch. The wheel and trackpad scroll the game's lists, and scroll bars and sliders drag.
 - **It saves like a Mac app should:** on every quit, from the Dock, at logout, even with a text box open. Minimizing counts as going to the background.
 - **iCloud save sync** with your iPhone or iPad, in an App you build and sign with a paid developer account. An app the launcher installs keeps its saves on the Mac; moving a character over by hand takes a minute ([docs/MAC.md](docs/MAC.md#saves-logs-and-icloud)).
+
+**Plays like D2R on PC.** With a mouse and keyboard, D2R Metal shows the game's own PC interface, which the Switch release still carries: the PC HUD with the angel and demon beside the orbs, the PC menus and character screens, and the game's gauntlet pointer, sized to the picture at any resolution. The keys are D2R's PC defaults:
+
+- click to walk, attack, talk and pick up, and hold to keep going; right click casts your right skill at the pointer, or uses the item under it;
+- Shift + click attacks without moving, and holding Shift compares an item with what you wear;
+- 1 – 4 drink from the belt, F1 – F8 pick skills, the wheel steps through them;
+- I, C, T and Q open and close the inventory, character, skill tree and quests; Tab shows the map, Alt the items on the ground, W swaps weapons;
+- Esc closes what is open, or opens the game menu.
+
+The inventory, stash, vendors and cube are worked with the mouse and drawn above the PC HUD, and item descriptions use the PC wording ("Right Click to Use"). Press any button on a controller and the console interface comes back; move the mouse or press a key and the PC one returns. Keys can't be rebound yet.
+
+<p align="center">
+  <img src="docs/images/r2-frame-pc-mode.jpg" width="49%" alt="Mouse and keyboard on the Mac: the Rogue Encampment with the game's PC HUD, its angel and demon statues beside the life and mana orbs, and the gauntlet pointer">
+  <img src="docs/images/r2-frame-pc-panels.jpg" width="49%" alt="The stash and inventory open in PC mode, drawn above the PC HUD, with the gauntlet pointer on an item">
+</p>
 
 **Typing with a controller.** Naming a character or entering an amount of gold brings up an in-game keyboard in the game's own style and fonts, with button hints for your controller. Press a key, click or touch the screen and it steps aside for a regular text box, keeping what you typed.
 
@@ -129,7 +143,7 @@ The Mac guide, with keys, saves, iCloud and moving saves over from an iPhone, is
 
 | At a glance | Mac | iPhone / iPad |
 |---|---|---|
-| Controls | Keyboard, mouse, trackpad, controller | Touch, controller |
+| Controls | Mouse and keyboard as on PC, trackpad, controller | Touch, controller |
 | Picture drawn at | The screen's own resolution (Native), 3D at 50–100% | The screen's full resolution, 3D at 50–100% |
 | MetalFX enlarges | The 3D world | The 3D world |
 | Environment shadows | On in Recommended | Available, off until measured on a phone |
