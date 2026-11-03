@@ -2263,12 +2263,18 @@ static void pso_user_record(const char *fmt, ...) {
     FILE *f = pso_user_file();
     if (!f) return;
     char line[8192]; va_list ap; va_start(ap, fmt); vsnprintf(line, sizeof line, fmt, ap); va_end(ap);
-    if (!g_pso_user_seen) {   // what the warm-up already builds, plus the user file itself (so its own rows are never appended twice); R rows by their checked, normalised form
+    // The dedupe set: what the warm-up builds before the first loading screen (the seed's rows up to PSO_WARM_BG_MARK), plus the user file itself
+    // (so its own rows are never appended twice; it is read even when DM_PSO_MANIFEST=<path> keeps it from being warmed). The seed's background
+    // rows are left out: one the player draws before a background worker has built it was compiled on the submit thread, so it is recorded and
+    // builds in the foreground from the next launch (warm_plan). R rows by their checked, normalised form
+    if (!g_pso_user_seen) {
         g_pso_user_seen = [NSMutableSet set];
         NSString *seed, *user; pso_warm_sources(&seed, &user); user = pso_user_path();
-        for (NSString *path in @[seed ?: @"", user ?: @""]) { NSString *txt = path.length ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] : nil;
+        NSArray<NSString *> *paths = @[seed ?: @"", user ?: @""];
+        for (int src = 0; src < 2; src++) { NSString *path = paths[(NSUInteger)src], *txt = path.length ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] : nil;
             if (!txt || !pso_layout_ok(txt, path)) continue;
             for (NSString *old in [txt componentsSeparatedByString:@"\n"]) {
+                if (!src && [old isEqualToString:@PSO_WARM_BG_MARK]) break;
                 if (!old.length || [old hasPrefix:@"#"]) continue;
                 pso_skey sk; char hex[sizeof sk * 2 + 1];
                 if ([old hasPrefix:@"R\t"] && !pso_skey_parse([old substringFromIndex:2].UTF8String, &sk) && !pso_skey_check(&sk)) { pso_skey_hex(&sk, hex); [g_pso_user_seen addObject:[@"R\t" stringByAppendingString:@(hex)]]; }

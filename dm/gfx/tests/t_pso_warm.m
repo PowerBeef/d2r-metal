@@ -3,7 +3,8 @@
 // where the user manifest lives (DM_PSO_USER, off, beside DM_SAVE), which manifests the warm-up reads (DM_PSO_MANIFEST off / path / default), and
 // the user manifest's dedupe treating an old raw row and its normalised form as one; the warm-up plan (priority order, background marker, dedupe
 // across files, a file of another layout), the warm-up end to end with every shader missing (counters end at 0, one done line, background QoS) for
-// each source combination, marker position and worker count, and the two waits; host pass builds counted apart from the game's pipelines.
+// each source combination, marker position and worker count, and the two waits; host pass builds counted apart from the game's pipelines; the
+// dedupe set leaving out the seed's background rows (so one drawn before it was built is recorded).
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -55,6 +56,11 @@ static NSString *rrow(uint32_t f, unsigned junk, int pad) {
     pso_key k; memset(&k, 0, sizeof k); k.cfmt[0] = f; k.chmask = 0xf; k.samples = 1; k.blend[1] = (blend_st){1, junk, junk, junk, junk, 1, 1};
     pso_skey sk; char h[sizeof sk * 2 + 1]; pso_skey_from(&k, v, nil, 0, NULL, &sk);
     if (pad) ((uint8_t *)&sk)[86] = ((uint8_t *)&sk)[87] = 0xff;
+    pso_skey_hex(&sk, h); return @(h);
+}
+static NSString *nrow(NSString *hex) {   // a row in its checked, normalised form, as the submit thread records it
+    pso_skey sk; char h[sizeof sk * 2 + 1];
+    if (pso_skey_parse(hex.UTF8String, &sk) || pso_skey_check(&sk)) return nil;
     pso_skey_hex(&sk, h); return @(h);
 }
 static NSString *plan_str(NSArray<WarmRow *> *plan) {
@@ -184,6 +190,22 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
         after = [NSString stringWithContentsOfFile:userf encoding:NSUTF8StringEncoding error:nil];
         CHECK([after isEqualToString:@PSO_MANIFEST_HEAD "\nS\tbbbbbbbbbbbbbbbb_b\t1\n"], "a user manifest of another key layout starts again");
         g_pso_user = NULL; g_pso_user_checked = 0; g_pso_user_seen = nil;
+        // The dedupe set takes the seed only up to its background marker: a background row drawn before a worker built it is recorded (once),
+        // so the next launch's plan builds it in the foreground; a foreground row is not recorded
+        NSString *Rf = nrow(rrow(110, 3, 0)), *Rb = nrow(rrow(111, 3, 0));
+        NSString *seedtxt = [NSString stringWithFormat:@"%s\nR\t%@\n%s\nR\t%@\n", PSO_MANIFEST_HEAD, Rf, PSO_WARM_BG_MARK, Rb];
+        [seedtxt writeToFile:seedf atomically:YES encoding:NSUTF8StringEncoding error:nil]; [fm removeItemAtPath:userf error:nil];
+        pso_user_record("R\t%s\n", Rf.UTF8String); pso_user_record("R\t%s\n", Rb.UTF8String); pso_user_record("R\t%s\n", Rb.UTF8String);
+        if (g_pso_user) fclose(g_pso_user);
+        after = [NSString stringWithContentsOfFile:userf encoding:NSUTF8StringEncoding error:nil];
+        NSString *want = [NSString stringWithFormat:@"%s\nR\t%@\n", PSO_MANIFEST_HEAD, Rb];
+        CHECK(Rf && Rb && [after isEqualToString:want],
+              "a seed row before the marker is not recorded, one after it is, once (user file: %lu rows, %s)", (unsigned long)[after componentsSeparatedByString:@"\nR\t"].count - 1,
+              [after containsString:Rf] ? "with the foreground row" : [after containsString:Rb] ? "the background row" : "no row");
+        warm_counts n = {0}; int fg = -1; NSArray<WarmRow *> *plan = warm_plan(seedtxt, after, nil, nil, &fg, &n);
+        CHECK([plan_str(plan) isEqualToString:@"R110,R111"] && fg == 2 && n.dup == 1, "next launch: the recorded background row builds in the foreground (plan %s, foreground %d, dup %llu)",
+              plan_str(plan).UTF8String, fg, (unsigned long long)n.dup);
+        g_pso_user = NULL; g_pso_user_checked = 0; g_pso_user_seen = nil; [fm removeItemAtPath:seedf error:nil]; [fm removeItemAtPath:userf error:nil];
     }
     unsetenv("DM_PSO_USER"); unsetenv("DM_SAVE"); g_shmap_path = nil;
 
