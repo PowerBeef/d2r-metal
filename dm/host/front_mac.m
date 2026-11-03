@@ -92,7 +92,8 @@ static int gpu_cores(void) {
     }
     return n;
 }
-// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores), memory and the main screen; worked out once per launch
+// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores) and the main screen's backing-store size; memory
+// and the Mac's model are only logged. Worked out once per launch
 static dm_mac_rec mac_rec(void) {
     static dm_mac_rec r; static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -100,7 +101,7 @@ static dm_mac_rec mac_rec(void) {
         char model[64] = ""; n = sizeof model; sysctlbyname("hw.model", model, &n, NULL, 0);
         NSScreen *sc = NSScreen.mainScreen; double px = main_px(), ph = sc ? sc.frame.size.height * sc.backingScaleFactor : 900;
         int w = native_w(), h = (int)lround(w * ph / fmax(px, 1));
-        NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), mem, w, h, front_video_mfx_ok() };
+        NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), w, h, front_video_mfx_ok() };
         dm_mac_recommend(&spec, &r);
         static const char *const tiers[] = { "iPhone chip", "base", "Pro", "Max", "Ultra" };
         static const int pct[5] = { 100, 85, 75, 67, 50 };

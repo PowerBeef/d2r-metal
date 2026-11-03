@@ -1,13 +1,11 @@
 // The Mac App's Recommended picture, worked out from this Mac's chip (dm_picrec.c). Pure C: the front end (front_mac.m) reads the machine,
 // t_picrec feeds made-up machines.
 #pragma once
-#include <stdint.h>
 
 typedef struct {
     const char *gpu;      // the GPU's Metal name: "Apple M6", "Apple M4 Pro", "Apple A18 Pro GPU"
     int cores;            // GPU cores (IORegistry gpu-core-count; 0 = unknown)
-    uint64_t mem;         // unified memory, bytes (0 = unknown)
-    int out_w, out_h;     // the picture at Native: the main screen's pixel size (out_w 16-aligned, 1600–3840)
+    int out_w, out_h;     // the picture at Native: the main screen's backing-store size in its current mode (out_w 16-aligned, 1600–3840)
     int mfx;              // MetalFX can enlarge on this GPU
 } dm_mac_spec;
 
