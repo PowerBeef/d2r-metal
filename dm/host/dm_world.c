@@ -605,12 +605,21 @@ void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at th
 // monsters included; as the designated target, as w_interact does) or else the ground tile under it (the same screen-to-tile formula as
 // w_walk_step), and the game's click entry main+0x4ace20 gets the PC action: 0 left press (move to / left skill on), 2 left release, 3 right press
 // (right skill at the point or on the unit), 5 right release; flags 0x1 = stand still (Shift). The click-ground move drop (diag.c c2s_deliver) is
-// exempted for a second after each click. Game main thread only; sx, sy normalized to the whole rendered picture
-void dm_world_pc_click(int action, int flags, float sx, float sy) {
+// exempted for a second after each click. A left press on a unit that is not a hostile monster (an NPC, an object, an item) walks up and
+// interacts as a world tap does (w_go): the PC left press with that unit as the designated target only walks toward it and never starts the
+// interaction (no talk packet for an NPC), so clicking an NPC never opened its dialog. Any other click ends a pending approach.
+// Returns 1 when the click started such an approach (the caller sends no release and no held repeats for it).
+// Game main thread only; sx, sy normalized to the whole rendered picture
+int dm_world_pc_click(int action, int flags, float sx, float sy) {
     uint8_t *b = wb(); uint64_t pl = w_player(), scene = b ? *(uint64_t *)(b + 0x2e2a698) : 0; int W = 0, H = 0, px = 0, py = 0, x = 0, y = 0; float f[2];
-    dm_screen_real(&W, &H); if (!b || !pl || !scene || W <= 0 || H <= 0 || !w_unit_xy(pl, &px, &py) || !w_project(b, scene, pl, f, 0)) return;
+    dm_screen_real(&W, &H); if (!b || !pl || !scene || W <= 0 || H <= 0 || !w_unit_xy(pl, &px, &py) || !w_project(b, scene, pl, f, 0)) return 0;
     float X = sx * W, Y = sy * H, d = 0; int lab = 0; uint64_t u = 0;
     if (action == 0 || action == 3) { g_hit_mon = 1; u = w_hit(b, X, Y, H * 0.10f, &d, &lab); g_hit_mon = 0; }
+    if (action == 0 || action == 3) g_go.on = 0;
+    if (action == 0 && u && !(flags & 1)) {
+        int cat = *(uint32_t *)u == 1 ? ((int (*)(int, uint64_t, uint64_t))(b + 0x2f7b7c))(0x165, pl, u) : 0;
+        if (cat != 1 && cat != 0xa) { w_go(u); LOG("PC mouse: walk up to and interact with type %u class %u id %u", *(uint32_t *)u, *(uint32_t *)(u + 4), *(uint32_t *)(u + 8)); return 1; }
+    }
     if (u && w_unit_xy(u, &x, &y)) {}
     else { float k = H * 0.00206f, a = (X - f[0]) / k / 16, c = (Y - f[1]) / k / 8; x = px + (int)lroundf((a + c) / 2); y = py + (int)lroundf((c - a) / 2); u = 0; }
     uint64_t mgr = ((uint64_t (*)(void))(b + 0x2acecc))(), keep = *(uint64_t *)(mgr + 0xd10);
@@ -619,6 +628,7 @@ void dm_world_pc_click(int action, int flags, float sx, float sy) {
     int r = ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, action, x, y, (uint64_t)flags);
     *(uint64_t *)(mgr + 0xd10) = keep;
     static int lg; if (lg++ < 200) LOG("PC mouse: action %d flags %d at tile %d,%d (%s) -> %d", action, flags, x, y, u ? "unit" : "ground", r);
+    return 0;
 }
 #endif
 // PC-mode probe (DM_UI_TAPS E<action>, dm/verify/debugging.md "PC mode probes"): the game's click entry main+0x4ace20 with any action code at a

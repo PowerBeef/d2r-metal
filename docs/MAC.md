@@ -66,8 +66,8 @@ The keys are D2R's PC defaults:
 | Alt | Show items on the ground |
 | W | Swap weapons |
 | R | Run / walk |
-| Space | Close all panels |
-| Esc | Close what is open; with nothing open, the game menu (Save and Exit, Quick Restart, Options, Chronicle); in Options, back. After death, continue |
+| Space | Close all panels (with an NPC, as Esc) |
+| Esc | Close what is open (with an NPC, its speech, then its menu); with nothing open, the game menu (Save and Exit, Quick Restart, Options, Chronicle); in Options, back. After death, continue |
 
 **Panels** (inventory, character, stash, vendors, the cube) are the console ones, drawn so they end above the PC HUD, and worked with the mouse: hover an item for its description, hold Shift to compare, right click to use; press and drag to move it (between cells, onto a body slot, into the stash or cube, onto a vendor's shelf = sell, into the inventory = buy); a double click also uses, puts on or takes off. Descriptions use the PC wording ("Right Click to Use", "Hold Shift to Compare"). The PC HUD's mini panel and run / walk button take clicks.
 

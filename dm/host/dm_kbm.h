@@ -12,4 +12,4 @@ int dm_kbm_shift(void);                                                     // g
 // used by dm_kbm.c
 int dm_padmode_pc(void);                                                    // dm_padmode.c
 void dm_touch_host_live(int op, float nx, float ny);                         // touch_mac.c
-void dm_world_pc_click(int action, int flags, float sx, float sy);         // dm_world.c: the click entry with a PC action at a screen point
+int dm_world_pc_click(int action, int flags, float sx, float sy);          // dm_world.c: the click entry with a PC action at a screen point; 1 = it started a walk-up-and-interact instead
