@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #include "nvn_obj.h"
@@ -15,6 +16,25 @@ typedef struct {
 } pso_fz_desc;
 
 typedef struct { char vs[24], fs[24]; uint8_t vs_stage, fs_stage, merged, fz; pso_fz_desc fz_desc; pso_key k; } pso_skey;
+_Static_assert(sizeof(pso_key) == 344 && offsetof(pso_skey, k) == 88 && sizeof(pso_skey) == 432, "manifest rows are 432-byte pso_skey");
+
+// Clears the key fields pso_desc (nvn_mtl.m) never reads, so keys that build the same pipeline are equal: the write mask and the blend state of
+// an output with no attachment in a normal pass, or with no physical attachment mapped to it in a merged pass, and the blend factors of an output
+// whose blending is off; a normal pass also gets an all-zero lmap. lmap entries are 0..7 or 0xff (pso_skey_check refuses others in merged rows).
+// Idempotent. pso_desc and pso_key_norm must change together, and so must norm_row in dm/tools/pso_seed.py (t_pso_skey and test_pso_seed.py share
+// a hash over the same random keys).
+static inline void pso_key_norm(pso_key *k, int merged) {
+    uint32_t en = 0, ch = 0; blend_st bl[8]; memset(bl, 0, sizeof bl);
+    for (int i = 0; i < 8; i++) {
+        if (!k->cfmt[i]) continue;
+        unsigned l = merged ? k->lmap[i] : (unsigned)i;
+        if (l > 7) continue;
+        ch |= k->chmask & (0xfu << (4 * l));
+        if (k->blend_en >> l & 1) { en |= 1u << l; bl[l] = k->blend[l]; }
+    }
+    k->blend_en = en; k->chmask = ch; memcpy(k->blend, bl, sizeof bl);
+    if (!merged) memset(k->lmap, 0, sizeof k->lmap);
+}
 
 static inline void pso_skey_from(const pso_key *k, NvShader *vs, NvShader *fs, int merged, const pso_fz_desc *fz, pso_skey *out) {
     memset(out, 0, sizeof *out);

@@ -82,6 +82,7 @@ run: \
 	python3 ../../tools/test_imgdiff.py
 	python3 ../../tools/test_bench.py
 	python3 ../../tools/test_boothist.py
+	python3 ../../tools/test_pso_seed.py
 	python3 ../../tools/test_guestsyms.py
 	python3 ../../tools/re/test_nso2elf.py
 	python3 ../../tools/re/test_addrcheck.py
