@@ -191,8 +191,7 @@ int main(int argc, char **argv) { @autoreleasepool {
         if (!getenv("DM_NVN_SHMAP") && !_NSGetExecutablePath(self, &sl)) { snprintf(p, sizeof p, "%s/../nvn/shader_map.tsv", dirname(self)); setenv("DM_NVN_SHMAP", p, 0); }
         if (!getenv("DM_MSL_DIR")) { const char *r = getenv("DM_ROOT"); snprintf(p, sizeof p, "%s/build/cache/metal_shader_cache", r && *r ? r : [NSHomeDirectory() stringByAppendingPathComponent:@"dm-work"].UTF8String); setenv("DM_MSL_DIR", p, 0); }
     }
-    mtl_init();
-    g_mfx_3d.settle = 0;   // one frame: the live run's 3D MetalFX scaler had long settled at this size, so build it on the first request (as the screenshot path does)
+    mtl_init();   // the 3D MetalFX set builds on its first request (it never settles), so a one-frame replay draws it as the live run did
     if (cap_kv(stat0, sn0, "tex_pool_n", v, sizeof v)) mtl_set_tex_pool_n(atoi(v));
     // regions first (every later decode needs them), then the object tables, sized before any is filled (objects point at each other)
     uint32_t nsub = 0; const cap_pres *pres = NULL;

@@ -387,7 +387,7 @@ static void c_grab_crop(void) {
     int b0 = g_mfx_grab.builds; static const int crop[4] = {8, 4, 48, 27};
     id<MTLBuffer> px = grab_run(crop_src(), 64, 36, crop, 96, 54);
     EXPECT("grab_crop: encoded", 1, px != nil);
-    EXPECT("grab_crop: the screenshot set built at once (no settle)", 1, g_mfx_grab.scaler != nil && g_mfx_grab.builds - b0 >= 0 && g_mfx_grab.iw == 48 && g_mfx_grab.ow == 96);
+    EXPECT("grab_crop: the screenshot set built at once (no settle)", 1, g_mfx_grab.scaler != nil && g_mfx_grab.builds - b0 == 1 && g_mfx_grab.iw == 48 && g_mfx_grab.ow == 96);
     if (px) EXPECT("grab_crop: every pixel (200, 100, 50, 255) +-2: nothing outside the crop bleeds in", 0, px_off(px, 96, 54, 0, 0, 96, 54, 1, (const int[4]){200, 100, 50, 255}, 2));
 }
 static void c_after3d(void) {

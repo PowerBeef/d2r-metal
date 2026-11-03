@@ -544,7 +544,7 @@ static void gerr_flush(void);
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
     pso_pend_age();   // 并行预编：回收过期没人领的预测槽 | parallel precompile: recycle stale untaken prediction slots
-    mfx3d_sub_begin();   // 「放大方式」关了：放掉 3D 放大趟的 MetalFX 资源 | "Upscaling" off: release the 3D pass's MetalFX resources
+    mfx3d_sub_begin();   // Upscaling off, or the 3D set unused for MFX_IDLE_3D submissions: put the 3D pass's MetalFX set down
     tbdr_latch();
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
     defer_drain();
@@ -6891,9 +6891,9 @@ static void mfx_pres_tick(void) {
     for (int i = 0; i < 2; i++) if (ms[i]->scaler && g_mfx_calls - ms[i]->last_use > MFX_IDLE) mfx_drop(ms[i], "idle");
 }
 // ---- MetalFX replaces the game's 3D upscale pass (every platform) ----
-// The game renders 3D at a scale (phones: the 3D Resolution setting, 75% by default, lowered on dropped frames by up to three Frame Drops levels,
-// 0.70 / 0.65 / 0.60 at 75%, unless Frame Drops is Keep; the Mac: 1.0 unless 3D Resolution is set) and at the end ps_upsample_p (fragment key
-// 52aac1f2306b8fc5) scales it back to the output size. Read from its translated shader:
+// The game renders 3D at a scale (the 3D Resolution setting: 75% by default on phones, 100% on the Mac; with Frame Drops on Lower, the phone default
+// and the Recommended of Macs with little GPU headroom, hle_oe.c's controller lowers it further, level by level, while frames drop; the levels and the
+// floor are hle_oe.c's) and at the end ps_upsample_p (fragment key 52aac1f2306b8fc5) scales it back to the output size. Read from its translated shader:
 //   uv' = clamp(uv x c7[0].xy, c7[2].xy, c7[2].zw); bilinear samples of t10 (the 3D picture, RG11B10F) at the centre and 4 neighbours (step c7[1].xy)
 //   make an unsharp-mask sharpen (strength c7[1].z), multiplied by t11 (an R8 mask, sampled bilinearly at the original uv); alpha = 1; only colour 0
 //   is written (the other attachment is bound but not written).
