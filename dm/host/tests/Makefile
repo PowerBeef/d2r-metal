@@ -106,7 +106,7 @@ run: \
 	python3 ../../tools/scenario.py check ../../verify/bench/*.scn
 	python3 ../../verify/test_assertlib.py
 	python3 ../../verify/touchcases/test_lib.py
-	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn ../../verify/scenarios/saves/*.scn ../../verify/scenarios/faults/*.scn ../../verify/golden/*.scn
+	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn ../../verify/scenarios/saves/*.scn ../../verify/scenarios/faults/*.scn ../../verify/scenarios/manual/*.scn ../../verify/golden/*.scn
 	$(if $(wildcard ../../verify/scenarios/pending/*.scn),python3 ../../tools/scenario.py check $(wildcard ../../verify/scenarios/pending/*.scn))
 	python3 ../../tools/test_switches.py
 	python3 ../../tools/switches.py check

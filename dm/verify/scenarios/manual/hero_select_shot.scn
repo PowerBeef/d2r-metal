@@ -1,3 +1,4 @@
+# Manual: run it by hand and look at the shot; no gate step runs it or compares its screenshot (the FLIP sets in golden.py judge charselect instead)
 # The hero-select screen (the campfire scene of the new-character page), held for a few seconds and captured: a picture-quality check of that 3D
 # scene under the picture settings a run is given (DM_TEST_VIDEO_FIRSTBOOT=1 for the recommended ones, DM_3D_SCALE / DM_MFX3D to force others)
 name hero_select_shot

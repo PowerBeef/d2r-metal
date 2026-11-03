@@ -81,6 +81,8 @@ Full-screen geometry: the live Metal 4 present logs neither its crop nor its vie
 
 At the first red event, or when a step fails, the runner asks the host for the `engine` snapshot (panels, focus, save state, the latest actions and UI messages) and stores it as `engine.json` in the run folder, beside `crash.txt` when the process crashed.
 
+Scenarios in `manual/` are run by hand only: no gate step runs them (`hero_select_shot.scn` captures a picture for a person to look at).
+
 Fault scenarios live in `faults/` (see [faults/README.md](faults/README.md)): they arm save faults with the `fault` command and check that the player is told, saves keep committing and the save stays valid.
 
 ## Generated saves
