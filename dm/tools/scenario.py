@@ -364,9 +364,12 @@ class Runner:
         self.backend = CliBackend(self.meta, self.run, headless) if backend_name == 'cli' else MacAppBackend(self.meta, self.run, headless) if backend_name == 'mac-app' else LaunchBackend(backend_name, self.meta, self.run)
         # Windowed runs are background runs unless they run in front: the `front` header, then the scenario's own env, then DM_TEST_BGRUN from the caller
         # (--front, bench.py), else 1. ios-mac always runs in front: the iOS package on the Mac takes the front even when launched with open -g (measured:
-        # UserInteractiveFocal 0.5 s after launch, scene active), so its runs are front runs, judged for disturbances. Headless and device runs set nothing
+        # UserInteractiveFocal 0.5 s after launch, scene active), so its runs are front runs, judged for disturbances. Headless and device runs set nothing.
+        # A capture of the presented picture (DM_TEST_PRESENT_SHOT: picture analysis, README images) is a front run too, as performance measurements are
+        # (bench.py): the user's rule is that those see the real game window, in front and in real full screen, never the emulated one
         self.windowed = backend_name == 'mac-app' or backend_name == 'ios-mac' or (backend_name == 'cli' and bool(self.meta['window']) and not headless)
-        self.bgrun = None if not self.windowed else '0' if self.meta['front'] or backend_name == 'ios-mac' else str(self.meta['env']['DM_TEST_BGRUN']) if 'DM_TEST_BGRUN' in self.meta['env'] \
+        capture = 'DM_TEST_PRESENT_SHOT' in self.meta['env']
+        self.bgrun = None if not self.windowed else '0' if self.meta['front'] or backend_name == 'ios-mac' or capture else str(self.meta['env']['DM_TEST_BGRUN']) if 'DM_TEST_BGRUN' in self.meta['env'] \
             else os.environ['DM_TEST_BGRUN'] if os.environ.get('DM_TEST_BGRUN') in ('0', '1') else '1'
         self.front = self.bgrun == '0'
         self.backend.bgrun = self.bgrun
