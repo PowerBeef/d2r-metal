@@ -318,7 +318,7 @@ DM_TEST_BELTFILL_SWITCH	host	host/dm_actions.c	-
 DM_TEST_BELT_DRINK	host	host/dm_beltauto.c	-
 DM_TEST_BELT_NOPUT	host	host/dm_beltauto.c	-
 DM_TEST_BG	ios	ios/Sources/front_ios.m	y
-DM_TEST_BGRUN	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	y
+DM_TEST_BGRUN	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py tools/test_bench.py …	y
 DM_TEST_BG_RELAUNCH	ios	ios/Sources/main.m	-
 DM_TEST_BINDTBL	host	host/dm_actions.c	-
 DM_TEST_C2S	host	host/dm_actions.c	-

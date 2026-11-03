@@ -128,8 +128,9 @@ for tier in "${TIERS[@]}"; do
     ;;
   long)
     lock_on 120
-    for r in town_loop combat ui_heavy rejoin; do step "long_bench_$r" 1800 -- python3 "$DM/tools/bench.py" run "$DM/verify/bench/$r.scn" --reps 3; done   # 先跑：机器还凉 | first: the machine is still cool
-    step long_profile 900 -- python3 "$DM/tools/bench.py" profile "$DM/verify/bench/combat.scn"   # 采样归因 + 卡顿 | sampled attribution + hitches
+    # Benchmarks first, while the machine is cool. They run in front by design; a rep still disturbed after its redos is not judged (exit 3 = unavailable, not red)
+    for r in town_loop combat ui_heavy rejoin; do step "long_bench_$r" 1800 -- bash -c 'python3 "$1/tools/bench.py" run "$1/verify/bench/$2.scn" --reps 3; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc' _ "$DM" "$r"; done
+    step long_profile 900 -- bash -c 'python3 "$1/tools/bench.py" profile "$1/verify/bench/combat.scn"; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc' _ "$DM"   # sampled attribution + hitches
     step long_regress 2400 -- bash -c 'python3 "$DM/tools/bench.py" regress "$DM/verify/bench/town_loop.scn" --reps 6; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # 对留存基线（bench.py baseline save）；没有基线为 ⚪ | against the kept baseline (bench.py baseline save); none = ⚪
     step long_playbot 3600 -- python3 "$DM/tools/playbot.py" run --seed 1 --episodes 4 --intents 15   # 试玩机器人：玩家意图 + 不变量（dm/tools/playbot.py） | the playtest bot: player intents + invariants (dm/tools/playbot.py)
     step long_soak 3600 -- python3 "$DM/tools/playbot.py" soak --minutes 30 --seed 2   # Mac 浸泡：soak_report.py 的四条判据 | Mac soak: soak_report.py's four criteria

@@ -27,6 +27,12 @@ Each series has `mean`, `p50`, `p95` and `p99`. `bench.json` keeps every run, pl
 
 The environment is recorded with each result: git revision (and whether the tree is dirty), machine model, OS, CPU and Game Mode status (`gamepolicyctl`). Before each run, `pmset -g therm` is checked. While the machine reports a thermal warning or CPU speed limit, the run waits (up to `--cool` seconds). The thermal state before and after each run is stored. `DM_STATEREP=1` is set, so the system's Metal performance recording can be split by game state (`metalperftrace overview --aggregate --domain GameState`).
 
+## In front, disturbed reps redone
+
+Benchmarks always run in front (`DM_TEST_BGRUN=0`, unlike every other windowed test run): real activation, real full screen (the Space switch included), real presented times. Projected presented times of background runs would read optimistic intervals, and Game Mode applies only to the Mac App in real full screen. `environment` records `bgrun=0`; each rep records `window` (its last `window` event and whether the game really had the front) and `attempts`.
+
+A rep the desk disturbed (the scenario runner's detector: another app took the front, a Space switch, display sleep, the session going inactive, an unrequested resign or occlusion, the game never in front; [scenarios/README.md](../scenarios/README.md)) is redone in its own slot after cooling, so the ABBA order holds; the disturbed attempt's folder is kept as `<rep>.disturbedK` and boot stages are recorded only for accepted reps. After `--redo N` redos (default 2) the benchmark is reported `⚪ BENCH <route> not judged: k of n runs disturbed (…)` with exit code 3 (`not judged` is never a regression or a speed-up; a real failure still makes it RED). Partial covers (notification banners, floating panels) are not detected.
+
 ## A/B
 
 `ab` runs the variants interleaved as ABBA (so slow thermal or clock drift affects both alike), `--reps` runs each. For every segment it compares the chosen metric's per-run values:
