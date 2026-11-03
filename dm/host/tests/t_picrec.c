@@ -1,8 +1,8 @@
 // The Mac App's Recommended picture (dm_picrec.c), checked two ways.
 // Expected rows: what each machine gets from the model (t_picrec_cases.h; the M6 rows are the measured ones and must stay within the capacity).
 // Invariants: properties the model must keep whatever its constants, over a grid of chips, GPU core counts, screens and MetalFX support.
-// Also checked: the chip as read from its name, per-core speeds and core-count fallbacks, and dm_picrec_real (the gate that keeps the CLI host
-// and test copies on the original picture). Pass -v to print every machine's choice.
+// Also checked: the chip as read from its name, per-core speeds and core-count fallbacks, dm_picrec_real (the gate that keeps the CLI host
+// and test copies on the original picture) and dm_picrec_id (the rec_id dm_video.c stores with the recommendation). Pass -v to print every machine's choice.
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -149,6 +149,20 @@ int main(int argc, char **argv) {
         check(dm_picrec_real(app, sup, fb) == want_real, NULL, "dm_picrec_real(app %d, support %d, firstboot %d) = %d, expected %d", app, sup, fb,
               dm_picrec_real(app, sup, fb), want_real);
     }
+    // rec_id (dm_picrec_id): the machine the recommendation was worked out for; dm_video.c works it out again when it changes. 32-bit FNV-1a over the GPU
+    // name, then cores, out_w, out_h and mfx as 4 little-endian bytes each, top bit cleared
+    struct { dm_mac_spec s; int id; } ids[] = {
+        { { "Apple M6", 12, 2560, 1440, 1 }, 1043353910 },
+        { { "Apple M6", 12, 3840, 2160, 1 }, 926858990 },
+        { { "Apple M1", 8, 2880, 1800, 1 }, 1049100262 },
+        { { NULL, 0, 0, 0, 0 }, 1768495365 },   // no name hashes as ""
+        { { "", 0, 0, 0, 0 }, 1768495365 },
+    };
+    for (size_t i = 0; i < sizeof ids / sizeof *ids; i++) { int id = dm_picrec_id(&ids[i].s);
+        check(id == ids[i].id && id >= 0, NULL, "dm_picrec_id(%s, %d, %dx%d, mfx %d) = %d, expected %d", ids[i].s.gpu ? ids[i].s.gpu : "NULL", ids[i].s.cores, ids[i].s.out_w, ids[i].s.out_h, ids[i].s.mfx, id, ids[i].id); }
+    { dm_mac_spec a = { "Apple M6", 12, 2560, 1440, 1 }, b = { "Apple M1", 8, 2560, 1440, 1 }, c = a, d = a; c.mfx = 0; d.out_w = 2544;
+      check(dm_picrec_id(&a) != dm_picrec_id(&b), NULL, "rec_id: another GPU at the same screen gives the same id");
+      check(dm_picrec_id(&a) != dm_picrec_id(&c) && dm_picrec_id(&a) != dm_picrec_id(&d), NULL, "rec_id: MetalFX or the screen does not change the id"); }
     grid();
     printf("t_picrec: %d checks, %d failed\n", n, fails);
     return fails != 0;

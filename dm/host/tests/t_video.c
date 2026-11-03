@@ -7,6 +7,7 @@
 //   (1)-(8)   sw_video.txt is read key by key: only a missing or out-of-range key is filled from the first-boot values; only a file with no key at all
 //             counts as a first boot
 //   (9)-(16)  the recommendation version (rec_v): a player still on the old Recommended moves to the new one, changed settings stay
+//   (17)      rec_id: the recommendation is worked out again when the machine (GPU, screen) changed; the 'picture' event's how
 //   (19)      loading is hardened: an unreadable file, junk values, a newer version, unknown keys, over-long lines
 //   (18)      M: the presets, Apply / Discard / Default and the display preferences on this M6
 //   (18j)     the Mac's rows map their values to the selector one to one
@@ -23,7 +24,7 @@
 #error "t_video is the Mac build; the phone build is t_video_phone"
 #endif
 extern char g_dir[512];
-extern int g_nodir, g_fe, g_mfx, g_rec_id, g_rec_res, g_fb_calls, g_full_calls, g_full_last, g_color_calls, g_color_last;
+extern int g_nodir, g_fe, g_mfx, g_fe_rec_id, g_fe_rec_res, g_fb_calls, g_full_calls, g_full_last, g_color_calls, g_color_last;
 extern int g_tshown, g_cdef_q3d, g_cval[2], g_cpend[2], g_cset[2];
 
 static int fails, checks;
@@ -118,11 +119,13 @@ int main(void) {
     // (1) complete file: read as is, no recommendation asked, no write-back
     r = run(FULL(0, 1, 2, 1, 0, 1) NEWREC);
     CHECK(r.v[0] == 0 && r.v[1] == 2 && r.v[2] == 0 && r.fb == 0 && !strcmp(r.file, FULL(0, 1, 2, 1, 0, 1) NEWREC), "(1) complete: 0/2/0, nothing asked (%d times), file unchanged", r.fb);
+    CHECK(r.evn == 1 && !strcmp(r.how, "read"), "(1) one 'picture' event, how=read; got %d, '%s'", r.evn, r.how);
     // (2) one rec_* missing: the player's three values stay (the old code reset all to the first boot = 1/2/0), only rec_res is filled with the
     // recommendation 1; the whole file is written back
     r = run("mode=0\nrec_mode=1\nres=2\nup=0\nrec_up=1\n" RV);
     CHECK(r.v[0] == 0 && r.v[1] == 2 && r.v[2] == 0, "(2) rec_res missing: the player's 0/2/0 stays, got %d/%d/%d", r.v[0], r.v[1], r.v[2]);
     CHECK(r.fb == 1 && !strcmp(r.file, FULL(0, 1, 2, 1, 0, 1) NEWREC), "(2) rec_res=1 filled and the whole file written back, got\n%s", r.file);
+    CHECK(!strcmp(r.how, "filled"), "(2) picture how=filled, got '%s'", r.how);
     // (3) one rec_* out of range: same as missing
     r = run(FULL(0, 1, 2, 1, 0, 7) NEWREC);
     CHECK(r.v[0] == 0 && r.v[1] == 2 && r.v[2] == 0 && !strcmp(r.file, FULL(0, 1, 2, 1, 0, 1) NEWREC), "(3) rec_up=7 out of range: only it becomes 1, got %d/%d/%d\n%s", r.v[0], r.v[1], r.v[2], r.file);
@@ -135,6 +138,9 @@ int main(void) {
     // (6) no file / empty file: first boot, all three from the first boot
     r = run(NULL);
     CHECK(r.v[0] == 1 && r.v[1] == 2 && r.v[2] == 0 && r.fb == 1 && !strcmp(r.file, FULL(1, 1, 2, 1, 0, 1) NEWREC), "(6) no file: first boot 1/2/0, recommendation 1/1/1 saved, got %d/%d/%d\n%s", r.v[0], r.v[1], r.v[2], r.file);
+    { static const int want[11] = { 1, 2, 0, 1, 3, 0, 0, 1, 2, REC_V, -1 }; int same = !memcmp(r.ev, want, sizeof want);
+      CHECK(r.evn == 1 && !strcmp(r.how, "first") && same, "(6) picture how=first with the values loaded, rec_v %d, no rec_id; got %d events, '%s', %d %d %d … rec_v %d rec_id %d",
+            REC_V, r.evn, r.how, r.ev[0], r.ev[1], r.ev[2], r.ev[9], r.ev[10]); }
     r = run("");
     CHECK(r.v[0] == 1 && r.v[1] == 2 && r.v[2] == 0, "(6) empty file: as a first boot, got %d/%d/%d", r.v[0], r.v[1], r.v[2]);
     // (7) a file from before the update (only the first three keys): those three stay, the later keys are filled from front_video_rec (aa 1, aniso 3,
@@ -152,6 +158,7 @@ int main(void) {
     r = run(FULL(0, 0, 0, 0, 0, 0) TAIL(0, 0, 0, 0, 0, 0));
     CHECK(r.v[0] == 1 && r.v[1] == 1 && r.v[2] == 1 && r.v[3] == 1 && r.v[4] == 3 && r.v[5] == 0 && r.v[6] == 0 && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) NEWREC),
           "(9) on the old recommendation: moved to 1/1/1 1/3/0 0, got %d/%d/%d %d/%d/%d %d\n%s", r.v[0], r.v[1], r.v[2], r.v[3], r.v[4], r.v[5], r.v[6], r.file);
+    CHECK(!strcmp(r.how, "update"), "(9) picture how=update, got '%s'", r.how);
     // (10) old version, Display Mode changed (mode=1 ≠ old recommendation 0) but every graphics key on the old Recommended: Display Mode and Color are
     // display preferences that never decide "on Recommended" (pref_key), so the graphics keys move to the new recommendation and mode stays
     r = run(FULL(1, 0, 0, 0, 0, 0) TAIL(0, 0, 0, 0, 0, 0));
@@ -197,7 +204,8 @@ int main(void) {
         char fp[600]; snprintf(fp, sizeof fp, "%s/sw_video.txt", g_dir); file_put(FULL(0, 1, 2, 1, 0, 1) NEWREC); chmod(fp, 0);
         r = child(NULL); chmod(fp, 0644);
         CHECK(r.v[0] == 1 && r.v[1] == 2 && r.v[2] == 0 && r.fb == 1 && !strcmp(file_get(), FULL(0, 1, 2, 1, 0, 1) NEWREC),
-              "(19a) unreadable: first-boot values 1/2/0 (%d/%d/%d, asked %d times), file left alone\n%s", r.v[0], r.v[1], r.v[2], r.fb, file_get()); }
+              "(19a) unreadable: first-boot values 1/2/0 (%d/%d/%d, asked %d times), file left alone\n%s", r.v[0], r.v[1], r.v[2], r.fb, file_get());
+        CHECK(!strcmp(r.how, "unreadable"), "(19a) picture how=unreadable, got '%s'", r.how); }
     // (19b) junk values count as out of range: back to the stored recommendation
     r = run("mode=yes\nrec_mode=1\nres=\nrec_res=1\nup=0\nrec_up=1\n" TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV);
     CHECK(r.v[0] == 1 && r.v[1] == 1 && r.v[2] == 0 && strstr(r.file, FULL(1, 1, 1, 1, 0, 1)) == r.file, "(19b) mode=yes, res=: back to 1 / 1, up 0 read; got %d/%d/%d\n%s", r.v[0], r.v[1], r.v[2], r.file);
@@ -207,10 +215,12 @@ int main(void) {
 #define NEWER(m, rm, s, rs, u, ru) FULL(m, rm, s, rs, u, ru) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) "rec_v=99\n"
     r = run(NEWER(0, 1, 9, 1, 0, 1));
     CHECK(r.v[1] == 1 && !strcmp(r.file, NEWER(0, 1, 9, 1, 0, 1)), "(19c) newer file, res=9: res 1 in memory (%d), file unchanged\n%s", r.v[1], r.file);
+    CHECK(!strcmp(r.how, "newer") && r.ev[9] == 99, "(19c) picture how=newer, rec_v 99; got '%s', %d", r.how, r.ev[9]);
     // (19d) an unknown line is kept: not rewritten at load, and written back after the known keys by the next Apply
     r = run_do(FULL(0, 1, 2, 1, 0, 1) NEWREC "future=3\n", act_aa0);
     CHECK(!strcmp(r.file0, FULL(0, 1, 2, 1, 0, 1) NEWREC "future=3\n") && !strcmp(r.file, FULL(0, 1, 2, 1, 0, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "future=3\n"),
           "(19d) unknown line kept\n%s", r.file);
+    CHECK(r.evn == 2 && !strcmp(r.how, "apply") && r.ev[3] == 0, "(19d) a second 'picture' event after the Apply: how=apply, aa 0; got %d events, '%s', aa %d", r.evn, r.how, r.ev[3]);
     // (19e) the same in a newer file: its rec_v and the unknown line survive the Apply
     r = run_do(NEWER(0, 1, 2, 1, 0, 1) "future=3\n", act_aa0);
     CHECK(strstr(r.file, "rec_v=99\n") && strstr(r.file, "future=3\n") && strstr(r.file, "\naa=0\n"), "(19e) newer file: rec_v=99 and future=3 kept\n%s", r.file);
@@ -220,6 +230,35 @@ int main(void) {
     CHECK(r.v[1] == 1 && !strncmp(r.file0, FULL(0, 1, 1, 1, 0, 1) NEWREC, strlen(FULL(0, 1, 1, 1, 0, 1) NEWREC)) && strstr(r.file0, "res=2\n") &&
           !strcmp(r.file, FULL(0, 1, 1, 1, 0, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
           "(19f) over-long lines: res stays 1 (%d), not rewritten at load, gone after the Apply\n%s", r.v[1], r.file);
+
+    // (19g) a newer file keeps its own rec_id: no move on another machine, nothing written at load, and an Apply keeps both its rec_v and its rec_id
+    g_fe_rec_id = 2222;
+    r = run_do(NEWER(0, 1, 2, 1, 0, 1) "rec_id=1111\n", act_aa0);
+    { const char *tail = "rec_v=99\nrec_id=1111\n"; size_t n = strlen(r.file), m = strlen(tail);
+      CHECK(r.fb == 0 && !strcmp(r.file0, NEWER(0, 1, 2, 1, 0, 1) "rec_id=1111\n") && n >= m && !strcmp(r.file + n - m, tail), "(19g) newer file: rec_id 1111 kept (asked %d times)\n%s", r.fb, r.file); }
+
+    // ---- (17) rec_id: the machine the recommendation was worked out for (front_video_rec_id; front_mac.m hashes the GPU name, its cores, Native's size and MetalFX).
+    // When it differs from the stored one, the recommendation is worked out again at launch: a player still on Recommended moves, everyone else keeps their settings
+    // (17a) a current file with no rec_id yet: worked out again once (same values here), and the id saved
+    r = run(FULL(1, 1, 1, 1, 1, 1) NEWREC);
+    CHECK(r.fb == 1 && r.v[K_RES] == 1 && !strcmp(r.how, "rescreen") && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) NEWREC "rec_id=2222\n"),
+          "(17a) no rec_id: asked once (%d), res 1 (%d), how=rescreen ('%s'), rec_id saved\n%s", r.fb, r.v[K_RES], r.how, r.file);
+    // (17b) the same machine: read, nothing asked or written
+    r = run(FULL(1, 1, 1, 1, 1, 1) NEWREC "rec_id=2222\n");
+    CHECK(r.fb == 0 && !strcmp(r.how, "read") && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) NEWREC "rec_id=2222\n") && r.ev[10] == 2222,
+          "(17b) same rec_id: nothing asked (%d), how=read ('%s'), file unchanged, event rec_id %d\n%s", r.fb, r.how, r.ev[10], r.file);
+    // (17c) another machine whose recommendation is Native (res 3): a player on Recommended moves
+    g_fe_rec_res = 3;
+    r = run(FULL(1, 1, 1, 1, 1, 1) NEWREC "rec_id=1111\n");
+    CHECK(r.v[K_RES] == 3 && !strcmp(r.how, "rescreen") && !strcmp(r.file, FULL(1, 1, 3, 3, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "rec_id=2222\n"),
+          "(17c) moved: res 3 (%d), how=rescreen ('%s')\n%s", r.v[K_RES], r.how, r.file);
+    // (17d) the same with a graphics key changed (aa 0): settings kept, only the recommendation and the id updated
+    r = run(FULL(1, 1, 1, 1, 1, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "rec_id=1111\n");
+    CHECK(r.v[K_RES] == 1 && !strcmp(r.file, FULL(1, 1, 1, 3, 1, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "rec_id=2222\n"), "(17d) changed settings kept: res 1 (%d)\n%s", r.v[K_RES], r.file);
+    // (17e) a newer file on another machine: no move, nothing written
+    r = run(NEWER(1, 1, 1, 1, 1, 1) "rec_id=1111\n");
+    CHECK(r.v[K_RES] == 1 && !strcmp(r.how, "newer") && !strcmp(r.file, NEWER(1, 1, 1, 1, 1, 1) "rec_id=1111\n"), "(17e) newer: res 1 (%d), how=newer ('%s'), file unchanged\n%s", r.v[K_RES], r.how, r.file);
+    g_fe_rec_id = -1; g_fe_rec_res = 1;
 
     // ---- M: front_mac.m on this M6 (Recommended = Native 100%, MetalFX, SMAA, 16x, Accurate, environment shadows, Ultra: the same values as Quality)
     g_fe = 'M';

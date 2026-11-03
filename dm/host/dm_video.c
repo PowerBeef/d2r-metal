@@ -94,7 +94,10 @@ __attribute__((weak)) void front_video_fullscreen(int on) { (void)on; }
 __attribute__((weak)) int front_video_running_res(void) { return -1; }
 __attribute__((weak)) int front_video_mfx_ok(void) { return 0; }
 __attribute__((weak)) int front_video_rec(const char *key) { (void)key; return -1; }   // front_video_firstboot 之后的键的推荐值；-1 = 没有（取 0，原先的样子） | recommendation for keys after front_video_firstboot's three; -1 = none (0, the old look)
-__attribute__((weak)) void front_video_color(int accurate) { (void)accurate; }   // 「色彩」点了应用 | "Colour" applied
+__attribute__((weak)) void front_video_color(int accurate) { (void)accurate; }
+// Which machine the recommendation is worked out for (front_mac.m: dm_picrec_id of the GPU and the main screen); -1 = the recommendation does not depend on
+// the machine (iOS, the CLI host, test copies)
+__attribute__((weak)) int front_video_rec_id(void) { return -1; }   // 「色彩」点了应用 | "Colour" applied
 
 static const char *vals_str(const int *v) {   // 「mode=1 res=1 …」：日志用（非线程安全的静态缓冲，只在 g_mu 下或启动时用） | "mode=1 res=1 ...": for logs (static buffer, not thread-safe; only used under g_mu or at launch)
     static char b[160]; size_t L = 0; b[0] = 0;
@@ -103,11 +106,13 @@ static const char *vals_str(const int *v) {   // 「mode=1 res=1 …」：日志
 }
 static _Atomic int g_rv_keep = REC_V;   // the rec_v saved: REC_V, or a newer file's own (an older build must not claim a newer file's values as its own)
 static char g_extra[512];               // whole lines of the file whose key this build does not know (a newer version's), written back after ours (under g_mu)
+static _Atomic int g_rec_id = -1;       // the rec_id saved with the recommendation: the machine it was worked out for (front_video_rec_id), or a newer file's own; -1 = none
 static void save_locked(void) {
     char p[1100], t[1120]; if (!dm_custom_path("sw_video.txt", p, sizeof p)) { LOG("【红】画面设置：设置目录还不知道，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
     for (int i = 0; ok && i < NV; i++) ok = fprintf(f, "%s=%d\nrec_%s=%d\n", k_keys[i], atomic_load(&g_val[i]), k_keys[i], atomic_load(&g_rec[i])) > 0;
     if (ok) ok = fprintf(f, "rec_v=%d\n", atomic_load(&g_rv_keep)) > 0;
+    if (ok && atomic_load(&g_rec_id) >= 0) ok = fprintf(f, "rec_id=%d\n", atomic_load(&g_rec_id)) > 0;
     if (ok && g_extra[0]) ok = fputs(g_extra, f) >= 0;
     if (f) ok = fclose(f) == 0 && ok;
     if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名（同 sw_custom.txt） | write a temporary file, then rename (as sw_custom.txt)
@@ -115,6 +120,12 @@ static void save_locked(void) {
     char rs[160]; strlcpy(rs, vals_str(r), sizeof rs);
     LOG("画面设置：存盘%s %s（推荐 %s）", ok ? "" : "【红】失败", vals_str(v), rs);
 }
+static void picture_ev(const char *how) {   // the 'picture' event: the values in effect, the rec_v and rec_id saved
+    DM_EV("picture", "how:s mode:d res:d up:d aa:d aniso:d color:d s3d:d envsh:d shq:d rec_v:d rec_id:d", how, atomic_load(&g_val[K_MODE]), atomic_load(&g_val[K_RES]),
+          atomic_load(&g_val[K_UP]), atomic_load(&g_val[K_AA]), atomic_load(&g_val[K_ANISO]), atomic_load(&g_val[K_COLOR]), atomic_load(&g_val[K_S3D]), atomic_load(&g_val[K_ESH]),
+          atomic_load(&g_val[K_SHQ]), atomic_load(&g_rv_keep), atomic_load(&g_rec_id));
+}
+_Static_assert(NV == 9, "the picture event lists every key");
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
     pthread_mutex_lock(&g_mu);
@@ -124,7 +135,7 @@ static void load_once(void) {
         // treat the whole file as a first boot). A value that is not a whole number counts as out of range. An unreadable file (anything but "no such
         // file") counts as a first boot for this launch and is not rewritten; a newer version's file is filled in memory only. Lines with a key this build
         // does not know are kept (g_extra); a line longer than the read buffer cannot hold a known key and is skipped whole
-        int v[NV], r[NV], rv_file = 1; for (int i = 0; i < NV; i++) v[i] = r[i] = -1;   // rv_file: the recommendation version in the file (absent = 1)
+        int v[NV], r[NV], rv_file = 1, id_file = -1; for (int i = 0; i < NV; i++) v[i] = r[i] = -1;   // rv_file: the recommendation version in the file (absent = 1); id_file: its rec_id
         errno = 0; FILE *f = fopen(p, "r"); int err = errno, ro = !f && err != ENOENT;
         char ln[64]; int cont = 0; size_t xn = 0; g_extra[0] = 0;
         while (f && fgets(ln, sizeof ln, f)) {
@@ -136,6 +147,7 @@ static void load_once(void) {
             int rec = !strncmp(ln, "rec_", 4), known = 0;
             for (int i = 0; i < NV; i++) if (!strcmp(rec ? ln + 4 : ln, k_keys[i])) { known = 1; if (x >= 0 && x < kn(i)) { if (rec) r[i] = x; else v[i] = x; } }
             if (!strcmp(ln, "rec_v")) { known = 1; if (num) rv_file = x; }   // junk = absent: version 1, worked out again
+            else if (!strcmp(ln, "rec_id")) { known = 1; if (x >= 0) id_file = x; }   // junk = absent
             *eq = '=';
             if (!known && xn + L + !nl < sizeof g_extra) { memcpy(g_extra + xn, ln, L); xn += L; if (!nl) g_extra[xn++] = '\n'; g_extra[xn] = 0; }
         }
@@ -144,7 +156,12 @@ static void load_once(void) {
         int newer = rv_file > REC_V;   // written by a newer version: filled in memory, never rewritten at load, and its rec_v is kept by a later Apply
         atomic_store(&g_rv_keep, newer ? rv_file : REC_V);
         int miss = 0, first = 1; for (int i = 0; i < NV; i++) { miss |= (v[i] < 0) << i | (r[i] < 0) << (i + NV); first &= v[i] < 0 && r[i] < 0; }   // first = 一个键都没读到（真首次启动） | first = not a single key read (a real first boot)
-        int bump = !first && rv_file < REC_V, s3d_missing = v[K_S3D] < 0;   // 推荐值版本旧了：按这一版重算 | the recommendation is from an older version: work it out again
+        // Worked out again (a "bump") when the recommendation is from an older version, or from another machine: rec_id names the GPU and the main screen it
+        // was worked out for, and Native already follows the current screen, so the stored 3D Resolution and shadows must too. A newer file keeps its own rec_id
+        // (an older build must not stamp this machine's id onto values it did not work out)
+        int id_now = front_video_rec_id(), moved = !first && !newer && !ro && id_now >= 0 && id_file != id_now;
+        atomic_store(&g_rec_id, newer ? id_file : id_now >= 0 ? id_now : id_file);
+        int bump = !first && (rv_file < REC_V || moved), s3d_missing = v[K_S3D] < 0;
         if (miss || bump) {   // 定推荐值（前端没有 = 原版：窗口、1600、标准），只补缺的键 | work out the recommendation (no front end = the original: windowed, 1600, standard), filling only the missing keys
             int rec[NV] = { 0 }, cur[NV] = { 0 };   // 前三个键前端一起定（front_video_firstboot），之后的键一个个问（front_video_rec，当前值 = 推荐） | the front end sets the first three together (front_video_firstboot), later keys one by one (front_video_rec, current = recommended)
             if (!front_video_firstboot(rec, cur)) memcpy(cur, rec, 3 * sizeof cur[0]);
@@ -153,8 +170,8 @@ static void load_once(void) {
                 int on_rec = 1; for (int i = 0; i < NV; i++) if (!pref_key(i) && v[i] >= 0 && r[i] >= 0 && v[i] != r[i]) on_rec = 0;   // judged by the graphics keys
                 for (int i = 0; i < NV; i++) { int nr = rec[i] >= 0 && rec[i] < kn(i) ? rec[i] : 0, was = v[i] >= 0 && r[i] >= 0 && v[i] == r[i];
                     if (v[i] >= 0 && (pref_key(i) ? was : on_rec)) v[i] = nr; r[i] = nr; }   // a display preference moves only while it equals its old recommendation
-                LOG("画面设置：推荐值第 %d 版 → 第 %d 版，%s | picture settings: recommendation version %d → %d, %s", rv_file, REC_V, on_rec ? "原先停在推荐上，一起换成新推荐" : "改过的设置照留，只换推荐",
-                    rv_file, REC_V, on_rec ? "was on the recommendation, moved to the new one" : "changed settings kept, only the recommendation updated");
+                if (rv_file < REC_V) LOG("picture settings: recommendation version %d → %d; %s", rv_file, REC_V, on_rec ? "moved to the new Recommended" : "changed settings kept");
+                else LOG("picture settings: worked out again for this screen and GPU (rec_id %d → %d); %s", id_file, id_now, on_rec ? "moved to the new Recommended" : "changed settings kept");
             }
             for (int i = 0; i < NV; i++) { int rv = rec[i] >= 0 && rec[i] < kn(i) ? rec[i] : 0, had_r = r[i] >= 0;
                 if (r[i] < 0) r[i] = rv;
@@ -167,6 +184,7 @@ static void load_once(void) {
             LOG("画面设置：%s 缺 / 越界的键 %s → 只补这几个（其余照读）", p, mk); }
         { char rs[160]; strlcpy(rs, vals_str(r), sizeof rs); LOG("画面设置：%s %s %s，推荐 %s", first ? "首次启动定推荐值" : miss ? "读盘（补过缺的键）" : "读盘", p, vals_str(v), rs); }
         if ((miss || bump) && !ro && !newer) save_locked();   // write the completed / updated file back (not over a file this build could not read, or a newer one)
+        picture_ev(ro ? "unreadable" : first ? "first" : newer ? "newer" : rv_file < REC_V ? "update" : moved ? "rescreen" : miss ? "filled" : "read");
         if (v[K_COLOR] == 1) front_video_color(1);   // 存着「准确」：交给前端标出图层（前端建层时设置目录可能还不知道，见 front_ios.m） | "Accurate" is stored: hand it to the front end for the present layer (the front end may not know the settings directory when it creates the layer, see front_ios.m)
     }
     pthread_mutex_unlock(&g_mu);
@@ -252,7 +270,7 @@ void dm_video_on_uimsg(const char *cat, const char *act, const char *arg) {
     load_once(); if (!atomic_load(&g_loaded)) return;
     if (!strcmp(act, "AcceptChanges")) { int ch = 0, mode = -1, color = -1;
         for (int i = 0; i < NV; i++) { int p = atomic_exchange(&g_pend[i], -1); if (p >= 0 && p != atomic_load(&g_val[i])) { atomic_store(&g_val[i], p); ch = 1; if (i == K_MODE) mode = p; if (i == K_COLOR) color = p; } }
-        if (ch) { pthread_mutex_lock(&g_mu); save_locked(); pthread_mutex_unlock(&g_mu); }
+        if (ch) { pthread_mutex_lock(&g_mu); save_locked(); pthread_mutex_unlock(&g_mu); picture_ev("apply"); }
         { int pk = atomic_exchange(&g_pick_pend, -1); if (pk >= 0) atomic_store(&g_pick, pk); }   // the picked preset is now the applied one
         if (mode >= 0) front_video_fullscreen(mode);   // 显示模式当场切 | display mode switches at once
         if (color >= 0) front_video_color(color);   // 色彩当场换（抗锯齿、各向异性由各自读设置的地方下一帧接上） | colour changes at once (anti-aliasing and anisotropy follow from where they read the setting, next frame)

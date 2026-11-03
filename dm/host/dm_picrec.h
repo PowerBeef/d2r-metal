@@ -27,3 +27,8 @@ void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r);
 // for every picture key (windowed, 1600, Standard, no MetalFX), so automated runs, golden baselines and benchmarks don't move; runs that want
 // MetalFX set DM_MFX / DM_MFX3D.
 int dm_picrec_real(int app, int app_support, int test_firstboot);
+
+// rec_id: which machine a recommendation was worked out for, a hash of everything dm_mac_recommend reads (the GPU name, its cores, the Native size,
+// MetalFX). dm_video.c stores it with the recommendation and works Recommended out again at launch when it changes (another main screen, another Mac).
+// 32-bit FNV-1a over the name's bytes (NULL = ""), then cores, out_w, out_h and mfx as 4 little-endian bytes each; the top bit is cleared (0..INT_MAX)
+int dm_picrec_id(const dm_mac_spec *s);
