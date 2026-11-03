@@ -9,6 +9,8 @@
 //   equiv     content inside a larger allocation gives the same picture as an exact-size set (inputContentWidth), and no texel of the unused part of
 //             the allocation (filled with NaN by an earlier frame) reaches the output
 //   content   Frame Drops steps inside the allocation reuse the set: no build, one content event each
+//   idle      unused sets are put down: the 3D set after MFX_IDLE_3D submissions without a 3D draw, the present and screenshot sets after MFX_IDLE
+//             presents without use; then released once the frames that may have used them have run
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
@@ -208,8 +210,48 @@ static void c_content(void) {
     EXPECT("content: no build event", 0, ev_count(ev0, "mfx who=3d op=build"));
 }
 
+// The present set, built through mfx_want (it settles: MFX_SETTLE presents at the new size)
+static int pres_build(NSUInteger cw, NSUInteger ch, double vw, double vh) {
+    int r = 0; for (int i = 0; i < MFX_SETTLE; i++) { mfx_pres_tick(); r = mfx_want(&g_mfx_pres, MFX_M4, cw, ch, (MTLViewport){0, 0, vw, vh, 0, 1}); } return r;
+}
+static void c_idle(void) {
+    int ev0 = g_ntev; __weak id ws, wi, wo;
+    // 3D set: released through the replay's deferred release, once the submission it was put down in has run
+    @autoreleasepool { mtl_sub_begin(); sub_done("idle: a submission before");
+        mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, 48, 27, 64, 36); g_mfx_3d.last_use = g_sub_serial;
+        ws = g_mfx_3d.scaler; wi = g_mfx_3d.in; wo = g_mfx_3d.out;
+        g_sub_serial += MFX_IDLE_3D; mfx3d_sub_begin(); }
+    EXPECT("idle 3D: after MFX_IDLE_3D submissions without a draw: still installed", 1, g_mfx_3d.scaler != nil);
+    @autoreleasepool { g_sub_serial++; mfx3d_sub_begin(); }
+    EXPECT("idle 3D: one more: put down", 1, g_mfx_3d.scaler == nil);
+    EXPECT("idle 3D: ... still alive (frames in flight)", 1, ws != nil && wi != nil && wo != nil);
+    EXPECT("idle 3D: ... an idle drop event", 1, ev_count(ev0, "mfx who=3d op=drop why=idle"));
+    @autoreleasepool { mtl_sub_begin(); sub_done("idle: the submission it was put down in"); }
+    @autoreleasepool { mtl_sub_begin(); sub_done("idle: the next one (deferred release drained)"); }
+    EXPECT("idle 3D: released after that submission ran", 1, ws == nil);
+    @autoreleasepool { res_commit(); }
+    EXPECT("idle 3D: both textures released after the residency commit", 1, wi == nil && wo == nil);
+    // Present set: MFX_IDLE presents unused keep it, one more puts it down, 4 more release it
+    @autoreleasepool { EXPECT("idle present: built", 1, pres_build(64, 36, 96, 54)); ws = g_mfx_pres.scaler; wi = g_mfx_pres.in;
+        for (int i = 0; i < MFX_IDLE; i++) mfx_pres_tick(); }
+    EXPECT("idle present: after MFX_IDLE unused presents: still installed", 1, g_mfx_pres.scaler != nil);
+    @autoreleasepool { mfx_pres_tick(); }
+    EXPECT("idle present: one more: put down, still alive", 1, g_mfx_pres.scaler == nil && ws != nil && wi != nil);
+    EXPECT("idle present: ... an idle drop event", 1, ev_count(ev0, "mfx who=pres op=drop why=idle"));
+    for (int i = 0; i < 4; i++) @autoreleasepool { mfx_pres_tick(); }
+    EXPECT("idle present: released 4 presents later", 1, ws == nil && wi == nil);
+    // Screenshot set: the same, built directly (no settle)
+    @autoreleasepool { EXPECT("idle screenshot: built", 1, mfx_ready(&g_mfx_grab, 0, MTLPixelFormatRGBA8Unorm, 64, 36, 96, 54)); ws = g_mfx_grab.scaler;
+        for (int i = 0; i < MFX_IDLE; i++) mfx_pres_tick(); }
+    EXPECT("idle screenshot: after MFX_IDLE presents: still installed", 1, g_mfx_grab.scaler != nil);
+    @autoreleasepool { mfx_pres_tick(); }
+    EXPECT("idle screenshot: one more: put down", 1, g_mfx_grab.scaler == nil && ws != nil);
+    for (int i = 0; i < 4; i++) @autoreleasepool { mfx_pres_tick(); }
+    EXPECT("idle screenshot: released 4 presents later", 1, ws == nil);
+}
+
 static const struct { const char *name; void (*fn)(void); } k_cases[] = {
-    {"compiler", c_compiler}, {"fail", c_fail}, {"alloc", c_alloc}, {"equiv", c_equiv}, {"content", c_content},
+    {"compiler", c_compiler}, {"fail", c_fail}, {"alloc", c_alloc}, {"equiv", c_equiv}, {"content", c_content}, {"idle", c_idle},
 };
 int main(int argc, char **argv) { setvbuf(stdout, NULL, _IONBF, 0);
     setenv("DM_MFX", "1", 1); setenv("DM_MFX3D", "1", 1);   // before any mfx_on / mfx3d_on call: both latch their switch once

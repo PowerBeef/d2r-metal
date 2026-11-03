@@ -6643,14 +6643,17 @@ static id<MTLTexture> present_src(id<MTLTexture> src) {
 // settle: how many requests in a row a new size needs before the rebuild (0 = at once, for the screenshot); p* are the size waiting to settle and how many times in a row it was requested
 #define MFX_SETTLE 8
 #define MFX_RETRY 600   // requests before a size that failed to build is tried again (about 10 s for the present and 3D sets; another size is tried at once)
+#define MFX_IDLE 300      // presents without use before the present / screenshot set is put down
+#define MFX_IDLE_3D 1800  // submissions without a 3D MetalFX draw before the 3D set is put down (about 30 s at 60 fps): loading screens and short menu visits keep it
 // tag: the set's name in the mfx events; why: the reason of its last build; builds / tries: successful builds / build attempts (tests read them).
 // bad: no MetalFX for this path on this device, for the session (capability only). fail_*: the last request key that failed to build, how many requests
 // for it since (fail_n), and how many times it was logged (fail_logs); the installed set stays in use meanwhile.
-// iw x ih is the input allocation; the content encoded into it (lcw x lch, the last one) can be smaller (the 3D set); kc counts content changes
+// iw x ih is the input allocation; the content encoded into it (lcw x lch, the last one) can be smaller (the 3D set); kc counts content changes.
+// last_use: when the set was last used, in presents (g_mfx_calls) for the present / screenshot sets and in submissions (g_sub_serial) for the 3D set
 typedef struct { id scaler; id<MTLTexture> in, out; id<MTLFence> fence; NSUInteger iw, ih, ow, oh; MTLPixelFormat fmt; int m4, bad, main_cb, uvi; id args; id<MTLBuffer> uv[3]; const char *who, *tag, *why;
                  int settle, pn; NSUInteger piw, pih, pow_, poh; MTLPixelFormat pfmt;
                  int builds, tries, fail_on, fail_n, fail_logs; MTLPixelFormat ffmt; NSUInteger fiw, fih, fow, foh;
-                 NSUInteger lcw, lch; int kc; } mfx_t;
+                 NSUInteger lcw, lch; int kc; uint64_t last_use; } mfx_t;
 // Only the present set settles (window drags change its output at every step). The 3D set's output is the game's output resolution, which never
 // changes continuously (fixed at launch on the Mac, discrete fold steps on phones), so it builds on the first request
 static mfx_t g_mfx_pres = { .who = "present", .tag = "pres", .settle = MFX_SETTLE }, g_mfx_grab = { .who = "present screenshot", .tag = "grab" },
@@ -6780,7 +6783,7 @@ static int mfx_ready(mfx_t *m, int m4, MTLPixelFormat fmt, NSUInteger iw, NSUInt
     double ms = (bp_now() - t0) / 1e6;
     mfx_drop(m, "replace");   // the old set will not be used again
     m->scaler = s; m->in = in; m->out = out; m->iw = iw; m->ih = ih; m->ow = ow; m->oh = oh; m->m4 = m4; m->fmt = fmt;
-    m->why = why; m->builds++; m->fail_on = 0; m->fail_n = 0; m->fail_logs = 0; m->lcw = m->lch = 0;
+    m->why = why; m->builds++; m->fail_on = 0; m->fail_n = 0; m->fail_logs = 0; m->lcw = m->lch = 0; m->last_use = m->main_cb ? g_sub_serial : g_mfx_calls;
     MLOG("%s: MetalFX scaler %lux%lu -> %lux%lu built in %.2f ms (%s, format %lu, %s)", m->who, (unsigned long)iw, (unsigned long)ih, (unsigned long)ow, (unsigned long)oh, ms,
          m4 ? "Metal 4" : "older API", (unsigned long)fmt, why);
     DM_EV("mfx", "who:s op:s why:s n:d iw:d ih:d ow:d oh:d ms:f", m->tag, "build", why, m->builds, (int)iw, (int)ih, (int)ow, (int)oh, ms);
@@ -6839,7 +6842,17 @@ static void mfx_gpu_note(double sec) {
 }
 // 要不要走 MetalFX：开关开、视口两边都比有效区大 5% 以上、放大器备好 | Whether to use MetalFX: switch on, viewport more than 5% larger than the valid area on both sides, scaler ready
 static int mfx_want(mfx_t *m, int m4, NSUInteger cw, NSUInteger ch, MTLViewport vp) {
-    return mfx_on() && vp.width > cw * 1.05 && vp.height > ch * 1.05 && mfx_ready(m, m4, MTLPixelFormatRGBA8Unorm, cw, ch, (NSUInteger)vp.width, (NSUInteger)vp.height);
+    if (!mfx_on() || !(vp.width > cw * 1.05 && vp.height > ch * 1.05)) return 0;
+    if (!mfx_ready(m, m4, MTLPixelFormatRGBA8Unorm, cw, ch, (NSUInteger)vp.width, (NSUInteger)vp.height)) return 0;
+    m->last_use = g_mfx_calls; return 1;
+}
+// Per-present bookkeeping (present thread, at the start of the present's MetalFX block): the retire list, Upscaling turned off (both sets put down,
+// remembered failures forgotten) and the idle release of the present and screenshot sets
+static void mfx_pres_tick(void) {
+    mfx_retire_tick();
+    if (!mfx_on()) { mfx_off(&g_mfx_pres); mfx_off(&g_mfx_grab); return; }
+    mfx_t *ms[2] = {&g_mfx_pres, &g_mfx_grab};
+    for (int i = 0; i < 2; i++) if (ms[i]->scaler && g_mfx_calls - ms[i]->last_use > MFX_IDLE) mfx_drop(ms[i], "idle");
 }
 // ---- MetalFX 换掉游戏的 3D 放大趟（各平台）----
 // 游戏 3D 按比例出（iOS 缺省 0.75、掉帧降到 0.70；Mac 缺省 1.0），末端由 ps_upsample_p（片元键 52aac1f2306b8fc5）放回输出尺寸。反汇编它：
@@ -6863,7 +6876,10 @@ static int mfx3d_on(void) {   // as mfx_on, with DM_MFX3D; read on the replay th
 }
 // 每次提交开头（回放线程）：「放大方式」关了就放掉 3D 放大趟的放大器与贴图（游戏不画放大趟了，mfx3d_draw 就走不到）
 // At the start of every submission (replay thread): with "Upscaling" off, release the 3D pass scaler and textures (once the game stops drawing the upscale pass, mfx3d_draw is never reached)
-static void mfx3d_sub_begin(void) { if (!mfx3d_on() && (g_mfx_3d.scaler || g_mfx_3d.fail_on)) mfx_off(&g_mfx_3d); }
+static void mfx3d_sub_begin(void) {
+    if (!mfx3d_on()) { if (g_mfx_3d.scaler || g_mfx_3d.fail_on) mfx_off(&g_mfx_3d); }
+    else if (g_mfx_3d.scaler && g_sub_serial - g_mfx_3d.last_use > MFX_IDLE_3D) mfx_drop(&g_mfx_3d, "idle");
+}
 static const char *g_mfx3d_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"
     "struct V { float4 p [[position]]; float2 uv; };\n"
@@ -6941,6 +6957,7 @@ static int mfx3d_draw(NvShader *f) {   // replay thread, at the game's ps_upsamp
     if (!cw || !ch || cw > src.width || ch > src.height || vw < cw * 1.05 || vh < ch * 1.05 || vx + vw > dst.width + 0.5 || vy + vh > dst.height + 0.5) return 0;
     NSUInteger aw, ah; mfx3d_alloc(cw, ch, (NSUInteger)llround(vw), (NSUInteger)llround(vh), dm_3d_scale_cfg(), &g_mfx_3d, &aw, &ah);
     if (!mfx3d_encode(src, cw, ch, aw, ah, mask, (MTLViewport){vx, vy, vw, vh, 0, 1})) return 0;
+    g_mfx_3d.last_use = g_sub_serial;
     { static int once; if (!once++) MLOG("3D upscale: MetalFX replaces ps_upsample_p: content %lux%lu (%.0f%% wide) -> viewport %.0fx%.0f, original sharpen %.3f", (unsigned long)cw, (unsigned long)ch, 100.0 * cw / vw, vw, vh, c[6]); }
     PD("U %llu 3D 放大改用 MetalFX %lux%lu → %.0fx%.0f", g_stat_pass, (unsigned long)cw, (unsigned long)ch, vw, vh);
     return 1;
@@ -7010,8 +7027,7 @@ static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, c
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
 #if TARGET_OS_OSX
     int mfx = 0;
-    mfx_retire_tick();
-    if (!mfx_on()) { mfx_off(&g_mfx_pres); mfx_off(&g_mfx_grab); }   // "Upscaling" off: release the present and screenshot scalers and textures
+    mfx_pres_tick();
     if (mfx_want(&g_mfx_pres, MFX_M4, cw, ch, vp)) {
         if (!mfx_scale(&g_mfx_pres, cb, src, cx, cy, cw, ch)) return 0;
         src = g_mfx_pres.out; cx = cy = 0; cw = src.width; ch = src.height; mfx = 1;
