@@ -181,15 +181,16 @@ static void aa_parse_cases(void) {
     CHECK(aa_env_parse("6") == -5 && aa_env_parse("2 ") == -5 && aa_env_parse("smaa") == -5 && aa_env_parse("-1") == -5 && aa_env_parse("OFF") == -5 && aa_env_parse("02") == -5,
           "DM_AA_MODE=6 / '2 ' / smaa / -1 / OFF / 02: malformed (-5), no trimming, case-sensitive");
 }
-// aa_tick against a fake main module whose renderer has the AA mode byte at +0x6614 (the console config, 1): each case in a forked child, because aa_tick reads
-// DM_AA_MODE once into a static. Returns the byte the child saw after one tick, or -1 when the child failed. scale3d_tick isn't called (its output size reads 0)
-static int aa_case(const char *env, int want, uint64_t frames) {
+// aa_tick against a fake main module whose renderer has the AA mode byte at +0x6614, starting at init (1 = the console config): each case in a forked child,
+// because aa_tick reads DM_AA_MODE once into a static. A case that expects a write starts from a different value, so its result proves the write happened.
+// Returns the byte the child saw after one tick, or -1 when the child failed. scale3d_tick isn't called (its output size reads 0)
+static int aa_case(const char *env, int want, uint64_t frames, int init) {
     fflush(stdout); pid_t p = fork(); if (p < 0) return -1;
     if (!p) {
         signal(SIGALRM, abort_exit); alarm(10);
         if (env) setenv("DM_AA_MODE", env, 1); else unsetenv("DM_AA_MODE");
         uint8_t *base = mmap(NULL, 0x3200000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); if (base == MAP_FAILED) _exit(255);
-        uint8_t *renderer = calloc(1, 0x7000); renderer[0x6614] = 1;
+        uint8_t *renderer = calloc(1, 0x7000); renderer[0x6614] = (uint8_t)init;
         *(uintptr_t *)(base + 0x31e0848) = (uintptr_t)renderer;
         memset(&g_mod[0], 0, sizeof g_mod[0]); strcpy(g_mod[0].name, "main"); g_mod[0].base = base; g_nmod = 1;
         g_frames = frames; g_aa_want = want;
@@ -200,14 +201,16 @@ static int aa_case(const char *env, int want, uint64_t frames) {
     return WEXITSTATUS(st);
 }
 static void aa_tick_cases(void) {
-    CHECK(aa_case(NULL, 2, 0) == 1, "aa_tick: before frame 30 the byte stays (1)");
-    CHECK(aa_case(NULL, 2, 30) == 2, "aa_tick: the picture setting's SMAA (2) is written from frame 30");
-    CHECK(aa_case(NULL, 1, 30) == 1, "aa_tick: the picture setting's FXAA (1)");
-    CHECK(aa_case("off", 2, 30) == 1, "aa_tick: DM_AA_MODE=off leaves the byte to the game");
-    CHECK(aa_case("3", 2, 30) == 2, "aa_tick: DM_AA_MODE=3 is refused (it crashes the game); the picture setting decides (2)");
-    CHECK(aa_case("smaa", 2, 30) == 2, "aa_tick: a malformed DM_AA_MODE is ignored; the picture setting decides (2)");
-    CHECK(aa_case("0", 2, 30) == 0, "aa_tick: DM_AA_MODE=0 forces no anti-aliasing");
-    CHECK(aa_case("2", 1, 30) == 2, "aa_tick: DM_AA_MODE=2 beats the picture setting");
+    CHECK(aa_case(NULL, 2, 0, 1) == 1, "aa_tick: before frame 30 the byte stays (1)");
+    CHECK(aa_case(NULL, 2, 30, 1) == 2, "aa_tick: the picture setting's SMAA (2) is written from frame 30");
+    CHECK(aa_case(NULL, 1, 30, 0) == 1, "aa_tick: the picture setting's FXAA (1) is written over 0");
+    CHECK(aa_case(NULL, 1, 0, 0) == 0, "aa_tick: ... but not before frame 30 (0 stays)");
+    CHECK(aa_case("off", 2, 30, 1) == 1, "aa_tick: DM_AA_MODE=off leaves the byte to the game");
+    CHECK(aa_case("3", 2, 30, 1) == 2, "aa_tick: DM_AA_MODE=3 is refused (it crashes the game); the picture setting decides (2)");
+    CHECK(aa_case("smaa", 2, 30, 1) == 2, "aa_tick: a malformed DM_AA_MODE is ignored; the picture setting decides (2)");
+    CHECK(aa_case("0", 2, 30, 1) == 0, "aa_tick: DM_AA_MODE=0 forces no anti-aliasing");
+    CHECK(aa_case("1", 2, 30, 0) == 1, "aa_tick: DM_AA_MODE=1 forces FXAA over the picture setting's SMAA");
+    CHECK(aa_case("2", 1, 30, 1) == 2, "aa_tick: DM_AA_MODE=2 beats the picture setting");
 }
 int main(void) {
     aa_parse_cases();
