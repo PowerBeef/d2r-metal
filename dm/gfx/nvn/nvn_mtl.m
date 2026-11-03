@@ -4692,8 +4692,9 @@ static int bloomq_pso(MTLPixelFormat fmt) {
     aux_bloom_get(&lib, &pso, &pf, &samp);
     if (!lib || !samp) { g_bloomq_broken = 1; return 0; }   // aux_build already printed the red line
     if (pf != fmt || !pso) {
-        NSError *e = nil; pso = bloomq_build_pso(lib, fmt, &e);
+        NSError *e = nil; uint64_t t0 = bp_now(); pso = bloomq_build_pso(lib, fmt, &e);
         if (!pso) { MLOG("【红】bloom 1/4: no capture pipeline for format %lu (%s): bloom 1/4 off for this session", (unsigned long)fmt, e ? e.localizedDescription.UTF8String : "no function"); g_bloomq_broken = 1; return 0; }
+        MLOG("bloom 1/4: built the capture pipeline for format %lu on the replay thread in %.1f ms (the prebuilt one is for format %lu)", (unsigned long)fmt, (bp_now() - t0) / 1e6, (unsigned long)pf);   // once per format (at most 4)
     }
     g_bloomq_pf[g_bloomq_np] = fmt; g_bloomq_ps[g_bloomq_np++] = pso;
     g_bloomq_pso = pso; g_bloomq_fmt = fmt; g_bloomq_samp = samp; return 1;

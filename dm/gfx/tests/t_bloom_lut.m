@@ -1,5 +1,6 @@
 // Bloom 1/4 and 3D brightening on a real Metal replay with closed-form expectations: the full A→B→C→D chain, every abort and mid-chain reset leaving B0 black,
-// the cutoff viewport guard, a broken capture pipeline falling back to the game's chain, the health summary's windows, background helper-kernel readiness,
+// the cutoff viewport and scissor guard, a broken capture pipeline falling back to the game's chain, the health summary's windows, when the apply reuses the
+// last B1, a never-allocated or released B0, a B0 clear inside an open pass, the prebuilt RG11B10Float capture pipeline, background helper-kernel readiness,
 // the LUT rewrite's output at k = 2 and the exposure k the magenta probe reads.
 // Built twice: t_bloom_lut (run under MTL_DEBUG_LAYER=1) and t_bloom_lut_asan (AddressSanitizer + UndefinedBehaviorSanitizer, the first report aborts).
 #include "../nvn/nvn_mtl.m"
@@ -49,8 +50,8 @@ static void lib_init(void) { NSError *e = nil; g_lib = [g_dev newLibraryWithSour
 // The bloom chain's fragment shaders, identified by key; each draws red when it is really drawn
 static NvShader *fs_key(const char *key, int ntex) { NvShader *s = shader(@"red", 1); s->rf.color_mask = 1; snprintf(s->key, sizeof s->key, "%s", key);
     if (ntex) { s->rf.nb = 1; s->rf.b[0] = (nvn_rbind){.kind = NVN_RB_TEX, .reg = 0, .dtt = 2}; } return s; }
-enum { ID_S = 1601, ID_B0, ID_B1, ID_B2, ID_T, ID_F };
-static tex_t tS, tB0, tB1, tB2, tT, tF;
+enum { ID_S = 1601, ID_B0, ID_B1, ID_B2, ID_T, ID_F, ID_HB0, ID_HB1, ID_HB2 };
+static tex_t tS, tB0, tB1, tB2, tT, tF, hB0, hB1, hB2;   // hB*: the bloom mips' own format (RG11B10Float), for which the capture pipeline is prebuilt
 static prog_t p_cut, p_down, p_up, p_apply, p_other, p_blue;
 static void bloom_init(void) {
     g_ub = (float *)pool_mem(4096); g_ub[0] = 0.5f;
@@ -60,6 +61,8 @@ static void bloom_init(void) {
     prog(&p_cut, shader(@"v", 0), cut); prog(&p_down, shader(@"v", 0), fs_key("019ce2f82edbda84_t", 1)); prog(&p_up, shader(@"v", 0), fs_key("cc264583f2000c81_t", 1));
     prog(&p_apply, shader(@"v", 0), fs_key("2e2d6700a2569795_t", 1)); prog(&p_other, shader(@"v", 0), fs_key("0123456789abcdef_t", 0));
     NvShader *blue = shader(@"blue", 1); blue->rf.color_mask = 1; snprintf(blue->key, sizeof blue->key, "fedcba9876543210_t"); prog(&p_blue, shader(@"v", 0), blue);
+    hB0 = tex(8, NVN_FORMAT_R11G11B10F); hB1 = tex(4, NVN_FORMAT_R11G11B10F); hB2 = tex(2, NVN_FORMAT_R11G11B10F);
+    mtl_reg_tex(ID_HB0, &hB0, NULL); mtl_reg_tex(ID_HB1, &hB1, NULL); mtl_reg_tex(ID_HB2, &hB2, NULL);
 }
 // One draw of program pg into a w x w target rt, sampling texture id tid (0 = none)
 static void step(const tex_t *rt, int w, int tid, prog_t *pg, int first) { chain c = chain_new(); set_rt_sz(&c, rt, w); ds_off(&c); bind_ubo7(&c); if (tid) bind_tex(&c, tid); bind_prog(&c, pg); draw_cmd(&c); run(&c, first); }
@@ -208,6 +211,11 @@ static void vp_case(void) {
     { chain c = chain_new(); set_rt_sz(&c, &tB0, 8); viewport(&c, 0, 0, 7, 8); ds_off(&c); bind_ubo7(&c); bind_tex(&c, ID_S); bind_prog(&c, &p_cut); draw_cmd(&c); run(&c, 1); commit(); }
     EXPECT("viewport 7x8 on an 8x8 target (within 1 px): engaged", 1, g_bloomq.state);
     bloomq_reset();
+    clear_green(&tB0); case_begin();
+    { chain c = chain_new(); set_rt_sz(&c, &tB0, 8); p_scissor sc = {0, 0, 4, 8}; emit(&c, OP_SCISSOR, &sc, sizeof sc); ds_off(&c); bind_ubo7(&c); bind_tex(&c, ID_S); bind_prog(&c, &p_cut); draw_cmd(&c); run(&c, 1); commit(); }
+    EXPECT("full viewport, scissor 4x8 on an 8x8 target: not engaged", 0, g_bloomq.state);
+    EXPECT("full viewport, scissor 4x8 on an 8x8 target: counted", 1, g_bloomq_stat.vp);
+    readback(&tB0, px); EXPECT("scissor 4x8: the game's cutoff drew the left half", 32, count_px(px, 255, 0, 0)); EXPECT("scissor 4x8: the right half untouched", 32, count_px(px, 0, 255, 0));
 }
 // The apply at state 0 reuses the last B1 only in a frame whose chain never started (the extrapolated frame). After a cutoff that did not engage
 // the game's own chain drew B0, and after an abort B0 is black (that frame has no bloom): both read B0. A second apply after a completed chain still
@@ -268,6 +276,17 @@ static void split_case(void) {
     EXPECT("split pass: the interrupted pass's depth is stored (no lookahead DontCare)", 0, g_sd_dead_bytes - g_udc_saved_bytes - dropped0);
     readback(&tT, px); EXPECT("split pass: the blue draw fails its depth test against the stored depth", 64, count_px(px, 255, 0, 0));
 }
+// Targets in the bloom mips' own format (RG11B10Float) use the capture pipeline prebuilt on the background queue: nothing is built on the replay thread
+static void fmt_case(void) {
+    case_begin();
+    step(&hB0, 8, ID_S, &p_cut, 1); EXPECT("RG11B10Float: the cutoff engages", 1, g_bloomq.state);
+    EXPECT("RG11B10Float: the cutoff's check took the prebuilt pipeline", 1, g_bloomq_pso != nil && g_bloomq_pso == g_aux.bloom_pso);
+    step(&hB1, 4, ID_HB0, &p_down, 0); EXPECT("RG11B10Float: the capture draws B1 (state 2)", 2, g_bloomq.state);
+    EXPECT("RG11B10Float: the capture used the prebuilt pipeline", 1, g_bloomq_pso == g_aux.bloom_pso && g_bloomq_fmt == MTLPixelFormatRG11B10Float);
+    step(&hB2, 2, ID_HB1, &p_down, 0); step(&hB1, 4, ID_HB2, &p_up, 0); step(&hB0, 8, ID_HB1, &p_up, 0);
+    step(&tF, 8, ID_HB0, &p_apply, 0); EXPECT("RG11B10Float: the apply reads B1", ID_HB1, S.tex[1][0]); commit();
+    EXPECT("RG11B10Float: applied", 1, g_bloomq_stat.applied);
+}
 // The health summary: the first window prints after 600 frames, later ones after 3600; new targets flush the window early; an empty window stays closed
 static char g_log[8192];
 static void log_cap(const char *file, int line, const char *fmt, ...) { (void)file; (void)line; char b[1024]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
@@ -292,6 +311,9 @@ static void summary_case(void) {
 }
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init(); lib_init(); bloom_init();
+    // The helper kernels compile on a background queue; the product waits for them once, for at most 3 s. Under a loaded machine that cap would make the
+    // cases below timing-dependent, so the test waits for the build itself (up to 60 s) before the first case
+    for (int i = 0; i < 60000 && !atomic_load(&g_aux_done); i++) usleep(1000);
     aux_case(); bright_case(); chain_case(); abort61_case(); abort62_case(); abort63_case(); midchain_case(); broken_case(); vp_case(); summary_case();
-    reuse_case(); fresh_b0_case(); split_case();
+    reuse_case(); fresh_b0_case(); split_case(); fmt_case();
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0; } }
