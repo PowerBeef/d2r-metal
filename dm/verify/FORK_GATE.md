@@ -20,7 +20,7 @@ Several tiers can be given at once; they run in the order given.
 - `summary.json` and the last line, `FORKGATE OK|RED {json}`, give the tiers, the commit, the time, the red steps and the number of unavailable items.
 - `$DM_ROOT/run/gate/latest` points at the most recent run.
 - Unavailable items (⚪) are not red: a missing recording, a fixture save without what a case needs, or no phone, or a front run still disturbed after its redos (exit 3: another app took the front, a Space switch, display sleep; `scenarios/README.md`).
-- **Only the long tier takes the front** (the benchmarks, by design). Every windowed scenario of `core` and `full` is a background run (`DM_TEST_BGRUN=1`): no focus taken, no Space switched, the window off screen; the gate can run while you work.
+- **What takes the front:** the long tier's benchmarks (by design) and, in `full`, the iOS package on the Mac (`smoke_mac.sh`, the `ios-mac` scenarios: it takes the front even when launched with `open -g`; its scenarios are front runs, redone when disturbed). Every windowed scenario of `core` and the Mac App scenarios of `full` are background runs (`DM_TEST_BGRUN=1`): no focus taken, no Space switched, the window off screen.
 
 ## Tiers
 

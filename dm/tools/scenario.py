@@ -309,7 +309,6 @@ class LaunchBackend:
 
     def start(self):
         env = dict(os.environ, SCN_RUN=self.run, SCN_SAVE=self.meta['save'], SCN_ENV=' '.join(f'{k}={v}' for k, v in self.meta['env'].items()))
-        if self.bgrun is not None: env['DM_TEST_BGRUN'] = self.bgrun; env['SCN_FRONT'] = '1' if self.bgrun == '0' else ''   # scenario_launch.sh: launch in front or in the background
         self.logf = open(os.path.join(self.run, 'launch.log'), 'a', encoding='utf-8')
         self.p = subprocess.Popen(['bash', os.path.join(DM, 'ios', 'tools', 'scenario_launch.sh'), self.name], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.logf, text=True, env=env)
         assert self.p.stdout is not None
@@ -364,9 +363,10 @@ class Runner:
         os.makedirs(self.run, exist_ok=True)
         self.backend = CliBackend(self.meta, self.run, headless) if backend_name == 'cli' else MacAppBackend(self.meta, self.run, headless) if backend_name == 'mac-app' else LaunchBackend(backend_name, self.meta, self.run)
         # Windowed runs are background runs unless they run in front: the `front` header, then the scenario's own env, then DM_TEST_BGRUN from the caller
-        # (--front, bench.py), else 1. Headless and device runs set nothing
+        # (--front, bench.py), else 1. ios-mac always runs in front: the iOS package on the Mac takes the front even when launched with open -g (measured:
+        # UserInteractiveFocal 0.5 s after launch, scene active), so its runs are front runs, judged for disturbances. Headless and device runs set nothing
         self.windowed = backend_name == 'mac-app' or backend_name == 'ios-mac' or (backend_name == 'cli' and bool(self.meta['window']) and not headless)
-        self.bgrun = None if not self.windowed else '0' if self.meta['front'] else str(self.meta['env']['DM_TEST_BGRUN']) if 'DM_TEST_BGRUN' in self.meta['env'] \
+        self.bgrun = None if not self.windowed else '0' if self.meta['front'] or backend_name == 'ios-mac' else str(self.meta['env']['DM_TEST_BGRUN']) if 'DM_TEST_BGRUN' in self.meta['env'] \
             else os.environ['DM_TEST_BGRUN'] if os.environ.get('DM_TEST_BGRUN') in ('0', '1') else '1'
         self.front = self.bgrun == '0'
         self.backend.bgrun = self.bgrun

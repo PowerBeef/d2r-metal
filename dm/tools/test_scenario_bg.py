@@ -85,6 +85,8 @@ class BgRunTest(unittest.TestCase):
         self.assertEqual(run('ping\n', headless=True), (None, False, None))       # headless: nothing set
         self.assertEqual(run('window 0\nping\n'), (None, False, None))
         self.assertEqual(run('ping\n', 'device'), (None, False, None))
+        self.assertEqual(run('ping\n', 'ios-mac'), ('0', True, '0'))              # the iOS package on the Mac takes the front anyway: always a front run
+        self.assertEqual(run('ping\n', 'ios-mac', env='1'), ('0', True, '0'))
 
     # ---- the detector, synthetic streams
     def test_detector_front(self):
