@@ -90,7 +90,8 @@ static void render_setup(void) {
     LOG("画面：出图宽 %d（选项页「分辨率」第 %d 档） | render width %d (Resolution tier %d)", g_render_w, t, g_render_w, t);
 }
 int front_video_running_res(void) { return g_render_tier; }
-int front_video_mfx_ok(void) { static int ok = -1; if (ok < 0) ok = [MTLFXSpatialScalerDescriptor supportsDevice:MTLCreateSystemDefaultDevice()] ? 1 : 0; return ok; }
+int mtl_mfx_supported(void);   // nvn_mtl.m: the Metal 4 spatial scaler both renderer paths build
+int front_video_mfx_ok(void) { return mtl_mfx_supported(); }
 // The GPU's name, which the recommendations below go by ("Apple M6", "Apple M4 Pro", "Apple A18 Pro GPU"); DM_TEST_GPU_NAME stands in for it (tests)
 static NSString *gpu_name(void) {
     const char *t = getenv("DM_TEST_GPU_NAME");
