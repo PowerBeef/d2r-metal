@@ -4701,9 +4701,11 @@ static int bloomq_capture(void) {
     g_bloomq_i = (g_bloomq_i + 1) % 3; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; return 1;
 }
 // B0 was never drawn while bloom 1/4 held the chain (its cutoff was skipped and its pending clear dropped): when the chain aborts or is left in the middle,
-// clear that level to black so the draws that still read B0 (the rest of the game's chain at state 0, the apply) read no bloom instead of undefined memory
+// clear that level to black so the draws that still read B0 (the rest of the game's chain at state 0, the apply) read no bloom instead of undefined memory.
+// Only a texture that still exists is cleared (serial_get, not tex_mtl, which would create one for a B0 released since, e.g. by a resolution change)
 static void bloomq_clear_b0(const tex_t *b0, int lv, int sl) {
-    id<MTLTexture> t = tex_mtl(b0); if (!t || !(t.usage & MTLTextureUsageRenderTarget)) return;
+    __unsafe_unretained id o = serial_get(b0->serial); id<MTLTexture> t = [o conformsToProtocol:@protocol(MTLTexture)] ? (id<MTLTexture>)o : nil;
+    if (!t || !(t.usage & MTLTextureUsageRenderTarget) || (NSUInteger)lv >= t.mipmapLevelCount || (NSUInteger)sl >= (t.textureType == MTLTextureType2DArray ? t.arrayLength : 1)) return;
     zskip_del(b0->serial); rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     RPD *rp = [RPD new]; rp.colorAttachments[0].texture = t; rp.colorAttachments[0].level = lv; rp.colorAttachments[0].slice = sl;
     rp.colorAttachments[0].loadAction = MTLLoadActionClear; rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0); rp.colorAttachments[0].storeAction = MTLStoreActionStore;
