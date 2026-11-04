@@ -31,18 +31,22 @@
 // to their defaults. The "has changes" bit is shared with the custom settings (dm_custom.c lights Apply from dm_video_dirty too). Events
 // (dm/verify/event_stream.md): 'picture' at load and after an Apply that saved, 'video_row' for each change the player makes.
 // Frame Rate and Frame Drops are custom keys (eco_fps / q3d in sw_custom.txt, dm_custom.c): this file only drives their selectors, pending values and
-// Apply go through the custom settings, and the presets leave them alone.
+// Apply go through the custom settings, and the presets leave them alone. The Frame Rate row's two options name the real rates on the window's
+// screen (fps_labels: 72 / 36 fps on a 144 Hz screen), the layout's 60 / 30 fps where those are the rates.
 // Phones: Recommended is 75% + MetalFX + SMAA + 16x + Accurate on every device (front_ios.m); no Display Mode, Native or s3d.
 // Selectors are the game's CarouselWidget (read on the host, 3.3.94012): the option count at +0x7e8, the current option at +0x7ec, and from +0x7d8 one byte
 // per option saying whether it can be chosen (0 = skipped). The current option is set through the game's own setter main+0xab0c84 (widget, index), which
-// clamps to the count, skips options that cannot be chosen and shows the option's text in the current language. The vtable and the option count are
-// checked before any read or write.
+// clamps to the count, skips options that cannot be chosen and shows the option's text in the current language: it looks the option's string (from +0x558,
+// 0x28 bytes each) up in the string table, shows the string itself when no entry has that name, and writes the text into its text box (the pointer at
+// +0x7f8). The vtable and the option count are checked before any read or write.
 #include "hle.h"
 #include "dm.h"
 #include "dm_cursor.h"
+#include "dm_i18n.h"
 #include "dm_widget.h"
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -90,6 +94,10 @@ __attribute__((weak)) int front_video_rec_id(void) { return -1; }
 // 1 = the window's screen no longer suits the launch picture and a restart would fix it (front_mac.m picture_screen_check): the Resolution row shows
 // the restart hint even though its value did not change; 0 = no (iOS, the unit tests)
 __attribute__((weak)) int front_video_screen_stale(void) { return 0; }
+// The refresh rate of the window's screen the Frame Rate row is labelled for (Hz, 0 = no window): front_mac.m lets a test stand in for it
+// (DM_TEST_SCREEN_HZ); elsewhere the present's own reading (nvn_mtl.m mtl_display_refresh)
+double mtl_display_refresh(void); double dm_pace_hz(double screen_hz, double floor_hz); double dm_eco_hz(double screen_hz);
+__attribute__((weak)) double front_video_screen_hz(void) { return mtl_display_refresh(); }
 
 static const char *vals_str(const int *v) {   // "mode=1 res=1 ...": for logs (static buffer, not thread-safe; only used under g_mu or at launch)
     static char b[160]; size_t L = 0; b[0] = 0;
@@ -327,6 +335,34 @@ static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effe
 // car_of turns a row's value into the selector index, val_of back; every other row is the identity
 static int car_of(int row, int v) { static const int m[5] = { 2, 3, 4, 1, 0 }; return DM_PHONE && k_row_key[row] == K_RES && v >= 0 && v < 5 ? m[v] : v; }
 static int val_of(int row, int c) { static const int m[5] = { 4, 3, 0, 1, 2 }; return DM_PHONE && k_row_key[row] == K_RES && c >= 0 && c < 5 ? m[c] : c; }
+// The Frame Rate row's labels for a screen of hz: the normal rate (the smallest even fraction of the refresh at or above 60, dm_pace_hz) and the power
+// saver's (dm_eco_hz), each as a whole number when within 0.1 of one, else with one decimal, put into fmt (dmVideoFpsRate, "%s fps"). Returns 0 when
+// both read 60 / 30 (60 and 120 Hz screens, NTSC 59.94, no window): the layout's own options (dmVideoFps60 / dmVideoFps30) stay
+static void fps_num(char *b, size_t n, double hz) { if (fabs(hz - round(hz)) < 0.1) snprintf(b, n, "%ld", lround(hz)); else snprintf(b, n, "%.1f", hz); }
+static int fps_labels(double screen_hz, const char *fmt, char *hi, char *lo, size_t n) {
+    char a[16], b[16]; fps_num(a, sizeof a, dm_pace_hz(screen_hz, 60)); fps_num(b, sizeof b, dm_eco_hz(screen_hz));
+    if (!strcmp(a, "60") && !strcmp(b, "30")) return 0;
+    if (!fmt || !strstr(fmt, "%s")) fmt = "%s fps";   // the format must carry its one placeholder (dm_i18n.py checks every language)
+    snprintf(hi, n, fmt, a); snprintf(lo, n, fmt, b); return 1;
+}
+// Writes the Frame Rate selector's two options (our own TouchVideo_fps, a CarouselWidget whose vtable and option count car_ok checked): the labels for the
+// screen, or back to the layout's own keys, then has the game's setter show the current option again. Only on a change: the strings are compared first
+static void fps_row(uint64_t w) {
+    static const char *const k_own[2] = { "dmVideoFps60", "dmVideoFps30" };   // the layout's options (touch_layout.py _VIDEO, row fps)
+    const char *nm = *(const char **)(w + 8); if (!nm || strcmp(nm, "TouchVideo_fps")) return;
+    char hi[48], lo[48]; const char *want[2] = { k_own[0], k_own[1] };
+    double hz = front_video_screen_hz();
+    if (fps_labels(hz, dm_str(main_base(), "dmVideoFpsRate"), hi, lo, sizeof hi)) { want[0] = hi; want[1] = lo; }
+    int ch = 0;
+    for (int i = 0; i < 2; i++) {
+        uint64_t st = w + 0x558 + 0x28 * (uint64_t)i; const char *cur = *(const char **)st; uint64_t len = *(uint64_t *)(st + 8); size_t n = strlen(want[i]);
+        if (cur && len == n && !memcmp(cur, want[i], n)) continue;
+        ((void *(*)(uint64_t, const char *, uint64_t))(main_base() + 0x136e5c))(st, want[i], n); ch = 1;
+    }
+    if (!ch) return;
+    ((void (*)(uint64_t, int))(main_base() + 0xab0c84))(w, car_get(w));   // show the current option with its new text
+    LOG("picture settings: Frame Rate row labelled %s / %s (screen %.2f Hz)", want[0], want[1], hz);
+}
 static int row_want(int i) { return k_row_ckey[i] ? dm_custom_shown_value(k_row_ckey[i]) : k_row_key[i] < 0 ? preset_of() : shown(k_row_key[i]); }   // the option this row should show
 void dm_video_pump(uint64_t sp) {   // called every frame while an Options page of ours is on screen (dm_custom.c); sp = 0: the page is not on screen
     static dm_wref seen[NR];
@@ -354,5 +390,6 @@ void dm_video_pump(uint64_t sp) {   // called every frame while an Options page 
         for (int i = 0; i < NR; i++) { if (!w[i]) continue; int v = row_want(i); if (k_row_key[i] == -1) preset_enable(w[i], v == P_CUSTOM); car_set(w[i], car_of(i, v)); }   // presets move the other rows, and the other rows move the preset
         DM_EV("video_row", "row:s value:d preset:d", k_rows[ch], cur, preset_of());   // the player's change and what the Graphic Presets row shows after it
     }
+    for (int i = 0; i < NR; i++) if (w[i] && !strcmp(k_rows[i], "fps")) fps_row(w[i]);   // the Frame Rate row names this screen's rates
     hint(sp);
 }
