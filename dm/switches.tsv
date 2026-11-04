@@ -446,7 +446,6 @@ DM_TEST_VIDEO_FIRSTBOOT	host	host/front_mac.m	y
 DM_TEST_VOICE	host	host/dm_custom.c	-
 DM_TEST_WALK_CAL	host	host/dm_world.c	-
 DM_TEST_WARP_DIAG	host	host/diag.c	-
-DM_TEST_WINDOW_PX	ios	ios/Sources/front_ios.m	-
 DM_TEST_WINSIZE	host	host/front_mac.m	y
 DM_TEST_WORLD_GO	host	host/dm_world.c	-
 DM_TEST_WORLD_GO2	host	host/dm_world.c	-

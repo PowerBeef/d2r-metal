@@ -314,7 +314,8 @@ static void probe_tsd(void) {
 // ---- boot：跑宿主（loader + HLE）到客体入口；宿主日志走 stderr，重定向到 Documents/boot.txt ----
 // ---- boot: run the host (loader + HLE) up to the guest entry; the host log goes to stderr, redirected to Documents/boot.txt ----
 int dm_main(int argc, char **argv);   // dm/host/main.c 以 -Dmain=dm_main 编入 | dm/host/main.c is compiled in with -Dmain=dm_main
-UIView *front_ios_view(CGRect frame); // front_ios.m
+UIView *front_ios_view(UIWindowScene *ws); // front_ios.m
+void front_ios_scene_geometry(UIWindowScene *ws);   // front_ios.m: the scene's geometry changed (main thread)
 void front_ios_lifecycle_install(void); // front_ios.m
 void front_ios_focus_event(int ev);     // front_ios.m
 void front_ios_final_save(void);        // front_ios.m：终止 / 断开前存一次盘 | front_ios.m: save once before terminating / disconnecting
@@ -1102,7 +1103,7 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
     if (self.netmon) { nw_path_monitor_cancel(self.netmon); self.netmon = nil; }   // 资源齐了就不再守网络：原先进了游戏还一直开着，每次网络变化都回调 | assets are complete, so stop watching the network: it used to stay on into the game, calling back on every network change
     plog("assets: 资源就绪，就地起宿主");
     g_need_assets = 0;
-    self.view = front_ios_view(self.view.window.windowScene.coordinateSpace.bounds);
+    self.view = front_ios_view(self.view.window.windowScene ?: g_window.windowScene);
     [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures]; [self setNeedsUpdateOfHomeIndicatorAutoHidden];
     // 下载 / 补充包在后台做完时系统会在后台叫醒 App 走到这里：那时起宿主就是在后台起游戏、提交 GPU（后台提交会被系统杀）。只换好界面，回前台时 sceneWillEnterForeground 起宿主
     // When a download / the Legacy Device Pack finishes in the background the system wakes the App in the background and it gets here: starting the host then would boot the game and submit GPU work in the background (background submits get killed by the system). Only swap the view; sceneWillEnterForeground starts the host on returning to the foreground
@@ -1139,13 +1140,17 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
 @implementation SceneDelegate
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)s options:(UISceneConnectionOptions *)o {
     UIWindowScene *ws = (UIWindowScene *)scene;
+    // The smallest window the system may resize the scene to (iPad windows; the iOS / iPadOS 27 SDK resizes the scene in discrete steps, TN3192):
+    // the smallest iPhone landscape 16:9 size, the base the touch layout is drawn for. sizeRestrictions is nil where the system offers no resizable windows
+    ws.sizeRestrictions.minimumSize = CGSizeMake(667, 375);
+    plog("Scene: minimum size 667x375 pt (%s)", ws.sizeRestrictions ? "set" : "not resizable here");
     self.window = [[UIWindow alloc] initWithWindowScene:ws]; g_window = self.window;
     UIViewController *vc = [DmGameVC new];
     vc.view.backgroundColor = UIColor.blackColor;
     if ([g_mode isEqualToString:@"boot"] && g_block_title) { vc = [BlockVC new]; vc.view.backgroundColor = UIColor.blackColor; }   // 图形芯片不支持 / 安装包不完整：只弹框 | Graphics chip not supported / install package incomplete: only show the message
     else if ([g_mode isEqualToString:@"boot"] && g_no_bc) { vc = [NoBcVC new]; vc.view.backgroundColor = UIColor.blackColor; }   // 本机型不支持：只弹框 | This device model is not supported: only show an alert
     else if ([g_mode isEqualToString:@"boot"] && g_need_assets) vc = [AssetVC new];   // 资源包没到：下载界面 | Asset pack not here yet: download screen
-    else if ([g_mode isEqualToString:@"boot"]) vc.view = front_ios_view(ws.coordinateSpace.bounds);   // 图形后端出图的层（不叠任何控件） | The layer the graphics backend presents into (no widgets stacked on it)
+    else if ([g_mode isEqualToString:@"boot"]) vc.view = front_ios_view(ws);   // the layer the graphics backend presents into, laid out for this scene
     else if ([g_mode isEqualToString:@"blank"]) { UIView *front_ios_blank_view(CGRect); vc.view = front_ios_blank_view(ws.coordinateSpace.bounds); }   // 发热负对照 | Heat negative control
     else {   // 探针模式：屏上标出模式名 | Probe mode: show the mode name on screen
         UILabel *l = [[UILabel alloc] initWithFrame:vc.view.bounds];
@@ -1160,6 +1165,8 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
 - (void)sceneDidEnterBackground:(UIScene *)s { if (g_host_up) front_ios_focus_event(1); }
 - (void)sceneWillEnterForeground:(UIScene *)s { log_promote(); if ([g_mode isEqualToString:@"boot"] && !g_need_assets && !g_no_bc && !g_block_title) { host_start(); if (g_host_up) front_ios_focus_event(2); } }
 - (void)sceneDidBecomeActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(3); }
+// A discrete resize, a rotation or a move to another display: front_ios.m notes the scene's screen and lays the game view out again
+- (void)windowScene:(UIWindowScene *)ws didUpdateEffectiveGeometry:(UIWindowSceneGeometry *)prev { (void)prev; if ([g_mode isEqualToString:@"boot"] && g_host_up) front_ios_scene_geometry(ws); }
 // 场景断开 / App 终止：还在前台就先存一次盘（front_ios_final_save），再有序收尾、_exit（hle_lifecycle.c）。注意：用户在多任务界面划掉一个已在后台挂起的 App 时，系统直接 SIGKILL，不走这两个回调
 // Scene disconnect / App termination: if still in the foreground, save once first (front_ios_final_save), then shut down in order and _exit (hle_lifecycle.c). Note: when the user swipes away an App already suspended in the background from the multitasking screen, the system sends SIGKILL directly and neither of these two callbacks runs
 - (void)sceneDidDisconnect:(UIScene *)s { if (g_host_up) { front_ios_final_save(); dm_host_shutdown("iOS 场景断开"); } }
