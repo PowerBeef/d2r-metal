@@ -1,6 +1,7 @@
 // The Mac App's Recommended picture (dm_picrec.c), checked two ways.
 // Expected rows: what each machine gets from the model (t_picrec_cases.h; the M6 rows are the measured ones and must stay within the capacity).
-// Invariants: properties the model must keep whatever its constants, over a grid of chips, GPU core counts, screens and MetalFX support.
+// Invariants: properties the model must keep whatever its constants, over a grid of chips, GPU core counts, screens and MetalFX support, and over
+// frame rates (50 to 100 fps) and drawables larger than the Native cap (4.5K to 6K).
 // Also checked: the chip as read from its name, per-core speeds and core-count fallbacks, dm_picrec_real (the gate that keeps the CLI host
 // and test copies on the original picture) and dm_picrec_id (the rec_id dm_video.c stores with the recommendation). Pass -v to print every machine's choice.
 #include <math.h>
@@ -9,7 +10,11 @@
 #include <string.h>
 #include "../dm_picrec.h"
 
-typedef struct { const char *what, *gpu; int cores, w, h, mfx; int native, tier_res, s3d, envsh, shq, q3d; } want;   // tier_res counts only without Native
+typedef struct { const char *what, *gpu; int cores, w, h, mfx; int native, tier_res, s3d, envsh, shq, q3d; int dw, dh; double hz; } want;   // tier_res counts only without Native;
+// dw x dh: the present's viewport (0 = the picture's size); hz: the frame rate on that screen (0 = 60)
+// rec_id of the M6 at Native 3840 x 2160 with MetalFX into a 5K viewport, and at 72 fps: the formula in dm_picrec.h, worked out by hand
+#define ID_M6_5K 566077671
+#define ID_M6_72 978830642
 static const int k_pct[5] = { 100, 85, 75, 67, 50 };
 static const double k_scale[5] = { 1.0, 0.85, 0.75, 0.67, 0.5 };
 static const int k_fixed_w[3] = { 1600, 1920, 2560 };
@@ -17,10 +22,11 @@ static int n, fails;
 
 // The cases give the in-game picture at Native (front_mac.m native_picture); a picture narrower than 16:9 is true full screen, whose aspect a fixed
 // resolution takes too (spec.aspect), so it is derived from the picture's own shape here
-static void rec_of(const char *gpu, int cores, int w, int h, int mfx, dm_mac_rec *r) {
-    dm_mac_spec s = { .gpu = gpu, .cores = cores, .out_w = w, .out_h = h, .mfx = mfx, .aspect = (long)w * 9 < (long)h * 16 ? (double)w / h : 0 };
+static void rec_at(const char *gpu, int cores, int w, int h, int mfx, int dw, int dh, double hz, dm_mac_rec *r) {
+    dm_mac_spec s = { .gpu = gpu, .cores = cores, .out_w = w, .out_h = h, .mfx = mfx, .aspect = (long)w * 9 < (long)h * 16 ? (double)w / h : 0, .drw_w = dw, .drw_h = dh, .pace_hz = hz };
     dm_mac_recommend(&s, r);
 }
+static void rec_of(const char *gpu, int cores, int w, int h, int mfx, dm_mac_rec *r) { rec_at(gpu, cores, w, h, mfx, 0, 0, 0, r); }
 
 // one check; a failure prints its line (the invariants print only the first 5 of each kind)
 __attribute__((format(printf, 3, 4))) static void check(int ok, int *shown, const char *fmt, ...) {
@@ -107,18 +113,68 @@ static void grid(void) {
         }
 }
 
+// A choice at least as light as another: not Native where the other is fixed, no higher 3D Resolution with Native, no environment shadows the other
+// lacks with the same output, and never a larger fixed width
+static int lighter_or_same(const dm_mac_rec *a, const dm_mac_rec *b) {   // b is no heavier than a
+    if (b->native && !a->native) return 0;
+    if (a->native && b->native && k_pct[b->s3d] > k_pct[a->s3d]) return 0;
+    if (a->native == b->native && b->envsh && !a->envsh) return 0;
+    if (!a->native && !b->native && b->tier_res > a->tier_res) return 0;
+    return 1;
+}
+// Frame rate and drawable over the same chips and core counts:
+//   I10  a faster frame rate (50, 60, 72, 82.5, 100 fps) never gives a heavier choice, and at 60 the answer is the one without a rate (0)
+//   I11  a larger viewport for the Native picture (3840 x 2160 into itself, 4480 x 2520, 5120 x 2880, 6016 x 3384) never gives a heavier choice, a
+//        viewport no more than 5% larger counts as none, and the enlargement is counted (pres > 0) exactly when the picture is Native and enlarged
+//   I1 and I2 hold there too (I1 at 60 fps: a faster screen can leave a slow GPU with nothing light enough)
+static void grid_rate_drawable(void) {
+    static const char *const k_tiers[4] = { "", " Pro", " Max", " Ultra" };
+    static const double k_hz[] = { 50, 60, 72, 82.5, 100 };
+    static const int k_drw[][2] = { { 3840, 2160 }, { 4000, 2250 }, { 4480, 2520 }, { 5120, 2880 }, { 6016, 3384 } };
+    static const int k_scr[][2] = { { 2560, 1440 }, { 3024, 1890 }, { 3840, 2160 } };
+    int shown[16] = { 0 };
+    for (int g = 1; g <= 7; g++) for (int t = 0; t < 4; t++) for (int mfx = 0; mfx < 2; mfx++) for (int k = 0; k < (int)(sizeof k_grid_cores / sizeof *k_grid_cores); k++) {
+        char chip[32]; snprintf(chip, sizeof chip, "Apple M%d%s", g, k_tiers[t]); int cores = k_grid_cores[k];
+        for (int s = 0; s < 3; s++) {
+            int w = k_scr[s][0], h = k_scr[s][1]; dm_mac_rec r0, r60, prev;
+            rec_of(chip, cores, w, h, mfx, &r0); rec_at(chip, cores, w, h, mfx, 0, 0, 60, &r60);
+            check(!memcmp(&r0, &r60, sizeof r0), &shown[10], "I10 60 fps differs from no rate (%s, %d cores, %dx%d, mfx %d)", chip, cores, w, h, mfx);
+            for (int i = 0; i < (int)(sizeof k_hz / sizeof *k_hz); i++) {
+                dm_mac_rec r; rec_at(chip, cores, w, h, mfx, 0, 0, k_hz[i], &r);
+                check(r.q3d == !(!r.envsh || r.load > 0.85), &shown[2], "I2 q3d %d with envsh %d, load %.3f (%s, %d cores, %dx%d, mfx %d, %.1f fps)", r.q3d, r.envsh, r.load, chip, cores, w, h, mfx, k_hz[i]);
+                if (i) check(lighter_or_same(&prev, &r), &shown[10], "I10 %.1f → %.1f fps gave a heavier choice: native %d → %d, 3D %d%% → %d%%, envsh %d → %d (%s, %d cores, %dx%d, mfx %d)",
+                             k_hz[i - 1], k_hz[i], prev.native, r.native, k_pct[prev.s3d], k_pct[r.s3d], prev.envsh, r.envsh, chip, cores, w, h, mfx);
+                prev = r;
+            }
+        }
+        dm_mac_rec prev;
+        for (int d = 0; d < (int)(sizeof k_drw / sizeof *k_drw); d++) {
+            dm_mac_rec r; int dw = k_drw[d][0], dh = k_drw[d][1]; rec_at(chip, cores, 3840, 2160, mfx, dw, dh, 0, &r);
+            dm_mac_spec sp = { .gpu = chip, .cores = cores, .out_w = 3840, .out_h = 2160, .mfx = mfx, .drw_w = dw, .drw_h = dh };
+            int enl = dm_picrec_enlarges(&sp);
+            check(enl == (d >= 2), &shown[11], "I11 %dx%d %s an enlargement of 3840x2160", dw, dh, enl ? "counts as" : "is not");
+            check((r.pres > 0) == (r.native && enl), &shown[11], "I11 pres %.3f with native %d into %dx%d (%s, %d cores, mfx %d)", r.pres, r.native, dw, dh, chip, cores, mfx);
+            check(r.speed < 0.27 || r.load <= 1.0, &shown[1], "I1 load %.3f at speed %.3f into %dx%d (%s, %d cores, mfx %d)", r.load, r.speed, dw, dh, chip, cores, mfx);
+            check(r.q3d == !(!r.envsh || r.load > 0.85), &shown[2], "I2 q3d %d with envsh %d, load %.3f into %dx%d (%s, %d cores, mfx %d)", r.q3d, r.envsh, r.load, dw, dh, chip, cores, mfx);
+            if (d) check(lighter_or_same(&prev, &r), &shown[11], "I11 %dx%d → %dx%d gave a heavier choice: native %d → %d, 3D %d%% → %d%%, envsh %d → %d (%s, %d cores, mfx %d)",
+                         k_drw[d - 1][0], k_drw[d - 1][1], dw, dh, prev.native, r.native, k_pct[prev.s3d], k_pct[r.s3d], prev.envsh, r.envsh, chip, cores, mfx);
+            prev = r;
+        }
+    }
+}
+
 int main(int argc, char **argv) {
     int verbose = argc > 1 && !strcmp(argv[1], "-v");
     static const want k[] = {
 #include "t_picrec_cases.h"
     };
     for (size_t i = 0; i < sizeof k / sizeof *k; i++) {
-        dm_mac_rec r; rec_of(k[i].gpu, k[i].cores, k[i].w, k[i].h, k[i].mfx, &r);
+        dm_mac_rec r; rec_at(k[i].gpu, k[i].cores, k[i].w, k[i].h, k[i].mfx, k[i].dw, k[i].dh, k[i].hz, &r);
         int ok = r.native == k[i].native && (r.native || r.tier_res == k[i].tier_res) && r.s3d == k[i].s3d && r.envsh == k[i].envsh && r.shq == k[i].shq && r.q3d == k[i].q3d;
         char out[16]; if (r.native) snprintf(out, sizeof out, "Native"); else snprintf(out, sizeof out, "fixed %d", k_fixed_w[r.tier_res]);
         if (!ok || verbose)
-            printf("%s %-50s %-24s %2d cores %4dx%-4d speed %.2f → %-10s 3D %3d%% envsh %d shq %d q3d %d (%.0f%%)%s\n", ok ? "  " : "✗", k[i].what, k[i].gpu,
-                   k[i].cores, k[i].w, k[i].h, r.speed, out, k_pct[r.s3d], r.envsh, r.shq, r.q3d, r.load * 100, ok ? "" : "  ← expected otherwise");
+            printf("%s %-50s %-24s %2d cores %4dx%-4d speed %.2f → %-10s 3D %3d%% envsh %d shq %d q3d %d (%.0f%%%s)%s\n", ok ? "  " : "✗", k[i].what, k[i].gpu,
+                   k[i].cores, k[i].w, k[i].h, r.speed, out, k_pct[r.s3d], r.envsh, r.shq, r.q3d, r.load * 100, r.pres > 0 ? ", present enlargement counted" : "", ok ? "" : "  ← expected otherwise");
         n++; fails += !ok;
         // the measured machines: the model must keep what they really held at 60 fps within its capacity
         if (strstr(k[i].what, "(measured)")) check(r.load <= 1.0, NULL, "%s: load %.3f above the capacity", k[i].what, r.load);
@@ -161,7 +217,26 @@ int main(int argc, char **argv) {
     { dm_mac_spec a = { "Apple M6", 12, 2560, 1440, 1 }, b = { "Apple M1", 8, 2560, 1440, 1 }, c = a, d = a; c.mfx = 0; d.out_w = 2544;
       check(dm_picrec_id(&a) != dm_picrec_id(&b), NULL, "rec_id: another GPU at the same screen gives the same id");
       check(dm_picrec_id(&a) != dm_picrec_id(&c) && dm_picrec_id(&a) != dm_picrec_id(&d), NULL, "rec_id: MetalFX or the screen does not change the id"); }
+    // The drawable and the frame rate count only where they change the model's input: a viewport of the picture's own size (or no more than 5%
+    // larger) and 60 fps keep a plain machine's id; a 5K viewport, a 4.5K one or 72 fps give another, and a 4K display moved from its 1920 x 1080
+    // to its 2560 x 1440 mode (the same 3840 Native, a 5120 x 2880 drawable) is worked out again
+    { dm_mac_spec a = { "Apple M6", 12, 3840, 2160, 1 }, same = a, near = a, k5 = a, k45 = a, r60 = a, r0 = a, r72 = a, both = a;
+      same.drw_w = 3840; same.drw_h = 2160; near.drw_w = 4000; near.drw_h = 2250; k5.drw_w = 5120; k5.drw_h = 2880; k45.drw_w = 4480; k45.drw_h = 2520;
+      r60.pace_hz = 60; r0.pace_hz = 0; r72.pace_hz = 72; both = k5; both.pace_hz = 72;
+      int id = dm_picrec_id(&a);
+      check(id == 926858990 && dm_picrec_id(&same) == id && dm_picrec_id(&near) == id && dm_picrec_id(&r60) == id && dm_picrec_id(&r0) == id, NULL,
+            "rec_id: a viewport the picture's size (%d), 5%% larger (%d) or 60 fps (%d) changes the plain id %d", dm_picrec_id(&same), dm_picrec_id(&near), dm_picrec_id(&r60), id);
+      int i5 = dm_picrec_id(&k5), i45 = dm_picrec_id(&k45), i72 = dm_picrec_id(&r72), ib = dm_picrec_id(&both);
+      check(i5 != id && i45 != id && i72 != id && ib != id && i5 != i45 && i5 != ib && i72 != ib && i5 >= 0 && i45 >= 0 && i72 >= 0 && ib >= 0, NULL,
+            "rec_id: 5K %d, 4.5K %d, 72 fps %d, 5K at 72 fps %d should differ from each other and from %d", i5, i45, i72, ib, id);
+      check(i5 == ID_M6_5K && i72 == ID_M6_72, NULL, "rec_id formula: 5K viewport %d (expected %d), 72 fps %d (expected %d)", i5, ID_M6_5K, i72, ID_M6_72); }
+    // dm_picrec_enlarges: the present's own rule, more than 5% larger both ways
+    { struct { int w, h, dw, dh, want; } e[] = { { 3840, 2160, 5120, 2880, 1 }, { 3840, 2160, 4480, 2520, 1 }, { 3840, 2160, 4032, 2268, 0 }, { 3840, 2160, 5120, 2160, 0 },
+                                                 { 2560, 1440, 2560, 1440, 0 }, { 3840, 2160, 0, 0, 0 }, { 3840, 1620, 5120, 2160, 1 } };
+      for (size_t i = 0; i < sizeof e / sizeof *e; i++) { dm_mac_spec sp = { "Apple M6", 12, e[i].w, e[i].h, 1, 0, e[i].dw, e[i].dh, 0 };
+          check(dm_picrec_enlarges(&sp) == e[i].want, NULL, "dm_picrec_enlarges(%dx%d into %dx%d) = %d, expected %d", e[i].w, e[i].h, e[i].dw, e[i].dh, dm_picrec_enlarges(&sp), e[i].want); } }
     grid();
+    grid_rate_drawable();
     printf("t_picrec: %d checks, %d failed\n", n, fails);
     return fails != 0;
 }

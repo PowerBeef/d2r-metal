@@ -29,6 +29,7 @@ __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn
 #include "dm_kbm.h"
 #include "dm_picrec.h"
 #include "dm_screen_mac.h"
+#include "dm_geom.h"
 #include "../ios/Sources/dm_vkbd_ui.h"
 #include "../ios/Sources/dm_vkbd.h"
 #include <signal.h>
@@ -190,9 +191,37 @@ static void panel_px(int *w, int *h) {
     }
     CFRelease(ms);
 }
+// DM_TEST_SCREEN_HZ=<hz> (tests): the screen's refresh rate as Recommended (mac_rec, through launch_hz) and the Frame Rate row's labels
+// (front_video_screen_hz) count it; the present still paces by the real display. Read once; 0 = unset (a value that is not a rate logs a red line)
+static double test_screen_hz(void) {
+    static double hz; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        const char *e = getenv("DM_TEST_SCREEN_HZ"); if (!e || !*e) return;
+        char *end; double v = strtod(e, &end);
+        if (end != e && !*end && v > 0 && v <= 1000) { hz = v; LOG("DM_TEST_SCREEN_HZ: the screen counts as %.2f Hz for Recommended and the Frame Rate labels", v); }
+        else LOG("【红】DM_TEST_SCREEN_HZ=%s is not a refresh rate in Hz: ignored", e);
+    });
+    return hz;
+}
+double mtl_display_refresh(void);   // nvn_mtl.m: the window's screen (screen_note's copy)
+double dm_pace_hz(double screen_hz, double floor_hz);   // nvn_mtl.m: the frame rate on a screen of that refresh (nvn_pace.h)
+// The refresh rate the Frame Rate row is labelled for (dm_video.c fps_row, on the game thread): the window's screen, or the test stand-in
+double front_video_screen_hz(void) { double t = test_screen_hz(); return t > 0 ? t : mtl_display_refresh(); }
+// The launch screen's refresh rate (Hz; 0 = unknown), for Recommended: its display mode's, else the screen's maximum frame rate, as screen_note
+// reads the window's screen; DM_TEST_SCREEN_HZ stands in for it
+static double launch_hz(void) {
+    double t = test_screen_hz(); if (t > 0) return t;
+    NSScreen *sc = dm_screen(); if (!sc) return 0;
+    CGDisplayModeRef m = CGDisplayCopyDisplayMode([sc.deviceDescription[@"NSScreenNumber"] unsignedIntValue]);
+    double hz = m ? CGDisplayModeGetRefreshRate(m) : 0; if (m) CGDisplayModeRelease(m);
+    return hz > 0 ? hz : (double)sc.maximumFramesPerSecond;
+}
+static int test_drawable_px(CGSize *sz);
 static int g_mac_rec_id = -1;   // dm_picrec_id of the spec mac_rec worked from (set once, inside its dispatch_once)
-// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores) and the in-game picture at Native (native_picture); memory,
-// the Mac's model, the panel size, the thermal state and Low Power Mode are only logged. Worked out once per launch: first in main.c cloud_boot_start
+// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores), the in-game picture at Native (native_picture), where
+// the present draws it in full screen (its viewport on the launch screen's full-screen drawable, below the notch: larger than the picture past the Native
+// cap, as on a 5K display; DM_TEST_DRAWABLE_PX's canvas stands in for the drawable) and the frame rate on the launch screen (launch_hz, dm_pace_hz: 72 fps
+// on a 144 Hz screen); memory, the Mac's model, the panel size, the thermal state and Low Power Mode are only logged. Worked out once per launch: first in main.c cloud_boot_start
 // (dm_custom's Frame Drops default, on the main thread, after NSApplication exists), then reused by dm_video.c's load
 static dm_mac_rec mac_rec(void) {
     static dm_mac_rec r; static dispatch_once_t once;
@@ -201,16 +230,22 @@ static dm_mac_rec mac_rec(void) {
         char model[64] = ""; n = sizeof model; sysctlbyname("hw.model", model, &n, NULL, 0);
         double px = main_px(), ph = main_px_h(), asp; int w, h; native_picture(&w, &h, &asp);
         NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), w, h, front_video_mfx_ok(), asp };
+        { scr_px sp = scr_launch(); CGSize ds = CGSizeMake(sp.w, sp.hc); test_drawable_px(&ds); double vp[4]; dm_geom_fit(ds.width, ds.height, w, h, vp);
+          spec.drw_w = (int)lround(vp[2]); spec.drw_h = (int)lround(vp[3]); }
+        double hz = launch_hz(); spec.pace_hz = dm_pace_hz(hz, 60);
         dm_mac_recommend(&spec, &r); g_mac_rec_id = dm_picrec_id(&spec);
         int pw, pnh; panel_px(&pw, &pnh); NSProcessInfo *pi = NSProcessInfo.processInfo;
         static const char *const tiers[] = { "iPhone chip", "base", "Pro", "Max", "Ultra" };
         static const int pct[5] = { 100, 85, 75, 67, 50 };
         static const int fixed_w[3] = { 1600, 1920, 2560 };
-        LOG("picture: %s (%s, generation %d), %d GPU cores, %.0f GB, %s, screen %dx%d (backing %.0fx%.0f%s, panel %dx%d), thermal state %ld, Low Power Mode %s; "
-            "about %.2fx the M6's GPU → Recommended %s %d, 3D %d%%, environment shadows %s, shadows %s, Frame Drops %s (%.0f%% of the estimated capacity); rec_id %d",
+        LOG("picture: %s (%s, generation %d), %d GPU cores, %.0f GB, %s, screen %dx%d (backing %.0fx%.0f%s, panel %dx%d), drawn into %dx%d%s, %.2f Hz%s → %.4g fps, "
+            "thermal state %ld, Low Power Mode %s; about %.2fx the M6's GPU → Recommended %s %d, 3D %d%%, environment shadows %s, shadows %s, Frame Drops %s "
+            "(%.0f%% of the estimated capacity%s); rec_id %d",
             g.UTF8String, tiers[r.tier + 1], r.gen, spec.cores, mem / 1073741824.0, model, w, h, px, ph, test_screen_px(NULL, NULL, NULL) ? " from DM_TEST_SCREEN_PX" : "",
-            pw, pnh, (long)pi.thermalState, pi.lowPowerModeEnabled ? "on" : "off", r.speed, r.native ? "Native" : "fixed", r.native ? w : fixed_w[r.tier_res], pct[r.s3d],
-            r.envsh ? "on" : "off", r.shq == 2 ? "Ultra" : r.shq ? "High" : "Standard", r.q3d ? "keep" : "lower", r.load * 100, g_mac_rec_id);
+            pw, pnh, spec.drw_w, spec.drw_h, dm_picrec_enlarges(&spec) ? " (the present enlarges it)" : "", hz, test_screen_hz() > 0 ? " from DM_TEST_SCREEN_HZ" : "", spec.pace_hz,
+            (long)pi.thermalState, pi.lowPowerModeEnabled ? "on" : "off", r.speed, r.native ? "Native" : "fixed", r.native ? w : fixed_w[r.tier_res], pct[r.s3d],
+            r.envsh ? "on" : "off", r.shq == 2 ? "Ultra" : r.shq ? "High" : "Standard", r.q3d ? "keep" : "lower", r.load * 100,
+            r.pres > 0 ? ", the present's enlargement included" : "", g_mac_rec_id);
     });
     return r;
 }

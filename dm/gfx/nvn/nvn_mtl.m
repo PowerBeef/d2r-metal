@@ -794,9 +794,10 @@ static uint64_t g_bp_t0;   // 进程启动（本模块装入）时刻 | Time of 
 __attribute__((constructor)) static void bp_t0(void) { g_bp_t0 = bp_now(); }
 static int bootprof(void) { static int v = -1; if (v < 0) v = getenv("DM_BOOTPROF") != NULL; return v; }
 static uint64_t g_bp_lib_n, g_bp_lib_ns, g_bp_pso_n, g_bp_pso_ns, g_bp_up_bytes, g_bp_first_present;
-// The host's own passes (texture helpers, present, MetalFX, bloom, the brightness LUT) build their libraries and pipelines at first use, on the
-// submit or present thread, outside the warm-up. They are counted here, apart from the game's shaders and pipelines (g_bp_lib_* / g_bp_pso_*,
-// @lib_new / @pso_new), which keep their meaning; a build over 4 ms is logged, so a cold run shows which one stalls a frame
+// The host's own passes build their libraries and pipelines outside the warm-up: the texture helpers, the present, the MetalFX copy and write-back
+// passes, the Metal 4 compiler and the scalers at first use, on the submit, replay or present thread; the helper kernels (the brightness LUT, bloom
+// 1/4) on their own queue from mtl_init. They are counted here, apart from the game's shaders and pipelines (g_bp_lib_* / g_bp_pso_*, @lib_new /
+// @pso_new), which keep their meaning; a build over 4 ms is logged with its thread, so a cold run shows which one stalls a frame
 static _Atomic uint64_t g_bp_host_lib_n, g_bp_host_lib_ns, g_bp_host_pso_n, g_bp_host_pso_ns;
 static void host_built(int pso, uint64_t t0, const char *what) {
     uint64_t dt = bp_now() - t0;
@@ -5021,6 +5022,7 @@ static int bloomq_pso(MTLPixelFormat fmt) {
     if (!lib || !samp) { g_bloomq_broken = 1; return 0; }   // aux_build already printed the red line
     if (pf != fmt || !pso) {
         NSError *e = nil; uint64_t t0 = bp_now(); pso = bloomq_build_pso(lib, fmt, &e);
+        if (pso) host_built(1, t0, "bloom 1/4");
         if (!pso) { MLOG("【红】bloom 1/4: no capture pipeline for format %lu (%s): bloom 1/4 off for this session", (unsigned long)fmt, e ? e.localizedDescription.UTF8String : "no function"); g_bloomq_broken = 1; return 0; }
         MLOG("bloom 1/4: built the capture pipeline for format %lu on the replay thread in %.1f ms (the prebuilt one is for format %lu)", (unsigned long)fmt, (bp_now() - t0) / 1e6, (unsigned long)pf);   // once per format (at most 4)
     }
@@ -5601,17 +5603,26 @@ static const char k_lut_msl[] =
 // Host-made helper kernels (3D brightening's LUT rewrite, bloom 1/4's capture) are compiled on a private serial queue started from mtl_init, not on the replay
 // thread at first use: a cold system shader cache (first launch after an install or an OS update) would otherwise put the compile into the first frame that needs it.
 // The replay thread waits for them at most once, for at most 3 s (aux_wait): dispatch_block_wait on a block submitted to a serial queue lends the waiter's QoS
-// to the build. Until they are ready, or when one could not be built, that rewrite stays off and the game's own picture shows
+// to the build. Until they are ready, or when one could not be built, that rewrite stays off and the game's own picture shows.
+// The same queue then prebuilds what the cold trigger runs found on frame threads (aux_prebuild, a block of its own, so aux_wait never waits for it)
 static os_unfair_lock g_aux_lk = OS_UNFAIR_LOCK_INIT;
-static struct { id<MTLComputePipelineState> bright_ps; id<MTLLibrary> bloom_lib; id<MTLRenderPipelineState> bloom_pso; MTLPixelFormat bloom_fmt; id<MTLSamplerState> bloom_samp; } g_aux;
+static struct { id<MTLComputePipelineState> bright_ps; id<MTLLibrary> bloom_lib; id<MTLRenderPipelineState> bloom_pso; MTLPixelFormat bloom_fmt; id<MTLSamplerState> bloom_samp;
+                id<MTLLibrary> present_lib, mfx3d_lib; } g_aux;   // present_lib / mfx3d_lib: aux_prebuild's (nil until it has run)
+static void aux_prebuild(void);
+// A library aux_prebuild compiled: the present's (also the MetalFX copy pass's) or the 3D write-back's; nil before it is ready, and the caller then
+// compiles its own (no frame thread ever waits for the queue)
+static id<MTLLibrary> pre_lib(int mfx3d) { os_unfair_lock_lock(&g_aux_lk); id<MTLLibrary> l = mfx3d ? g_aux.mfx3d_lib : g_aux.present_lib; os_unfair_lock_unlock(&g_aux_lk); return l; }
 static dispatch_queue_t g_aux_q; static dispatch_block_t g_aux_blk; static dispatch_once_t g_aux_once; static _Atomic int g_aux_done;
 static void aux_build(void) {
-    uint64_t t0 = bp_now(); NSError *e = nil;
+    uint64_t t0 = bp_now(), t1 = t0; NSError *e = nil;   // each build is also counted with the host's own (host_built, "another thread": this queue)
     id<MTLLibrary> ll = [g_dev newLibraryWithSource:@(k_lut_msl) options:nil error:&e]; id<MTLFunction> lf = ll ? [ll newFunctionWithName:@"lutk"] : nil;
-    id<MTLComputePipelineState> bps = lf ? [g_dev newComputePipelineStateWithFunction:lf error:&e] : nil;
+    if (ll) host_built(0, t1, "brightness LUT");
+    t1 = bp_now(); id<MTLComputePipelineState> bps = lf ? [g_dev newComputePipelineStateWithFunction:lf error:&e] : nil;
+    if (bps) host_built(1, t1, "brightness LUT");
     if (!bps) MLOG("【红】3D brightening: the LUT kernel could not be built (%s): brightening off for this session", e ? e.localizedDescription.UTF8String : "no function");
-    e = nil; id<MTLLibrary> bl = [g_dev newLibraryWithSource:@(k_bloomq_msl) options:nil error:&e]; id<MTLRenderPipelineState> bp = nil; id<MTLSamplerState> bs = nil;
-    if (bl) { NSError *pe = nil; bp = bloomq_build_pso(bl, MTLPixelFormatRG11B10Float, &pe);   // the bloom mips' format; another format is built from bl on first use (bloomq_pso)
+    e = nil; t1 = bp_now(); id<MTLLibrary> bl = [g_dev newLibraryWithSource:@(k_bloomq_msl) options:nil error:&e]; id<MTLRenderPipelineState> bp = nil; id<MTLSamplerState> bs = nil;
+    if (bl) host_built(0, t1, "bloom 1/4");
+    if (bl) { NSError *pe = nil; t1 = bp_now(); bp = bloomq_build_pso(bl, MTLPixelFormatRG11B10Float, &pe); if (bp) host_built(1, t1, "bloom 1/4");   // the bloom mips' format; another format is built from bl on first use (bloomq_pso)
         MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge; sd.supportArgumentBuffers = YES;
         bs = [g_dev newSamplerStateWithDescriptor:sd]; }
     if (!bl || !bs) MLOG("【红】bloom 1/4: the capture shader could not be built (%s): bloom 1/4 off for this session", e ? e.localizedDescription.UTF8String : "no sampler");
@@ -5623,7 +5634,8 @@ static void aux_prewarm(void) {
     dispatch_once(&g_aux_once, ^{
         g_aux_q = dispatch_queue_create("dm.aux_kernels", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
         g_aux_blk = dispatch_block_create(0, ^{ @autoreleasepool { aux_build(); } });
-        dispatch_async(g_aux_q, g_aux_blk); });
+        dispatch_async(g_aux_q, g_aux_blk);
+        dispatch_async(g_aux_q, ^{ @autoreleasepool { aux_prebuild(); } }); });
 }
 // 1 = the helper kernels are built (each may still have failed: check its object). Replay thread only (the tests are single-threaded): it waits once at most,
 // never with a lock held. A wait that times out does not count as the one wait dispatch_block_wait allows, and it is never repeated
@@ -6609,17 +6621,21 @@ static int present_down_taps(NSUInteger cw, NSUInteger ch, MTLViewport vp) {
 }
 static void present_pipeline(MTLPixelFormat format) {
     if (!g_blit_pso || g_blit_fmt != format) {
-        NSError *e = nil;
-        id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_present_msl) options:nil error:&e];
-        if (!lib) MDIE("出图着色器编译失败 %s", e.localizedDescription.UTF8String);
+        NSError *e = nil; uint64_t t0 = bp_now();   // the builds are counted with the host's own (host_built); the library is aux_prebuild's when ready
+        id<MTLLibrary> lib = pre_lib(0);
+        if (!lib) { lib = [g_dev newLibraryWithSource:@(g_present_msl) options:nil error:&e];
+            if (!lib) MDIE("present: the shader library failed to compile: %s", e.localizedDescription.UTF8String);
+            host_built(0, t0, "present"); }
         MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
         pd.vertexFunction = [lib newFunctionWithName:@"vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"fs"];
         pd.colorAttachments[0].pixelFormat = format;
-        g_blit_pso = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
+        t0 = bp_now(); g_blit_pso = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
         if (!g_blit_pso) MDIE("出图管线失败 %s", e.localizedDescription.UTF8String);
+        host_built(1, t0, "present");
         pd.fragmentFunction = [lib newFunctionWithName:@"fs_down"];
-        g_blit_pso_down = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
+        t0 = bp_now(); g_blit_pso_down = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
         if (!g_blit_pso_down) MDIE("present: the down filter's pipeline failed: %s", e.localizedDescription.UTF8String);
+        host_built(1, t0, "present down-filter");
         g_blit_fmt = format;
         MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.supportArgumentBuffers = YES;
         g_blit_samp = [g_dev newSamplerStateWithDescriptor:sd];
@@ -6708,8 +6724,9 @@ static int mfx_stack(void) {
 // The Metal 4 compiler every Metal 4 scaler is built with: the present thread and the replay thread both build scalers, so it is created once
 static id<MTL4Compiler> mfx_compiler(void) {
     static id<MTL4Compiler> c; static dispatch_once_t once;
-    dispatch_once(&once, ^{ NSError *e = nil; c = [g_dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&e];
-        if (!c) MLOG("【红】MetalFX: no Metal 4 compiler (%s); MetalFX stays off", e.localizedDescription.UTF8String); });
+    dispatch_once(&once, ^{ NSError *e = nil; uint64_t t0 = bp_now(); c = [g_dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&e];
+        if (c) host_built(0, t0, "MetalFX compiler");   // counted with the libraries: it is made once, as a library is loaded
+        else MLOG("【红】MetalFX: no Metal 4 compiler (%s); MetalFX stays off", e.localizedDescription.UTF8String); });
     return c;
 }
 // Whether this device has the Metal 4 MetalFX spatial scaler, which both renderer paths build (the Mac present and the 3D pass on every platform).
@@ -6724,10 +6741,11 @@ static id<MTLRenderPipelineState> mfx_copy_pso(MTLPixelFormat fmt) {   // copy p
     static MTLPixelFormat f[4]; static id<MTLRenderPipelineState> p[4]; static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_lock(&mu); id<MTLRenderPipelineState> r = nil; int k = 0;
     for (; k < 4 && p[k]; k++) if (f[k] == fmt) { r = p[k]; break; }
-    if (!r && k < 4) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_present_msl) options:nil error:&e];
+    if (!r && k < 4) { NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = pre_lib(0);   // the present's library: aux_prebuild's when ready
+        if (!lib) { lib = [g_dev newLibraryWithSource:@(g_present_msl) options:nil error:&e]; if (lib) host_built(0, t0, "MetalFX copy"); }
         MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
         pd.vertexFunction = [lib newFunctionWithName:@"vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"fs"]; pd.colorAttachments[0].pixelFormat = fmt;
-        r = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil; if (r) { f[k] = fmt; p[k] = r; }
+        t0 = bp_now(); r = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil; if (r) { host_built(1, t0, "MetalFX copy"); f[k] = fmt; p[k] = r; }
         else MLOG("【红】MetalFX: the copy pass pipeline could not be built (format %lu): %s", (unsigned long)fmt, e.localizedDescription.UTF8String); }
     pthread_mutex_unlock(&mu); return r;
 }
@@ -6798,6 +6816,7 @@ static int mfx_ready(mfx_t *m, int m4, MTLPixelFormat fmt, NSUInteger iw, NSUInt
     d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;   // the swapchain holds sRGB-encoded (display-referred) values
     id<MTLFXSpatialScalerBase> s = m4 ? (id<MTLFXSpatialScalerBase>)[d newSpatialScalerWithDevice:g_dev compiler:mfx_compiler()] : (id<MTLFXSpatialScalerBase>)[d newSpatialScalerWithDevice:g_dev];
     const char *stage = "scaler"; id<MTLTexture> in = nil, out = nil;
+    if (s) host_built(1, t0, m->main_cb ? "3D MetalFX scaler" : "MetalFX scaler");   // counted with the pipelines (the scaler's own kernels)
     if (s) {
         stage = "textures";
         MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:fmt width:iw height:ih mipmapped:NO];
@@ -6953,12 +6972,37 @@ static id<MTLRenderPipelineState> mfx3d_pso(MTLPixelFormat fmt) {   // write-bac
     static MTLPixelFormat f[4]; static id<MTLRenderPipelineState> p[4]; int k = 0;
     for (; k < 4 && p[k]; k++) if (f[k] == fmt) return p[k];
     if (k == 4) return nil;
-    NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_mfx3d_msl) options:nil error:&e];
+    NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = pre_lib(1);   // aux_prebuild's when ready
+    if (!lib) { lib = [g_dev newLibraryWithSource:@(g_mfx3d_msl) options:nil error:&e]; if (lib) host_built(0, t0, "3D write-back"); }
     MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
     pd.vertexFunction = [lib newFunctionWithName:@"vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"fs"]; pd.colorAttachments[0].pixelFormat = fmt;
-    id<MTLRenderPipelineState> r = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+    t0 = bp_now(); id<MTLRenderPipelineState> r = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+    if (r) host_built(1, t0, "3D write-back");
     if (!r) { MLOG("【红】3D upscale: the write-back pipeline could not be built (format %lu): %s", (unsigned long)fmt, e.localizedDescription.UTF8String); return nil; }
     f[k] = fmt; p[k] = r; return r;
+}
+// Host builds the cold trigger runs found on frame threads, prebuilt on the helper-kernel queue after the helper kernels (aux_prewarm). pso_seed.py cold,
+// 2026-11-03 (P7 part B; Mac App with the 3D at 75% and MetalFX forced, and the iOS package on this Mac): the present's library 84-89 ms at the first
+// present (present thread), the 3D write-back's 74-80 ms and the first 3D MetalFX scaler 16.5-18.4 ms at the first 3D MetalFX draw (submit thread),
+// which in a run is the first Frame Drops step, when frames are already slow. The two libraries are compiled here and taken by their users when ready
+// (pre_lib); a throwaway scaler per format the scalers use (the 3D pass's RGBA16F, the present's RGBA8) compiles MetalFX's kernels, so a real scaler then
+// builds in a few ms. The pipelines on top of the libraries took under 5 ms and stay where they are
+static void aux_prebuild(void) {
+    uint64_t t0 = bp_now(), t1 = t0; NSError *e = nil; int ns = 0;
+    id<MTLLibrary> pl = [g_dev newLibraryWithSource:@(g_present_msl) options:nil error:&e]; if (pl) host_built(0, t1, "present (prebuilt)");
+    t1 = bp_now(); id<MTLLibrary> wl = [g_dev newLibraryWithSource:@(g_mfx3d_msl) options:nil error:&e]; if (wl) host_built(0, t1, "3D write-back (prebuilt)");
+    os_unfair_lock_lock(&g_aux_lk); g_aux.present_lib = pl; g_aux.mfx3d_lib = wl; os_unfair_lock_unlock(&g_aux_lk);
+    if (mtl_mfx_supported() && mfx_compiler()) {
+        static const MTLPixelFormat k_fmt[2] = { MTLPixelFormatRGBA16Float, MTLPixelFormatRGBA8Unorm };
+        for (int i = 0; i < 2; i++) {
+            MTLFXSpatialScalerDescriptor *d = [MTLFXSpatialScalerDescriptor new]; d.colorTextureFormat = d.outputTextureFormat = k_fmt[i];
+            d.inputWidth = 64; d.inputHeight = 36; d.outputWidth = 96; d.outputHeight = 54; d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
+            t1 = bp_now(); id<MTLFXSpatialScalerBase> sc = (id<MTLFXSpatialScalerBase>)[d newSpatialScalerWithDevice:g_dev compiler:mfx_compiler()];
+            if (sc) { host_built(1, t1, i ? "MetalFX scaler warm-up (present format)" : "MetalFX scaler warm-up (3D format)"); ns++; }
+        }
+    }
+    MLOG("host passes: prebuilt on the helper-kernel queue in %.1f ms (present library %s, 3D write-back library %s, MetalFX kernels %d of 2)", (bp_now() - t0) / 1e6,
+         pl ? "ready" : "failed (built at first use)", wl ? "ready" : "failed (built at first use)", ns);
 }
 // The 3D set's input allocation (aw x ah) for content cw x ch and output ow x oh: sized for the configured 3D scale (cfg, without the Frame Drops level)
 // plus MFX_PAD texels, so a Frame Drops step only changes the content inside it (no rebuild). The pad also absorbs a rounding difference between the

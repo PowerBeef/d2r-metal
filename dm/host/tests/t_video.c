@@ -12,6 +12,7 @@
 //   (18)      M: the presets, Apply / Discard / Default and the display preferences on this M6
 //   (18j)     the Mac's rows map their values to the selector one to one
 //   (21)      the environment-shadow and shadow-map answers are latched once the settings are known (thread.c's KESHADOW / KSHSIZE slots)
+//   (22)      the Frame Rate row's labels name the screen's real rates (fps_labels), and keep the layout's 60 / 30 fps where those are the rates
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -341,6 +342,18 @@ int main(void) {
       l = run_latch(LATCH_FILE(1, 1, 2, 2), NULL, NULL, 1);
       CHECK(l.e1 == 0 && l.s1 == 2100 && l.e2 == 1 && l.s2 == 4096,
             "(21) settings directory unknown: 0 / 2100 (the Switch look), not latched, so 1 / 4096 once it is known; got %d / %d, then %d / %d", l.e1, l.s1, l.e2, l.s2); }
+
+    // ---- (22) the Frame Rate labels: the normal rate (dm_pace_hz) and the power saver's (dm_eco_hz), whole numbers within 0.1, else one decimal
+    { static const struct { double hz; const char *hi, *lo; } k[] = { { 60, NULL, NULL }, { 120, NULL, NULL }, { 59.94, NULL, NULL }, { 240, NULL, NULL }, { 0, NULL, NULL },
+          { 144, "72 fps", "36 fps" }, { 165, "82.5 fps", "33 fps" }, { 100, "100 fps", "33.3 fps" }, { 75, "75 fps", "37.5 fps" }, { 50, "50 fps", "25 fps" },
+          { 90, "90 fps", "30 fps" }, { 48, "48 fps", "24 fps" }, { 119.88, NULL, NULL } };
+      for (size_t i = 0; i < sizeof k / sizeof *k; i++) { char hi[48] = "", lo[48] = ""; int r = fps_labels(k[i].hz, "%s fps", hi, lo, sizeof hi);
+          CHECK(k[i].hi ? r == 1 && !strcmp(hi, k[i].hi) && !strcmp(lo, k[i].lo) : r == 0, "(22) %.2f Hz: expect %s / %s, got %s%s / %s", k[i].hz, k[i].hi ? k[i].hi : "the layout's 60", k[i].lo ? k[i].lo : "30",
+                r ? "" : "(none) ", hi, lo); }
+      char hi[48], lo[48];
+      CHECK(fps_labels(144, "%s 帧", hi, lo, sizeof hi) && !strcmp(hi, "72 帧") && !strcmp(lo, "36 帧"), "(22) the language's format: expect 72 帧 / 36 帧, got %s / %s", hi, lo);
+      CHECK(fps_labels(144, "dmVideoFpsRate", hi, lo, sizeof hi) && !strcmp(hi, "72 fps"), "(22) a format without its placeholder (a missing entry) falls back to %%s fps: got %s", hi);
+      CHECK(fps_labels(144, NULL, hi, lo, sizeof hi) && !strcmp(lo, "36 fps"), "(22) no format: %%s fps; got %s", lo); }
 
     file_put(NULL); rmdir(g_dir);
     printf("t_video: %d checks, %d failed\n", checks, fails);

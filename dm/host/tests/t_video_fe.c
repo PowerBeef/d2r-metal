@@ -48,3 +48,11 @@ int dm_custom_shown(void) { return g_tshown; }
 int dm_custom_shown_value(const char *key) { int i = ckey(key); return i < 0 ? 0 : g_cpend[i] >= 0 ? g_cpend[i] : g_cval[i]; }
 void dm_custom_set_pending(const char *key, int v) { int i = ckey(key); if (i >= 0) { g_cpend[i] = v < 0 ? -1 : v; g_cset[i] = v; } }
 int dm_custom_default(const char *key) { int i = ckey(key); return i == 1 ? g_cdef_q3d : 0; }
+// The present's refresh reading, the frame-rate rules and the string lookup the Frame Rate row's labels use (dm_video.c fps_labels, fps_row): the rules
+// are the real ones (nvn_pace.h), the refresh rate is g_scr_hz, and dm_str hands back the key, as no game string table is loaded here
+#include "../../gfx/nvn/nvn_pace.h"
+double g_scr_hz = 60;
+double mtl_display_refresh(void) { return g_scr_hz; }
+double dm_pace_hz(double screen_hz, double floor_hz) { return nvn_pace_hz(screen_hz, floor_hz); }
+double dm_eco_hz(double screen_hz) { return nvn_eco_hz(screen_hz); }
+const char *dm_str(uint8_t *b, const char *key) { (void)b; return key; }
