@@ -43,3 +43,22 @@
 // and every Recommended run at 2560 x 1440: 60 fps with no slow frame. t_picrec checks that the model keeps these within its capacity.
     { "Mac mini M6, 2560 display (measured)", "Apple M6", 12, 2560, 1440, 1, 1, 0, 0, 1, 2, 1 },
     { "Mac mini M6 on a 4K display (measured)", "Apple M6", 12, 3840, 2160, 1, 1, 0, 0, 1, 2, 0 },
+// Where the present draws the picture (dw x dh, the viewport on the full-screen drawable) and the frame rate on the screen (hz). Past the Native cap
+// (3840 x 2160) the present enlarges the picture: with MetalFX while the 3D is at 100%, about 2 load units into 5120 x 2880 (an M6 at 5K drops to 85%,
+// where its 4K row keeps 100%), bilinear after a lower 3D's MetalFX pass, about 0.1. A fixed resolution's enlargement is not counted (the iMac 8-core row).
+// A screen at another frame rate scales the load by rate / 60: 72 fps on 144 Hz, 100 on 100 Hz, 50 on 50 Hz (heavier there); ProMotion 120 Hz runs 60
+    { "iMac 24 M4 (10-core GPU), 4.5K at its default 2240 x 1260", "Apple M4", 10, 3840, 2160, 1, 1, 0, 3, 0, 0, 0, 4480, 2520, 0 },
+    { "iMac 24 M4 (8-core GPU), 4.5K at its default 2240 x 1260", "Apple M4", 8, 3840, 2160, 1, 0, 1, 0, 1, 2, 1, 4480, 2520, 0 },
+    { "Mac mini M4 Pro (20-core GPU) on a 5K Studio Display", "Apple M4 Pro", 20, 3840, 2160, 1, 1, 0, 0, 1, 2, 0, 5120, 2880, 0 },
+    { "Mac mini M4 Pro (16-core GPU) on a 5K Studio Display", "Apple M4 Pro", 16, 3840, 2160, 1, 1, 0, 1, 1, 2, 0, 5120, 2880, 0 },
+    { "Mac Studio M4 Max (40-core GPU) on a 5K Studio Display", "Apple M4 Max", 40, 3840, 2160, 1, 1, 0, 0, 1, 2, 1, 5120, 2880, 0 },
+    { "Mac mini M6 on a 5K display", "Apple M6", 12, 3840, 2160, 1, 1, 0, 1, 1, 2, 1, 5120, 2880, 0 },
+    { "Mac Studio M4 Max (40-core GPU) on a 6K Pro Display XDR", "Apple M4 Max", 40, 3840, 2160, 1, 1, 0, 0, 1, 2, 1, 6016, 3384, 0 },
+    { "MacBook Neo on a 5K display", "Apple A18 Pro GPU", 5, 3840, 2160, 1, 0, 1, 0, 0, 0, 0, 5120, 2880, 0 },
+    { "Mac mini M4 (10-core GPU), 2560 x 1440 at 144 Hz (72 fps)", "Apple M4", 10, 2560, 1440, 1, 1, 0, 0, 1, 2, 0, 0, 0, 72 },
+    { "Mac mini M4 (10-core GPU), 2560 x 1440 at 100 Hz", "Apple M4", 10, 2560, 1440, 1, 1, 0, 2, 1, 2, 0, 0, 0, 100 },
+    { "Mac mini M4 Pro (16-core GPU) on a 4K display at 144 Hz", "Apple M4 Pro", 16, 3840, 2160, 1, 1, 0, 2, 1, 2, 0, 0, 0, 72 },
+    { "Mac mini M6 on a 4K display at 144 Hz", "Apple M6", 12, 3840, 2160, 1, 1, 0, 1, 1, 2, 0, 0, 0, 72 },
+    { "Mac mini M1 (8-core GPU), 2560 x 1440 at 144 Hz", "Apple M1", 8, 2560, 1440, 1, 1, 0, 2, 0, 0, 0, 0, 0, 72 },
+    { "Mac mini M4 (10-core GPU) on a 4K TV at 50 Hz", "Apple M4", 10, 3840, 2160, 1, 1, 0, 2, 0, 0, 0, 0, 0, 50 },
+    { "MacBook Pro 14 M4 Pro, ProMotion 120 Hz (60 fps)", "Apple M4 Pro", 20, 3024, 1890, 1, 1, 0, 0, 1, 2, 1, 3024, 1890, 60 },
