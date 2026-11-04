@@ -1,0 +1,44 @@
+# iPad windows follow discrete resizes (IOS-2). With the iOS / iPadOS 27 SDK the system resizes an iPad app's scene in steps (windowed apps,
+# Stage Manager, external displays) even with UIRequiresFullScreen, so the render size, the present and the game view (the UI band where the drawn
+# controls and touch land) must follow the window: the geom event compares them with where the present really drew the picture.
+# - The resize hook (`app resize_<w>x<h>`, front_ios.m test_resize) resizes the outermost view in points, not the Mac window: sizes larger than the
+#   Mac window are fine, since the geometry, the render size and the present do not depend on the window's clipping. Every size is at least the
+#   667x375 pt minimum scene size (main.m).
+# - Windows narrower than 4:3 get a 4:3 picture with bars above and below (dm_geom_window_px, clamp=1); wider ones follow the window.
+# - It runs on the phone package (DM_TEST_IDIOM=pad takes the iPad paths; the gate's full tier) and on the iPad-idiom package (SCN_MAC_APP=
+#   .iosdd_mac_pad/DmMacSmokePad.app, built by SMOKE_MAC_FAMILY=1,2 SMOKE_MAC_PKG_ONLY=1 dm/ios/tools/smoke_mac.sh 1): the first resize makes both
+#   start at 1366x1024 on a pretended 2732x2048 iPad screen (DM_TEST_SCREEN).
+# - Pixel values assume scale 2 (this Mac's displays): the first geom step (k100=200) fails first otherwise.
+# - Not at the Mac's Recommended in full screen, by design: the iOS package runs in its own fixed window with the iOS first-boot settings, and the
+#   test resizes its view. ios-mac runs are front runs (the iOS package takes the front).
+name ios_window_resize
+requires ios-mac
+save warlock
+timeout 300
+env DM_TEST_IDIOM=pad DM_TEST_SCREEN=2732x2048
+
+expect main_menu timeout=150
+app resize_1366x1024
+# out of a run the game renders 16:9 of the width, shown with bars above and below
+expect geom ok=1 ingame=0 win_w=1366 win_h=1024 rw=2732 rh=1536 vp_y=256 vp_h=1536 follow=1 k100=200 timeout=20
+enter_game
+expect geom ok=1 ingame=1 win_w=1366 win_h=1024 rw=2732 rh=2048 vp_y=0 vp_h=2048 follow=1 timeout=30
+app resize_1100x700
+expect geom ok=1 ingame=1 win_w=1100 win_h=700 rw=2200 rh=1400 vp_h=1400 follow=1 clamp=0 timeout=15
+# narrower than 4:3: a 4:3 picture with bars
+app resize_900x800
+expect geom ok=1 ingame=1 win_w=900 win_h=800 rw=1800 rh=1350 vp_y=125 vp_h=1350 follow=1 clamp=1 timeout=15
+# wider than 16:9
+app resize_1366x600
+expect geom ok=1 ingame=1 win_w=1366 win_h=600 rw=2732 rh=1200 vp_h=1200 follow=1 clamp=0 timeout=15
+stick 1 0 frames=30
+expect_state in_game=true
+# the minimum scene size
+app resize_667x375
+expect geom ok=1 ingame=1 win_w=667 win_h=375 rw=1334 rh=750 vp_h=750 follow=1 timeout=15
+app resize_1366x1024
+expect geom ok=1 ingame=1 win_w=1366 win_h=1024 rw=2732 rh=2048 follow=1 timeout=15
+quit
+check no_event geom ok=0
+check no_red
+check no_red_log

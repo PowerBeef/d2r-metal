@@ -64,6 +64,9 @@ targets:
         UISupportedInterfaceOrientations:   # 游戏画面 16:9 横屏（1600x900），只允许横屏两向 | The game picture is 16:9 landscape (1600x900); only the two landscape orientations are allowed
           - UIInterfaceOrientationLandscapeRight
           - UIInterfaceOrientationLandscapeLeft
+        # iOS / iPadOS 27 SDK: no longer full-screen-only; the system resizes the scene discretely (windowed apps, Stage Manager, external displays;
+        # TN3192). front_ios.m follows the window when a resize ends and main.m sets a minimum size. Kept because without it resizing is live and
+        # the render size would rebuild at every drag step.
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
         UIViewControllerBasedStatusBarAppearance: false

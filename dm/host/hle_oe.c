@@ -8,8 +8,7 @@
 #include "hle.h"
 #include "dm_uiscreen.h"
 
-// 运行模式是运行时状态（前端可改：iOS 过热降级切掌机）：唯一来源在此，启动时从 DM_OPMODE 取一次，之后不再读环境变量
-// The operation mode is runtime state (the front end can change it: iOS overheat downgrade switches to handheld): the single source is here, taken once from DM_OPMODE at startup, the environment variable is not read again afterwards
+// The operation mode is runtime state (changed at run time only by DM_OE_SCRIPT test scripts and the unit test t_oe): the single source is here, taken once from DM_OPMODE at startup, the environment variable is not read again afterwards
 #include <math.h>
 #include <stdatomic.h>
 static _Atomic int g_opmode = -1;
@@ -56,7 +55,7 @@ static _Atomic int g_ui_opmode = -1;
 static _Atomic int g_ui_armed; static _Atomic uint32_t g_ui_reads;   // 推过通知后游戏第一次来读运行模式记一次：切换事务拿它回读「游戏收到了」 | Counts once when the game first comes to read the operation mode after a notification has been pushed: the switch transaction uses it to read back "the game received it"
 uint32_t dm_oe_ui_opmode_reads(void) { return atomic_load(&g_ui_reads); }
 void dm_oe_ui_opmode(int m) { g_ui_opmode = m < 0 ? -1 : m; atomic_store(&g_ui_armed, 1); if (g_ntf_opmode) mq_push(MSG_OPMODE); }
-void dm_set_opmode(int m) {   // 前端调（过热降级等）：改状态并按游戏打开的开关推送 30 / 31 | called by the front end (overheat downgrade etc.): change the state and push 30 / 31 according to the switches the game has turned on
+void dm_set_opmode(int m) {   // DM_OE_SCRIPT and t_oe: change the state and push 30 / 31 according to the switches the game has turned on
     int old = dm_opmode(); if (old == m) return;
     g_opmode = m;
     LOG("oe 运行模式 %d → %d", old, m);
@@ -93,9 +92,7 @@ HLE_FORCE("_ZN2nn2oe27SetPerformanceConfigurationENS0_15PerformanceModeEi", "设
     LOG("oe::SetPerformanceConfiguration mode=%d cfg=%#x（忽略）", mode, cfg);
 }
 
-// 脚本化状态变化（无窗口验证生命周期 / 过热降级）：DM_OE_SCRIPT="focus=3@10,focus=1@20,opmode=0@30"（第 N 秒）
-// 时刻从游戏第一次取通知算起；「@ingame+N」= 读取画面第 K 次撤下（K = 前面 @ingame 项数 + 1，首个即进局）后 N 秒（按事件，不受负载影响）。与前端调用并存。
-// Scripted state changes (verify lifecycle / overheat downgrade without a window): DM_OE_SCRIPT="focus=3@10,focus=1@20,opmode=0@30" (second N)
+// Scripted state changes (lifecycle / operation-mode checks without a window): DM_OE_SCRIPT="focus=3@10,focus=1@20,opmode=0@30" (second N)
 // Time counts from the game's first notification fetch; "@ingame+N" = N seconds after the loading screen is taken down for the K-th time (K = number of preceding @ingame items + 1, the first one is run entry) (event-based, not affected by load). Coexists with front end calls.
 #include <unistd.h>
 static _Atomic int g_ls_unloads;   // 读取画面撤下次数（diag.c 的 UIMSG 处理调 dm_note_loadscreen_unload） | number of times the loading screen was taken down (the UIMSG handler in diag.c calls dm_note_loadscreen_unload)
