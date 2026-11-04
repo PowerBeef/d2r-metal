@@ -1,0 +1,64 @@
+# True full screen on a 16:10 Mac (NFS-1), on the Mac App test copy at Recommended for a 2304x1440 main screen (DM_TEST_SCREEN_PX: this 2560x1440
+# display shows it 1:1, pillarboxed in full screen to 1152x720 pt, drawable 2304x1440), in PC mode (DM_PC_MODE=1), with the 3D forced to 75%
+# (DM_3D_SCALE: the MetalFX 3D pass and its rebuild at every run entry and exit, which Recommended's 100% on this Mac never uses; NFS-4).
+# - The front end runs 16:9 with bars (2304x1296), a run 16:10 (2304x1440): the uiscreen res events and the presented frames (fe pshot:
+#   front_end.png, in_game.png, pc_inventory.png in support/, for a person to review the bars, the HUD along the bottom, nameplates at the units).
+# - The interface band sits at the bottom in a run (rect y=144) and stays there with a panel open, in the PC set and in the controller set (on the
+#   Mac the band never moves for a panel; touch_mac.c); a move would show as a rect event with y=72 (NFS-8).
+# - A ground click just above the PC HUD (content 640,641: interface y 0.878, picture y 0.890) walks the hero: the PC HUD band is judged in
+#   interface height, not the picture's (NFS-6). The test copy boots in PC mode (DM_PC_MODE=1, no padmode event), so the click takes the PC path
+#   (the log_has check: classified as world at interface y 0.878).
+# - The run is left (PausePanelMessage:ExitGame, the message the pause page's exit sends; A on the Mac App's pause page lands on Options) and
+#   entered again: the 16:10 -> 16:9 -> 16:10 pushes.
+# Run it with --front to time the run entry and exit frames (NFS-4) and to review the shots in real full screen.
+name true_full_1610_mac
+requires mac-app
+save warlock
+timeout 420
+env DM_TEST_SCREEN_PX=2304x1440 DM_TEST_VIDEO_FIRSTBOOT=1 DM_3D_SCALE=0.75 DM_PC_MODE=1
+
+expect main_menu timeout=120
+fe "0 layout"
+expect layout dw=2304 dh=1440 fs=true timeout=5
+fe "0 pshot front_end.png"
+sleep 1
+enter_game
+expect uiscreen what=res world=true w=2304 h=1440 timeout=10
+fe "0 uiscr"
+expect uiscreen what=rect y=144 timeout=10
+fe "0 pshot in_game.png"
+remember x
+fe "0 down 640,641"
+sleep 0.15
+fe "0 up 640,641"
+sleep 2
+expect_state x!=$x timeout=5
+fe "0 key 34"
+expect_no uiscreen what=rect y=72 for=3
+expect_state panels~=PlayerInventoryExpansionLayout timeout=5
+fe "0 pshot pc_inventory.png"
+sleep 1
+fe "0 key 49"
+sleep 1
+inputmode mode=controller
+expect padmode mode=controller timeout=20
+open_pause
+expect_no uiscreen what=rect y=72 for=2
+close_pause
+open_pause
+msg PausePanelMessage:ExitGame
+expect main_menu timeout=90
+fe "0 uiscr"
+expect uiscreen what=res world=false w=2304 h=1296 timeout=5
+enter_game
+expect uiscreen what=res world=true w=2304 h=1440 timeout=10
+system_quit
+check no_red
+check no_red_log
+check saved
+check event game_leave
+check event layout dw=2304 dh=1440 fs=true
+check event uiscreen what=res world=false w=2304 h=1296
+check event screen match=true
+check event padmode mode=controller
+check log_has "PC input: button 0 at 0\.500,0\.87[0-9] .*-> world"

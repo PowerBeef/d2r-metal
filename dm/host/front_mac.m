@@ -799,6 +799,26 @@ static void emu_full_toggle(void) {
     if (!on && [d respondsToSelector:@selector(windowDidExitFullScreen:)]) [d windowDidExitFullScreen:n];
 }
 
+// One grab of the next live present (nvn_mtl.m mtl_grab_next_present: the same encoding as the present) written as a PNG: what the player sees, bars
+// and the picture's placement in the window included, not the game's output texture. The on-screen keyboard is a layer above the picture, not in the
+// presented image, so it is composited on top. Main thread; used by DM_TEST_PRESENT_SHOT and the control port's fe pshot
+static void present_shot(NSString *path) {
+    void mtl_grab_next_present(void (^cb)(CGImageRef img));
+    NSSize vb = g_view.bounds.size; NSRect gr = game_rect(); double fy = 0, fh = 1; ui_rect_frac(&fy, &fh);
+    CGRect kr; CGImageRef kimg = dm_vkbd_ui_snapshot(&kr);
+    mtl_grab_next_present(^(CGImageRef img0) { if (!img0) { LOG("【红】present shot: %s was not taken", path.UTF8String); if (kimg) CGImageRelease(kimg); return; }
+        CGImageRef img = CGImageRetain(img0);
+        if (kimg) { size_t W = CGImageGetWidth(img0), H = CGImageGetHeight(img0); double sc = W / gr.size.width;
+            CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB); CGContextRef c = CGBitmapContextCreate(NULL, W, H, 8, 0, cs, (CGBitmapInfo)kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little); CGColorSpaceRelease(cs);
+            if (c) { CGContextDrawImage(c, CGRectMake(0, 0, W, H), img0); CGContextDrawImage(c, CGRectMake(kr.origin.x * sc, H - (kr.origin.y + kr.size.height) * sc, kr.size.width * sc, kr.size.height * sc), kimg);
+                CGImageRelease(img); img = CGBitmapContextCreateImage(c); CGContextRelease(c); }
+            CGImageRelease(kimg); }
+        CGImageDestinationRef d = CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], (__bridge CFStringRef)@"public.png", 1, NULL);
+        if (d) { CGImageDestinationAddImage(d, img, NULL); CGImageDestinationFinalize(d); CFRelease(d); }
+        LOG("present shot: %s %zux%zu (content %.0fx%.0f pt, picture %.0fx%.0f pt at (%.0f,%.0f), interface band y %.3f height %.3f, %s%s)", path.UTF8String, CGImageGetWidth(img), CGImageGetHeight(img),
+            vb.width, vb.height, gr.size.width, gr.size.height, gr.origin.x, gr.origin.y, fy, fh, dm_uiscreen_ingame() ? "in a run" : "out of a run", kimg ? ", on-screen keyboard composited" : "");
+        CGImageRelease(img); });
+}
 typedef struct { void (*fn)(void); } guest_arg;
 // 游戏自己退出（nnMain 返回）：走与关窗口相同的收尾——等这一局还排着的 iCloud 上传，再 dm_host_shutdown（停预取、暂停声音、挂起图形，_exit）。
 // 原先在客体线程上直接 exit(0)：跳过 dm_host_shutdown，排着的上传被掐掉，atexit / C++ 析构跑的时候主线程与出图线程还在动。
@@ -997,28 +1017,12 @@ void front_run(void (*guest)(void)) {
           int w, h; if ((e = getenv("DM_TEST_WINSIZE")) && sscanf(e, "%dx%d", &w, &h) == 2) { [win setContentSize:NSMakeSize(w, h)]; if (bg) { g_emu_win = NSMakeSize(w, h); bg_place(g_emu_win); } layout_game(); }
           if ((e = getenv("DM_TEST_FULLSCREEN_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)   // 「秒[;秒…]」：每个时刻切一次全屏（来回切） | "seconds[;seconds...]": toggle full screen at each time (back and forth)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [win toggleFullScreen:nil]; });
-          // DM_TEST_PRESENT_SHOT=<秒>:<路径>[;<秒>:<路径>…]：到点取下一次上屏的画面（图形层与上屏同一套编码，见 nvn_mtl.m mtl_grab_next_present）写成 PNG——
-          // 看的是玩家真看到的（含留边位置），不是游戏出图贴图（DM_NVN_SHOT_UI 取的那张，裁切区不居中）
-          // DM_TEST_PRESENT_SHOT=<seconds>:<path>[;<seconds>:<path>...]: at the given time, grab the next presented picture (the graphics layer uses the same encoding as presentation, see nvn_mtl.m mtl_grab_next_present) and write it as PNG -
-          // this is what the player actually sees (including where the bars are), not the game's output texture (the one DM_NVN_SHOT_UI takes, whose crop is not centred)
-          if ((e = getenv("DM_TEST_PRESENT_SHOT"))) { void mtl_grab_next_present(void (^cb)(CGImageRef img));
+          // DM_TEST_PRESENT_SHOT=<seconds>:<path>[;<seconds>:<path>...]: at each time (counted from the window's creation), one grab of the next live present
+          // written as a PNG (present_shot): what the player sees, bars included
+          if ((e = getenv("DM_TEST_PRESENT_SHOT")))
               for (NSString *it in [@(e) componentsSeparatedByString:@";"]) { NSRange c = [it rangeOfString:@":"]; if (c.location == NSNotFound) continue;
                   double at = [it substringToIndex:c.location].doubleValue; NSString *path = [it substringFromIndex:c.location + 1];
-                  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                      NSSize vb = v.bounds.size; NSRect gr = game_rect(); double fy = 0, fh = 1; ui_rect_frac(&fy, &fh);
-                      CGRect kr; CGImageRef kimg = dm_vkbd_ui_snapshot(&kr);   // 屏幕键盘是画面上面的层、不在上屏图里：叠上去，截图才是玩家看到的 | the on-screen keyboard is a layer above the picture, not in the presented image: composite it so the shot is what the player sees
-                      mtl_grab_next_present(^(CGImageRef img0) { if (!img0) { LOG("【红】DM_TEST_PRESENT_SHOT：%s 没取到", path.UTF8String); if (kimg) CGImageRelease(kimg); return; }
-                          CGImageRef img = CGImageRetain(img0);
-                          if (kimg) { size_t W = CGImageGetWidth(img0), H = CGImageGetHeight(img0); double s = W / gr.size.width;
-                              CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB); CGContextRef c = CGBitmapContextCreate(NULL, W, H, 8, 0, cs, (CGBitmapInfo)kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little); CGColorSpaceRelease(cs);
-                              if (c) { CGContextDrawImage(c, CGRectMake(0, 0, W, H), img0); CGContextDrawImage(c, CGRectMake(kr.origin.x * s, H - (kr.origin.y + kr.size.height) * s, kr.size.width * s, kr.size.height * s), kimg);
-                                  CGImageRelease(img); img = CGBitmapContextCreateImage(c); CGContextRelease(c); }
-                              CGImageRelease(kimg); }
-                          CGImageDestinationRef d = CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], (__bridge CFStringRef)@"public.png", 1, NULL);
-                          if (d) { CGImageDestinationAddImage(d, img, NULL); CGImageDestinationFinalize(d); CFRelease(d); }
-                          LOG("DM_TEST_PRESENT_SHOT：%s %zux%zu（内容区 %.0fx%.0f，游戏画面 %.0fx%.0f 在 (%.0f,%.0f)，界面矩形纵向 %.3f 高 %.3f，%s%s）", path.UTF8String, CGImageGetWidth(img), CGImageGetHeight(img),
-                              vb.width, vb.height, gr.size.width, gr.size.height, gr.origin.x, gr.origin.y, fy, fh, dm_uiscreen_ingame() ? "局内" : "局外", kimg ? "，叠了屏幕键盘" : "");
-                          CGImageRelease(img); }); }); } }
+                  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ present_shot(path); }); }
           // DM_TEST_NSMOUSE=<文件>：合成真正的系统鼠标事件（NSEvent）投进 App 的事件队列，走与真人点击同一条分发路（事件监视器 → 换算 → 状态机），不经测试入口。
           // 每行「秒 down|move|up|hover x,y」，x,y 是内容区里的点（左上角为原点；窗口缺省 1280×720），时刻自窗口建好起算。
           // 坐标后可带锚点「@c」「@b」：按 1280×720 写的 y 换算到实际内容区高度——@c 上下居中的界面（前端页、大面板）加 (高 − 720) / 2，@b 贴底的（局内 HUD）加 (高 − 720)；
@@ -1096,6 +1100,14 @@ void front_run(void (*guest)(void)) {
                                                           context:nil characters:chars charactersIgnoringModifiers:chars isARepeat:NO keyCode:(unsigned short)x];
                           if (dn) LOG("DM_TEST_NSMOUSE: %.2f s key code %d to %s%s", NSProcessInfo.processInfo.systemUptime - t0, (int)x, tname(tw), direct ? ", handed to it directly" : "");
                           if (direct) [tw sendEvent:ev]; else [NSApp postEvent:ev atStart:NO]; }); });
+                      return 1; }
+                  if (!strcmp(op, "uiscr") || !strcmp(op, "pshot")) {   // "<s> uiscr": the uiscreen res and rect events now (dm_uiscreen_report); "<s> pshot <path>": one grab of the
+                      // next live present as a PNG (present_shot; a relative path lands in DM_APP_SUPPORT, a scenario run's support folder)
+                      char a1[1024] = ""; sscanf(ln.UTF8String, "%*lf %*7s %1023s", a1); NSString *path = @(a1); int shot = op[0] == 'p';
+                      if (shot && !path.length) return 0;
+                      if (shot && !path.absolutePath) { const char *sup = getenv("DM_APP_SUPPORT"); path = [(sup ? @(sup) : NSFileManager.defaultManager.currentDirectoryPath) stringByAppendingPathComponent:path]; }
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+                          if (shot) present_shot(path); else dm_uiscreen_report(); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
                       return 1; }
                   if (!strcmp(op, "screen")) {   // "<s> screen <w>x<h>|off": the window's screen counts as w x h pixels (off = the real one again), then the check runs (picture_screen_check)
                       char a1[32] = ""; sscanf(ln.UTF8String, "%*lf %*7s %31s", a1); unsigned tw = 0, th = 0; int on = sscanf(a1, "%ux%u", &tw, &th) == 2 && tw && th;

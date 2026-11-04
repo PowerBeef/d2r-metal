@@ -38,7 +38,13 @@ void dm_uiscreen_enable(int m) { atomic_store(&g_mode, m < DM_UISCREEN_OFF || m 
 static _Atomic int g_ingame;
 void (*g_dm_charsel_hook)(void);   // 退出一局回到前端那一刻（diag.c 界面消息 FrontEndNavigation:ToFrontEnd 里调） | The moment of quitting a run back to the front end (called in diag.c's UI message FrontEndNavigation:ToFrontEnd)
 void (*g_dm_ingame_hook)(int on);   // 进局 / 出局那一刻（读取画面也算一次出局）；iOS：cloud_ios.m 拿「进局」记一局开始 | The moment of entering / leaving a run (the loading screen also counts as leaving once); iOS: cloud_ios.m uses "entering a run" to mark the start of a run
-void dm_uiscreen_set_ingame(int on) { if (atomic_exchange(&g_ingame, on != 0) != (on != 0)) { LOG("界面画面：%s", on ? "进局（真全屏）" : "出局（留边）"); if (g_dm_ingame_hook) g_dm_ingame_hook(on != 0); } }
+void dm_uiscreen_set_ingame(int on) {
+    if (atomic_exchange(&g_ingame, on != 0) == (on != 0)) return;
+    int full = mode() != DM_UISCREEN_OFF;   // only true full screen changes the picture between a run and the front end
+    LOG("UI screen: %s%s", on ? "in a run" : "out of a run", !full ? "" : on ? " (true full screen)" : " (16:9 with bars)");
+    DM_EV("uiscreen", "what:s on:b full:b", "run", on != 0, full);
+    if (g_dm_ingame_hook) g_dm_ingame_hook(on != 0);
+}
 int dm_uiscreen_ingame(void) { return atomic_load(&g_ingame); }
 // 局内开着大面板：整块界面移到正中、上下留同样宽的边，关掉回落贴底；不做过渡（直接跳）。
 // 判据就是触摸前端的「面板模式」（摇杆收起、单指当光标的那个状态，front_ios.m 在界面消息回调里同步算出），只开着 NPC 对话菜单不算（菜单跟着 NPC 摆，留在贴底）。
@@ -48,7 +54,7 @@ int dm_uiscreen_ingame(void) { return atomic_load(&g_ingame); }
 // The message callback and the game's UI layout run on the same thread, one after the other in the same frame, so on the open / close frame the UI is already at the new position; the graphics layer shift, the front end game view, the world text projection and the world tap conversion all read yoff fresh every frame and follow along naturally
 static _Atomic int g_panel;
 int dm_uiscreen_panel(void) { return atomic_load(&g_panel); }
-void dm_uiscreen_set_panel(int on) { if (atomic_exchange(&g_panel, on != 0) != (on != 0) && atomic_load(&g_ingame) && atomic_load(&g_rw)) LOG("界面画面：%s", on ? "开大面板 → 界面移到正中" : "大面板关了 → 界面回落"); }
+void dm_uiscreen_set_panel(int on) { if (atomic_exchange(&g_panel, on != 0) != (on != 0) && atomic_load(&g_ingame) && atomic_load(&g_rw)) LOG("UI screen: %s", on ? "a large panel opened -> the interface moves to the centre" : "the large panel closed -> the interface goes back"); }
 static int yoff(void) { int rh = atomic_load(&g_rh), uh = atomic_load(&g_uh), m = mode(); if (!atomic_load(&g_rw) || rh <= uh || m == DM_UISCREEN_OFF) return 0;
     if (!atomic_load(&g_ingame) || atomic_load(&g_panel)) m = DM_UISCREEN_CENTER; return m == DM_UISCREEN_CENTER ? (rh - uh) / 2 : m == DM_UISCREEN_BOTTOM ? rh - uh : 0; }
 
@@ -81,8 +87,9 @@ uint64_t front_game_res(int docked); void dm_oe_res_changed(void);
 // 所以在游戏取走 31 的那一刻（hle_oe.c，同一个线程、紧挨着它的比较之前）把真实高写回：同一帧里写回、比较、切换、游戏自己写成新值，中间没有一帧按 4:3 排界面。
 // When handling 31 the game compares the "screen width / height" globals with the new resolution (main+0xe10e10) and does not switch if they are equal. On leaving a run this pair still holds the 16:9 height we wrote, which happens to equal the value to switch to, so the game would think the switch is already done.
 // So at the moment the game takes 31 (hle_oe.c, same thread, right before its comparison) write the real height back: within the same frame come the write-back, comparison, switch, and the game writing the new value itself, with not a single frame laying out the UI at 4:3 in between.
+static _Atomic int g_last_y = -1;   // the interface band's y last reported (rect_note); -1 = report the next one
 void dm_uiscreen_res_reread(void) { uint8_t *b = main_base(); int rw = atomic_load(&g_rw); if (!b || !rw) return; int32_t *g = (int32_t *)(b + 0x211da38);
-    if (g[0] == rw && g[1] == atomic_load(&g_uh)) g[1] = atomic_load(&g_rh); atomic_store(&g_rw, 0); }
+    if (g[0] == rw && g[1] == atomic_load(&g_uh)) g[1] = atomic_load(&g_rh); atomic_store(&g_rw, 0); atomic_store(&g_last_y, -1); }
 // 游戏处理 31 时（main+0xe10df0–0xe10e0c）只接受「宽高都不超过窗口初始化时的尺寸 [main+0x211da30]」的新值：窗口贴图按启动时的参数位一次建好，之后只在里面改出图区域。
 // 所以启动时给屏幕原生值（最大的那个），窗口初始化完、界面每帧那一处第一次跑到时再切到前端的 16:9。
 // When handling 31 (main+0xe10df0–0xe10e0c) the game only accepts new values where "both width and height do not exceed the size at window initialization [main+0x211da30]": the window texture is created once from the startup parameter slot, and afterwards only the render region inside it changes.
@@ -93,20 +100,41 @@ uint64_t dm_game_res(int docked) { uint64_t r = front_game_res(docked); uint32_t
     if (atomic_load(&g_res_live) && mode() != DM_UISCREEN_OFF && !atomic_load(&g_world) && (uint64_t)w * 9 < (uint64_t)h * 16) h = (uint32_t)((uint64_t)w * 9 / 16) & ~1u;
     return (uint64_t)h << 32 | w; }
 
-void dm_uiscreen_pump(void) {
+// The interface band as an event (event_stream.md `uiscreen`, what=rect): its y and height in the real picture of height h, and why it sits there
+static void rect_ev(const char *why) {
+    int x, y, w, uh, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &uh); dm_screen_real(&rw, &rh);
+    DM_EV("uiscreen", "what:s y:d h:d uh:d why:s", "rect", y, rh, uh, why);
+}
+static const char *rect_why(void) { return !atomic_load(&g_ingame) ? "out of a run" : atomic_load(&g_panel) ? "panel" : "run"; }
+// Every pump frame while the band is rewritten: a move of the band (a panel, a run's entry or exit, the game rewriting its size) is reported within a frame
+static void rect_note(void) {
+    if (!atomic_load(&g_rw)) return;
+    int y = yoff(); if (atomic_exchange(&g_last_y, y) == y) return;
+    int x, w, uh, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &uh); dm_screen_real(&rw, &rh);
+    LOG("UI screen: interface band at y %d of %d (band %d high, %s)", y, rh, uh, rect_why()); rect_ev(rect_why());
+}
+static void res_ev(int world) { uint64_t r = dm_game_res(1); DM_EV("uiscreen", "what:s world:b w:u h:u", "res", world, (unsigned long long)(uint32_t)r, (unsigned long long)(r >> 32)); }
+// Tests (the control port's fe uiscr): the current game resolution and interface band as events, whatever changed; any thread (atomics only)
+void dm_uiscreen_report(void) { res_ev(atomic_load(&g_world)); rect_ev("ask"); }
+static void pump_body(void);
+void dm_uiscreen_pump(void) { pump_body(); rect_note(); }
+static void pump_body(void) {
     uint8_t *b = main_base(); if (!b) return;
     dm_gpuheap_pump();   // GPU heap 0 readings, once a second (dm_gpuheap.c)
     { int world = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)) != 0;
       int first = !atomic_exchange(&g_res_live, 1);
-      if ((atomic_exchange(&g_world, world) != world || (first && !world)) && mode() != DM_UISCREEN_OFF) { LOG("界面画面：%s → 游戏分辨率切到 %u x %u", world ? "玩家单位建立" : first ? "窗口已建好、在前端" : "玩家单位销毁", (unsigned)dm_game_res(1), (unsigned)(dm_game_res(1) >> 32)); dm_oe_res_changed(); } }
+      if ((atomic_exchange(&g_world, world) != world || (first && !world)) && mode() != DM_UISCREEN_OFF) {
+          LOG("UI screen: %s -> game resolution %u x %u", world ? "the player unit exists" : first ? "the window is built, in the front end" : "the player unit is gone",
+              (unsigned)dm_game_res(1), (unsigned)(dm_game_res(1) >> 32));
+          res_ev(world); dm_oe_res_changed(); } }
     static int reg; if (!reg) { reg = 1; if (gate_obs_present(OBS_UI_PROJECT)) { gate_obs_set(OBS_UI_PROJECT, ui_project_obs); atomic_store(&g_proj_on, 1); } } int32_t *g = (int32_t *)(b + 0x211da38); int m = mode(), rw = atomic_load(&g_rw);
     if (!atomic_load(&g_world) && m != DM_UISCREEN_OFF) return;   // 不在局里：游戏自己按 16:9 出图，这对量不改写（出局那一下的写回见 dm_uiscreen_res_reread） | Not in a run: the game renders at 16:9 by itself, so this pair of values is not rewritten (for the write-back at the moment of leaving a run see dm_uiscreen_res_reread)
-    if (m == DM_UISCREEN_OFF) { if (rw) { if (g[0] == rw && g[1] == atomic_load(&g_uh)) g[1] = atomic_load(&g_rh); atomic_store(&g_rw, 0); LOG("界面画面：关掉，屏幕高写回 %d", g[1]); } return; }   // 没打开过就什么都不碰 | If it was never turned on, touch nothing
+    if (m == DM_UISCREEN_OFF) { if (rw) { if (g[0] == rw && g[1] == atomic_load(&g_uh)) g[1] = atomic_load(&g_rh); atomic_store(&g_rw, 0); atomic_store(&g_last_y, -1); LOG("UI screen: off, the screen height written back: %d", g[1]); } return; }   // never turned on: touch nothing
     int w = g[0], h = g[1]; if (w <= 0 || h <= 0) return;
     if (rw && w == rw && h == atomic_load(&g_uh)) return;   // 还是我们上次写的值 | Still the value we wrote last time
     static int n; int uh = h; if ((long)w * 9 < (long)h * 16) { uh = (int)((long)w * 9 / 16) & ~1; g[1] = uh; }
     atomic_store(&g_rh, h); atomic_store(&g_uh, uh); atomic_store(&g_rw, w);
-    LOG("界面画面：游戏写入屏幕宽高 %d x %d（第 %d 次）→ 界面用 %d x %d，纵向位置 %d", w, h, ++n, w, uh, yoff());
+    LOG("UI screen: the game wrote its screen size %d x %d (time %d) -> the interface uses %d x %d at y %d", w, h, ++n, w, uh, yoff());
 }
 int dm_screen_real(int *w, int *h) { int rw = atomic_load(&g_rw);
     if (rw) { *w = rw; *h = atomic_load(&g_rh); return 1; }
