@@ -525,6 +525,32 @@ static void screen_note(void) {
     g_scr_hz = hz; snprintf(g_scr_name, sizeof g_scr_name, "%s", sc.localizedName.UTF8String ?: "?"); pthread_mutex_unlock(&g_scr_mu);
     if (!same) LOG("屏幕：%s，刷新率 %.2f Hz（最高 %ld 帧）", g_scr_name, hz, (long)sc.maximumFramesPerSecond);
 }
+// COL-5: the picture is set once, from the launch screen; a window moved to another screen (or a dock / undock) keeps it. picture_screen_check compares
+// the window's screen with the launch picture (dm_scr_matches) at window creation, when the window changes screen and when the screens change, logs a
+// line on every change and always emits a `screen` event. The Options page's Resolution row shows "Takes effect after restarting the game" only when
+// a restart would fix it (front_video_screen_stale, dm_video.c hint): the window is on the primary display, where a restart opens it. A window dragged
+// to a secondary display gets the log line only, since a restart would open on the main display again. No live resize: a 16:9 <-> 16:10 switch of
+// dm_uiscreen at run time is untested
+static int g_test_win_on; static scr_px g_test_win;   // tests (fe screen): the window's screen counts as this
+static scr_px scr_window(void) {
+    if (g_test_win_on) return g_test_win;
+    if (g_scr_test) return scr_launch();   // an emulated launch screen stands in for the window's too, so emulated runs match
+    return scr_real(g_win.screen ?: dm_screen());
+}
+static _Atomic int g_screen_stale;
+int front_video_screen_stale(void) { return atomic_load(&g_screen_stale); }   // dm_video.c: the Resolution row's restart hint
+static void picture_screen_check(void) {   // main thread
+    if (!getenv("DM_APP") || getenv("DM_GAME_RES") || g_render_tier < 0 || !g_win) return;
+    scr_px s = scr_window(); dm_scr_pic p = dm_scr_picture(s.w, s.hc); int nw = dm_scr_native_w(s.w, s.hc, p.aspect);
+    int ok = dm_scr_matches(g_render_tier, g_render_w, g_full, g_aspect, s.w, s.hc);
+    int fixes = g_test_win_on || g_scr_test || bgrun() || (g_win.screen ?: dm_screen()) == NSScreen.screens.firstObject;
+    atomic_store(&g_screen_stale, !ok && fixes);
+    static double last[4] = { -1 }; const double now[4] = { s.w, s.hc, ok, fixes };
+    if (memcmp(last, now, sizeof now)) { memcpy(last, now, sizeof now);
+        LOG("picture: this window's screen is %.0fx%.0f px (%s, Native %d); the game started at %d wide (%s): %s", s.w, s.hc, p.full ? "true full screen" : "16:9", nw,
+            g_render_w, g_full ? "true full screen" : "16:9", ok ? "still suits it" : fixes ? "restart the game to fit it" : "a restart opens on the main display, not this one: no hint"); }
+    DM_EV("screen", "w:u h:u native_w:d render_w:d full:b match:b restart_fixes:b", (unsigned long long)lround(s.w), (unsigned long long)lround(s.hc), nw, g_render_w, p.full, ok, fixes);
+}
 double front_display_refresh(char *name, size_t n) {
     pthread_mutex_lock(&g_scr_mu); double hz = g_scr_hz; if (name && n) snprintf(name, n, "%s", g_scr_name); pthread_mutex_unlock(&g_scr_mu); return hz;
 }
@@ -534,7 +560,7 @@ double front_display_refresh(char *name, size_t n) {
 - (void)windowDidEnterFullScreen:(NSNotification *)n { (void)n; if (getenv("DM_APP")) dm_video_fullscreen_note(1); }   // 设置跟着窗口走（菜单 / ⌃⌘F 切的也算） | the setting follows the window (switching from the menu / ⌃⌘F counts too)
 - (void)windowDidExitFullScreen:(NSNotification *)n { (void)n; if (getenv("DM_APP")) dm_video_fullscreen_note(0); }
 - (void)windowDidChangeBackingProperties:(NSNotification *)n { (void)n; layout_game(); }
-- (void)windowDidChangeScreen:(NSNotification *)n { (void)n; screen_note(); }
+- (void)windowDidChangeScreen:(NSNotification *)n { (void)n; screen_note(); picture_screen_check(); }
 - (void)quit:(id)s { (void)s; app_quit("菜单退出"); }
 // 系统来的退出（程序坞「退出」、⌘-Tab 时按 Q、注销 / 重启 / 关机、AppleScript quit）都走 terminate:。没有这个委托方法时 AppKit 直接结束进程，不存盘。
 // app_quit 在后台线程上存完盘自己结束进程（dm_host_shutdown 里 _exit），这里一律答「稍后」：注销 / 关机等着这个进程结束，不会像答「取消」那样把注销取消掉；
@@ -857,8 +883,8 @@ void front_run(void (*guest)(void)) {
         // about twice as long, so fe lines queued behind a `unit` wait went out late, together). The activity lasts for the run; idle system sleep is allowed
         if (bg) { static id act; act = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical reason:@"background test run"]; (void)act; }
         else [win makeKeyAndOrderFront:nil];
-        screen_note();
-        [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note();
+        screen_note(); picture_screen_check();
+        [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note(); picture_screen_check();
             if (bgrun()) bg_place(g_emul_full ? full_size() : g_emu_win); }];   // a display change may move a window that sits off every screen: put it back
         if (!bg) [NSApp activateIgnoringOtherApps:YES];
         // 启动即全屏：选项页「显示模式」是全屏（dm_video.c 的 mode；旧版偏好 StartFullScreen 首次启动时接过来）。全屏测试开关（DM_TEST_FULLSCREEN_AT）在时不理它，
@@ -1070,6 +1096,12 @@ void front_run(void (*guest)(void)) {
                                                           context:nil characters:chars charactersIgnoringModifiers:chars isARepeat:NO keyCode:(unsigned short)x];
                           if (dn) LOG("DM_TEST_NSMOUSE: %.2f s key code %d to %s%s", NSProcessInfo.processInfo.systemUptime - t0, (int)x, tname(tw), direct ? ", handed to it directly" : "");
                           if (direct) [tw sendEvent:ev]; else [NSApp postEvent:ev atStart:NO]; }); });
+                      return 1; }
+                  if (!strcmp(op, "screen")) {   // "<s> screen <w>x<h>|off": the window's screen counts as w x h pixels (off = the real one again), then the check runs (picture_screen_check)
+                      char a1[32] = ""; sscanf(ln.UTF8String, "%*lf %*7s %31s", a1); unsigned tw = 0, th = 0; int on = sscanf(a1, "%ux%u", &tw, &th) == 2 && tw && th;
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+                          g_test_win_on = on; g_test_win = (scr_px){ tw, th, th }; LOG("DM_TEST_NSMOUSE: the window's screen counts as %s", on ? [NSString stringWithFormat:@"%ux%u px", tw, th].UTF8String : "the real one");
+                          picture_screen_check(); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
                       return 1; }
                   if (!strcmp(op, "scale") || !strcmp(op, "layout") || !strcmp(op, "fs") || !strcmp(op, "menukey")) {
                       // Window test hooks, on the main run loop (they work in background runs, with no key window):

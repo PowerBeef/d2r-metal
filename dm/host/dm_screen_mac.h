@@ -26,3 +26,6 @@ uint64_t dm_scr_game_res(int render_w, double aspect, int full, int docked);
 // The first window's content size (points) for a picture of this aspect: 1280 points wide, smaller when the screen's visible area (max_w x max_h:
 // below the menu bar, beside the Dock, below the title bar) is smaller, never larger; in the picture's shape so it has no bars. 0 x 0 = unknown
 void dm_scr_fit_window(double aspect, double max_w, double max_h, double *w, double *h);
+// Whether a screen of w x h pixels (h below the notch) still suits the picture the game was launched with (Resolution tier, render width, true full
+// screen, aspect): the same shape, and for Native the same width. A fixed tier only needs the same shape (the present scales it)
+int dm_scr_matches(int tier, int render_w, int full, double aspect, double w, double h);

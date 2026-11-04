@@ -86,6 +86,9 @@ __attribute__((weak)) void front_video_color(int accurate) { (void)accurate; }  
 // Which machine the recommendation is worked out for (front_mac.m: dm_picrec_id of the GPU and the main screen); -1 = the recommendation does not depend on
 // the machine (iOS, the CLI host, test copies without DM_TEST_VIDEO_FIRSTBOOT=1)
 __attribute__((weak)) int front_video_rec_id(void) { return -1; }
+// 1 = the window's screen no longer suits the launch picture and a restart would fix it (front_mac.m picture_screen_check): the Resolution row shows
+// the restart hint even though its value did not change; 0 = no (iOS, the unit tests)
+__attribute__((weak)) int front_video_screen_stale(void) { return 0; }
 
 static const char *vals_str(const int *v) {   // "mode=1 res=1 ...": for logs (static buffer, not thread-safe; only used under g_mu or at launch)
     static char b[160]; size_t L = 0; b[0] = 0;
@@ -306,9 +309,9 @@ static void hint_at(uint64_t sp, const char *hint, const char *label, int show) 
     int x = show ? ((int32_t *)(lw + 0x70))[0] : 99999; int32_t *r = (int32_t *)(hw + 0x70);
     if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)hw + 0x10))(hw); }
 }
-static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows, shadow quality)
+static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows, shadow quality); also under Resolution when the window's screen no longer suits the launch picture
     int run = front_video_running_res(), esh = atomic_load(&g_esh_launch);
-    hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && shown(K_RES) != run);
+    hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && (shown(K_RES) != run || front_video_screen_stale()));
     hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && shown(K_ESH) != esh);
     int shq = atomic_load(&g_shq_launch), sq = shown(K_SHQ);
     hint_at(sp, "TouchVideoShqHint", "TouchVideo_shq_Text", shq > 0 && sq >= 0 && sq < 3 && k_shq_px[sq] != shq);

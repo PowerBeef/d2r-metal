@@ -1,0 +1,47 @@
+# The game window on the Mac App test copy at this Mac's Recommended (DM_TEST_VIDEO_FIRSTBOOT=1: full screen, emulated in a background run):
+# - COL-1 / LIF-3: a backing-scale change (a move between a 1x and a 2x display) resizes the drawable with the same point frame. fe scale enters
+#   through the window delegate's windowDidChangeBackingProperties:, as a display move does; fe layout re-emits the layout at that moment.
+# - COL-10: Window > Minimize (Cmd-M) is disabled in full screen and minimizes the windowed game (fe menukey: the main menu's key equivalent,
+#   which needs no key window, so it works in a background run).
+# - COL-7: leaving full screen (fe fs 0, the Options page's path) gives a first window fitted to the screen with no bars (x=0 y=0).
+# - COL-5: a window on another screen (fe screen stands in for it) is reported against the launch picture; a restart would fix it.
+# It leaves full screen midway, because the window's size and minimize exist only windowed, and enters a game first, so minimize happens where the
+# clock freeze matters and the system quit (save, then quit) has a save to commit.
+name mac_window
+requires mac-app
+save warlock
+timeout 300
+env DM_TEST_VIDEO_FIRSTBOOT=1
+
+expect main_menu timeout=120
+fe "0 layout"
+expect layout dw=2560 dh=1440 scale=2 fs=true timeout=5
+fe "0 scale 1"
+expect layout scale=1 dw=1280 dh=720 timeout=5
+fe "0 scale 0"
+expect layout scale=2 dw=2560 dh=1440 timeout=5
+enter_game
+fe "0 menukey m cmd"
+expect_no app state=minimized for=3
+fe "0 fs 0"
+sleep 3
+fe "0 layout"
+expect layout fs=false x=0 y=0 timeout=5
+fe "0 menukey m cmd"
+expect app state=minimized timeout=5
+sleep 2
+app restore
+expect app state=restored timeout=10
+fe "0 screen 3840x2160"
+expect screen match=false native_w=3840 full=false restart_fixes=true timeout=5
+fe "0 screen 3024x1890"
+expect screen match=false full=true timeout=5
+fe "0 screen off"
+expect screen match=true timeout=5
+system_quit
+check no_red
+check no_red_log
+check saved
+check event quit_save saved=true
+check event layout dw=2560 dh=1440 fs=true
+check event screen match=true restart_fixes=true

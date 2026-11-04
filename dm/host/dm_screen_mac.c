@@ -29,3 +29,9 @@ void dm_scr_fit_window(double aspect, double max_w, double max_h, double *w, dou
     if (max_w > 0 && max_h > 0) k = fmin(1, fmin(max_w / 1280, max_h / (1280 / aspect)));
     *w = floor(1280 * k); *h = floor(*w / aspect);
 }
+
+int dm_scr_matches(int tier, int render_w, int full, double aspect, double w, double h) {
+    dm_scr_pic p = dm_scr_picture(w, h);
+    if (p.full != full || (full && fabs(p.aspect / aspect - 1) > 0.01)) return 0;
+    return tier != 3 || dm_scr_native_w(w, h, p.aspect) == render_w;
+}
