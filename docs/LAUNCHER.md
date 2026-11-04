@@ -137,7 +137,7 @@ move that a stop never cuts; outputs an installed app uses are never rewritten i
 
 **The shaders on a player's Mac:**
 - The shader chain is of the source form (`dmsh_chain.py --update-lock --runtime`): the libraries hold Metal source, which the game compiles with macOS's own compiler (`nvn_mtl.m` `lib_load`).
-- `D2RMobile --warm-shaders` fills macOS's per-app cache once, with the libraries in two worker processes, then the preset pipelines (`pso_manifest.tsv`).
+- `D2RMobile --warm-shaders` fills macOS's per-app cache once, with the libraries in two worker processes, then the preset pipelines (`pso_manifest.tsv`) and the player's own (`pso_user.tsv`, beside the save folder).
 - Measured on an M6 against the Xcode-compiled libraries: the same pictures (a replayed town frame differs in 6 of 1.44 M pixels) and the same frame pacing.
 
 **Building a release** (on this Mac; GitHub has no macOS 27 runners):
