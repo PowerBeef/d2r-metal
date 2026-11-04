@@ -27,8 +27,9 @@ The sets:
          reads "picture: Apple M6 ..., 12 GPU cores ..., screen 2560x1440 ... -> Recommended Native 2560, 3D 100%, environment shadows on,
          shadows Ultra, Frame Drops keep".
   REC75  REC with the 3D at 75%, so MetalFX does the 3D upscale: the base M chips' Recommended at a 2560-class screen (the t_picrec rows
-         "MacBook Air M1, 1280 x 800" and the M2 and M3 13-inch 8-core rows at 1280 x 832). Two deliberate differences: those Airs
-         are 16:10 (2560 x 1600 / 1664), and REC75 keeps 2560 x 1440 so it compares with REC; and their Frame Drops default is lower (q3d 0),
+         "MacBook Air M1, 1280 x 800" and the M2 13-inch 8-core row at 1280 x 832; the M3's picks 85% since the model reads the picture below
+         the notch). Two deliberate differences: those Airs are 16:10 (2560 x 1600 below the notch), and REC75 keeps 2560 x 1440 so it compares
+         with REC; and their Frame Drops default is lower (q3d 0),
          while REC75 keeps the 3D scale fixed (DM_3D_SCALE_DYN=0), because a scale that moves can have no picture baseline.
   PHONE  the iPhone 17 Pro's Recommended, drawn by the Mac host: its native 2622 x 1206, 3D 75% with MetalFX (front_ios.m front_video_firstboot),
          SMAA, 16x and Accurate (front_video_rec), and no environment-shadow or shadow-quality recommendation, so environment shadows off and

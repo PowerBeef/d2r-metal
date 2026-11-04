@@ -14,7 +14,7 @@ import picture  # noqa: E402
 S3D = {0: '1.0', 1: '0.85', 2: '0.75', 3: '0.67', 4: '0.5'}   # dm_video.c dm_video_scale3d (Mac s3d)
 SHQ = {0: '2100', 1: '3072', 2: '4096'}                       # dm_video.c k_shq_px
 THIS_MAC = 'Mac mini M6, 2560 display (measured)'               # t_picrec_cases.h row names: rename them here too
-BASE_2560 = ('MacBook Air M1, 1280 x 800', 'MacBook Air 13 M2 (8-core GPU), 1280 x 832', 'MacBook Air 13 M3 (8-core GPU), 1280 x 832')
+BASE_2560 = ('MacBook Air M1, 1280 x 800', 'MacBook Air 13 M2 (8-core GPU), 1280 x 832')
 
 
 def picrec_rows():

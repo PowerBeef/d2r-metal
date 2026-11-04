@@ -5,8 +5,10 @@
 typedef struct {
     const char *gpu;      // the GPU's Metal name: "Apple M6", "Apple M4 Pro", "Apple A18 Pro GPU"
     int cores;            // GPU cores (IORegistry gpu-core-count; 0 = unknown)
-    int out_w, out_h;     // the picture at Native: the main screen's backing-store size in its current mode (out_w 16-aligned, 1600–3840)
+    int out_w, out_h;     // the in-game picture at Native (front_mac.m native_picture): the main screen's backing store in its current mode, below the notch,
+                          // in the picture's shape (out_w even, 1600–3840, within the heap cap DM_SCR_MAX_PX)
     int mfx;              // MetalFX can enlarge on this GPU
+    double aspect;        // the game picture's aspect (16:10 on a 16:10 MacBook, true full screen); 0 = 16:9. A fixed resolution takes this shape too
 } dm_mac_spec;
 
 typedef struct {

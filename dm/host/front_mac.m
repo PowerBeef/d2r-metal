@@ -128,6 +128,13 @@ int dm_video_get(const char *key);
 void dm_video_fullscreen_note(int on);
 static void panel_px(int *w, int *h);
 static int native_w(void) { scr_px sp = scr_launch(); return dm_scr_native_w(sp.w, sp.hc, dm_scr_picture(sp.w, sp.hc).aspect); }   // from the launch screen, whether or not true full screen is on
+// The in-game picture at Native (Recommended's input, mac_rec): its width, height and aspect, from the launch screen as full_setup and native_w see it
+// (below the notch, in the picture's shape: 3024 x 1890 on a 14-inch MacBook Pro, not the whole 3024 x 1964 backing store), whether or not true full
+// screen is on yet, so it is right whenever dm_video.c loads
+static void native_picture(int *w, int *h, double *aspect) {
+    scr_px sp = scr_launch(); dm_scr_pic p = dm_scr_picture(sp.w, sp.hc);
+    *w = dm_scr_native_w(sp.w, sp.hc, p.aspect); *h = (int)(dm_scr_game_res(*w, p.aspect, p.full, 1) >> 32); *aspect = p.aspect;
+}
 static void render_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
     int t = dm_video_get("res"); if (t < 0 || t > 3) t = 0;
@@ -176,7 +183,7 @@ static void panel_px(int *w, int *h) {
     CFRelease(ms);
 }
 static int g_mac_rec_id = -1;   // dm_picrec_id of the spec mac_rec worked from (set once, inside its dispatch_once)
-// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores) and the main screen's backing-store size; memory,
+// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores) and the in-game picture at Native (native_picture); memory,
 // the Mac's model, the panel size, the thermal state and Low Power Mode are only logged. Worked out once per launch: first in main.c cloud_boot_start
 // (dm_custom's Frame Drops default, on the main thread, after NSApplication exists), then reused by dm_video.c's load
 static dm_mac_rec mac_rec(void) {
@@ -184,9 +191,8 @@ static dm_mac_rec mac_rec(void) {
     dispatch_once(&once, ^{
         uint64_t mem = 0; size_t n = sizeof mem; sysctlbyname("hw.memsize", &mem, &n, NULL, 0);
         char model[64] = ""; n = sizeof model; sysctlbyname("hw.model", model, &n, NULL, 0);
-        double px = main_px(), ph = main_px_h();
-        int w = native_w(), h = (int)lround(w * ph / fmax(px, 1));
-        NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), w, h, front_video_mfx_ok() };
+        double px = main_px(), ph = main_px_h(), asp; int w, h; native_picture(&w, &h, &asp);
+        NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), w, h, front_video_mfx_ok(), asp };
         dm_mac_recommend(&spec, &r); g_mac_rec_id = dm_picrec_id(&spec);
         int pw, pnh; panel_px(&pw, &pnh); NSProcessInfo *pi = NSProcessInfo.processInfo;
         static const char *const tiers[] = { "iPhone chip", "base", "Pro", "Max", "Ultra" };
