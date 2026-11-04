@@ -26,6 +26,7 @@ enter_game
 expect uiscreen what=res world=true w=2304 h=1440 timeout=10
 fe "0 uiscr"
 expect uiscreen what=rect y=144 timeout=10
+sleep 2
 fe "0 pshot in_game.png"
 remember x
 fe "0 down 640,641"
