@@ -108,10 +108,13 @@ res, okp = golden.judge_page(base, hud, keep, golden.LB_REGIONS)
 expect(res['view']['ok'] and not res['hud']['ok'] and not okp, f"a HUD-band change fails the hud region only (hot {res['hud']['hot']})")
 one = np.zeros((100, 100, 3)); two = one.copy(); two[50, 50] = 1.0
 expect(int(golden.unstable_mask(one, two).sum()) == 25, 'one moving pixel masks a 5 x 5 block (UNSTABLE_GROW 2)')
-lim = golden.page_limits({'noise': {'view': {'mean': 0.011, 'hot': 0.0025}, 'hud': {'mean': 0.0, 'hot': 0.0}}})
-expect(abs(lim['view'][0] - 0.0075) < 1e-9 and lim['view'][1] == golden.FLIP_MEAN_MAX and lim['hud'] == (golden.FLIP_HOT_MAX, golden.FLIP_MEAN_MAX),
+lim = golden.page_limits({'noise': {'view': {'mean': 0.011, 'hot': 0.0025, 'detail': 0.99}, 'hud': {'mean': 0.0, 'hot': 0.0}}})
+expect(abs(lim['view'][0] - 0.0075) < 1e-9 and lim['view'][1] == golden.FLIP_MEAN_MAX and abs(lim['view'][2] - 0.03) < 1e-9
+       and lim['hud'] == (golden.FLIP_HOT_MAX, golden.FLIP_MEAN_MAX, golden.DETAIL_TOL),
        f'page_limits: NOISE_K x the recorded noise, never below the fixed limits ({lim})')
-r = golden.flip_region(base, patch, keep, view, hot_max=0.06); expect(r['ok'], 'a region limit raised above the change lets it pass')
+r = golden.flip_region(base, base + 1 / 255, keep, view); expect(r['detail'] == 1.0, f"a uniform shift keeps the fine detail ({r['detail']})")
+soft = (base + np.roll(base, 1, 0) + np.roll(base, -1, 0) + np.roll(base, 1, 1) + np.roll(base, -1, 1)) / 5
+r = golden.flip_region(base, soft, keep, view); expect(r['detail'] < 0.9 and not r['ok'] and 'detail' in r['why'], f"a blurred picture fails on its fine detail ({r['detail']}, hot {r['hot']})")
 
 # ---- record / check / controls without the game: a fake shooter ----
 SMALL = np.round((0.35 + 0.25 * np.random.default_rng(2).random((180, 320, 3))) * 255) / 255

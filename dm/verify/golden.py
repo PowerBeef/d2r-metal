@@ -293,8 +293,12 @@ FLIP_SETS = [s for s in SETS if SETS[s]['judge'] == 'flip']
 # (unstable_mask, grown UNSTABLE_GROW pixels; at most UNSTABLE_MAX of the frame, measured up to 22%) and must agree elsewhere to REPEAT_MAX (the
 # dither alone gives 0.002-0.011); the third, judged against the first outside that mask, is the page's own noise, which a check meets again (rain
 # lands somewhere new each run: up to 0.28% of a view's pixels hot, against FLIP_HOT_MAX 0.05%). A check allows each region NOISE_K times its
-# recorded noise, never less than the fixed limits (page_limits)
-FLIP_HOT, FLIP_HOT_MAX, FLIP_MEAN_MAX = 0.1, 0.0005, 0.06
+# recorded noise, never less than the fixed limits (page_limits).
+# A softer or sharper picture (the 3D MetalFX pass off, another anti-aliasing) moves FLIP's mean less than a harmless uniform one-level shift does
+# (0.023 against 0.03), so each region also compares its fine detail: the mean absolute Laplacian of luminance over the kept pixels, test / base.
+# Measured 2026-11-04 on the look-set pages: a repeat shot 0.999-1.002, a uniform one-level shift 1.000, FXAA for SMAA 0.89, the 3D MetalFX pass off
+# 0.68-0.79. A region fails when the ratio is more than DETAIL_TOL from 1 (or NOISE_K times its recorded noise)
+FLIP_HOT, FLIP_HOT_MAX, FLIP_MEAN_MAX, DETAIL_TOL = 0.1, 0.0005, 0.06, 0.02
 UNSTABLE_GROW, UNSTABLE_MAX, REPEAT_MAX, NOISE_K = 2, 0.30, 0.02, 3
 NOT_ALLOWED = 'not allowed'
 LB_REGIONS = {'view': [0, 0, 1, 0.82], 'hud': [0, 0.82, 1, 1]}
@@ -328,30 +332,44 @@ def unstable_mask(a, b, grow=UNSTABLE_GROW, tol=2 / 255):
     return m
 
 
-def flip_region(base, test, keep, rect, hot=FLIP_HOT, hot_max=FLIP_HOT_MAX, mean_max=FLIP_MEAN_MAX, fmap=None) -> dict[str, Any]:
-    """FLIP of test against base inside rect, over the keep pixels: dict(mean, hot = share of pixels above `hot`, p99, n, ok, why)."""
+def detail(img, keep, rect):
+    """Fine detail inside rect over the keep pixels: the mean absolute Laplacian of luminance (0 when there are no pixels)."""
+    import numpy as np   # noqa: PLC0415
+    y = 0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2]
+    lap = np.abs(4 * y[1:-1, 1:-1] - y[:-2, 1:-1] - y[2:, 1:-1] - y[1:-1, :-2] - y[1:-1, 2:])
+    ys, xs = _rect(rect, img.shape); m = np.zeros(keep.shape, bool); m[ys, xs] = True; k = (keep & m)[1:-1, 1:-1]
+    return float(lap[k].mean()) if k.any() else 0.0
+
+
+def flip_region(base, test, keep, rect, hot=FLIP_HOT, hot_max=FLIP_HOT_MAX, mean_max=FLIP_MEAN_MAX, fmap=None, detail_tol=DETAIL_TOL) -> dict[str, Any]:
+    """FLIP of test against base inside rect, over the keep pixels: dict(mean, hot = share of pixels above `hot`, p99, detail = test's fine detail
+    over base's, n, ok, why)."""
     import numpy as np   # noqa: PLC0415
     import imgdiff       # noqa: PLC0415  # pyright: ignore[reportMissingImports]
     f = imgdiff.flip(base, test) if fmap is None else fmap
     ys, xs = _rect(rect, f.shape)
     v = f[ys, xs][keep[ys, xs]]
-    if not v.size: return dict(mean=0.0, hot=0.0, p99=0.0, n=0, ok=True, why='no pixels to judge')
-    mean, hs = float(v.mean()), float((v > hot).mean()); ok = hs <= hot_max and mean <= mean_max
-    return dict(mean=round(mean, 5), hot=round(hs, 5), p99=round(float(np.percentile(v, 99)), 5), n=int(v.size), ok=ok,
-                why='' if ok else f'FLIP mean {mean:.4f} (max {mean_max}), {hs:.3%} of pixels above {hot} (max {hot_max:.3%})')
+    if not v.size: return dict(mean=0.0, hot=0.0, p99=0.0, detail=1.0, n=0, ok=True, why='no pixels to judge')
+    mean, hs = float(v.mean()), float((v > hot).mean())
+    db = detail(base, keep, rect); dr = detail(test, keep, rect) / db if db > 1e-4 else 1.0   # a flat region has no detail to lose
+    ok = hs <= hot_max and mean <= mean_max and abs(dr - 1) <= detail_tol
+    return dict(mean=round(mean, 5), hot=round(hs, 5), p99=round(float(np.percentile(v, 99)), 5), detail=round(dr, 4), n=int(v.size), ok=ok,
+                why='' if ok else f'FLIP mean {mean:.4f} (max {mean_max}), {hs:.3%} of pixels above {hot} (max {hot_max:.3%}), detail x{dr:.3f} (within {detail_tol:.3f} of 1)')
 
 
 def page_limits(meta):
-    """{region: (hot_max, mean_max)} for a page from its recorded noise (meta.json 'noise'): NOISE_K times it, never below the fixed limits."""
-    return {r: (max(FLIP_HOT_MAX, NOISE_K * v['hot']), max(FLIP_MEAN_MAX, NOISE_K * v['mean'])) for r, v in (meta or {}).get('noise', {}).items()}
+    """{region: (hot_max, mean_max, detail_tol)} for a page from its recorded noise (meta.json 'noise'): NOISE_K times it, never below the fixed
+    limits."""
+    return {r: (max(FLIP_HOT_MAX, NOISE_K * v['hot']), max(FLIP_MEAN_MAX, NOISE_K * v['mean']), max(DETAIL_TOL, NOISE_K * abs(v.get('detail', 1.0) - 1)))
+            for r, v in (meta or {}).get('noise', {}).items()}
 
 
 def judge_page(base, test, keep, regions, fmap=None, limits=None) -> tuple[dict[str, dict[str, Any]], bool]:
     """Every region judged on its own: ({region: flip_region result}, ok when every region is ok). limits: page_limits (default the fixed ones)."""
     import imgdiff   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
     f = imgdiff.flip(base, test) if fmap is None else fmap
-    lim = limits or {}
-    res = {r: flip_region(base, test, keep, rect, hot_max=lim.get(r, (FLIP_HOT_MAX, FLIP_MEAN_MAX))[0], mean_max=lim.get(r, (FLIP_HOT_MAX, FLIP_MEAN_MAX))[1], fmap=f)
+    lim = limits or {}; fixed = (FLIP_HOT_MAX, FLIP_MEAN_MAX, DETAIL_TOL)
+    res = {r: flip_region(base, test, keep, rect, hot_max=lim.get(r, fixed)[0], mean_max=lim.get(r, fixed)[1], detail_tol=lim.get(r, fixed)[2], fmap=f)
            for r, rect in regions.items()}
     return res, all(x['ok'] for x in res.values())
 
@@ -431,7 +449,7 @@ def flip_record(s, names, reason, host, controls=True, allow_blind=None):
         elif os.path.exists(up): os.remove(up)
         with open(os.path.join(d, p + '.meta.json'), 'w', encoding='utf-8') as f:
             json.dump(dict(set=s, page=p, env=st['env'], regions=page_regions(p), sha=head(), reason=reason, recorded=datetime.datetime.now().isoformat(timespec='seconds'),
-                           repeat_mean={r: v['mean'] for r, v in rep.items()}, noise={r: dict(mean=v['mean'], hot=v['hot']) for r, v in noise.items()},
+                           repeat_mean={r: v['mean'] for r, v in rep.items()}, noise={r: dict(mean=v['mean'], hot=v['hot'], detail=v['detail']) for r, v in noise.items()},
                            unstable_share=round(float(un.mean()), 5) if un is not None else 0.0), f, indent=1)
         for png in shots: drop_shot(png)
         log('shot', f"{st['dir']}/{p}", reason); print(f"GOLDEN-REC shot {st['dir']}/{p} OK")
@@ -454,7 +472,7 @@ def flip_controls(s, names, host, allow_blind, reason='controls'):
             base, test = imgdiff.load(os.path.join(d, p + '.png')), imgdiff.load(png)
             if base.shape != test.shape: row[p] = dict(red=True, why='size differs'); drop_shot(png); continue
             res, okp = judge_page(base, test, stored_keep(s, p, base.shape), page_regions(p), limits=page_limits(page_meta(s, p)))
-            row[p] = {r: dict(mean=v['mean'], hot=v['hot']) for r, v in res.items()}; row[p]['red'] = not okp
+            row[p] = {r: dict(mean=v['mean'], hot=v['hot'], detail=v['detail']) for r, v in res.items()}; row[p]['red'] = not okp
             drop_shot(png)
         row['seen'] = any(isinstance(v, dict) and v.get('red') for v in row.values())
         table[c] = row
