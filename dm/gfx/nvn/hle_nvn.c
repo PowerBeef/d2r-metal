@@ -1056,7 +1056,9 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
 // Period for the real-time thread declarations: the present pacing is still computed at the 60 tier (present_period, see there), and power-saving mode (30 fps) is slowed down by the display link - the declaration has to follow the actual frame period;
 // power-saving mode used to keep declaring a 60 Hz deadline, so the system scheduled and raised clocks for a 16.7 ms deadline (power wasted). When the display link is not running (no window / off) power-saving mode has no effect and the period is unchanged
 int mtl_fps_target(void);
+int mtl_fg_active(void);
 static uint64_t rt_decl_period(uint64_t period_ns) {
+    if (period_ns && mtl_fg_active() && mtl_link_active()) return period_ns * 2;   // frame generation: the game draws every other present
     if (!period_ns || mtl_fps_target() != 30 || !mtl_link_active()) return period_ns;
     double hz = dm_eco_hz(mtl_display_refresh()); uint64_t eco = hz > 0 ? (uint64_t)(1e9 / hz) : 0;   // the power saver's real rate (nvn_eco_hz)
     return eco > period_ns ? eco : period_ns;

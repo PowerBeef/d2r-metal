@@ -36,10 +36,10 @@ typedef struct { uint64_t key; int idx; } mv_slot;
 static struct {
     __strong id<MTLBuffer> snap[MV_RING]; uint64_t gpu[MV_RING]; size_t used; int ri;
     mv_draw *d[2]; int n[2], cur; mv_slot *tab[2]; struct { uint64_t key; int n; } *occ; struct { uint64_t addr, size; uint32_t off; uint32_t stamp; } *dd; uint32_t stamp;
-    uint64_t frame[2]; float vp[2][16], jit[2][2]; int has_vp[2]; double view[6]; int have_prev, moved_last, stat_overflow, stat_full; uint64_t stat_frames, stat_moved, stat_draws, last_use; size_t stat_peak; int stat_cuts, stat_far;
+    uint64_t frame[2]; float vp[2][16], jit[2][2], view_m[2][16], proj_m[2][16], nearf[2], farf[2]; int has_vp[2]; double view[6]; int have_prev, moved_last, stat_overflow, stat_full; uint64_t stat_frames, stat_moved, stat_draws, last_use; size_t stat_peak; int stat_cuts, stat_far;
     __strong id<MTLTexture> depth, vel; __strong id<MTLLibrary> lib; __strong id<MTLFunction> obj_fn; __strong id<MTLRenderPipelineState> cam; __strong id<MTLDepthStencilState> dss;
     __strong id<MTL4ArgumentTable> vt, ft; __strong id<MTLBuffer> zero, unif; __strong id<MTLFence> fence;
-    long dump_first, dump_count; const char *dump_path; __strong id<MTLTexture> dump_col; __strong id<MTLTexture> dump_vel; __strong id<MTLTexture> dump_out; uint64_t dump_frame; int inited;
+    long dump_first, dump_count; const char *dump_path; __strong id<MTLTexture> dump_col; __strong id<MTLTexture> dump_vel; __strong id<MTLTexture> dump_out; __strong id<MTLTexture> dump_gen; __strong id<MTLTexture> dump_real; __strong id<MTLTexture> dump_comp; __strong id<MTLTexture> dump_swap; uint64_t dump_frame; int inited;
 } g_mv;
 static nvn_hmap g_mv_pso = {.klen = sizeof(pso_key)};
 
@@ -103,8 +103,8 @@ static void mv_dump_raw(id<MTLTexture> t, size_t bpp, const char *suffix, uint64
 // A new frame's first prepass draw: last frame's draws become the previous ones, the next copy buffer starts
 static void mv_frame_begin(uint64_t frame) {
     if (g_mv.dump_vel) {   // the velocity and picture targets of a dumped frame: nothing has written them yet this frame
-        mtl_finish_gpu(); mv_dump_raw(g_mv.dump_vel, 4, "mv", g_mv.dump_frame); mv_dump_raw(g_mv.dump_col, 4, "col", g_mv.dump_frame); mv_dump_raw(g_mv.dump_out, 8, "out", g_mv.dump_frame);
-        g_mv.dump_vel = nil; g_mv.dump_col = nil; g_mv.dump_out = nil;
+        mtl_finish_gpu(); mv_dump_raw(g_mv.dump_vel, 4, "mv", g_mv.dump_frame); mv_dump_raw(g_mv.dump_col, 4, "col", g_mv.dump_frame); mv_dump_raw(g_mv.dump_out, 8, "out", g_mv.dump_frame); mv_dump_raw(g_mv.dump_gen, g_mv.dump_gen.pixelFormat == MTLPixelFormatRGBA16Float ? 8 : 4, "gen", g_mv.dump_frame); mv_dump_raw(g_mv.dump_real, g_mv.dump_real.pixelFormat == MTLPixelFormatRGBA16Float ? 8 : 4, "real", g_mv.dump_frame); mv_dump_raw(g_mv.dump_comp, 4, "comp", g_mv.dump_frame); mv_dump_raw(g_mv.dump_swap, 4, "swap", g_mv.dump_frame);
+        g_mv.dump_comp = nil; g_mv.dump_swap = nil; g_mv.dump_vel = nil; g_mv.dump_col = nil; g_mv.dump_out = nil; g_mv.dump_gen = nil; g_mv.dump_real = nil;
     }
     g_mv.cur ^= 1; g_mv.ri = (g_mv.ri + 1) % MV_RING; g_mv.used = 0; g_mv.stamp++;
     int c = g_mv.cur; g_mv.n[c] = 0; g_mv.frame[c] = frame; g_mv.has_vp[c] = 0; memset(g_mv.tab[c], 0, MV_TAB * sizeof(mv_slot)); memset(g_mv.occ, 0, MV_TAB * sizeof *g_mv.occ);
@@ -171,7 +171,9 @@ static void mv_note_draw(NvProg *pr, const p_draw_idx *di) {
         if (b->reg == MV_VIEW_REG && !g_mv.has_vp[c] && S.ubo[0][b->reg].size >= MV_VP_OFF + 64) { const float *pj = (const float *)((uint8_t *)g_mv.snap[g_mv.ri].contents + o - 1 + MV_PROJ_OFF);
             memcpy(g_mv.vp[c], (uint8_t *)g_mv.snap[g_mv.ri].contents + o - 1 + MV_VP_OFF, 64); g_mv.has_vp[c] = 1;
             // the frustum is centred, so these hold nothing but the offset: the world's camera is orthographic (w comes from the fourth row), the character screen's a perspective one (the third)
-            int wr = pj[11] != 0 ? 8 : 12; g_mv.jit[c][0] = pj[wr + 3] != 0 ? pj[wr] / pj[wr + 3] : 0; g_mv.jit[c][1] = pj[wr + 3] != 0 ? pj[wr + 1] / pj[wr + 3] : 0; }
+            int wr = pj[11] != 0 ? 8 : 12; g_mv.jit[c][0] = pj[wr + 3] != 0 ? pj[wr] / pj[wr + 3] : 0; g_mv.jit[c][1] = pj[wr + 3] != 0 ? pj[wr + 1] / pj[wr + 3] : 0;
+            // for the frame interpolator (nvn_fg.inc): the view, the projection without the offset, and the depth range (block +0x50, +0xd0; +0x250 / +0x254 hold far / near for an orthographic camera)
+            { const uint8_t *blk = (const uint8_t *)g_mv.snap[g_mv.ri].contents + o - 1; memcpy(g_mv.view_m[c], blk + 0x50, 64); memcpy(g_mv.proj_m[c], pj, 64); g_mv.proj_m[c][wr] = 0; g_mv.proj_m[c][wr + 1] = 0; g_mv.farf[c] = ((const float *)(blk + 0x250))[0]; g_mv.nearf[c] = ((const float *)(blk + 0x250))[1]; } }
     }
     d->pso = mv_pso(vs);   // nil for now: nothing to draw again, but next frame's match still finds this one's constants
     uint64_t h = 1469598103934665603ull;

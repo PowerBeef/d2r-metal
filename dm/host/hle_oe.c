@@ -411,7 +411,19 @@ static int aa_env_parse(const char *e) {
     if (!e[1] && *e >= '3' && *e <= '5') return AA_ENV_CRASH;
     return AA_ENV_BAD;
 }
+// The game stencils out the 3D under opaque interface pixels (renderer+0x66b4 set: ps_ui_stencil_p, main+0x16d8e0c), which leaves a black interface-shaped hole in the world. The world is
+// reprojected by the temporal scaler and warped by the frame interpolator, where that hole moves and shows past the interface's edge, so it is drawn whole with them
+static void ui_stencil_tick(void) {
+    static module_t *main; static int saved = -1;
+    if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
+    if (!main || dm_nvn_frame_count() < 30) return;
+    uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;
+    volatile uint8_t *f = (volatile uint8_t *)(renderer + 0x66b4); int want_off = dm_video_temporal_active() && !getenv("DM_FG_KEEP_STENCIL");
+    if (want_off && *f) { if (saved < 0) { saved = *f; LOG("UI stencil off (temporal scaler; was %d, frame %llu)", saved, (unsigned long long)dm_nvn_frame_count()); } dm_guest_write_prepare((void *)f, 1); *f = 0; }
+    else if (!want_off && saved >= 0) { dm_guest_write_prepare((void *)f, 1); *f = (uint8_t)saved; saved = -1; }
+}
 static void aa_tick(void) {
+    ui_stencil_tick();
     static int force = -2; static module_t *main;
     if (force == -2) { const char *e = getenv("DM_AA_MODE"); force = aa_env_parse(e);
         if (force == AA_ENV_CRASH) LOG("【红】DM_AA_MODE=%s refused: modes 3-5 (SMAA T2x) crash the game in its SMAA pass (main+0x16aa23c), which copies from a velocity target the console build never creates; the picture setting decides", e);

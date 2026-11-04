@@ -5171,6 +5171,7 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
 }
 static void mv_note_draw(NvProg *pr, const p_draw_idx *di);   // nvn_mv.inc
 static int mfx3d_draw(NvShader *f);   // 见定义处（MetalFX 换掉游戏的 3D 放大趟） | see the definition (MetalFX replaces the game's 3D upscale pass)
+static void fg_compose(NvShader *f);   // nvn_fg.inc
 // 着色器碰内存的方式（按反射算一次）：1 读贴图（含类型化缓冲、可写贴图）、2 读存储缓冲、4 写内存（可写贴图、可写存储缓冲）；0x80 = 已算
 // How a shader touches memory (worked out once from its reflection): 1 reads textures (incl. typed buffers and writable textures), 2 reads storage buffers, 4 writes memory (writable textures, writable storage buffers); 0x80 = done
 enum { MF_TEX = 1, MF_BUF = 2, MF_WRITE = 4 };
@@ -5308,6 +5309,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         } else if (g_bloomq.state) bloomq_abort(61, "another draw came in the middle of the chain", f_);
       }
     }
+    if (pr->sh[1] && !strncmp(pr->sh[1]->key, "9a650561e5c40791", 16)) fg_compose(pr->sh[1]);   // the game's compose pass: the generated frame first (frame generation)
     if (pr->sh[1] && !strncmp(pr->sh[1]->key, "52aac1f2306b8fc5", 16) && mfx3d_draw(pr->sh[1])) return;   // 游戏的 3D 放大趟（ps_upsample_p）改用 MetalFX | the game's 3D upscale pass (ps_upsample_p) through MetalFX
     if (S.poly.cull == NVN_FACE_FRONT_AND_BACK) return;
     // 续用的通道可能是少挂深度 / 模板开的（开法 2 / 3 / 4）：这次绘制要的平面没挂，就在它之前切开（重开时按新前瞻挂）
@@ -6973,6 +6975,7 @@ static void mfx3d_sub_begin(void) {
     else if (g_mfx_3d.scaler && g_sub_serial - g_mfx_3d.last_use > MFX_IDLE_3D) mfx_drop(&g_mfx_3d, "idle");
 }
 #include "nvn_mv.inc"
+#include "nvn_fg.inc"
 static const char *g_mfx3d_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"
     "struct V { float4 p [[position]]; float2 uv; };\n"
@@ -7050,7 +7053,7 @@ static int mfx3d_encode(id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInt
     id<MTLRenderPipelineState> pso = temporal ? g_mt.wb : mfx3d_pso(dst.pixelFormat); if (!pso) return 0;
     rp_end();
     if (!mv_resolve(src) && temporal) { g_mt.reset = 1; return 0; }   // no velocities after all (an encoder failed): the game's own upscale, and the history starts anew
-    if (temporal) mt_encode(src, cw, ch);
+    if (temporal) { mt_encode(src, cw, ch); g_fg.world_frame = atomic_load(&g_cur_frame); }
     else if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0;
     id<MTLTexture> mfx_out = temporal ? g_mt.out : g_mfx_3d.out; id<MTLFence> mfx_fence = temporal ? g_mv.fence : g_mfx_3d.fence;
     if (g_mv.dump_vel) g_mv.dump_out = mfx_out;
@@ -7242,6 +7245,15 @@ static void present_rgb(id<MTLTexture> dt, uint64_t ticket) {
     if (k == present_rgb_n()) MLOG("上屏取色 汇总：前 %ld 次上屏，品红 %ld 次（drawable %lux%lu）", k, magenta, (unsigned long)w, (unsigned long)h);
 }
 static double g_link_it_tin;   // 节拍回调正在上屏的那一帧的入队时刻（只在节拍线程读写） | Enqueue time of the frame the display-link callback is presenting (read and written only on the display-link thread)
+// Frame generation's real measure: the time between all shown frames, generated and real (the bench's present times cover the real ones only). Presented handlers run one at a time
+static void fg_shown(double t) {
+    static double last, longest; static uint64_t n, late; extern double mtl_display_refresh(void);
+    if (t <= 0) return;
+    if (last > 0 && t > last) { double dt = t - last, tick = 1.0 / 60; n++; if (dt > tick * 1.5) late++; if (dt > longest) longest = dt; }
+    last = t;
+    if (n && n % 600 == 0) { MLOG("frame generation: %llu frames shown, %llu late (%.2f%%), longest %.1f ms", (unsigned long long)n, (unsigned long long)late, 100.0 * late / n, longest * 1e3); DM_EV("fg_shown", "n:u late:u longest_ms:f", (unsigned long long)n, (unsigned long long)late, longest * 1e3); }
+}
+static __unsafe_unretained id<MTLTexture> g_present_gen;   // a generated frame instead of the swap texture (frame generation); the thread that presents
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
@@ -7256,7 +7268,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
              (unsigned long long)g_bp_host_lib_n, (unsigned long long)g_bp_host_pso_n, (g_bp_host_lib_ns + g_bp_host_pso_ns) / 1e6);
     }
     PD("X ser=%llu", t->serial);
-    id<MTLTexture> src = tex_mtl(t);
+    id<MTLTexture> src = g_present_gen ? g_present_gen : tex_mtl(t);
     if (!src) { RED_ONCE(8, "出图贴图建不出 MTLTexture"); return 0; }
     // DM_NVN_REGLUM=x0,y0,x1,y1:文件（归一化坐标）：每次出图回读该区域，记「出图序号、出图时刻 ns、区域平均亮度、隔点灰度小图（十六进制）」（诊断：核动画速度与帧率无关）。
     // 单独的命令缓冲排在本帧渲染之后（同一队列按提交序执行），不等 GPU、不扰动帧节奏
@@ -7363,6 +7375,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     uint64_t pn = ticket; int proj = atomic_load(&g_present_project);
     [dr addPresentedHandler:^(id<MTLDrawable> d) {   // the actual presentation time (when this frame really replaced the previous one on screen; CACurrentMediaTime base); projected in background runs
         g_pres[pn % PRING] = (pres_ent){pn, nvn_presented_or_projected(d.presentedTime, proj, target_ts)};
+        if (atomic_load(&g_fg_fifo)) fg_shown(d.presentedTime);
     }];
     // 每张至少显示一个出图周期：GPU 完成时刻在 120 Hz 刷新边界附近抖动时，不再出现「25 ms + 8.33 ms」成对的顿挫
     // Each frame is displayed for at least one present period: when the GPU completion time jitters around a 120 Hz refresh boundary, the paired "25 ms + 8.33 ms" stutter no longer appears
@@ -7385,7 +7398,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 // Swapchain texture return: before AcquireTexture gets a texture it waits for the ticket of that texture's previous present to be processed (mtl_present_wait), after which the commands the game draws into it
 // are necessarily ordered after that blit on the GPU queue.
 #define PQ 8
-typedef struct { tex_t t; double period; uint64_t frame; int crop[4]; double t_in; } pq_item;   // t_in：游戏把这一帧交进出图队列的时刻（CACurrentMediaTime） | t_in: the time the game handed this frame into the present queue (CACurrentMediaTime)
+typedef struct { tex_t t; double period; uint64_t frame; int crop[4]; double t_in; void *gen; } pq_item;   // t_in：游戏把这一帧交进出图队列的时刻（CACurrentMediaTime） | t_in: the time the game handed this frame into the present queue (CACurrentMediaTime)
 static pq_item g_pq[PQ];
 static uint64_t g_pq_in;
 static int present_now(const tex_t *, double, uint64_t, uint64_t, const int[4], id<CAMetalDrawable>, double);
@@ -7451,14 +7464,16 @@ static void link_rate_reset(void) { pthread_mutex_lock(&g_link_mu); g_link_prev_
     pthread_mutex_lock(&g_pq_mu);
     if (!LINK_WANT() || g_pq_read == g_pq_in) { pthread_mutex_unlock(&g_pq_mu); return; }
     uint64_t first = g_pq_read + 1, ticket = g_pq_in;
-    pq_item it = g_pq[(g_pq_in - 1) % PQ]; g_link_it_tin = it.t_in;
-    g_pq_read = g_pq_in;
+    // With frame generation each tick takes the next present, not the newest: the generated frame and the real one behind it each get theirs. A backlog keeps only the last pair
+    if (atomic_load(&g_fg_fifo) && ticket > first) ticket = ticket - first >= 2 ? (ticket - 1) : first;
+    pq_item it = g_pq[(ticket - 1) % PQ]; g_link_it_tin = it.t_in;
+    g_pq_read = ticket;
     if (ticket > first) { g_link_dropped += ticket - first; for (uint64_t k = first; k < ticket; k++) g_pres[k % PRING] = (pres_ent){k, -1}; }   // 被合并丢弃的旧帧记「未上屏」，上屏统计如实算掉帧 | Old frames merged and dropped are recorded as "not presented", so the present statistics honestly count them as dropped frames
     if (ticket > 1 && g_pq_done < ticket - 1) g_pq_done = ticket - 1;
     pthread_cond_broadcast(&g_pq_cv);
     pthread_mutex_unlock(&g_pq_mu);
     int submitted;
-    @autoreleasepool { submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, update.drawable, update.targetPresentationTimestamp); }
+    @autoreleasepool { g_present_gen = (__bridge id<MTLTexture>)it.gen; submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, update.drawable, update.targetPresentationTimestamp); g_present_gen = nil; }
     if (!submitted) {
         pthread_mutex_lock(&g_pq_mu);
         if (ticket > g_pq_done) g_pq_done = ticket;
@@ -7585,7 +7600,7 @@ static void *present_main(void *arg) {
         uint64_t ticket = ++g_pq_read; g_classic_busy = 1;
         pthread_mutex_unlock(&g_pq_mu);
         int submitted;
-        @autoreleasepool { submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, nil, 0); }
+        @autoreleasepool { g_present_gen = (__bridge id<MTLTexture>)it.gen; submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, nil, 0); g_present_gen = nil; }
         pthread_mutex_lock(&g_pq_mu); g_classic_busy = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
         if (!submitted) {
             pthread_mutex_lock(&g_pq_mu);
@@ -7621,6 +7636,16 @@ int mtl_present_offscreen(void) { return atomic_load(&g_present_project) && !lin
 static _Atomic int g_present_idle;
 void mtl_present_idle_set(int on) { atomic_store(&g_present_idle, on != 0); }
 int mtl_present_idle(void) { return atomic_load(&g_present_idle); }
+// The generated frame of this frame (nvn_fg.inc), queued right before the real one; the replay thread, in the present job
+static void fg_present(const tex_t *t, double period, const int crop[4]) {
+    if (!g_fg.ready || g_fg.ready_frame != atomic_load(&g_cur_frame)) return;
+    g_fg.ready = 0;
+    pthread_mutex_lock(&g_pq_mu);
+    while (g_pq_in - g_pq_done >= PQ) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
+    pq_item *it = &g_pq[g_pq_in % PQ]; *it = (pq_item){*t, period, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime(), (__bridge void *)g_fg.out[g_fg.idx]};
+    if (crop) memcpy(it->crop, crop, sizeof it->crop);
+    ++g_pq_in; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
+}
 uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     // Dropped at the door (ticket 0 = no pending present, so the swapchain acquire does not wait): while discarding, and while the shell is inactive
     // with no present link to pause (classic or rescue mode), so nothing is presented to a covered picture. That also keeps link_sync, and with it
@@ -7635,9 +7660,10 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
         if (st == 1 && link_on() && now - t0 >= at) { st = 2; mtl_link_pause(1); MLOG("DM_TEST_LINK_STALL：暂停显示节拍 %.1f 秒（帧 %llu）", dur, (unsigned long long)atomic_load(&g_cur_frame)); }
         else if (st == 2 && now - t0 >= at + dur) { st = 3; mtl_link_pause(0); MLOG("DM_TEST_LINK_STALL：放开显示节拍（帧 %llu）", (unsigned long long)atomic_load(&g_cur_frame)); }
     }
+    fg_present(t, period, crop);
     pthread_mutex_lock(&g_pq_mu);
     while (g_pq_in - g_pq_done >= PQ) pthread_cond_wait(&g_pq_cv, &g_pq_mu);   // 队满才等；正常由 AcquireTexture 先挡住 | Wait only when the queue is full; normally AcquireTexture blocks first
-    pq_item *it = &g_pq[g_pq_in % PQ]; *it = (pq_item){*t, period, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime()};
+    pq_item *it = &g_pq[g_pq_in % PQ]; *it = (pq_item){*t, period, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime(), NULL};
     if (crop) memcpy(it->crop, crop, sizeof it->crop);   // 当帧状态随票号入队，不在出图线程晚读可变window | The current frame's state is enqueued with the ticket number, rather than reading the mutable window late on the present thread
     uint64_t tk = ++g_pq_in;
     pthread_cond_broadcast(&g_pq_cv);
@@ -7706,7 +7732,8 @@ int mtl_link_rate_requested(void) {
 int mtl_link_rate(void) { pthread_mutex_lock(&g_link_mu); int m = g_link_rate_meas; pthread_mutex_unlock(&g_link_mu); return m > 0 ? m : mtl_link_rate_requested(); }
 // One game frame at 60 Hz: one tick of the link, or two in the 120 Hz test mode (DM_PRESENT_LINK=2) when the link really delivers 90 Hz or more.
 // A 120 Hz request the system delivers at 60 Hz then gives 60 frames, not 30; delivered at 80 Hz this opt-in mode gives 80
-int mtl_link_wait_tick(uint64_t timeout_ns) { int rate = mtl_link_rate(); return mtl_link_wait_ticks(LINK_WANT() == 2 && rate >= 90 ? 2 : 1, timeout_ns); }
+int mtl_fg_active(void) { return atomic_load(&g_fg_fifo); }   // frame generation is on: the game draws one frame per two presents
+int mtl_link_wait_tick(uint64_t timeout_ns) { int rate = mtl_link_rate(); return mtl_link_wait_ticks((LINK_WANT() == 2 && rate >= 90 ? 2 : 1) * (mtl_fg_active() ? 2 : 1), timeout_ns); }
 // The same wait counted in the link's own ticks: one tick per frame lets DM_PRESENT_HZ=120 reach 120 frames on a 120 Hz link (hle_nvn.c link_wait).
 // Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds).
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns) {
