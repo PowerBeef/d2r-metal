@@ -185,6 +185,7 @@ dmCustomBright	暗处加亮	Brighten dark areas	Aclarar zonas oscuras		Осве�
 dmVideoUpscale	放大方式	Upscaling	Escalado		Масштабирование	업스케일링	Mac 选项页「图形」节「放大方式」行的标签（touch_layout.py _VIDEO，dm_video.c）
 dmVideoUpStandard	标准	Standard	Estándar		Стандартное	표준	「放大方式」第一项：双线性拉伸（dm_video.c）
 dmVideoUpMetalFX	MetalFX	MetalFX	MetalFX		MetalFX	MetalFX	「放大方式」第二项：MetalFX 空间放大（nvn_mtl.m mfx_ready）
+dmVideoUpTemporal	时域	Temporal	Temporal		Временное	템포럴	「放大方式」第三项：MetalFX 时域放大（nvn_mv.inc），3D 清晰度低于 100% 时生效；「MetalFX Temporal」在选择框里压到箭头
 dmVideoRes1600	1600 × 900	1600 × 900	1600 × 900		1600 × 900	1600 × 900	「分辨率」第一档（宽 1600；16:10 屏上高按屏幕比例）
 dmVideoRes1920	1920 × 1080	1920 × 1080	1920 × 1080		1920 × 1080	1920 × 1080	「分辨率」第二档（宽 1920）
 dmVideoRes2560	2560 × 1440	2560 × 1440	2560 × 1440		2560 × 1440	2560 × 1440	「分辨率」第三档（宽 2560）
@@ -194,7 +195,7 @@ dmVideoResHint	重启游戏后生效	Takes effect after restarting the game	Se a
 dmVideoModeTip	在窗口和全屏之间切换。	Play in a window or fill the whole screen.	Juega en una ventana o a pantalla completa.		Игра в окне или на весь экран.	창 모드 또는 전체 화면으로 플레이합니다.	「显示模式」行的悬停说明
 dmVideoResTip	游戏画面的渲染分辨率。越高越清楚，显卡越吃力。	The resolution the game renders at. Higher is sharper but works the GPU harder.	Resolución a la que se dibuja el juego. Más alta es más nítida, pero exige más a la GPU.		Разрешение, в котором рисуется игра. Выше — чётче, но тяжелее для видеокарты.	게임을 렌더링하는 해상도입니다. 높을수록 선명하지만 GPU 부담이 커집니다.	「分辨率」行的悬停说明
 dmVideoPresetTip	推荐：按这台 Mac 和它的主屏选好的设置。	Recommended: the settings chosen for this Mac and its main screen.	Recomendado: los ajustes elegidos para este Mac y su pantalla principal.		Рекомендуемые: настройки, выбранные для этого Mac и его основного экрана.	권장: 이 Mac과 주 화면에 맞춰 고른 설정입니다.	「图形预设」行的悬停说明
-dmVideoUpscaleTip	MetalFX 放大到屏幕时更清楚；标准是普通拉伸。	MetalFX keeps the picture sharp when it is enlarged to the screen; Standard is a plain stretch.	MetalFX mantiene la imagen nítida al ampliarla a la pantalla; Estándar la estira sin más.		MetalFX сохраняет чёткость при увеличении до экрана; «Стандартное» — простое растяжение.	MetalFX는 화면에 맞게 키울 때 선명하게 유지합니다. 표준은 단순 확대입니다.	「放大方式」行的悬停说明
+dmVideoUpscaleTip	MetalFX 放大到屏幕时更清楚；标准是普通拉伸。时域也是 MetalFX（3D 清晰度低于 100% 时），还用多帧画面补细节、抹平锯齿。	MetalFX keeps the picture sharp when it is enlarged to the screen; Standard is a plain stretch. Temporal is MetalFX too (3D Resolution below 100%) and also builds detail from several frames and smooths edges.	MetalFX mantiene la imagen nítida al ampliarla a la pantalla; Estándar la estira sin más. Temporal también es MetalFX (resolución 3D inferior al 100 %) y además reúne detalle de varios fotogramas y suaviza los bordes.		MetalFX сохраняет чёткость при увеличении до экрана; «Стандартное» — простое растяжение. «Временное» — тоже MetalFX (разрешение 3D ниже 100 %): оно также собирает детали из нескольких кадров и сглаживает края.	MetalFX는 화면에 맞게 키울 때 선명하게 유지합니다. 표준은 단순 확대입니다. 템포럴도 MetalFX이며(3D 해상도 100% 미만) 여러 프레임에서 디테일을 모으고 가장자리를 다듬습니다.	「放大方式」行的悬停说明
 dmVideo3DRes	3D 清晰度	3D Resolution	Resolución 3D		Разрешение 3D	3D 해상도	iOS 选项页「图形」节第一行：游戏 3D 画面的渲染比例（dm_video.c res，hle_oe.c s3_cfg）
 dmVideoScale75	75%	75%	75%		75%	75%	「3D 清晰度」第一档（缺省）
 dmVideoScale85	85%	85%	85%		85%	85%	「3D 清晰度」第二档

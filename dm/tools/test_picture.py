@@ -53,7 +53,7 @@ class PictureTest(unittest.TestCase):
             self.assertEqual(sorted(s), sorted(picture.KEYS), name)
             self.assertRegex(s['DM_GAME_RES'], r'^\d+x\d+$', name)
             self.assertTrue(0.5 <= float(s['DM_3D_SCALE']) <= 1.0, name)   # hle_oe.c s3_cfg dies outside 0.5-1.0
-            self.assertIn(s['DM_AA_MODE'], ('1', '2'), name)                # T2x (3) fails inside the game
+            self.assertIn(s['DM_AA_MODE'], ('0',) if s['DM_MFXT'] == '1' else ('1', '2'), name)   # T2x (3) fails inside the game; the temporal scaler replaces the game's AA (hle_oe.c aa_tick)
             self.assertIn(s['DM_NVN_ANISO'], ('0', '4', '8', '16'), name)
             self.assertIn(s['DM_SHADOW_SIZE'], SHQ.values(), name)
             self.assertIn(s['DM_COLORSPACE'], ('srgb', 'none'), name)

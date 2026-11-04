@@ -281,6 +281,7 @@ SETS: dict[str, dict[str, Any]] = {
     'rec': dict(env=picture.REC, pages=LB_ALL + ['inventory'], judge='flip', dir='rec', log_allow=(),
                 controls={'fxaa': {'DM_AA_MODE': '1'}, 'aniso_off': {'DM_NVN_ANISO': '0'}, 'envsh_off': {'DM_ENV_SHADOWS': '0'}, 'shadow_2100': {'DM_SHADOW_SIZE': '2100'}}),
     'rec75': dict(env=picture.REC75, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
+    'rec75t': dict(env=picture.REC75T, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75t', log_allow=(), controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
     'bright': dict(env=dict(picture.REC, DM_BRIGHT_K='4'), pages=['lb_crypt_a1'], judge='flip', dir='bright', log_allow=(), controls={'bright_off': {'DM_BRIGHT_K': '1'}}),
     'phone': dict(env=picture.PHONE, pages=['lb_town_a1', 'lb_crypt_a1'], judge='flip', dir='phone', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
 }

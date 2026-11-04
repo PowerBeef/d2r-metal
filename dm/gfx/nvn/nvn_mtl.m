@@ -540,12 +540,14 @@ static uint64_t g_sub_serial;   // 第几次提交（并行预编「每次提交
 static void tbdr_latch(void);
 static void pso_pend_age(void);
 static void mfx3d_sub_begin(void);
+static void mv_sub_begin(void);
 static void aniso_latch(void);
 static void bar_stats(void);
 static void gerr_flush(void);
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
     pso_pend_age();   // 并行预编：回收过期没人领的预测槽 | parallel precompile: recycle stale untaken prediction slots
+    mv_sub_begin();   // nvn_mv.inc: the temporal scaler and its motion vectors wanted now, or put down
     mfx3d_sub_begin();   // Upscaling off, or the 3D set unused for MFX_IDLE_3D submissions: put the 3D pass's MetalFX set down
     tbdr_latch();
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
@@ -7043,20 +7045,24 @@ static int mfx3d_encode(id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInt
     RPD *rp = [RPD new]; attach(rp.colorAttachments[0], R.rt.color[0], &R.rt.cview[0], R.rt.has_cview[0], 1);
     id<MTLTexture> dst = rp.colorAttachments[0].texture; if (!dst) return 0;   // a format view has its base's size
     NSUInteger ow = (NSUInteger)llround(vp.width), oh = (NSUInteger)llround(vp.height);
-    if (!mfx3d_ready(aw, ah, ow, oh, cfg)) return 0;
-    id<MTLRenderPipelineState> pso = mfx3d_pso(dst.pixelFormat); if (!pso) return 0;
+    int temporal = mt_ready(src, dst.pixelFormat, ow, oh, cw);
+    if (!temporal && !mfx3d_ready(aw, ah, ow, oh, cfg)) return 0;
+    id<MTLRenderPipelineState> pso = temporal ? g_mt.wb : mfx3d_pso(dst.pixelFormat); if (!pso) return 0;
     rp_end();
-    mv_resolve(src);
-    if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0;
+    if (!mv_resolve(src) && temporal) { g_mt.reset = 1; return 0; }   // no velocities after all (an encoder failed): the game's own upscale, and the history starts anew
+    if (temporal) mt_encode(src, cw, ch);
+    else if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0;
+    id<MTLTexture> mfx_out = temporal ? g_mt.out : g_mfx_3d.out; id<MTLFence> mfx_fence = temporal ? g_mv.fence : g_mfx_3d.fence;
+    if (g_mv.dump_vel) g_mv.dump_out = mfx_out;
     int full = vp.originX == 0 && vp.originY == 0 && ow == dst.width && oh == dst.height;
     rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : R.clear_c[0] ? MTLLoadActionClear : MTLLoadActionLoad;
     rp.colorAttachments[0].clearColor = R.cc[0]; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; if (!en) { MLOG("【红】3D upscale: the write-back encoder could not be created"); return 0; }
     if (!g_mfx3d_args) { MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxSamplerStateBindCount = 2; NSError *e = nil; g_mfx3d_args = [g_dev newArgumentTableWithDescriptor:ad error:&e]; }
     [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
-    [en waitForFence:g_mfx_3d.fence beforeEncoderStages:MTLStageFragment];   // wait for MetalFX to finish writing
+    [en waitForFence:mfx_fence beforeEncoderStages:MTLStageFragment];   // wait for MetalFX to finish writing
     [en setArgumentTable:g_mfx3d_args atStages:MTLRenderStageFragment];
-    [g_mfx3d_args setTexture:g_mfx_3d.out.gpuResourceID atIndex:0]; [g_mfx3d_args setTexture:mask.gpuResourceID atIndex:1];
+    [g_mfx3d_args setTexture:mfx_out.gpuResourceID atIndex:0]; [g_mfx3d_args setTexture:mask.gpuResourceID atIndex:1];
     [g_mfx3d_args setSamplerState:mfx_samp(1).gpuResourceID atIndex:0]; [g_mfx3d_args setSamplerState:mfx_samp(1).gpuResourceID atIndex:1];
     [en setViewport:vp]; [en setRenderPipelineState:pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; enc_host_r_end(en);
     R.clear_c[0] = 0; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;   // colour 0's pending clear landed (or was covered); other pending clears land at the next pass

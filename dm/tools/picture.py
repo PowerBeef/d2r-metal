@@ -55,8 +55,10 @@ REC = {
     'DM_ENV_SHADOWS': '1',
     'DM_SHADOW_SIZE': '4096',
     'DM_3D_SCALE_DYN': '0',
+    'DM_MFXT': '0',
 }
 REC75 = dict(REC, DM_3D_SCALE='0.75')
+REC75T = dict(REC75, DM_MFXT='1', DM_AA_MODE='0')   # REC75 with the temporal scaler in place of the spatial one; the game's own AA is off with it (hle_oe.c aa_tick)
 PHONE = {
     'DM_GAME_RES': '2622x1206',
     'DM_3D_SCALE': '0.75',
@@ -68,10 +70,11 @@ PHONE = {
     'DM_ENV_SHADOWS': '0',
     'DM_SHADOW_SIZE': '2100',
     'DM_3D_SCALE_DYN': '0',
+    'DM_MFXT': '0',
 }
 MAC_APP_REC = {'DM_TEST_VIDEO_FIRSTBOOT': '1'}
 FULLSCREEN = {'DM_TEST_FULLSCREEN_AT': '1'}
-SETS = {'rec': REC, 'rec75': REC75, 'phone': PHONE}
+SETS = {'rec': REC, 'rec75': REC75, 'rec75t': REC75T, 'phone': PHONE}
 KEYS = tuple(REC)   # every set pins every one of these
 
 

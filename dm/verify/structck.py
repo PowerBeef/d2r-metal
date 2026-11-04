@@ -378,9 +378,9 @@ if set(gates) != seen: bad(f'gates.tsv 有多余行 {len(set(gates) - seen)}')
 # ⑥ 线程槽
 # ⑥ Thread slots
 _base = {'K18', 'KTLS', 'KTLR', 'KGATE'}; _extra = set(KEY) - _base   # 额外键 = 参数门键（KRES* / KASPECT* …；改写器全局键表，三模块表头都列）：须是 K 开头大写名、键号低于基础四键 | Extra keys = parameter-gate keys (KRES* / KASPECT* ...; the rewriter's global key table, listed in the headers of all three modules): must be uppercase names starting with K, with key numbers below the four base keys
-if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW', 'KSHSIZE'} \
-        or not {k for *_, k in params} | {k for _, _, k, _ in switches} <= set(KEY) or set(KEY.values()) != set(range(10)):
-    bad(f'header key page indices are not valid: {KEY} (ten keys with indices exactly 0..9)')
+if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW', 'KSHSIZE', 'KJITTER'} \
+        or not {k for *_, k in params} | {k for _, _, k, _ in switches} <= set(KEY) or set(KEY.values()) != set(range(11)):
+    bad(f'header key page indices are not valid: {KEY} (eleven keys with indices exactly 0..10)')
 kv = {v: k for k, v in KEY.items()}; nk = {}
 for o in range(PO, len(pat) - 4, 4):
     w = W(pat, o)
@@ -501,6 +501,13 @@ nsw = 0
 for o, w0, k, why in switches:
     if ANDROID: bad(f'switched branch {o:#x}: Apple layout only'); continue
     wo = W(orig, o)
+    if orig[o:o + 4] == bytes.fromhex(w0) and wo & 0xFFE00C00 == 0x1A800000:   # a csel row (since r50): csel ; stur x16 ; stur x17 ; slot fetch ; ldr x16,[x16] ; cbz x16, off ; mov wD, w16 ; off: ldur x16 ; ldur x17 ; b original+4
+        st = btarget(o); ks = keyseq(st + 12) if st is not None and PO <= st < len(pat) else None
+        want = {} if st is None else {st: wo, st + 4: 0xF81F03F0, st + 8: 0xF81E83F1, st + 28: 0xF9400210, st + 32: 0xB4000000 | (((40 - 32) >> 2) << 5) | 16, st + 36: 0x2A1003E0 | (wo & 31),
+                                      st + 40: 0xF85F03F0, st + 44: 0xF85E83F1, st + 48: B(st + 48, o + 4)}
+        if k not in KEY or not ks or ks != (st + 28, KEY[k]) or any(W(pat, a) != v for a, v in want.items()) or (W(pat, st + 12) & 31) != 16:
+            bad(f'switched csel {o:#x}: block does not match the template'); continue
+        nsw += 1; continue
     if orig[o:o + 4] != bytes.fromhex(w0) or wo & 0xFF000010 != 0x54000000 or wo & 0xF >= 0xE: bad(f'switched branch {o:#x}: original word is not the registered b.cond {w0}'); continue
     if k not in KEY: bad(f'switched branch {o:#x}: key {k} not in the header'); continue
     tgt = o + 4 * ((((wo >> 5) & 0x7FFFF) ^ 0x40000) - 0x40000); st = btarget(o)

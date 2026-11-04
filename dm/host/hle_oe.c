@@ -399,6 +399,7 @@ static void sharpen_tick(void) {
 // DM_AA_MODE=off leaves it to the game (or to a test's control-port mem write). DM_AA_MODE=0, 1 or 2 forces the mode; anything else is refused with a red line
 // and the picture setting decides. The weak default below (-1: leave it) is for builds without dm_video.c (the t_oe unit test).
 __attribute__((weak)) int dm_video_aa_mode(void) { return -1; }
+__attribute__((weak)) int dm_video_temporal_active(void) { return 0; }
 enum { AA_ENV_UNSET = -1, AA_ENV_OFF = -3, AA_ENV_CRASH = -4, AA_ENV_BAD = -5 };
 // DM_AA_MODE: unset or empty, exactly "off", or a single digit 0-2 (forced); 3-5 crash the game; anything else is malformed (no trimming, case-sensitive)
 static int aa_env_parse(const char *e) {
@@ -415,7 +416,7 @@ static void aa_tick(void) {
         else if (force == AA_ENV_BAD) LOG("【红】DM_AA_MODE=%s is not 0, 1, 2 or off: ignored, the picture setting decides", e);
         if (force == AA_ENV_CRASH || force == AA_ENV_BAD) force = AA_ENV_UNSET; }
     if (force == AA_ENV_OFF) return;   // DM_AA_MODE=off: leave the byte to the game (or to a test's control-port mem write)
-    int want = force >= 0 ? force : dm_video_aa_mode(); if (want < 0 || want > 2) return;
+    int want = force >= 0 ? force : dm_video_temporal_active() ? 0 : dm_video_aa_mode(); if (want < 0 || want > 2) return;   // the temporal scaler antialiases: the game's own AA off with it
     if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
     if (!main || dm_nvn_frame_count() < 30) return;
     uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;
