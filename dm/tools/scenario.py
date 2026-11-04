@@ -171,8 +171,8 @@ def disturbed(events, marks, ops, front, fs_at=()):
     fs_at = DM_TEST_FULLSCREEN_AT times (scheduled real full-screen switches, for hosts without `window` events).
     Front run: disturbed by another app taking the front, a Space switch, display sleep, the session going inactive, a resign whose cause is not the run's own
     sheet or minimize, occlusion or minimize outside a step that asked for it (requesting steps and the step after them: the events arrive asynchronously),
-    except the real full-screen switch (within FS_GRACE s of a window `full` change or a scheduled switch) and a Space switch during the launch (before the
-    first step and before the run's first full-screen window: the previous front run's full-screen Space closing, measured 2026-11-04 at 0.17-0.23 s into
+    except the real full-screen switch (within FS_GRACE s of a window `full` change or a scheduled switch) and a Space switch during the launch (within LAUNCH_S
+    s of the start, in the first step at the latest and before the run's first full-screen window: the previous front run's full-screen Space closing, measured 2026-11-04 at 0.17-0.23 s into
     11 back-to-back bench launches, while nothing measured has started); and by never getting the front before the first
     step ended. Background run: `desk front by=self` within LAUNCH_S s of launch or inside a requesting step's reach is the run taking the front (red);
     a later one is the user's own, only noted. Events after the quit started are consequences of it and are not judged.
@@ -199,7 +199,7 @@ def disturbed(events, marks, ops, front, fs_at=()):
             continue
         what = None
         if k == 'desk' and e.get('what') in ('other_app', 'space', 'screens_sleep', 'session_off'):
-            launch_space = e.get('what') == 'space' and s == 0 and t < first_full
+            launch_space = e.get('what') == 'space' and s <= 1 and t < first_full and t - t0 < LAUNCH_S   # the launch: first step, first LAUNCH_S s, before full screen
             if not requested(s) and not (e.get('what') == 'space' and in_fs(t)) and not launch_space: what = f"desk {e.get('what')}" + (f" by {e['by']}" if e.get('by') else '')
         elif k == 'app' and not emu and e.get('state') == 'resign':
             if e.get('cause') not in ('sheet', 'minimize') and not requested(s): what = f"app resign cause={e.get('cause', '?')}"
