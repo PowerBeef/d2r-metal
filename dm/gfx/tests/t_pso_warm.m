@@ -329,22 +329,31 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     // The host's own passes go through host_built, each build once and a cached one not again, and the game's counters do not move: the present
     // (one library, the plain and the down-filter pipelines), the MetalFX copy pass, the 3D write-back pass, the Metal 4 compiler and a scaler (the
     // compiler is counted with the libraries, a scaler with the pipelines), the helper kernels (the brightness LUT kernel and bloom 1/4's capture
-    // shader, a library and a pipeline each) and a bloom 1/4 pipeline for another format than the prebuilt one
+    // shader, a library and a pipeline each) and a bloom 1/4 pipeline for another format than the prebuilt one. aux_prebuild (queued by mtl_init after
+    // the helper kernels) compiles the present's and the 3D write-back's libraries and warms MetalFX's kernels with a throwaway scaler per format, and
+    // the passes take its libraries; without them (not ready yet) a pass compiles its own
     {
-        aux_wait();   // mtl_init started the helper kernels on their queue: let that build finish before counting
+        aux_wait(); dispatch_sync(g_aux_q, ^{});   // mtl_init queued the helper kernels and the prebuild: let both finish before counting
 #define HOST_DELTA(what, call, wl, wp) do { uint64_t l0, p0, l1, p1, hl0, hp0, hl1, hp1, ln, pn; mtl_create_stats(&l0, &p0); mtl_host_create_stats(&hl0, &hp0, &ln, &pn); \
         @autoreleasepool { (void)(call); } mtl_create_stats(&l1, &p1); mtl_host_create_stats(&hl1, &hp1, &ln, &pn); \
         CHECK(hl1 - hl0 == (wl) && hp1 - hp0 == (wp) && l1 == l0 && p1 == p0, "host build counted, %s: host libraries +%llu (want %d), host pipelines +%llu (want %d), game +%llu / +%llu", \
               what, (unsigned long long)(hl1 - hl0), wl, (unsigned long long)(hp1 - hp0), wp, (unsigned long long)(l1 - l0), (unsigned long long)(p1 - p0)); } while (0)
-        HOST_DELTA("present", (present_pipeline(MTLPixelFormatBGRA8Unorm), 0), 1, 2);
+        int mfx = mtl_mfx_supported();
+        CHECK(pre_lib(0) && pre_lib(1), "the prebuild left the present's and the 3D write-back's libraries ready");
+        HOST_DELTA("the prebuild (two libraries; a throwaway scaler per format where MetalFX exists)", (aux_prebuild(), 0), 2, mfx ? 2 : 0);
+        HOST_DELTA("present, on the prebuilt library", (present_pipeline(MTLPixelFormatBGRA8Unorm), 0), 0, 2);
         HOST_DELTA("present, the same format again", (present_pipeline(MTLPixelFormatBGRA8Unorm), 0), 0, 0);
-        HOST_DELTA("MetalFX copy pass", mfx_copy_pso(MTLPixelFormatRGBA16Float), 1, 1);
+        HOST_DELTA("MetalFX copy pass, on the prebuilt library", mfx_copy_pso(MTLPixelFormatRGBA16Float), 0, 1);
         HOST_DELTA("MetalFX copy pass, cached", mfx_copy_pso(MTLPixelFormatRGBA16Float), 0, 0);
-        HOST_DELTA("3D write-back pass", mfx3d_pso(MTLPixelFormatRG11B10Float), 1, 1);
+        HOST_DELTA("3D write-back pass, on the prebuilt library", mfx3d_pso(MTLPixelFormatRG11B10Float), 0, 1);
         HOST_DELTA("3D write-back pass, cached", mfx3d_pso(MTLPixelFormatRG11B10Float), 0, 0);
-        if (mtl_mfx_supported()) {
-            HOST_DELTA("Metal 4 compiler", mfx_compiler(), 1, 0);
-            HOST_DELTA("Metal 4 compiler, once", mfx_compiler(), 0, 0);
+        { id<MTLLibrary> keep_p = g_aux.present_lib, keep_w = g_aux.mfx3d_lib; g_aux.present_lib = g_aux.mfx3d_lib = nil;   // the prebuild not ready yet
+          HOST_DELTA("present before the prebuild is ready: its own library", (present_pipeline(MTLPixelFormatRGBA8Unorm), 0), 1, 2);
+          HOST_DELTA("MetalFX copy pass before the prebuild is ready", mfx_copy_pso(MTLPixelFormatRGBA8Unorm), 1, 1);
+          HOST_DELTA("3D write-back pass before the prebuild is ready", mfx3d_pso(MTLPixelFormatRGBA16Float), 1, 1);
+          g_aux.present_lib = keep_p; g_aux.mfx3d_lib = keep_w; }
+        if (mfx) {
+            HOST_DELTA("Metal 4 compiler, made once (by the prebuild)", mfx_compiler(), 0, 0);
             HOST_DELTA("3D MetalFX scaler", mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, 48, 27, 64, 36), 0, 1);
             HOST_DELTA("3D MetalFX scaler, built", mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, 48, 27, 64, 36), 0, 0);
             mfx_drop(&g_mfx_3d, "off");
