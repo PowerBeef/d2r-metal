@@ -27,8 +27,8 @@ static inline dm_geom_pfit dm_geom_present(double dw, double dh, unsigned cx, un
         return f;
     }
     if (fabs((dw / dh) / ((double)cw / ch) - 1) < 0.01) return f;
-    double s = fmin(dw / cw, dh / ch);
-    f.kind = DM_GEOM_FIT; f.x = floor((dw - cw * s) / 2); f.y = floor((dh - ch * s) / 2); f.w = round(cw * s); f.h = round(ch * s);
+    double s = fmin(dw / cw, dh / ch);   // the bars from the rounded size: the limiting side's crop x s can round just above the drawable, and floor would put the bar at -1
+    f.kind = DM_GEOM_FIT; f.w = round(cw * s); f.h = round(ch * s); f.x = floor((dw - f.w) / 2); f.y = floor((dh - f.h) / 2);
     return f;
 }
 // The viewport alone, for a picture of pw x ph pixels in a drawable of dw x dh (out = x, y, w, h): the present's viewport for that picture

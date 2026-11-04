@@ -62,6 +62,8 @@ int main(void) {
     present(6, 6, 0, 0, 8, 8, DM_GEOM_ONE, 0, 0, 6, 6, 1, 1, 6, 6);
     present(6, 6, 2, 3, 8, 8, DM_GEOM_ONE, 0, 0, 6, 6, 3, 4, 6, 6);                                // a crop offset carries over
     present(0, 0, 0, 0, 8, 8, DM_GEOM_FILL, 0, 0, 0, 0, 0, 0, 8, 8);                                // no drawable: nothing computed
+    present(1334, 750, 0, 0, 2868, 1320, DM_GEOM_FIT, 0, 68, 1334, 614, 0, 0, 2868, 1320);        // width-limited: crop x scale rounds above the drawable, the bar must not go to -1
+    present(750, 1334, 0, 0, 1320, 2868, DM_GEOM_FIT, 68, 0, 614, 1334, 0, 0, 1320, 2868);        // the same, height-limited
     fit(2560, 1440, 2304, 1440, 128, 0, 2304, 1440);
     fit(2560, 1440, 2560, 1440, 0, 0, 2560, 1440);
     fit(2560, 1440, 0, 0, 0, 0, 2560, 1440);
