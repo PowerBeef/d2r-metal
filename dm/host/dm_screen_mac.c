@@ -9,8 +9,11 @@ dm_scr_pic dm_scr_picture(double w, double h) {
 }
 
 int dm_scr_native_w(double w_px, double h_px, double aspect) {
-    (void)h_px; (void)aspect;
-    int w = (int)w_px / 16 * 16;   // the main screen's pixel width, 16-aligned, 1600-3840
+    if (!(aspect > 0)) aspect = 16.0 / 9;
+    double pw = w_px, fit = floor(h_px * aspect + 0.5), cap = floor(sqrt(DM_SCR_MAX_PX * aspect) + 1e-6);   // the epsilon keeps 3840 x 2160 at 16:9 whole
+    if (h_px > 0 && fit < pw) pw = fit;   // the picture's width on this screen: a screen wider than the picture shows it with side bars
+    if (cap < pw) pw = cap;
+    int w = (int)pw & ~1;
     return w < 1600 ? 1600 : w > 3840 ? 3840 : w;
 }
 

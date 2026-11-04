@@ -31,17 +31,21 @@ int main(void) {
     pic(3440, 1440, 16.0 / 9, 0);
     pic(1770, 1000, 16.0 / 9, 0);   // within 1% of 16:9
     pic(0, 0, 16.0 / 9, 0);
-    // Native: the backing store's width, 16-aligned, 1600-3840
-    native(2940, 1838, 2940 / 1838.0, 2928);
-    native(3420, 2150, 3420 / 2150.0, 3408);
+    // Native: the picture's own pixel width on the screen, within DM_SCR_MAX_PX, even, 1600-3840
+    native(2940, 1838, 2940 / 1838.0, 2940);   // the 13-inch Air at its default mode: no longer 2928
+    native(3420, 2150, 3420 / 2150.0, 3420);   // the 15-inch Air at its default mode: no longer 3408
     native(2560, 1440, 16.0 / 9, 2560);
     native(3024, 1890, 1.6, 3024);
     native(3456, 2160, 1.6, 3456);
     native(3840, 2160, 16.0 / 9, 3840);
     native(5120, 2880, 16.0 / 9, 3840);
-    native(3440, 1440, 16.0 / 9, 3440);
-    native(2559, 1440, 16.0 / 9, 2544);
+    native(3440, 1440, 16.0 / 9, 2560);        // a 21:9 ultrawide: the 16:9 picture's width, not 3440 minified into the pillarbox
+    native(2559, 1440, 16.0 / 9, 2558);
     native(1440, 900, 1.6, 1600);
+    native(3840, 2400, 1.6, 3642);             // the heap cap: a 16:10 4K screen
+    native(4112, 2584, 4112 / 2584.0, 3632);   // a 16-inch MacBook Pro at its "more space" mode (2056 x 1329 pt), below the notch
+    native(3840, 2880, 4.0 / 3, 3324);         // the heap cap at 4:3
+    native(6016, 3384, 6016 / 3384.0, 3840);   // a Pro Display XDR
     // the game resolution
     res(2940, 2940 / 1838.0, 1, 1, 2940, 1838);
     res(2560, 1.6, 1, 1, 2560, 1600);

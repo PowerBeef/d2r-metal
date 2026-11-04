@@ -118,14 +118,15 @@ static void full_setup(void) {
 // 只在启动时定（游戏分辨率启动后不变）；换屏、拉窗口后由出图（MetalFX / 双线性）跟着视口缩放。DM_GAME_RES（直接给分辨率，对拍用）在时不理它
 // Output resolution (the docked game output width; height from the picture's aspect ratio): 1600 originally. In the App it follows the options page "Display → Resolution" tier (res in dm_video.c: 1600 / 1920 / 2560),
 // set only at launch (the game resolution does not change after launch); after a screen change or window resize the present (MetalFX / bilinear) scales to the viewport. Ignored with DM_GAME_RES (which gives the resolution directly, for comparisons)
-// 第四档「原生」（res=3）= 主屏的像素宽（16 对齐，1600–3840）：界面与文字按屏幕原生分辨率画，3D 由「3D 清晰度」单独降（dm_video.c s3d）
-// The fourth tier "Native" (res=3) = the main screen's pixel width (16-aligned, 1600–3840): the interface and text are drawn at the screen's own resolution, and "3D Resolution" lowers the 3D on its own (s3d in dm_video.c)
+// The fourth tier "Native" (res=3) = the width of the picture on the main screen in pixels, even, 1600-3840 (dm_scr_native_w: on a 21:9 screen the
+// 16:9 picture's width; within DM_SCR_MAX_PX, the GPU heap's room): the interface and text are drawn at the screen's own resolution, and
+// "3D Resolution" lowers the 3D on its own (s3d in dm_video.c)
 static const int k_render_w[3] = { 1600, 1920, 2560 };
 static int g_render_w = 1600, g_render_tier = -1;   // 这次启动用的那一档（-1 = 没按设置定） | the tier used for this launch (-1 = not set from the settings)
 int dm_video_get(const char *key);
 void dm_video_fullscreen_note(int on);
 static void panel_px(int *w, int *h);
-static int native_w(void) { return dm_scr_native_w(main_px(), main_px_h(), 16.0 / 9); }
+static int native_w(void) { scr_px sp = scr_launch(); return dm_scr_native_w(sp.w, sp.hc, dm_scr_picture(sp.w, sp.hc).aspect); }   // from the launch screen, whether or not true full screen is on
 static void render_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
     int t = dm_video_get("res"); if (t < 0 || t > 3) t = 0;

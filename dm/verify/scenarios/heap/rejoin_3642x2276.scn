@@ -1,0 +1,91 @@
+# GPU heap 0 over ten run entries and exits at 3642x2276 (NFS-9, LIF-4): the largest 16:10 picture DM_SCR_MAX_PX (3840 x 2160 pixels) allows
+# (a 16:10 4K display, a 16-inch MacBook Pro at its "more space" mode), on the product's 16:10 interface path (DM_UI_169=1 DM_UI_YPOS=bottom:
+# dm_game_res gives 3642x2048 in the front end and 3642x2276 in a run, so every entry and exit switches the
+# display textures between 16:9 and 16:10 inside heap 0's first-fit pool). The 3D at 75% (the MetalFX 3D pass's targets), Ultra and environment
+# shadows, SMAA. The gpuheap events record use, the high-water mark and the largest free gap after each switch; pool_mb=768 is the positive
+# control. 'press A' on the CLI host's original pause page is Save and Exit. It departs from this Mac's Recommended because only DM_GAME_RES
+# renders this size here; heap readings are measurements, so it runs in front and in real full screen. Run it alone (about a minute; measured 2026-11-03: 448 <-> 497 MiB used, the gap never under 270 MiB).
+name rejoin_3642x2276
+requires cli
+front fullscreen
+save warlock
+timeout 600
+env DM_GAME_RES=3642x2276 DM_UI_169=1 DM_UI_YPOS=bottom DM_3D_SCALE=0.75 DM_SHADOW_SIZE=4096 DM_ENV_SHADOWS=1 DM_AA_MODE=2 DM_TEST_FULLSCREEN_AT=1
+
+expect main_menu timeout=150
+enter_game
+# cycle 1
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+# cycle 2
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+# cycle 3
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+# cycle 4
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+# cycle 5
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+# cycle 6
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+# cycle 7
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+# cycle 8
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+# cycle 9
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+# cycle 10
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 2
+quit
+check no_red
+check no_red_log
+check saved
+check event gpuheap pool_mb=768
