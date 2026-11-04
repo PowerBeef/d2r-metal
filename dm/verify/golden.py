@@ -282,9 +282,10 @@ SETS: dict[str, dict[str, Any]] = {
                 controls={'fxaa': {'DM_AA_MODE': '1'}, 'aniso_off': {'DM_NVN_ANISO': '0'}, 'envsh_off': {'DM_ENV_SHADOWS': '0'}, 'shadow_2100': {'DM_SHADOW_SIZE': '2100'}}),
     'rec75': dict(env=picture.REC75, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
     # The temporal sets' camera jitters, so each shot lands on another offset and about half the frame differs by a level or two (45-53% against the usual limit of 45%,
-    # measured 2026-11-04), while repeat FLIP stays small (0.008-0.010 against REPEAT_MAX); their limit on moving pixels is therefore looser
-    'rect': dict(env=picture.RECT, pages=['lb_town_a1', 'lb_wild_a1', 'lb_crypt_a1'], judge='flip', dir='rect', log_allow=(), unstable_max=0.65, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
-    'rec75t': dict(env=picture.REC75T, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75t', log_allow=(), unstable_max=0.65, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
+    # measured 2026-11-04), while repeat FLIP stays small (0.008-0.010 against REPEAT_MAX); their limit on moving pixels is therefore looser. With so much of the frame masked,
+    # rain crossing what is left comes and goes (rect lb_town_a1: 0.007-0.124% hot over 7 checks of one build, 0.016% in its 2 noise shots), so they take 10 shots: the usual 4 for the mask and 6 for the noise
+    'rect': dict(env=picture.RECT, pages=['lb_town_a1', 'lb_wild_a1', 'lb_crypt_a1'], judge='flip', dir='rect', log_allow=(), unstable_max=0.65, record_shots=10, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
+    'rec75t': dict(env=picture.REC75T, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75t', log_allow=(), unstable_max=0.65, record_shots=10, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
     'bright': dict(env=dict(picture.REC, DM_BRIGHT_K='4'), pages=['lb_crypt_a1'], judge='flip', dir='bright', log_allow=(), controls={'bright_off': {'DM_BRIGHT_K': '1'}}),
     'phone': dict(env=picture.PHONE, pages=['lb_town_a1', 'lb_crypt_a1'], judge='flip', dir='phone', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
 }
@@ -435,7 +436,7 @@ def flip_record(s, names, reason, host, controls=True, allow_blind=None):
     st, d, runs, bad = SETS[s], set_dir(s), run_dir(f'rec_{s}'), 0
     os.makedirs(d, exist_ok=True)
     for p in set_pages(s, names):
-        shots, why, un, rep, noise = [os.path.join(runs, p + ('.png' if i == 0 else f'.{i + 1}.png')) for i in range(RECORD_SHOTS)], None, None, {}, {}
+        shots, why, un, rep, noise = [os.path.join(runs, p + ('.png' if i == 0 else f'.{i + 1}.png')) for i in range(st.get('record_shots', RECORD_SHOTS))], None, None, {}, {}
         for png in shots:
             ok, w = take_shot(host, p, png, st['env'])
             if not ok: why = f'screenshot failed: {w}'; break
