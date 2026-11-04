@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Unit test for dmsh_rules.py: the HDR-switch split on synthetic MSL shaped like spirv-cross output (no game shader text). Checks the structure,
-that the else copy has the switch replaced by false and nothing else changed, the refusals, and (when the Metal compiler is there) that the result
-compiles and that the switch-off copy loses the work the switch guarded."""
+"""Unit test for dmsh_rules.py, on synthetic MSL shaped like spirv-cross output (no game shader text). The HDR-switch split: the structure, that the
+else copy has the switch replaced by false and nothing else changed, the refusals, and (when the Metal compiler is there) that the result compiles and
+that the switch-off copy loses the work the switch guarded. The velocity entry: the original entry is untouched, the new entry's structure, the
+refusals, and that the result compiles and runs the body on both argument blocks."""
 import builtins
 import dis
 import os
@@ -81,6 +82,42 @@ BODY = '''fragment main0_out main0(constant spvDescriptorSetBuffer0& spvDescript
 SRC = HEAD + BODY
 
 
+VS = '''#include <metal_stdlib>
+using namespace metal;
+
+struct type_c
+{
+    float4 _m0[32];
+};
+
+struct spvDescriptorSetBuffer0
+{
+    constant type_c* vp_c3 [[id(0)]];
+    constant type_c* vp_c6 [[id(1)]];
+};
+
+struct main0_out
+{
+    float4 gl_Position [[position, invariant]];
+};
+
+struct main0_in
+{
+    float4 m_0 [[attribute(0)]];
+};
+
+vertex main0_out main0(main0_in in [[stage_in]], constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]])
+{
+    main0_out out = {};
+    float _1 = in.m_0.x * (*spvDescriptorSet0.vp_c3)._m0[0].x;
+    out.gl_Position.x = _1 * (*spvDescriptorSet0.vp_c6)._m0[21].x;
+    out.gl_Position.w = 1.0;
+    return out;
+}
+
+'''
+
+
 class HdrSwitchSplit(unittest.TestCase):
     def test_structure(self):
         out = dmsh_rules.hdr_switch_split(SRC)
@@ -108,10 +145,15 @@ class HdrSwitchSplit(unittest.TestCase):
     def test_rule_table(self):
         self.assertEqual(len(dmsh_rules.HDR_SWITCH_KEYS), 7)
         self.assertTrue(all(re.fullmatch(r'[0-9a-f]{16}', k) for k in dmsh_rules.HDR_SWITCH_KEYS))
-        (f, applies), = dmsh_rules.RULES
+        (f, applies), (g, applies2) = dmsh_rules.RULES
         self.assertIs(f, dmsh_rules.hdr_switch_split)
         self.assertTrue(applies('any', 'e5fb9d7722af87ad'))
         self.assertFalse(applies('any', '3979464914c7fede'))
+        self.assertIs(g, dmsh_rules.velocity_entry)
+        self.assertEqual(len(dmsh_rules.VELOCITY_VS_KEYS), 39)
+        self.assertTrue(all(re.fullmatch(r'[0-9a-f]{16}', k) for k in dmsh_rules.VELOCITY_VS_KEYS))
+        self.assertTrue(applies2('any', '3deaf68fd65b5298'))
+        self.assertFalse(applies2('any', 'e5fb9d7722af87ad'))
 
     def test_rules_self_contained(self):
         # The shader cache fingerprints only each applying rule's own text (dmsh_build.shader_rule_source), and the chain version leaves dmsh_rules.py
@@ -138,6 +180,38 @@ class HdrSwitchSplit(unittest.TestCase):
             'e5fb9d7722af87ad': ['ps_smaa_edge_detection_p.bin'],
             '05fa4ac2ebf8af59': ['ps_compose_p.bin'], '9a650561e5c40791': ['ps_compose_p.bin'], '618342d86ec36c81': ['ps_compose_p.bin'],
             '026014cb2c3e2f90': ['ps_smaa_resolve_p.bin'], '776420a8fa59672e': ['ps_smaa_resolve_p.bin'], 'ca25698067fe0e78': ['ps_smaa_resolve_p.bin']})
+        missing = sorted(k for k in dmsh_rules.VELOCITY_VS_KEYS if k not in pk)
+        self.assertEqual(missing, [], 'VELOCITY_VS_KEYS has a key no shader has; the rule would silently skip it')
+
+    def test_velocity_entry(self):
+        out = dmsh_rules.velocity_entry(VS)
+        self.assertTrue(out.startswith(VS.rstrip('\n')), 'the shader\'s own entry stays as it is')
+        self.assertEqual(out.count('vertex main0_out main0('), 1)
+        self.assertIn('main0_out dm_main0(main0_in in, constant spvDescriptorSetBuffer0& spvDescriptorSet0)', out)
+        self.assertIn('vertex dm_vel_out dm_velocity(main0_in in [[stage_in]], constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]], constant spvDescriptorSetBuffer0& dm_prev [[buffer(1)]])', out)
+        self.assertIn('main0_out c = dm_main0(in, spvDescriptorSet0);', out)
+        self.assertIn('main0_out p = dm_main0(in, dm_prev);', out)
+        self.assertIn('float4 gl_Position [[position, invariant]];', out[out.index('struct dm_vel_out'):])
+        inst = VS.replace('[[buffer(0)]])', '[[buffer(0)]], uint gl_InstanceIndex [[instance_id]], uint gl_BaseInstance [[base_instance]])')
+        out2 = dmsh_rules.velocity_entry(inst)
+        self.assertIn('main0_out dm_main0(main0_in in, constant spvDescriptorSetBuffer0& spvDescriptorSet0, uint gl_InstanceIndex, uint gl_BaseInstance)', out2)
+        self.assertIn('main0_out p = dm_main0(in, dm_prev, gl_InstanceIndex, gl_BaseInstance);', out2)
+
+    def test_velocity_refusals(self):
+        with self.assertRaises(ValueError): dmsh_rules.velocity_entry(VS.replace('vertex main0_out main0(', 'vertex main0_out other('))
+        with self.assertRaises(ValueError): dmsh_rules.velocity_entry(VS.replace('[[buffer(0)]])', '[[buffer(0)]], constant float& x [[buffer(1)]])'))
+        with self.assertRaises(ValueError): dmsh_rules.velocity_entry(VS.replace('spvDescriptorSet0 [[buffer(0)]]', 'spvDescriptorSet0 [[buffer(2)]]'))
+
+    @unittest.skipUnless(shutil.which('xcrun'), 'needs the Metal compiler')
+    def test_velocity_compiles(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'v.metal')
+            with open(p, 'w') as f: f.write(dmsh_rules.velocity_entry(VS))
+            r = subprocess.run(['xcrun', '-sdk', 'macosx', 'metal', '-S', '-emit-llvm', '-fpreserve-invariance', p, '-o', p[:-6] + '.ll'], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr[-600:])
+            with open(p[:-6] + '.ll') as f: ir = f.read()
+            self.assertIn('@dm_velocity', ir)
+            self.assertIn('@main0', ir)
 
     @unittest.skipUnless(shutil.which('xcrun'), 'needs the Metal compiler')
     def test_compiles_and_drops_curve(self):
