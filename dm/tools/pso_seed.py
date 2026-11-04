@@ -13,7 +13,8 @@
 #                                    Recommended's features forced, ios-mac as is) and checks its manifest: 'PSO_GATE OK|RED rows=<n>'
 #   record [--set front,act1,tour|all] [--only <backend>] [--front create|menu] [--out DIR] [--keep]   runs the 26-row route matrix (matrix())
 #                                    under the game lock and harvests each run's manifest to DIR/<NN>_<set>_<name>.tsv; 'RUN <NN> <name> OK|RED|UNAVAIL rows=<n>'
-#   merge --dir DIR [--seed FILE] [--write]   the new seed from a record folder: front rows, the seed's rows, Act 1 rows, the background marker, tour rows
+#   merge --dir DIR [--seed FILE] [--write]   the new seed from a record folder: the seed's own rows, then the new front and Act 1 rows, the
+#                                    background marker, the seed's background rows, the new tour rows
 #   cold [--backend mac-app|ios-mac] [--route FILE] [--env K=V]... [--user-manifest FILE] [--launcher-warm] [--keep]   one true cold start (mac-app: a
 #                                    fresh bundle ID; ios-mac: the package's Metal cache moved to the Trash first) with DM_BOOTPROF; appends a row to
 #                                    $DM_ROOT/run/pso/cold.tsv: 'PSO_COLD OK|RED'. It runs in front (timing); a disturbed attempt is redone from a fresh cold
@@ -348,9 +349,12 @@ def check(paths, seed=SEED, allow=ALLOW):
 
 
 def merge(seed_lines, sections, notes):
-    """The new seed: the layout line and notes, the front rows, the seed's own rows (its foreground part), the Act 1 rows, the background marker,
-    the seed's background rows, the tour rows. The seed's rows must be canonical (else ValueError); new rows already in the seed or earlier are
-    dropped. sections = {'front': [lines], 'act1': [...], 'tour': [...]}, each in file order. Returns (lines, counts)."""
+    """The new seed: the layout line and notes, the seed's own rows (its foreground part), the new front rows, the new Act 1 rows, the background
+    marker, the seed's background rows, the new tour rows. The seed's rows keep their place: the warm-up builds in file order, and new front rows
+    placed ahead of them (the character-creation page's, say) held back the main menu's own, which the first front-end frames then built on the
+    submit thread (27 instead of 5 at a cold launch, a 150 ms frame instead of 70; measured 2026-11-03). The seed's rows must be canonical (else
+    ValueError); new rows already in the seed or earlier are dropped. sections = {'front': [lines], 'act1': [...], 'tour': [...]}, each in file
+    order. Returns (lines, counts)."""
     fg, bg, in_bg = [], [], False
     for line in seed_lines:
         line = line.rstrip('\r\n')
@@ -372,7 +376,7 @@ def merge(seed_lines, sections, notes):
             seen.add(row_id(tag, val)); out.append(f'S\t{val}\t{stage}' if tag == 'S' else f'{tag}\t{val}')
         return out
     front, act1, tour = fresh(sections.get('front', [])), fresh(sections.get('act1', [])), fresh(sections.get('tour', []))
-    lines = [HEAD] + NORM_NOTE + ['# ' + x for x in notes] + front + fg + act1 + [BG_MARK] + bg + tour
+    lines = [HEAD] + NORM_NOTE + ['# ' + x for x in notes] + fg + front + act1 + [BG_MARK] + bg + tour
     return lines, dict(front=len(front), seed=len(fg), act1=len(act1), seed_background=len(bg), tour=len(tour))
 
 

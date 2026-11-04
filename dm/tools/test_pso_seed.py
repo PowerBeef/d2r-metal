@@ -166,10 +166,10 @@ class RunToolsTest(unittest.TestCase):
                                        {'front': [f1, s1], 'act1': [a1, f1], 'tour': [t1]}, ['note'])
         body = [x for x in lines if not x.startswith('#') or x == pso_seed.BG_MARK]
         self.assertEqual(lines[0], pso_seed.HEAD)
-        self.assertEqual(body, [f1, s1, s2, a1, pso_seed.BG_MARK, t1])
+        self.assertEqual(body, [s1, s2, f1, a1, pso_seed.BG_MARK, t1])   # the seed's own rows keep their place
         self.assertEqual(counts, dict(front=1, seed=2, act1=1, seed_background=0, tour=1))
         again, _ = pso_seed.merge(lines, {'front': [], 'act1': [], 'tour': ['C\ttour2_b']}, [])
-        self.assertEqual([x for x in again if not x.startswith('#') or x == pso_seed.BG_MARK], [f1, s1, s2, a1, pso_seed.BG_MARK, t1, 'C\ttour2_b'])
+        self.assertEqual([x for x in again if not x.startswith('#') or x == pso_seed.BG_MARK], [s1, s2, f1, a1, pso_seed.BG_MARK, t1, 'C\ttour2_b'])
         with self.assertRaises(ValueError): pso_seed.merge([f'R\t{n1().hex()}\n'], {}, [])   # a seed row that is not normalised stops the merge
 
     def test_matrix_and_routes(self):
