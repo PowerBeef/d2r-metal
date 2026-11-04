@@ -6,8 +6,10 @@
 
 // The game picture on a main screen of w x h pixels (h = the full-screen content height, below the notch): aspect = width / height; full = 1 when
 // the screen is narrower than 16:9 (true full screen: the 3D fills the screen, the interface is a 16:9 band along the bottom, dm_uiscreen.c);
-// otherwise 16:9 throughout
-typedef struct { double aspect; int full; } dm_scr_pic;
+// otherwise 16:9 throughout. A screen narrower than 4:3 (a rotated display, a 5:4 monitor) gets a 4:3 picture with bars (clamped = 1): no taller
+// shape has ever run, and at high resolution a tall picture overflows GPU heap 0
+#define DM_SCR_MIN_ASPECT (4.0 / 3)
+typedef struct { double aspect; int full, clamped; } dm_scr_pic;
 dm_scr_pic dm_scr_picture(double w, double h);
 // The largest picture Native renders, in pixels: GPU heap 0 (768 MiB, never grows, first-fit; dm_gpuheap.c) must keep room for the next rebuild.
 // Chosen from heap readings on 2026-11-03 (CLI host, Ultra and environment shadows, SMAA and FXAA switched in game, 3D 100% <-> 60% rebuilds, run

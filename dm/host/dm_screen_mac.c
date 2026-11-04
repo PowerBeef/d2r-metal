@@ -4,8 +4,9 @@
 #include <math.h>
 
 dm_scr_pic dm_scr_picture(double w, double h) {
-    if (h <= 0 || w / h >= 16.0 / 9 - 0.01) return (dm_scr_pic){ 16.0 / 9, 0 };   // 16:9 or wider (an external 16:9 screen, an ultrawide): 16:9 throughout
-    return (dm_scr_pic){ w / h, 1 };
+    if (h <= 0 || w / h >= 16.0 / 9 - 0.01) return (dm_scr_pic){ 16.0 / 9, 0, 0 };   // 16:9 or wider (an external 16:9 screen, an ultrawide): 16:9 throughout
+    if (w / h < DM_SCR_MIN_ASPECT) return (dm_scr_pic){ DM_SCR_MIN_ASPECT, 1, 1 };   // narrower than 4:3: a 4:3 picture with bars (the iPad's layout)
+    return (dm_scr_pic){ w / h, 1, 0 };
 }
 
 int dm_scr_native_w(double w_px, double h_px, double aspect) {

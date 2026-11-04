@@ -96,23 +96,24 @@ static scr_px scr_launch(void) {
 // The launch screen's backing-store width and whole height in pixels (Recommended's inputs, mac_rec)
 static double main_px(void) { return scr_launch().w; }
 static double main_px_h(void) { return scr_launch().h; }
-// 真全屏（App 形态，屏幕比 16:9 窄——16:10 的 MacBook，「不能全屏」：全屏后上下各 56 点黑边）：照 iPad 那套（front_ios.m、dm_uiscreen.c）——
-// 启动时按屏幕比例（全屏时的内容区：屏幕扣掉刘海安全区）定游戏分辨率，局内 3D 铺满、界面按 16:9 贴底（开大面板居中），前端各页与读取画面游戏自己按 16:9 出、上下留边。
-// 窗口锁成同一比例，窗口态与全屏态都铺满。屏幕不比 16:9 窄（外接 16:9 / 更宽的屏）：照旧全程 16:9。比例在启动时按主屏定，之后挪到别的屏不重算（游戏分辨率只在启动时定）。
-// 测试开关 DM_TEST_SCREEN_ASPECT=<宽>x<高>：当作主屏是这个比例（16x9 = 外接 16:9 屏的口径）
-// True full screen (App form, screen narrower than 16:9 - a 16:10 MacBook, "cannot go full screen": 56 points of black bar above and below in full screen): the iPad approach (front_ios.m, dm_uiscreen.c) -
-// at launch the game resolution is set from the screen's aspect ratio (the full-screen content area: the screen minus the notch safe area); in game the 3D fills the screen, the interface is 16:9 along the bottom (centred with a large panel open), and the front-end pages and the loading screen are drawn by the game at 16:9 with bars above and below.
-// The window is locked to the same ratio, so both windowed and full screen are filled. Screens not narrower than 16:9 (external 16:9 / wider screens): 16:9 throughout as before. The ratio is set from the main screen at launch and not recomputed when moved to another screen (the game resolution is only set at launch).
-// Test switch DM_TEST_SCREEN_ASPECT=<w>x<h>: treat the main screen as this ratio (16x9 = the external 16:9 screen case)
+// True full screen (the Mac App on a main screen narrower than 16:9: a 16:10 MacBook, which would otherwise show bars above and below in full screen):
+// the iPad's approach (front_ios.m, dm_uiscreen.c). At launch the game resolution takes the launch screen's shape (scr_launch: its full-screen content
+// area, below the notch); in a run the 3D fills the screen and the interface is a 16:9 band along the bottom, while the front-end pages and the
+// loading screen are drawn by the game at 16:9 with bars. The window keeps that shape too, so windowed and full screen are both filled. A screen
+// narrower than 4:3 gets a 4:3 picture with bars (dm_scr_picture: no taller shape has run, and a tall picture at high resolution overflows GPU heap 0).
+// Screens not narrower than 16:9 (external 16:9 or wider screens): 16:9 throughout. The shape is set once (the game resolution is only set at launch):
+// moving the window to another screen does not change it before the next launch. Test switches: DM_TEST_SCREEN_PX and DM_TEST_SCREEN_ASPECT stand
+// in for the launch screen (scr_launch)
 static double g_aspect = 16.0 / 9;   // 游戏画面比例（宽 ÷ 高） | aspect ratio of the game picture (width / height)
 static int g_full;                    // 1 = 真全屏已开 | 1 = true full screen is on
 static void full_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
     scr_px sp = scr_launch(); double w = sp.w, h = sp.hc;
     dm_scr_pic p = dm_scr_picture(w, h);
-    if (!p.full) { LOG("画面：主屏 %.0fx%.0f 不比 16:9 窄 → 全程 16:9", w, h); return; }
+    if (!p.full) { LOG("picture: main screen %.0fx%.0f px is not narrower than 16:9 -> 16:9 throughout", w, h); return; }
     g_aspect = p.aspect; g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM);
-    LOG("画面：主屏全屏内容区 %.0fx%.0f（比例 %.3f）比 16:9 窄 → 真全屏：窗口锁这个比例，局内铺满、界面贴底，前端 16:9 留边", w, h, g_aspect);
+    LOG("picture: main screen content %.0fx%.0f px (aspect %.3f)%s -> true full screen at %.3f, interface along the bottom, front-end pages 16:9 with bars", w, h, w / h,
+        p.clamped ? ", narrower than 4:3: the picture stays 4:3 (the GPU heap 0 range)" : "", g_aspect);
 }
 // 出图分辨率（主机模式的游戏出图宽，高按画面比例）：原版 1600。App 里按选项页「显示 → 分辨率」那一档（dm_video.c 的 res：1600 / 1920 / 2560），
 // 只在启动时定（游戏分辨率启动后不变）；换屏、拉窗口后由出图（MetalFX / 双线性）跟着视口缩放。DM_GAME_RES（直接给分辨率，对拍用）在时不理它
