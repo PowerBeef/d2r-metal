@@ -301,7 +301,9 @@ FLIP_SETS = [s for s in SETS if SETS[s]['judge'] == 'flip']
 # Measured 2026-11-04 on the look-set pages: a repeat shot 0.999-1.002, a uniform one-level shift 1.000, FXAA for SMAA 0.89, the 3D MetalFX pass off
 # 0.68-0.79. A region fails when the ratio is more than DETAIL_TOL from 1 (or NOISE_K times its recorded noise)
 FLIP_HOT, FLIP_HOT_MAX, FLIP_MEAN_MAX, DETAIL_TOL = 0.1, 0.0005, 0.06, 0.02
-UNSTABLE_GROW, UNSTABLE_MAX, REPEAT_MAX, NOISE_K = 2, 0.45, 0.02, 3
+# NOISE_K 4: with 3, one of 32 page checks of an unchanged build read just over (rec75 lb_town_a1's HUD band, rain along its bottom: 0.408% hot against
+# 0.390%); with 4 every control of the 2026-11-04 record is still seen on several pages
+UNSTABLE_GROW, UNSTABLE_MAX, REPEAT_MAX, NOISE_K = 2, 0.45, 0.02, 4
 RECORD_SHOTS, MASK_SHOTS = 6, 4
 NOT_ALLOWED = 'not allowed'
 LB_REGIONS = {'view': [0, 0, 1, 0.82], 'hud': [0, 0.82, 1, 1]}

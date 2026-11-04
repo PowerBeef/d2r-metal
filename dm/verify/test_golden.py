@@ -109,7 +109,7 @@ expect(res['view']['ok'] and not res['hud']['ok'] and not okp, f"a HUD-band chan
 one = np.zeros((100, 100, 3)); two = one.copy(); two[50, 50] = 1.0
 expect(int(golden.unstable_mask(one, two).sum()) == 25, 'one moving pixel masks a 5 x 5 block (UNSTABLE_GROW 2)')
 lim = golden.page_limits({'noise': {'view': {'mean': 0.011, 'hot': 0.0025, 'detail': 0.99}, 'hud': {'mean': 0.0, 'hot': 0.0}}})
-expect(abs(lim['view'][0] - 0.0075) < 1e-9 and lim['view'][1] == golden.FLIP_MEAN_MAX and abs(lim['view'][2] - 0.03) < 1e-9
+expect(abs(lim['view'][0] - golden.NOISE_K * 0.0025) < 1e-9 and lim['view'][1] == golden.FLIP_MEAN_MAX and abs(lim['view'][2] - golden.NOISE_K * 0.01) < 1e-9
        and lim['hud'] == (golden.FLIP_HOT_MAX, golden.FLIP_MEAN_MAX, golden.DETAIL_TOL),
        f'page_limits: NOISE_K x the recorded noise, never below the fixed limits ({lim})')
 r = golden.flip_region(base, base + 1 / 255, keep, view); expect(r['detail'] == 1.0, f"a uniform shift keeps the fine detail ({r['detail']})")
