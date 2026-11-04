@@ -60,6 +60,14 @@ int dm_kbm_match(const uint8_t *list, int n, int vk, int mods, int *out, int max
     return c;
 }
 
+// Where a PC mouse press lands (dm_kbm_step), from the hit test at the point (dm_ui_item_at_now: 3 = outside every panel, 0 = nothing it could
+// classify, which is also a clickable widget or the inside of a panel), whether panels are up (dm_ui_panel_state), whether anything non-resident is
+// open, and the point's height in the interface band (uy, 0..1 of the band; on a 16:10 screen the band is the bottom 16:9 part of the picture, so
+// a picture height would send a strip of world clicks to the HUD): 1 = a panel, 2 = the PC HUD band at the band's bottom, 0 = the world (above or
+// below the band too: uy < 0 or > 1)
+int dm_kbm_where(int hit, int panels, int open, float uy) {
+    return (hit != 0 && hit != 3) || panels ? 1 : uy > HUD_BAND && uy <= 1.0f ? 2 : hit == 0 && open ? 1 : 0;
+}
 #if TARGET_OS_OSX && !defined(DM_KBM_PURE_ONLY)   // DM_KBM_PURE_ONLY: the unit test (t_kbm) builds the pure helpers alone
 // ---- events from the front end ----
 typedef struct { uint8_t op, btn, mods; int16_t vk; float nx, ny; } kev;   // op: 0 move, 1 down, 2 up, 3 key down, 4 key up, 5 wheel (vk = notches)
@@ -183,7 +191,7 @@ int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the c
                 // mouse messages, which its buttons take), else the world. dm_ui_item_at_now: 3 = outside every panel; 0 = nothing it could classify,
                 // which is also a clickable widget or the inside of a panel, so with a panel open it goes to the panel. The HUD band is compared in
                 // interface height (on 16:10 the band's bottom part, not the picture's)
-                int hit = dm_ui_item_at_now(g_x, g_y), ps = dm_ui_panel_state(), hud = g_y > HUD_BAND, where = (hit != 0 && hit != 3) || ps ? 1 : hud ? 2 : hit == 0 && open ? 1 : 0;
+                int hit = dm_ui_item_at_now(g_x, g_y), ps = dm_ui_panel_state(), where = dm_kbm_where(hit, ps, open, g_y);
                 static int lh; if (lh++ < 50) LOG("PC input: button %d at %.3f,%.3f -> hit %d panels %d open %d -> %s", bt, g_x, g_y, hit, ps, open, where == 1 ? "panel" : where == 2 ? "HUD" : "world");
                 g_btn[bt].down = 1; g_btn[bt].ui = where;
                 if (where == 1 && (hit == 1 || hit == 7)) { g_btn[bt].ui = 3; item_click(bt, hit); }

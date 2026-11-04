@@ -3,6 +3,7 @@
 #include <stdint.h>
 int dm_kbm_vk_from_mac(unsigned short kc);                                    // macOS virtual key code -> Windows virtual key; 0 = unused
 int dm_kbm_match(const uint8_t *list, int n, int vk, int mods, int *out, int max);   // bindings a key fires (pure; t_kbm)
+int dm_kbm_where(int hit, int panels, int open, float uy);                   // where a PC press lands: 1 panel, 2 PC HUD, 0 world (pure; t_kbm)
 void dm_kbm_mouse(int op, float nx, float ny, int btn, int mods);           // any thread: op 0 move 1 down 2 up; btn 0 left 1 right 2-4 mouse 3-5; interface-normalized
 void dm_kbm_key(int vk, int down, int mods);                                // any thread: mods 1 Shift 2 Ctrl 4 Alt
 void dm_kbm_wheel(float nx, float ny, int notches);                         // any thread: over the world, previous / next skill
