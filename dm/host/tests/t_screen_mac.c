@@ -15,6 +15,10 @@ static void native(double w, double h, double aspect, int want) {
     int got = dm_scr_native_w(w, h, aspect);
     CHECK(got == want, "dm_scr_native_w(%.0f, %.0f, %.4f) = %d, expected %d", w, h, aspect, got, want);
 }
+static void win(double aspect, double mw, double mh, double ww, double wh) {
+    double w, h; dm_scr_fit_window(aspect, mw, mh, &w, &h);
+    CHECK(w == ww && h == wh, "dm_scr_fit_window(%.4f, %.0f, %.0f) = %.0fx%.0f, expected %.0fx%.0f", aspect, mw, mh, w, h, ww, wh);
+}
 static void res(int rw, double aspect, int full, int docked, unsigned w, unsigned h) {
     uint64_t r = dm_scr_game_res(rw, aspect, full, docked);
     CHECK((uint32_t)r == w && (uint32_t)(r >> 32) == h, "dm_scr_game_res(%d, %.4f, full %d, docked %d) = %ux%u, expected %ux%u", rw, aspect, full, docked,
@@ -54,6 +58,13 @@ int main(void) {
     res(1600, 16.0 / 9, 0, 1, 1600, 900);
     res(2560, 16.0 / 9, 0, 0, 1280, 720);
     res(1600, 1.6, 1, 0, 1152, 720);
+    // the first window: 1280 pt wide unless the screen's visible area is smaller, in the picture's shape
+    win(16.0 / 9, 1280, 668, 1187, 667);
+    win(16.0 / 9, 1280, 658, 1169, 657);   // this Mac's 1280 x 720 pt screen below the menu bar and a title bar
+    win(16.0 / 9, 2560, 1400, 1280, 720);
+    win(1.6, 1280, 668, 1068, 667);
+    win(4.0 / 3, 1280, 668, 890, 667);
+    win(16.0 / 9, 0, 0, 1280, 720);
     // a rotated 5K: 2880 x 5120 used to render 2880 x 5120 (14.7 Mpx) against heap 0; now a 4:3 picture within the cap
     { dm_scr_pic p = dm_scr_picture(2880, 5120); int w = dm_scr_native_w(2880, 5120, p.aspect); uint64_t r = dm_scr_game_res(w, p.aspect, p.full, 1);
       CHECK(w == 2880 && (uint32_t)r == 2880 && (uint32_t)(r >> 32) == 2160, "a rotated 5K: Native %d, game resolution %ux%u, expected 2880x2160", w, (unsigned)(uint32_t)r, (unsigned)(r >> 32)); }

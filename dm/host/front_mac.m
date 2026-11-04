@@ -747,7 +747,7 @@ static NSPoint bg_origin(NSSize sz) {
 static NSSize emu_window_size(NSRect content, NSWindowStyleMask sm) {
     NSScreen *sc = dm_screen();
     NSWindow *t = [[NSWindow alloc] initWithContentRect:content styleMask:sm backing:NSBackingStoreBuffered defer:YES screen:sc]; t.releasedWhenClosed = NO;
-    t.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); if (g_full) t.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
+    t.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); t.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
     [t center];
     NSRect f = [t constrainFrameRect:t.frame toScreen:sc];
     return [t contentRectForFrameRect:f].size;
@@ -796,14 +796,21 @@ void front_run(void (*guest)(void)) {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];   // a background run stays Regular too: accessory / prohibited apps with nothing visible get the Background role (timers ~100 ms late)
         (void)scr_launch(); full_setup(); render_setup();   // the launch screen is read before the window exists (scr_launch)
-        NSRect r = NSMakeRect(0, 0, 1280, floor(1280 / g_aspect));
+        // The first window: 1280 points wide in the picture's shape, fitted inside the screen's visible area below its title bar (dm_scr_fit_window),
+        // so it opens whole, with no bars; AppKit used to clamp a 1280 x 720 window on a 1280 x 720 pt screen to 1280 x 658 and the picture sat
+        // in a 1170-wide pillarbox (COL-7)
         NSWindowStyleMask sm = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
+        NSScreen *home = dm_screen(); double cw = 1280, ch = floor(1280 / g_aspect);
+        CGFloat tb = [NSWindow frameRectForContentRect:NSMakeRect(0, 0, 100, 100) styleMask:sm].size.height - 100;
+        if (home) dm_scr_fit_window(g_aspect, home.visibleFrame.size.width, home.visibleFrame.size.height - tb, &cw, &ch);
+        NSRect r = NSMakeRect(0, 0, cw, ch);
+        LOG("window: first content %.0fx%.0f pt (the screen's visible area %.0fx%.0f pt below a %.0f pt title bar)", cw, ch, home.visibleFrame.size.width, home.visibleFrame.size.height, tb);
         if (bg) { g_emu_win = r.size = emu_window_size(r, sm); sm = NSWindowStyleMaskBorderless; }   // background: borderless (never key), at the size AppKit gives the titled window
         NSWindow *win = [[DmWindow alloc] initWithContentRect:r styleMask:sm backing:NSBackingStoreBuffered defer:NO];
         win.title = @"D2R Metal"; win.restorable = NO; g_win = win; g_dm_ctl_app_fn = ctl_app;
         NSView *v = win.contentView; g_view = v;
         v.wantsLayer = YES; v.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
-        win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary; win.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); if (g_full) win.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
+        win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary; win.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); win.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);   // resizing keeps the picture filling the window
         // Background: on every Space (its display link keeps ticking when the user switches Spaces or opens a full-screen app), out of Mission Control,
         // Cmd-` cycling and the Stage Manager layout
         if (bg) { win.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle |

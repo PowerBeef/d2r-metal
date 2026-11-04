@@ -23,3 +23,9 @@ uint64_t dm_scr_game_res(int render_w, double aspect, int full, int docked) {
         return docked ? (uint64_t)(llround(render_w / aspect / 2) * 2) << 32 | (uint64_t)render_w : 720ull << 32 | (uint64_t)(llround(720 * aspect / 8) * 8);
     return docked ? (uint64_t)(llround(render_w * 9.0 / 16 / 2) * 2) << 32 | (uint64_t)render_w : 720ull << 32 | 1280;   // 16:9: 1600x900 by default
 }
+
+void dm_scr_fit_window(double aspect, double max_w, double max_h, double *w, double *h) {
+    double k = 1;
+    if (max_w > 0 && max_h > 0) k = fmin(1, fmin(max_w / 1280, max_h / (1280 / aspect)));
+    *w = floor(1280 * k); *h = floor(*w / aspect);
+}

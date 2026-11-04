@@ -23,3 +23,6 @@ dm_scr_pic dm_scr_picture(double w, double h);
 int dm_scr_native_w(double w_px, double h_px, double aspect);
 // The game resolution for an output width render_w, packed (height << 32 | width): docked (the Mac's mode) or handheld; full = true full screen
 uint64_t dm_scr_game_res(int render_w, double aspect, int full, int docked);
+// The first window's content size (points) for a picture of this aspect: 1280 points wide, smaller when the screen's visible area (max_w x max_h:
+// below the menu bar, beside the Dock, below the title bar) is smaller, never larger; in the picture's shape so it has no bars. 0 x 0 = unknown
+void dm_scr_fit_window(double aspect, double max_w, double max_h, double *w, double *h);
