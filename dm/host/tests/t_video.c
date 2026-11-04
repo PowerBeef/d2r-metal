@@ -131,6 +131,11 @@ int main(void) {
     // (3) one rec_* out of range: same as missing
     r = run(FULL(0, 1, 2, 1, 0, 7) NEWREC);
     CHECK(r.v[0] == 0 && r.v[1] == 2 && r.v[2] == 0 && !strcmp(r.file, FULL(0, 1, 2, 1, 0, 1) NEWREC), "(3) rec_up=7 out of range: only it becomes 1, got %d/%d/%d\n%s", r.v[0], r.v[1], r.v[2], r.file);
+    // (3b) Upscaling's third option (Temporal) is a value like the others, and the fourth is out of range
+    r = run("mode=0\nrec_mode=1\nres=2\nup=2\nrec_up=1\n" RV);
+    CHECK(r.v[2] == 2, "(3b) up=2 (Temporal) read and kept, got %d", r.v[2]);
+    r = run("mode=0\nrec_mode=1\nres=2\nup=3\nrec_up=1\n" RV);
+    CHECK(r.v[2] == 1, "(3b) up=3 out of range: back to the recommendation 1, got %d", r.v[2]);
     // (4) current value missing / out of range, recommendation present: back to the stored recommendation
     r = run("mode=5\nrec_mode=0\nrec_res=2\nup=1\nrec_up=0\n" RV);
     CHECK(r.v[0] == 0 && r.v[1] == 2 && r.v[2] == 1, "(4) mode=5 out of range, res missing: back to the stored 0, 2; up read as 1, got %d/%d/%d", r.v[0], r.v[1], r.v[2]);

@@ -155,6 +155,7 @@ static int s3_max_level(float cfg, float floor_env) { return dm_s3_max_level(cfg
 // 配置值：DM_3D_SCALE（0.5–1.0，读一次），否则 iOS 选项页的「3D 清晰度」，再否则缺省手机 0.75、Mac 宿主 1.0
 // Configured value: DM_3D_SCALE (0.5–1.0, read once), else the iOS options page's "3D Resolution", else the default: 0.75 on phones, 1.0 on the Mac host
 __attribute__((weak)) float dm_video_scale3d(void) { return 0; }   // 宿主 dm_video.c 给强定义（手机选项页「3D 清晰度」）；单测不链它时恒 0 | the host's dm_video.c gives the strong definition (phone options page "3D Resolution"); 0 when a unit test does not link it
+__attribute__((weak)) int dm_video_temporal_active(void) { return 0; }   // dm_video.c: Upscaling = MetalFX Temporal
 static float g_s3_env;   // DM_3D_SCALE, read once by s3_env_read (0 = not set)
 static void s3_env_read(void) {
     const char *e = getenv("DM_3D_SCALE");
@@ -354,6 +355,8 @@ static void scale3d_tick(void) {
     // The Frame Drops level: 0 = the configured value, k = its k-th level below it (dm_s3lv.h)
     int lv = atomic_load(&g_scale3d_level); float dyn = s3_level_scale(want_cfg, lv);
     float want = dm_nvn_ruler_truth() ? 1.0f : dyn;
+    // At 100% the game has no upscale pass, and the temporal scaler (nvn_mv.inc) takes that pass's place: 99% is too small a step to see, and the scaler then antialiases
+    if (want >= 1.0f && !dm_nvn_ruler_truth() && dm_video_temporal_active()) want = 0.99f;
     if (want == cur || !main || dm_nvn_frame_count() < 30) return;
     uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;
     uint32_t ow = *(uint32_t *)(renderer + 0xee88), oh = *(uint32_t *)(renderer + 0xee8c); if (!ow || !oh) return;
@@ -415,7 +418,7 @@ static void aa_tick(void) {
         else if (force == AA_ENV_BAD) LOG("【红】DM_AA_MODE=%s is not 0, 1, 2 or off: ignored, the picture setting decides", e);
         if (force == AA_ENV_CRASH || force == AA_ENV_BAD) force = AA_ENV_UNSET; }
     if (force == AA_ENV_OFF) return;   // DM_AA_MODE=off: leave the byte to the game (or to a test's control-port mem write)
-    int want = force >= 0 ? force : dm_video_aa_mode(); if (want < 0 || want > 2) return;
+    int want = force >= 0 ? force : dm_video_temporal_active() ? 0 : dm_video_aa_mode(); if (want < 0 || want > 2) return;   // the temporal scaler antialiases: the game's own AA off with it
     if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
     if (!main || dm_nvn_frame_count() < 30) return;
     uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;

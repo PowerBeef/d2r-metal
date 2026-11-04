@@ -155,6 +155,7 @@ DM_MEM_STAT_ALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_METAL_COLD	ios	ios/Sources/main.m	-
 DM_MFX	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_mfx_on.m	y
 DM_MFX3D	gfx	gfx/nvn/nvn_capture.c gfx/nvn/nvn_mtl.m gfx/tests/t_capture.c gfx/tests/t_mfx_on.m	y
+DM_MFXT	host	host/dm_video.c	-
 DM_MFX_STACK	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_mfx_on.m	-
 DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
@@ -162,6 +163,8 @@ DM_MOVIE_FFMPEG_PREFIX	ios-tools	ios/run.sh	y
 DM_MOVIE_REAL	host	host/hle_movie.c	-
 DM_MSL_DIR	gfx,host,ios,tools	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m host/app_mac.m ios/Sources/main.m …	y
 DM_MSL_IOS	ios-tools	ios/run.sh	-
+DM_MV	gfx	gfx/nvn/nvn_mv.inc	-
+DM_MV_DUMP	gfx	gfx/nvn/nvn_mv.inc	-
 DM_NATIVE_ART_DIR	ios-tools	ios/tests/test_native_art_capture.py	-
 DM_NICK	host	host/hle_account.c	-
 DM_NOTARY_PROFILE	tools	tools/release_mac.sh	-

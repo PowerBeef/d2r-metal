@@ -202,8 +202,8 @@ Every setting lives in the game's own Options, on five tabs: **Video**, **Audio*
 You can change any setting; **Graphic Presets** also offers *Performance* (lighter) and *Quality* (on a Mac everything on; on iPhone and iPad the 3D world at 100% with MetalFX, SMAA and 16x filtering, the shadow rows left as they are), and **Default** puts the tab you are on back to Recommended.
 
 - **Video**:
-  - On the Mac: Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets, 3D Resolution (100 down to 50%) and Upscaling (Standard / MetalFX).
-  - On iPhone and iPad: 3D Resolution (50 to 100%), Color, Graphic Presets and Upscaling.
+  - On the Mac: Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets, 3D Resolution (100 down to 50%) and Upscaling (Standard, MetalFX, or Temporal, which builds detail from several frames for the cleanest picture and uses more of the graphics chip).
+  - On iPhone and iPad: 3D Resolution (50 to 100%), Color, Graphic Presets and Upscaling (the same three; Temporal hasn't been measured on a phone yet).
   - On both: **Anti-Aliasing** (FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Environment Shadows** and **Shadow Quality** (Standard up to Ultra; both take effect at the next start), **Frame Rate** (60 fps, or 30 to save power; 72 or 36 on a 144 Hz Mac screen) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
 - **Apply, Discard and Default** work like the game's own option pages.

@@ -540,12 +540,14 @@ static uint64_t g_sub_serial;   // 第几次提交（并行预编「每次提交
 static void tbdr_latch(void);
 static void pso_pend_age(void);
 static void mfx3d_sub_begin(void);
+static void mv_sub_begin(void);
 static void aniso_latch(void);
 static void bar_stats(void);
 static void gerr_flush(void);
 void mtl_sub_begin(void) {
     mtl_init(); g_sub_serial++;
     pso_pend_age();   // 并行预编：回收过期没人领的预测槽 | parallel precompile: recycle stale untaken prediction slots
+    mv_sub_begin();   // nvn_mv.inc: the temporal scaler and its motion vectors wanted now, or put down
     mfx3d_sub_begin();   // Upscaling off, or the 3D set unused for MFX_IDLE_3D submissions: put the 3D pass's MetalFX set down
     tbdr_latch();
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
@@ -2220,7 +2222,7 @@ static void shmap_load(void) {
     // The argument buffer encoded last time
     id<MTLBuffer> ab_buf; uint64_t ab_gpu; size_t ab_off; uint64_t ab_pass;
     int8_t zf_state, zf_nf; zskip_fact zf;   // 全零跳过事实表的查表结果缓存（0 未查 / 1 无 / 2 有）；键不变，表长（单测可增补）没变就不重查   // ab_pass：编这块参数的渲染通道序号——只在同一通道内复用（跨通道 / 跨提交的块所在 arena 可能已回收重写） | Cached lookup result in the all-zero skip fact table (0 not looked up / 1 absent / 2 present); with the key unchanged and the table length (unit tests may append) unchanged, no re-lookup   // ab_pass: render pass index where this argument block was encoded; reused only within the same pass (across passes / submissions the arena holding the block may have been recycled and rewritten)
-    id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
+    id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; id<MTLFunction> vel_fn; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
 @implementation NvShader @end
 #include "nvn_pso_skey.h"
 @interface NvProg : NSObject { @public NvShader *sh[6]; __unsafe_unretained NvShader *fl_sh[6]; uint8_t fl_ok, fl_img, fl_img_w; uint32_t fl_cmask; } @end   // fl_*：按绘制要用的反射摘要（udc_note_draw），按 sh[] 核对后复用 | fl_*: reflection summary used per draw (udc_note_draw), reused after checking against sh[]
@@ -2523,6 +2525,7 @@ static NvShader *shader_load(NSString *pc, int stage) {
     if (nvn_refl_from_json(j, &o->rf, err, sizeof err)) { MLOG("【红】着色器 %s 反射转换失败：%s", pc.UTF8String, err); return nil; }
     if (rt_range_on()) o->range_ro=rt_range_bindings_ro(j);
     o->fn = [lib newFunctionWithName:j[@"entry"]]; o->stage = stage; strlcpy(o->key, pc.UTF8String, sizeof o->key);
+    if (stage == 0) o->vel_fn = [lib newFunctionWithName:@"dm_velocity"];   // the motion-vector entry of the unit vertex shaders (dmsh_rules.py velocity_entry)
     if (o->rf.nb) {
         o->ae = [o->fn newArgumentEncoderWithBufferIndex:o->rf.abi];
         int max_aid = -1;
@@ -3772,6 +3775,7 @@ static int sdx_decide(uint8_t st[SD_MAX]);   // 写回前瞻判定（索引见 m
 // 1 while a pass is cut short in the middle of a draw and its draws go on in a reopened pass that loads every attachment (bloomq_clear_b0): the lookahead
 // skips the cut pass's own attachment events (they predate the end), so it could drop a store the reopened half needs; store them all instead
 static int g_sd_keep;
+static uint64_t g_mv_depth_ser;   // nvn_mv.inc: the depth target the motion vectors read after the last pass that uses it, so its store is never dropped
 static void sd_finish(void) {
     if (!g_nsd) return;
     if (!tbdr_on()) {   // 优化全关：一律写回 | All optimizations off: always write back
@@ -3784,6 +3788,7 @@ static void sd_finish(void) {
     else for (int i = 0; i < g_nsd; i++) sd_need(&g_sd[i], 6);   // 列表外结束的通道 / 索引不可用：一律写回 | Pass ended outside the list / index unavailable: always write back
     for (int i = 0; i < g_nsd; i++) {
         sd_att *t = &g_sd[i]; int udc_dead = udc_on() && t->load && !t->wrote;
+        if (t->depth == 1 && t->ser == g_mv_depth_ser) { t->state = 1; udc_dead = 0; }
         // 与窗口贴图写在同一个通道里的颜色附件不进账本：它是出图链上的一环，不是「每帧先重置再用」的瞬态附件。
         // 局内「放大」通道一次写两张——场景贴图 + 窗口贴图，界面合成并进了同一通道，所以局内没人回读场景贴图；游戏一停画 3D（读取画面）
         // 就改由单独的合成通道回头采它。「要进读取画面」在上一帧提交之后才知道，预判拦不住：iPad 真全屏每个安装第一次换幕必撞一次
@@ -5164,6 +5169,7 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
     memcpy(&S, &save, sizeof S); args_dirty_all(); R.sc = sc; R.has_sc = has_sc; g_pso_dirty = g_dss_dirty = 1; g_gh.busy = 0;
     for (int i = 0; i < g_gh.n; i++) free(g_gh.c[i].S_); g_gh.n = 0;
 }
+static void mv_note_draw(NvProg *pr, const p_draw_idx *di);   // nvn_mv.inc
 static int mfx3d_draw(NvShader *f);   // 见定义处（MetalFX 换掉游戏的 3D 放大趟） | see the definition (MetalFX replaces the game's 3D upscale pass)
 // 着色器碰内存的方式（按反射算一次）：1 读贴图（含类型化缓冲、可写贴图）、2 读存储缓冲、4 写内存（可写贴图、可写存储缓冲）；0x80 = 已算
 // How a shader touches memory (worked out once from its reflection): 1 reads textures (incl. typed buffers and writable textures), 2 reads storage buffers, 4 writes memory (writable textures, writable storage buffers); 0x80 = done
@@ -5470,6 +5476,7 @@ frz_plain:;
     rr_snap(dw,di);
 #endif
     udc_note_draw(pr);
+    mv_note_draw(pr, di);
     // 0 个图元的绘制（游戏会发 count=0）不画任何像素，跳过编码；Metal 规定计数必须非零，校验层否则当场中止（营地 / 野外 / 战斗页实测）
     // A draw with 0 primitives (the game does send count=0) draws no pixels, so skip encoding; Metal requires the count to be non-zero, otherwise the validation layer aborts on the spot (measured on the camp / wilderness / combat pages)
     if (dw && prim == 7) {   // 四边形：共享索引 0,1,2,0,2,3 | Quads: shared indices 0,1,2,0,2,3
@@ -6965,6 +6972,7 @@ static void mfx3d_sub_begin(void) {
     if (!mfx3d_on()) { if (g_mfx_3d.scaler || g_mfx_3d.fail_on) mfx_off(&g_mfx_3d); }
     else if (g_mfx_3d.scaler && g_sub_serial - g_mfx_3d.last_use > MFX_IDLE_3D) mfx_drop(&g_mfx_3d, "idle");
 }
+#include "nvn_mv.inc"
 static const char *g_mfx3d_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"
     "struct V { float4 p [[position]]; float2 uv; };\n"
@@ -7037,19 +7045,24 @@ static int mfx3d_encode(id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInt
     RPD *rp = [RPD new]; attach(rp.colorAttachments[0], R.rt.color[0], &R.rt.cview[0], R.rt.has_cview[0], 1);
     id<MTLTexture> dst = rp.colorAttachments[0].texture; if (!dst) return 0;   // a format view has its base's size
     NSUInteger ow = (NSUInteger)llround(vp.width), oh = (NSUInteger)llround(vp.height);
-    if (!mfx3d_ready(aw, ah, ow, oh, cfg)) return 0;
-    id<MTLRenderPipelineState> pso = mfx3d_pso(dst.pixelFormat); if (!pso) return 0;
+    int temporal = mt_ready(src, dst.pixelFormat, ow, oh, cw);
+    if (!temporal && !mfx3d_ready(aw, ah, ow, oh, cfg)) return 0;
+    id<MTLRenderPipelineState> pso = temporal ? g_mt.wb : mfx3d_pso(dst.pixelFormat); if (!pso) return 0;
     rp_end();
-    if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0;
+    if (!mv_resolve(src) && temporal) { g_mt.reset = 1; return 0; }   // no velocities after all (an encoder failed): the game's own upscale, and the history starts anew
+    if (temporal) mt_encode(src, cw, ch);
+    else if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0;
+    id<MTLTexture> mfx_out = temporal ? g_mt.out : g_mfx_3d.out; id<MTLFence> mfx_fence = temporal ? g_mv.fence : g_mfx_3d.fence;
+    if (g_mv.dump_vel) g_mv.dump_out = mfx_out;
     int full = vp.originX == 0 && vp.originY == 0 && ow == dst.width && oh == dst.height;
     rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : R.clear_c[0] ? MTLLoadActionClear : MTLLoadActionLoad;
     rp.colorAttachments[0].clearColor = R.cc[0]; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; if (!en) { MLOG("【红】3D upscale: the write-back encoder could not be created"); return 0; }
     if (!g_mfx3d_args) { MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxSamplerStateBindCount = 2; NSError *e = nil; g_mfx3d_args = [g_dev newArgumentTableWithDescriptor:ad error:&e]; }
     [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
-    [en waitForFence:g_mfx_3d.fence beforeEncoderStages:MTLStageFragment];   // wait for MetalFX to finish writing
+    [en waitForFence:mfx_fence beforeEncoderStages:MTLStageFragment];   // wait for MetalFX to finish writing
     [en setArgumentTable:g_mfx3d_args atStages:MTLRenderStageFragment];
-    [g_mfx3d_args setTexture:g_mfx_3d.out.gpuResourceID atIndex:0]; [g_mfx3d_args setTexture:mask.gpuResourceID atIndex:1];
+    [g_mfx3d_args setTexture:mfx_out.gpuResourceID atIndex:0]; [g_mfx3d_args setTexture:mask.gpuResourceID atIndex:1];
     [g_mfx3d_args setSamplerState:mfx_samp(1).gpuResourceID atIndex:0]; [g_mfx3d_args setSamplerState:mfx_samp(1).gpuResourceID atIndex:1];
     [en setViewport:vp]; [en setRenderPipelineState:pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; enc_host_r_end(en);
     R.clear_c[0] = 0; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;   // colour 0's pending clear landed (or was covered); other pending clears land at the next pass
@@ -7075,7 +7088,7 @@ static int mfx3d_draw(NvShader *f) {   // replay thread, at the game's ps_upsamp
     id<MTLTexture> src = tex_mtl(&t10), mask = tex_mtl(&t11), dst = tex_mtl(R.rt.color[0]); if (!src || !mask || !dst) return 0;
     double vx = S.vp[0][0], vy = S.vp[0][1], vw = S.vp[0][2], vh = S.vp[0][3];
     NSUInteger cw = (NSUInteger)llround(c[0] * src.width), ch = (NSUInteger)llround(c[1] * src.height);
-    if (!cw || !ch || cw > src.width || ch > src.height || vw < cw * 1.05 || vh < ch * 1.05 || vx + vw > dst.width + 0.5 || vy + vh > dst.height + 0.5) return 0;
+    if (!cw || !ch || cw > src.width || ch > src.height || vw < cw * (g_mt_want ? 1.001 : 1.05) || vh < ch * (g_mt_want ? 1.001 : 1.05) || vx + vw > dst.width + 0.5 || vy + vh > dst.height + 0.5) return 0;   // nearly 1:1 is worth it only to the temporal scaler, which then antialiases
     float cfg = dm_3d_scale_cfg(); NSUInteger aw, ah; mfx3d_alloc(cw, ch, (NSUInteger)llround(vw), (NSUInteger)llround(vh), cfg, &g_mfx_3d, &aw, &ah);
     if (!mfx3d_encode(src, cw, ch, aw, ah, cfg, mask, (MTLViewport){vx, vy, vw, vh, 0, 1})) return 0;
     g_mfx_3d.last_use = g_sub_serial; atomic_fetch_add(&g_mfx3d_gen, 1);

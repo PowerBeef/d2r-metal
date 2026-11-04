@@ -733,8 +733,10 @@ static uint8_t *cmd_alloc(cmd_t *o, uint32_t size) {
     if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.bytes += size; g_cs.recs++; pthread_mutex_unlock(&g_cs_mu); }
     uint8_t *p = o->cur; o->cur += size; put_hdr(p, 0, size); return p;
 }
+__attribute__((weak)) void dm_jitter_refresh(void) {}   // thread.c
 NVN(nvnCommandBufferBeginRecording, void, NVNcommandBuffer *c) {
     cmd_t *o = CB(c);
+    dm_jitter_refresh();
     if (o->recording) LOG("【红】BeginRecording 重入");
     o->recording = 1;
     if (o->shadow) ((bshadow *)o->shadow)->have = 0;   // 每段录制从「什么都不知道」起：第一次绑定一定录 | each recording starts knowing nothing: the first bind of each kind is always recorded

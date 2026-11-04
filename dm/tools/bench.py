@@ -619,7 +619,7 @@ def main(argv):
     rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli',), help='the kept host runs on the command-line host only'); rg.add_argument('--reps', type=int, default=6)
     rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50', help='comma-separated; gpu_ms is left out by default: on a fast Mac it is clock-scaled'); rg.add_argument('--cool', type=float, default=120); rg.add_argument('--keep', action='store_true', help='write .keep into the result folder')
     for sp in (r, b, pr, rg):
-        sp.add_argument('--picture', default='rec', choices=('rec', 'orig', 'rec75', 'phone'),
+        sp.add_argument('--picture', default='rec', choices=('rec', 'rect', 'orig', 'rec75', 'rec75t', 'phone'),
                         help="rec (default): this Mac's Recommended in full screen (dm/tools/picture.py); orig: the host's own defaults, windowed; rec75 / phone: those sets")
     for x in (r, b, pr, rg): x.add_argument('--redo', type=int, default=REDO, help=f'how many times a disturbed rep is redone in its slot before the benchmark is not judged (default {REDO})')
     a = ap.parse_args(argv)

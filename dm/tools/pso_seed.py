@@ -11,7 +11,7 @@
 #                                    'PSO_CHECK OK|RED rows=<n>'
 #   gate [--backend mac-app|cli|ios-mac] [--headless]   runs dm/verify/bench/town_loop.scn (mac-app at this Mac's Recommended in full screen, cli with
 #                                    Recommended's features forced, ios-mac as is) and checks its manifest: 'PSO_GATE OK|RED rows=<n>'
-#   record [--set front,act1,tour|all] [--only <backend>] [--front create|menu] [--out DIR] [--keep]   runs the 26-row route matrix (matrix())
+#   record [--set front,act1,tour|all] [--only <backend>] [--front create|menu] [--out DIR] [--keep]   runs the 28-row route matrix (matrix())
 #                                    under the game lock and harvests each run's manifest to DIR/<NN>_<set>_<name>.tsv; 'RUN <NN> <name> OK|RED|UNAVAIL rows=<n>'
 #   merge --dir DIR [--seed FILE] [--write]   the new seed from a record folder: the seed's own rows, then the new front and Act 1 rows, the
 #                                    background marker, the seed's background rows, the new tour rows
@@ -178,8 +178,9 @@ COMBAT = os.path.join(DM, 'verify', 'bench', 'combat.scn')
 HARVEST = 'pso_user.harvest.tsv'   # a run's manifest copied out of the iOS package's container
 REC_ENV = {'DM_TEST_VIDEO_FIRSTBOOT': '1'}   # Mac App rows: this Mac's Recommended picture, full screen
 CLI_REC = {'DM_AA_MODE': '2', 'DM_ENV_SHADOWS': '1', 'DM_3D_SCALE': '0.75', 'DM_MFX3D': '1'}   # Recommended's features forced on the CLI host, which has no Recommended
-# CLI forces: the player-reachable settings the Mac's Recommended does not use (anti-aliasing is FXAA or SMAA for players; AA off is not reachable)
-FORCES = [('orig', {}), ('smaa_shadows', {'DM_AA_MODE': '2', 'DM_ENV_SHADOWS': '1'}), ('rec_mfx3d', dict(CLI_REC)), ('s75_bilinear', {'DM_3D_SCALE': '0.75', 'DM_MFX3D': '0'})]
+# CLI forces: the player-reachable settings the Mac's Recommended does not use (anti-aliasing is FXAA or SMAA for players, and off only with Upscaling = Temporal)
+FORCES = [('orig', {}), ('smaa_shadows', {'DM_AA_MODE': '2', 'DM_ENV_SHADOWS': '1'}), ('rec_mfx3d', dict(CLI_REC)), ('s75_bilinear', {'DM_3D_SCALE': '0.75', 'DM_MFX3D': '0'}),
+          ('temporal', {'DM_MFXT': '1', 'DM_AA_MODE': '0', 'DM_ENV_SHADOWS': '1', 'DM_3D_SCALE': '0.75', 'DM_MFX3D': '1'})]
 # Waypoint stops of the local all-waypoint save save_ref_tour: (name, ZR presses to the act's tab, the stop's row on the waypoint list)
 TOUR = [('a1_darkwood', 0, 0.446), ('a1_catacombs', 0, 0.822), ('a2_town', 1, 0.222), ('a2_faroasis', 1, 0.521), ('a2_arcane', 1, 0.747), ('a3_docks', 2, 0.222),
         ('a3_flayer', 2, 0.446), ('a4_town', 3, 0.222), ('a4_riverflame', 3, 0.371), ('a5_town', 4, 0.222), ('a5_frigid', 4, 0.296), ('a5_arreat', 4, 0.371)]
@@ -189,7 +190,7 @@ COLD_REDO = 2   # a cold start the desk disturbed is redone this many times, eac
 
 
 def matrix():
-    """The 26 recording rows: front end (Mac App, iOS package), Act 1 (Mac App and iOS package town / combat, CLI town / combat under each force),
+    """The 28 recording rows: front end (Mac App, iOS package), Act 1 (Mac App and iOS package town / combat, CLI town / combat under each force),
     then the tour stops (Mac App). Mac App rows run at this Mac's Recommended in full screen."""
     rows = [dict(nn='01', set='front', name='mac_front', backend='mac-app', route='front'), dict(nn='02', set='front', name='ios_front', backend='ios-mac', route='front'),
             dict(nn='03', set='act1', name='mac_town', backend='mac-app', route=TOWN), dict(nn='04', set='act1', name='mac_combat', backend='mac-app', route=COMBAT),
