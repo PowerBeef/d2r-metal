@@ -1617,6 +1617,9 @@ static void c2s_load(const char *path) {
 // max(original + 40, unfreeze time + 40): with no backlog = original + 40, same as without freezing; with backlog the catch-up ticks are skipped (in the ground-truth run there are no ticks after tick E).
 static uint32_t g_hold_tick; static char g_hold_ui[96] = "PausePanelMessage:ExitGame"; static _Atomic int g_holding; static uint64_t g_hold_t0;
 static volatile uint32_t *g_hold_dl; static uint32_t g_hold_dl0; static int32_t g_hold_org; static int g_hold_org_ok; static uint32_t g_hold_dl1;
+// The tick number at the last tick entry while frozen: the tick counter itself moves on once the frozen tick has run (420 reads 421 by the
+// time a screenshot is written), so the release's self-check compares the entry number, as the replay's g_rplast does
+static _Atomic uint32_t g_hold_entry;
 static uint32_t guest_ms(void) { return (uint32_t)(guest_ns() / 1000000); }
 static volatile uint32_t *hold_dl(void) {
     if (!g_hold_dl) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) g_hold_dl = (volatile uint32_t *)(g_mod[i].base + 0x2d685d8);
@@ -1643,7 +1646,7 @@ static void hold_unfreeze(void) {
 }
 static void hold_release(const char *why) {
     if (!atomic_exchange(&g_holding, 0)) return;
-    uint32_t last = g_rp ? (uint32_t)g_rplast : cur_tick();   // 冻结期间最后一次拍入口的拍号 = 暂停（存盘 / 截图）拍；没有回放时 g_rplast 不走，取当前拍号 | Tick number of the last tick entry during the freeze = the pause (save / screenshot) tick; without a replay g_rplast does not move, so take the current tick
+    uint32_t last = g_rp ? (uint32_t)g_rplast : atomic_load(&g_hold_entry);   // the tick number at the last tick entry during the freeze = the pause (save / screenshot) tick
     hold_unfreeze();
     LOG("DM_TICK_HOLD：「%s」→ 解冻（冻结 %.3f s）；冻结拍 %u（目标 %u）%s；下一拍时限 %u → %u", why, (now_ns() - g_hold_t0) / 1e9, last, g_hold_tick,
         last == g_hold_tick ? "" : "【红】不等", g_hold_dl0 + 40, g_hold_dl1);
@@ -1981,6 +1984,7 @@ static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入�
         static uint32_t lt, ms; static int st;
         if (!st) { const char *e = getenv("DM_TEST_LAG"); st = e ? 1 : 2; if (e) { lt = (uint32_t)strtoul(e, 0, 0); const char *c = strchr(e, ':'); ms = c ? (uint32_t)strtoul(c + 1, 0, 0) : 300; } }
         if (st == 1 && cur_tick() == lt) { st = 2; usleep(ms * 1000); LOG("DM_TEST_LAG：拍 %u 入口睡 %u ms", lt, ms); } }
+    if (atomic_load(&g_holding)) atomic_store(&g_hold_entry, cur_tick());   // a tick that slipped through the freeze shows in the release's self-check
     hold_track_origin();   // 冻结 / 解冻换算时限用；读取画面冻结（dm_hold_for_loadscreen）不依赖 DM_TICK_HOLD，所以每拍都跟 | Used for converting time limits on freeze / unfreeze; the loading screen freeze (dm_hold_for_loadscreen) does not depend on DM_TICK_HOLD, so it is tracked every tick
     // 按拍号截图的局（DM_TICK_HOLD=E:SHOT）：进局第 5 拍读取画面还没撤就先冻结到它撤下（dm_hold_for_loadscreen），之后的拍号时间线都落在客户端加载完之后。
     // 负载高时客户端加载慢、服务端拍照走：出过一次 NPC 页读取画面拍 85 才撤，拍 84 的 A 在撤屏当拍按下、游戏不认，对话面板没开（按键到点才冻结救不了这一下）
@@ -1991,7 +1995,7 @@ static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入�
     { int dm_loadscreen_up(void); uint32_t t = cur_tick(); if (g_hold_tick && !strcmp(g_hold_ui, "SHOT") && t >= 5 && t < g_hold_tick && dm_loadscreen_up()) dm_hold_for_loadscreen(); }
     if (g_hold_tick && g_pos_bad && !strcmp(g_hold_ui, "SHOT") && cur_tick() == g_hold_tick) { static int o2; if (!o2++) LOG("DM_TICK_HOLD：坐标核对不一致，不截图也不冻结"); }
     else if (g_hold_tick) { uint32_t t = cur_tick(); if (t == g_hold_tick) { static int once; if (!once++) {
-        hold_freeze();
+        hold_freeze(); atomic_store(&g_hold_entry, t);
         g_hold_t0 = now_ns(); atomic_store(&g_holding, 1); LOG("DM_TICK_HOLD：拍 %u 冻结客体时钟，等「%s」", t, g_hold_ui);
         pthread_t th; if (!pthread_create(&th, NULL, hold_guard, NULL)) pthread_detach(th); } } }
     if (g_rp) c2s_inject(regs[0]);
