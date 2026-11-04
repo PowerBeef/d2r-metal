@@ -350,7 +350,7 @@ static void mtl_init_once(void) {
     g_bloomq_args = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
     if (!g_bloomq_args) MDIE("建立泛光 1/4 argument table 失败：%s", ate.localizedDescription.UTF8String);
     for (int i = 0; i < 3; i++) {
-        g_present_uv[i] = [g_dev newBufferWithLength:sizeof(float) * 8 options:MTLResourceStorageModeShared];
+        g_present_uv[i] = [g_dev newBufferWithLength:sizeof(float) * 12 options:MTLResourceStorageModeShared];   // Crop: rect, edge, and the down filter's tap (fs_down)
         if (!g_present_uv[i]) MDIE("建立出图 UV 缓冲[%d] 失败", i);
         res_add(g_present_uv[i]);
         g_bloomq_const[i] = [g_dev newBufferWithLength:sizeof(float) * 8 options:MTLResourceStorageModeShared];
@@ -6583,13 +6583,28 @@ double mtl_pace_hz(void) { double r = mtl_display_refresh(); return mtl_fps_targ
 static _Atomic uint64_t g_present_stall_ns;   // 单测用：出图线程每次出图前额外停顿（模拟 drawable 迟迟不可用） | For unit tests: an extra pause before each present on the present thread (simulating a drawable that stays unavailable)
 static CAMetalLayer *g_present_layer_resident;
 void mtl_present_test_stall(uint64_t ns) { g_present_stall_ns = ns; }
-// 出图着色器：全屏三角形，按 Crop 取源纹理有效区（MetalFX 的拷贝趟也用它） | Present shader: a full-screen triangle sampling the source's valid area per Crop (the MetalFX copy pass uses it too)
+// Present shaders: a full-screen triangle sampling the source's valid area per Crop (fs; the MetalFX copy pass uses it too). fs_down is the
+// present's down filter (MFX-11): when the picture shrinks by more than 1.34x (a Native picture in a smaller window), one bilinear tap per pixel
+// would skip texels and alias, so it averages n x n bilinear taps spread over the pixel's footprint (tap.xy = one output pixel in the source's uv,
+// tap.z = n, 2-4); the Crop it reads is 12 floats
 static const char *g_present_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"
     "struct V { float4 p [[position]]; float2 uv; };\n"
     "vertex V vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); V o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); o.uv = uv; return o; }\n"
     "struct Crop { float4 rect; float4 edge; };\n"
-    "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant Crop& c [[buffer(0)]]) { return t.sample(s, clamp(in.uv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw)); }\n";
+    "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant Crop& c [[buffer(0)]]) { return t.sample(s, clamp(in.uv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw)); }\n"
+    "struct CropD { float4 rect; float4 edge; float4 tap; };\n"
+    "fragment float4 fs_down(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant CropD& c [[buffer(0)]]) {\n"
+    "  float2 uv = in.uv * c.rect.zw + c.rect.xy; int n = int(c.tap.z); float4 a = 0;\n"
+    "  for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) { float2 o = (float2(i, j) + 0.5) / float(n) - 0.5; a += t.sample(s, clamp(uv + o * c.tap.xy, c.edge.xy, c.edge.zw)); }\n"
+    "  return a / float(n * n); }\n";
+static id<MTLRenderPipelineState> g_blit_pso_down;   // fs_down's pipeline, built with g_blit_pso
+// The down filter's taps per axis for a crop of cw x ch shown in viewport vp: 0 (one bilinear tap, fs) up to a 1.34x shrink, else ceil(shrink),
+// at most 4. After a MetalFX enlargement the source is already at the viewport's size, so the two never combine
+static int present_down_taps(NSUInteger cw, NSUInteger ch, MTLViewport vp) {
+    if (vp.width <= 0 || vp.height <= 0) return 0;
+    double k = fmax(cw / vp.width, ch / vp.height); return k > 1.34 ? (int)fmin(4, ceil(k)) : 0;
+}
 static void present_pipeline(MTLPixelFormat format) {
     if (!g_blit_pso || g_blit_fmt != format) {
         NSError *e = nil;
@@ -6600,6 +6615,9 @@ static void present_pipeline(MTLPixelFormat format) {
         pd.colorAttachments[0].pixelFormat = format;
         g_blit_pso = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
         if (!g_blit_pso) MDIE("出图管线失败 %s", e.localizedDescription.UTF8String);
+        pd.fragmentFunction = [lib newFunctionWithName:@"fs_down"];
+        g_blit_pso_down = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
+        if (!g_blit_pso_down) MDIE("present: the down filter's pipeline failed: %s", e.localizedDescription.UTF8String);
         g_blit_fmt = format;
         MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.supportArgumentBuffers = YES;
         g_blit_samp = [g_dev newSamplerStateWithDescriptor:sd];
@@ -7057,9 +7075,11 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src0, id<MTLTe
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     id<MTLRenderCommandEncoder> en = [cb renderCommandEncoderWithDescriptor:rp];
     [en setViewport:vp];
-    [en setRenderPipelineState:g_blit_pso]; [en setFragmentTexture:src atIndex:0]; [en setFragmentSamplerState:g_blit_samp atIndex:0];
-    float uv[8] = {(float)cx / src.width, (float)cy / src.height, (float)cw / src.width, (float)ch / src.height,
-                   (cx + 0.5f) / src.width, (cy + 0.5f) / src.height, (cx + cw - 0.5f) / src.width, (cy + ch - 0.5f) / src.height};
+    int taps = present_down_taps(cw, ch, vp);   // a shrink past 1.34x: the down filter (fs_down)
+    [en setRenderPipelineState:taps ? g_blit_pso_down : g_blit_pso]; [en setFragmentTexture:src atIndex:0]; [en setFragmentSamplerState:g_blit_samp atIndex:0];
+    float uv[12] = {(float)cx / src.width, (float)cy / src.height, (float)cw / src.width, (float)ch / src.height,
+                    (cx + 0.5f) / src.width, (cy + 0.5f) / src.height, (cx + cw - 0.5f) / src.width, (cy + ch - 0.5f) / src.height,
+                    (float)(cw / vp.width / src.width), (float)(ch / vp.height / src.height), (float)taps, 0};
     [en setFragmentBytes:uv length:sizeof uv atIndex:0];
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [en endEncoding];
@@ -7125,8 +7145,10 @@ static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, c
     float *uv = g_present_uv[uv_i].contents;
     uv[0] = (float)cx / src.width; uv[1] = (float)cy / src.height; uv[2] = (float)cw / src.width; uv[3] = (float)ch / src.height;
     uv[4] = (cx + 0.5f) / src.width; uv[5] = (cy + 0.5f) / src.height; uv[6] = (cx + cw - 0.5f) / src.width; uv[7] = (cy + ch - 0.5f) / src.height;
+    int taps = present_down_taps(cw, ch, vp);   // a shrink past 1.34x: the down filter (fs_down; never after MetalFX, whose output has the viewport's size)
+    uv[8] = (float)(cw / vp.width / src.width); uv[9] = (float)(ch / vp.height / src.height); uv[10] = (float)taps; uv[11] = 0;
     [g_present_args setAddress:g_present_uv[uv_i].gpuAddress atIndex:0];
-    [en setViewport:vp]; [en setRenderPipelineState:g_blit_pso];
+    [en setViewport:vp]; [en setRenderPipelineState:taps ? g_blit_pso_down : g_blit_pso];
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     m4_end(en);
     return 1;
