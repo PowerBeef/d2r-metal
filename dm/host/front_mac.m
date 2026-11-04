@@ -101,7 +101,9 @@ static double main_px_h(void) { return scr_launch().h; }
 // area, below the notch); in a run the 3D fills the screen and the interface is a 16:9 band along the bottom, while the front-end pages and the
 // loading screen are drawn by the game at 16:9 with bars. The window keeps that shape too, so windowed and full screen are both filled. A screen
 // narrower than 4:3 gets a 4:3 picture with bars (dm_scr_picture: no taller shape has run, and a tall picture at high resolution overflows GPU heap 0).
-// Screens not narrower than 16:9 (external 16:9 or wider screens): 16:9 throughout. The shape is set once (the game resolution is only set at launch):
+// A wider screen (21:9) gets true full screen too: the game fills it and lays its interface out across it, while the front-end pages and the
+// loading screen are drawn at most 2.17:1 with side bars (dm_front_res: the main menu's backdrop is painted no wider); wider than 2.4:1 (32:9)
+// the picture stays 2.4:1 with bars. A 16:9 screen: 16:9 throughout. The shape is set once (the game resolution is only set at launch):
 // moving the window to another screen does not change it before the next launch. Test switches: DM_TEST_SCREEN_PX and DM_TEST_SCREEN_ASPECT stand
 // in for the launch screen (scr_launch)
 static double g_aspect = 16.0 / 9;   // 游戏画面比例（宽 ÷ 高） | aspect ratio of the game picture (width / height)
@@ -110,17 +112,19 @@ static void full_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
     scr_px sp = scr_launch(); double w = sp.w, h = sp.hc;
     dm_scr_pic p = dm_scr_picture(w, h);
-    if (!p.full) { LOG("picture: main screen %.0fx%.0f px is not narrower than 16:9 -> 16:9 throughout", w, h); return; }
+    if (!p.full) { LOG("picture: main screen %.0fx%.0f px is 16:9 -> 16:9 throughout", w, h); return; }
     g_aspect = p.aspect; g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM);
-    LOG("picture: main screen content %.0fx%.0f px (aspect %.3f)%s -> true full screen at %.3f, interface along the bottom, front-end pages 16:9 with bars", w, h, w / h,
-        p.clamped ? ", narrower than 4:3: the picture stays 4:3 (the GPU heap 0 range)" : "", g_aspect);
+    int wide = g_aspect > 16.0 / 9;
+    LOG("picture: main screen content %.0fx%.0f px (aspect %.3f)%s -> true full screen at %.3f, %s", w, h, w / h,
+        !p.clamped ? "" : wide ? ", wider than 2.4:1: the picture stays 2.4:1 with side bars" : ", narrower than 4:3: the picture stays 4:3 (the GPU heap 0 range)", g_aspect,
+        wide ? "the interface across the screen, front-end pages at most 2.17:1 with side bars" : "interface along the bottom, front-end pages 16:9 with bars");
 }
 // 出图分辨率（主机模式的游戏出图宽，高按画面比例）：原版 1600。App 里按选项页「显示 → 分辨率」那一档（dm_video.c 的 res：1600 / 1920 / 2560），
 // 只在启动时定（游戏分辨率启动后不变）；换屏、拉窗口后由出图（MetalFX / 双线性）跟着视口缩放。DM_GAME_RES（直接给分辨率，对拍用）在时不理它
 // Output resolution (the docked game output width; height from the picture's aspect ratio): 1600 originally. In the App it follows the options page "Display → Resolution" tier (res in dm_video.c: 1600 / 1920 / 2560),
 // set only at launch (the game resolution does not change after launch); after a screen change or window resize the present (MetalFX / bilinear) scales to the viewport. Ignored with DM_GAME_RES (which gives the resolution directly, for comparisons)
-// The fourth tier "Native" (res=3) = the width of the picture on the main screen in pixels, even, 1600-3840 (dm_scr_native_w: on a 21:9 screen the
-// 16:9 picture's width; within DM_SCR_MAX_PX, the GPU heap's room): the interface and text are drawn at the screen's own resolution, and
+// The fourth tier "Native" (res=3) = the width of the picture on the main screen in pixels, even, 1600-3840 (dm_scr_native_w: a 21:9 screen's own
+// width; within DM_SCR_MAX_PX, the GPU heap's room): the interface and text are drawn at the screen's own resolution, and
 // "3D Resolution" lowers the 3D on its own (s3d in dm_video.c)
 static const int k_render_w[3] = { 1600, 1920, 2560 };
 static int g_render_w = 1600, g_render_tier = -1;   // 这次启动用的那一档（-1 = 没按设置定） | the tier used for this launch (-1 = not set from the settings)

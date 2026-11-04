@@ -41,7 +41,7 @@ void (*g_dm_ingame_hook)(int on);   // 进局 / 出局那一刻（读取画面�
 void dm_uiscreen_set_ingame(int on) {
     if (atomic_exchange(&g_ingame, on != 0) == (on != 0)) return;
     int full = mode() != DM_UISCREEN_OFF;   // only true full screen changes the picture between a run and the front end
-    LOG("UI screen: %s%s", on ? "in a run" : "out of a run", !full ? "" : on ? " (true full screen)" : " (16:9 with bars)");
+    LOG("UI screen: %s%s", on ? "in a run" : "out of a run", !full ? "" : on ? " (true full screen)" : " (the front end's shape with bars)");
     DM_EV("uiscreen", "what:s on:b full:b", "run", on != 0, full);
     if (g_dm_ingame_hook) g_dm_ingame_hook(on != 0);
 }
@@ -97,7 +97,7 @@ void dm_uiscreen_res_reread(void) { uint8_t *b = main_base(); int rw = atomic_lo
 static _Atomic int g_world, g_res_live;
 int dm_uiscreen_res_live(void) { return atomic_load(&g_res_live); }
 uint64_t dm_game_res(int docked) { uint64_t r = front_game_res(docked); uint32_t w = (uint32_t)r, h = (uint32_t)(r >> 32);   // 先问前端：iOS 前端在第一次被问时才决定开不开真全屏 | Ask the front end first: the iOS front end only decides whether to turn on true fullscreen the first time it is asked
-    if (atomic_load(&g_res_live) && mode() != DM_UISCREEN_OFF && !atomic_load(&g_world) && (uint64_t)w * 9 < (uint64_t)h * 16) h = (uint32_t)((uint64_t)w * 9 / 16) & ~1u;
+    if (atomic_load(&g_res_live) && mode() != DM_UISCREEN_OFF && !atomic_load(&g_world)) return dm_front_res(w, h);   // the front end: 16:9, or at most 2.17:1, with bars
     return (uint64_t)h << 32 | w; }
 
 // The interface band as an event (event_stream.md `uiscreen`, what=rect): its y and height in the real picture of height h, and why it sits there

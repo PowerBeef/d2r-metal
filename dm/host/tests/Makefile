@@ -183,7 +183,7 @@ $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_textbox.c ../dm_textbox_core.c
 $(B)/t_scrub: t_scrub.c ../dm_scrub.c ../dm_scrub.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_scrub.c ../dm_scrub.c
-$(B)/t_screen_mac: t_screen_mac.c ../dm_screen_mac.c ../dm_screen_mac.h | $(B)
+$(B)/t_screen_mac: t_screen_mac.c ../dm_screen_mac.c ../dm_screen_mac.h ../dm_uiscreen.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_screen_mac.c ../dm_screen_mac.c -lm
 $(B)/t_geom: t_geom.c ../dm_geom.h | $(B)
 	clang -std=c11 -O1 -Wall -Wextra -Werror -pedantic -I.. -o $@ t_geom.c -lm

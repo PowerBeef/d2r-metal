@@ -4,7 +4,9 @@
 #include <math.h>
 
 dm_scr_pic dm_scr_picture(double w, double h) {
-    if (h <= 0 || w / h >= 16.0 / 9 - 0.01) return (dm_scr_pic){ 16.0 / 9, 0, 0 };   // 16:9 or wider (an external 16:9 screen, an ultrawide): 16:9 throughout
+    if (h <= 0 || fabs(w / h - 16.0 / 9) <= 0.01) return (dm_scr_pic){ 16.0 / 9, 0, 0 };   // 16:9 (within 0.01): 16:9 throughout
+    if (w / h > DM_SCR_MAX_ASPECT) return (dm_scr_pic){ DM_SCR_MAX_ASPECT, 1, 1 };   // wider than 2.4:1 (32:9): the widest tested shape with side bars
+    if (w / h > 16.0 / 9) return (dm_scr_pic){ w / h, 1, 0 };   // wider (21:9): true full screen at its own shape
     if (w / h < DM_SCR_MIN_ASPECT) return (dm_scr_pic){ DM_SCR_MIN_ASPECT, 1, 1 };   // narrower than 4:3: a 4:3 picture with bars (the iPad's layout)
     return (dm_scr_pic){ w / h, 1, 0 };
 }

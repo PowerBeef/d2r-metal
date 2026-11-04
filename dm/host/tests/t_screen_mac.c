@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 #include "../dm_screen_mac.h"
+#include "../dm_uiscreen.h"
 
 static int n, fails;
 #define CHECK(ok, ...) do { n++; if (!(ok)) { fails++; printf("✗ "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -30,14 +31,16 @@ static void res(int rw, double aspect, int full, int docked, unsigned w, unsigne
 }
 
 int main(void) {
-    // the picture: 16:9 or wider keeps 16:9 throughout; narrower gets true full screen at the screen's own aspect, down to 4:3
+    // the picture: 16:9 keeps 16:9 throughout; narrower or wider gets true full screen at the screen's own aspect, from 4:3 to DM_SCR_MAX_ASPECT
     pic(2560, 1440, 16.0 / 9, 0, 0);
     pic(1512, 950, 1512 / 950.0, 1, 0);
     pic(1440, 900, 1.6, 1, 0);
     pic(1024, 768, 4.0 / 3, 1, 0);
     pic(1280, 1024, 4.0 / 3, 1, 1);   // 5:4: a 4:3 picture with bars
     pic(1440, 2560, 4.0 / 3, 1, 1);   // a rotated display
-    pic(3440, 1440, 16.0 / 9, 0, 0);
+    pic(3440, 1440, 3440 / 1440.0, 1, 0);   // 21:9: the game fills it (the user's choice, 2026-11-03)
+    pic(2560, 1080, 2560 / 1080.0, 1, 0);
+    pic(5120, 1440, DM_SCR_MAX_ASPECT, 1, 1);   // 32:9: never run, so the widest tested shape with side bars
     pic(1770, 1000, 16.0 / 9, 0, 0);   // within 1% of 16:9
     pic(0, 0, 16.0 / 9, 0, 0);
     // Native: the picture's own pixel width on the screen, within DM_SCR_MAX_PX, even, 1600-3840
@@ -48,7 +51,9 @@ int main(void) {
     native(3456, 2160, 1.6, 3456);
     native(3840, 2160, 16.0 / 9, 3840);
     native(5120, 2880, 16.0 / 9, 3840);
-    native(3440, 1440, 16.0 / 9, 2560);        // a 21:9 ultrawide: the 16:9 picture's width, not 3440 minified into the pillarbox
+    native(3440, 1440, 3440 / 1440.0, 3440);   // a 21:9 ultrawide: its own width (true full screen)
+    native(5120, 2160, 5120 / 2160.0, 3840);   // a 5K2K ultrawide: 3840 x 1620 (the width limit)
+    native(5120, 1440, DM_SCR_MAX_ASPECT, 3456);   // 32:9: the 2.4:1 picture's width
     native(2559, 1440, 16.0 / 9, 2558);
     native(1440, 900, 1.6, 1600);
     native(3840, 2400, 1.6, 3642);             // the heap cap: a 16:10 4K screen
@@ -62,6 +67,7 @@ int main(void) {
     res(1600, 16.0 / 9, 0, 1, 1600, 900);
     res(2560, 16.0 / 9, 0, 0, 1280, 720);
     res(1600, 1.6, 1, 0, 1152, 720);
+    res(3440, 3440 / 1440.0, 1, 1, 3440, 1440);
     // the first window: 1280 pt wide unless the screen's visible area is smaller, in the picture's shape
     win(16.0 / 9, 1280, 668, 1187, 667);
     win(16.0 / 9, 1280, 658, 1169, 657);   // this Mac's 1280 x 720 pt screen below the menu bar and a title bar
@@ -79,7 +85,8 @@ int main(void) {
     match(3, 3024, 1, 1.6, 3456, 2160, 0);
     match(0, 1600, 1, 1.6, 3456, 2160, 1);
     match(3, 3840, 0, 16.0 / 9, 5120, 2880, 1);
-    match(3, 2560, 0, 16.0 / 9, 3440, 1440, 1);
+    match(3, 2560, 0, 16.0 / 9, 3440, 1440, 0);   // a 16:9 launch on a 21:9 screen: the screen now wants true full screen
+    match(3, 3440, 1, 3440 / 1440.0, 3440, 1440, 1);
     // the PC pointer: a share of the interface band's height (16:9 band), 24-160 pt
     { static const double k[][3] = { { 1280, 720, 43 }, { 1152, 720, 39 }, { 1187, 667, 40 }, { 2560, 1440, 86 }, { 300, 200, 24 }, { 6000, 3375, 160 } };
       for (unsigned i = 0; i < sizeof k / sizeof *k; i++) { int got = dm_scr_cursor_pt(k[i][0], k[i][1]);
@@ -88,7 +95,7 @@ int main(void) {
     { dm_scr_pic p = dm_scr_picture(2880, 5120); int w = dm_scr_native_w(2880, 5120, p.aspect); uint64_t r = dm_scr_game_res(w, p.aspect, p.full, 1);
       CHECK(w == 2880 && (uint32_t)r == 2880 && (uint32_t)(r >> 32) == 2160, "a rotated 5K: Native %d, game resolution %ux%u, expected 2880x2160", w, (unsigned)(uint32_t)r, (unsigned)(r >> 32)); }
     // the bound: no screen of any shape gives a Native picture larger than DM_SCR_MAX_PX, nor do the fixed widths at the narrowest picture (4:3)
-    { static const double k_shape[] = { 0.5, 0.5625, 1.0, 1.25, 4.0 / 3, 1.5, 1.6, 16.0 / 9 - 0.011, 16.0 / 9, 2.39 };
+    { static const double k_shape[] = { 0.5, 0.5625, 1.0, 1.25, 4.0 / 3, 1.5, 1.6, 16.0 / 9 - 0.011, 16.0 / 9, 2.0, 2.39, 3.56 };
       int over = 0; double worst = 0;
       for (double w = 1000; w <= 6016; w += 8) for (unsigned k = 0; k < sizeof k_shape / sizeof *k_shape; k++) {
           double h = w / k_shape[k]; dm_scr_pic p = dm_scr_picture(w, h); int nw = dm_scr_native_w(w, h, p.aspect); uint64_t r = dm_scr_game_res(nw, p.aspect, p.full, 1);
@@ -96,6 +103,12 @@ int main(void) {
       CHECK(!over, "%d screens give a Native picture above DM_SCR_MAX_PX (largest %.0f px)", over, worst);
       for (int fw = 1600; fw <= 2560; fw += fw == 1600 ? 320 : 640) { uint64_t r = dm_scr_game_res(fw, DM_SCR_MIN_ASPECT, 1, 1);
           CHECK((double)(uint32_t)r * (double)(uint32_t)(r >> 32) <= DM_SCR_MAX_PX, "the fixed width %d at 4:3 is above DM_SCR_MAX_PX", fw); } }
+    // the front-end pages' picture (dm_uiscreen.h dm_front_res): 16:9 on a narrower screen, at most DM_FRONT_MAX_ASPECT on a wider one
+    { static const unsigned k[][4] = { { 2304, 1440, 2304, 1296 }, { 3440, 1440, 3132, 1440 }, { 2560, 1072, 2332, 1072 }, { 3840, 1607, 3494, 1607 },
+                                       { 2622, 1206, 2622, 1206 }, { 2868, 1320, 2868, 1320 }, { 2560, 1440, 2560, 1440 } };
+      for (unsigned i = 0; i < sizeof k / sizeof *k; i++) { uint64_t r = dm_front_res(k[i][0], k[i][1]);
+          CHECK((uint32_t)r == k[i][2] && (uint32_t)(r >> 32) == k[i][3], "dm_front_res(%u, %u) = %ux%u, expected %ux%u", k[i][0], k[i][1], (unsigned)(uint32_t)r,
+                (unsigned)(r >> 32), k[i][2], k[i][3]); } }
     printf("t_screen_mac: %d checks, %d failed\n", n, fails);
     return fails != 0;
 }
