@@ -2779,6 +2779,8 @@ static MTLSamplerAddressMode wrapm(int w) {
 // included (wrap modes aren't consulted; t_aniso pins that). Point samplers (the UI composite's among them) and shadow compares are left alone. Screen-aligned passes
 // have an isotropic footprint and look the same. The level changes at the start of a submission (mtl_sub_begin → aniso_latch): every sampler already built is released
 // after the submissions that used it complete, and argument blocks refill through g_reg_gen.
+// Measured on the look set (lookbook.py, 13 pages, 2026-11-04): 3D-view FLIP of 4x against 16x 0.0028 and of the original against 16x 0.0100, with two
+// shots at 16x 0.0019 apart; edge sharpness at 4x within 0.2% of 16x, the original up to 26% lower.
 // Level: g_aniso (DM_NVN_UB in-process alternation) > DM_NVN_ANISO > the host dm_video_aniso(); 0 = the original.
 int g_aniso = -1;
 static int g_aniso_cur;   // 已建的采样器按这一档（g_rmu 下读写） | the level the samplers built so far use (read and written under g_rmu)
