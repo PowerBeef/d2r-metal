@@ -174,9 +174,9 @@ class RunToolsTest(unittest.TestCase):
 
     def test_matrix_and_routes(self):
         m = pso_seed.matrix()
-        self.assertEqual(len(m), 26); self.assertEqual(len({r['nn'] for r in m}), 26)
-        self.assertEqual([r['nn'] for r in m], [f'{i:02d}' for i in range(1, 27)])
-        self.assertFalse([r for r in m if r['env'].get('DM_AA_MODE') in ('0', '3')])
+        self.assertEqual(len(m), 28); self.assertEqual(len({r['nn'] for r in m}), 28)
+        self.assertEqual([r['nn'] for r in m], [f'{i:02d}' for i in range(1, 29)])
+        self.assertFalse([r for r in m if r['env'].get('DM_AA_MODE') == '3' or (r['env'].get('DM_AA_MODE') == '0' and r['env'].get('DM_MFXT') != '1')])   # AA off only with the temporal scaler
         self.assertTrue(all(r['env'].get('DM_TEST_VIDEO_FIRSTBOOT') == '1' for r in m if r['backend'] == 'mac-app'))
         self.assertEqual(sum(r['set'] == 'tour' for r in m), 12)
         with tempfile.TemporaryDirectory() as d:

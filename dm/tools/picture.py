@@ -55,7 +55,6 @@ REC = {
     'DM_ENV_SHADOWS': '1',
     'DM_SHADOW_SIZE': '4096',
     'DM_3D_SCALE_DYN': '0',
-    'DM_MFXT': '0',
 }
 REC75 = dict(REC, DM_3D_SCALE='0.75')
 RECT = dict(REC, DM_MFXT='1', DM_AA_MODE='0')   # REC with the temporal scaler: the 3D target at 99%, the game's own AA off with it (hle_oe.c scale3d_tick, aa_tick)
@@ -71,12 +70,11 @@ PHONE = {
     'DM_ENV_SHADOWS': '0',
     'DM_SHADOW_SIZE': '2100',
     'DM_3D_SCALE_DYN': '0',
-    'DM_MFXT': '0',
 }
 MAC_APP_REC = {'DM_TEST_VIDEO_FIRSTBOOT': '1'}
 FULLSCREEN = {'DM_TEST_FULLSCREEN_AT': '1'}
 SETS = {'rec': REC, 'rect': RECT, 'rec75': REC75, 'rec75t': REC75T, 'phone': PHONE}
-KEYS = tuple(REC)   # every set pins every one of these
+KEYS = tuple(REC)   # every set pins every one of these; RECT and REC75T also pin DM_MFXT (nothing turns the temporal scaler on in the others: the CLI host's Upscaling is 0)
 
 
 def env(name, backend='cli', user=None):
