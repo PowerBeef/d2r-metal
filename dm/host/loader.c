@@ -178,11 +178,19 @@ static void read_layout(module_t *m, const char *dir) {
         else if (!strcmp(key, "TEXT_END")) m->text_end = v;
         else if (!strcmp(key, "RO_OFF")) m->ro_off = v;
         else if (!strcmp(key, "DATA_OFF")) m->data_off = v;
-        else for (int k = 0; k < KEY_N; k++) {
-            size_t n = strlen(kn[k]);
-            if (!strncmp(key, "KEY_", 4) && !strncmp(key + 4, kn[k], n) && !strcmp(key + 4 + n, "_IDX")) {
-                m->key_idx[k] = (unsigned)strtoul(strrchr(line, '\t') + 1, 0, 10); seen |= 1u << k;
+        else {
+            int hit = 0;
+            for (int k = 0; k < KEY_N; k++) {
+                size_t n = strlen(kn[k]);
+                if (!strncmp(key, "KEY_", 4) && !strncmp(key + 4, kn[k], n) && !strcmp(key + 4 + n, "_IDX")) {
+                    m->key_idx[k] = (unsigned)strtoul(strrchr(line, '\t') + 1, 0, 10); seen |= 1u << k; hit = 1;
+                }
             }
+            // A host key this host does not know: the build output is newer than the host (a kept bench baseline host on a newer product, say).
+            // Running on would leave that key's thread slot unfilled, and the game would read TSD slot 0 through it, so stop here
+            size_t kl = strlen(key);
+            if (!hit && !strncmp(key, "KEY_", 4) && kl > 8 && !strcmp(key + kl - 4, "_IDX"))
+                die("%s: unknown host key %s: the build output is newer than this host (dm/PRODUCT); rebuild the host", path, key);
         }
     }
     fclose(f);

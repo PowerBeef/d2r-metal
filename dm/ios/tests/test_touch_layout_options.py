@@ -31,6 +31,9 @@ for name in ('TouchCustom_touch_swap_above', 'TouchCustom_touch_swap_above_near'
 assert nodes['TouchCustom_touch_swap_above_Text']['fields']['rect']['height'] == 360
 for suffix in ('Near', 'Far'):
     assert any(n.get('fields', {}).get('text') == '@dmCustomTouchSwap' + suffix for n in nodes.values())
+# Brighten dark areas (key bright): a plain checkbox row, the last custom row
+assert nodes['TouchCustom_bright']['type'] == 'ToggleButtonWidget'
+assert nodes['TouchCustom_bright_Text']['fields']['text'] == '@dmCustomBright'
 host_src = (root / 'host/dm_custom.c').read_text()
 def host_variant(voice):   # 宿主按 VOICE_ROW（DM_MOVIE_FFMPEG）条件编译的两份键表：缺省去掉 #if VOICE_ROW 块，开关包只去掉预处理行
     keep = re.sub(r'#if VOICE_ROW\n(.*?)#endif\n', (lambda m: m[1]) if voice else '', host_src, flags=re.S)
@@ -46,6 +49,7 @@ for voice in (False, True):
     assert all(re.fullmatch(r'-?\d+|!?DM_PHONE', x) for x in defaults), defaults
     defaults = [int(x) if re.fullmatch(r'-?\d+', x) else x for x in defaults]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
+    assert defaults[keys.index('bright')] == 1, defaults   # Brighten dark areas: on by default (today's look)
 os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
 host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host
@@ -64,7 +68,7 @@ def page_nodes(text):
     return found
 all_keys = [k for k, _ in layout._CUSTOM_ROWS]
 assert 'TouchCustom_eco_fps' in nodes and 'TouchCustom_q3d' in nodes and [k for k, _ in layout._CUSTOM_ALL][1:] == all_keys
-page_rows = {}
+page_rows, page_states = {}, {}
 for flag in ('DM_OVERLAY_MAC', 'DM_OVERLAY_IOS'):
     os.environ[flag] = '1'; layout = importlib.reload(layout)
     video = page_nodes(layout._custom_page(FAKE, 'video')[0]); extras = page_nodes(layout._custom_page(FAKE, 'extras')[0])
@@ -72,8 +76,10 @@ for flag in ('DM_OVERLAY_MAC', 'DM_OVERLAY_IOS'):
         w = video['TouchVideo_' + row]
         assert w['type'] == 'CarouselWidget' and w['fields']['states'] == states, (flag, row, w)
     assert not {'TouchCustom_eco_fps', 'TouchCustom_q3d', 'TouchCustom_q3d_smooth'} & set(extras), flag
+    assert 'TouchCustom_bright' in extras, flag   # Brighten dark areas is on the Extras page (Mac and iOS)
     assert [k for k, _ in layout._CUSTOM_ALL][1:] == [k for k in all_keys if k not in ('eco_fps', 'q3d')], flag
     page_rows[flag] = [r[0] for r in layout._VIDEO if r[0] != 'hdr']
+    page_states[flag] = {r[0]: len(r[2]) for r in layout._VIDEO if r[0] != 'hdr'}
     os.environ.pop(flag); layout = importlib.reload(layout)
 # 宿主按 dm_video.c k_rows 的顺序认页上的行（手柄上下、第几行）：每个平台页上的行必须是 k_rows 按原顺序挑出的一部分；fps / drops 是自定义设置的键
 # The host walks the page's rows in dm_video.c k_rows order (controller up / down, row numbers): each platform's page rows must be k_rows in the same order with some left out; fps / drops are custom settings keys
@@ -84,4 +90,13 @@ assert len(ckey) == len(k_rows) and dict(zip(k_rows, ckey))['fps'] == '"eco_fps"
 for flag, rows in page_rows.items():
     it = iter(k_rows); assert all(r in it for r in rows), (flag, rows, k_rows)
 assert page_rows['DM_OVERLAY_MAC'] == k_rows, page_rows['DM_OVERLAY_MAC']   # Mac 页上全有 | the Mac page has every row
-print('PASS touch layout options: generated radio pair, labels, defaults, host order (default and MOVIE_FFMPEG=1), scrolling row extent, and Frame Rate / Frame Drops on the Mac and iOS Video tab')
+# Each selector has as many options as the host expects (dm_video.c car_ok refuses a selector whose count differs, and the row then does nothing):
+# a key's tiers (k_n, by k_keys; the phone's res has the five 3D-resolution tiers, kn), Graphic Presets 4, Frame Rate / Frame Drops 2
+k_keys = re.findall(r'"(\w+)"', re.search(r'k_keys\[NV\] = \{([^}]*)\}', video_src).group(1))
+k_n = [int(x) for x in re.search(r'k_n\[NV\] = \{([^}]*)\}', video_src).group(1).split(',')]
+assert len(k_keys) == len(k_n), (k_keys, k_n)
+for flag, states in page_states.items():
+    for row, n in states.items():
+        want = 4 if row == 'preset' else 2 if row in ('fps', 'drops') else 5 if row == 'res' and flag == 'DM_OVERLAY_IOS' else k_n[k_keys.index({'upscale': 'up'}.get(row, row))]
+        assert n == want, (flag, row, n, want)
+print("PASS touch layout options: generated radio pair, labels, defaults, host order (default and MOVIE_FFMPEG=1), scrolling row extent, Frame Rate / Frame Drops on the Mac and iOS Video tab, and each Video-tab selector's option count against dm_video.c")

@@ -142,10 +142,27 @@ static void warm_with_window(void) {
     [w orderOut:nil];
     LOG("App: shaders compiled for this macOS: %d libraries, exit %d, %.1f s", atomic_load(&total), t.terminationStatus, CACurrentMediaTime() - t0);
 }
+// The App's support folder (saves, settings, logs, pso_user.tsv): DM_APP_SUPPORT whenever it is set, even empty (a test copy's folder, the same
+// rule as the logs, iCloud and the launcher hand-over), else ~/Library/Application Support/<APP_NAME>
+static NSString *app_support_dir(void) {
+    const char *t = getenv("DM_APP_SUPPORT");
+    if (t) return @(t);
+    return [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@APP_NAME];
+}
+// The launcher's warm pass sets no DM_SAVE, so the warm-up would not find the player's own manifest: point it at the pso_user.tsv a game start
+// reads (beside the save folder), and the system's cache then holds the player's own pipelines too. A given DM_PSO_USER or DM_SAVE is left alone
+static void warm_pso_user_env(void) {
+    const char *u = getenv("DM_PSO_USER"), *save = getenv("DM_SAVE");
+    if ((u && *u) || (save && *save)) return;
+    NSString *sup = app_support_dir();
+    if (!sup.length) return;
+    setenv("DM_PSO_USER", [sup stringByAppendingPathComponent:@"pso_user.tsv"].fileSystemRepresentation, 1);
+}
 // --warm-shaders in App form (the launcher runs <app>/Contents/MacOS/D2RMobile --warm-shaders): the library folder and the shader map come from the package, as at a normal start
 void dm_app_msl_env(void) {
     @autoreleasepool {
         if (![NSBundle.mainBundle.bundlePath.pathExtension isEqualToString:@"app"]) return;
+        warm_pso_user_env();
         NSString *msl = res_item(@"msl"), *shmap = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"shader_map.tsv"];
         if (msl && !getenv("DM_MSL_DIR")) setenv("DM_MSL_DIR", msl.fileSystemRepresentation, 1);
         // the pipeline warm-up reads pso_manifest.tsv beside the shader map, as at a normal start
@@ -181,8 +198,7 @@ int dm_app_bootstrap(int *argc, char ***argv) {
         if (launcher_handoff()) exit(0);
         NSFileManager *fm = NSFileManager.defaultManager;
         if (!getenv("DM_LANG")) setenv("DM_LANG", [NSLocale.preferredLanguages.firstObject hasPrefix:@"zh"] ? "zh-Hans" : "en", 1);   // 命令行宿主一律简中；App 形态跟系统首选语言（提示框与游戏内同一个开关） | The command-line host is always Simplified Chinese; the App form follows the system's preferred language (dialogs and in-game text use the same switch)
-        NSString *sup = [[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@APP_NAME] copy];
-        if (getenv("DM_APP_SUPPORT")) sup = @(getenv("DM_APP_SUPPORT"));   // 测试：存档等放到指定目录，不碰玩家那份 | Test: put saves and the rest in a given directory, leaving the player's own untouched
+        NSString *sup = [app_support_dir() copy];   // a test copy (DM_APP_SUPPORT) keeps its saves and the rest in its own folder, leaving the player's untouched
         NSString *logd = [[NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"Logs/" APP_NAME] copy];
         if (getenv("DM_APP_SUPPORT")) logd = [sup stringByAppendingPathComponent:@"Logs"];   // 测试：日志也放进指定目录，玩家那份 host.log 不被轮转覆盖 | Test: logs go into the given directory too, so the player's host.log is not rotated away
         NSString *save = [sup stringByAppendingPathComponent:@"save"], *temp = [sup stringByAppendingPathComponent:@"temp"];

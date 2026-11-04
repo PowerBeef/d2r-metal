@@ -1,0 +1,30 @@
+# A foldable phone's window changes size when it folds and unfolds (IOS-2, the phone path): the long side stays the width, there is no 4:3 rule
+# on phones, and the boot cap reserves 2160 rows so the inner screen fits after an outer-screen launch (front_ios.m front_game_res).
+# - The sizes are foldable outer / inner screen sizes in points (DM_TEST_SCREEN=2034x1398, an outer screen in pixels); phones have no minimum
+#   scene size. The resize hook (`app resize_<w>x<h>`) resizes the outermost view, as in ios_window_resize.scn.
+# - DM_TEST_IDIOM=phone makes it run the same on the phone package and on the iPad-idiom package (SCN_MAC_APP).
+# - Pixel values assume scale 2 (this Mac's displays).
+# - Not at the Mac's Recommended in full screen, by design: the iOS package runs in its own fixed window with the iOS first-boot settings, and the
+#   test resizes its view. ios-mac runs are front runs (the iOS package takes the front).
+name ios_fold_resize
+requires ios-mac
+save warlock
+timeout 240
+env DM_TEST_SCREEN=2034x1398 DM_TEST_IDIOM=phone
+
+expect main_menu timeout=150
+app resize_667x375
+expect geom ok=1 ingame=0 win_w=667 win_h=375 rw=1334 rh=750 follow=1 k100=200 timeout=20
+enter_game
+expect geom ok=1 ingame=1 win_w=667 win_h=375 rw=1334 rh=750 follow=1 timeout=30
+app resize_678x466
+expect geom ok=1 ingame=1 win_w=678 win_h=466 rw=1356 rh=932 vp_h=932 follow=1 clamp=0 timeout=15
+# narrower than 4:3, but phones are never clamped
+app resize_900x700
+expect geom ok=1 ingame=1 win_w=900 win_h=700 rw=1800 rh=1400 vp_h=1400 follow=1 clamp=0 timeout=15
+app resize_678x466
+expect geom ok=1 ingame=1 win_w=678 win_h=466 rw=1356 rh=932 follow=1 timeout=15
+quit
+check no_event geom ok=0
+check no_red
+check no_red_log

@@ -1,0 +1,21 @@
+# The Mac App test copy's first launch as if on an M1 with an 8-core GPU (DM_TEST_GPU_NAME / DM_TEST_GPU_CORES) on this 2560 x 1440 screen: the
+# glue from the chip to the picture for a Mac whose Recommended differs from this one's (t_picrec_cases.h). The 3D runs below 100% with the MetalFX
+# 3D pass, and the picture event carries the set the model gives: Native 2560, 3D 75%, environment shadows on, Ultra, Frame Drops lower (about
+# 0.31x the M6's GPU, the 75% load at 90% of the estimated capacity, above the 85% line). Pinned from the first run on 2026-11-03
+name pic_mac_firstboot_m1
+requires mac-app
+save warlock
+timeout 300
+env DM_TEST_VIDEO_FIRSTBOOT=1 "DM_TEST_GPU_NAME=Apple M1" DM_TEST_GPU_CORES=8 DM_GAME_SEED=305419896
+
+expect main_menu timeout=120
+enter_game
+sleep 6
+system_quit
+check no_red
+check no_red_log
+check event picture how=first mode=1 res=3 up=1 aa=1 aniso=3 color=1 s3d=2 envsh=1 shq=2
+check log_has "→ Recommended Native 2560, 3D 75%, environment shadows on, shadows Ultra, Frame Drops lower"
+check event scale3d pct=75
+check event mfx who=3d op=build
+check no_event mfx who=pres op=build

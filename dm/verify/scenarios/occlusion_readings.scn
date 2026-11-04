@@ -1,0 +1,39 @@
+# Present-time readings come back after the window was covered (LIF-1 / S3D-1 on the Mac), and the covered frames are not judged (LIF-2 / S3D-2).
+# A covered window discards presents. With readings looked up by the game's present count, the count and the present-thread tickets drifted
+# apart for good, so every reading after the cover was "no reading" (perf blind=true) and Frame Drops froze; they are looked up through each
+# present's job now. The 12 s cover is longer than a perf window, so the second expect after the uncover only sees frames from after it, and with
+# DM_TEST_Q3D=0 (the Mac's default is Keep) the no-step check exercises the controller. While covered the game loop runs at DM_HIDDEN_HZ (LIF-5):
+# game logic must keep about 25 ticks a second through catch-up ticks (checked while still covered), with no burst after the uncover; the
+# audio_dry remembers frame the covered stretch for the energy / underrun A/B. In front: real occlusion of a window on screen and real present-time
+# readings (a background run's cover is virtual and its readings projected); the cover window sits just above the game window on the game's Space,
+# so the run stays windowed (the CLI host, and the Mac App test copy, which starts windowed with the original picture settings).
+name occlusion_readings
+front visibility
+requires cli mac-app
+save warlock
+timeout 240
+env DM_TEST_Q3D=0
+
+enter_game
+stick 1 0 frames=30
+sleep 22
+expect perf blind=false timeout=25
+remember tick
+remember audio_dry as=dry0
+app cover
+expect app state=occluded timeout=5
+sleep 12
+expect_state tick>=$tick+280 timeout=1
+remember audio_dry as=dry1
+app uncover
+expect app state=visible timeout=5
+remember tick as=t_up
+sleep 1
+expect_state tick<=$t_up+40 timeout=1
+expect perf timeout=25
+log skip the first window after the uncover: it still holds frames from before
+expect perf blind=false timeout=25
+quit
+check no_red
+check no_red_log
+check no_event scale3d lv=1

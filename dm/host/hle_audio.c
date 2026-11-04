@@ -65,6 +65,7 @@ static aout *ao(const void *g) { aout *a = objmap_get(g); if (!a) die("AudioOut 
 // compare by in-process alternation while moving on the device, not across two launches (thermal state and scene both differ)
 static int g_nq_mode = -1, g_nq_alt; static qos_class_t g_nq_base = QOS_CLASS_UNSPECIFIED;
 static _Atomic uint64_t g_nq_dry[2], g_nq_calls[2], g_nq_wake[2], g_nq_lat_sum[2], g_nq_lat_max[2], g_nq_lat_2ms[2];
+static _Atomic uint64_t g_dry_total;   // underruns since launch, whatever the QoS phase (dm_audio_dry_total)
 static int nq_phase(void) { if (g_nq_mode < 0) { const char *e = getenv("DM_AUDIO_NQOS"); g_nq_mode = e && !strcmp(e, "0") ? 0 : e && !strncmp(e, "alt:", 4) ? 2 : 1; if (g_nq_mode == 2) { g_nq_alt = atoi(e + 4); if (g_nq_alt < 1) g_nq_alt = 30; } }
     return g_nq_mode < 2 ? g_nq_mode : (int)((now_ns() / 1000000000ull / (uint64_t)g_nq_alt) & 1); }
 static void nq_report(int ph) {
@@ -161,7 +162,10 @@ static void render(aout *a, void *data, uint32_t bytes) {
     { static FILE *df; static int on = -1; if (on < 0) { const char *e = getenv("DM_AUDIO_OUT_DUMP"); on = e != NULL; if (on && !(df = fopen(e, "wb"))) LOG("【红】DM_AUDIO_OUT_DUMP 打不开 %s", e); }
       if (df) fwrite(data, 1, bytes, df); }
     { int q = nq_phase(); atomic_fetch_add_explicit(&g_nq_calls[q], 1, memory_order_relaxed); if (a->dry) atomic_fetch_add_explicit(&g_nq_dry[q], 1, memory_order_relaxed); }   // 通知线程 QoS 对照：按当前相记 | Notification thread QoS comparison: recorded per current phase
+    if (a->dry) atomic_fetch_add_explicit(&g_dry_total, 1, memory_order_relaxed);
 }
+// Cumulative underruns (callbacks that found the buffer dry), in every mode: the control port's state field audio_dry
+uint64_t dm_audio_dry_total(void) { return atomic_load_explicit(&g_dry_total, memory_order_relaxed); }
 static OSStatus au_render(void *ctx, AudioUnitRenderActionFlags *f, const AudioTimeStamp *ts, UInt32 bus, UInt32 frames, AudioBufferList *bl) {
     (void)f; (void)ts; (void)bus; (void)frames;
     render(ctx, bl->mBuffers[0].mData, bl->mBuffers[0].mDataByteSize);

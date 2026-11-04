@@ -2,14 +2,13 @@
 # 场景运行器：按场景文件（dm/verify/scenarios/*.scn）一步一步驱动游戏（控制口 dm/verify/control_port.md），每步等它生效再走下一步，末尾按检查项判 OK / RED。
 # 场景文件是一行一步的文本，用的是触屏脚本的那套动作名（tap_ui、await_ui、walk_to、tap_unit、shot …），但不按时刻排，按顺序做；格式见 dm/verify/scenarios/README.md。
 #   后端：cli（Mac 命令行宿主，缺省）、mac-app（玩家装的 Mac App，DM_APP_SUPPORT 隔开存档与日志）、ios-mac（Mac 上跑的 iOS 包，走日志端口）、device（真机：devicectl 拉起 + iproxy 转日志端口）
-#   用法：scenario.py run <场景文件>… [--backend cli|mac-app|ios-mac|device] [--out 目录] [--headless] [--metal-validation api|shader|all|lint]
-#         scenario.py check <场景文件>…      只解析、不跑（语法 / 动作名 / 参数）
 #   每个场景打「SCENARIO <名> OK|RED …」判定行（dmtest.py 认得），末行 RESULT {json}；结果目录里有 host.log、events.ndjson、port.log、steps.tsv 与截图
 #   跑完都查一遍日志里的消毒器报告（SCN_DMHOST=dm/host/dmhost_asan 等，有就判红，汇总进 sanitizer.txt）；--metal-validation 开 Metal 校验层，消息汇总进 metal_validation.txt（lint 只汇总、不判红）
 # Scenario runner: drives the game step by step from a scenario file (dm/verify/scenarios/*.scn) through the control port (dm/verify/control_port.md), waits for each step to take effect before the next, and judges OK / RED by the checks at the end.
 # A scenario file is text with one step per line, using the touch script's action names (tap_ui, await_ui, walk_to, tap_unit, shot ...), but run in order instead of by time; the format is in dm/verify/scenarios/README.md.
 #   Backends: cli (Mac command-line host, default), mac-app (the Mac App players install, saves and logs kept apart with DM_APP_SUPPORT), ios-mac (the iOS package running on a Mac, over the log port), device (real device: launched with devicectl, log port forwarded through iproxy)
-#   Usage: scenario.py run <scenario file>... [--backend cli|mac-app|ios-mac|device] [--out dir] [--headless] [--metal-validation api|shader|all|lint]
+#   Usage: scenario.py run <scenario file>... [--backend cli|mac-app|ios-mac|device] [--out dir] [--headless] [--metal-validation api|shader|all|lint] [--env K=V ...]
+#          --env (repeatable, shell-quoted "K=V K2=V2" words) is merged into every scenario's env and wins over it
 #          scenario.py check <scenario file>...   parse only, do not run (syntax / action names / arguments)
 #   Each scenario prints a "SCENARIO <name> OK|RED ..." verdict line (dmtest.py understands it), last line RESULT {json}; the result directory holds host.log, events.ndjson, port.log, steps.tsv and the screenshots
 #   Every run then checks the log for sanitizer reports (SCN_DMHOST=dm/host/dmhost_asan and the like; any report is red, summarized in sanitizer.txt); --metal-validation turns on the Metal validation layers, with the messages summarized in metal_validation.txt (lint only summarizes, never red)
@@ -46,9 +45,10 @@ SCHEMES = ('pc', 'controller', 'touch')
 OPEN_KEYS = {'pause': 'esc', 'inventory': 'i'}   # the PC bindings that open them
 # PC keys by name: (Mac key code, Windows virtual key). On the Mac App a PC key goes through AppKit (the fe line, front_mac.m), elsewhere into the PC layer (kbm)
 PC_KEYS = {'esc': (53, 27), 'return': (36, 13), 'space': (49, 32), 'i': (34, 73), 'c': (8, 67), 't': (17, 84), '1': (18, 49)}
-LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture')
+LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture', 'expect_mem')
 HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires', 'front', 'schemes')
-CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event', 'actions', 'saves_valid', 'save_pairs')
+CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event', 'actions', 'saves_valid', 'save_pairs', 'log_has')
+LOG_HAS_KW = ('re', 'file', 'min', 'last')
 BAD = ('red', 'fatal', 'crash', 'watchdog')
 
 
@@ -68,6 +68,11 @@ class Unsupported(Exception):
 
 class ScenarioError(Exception):
     pass
+
+
+def scn_env(env, run):
+    """A scenario's env with {run} in a value replaced by the run folder (DM_TEST_PRESENT_SHOT=15:{run}/present.png). The cli and mac-app backends use it."""
+    return {k: v.replace('{run}', run) if isinstance(v, str) else v for k, v in env.items()}
 
 
 def value(v):
@@ -104,11 +109,14 @@ def parse(path):
             continue
         if op == 'check':
             if not args or args[0] not in CHECKS and not args[0].startswith('exit'): raise ScenarioError(f'{path}:{n}: unknown check {args[:1]} (known: {", ".join(CHECKS)})')
+            if args[0] == 'log_has': log_has_parse(path, n, args[1:], kw)
             checks.append(dict(op=args[0], args=args[1:], kw=kw, line=raw.strip(), n=n)); continue
         if op not in POS and op not in MACROS and op not in LOCAL: raise ScenarioError(f'{path}:{n}: unknown step {op!r}')
-        if op in POS:
-            if len(args) > len(POS[op]): raise ScenarioError(f'{path}:{n}: {op} takes at most {len(POS[op])} positional arguments ({" ".join(POS[op])})')
-            kw = {**dict(zip(POS[op], args, strict=False)), **kw}; args = []
+        if op in POS or op == 'expect_mem':
+            pos = POS['mem'] if op == 'expect_mem' else POS[op]
+            if len(args) > len(pos): raise ScenarioError(f'{path}:{n}: {op} takes at most {len(pos)} positional arguments ({" ".join(pos)})')
+            kw = {**dict(zip(pos, args, strict=False)), **kw}; args = []
+        if op == 'expect_mem': expect_mem_parse(path, n, kw)
         if op in ('expect', 'expect_no') and not args: raise ScenarioError(f'{path}:{n}: {op} needs an event type')
         if op == 'sleep' and (not args or not re.fullmatch(r'[\d.]+', args[0])): raise ScenarioError(f'{path}:{n}: sleep needs seconds')
         if op == 'remember' and not args: raise ScenarioError(f'{path}:{n}: remember needs a state field')
@@ -118,6 +126,35 @@ def parse(path):
         steps.append(dict(op=op, args=args, kw=kw, line=raw.split('#')[0].strip(), n=n, soft=soft, only=only))
     if meta['front'] and 'DM_TEST_BGRUN' in meta['env']: raise ScenarioError(f'{path}: front and env DM_TEST_BGRUN contradict each other')
     return meta, steps, checks
+
+
+def expect_mem_parse(path, n, kw):
+    """expect_mem <at> [len] [chain=...] hex=<bytes> [timeout=5]: the read length is the byte count of hex. Without len the control port's mem
+    reads 8 bytes, which a shorter hex could never equal, so a missing len becomes that count and a len that disagrees with hex is refused."""
+    if not kw.get('at') or not re.fullmatch(r'(?:[0-9a-fA-F]{2})+', kw.get('hex', '')):
+        raise ScenarioError(f'{path}:{n}: expect_mem needs <at> and hex=<bytes as an even number of hex digits>')
+    nb = len(kw['hex']) // 2
+    if nb > 4096: raise ScenarioError(f'{path}:{n}: expect_mem hex= holds {nb} bytes; the control port reads at most 4096')
+    if 'len' not in kw: kw['len'] = str(nb)
+    elif not re.fullmatch(r'\d+', kw['len']) or int(kw['len']) != nb:
+        raise ScenarioError(f'{path}:{n}: expect_mem len {kw["len"]} does not match hex= ({nb} bytes); leave len out to read exactly the bytes of hex')
+
+
+def log_has_parse(path, n, args, kw):
+    """check log_has <regex> | re=<regex> [file=<run-relative file>] [min=1] [last=<regex>]: the regexes must compile; a regex holding = goes in re=.
+    Refused: a positional regex together with re= (one would be ignored), min=0 (always passes), and last= with a min other than 1 (last= judges one line)."""
+    bad = [k for k in kw if k not in LOG_HAS_KW]
+    if bad: raise ScenarioError(f'{path}:{n}: log_has takes re= file= min= last= (got {bad[0]}=; a regex containing = goes in re="...")')
+    if len(args) > 1: raise ScenarioError(f'{path}:{n}: log_has takes one regex (quote a regex with spaces)')
+    if args and 're' in kw: raise ScenarioError(f'{path}:{n}: log_has takes the regex either as an argument or as re=, not both')
+    rx = kw.get('re') or (args[0] if args else '')
+    if not rx: raise ScenarioError(f'{path}:{n}: log_has needs a regex')
+    for x in [rx] + ([kw['last']] if 'last' in kw else []):
+        try: re.compile(x)
+        except re.error as e: raise ScenarioError(f'{path}:{n}: log_has: bad regex {x!r}: {e}') from e
+    if not re.fullmatch(r'\d+', kw.get('min', '1')): raise ScenarioError(f'{path}:{n}: log_has min= takes a whole number')
+    if int(kw.get('min', '1')) < 1: raise ScenarioError(f'{path}:{n}: log_has min=0 always passes (use min=1 or more)')
+    if 'last' in kw and int(kw.get('min', '1')) != 1: raise ScenarioError(f'{path}:{n}: log_has last= judges one line, so min= can only be 1')
 
 
 # ---------- 前台与后台跑局 | Front and background runs ----------
@@ -134,7 +171,9 @@ def disturbed(events, marks, ops, front, fs_at=()):
     fs_at = DM_TEST_FULLSCREEN_AT times (scheduled real full-screen switches, for hosts without `window` events).
     Front run: disturbed by another app taking the front, a Space switch, display sleep, the session going inactive, a resign whose cause is not the run's own
     sheet or minimize, occlusion or minimize outside a step that asked for it (requesting steps and the step after them: the events arrive asynchronously),
-    except the real full-screen switch (within FS_GRACE s of a window `full` change or a scheduled switch); and by never getting the front before the first
+    except the real full-screen switch (within FS_GRACE s of a window `full` change or a scheduled switch) and a Space switch during the launch (within LAUNCH_S
+    s of the start, in the first step at the latest and before the run's first full-screen window: the previous front run's full-screen Space closing, measured 2026-11-04 at 0.17-0.23 s into
+    11 back-to-back bench launches, while nothing measured has started); and by never getting the front before the first
     step ended. Background run: `desk front by=self` within LAUNCH_S s of launch or inside a requesting step's reach is the run taking the front (red);
     a later one is the user's own, only noted. Events after the quit started are consequences of it and are not judged.
     Returns dict(disturbed=[{t, step, what}], took_front=[...], front_by_user=[...])."""
@@ -146,6 +185,7 @@ def disturbed(events, marks, ops, front, fs_at=()):
     for e in events:
         if e.get('ev') == 'window' and bool(e.get('full')) != prev_full: prev_full = bool(e.get('full')); fs_win.append((e.get('t', 0) - 0.5, e.get('t', 0) + FS_GRACE))
     def in_fs(t): return any(a <= t <= b for a, b in fs_win)
+    first_full = min([e.get('t', 0) for e in events if e.get('ev') == 'window' and e.get('full')] + [at for at in fs_at] + [float('inf')])
     first_end = marks[1] if len(marks) > 1 else float('inf'); active = False
     for e in events:
         k, seq, t = e.get('ev'), e.get('seq', 0), e.get('t', 0)
@@ -159,7 +199,8 @@ def disturbed(events, marks, ops, front, fs_at=()):
             continue
         what = None
         if k == 'desk' and e.get('what') in ('other_app', 'space', 'screens_sleep', 'session_off'):
-            if not requested(s) and not (e.get('what') == 'space' and in_fs(t)): what = f"desk {e.get('what')}" + (f" by {e['by']}" if e.get('by') else '')
+            launch_space = e.get('what') == 'space' and s <= 1 and t < first_full and t - t0 < LAUNCH_S   # the launch: first step, first LAUNCH_S s, before full screen
+            if not requested(s) and not (e.get('what') == 'space' and in_fs(t)) and not launch_space: what = f"desk {e.get('what')}" + (f" by {e['by']}" if e.get('by') else '')
         elif k == 'app' and not emu and e.get('state') == 'resign':
             if e.get('cause') not in ('sheet', 'minimize') and not requested(s): what = f"app resign cause={e.get('cause', '?')}"
         elif k == 'app' and not emu and e.get('state') in ('occluded', 'minimized'):
@@ -238,7 +279,7 @@ class CliBackend:
                    DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_WATCH=str(self.meta['timeout'] + 60), DM_CRASH_JSON=os.path.join(self.run, 'crash.json'))
         if self.bgrun is not None: env['DM_TEST_BGRUN'] = self.bgrun   # background (or front) test run: the scenario's own env below still wins
         if self.meta['window'] and not self.headless: env['DM_WINDOW'] = '1'
-        env.update(self.meta['env'])
+        env.update(scn_env(self.meta['env'], self.run))
         if env.get('DM_ROMFS_OVERLAY') == 'auto-mac':   # env DM_ROMFS_OVERLAY=auto-mac: the Mac App's overlay (DM_OVERLAY_MAC: Video tab, key caps, the PC interface set for DM_PC_MODE), about 25 s
             ov = os.path.join(self.run, 'romfs_overlay')
             if subprocess.run([sys.executable, os.path.join(DM, 'ios', 'tools', 'gen_romfs_overlay.py'), romfs, ov], capture_output=True, check=False, env=dict(os.environ, DM_OVERLAY_MAC='1')).returncode: raise ScenarioError('gen_romfs_overlay.py failed')
@@ -291,8 +332,8 @@ class MacAppBackend(CliBackend):
         env = {k: v for k, v in os.environ.items() if k not in ('DM_SAVE', 'DM_TEMP', 'DM_ROMFS', 'DM_ROOT')}
         env.update(DM_APP_SUPPORT=sup, DM_APP_ROMFS=romfs, DM_CTL_PORT=str(port), DM_EVENTS=os.path.join(self.run, 'events.ndjson'), DM_AUDIO='0', DM_WATCH=str(self.meta['timeout'] + 60),
                    DM_CRASH_JSON=os.path.join(self.run, 'crash.json'))
-        if self.bgrun is not None: env['DM_TEST_BGRUN'] = self.bgrun
-        env.update(self.meta['env'])
+        if self.bgrun is not None: env['DM_TEST_BGRUN'] = self.bgrun   # background (or front) test run: the scenario's own env below still wins
+        env.update(scn_env(self.meta['env'], self.run))
         self.log = open(os.path.join(self.run, 'launch.log'), 'wb')
         self.proc = subprocess.Popen([exe], env=env, stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         try: return dmctl.Ctl(server=srv, connect_timeout=60, log=os.path.join(self.run, 'port.log'))
@@ -371,9 +412,11 @@ METAL_VALIDATION['all'] = dict(METAL_VALIDATION['api'], **METAL_VALIDATION['shad
 
 
 class Runner:
-    def __init__(self, path, backend_name, out, headless, metal=None):
+    def __init__(self, path, backend_name, out, headless, metal=None, extra_env=None):
         self.path = path
         self.meta, self.steps, self.checks = parse(path)
+        self.meta['env'].update(extra_env or {})   # run --env: the command line wins over the scenario's own env
+        if self.meta['front'] and 'DM_TEST_BGRUN' in (extra_env or {}): raise ScenarioError(f'{path}: front and --env DM_TEST_BGRUN contradict each other')
         stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         self.run = out or os.path.join(DM_ROOT, 'run', 'scenario', f"{self.meta['name']}_{backend_name}_{stamp}_{os.getpid()}")
         os.makedirs(self.run, exist_ok=True)
@@ -535,6 +578,16 @@ class Runner:
             except TimeoutError: return 'not seen'
             raise ScenarioError(f'unexpected event: {json.dumps(e, ensure_ascii=False)}')
         if op == 'expect_state': return self.expect_state(kw)
+        if op == 'expect_mem':   # expect_mem <at> [len] [chain=...] hex=<bytes> [timeout=5]: polls the control port's mem until the bytes read are these
+            # an error reply (a null pointer on the chain before the object exists, main not loaded yet) is polled again too; the last one is reported at the timeout
+            want = str(kw['hex']).lower(); t = float(kw.get('timeout', 5)); q = {k: kw[k] for k in ('at', 'len', 'chain') if k in kw}
+            end = time.time() + t
+            while True:
+                try: got = str(self.ctl('mem', **q).get('hex', '')).lower()
+                except dmctl.CtlError as e: got = f'error reply ({e})'
+                if got == want: return f"{q['at']}: {got}"
+                if time.time() > end: raise ScenarioError(f"{q['at']}: {got} (want {want})")
+                time.sleep(0.2)
         if op == 'sleep': time.sleep(float(st['args'][0])); return None
         if op == 'gpu_capture':   # gpu_capture [frames=1] [path=frame.gputrace] [keep=1]：截 GPU 帧（gpucapture，只 cli / mac-app），结果带 gpudebug 的摘要 | capture GPU frames (gpucapture, cli / mac-app only); the result carries the gpudebug summary
             pid = self.backend.pid()
@@ -603,6 +656,8 @@ class Runner:
                     n = sum(1 for e in evs[i:end] if e['ev'] == 'save' and e.get('result') == 'commit')
                     if n < 2: short.append(f"request at t={evs[i].get('t')}: {n} commits")
                 ok = bool(req) and not short; why = f'{len(req)} requests' + (f"; {'; '.join(short[:3])}" if short else ', each with 2+ commits')
+            elif op == 'log_has':
+                ok, why = self.log_has(ck)
             elif op in ('event', 'no_event'):
                 ev = ck['args'][0] if ck['args'] else ''
                 hit = [e for e in evs if e['ev'] == ev and all(e.get(k) == value(v) or str(e.get(k)) == v for k, v in ck['kw'].items())]
@@ -610,6 +665,22 @@ class Runner:
             out.append(dict(check=ck['line'], ok=ok, detail=why))
             self.say(f"CHECK {'✓' if ok else '✗'} {ck['line']} — {why}")
         return out
+
+    def log_has(self, ck):
+        """Lines of the game log (or of file=, relative to the run folder) matching the regex: at least min= (default 1). With last=, only the
+        last line matching last= is judged (1 when it matches the regex, else 0), so a final state is checked rather than any earlier one."""
+        kw = ck['kw']; rx = kw.get('re') or ck['args'][0]; want = int(kw.get('min', 1))
+        f = os.path.join(self.run, kw['file']) if kw.get('file') else (self.backend.log_file() if hasattr(self.backend, 'log_file') else '')
+        name = kw.get('file') or os.path.basename(f or 'log')
+        if not f or not os.path.exists(f): return False, f'no file {name}'
+        with open(f, encoding='utf-8', errors='replace') as fh: lines = fh.read().splitlines()
+        if 'last' in kw:
+            hits = [ln for ln in lines if re.search(kw['last'], ln)]
+            if not hits: return False, f'no line matches /{kw["last"]}/ in {name}'
+            n = 1 if re.search(rx, hits[-1]) else 0
+            return n >= want, f'last /{kw["last"]}/ line: {hits[-1].strip()[:160]}'
+        n = sum(1 for ln in lines if re.search(rx, ln))
+        return n >= want, f'{n} lines match /{rx}/ in {name} (want >= {want})'
 
     def save_root(self):   # 这一局已提交的存档目录（只 cli / mac-app 拿得到） | this run's committed save directory (only reachable on cli / mac-app)
         if self.backend.name == 'cli': return os.path.join(self.run, 'save')
@@ -739,10 +810,11 @@ class Runner:
         return res, 0 if verdict == 'OK' else 1
 
 
-def run_scenario(path, backend, out, headless, metal, redo, make=None):
+def run_scenario(path, backend, out, headless, metal, redo, make=None, extra_env=None):
     """One scenario file. A front run that came out disturbed is redone in a new run folder (the disturbed one is kept), at most `redo` times, then
-    reported "not judged" (⚪ line, verdict UNAVAILABLE, code 3). Only the judged front attempt's verdict line is printed bare. make(out) builds the Runner (tests)."""
-    mk = make or (lambda o: Runner(path, backend, o, headless, metal=metal))
+    reported "not judged" (⚪ line, verdict UNAVAILABLE, code 3). Only the judged front attempt's verdict line is printed bare. make(out) builds the Runner (tests);
+    extra_env = run --env, merged into the scenario's env (the command line wins)."""
+    mk = make or (lambda o: Runner(path, backend, o, headless, metal=metal, extra_env=extra_env))
     attempt = 0
     while True:
         r = mk(out if not attempt or out is None else f'{out}_redo{attempt}')
@@ -764,6 +836,7 @@ def main(argv):
     r = sub.add_parser('run'); r.add_argument('files', nargs='+'); r.add_argument('--backend', default='cli', choices=('cli', 'mac-app', 'ios-mac', 'device'))
     r.add_argument('--out'); r.add_argument('--headless', action='store_true')
     r.add_argument('--metal-validation', choices=sorted(METAL_VALIDATION), help='turn on the Metal validation layers; messages go to metal_validation.txt (lint: summary only)')
+    r.add_argument('--env', action='append', default=[], help='K=V words (repeatable, shell-quoted) merged into every scenario\'s env; the command line wins')
     r.add_argument('--front', action='store_true', help='run windowed scenarios in front (DM_TEST_BGRUN=0), to watch them; judged for disturbances and redone')
     r.add_argument('--redo', type=int, default=2, help='how many times a disturbed front run is redone before it is reported not judged (default 2)')
     r.add_argument('--scheme', choices=SCHEMES, help='the control scheme of the scheme-neutral steps (default: the first of a scenario\'s schemes header)')
@@ -776,6 +849,11 @@ def main(argv):
             try: meta, steps, checks = parse(f); print(f"SCENARIO-CHECK {meta['name']} OK {len(steps)} steps, {len(checks)} checks")
             except ScenarioError as e: bad += 1; print(f'SCENARIO-CHECK {os.path.basename(f)} RED {e}')
         return 1 if bad else 0
+    extra = {}
+    for it in a.env:
+        for kv in shlex.split(it):
+            if '=' not in kv or kv.startswith('='): print(f'🔴 --env takes K=V words (got {kv!r})'); return 2
+            k, v = kv.split('=', 1); extra[k] = v
     if a.front: os.environ['DM_TEST_BGRUN'] = '0'
     if a.scheme: os.environ['SCN_SCHEME'] = a.scheme
     if a.aspect: os.environ['DM_TEST_SCREEN_ASPECT'] = a.aspect
@@ -791,7 +869,7 @@ def main(argv):
     for f in a.files:
         try:
             ensure_save(parse(f)[0]['save'], a.headless)
-            res, code = run_scenario(f, a.backend, a.out if len(a.files) == 1 else None, a.headless, a.metal_validation, a.redo)
+            res, code = run_scenario(f, a.backend, a.out if len(a.files) == 1 else None, a.headless, a.metal_validation, a.redo, extra_env=extra)
         except ScenarioError as e: res, code = dict(name=os.path.basename(f), verdict='RED', reason=str(e)), 1; print(f'SCENARIO {os.path.basename(f)} RED {e}')
         results.append(res); codes.append(code)
     rc = final_rc(codes)

@@ -102,6 +102,12 @@ class BgRunTest(unittest.TestCase):
         fs = [ev(3, 1.20, 'window', full=True), ev(4, 1.25, 'app', state='occluded'), ev(5, 1.7, 'app', state='visible'), ev(6, 1.75, 'desk', what='space')]
         self.assertEqual(ok(fs, [2], ['sleep']), [])                                   # the real full-screen Space switch
         self.assertEqual(len(ok([ev(5, 5.0, 'desk', what='space')], [2], ['sleep'])), 1)
+        # the previous front run's full-screen Space closing during this launch (before the first step and the first full-screen window): not a disturbance
+        self.assertEqual(ok([ev(2, 0.22, 'desk', what='space'), ev(3, 1.20, 'window', full=True)], [4], ['sleep']), [])
+        self.assertEqual(ok([ev(2, 0.22, 'desk', what='space'), ev(3, 1.20, 'window', full=True)], [1, 8], ['enter_game', 'sleep']), [])   # the first step began at launch
+        self.assertEqual(len(ok([ev(4, 0.22, 'desk', what='space'), ev(9, 1.20, 'window', full=True)], [1, 3, 8], ['sleep', 'sleep', 'sleep'])), 1)   # in the second step: judged
+        self.assertEqual(len(ok([ev(2, 0.22, 'desk', what='other_app', by='x'), ev(3, 1.20, 'window', full=True)], [4], ['sleep'])), 1)   # only a Space switch
+        self.assertEqual(len(ok([ev(3, 1.20, 'window', full=True), ev(4, 8.0, 'desk', what='space')], [5], ['sleep'])), 1)   # after the full-screen window (past its grace): judged
         d = ok([ev(5, 5.0, 'desk', what='other_app', by='com.example')], [2], ['sleep'])
         self.assertEqual((len(d), d[0]['step']), (1, 1)); self.assertIn('other_app', d[0]['what'])
         self.assertEqual(len(ok([ev(5, 5.0, 'app', state='resign', cause='app')], [2], ['sleep'])), 1)

@@ -14,6 +14,8 @@
 //   phys    pages from MapPhysicalMemory must be zero (F-CORE-16): map, fill with 0xA5, UnmapPhysicalMemory, map again, count the 0xA5 bytes left
 //   svc     ExitProcess (0x07) goes to the host's graceful exit, and an unimplemented SVC returns NotImplemented 0x4201 and reports red once (F-CORE-12)
 //   query   QueryMemory answers a module segment by segment and any other host address with one Inaccessible block (F-CORE-1); the walk of the SDK's GetExceptionInfo (sdk+0x3642e0) must find the module start and the end of CodeData in a few steps
+//   pool    the app pool on a stepped-down reservation (SHD-8): with a 3840 MB heap region (the 4864 MiB step) the game's boot loop (whole pool, rounded down to 2 MB, then 2 MB less per refusal)
+//           must settle at the region after 34 silent refusals with one 'App pool' line; at 4096 MB (5120 MiB) the pool is untouched and the heap is 3984 MB, as in the game's logs
 //   disjoint R / overlap R   stress (run by the ThreadSanitizer build, make tsan): 8 threads map their own slot for R rounds; 2 threads map the same target at once for R rounds
 // No argument = run all deterministic cases (make run)
 #include <string.h>
@@ -40,8 +42,13 @@ void hlecount_svc(int num) { (void)num; }
 uint64_t dm_entropy64(void) { return 4; }
 void dm_backtrace(uint64_t fp) { (void)fp; }
 uint64_t guest_ns(void) { return 0; }
-static _Atomic long g_logs, g_red_logs; static char g_shutdown_why[64];
-static void quiet_log(const char *file, int line, const char *fmt, ...) { (void)file; (void)line; atomic_fetch_add(&g_logs, 1); if (strstr(fmt, "【红】")) atomic_fetch_add(&g_red_logs, 1); }
+static _Atomic long g_logs, g_red_logs, g_oom_logs, g_pool_logs; static char g_shutdown_why[64];
+static void quiet_log(const char *file, int line, const char *fmt, ...) {
+    (void)file; (void)line; atomic_fetch_add(&g_logs, 1);
+    if (strstr(fmt, "【红】")) atomic_fetch_add(&g_red_logs, 1);
+    if (strstr(fmt, "SetHeapSize OOM")) atomic_fetch_add(&g_oom_logs, 1);
+    if (strstr(fmt, "App pool")) atomic_fetch_add(&g_pool_logs, 1);
+}
 void dm_host_shutdown(const char *why) { snprintf(g_shutdown_why, sizeof g_shutdown_why, "%s", why); }   // 真的会 _exit(0)；这里只记下来 | the real one _exit(0)s; here it is only recorded
 
 // macOS 没有 pthread_barrier_t：按代计数的小屏障 | macOS has no pthread_barrier_t: a small generation-counting barrier
@@ -185,6 +192,36 @@ static void query(void) {
     CHECK(r == 0 && g_nq == 1, "query: a host pc has no exception info");
     g_nmod = 0;
 }
+// ---- pool ----
+static uint64_t getinfo(uint64_t id) { uint64_t r[32] = {0, id, 0}; svc_dispatch(0x29, r, 0); return r[1]; }
+// The game's boot loop: ask for the whole pool rounded down to 2 MB, then 2 MB less after each refusal (any non-zero result)
+static uint64_t boot_heap(int *n) { uint64_t size = getinfo(6) & ~((2ull << 20) - 1); *n = 0; while (svc(1, 0, size, 0) != 0) { size -= 2ull << 20; ++*n; } return size; }
+static void pool(void) {
+    const uint64_t MB = 1ull << 20;
+    if (g_reserve != 5ull << 30) { CHECK(0, "pool: needs the 5120 MiB reservation, got %zu MiB", g_reserve >> 20); return; }
+    size_t cap0 = g_heap_cap;
+    g_mod[0] = (module_t){.name = "main", .base = (uint8_t *)0x7100000000ull, .size = 68ull << 20}; g_nmod = 1;
+    svc(1, 0, 0, 0);
+    long oom0 = g_oom_logs, pool0 = g_pool_logs; int n;
+    // (a) the 4864 MiB step: heap region 3840 MB
+    g_heap_cap = 3840 * MB;
+    uint64_t total = getinfo(6), heap = boot_heap(&n), used = getinfo(7);
+    printf("pool: region 3840 MB: pool reported %llu MB, heap %llu MB after %d refusals, %ld 'SetHeapSize OOM' lines, %ld 'App pool' lines, used %llu MB (expect 3908, 3840, 34, 0, 1, 3908)\n",
+           total / MB, heap / MB, n, g_oom_logs - oom0, g_pool_logs - pool0, used / MB);
+    CHECK(total == 3908 * MB && heap == 3840 * MB && n == 34 && g_oom_logs == oom0 && g_pool_logs - pool0 == 1 && used == 3908 * MB, "pool: a stepped-down reservation must trim the pool to the region plus the image");
+    svc(1, 0, 0, 0);
+    // (b) the 5120 MiB reservation: heap region 4096 MB, nothing trimmed
+    g_heap_cap = 4096 * MB;
+    total = getinfo(6); heap = boot_heap(&n);
+    printf("pool: region 4096 MB: pool reported %llu MB, heap %llu MB after %d refusals, %ld 'SetHeapSize OOM' lines, %ld 'App pool' lines (expect 4053, 3984, 34, 0, 1)\n",
+           total / MB, heap / MB, n, g_oom_logs - oom0, g_pool_logs - pool0);
+    CHECK(total == 4053 * MB && heap == 3984 * MB && n == 34 && g_oom_logs == oom0 && g_pool_logs - pool0 == 1, "pool: the 5120 MiB reservation must keep the 4053 MB pool and the 3984 MB heap");
+    svc(1, 0, 0, 0); g_heap_cap = cap0; g_nmod = 0;
+    // (c) the pure fit
+    uint64_t f1 = pool_fit(4053 * MB, 3968 * MB, 68 * MB), f2 = pool_fit(4053 * MB, 4096 * MB, 68 * MB), f3 = pool_fit(1234 * MB, 0, 68 * MB);
+    printf("pool: pool_fit 4053 / 3968 / 68 -> %llu, 4053 / 4096 / 68 -> %llu, 1234 / 0 / 68 -> %llu (expect 4036, 4053, 1234)\n", f1 / MB, f2 / MB, f3 / MB);
+    CHECK(f1 == 4036 * MB && f2 == 4053 * MB && f3 == 1234 * MB, "pool: pool_fit");
+}
 static barrier_t g_bar;
 static _Atomic long map_fail, unmap_fail, live_lost, after_not_free, rounds_done;
 static void *disjoint(void *p) {
@@ -234,6 +271,7 @@ static void run_overlap(void) {
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "all"; if (argc > 2) R = atoi(argv[2]);
     setvbuf(stdout, NULL, _IONBF, 0);
+    unsetenv("DM_APP_POOL_ADD_MB");   // 'pool' expects the default +768 MB
     g_dm_log_hook = quiet_log;
     mem_init();
     for (int i = 0; i < NT; i++) { g_src[i] = malloc(SZ); memset(g_src[i], i, SZ); }
@@ -243,6 +281,7 @@ int main(int argc, char **argv) {
     if (all || !strcmp(mode, "phys")) phys();
     if (all || !strcmp(mode, "svc")) svcs();
     if (all || !strcmp(mode, "query")) query();
+    if (all || !strcmp(mode, "pool")) pool();
     if (!strcmp(mode, "disjoint")) run_disjoint();
     if (!strcmp(mode, "overlap")) run_overlap();
     printf("t_svc_mem %s: %s\n", mode, g_fail ? "FAIL" : "OK");

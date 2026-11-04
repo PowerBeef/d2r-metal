@@ -1,58 +1,52 @@
-// 画面设置：Mac 选项页顶上「显示」「图形」两节（布局 touch_layout.py _VIDEO），存在自定义设置旁的 sw_video.txt。
-// 三个值：mode（0 窗口 / 1 全屏）、res（出图宽档 0 = 1600 / 1 = 1920 / 2 = 2560）、up（0 标准拉伸 / 1 MetalFX），另存一份「推荐」rec_*。
-// 首次启动（文件里一个键都没有；只缺 / 越界个别键时只补那几个，见 load_once）按这台 Mac 定推荐值并当作当前值（前端 front_video_firstboot：屏幕像素宽、显卡核数、MetalFX 支持；旧版偏好 StartFullScreen /
-// RenderScale / MetalFXUpscale 设过的接着用）。「图形预设」是推导出来的：三项都等于推荐 = 推荐；分辨率 + 放大方式等于性能档 / 品质档 = 那一档；都不是 = 自定义。
-// 页上照原版选项页的语义：切换框改的是待定值，「应用」才生效并存盘（显示模式当场切、放大方式下一帧起、分辨率下次启动——行下提示「重启游戏后生效」），
-// 「放弃」丢掉待定值，「默认」待定值回推荐值。「有改动」位与自定义页合在一起（dm_custom.c 按 dm_video_dirty 一并点亮「应用」）。
-// 切换框（CarouselWidget，宿主实读 3.3.94012）：选项个数 +0x7e8、当前项 +0x7ec、每项可选与否 +0x7d8 起每项一字节（0 = 跳过）；
-// 设当前项走原版 main+0xab0c84(控件, 序号)（按个数钳、跳过不可选的项、按当前语言换上这一项的字）。读写前核虚表与选项个数。
-// Picture settings: the "Display" and "Graphics" sections at the top of the Mac options page (layout touch_layout.py _VIDEO), stored in sw_video.txt next to the custom settings.
-// Three values: mode (0 windowed / 1 full screen), res (render width tier 0 = 1600 / 1 = 1920 / 2 = 2560), up (0 standard stretch / 1 MetalFX), plus a stored "recommended" copy rec_*.
-// On first boot (no key at all in the file; when only some keys are missing / out of range only those are filled, see load_once) the recommendation is worked out for this Mac and becomes the current value (front end front_video_firstboot: screen pixel width, GPU cores, MetalFX support; values from the
-// older preferences StartFullScreen / RenderScale / MetalFXUpscale carry over when set). "Graphic Presets" is derived: all three equal to the recommendation = Recommended; resolution + upscaling equal to the
-// Performance / Quality tier = that tier; otherwise = Custom.
-// On the page it follows the original options page: a selector changes a pending value, only "Apply" makes it take effect and saves (display mode switches at once, upscaling from the next frame, resolution at the next
-// launch -- with "Takes effect after restarting the game" under the row), "Discard" drops pending values, "Default" sets pending values back to the recommendation. The "has changes" bit is shared with the custom page
-// (dm_custom.c lights "Apply" from dm_video_dirty too).
-// Selector (CarouselWidget, read on the host, 3.3.94012): option count +0x7e8, current option +0x7ec, one byte per option from +0x7d8 saying whether it can be chosen (0 = skipped);
-// the current option is set through the game's main+0xab0c84(widget, index) (clamps to the count, skips options that cannot be chosen, puts that option's text in the current language). The vtable and option count are checked before reading or writing.
-// 两个平台的「图形」节末尾还有「帧率」（60 / 30 省电）与「掉帧时」（降低 / 保持 3D 清晰度）：值存在自定义设置里（eco_fps / q3d，dm_custom.c 读写、存 sw_custom.txt），
-// 这里只管页上的切换框——待定值、应用、放弃都走自定义设置那一套；图形预设不管它们，「默认」把它们回到缺省（60 帧、降低）
-// Phones (DM_PHONE, iOS overlay DM_OVERLAY_IOS): the page only has the "Graphics" section -- res is the 3D resolution (values 0 / 1 / 2 = 0.75 / 0.85 / 1.0 as before,
-// 3 / 4 = 0.67 / 0.5 added later; the row lists them 50 / 67 / 75 / 85 / 100 %, see car_of; handed to the 3D scale in hle_oe.c, switching as soon as Apply is pressed),
-// up is whether the game's 3D upscale pass uses MetalFX (nvn_mtl.m mfx3d_draw), and there is no display mode row; presets: Recommended = chosen per device on first boot, Performance = 75% Standard (lightest on the battery), Quality = 100% + MetalFX.
-// Only the rows the page actually has are handled (dm_video_rows lists the selectors it finds)
-// On both platforms the Graphics section ends with Frame Rate (60 / 30 power saver) and Frame Drops (lower / keep the 3D resolution): their values live in the custom settings (eco_fps / q3d, read and written by
-// dm_custom.c, saved in sw_custom.txt), and this file only drives the selectors -- pending values, Apply and Discard go through the custom settings; the graphic presets leave them alone, and "Default" puts them back to their defaults (60 fps, lower)
-// Mac 另有三行画质（画质计划第 1 阶段）：「抗锯齿」aa（0 FXAA = 原版 / 1 SMAA，游戏自己电脑版的那一档：宿主 hle_oe.c aa_tick 写渲染器的档位字节）、
-// 「各向异性过滤」aniso（0 原版 / 1 4× / 2 8× / 3 16×，nvn_mtl.m 采样器覆盖）、「色彩」color（0 鲜艳 = 原先不标色彩空间，宽色域屏把 sRGB 当屏幕原色撑开 / 1 准确 = 层标 sRGB 交给系统配色）。
-// 三项都点应用即生效、都算进「推荐」；值 0 都是原先的样子，所以测试副本、命令行宿主一概不变（iOS 页上也有这三行，推荐值从第 3 版起同 Mac）。旧文件没有这几个键：读盘时按前端 front_video_rec 补
-// The Mac has three more picture rows (picture plan phase 1): "Anti-Aliasing" aa (0 FXAA = the original / 1 SMAA, the game's own PC setting: the host's hle_oe.c aa_tick writes the renderer's mode byte),
-// "Anisotropic Filtering" aniso (0 original / 1 4x / 2 8x / 3 16x, the sampler override in nvn_mtl.m) and "Colour" color (0 Vivid = no colour space on the layer as before, so wide-gamut panels stretch sRGB to
-// the panel's primaries / 1 Accurate = the layer is tagged sRGB and the system colour-matches it).
-// All three take effect on Apply and count towards "Recommended"; value 0 is always the old look, so test copies and the CLI host are unchanged (the iOS page has these rows too, recommended like the Mac from version 3 on). Older files lack these keys: loading fills
-// them from the front end's front_video_rec
-// Mac 的原生出图与 3D 清晰度（画质计划第 3 阶段）：「分辨率」多一档「原生」（res=3：主屏的像素宽，16 对齐，1600–3840），界面与文字按屏幕原生分辨率画；
-// 「3D 清晰度」s3d（0 = 100% 原先的样子 / 1 = 85% / 2 = 75% / 3 = 67% / 4 = 50%）只降 3D，游戏自己的 3D 放大趟把它放回出图尺寸（开 MetalFX 时由 MetalFX 放大，nvn_mtl.m mfx3d_draw）。
-// 推荐值有版本（rec_v）：版本旧的文件读盘时按这一版重算推荐值；玩家还停在旧推荐上（各键都等于旧推荐）就一起换成新推荐，改过的照留
-// Native output and 3D resolution on the Mac (picture plan phase 3): "Resolution" gains a "Native" tier (res=3: the main screen's pixel width, 16-aligned, 1600–3840), so the interface and text are drawn at
-// the screen's own resolution; "3D Resolution" s3d (0 = 100%, the old look / 1 = 85% / 2 = 75% / 3 = 67% / 4 = 50%) lowers only the 3D, which the game's own 3D upscale pass brings back to the output size
-// (with MetalFX when Upscaling is MetalFX, nvn_mtl.m mfx3d_draw).
-// The recommendation has a version (rec_v): a file with an older version gets this version's recommendation at load; a player still on the old recommendation (every key equal to it) moves to the new one
-// with it, while changed settings stay
-// Environment shadows on the Mac (envsh: 0 = the Switch look, only characters and a few marked models cast shadows / 1 = environment models cast shadows too, as
-// on PC): the rewriter's switched branch in Model_ApplyPlatformTiers (patch_nso.py SWITCHES) reads the KESHADOW thread slot, which every guest thread gets
-// from dm_video_env_shadows at its start (thread.c). Models take their shadow flag when they load, so the value is latched at launch and a change shows
-// "Takes effect after restarting the game" under the row. Recommended on the Mac (version 4, front_mac.m front_video_rec); the phone page has the row, off, and its
-// presets leave it alone
-// Shadow Quality (shq: 0 = Standard, the Switch's 2100-texel directional shadow map / 1 = High, 3072 / 2 = Ultra, 4096, the game's own edges at quality levels 2
-// and 3): the rewriter's KSHSIZE parameter gate (patch_nso.py PARAMS) loads the edge from a thread slot that every guest thread gets from dm_video_shadow_size at
-// its start (thread.c). The map is created once at renderer init, so the value is latched at launch and a change shows the restart hint. Ultra is Recommended on
-// the Mac (version 5); the phone keeps Standard and its presets leave the row alone. DM_SHADOW_SIZE=<px> forces the edge
+// Picture settings: the rows of the Options Video tab (layout touch_layout.py _VIDEO), stored in sw_video.txt beside the custom settings (dm_custom_path).
+// The Mac page has two sections: Display (Display Mode, Resolution, Color) and Graphics (Graphic Presets, 3D Resolution, Upscaling, Anti-Aliasing,
+// Anisotropic Filtering, Environment Shadows, Shadow Quality, Frame Rate, Frame Drops). The phone page (DM_PHONE, overlay DM_OVERLAY_IOS) has the Graphics
+// section only: no Display Mode or Resolution (phones render at the screen's native size), and its 3D Resolution is the res row.
+// Keys, saved by name (new keys go at the end); value 0 is always the original look, which the CLI host and Mac test copies
+// (without DM_TEST_VIDEO_FIRSTBOOT=1) keep:
+//   mode   0 windowed / 1 full screen (Mac). Switched at once on Apply; the menu and ⌃⌘F write it back (dm_video_fullscreen_note)
+//   res    Mac: the output width, 0 = 1600 / 1 = 1920 / 2 = 2560 / 3 = Native (the main screen's backing-store width, front_mac.m native_w), at the next
+//          launch. Phones: the 3D resolution, stored 0..4 = 75 / 85 / 100 / 67 / 50 % (the first three are the oldest values) and listed 50 .. 100 %
+//          through car_of / val_of, live
+//   up     0 Standard / 1 MetalFX: the present's enlargement on the Mac, and the game's 3D upscale pass (nvn_mtl.m mfx3d_draw), from the next frame
+//   aa     0 FXAA (the original) / 1 SMAA: the renderer's mode byte, written by hle_oe.c aa_tick (dm_video_aa_mode)
+//   aniso  0 the game's own / 4x / 8x / 16x: the sampler override, latched per submission by nvn_mtl.m aniso_latch
+//   color  0 Vivid (the present layer untagged) / 1 Accurate (tagged sRGB, front_video_color), at once
+//   s3d    Mac: the 3D Resolution with Native output, 0 = 100 / 85 / 75 / 67 / 50 %, read every tick by hle_oe.c s3_cfg (dm_video_scale3d)
+//   envsh  environment shadows; shq the shadow map, 0 Standard 2100 / 1 High 3072 / 2 Ultra 4096 texels. Both are latched at launch, because every guest
+//          thread gets them through thread.c's KESHADOW and KSHSIZE slots (dm_video_env_shadows / dm_video_shadow_size); a change shows the restart hint
+//          (none while DM_ENV_SHADOWS / DM_SHADOW_SIZE force them; DM_SHADOW_SIZE is clamped to 512..4096 and made even)
+// Recommended: rec_<key> holds the recommendation, rec_v its version (REC_V) and rec_id the machine it was worked out for (front_video_rec_id: the Mac
+// App's GPU and main screen; none on iOS, the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1). It is worked out (front_video_firstboot for
+// the first three keys, front_video_rec for the others) on first boot, for a missing or out-of-range key (only that key is filled), and when rec_v is
+// older or rec_id differs (a move): a player still on Recommended moves with it, changed settings stay. A file that cannot be read, or that a newer
+// version wrote, is not rewritten at load; lines with a key this build does not know are kept, and lines longer than 62 characters are skipped.
+// Display preferences (pref_key: Display Mode, and Color on the Mac) never decide whether the picture is on Recommended: first launch and Default set
+// them, the Graphic Presets row leaves them alone, and a move changes one only while it still equals its old recommendation.
+// Graphic Presets is derived: the preset the player last picked while the values still match it, else Recommended, Performance or Quality (tier_of),
+// whichever matches first, else Custom.
+// On the page a selector changes a pending value. Apply makes it take effect and saves: Display Mode and Color at once, Upscaling, Anti-Aliasing,
+// Anisotropic Filtering and 3D Resolution from the next frame, Resolution, Environment Shadows and Shadow Quality at the next launch ("Takes effect after
+// restarting the game" under the row). Discard drops the pending values; Default sets every key back to the recommendation, and Frame Rate / Frame Drops
+// to their defaults. The "has changes" bit is shared with the custom settings (dm_custom.c lights Apply from dm_video_dirty too). Events
+// (dm/verify/event_stream.md): 'picture' at load and after an Apply that saved, 'video_row' for each change the player makes.
+// Frame Rate and Frame Drops are custom keys (eco_fps / q3d in sw_custom.txt, dm_custom.c): this file only drives their selectors, pending values and
+// Apply go through the custom settings, and the presets leave them alone. The Frame Rate row's two options name the real rates on the window's
+// screen (fps_labels: 72 / 36 fps on a 144 Hz screen), the layout's 60 / 30 fps where those are the rates.
+// Phones: Recommended is 75% + MetalFX + SMAA + 16x + Accurate on every device (front_ios.m); no Display Mode, Native or s3d.
+// Selectors are the game's CarouselWidget (read on the host, 3.3.94012): the option count at +0x7e8, the current option at +0x7ec, and from +0x7d8 one byte
+// per option saying whether it can be chosen (0 = skipped). The current option is set through the game's own setter main+0xab0c84 (widget, index), which
+// clamps to the count, skips options that cannot be chosen and shows the option's text in the current language: it looks the option's string (from +0x558,
+// 0x28 bytes each) up in the string table, shows the string itself when no entry has that name, and writes the text into its text box (the pointer at
+// +0x7f8). The vtable and the option count are checked before any read or write.
 #include "hle.h"
 #include "dm.h"
 #include "dm_cursor.h"
+#include "dm_i18n.h"
 #include "dm_widget.h"
+#include <errno.h>
+#include <limits.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -66,103 +60,156 @@ int dm_custom_path(const char *name, char *p, size_t n);
 enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
 static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq" };
 static const int k_n[NV] = { 2, 4, 2, 2, 4, 2, 5, 2, 3 };
-#define REC_V 7   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);
-                  // 6 = a Mac on an iPhone chip (MacBook Neo) gets the phone's (front_mac.m); 7 = chosen from the chip's generation, GPU cores and the screen (dm_picrec.c)
+#define REC_V 8   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);
+                  // 6 = a Mac on an iPhone chip (MacBook Neo) gets the phone's (front_mac.m); 7 = chosen from the chip's generation, GPU cores and the screen (dm_picrec.c);
+                  // 8 = Native's light ladder stops at 67%, an iPhone chip keeps the phone's shadows, A-chip table and smallest-part core counts (dm_picrec.c)
 static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on phones res is the five 3D-resolution tiers; on the Mac res has the extra "Native" tier
+// Display preferences: the Mac's Display section (Display Mode, Color). First launch and Default set them from the recommendation, but they never decide
+// whether the picture is on Recommended, the Graphic Presets row leaves them alone (as Performance and Quality always did), and a rec_v or screen move
+// changes one only while it still equals its old recommendation. On phones Color sits in the Graphics section next to Graphic Presets, so it stays part
+// of Recommended there; phones have no Display Mode row (mode is always 0, its recommendation)
+static int pref_key(int k) { return k == K_MODE || (k == K_COLOR && !DM_PHONE); }
 #define NR 12
 static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "shq", "fps", "drops" };   // row order on the page (rows the page lacks are skipped)
 static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, K_SHQ, -2, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
 static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", "q3d" };
-static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // 切换框的选项个数：键的档数；预设 4；自定义设置的键 2 | options in the selector: the key's tiers; presets 4; custom settings keys 2   // 切换框第 0 / 1 项 = 键值 0 / 1（60 帧 / 30 帧；降低 / 保持） | selector options 0 / 1 = key values 0 / 1 (60 / 30 fps; lower / keep)
+static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // options in the selector: the key's tiers; presets 4; custom settings keys 2 (options 0 / 1 = values 0 / 1: 60 / 30 fps; lower / keep)
 int dm_custom_shown_value(const char *key); void dm_custom_set_pending(const char *key, int v); int dm_custom_default(const char *key);
-static _Atomic int g_crows;   // 页上有的自定义键行（按行号的位）：「默认」只回这几行 | the custom-key rows the page has (one bit per row): "Default" resets only those
+static _Atomic int g_crows;   // the custom-key rows the page has (one bit per row): Default resets only those
 enum { P_REC, P_PERF, P_QUAL, P_CUSTOM };
 static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
 _Static_assert(NV == 9, "g_pend initialiser count");
-static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // 读盘 / 存盘：前端主线程（启动、全屏切换）与游戏线程（应用）都会写 | load / save: written by both the front end's main thread (launch, full-screen changes) and the game thread (Apply)
+static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // load / save: written by both the front end's main thread (launch, full-screen changes) and the game thread (Apply)
 
-// 前端提供（Mac：front_mac.m）；别的平台没有这一节，用这里的弱定义 | Provided by the front end (Mac: front_mac.m); other platforms have no such section and use the weak definitions here
+// Provided by the front end (front_mac.m, front_ios.m); builds without one (unit tests) use the weak definitions here
 __attribute__((weak)) int front_video_firstboot(int rec[3], int cur[3]) { (void)rec; (void)cur; return 0; }
 __attribute__((weak)) void front_video_fullscreen(int on) { (void)on; }
 __attribute__((weak)) int front_video_running_res(void) { return -1; }
 __attribute__((weak)) int front_video_mfx_ok(void) { return 0; }
-__attribute__((weak)) int front_video_rec(const char *key) { (void)key; return -1; }   // front_video_firstboot 之后的键的推荐值；-1 = 没有（取 0，原先的样子） | recommendation for keys after front_video_firstboot's three; -1 = none (0, the old look)
-__attribute__((weak)) void front_video_color(int accurate) { (void)accurate; }   // 「色彩」点了应用 | "Colour" applied
+__attribute__((weak)) int front_video_rec(const char *key) { (void)key; return -1; }   // the recommendation for the keys after front_video_firstboot's three; -1 = none (0, the old look)
+__attribute__((weak)) void front_video_color(int accurate) { (void)accurate; }   // Color applied, or Accurate read at load
+// Which machine the recommendation is worked out for (front_mac.m: dm_picrec_id of the GPU and the main screen); -1 = the recommendation does not depend on
+// the machine (iOS, the CLI host, test copies without DM_TEST_VIDEO_FIRSTBOOT=1)
+__attribute__((weak)) int front_video_rec_id(void) { return -1; }
+// 1 = the window's screen no longer suits the launch picture and a restart would fix it (front_mac.m picture_screen_check): the Resolution row shows
+// the restart hint even though its value did not change; 0 = no (iOS, the unit tests)
+__attribute__((weak)) int front_video_screen_stale(void) { return 0; }
+// The refresh rate of the window's screen the Frame Rate row is labelled for (Hz, 0 = no window): front_mac.m lets a test stand in for it
+// (DM_TEST_SCREEN_HZ); elsewhere the present's own reading (nvn_mtl.m mtl_display_refresh)
+double mtl_display_refresh(void); double dm_pace_hz(double screen_hz, double floor_hz); double dm_eco_hz(double screen_hz);
+__attribute__((weak)) double front_video_screen_hz(void) { return mtl_display_refresh(); }
 
-static const char *vals_str(const int *v) {   // 「mode=1 res=1 …」：日志用（非线程安全的静态缓冲，只在 g_mu 下或启动时用） | "mode=1 res=1 ...": for logs (static buffer, not thread-safe; only used under g_mu or at launch)
+static const char *vals_str(const int *v) {   // "mode=1 res=1 ...": for logs (static buffer, not thread-safe; only used under g_mu or at launch)
     static char b[160]; size_t L = 0; b[0] = 0;
     for (int i = 0; i < NV && L < sizeof b; i++) L += (size_t)snprintf(b + L, sizeof b - L, "%s%s=%d", i ? " " : "", k_keys[i], v[i]);
     return b;
 }
+static _Atomic int g_rv_keep = REC_V;   // the rec_v saved: REC_V, or a newer file's own (an older build must not claim a newer file's values as its own)
+static char g_extra[512];               // whole lines of the file whose key this build does not know (a newer version's), written back after ours (under g_mu)
+static _Atomic int g_rec_id = -1;       // the rec_id saved with the recommendation: the machine it was worked out for (front_video_rec_id), or a newer file's own; -1 = none
 static void save_locked(void) {
     char p[1100], t[1120]; if (!dm_custom_path("sw_video.txt", p, sizeof p)) { LOG("【红】画面设置：设置目录还不知道，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
     for (int i = 0; ok && i < NV; i++) ok = fprintf(f, "%s=%d\nrec_%s=%d\n", k_keys[i], atomic_load(&g_val[i]), k_keys[i], atomic_load(&g_rec[i])) > 0;
-    if (ok) ok = fprintf(f, "rec_v=%d\n", REC_V) > 0;
+    if (ok) ok = fprintf(f, "rec_v=%d\n", atomic_load(&g_rv_keep)) > 0;
+    if (ok && atomic_load(&g_rec_id) >= 0) ok = fprintf(f, "rec_id=%d\n", atomic_load(&g_rec_id)) > 0;
+    if (ok && g_extra[0]) ok = fputs(g_extra, f) >= 0;
     if (f) ok = fclose(f) == 0 && ok;
-    if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名（同 sw_custom.txt） | write a temporary file, then rename (as sw_custom.txt)
+    if (ok) ok = rename(t, p) == 0;   // write a temporary file, then rename (as sw_custom.txt)
     int v[NV], r[NV]; for (int i = 0; i < NV; i++) { v[i] = atomic_load(&g_val[i]); r[i] = atomic_load(&g_rec[i]); }
     char rs[160]; strlcpy(rs, vals_str(r), sizeof rs);
     LOG("画面设置：存盘%s %s（推荐 %s）", ok ? "" : "【红】失败", vals_str(v), rs);
 }
+static void picture_ev(const char *how) {   // the 'picture' event: the values in effect, the rec_v and rec_id saved
+    DM_EV("picture", "how:s mode:d res:d up:d aa:d aniso:d color:d s3d:d envsh:d shq:d rec_v:d rec_id:d", how, atomic_load(&g_val[K_MODE]), atomic_load(&g_val[K_RES]),
+          atomic_load(&g_val[K_UP]), atomic_load(&g_val[K_AA]), atomic_load(&g_val[K_ANISO]), atomic_load(&g_val[K_COLOR]), atomic_load(&g_val[K_S3D]), atomic_load(&g_val[K_ESH]),
+          atomic_load(&g_val[K_SHQ]), atomic_load(&g_rv_keep), atomic_load(&g_rec_id));
+}
+_Static_assert(NV == 9, "the picture event lists every key");
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
     pthread_mutex_lock(&g_mu);
     char p[1100];
     if (!atomic_load(&g_loaded) && dm_custom_path("sw_video.txt", p, sizeof p)) {
-        // 逐键读：缺的、越界的那一个键才按首次启动的值补，其余照读到的用。原先任一 rec_* 缺 / 越界就整份当首次启动，玩家设好的三项全被推荐值盖掉
-        // Read key by key: only a missing or out-of-range key is filled from the first-boot values, the rest keep what was read. Before, one missing / out-of-range rec_* treated the whole file as a first boot and the recommendation overwrote all three of the player's settings
-        int v[NV], r[NV], rv_file = 1; for (int i = 0; i < NV; i++) v[i] = r[i] = -1;   // rv_file：文件里的推荐版本（没写 = 1） | rv_file: the recommendation version in the file (absent = 1)
-        FILE *f = fopen(p, "r"); char ln[64];
-        while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int x = atoi(eq + 1), rec = !strncmp(ln, "rec_", 4);
-            for (int i = 0; i < NV; i++) if (!strcmp(rec ? ln + 4 : ln, k_keys[i]) && x >= 0 && x < kn(i)) { if (rec) r[i] = x; else v[i] = x; }
-            if (!strcmp(ln, "rec_v")) rv_file = x; }
-        if (f) fclose(f);
-        int miss = 0, first = 1; for (int i = 0; i < NV; i++) { miss |= (v[i] < 0) << i | (r[i] < 0) << (i + NV); first &= v[i] < 0 && r[i] < 0; }   // first = 一个键都没读到（真首次启动） | first = not a single key read (a real first boot)
-        int bump = !first && rv_file < REC_V, s3d_missing = v[K_S3D] < 0;   // 推荐值版本旧了：按这一版重算 | the recommendation is from an older version: work it out again
-        if (miss || bump) {   // 定推荐值（前端没有 = 原版：窗口、1600、标准），只补缺的键 | work out the recommendation (no front end = the original: windowed, 1600, standard), filling only the missing keys
-            int rec[NV] = { 0 }, cur[NV] = { 0 };   // 前三个键前端一起定（front_video_firstboot），之后的键一个个问（front_video_rec，当前值 = 推荐） | the front end sets the first three together (front_video_firstboot), later keys one by one (front_video_rec, current = recommended)
+        // Read key by key: only a missing or out-of-range key is filled from the first-boot values, the rest keep what was read (one missing rec_* used to
+        // treat the whole file as a first boot). A value that is not a whole number counts as out of range. An unreadable file (anything but "no such
+        // file") counts as a first boot for this launch and is not rewritten; a newer version's file is filled in memory only. Lines with a key this build
+        // does not know are kept (g_extra); a line longer than 62 characters cannot hold a known key and is skipped whole
+        int v[NV], r[NV], rv_file = 1, id_file = -1; for (int i = 0; i < NV; i++) v[i] = r[i] = -1;   // rv_file: the recommendation version in the file (absent = 1); id_file: its rec_id
+        errno = 0; FILE *f = fopen(p, "r"); int err = errno, ro = !f && err != ENOENT;
+        char *ln = NULL; size_t cap = 0, xn = 0; ssize_t got; g_extra[0] = 0;
+        while (f && (got = getline(&ln, &cap, f)) > 0) {
+            // Over-long: more than 62 characters before the newline (the 64-byte buffer this parser used to read with), judged by the bytes read, so a
+            // NUL inside a line does not make it look like the first piece of a longer one. Past that, the line is read as a string, up to a NUL
+            if (got - (ln[got - 1] == '\n') > 62) continue;
+            size_t L = strlen(ln); int nl = L && ln[L - 1] == '\n';
+            char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0;
+            char *end; long lx = strtol(eq + 1, &end, 10);
+            int num = end != eq + 1 && (*end == '\n' || *end == '\r' || !*end) && lx >= INT_MIN && lx <= INT_MAX, x = num ? (int)lx : -1;
+            int rec = !strncmp(ln, "rec_", 4), known = 0;
+            for (int i = 0; i < NV; i++) if (!strcmp(rec ? ln + 4 : ln, k_keys[i])) { known = 1; if (x >= 0 && x < kn(i)) { if (rec) r[i] = x; else v[i] = x; } }
+            if (!strcmp(ln, "rec_v")) { known = 1; if (num) rv_file = x; }   // junk = absent: version 1, worked out again
+            else if (!strcmp(ln, "rec_id")) { known = 1; if (x >= 0) id_file = x; }   // junk = absent
+            *eq = '=';
+            if (!known && xn + L + !nl < sizeof g_extra) { memcpy(g_extra + xn, ln, L); xn += L; if (!nl) g_extra[xn++] = '\n'; g_extra[xn] = 0; }
+        }
+        free(ln); if (f) fclose(f);
+        if (ro) LOG("【红】picture settings: cannot read %s (%s): this launch uses the recommendation and leaves the file as it is", p, strerror(err));
+        int newer = rv_file > REC_V;   // written by a newer version: filled in memory, never rewritten at load, and its rec_v is kept by a later Apply
+        atomic_store(&g_rv_keep, newer ? rv_file : REC_V);
+        int miss = 0, first = 1; for (int i = 0; i < NV; i++) { miss |= (v[i] < 0) << i | (r[i] < 0) << (i + NV); first &= v[i] < 0 && r[i] < 0; }   // first = not a single key read (a real first boot)
+        // Worked out again (a "bump") when the recommendation is from an older version, or from another machine: rec_id names the GPU and the main screen it
+        // was worked out for, and Native already follows the current screen, so the stored 3D Resolution and shadows must too. A newer file keeps its own rec_id
+        // (an older build must not stamp this machine's id onto values it did not work out)
+        int id_now = front_video_rec_id(), moved = !first && !newer && !ro && id_now >= 0 && id_file != id_now;
+        atomic_store(&g_rec_id, newer ? id_file : id_now >= 0 ? id_now : id_file);
+        int bump = !first && (rv_file < REC_V || moved), s3d_missing = v[K_S3D] < 0;
+        if (miss || bump) {   // work out the recommendation (no front end = the original: windowed, 1600, Standard), filling only the missing keys
+            int rec[NV] = { 0 }, cur[NV] = { 0 };   // the front end sets the first three together (front_video_firstboot), the later keys one by one (front_video_rec; current = recommended)
             if (!front_video_firstboot(rec, cur)) memcpy(cur, rec, 3 * sizeof cur[0]);
             for (int i = 3; i < NV; i++) { int x = front_video_rec(k_keys[i]); rec[i] = cur[i] = x >= 0 && x < kn(i) ? x : 0; }
-            if (bump) {   // 还停在旧推荐上（读到的键都等于旧推荐）：一起换成新推荐；改过的照留，只换推荐 | still on the old recommendation (every key read equals it): move to the new one; changed settings stay, only the recommendation changes
-                int on_rec = 1; for (int i = 0; i < NV; i++) if (v[i] >= 0 && r[i] >= 0 && v[i] != r[i]) on_rec = 0;
-                for (int i = 0; i < NV; i++) { int nr = rec[i] >= 0 && rec[i] < kn(i) ? rec[i] : 0; if (on_rec && v[i] >= 0) v[i] = nr; r[i] = nr; }
-                LOG("画面设置：推荐值第 %d 版 → 第 %d 版，%s | picture settings: recommendation version %d → %d, %s", rv_file, REC_V, on_rec ? "原先停在推荐上，一起换成新推荐" : "改过的设置照留，只换推荐",
-                    rv_file, REC_V, on_rec ? "was on the recommendation, moved to the new one" : "changed settings kept, only the recommendation updated");
+            if (bump) {   // still on the old recommendation (every graphics key read equals it): move to the new one; changed settings stay, only the recommendation changes
+                int on_rec = 1; for (int i = 0; i < NV; i++) if (!pref_key(i) && v[i] >= 0 && r[i] >= 0 && v[i] != r[i]) on_rec = 0;   // judged by the graphics keys
+                for (int i = 0; i < NV; i++) { int nr = rec[i] >= 0 && rec[i] < kn(i) ? rec[i] : 0, was = v[i] >= 0 && r[i] >= 0 && v[i] == r[i];
+                    if (v[i] >= 0 && (pref_key(i) ? was : on_rec)) v[i] = nr; r[i] = nr; }   // a display preference moves only while it equals its old recommendation
+                if (rv_file < REC_V) LOG("picture settings: recommendation version %d → %d; %s", rv_file, REC_V, on_rec ? "moved to the new Recommended" : "changed settings kept");
+                else LOG("picture settings: worked out again for this screen and GPU (rec_id %d → %d); %s", id_file, id_now, on_rec ? "moved to the new Recommended" : "changed settings kept");
             }
             for (int i = 0; i < NV; i++) { int rv = rec[i] >= 0 && rec[i] < kn(i) ? rec[i] : 0, had_r = r[i] >= 0;
                 if (r[i] < 0) r[i] = rv;
-                if (v[i] < 0) v[i] = had_r ? r[i] : cur[i] >= 0 && cur[i] < kn(i) ? cur[i] : r[i]; }   // 当前值缺：有存着的推荐就回推荐，都缺才按首次启动的当前值（含旧版偏好） | current value missing: back to the stored recommendation; only when both are missing, the first-boot current value (incl. older preferences)
-            if (!first && s3d_missing && v[K_RES] != 3) v[K_S3D] = 0;   // 3D 清晰度只配原生出图：没用原生的老设置补 100%（原先的样子） | 3D resolution only goes with native output: older settings not on Native get 100% (the old look)
+                if (v[i] < 0) v[i] = had_r ? r[i] : cur[i] >= 0 && cur[i] < kn(i) ? cur[i] : r[i]; }   // current value missing: back to the stored recommendation; only when both are missing, the first-boot current value (incl. older preferences)
+            if (!first && s3d_missing && v[K_RES] != 3) v[K_S3D] = 0;   // 3D Resolution only goes with Native output: older settings not on Native get 100% (the old look)
         }
         for (int i = 0; i < NV; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_rec[i], r[i]); }
         atomic_store(&g_loaded, 1);
         if (miss && !first) { char mk[128] = ""; for (int i = 0; i < 2 * NV; i++) if (miss >> i & 1) snprintf(mk + strlen(mk), sizeof mk - strlen(mk), "%s%s%s", mk[0] ? " " : "", i >= NV ? "rec_" : "", k_keys[i % NV]);
             LOG("画面设置：%s 缺 / 越界的键 %s → 只补这几个（其余照读）", p, mk); }
         { char rs[160]; strlcpy(rs, vals_str(r), sizeof rs); LOG("画面设置：%s %s %s，推荐 %s", first ? "首次启动定推荐值" : miss ? "读盘（补过缺的键）" : "读盘", p, vals_str(v), rs); }
-        if (miss || bump) save_locked();   // 补齐 / 换了推荐的整份写回 | write the completed / updated file back
-        if (v[K_COLOR] == 1) front_video_color(1);   // 存着「准确」：交给前端标出图层（前端建层时设置目录可能还不知道，见 front_ios.m） | "Accurate" is stored: hand it to the front end for the present layer (the front end may not know the settings directory when it creates the layer, see front_ios.m)
+        if ((miss || bump) && !ro && !newer) save_locked();   // write the completed / updated file back (not over a file this build could not read, or a newer one)
+        picture_ev(ro ? "unreadable" : first ? "first" : newer ? "newer" : rv_file < REC_V ? "update" : moved ? "rescreen" : miss ? "filled" : "read");
+        if (v[K_COLOR] == 1) front_video_color(1);   // Accurate is stored: hand it to the front end for the present layer (the front end may not know the settings directory when it creates the layer, see front_ios.m)
     }
     pthread_mutex_unlock(&g_mu);
 }
-int dm_video_get(const char *key) {   // 生效值；设置目录还不知道时答原版值 | the value in effect; the original value while the settings directory is unknown
+int dm_video_get(const char *key) {   // the value in effect; the original value while the settings directory is unknown
     load_once(); for (int i = 0; i < NV; i++) if (key && !strcmp(key, k_keys[i])) return atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : 0;
     return 0;
 }
 int dm_video_upscale(void) { return dm_video_get("up"); }
-int dm_video_aa_mode(void) { return dm_video_get("aa") == 1 ? 2 : 1; }   // 游戏渲染器的抗锯齿档位字节（hle_oe.c aa_tick 每拍读）：1 FXAA（原版）/ 2 SMAA 1x | the game renderer's AA mode byte (read every tick by aa_tick in hle_oe.c): 1 FXAA (original) / 2 SMAA 1x
-int dm_video_aniso(void) { static const int k[4] = { 0, 4, 8, 16 }; int a = dm_video_get("aniso"); return a >= 0 && a < 4 ? k[a] : 0; }   // 提交开头读（nvn_mtl.m aniso_latch）；0 = 原版 | read at the start of each submission (nvn_mtl.m aniso_latch); 0 = the original
-float dm_video_scale3d(void) {   // 3D 清晰度（hle_oe.c s3_cfg 每拍读；> 0 才算数）：手机按 res（75 / 85 / 100%），Mac 按 s3d（0 = 100% 答 0，照原先） | the 3D resolution (read every tick by s3_cfg in hle_oe.c; only > 0 counts): phones from res (75 / 85 / 100%), the Mac from s3d (0 = 100% answers 0, as before)
+int dm_video_aa_mode(void) { return dm_video_get("aa") == 1 ? 2 : 1; }   // the game renderer's AA mode byte (read every tick by aa_tick in hle_oe.c): 1 FXAA (original) / 2 SMAA 1x
+int dm_video_aniso(void) { static const int k[4] = { 0, 4, 8, 16 }; int a = dm_video_get("aniso"); return a >= 0 && a < 4 ? k[a] : 0; }   // read at the start of each submission (nvn_mtl.m aniso_latch); 0 = the original
+float dm_video_scale3d(void) {   // the 3D resolution (read every tick by s3_cfg in hle_oe.c; only > 0 counts): phones from res: 50 / 67 / 75 / 85 / 100 % (stored 4 / 3 / 0 / 1 / 2), the Mac from s3d (0 = 100% answers 0, as before)
     static const float k[5] = { 0.75f, 0.85f, 1.0f, 0.67f, 0.5f }, m[5] = { 0, 0.85f, 0.75f, 0.67f, 0.5f };
     load_once(); if (!atomic_load(&g_loaded)) return 0;
     if (DM_PHONE) { int t = atomic_load(&g_val[K_RES]); return t >= 0 && t < 5 ? k[t] : 0; }
     int t = atomic_load(&g_val[K_S3D]); return t > 0 && t < 5 ? m[t] : 0;
-}   // 出图每帧读（nvn_mtl.m mfx_on） | read by the present every frame (nvn_mtl.m mfx_on)
+}
 static _Atomic int g_esh_launch = -1;   // environment shadows as latched at launch (what the game's threads got); -1 = not latched yet
+static _Atomic int g_esh_forced, g_shq_forced;   // 1 = DM_ENV_SHADOWS / DM_SHADOW_SIZE fixed the value: the Options page's choice does not take effect, so no restart hint
 int dm_video_env_shadows(void) {   // every guest thread at its start (thread.c, KESHADOW slot): the first answer once the settings are known holds for the session
     int x = atomic_load(&g_esh_launch); if (x >= 0) return x;
     const char *e = getenv("DM_ENV_SHADOWS");   // DM_ENV_SHADOWS=0/1 forces it (tests, A/B runs)
-    if (e && *e) x = atoi(e) != 0;
+    if (e && *e) { x = atoi(e) != 0; atomic_store(&g_esh_forced, 1); }
     else { load_once(); if (!atomic_load(&g_loaded)) return 0; x = atomic_load(&g_val[K_ESH]) == 1; }
     int exp = -1; if (atomic_compare_exchange_strong(&g_esh_launch, &exp, x)) LOG("Environment shadows: %s (%s)", x ? "on" : "off", e && *e ? "DM_ENV_SHADOWS" : "picture setting");
     return atomic_load(&g_esh_launch);
@@ -171,43 +218,60 @@ static const int k_shq_px[3] = { 2100, 3072, 4096 };   // Standard = the Switch'
 static _Atomic int g_shq_launch = -1;   // the shadow map edge as latched at launch (what the game's threads got); -1 = not latched yet
 int dm_video_shadow_size(void) {   // every guest thread at its start (thread.c, KSHSIZE slot): the shadow init reads it once, so the first answer holds for the session
     int x = atomic_load(&g_shq_launch); if (x > 0) return x;
-    const char *e = getenv("DM_SHADOW_SIZE");   // DM_SHADOW_SIZE=<px> forces it (tests, A/B runs), clamped to 512..8192
-    if (e && *e) { x = atoi(e); x = x < 512 ? 512 : x > 8192 ? 8192 : x; }
+    // DM_SHADOW_SIZE=<px> forces the edge (tests, A/B runs), clamped to 512..4096 and made even: 4096 is the game's own Ultra edge, and 8192 took
+    // 256 MiB of GPU heap 0
+    const char *e = getenv("DM_SHADOW_SIZE"); int raw = 0;
+    if (e && *e) { raw = atoi(e); x = (raw < 512 ? 512 : raw > 4096 ? 4096 : raw) & ~1; atomic_store(&g_shq_forced, 1); }
     else { load_once(); if (!atomic_load(&g_loaded)) return k_shq_px[0]; int t = atomic_load(&g_val[K_SHQ]); x = k_shq_px[t >= 0 && t < 3 ? t : 0]; }
-    int exp = -1; if (atomic_compare_exchange_strong(&g_shq_launch, &exp, x)) LOG("Shadow map: %d px (%s)", x, e && *e ? "DM_SHADOW_SIZE" : "picture setting");
+    int exp = -1; if (atomic_compare_exchange_strong(&g_shq_launch, &exp, x)) {
+        if (!(e && *e)) LOG("Shadow map: %d px (picture setting)", x);
+        else if (x != raw) LOG("Shadow map: %d px (DM_SHADOW_SIZE, clamped from %d)", x, raw);
+        else LOG("Shadow map: %d px (DM_SHADOW_SIZE)", x); }
     return atomic_load(&g_shq_launch);
 }
-void dm_video_fullscreen_note(int on) {   // 玩家用菜单 / ⌃⌘F 切了全屏：设置跟着窗口走（同电脑版「显示模式」） | the player switched full screen from the menu / ⌃⌘F: the setting follows the window (as the PC "Display Mode")
+void dm_video_fullscreen_note(int on) {   // the player switched full screen from the menu / ⌃⌘F: the setting follows the window (as the PC Display Mode)
     load_once(); if (!atomic_load(&g_loaded) || atomic_load(&g_val[K_MODE]) == (on != 0)) return;
     pthread_mutex_lock(&g_mu); atomic_store(&g_val[K_MODE], on != 0); save_locked(); pthread_mutex_unlock(&g_mu);
     atomic_store(&g_repaint, 1);
 }
 static int shown(int k) { int p = atomic_load(&g_pend[k]); return p >= 0 ? p : atomic_load(&g_val[k]); }
-static int perf_up(void) { return DM_PHONE ? 0 : front_video_mfx_ok() ? 1 : 0; }   // 性能档的放大方式：手机 = 标准（省电），Mac = MetalFX（它很便宜） | Performance's upscaling: phone = Standard (saves power), Mac = MetalFX (cheap there)
-// 性能 / 品质档各键的值（t 0 = 性能，1 = 品质）；-1 = 这一档不管这个键。抗锯齿、各向异性只在 Mac 上归档管（手机页上没有这两行，档位不该暗改它们）
-// Each key's value in the Performance / Quality presets (t 0 = Performance, 1 = Quality); -1 = the preset leaves this key alone. Anti-aliasing and anisotropy belong to the presets on the Mac only (the phone page has no such rows,
-// so a preset must not change them behind the player's back)
+static int perf_up(void) { return DM_PHONE ? 0 : front_video_mfx_ok() ? 1 : 0; }   // Performance's upscaling: phone = Standard (saves power), Mac = MetalFX (cheap there)
+// Each key's value in the Performance / Quality presets (t 0 = Performance, 1 = Quality); -1 = the preset leaves this key alone. Anti-Aliasing and
+// Anisotropic Filtering follow the same tiers on both platforms (the phone page has both rows too: touch_layout.py _VIDEO, iOS list): Performance =
+// FXAA and leaves anisotropy alone, Quality = SMAA and 16x. On phones the presets leave Environment Shadows and Shadow Quality alone until their phone
+// cost is measured, and the phone Recommended already gives SMAA and 16x (front_ios.m front_video_rec)
 static int tier_of(int k, int t) {
     switch (k) {
-    case K_RES: return t ? (DM_PHONE ? 2 : 3) : 0;   // 品质：手机 100% 3D，Mac 原生出图 | Quality: 100% 3D on phones, native output on the Mac
+    case K_RES: return t ? (DM_PHONE ? 2 : 3) : 0;   // Quality: 100% 3D on phones, Native output on the Mac
     case K_UP: return t ? (front_video_mfx_ok() ? 1 : 0) : perf_up();
-    case K_AA: return DM_PHONE ? -1 : t;
-    case K_ANISO: return DM_PHONE ? -1 : t ? 3 : -1;
-    case K_S3D: return DM_PHONE ? -1 : 0;   // Mac：性能（出图 1600）与品质（原生）的 3D 都是 100% | Mac: both Performance (1600 output) and Quality (native) draw the 3D at 100%
+    case K_AA: return t;   // Performance FXAA (SMAA was about 18% of the phone's GPU work before e070b94), Quality SMAA
+    case K_ANISO: return t ? 3 : -1;
+    case K_S3D: return DM_PHONE ? -1 : 0;   // Mac: both Performance (1600 output) and Quality (Native) draw the 3D at 100%
     case K_ESH: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch look, Quality = environment shadows; phone presets leave it alone (cost not measured there yet)
     case K_SHQ: return DM_PHONE ? -1 : t ? 2 : 0;   // Mac: Performance = Standard (the Switch's map), Quality = Ultra; phone presets leave it alone
     default: return -1;
     }
 }
-static int preset_of(void) {
-    int rec = 1; for (int k = 0; k < NV; k++) rec &= shown(k) == atomic_load(&g_rec[k]);
-    if (rec) return P_REC;
-    for (int t = 0; t < 2; t++) { int m = 1; for (int k = 0; k < NV; k++) { int x = tier_of(k, t); if (x >= 0) m &= shown(k) == x; } if (m) return t ? P_QUAL : P_PERF; }
+// The preset the player last applied (kept in memory for the session only) and the one picked on the page but not applied yet; -1 = none.
+// While the values still match it, the row keeps showing the player's pick: on a Mac whose Recommended equals Quality, picking Quality used to snap back to Recommended
+static _Atomic int g_pick = -1, g_pick_pend = -1;
+static int matches(int p) {   // the values shown match preset p: Recommended over every key but the display preferences, Performance / Quality over the keys tier_of lists
+    for (int k = 0; k < NV; k++) {
+        int x = p == P_REC ? (pref_key(k) ? -1 : atomic_load(&g_rec[k])) : tier_of(k, p == P_QUAL);
+        if (x >= 0 && shown(k) != x) return 0;
+    }
+    return 1;
+}
+static int preset_of(void) {   // the Graphic Presets row: the player's pick while it matches, else the first match of Recommended, Performance, Quality; else Custom
+    int p = atomic_load(&g_pick_pend); if (p < 0) p = atomic_load(&g_pick);
+    if (p >= 0 && p != P_CUSTOM && matches(p)) return p;
+    for (int q = P_REC; q < P_CUSTOM; q++) if (matches(q)) return q;
     return P_CUSTOM;
 }
-static void apply_preset(int p) {   // 选了某档：改待定值（推荐 = 全部回推荐；性能 / 品质只管 tier_of 列的键） | a preset was chosen: change pending values (Recommended = everything back to the recommendation; Performance / Quality only the keys tier_of lists)Quality set only resolution and upscaling)
-    if (p == P_REC) for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i]));
+static void apply_preset(int p) {   // a preset was picked: set the pending values (Recommended: every key but the display preferences back to the recommendation; Performance / Quality: the keys tier_of lists)
+    if (p == P_REC) { for (int i = 0; i < NV; i++) if (!pref_key(i)) atomic_store(&g_pend[i], atomic_load(&g_rec[i])); }
     else if (p == P_PERF || p == P_QUAL) for (int k = 0; k < NV; k++) { int x = tier_of(k, p == P_QUAL); if (x >= 0) atomic_store(&g_pend[k], x); }
+    if (p >= 0 && p != P_CUSTOM) atomic_store(&g_pick_pend, p);
 }
 int dm_video_dirty(void) { int d = 0; for (int i = 0; i < NV; i++) { int p = atomic_load(&g_pend[i]); d |= p >= 0 && p != atomic_load(&g_val[i]); } return d; }
 void dm_video_on_uimsg(const char *cat, const char *act, const char *arg) {
@@ -215,18 +279,19 @@ void dm_video_on_uimsg(const char *cat, const char *act, const char *arg) {
     load_once(); if (!atomic_load(&g_loaded)) return;
     if (!strcmp(act, "AcceptChanges")) { int ch = 0, mode = -1, color = -1;
         for (int i = 0; i < NV; i++) { int p = atomic_exchange(&g_pend[i], -1); if (p >= 0 && p != atomic_load(&g_val[i])) { atomic_store(&g_val[i], p); ch = 1; if (i == K_MODE) mode = p; if (i == K_COLOR) color = p; } }
-        if (ch) { pthread_mutex_lock(&g_mu); save_locked(); pthread_mutex_unlock(&g_mu); }
-        if (mode >= 0) front_video_fullscreen(mode);   // 显示模式当场切 | display mode switches at once
-        if (color >= 0) front_video_color(color);   // 色彩当场换（抗锯齿、各向异性由各自读设置的地方下一帧接上） | colour changes at once (anti-aliasing and anisotropy follow from where they read the setting, next frame)
+        if (ch) { pthread_mutex_lock(&g_mu); save_locked(); pthread_mutex_unlock(&g_mu); picture_ev("apply"); }
+        { int pk = atomic_exchange(&g_pick_pend, -1); if (pk >= 0) atomic_store(&g_pick, pk); }   // the picked preset is now the applied one
+        if (mode >= 0) front_video_fullscreen(mode);   // Display Mode switches at once
+        if (color >= 0) front_video_color(color);   // Color changes at once (anti-aliasing and anisotropy follow from where they read the setting, next frame)
         atomic_store(&g_repaint, 1); }
-    else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_repaint, 1); }
-    // 「默认」只管当前页签那一节（「附加」页签上不动画面设置，同原版各页签各管各的） | Default covers only the current tab's section (on the "Extras" tab it leaves the picture settings alone, as each original tab covers its own)
-    else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 1)) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i]));
+    else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_pick_pend, -1); atomic_store(&g_repaint, 1); }
+    // Default covers only the current tab's section (on the Extras tab it leaves the picture settings alone, as each original tab covers its own)
+    else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 1)) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i]));   // every key, the display preferences included
+        atomic_store(&g_pick_pend, P_REC);
         for (int i = 0; i < NR; i++) if (k_row_ckey[i] && (atomic_load(&g_crows) >> i & 1)) dm_custom_set_pending(k_row_ckey[i], dm_custom_default(k_row_ckey[i]));
         atomic_store(&g_repaint, 1); LOG("画面设置：默认 → 推荐值、帧率与掉帧时回缺省（点「应用」生效）"); }
 }
 
-// ---- 页上的切换框
 // ---- Selectors on the page
 static uint8_t *main_base(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
 DM_WIDGET_RED_DEF
@@ -238,16 +303,16 @@ static int car_ok(uint64_t w, int n) {
 }
 static int car_get(uint64_t w) { return *(int32_t *)(w + 0x7ec); }
 static void car_set(uint64_t w, int i) { if (car_get(w) != i) ((void (*)(uint64_t, int))(main_base() + 0xab0c84))(w, i); }
-static void preset_enable(uint64_t w, int custom) { *(uint8_t *)(w + 0x7d8 + P_CUSTOM) = custom != 0; }   // 「自定义」只在不对应任何一档时可选（箭头跳过它） | "Custom" can only be chosen when no preset matches (the arrows skip it)
-static int present_rows(uint64_t sp, int idx[NR]) {   // 页上实际有的行（按页上的顺序）：Mac 六行，手机没有显示模式 | the rows the page really has (in page order): six on the Mac, no display mode on phones
+static void preset_enable(uint64_t w, int custom) { *(uint8_t *)(w + 0x7d8 + P_CUSTOM) = custom != 0; }   // Custom can only be chosen while the row shows it (no preset matches; the arrows skip it)
+static int present_rows(uint64_t sp, int idx[NR]) {   // the rows the page really has, in page order: twelve on the Mac; ten on phones (no Display Mode, and 3D Resolution is the res row, with no separate s3d row)
     int n = 0; for (int i = 0; i < NR && sp; i++) { uint64_t w = row_w(sp, i); if (w && *(uint8_t *)(w + 0x50)) idx[n++] = i; } return n;
 }
 int dm_video_rows(uint64_t sp) { int idx[NR]; return present_rows(sp, idx); }
-void dm_video_row(uint64_t sp, int i, uint64_t *tw, uint64_t *cw) {   // 手柄选中框：第 i 个画面设置行的标签与切换框 | controller selection frame: label and selector of the i-th picture row
+void dm_video_row(uint64_t sp, int i, uint64_t *tw, uint64_t *cw) {   // controller selection frame: label and selector of the i-th picture row
     int idx[NR], n = present_rows(sp, idx); *tw = *cw = 0; if (i < 0 || i >= n) return;
     char nm[48]; snprintf(nm, sizeof nm, "TouchVideo_%s_Text", k_rows[idx[i]]); *tw = dm_custom_find_w(sp, nm); *cw = row_w(sp, idx[i]);
 }
-void dm_video_pad(uint64_t sp, int r, int dir) {   // 手柄：左右 = 上一项 / 下一项，A = 下一项（到头回第一项）；之后 dm_video_pump 当玩家改了处理 | controller: left / right = previous / next option, A = next (wrapping to the first); dm_video_pump then handles it as a player change
+void dm_video_pad(uint64_t sp, int r, int dir) {   // controller: left / right = previous / next option, A = next (wrapping to the first); dm_video_pump then handles it as a player change
     int idx[NR], nr = present_rows(sp, idx); if (r < 0 || r >= nr) return; int i = idx[r];
     uint64_t w = row_w(sp, i); if (!car_ok(w, row_n(i))) return;
     int n = row_n(i), cur = car_get(w), to = cur;
@@ -259,35 +324,62 @@ static void hint_at(uint64_t sp, const char *hint, const char *label, int show) 
     int x = show ? ((int32_t *)(lw + 0x70))[0] : 99999; int32_t *r = (int32_t *)(hw + 0x70);
     if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)hw + 0x10))(hw); }
 }
-static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows, shadow quality)
+static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows, shadow quality); also under Resolution when the window's screen no longer suits the launch picture
     int run = front_video_running_res(), esh = atomic_load(&g_esh_launch);
-    hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && shown(K_RES) != run);
-    hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && shown(K_ESH) != esh);
+    hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && (shown(K_RES) != run || front_video_screen_stale()));
+    hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && !atomic_load(&g_esh_forced) && shown(K_ESH) != esh);   // a forced value never follows the page: no hint
     int shq = atomic_load(&g_shq_launch), sq = shown(K_SHQ);
-    hint_at(sp, "TouchVideoShqHint", "TouchVideo_shq_Text", shq > 0 && sq >= 0 && sq < 3 && k_shq_px[sq] != shq);
+    hint_at(sp, "TouchVideoShqHint", "TouchVideo_shq_Text", shq > 0 && !atomic_load(&g_shq_forced) && sq >= 0 && sq < 3 && k_shq_px[sq] != shq);
 }
 // The phone's 3D Resolution row lists 50 / 67 / 75 / 85 / 100 % while its stored values keep their meaning (0 = 75, 1 = 85, 2 = 100, 3 = 67, 4 = 50):
 // car_of turns a row's value into the selector index, val_of back; every other row is the identity
 static int car_of(int row, int v) { static const int m[5] = { 2, 3, 4, 1, 0 }; return DM_PHONE && k_row_key[row] == K_RES && v >= 0 && v < 5 ? m[v] : v; }
 static int val_of(int row, int c) { static const int m[5] = { 4, 3, 0, 1, 2 }; return DM_PHONE && k_row_key[row] == K_RES && c >= 0 && c < 5 ? m[c] : c; }
-static int row_want(int i) { return k_row_ckey[i] ? dm_custom_shown_value(k_row_ckey[i]) : k_row_key[i] < 0 ? preset_of() : shown(k_row_key[i]); }   // 这一行该显示哪一项 | the option this row should show
-void dm_video_pump(uint64_t sp) {   // 自定义页在屏上时每帧调（dm_custom.c）；sp = 0：页不在屏上 | called every frame while the custom page is on screen (dm_custom.c); sp = 0: the page is not on screen
+// The Frame Rate row's labels for a screen of hz: the normal rate (the smallest even fraction of the refresh at or above 60, dm_pace_hz) and the power
+// saver's (dm_eco_hz), each as a whole number when within 0.1 of one, else with one decimal, put into fmt (dmVideoFpsRate, "%s fps"). Returns 0 when
+// both read 60 / 30 (60 and 120 Hz screens, NTSC 59.94, no window): the layout's own options (dmVideoFps60 / dmVideoFps30) stay
+static void fps_num(char *b, size_t n, double hz) { if (fabs(hz - round(hz)) < 0.1) snprintf(b, n, "%ld", lround(hz)); else snprintf(b, n, "%.1f", hz); }
+static int fps_labels(double screen_hz, const char *fmt, char *hi, char *lo, size_t n) {
+    char a[16], b[16]; fps_num(a, sizeof a, dm_pace_hz(screen_hz, 60)); fps_num(b, sizeof b, dm_eco_hz(screen_hz));
+    if (!strcmp(a, "60") && !strcmp(b, "30")) return 0;
+    if (!fmt || !strstr(fmt, "%s")) fmt = "%s fps";   // the format must carry its one placeholder (dm_i18n.py checks every language)
+    snprintf(hi, n, fmt, a); snprintf(lo, n, fmt, b); return 1;
+}
+// Writes the Frame Rate selector's two options (our own TouchVideo_fps, a CarouselWidget whose vtable and option count car_ok checked): the labels for the
+// screen, or back to the layout's own keys, then has the game's setter show the current option again. Only on a change: the strings are compared first
+static void fps_row(uint64_t w) {
+    static const char *const k_own[2] = { "dmVideoFps60", "dmVideoFps30" };   // the layout's options (touch_layout.py _VIDEO, row fps)
+    const char *nm = *(const char **)(w + 8); if (!nm || strcmp(nm, "TouchVideo_fps")) return;
+    char hi[48], lo[48]; const char *want[2] = { k_own[0], k_own[1] };
+    double hz = front_video_screen_hz();
+    if (fps_labels(hz, dm_str(main_base(), "dmVideoFpsRate"), hi, lo, sizeof hi)) { want[0] = hi; want[1] = lo; }
+    int ch = 0;
+    for (int i = 0; i < 2; i++) {
+        uint64_t st = w + 0x558 + 0x28 * (uint64_t)i; const char *cur = *(const char **)st; uint64_t len = *(uint64_t *)(st + 8); size_t n = strlen(want[i]);
+        if (cur && len == n && !memcmp(cur, want[i], n)) continue;
+        ((void *(*)(uint64_t, const char *, uint64_t))(main_base() + 0x136e5c))(st, want[i], n); ch = 1;
+    }
+    if (!ch) return;
+    ((void (*)(uint64_t, int))(main_base() + 0xab0c84))(w, car_get(w));   // show the current option with its new text
+    LOG("picture settings: Frame Rate row labelled %s / %s (screen %.2f Hz)", want[0], want[1], hz);
+}
+static int row_want(int i) { return k_row_ckey[i] ? dm_custom_shown_value(k_row_ckey[i]) : k_row_key[i] < 0 ? preset_of() : shown(k_row_key[i]); }   // the option this row should show
+void dm_video_pump(uint64_t sp) {   // called every frame while an Options page of ours is on screen (dm_custom.c); sp = 0: the page is not on screen
     static dm_wref seen[NR];
     uint64_t w[NR] = { 0 }; int ok = sp != 0 && dm_video_rows(sp) > 0;
-    for (int i = 0; ok && i < NR; i++) { w[i] = row_w(sp, i); if (w[i] && !*(uint8_t *)(w[i] + 0x50)) w[i] = 0; }   // 页上没有的行 = 0，下面跳过 | rows the page lacks = 0, skipped below
-    if (!ok) { int was = 0; for (int i = 0; i < NR; i++) was |= seen[i].w != 0;   // 页没了：没点「应用」的改动作废（同自定义页） | the page is gone: changes without "Apply" are dropped (as the custom page)
-        if (was) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); for (int i = 0; i < NR; i++) if (k_row_ckey[i]) dm_custom_set_pending(k_row_ckey[i], -1); }
+    for (int i = 0; ok && i < NR; i++) { w[i] = row_w(sp, i); if (w[i] && !*(uint8_t *)(w[i] + 0x50)) w[i] = 0; }   // rows the page lacks = 0, skipped below
+    if (!ok) { int was = 0; for (int i = 0; i < NR; i++) was |= seen[i].w != 0;   // the page is gone: changes without Apply are dropped (as on the custom page)
+        if (was) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_pick_pend, -1); for (int i = 0; i < NR; i++) if (k_row_ckey[i]) dm_custom_set_pending(k_row_ckey[i], -1); }
         memset(seen, 0, sizeof seen); atomic_store(&g_crows, 0); return; }
     for (int i = 0; i < NR; i++) if (w[i] && !car_ok(w[i], row_n(i))) return;
     { int cr = 0; for (int i = 0; i < NR; i++) if (w[i] && k_row_ckey[i]) cr |= 1 << i; atomic_store(&g_crows, cr); }
     load_once(); if (!atomic_load(&g_loaded)) return;
     if (atomic_exchange(&g_repaint, 0)) memset(seen, 0, sizeof seen);
-    int want[NR], ch = -1;   // 先按改之前的值算各行该显示什么，再找玩家动了哪一行（一帧只认一行）：原先边改边比，预设刚改的待定值被后面几行当成玩家又改回去了
-                            // first work out what each row should show from the values before any change, then find the row the player moved (one per frame): comparing while changing used to let the later rows read a preset's fresh pending values as the player changing them back
+    int want[NR], ch = -1;   // first work out what each row should show from the values before any change, then find the row the player moved (one per frame): comparing while changing used to let the later rows read a preset's fresh pending values as the player changing them back
     for (int i = 0; i < NR; i++) want[i] = car_of(i, row_want(i));
     for (int i = 0; i < NR; i++) {
         if (!w[i]) continue;
-        if (dm_wref_get(&seen[i]) != w[i]) { dm_wref_set(&seen[i], w[i]); if (k_row_key[i] == -1) preset_enable(w[i], want[i] == P_CUSTOM); car_set(w[i], want[i]); continue; }   // 页刚出现：摆成该显示的值，这一帧不当玩家改了 | the page just appeared: show the value it should, and do not treat this frame as a player change
+        if (dm_wref_get(&seen[i]) != w[i]) { dm_wref_set(&seen[i], w[i]); if (k_row_key[i] == -1) preset_enable(w[i], want[i] == P_CUSTOM); car_set(w[i], want[i]); continue; }   // the page just appeared: show the value it should, and do not treat this frame as a player change
         if (ch < 0 && car_get(w[i]) != want[i]) ch = i;
     }
     if (ch >= 0) {
@@ -295,7 +387,9 @@ void dm_video_pump(uint64_t sp) {   // 自定义页在屏上时每帧调（dm_cu
         if (k_row_ckey[ch]) { dm_custom_set_pending(k_row_ckey[ch], cur); LOG("画面设置：%s → %d（自定义设置里的键；点「应用」生效）", k_row_ckey[ch], cur); }
         else if (k < 0) { if (cur != P_CUSTOM) apply_preset(cur); LOG("画面设置：图形预设 → %d（点「应用」生效）", cur); }
         else { atomic_store(&g_pend[k], cur); LOG("画面设置：%s → %d（点「应用」生效）", k_keys[k], cur); }
-        for (int i = 0; i < NR; i++) { if (!w[i]) continue; int v = row_want(i); if (k_row_key[i] == -1) preset_enable(w[i], v == P_CUSTOM); car_set(w[i], car_of(i, v)); }   // 预设带动其余几项、其余几项带动预设 | presets move the other rows, and the other rows move the preset
+        for (int i = 0; i < NR; i++) { if (!w[i]) continue; int v = row_want(i); if (k_row_key[i] == -1) preset_enable(w[i], v == P_CUSTOM); car_set(w[i], car_of(i, v)); }   // presets move the other rows, and the other rows move the preset
+        DM_EV("video_row", "row:s value:d preset:d", k_rows[ch], cur, preset_of());   // the player's change and what the Graphic Presets row shows after it
     }
+    for (int i = 0; i < NR; i++) if (w[i] && !strcmp(k_rows[i], "fps")) fps_row(w[i]);   // the Frame Rate row names this screen's rates
     hint(sp);
 }

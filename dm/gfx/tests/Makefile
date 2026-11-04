@@ -4,7 +4,7 @@
 # Source files are included by wildcard, same convention as GFX in the host Makefile (hle_nvn.c is #included directly by t_nvn.c, so it is excluded); adding new source files needs no change here
 CFLAGS=-O1 -g -Wall -Wno-unused-function -I../nvn/include
 GFX=$(filter-out ../nvn/hle_nvn.c,$(sort $(wildcard ../nvn/*.c ../nvn/*.m ../nvn/*.S ../tex/*.c ../tex/*.m))) ../xtrace.c   # xtrace.c：hle_nvn.c 的系统时间线打点（苹果 os_signpost） | xtrace.c: the system timeline markers used by hle_nvn.c (os_signpost on Apple)
-GFX_H=$(wildcard ../nvn/*.h ../nvn/*.inc ../nvn/include/*.h ../tex/*.h)
+GFX_H=$(wildcard ../nvn/*.h ../nvn/*.inc ../nvn/include/*.h ../tex/*.h) ../../host/dm_geom.h   # dm_geom.h: the present fit nvn_mtl.m shares with the front ends
 FW=-framework Metal -framework MetalFX -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
 # 宿主 crash.c 一并链入：写保护单测走生产同一套缺页钩子
 # Host crash.c is linked in as well: the write-protect unit tests go through the same page-fault hook as production
@@ -30,6 +30,9 @@ t_pace: t_pace.c ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_pace.c
 t_timestamp: t_timestamp.c ../nvn/nvn_timestamp.h
 	clang -O1 -Wall -o $@ t_timestamp.c
+# Built with ThreadSanitizer: a race report exits non-zero
+t_ratelog: t_ratelog.c ../nvn/nvn_ratelog.h
+	clang -O1 -g -fsanitize=thread -Wall -Werror -o $@ t_ratelog.c
 t_presproj: t_presproj.c ../nvn/nvn_presproj.h
 	clang -O1 -Wall -o $@ t_presproj.c
 t_capture: t_capture.c ../nvn/nvn_capture.c ../nvn/nvn_capture.h ../nvn/nvn_obj.h
@@ -53,6 +56,10 @@ t_zskip: t_zskip.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_zskip.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_xv: t_xv.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_xv.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_aniso: t_aniso.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_aniso.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_bar: t_bar.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_bar.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_ub: t_ub.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_ub.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_mip_extent: t_mip_extent.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
@@ -71,14 +78,24 @@ t_prog_key: t_prog_key.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_prog_key.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_mfx_life: t_mfx_life.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_mfx_life.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+# MetalFX policy and pixel checks (t_mfx_on.m): ./t_mfx_on [case]
+t_mfx_on: t_mfx_on.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_mfx_on.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pso_pend: t_pso_pend.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_pend.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_skey.m -framework Foundation
+t_pso_warm: t_pso_warm.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_warm.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pfv.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_replay_fix: t_replay_fix.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_replay_fix.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+# Bloom 1/4 and 3D brightening (t_bloom_lut.m), plain and with AddressSanitizer + UndefinedBehaviorSanitizer (the first report aborts)
+t_bloom_lut: t_bloom_lut.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_bloom_lut.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_bloom_lut_asan: t_bloom_lut.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=all -fobjc-arc -o $@ t_bloom_lut.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 # 同一份源码编两份消毒版：线程消毒（t_replay_tsan）、地址 + 未定义行为消毒（t_replay_asan，首个报告即中止）；有报告即非 0 退出
 # The same source built as two sanitizer binaries: ThreadSanitizer (t_replay_tsan) and AddressSanitizer + UndefinedBehaviorSanitizer (t_replay_asan, aborts at the first report); any report exits non-0
 t_replay_tsan: t_replay_san.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
@@ -89,6 +106,10 @@ t_replay_asan: t_replay_san.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H
 # Dependencies one per line in alphabetical order (so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
 	t_adaptive_pace \
+	t_aniso \
+	t_bar \
+	t_bloom_lut \
+	t_bloom_lut_asan \
 	t_copy_pitch \
 	t_builtin \
 	t_cover \
@@ -99,6 +120,7 @@ run: \
 	t_fuse_check \
 	t_hmap \
 	t_mfx_life \
+	t_mfx_on \
 	t_mip_extent \
 	t_link_ticks \
 	t_nvn \
@@ -111,6 +133,8 @@ run: \
 	t_prog_key \
 	t_pso_pend \
 	t_pso_skey \
+	t_ratelog \
+	t_pso_warm \
 	t_refl \
 	t_refl_lib \
 	t_reorder_chain \
@@ -136,6 +160,7 @@ run: \
 	./t_timestamp
 	./t_presproj
 	./t_capture
+	./t_ratelog
 	./t_adaptive_pace
 	./t_refl
 	./t_refl_lib
@@ -148,6 +173,8 @@ run: \
 	./t_zskip
 	./t_xv
 	./t_ub
+	MTL_DEBUG_LAYER=1 ./t_bar
+	MTL_DEBUG_LAYER=1 ./t_aniso
 	MTL_DEBUG_LAYER=1 ./t_mip_extent
 	./t_link_ticks
 	MTL_DEBUG_LAYER=1 ./t_mip_extent --stencil-only
@@ -161,20 +188,32 @@ run: \
 	DM_NVN_UNWRITTEN_DC=0 MTL_DEBUG_LAYER=1 ./t_rt_range --sample-attachment --both-flags
 	./t_pso_skey
 	./t_pso_pend
+	./t_pso_warm
 	./t_mfx_life
+	MTL_DEBUG_LAYER=1 ./t_mfx_on
+	DM_MFX_STACK=1 MTL_DEBUG_LAYER=1 ./t_mfx_on after3d   # the A/B switch keeps MetalFX at the present
+	DM_MFX_STACK=1 MTL_DEBUG_LAYER=1 ./t_mfx_on gpu_note   # ... and the present GPU-time line counts it
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
 	MTL_DEBUG_LAYER=1 ./t_replay_fix
+	MTL_DEBUG_LAYER=1 ./t_bloom_lut
+	./t_bloom_lut_asan
 	./t_replay_tsan treg
 	./t_replay_tsan gfxuse
 	./t_replay_tsan rtrange
+	./t_replay_tsan mfxcomp
+	./t_replay_tsan mfxon
+	./t_replay_tsan link
 	./t_replay_asan bloom
 	./t_replay_asan fx9
 	./t_replay_asan fx19
 	./t_replay_asan fx11
 	python3 test_tbdr_budget.py
+	python3 test_passgpu_top.py
+	python3 test_c1_guard.py
 	python3 test_ub_table.py
 	python3 test_dmsh_rules.py
+	python3 test_compile_convention.py
 .PHONY: run
 
 t_copy_pitch: t_copy_pitch.c ../nvn/nvn_copy_pitch.h

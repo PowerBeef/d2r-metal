@@ -2,6 +2,8 @@
 """Unit test for dmsh_rules.py: the HDR-switch split on synthetic MSL shaped like spirv-cross output (no game shader text). Checks the structure,
 that the else copy has the switch replaced by false and nothing else changed, the refusals, and (when the Metal compiler is there) that the result
 compiles and that the switch-off copy loses the work the switch guarded."""
+import builtins
+import dis
 import os
 import re
 import shutil
@@ -12,6 +14,23 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools'))
 import dmsh_rules  # noqa: E402
+SHADER_MAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nvn', 'shader_map.tsv')
+
+
+def globals_used(f):
+    """Module-level names a function (and the functions, lambdas and comprehensions inside it) reads"""
+    out, todo = set(), [f.__code__]
+    while todo:
+        code = todo.pop()
+        out |= {i.argval for i in dis.get_instructions(code) if i.opname in ('LOAD_GLOBAL', 'LOAD_NAME', 'LOAD_FROM_DICT_OR_GLOBALS')}
+        todo += [c for c in code.co_consts if isinstance(c, type(code))]
+    return out
+
+
+_K = 3   # the positive control's module-level constant
+
+
+def _uses_k(s): return s * _K
 
 HEAD = '''#include <metal_stdlib>
 #include <simd/simd.h>
@@ -93,6 +112,32 @@ class HdrSwitchSplit(unittest.TestCase):
         self.assertIs(f, dmsh_rules.hdr_switch_split)
         self.assertTrue(applies('any', 'e5fb9d7722af87ad'))
         self.assertFalse(applies('any', '3979464914c7fede'))
+
+    def test_rules_self_contained(self):
+        # The shader cache fingerprints only each applying rule's own text (dmsh_build.shader_rule_source), and the chain version leaves dmsh_rules.py
+        # out of the code form: a module-level helper or constant used inside a rule could change without changing any shader's digest, and the
+        # cache would hand back stale MSL. So a rule may use only re and builtins
+        allowed = {'re'} | set(vars(builtins))
+        self.assertEqual(globals_used(_uses_k) - allowed, {'_K'}, 'positive control: a module-level name must be seen')
+        for f, _ in dmsh_rules.RULES:
+            self.assertEqual(globals_used(f) - allowed, set(), f'{f.__name__} reads module-level names: the cache fingerprint covers only the function\'s own text'
+                             ' (dmsh_build.shader_rule_source), so a rule may use only re and builtins')
+
+    def test_keys_in_shader_map(self):
+        # Each HDR-switch key against the package it belongs to: the SMAA edge pass, the three variants of the final compose pass (drawn every frame) and
+        # the three SMAA resolve variants (AA modes 3-5, never drawn here). The compose keys appear on two rows each (key conflicts), hence the sets
+        pk = {}
+        with open(SHADER_MAP, encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('#') or line.startswith('package\t'): continue
+                c = line.rstrip('\n').split('\t')
+                if len(c) > 3: pk.setdefault(c[3], set()).add(c[0])
+        missing = sorted(k for k in dmsh_rules.HDR_SWITCH_KEYS if k not in pk)
+        self.assertEqual(missing, [], 'HDR_SWITCH_KEYS has a key no shader has; the rule would silently skip it')
+        self.assertEqual({k: sorted(pk[k]) for k in dmsh_rules.HDR_SWITCH_KEYS}, {
+            'e5fb9d7722af87ad': ['ps_smaa_edge_detection_p.bin'],
+            '05fa4ac2ebf8af59': ['ps_compose_p.bin'], '9a650561e5c40791': ['ps_compose_p.bin'], '618342d86ec36c81': ['ps_compose_p.bin'],
+            '026014cb2c3e2f90': ['ps_smaa_resolve_p.bin'], '776420a8fa59672e': ['ps_smaa_resolve_p.bin'], 'ca25698067fe0e78': ['ps_smaa_resolve_p.bin']})
 
     @unittest.skipUnless(shutil.which('xcrun'), 'needs the Metal compiler')
     def test_compiles_and_drops_curve(self):

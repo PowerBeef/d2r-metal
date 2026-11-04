@@ -67,13 +67,14 @@ static int c_input_idle(void *a) { (void)a; return !dm_ctl_input_busy(); }
 // 再加引擎快照（dm_engine.c）：屏上面板（最上面的在前）、焦点控件与它的面板、手柄光标模式、存盘忙 / 提交推迟 / 挂着的容器
 // state: in a run or not, tick, paused, the most recently opened panel, the player (level / life / mana / area / position / dead / experience progress / new quest), control-port counters;
 // plus the engine snapshot (dm_engine.c): the panels on screen (top one first), the focused widget and its panel, the controller cursor mode, save busy / commit deferred / mounted containers
+uint64_t dm_audio_dry_total(void);   // hle_audio.c: cumulative audio underruns
 static int cmd_state(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     (void)a; (void)err; (void)ecap;
     dm_hud_info h; dm_hud_get(&h);
     char panel[48]; strlcpy(panel, g_lf_panel, sizeof panel);
-    size_t n = dm_json_fields(out, cap, "in_game:b tick:u paused:b panel:s level:d hp:d hp_max:d mp:d mp_max:d area:d x:d y:d dead:b players:d holding:d belt0:d belt1:d belt2:d belt3:d portal:d points:d exp_permille:d quest_unread:b gold:d gold_stash:d items:d item_dups:d monsters:d skill_left:d skill_right:d skills:d ev_dropped:u",
+    size_t n = dm_json_fields(out, cap, "in_game:b tick:u paused:b panel:s level:d hp:d hp_max:d mp:d mp_max:d area:d x:d y:d dead:b players:d holding:d belt0:d belt1:d belt2:d belt3:d portal:d points:d exp_permille:d quest_unread:b gold:d gold_stash:d items:d item_dups:d monsters:d skill_left:d skill_right:d skills:d ev_dropped:u audio_dry:u",
                    h.valid, (unsigned long long)(h.valid ? dm_cur_tick() : 0), h.valid && dm_game_paused(), panel[0] ? panel : NULL, h.level, h.hp, h.hp_max, h.mp, h.mp_max,
-                   h.area, h.x, h.y, h.dead, h.players, h.holding, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.points, h.exp_permille, h.quest_unread, h.gold, h.gold_stash, h.items, h.item_dups, h.monsters, h.skill_left, h.skill_right, h.skills, (unsigned long long)dm_ctl_dropped());
+                   h.area, h.x, h.y, h.dead, h.players, h.holding, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.points, h.exp_permille, h.quest_unread, h.gold, h.gold_stash, h.items, h.item_dups, h.monsters, h.skill_left, h.skill_right, h.skills, (unsigned long long)dm_ctl_dropped(), (unsigned long long)dm_audio_dry_total());
     if (n < cap) dm_engine_state_json(out + n, cap - n);
     return 1;
 }
@@ -440,12 +441,14 @@ static int cmd_act(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     dm_json_fields(out, cap, "x:f y:f scheme:s target:s", (double)xy[0], (double)xy[1], "console", r >= 0 && r <= 4 ? kind[r] : "?");
     return 1;
 }
-// app do=background|foreground|resign|active|minimize|restore|terminate：前端生命周期（见 dm_ctl.h g_dm_ctl_app_fn） | app do=...: front-end lifecycle (see g_dm_ctl_app_fn in dm_ctl.h)
+// app do=background|foreground|resign|active|minimize|restore|terminate: front-end lifecycle (see g_dm_ctl_app_fn in dm_ctl.h);
+// the Mac front end also takes the test verbs cover|uncover|link_inactive|link_active (front_mac.m ctl_app), the iOS front end resize_<w>x<h>
+// (front_ios.m test_resize: the outermost view resized to w x h points, as a discrete scene resize)
 static int cmd_app(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     const char *w = dm_ctl_get(a, "do"); (void)out; (void)cap;
     if (!w) ERR("missing do");
     if (!g_dm_ctl_app_fn) ERR("no front end to drive (headless host?)");
-    if (g_dm_ctl_app_fn(w)) ERR("'%s' is not supported by this front end", w);
+    if (g_dm_ctl_app_fn(w)) ERR("'%s' failed or is not supported by this front end (see the host log)", w);
     return 1;
 }
 

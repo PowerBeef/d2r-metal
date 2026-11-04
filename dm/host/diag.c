@@ -8,19 +8,23 @@
 #include <TargetConditionals.h>
 #if TARGET_OS_IOS
 #include "dm_hud_exp.h"
+int dm_hud_exp_rows(void) { return 100; }   // compiled in (dm_hud_exp.h)
 #else
 #include "dm_tables.h"
 static uint32_t k_exp[100];
 static pthread_once_t g_exp_once = PTHREAD_ONCE_INIT;
-static int g_exp_ok;
+static int g_exp_ok, g_exp_rows = -2;   // rows read from hud_exp.tsv: -2 not read yet, -1 missing
 static void exp_load(void) {   // the experience table from hud_exp.tsv (dm_tables.h); without it the experience bar stays empty
     long v[100]; char path[PATH_MAX]; int n = dm_table_read("hud_exp.tsv", 1, v, 100, path);
+    g_exp_rows = n < 0 ? -1 : n;
     if (n == 100) { for (int i = 0; i < 100; i++) k_exp[i] = (uint32_t)v[i]; g_exp_ok = 1; }
     else LOG("Tables: %s %s: the experience bar stays empty", path, n < 0 ? "is missing" : "is incomplete");
 }
+int dm_hud_exp_rows(void) { pthread_once(&g_exp_once, exp_load); return g_exp_rows; }   // for dm_bright.c dm_tables_status (the Tables: line at start, Share Logs)
 #endif
 #include <fcntl.h>
 #include <dirent.h>
+#include <math.h>
 #include <stdatomic.h>
 #include "dm_i18n.h"
 #include <signal.h>
@@ -1613,6 +1617,9 @@ static void c2s_load(const char *path) {
 // max(original + 40, unfreeze time + 40): with no backlog = original + 40, same as without freezing; with backlog the catch-up ticks are skipped (in the ground-truth run there are no ticks after tick E).
 static uint32_t g_hold_tick; static char g_hold_ui[96] = "PausePanelMessage:ExitGame"; static _Atomic int g_holding; static uint64_t g_hold_t0;
 static volatile uint32_t *g_hold_dl; static uint32_t g_hold_dl0; static int32_t g_hold_org; static int g_hold_org_ok; static uint32_t g_hold_dl1;
+// The tick number at the last tick entry while frozen: the tick counter itself moves on once the frozen tick has run (420 reads 421 by the
+// time a screenshot is written), so the release's self-check compares the entry number, as the replay's g_rplast does
+static _Atomic uint32_t g_hold_entry;
 static uint32_t guest_ms(void) { return (uint32_t)(guest_ns() / 1000000); }
 static volatile uint32_t *hold_dl(void) {
     if (!g_hold_dl) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) g_hold_dl = (volatile uint32_t *)(g_mod[i].base + 0x2d685d8);
@@ -1639,7 +1646,7 @@ static void hold_unfreeze(void) {
 }
 static void hold_release(const char *why) {
     if (!atomic_exchange(&g_holding, 0)) return;
-    uint32_t last = g_rp ? (uint32_t)g_rplast : cur_tick();   // 冻结期间最后一次拍入口的拍号 = 暂停（存盘 / 截图）拍；没有回放时 g_rplast 不走，取当前拍号 | Tick number of the last tick entry during the freeze = the pause (save / screenshot) tick; without a replay g_rplast does not move, so take the current tick
+    uint32_t last = g_rp ? (uint32_t)g_rplast : atomic_load(&g_hold_entry);   // the tick number at the last tick entry during the freeze = the pause (save / screenshot) tick
     hold_unfreeze();
     LOG("DM_TICK_HOLD：「%s」→ 解冻（冻结 %.3f s）；冻结拍 %u（目标 %u）%s；下一拍时限 %u → %u", why, (now_ns() - g_hold_t0) / 1e9, last, g_hold_tick,
         last == g_hold_tick ? "" : "【红】不等", g_hold_dl0 + 40, g_hold_dl1);
@@ -1700,15 +1707,22 @@ void dm_longframe_note(const char *what) {
 }
 void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 帧的实际上屏间隔 ms；−1 = 被系统丢弃，0 = 无读数） | Called once per frame by the present thread (the actual present interval in ms, lagging by 8 frames; −1 = dropped by the system, 0 = no reading)
     static const char *path; static int init; static unsigned c16, c25, c33, disc; static double sum; static uint64_t t0, f0, cpu0, tstart;
+    static unsigned none;   // presents with no reading (0): their time never came back
     if (!init) { init = 1; const char *e = getenv("DM_PERF_FILE"); path = e ? (strcmp(e, "0") ? e : NULL) : (DM_PHONE ? "perf.txt" : NULL); t0 = tstart = now_ns(); f0 = dm_nvn_frame_count(); cpu0 = dm_nvn_sub_cpu_ns(); }
     dm_3d_scale_feed(iv);   // 动态 3D 比例的控制器吃同一份上屏间隔（hle_oe.c） | The dynamic 3D scale controller consumes the same present intervals (hle_oe.c)
     { static FILE *ff; static int fi;   // DM_FRAMES=<文件>：逐帧记「秒（同事件时钟）\t上屏间隔 ms」，基准测试（dm/tools/bench.py）按 mark 事件切段 | DM_FRAMES=<file>: per frame "seconds (event clock)\tpresent interval ms", cut into segments by mark events in the benchmarks (dm/tools/bench.py)
       if (!fi) { fi = 1; const char *e = getenv("DM_FRAMES"); if (e && *e && (ff = fopen(e, "w"))) { setvbuf(ff, NULL, _IOLBF, 0); fputs("t\tiv_ms\n", ff); } }
       if (ff) fprintf(ff, "%.4f\t%.3f\n", dm_events_now_s(), iv); }
-    if (!path) return;
-    if (iv < 0) disc++; else if (iv > 0) { sum += iv; if (iv <= 20.8) c16++; else if (iv <= 29.2) c25++; else c33++; }
+    // Counted whether or not perf.txt is written (DM_PERF_FILE; phones only by default): the perf event goes out every 10 s either way
+    if (iv < 0) disc++; else if (iv > 0) { sum += iv; if (iv <= 20.8) c16++; else if (iv <= 29.2) c25++; else c33++; } else none++;
     uint64_t now = now_ns(); if (now - t0 < 10000000000ull) return;
     unsigned n = c16 + c25 + c33; uint64_t f = dm_nvn_frame_count(), cpu = dm_nvn_sub_cpu_ns();
+    // The window's readings (dm/verify/event_stream.md): n frames with an on-screen interval, disc not shown (-1), none with no reading (0).
+    // blind = mostly no readings (present times lost), shown = mostly frames on screen
+    { double fps = sum > 0 ? n * 1000.0 / sum : (f - f0) / ((now - t0) / 1e9);
+      DM_EV("perf", "fps:f n:u c25:u c33:u disc:u none:u blind:b shown:b scale:f ingame:b", round(fps * 10) / 10, (unsigned long long)n, (unsigned long long)c25,
+            (unsigned long long)c33, (unsigned long long)disc, (unsigned long long)none, none > n + disc, n > none + disc, round(dm_3d_scale_cur() * 1000) / 1000.0, dm_ingame_now()); }
+    if (!path) { c16 = c25 = c33 = disc = none = 0; sum = 0; t0 = now; f0 = f; cpu0 = cpu; return; }
     struct stat st; if (!stat(path, &st) && st.st_size > 256 * 1024) rename(path, "perf.old.txt");
     FILE *fp = fopen(path, "a");
     if (fp) {
@@ -1720,7 +1734,7 @@ void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 �
         fclose(fp);
     }
     LOG("[perf] 温控 %d 3D %.2f 帧率 %.1f 三档 %u/%u/%u 丢弃 %u", dm_thermal_now(), dm_3d_scale_cur(), sum > 0 ? n * 1000.0 / sum : (f - f0) / ((now - t0) / 1e9), c16, c25, c33, disc);   // 同一行进 boot.txt（冒烟可核） | The same line goes into boot.txt (the smoke test can check it)
-    c16 = c25 = c33 = disc = 0; sum = 0; t0 = now; f0 = f; cpu0 = cpu;
+    c16 = c25 = c33 = disc = none = 0; sum = 0; t0 = now; f0 = f; cpu0 = cpu;
 }
 // 控制口 pause / resume / step（dm_ctl_cmds.c）：同 DM_TICK_HOLD 的冻结（下一拍时限拨到极远 + 客体时钟冻结），由命令解冻；冻着时 dm_server_tick 报 UINT64_MAX、按键脚本改按出图帧
 // 返回 0 成功；-1 还没有时限零点（局内至少跑过一拍、且开着控制通道才有）；-2 已被别的冻结占着（DM_TICK_HOLD / 读取画面冻结）
@@ -1904,6 +1918,10 @@ int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms) {
     *commits = last - c0; *froze = bg; *ms = (now_ns() - t0) / 1e6;
     return asked;
 }
+// Dormant for players: only DM_TEST_FREEZE or DM_PANEL_FREEZE attach the freeze here, and no app shell sets either; the paused background save
+// (save_unpause_begin) attaches the gates without telling the renderer. Before it is ever enabled: frozen frames present at full rate and count as clean
+// windows for the 3D-scale controller (hle_oe.c scale3d_ctl_step), so hold it with scale3d_ctl_hold while frozen and for a few seconds after; and add a
+// scenario that keeps a panel open for more than 30 s at Frame Drops = lower.
 static void freeze_tick(uint64_t G) {   // 拍入口：定这一拍冻不冻，冻就把拍号先减 1 | Tick entry: decide whether this tick is frozen; if so, decrement the tick number by 1 first
     static struct { uint32_t at, n; int st; } w[8]; static int nw = -1, panel, cur = -1; static uint32_t left, calls;
     if (nw < 0) { nw = 0; const char *e = getenv("DM_TEST_FREEZE"); char buf[160]; if (e) { strlcpy(buf, e, sizeof buf); for (char *sv, *t = strtok_r(buf, ";", &sv); t && nw < 8; t = strtok_r(NULL, ";", &sv)) if (sscanf(t, "%u:%u", &w[nw].at, &w[nw].n) == 2) nw++; }
@@ -1966,6 +1984,7 @@ static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入�
         static uint32_t lt, ms; static int st;
         if (!st) { const char *e = getenv("DM_TEST_LAG"); st = e ? 1 : 2; if (e) { lt = (uint32_t)strtoul(e, 0, 0); const char *c = strchr(e, ':'); ms = c ? (uint32_t)strtoul(c + 1, 0, 0) : 300; } }
         if (st == 1 && cur_tick() == lt) { st = 2; usleep(ms * 1000); LOG("DM_TEST_LAG：拍 %u 入口睡 %u ms", lt, ms); } }
+    if (atomic_load(&g_holding)) atomic_store(&g_hold_entry, cur_tick());   // a tick that slipped through the freeze shows in the release's self-check
     hold_track_origin();   // 冻结 / 解冻换算时限用；读取画面冻结（dm_hold_for_loadscreen）不依赖 DM_TICK_HOLD，所以每拍都跟 | Used for converting time limits on freeze / unfreeze; the loading screen freeze (dm_hold_for_loadscreen) does not depend on DM_TICK_HOLD, so it is tracked every tick
     // 按拍号截图的局（DM_TICK_HOLD=E:SHOT）：进局第 5 拍读取画面还没撤就先冻结到它撤下（dm_hold_for_loadscreen），之后的拍号时间线都落在客户端加载完之后。
     // 负载高时客户端加载慢、服务端拍照走：出过一次 NPC 页读取画面拍 85 才撤，拍 84 的 A 在撤屏当拍按下、游戏不认，对话面板没开（按键到点才冻结救不了这一下）
@@ -1976,7 +1995,7 @@ static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入�
     { int dm_loadscreen_up(void); uint32_t t = cur_tick(); if (g_hold_tick && !strcmp(g_hold_ui, "SHOT") && t >= 5 && t < g_hold_tick && dm_loadscreen_up()) dm_hold_for_loadscreen(); }
     if (g_hold_tick && g_pos_bad && !strcmp(g_hold_ui, "SHOT") && cur_tick() == g_hold_tick) { static int o2; if (!o2++) LOG("DM_TICK_HOLD：坐标核对不一致，不截图也不冻结"); }
     else if (g_hold_tick) { uint32_t t = cur_tick(); if (t == g_hold_tick) { static int once; if (!once++) {
-        hold_freeze();
+        hold_freeze(); atomic_store(&g_hold_entry, t);
         g_hold_t0 = now_ns(); atomic_store(&g_holding, 1); LOG("DM_TICK_HOLD：拍 %u 冻结客体时钟，等「%s」", t, g_hold_ui);
         pthread_t th; if (!pthread_create(&th, NULL, hold_guard, NULL)) pthread_detach(th); } } }
     if (g_rp) c2s_inject(regs[0]);

@@ -25,6 +25,9 @@ TIERS=("$@"); [ ${#TIERS[@]} -gt 0 ] || TIERS=(quick unit)
 for t in "${TIERS[@]}"; do case "$t" in quick|unit|core|full|long|device) ;; *) echo "🔴 未知层 | unknown tier: $t"; exit 2;; esac; done
 OUT="$DM_ROOT/run/gate/$(date +%Y%m%d_%H%M%S)_$(IFS=_; echo "${TIERS[*]}")"; mkdir -p "$OUT"; ln -sfn "$OUT" "$DM_ROOT/run/gate/latest"
 STEPS="$OUT/steps.tsv"; : > "$STEPS"
+# Informational steps (measurements with no threshold): a RED verdict is recorded as INFO and doesn't make the gate red; ERROR (a timeout, a command
+# that could not start) still does
+INFO_STEPS="long_pso_cold"
 HEAD_SHA=$(git -C "$ROOT" rev-parse --short HEAD); DIRTY=$(git -C "$ROOT" status --porcelain -- . ':!dm/gfx/tools/dmsh_chain.lock' ':!dm/gfx/nvn/dmsh_chain.h' ':!dm/gfx/nvn/c1_full.tsv' | wc -l | tr -d ' ')
 T0=$SECONDS
 echo "FORKGATE 开始 | start: 层 | tiers ${TIERS[*]} @ $HEAD_SHA（未提交改动 | uncommitted changes: $DIRTY）→ $OUT"
@@ -41,6 +44,7 @@ step() {   # step <名字 | name> <超时秒 | timeout s> -- <命令 | command�
   case $name in unit_*) rco=(--rc-only);; esac   # 测试套：退出码就是结论（套里的负向用例自己会打 RED 行） | test suites: the exit code is the verdict (their negative cases print RED lines)
   python3 "$DM/tools/dmtest.py" --name "$name" --out "$d" --junit "$d/junit.xml" --timeout "$to" ${rco[@]+"${rco[@]}"} -- "$@" > "$d.console" 2>&1
   local rc=$? v; case $rc in 0) v=OK;; 1) v=RED;; *) v=ERROR;; esac
+  if [ "$v" = RED ]; then case " $INFO_STEPS " in *" $name "*) v=INFO;; esac; fi   # an informational step's RED is reported, not counted
   local un; un=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("unavailable", [])))' "$d/result.json" 2>/dev/null || echo 0)
   printf '%s\t%s\t%s\t%s\n' "$name" "$v" "$((SECONDS - s))" "$un" >> "$STEPS"
   printf '%-28s %-5s %4ss%s\n' "$name" "$v" "$((SECONDS - s))" "$([ "$un" != 0 ] && echo "  ⚪ $un 项不可用 | unavailable")"
@@ -91,7 +95,7 @@ for tier in "${TIERS[@]}"; do
     step quick_literals 120 -- python3 "$DM/i18n/scan_literals.py"
     step quick_i18n 120 -- python3 "$DM/ios/tools/dm_i18n.py" --check
     step quick_switches 120 -- python3 "$DM/tools/switches.py" check
-    step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/golden/"*.scn "$DM/verify/bench/"*.scn
+    step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/scenarios/picture/"*.scn "$DM/verify/scenarios/heap/"*.scn "$DM/verify/scenarios/manual/"*.scn "$DM/verify/golden/"*.scn "$DM/verify/bench/"*.scn
     step quick_hudgen 300 -- bash "$DM/ios/tools/check_hud_gen.sh"
     step quick_readdr 300 -- python3 "$DM/tools/re/addrcheck.py"   # cited main+0x... addresses vs the game program and the private analysis export (unavailable without them)
     ;;
@@ -112,18 +116,28 @@ for tier in "${TIERS[@]}"; do
     lock_on 10
     step core_front_scenarios 900 -- bash -c 'scn_run "$@" --backend cli' _ $(front_scenarios $(scenarios))   # windowed, one at a time, in the background (front-end lifecycle: minimize / quit)
     step core_touchcases 900 -- bash -c touch_cases
+    # The picture chain at this Mac's Recommended on the CLI host (scenarios/picture: SMAA, 16x, shadows, 3D 75% with the MetalFX 3D pass, AA switched live)
+    step core_picture 900 -- bash -c 'par_scenarios cli 2 "$@"' _ "$DM/verify/scenarios/picture/rec.scn" "$DM/verify/scenarios/picture/rec75.scn" "$DM/verify/scenarios/picture/aa_toggle.scn"
+    # Pipeline warm-up coverage: the town route with Recommended's features forced builds no pipeline that the seed (dm/gfx/nvn/pso_manifest.tsv) or
+    # the reviewed allow-list (pso_allow.tsv) lacks (PSO_GATE OK rows=0)
+    step core_pso_cli 900 -- python3 "$DM/tools/pso_seed.py" gate --backend cli --headless
     ;;
   full)
     lock_on 15
     step full_macapp_build 900 -- bash -c fresh_mac_app
     # Background runs at this Mac's Recommended picture (DM_TEST_VIDEO_FIRSTBOOT=1: Display Mode = full screen, emulated off screen, the same drawable as real full screen)
     step full_macapp_scenarios 1800 -- bash -c 'DM_TEST_VIDEO_FIRSTBOOT=1 scn_run "$@" --backend mac-app' _ $(scenarios)
+    step full_pso_mac 900 -- python3 "$DM/tools/pso_seed.py" gate --backend mac-app   # warm-up coverage on the Mac App test copy at this Mac's Recommended
     step full_smoke_mac 900 -- bash "$DM/ios/tools/smoke_mac.sh" 1   # 也按 HEAD 重出 iOS 包的 Mac 版（ios-mac 场景用它） | also rebuilds the iOS package for the Mac from HEAD (the ios-mac scenarios use it)
+    step full_pso_ios 900 -- python3 "$DM/tools/pso_seed.py" gate --backend ios-mac   # and on the iOS package smoke_mac has just rebuilt
     step full_iosmac_scenarios 1800 -- bash -c 'scn_run "$@" --backend ios-mac' _ $(scenarios)   # front runs (the iOS package takes the front): a disturbed one is redone, then ⚪
     step full_metal_validation 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/enter_game.scn" --backend cli --headless --metal-validation api
+    step full_metal_validation_rec 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/picture/rec.scn" --backend cli --headless --metal-validation api   # at the Recommended picture
+    step full_macapp_picture 900 -- bash -c 'scn_run "$@" --backend mac-app' _ "$DM/verify/scenarios/picture/"mac_*.scn   # first launches: this Mac and an M1 stand-in
     # 我们自己的基线（golden.py；没录过 = ⚪ 不可用，不算红） | our own baselines (golden.py; never recorded = ⚪ unavailable, not red)
     step full_golden_replay 1800 -- bash -c 'python3 "$DM/verify/golden.py" replay check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
     step full_golden_shots 1200 -- bash -c 'python3 "$DM/verify/golden.py" shots check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
+    step full_golden_picture 2400 -- bash -c 'python3 "$DM/verify/golden.py" shots check --set orig,rec,rec75,bright,phone; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # FLIP sets (screenshot_gate.md)
     step full_faults 1200 -- bash -c 'par_scenarios cli 3 "$@"' _ $(headless_scenarios "$DM/verify/scenarios/faults/"*.scn)   # 故障矩阵（scenarios/faults/README.md） | the fault matrix (scenarios/faults/README.md)
     step full_faults_front 600 -- bash -c 'scn_run "$@" --backend cli' _ $(front_scenarios "$DM/verify/scenarios/faults/"*.scn)
     ;;
@@ -132,7 +146,13 @@ for tier in "${TIERS[@]}"; do
     # Benchmarks first, while the machine is cool. They run in front by design; a rep still disturbed after its redos is not judged (exit 3 = unavailable, not red)
     for r in town_loop combat ui_heavy rejoin; do step "long_bench_$r" 1800 -- bash -c 'python3 "$1/tools/bench.py" run "$1/verify/bench/$2.scn" --reps 3; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc' _ "$DM" "$r"; done
     step long_profile 900 -- bash -c 'python3 "$1/tools/bench.py" profile "$1/verify/bench/combat.scn"; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc' _ "$DM"   # sampled attribution + hitches
+    # GPU heap 0 at the Native cap (scenarios/heap, the readings behind DM_SCR_MAX_PX): measurements, so front runs in real full screen, one at a time
+    step long_heap 1800 -- bash -c 'scn_run "$@" --backend cli' _ "$DM/verify/scenarios/heap/"*.scn
+    step long_heap_mac 600 -- bash -c 'fresh_mac_app && scn_run "$@" --backend mac-app' _ "$DM/verify/scenarios/heap/"*.scn
     step long_regress 2400 -- bash -c 'python3 "$DM/tools/bench.py" regress "$DM/verify/bench/town_loop.scn" --reps 6; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # 对留存基线（bench.py baseline save）；没有基线为 ⚪ | against the kept baseline (bench.py baseline save); none = ⚪
+    # One true cold start of the Mac App (a fresh bundle ID, so an empty Metal cache), in front: a row of its warm-up times goes to $DM_ROOT/run/pso/cold.tsv.
+    # Informational (INFO_STEPS); a run still disturbed after its redos is ⚪
+    step long_pso_cold 1200 -- bash -c 'python3 "$DM/tools/pso_seed.py" cold --backend mac-app; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
     step long_playbot 3600 -- python3 "$DM/tools/playbot.py" run --seed 1 --episodes 4 --intents 15   # 试玩机器人：玩家意图 + 不变量（dm/tools/playbot.py） | the playtest bot: player intents + invariants (dm/tools/playbot.py)
     step long_soak 3600 -- python3 "$DM/tools/playbot.py" soak --minutes 30 --seed 2   # Mac 浸泡：soak_report.py 的四条判据 | Mac soak: soak_report.py's four criteria
     for san in asan ubsan; do

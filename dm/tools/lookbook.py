@@ -21,7 +21,6 @@
 import argparse
 import json
 import os
-import subprocess
 import sys
 
 import numpy as np
@@ -36,64 +35,38 @@ import imgdiff  # noqa: E402
 OUT = os.path.join(golden.scenario.DM_ROOT, 'run', 'lookbook')
 BASE_W, BASE_H = 1600, 900   # 宿主缺省出图分辨率（front_game_res）| the host's default output resolution (front_game_res)
 FRONT = ('loading', 'charselect', 'newchar')   # 前端页：没有局内 3D 画面，画质对照不看 | front-end pages: no in-game 3D picture, not part of the look set
-# 对照集自己的 3D 页：照截图闸门的做法（hostshot.sh、keypage 产物、确定时钟）：标准存档的术士进营地，第 150 拍用测试开关 DM_TEST_GOTO_LEVEL
-# 换到指定关卡，第 E 拍冻结游戏时钟（DM_TICK_HOLD=E:SHOT，截图写盘后解冻），宿主在拍 E 发「DM:Tick:E#」，其后第 2 帧截图——按帧算的动画（火光、
-# 人物待机、球液）也就落在同一帧上。DM_STATE 只为挂上完整的拍入口（冻结在那里）。固定随机种子与时刻，同一宿主两次截出来应完全相同。
-# 关卡：2 血腥荒地（野外远景）、34 地下墓穴（暗处）、76 蜘蛛森林（植被细节）、107 火焰之河（火光与泛光）。邪恶洞窟（8）与鲁·高因下水道（47）不用：
-# 蝙蝠、火把闪动与定时的任务提示每次都不同（同宿主两次 FLIP 0.02 上下）
-# The look set's own 3D pages follow the screenshot gate's recipe (hostshot.sh, the keypage product, the deterministic clock): the standard save's Warlock enters
-# camp, switches to the given level at tick 150 with the test switch DM_TEST_GOTO_LEVEL, the game clock freezes at tick E (DM_TICK_HOLD=E:SHOT, released once the
-# screenshot is written), the host sends "DM:Tick:E#" at tick E and the screenshot is taken 2 frames later -- so frame-driven animation (fire, idle poses, orb
-# liquid) lands on the same frame too. DM_STATE is only there to install the full tick entry (where the freeze lives). With a fixed random seed and time, the
-# same host captures nearly the same picture twice. Levels: 2 Blood Moor (distant wilderness), 34 Catacombs (dark), 76 Spider Forest (foliage detail), 107 River
-# of Flame (fire and bloom). The Den of Evil (8) and the Lut Gholein sewers (47) are not used: bats, torch flicker and a timed quest prompt differ every run (FLIP
-# about 0.02 between two runs of the same host)
-LB_KEYS = 'X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterSelectPanel,DOWN@%0.5+0.03>UpdateCharacterInfo,A@%0.5>SelectCharacter,A@%1>FrontEndNavigation:ToGame'
-LB_PAGES = {f'lb_{n}': dict(level=lv, tick=e, viewport=[0, 0, 1, 0.82])
-            for n, lv, e in (('wild_a1', 2, 420), ('crypt_a1', 34, 420), ('jungle_a3', 76, 420), ('lava_a4', 107, 420))}
+LB_PAGES = golden.LB_PAGES   # the look set's own 3D pages and their recipe live in golden.py (its FLIP sets shoot them too)
 
 
 def pages(names):
     names = list(names or [])
     lb = [p for p in LB_PAGES if not names or p in names]
-    return [p for p in golden.shot_pages([n for n in names if n not in LB_PAGES]) if p not in FRONT and (not names or p in names)] + lb
+    gate = [n for n in names if n not in LB_PAGES]
+    if names and not gate: return lb   # only look-set pages asked for: the screenshot-gate pages are not listed (nor their unavailable notes)
+    return [p for p in golden.shot_pages(gate) if p not in FRONT and (not names or p in names)] + lb
 
 
 def spec(p):
     return dict(host=LB_PAGES[p], viewport=LB_PAGES[p]['viewport']) if p in LB_PAGES else golden.page_spec(p)
 
 
-def take_shot(host, p, png):
-    """一页截图：画面闸门的页走 golden.take_shot；对照集自己的页照同一做法（触发、键序、环境、确定时钟、keypage 产物）。 | One page: screenshot-gate pages
-    go through golden.take_shot; the look set's own pages follow the same recipe (trigger, key script, environment, deterministic clock, keypage product)."""
-    if p not in LB_PAGES: return golden.take_shot(host, p, png)
-    h = LB_PAGES[p]; e = h['tick']; os.makedirs(os.path.dirname(png), exist_ok=True)
-    env = dict(os.environ, DM_TOWNWP_OFF='1', DM_GAME_SEED='0x12345678', DM_FIXED_TIME='1790000000', DM_TEST_GOTO_LEVEL=f"150:{h['level']}", DM_TICK_HOLD=f'{e}:SHOT',
-               DM_STATE=png[:-4] + '.state.jsonl', DM_BRIGHT_K='1', DM_KEYS=LB_KEYS)
-    env['DM_DETCLOCK'] = env.get('DM_DETCLOCK', '16666667')
-    # DM_SHOT_PRODUCT=<产物目录>：换一份改写产物截（比较改写变体，如阴影图边长）；缺省 keypage | DM_SHOT_PRODUCT=<output dir>: shoot another rewrite output (to compare rewrite variants such as the shadow-map size); default keypage
-    prod = os.environ.get('DM_SHOT_PRODUCT') or subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'keypage'], capture_output=True, text=True, check=False).stdout.strip()
-    r = subprocess.run(['bash', os.path.join(DM, 'verify', 'hostshot.sh'), host, prod, f'DM:Tick:{e}#+2', png, '300'], env=env, capture_output=True, text=True, check=False)
-    return r.returncode == 0 and os.path.exists(png), (r.stderr.strip().splitlines() or [''])[-1]
+def take_shot(host, p, png, extra=None):
+    """One page through golden.take_shot (both the screenshot-gate pages and the look set's own pages); extra wins over the page's own env, so a
+    variant can set DM_BRIGHT_K."""
+    return golden.take_shot(host, p, png, extra)
 
 
 def shoot(name, env, res, host, names):
+    """One set of a variant: its env (and DM_GAME_RES=res) go to every shot as the caller's env; the process environment is left alone."""
     d = os.path.join(OUT, name); os.makedirs(d, exist_ok=True)
-    saved = {k: os.environ.get(k) for k in list(env) + ['DM_GAME_RES']}
-    os.environ.update(env)
-    if res: os.environ['DM_GAME_RES'] = res
+    extra = dict(env, **({'DM_GAME_RES': res} if res else {}))
     bad = 0
-    try:
-        for p in pages(names):
-            png = os.path.join(d, p + '.png')
-            ok, why = take_shot(host, p, png)
-            print(f"LOOKBOOK shot {name}/{p} {'OK' if ok else 'RED ' + why}", flush=True); bad += not ok
-    finally:
-        for k, v in saved.items():
-            if v is None: os.environ.pop(k, None)
-            else: os.environ[k] = v
+    for p in pages(names):
+        png = os.path.join(d, p + '.png')
+        ok, why = take_shot(host, p, png, extra)
+        print(f"LOOKBOOK shot {name}/{p} {'OK' if ok else 'RED ' + why}", flush=True); bad += not ok
     with open(os.path.join(d, 'meta.json'), 'w', encoding='utf-8') as f:
-        json.dump(dict(name=name, env=env, res=res, host=host, sha=golden.head()), f, indent=1)
+        json.dump(dict(name=name, env=extra, res=res, host=host, sha=golden.head()), f, indent=1)
     return bad
 
 
@@ -128,11 +101,7 @@ def unstable(s1, s2, p, shape):
     captures of the same variant (s1 / s2: things that move on their own -- critters, flicker, timed text), grown by 4 pixels; excluded from comparisons."""
     f1, f2 = os.path.join(OUT, s1, p + '.png'), os.path.join(OUT, s2, p + '.png')
     if not (os.path.exists(f1) and os.path.exists(f2)): return np.zeros(shape[:2], bool)
-    d = np.abs(imgdiff.load(f1) - imgdiff.load(f2)).max(2) > 2 / 255
-    m = d.copy()
-    for dy in range(-4, 5):
-        for dx in range(-4, 5): m |= np.roll(np.roll(d, dy, 0), dx, 1)
-    return m
+    return golden.unstable_mask(imgdiff.load(f1), imgdiff.load(f2))
 
 
 def compare(a, b, names, stable=None):

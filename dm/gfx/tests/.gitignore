@@ -63,8 +63,12 @@ t_replay_fix
 t_replay_fix.dSYM/
 t_pso_pend
 t_pso_pend.dSYM/
+t_pso_warm
+t_pso_warm.dSYM/
 t_mfx_life
 t_mfx_life.dSYM/
+t_mfx_on
+t_mfx_on.dSYM/
 t_bc8
 t_link_ticks
 t_link_ticks.dSYM/
@@ -72,3 +76,13 @@ t_capture
 t_capture.dSYM/
 nvn_replay
 nvn_replay.dSYM/
+t_bar
+t_bar.dSYM/
+t_aniso
+t_aniso.dSYM/
+t_ratelog
+t_ratelog.dSYM/
+t_bloom_lut
+t_bloom_lut.dSYM/
+t_bloom_lut_asan
+t_bloom_lut_asan.dSYM/

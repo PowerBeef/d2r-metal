@@ -663,9 +663,7 @@ def build_profile(romfs, outdir):
     text = text.replace('\r\n', '\n')   # 这份原版是 CRLF | This original-game file uses CRLF
     if text.count(BIG_FONT[0]) != 1: raise SystemExit('touch_layout：_profileConsoleHD 的字号段不是原样（原版变了？）')
     o = os.path.join(outdir, 'profile_consolehd.json'); open(o, 'w', encoding='utf-8').write(text.replace(BIG_FONT[0], BIG_FONT[1])); repl = {path.lower(): o}
-    # 掌机档（DM_OPMODE=0：过热降级会切过去，触屏脚本也用它）走另一份 _profileHandheldHD，上面的改动到不了：同一组值也写进去，
-    # 否则掌机档下字是小的、选项页分节横线穿过标题字（在 Mac 上的 iOS 包截到）
-    # The handheld profile (DM_OPMODE=0: overheat downgrade switches to it, and touch scripts use it too) goes through a separate _profileHandheldHD that the changes above do not reach: the same set of values is written there too,
+    # The handheld profile (DM_OPMODE=0: test scripts switch to it, and touch scripts use it too) goes through a separate _profileHandheldHD that the changes above do not reach: the same set of values is written there too,
     # otherwise under the handheld profile the text is small and the options page section divider line runs through the header text (captured on the iOS app on the Mac)
     path, text = read_layout(romfs, 'controller/_profilehandheldhd.json'); text = text.replace('\r\n', '\n')
     a = '"XMediumLargeFontSize": 36,\n    "MediumLargeFontSize": 36,\n    "XMediumFontSize": 34,\n'
@@ -799,7 +797,7 @@ def _drop_rows(*rows):
 # 视频页的表格整个换成我们的行：分节标题 + 每个开关一行原版勾选框（照「游戏」页「自动拾取金币」那一行的字段）。控件名 TouchCustom_<键>，
 # 宿主 dm_custom.c 读勾没勾、按应用 / 放弃 / 默认处理。勾选框的消息发一条无害的 ClosePanel，游戏不认
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('drop_light', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'eco_fps', 'q3d', 'touch_swap_above')
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('drop_light', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'eco_fps', 'q3d', 'touch_swap_above', 'bright')
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines
@@ -832,13 +830,6 @@ _CUSTOM_TEST_ROWS = int(os.environ.get('DM_CUSTOM_TEST_ROWS', '0'))   # 测试�
 # "3D Quality" (q3d) is a radio with two options, each with a line of small description text below, taking two rows of height (_CUSTOM_Q3D_H); every other row is one row high
 _CUSTOM_Q3D_H = 2 * _CUSTOM_LINE_H
 _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') else _CUSTOM_LINE_H) for k, _ in _CUSTOM_ALL] + [_CUSTOM_LINE_H] * _CUSTOM_TEST_ROWS
-# Mac App（DM_OVERLAY_MAC）：这一页顶上先放「显示」「图形」两节画面设置（宿主 dm_video.c），再接「自定义」一节。
-# 照原版主机版视频页 / 电脑版图形页的样子：分节标题（原版标题字样 + 金色分隔线）、每行左边标签、右边原版的左右切换框（CarouselWidget，
-# 与主机版「图形模式」同一组字段，摆在第二栏正中：x 1000 + (700 − 596) / 2）。标签和选项尽量用原版串（显示 / 显示模式 / 窗口 / 全屏 / 分辨率 /
-# 图形 / 图形预设 / 性能 / 品质 / 自定义 / 抗锯齿 / FXAA / SMAA / 各向异性过滤 / 4× 8× 16×，后几个是游戏电脑版选项的串），游戏有几种语言就有几种；原版没有的（放大方式、MetalFX、标准、推荐、各档分辨率、
-# 色彩 / 鲜艳 / 准确、各向异性的「原版」）在中英表里。
-# 切换框的消息发 TouchVideoMessage:<键>，游戏里没人认这一类：切换框会拿自己的值替换消息的第三段，勾选框那条无害的 PanelManager:ClosePanel:<名> 就成了不带名字的 ClosePanel（main+0xb1ee2c 按空名字找子控件，崩）。宿主读切换框的当前项，按应用 / 放弃 / 默认处理。「分辨率」下面留一行，
-# 改了没重启时宿主把「重启游戏后生效」挪进来（同语言行的提示）。有鼠标悬停，所以各行带原版式的悬停说明
 # Mac App (DM_OVERLAY_MAC): this page first gets two sections of picture settings, "Display" and "Graphics" (host dm_video.c), followed by the "Custom" section.
 # Modeled on the original console video page / PC graphics page: section headers (original heading style + gold divider), a label on the left of each row and the original left/right selector (CarouselWidget,
 # the same fields as the console "Graphics Mode", centered in the second column: x 1000 + (700 - 596) / 2) on the right. Labels and choices use original strings where they exist (Display / Display Mode / Windowed / Fullscreen / Resolution /
@@ -846,8 +837,9 @@ _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') els
 # the ones the game lacks (Upscaling, MetalFX, Standard, Recommended, the resolution tiers, Color / Vivid / Accurate, anisotropy's "Original") are in the string table.
 # A selector sends TouchVideoMessage:<key>, a category nothing in the game handles: a selector replaces the message's third part with its own value, so the checkboxes' harmless PanelManager:ClosePanel:<name> became ClosePanel with no name, which crashed (lookup of a NULL child name at main+0xb1ee2c). The host reads each selector's current choice and handles apply / discard / default. The Resolution row keeps a line below it,
 # where the host puts "Takes effect after restarting the game" while a change is waiting for a restart (like the language row's hint). There is mouse hover, so each row has an original-style hover description
-# iOS (DM_OVERLAY_IOS, set by dm/ios/run.sh when it generates the overlay): only the "Graphics" section, which is the header row itself -- 3D Resolution (75% / 85% / 100%), Graphic Presets, Upscaling
-# (whether the game's 3D upscale pass uses MetalFX), Frame Rate (60 / 30 power saver), Frame Drops (lower / keep the 3D resolution); no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
+# iOS (DM_OVERLAY_IOS, set by dm/ios/run.sh when it generates the overlay): only the "Graphics" section, which is the header row itself -- 3D Resolution (50%, 67%, 75%, 85%, 100%),
+# Color, Graphic Presets, Upscaling (whether the game's 3D upscale pass uses MetalFX), Anti-Aliasing, Anisotropic Filtering, Environment Shadows, Shadow Quality, Frame Rate
+# (60 / 30 power saver), Frame Drops (lower / keep the 3D resolution); no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
 # Mac 与 iOS 上这几行独占「视频」页签（页首标题 = 第一节的名字，在表格的标题行里）；自定义各行在第五个页签「附加」那一页（_EXTRAS_PANEL）
 # On the Mac and iOS these rows have the "Video" tab to themselves (the page title = the first section's name, in the table's title row); the custom rows are on the page of the fifth tab, "Extras" (_EXTRAS_PANEL)
 _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVideoModeTip'),

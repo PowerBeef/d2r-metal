@@ -1,0 +1,35 @@
+# GPU heap 0 at the Native cap (LIF-4, SHD-1): the CLI host at 3324x2494, the largest 4:3 picture DM_SCR_MAX_PX (3840 x 2160 pixels) allows and
+# the tightest shape measured (2026-11-03: 3840x2880 crashed at the run entry, 3504x2628 left a 3 MiB gap, 3840x2400 a 14 MiB one), on the
+# product's interface path for screens narrower than 16:9 (DM_UI_169=1 DM_UI_YPOS=bottom: 3324x1870 in the front end, 3324x2494 in a run), with
+# 3D 100%, Ultra shadows and environment shadows. In game the anti-aliasing mode byte is switched SMAA -> FXAA -> SMAA through the control port
+# (SMAA's targets are made on first use), then the run is left and entered again (the 16:9 <-> 4:3 switch rebuilds the display textures). The
+# gpuheap events (dm_gpuheap.c) record heap 0 after each change: pool_mb=768 is the positive control (the rewriter's budget); the largest free gap
+# is the room the next rebuild has, and dm_gpuheap.c logs a red line when it falls under 64 MiB (measured: 76 MiB at the smallest). Another size:
+# --env DM_GAME_RES=<w>x<h>. It departs from this Mac's Recommended because only DM_GAME_RES renders a size this display cannot show; heap
+# readings are measurements, so it runs in front and in real full screen (DM_TEST_FULLSCREEN_AT). Run it alone (about 3 GB of GPU memory).
+name heap0_cap
+requires cli
+front fullscreen
+save warlock
+timeout 400
+env DM_GAME_RES=3324x2494 DM_UI_169=1 DM_UI_YPOS=bottom DM_3D_SCALE=1.0 DM_SHADOW_SIZE=4096 DM_ENV_SHADOWS=1 DM_AA_MODE=off DM_TEST_FULLSCREEN_AT=1
+
+expect main_menu timeout=150
+enter_game
+sleep 3
+mem main+0x31e0848 1 chain=0x6614 write=02
+sleep 3
+mem main+0x31e0848 1 chain=0x6614 write=01
+sleep 2
+mem main+0x31e0848 1 chain=0x6614 write=02
+sleep 3
+open_pause
+press A
+expect game_leave timeout=30
+expect main_menu timeout=60
+enter_game
+sleep 3
+quit
+check no_red
+check no_red_log
+check event gpuheap pool_mb=768

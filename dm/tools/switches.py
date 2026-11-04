@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 # 环境开关（DM_*）登记表：从源码扫出谁读了哪些开关，生成 dm/switches.tsv；检查脚本里设的开关有没有人读（拼错 / 早已删掉的开关一设就静默无效）。
 #   读：C / ObjC 源码里的 "DM_…" 字面量（getenv 直接读与经名字表读的都算）、Python 的 os.environ.get / os.environ[…] / os.getenv、shell 与 Makefile 里的 $DM_… / ${DM_…}
-#   设：shell 的 DM_…= / export / env -u / --env DM_…= / DEVICECTL_CHILD_DM_…=（去掉前缀）、Python 的环境字典键 / dict(…, DM_…=) / 'DM_…=值' 串
 #   gen    重新生成 dm/switches.tsv（列：开关、读它的部分、读它的文件、文档里提到没有）
 #   check  登记表与源码一致，且每个「设」的开关都有人读；不符打 SWITCHES RED 与明细、退出码 1
 # Registry of environment switches (DM_*): scans the sources for who reads which switches and generates dm/switches.tsv; checks that every switch a script sets is read by something (a misspelt / long-removed switch silently does nothing when set).
 #   Reads: "DM_..." literals in C / ObjC sources (both direct getenv and reads through name tables count), Python's os.environ.get / os.environ[...] / os.getenv, $DM_... / ${DM_...} in shell and Makefiles
-#   Sets: shell DM_...= / export / env -u / --env DM_...= / DEVICECTL_CHILD_DM_...= (prefix removed), Python environment dict keys / dict(..., DM_...=) / 'DM_...=value' strings
+#   Sets: shell DM_...= / export / env -u / --env DM_...= / DEVICECTL_CHILD_DM_...= (prefix removed), Python environment dict keys / dict(..., DM_...=) / 'DM_...=value' strings,
+#         and the env lines of scenario files (*.scn: `env DM_...=value ...`, shell-quoted words, # comments ignored)
 #   gen    regenerate dm/switches.tsv (columns: switch, parts that read it, files that read it, mentioned in the docs or not)
 #   check  the registry matches the sources and every switch that is set is read by something; otherwise prints SWITCHES RED with details, exit code 1
 import ast
 import collections
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -91,6 +92,13 @@ def scan(root=DM):
                 for m in SH_READ.finditer(code): reads[m.group(1)].add(f)
                 for rx in (SH_SET, SH_UNSET):
                     for m in rx.finditer(code): sets[m.group(1)].append((f, i))
+        elif ext == '.scn':   # a scenario's env lines set switches for the game it runs
+            for i, line in enumerate(text.splitlines(), 1):
+                try: tok = shlex.split(line, comments=True)
+                except ValueError: tok = line.split('#')[0].split()
+                if tok and tok[0] == 'env':
+                    for t in tok[1:]:
+                        if m := re.match('(' + NAME + ')=', t): sets[m.group(1)].append((f, i))
         elif os.path.basename(f) == 'Makefile' or ext in ('.mk', '.yml', '.yaml', '.xcconfig'):
             for m in MK_READ.finditer(text): reads[m.group(1)].add(f)
         elif ext == '.md':

@@ -14,11 +14,17 @@
 //   fx9    (undefined) the store lookahead table has 9 entries, 8 colors + depth + stencil = 10
 //   fx19   (undefined) negative indices from the game (first viewport / vertex buffer, stage, slot) must be stopped on both the record and the replay side
 //   fx11   vertex stream 15 aborts the process inside Metal's own descriptor setter (buffer index 31 out of range)
+//   mfxcomp (thread) the present thread (present scaler) and the replay thread (3D-pass scaler) build their first MetalFX scalers at the same time:
+//          the Metal 4 compiler they share must be created once (it was a function-static with an unlocked check-then-create)
+//   mfxon  (thread) the Upscaling switches (mfx_on / mfx3d_on) are read from the present, replay and feedback threads: their env latch and last-logged value
+//   link   (thread) the display link's mode, the link object and the present-link switch: the translation thread (link_sync) changes them while
+//          the game thread (acquire: mtl_link_active, mtl_link_rate) and the main thread (iOS resign: mtl_present_inactive) read them (LIF-6)
 #include "../nvn/nvn_mtl.m"
 #include "../nvn/hle_nvn.c"
 #include <pthread.h>
 uint64_t g_t0_ns;   // 宿主 main.c 的进程起点（hle_nvn 逐帧 @t_s 用），单测替身 | process start time from host main.c (used by hle_nvn's per-frame @t_s); unit test stub
-void *front_metal_layer(void) { return NULL; }
+static void *g_t_layer;   // a layer only for the link case (NULL elsewhere: presents only count)
+void *front_metal_layer(void) { return g_t_layer; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
 module_t g_mod[MAX_MOD]; int g_nmod;
 void svc_thread_dump(void) {}
@@ -48,6 +54,17 @@ static void *treg_reader(void *a) {   // 翻译线程替身：调真实的两个
 }
 static void *use_reader(void *a) { (void)a; for (int i = 0; i < 200000; i++) use_rec("buf", 0x1000, 16, 0, NULL); return NULL; }
 static void *rt_reader(void *a) { (void)a; int n = 0; for (int i = 0; i < 1000; i++) n += rt_range_on(); return (void *)(intptr_t)n; }
+static _Atomic int g_mfx_bar;   // start gate (macOS has no pthread_barrier): each thread checks in, then spins until both have, so their first calls overlap
+static void mfx_gate(void) { atomic_fetch_add(&g_mfx_bar, 1); while (atomic_load(&g_mfx_bar) < 2) {} }
+static void *g_mfx_comp[2];   // the compiler each builder thread saw (mfx_compiler), compared after the join
+static void *mfx_pres_builder(void *a) { (void)a; mfx_gate(); int ok = 0; g_mfx_comp[0] = (__bridge void *)mfx_compiler();
+    for (int i = 0; i < MFX_SETTLE; i++) @autoreleasepool { ok = mfx_ready(&g_mfx_pres, MFX_M4, MTLPixelFormatRGBA8Unorm, 64, 36, 96, 54); } return (void *)(intptr_t)ok; }
+static void *mfx_3d_builder(void *a) { (void)a; mfx_gate(); int ok = 0; g_mfx_comp[1] = (__bridge void *)mfx_compiler();
+    for (int i = 0; i < MFX_SETTLE; i++) @autoreleasepool { ok = mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, 48, 27, 64, 36); } return (void *)(intptr_t)ok; }
+static void *mfx_switch_reader(void *a) { (void)a; mfx_gate(); int n = 0; for (int i = 0; i < 1000; i++) n += mfx_on() + mfx3d_on(); return (void *)(intptr_t)n; }
+static _Atomic int g_lk_stop;
+static void *lk_game(void *a) { (void)a; long n = 0; while (!atomic_load(&g_lk_stop)) { n += mtl_link_rate(); n += mtl_link_active(); } return (void *)n; }   // game thread: the acquire's link wait
+static void *lk_main(void *a) { (void)a; for (int i = 0; i < 4000; i++) mtl_present_inactive(i & 1); mtl_present_inactive(0); return NULL; }   // main thread: iOS resign / become active
 
 int main(int argc, char **argv) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     const char *mode = argc > 1 ? argv[1] : "";
@@ -69,6 +86,9 @@ int main(int argc, char **argv) { @autoreleasepool { setvbuf(stdout, NULL, _IONB
         pthread_join(th, NULL);
         EXPECT("DM_NVN_RT_RANGE：未设置时关 | DM_NVN_RT_RANGE: off when unset", 0, (uint64_t)on);
     } else if (!strcmp(mode, "bloom")) {
+        // The capture's pipeline comes from the helper kernels built on a background queue; the product waits for them once, for at most 3 s.
+        // Wait for the build here (up to 60 s) so this case does not depend on how loaded the machine is
+        for (int i = 0; i < 60000 && !atomic_load(&g_aux_done); i++) usleep(1000);
         // 泛光 1/4：起点（片元 2938a5b71b8e21b2，采样 S 画进 B0）只记下状态、不画；原生截取（019ce2f82edbda84，采样 B0）时从记下的 S 画。两次之间游戏登记了更高的贴图号（登记表搬家）
         // Bloom 1/4: the start (fragment 2938a5b71b8e21b2, samples S into B0) only records state and does not draw; the native capture (019ce2f82edbda84, samples B0) draws from the recorded S. Between the two the game registers a higher texture ID (the table moves)
         NvShader *f0 = shader(@"red", 1), *f1 = shader(@"red", 1); snprintf(f0->key, sizeof f0->key, "2938a5b71b8e21b2_b"); snprintf(f1->key, sizeof f1->key, "019ce2f82edbda84_b");
@@ -124,5 +144,29 @@ int main(int argc, char **argv) { @autoreleasepool { setvbuf(stdout, NULL, _IONB
             k.attr[0].fmt = 0x2E; k.attr[0].stream = streams[q]; if (streams[q] < 16) k.stream[streams[q]].stride = 16;
             MTLRenderPipelineDescriptor *d = pso_desc(&k, vs, fs, nil, 0); NSError *e = nil; id ps = d ? [g_dev newRenderPipelineStateWithDescriptor:d error:&e] : nil;
             char n[128]; snprintf(n, sizeof n, "顶点流 %d：管线建得出、进程不中止 | stream %d: the pipeline builds and the process does not abort", streams[q], streams[q]); EXPECT(n, 1, ps != nil); }
-    } else { fprintf(stderr, "用法 | usage: t_replay_san treg|gfxuse|rtrange|bloom|fx9|fx19|fx11\n"); return 2; }
+    } else if (!strcmp(mode, "mfxcomp")) {
+        if (![MTLFXSpatialScalerDescriptor supportsMetal4FX:g_dev]) { printf("no Metal 4 MetalFX spatial scaler on this machine: skipped\n== mfxcomp: 0 checks, 0 failed ==\n"); return 0; }
+        mfx_on(); mfx3d_on();   // the switches' own latches are mfxon's subject: take them here, before the threads start
+        atomic_store(&g_mfx_bar, 0); pthread_t a, b; void *ra, *rb;
+        pthread_create(&a, NULL, mfx_pres_builder, NULL); pthread_create(&b, NULL, mfx_3d_builder, NULL);
+        pthread_join(a, &ra); pthread_join(b, &rb);
+        EXPECT("MetalFX: the present scaler built on its thread", 1, (uint64_t)(g_mfx_pres.scaler != nil && ra));
+        EXPECT("MetalFX: the 3D-pass scaler built on its thread", 1, (uint64_t)(g_mfx_3d.scaler != nil && rb));
+        EXPECT("MetalFX: both threads got the same Metal 4 compiler", 1, (uint64_t)(g_mfx_comp[0] && g_mfx_comp[0] == g_mfx_comp[1]));
+    } else if (!strcmp(mode, "mfxon")) {
+        atomic_store(&g_mfx_bar, 0); pthread_t a, b; void *ra, *rb;
+        pthread_create(&a, NULL, mfx_switch_reader, NULL); pthread_create(&b, NULL, mfx_switch_reader, NULL);
+        pthread_join(a, &ra); pthread_join(b, &rb);
+        EXPECT("MetalFX switches: both threads read the same answers (off in the unit test)", 0, (uint64_t)((intptr_t)ra + (intptr_t)rb));
+    } else if (!strcmp(mode, "link")) {
+        CAMetalLayer *layer = [CAMetalLayer layer]; layer.device = g_dev; layer.drawableSize = CGSizeMake(64, 64); g_t_layer = (__bridge void *)layer;
+        __atomic_store_n(&g_dm_present_link, 1, __ATOMIC_RELAXED); g_rescue_mode = 1; g_rescue_back_at = 0;   // the first link_sync ends a stall rescue: a write the game thread reads
+        pthread_t g, m; pthread_create(&g, NULL, lk_game, NULL); pthread_create(&m, NULL, lk_main, NULL);
+        int made = 0;
+        for (int i = 0; i < 3000; i++) { link_sync(); made |= mtl_link_active(); if (i % 100 == 0) usleep(1000); }   // the translation thread: link_sync before each present
+        pthread_join(m, NULL); atomic_store(&g_lk_stop, 1); pthread_join(g, NULL);
+        EXPECT("link: the present link was made on its own thread", 1, made);
+        __atomic_store_n(&g_dm_present_link, 0, __ATOMIC_RELAXED); link_sync();   // back to mode 0: the link is invalidated on its run loop and its thread ends
+        EXPECT("link: mode 0 takes the link down", 0, mtl_link_active());
+    } else { fprintf(stderr, "用法 | usage: t_replay_san treg|gfxuse|rtrange|bloom|fx9|fx19|fx11|mfxcomp|mfxon|link\n"); return 2; }
     printf("== %s：%d 项，失败 %d ==\n", mode, count, fail); return fail != 0; } }

@@ -28,6 +28,14 @@ int main(void) {
     n = dm_kbm_match(l, 8, 'Q', 0, o, 4); CHECK(n == 0, "Q alone does not fire Shift + Q");
     n = dm_kbm_match(l, 8, 0x100, 0, o, 4); CHECK(n == 1 && o[0] == 7, "mouse 3");
     n = dm_kbm_match(l, 8, 'Z', 0, o, 4); CHECK(n == 0, "unbound key");
+    // where a press lands (dm_kbm_where): the HUD band is judged in interface height (on 16:10, interface y 0.878 is picture y 0.890: world)
+    CHECK(dm_kbm_where(0, 0, 0, 0.878f) == 0, "interface y 0.878: world, not the HUD");
+    CHECK(dm_kbm_where(0, 0, 0, 0.885f) == 0, "the band's edge itself: world");
+    CHECK(dm_kbm_where(0, 0, 0, 0.90f) == 2 && dm_kbm_where(0, 0, 0, 1.0f) == 2, "the PC HUD band");
+    CHECK(dm_kbm_where(0, 0, 0, 1.05f) == 0 && dm_kbm_where(0, 0, 0, -0.2f) == 0, "below / above the band: world");
+    CHECK(dm_kbm_where(5, 0, 0, 0.5f) == 1, "an item area: the panel");
+    CHECK(dm_kbm_where(3, 0, 0, 0.95f) == 2 && dm_kbm_where(3, 1, 0, 0.95f) == 1, "outside every panel in the HUD band: HUD; with panels up: the panel");
+    CHECK(dm_kbm_where(0, 0, 1, 0.5f) == 1 && dm_kbm_where(3, 0, 1, 0.5f) == 0, "nothing classified while something is open: the panel; outside every panel: world");
     printf("KBM %s fails=%d\n", fails ? "RED" : "PASS", fails);
     return fails != 0;
 }

@@ -8,9 +8,27 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench  # noqa: E402
+import picture  # noqa: E402
+
+ROUTE = str(Path(__file__).resolve().parents[1] / 'verify' / 'bench' / 'town_loop.scn')
+CHAIN = 'add73ceeb333'
+
+
+def fake_tree(root, chain=CHAIN, fixups='v1'):
+    """A host, its gfx tables, a rewrite output and a shader library laid out as in the repository and the workspace."""
+    r = Path(root)
+    for rel, data in (('host/dmhost', b'\x00..' + chain.encode() + b'..\x00'), ('gfx/nvn/shader_map.tsv', b'map\n'), ('product/main.fixups.tsv', fixups.encode()),
+                      (f'msl/b-{CHAIN}/x.metallib', b'lib')):
+        (r / rel).parent.mkdir(parents=True, exist_ok=True); (r / rel).write_bytes(data)
+    return str(r / 'host' / 'dmhost'), str(r / 'product'), str(r / 'msl')
+
+
+def raise_if_called(*a, **k):
+    raise AssertionError('must not be called')
 
 
 class BenchTest(unittest.TestCase):
@@ -83,6 +101,166 @@ class BenchTest(unittest.TestCase):
         self.assertEqual((bench.role('主线程'), bench.role('Thread_0x01'), bench.role('FMOD mixer thread'), bench.role('BGS Thread')), ('main', 'workers', 'audio', 'other'))
 
 
+    def test_baseline_snapshot(self):   # the snapshot keeps the host, its tables, the rewrite output and the shader library; saving twice into one folder never nests
+        with tempfile.TemporaryDirectory() as t:
+            host, prod, msl = fake_tree(t); d = os.path.join(t, 'base', 'r1')
+            ok, why = bench.snapshot(host, prod, msl, CHAIN, '3.3.94012-r49', d, git={'rev': 'r1', 'dirty': False})
+            self.assertTrue(ok, why)
+            for rel in ('host/dmhost', 'gfx/nvn/shader_map.tsv', 'product/main.fixups.tsv', f'msl/b-{CHAIN}/x.metallib'): self.assertTrue(os.path.isfile(os.path.join(d, rel)), rel)
+            meta = json.load(open(os.path.join(d, 'meta.json'), encoding='utf-8'))
+            self.assertEqual((meta['chain'], meta['product'], meta['rev']), (CHAIN, '3.3.94012-r49', 'r1'))
+            self.assertEqual(bench.baseline_env(d), {'SCN_PRODUCT': os.path.join(d, 'product'), 'DM_MSL_DIR': os.path.join(d, 'msl')})
+            Path(prod, 'main.fixups.tsv').write_text('v2', encoding='utf-8')
+            ok, why = bench.snapshot(host, prod, msl, CHAIN, '3.3.94012-r49', d, git={'rev': 'r1', 'dirty': True})
+            self.assertTrue(ok, why)
+            self.assertEqual(Path(d, 'product', 'main.fixups.tsv').read_text(encoding='utf-8'), 'v2')
+            self.assertFalse(os.path.exists(os.path.join(d, 'product', 'product')))
+            self.assertFalse(os.path.exists(d + '.new') or os.path.exists(d + '.old'))
+            other, _, _ = fake_tree(os.path.join(t, 'other'), chain='0123456789ab')
+            before = sorted(os.listdir(d))
+            self.assertEqual(bench.snapshot(other, prod, msl, CHAIN, '3.3.94012-r49', d), (False, 'host was built from another shader chain'))
+            self.assertEqual(sorted(os.listdir(d)), before)
+            self.assertFalse(bench.snapshot(host, prod, os.path.join(t, 'nolib'), CHAIN, '3.3.94012-r49', d)[0])
+            os.remove(os.path.join(d, 'meta.json')); self.assertIsNone(bench.baseline_env(d))
+
+    def test_regress_unsnapshotted(self):   # a kept host without its rewrite output / shader library is grey before any run starts
+        with tempfile.TemporaryDirectory() as t:
+            Path(t, 'r1', 'host').mkdir(parents=True); Path(t, 'r1', 'host', 'dmhost').write_bytes(b'x'); os.symlink('r1', os.path.join(t, 'current'))
+            out = io.StringIO()
+            with mock.patch.object(bench, 'BASE', t), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None), \
+                 mock.patch.object(bench.scenario, 'Runner', raise_if_called), mock.patch.object(bench, 'current_host', raise_if_called), contextlib.redirect_stdout(out):
+                rc = bench.main(['regress', ROUTE, '--reps', '6'])
+        self.assertEqual(rc, 3, out.getvalue()); self.assertIn('no rewrite output / shader library snapshot', out.getvalue())
+
+
+    def regress_out(self, argv, segs, go=None):
+        """bench.py regress over fake runs whose segments come from segs(run number): (exit code, output, regress.json). go(attempt) gives a run's (result, code)."""
+        n = [0]; tries = [0]
+        class FakeRunner:
+            def __init__(self, route, backend, out_dir, headless): self.on_started = None
+            def go(self): tries[0] += 1; return go(tries[0]) if go else ({}, 0)
+        def fake_segments(d): n[0] += 1; return segs(n[0])
+        with tempfile.TemporaryDirectory() as t:
+            self.snapshotted(t); host = Path(t, 'dmhost'); host.write_bytes(b'x'); out = io.StringIO()
+            with mock.patch.object(bench.scenario, 'Runner', FakeRunner), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None), \
+                 mock.patch.object(bench, 'wait_cool', lambda s: (None, 0)), mock.patch.object(bench, 'thermal', lambda: None), \
+                 mock.patch.object(bench, 'environment', lambda: {'git': {'rev': 'x'}}), mock.patch.object(bench, 'DM_ROOT', t), mock.patch.object(bench, 'BASE', t), \
+                 mock.patch.object(bench, 'current_host', lambda: str(host)), mock.patch.object(bench, 'segments', fake_segments), contextlib.redirect_stdout(out):
+                rc = bench.main(['regress', ROUTE, '--reps', '6'] + argv)
+            with open(next(Path(t, 'run', 'bench').glob('town_loop_regress_*/regress.json')), encoding='utf-8') as f: rj = json.load(f)
+        return rc, out.getvalue(), rj
+
+    def test_regress_not_judged(self):   # a requested comparison with no p (too few runs had a value) never reads OK: grey, naming it
+        def seg(i, present=False):   # values that interleave between A and B: no difference
+            v = 1.0 + (i % 3) * 0.01
+            return dict({k: {'p50': v} for k in ('cpu_ms', 'nvn_ms', 'proc_cpu_ms')}, present={'p95_ms': v} if present else {})
+        rc, out, rj = self.regress_out([], lambda i: {'town': seg(i), 'wild': seg(i)})
+        self.assertEqual(rc, 0, out); self.assertIn('BENCH-REGRESS OK', out); self.assertEqual((rj['verdict'], rj['not_judged']), ('OK', {}))
+        rc, out, rj = self.regress_out(['--metrics', 'cpu_ms.p50,present.p95_ms'], lambda i: {'town': seg(i), 'wild': seg(i)})   # present.* empty, as at Recommended
+        self.assertEqual(rc, 3, out); self.assertIn('⚪ BENCH-REGRESS town_loop: not judged', out); self.assertIn('present.p95_ms (town, wild)', out)
+        self.assertNotIn('BENCH-REGRESS OK', out); self.assertEqual(rj['not_judged'], {'present.p95_ms': ['town', 'wild']})
+        rc, out, _ = self.regress_out(['--metrics', 'present.p95_ms'], lambda i: {'town': seg(i, True), 'wild': seg(i, True)})
+        self.assertEqual(rc, 0, out)
+        rc, out, rj = self.regress_out([], lambda i: {'town': seg(i)})   # a route segment missing from every run
+        self.assertEqual(rc, 3, out); self.assertEqual(rj['not_judged'], {m: ['wild'] for m in ('cpu_ms.p50', 'nvn_ms.p50', 'proc_cpu_ms.p50')})
+        def slow(i): return {'town': dict(cpu_ms={'p50': (2.0 if ('ABBA' * 3)[i - 1] == 'B' else 1.0) + i / 1000})}   # B clearly slower (run i follows the ABBA order)
+        rc, out, rj = self.regress_out(['--metrics', 'cpu_ms.p50,present.p95_ms'], lambda i: {**slow(i), 'wild': seg(i)})   # a slowdown is red even with a comparison not judged
+        self.assertEqual((rc, rj['verdict']), (1, 'RED'), out); self.assertIn('town cpu_ms.p50 +', out); self.assertIn('not judged: present.p95_ms (town, wild)', out)
+        self.assertEqual(bench.not_judged([], ['cpu_ms.p50'], []), {'cpu_ms.p50': ['(no segment)']})
+
+    def test_regress_disturbed(self):   # a run the desk still disturbed after its redos is a not_judged reason: grey (exit 3), never OK; a slowdown stays red
+        def seg(i):
+            v = 1.0 + (i % 3) * 0.01
+            return {'town': {k: {'p50': v} for k in ('cpu_ms', 'nvn_ms', 'proc_cpu_ms')}, 'wild': {k: {'p50': v} for k in ('cpu_ms', 'nvn_ms', 'proc_cpu_ms')}}
+        dist = dict(disturbed=[dict(t=1.0, step=1, what='desk other_app by com.example')])
+        with mock.patch.object(bench, 'REDO', bench.REDO):   # main() sets the module's REDO from --redo: put it back afterwards
+            rc, out, rj = self.regress_out(['--redo', '0'], seg, go=lambda k: (dist, 0) if k == 3 else ({}, 0))
+        self.assertEqual((rc, rj['verdict']), (3, 'UNAVAILABLE'), out); self.assertIn('⚪ BENCH-REGRESS town_loop: not judged, 1 runs disturbed', out)
+        self.assertEqual(rj['not_judged'], {'disturbed': ['03B: desk other_app by com.example']}); self.assertNotIn('BENCH-REGRESS OK', out)
+
+    def test_holm_and_min_reps(self):
+        rows = [dict(p=p) for p in (0.001, 0.01, 0.02, 0.04)]; bench.holm(rows)
+        self.assertEqual([r['holm'] for r in rows], [True, True, True, True])
+        rows = [dict(p=p) for p in (0.04, 0.03, 0.02, 0.01)] + [dict(verdict='not enough runs')]; bench.holm(rows)   # in any order; a row without p is left alone
+        self.assertEqual([r.get('holm') for r in rows], [False, False, False, True, None]); self.assertNotIn('holm', rows[4])
+        self.assertEqual([bench.min_reps(m) for m in (1, 4, 6, 8)], [4, 5, 5, 6])   # 2/70 = 0.0286; 2/252 = 0.0079 <= 0.0125 and <= 0.00833; 2/924 = 0.0022 <= 0.00625
+
+    def snapshotted(self, t):
+        host, prod, msl = fake_tree(os.path.join(t, 'src'))
+        ok, why = bench.snapshot(host, prod, msl, CHAIN, '3.3.94012-r49', os.path.join(t, 'r1'), git={'rev': 'r1'}); self.assertTrue(ok, why)
+        os.symlink('r1', os.path.join(t, 'current'))
+
+    def test_regress_runs_guard(self):   # too few runs for the comparisons regress makes: refused before any run, naming the reps it needs
+        for argv, want in ((['--reps', '4'], 'use --reps 5'), (['--metrics', 'cpu_ms.p50,nvn_ms.p50,gpu_ms.p50,proc_cpu_ms.p50', '--reps', '5'], 'use --reps 6'),
+                           (['--metrics', 'cpu_ms.p50,nope.p50'], 'unknown metric')):
+            with tempfile.TemporaryDirectory() as t:
+                self.snapshotted(t); out = io.StringIO()
+                with mock.patch.object(bench, 'BASE', t), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None), \
+                     mock.patch.object(bench.scenario, 'Runner', raise_if_called), mock.patch.object(bench, 'current_host', raise_if_called), contextlib.redirect_stdout(out):
+                    rc = bench.main(['regress', ROUTE] + argv)
+            self.assertEqual(rc, 2, out.getvalue()); self.assertIn(want, out.getvalue())
+
+
+    def test_picture_env(self):
+        self.assertEqual(bench.picture_env('rec', 'cli', {}), {**picture.REC, 'DM_TEST_FULLSCREEN_AT': '1'})
+        self.assertEqual(bench.picture_env('rec', 'mac-app', {}), {'DM_TEST_VIDEO_FIRSTBOOT': '1'})
+        self.assertEqual(bench.picture_env('orig', 'cli', {}), {})
+        got = bench.picture_env('rec', 'cli', {'DM_TEST_WINSIZE': '1280x720'})
+        self.assertEqual(got['DM_TEST_WINSIZE'], '1280x720'); self.assertNotIn('DM_TEST_FULLSCREEN_AT', got)
+
+    def test_picture_reaches_host(self):   # run, ab, profile and regress all hand the picture to the host; regress's A runs also get the baseline's snapshot
+        seen = []
+        class FakeRunner:
+            def __init__(self, route, backend, out_dir, headless): seen.append((out_dir, dict(os.environ))); self.on_started = None
+            def go(self): return {}, 0
+        with tempfile.TemporaryDirectory() as t:
+            host = Path(t, 'dmhost'); host.write_bytes(b'x')
+            base = os.path.join(t, 'baseline'); os.makedirs(base); self.snapshotted(base)
+            patches = [mock.patch.object(bench.scenario, 'Runner', FakeRunner), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None),
+                       mock.patch.object(bench, 'wait_cool', lambda s: (None, 0)), mock.patch.object(bench, 'thermal', lambda: None),
+                       mock.patch.object(bench, 'environment', lambda: {'git': {'rev': 'x'}}), mock.patch.object(bench, 'DM_ROOT', t), mock.patch.object(bench, 'BASE', base),
+                       mock.patch.object(bench, 'current_host', lambda: str(host)), mock.patch.object(bench, 'attribute', lambda d, h: dict(threads={}, segments={}, hitches=[]))]
+            with contextlib.ExitStack() as st, contextlib.redirect_stdout(io.StringIO()):
+                for pt in patches: st.enter_context(pt)
+                def call(argv, want=0):
+                    seen.clear(); rc = bench.main(argv); self.assertEqual(rc, want, argv); self.assertNotIn('DM_GAME_RES', os.environ); return list(seen)
+                rec = {k: v for k, v in picture.REC.items()}
+                [(_, got)] = call(['run', ROUTE, '--reps', '1'])
+                self.assertEqual((got['DM_GAME_RES'], got['DM_TEST_FULLSCREEN_AT']), ('2560x1440', '1')); self.assertLessEqual(rec.items(), got.items())
+                [(_, got)] = call(['run', ROUTE, '--reps', '1', '--env', 'DM_GAME_RES=1600x900'])
+                self.assertEqual(got['DM_GAME_RES'], '1600x900')
+                [(_, got)] = call(['run', ROUTE, '--reps', '1', '--picture', 'orig'])
+                self.assertNotIn('DM_AA_MODE', got)
+                runs = call(['ab', ROUTE, '--reps', '1', '--b-env', 'DM_AA_MODE=1'])
+                self.assertEqual(len(runs), 2); self.assertTrue(all(got['DM_NVN_ANISO'] == '16' for _, got in runs))
+                self.assertEqual([got['DM_AA_MODE'] for _, got in runs], ['2', '1'])
+                [(_, got)] = call(['profile', ROUTE])
+                self.assertEqual((got['DM_SAMPLE'], got['DM_SHADOW_SIZE']), ('4:*', '4096'))
+                runs = call(['regress', ROUTE, '--reps', '6'], 3)   # the fake runs measure nothing, so no comparison is judged: grey, not OK
+                self.assertEqual(len(runs), 12)
+                for d, got in runs:
+                    self.assertEqual(got['DM_ENV_SHADOWS'], '1', d)
+                    if d.endswith('A'): self.assertEqual((got['SCN_PRODUCT'], got['DM_MSL_DIR']), (os.path.join(os.path.realpath(base), 'r1', 'product'), os.path.join(os.path.realpath(base), 'r1', 'msl')))
+                    else: self.assertNotIn('SCN_PRODUCT', got)
+                rj = json.load(open(next(Path(t, 'run', 'bench').glob('town_loop_regress_*/regress.json')), encoding='utf-8'))
+                self.assertEqual(rj['picture'], 'rec')
+
+
+    def test_dir_token(self):   # {dir} in an env value becomes the run's own folder (DM_NVN_PASSGPU={dir}/passgpu.tsv), per variant and run
+        seen = []
+        class FakeRunner:
+            def __init__(self, route, backend, out_dir, headless): seen.append((out_dir, dict(os.environ).get('DM_NVN_PASSGPU'))); self.on_started = None   # read through a copy: a test is not a reader in dm/switches.tsv
+            def go(self): return {}, 0
+        with tempfile.TemporaryDirectory() as t, contextlib.redirect_stdout(io.StringIO()), \
+             mock.patch.object(bench.scenario, 'Runner', FakeRunner), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None), \
+             mock.patch.object(bench, 'wait_cool', lambda s: (None, 0)), mock.patch.object(bench, 'thermal', lambda: None), \
+             mock.patch.object(bench, 'environment', lambda: {'git': {'rev': 'x'}}), mock.patch.object(bench, 'DM_ROOT', t):
+            self.assertEqual(bench.main(['ab', ROUTE, '--reps', '1', '--a-env', 'DM_NVN_PASSGPU={dir}/pg.tsv', '--b-env', 'DM_NVN_PASSGPU={dir}/pg.tsv']), 0)
+        self.assertEqual(len(seen), 2)
+        for d, v in seen: self.assertEqual(v, os.path.join(d, 'pg.tsv'))
+        self.assertNotIn('DM_NVN_PASSGPU', os.environ)
+
+
 class FakeRunner:
     """Stands in for scenario.Runner in run_once: each go() takes the next outcome of OUTCOMES ('ok', 'red' or 'disturbed'), records the
     DM_TEST_BGRUN it saw and leaves a marker file naming its attempt in its run folder."""
@@ -153,7 +331,7 @@ class BenchRedoTest(unittest.TestCase):
 
     def test_cmd_run_not_judged(self):
         FakeRunner.OUTCOMES = ['ok'] + ['disturbed'] * 3
-        a = types.SimpleNamespace(route='town.scn', backend='cli', reps=2, env=None, host=None, out=str(self.dir / 'bench.json'), cool=0, mpt=False)
+        a = types.SimpleNamespace(route='town.scn', backend='cli', reps=2, env=None, host=None, out=str(self.dir / 'bench.json'), cool=0, mpt=False, picture='rec')
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf): rc = bench.cmd_run(a)
         self.assertEqual(rc, 3); self.assertIn('⚪ BENCH town not judged: 1 of 2 runs disturbed', buf.getvalue())
@@ -161,7 +339,7 @@ class BenchRedoTest(unittest.TestCase):
 
     def test_ab_slot_order_after_redo(self):
         FakeRunner.OUTCOMES = ['ok', 'disturbed', 'ok', 'ok', 'ok']   # the second slot (B) is redone once in place
-        a = types.SimpleNamespace(route='town.scn', backend='cli', reps=2, a_env='', b_env='', a_host=None, b_host=None, metric='gpu_ms.p50', out=str(self.dir / 'ab.json'), cool=0)
+        a = types.SimpleNamespace(route='town.scn', backend='cli', reps=2, a_env='', b_env='', a_host=None, b_host=None, metric='gpu_ms.p50', out=str(self.dir / 'ab.json'), cool=0, picture='rec')
         with contextlib.redirect_stdout(io.StringIO()): rc = bench.cmd_ab(a)
         self.assertEqual(rc, 0)
         slots = [os.path.basename(o) for o, _ in FakeRunner.seen]

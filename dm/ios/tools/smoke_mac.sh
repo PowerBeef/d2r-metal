@@ -11,7 +11,12 @@
 #   For building regression packages (after a regression package is built, no separate smoke test is run to occupy the second Mac's lock; the first run of that pass itself verifies package launch through entering the game; the merge smoke-test gate is still managed by merge.sh).
 # Usage: smoke_mac.sh <count>. SMOKE_MAC_HOST=local (default) | <ssh target, e.g. user@host>: the remote only runs, does not build -- build and wrap locally, rsync it over, and pull the results back to the local machine for the ledger.
 # What it can stand in for the real device on: the iOS shell (main.m / front_ios.m / UIKit / resource location / lifecycle) launches, gets into the game, is not killed by the watchdog, really produces sound. What it cannot: thermal state, real touch points, A19 GPU time, installation.
-set -u   # 变量后紧跟中文标点一律写 ${名}：无 UTF-8 区域（ssh 非交互）时 bash 会把标点字节并进变量名（mini「$segs；」报未绑定） | Whenever a variable is immediately followed by Chinese punctuation always write ${name}: without a UTF-8 locale (non-interactive ssh) bash merges the punctuation bytes into the variable name (on the second Mac 「$segs；」 was reported as unbound)
+# SMOKE_MAC_FAMILY=1 (default) builds the iPhone-only package .iosdd_mac/DmMacSmoke.app that the smoke runs, scenario.py's ios-mac backend and the gate use.
+#   SMOKE_MAC_FAMILY=1,2 builds the iPad-idiom package .iosdd_mac_pad/DmMacSmokePad.app instead (DM_DEVICE_FAMILY=1,2: iPhone and iPad, so the Mac runs it
+#   with the iPad idiom, in a 1366x1024 pt window), for the uireg iPad profiles (UIREG_APP_IPAD) and the iPad window scenarios (SCN_MAC_APP). It needs
+#   SMOKE_MAC_PKG_ONLY=1 (the smoke criteria are written for the iPhone package) and refuses while that package is still mounted (rebuilding a mounted
+#   Wrapper leaves a stale mount; wait until `mount | grep -F .iosdd_mac_pad/` prints nothing). Move .iosdd_mac_pad to the Trash when done with it.
+set -u  # 变量后紧跟中文标点一律写 ${名}：无 UTF-8 区域（ssh 非交互）时 bash 会把标点字节并进变量名（mini「$segs；」报未绑定） | Whenever a variable is immediately followed by Chinese punctuation always write ${name}: without a UTF-8 locale (non-interactive ssh) bash merges the punctuation bytes into the variable name (on the second Mac 「$segs；」 was reported as unbound)
 N=${1:-1}
 # 真机档位（缺省开）：Mac 上的窗口不是手机的比例和安全区，布局缩放 / 控件内缩 / 命中框和真机不是一套数，「mini 过、真机不同」多次出在这里。
 # 缺省带上真机的画面分辨率与左右安全区（iPhone 17 Pro Max：2868x1320、左右各 62 点），前端按这块画面矩形摆控件、换算触点。DM_MAC_DEVICE_PROFILE=0 回到按 Mac 窗口原样跑
@@ -32,7 +37,7 @@ DEVP=""; [ "${DM_MAC_DEVICE_PROFILE:-1}" != 0 ] && DEVP="--env DM_GAME_RES=2868x
 # 新加一个 source / 调用的同目录文件，就加进这里—— 漏了后加的三份，远端一起就报「DM_BUNDLE_ID 未设」，在台账留了假红。
 # The same-directory files this script needs at run time, listed in this one place only: before starting, each is checked to be present (a missing one is a failure on the spot, not reported halfway through the run), and when dispatching to the remote machine the sync also goes by this list.
 # When a new same-directory file is sourced / called, add it here -- the three added later were missed, the remote side reported 「DM_BUNDLE_ID 未设」(DM_BUNDLE_ID not set) as soon as it started, and a false failure was left in the ledger.
-SMOKE_MAC_DEPS="local_env.sh logport.py devlock.sh macwin.sh devbattery.sh cloud_guard.sh save_key.sh launch_guard.sh smoke_touch.txt uireg"
+SMOKE_MAC_DEPS="local_env.sh logport.py s3_steps.py devlock.sh macwin.sh devbattery.sh cloud_guard.sh save_key.sh launch_guard.sh smoke_touch.txt uireg"
 _sm_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); _sm_miss=
 for _sm_f in $SMOKE_MAC_DEPS; do [ -e "$_sm_dir/$_sm_f" ] || _sm_miss="$_sm_miss $_sm_f"; done
 [ -z "$_sm_miss" ] || { echo "SMOKE-MAC RED 0/${1:-1} 用时 0 秒"; echo "【红】冒烟脚本的依赖文件缺了：${_sm_miss}（目录 ${_sm_dir}），没有起跑"; exit 2; }
@@ -147,8 +152,10 @@ run_stage() {
     # 玩家路径日志不许有红行（产品缺省路径上的常驻红行 = 没人看的告警；曾经每次启动有 14 条面板栈假红）
     # The player path log must have no failure lines (a permanent failure line on the product default path = an alarm nobody looks at; there used to be 14 false panel-stack failures at every launch)
     red_n=$(LC_ALL=C grep -a -c '【红】' "$RUN/player.txt" 2>/dev/null)
-    if [[ "$pr" == result=0* ]] && [ "${au_real:-0}" -gt 0 ] && [ "${au_null:-0}" = 0 ] && [ "${hud_ok:-0}" -gt 0 ] && [ "${red_n:-0}" = 0 ]; then PLAYER_RES=OK; echo "玩家路径 OK：进局 35 s + 暂停菜单 20 s 仍活着；AudioOut 真出声 ${au_real} 路（${pr}）"
-    else PLAYER_RES=RED; echo "玩家路径 RED：${pr}；AudioOut 真出声 ${au_real:-0} 路 / 静音接收端 ${au_null:-0} 路（须真出声 > 0、静音 0）；读到玩家状态 ${hud_ok:-0} 行（须 > 0）；红行 ${red_n:-0} 条（须 0）：$(LC_ALL=C grep -a -m1 '【红】' "$RUN/player.txt" 2>/dev/null | cut -c1-80)"; fi
+    # Frame Drops steps judged by the [perf] windows around them (s3_steps.py has the rules): prints "bad notjudged"
+    read -r s3bad s3nj <<< "$(python3 -I "$TOOLS/s3_steps.py" "$RUN/player.txt")"
+    if [[ "$pr" == result=0* ]] && [ "${au_real:-0}" -gt 0 ] && [ "${au_null:-0}" = 0 ] && [ "${hud_ok:-0}" -gt 0 ] && [ "${red_n:-0}" = 0 ] && [ "${s3bad:-1}" = 0 ]; then PLAYER_RES=OK; echo "玩家路径 OK：进局 35 s + 暂停菜单 20 s 仍活着；AudioOut 真出声 ${au_real} 路（${pr}）；Frame Drops steps judged bad: 0 (not judged: ${s3nj:-0})"
+    else PLAYER_RES=RED; echo "玩家路径 RED：${pr}；AudioOut 真出声 ${au_real:-0} 路 / 静音接收端 ${au_null:-0} 路（须真出声 > 0、静音 0）；读到玩家状态 ${hud_ok:-0} 行（须 > 0）；红行 ${red_n:-0} 条（须 0）：$(LC_ALL=C grep -a -m1 '【红】' "$RUN/player.txt" 2>/dev/null | cut -c1-80)；Frame Drops stepped down with nothing on screen or at full frame rate: ${s3bad:-?} (not judged: ${s3nj:-?})"; fi
     segs="${segs:+${segs}；}玩家路径:$PLAYER_RES"
   fi
   # 触摸玩家路径：从空存档起，只用触点——点职业、创建、选模式、起名 → 进局；不碰摇杆点三下空地坐标不变；点脚下的小站开小站面板（进局落在小站上，营地 NPC 都不在画面里；按类号 tap_unit 落真实触点，走世界点按 → 交互同一条路）。
@@ -208,6 +215,15 @@ if [ "${SMOKE_MAC_STAGE:-}" = run ]; then trap 'eval "$CLEAN"' EXIT; trap 'exit 
 # ---------- Outer layer: build → wrap in Wrapper → run (local | remote) → record in ledger ----------
 HOST=${SMOKE_MAC_HOST:-local}
 TREE=$(git rev-parse --show-toplevel 2>/dev/null || pwd); DD=$TREE/.iosdd_mac   # 与真机冒烟的 .iosdd 分开：两种目标的中间产物互不覆盖 | Separate from the real device smoke test's .iosdd: intermediate outputs of the two targets do not overwrite each other
+# The device family (header): checked before the ledger trap below, so a refused call leaves no ledger row
+FAMILY=${SMOKE_MAC_FAMILY:-1}; PKG=DmMacSmoke
+case "$FAMILY" in
+  1) ;;
+  1,2) [ "${SMOKE_MAC_PKG_ONLY:-0}" = 1 ] || { echo "SMOKE-MAC RED 0/$N 用时 0 秒"; echo "【红】SMOKE_MAC_FAMILY=1,2 builds the iPad-idiom package only: set SMOKE_MAC_PKG_ONLY=1"; exit 2; }
+       DD=$TREE/.iosdd_mac_pad; PKG=DmMacSmokePad
+       mount | LC_ALL=C grep -qF "$DD/$PKG.app/" && { echo "SMOKE-MAC RED 0/$N 用时 0 秒"; echo "【红】$DD/$PKG.app is still mounted (an instance ran from it): wait until mount no longer lists it, then rebuild"; exit 2; } ;;
+  *) echo "SMOKE-MAC RED 0/$N 用时 0 秒"; echo "【红】SMOKE_MAC_FAMILY must be 1 (iPhone) or 1,2 (iPhone and iPad), not '$FAMILY'"; exit 2 ;;
+esac
 RUN="${DM_ROOT:-$HOME/dm-work}/run/ios/smoke_mac/$(date +%Y%m%d_%H%M%S)_$$"; mkdir -p "$RUN"
 LEDGER=${SMOKE_LEDGER:-${DM_ROOT:-$HOME/dm-work}/run/ios/smoke_ledger.tsv}; LEDGER_RES=中断; ok=0; T0=$(date +%s)
 ledger_write() {   # 与 smoke.sh 同表；结果列带「Mac:」前缀（merge.sh 现在只认无前缀的真机 OK），末列 = 设备 | Same table as smoke.sh; the result column carries the "Mac:" prefix (merge.sh now only accepts unprefixed real device OK), last column = device
@@ -221,14 +237,14 @@ trap 'eval "$CLEAN"; ledger_write' EXIT; trap 'exit 143' INT TERM
 echo "SMOKE-MAC 开始 $N 次（${HOST}），结果目录 $RUN"
 UIREG_REDMARK=${DM_ROOT:-$HOME/dm-work}/run/ios/uireg_b_last_red.txt; [ -s "$UIREG_REDMARK" ] && echo "上次界面回归 b 局红（只报不拦）：$(cat "$UIREG_REDMARK")"
 ( cd "$TREE/dm/ios" && DM_GEN_ONLY=1 DM_IOS_DD="$DD" bash run.sh build && source tools/asc_env.sh && asc_auth &&
-  # 设备族固定只面向 iPhone，不跟工程的缺省值走：冒烟与界面回归的「iPhone 档」窗口和坐标换算按它定（公开仓库的工程缺省是 iPhone + iPad）
-  # The device family is fixed to iPhone only and does not follow the project default: the window and coordinate mapping of the "iPhone profile" in the smoke test and the UI regression are defined by it (the project default in the public repository is iPhone + iPad)
+  # The device family does not follow the project default (iPhone + iPad): iPhone only (SMOKE_MAC_FAMILY=1) defines the window and coordinate mapping
+  # of the smoke test's and the UI regression's "iPhone profile"; 1,2 is the iPad-idiom package (header)
   xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination 'platform=macOS,arch=arm64,variant=Designed for iPad' \
-    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} DM_DEVICE_FAMILY=1 build ) > "$RUN/build.log" 2>&1 \
+    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} DM_DEVICE_FAMILY="$FAMILY" build ) > "$RUN/build.log" 2>&1 \
   || { LEDGER_RES=构建失败; echo "【红】构建失败：$RUN/build.log"; grep -E "error:|🔴" "$RUN/build.log" | head -5; echo "SMOKE-MAC RED 0/$N 用时 $(( $(date +%s) - T0 )) 秒"; exit 2; }
 # 直接 open 构建产物会报 incorrect executable format：要包成 <名>.app/Wrapper/DmIOS.app + WrappedBundle 软链
 # Directly opening the build output reports incorrect executable format: it must be wrapped as <name>.app/Wrapper/DmIOS.app + a WrappedBundle symlink
-W="$DD/DmMacSmoke.app"; rm -rf "$W"; mkdir -p "$W/Wrapper" && cp -cR "$DD/Build/Products/Release-iphoneos/DmIOS.app" "$W/Wrapper/" && ln -s Wrapper/DmIOS.app "$W/WrappedBundle" \
+W="$DD/$PKG.app"; rm -rf "$W"; mkdir -p "$W/Wrapper" && cp -cR "$DD/Build/Products/Release-iphoneos/DmIOS.app" "$W/Wrapper/" && ln -s Wrapper/DmIOS.app "$W/WrappedBundle" \
   || { LEDGER_RES=构建失败; echo "【红】包 Wrapper 失败"; exit 2; }
 if [ "${SMOKE_MAC_PKG_ONLY:-0}" = 1 ] && [ "$HOST" = local ]; then trap 'eval "$CLEAN"' EXIT; echo "SMOKE-MAC 只出包 $W"; exit 0; fi
 if [ "$HOST" = local ]; then
@@ -242,7 +258,7 @@ else
   TB=$(command -v timeout || command -v gtimeout)
   { $S "mkdir -p $RD/tools" && ${TB:+$TB 180} rsync -a --delete "$W" "$HOST:$RD/" && ${TB:+$TB 30} rsync -a "$TOOLS/smoke_mac.sh" $(for _sm_f in $SMOKE_MAC_DEPS; do printf '%s ' "$TOOLS/$_sm_f"; done) "$HOST:$RD/tools/"; } > "$RUN/rsync.log" 2>&1 \
     || { trc=$?; LEDGER_RES=传包失败; echo "【红】传包到 $HOST 失败（退出码 ${trc}；124 = 超时）：$(tail -2 "$RUN/rsync.log" | tr '\n' ' ' | cut -c1-200)"; echo "SMOKE-MAC RED 0/$N 用时 $(( $(date +%s) - T0 )) 秒"; exit 2; }
-  if [ "${SMOKE_MAC_PKG_ONLY:-0}" = 1 ]; then trap 'eval "$CLEAN"' EXIT; echo "SMOKE-MAC 只出包 $HOST:$RD/DmMacSmoke.app"; exit 0; fi
+  if [ "${SMOKE_MAC_PKG_ONLY:-0}" = 1 ]; then trap 'eval "$CLEAN"' EXIT; echo "SMOKE-MAC 只出包 $HOST:$RD/$PKG.app"; exit 0; fi
   $S "SMOKE_MAC_STAGE=run SMOKE_MAC_WRAP=\$HOME/$RD/DmMacSmoke.app SMOKE_MAC_RUN=\$HOME/$RR SMOKE_OWNER='${SMOKE_OWNER:-未署名}' SMOKE_PLAYER=${SMOKE_PLAYER:-1} DM_MAC_DEVICE_PROFILE=${DM_MAC_DEVICE_PROFILE:-1} ${SMOKE_KEYS:+SMOKE_KEYS='$SMOKE_KEYS'} bash \$HOME/$RD/tools/smoke_mac.sh $N"; rc=$?
   rsync -a "$HOST:$RR/" "$RUN/" 2>/dev/null; $S "rm -rf \$HOME/$RR"
 fi

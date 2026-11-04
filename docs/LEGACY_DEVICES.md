@@ -69,4 +69,4 @@ Afterwards `$D/pack` contains:
 
 ## In practice
 
-The lowest device we measured is the iPhone 14 Pro Max (A16, 6 GB of RAM), running at 60 fps. During internal testing this route was completed by users on A16 devices; the oldest device our test players actually play on is the iPhone 13 Pro Max (A15, 6 GB of RAM), in the 30 fps mode.
+D2R Mobile's testers measured an iPhone 14 Pro Max (A16, 6 GB of RAM) at 60 fps and played on an iPhone 13 Pro Max (A15, 6 GB of RAM) in the 30 fps mode, in October 2026, with the picture settings of that time (the 3D world at 75% enlarged by the game's own upscale, FXAA, the game's own texture filtering and a 1024-pixel shadow map); A16 users also completed this guide's route. D2R Metal's iPhone and iPad Recommended is heavier (MetalFX enlargement of the 3D world, SMAA, 16x filtering and the Switch's own 2100-pixel shadow map) and has only been measured on an iPhone 17 Pro. On these devices the 3D resolution dips on its own when frames drop; if the game still stutters, lower 3D Resolution, set Upscaling to Standard or Anti-Aliasing to FXAA, or choose the 30 fps Frame Rate in Options → Video.

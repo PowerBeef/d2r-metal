@@ -49,7 +49,7 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 | File | What it does |
 |---|---|
 | `dm_uiscreen.c`, `dm_uiscreen.h` | On screens narrower than 16:9 (iPad), lays the UI out at 16:9 while the 3D picture still fills the whole screen |
-| `dm_bright.c` | Dynamic exposure for the 3D brightness boost: how much to brighten depends on the kind of level you are in |
+| `dm_bright.c` | Dynamic exposure for the 3D brightness boost: how much to brighten depends on the kind of level you are in, and the Extras switch `bright` (Brighten dark areas, on by default, live) turns it off; also reports both game-derived tables at start (the `Tables:` line, red in the Mac App when one is missing) |
 | `dm_hud.c`, `dm_hud.h` | The numbers on the bottom UI (level, experience percentage, belt counts), and the request for a player setting (1–8) through the game's `/players` path (controller pause menu, `DM_PLAYERS`, touch scripts) |
 
 ### Text and language
@@ -70,7 +70,8 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 
 | File | What it does |
 |---|---|
-| `dm_video.c` | The picture settings on the Options Video tab (Mac: Display Mode, Resolution, Graphic Presets, Upscaling; iOS: 3D Resolution, Graphic Presets, Upscaling; both: Frame Rate and Frame Drops), stored in `sw_video.txt` with a first-launch Recommended copy. Frame Rate and Frame Drops hold the custom keys `eco_fps` / `q3d`, saved in `sw_custom.txt` through `dm_custom.c` |
+| `dm_video.c` | The picture settings on the Options Video tab (Mac: Display Mode, Resolution incl. Native, Color, Graphic Presets, 3D Resolution, Upscaling, Anti-Aliasing, Anisotropic Filtering, Environment Shadows, Shadow Quality; iOS: the Graphics rows, with 3D Resolution as `res`; both: Frame Rate and Frame Drops), stored in `sw_video.txt` with the Recommended copy (`rec_*`, `rec_v`, `rec_id`). Frame Rate and Frame Drops hold the custom keys `eco_fps` / `q3d`, saved in `sw_custom.txt` through `dm_custom.c` |
+| `dm_picrec.c`, `dm_picrec.h` | The Mac App's Recommended picture from the chip's generation, tier and GPU cores and the main screen (pure C; cases and invariants in `tests/t_picrec`) |
 
 ### Convenience features
 

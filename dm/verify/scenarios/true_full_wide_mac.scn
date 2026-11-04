@@ -1,0 +1,54 @@
+# True full screen on a 21:9 Mac screen (COL-9, the user's choice of 2026-11-03), on the Mac App test copy at Recommended for a 2560x1072 main
+# screen (DM_TEST_SCREEN_PX, 2.39:1: this 2560x1440 display shows it 1:1, letterboxed in full screen), in PC mode (DM_PC_MODE=1).
+# - The front end is drawn at most 2.17:1 with side bars (2332x1072: the main menu's 3D backdrop is painted no wider), a run at the screen's own
+#   2.39:1 (2560x1072), across the leave and re-entry: the uiscreen res events; the presented frames (fe pshot: front_end.png, in_game.png,
+#   pc_inventory.png in support/) are for a person to review the side bars, the HUD across the screen and a centred panel.
+# - The interface spans the screen in a run (no band: the rect event's y is 0).
+# - A ground click in the picture's left third walks the hero (the pointer mapped across the wide picture).
+# Run it with --front to review the shots in real full screen.
+name true_full_wide_mac
+requires mac-app
+save warlock
+timeout 420
+env DM_TEST_SCREEN_PX=2560x1072 DM_TEST_VIDEO_FIRSTBOOT=1 DM_PC_MODE=1
+
+expect main_menu timeout=120
+fe "0 layout"
+expect layout dw=2560 dh=1072 fs=true timeout=5
+fe "0 uiscr"
+expect uiscreen what=res world=false w=2332 h=1072 timeout=5
+# the menu fades in after main_menu: wait for it before the shot
+sleep 5
+fe "0 pshot front_end.png"
+sleep 1
+enter_game
+expect uiscreen what=res world=true w=2560 h=1072 timeout=10
+fe "0 uiscr"
+expect uiscreen what=rect y=0 timeout=10
+sleep 2
+fe "0 pshot in_game.png"
+remember x
+fe "0 down 300,360"
+sleep 0.15
+fe "0 up 300,360"
+sleep 2
+expect_state x!=$x timeout=5
+fe "0 key 34"
+expect_state panels~=PlayerInventoryExpansionLayout timeout=5
+sleep 1
+fe "0 pshot pc_inventory.png"
+fe "0 key 53"
+sleep 1
+open_pause
+msg PausePanelMessage:ExitGame
+expect main_menu timeout=90
+fe "0 uiscr"
+expect uiscreen what=res world=false w=2332 h=1072 timeout=5
+enter_game
+expect uiscreen what=res world=true w=2560 h=1072 timeout=10
+system_quit
+check no_red
+check no_red_log
+check saved
+check event game_leave
+check event screen match=true

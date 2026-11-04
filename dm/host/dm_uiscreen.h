@@ -15,5 +15,15 @@ void dm_uiscreen_set_ingame(int on);          // 只许界面每帧那一处（d
 void dm_uiscreen_set_panel(int on);           // 局内开着大面板（功能页 / 箱子 / 商人 / 魔盒…，= 触摸前端的面板模式）：界面矩形移到正中；关掉回落前端选的摆法。触摸前端在界面消息回调里调 | A large panel open in a run (function pages / stash / vendor / cube..., = the touch front end's panel mode): the UI rectangle moves to the center; when closed it drops back to the placement the front end chose. Called by the touch front end in the UI message callback
 int dm_uiscreen_panel(void);                 // 上面那个状态：局内开着大面板 = 1 | The state above: a large panel open in a run = 1
 #include <stdint.h>
+// The front-end pages' picture (out of a run, with true full screen on) for a game resolution w x h of the screen's shape: 16:9 on a narrower
+// screen (bars above and below), at most DM_FRONT_MAX_ASPECT on a wider one (bars at the sides: the main menu's 3D backdrop is painted no wider; at
+// 2.17:1, the iPhone's shape, it is whole, at 21:9 its edge shows, COL-9 probe 2026-11-03), otherwise unchanged. Packed {u32 width, u32 height}
+#define DM_FRONT_MAX_ASPECT 2.175
+static inline uint64_t dm_front_res(uint32_t w, uint32_t h) {
+    if ((uint64_t)w * 9 < (uint64_t)h * 16) h = (uint32_t)((uint64_t)w * 9 / 16) & ~1u;
+    else if (w > h * DM_FRONT_MAX_ASPECT + 1) w = (uint32_t)(h * DM_FRONT_MAX_ASPECT + 0.5) & ~1u;
+    return (uint64_t)h << 32 | w;
+}
 uint64_t dm_game_res(int docked);            // 游戏出图分辨率参数位此刻该给的值（{u32 宽, u32 高} 打包）：前端的原生值，真全屏打开且不在局里时改成屏宽的 16:9 | The value the game's render resolution parameter slot should give right now (packed {u32 width, u32 height}): the front end's native value, changed to 16:9 of the screen width when true fullscreen is on and not in a run
 void dm_uiscreen_res_reread(void);            // 只许 hle_oe.c 在游戏取走「性能模式变化」通知时调 | May only be called by hle_oe.c when the game takes the "performance mode changed" notification
+void dm_uiscreen_report(void);               // tests (the control port's fe uiscr): emits the uiscreen res and rect events with the current values; any thread

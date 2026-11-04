@@ -16,8 +16,8 @@ import scenario  # noqa: E402
 
 class FakeHost:
     """连到运行器监听口的假宿主：主菜单事件先发，X → 选角面板，LoadCharacter → 进局 + 读取画面撤下。 | A fake host that connects to the runner's listening socket: main menu event first, X -> character select panel, LoadCharacter -> game enter + loading screen gone."""
-    def __init__(self, port, fail_cmd=None):
-        self.port, self.fail_cmd, self.seq, self.in_game, self.got = port, fail_cmd, 0, False, []
+    def __init__(self, port, fail_cmd=None, mem_errors=0):
+        self.port, self.fail_cmd, self.seq, self.in_game, self.got, self.mem_errors = port, fail_cmd, 0, False, [], mem_errors
         threading.Thread(target=self.run, daemon=True).start()
 
     def ev(self, kind, **kw):
@@ -38,16 +38,18 @@ class FakeHost:
                 if r['cmd'] == 'press' and r.get('keys') == 'PLUS': self.ev('panel', act='OpenPanel', name='PlayerInventoryExpansionLayout')
                 if r['cmd'] == 'state': out = dict(in_game=self.in_game, hp=40, panel='AutoMap')
                 if r['cmd'] == 'boom': self.ev('crash', sig=11)
+                if r['cmd'] == 'mem': out = dict(at='0x7100000010', hex='02' + '00' * (int(r.get('len', 8)) - 1))   # as the host: len bytes, 8 without it
                 ok = r['cmd'] != self.fail_cmd
-                rep = dict(id=r['id'], cmd=r['cmd'], ok=ok, **out, **({} if ok else {'err': 'nope'}))
+                if r['cmd'] == 'mem' and self.mem_errors > 0: self.mem_errors -= 1; ok, out = False, {}   # the first reads fail, as through a pointer still null
+                rep = dict(id=r['id'], cmd=r['cmd'], ok=ok, **out, **({} if ok else {'err': 'no pointer at 0x0' if r['cmd'] == 'mem' else 'nope'}))
                 self.s.sendall(b'[dm] RE ' + json.dumps(rep).encode() + b'\n')
 
 
 class FakeBackend:
     name = 'cli'
-    def __init__(self, fail_cmd=None): self.fail_cmd, self.host = fail_cmd, None
+    def __init__(self, fail_cmd=None, mem_errors=0): self.fail_cmd, self.host, self.mem_errors = fail_cmd, None, mem_errors
     def start(self):
-        srv, port = dmctl.bind(); self.host = FakeHost(port, self.fail_cmd)
+        srv, port = dmctl.bind(); self.host = FakeHost(port, self.fail_cmd, self.mem_errors)
         return dmctl.Ctl(server=srv, connect_timeout=5)
     def alive(self): return False
     def wait_exit(self, timeout): return 0 if timeout >= 0 else None
@@ -82,9 +84,9 @@ class ScenarioTest(unittest.TestCase):
         for bad in ('jump 1\n', 'press A 1 2\n', 'expect\n', 'sleep x\n', 'check nonsense\n', 'msg "unclosed\n'):
             with self.assertRaises(scenario.ScenarioError, msg=bad): scenario.parse(self.scn(bad, 'b.scn'))
 
-    def run_scn(self, text, fail_cmd=None):
+    def run_scn(self, text, fail_cmd=None, mem_errors=0):
         r = scenario.Runner(self.scn(text), 'cli', str(self.dir / 'out'), True)
-        fb = FakeBackend(fail_cmd); r.backend = fb   # type: ignore[assignment]
+        fb = FakeBackend(fail_cmd, mem_errors); r.backend = fb   # type: ignore[assignment]
         res, code = r.go()
         assert fb.host is not None
         return res, code, fb.host
@@ -137,6 +139,68 @@ class ScenarioTest(unittest.TestCase):
         self.assertFalse(by['no sanitizer reports']['ok']); self.assertIn('heap-use-after-free', by['no sanitizer reports']['detail'])
         self.assertTrue(by['metal validation (lint)']['ok']); self.assertIn('1 messages', by['metal validation (lint)']['detail'])
         self.assertTrue((self.dir / 'out' / 'sanitizer.txt').exists() and (self.dir / 'out' / 'metal_validation.txt').exists())
+
+
+    def test_parse_log_has_and_expect_mem(self):
+        _, _, checks = scenario.parse(self.scn('check log_has "Shadow map: 4096 px" file=p.tsv min=2\ncheck log_has re="a=1 b"\ncheck log_has last="窗口：内容区" "x"\n'))
+        self.assertEqual([(c['op'], c['args'], c['kw']) for c in checks], [('log_has', ['Shadow map: 4096 px'], {'file': 'p.tsv', 'min': '2'}),
+                                                                           ('log_has', [], {'re': 'a=1 b'}), ('log_has', ['x'], {'last': '窗口：内容区'})])
+        _, _, checks = scenario.parse(self.scn('check log_has "放在 \\(0,0\\)"\n'))   # double quotes keep the backslash
+        self.assertEqual(checks[0]['args'], ['放在 \\(0,0\\)'])
+        _, steps, _ = scenario.parse(self.scn('expect_mem main+0x10 1 chain=0x8 hex=02\nexpect_mem main+0x10 hex=0200\n'))
+        self.assertEqual((steps[0]['op'], steps[0]['kw']), ('expect_mem', {'at': 'main+0x10', 'len': '1', 'chain': '0x8', 'hex': '02'}))
+        self.assertEqual(steps[1]['kw']['len'], '2')   # without len the read is hex's byte count, not the control port's 8
+        for bad in ('check log_has\n', 'check log_has "("\n', 'check log_has last="(" x\n', 'check log_has x min=two\n', 'check log_has a=1\n',
+                    'check log_has x min=0\n', 'check log_has last="a" "b" min=2\n', 'check log_has x re=y\n',
+                    'expect_mem main+0x10 hex=0\n', 'expect_mem hex=02\n', 'expect_mem main+0x10 1 2 hex=02\n',
+                    'expect_mem main+0x10 4 hex=02\n', 'expect_mem main+0x10 len=x hex=02\n'):
+            with self.assertRaises(scenario.ScenarioError, msg=bad): scenario.parse(self.scn(bad, 'b.scn'))
+
+    def test_expect_mem(self):   # polls the control port's mem until the bytes match; hex and timeout are never sent to the host
+        res, code, host = self.run_scn('expect_mem main+0x10 1 hex=02\n')
+        self.assertEqual((code, res['verdict']), (0, 'OK'), res)
+        mem = [g for g in host.got if g['cmd'] == 'mem'][0]
+        self.assertEqual((mem['at'], mem['len']), ('main+0x10', 1)); self.assertNotIn('hex', mem); self.assertNotIn('timeout', mem)
+        res, code, _ = self.run_scn('expect_mem main+0x10 1 hex=01 timeout=0.5\n')
+        self.assertEqual((code, res['failed']['step']), (1, 1)); self.assertIn('want 01', res['reason'])
+        res, code, host = self.run_scn('expect_mem main+0x10 hex=0200\n')   # len left out: it reads exactly the two bytes of hex
+        self.assertEqual((code, res['verdict']), (0, 'OK'), res); self.assertEqual([g['len'] for g in host.got if g['cmd'] == 'mem'], [2])
+
+    def test_expect_mem_polls_through_error_replies(self):   # an error reply (a pointer on the chain still null) is read again until the timeout, not red at once
+        res, code, host = self.run_scn('expect_mem main+0x10 chain=0x8 hex=02 timeout=5\n', mem_errors=2)
+        self.assertEqual((code, res['verdict']), (0, 'OK'), res); self.assertEqual(sum(g['cmd'] == 'mem' for g in host.got), 3)
+        res, code, _ = self.run_scn('expect_mem main+0x10 chain=0x8 hex=02 timeout=0.5\n', mem_errors=100)
+        self.assertEqual((code, res['failed']['step']), (1, 1)); self.assertIn('no pointer at 0x0', res['reason']); self.assertIn('want 02', res['reason'])
+
+    def run_log(self, text, lines, files=None):
+        log = self.dir / 'host.log'; log.write_text(''.join(x + '\n' for x in lines), encoding='utf-8')
+        r = scenario.Runner(self.scn(text), 'cli', str(self.dir / 'out'), True)
+        for name, body in (files or {}).items(): (self.dir / 'out' / name).write_text(body, encoding='utf-8')
+        fb = FakeBackend(); fb.log_file = lambda: str(log); r.backend = fb   # type: ignore[assignment,method-assign]
+        return r.go()
+
+    def test_log_has(self):
+        lines = ['Shadow map: 4096 px', 'x', 'Shadow map: 4096 px']
+        res, code = self.run_log('ping\ncheck log_has "Shadow map: 4096 px" min=2\n', lines)
+        self.assertEqual(code, 0, res); self.assertTrue(res['checks'][0]['detail'].startswith('2 lines'), res['checks'][0])
+        res, code = self.run_log('ping\ncheck log_has "Shadow map: 4096 px" min=3\n', lines)
+        self.assertEqual((code, res['checks'][0]['ok']), (1, False))
+        res, code = self.run_log('ping\ncheck log_has "\\t@mfx3d\\t1" file=nvn.tsv min=2\n', lines, {'nvn.tsv': '5\t@mfx3d\t1\n6\t@mfx3d\t1\n'})
+        self.assertEqual(code, 0, res)
+        res, code = self.run_log('ping\ncheck log_has x file=nope.tsv\n', lines)
+        self.assertEqual(code, 1); self.assertIn('nope.tsv', res['checks'][0]['detail'])
+
+    def test_log_has_last(self):   # last= judges only the last line matching it: an earlier windowed layout line cannot pass a full-screen check
+        full, win = '窗口：内容区 1280×720，游戏画面 1280×720 放在 (0,0)', '窗口：内容区 1280×658，游戏画面 1170×658 放在 (55,0)'
+        scn = 'ping\ncheck log_has last="窗口：内容区" "内容区 1280×720，游戏画面 1280×720 放在 \\(0,0\\)"\n'
+        res, code = self.run_log(scn, [full, win]); self.assertEqual(code, 1); self.assertIn('1170×658', res['checks'][0]['detail'])
+        res, code = self.run_log(scn, [win, full]); self.assertEqual(code, 0, res)
+        res, code = self.run_log(scn, ['nothing']); self.assertEqual(code, 1)
+
+    def test_run_token_and_extra_env(self):
+        self.assertEqual(scenario.scn_env({'A': '{run}/p.tsv', 'B': 'x'}, '/r'), {'A': '/r/p.tsv', 'B': 'x'})
+        r = scenario.Runner(self.scn('env A=1\nping\n'), 'cli', str(self.dir / 'out'), True, extra_env={'A': '2', 'B': '3'})
+        self.assertEqual(r.meta['env'], {'A': '2', 'B': '3'})
 
 
 if __name__ == '__main__':

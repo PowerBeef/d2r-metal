@@ -6,6 +6,7 @@
 uint64_t g_t0_ns;   // 宿主 main.c 的进程起点（hle_nvn 逐帧 @t_s 用），单测替身 | process start time from host main.c (used by hle_nvn's per-frame @t_s); unit test stub
 #include "../tex/nvn_deswizzle.h"
 #include <time.h>
+#include <math.h>
 void *front_metal_layer(void) { return NULL; }   // 单测无窗口：出图只计数 | no window in unit tests: present only counts
 module_t *module_of(const void *p) { (void)p; return NULL; }   // 单测无客体模块 | no guest modules in unit tests
 module_t g_mod[MAX_MOD]; int g_nmod;                            // crash.c 依赖的宿主符号 | host symbols that crash.c depends on
@@ -192,8 +193,10 @@ int main(void) {
         NVNmemoryPoolBuilder hb; NVNmemoryPool hp; P(nvnMemoryPoolBuilderSetDefaults)(&hb); P(nvnMemoryPoolBuilderSetStorage)(&hb, heap, 4 * big);
         P(nvnMemoryPoolInitialize)(&hp, &hb);
         P(nvnCommandBufferBeginRecording)(&cb);
+        P(nvnCommandBufferReportCounter)(&cb, NVN_COUNTER_TYPE_TIMESTAMP, (NVNbufferAddress)(cnt + 0x100));   // a frame's begin and end reports, as the game writes them
         for (int i = 0; i < 24; i++) P(nvnCommandBufferCopyBufferToBuffer)(&cb, (NVNbufferAddress)busy_a, (NVNbufferAddress)busy_b, big, 0);
         P(nvnCommandBufferCopyBufferToBuffer)(&cb, (NVNbufferAddress)bsrc, (NVNbufferAddress)bdst, big, 0);
+        P(nvnCommandBufferReportCounter)(&cb, NVN_COUNTER_TYPE_TIMESTAMP, (NVNbufferAddress)(cnt + 0x110));
         NVNcommandHandle hb2 = P(nvnCommandBufferEndRecording)(&cb);
         NVNsync sb; P(nvnSyncInitialize)(&sb, &dev);
         uint64_t t0 = now_ns();
@@ -207,6 +210,14 @@ int main(void) {
         EXPECT("刚提交时零超时等待 = 超时(2)", 2, w0);
         EXPECT("长等待 = 满足(1)", 1, w1);
         EXPECT("dst 全为改写前的值（抽 16384 处）", 0, bad);
+        // Counter reports are written on the CPU when the submission completes (nvn_mtl.m gpu_ticks), so begin and end land together: the game's dynamic
+        // resolution reads its GPU frame time from such a pair and stays at 1.0 / 1.0
+        uint64_t rb, re; memcpy(&rb, cnt + 0x100, 8); memcpy(&re, cnt + 0x110, 8);
+        double span_ns = re >= rb ? (double)(re - rb) * 625 / 384 : -1;
+        printf("（begin/end report span %.0f ns）\n", span_ns);
+        EXPECT("begin/end timestamp reports of one submit are both written", 1, rb != 0 && re >= rb);
+        EXPECT("the busy submit took over 2 ms", 1, ms > 2);
+        EXPECT("begin/end reports of one submit differ by under 1/4 of its GPU time (completion-time stamps keep the game's dynamic resolution off; bb88916)", 1, span_ns >= 0 && span_ns * 4 < ms * 1e6);
         P(nvnMemoryPoolFinalize)(&hp); free(heap);
     }
 
@@ -416,6 +427,66 @@ int main(void) {
         P(nvnWindowAcquireTexture)(&w3, NULL, &ix);
         EXPECT("取到的是第 0 张", 0, ix);
         mtl_present_test_stall(0); mtl_present_flush();
+    }
+    // 6f2. The present-time test hook (mtl_presented_test_set): a time recorded for a ticket reads back for that ticket, and not for another one in the same ring slot
+    {
+        mtl_presented_test_set(900001, 123.25);
+        EXPECT("6f2 the recorded time reads back (us)", 123250000, (long long)(mtl_presented_time(900001) * 1e6 + 0.5));
+        EXPECT("6f2 another ticket in that slot reads 0 (no reading)", 0, (long long)(mtl_presented_time(900001 + 1024) * 1e6));
+    }
+    // 6g. Present-time readings after discarded presents (LIF-1): times are recorded by present-thread ticket, and a discarded present gets none, so
+    //     looking a game present up by its own count drifts for good after the first discard. Present ordinal p shows at 100 + p / 60 s; the reading
+    //     for ordinal p (taken 8 presents later) is time(p) - time(p - 1) = 16.667 ms, or 0 (no reading) when p or p - 1 has no time:
+    //     ordinals 21-40 are discarded (no ticket), 41's predecessor was, 61 has an out-of-range index (no job) and 62's predecessor is 61
+    {
+        nvn_present_config(0, 0);
+        NVNwindowBuilder wb5; NVNwindow w5; P(nvnWindowBuilderSetDevice)(&wb5, &dev); P(nvnWindowBuilderSetDefaults)(&wb5);
+        NVNtexture *sc5[3] = {&sc[0], &sc[1], &sc[0]};
+        P(nvnWindowBuilderSetTextures)(&wb5, 3, sc5); P(nvnWindowInitialize)(&w5, &wb5);
+        win_t *o5 = (win_t *)&w5; static long long got[80]; int ix;
+        for (int k = 0; k < 72; k++) {
+            if (k == 20) { mtl_present_flush(); mtl_present_discard(1); }
+            if (k == 40) mtl_present_discard(0);
+            if (k == 60) P(nvnQueuePresentTexture)(&q, &w5, 7);   // ordinal 61: an index past the swapchain, no job
+            else {
+                P(nvnWindowAcquireTexture)(&w5, NULL, &ix); P(nvnQueuePresentTexture)(&q, &w5, ix);
+                uint64_t tk = x_present_ticket(o5->ticket[ix]); if (tk) mtl_presented_test_set(tk, 100.0 + o5->presents / 60.0);
+            }
+            if (o5->presents > 9 && o5->presents - 8 < 80) got[o5->presents - 8] = llround(g_pres_iv[(g_presn - 1) % TWIN] * 1000);
+        }
+        int a = 0, b = 0, c = 0;
+        for (int p = 2; p <= 20; p++) a += got[p] == 16667;
+        for (int p = 21; p <= 41; p++) b += got[p] == 0;
+        for (int p = 42; p <= 60; p++) c += got[p] == 16667;
+        EXPECT("6g ordinals 2-20 before the discard read 16.667 ms", 19, a);
+        EXPECT("6g ordinals 21-41 (discarded, or after one) read no reading", 21, b);
+        EXPECT("6g ordinals 42-60 after the discard read 16.667 ms again", 19, c);
+        EXPECT("6g ordinal 61 (no job) reads no reading", 0, got[61]);
+        EXPECT("6g ordinal 62 (after a present with no job) reads no reading", 0, got[62]);
+        EXPECT("6g ordinal 63 reads 16.667 ms", 16667, got[63]);
+    }
+    // 6h. Classic (no present link) presents across the lifecycle (LIF-7): while the shell is inactive a present is dropped at the door (no
+    //     ticket), as the link's pause does in link mode; and a suspend drops the queued presents the present thread has not taken, waiting only
+    //     for the one in its hands (each present stalls 200 ms here: waiting for all four took about 800 ms)
+    {
+        nvn_present_config(0, 0);
+        NVNwindowBuilder wb6; NVNwindow w6; P(nvnWindowBuilderSetDevice)(&wb6, &dev); P(nvnWindowBuilderSetDefaults)(&wb6);
+        NVNtexture *sc6[4] = {&sc[0], &sc[1], &sc[0], &sc[1]};
+        P(nvnWindowBuilderSetTextures)(&wb6, 4, sc6); P(nvnWindowInitialize)(&w6, &wb6);
+        win_t *o6 = (win_t *)&w6; int ix;
+        mtl_present_inactive(1);
+        P(nvnWindowAcquireTexture)(&w6, NULL, &ix); P(nvnQueuePresentTexture)(&q, &w6, ix);
+        EXPECT("6h inactive, classic mode: the present is dropped at the door (ticket 0)", 0, (long long)x_present_ticket(o6->ticket[ix]));
+        mtl_present_inactive(0);
+        P(nvnWindowAcquireTexture)(&w6, NULL, &ix); P(nvnQueuePresentTexture)(&q, &w6, ix);
+        EXPECT("6h active again: the present gets a ticket", 1, x_present_ticket(o6->ticket[ix]) > 0);
+        mtl_present_flush(); mtl_present_test_stall(200000000ull);
+        uint64_t last = 0;
+        for (int k = 0; k < 4; k++) { P(nvnWindowAcquireTexture)(&w6, NULL, &ix); P(nvnQueuePresentTexture)(&q, &w6, ix); last = x_present_ticket(o6->ticket[ix]); }
+        uint64_t t0 = now_ns(); dm_gfx_suspend(1); double ms = (now_ns() - t0) / 1e6; dm_gfx_suspend(0); mtl_present_test_stall(0);
+        printf("  (6h suspend with four classic presents queued, 200 ms each: %.0f ms)\n", ms);
+        EXPECT("6h the queued present the present thread never took reads not shown (-1)", -1, (long long)mtl_presented_time(last));
+        EXPECT("6h the suspend waits only for the present in hand (< 450 ms)", 1, ms < 450);
     }
 
     // 8. 对象副本：录完命令后游戏 Finalize 并在同址重建贴图 / 换程序着色器，已录命令里读到的仍是录制时的内容；退役副本过 SNAP_KEEP 次提交才回收

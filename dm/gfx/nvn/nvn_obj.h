@@ -138,8 +138,9 @@ void mtl_present_flush(void);                              // 等已入队的出
 void mtl_present_test_stall(uint64_t ns);                  // 单测：出图线程每次出图前额外停顿 ns | Unit test: extra pause in ns before each present on the present thread
 int mtl_display_hz(void);                                   // 有窗口时屏幕最高刷新率（Hz），无窗口 0 | Maximum refresh rate of the screen (Hz) when there is a window, 0 without a window
 double mtl_display_refresh(void);                           // 同上，不取整（窗口所在屏） | Same as above, not rounded (screen the window is on)
-double mtl_pace_hz(void);                                   // 出图帧率：刷新率的整数分之一里不低于目标（60 / 省电 30）的最小一档 | Present frame rate: the smallest tier among integer fractions of the refresh rate that is not below the target (60 / power saving 30)
+double mtl_pace_hz(void);                                   // present frame rate: the smallest integer fraction of the screen's refresh rate at or above 60, or the power saver's rate (dm_eco_hz: the 30 tier, at most 3/4 of the normal rate)
 double dm_pace_hz(double screen_hz, double floor_hz);       // 上面的纯算式（单测用） | Pure formula of the above (for unit tests)
+double dm_eco_hz(double screen_hz);                         // the power saver's rate (nvn_pace.h nvn_eco_hz): the 30 tier, at most 3/4 of the normal rate
 void mtl_set_tex_pool_n(int n);                            // 贴图描述符池容量：池外的贴图号按「空槽」处理（读出 0） | Texture descriptor pool capacity: texture IDs outside the pool are treated as 'empty slots' (read 0)
 // 计时埋点（Mac / iOS 共用）：提交按帧号打标；GPU 时间 = 该帧全部命令缓冲 GPUEnd−GPUStart 之和，全部完成后才可读（否则 −1）
 // Timing instrumentation (shared by Mac / iOS): submissions are tagged with the frame number; GPU time = sum of GPUEnd−GPUStart over all of that frame's command buffers, readable only after all complete (otherwise −1)
@@ -164,10 +165,18 @@ int mtl_fps_target(void);
 int mtl_link_active(void);
 int mtl_link_wait_tick(uint64_t timeout_ns);
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns);   // the same wait in the link's own ticks
-int mtl_link_rate(void);                                    // 120, 60, or 30 in power-saving mode
+int mtl_link_rate(void);                                    // the rate the link delivers, measured from its target timestamps; the requested rate until 8 ticks are seen
+int mtl_link_rate_requested(void);                          // the rate the link was asked for: 120 (DM_PRESENT_LINK=2), the screen's tier at or above 60, or the power saver's
 double mtl_presented_time(uint64_t n);
    // 第 n 次出图（从 1 计）的实际呈现时刻（秒）；0 = 未就绪，−1 = 被丢弃
    // Actual presentation time (seconds) of the n-th present (counted from 1); 0 = not ready, −1 = dropped
+void mtl_presented_test_set(uint64_t tk, double t);   // unit tests: record ticket tk's presentation time (seconds; -1 = not shown)
+void mtl_present_inactive(int on);   // the shell is inactive (iOS resign; the Mac test verb link_inactive): the present link paused, as mtl_link_pause
+void mtl_present_discard(int on);    // presents are not shown (Mac window covered, iOS background save wait): dropped at the door, queued ones dropped
+int mtl_present_hidden(void);        // presents are not shown right now: discarded or paused for an inactive shell (Frame Drops skips those frames)
+int mtl_present_offscreen(void);     // a background test run's presents read nothing (off screen with no present link): Frame Drops skips them too
+void mtl_present_idle_set(int on);  // the picture is out of view for a while (the Mac window covered): the game loop slows to DM_HIDDEN_HZ
+int mtl_present_idle(void);
 // 贴图释放（Finalize 时）
 // Texture release (at Finalize)
 void mtl_tex_release(tex_t *t);
@@ -175,7 +184,11 @@ void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads);
 uint64_t mtl_pkg_miss(void);
 uint64_t mtl_upload_ns_take(void);   // 取走并清零：上次以来提交线程上预排布贴图上传耗时   // DM_NVN_DIRTYCHECK 诊断：漏检次数   // 预排布贴图：首传次数、因池内容变化而重传次数 | Take and zero: time spent uploading packaged textures on the submit thread since last time   // DM_NVN_DIRTYCHECK diagnostic: number of missed detections   // Packaged textures: number of first uploads, number of re-uploads due to pool content changes
 uint64_t mtl_upload_gpu_ns_take(void);   // 取走并清零：上传命令缓冲的显卡执行耗时（GPUEndTime − GPUStartTime 累加） | Take and zero: GPU execution time of upload command buffers (sum of GPUEndTime − GPUStartTime)
-void mtl_create_stats(uint64_t *lib, uint64_t *pso);   // 累计：提交线程上同步载入的着色器库数、同步新建的渲染 + 计算管线数（预热领用的不算） | Cumulative: number of shader libraries loaded synchronously on the submit thread, number of render + compute pipelines created synchronously (those taken from warm-up do not count)
+// Cumulative, game shaders and pipelines only: shader libraries loaded and render + compute pipelines built while a frame waited for them: synchronous
+// builds on the submit thread and pipelines the submit thread took from the parallel precompile (it waited for the rest of their compile). Pipelines
+// taken from the warm-up do not count; the host's own passes are counted apart (mtl_host_create_stats)
+void mtl_create_stats(uint64_t *lib, uint64_t *pso);
+void mtl_host_create_stats(uint64_t *lib, uint64_t *pso, uint64_t *lib_ns, uint64_t *pso_ns);   // the host's own pass builds: libraries, pipelines and their total times
 // CPU 读贴图：level / layer0 起，按 row / img 字节步长写进 dst
 // CPU texture read: starting at level / layer0, written into dst with row / img byte strides
 void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, uint8_t *dst, size_t row, size_t img);

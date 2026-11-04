@@ -1,0 +1,28 @@
+# Anti-aliasing switched while the game runs (a stress run, AA-3): with DM_AA_MODE=off the host leaves the renderer's AA byte alone, so the test
+# writes it through the control port: FXAA, SMAA, none, SMAA again, each held a few seconds while the hero walks. The SMAA pass builds its targets
+# on first use and the FXAA / SMAA switch happens per frame: no red line, no crash, and each value reads back
+name pic_aa_toggle
+requires cli
+save warlock
+timeout 180
+env DM_3D_SCALE=1.0 DM_GAME_RES=2560x1440 DM_MFX=1 DM_MFX3D=1 DM_AA_MODE=off DM_NVN_ANISO=16 DM_COLORSPACE=srgb DM_ENV_SHADOWS=1 DM_SHADOW_SIZE=4096 DM_3D_SCALE_DYN=0 DM_GAME_SEED=305419896
+
+enter_game
+expect_state in_game=true hp>=1 area=1 timeout=10
+sleep 3
+mem main+0x31e0848 1 chain=0x6614 write=01
+expect_mem main+0x31e0848 1 chain=0x6614 hex=01
+walk_to 5789 4470 timeout=20
+mem main+0x31e0848 1 chain=0x6614 write=02
+expect_mem main+0x31e0848 1 chain=0x6614 hex=02
+sleep 3
+mem main+0x31e0848 1 chain=0x6614 write=00
+expect_mem main+0x31e0848 1 chain=0x6614 hex=00
+sleep 3
+mem main+0x31e0848 1 chain=0x6614 write=02
+expect_mem main+0x31e0848 1 chain=0x6614 hex=02
+sleep 3
+quit
+check no_red
+check no_red_log
+check exit 0

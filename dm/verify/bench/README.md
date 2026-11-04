@@ -7,11 +7,22 @@ A benchmark route is a [scenario](../scenarios/README.md) with `mark <segment>` 
 The results are statistics per segment.
 
 ```bash
-python3 dm/tools/bench.py run dm/verify/bench/town_loop.scn --reps 3                 # bench.json in $DM_ROOT/run/bench/
+python3 dm/tools/bench.py run dm/verify/bench/town_loop.scn --reps 3                 # bench.json in $DM_ROOT/run/bench/; this Mac's Recommended in full screen
 python3 dm/tools/bench.py ab dm/verify/bench/town_loop.scn --reps 6 \
     --a-env DM_3D_SCALE=1.0 --b-env DM_3D_SCALE=0.5 --metric gpu_ms.p50             # or --a-host / --b-host: two dmhost builds
 python3 dm/tools/bench.py show bench.json
 ```
+
+## Picture
+
+Runs default to **this Mac's Recommended picture in full screen** (`--picture rec`), the picture players get here; `--picture orig` keeps the host's own defaults in a window, as runs had before. The sets live in `dm/tools/picture.py`, which says how each key is pinned and how the sets differ:
+- `rec` on the `cli` backend pins every picture key through its forcing switch (Native `DM_GAME_RES=2560x1440`, 3D 100%, MetalFX `DM_MFX` / `DM_MFX3D`, SMAA, 16x, Accurate colour, environment shadows, Ultra shadows, Frame Drops keep with `DM_3D_SCALE_DYN=0`) and adds `DM_TEST_FULLSCREEN_AT=1`. On `mac-app` it is `DM_TEST_VIDEO_FIRSTBOOT=1`: the test copy works out its own Recommended and starts full screen. Benchmarks run in front, so this is real full screen (the Space switch included); a background caller of the same set (a scenario, a golden shot) gets the emulated full screen of the same size.
+- `rec75` (the base M chips' 3D 75% with MetalFX) and `phone` (the iPhone 17 Pro's picture at 2622 × 1206) pin their sets the same way.
+- `--env`, `--a-env` and `--b-env` win over the picture; a run that sets `DM_TEST_WINSIZE` or `DM_TEST_FULLSCREEN_AT` itself gets no full-screen switch.
+
+`{dir}` in an env value becomes the run's own folder, e.g. `DM_NVN_PASSGPU={dir}/passgpu.tsv`: one file per run and variant, beside its `host.log` and `nvn.tsv`.
+
+The picture is recorded in `bench.json`, `ab.json`, `regress.json` and the ledger's route column (`town_loop@rec`). Results from before this default (the original look in a window: the command-line host drew its picture at 1170 × 658 points inside a 1280 × 658 point window) are not comparable with it.
 
 ## What is measured
 
@@ -59,15 +70,31 @@ Checked on this tree (Apple M6, macOS 27):
 ## Regression against a kept baseline
 
 ```bash
-python3 dm/tools/bench.py baseline save                 # keep this tree's dmhost (and its gfx/nvn tables) as $DM_ROOT/run/bench/baseline/<rev>, current → it
-python3 dm/tools/bench.py regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,gpu_ms.p50]
+python3 dm/tools/bench.py baseline save [--name N]      # keep this tree's dmhost with what it runs on as $DM_ROOT/run/bench/baseline/<N, default the rev>, current → it
+python3 dm/tools/bench.py regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50]
 ```
 
-`regress` runs the baseline host (A) against the current one (B) in ABBA order and judges each metric as `ab` does. Only "B slower" (p < 0.05, interval on one side of 0) is red; every row goes to the ledger. With no baseline it is ⚪ (exit code 3).
+A baseline is a snapshot of everything the host runs on, so a later regression compares hosts and nothing else:
+- `host/dmhost` and the tables it reads beside itself (`host/tables`, `gfx/nvn/*.tsv`);
+- `product/`: the rewrite output it was built against (`product.sh path touch`);
+- `msl/b-<chain>/`: its shader library;
+- `meta.json`: the git revision (and whether the tree was dirty), `dm/PRODUCT`, the shader chain, the time and the host's SHA-256.
+
+The product and the library are APFS clones (`cp -cR`), so they share blocks with the workspace copies until those change; after a chain or product change the baseline keeps its own (a 523 MB library). The snapshot is built in `<N>.new` and renamed into place at the end, so saving twice into one folder never nests a copy in an old one. `baseline save` refuses (red, exit 1) when the shader library is missing or the host was built from another shader chain.
+
+`regress` runs the baseline host (A) on its own rewrite output and shader library (`SCN_PRODUCT`, `DM_MSL_DIR`) against the current host (B) on the current ones, in ABBA order, and judges each metric as `ab` does. It prints both sides (`baseline <N>: <product> b-<chain>; current: …`) and records them in `regress.json`.
+
+Every segment × metric of one regression is one family of comparisons, and the p values get **Holm's correction**: sorted by p, the k-th smallest (from 0) of m stays significant while p ≤ 0.05 / (m − k). Only "B slower" (interval on one side of 0) that also passes Holm is red; the ledger's verdict column says `(Holm ok)` or `(Holm n.s.)`. A **runs guard** refuses (red, exit 2, before any run) a `--reps` too small to ever reach Holm's strictest level: the exact test's smallest p is 2 / C(2n, n), so the defaults (3 metrics × 2 `town_loop` segments = 6 comparisons) need 5 runs a side, and the long tier's 6 keep a margin; 4 metrics need 6. Every segment × metric must also be judged: one that got no p, because fewer than 2 runs a side had a value (a `present.*` metric at a picture whose present is not measured, a segment missing from the runs), makes the regression ⚪ (exit code 3) with the metric and segments named, never OK; a significant slowdown elsewhere is still red. A rep still disturbed after its redos (see above) is a `not_judged` reason too (`disturbed`, naming the reps). `regress.json` records the `verdict` and the `not_judged` list.
+
+`gpu_ms` is not in the default metrics: on a fast Mac the GPU lowers its clock when it has room, so a GPU-side change shows up as a clock change rather than as time (the M6 holds 60 fps at 40% of its capacity in town). Pass `--metrics gpu_ms.p50` with an ABBA when a change is GPU-bound, and read it with that in mind. With no baseline, or a baseline kept before snapshots existed (a host alone), it is ⚪ (exit code 3) before any run starts: an old host on a newer rewrite output would read thread slots it does not fill. `regress` runs on the `cli` backend only, since the kept host is a command-line host.
+
+`run`, `ab` and `regress` take `--keep`: it writes `.keep` into the result folder so `workspace_prune.py` never takes it (A/B evidence cited in a commit or the README). `workspace_prune.py` lists baselines other than `current` once they are older than its `--days`.
 
 ## Boot-time history
 
 Every benchmark run and every `dm/ios/tools/bootprof.sh` run appends the time from process start to each boot stage to `$DM_ROOT/run/bootprof/history.tsv`, with the git revision. The stages come from the event stream (`boot`, `main_menu`, `game_enter`, `loading_done`) and from the `DM_BOOTPROF` table (⓪–⑥). `python3 dm/tools/boothist.py show --label bench:cli` compares the median of the latest runs with the runs before and marks stages more than 10% and 50 ms slower.
+
+iOS test runs (`DM_SAVE_FRESH`, as `bootprof.sh` and `smoke_mac.sh` start them) keep their pipeline manifest in `Documents/settings.test` (`main.m`) and start each run with an empty one: the warm-up builds the seed (`pso_manifest.tsv`) alone, as on a first install, and the player's own `pso_user.tsv` is neither read nor grown. A true cold start, with the system's Metal cache emptied too, is `dm/tools/pso_seed.py cold` (a row in `$DM_ROOT/run/pso/cold.tsv`; the long tier runs one on the Mac App).
 
 ## Routes
 

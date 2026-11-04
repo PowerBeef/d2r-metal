@@ -1056,7 +1056,7 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
 int mtl_fps_target(void);
 static uint64_t rt_decl_period(uint64_t period_ns) {
     if (!period_ns || mtl_fps_target() != 30 || !mtl_link_active()) return period_ns;
-    double hz = dm_pace_hz(mtl_display_refresh(), 30); uint64_t eco = hz > 0 ? (uint64_t)(1e9 / hz) : 0;
+    double hz = dm_eco_hz(mtl_display_refresh()); uint64_t eco = hz > 0 ? (uint64_t)(1e9 / hz) : 0;   // the power saver's real rate (nvn_eco_hz)
     return eco > period_ns ? eco : period_ns;
 }
 // ---------- 翻译队列（B 方案第二期）：提交 / 出图 / 设帧号按序排给翻译线程，游戏线程只登记、立刻返回 ----------
@@ -1075,6 +1075,11 @@ typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int 
 #define XTK 1024
 static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done, g_xsub_done;   // g_xsub_done：已翻译完的提交号（栅栏值） | g_xsub_done: the last submit number translated (fence value)   // 入队任务数 / 已执行任务数（任务号从 1 计） | Jobs enqueued / jobs executed (job numbers start at 1)
 static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号 → 出图线程票号 | Present job number -> present thread ticket
+// Game present -> its present job: the window's present count (win_t presents) at each nvnQueuePresentTexture and the job it pushed (0 = no job: an
+// index past the swapchain). Game thread only, one NVN window, as the present-time lookup below has always assumed
+typedef struct { uint64_t ord, job; } pjob_ent;
+#define PJN 16
+static pjob_ent g_pjob[PJN];
 static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
 static int pace_adapt_enabled(void);
 static _Atomic double g_pa_xcpu_ms = -1;   // 最近60个翻译帧的真实线程CPU（不含任何等待）| Actual thread CPU per frame over the latest 60 translation frames, excluding waits
@@ -1176,6 +1181,20 @@ static uint64_t x_present_ticket(uint64_t job) {   // 出图任务执行完后�
     if (lost) { static int red; if (!red++) LOG("【红】翻译队列：出图任务 %llu 的票号已被覆盖（票号表 %d 项不够），这次取图不等出图线程", (unsigned long long)job, XTK); }
     return tk;
 }
+// The present-thread ticket a present job got, if it has run: never waits (0 = not run yet, the present was dropped at the door, or the job's
+// slot was reused)
+static uint64_t x_ticket_peek(uint64_t job) {
+    if (!job) return 0;
+    pthread_mutex_lock(&g_xmu); uint64_t tk = g_xtk[job % XTK].job == job ? g_xtk[job % XTK].tk : 0; pthread_mutex_unlock(&g_xmu);
+    return tk;
+}
+// The presentation time of the game's present number ord (seconds; -1 = not shown, 0 = no reading): game present -> present job -> present-thread
+// ticket -> the time the presented handler recorded for that ticket (mtl_presented_time)
+static double present_time_of(uint64_t ord) {
+    pjob_ent e = g_pjob[ord % PJN]; if (e.ord != ord) return 0;
+    uint64_t tk = x_ticket_peek(e.job);
+    return tk ? mtl_presented_time(tk) : 0;
+}
 NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h) {
     gfx_enter();
     ((queue_t *)q)->submits++;
@@ -1268,6 +1287,14 @@ static void trow(uint64_t f, const char *name, double v);
 static void sleep_until_ns(uint64_t dl);
 static uint64_t present_period(const win_t *o);
 static int link_wait(uint64_t timeout_ns);
+// The game loop's rate while nothing is on screen (mtl_present_idle: a covered Mac window): DM_HIDDEN_HZ, read once; 0 = off (the loop keeps the
+// link's rate: about 60 Hz on this Mac while covered, the wait's 2-period timeout when the link stops); outside 0-60, or unset: 15. The default is
+// measured (wave-2 exit ABBA, 2026-11-03, windowed CLI, occlusion_readings x4): 15 Hz used 0.18x and 0.26x the energy of 0 while covered, no underruns
+static int hidden_hz(void) {
+    static int hz = -1;
+    if (hz < 0) { const char *e = getenv("DM_HIDDEN_HZ"); int v = e ? atoi(e) : 15; hz = v >= 0 && v <= 60 ? v : 15; if (e) LOG("[nvn] DM_HIDDEN_HZ=%s: the loop runs at %d Hz while nothing is on screen%s", e, hz, hz ? "" : " (off)"); }
+    return hz;
+}
 __attribute__((weak)) void dm_main_yield_stats(uint64_t *n, uint64_t *ns) { *n = 0; *ns = 0; }   // 宿主 hle_thread.c 提供真值；图形单测里为 0 | The host's hle_thread.c provides the ground truth; 0 in graphics unit tests
 __attribute__((weak)) uint32_t dm_guest_work_qos(unsigned *count) { if (count) *count = 0; return QOS_CLASS_UNSPECIFIED; }
 __attribute__((weak)) void dm_hle_wake_counts(uint64_t *wakes, uint64_t *skips) { *wakes = 0; *skips = 0; }
@@ -1289,7 +1316,11 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
         rt_comp_tick(&g_rt_main, decl);
         // 等节拍的超时取两个实际帧周期（decl：省电模式是 30 帧的 33.3 ms）：原先按 60 档取 2 × 16.7 ms，正好等于 30 Hz 节拍间隔，节拍稍晚一点就落到 60 Hz 兜底、提前开工
         // the display-link wait times out after two actual frame periods (decl: 33.3 ms for the 30 fps power-saving mode): it used to be 2 x 16.7 ms from the 60 tier, exactly the 30 Hz tick spacing, so a slightly late tick fell through to the 60 Hz fallback and the frame started early
-        if (mtl_link_active()) { if (!link_wait(decl ? 2 * decl : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
+        // Nothing is on screen (a covered Mac window, mtl_present_idle): the loop runs at DM_HIDDEN_HZ instead of rendering full frames that are
+        // thrown away at the link's rate (about 60 Hz on this Mac while covered; the wait's 2-period timeout when the link stops); game logic still
+        // ticks at 25 Hz through catch-up ticks, as in power saving
+        if (hidden_hz() && mtl_present_idle()) { static uint64_t idle_last; uint64_t dl = idle_last + 1000000000ull / (uint64_t)hidden_hz(); if (dl > now_ns()) sleep_until_ns(dl); idle_last = now_ns(); }
+        else if (mtl_link_active()) { if (!link_wait(decl ? 2 * decl : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK: pacing fully follows the display link (wait for the next tick when running fast, go at once when behind); our own 60 Hz clock is only the fallback when no tick arrives
         else if (wait) sleep_until_ns(at);
     } else {   // DM_DETCLOCK_PACE=1（画面闸门用）：客体时钟按帧走的同时，每帧墙钟不短于一个步长——帧数与游戏内时间确定，后台加载线程每帧至少有一个步长的墙钟可用； | DM_DETCLOCK_PACE=1 (used by the screenshot gate): while the guest clock advances per frame, each frame's wall clock is no shorter than one step -- frame count and in-game time are deterministic, and the background loading thread has at least one step of wall clock available per frame;
                // 机器满载时帧只会更慢、后台得到的墙钟只会更多，所以「消息后第 N 帧」截到的画面与负载无关
@@ -1350,6 +1381,10 @@ static void dump_frame(void) {
 #define TWIN 300
 static double g_tw[6][TWIN]; static unsigned g_tn[6];
 static double g_pres_iv[TWIN]; static unsigned g_presn;   // 上屏间隔（ms；−1 = 被系统丢弃，0 = 无读数） | Present interval (ms; -1 = dropped by the system, 0 = no reading)
+// The pacer's frame period (ms) at the last present: what a frame really has (rt_decl_period: the power saver's 33.3 only with the link on, 8.33 for
+// DM_PRESENT_HZ=120, the adaptive tier under DM_PACE_ADAPT); 0 = uncapped (DM_PRESENT_HZ=0). Frame Drops and tsummary judge late frames against it
+static double g_frame_period_ms;
+double nvn_frame_period_ms(void) { return g_frame_period_ms; }
 __attribute__((weak)) double dm_brightness_now(void) { return -1; }
 __attribute__((weak)) void dm_perf_present(double iv_ms) { (void)iv_ms; }   // 缺省（单测）；宿主 diag.c 的强定义：常开性能记录 perf.txt | Default (unit tests); strong definition in the host's diag.c: always-on performance record perf.txt
 uint64_t dm_nvn_sub_cpu_ns(void) { return atomic_load(&g_cum_sub_cpu_ns); }   // 提交（不含出图）累计 CPU 纳秒 | Cumulative CPU nanoseconds of submit (excluding present)
@@ -1389,8 +1424,9 @@ static void tsummary(uint64_t frame) {
     { unsigned n = g_tn[0] < TWIN ? g_tn[0] : TWIN, over = 0; double v[TWIN];   // 帧间隔另起一行（M1 基线）：本窗口 > 16.7 ms 帧数与 p99 | frame interval gets its own line (M1 baseline): number of frames > 16.7 ms in this window and p99
       if (n) { memcpy(v, g_tw[0], n * sizeof *v); qsort(v, n, sizeof *v, dcmp); for (unsigned i = 0; i < n; i++) over += v[i] > 16.7;
         LOG("[nvn] 帧间隔 至帧 %llu：>16.7ms %u / %u 帧，p99 %.2f ms", frame, over, n, v[(n * 99) / 100 < n ? (n * 99) / 100 : n - 1]); } }
-    { unsigned n = g_presn < TWIN ? g_presn : TWIN, k = 0, drop = 0, discard = 0; double v[TWIN];   // 上屏：掉帧 = 间隔 > 16.7 × 1.5 ms 或被丢弃 | on-screen present: dropped frame = interval > 16.7 × 1.5 ms or discarded
-      for (unsigned i = 0; i < n; i++) { double x = g_pres_iv[i]; if (x < 0) { drop++; discard++; } else if (x > 0) { v[k++] = x; drop += x > 25.0; } }
+    { unsigned n = g_presn < TWIN ? g_presn : TWIN, k = 0, drop = 0, discard = 0; double v[TWIN];   // on screen: a dropped frame = an interval over 1.5 frame periods + 0.25 ms (as Frame Drops judges), or not shown
+      double late = (g_frame_period_ms > 0 ? g_frame_period_ms : 1000.0 / 60) * 1.5 + 0.25;
+      for (unsigned i = 0; i < n; i++) { double x = g_pres_iv[i]; if (x < 0) { drop++; discard++; } else if (x > 0) { v[k++] = x; drop += x > late; } }
       task_vm_info_data_t vi; mach_msg_type_number_t vc = TASK_VM_INFO_COUNT; double fp = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &vc) == KERN_SUCCESS ? vi.phys_footprint / 1048576.0 : -1;
       double br = dm_brightness_now();   // footprint / 亮度随上屏行带出：不依赖拍入口观测门（营地局也有） | footprint / brightness are carried on the on-screen present row: does not depend on the tick-entry observation gate (camp runs have it too)
       // 上屏间隔 p5 / p50 / p95：整除的帧率三个数相同（144 Hz 屏 72 帧都是 13.9）；不整除时两档交替（60 帧在 144 Hz 屏上 13.9 / 20.8）
@@ -1612,16 +1648,20 @@ int (*g_nvn_loadscreen_up)(void);   // 宿主登记：读取画面此刻是否�
 NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     (void)q; win_t *o = (win_t *)w; o->presents++;
     static uint64_t prev_in, prev_out, prev_pass, prev_draw;
-    // 第一次进局的读取画面：后台管线预热没跑完就在这里等它（读取画面多停一会儿），进局后不在提交线程现编管线。预热早已完成时一次判断即过
-    // Loading screen on first entering a run: if the background pipeline warm-up has not finished, wait for it here (the loading screen stays a bit longer), so that after entering the run no pipelines are compiled on the fly on the submit thread. When warm-up finished long ago this passes with a single check
+    // Loading screen on first entering a run: if the pipeline warm-up's foreground rows (the seed's rows before its background marker, and the
+    // player's own manifest) are not built yet, wait for them here (at most 15 s; the loading screen stays a bit longer), so the run does not start
+    // by compiling those pipelines on the submit thread. The seed's background rows (later acts) keep building during play. When the foreground
+    // rows finished long ago this passes with a single check
     { static int gate;
       if (!gate && g_nvn_loadscreen_up && g_nvn_loadscreen_up()) { gate = 1; int ms = mtl_warm_wait(15000); if (ms) LOG("[nvn] 进局读取画面等管线预热 %d ms", ms); } }
     present_cfg(o);
     gfx_enter();
     uint64_t t0 = now_ns();
+    uint64_t job = 0;   // this present's job (0: none, for an index past the swapchain), recorded for the present-time lookup (present_time_of)
     if (idx >= 0 && idx < o->ntex && idx < 4) {   // 只入队，立即返回；ticket 存翻译队列的任务号 | Enqueue only and return at once; ticket holds the translation queue's job number
         xjob j = {XJ_PRESENT, 0, NULL, snap_tex(o->tex[idx]), present_period(o) / 1e9}; memcpy(j.crop, o->crop, sizeof j.crop);
-        o->ticket[idx] = x_push(&j); }
+        job = o->ticket[idx] = x_push(&j); }
+    g_pjob[o->presents % PJN] = (pjob_ent){o->presents, job};
     gfx_leave();
     atomic_fetch_add(&g_nvn_ns, now_ns() - t0);
     uint64_t f = g_frame, ps, dr; mtl_stats(&ps, &dr);
@@ -1737,14 +1777,18 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     // Real-device semantics: present only enqueues and returns immediately; this frame's display time is scheduled by the pacer, and the texture can be acquired again only at "display time + one period" (blocking in AcquireTexture)
     if (g_hz_auto && !dm_detclock_enabled()) pace_adapt_tick(mtl_display_refresh());
     uint64_t period = present_period(o), now = dm_detclock_enabled() ? guest_ns() : now_ns();
+    g_frame_period_ms = period ? rt_decl_period(period) / 1e6 : 0;
     nvn_pacer pc = {o->pace};
     uint64_t slot = now + nvn_pace(&pc, now, period);
     o->pace = pc.target;
     if (idx >= 0 && idx < 4) o->avail[idx] = period ? slot + period : 0;
     static uint64_t prev_slot; if (prev_slot && period) trow(f, "@display_ms", (slot - prev_slot) / 1e6); prev_slot = slot;   // 屏幕上相邻两帧的显示间隔（掉帧看这个） | display interval between two adjacent frames on screen (this is the one to look at for dropped frames)
-    // 实际呈现间隔（窗口模式）：滞后 8 次出图取（呈现回调已到），第 n 次与第 n−1 次之差；−1 = 被丢弃
-    // Actual presentation interval (windowed mode): taken 8 presents late (the presented callback has arrived by then), as the difference between the n-th and the (n−1)-th; −1 = discarded
-    if (o->presents > 9) { uint64_t n = o->presents - 8; double a_ = mtl_presented_time(n), b_ = mtl_presented_time(n - 1);
+    // Actual presentation interval (windowed mode): taken 8 presents late (the presented callback has arrived by then), as the difference between the
+    // game's n-th and (n-1)-th presents; -1 = not shown. The lookup goes game present -> job -> present-thread ticket (present_time_of): the present
+    // thread numbers only the presents it was given, so a present without a ticket (dropped at the door while discarding or while an inactive shell
+    // has no present link to pause, or with an index past the swapchain) gives "no reading" for itself and for the next present, and the count never
+    // drifts from the tickets
+    if (o->presents > 9) { uint64_t n = o->presents - 8; double a_ = present_time_of(n), b_ = present_time_of(n - 1);
         if (a_ < 0) trow(f - 8, "@presented_ms", -1); else if (a_ > 0 && b_ > 0) trow(f - 8, "@presented_ms", (a_ - b_) * 1e3);
         g_pres_iv[g_presn++ % TWIN] = a_ < 0 ? -1 : (a_ > 0 && b_ > 0 ? (a_ - b_) * 1e3 : 0);
         { double iv_ = a_ < 0 ? -1 : (a_ > 0 && b_ > 0 ? (a_ - b_) * 1e3 : 0); mtl_ub_present(iv_); }   // 同进程交替测量（DM_NVN_UB）按相统计上屏间隔；没开时只是一次原子读 | same-process alternating measurement (DM_NVN_UB) tallies on-screen present intervals per phase; when off it is just one atomic read

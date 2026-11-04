@@ -153,6 +153,7 @@ static void host_preload(int argc, char **argv) {
     uint64_t tc = now_ns();
     stubs_report();
     if (g_flag.bootprof) LOG("① 细分（装载后）：探针 / 拍门 / 按键 %.1f ms、预取启动（读清单）%.1f ms、桩报告 %.1f ms", (tb - ta) / 1e6, (tc - tb) / 1e6, (now_ns() - tc) / 1e6);
+    { void dm_tables_report(void); dm_tables_report(); }   // the two game-derived tables (dm_bright.c): one Tables: line, red in the Mac App when one is missing
     dm_prof_mark("① 宿主装载（读 NSO / 重定位 / 强制接管）");
     DM_EV("boot", "stage:s mods:d", "host_loaded", g_nmod);
     { void loader_hash_log(void); loader_hash_log(); }   // DM_LOADHASH=1：装载结果的地址无关哈希（loader.c） | DM_LOADHASH=1: address-independent hash of the load result (loader.c)

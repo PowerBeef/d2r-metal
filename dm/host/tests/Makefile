@@ -16,10 +16,12 @@ run: \
 	$(B)/t_altstack \
 	$(B)/t_audio \
 	$(B)/t_audio_spsc \
+	$(B)/t_bright \
 	$(B)/t_cloudmerge \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
+	$(B)/t_custom \
 	$(B)/t_dump \
 	$(B)/t_dump_asan \
 	$(B)/t_fs \
@@ -31,6 +33,7 @@ run: \
 	$(B)/t_hud_dead \
 	$(B)/t_i18n \
 	$(B)/t_minimap_lift \
+	$(B)/t_loader_layout \
 	$(B)/t_loader_reloc \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
@@ -50,6 +53,8 @@ run: \
 	$(B)/t_romfs_validate \
 	$(B)/t_save_hooks \
 	$(B)/t_scrub \
+	$(B)/t_screen_mac \
+	$(B)/t_geom \
 	$(B)/t_svc_mem \
 	$(B)/t_swkbd \
 	$(B)/t_target_rank \
@@ -62,6 +67,7 @@ run: \
 	$(B)/t_unimpl \
 	$(B)/t_unit_level \
 	$(B)/t_video \
+	$(B)/t_video_phone \
 	$(B)/t_mv_restore \
 	$(B)/t_widget
 	python3 native_write_scan.py --selftest ..
@@ -72,6 +78,7 @@ run: \
 	$(B)/t_thread_leak
 	$(B)/t_loader_weak
 	$(B)/t_loader_reloc 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_loader_layout
 	$(B)/t_mac_overlay
 	TMPDIR="$(abspath $(B))" $(B)/t_app_mac
 	$(PY) test_mac_features.py
@@ -83,7 +90,10 @@ run: \
 	python3 ../../tools/test_scenario_schemes.py
 	python3 ../../tools/test_imgdiff.py
 	python3 ../../tools/test_bench.py
+	python3 ../../tools/test_workspace_prune.py
+	python3 ../../tools/test_picture.py
 	python3 ../../tools/test_boothist.py
+	python3 ../../tools/test_pso_seed.py
 	python3 ../../tools/test_guestsyms.py
 	python3 ../../tools/re/test_nso2elf.py
 	python3 ../../tools/re/test_addrcheck.py
@@ -100,7 +110,8 @@ run: \
 	python3 ../../tools/scenario.py check ../../verify/bench/*.scn
 	python3 ../../verify/test_assertlib.py
 	python3 ../../verify/touchcases/test_lib.py
-	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn ../../verify/scenarios/saves/*.scn ../../verify/scenarios/faults/*.scn ../../verify/golden/*.scn
+	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn ../../verify/scenarios/saves/*.scn ../../verify/scenarios/faults/*.scn ../../verify/scenarios/manual/*.scn ../../verify/scenarios/heap/*.scn ../../verify/scenarios/picture/*.scn ../../verify/golden/*.scn
+	$(if $(wildcard ../../verify/scenarios/pending/*.scn),python3 ../../tools/scenario.py check $(wildcard ../../verify/scenarios/pending/*.scn))
 	python3 ../../tools/test_switches.py
 	python3 ../../tools/switches.py check
 	$(B)/t_ctl
@@ -122,6 +133,7 @@ run: \
 	DM_ROMFS="$(DM_ROOT)/data/switch/3.3.94012/Update/RomFS" $(B)/t_romfs_validate
 	$(B)/t_audio
 	$(B)/t_audio_spsc
+	TMPDIR="$(abspath $(B))" $(B)/t_bright 2>/dev/null
 	$(B)/t_swkbd
 	$(B)/t_aim_cone
 	$(B)/t_altstack
@@ -149,7 +161,11 @@ run: \
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudmerge 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_scrub
+	$(B)/t_screen_mac
+	$(B)/t_geom
 	TMPDIR="$(abspath $(B))" $(B)/t_video 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_video_phone 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_custom 2>/dev/null
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
 	$(PY) movie_cut.py $(B)/main.orig.bin $(B)/subsdk0.orig.bin
 	$(PY) oe_notify.py $(B)/main.orig.bin
@@ -167,10 +183,21 @@ $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_textbox.c ../dm_textbox_core.c
 $(B)/t_scrub: t_scrub.c ../dm_scrub.c ../dm_scrub.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_scrub.c ../dm_scrub.c
-$(B)/t_picrec: t_picrec.c t_picrec_cases.h ../dm_picrec.c ../dm_picrec.h | $(B)
+$(B)/t_screen_mac: t_screen_mac.c ../dm_screen_mac.c ../dm_screen_mac.h ../dm_uiscreen.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_screen_mac.c ../dm_screen_mac.c -lm
+$(B)/t_geom: t_geom.c ../dm_geom.h | $(B)
+	clang -std=c11 -O1 -Wall -Wextra -Werror -pedantic -I.. -o $@ t_geom.c -lm
+$(B)/t_picrec: t_picrec.c t_picrec_cases.h ../dm_picrec.c ../dm_picrec.h ../dm_s3lv.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_picrec.c ../dm_picrec.c -lm
-$(B)/t_video: t_video.c ../dm_video.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_video.c ../dm_video.c
+# the Mac build of dm_video.c (t_video.c includes dm_video.c; t_video_fe.c holds the front-end stubs: generic and front_mac.m on this M6)
+$(B)/t_video: t_video.c t_video_fe.c ../dm_video.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_video.c t_video_fe.c
+# dm_custom.c: Frame Drops follows its default unless the player picked the other value (custom_v 2), the Extras key bright
+$(B)/t_custom: t_custom.c ../dm_custom.c ../dm_custom.h ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_custom.c ../dm_custom.c
+# the phone build of dm_video.c (DM_PHONE=1 on the Mac; t_video_phone.c includes dm_video.c, the stubs mirror front_ios.m)
+$(B)/t_video_phone: t_video_phone.c t_video_phone_stubs.c ../dm_video.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -DDM_PHONE=1 -I.. -Wl,-dead_strip -o $@ t_video_phone.c t_video_phone_stubs.c
 $(B)/t_widget: t_widget.c ../dm_widget.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_widget.c
 $(B)/t_unit_level: t_unit_level.c ../dm_unit.h | $(B)
@@ -197,6 +224,9 @@ $(B)/t_fs: t_fs.c t_fs_stub.c ../hle_fs.c ../hle.h ../dm.h ../dm_i18n.c | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_fs.c t_fs_stub.c ../dm_i18n.c
 $(B)/t_audio: t_audio.c ../hle_audio.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_audio.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
+# dm_bright.c alone (dm_table_read is inline in dm_tables.h): table status, the exposure smoother, the Extras switch
+$(B)/t_bright: t_bright.c ../dm_bright.c ../dm.h ../dm_tables.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bright.c ../dm_bright.c
 $(B)/t_audio_spsc: t_audio_spsc.c ../hle_audio.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_audio_spsc.c -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
 $(B)/t_audio_spsc_tsan: t_audio_spsc.c ../hle_audio.c ../hle.h ../dm.h | $(B)
@@ -254,8 +284,8 @@ $(B)/t_romfs_validate: t_romfs_validate.c ../romfs_validate.c ../romfs_validate.
 $(B)/t_hid_script: t_hid_script.c t_touch_tick_stub.c ../hle_hid.c ../dm_cursor.c ../dm_hud.c ../dm_hud.h ../touch_mac.c ../../ios/Sources/dm_touch_controls.c ../hle.h ../dm.h ../dm_input.h ../front.h | $(B) ../dm_prof.c
 	clang -O1 -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_hid_script.c t_touch_tick_stub.c ../dm_cursor.c ../dm_hud.c ../touch_mac.c ../../ios/Sources/dm_touch_controls.c -lm ../dm_prof.c
 
-$(B)/t_oe: t_oe.c ../hle_oe.c ../hle.h ../dm.h | $(B)
-	clang -O1 -Wno-unused-function -I.. -o $@ t_oe.c
+$(B)/t_oe: t_oe.c t_oe_stub.c ../hle_oe.c ../hle.h ../dm.h ../dm_s3lv.h | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_oe.c t_oe_stub.c
 
 $(B)/t_kbm: t_kbm.c ../dm_kbm.c ../dm_kbm.h
 	clang -O1 -Wall -Werror -I.. -o $@ t_kbm.c
@@ -289,6 +319,9 @@ $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 
 $(B)/t_loader_reloc: t_loader_reloc.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_reloc.c ../hle.c
+
+$(B)/t_loader_layout: t_loader_layout.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
+	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_layout.c ../hle.c
 
 $(B)/t_unimpl: t_unimpl.c ../hle.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-unused-function -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_unimpl.c
