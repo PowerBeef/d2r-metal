@@ -146,6 +146,7 @@ UIREG_APP_IPAD=$PWD/.iosdd_mac_pad/DmMacSmokePad.app python3 dm/ios/tools/uireg/
 
 - It only builds (`SMOKE_MAC_PKG_ONLY=1` is required) and writes no smoke ledger row.
 - Before rebuilding it, wait until the last run's mount is gone (`mount | grep -F .iosdd_mac_pad/` prints nothing); the script refuses while it is still mounted (see the rules below).
+- The same package runs the iPad window scenarios: `SCN_MAC_APP=$PWD/.iosdd_mac_pad/DmMacSmokePad.app python3 dm/tools/scenario.py run dm/verify/scenarios/ios_window_resize.scn dm/verify/scenarios/ios_fold_resize.scn --backend ios-mac`.
 - When done, move `.iosdd_mac_pad` to the Trash (once the mount is gone): its derived data takes several GB, and a stale test app shows up in the Mac's app search.
 
 ## Rules for swapping packages

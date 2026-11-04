@@ -442,7 +442,8 @@ static int cmd_act(const ctl_args *a, char *out, size_t cap, char *err, size_t e
     return 1;
 }
 // app do=background|foreground|resign|active|minimize|restore|terminate: front-end lifecycle (see g_dm_ctl_app_fn in dm_ctl.h);
-// the Mac front end also takes the test verbs cover|uncover|link_inactive|link_active (front_mac.m ctl_app)
+// the Mac front end also takes the test verbs cover|uncover|link_inactive|link_active (front_mac.m ctl_app), the iOS front end resize_<w>x<h>
+// (front_ios.m test_resize: the outermost view resized to w x h points, as a discrete scene resize)
 static int cmd_app(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     const char *w = dm_ctl_get(a, "do"); (void)out; (void)cap;
     if (!w) ERR("missing do");

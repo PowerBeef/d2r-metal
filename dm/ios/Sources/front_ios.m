@@ -32,6 +32,7 @@ static void vkbd_where(dm_vkbd_host *h); static void alert_handoff_pad(void);   
 #include "../../host/dm_world.h"
 #include "../../host/dm_ctl.h"
 #include "../../host/dm_uiscreen.h"
+#include "../../host/dm_geom.h"
 #include "../../host/dm_actions.h"
 #include "../../host/dm_i18n.h"
 static NSString *SWT(const char *k) { return @(dm_ui(k)); }   // 我们自己的界面文字（中英表 dm/i18n/ui_text.tsv，语言跟原版设置走） | our own UI text (Chinese-English string table dm/i18n/ui_text.tsv, language follows the original game's setting)
@@ -88,6 +89,12 @@ static __weak DmMetalView *g_touch_view;
 static int g_full;
 static _Atomic uint64_t g_res_now;        // 当前出图尺寸 {u32 宽, u32 高}（真全屏下随窗口变，见 front_game_res 上的说明）
 static uint64_t g_res_cap;                // 报给游戏建窗口的尺寸（上限）
+// The iPad paths (DM_TEST_IDIOM=pad|phone, read once, lets either iOS package on the Mac take the iPad or the phone paths; unset = the device's idiom)
+static int ios_pad(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("DM_TEST_IDIOM"); v = e && *e ? !strcmp(e, "pad") : UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad; }
+    return v;
+}
 static CGRect world_rect(UIView *v) { UIView *b = v.superview; int x, y, w, h, rw = 0, rh = 0; if (!g_full || !b) return v.bounds; dm_ui_rect(&x, &y, &w, &h);
     return dm_screen_real(&rw, &rh) && h > 0 && h < rh ? [v convertRect:b.bounds fromView:b] : v.bounds; }   // 局外（界面矩形就是整个画面）时世界与游戏视图重合 | Out of a run (the UI rectangle is the whole picture) the world and the game view coincide
 static void world_norm(UIView *v, CGFloat x, CGFloat y, float *nx, float *ny) { CGRect r = world_rect(v); *nx = (float)((x - r.origin.x) / r.size.width); *ny = (float)((y - r.origin.y) / r.size.height); }
@@ -816,6 +823,7 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
 // Called on the main thread: creates the fullscreen Metal view; the graphics backend gets its layer through front_metal_layer to present frames
 // ProMotion frame rate request: on iPhone, when the App calls nextDrawable / present itself, the system by default hands out drawables at 60 Hz (real device: adding only Info.plist's
 // CADisableMinimumFrameDurationOnPhone still gives 60 fps and a 16.6 ms drawable wait). Attach a declaration-only CADisplayLink (empty callback) requesting 80–120 Hz, and only then does the system switch to 120 Hz.
+static void geom_watch(DmMetalView *v);   // the picture-geometry check (geom event), defined after the window code
 @interface DmRateHint : NSObject
 - (void)tick:(CADisplayLink *)l;
 @end
@@ -830,6 +838,7 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
         if (g_full) { static int lx = -1, ly, lw, lh, lrh, lrw; int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h);   // 界面矩形由宿主定（开机后才有、切档会变）：变了就让容器重摆游戏视图 | The UI rectangle is decided by the host (available only after boot, changes when the profile switches): on change, have the container re-lay out the game view
             if (dm_screen_real(&rw, &rh) && (x != lx || y != ly || w != lw || h != lh || rh != lrh || rw != lrw)) { lx = x; ly = y; lw = w; lh = h; lrh = rh; lrw = rw; [v.superview setNeedsLayout]; [v.superview layoutIfNeeded]; } }   // 当拍摆到位：自绘控件不比游戏画的界面晚一拍 | Laid out within the same tick: custom-drawn widgets are not one tick later than the UI drawn by the game
         [v tickTouchControls:CACurrentMediaTime()];
+        geom_watch(v);
         [g_touch_view refreshPortalBinding];
     }
 }
@@ -849,6 +858,16 @@ static CADisplayLink *g_rate_link;
 // on a real iPhone the picture ratio = the screen ratio, which takes this path with no container and unchanged behavior.
 uint64_t front_game_res(int docked); void mtl_set_ui_rect_fn(void (*fn)(double *y, double *h));
 static void ui_rect_frac(double *fy, double *fh) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); if (dm_screen_real(&rw, &rh) && rh > 0) { *fy = (double)y / rh; *fh = (double)h / rh; } }
+// Where the present draws the picture in a view of f points at scale k: the present's own fit (dm_geom_fit, which present_encode_m4 uses) of the
+// picture the game view goes by (dm_geom_pic: the real one once the game has written its size) into f's drawable, back in points. *real (when
+// not NULL) = whether that was the real picture
+static CGRect pic_rect(CGRect f, CGFloat k, int *real) {
+    int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); if (!dm_screen_real(&rw, &rh)) rw = rh = 0;
+    double p[2], r[4]; int re = dm_geom_pic(rw, rh, h, p); if (real) *real = re;
+    if (k <= 0) k = 1;
+    dm_geom_fit(round(f.size.width * k), round(f.size.height * k), p[0], p[1], r);
+    return CGRectMake(f.origin.x + r[0] / k, f.origin.y + r[1] / k, r[2] / k, r[3] / k);
+}
 static CGRect letterbox_rect(CGRect f) {
     if (g_full && f.size.width > 0 && f.size.height > 0) {   // 真全屏：游戏视图跟宿主的读数走（纵向位置只有那一个来源），每拍比对、变了重摆 | True fullscreen: the game view follows the host's readings (the only source for the vertical position); compared every tick and re-laid out on change
         // 局内（真实画面比 16:9 窄、界面矩形比画面矮）= 界面矩形，贴底；局外（前端各页、读取画面，游戏整体按 16:9 出）= 窗口里居中的那块 16:9。宿主还没读到画面宽高前按局外摆
@@ -889,16 +908,68 @@ static void window_px(CGSize s, CGFloat k) {
 // True fullscreen: the strip above the game view has only 3D; fingers landing there are also given to the game view (negative y) -- tapping monsters / chests works as usual, and the UI and custom-drawn widgets cannot be hit
 - (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { UIView *h = [super hitTest:p withEvent:e]; return g_full && h == self ? self.game : h; }
 @end
-// 测试：模拟窗口变尺寸（iPhone Duo 展开 / 折叠）。Mac 上的 iOS 包窗口不能拖（要求全屏），用这个到点把最外层视图改成给定点数，走的是同一段布局代码。
-// DM_TEST_FOLD=<秒>:<宽>x<高>[,<秒>:<宽>x<高>…]，秒数从视图建好时算；配 DM_TEST_WINDOW_PX=1 让 Mac 上也跟着换出图尺寸
+// The outermost view: the container when the game view has one (letterboxed or true full screen), else the game view itself
+static UIView *outer_view(void) { DmMetalView *v = g_touch_view; UIView *s = v.superview; return [s isKindOfClass:DmLetterboxView.class] ? s : v; }
+static void geom_rearm(void);
+// Tests: resize the outermost view to w x h points, as a discrete scene resize does (an iPhone Duo folding, an iPad window). The iOS package's
+// window on the Mac cannot be dragged (it asks for full screen), so this takes the same layout code; the view may be larger than the Mac window
+// (geometry, render size and present do not depend on the window's clipping). The control port's `app do=resize_<w>x<h>` and DM_TEST_FOLD call it
+static void test_resize(double w, double h) {
+    UIView *u = outer_view(); if (!u) return;
+    LOG("Test: view resized to %.0fx%.0f pt", w, h); geom_rearm();
+    u.frame = CGRectMake(0, 0, w, h); [u setNeedsLayout]; [u layoutIfNeeded];
+}
+// DM_TEST_FOLD=<s>:<w>x<h>[,<s>:<w>x<h>…]: test_resize at those seconds after the view is built
 static UIView *test_fold(UIView *top) {
     const char *e = getenv("DM_TEST_FOLD"); if (!e) return top;
     for (const char *q = e; q && *q; q = strchr(q, ',') ? strchr(q, ',') + 1 : NULL) {
         double t = 0, w = 0, h = 0; if (sscanf(q, "%lf:%lfx%lf", &t, &w, &h) != 3 || w <= 0 || h <= 0) continue;
-        __weak UIView *wt = top; dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(t * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIView *u = wt; if (!u) return; LOG("测试：视图改成 %.0fx%.0f 点（DM_TEST_FOLD）", w, h); u.frame = CGRectMake(0, 0, w, h); [u setNeedsLayout]; [u layoutIfNeeded]; });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(t * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ test_resize(w, h); });
     }
     return top;
+}
+// The picture-geometry check (event geom, dm/verify/event_stream.md), every touch-controls tick on the main thread: the picture, the drawable and
+// the game view (where the drawn controls and touch land) are compared with where the present really drew the picture (nvn_mtl.m
+// mtl_present_geom: the last present_encode_m4 viewport, drawable and sampled crop, in pixels).
+// - The present layer is the container's in true full screen; otherwise the game view's own layer (letterboxed in a container or not).
+// - It judges only while the present shows the picture the game renders now: true full screen, the real picture (pic_rect) and the present's crop
+//   of its aspect within 0.5%; otherwise the crop of the launch picture's aspect (front_game_res). Ticks it does not judge restart the settling.
+// - A state (ok, in a run, the window, the viewport, the real picture, whether the render size followed the window, the iPad 4:3 rule, the scale)
+//   is settled after 20 ticks (aligned) or 60 (not); it is reported when it differs from the last one reported, and once after each resize
+//   (geom_rearm), so returning to a size reports again. Log and event only, never a red line: a player's log never carries a false red
+static _Atomic int g_geom_rearm;
+static void geom_rearm(void) { atomic_store(&g_geom_rearm, 1); }
+static void geom_watch(DmMetalView *v) {
+    static int cand[13], last[13], n, have, rearmed;
+    if (atomic_exchange(&g_geom_rearm, 0)) { rearmed = 1; n = 0; }
+    UIView *host = g_full ? v.superview : v, *top = outer_view(); if (!v || !host || !top || !g_layer) return;
+    void mtl_present_geom(int out[8]); int pg[8]; mtl_present_geom(pg);
+    int x, y, w, h, rw = 0, rh = 0, real = 1; dm_ui_rect(&x, &y, &w, &h); (void)x; (void)w;
+    CGRect f = host.bounds; CGFloat k = g_layer.contentsScale; CGRect pr = f;
+    int judge = dm_uiscreen_res_live() && dm_screen_real(&rw, &rh) && rw > 0 && rh > 0 && pg[6] > 0 && pg[7] > 0 && k > 0 && f.size.width > 0 && f.size.height > 0;
+    if (judge && g_full) { pr = pic_rect(f, k, &real); judge = real && fabs(((double)pg[6] / pg[7]) / ((double)rw / rh) - 1) <= 0.005; }
+    else if (judge) { uint64_t r = front_game_res(1); judge = (r >> 32) && fabs(((double)pg[6] / pg[7]) / ((double)(uint32_t)r / (double)(r >> 32)) - 1) <= 0.005; }
+    if (!judge) { n = 0; return; }
+    const double vp[4] = { pg[0], pg[1], pg[2], pg[3] };
+    double e[4] = { 0, 0, round(f.size.width * k), round(f.size.height * k) };
+    if (g_full) { e[0] = (pr.origin.x - f.origin.x) * k; e[1] = (pr.origin.y - f.origin.y) * k; e[2] = pr.size.width * k; e[3] = pr.size.height * k; }
+    CGRect gv = g_full ? v.frame : v.bounds;   // the game view in the present layer's coordinates
+    const double g[4] = { (gv.origin.x - f.origin.x) * k, (gv.origin.y - f.origin.y) * k, gv.size.width * k, gv.size.height * k };
+    double want[4]; dm_geom_ui_view(vp, rh, y, h, 1.0, want);
+    int ok_pic = dm_geom_same(e, vp, 3), ok_dr = labs(pg[4] - lround(f.size.width * k)) <= 1 && labs(pg[5] - lround(f.size.height * k)) <= 1, ok_view = dm_geom_same(g, want, 2);
+    CGSize ts = top.bounds.size; uint32_t wp[2] = { 0, 0 };
+    int clamp = dm_geom_window_px(ts.width, ts.height, k, (double)(uint32_t)g_res_cap, (double)(g_res_cap >> 32), ios_pad() ? 4.0 / 3 : 0, wp), follow = -1;
+    if (g_full && !getenv("DM_GAME_RES")) { uint64_t o = dm_game_res(1); follow = rw == (int)(uint32_t)o && rh == (int)(o >> 32) && (uint32_t)o == wp[0]; }
+    const int st[13] = { ok_pic && ok_dr && ok_view, dm_uiscreen_ingame(), (int)lround(ts.width), (int)lround(ts.height), pg[0], pg[1], pg[2], pg[3], rw, rh, follow, clamp, (int)lround(k * 100) };
+    if (memcmp(st, cand, sizeof st)) { memcpy(cand, st, sizeof st); n = 0; }
+    if (++n != (st[0] ? 20 : 60)) return;
+    if (have && !rearmed && !memcmp(st, last, sizeof st)) return;
+    memcpy(last, st, sizeof st); have = 1; rearmed = 0;
+    LOG("Picture geometry %s: window %dx%d pt, present viewport %d,%d %dx%d px of %dx%d, picture expected at %.0f,%.0f %.0fx%.0f, game view y %.1f h %.1f pt, real picture %dx%d, render %s, %s",
+        st[0] ? "aligned" : "MISALIGNED", st[2], st[3], pg[0], pg[1], pg[2], pg[3], pg[4], pg[5], e[0], e[1], e[2], e[3], gv.origin.y, gv.size.height, rw, rh,
+        follow < 0 ? "fixed" : follow ? "follows the window" : "not yet followed", st[1] ? "in a run" : "out of a run");
+    DM_EV("geom", "ok:d ingame:d win_w:d win_h:d vp_x:d vp_y:d vp_w:d vp_h:d rw:d rh:d follow:d clamp:d k100:d", st[0], st[1], st[2], st[3], st[4], st[5], st[6], st[7], st[8], st[9],
+          st[10], st[11], st[12]);
 }
 UIView *front_ios_view(CGRect frame) {
     front_game_res(1);   // 「真全屏」开没开（g_full）是它第一次被调时按屏幕比例定的；下面摆视图要用，不能指望别处碰巧先调过 | whether "true fullscreen" is on (g_full) is decided from the screen aspect ratio the first time this is called; the view layout below needs it and cannot count on something else happening to have called it first
@@ -1293,6 +1364,7 @@ static int ctl_app(const char *w) {
     if (!strcmp(w, "resign")) { dispatch_sync(mq, ^{ front_ios_focus_event(0); }); return 0; }
     if (!strcmp(w, "active")) { dispatch_sync(mq, ^{ front_ios_focus_event(3); }); return 0; }
     if (!strcmp(w, "terminate")) { dispatch_async(mq, ^{ front_ios_final_save(); dm_host_shutdown("控制口 terminate"); }); return 0; }
+    double rw_, rh_; if (sscanf(w, "resize_%lfx%lf", &rw_, &rh_) == 2 && rw_ > 0 && rh_ > 0) { dispatch_sync(mq, ^{ test_resize(rw_, rh_); }); return 0; }   // tests: a discrete scene resize (test_resize)
     return -1;
 }
 // 失活（控制中心 / 通知中心拉下来、来电横幅、多任务界面）到再激活之间停掉两条显示节拍：出图节拍（nvn_mtl.m mtl_link_pause）和触屏控件那条（DmRateHint，每拍重画控件与秘境任务栏）。

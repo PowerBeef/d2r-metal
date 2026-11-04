@@ -358,6 +358,7 @@ DM_TEST_ICLOUD_MIGRATE_KILL	ios	ios/Sources/cloud_ios.m	-
 DM_TEST_ICLOUD_OFF	ios	ios/Sources/cloud_ios.m	-
 DM_TEST_ICLOUD_ROOT	ios	ios/Sources/cloud_ios.m	-
 DM_TEST_ICLOUD_SUB	ios	ios/Sources/cloud_ios.m	-
+DM_TEST_IDIOM	ios	ios/Sources/front_ios.m	-
 DM_TEST_JOY_ISO	ios	ios/Sources/front_ios.m	-
 DM_TEST_KBD_TYPE	ios	ios/Sources/front_ios.m	-
 DM_TEST_KEYRACE	host	host/main.c	-
