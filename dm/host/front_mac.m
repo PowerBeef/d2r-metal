@@ -554,6 +554,10 @@ double front_display_refresh(char *name, size_t n) {
 }
 - (void)quitEvent:(NSAppleEventDescriptor *)e reply:(NSAppleEventDescriptor *)r { (void)e; (void)r; app_quit("系统退出"); }
 - (void)keys:(id)s { (void)s; show_keys(); }
+// Window > Minimize (Cmd-M): a background test run emulates it, as the control port's app minimize does
+- (void)minimize:(id)s { if (bgrun()) emu_minimize(1); else [g_win miniaturize:s]; }
+// Minimize is off in full screen (as in other Mac apps) and while minimized; every other item stays on
+- (BOOL)validateMenuItem:(NSMenuItem *)it { return it.action != @selector(minimize:) || (g_win && !win_full() && !win_mini()); }
 - (void)share:(id)s { (void)s; share_logs_ui(); }
 @end
 static uint64_t g_btn;
@@ -799,7 +803,7 @@ void front_run(void (*guest)(void)) {
         // The first window: 1280 points wide in the picture's shape, fitted inside the screen's visible area below its title bar (dm_scr_fit_window),
         // so it opens whole, with no bars; AppKit used to clamp a 1280 x 720 window on a 1280 x 720 pt screen to 1280 x 658 and the picture sat
         // in a 1170-wide pillarbox (COL-7)
-        NSWindowStyleMask sm = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
+        NSWindowStyleMask sm = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;   // minimizable: Window > Minimize
         NSScreen *home = dm_screen(); double cw = 1280, ch = floor(1280 / g_aspect);
         CGFloat tb = [NSWindow frameRectForContentRect:NSMakeRect(0, 0, 100, 100) styleMask:sm].size.height - 100;
         if (home) dm_scr_fit_window(g_aspect, home.visibleFrame.size.width, home.visibleFrame.size.height - tb, &cw, &ch);
@@ -833,11 +837,14 @@ void front_run(void (*guest)(void)) {
             [v addTrackingArea:[[NSTrackingArea alloc] initWithRect:NSZeroRect options:NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect owner:v userInfo:nil]];
             [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *t) { (void)t; pc_cursor_sync(); }];   // the PC cursor follows mode changes and the window size without pointer motion
         }
-        { // 菜单栏：应用（退出 ⌘Q）/ 显示（全屏 ⌃⌘F）/ 帮助（键位对照） | Menu bar: application (Quit ⌘Q) / View (Full Screen ⌃⌘F) / Help (key mapping)
+        { // Menu bar: application (Quit Cmd-Q) / View (Full Screen Ctrl-Cmd-F) / Window (Minimize Cmd-M) / Help (key mapping, Share Log)
           NSMenu *bar = [NSMenu new];
           NSMenu *(^add)(const char *) = ^NSMenu *(const char *t) { NSMenuItem *it = [NSMenuItem new]; [bar addItem:it]; NSMenu *m = [[NSMenu alloc] initWithTitle:@(t)]; it.submenu = m; return m; };
           [[add("") addItemWithTitle:@(ui("dmAppQuit")) action:@selector(quit:) keyEquivalent:@"q"] setTarget:ctl];
           NSMenuItem *fs = [add(ui("dmAppMenuView")) addItemWithTitle:@(ui("dmAppFullscreen")) action:@selector(toggleFullScreen:) keyEquivalent:@"f"]; fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+          // Window: Minimize only, targeted at the window controller like the other items, so it works (and can be tested) without the App in front;
+          // DmWinCtl validateMenuItem: disables it in full screen and while minimized. NSApp.windowsMenu is not set, so AppKit adds no window list
+          { NSMenu *wm = add(ui("dmAppMenuWindow")); [[wm addItemWithTitle:@(ui("dmAppMinimize")) action:@selector(minimize:) keyEquivalent:@"m"] setTarget:ctl]; }
           { NSMenu *hm = add(ui("dmAppMenuHelp")); [[hm addItemWithTitle:@(ui("dmAppKeysTitle")) action:@selector(keys:) keyEquivalent:@""] setTarget:ctl]; [[hm addItemWithTitle:@(ui("dmAppShareLog")) action:@selector(share:) keyEquivalent:@""] setTarget:ctl]; }
           NSApp.mainMenu = bar; }
         { void dm_gamepad_start(void (*on_mode)(int pad)), dm_gamepad_on_press(void (*fn)(void)); dm_gamepad_start(NULL); dm_gamepad_on_press(text_input_handoff_pad); }   // 手柄（与 iOS 壳共用 ios/Sources/dm_gamepad.m）：连上即用，与键盘并存 | Gamepad (ios/Sources/dm_gamepad.m, shared with the iOS shell): works as soon as it is connected, alongside the keyboard
@@ -1085,9 +1092,12 @@ void front_run(void (*guest)(void)) {
                                                         ([k2 containsString:@"opt"] ? NSEventModifierFlagOption : 0) | ([k2 containsString:@"shift"] ? NSEventModifierFlagShift : 0);
                               NSEvent *ev = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:mf timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber
                                                               context:nil characters:k1 charactersIgnoringModifiers:k1 isARepeat:NO keyCode:0];
-                              for (NSMenuItem *it in NSApp.mainMenu.itemArray) [it.submenu update];
+                              NSMenuItem *hit = nil;   // the item with this key equivalent, for the log: AppKit takes the key for a disabled item too, and does nothing
+                              for (NSMenuItem *it in NSApp.mainMenu.itemArray) { [it.submenu update];
+                                  for (NSMenuItem *x in it.submenu.itemArray) if ([x.keyEquivalent isEqualToString:k1] && (x.keyEquivalentModifierMask & 0x1e0000) == (mf & 0x1e0000)) hit = x; }
                               BOOL took = [NSApp.mainMenu performKeyEquivalent:ev];
-                              LOG("DM_TEST_NSMOUSE: menu key %s%s%s -> %s", k2.UTF8String, k2.length ? "+" : "", k1.UTF8String, took ? "a menu item took it" : "no enabled item"); }
+                              LOG("DM_TEST_NSMOUSE: menu key %s%s%s -> %s%s%s (%s)", k2.UTF8String, k2.length ? "+" : "", k1.UTF8String, hit ? "\"" : "", hit ? hit.title.UTF8String : "no item",
+                                  hit ? (hit.enabled ? "\" enabled" : "\" disabled") : "", took ? "taken" : "not taken"); }
                       }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
                       return 1; }
                   if (!strcmp(op, "unit") || !strcmp(op, "unith")) {   // 「秒 unit <类型>,<类号>」：盯住这类单位（类号 16777214 = 敌对且可选中的怪、16777215 = 任意），它一在画面里就在它身体框中心投一次真正的鼠标点击；unith = 按住 2.5 秒才抬起 | "<seconds> unit <type>,<class>": watch for units of this kind (class 16777214 = hostile and selectable monster, 16777215 = any) and post one real mouse click at the centre of its body box as soon as it is on screen; unith = hold for 2.5 seconds before releasing
@@ -1123,15 +1133,12 @@ void front_run(void (*guest)(void)) {
                   LOG("DM_TEST_NSMOUSE：%d 条排好", n); } }
           if ((e = getenv("DM_TEST_SHARELOG"))) { NSString *to = @(e); dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSString *er = share_logs(to); LOG("DM_TEST_SHARELOG：第 8 秒打包到 %s → %s", to.lastPathComponent.UTF8String, er ? er.UTF8String : "OK"); }); }   // 测试：不弹存储面板，第 8 秒直接把压缩包写到这个路径 | test: no save panel, write the archive directly to this path at second 8
           if ((e = getenv("DM_TEST_QUIT_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ app_quit("DM_TEST_QUIT_AT"); });
-          // DM_TEST_TERMINATE_AT=<秒>：走一次系统退出（退出 Apple 事件，同程序坞「退出」）；DM_TEST_MINI_AT=<秒>[;<秒>…]：每个时刻切一次最小化（来回切）。
-          // 游戏窗口本来不带「可最小化」（没有黄色按钮、没有 ⌘M）：这个开关只在测试时给窗口加上，验上面的最小化处理
-          // DM_TEST_TERMINATE_AT=<seconds>: go through one system quit (the quit Apple event, same as Quit in the Dock); DM_TEST_MINI_AT=<seconds>[;<seconds>...]: toggle minimize at each time (back and forth).
-          // The game window is not minimizable by itself (no yellow button, no Cmd-M): this switch adds that only for the test, to check the minimize handling above
+          // DM_TEST_TERMINATE_AT=<seconds>: go through one system quit (the quit Apple event, same as Quit in the Dock); DM_TEST_MINI_AT=<seconds>[;<seconds>...]:
+          // toggle minimize at each time (back and forth). The window is minimizable (Window > Minimize, Cmd-M); the switch only schedules the toggles
           // 退出走主线程运行循环的公共模式（不排主队列）：模态弹框（如键位对照）的模态循环跑在主队列的一个块里，那时主队列不走，真的「程序坞退出」却照样进来
           // The quit goes through the main run loop's common modes (not the main queue): a modal dialog's (such as the key map's) modal loop runs inside a main-queue block, during which the main queue does not run, yet a real "Quit in the Dock" still comes in
           if ((e = getenv("DM_TEST_TERMINATE_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
               CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ send_quit_event(); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
-          if ((e = getenv("DM_TEST_MINI_AT")) && !bg) win.styleMask |= NSWindowStyleMaskMiniaturizable;
           if ((e = getenv("DM_TEST_MINI_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)   // background: emulated (emu_minimize)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (bg) emu_minimize(!g_mini_emul); else if (win.miniaturized) [win deminiaturize:nil]; else [win miniaturize:nil]; }); }
         // 生命周期（hle.h / dm.h）：失焦 → 2、拿回焦点 → 1；最小化 → 3 + 音频暂停 + GPU 挂起，还原 → 恢复（随后拿回焦点 → 1）
