@@ -59,6 +59,7 @@ SRC=\
 	dm_potpick.c \
 	dm_cloudmerge.c \
 	dm_savebits.c \
+	dm_screen_mac.c \
 	dm_scrub.c \
 	dm_staterep.m \
 	dm_textbox.c \
@@ -115,7 +116,7 @@ tables/bright_levels.tsv: ../tools/gen_bright_levels.py ../ios/tools/touch_layou
 	$(NEED_ROMFS)
 	@mkdir -p tables
 	python3 ../tools/gen_bright_levels.py --tsv "$(ROMFS)" $@.tmp && mv $@.tmp $@
-dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h dm_s3lv.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) dm_tables.h | $(if $(HAVE_ROMFS),$(TABLES))
+dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h dm_s3lv.h dm_screen_mac.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) dm_tables.h | $(if $(HAVE_ROMFS),$(TABLES))
 	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network -framework IOKit
 # 消毒器版宿主（调试用，不在缺省目标里）：make dmhost_asan（地址 + 未定义行为）/ dmhost_ubsan / dmhost_tsan；只插桩宿主代码，游戏程序不插桩。
 # 场景运行器经 SCN_DMHOST 用它：SCN_DMHOST=dm/host/dmhost_asan python3 dm/tools/scenario.py run …（dm/verify/debugging.md）
@@ -126,5 +127,5 @@ dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h dm_s3lv.h front.h touc
 SAN_asan=-fsanitize=address,undefined -mllvm -asan-stack=0
 SAN_ubsan=-fsanitize=undefined
 SAN_tsan=-fsanitize=thread
-dmhost_asan dmhost_ubsan dmhost_tsan: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h dm_s3lv.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) dm_tables.h | $(if $(HAVE_ROMFS),$(TABLES))
+dmhost_asan dmhost_ubsan dmhost_tsan: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h dm_s3lv.h dm_screen_mac.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) dm_tables.h | $(if $(HAVE_ROMFS),$(TABLES))
 	clang $(CFLAGS) $(SAN_$(@:dmhost_%=%)) -fno-omit-frame-pointer -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network -framework IOKit

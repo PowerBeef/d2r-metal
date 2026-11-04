@@ -53,6 +53,7 @@ run: \
 	$(B)/t_romfs_validate \
 	$(B)/t_save_hooks \
 	$(B)/t_scrub \
+	$(B)/t_screen_mac \
 	$(B)/t_svc_mem \
 	$(B)/t_swkbd \
 	$(B)/t_target_rank \
@@ -159,6 +160,7 @@ run: \
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudmerge 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_scrub
+	$(B)/t_screen_mac
 	TMPDIR="$(abspath $(B))" $(B)/t_video 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_video_phone 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_custom 2>/dev/null
@@ -179,6 +181,8 @@ $(B)/t_textbox: t_textbox.c ../dm_textbox_core.c ../dm_textbox_core.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_textbox.c ../dm_textbox_core.c
 $(B)/t_scrub: t_scrub.c ../dm_scrub.c ../dm_scrub.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_scrub.c ../dm_scrub.c
+$(B)/t_screen_mac: t_screen_mac.c ../dm_screen_mac.c ../dm_screen_mac.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_screen_mac.c ../dm_screen_mac.c -lm
 $(B)/t_picrec: t_picrec.c t_picrec_cases.h ../dm_picrec.c ../dm_picrec.h ../dm_s3lv.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_picrec.c ../dm_picrec.c -lm
 # the Mac build of dm_video.c (t_video.c includes dm_video.c; t_video_fe.c holds the front-end stubs: generic and front_mac.m on this M6)

@@ -28,6 +28,7 @@ __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn
 #include "dm_ctl.h"
 #include "dm_kbm.h"
 #include "dm_picrec.h"
+#include "dm_screen_mac.h"
 #include "../ios/Sources/dm_vkbd_ui.h"
 #include "../ios/Sources/dm_vkbd.h"
 #include <signal.h>
@@ -67,8 +68,9 @@ static void full_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
     NSScreen *sc = dm_screen(); double w = sc.frame.size.width, h = sc.frame.size.height - sc.safeAreaInsets.top; const char *e = getenv("DM_TEST_SCREEN_ASPECT"); unsigned tw, th;
     if (e && sscanf(e, "%ux%u", &tw, &th) == 2 && tw && th) { w = tw; h = th; }
-    if (h <= 0 || w / h >= 16.0 / 9 - 0.01) { LOG("画面：主屏 %.0fx%.0f 不比 16:9 窄 → 全程 16:9", w, h); return; }
-    g_aspect = w / h; g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM);
+    dm_scr_pic p = dm_scr_picture(w, h);
+    if (!p.full) { LOG("画面：主屏 %.0fx%.0f 不比 16:9 窄 → 全程 16:9", w, h); return; }
+    g_aspect = p.aspect; g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM);
     LOG("画面：主屏全屏内容区 %.0fx%.0f（比例 %.3f）比 16:9 窄 → 真全屏：窗口锁这个比例，局内铺满、界面贴底，前端 16:9 留边", w, h, g_aspect);
 }
 // 出图分辨率（主机模式的游戏出图宽，高按画面比例）：原版 1600。App 里按选项页「显示 → 分辨率」那一档（dm_video.c 的 res：1600 / 1920 / 2560），
@@ -99,7 +101,7 @@ static int test_screen_px(unsigned *w, unsigned *h, unsigned *notch) {
 // The main screen's size in pixels (backing store, notch included; the pinned screen in a background run, dm_screen); DM_TEST_SCREEN_PX stands in for it
 static double main_px(void) { unsigned w; if (test_screen_px(&w, NULL, NULL)) return w; NSScreen *sc = dm_screen(); return sc ? sc.frame.size.width * sc.backingScaleFactor : 1600; }
 static double main_px_h(void) { unsigned h; if (test_screen_px(NULL, &h, NULL)) return h; NSScreen *sc = dm_screen(); return sc ? sc.frame.size.height * sc.backingScaleFactor : 900; }
-static int native_w(void) { int w = (int)main_px() / 16 * 16; return w < 1600 ? 1600 : w > 3840 ? 3840 : w; }
+static int native_w(void) { return dm_scr_native_w(main_px(), main_px_h(), 16.0 / 9); }
 static void render_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
     int t = dm_video_get("res"); if (t < 0 || t > 3) t = 0;
@@ -507,8 +509,7 @@ void *front_metal_layer(void) { return (__bridge void *)g_layer; }
 uint64_t front_game_res(int docked) {
     unsigned w, h; const char *e = getenv("DM_GAME_RES");
     if (e && sscanf(e, "%ux%u", &w, &h) == 2) return docked ? (uint64_t)h << 32 | w : (uint64_t)(h * 4 / 5) << 32 | (w * 4 / 5 + 3) / 4 * 4;
-    if (g_full) return docked ? (uint64_t)(llround(g_render_w / g_aspect / 2) * 2) << 32 | (uint64_t)g_render_w : 720ull << 32 | (uint64_t)(llround(720 * g_aspect / 8) * 8);   // 真全屏：宽 = 出图宽（缺省 1600）、高按屏幕比例（16:10 → 1600x1004） | true full screen: width = render width (1600 by default), height by the screen's aspect ratio (16:10 -> 1600x1004)
-    return docked ? (uint64_t)(llround(g_render_w * 9.0 / 16 / 2) * 2) << 32 | (uint64_t)g_render_w : 720ull << 32 | 1280;   // 缺省 1600x900 | 1600x900 by default
+    return dm_scr_game_res(g_render_w, g_aspect, g_full, docked);   // dm_screen_mac.c: true full screen at the screen's aspect, else 16:9 (1600x900 by default)
 }
 
 static int g_mouse_down;      // 这一笔左键的按下收了（落在画面里）：随后的拖动 / 抬起才交下去 | the press of this left-button gesture was taken (inside the picture): only then are its drags / release passed on
