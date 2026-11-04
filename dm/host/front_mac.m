@@ -139,12 +139,16 @@ static void render_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
     int t = dm_video_get("res"); if (t < 0 || t > 3) t = 0;
     g_render_tier = t; g_render_w = t == 3 ? native_w() : k_render_w[t];
-    // The backing store is what Native renders; in a scaled display mode (a MacBook Air at its default "looks like") macOS resamples it to a panel
-    // with fewer pixels. Both are logged so a shared log shows which mode the player runs (COL-3: whether Native should follow the panel waits for a
-    // display in a scaled mode)
-    scr_px sp = scr_launch(); int pw, ph; panel_px(&pw, &ph);
-    LOG("picture: main screen %.0fx%.0f px (backing store; %.0f below the notch)%s, panel %dx%d px%s; render width %d (Resolution tier %d)", sp.w, sp.h, sp.hc,
-        g_scr_test ? " (test screen)" : "", pw, ph, !g_scr_test && pw > 0 && fabs(pw - sp.w) > 1 ? " (scaled display mode: macOS resamples the backing store to the panel)" : "", g_render_w, t);
+    // The backing store is what Native renders; in a scaled display mode (a MacBook Air at its default "looks like") macOS resamples it to an output
+    // with fewer pixels. Backing store, output and panel are logged so a shared log shows which mode the player runs (COL-3: whether Native should
+    // follow the output waits for a display in a scaled mode)
+    // The output mode is what macOS sends to the display; a display can scale that to a panel of another size on its own (a 4K monitor fed 2560x1440)
+    scr_px sp = scr_launch(); int pw, ph, ow = 0, oh = 0; panel_px(&pw, &ph);
+    { NSScreen *sc = dm_screen(); CGDisplayModeRef m = sc ? CGDisplayCopyDisplayMode([sc.deviceDescription[@"NSScreenNumber"] unsignedIntValue]) : NULL;
+      if (m) { ow = (int)CGDisplayModeGetPixelWidth(m); oh = (int)CGDisplayModeGetPixelHeight(m); CGDisplayModeRelease(m); } }
+    LOG("picture: main screen %.0fx%.0f px (backing store; %.0f below the notch)%s, output %dx%d px%s, panel %dx%d px%s; render width %d (Resolution tier %d)", sp.w, sp.h, sp.hc,
+        g_scr_test ? " (test screen)" : "", ow, oh, !g_scr_test && ow > 0 && fabs(ow - sp.w) > 1 ? " (scaled display mode: macOS resamples the backing store to the output)" : "",
+        pw, ph, pw > 0 && ow > 0 && fabs(pw - ow) > 1 ? " (the display scales the output to its panel)" : "", g_render_w, t);
 }
 int front_video_running_res(void) { return g_render_tier; }
 int mtl_mfx_supported(void);   // nvn_mtl.m: the Metal 4 spatial scaler both renderer paths build
