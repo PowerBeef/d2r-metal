@@ -61,14 +61,9 @@ static BOOL touch_control_log_enabled(void) {
     return enabled;
 }
 
-// 真实触点 → 宿主（nn::hid GetTouchScreenStates 由宿主按 TouchScreenState 布局返回）。
-// 每次触点集合变化把当前全部触点整组推给宿主：id = 手指槽号 0–15（按下时取最小空槽，抬起前不变），
-// x / y = 在出图画面上的归一化坐标 [0, 1)（左上为原点）——宿主按游戏当前档位的坐标系换算（主机 1952x900 / 掌机 1568x720，
-// 过热会切档，所以不在前端定死像素；宿主按游戏的 1280x720 面板坐标换算）。dm_touch / dm_touch_set 声明在 front.h，实现在 hle_touch.c。
-// Real touch points → host (nn::hid GetTouchScreenStates is returned by the host in the TouchScreenState layout).
-// Every time the set of touch points changes, push all current touch points to the host as a group: id = finger slot number 0–15 (lowest free slot taken on press, unchanged until lift),
-// x / y = normalized coordinates on the output picture [0, 1) (origin at top left) -- the host converts according to the coordinate system of the game's current profile (docked 1952x900 / handheld 1568x720;
-// overheating switches profiles, so pixels are not fixed in the front end; the host converts using the game's 1280x720 panel coordinates). dm_touch / dm_touch_set are declared in front.h and implemented in hle_touch.c.
+// Real touch points → host (nn::hid GetTouchScreenStates is answered by the host in the TouchScreenState layout). Every change of the set pushes
+// all current points: id = finger slot 0–15 (lowest free slot on press, kept until lift), x / y = normalized coordinates on the output picture
+// [0, 1) from the top left; the host converts them to the game's 1280x720 panel coordinates. dm_touch / dm_touch_set: front.h, hle_touch.c.
 
 @interface DmMetalView : UIView
 - (void)cancelControls;
@@ -1277,25 +1272,18 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
     }
 }
 
-// ---- 生命周期 / 过热 / 音频会话 → host（hle.h：dm_focus_set / dm_set_opmode / dm_audio_suspend）----
-// 焦点（场景生命周期）：sceneWillResignActive → 2；sceneDidEnterBackground → 3 + 音频暂停 + GPU 挂起；sceneWillEnterForeground → GPU 恢复 + 音频恢复 + 2；sceneDidBecomeActive → 1。
-//   iOS 27 真机实测：无场景清单的旧式 App 启动后 applicationState 恒为 1（前台未激活），收不到激活 / 失活，故改走 UIScene。
-//   游戏收到焦点 3 只发 0x2c 事件、不自停渲染⇒ 进后台由宿主挡 GPU：dm_gfx_suspend(1) 等在途命令完成才返回（后台提交 GPU 会被系统杀）。
-// 过热：thermalState 变化只记日志。3D 渲染比例的降 / 升由实际掉帧驱动（hle_oe.c 动态比例，0.75 → 0.72 → 0.70；界面始终原生）。
-// 之前是切掌机模式：那会连界面一起降，且运行中切模式的路径有宽度掩码缺陷（main+0xe10e48，r27 修）。
-//   DM_THERMAL_NOFALLBACK=1：过热不切掌机（只供原生功耗测量，读数不混入别的分辨率）。
-// 音频会话：Playback（开着静音开关也出声，只听音量键——手游的行业惯例；和原先的 SoloAmbient 一样会停掉其它 App 的音乐）。
-// 这个类别下系统不再替我们按静音开关静音，锁屏 / 切后台 / 来电时停声全靠下面的生命周期与打断处理（进后台、被打断都 dm_audio_suspend）；不开后台音频能力。
-// 打断开始暂停、结束时恢复。
-// ---- Lifecycle / overheating / audio session → host (hle.h: dm_focus_set / dm_set_opmode / dm_audio_suspend) ----
+// ---- Lifecycle / overheating / audio session → host (hle.h: dm_focus_set / dm_audio_suspend) ----
 // Focus (scene lifecycle): sceneWillResignActive → 2; sceneDidEnterBackground → 3 + audio pause + GPU suspend; sceneWillEnterForeground → GPU resume + audio resume + 2; sceneDidBecomeActive → 1.
 //   Measured on a real device with iOS 27: for a legacy App without a scene manifest, applicationState stays 1 (foreground inactive) after launch and activation / deactivation never arrive, hence the switch to UIScene.
 //   On focus 3 the game only sends event 0x2c and does not stop rendering by itself ⇒ on entering background the host blocks the GPU: dm_gfx_suspend(1) returns only after in-flight commands complete (submitting GPU work in background gets killed by the system).
-// Overheating: thermalState changes are only logged. Lowering / raising the 3D render scale is driven by actual dropped frames (hle_oe.c dynamic scale, 0.75 → 0.72 → 0.70; the UI is always native).
-// Previously it switched to handheld mode: that lowered the UI too, and the path that switches mode while running had a width mask bug (main+0xe10e48, fixed in r27).
-//   DM_THERMAL_NOFALLBACK=1: do not switch to handheld on overheating (only for native power measurement, so readings are not mixed with other resolutions).
-// Audio session: Playback (sound plays even with the mute switch on and only the volume keys are obeyed -- the industry convention for mobile games; like the earlier SoloAmbient it stops other Apps' music).
-// Under this category the system no longer mutes for us by the mute switch, and stopping sound on lock screen / going to background / incoming call relies entirely on the lifecycle and interruption handling below (entering background and being interrupted both call dm_audio_suspend); the background audio capability is not enabled.
+// Overheating: thermal-state changes are only logged (thermal_apply). The 3D render scale follows actual dropped frames instead (hle_oe.c's Frame
+// Drops: the configured value, then up to three steps of x0.93 below it, never below 50%: 0.70 / 0.65 / 0.60 at the phones' 75%, dm_s3lv.h; the UI
+// stays native); Frame Drops 'Keep' (q3d = 1) turns that off. An earlier version switched to handheld mode on overheating, which lowered the UI too
+// (and the run-time mode switch had a width-mask bug, main+0xe10e48, fixed in r27). DM_THERMAL_NOFALLBACK=1 pins the 3D scale (the dynamic scaler
+// is off) for power and frame-time measurements.
+// Audio session: Playback with MixWithOthers (sound plays with the silent switch on and other apps' audio keeps playing, #77); stopping sound on
+// lock / background / interruption relies on the lifecycle and interruption handling below (entering the background and being interrupted both call
+// dm_audio_suspend); no background audio capability.
 // Pause when an interruption begins, resume when it ends.
 #import <AVFoundation/AVFoundation.h>
 
@@ -1328,7 +1316,7 @@ void front_save_failed(int err) {
 #define THERMAL_RESTORE_SEC 60
 
 static void thermal_apply(void) {
-    static unsigned gen;                       // 每次状态变化作废之前排的「恢复主机模式」 | Every state change invalidates the previously scheduled "restore docked mode"
+    static unsigned gen;                       // each state change invalidates the 'cooled down' line scheduled before
     NSProcessInfoThermalState s = NSProcessInfo.processInfo.thermalState;
     unsigned my = ++gen;
     if (s >= NSProcessInfoThermalStateSerious) {
