@@ -794,9 +794,10 @@ static uint64_t g_bp_t0;   // 进程启动（本模块装入）时刻 | Time of 
 __attribute__((constructor)) static void bp_t0(void) { g_bp_t0 = bp_now(); }
 static int bootprof(void) { static int v = -1; if (v < 0) v = getenv("DM_BOOTPROF") != NULL; return v; }
 static uint64_t g_bp_lib_n, g_bp_lib_ns, g_bp_pso_n, g_bp_pso_ns, g_bp_up_bytes, g_bp_first_present;
-// The host's own passes (texture helpers, present, MetalFX, bloom, the brightness LUT) build their libraries and pipelines at first use, on the
-// submit or present thread, outside the warm-up. They are counted here, apart from the game's shaders and pipelines (g_bp_lib_* / g_bp_pso_*,
-// @lib_new / @pso_new), which keep their meaning; a build over 4 ms is logged, so a cold run shows which one stalls a frame
+// The host's own passes build their libraries and pipelines outside the warm-up: the texture helpers, the present, the MetalFX copy and write-back
+// passes, the Metal 4 compiler and the scalers at first use, on the submit, replay or present thread; the helper kernels (the brightness LUT, bloom
+// 1/4) on their own queue from mtl_init. They are counted here, apart from the game's shaders and pipelines (g_bp_lib_* / g_bp_pso_*, @lib_new /
+// @pso_new), which keep their meaning; a build over 4 ms is logged with its thread, so a cold run shows which one stalls a frame
 static _Atomic uint64_t g_bp_host_lib_n, g_bp_host_lib_ns, g_bp_host_pso_n, g_bp_host_pso_ns;
 static void host_built(int pso, uint64_t t0, const char *what) {
     uint64_t dt = bp_now() - t0;
@@ -5021,6 +5022,7 @@ static int bloomq_pso(MTLPixelFormat fmt) {
     if (!lib || !samp) { g_bloomq_broken = 1; return 0; }   // aux_build already printed the red line
     if (pf != fmt || !pso) {
         NSError *e = nil; uint64_t t0 = bp_now(); pso = bloomq_build_pso(lib, fmt, &e);
+        if (pso) host_built(1, t0, "bloom 1/4");
         if (!pso) { MLOG("【红】bloom 1/4: no capture pipeline for format %lu (%s): bloom 1/4 off for this session", (unsigned long)fmt, e ? e.localizedDescription.UTF8String : "no function"); g_bloomq_broken = 1; return 0; }
         MLOG("bloom 1/4: built the capture pipeline for format %lu on the replay thread in %.1f ms (the prebuilt one is for format %lu)", (unsigned long)fmt, (bp_now() - t0) / 1e6, (unsigned long)pf);   // once per format (at most 4)
     }
@@ -5606,12 +5608,15 @@ static os_unfair_lock g_aux_lk = OS_UNFAIR_LOCK_INIT;
 static struct { id<MTLComputePipelineState> bright_ps; id<MTLLibrary> bloom_lib; id<MTLRenderPipelineState> bloom_pso; MTLPixelFormat bloom_fmt; id<MTLSamplerState> bloom_samp; } g_aux;
 static dispatch_queue_t g_aux_q; static dispatch_block_t g_aux_blk; static dispatch_once_t g_aux_once; static _Atomic int g_aux_done;
 static void aux_build(void) {
-    uint64_t t0 = bp_now(); NSError *e = nil;
+    uint64_t t0 = bp_now(), t1 = t0; NSError *e = nil;   // each build is also counted with the host's own (host_built, "another thread": this queue)
     id<MTLLibrary> ll = [g_dev newLibraryWithSource:@(k_lut_msl) options:nil error:&e]; id<MTLFunction> lf = ll ? [ll newFunctionWithName:@"lutk"] : nil;
-    id<MTLComputePipelineState> bps = lf ? [g_dev newComputePipelineStateWithFunction:lf error:&e] : nil;
+    if (ll) host_built(0, t1, "brightness LUT");
+    t1 = bp_now(); id<MTLComputePipelineState> bps = lf ? [g_dev newComputePipelineStateWithFunction:lf error:&e] : nil;
+    if (bps) host_built(1, t1, "brightness LUT");
     if (!bps) MLOG("【红】3D brightening: the LUT kernel could not be built (%s): brightening off for this session", e ? e.localizedDescription.UTF8String : "no function");
-    e = nil; id<MTLLibrary> bl = [g_dev newLibraryWithSource:@(k_bloomq_msl) options:nil error:&e]; id<MTLRenderPipelineState> bp = nil; id<MTLSamplerState> bs = nil;
-    if (bl) { NSError *pe = nil; bp = bloomq_build_pso(bl, MTLPixelFormatRG11B10Float, &pe);   // the bloom mips' format; another format is built from bl on first use (bloomq_pso)
+    e = nil; t1 = bp_now(); id<MTLLibrary> bl = [g_dev newLibraryWithSource:@(k_bloomq_msl) options:nil error:&e]; id<MTLRenderPipelineState> bp = nil; id<MTLSamplerState> bs = nil;
+    if (bl) host_built(0, t1, "bloom 1/4");
+    if (bl) { NSError *pe = nil; t1 = bp_now(); bp = bloomq_build_pso(bl, MTLPixelFormatRG11B10Float, &pe); if (bp) host_built(1, t1, "bloom 1/4");   // the bloom mips' format; another format is built from bl on first use (bloomq_pso)
         MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge; sd.supportArgumentBuffers = YES;
         bs = [g_dev newSamplerStateWithDescriptor:sd]; }
     if (!bl || !bs) MLOG("【红】bloom 1/4: the capture shader could not be built (%s): bloom 1/4 off for this session", e ? e.localizedDescription.UTF8String : "no sampler");
@@ -6609,17 +6614,20 @@ static int present_down_taps(NSUInteger cw, NSUInteger ch, MTLViewport vp) {
 }
 static void present_pipeline(MTLPixelFormat format) {
     if (!g_blit_pso || g_blit_fmt != format) {
-        NSError *e = nil;
+        NSError *e = nil; uint64_t t0 = bp_now();   // the builds are counted with the host's own (host_built)
         id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_present_msl) options:nil error:&e];
         if (!lib) MDIE("出图着色器编译失败 %s", e.localizedDescription.UTF8String);
+        host_built(0, t0, "present");
         MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
         pd.vertexFunction = [lib newFunctionWithName:@"vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"fs"];
         pd.colorAttachments[0].pixelFormat = format;
-        g_blit_pso = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
+        t0 = bp_now(); g_blit_pso = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
         if (!g_blit_pso) MDIE("出图管线失败 %s", e.localizedDescription.UTF8String);
+        host_built(1, t0, "present");
         pd.fragmentFunction = [lib newFunctionWithName:@"fs_down"];
-        g_blit_pso_down = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
+        t0 = bp_now(); g_blit_pso_down = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
         if (!g_blit_pso_down) MDIE("present: the down filter's pipeline failed: %s", e.localizedDescription.UTF8String);
+        host_built(1, t0, "present down-filter");
         g_blit_fmt = format;
         MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.supportArgumentBuffers = YES;
         g_blit_samp = [g_dev newSamplerStateWithDescriptor:sd];
@@ -6708,8 +6716,9 @@ static int mfx_stack(void) {
 // The Metal 4 compiler every Metal 4 scaler is built with: the present thread and the replay thread both build scalers, so it is created once
 static id<MTL4Compiler> mfx_compiler(void) {
     static id<MTL4Compiler> c; static dispatch_once_t once;
-    dispatch_once(&once, ^{ NSError *e = nil; c = [g_dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&e];
-        if (!c) MLOG("【红】MetalFX: no Metal 4 compiler (%s); MetalFX stays off", e.localizedDescription.UTF8String); });
+    dispatch_once(&once, ^{ NSError *e = nil; uint64_t t0 = bp_now(); c = [g_dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&e];
+        if (c) host_built(0, t0, "MetalFX compiler");   // counted with the libraries: it is made once, as a library is loaded
+        else MLOG("【红】MetalFX: no Metal 4 compiler (%s); MetalFX stays off", e.localizedDescription.UTF8String); });
     return c;
 }
 // Whether this device has the Metal 4 MetalFX spatial scaler, which both renderer paths build (the Mac present and the 3D pass on every platform).
@@ -6724,10 +6733,10 @@ static id<MTLRenderPipelineState> mfx_copy_pso(MTLPixelFormat fmt) {   // copy p
     static MTLPixelFormat f[4]; static id<MTLRenderPipelineState> p[4]; static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_lock(&mu); id<MTLRenderPipelineState> r = nil; int k = 0;
     for (; k < 4 && p[k]; k++) if (f[k] == fmt) { r = p[k]; break; }
-    if (!r && k < 4) { NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_present_msl) options:nil error:&e];
+    if (!r && k < 4) { NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_present_msl) options:nil error:&e]; if (lib) host_built(0, t0, "MetalFX copy");
         MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
         pd.vertexFunction = [lib newFunctionWithName:@"vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"fs"]; pd.colorAttachments[0].pixelFormat = fmt;
-        r = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil; if (r) { f[k] = fmt; p[k] = r; }
+        t0 = bp_now(); r = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil; if (r) { host_built(1, t0, "MetalFX copy"); f[k] = fmt; p[k] = r; }
         else MLOG("【红】MetalFX: the copy pass pipeline could not be built (format %lu): %s", (unsigned long)fmt, e.localizedDescription.UTF8String); }
     pthread_mutex_unlock(&mu); return r;
 }
@@ -6798,6 +6807,7 @@ static int mfx_ready(mfx_t *m, int m4, MTLPixelFormat fmt, NSUInteger iw, NSUInt
     d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;   // the swapchain holds sRGB-encoded (display-referred) values
     id<MTLFXSpatialScalerBase> s = m4 ? (id<MTLFXSpatialScalerBase>)[d newSpatialScalerWithDevice:g_dev compiler:mfx_compiler()] : (id<MTLFXSpatialScalerBase>)[d newSpatialScalerWithDevice:g_dev];
     const char *stage = "scaler"; id<MTLTexture> in = nil, out = nil;
+    if (s) host_built(1, t0, m->main_cb ? "3D MetalFX scaler" : "MetalFX scaler");   // counted with the pipelines (the scaler's own kernels)
     if (s) {
         stage = "textures";
         MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:fmt width:iw height:ih mipmapped:NO];
@@ -6953,10 +6963,11 @@ static id<MTLRenderPipelineState> mfx3d_pso(MTLPixelFormat fmt) {   // write-bac
     static MTLPixelFormat f[4]; static id<MTLRenderPipelineState> p[4]; int k = 0;
     for (; k < 4 && p[k]; k++) if (f[k] == fmt) return p[k];
     if (k == 4) return nil;
-    NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_mfx3d_msl) options:nil error:&e];
+    NSError *e = nil; uint64_t t0 = bp_now(); id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_mfx3d_msl) options:nil error:&e]; if (lib) host_built(0, t0, "3D write-back");
     MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
     pd.vertexFunction = [lib newFunctionWithName:@"vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"fs"]; pd.colorAttachments[0].pixelFormat = fmt;
-    id<MTLRenderPipelineState> r = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+    t0 = bp_now(); id<MTLRenderPipelineState> r = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+    if (r) host_built(1, t0, "3D write-back");
     if (!r) { MLOG("【红】3D upscale: the write-back pipeline could not be built (format %lu): %s", (unsigned long)fmt, e.localizedDescription.UTF8String); return nil; }
     f[k] = fmt; p[k] = r; return r;
 }
