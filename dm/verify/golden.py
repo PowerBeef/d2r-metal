@@ -273,7 +273,7 @@ def drop_shot(png, keep=()):
 # Controls turn one setting back off: each must read RED on at least one page, so a set that cannot see its own setting is caught (--allow-blind takes a
 # measured reason). The REC75 and PHONE sets keep the 3D scale fixed (Frame Drops off): a scale that moves can have no picture baseline.
 # The character-select page is in no FLIP set: its campfire's flicker lights most of the frame (46-49% of the pixels moved between two recording
-# shots, 2026-11-04, against UNSTABLE_MAX 2%), so it keeps only its SSIM screenshot-gate check.
+# shots, 2026-11-04, then against a limit of 2%), so it keeps only its SSIM screenshot-gate check.
 SETS: dict[str, dict[str, Any]] = {
     'pages': dict(env={}, pages=None, judge='ssim', dir='m4', controls={}, log_allow=()),
     'orig': dict(env={}, pages=list(LB_ALL), judge='flip', dir='orig', log_allow=(),
@@ -287,9 +287,15 @@ SETS: dict[str, dict[str, Any]] = {
 FLIP_SETS = [s for s in SETS if SETS[s]['judge'] == 'flip']
 # A region passes when at most FLIP_HOT_MAX of its pixels have FLIP above FLIP_HOT and its mean is at most FLIP_MEAN_MAX. Measured with imgdiff on synthetic
 # images: a uniform +1/+2 LSB shift gives a per-pixel FLIP of at most 0.062 (mean 0.03-0.057) and passes; +3 LSB everywhere fails on the mean; +6 LSB marks
-# every pixel hot; a 100 x 100 patch at +0.3 marks 5.9% of a 640 x 295 view hot. Recording needs two shots whose regions agree to REPEAT_MAX, with at most
-# UNSTABLE_MAX of the frame moving between them
-FLIP_HOT, FLIP_HOT_MAX, FLIP_MEAN_MAX, REPEAT_MAX, UNSTABLE_MAX = 0.1, 0.0005, 0.06, 0.001, 0.02
+# every pixel hot; a 100 x 100 patch at +0.3 marks 5.9% of a 640 x 295 view hot.
+# Real shots of one frozen tick are not identical (measured 2026-11-04 on the 13 look-set pages): the rain, flames and idle animations move, and the
+# game's dither shifts about a quarter of the 3D view by one level. Recording therefore takes three shots: the first two give the moving pixels
+# (unstable_mask, grown UNSTABLE_GROW pixels; at most UNSTABLE_MAX of the frame, measured up to 22%) and must agree elsewhere to REPEAT_MAX (the
+# dither alone gives 0.002-0.011); the third, judged against the first outside that mask, is the page's own noise, which a check meets again (rain
+# lands somewhere new each run: up to 0.28% of a view's pixels hot, against FLIP_HOT_MAX 0.05%). A check allows each region NOISE_K times its
+# recorded noise, never less than the fixed limits (page_limits)
+FLIP_HOT, FLIP_HOT_MAX, FLIP_MEAN_MAX = 0.1, 0.0005, 0.06
+UNSTABLE_GROW, UNSTABLE_MAX, REPEAT_MAX, NOISE_K = 2, 0.30, 0.02, 3
 NOT_ALLOWED = 'not allowed'
 LB_REGIONS = {'view': [0, 0, 1, 0.82], 'hud': [0, 0.82, 1, 1]}
 
@@ -312,7 +318,7 @@ def page_keep(p, shape):
     return keep
 
 
-def unstable_mask(a, b, grow=4, tol=2 / 255):
+def unstable_mask(a, b, grow=UNSTABLE_GROW, tol=2 / 255):
     """Pixels whose largest channel differs by more than tol between two captures (things that move on their own: critters, flicker, timed text),
     grown by `grow` pixels."""
     import numpy as np   # noqa: PLC0415
@@ -335,11 +341,18 @@ def flip_region(base, test, keep, rect, hot=FLIP_HOT, hot_max=FLIP_HOT_MAX, mean
                 why='' if ok else f'FLIP mean {mean:.4f} (max {mean_max}), {hs:.3%} of pixels above {hot} (max {hot_max:.3%})')
 
 
-def judge_page(base, test, keep, regions, fmap=None) -> tuple[dict[str, dict[str, Any]], bool]:
-    """Every region judged on its own: ({region: flip_region result}, ok when every region is ok)."""
+def page_limits(meta):
+    """{region: (hot_max, mean_max)} for a page from its recorded noise (meta.json 'noise'): NOISE_K times it, never below the fixed limits."""
+    return {r: (max(FLIP_HOT_MAX, NOISE_K * v['hot']), max(FLIP_MEAN_MAX, NOISE_K * v['mean'])) for r, v in (meta or {}).get('noise', {}).items()}
+
+
+def judge_page(base, test, keep, regions, fmap=None, limits=None) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Every region judged on its own: ({region: flip_region result}, ok when every region is ok). limits: page_limits (default the fixed ones)."""
     import imgdiff   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
     f = imgdiff.flip(base, test) if fmap is None else fmap
-    res = {r: flip_region(base, test, keep, rect, fmap=f) for r, rect in regions.items()}
+    lim = limits or {}
+    res = {r: flip_region(base, test, keep, rect, hot_max=lim.get(r, (FLIP_HOT_MAX, FLIP_MEAN_MAX))[0], mean_max=lim.get(r, (FLIP_HOT_MAX, FLIP_MEAN_MAX))[1], fmap=f)
+           for r, rect in regions.items()}
     return res, all(x['ok'] for x in res.values())
 
 
@@ -368,6 +381,13 @@ def red_lines(png, st):
     return [t for _, t in assertlib.logred(lp, allow=st['log_allow'])][:3] if os.path.exists(lp) else []
 
 
+def page_meta(s, p):
+    """A baseline's meta.json (None when there is none)."""
+    try:
+        with open(os.path.join(set_dir(s), p + '.meta.json'), encoding='utf-8') as f: return json.load(f)
+    except (OSError, ValueError): return None
+
+
 def stored_keep(s, p, shape):
     """page_keep without the pixels recorded as moving (<page>.unstable.png beside the baseline)."""
     import numpy as np   # noqa: PLC0415
@@ -388,18 +408,19 @@ def flip_record(s, names, reason, host, controls=True, allow_blind=None):
     st, d, runs, bad = SETS[s], set_dir(s), run_dir(f'rec_{s}'), 0
     os.makedirs(d, exist_ok=True)
     for p in set_pages(s, names):
-        shots, why, un, rep = [os.path.join(runs, p + '.png'), os.path.join(runs, p + '.2.png')], None, None, {}
+        shots, why, un, rep, noise = [os.path.join(runs, p + '.png'), os.path.join(runs, p + '.2.png'), os.path.join(runs, p + '.3.png')], None, None, {}, {}
         for png in shots:
             ok, w = take_shot(host, p, png, st['env'])
             if not ok: why = f'screenshot failed: {w}'; break
             red = red_lines(png, st)
             if red: why = f"red lines in a clean baseline run: {' | '.join(red)}; fix them, or add a regex with a reason to SETS[{s!r}]['log_allow']"; break
         if why is None:
-            a, b = imgdiff.load(shots[0]), imgdiff.load(shots[1])
-            if a.shape != b.shape: why = f'the two shots differ in size ({a.shape[1]}x{a.shape[0]} vs {b.shape[1]}x{b.shape[0]})'
+            a, b, c = (imgdiff.load(x) for x in shots)
+            if a.shape != b.shape or a.shape != c.shape: why = f'the shots differ in size ({a.shape[1]}x{a.shape[0]}, {b.shape[1]}x{b.shape[0]}, {c.shape[1]}x{c.shape[0]})'
             else:
-                un = unstable_mask(a, b); share = float(un.mean())
-                rep, _ = judge_page(a, b, page_keep(p, a.shape) & ~un, page_regions(p))
+                un = unstable_mask(a, b); share = float(un.mean()); keep = page_keep(p, a.shape) & ~un
+                rep, _ = judge_page(a, b, keep, page_regions(p))
+                noise, _ = judge_page(a, c, keep, page_regions(p))   # the third shot outside the moving pixels: the noise a check meets again
                 worst = max(float(r['mean']) for r in rep.values())
                 if share > UNSTABLE_MAX or worst > REPEAT_MAX:
                     why = f'page moves between two shots ({share:.1%} moving, repeat FLIP mean {worst:.4f}): not stable enough for a FLIP baseline'
@@ -410,7 +431,8 @@ def flip_record(s, names, reason, host, controls=True, allow_blind=None):
         elif os.path.exists(up): os.remove(up)
         with open(os.path.join(d, p + '.meta.json'), 'w', encoding='utf-8') as f:
             json.dump(dict(set=s, page=p, env=st['env'], regions=page_regions(p), sha=head(), reason=reason, recorded=datetime.datetime.now().isoformat(timespec='seconds'),
-                           repeat_mean={r: v['mean'] for r, v in rep.items()}, unstable_share=round(float(un.mean()), 5) if un is not None else 0.0), f, indent=1)
+                           repeat_mean={r: v['mean'] for r, v in rep.items()}, noise={r: dict(mean=v['mean'], hot=v['hot']) for r, v in noise.items()},
+                           unstable_share=round(float(un.mean()), 5) if un is not None else 0.0), f, indent=1)
         for png in shots: drop_shot(png)
         log('shot', f"{st['dir']}/{p}", reason); print(f"GOLDEN-REC shot {st['dir']}/{p} OK")
     if controls and not bad: bad += flip_controls(s, names, host, allow_blind or {}, reason)
@@ -431,7 +453,7 @@ def flip_controls(s, names, host, allow_blind, reason='controls'):
             if not ok: row[p] = dict(error=w); errors += 1; print(f'  control {c} on {p}: screenshot failed: {w}'); continue
             base, test = imgdiff.load(os.path.join(d, p + '.png')), imgdiff.load(png)
             if base.shape != test.shape: row[p] = dict(red=True, why='size differs'); drop_shot(png); continue
-            res, okp = judge_page(base, test, stored_keep(s, p, base.shape), page_regions(p))
+            res, okp = judge_page(base, test, stored_keep(s, p, base.shape), page_regions(p), limits=page_limits(page_meta(s, p)))
             row[p] = {r: dict(mean=v['mean'], hot=v['hot']) for r, v in res.items()}; row[p]['red'] = not okp
             drop_shot(png)
         row['seen'] = any(isinstance(v, dict) and v.get('red') for v in row.values())
@@ -465,7 +487,7 @@ def flip_check(s, names, host):
                 if base.shape != test.shape: res.update(ok=False, why=f'size {test.shape[1]}x{test.shape[0]}, baseline {base.shape[1]}x{base.shape[0]}')
                 else:
                     fmap = imgdiff.flip(base, test)
-                    rr, okp = judge_page(base, test, stored_keep(s, p, base.shape), page_regions(p), fmap=fmap)
+                    rr, okp = judge_page(base, test, stored_keep(s, p, base.shape), page_regions(p), fmap=fmap, limits=page_limits(meta))
                     why = '; '.join(f"{r}: " + (v['why'] or 'mean %.4f, hot %.3f%%' % (v['mean'], 100 * v['hot'])) for r, v in rr.items())
                     if red: why += f"; red lines: {' | '.join(red)}"
                     res.update(ok=okp and not red, why=why, regions=rr)

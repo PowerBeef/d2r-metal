@@ -107,7 +107,11 @@ hud = base.copy(); hud[310:350, 300:340] += 0.3
 res, okp = golden.judge_page(base, hud, keep, golden.LB_REGIONS)
 expect(res['view']['ok'] and not res['hud']['ok'] and not okp, f"a HUD-band change fails the hud region only (hot {res['hud']['hot']})")
 one = np.zeros((100, 100, 3)); two = one.copy(); two[50, 50] = 1.0
-expect(int(golden.unstable_mask(one, two).sum()) == 81, 'one moving pixel masks a 9 x 9 block')
+expect(int(golden.unstable_mask(one, two).sum()) == 25, 'one moving pixel masks a 5 x 5 block (UNSTABLE_GROW 2)')
+lim = golden.page_limits({'noise': {'view': {'mean': 0.011, 'hot': 0.0025}, 'hud': {'mean': 0.0, 'hot': 0.0}}})
+expect(abs(lim['view'][0] - 0.0075) < 1e-9 and lim['view'][1] == golden.FLIP_MEAN_MAX and lim['hud'] == (golden.FLIP_HOT_MAX, golden.FLIP_MEAN_MAX),
+       f'page_limits: NOISE_K x the recorded noise, never below the fixed limits ({lim})')
+r = golden.flip_region(base, patch, keep, view, hot_max=0.06); expect(r['ok'], 'a region limit raised above the change lets it pass')
 
 # ---- record / check / controls without the game: a fake shooter ----
 SMALL = np.round((0.35 + 0.25 * np.random.default_rng(2).random((180, 320, 3))) * 255) / 255
@@ -136,6 +140,7 @@ with tempfile.TemporaryDirectory() as t:
         cj = json.load(open(os.path.join(d, 'controls.json')))
         meta = json.load(open(os.path.join(d, 'lb_town_a1.meta.json')))
         expect(cj['fxaa']['seen'] is True and meta['env'] == {'GT_SET': '1'} and os.path.exists(os.path.join(d, 'lb_town_a1.png')), 'record keeps the baseline, its meta (set env) and controls.json')
+        expect(set(meta.get('noise', {})) == {'view', 'hud'} and meta['noise']['view']['hot'] == 0.0, 'record keeps the third shot\'s noise per region in meta.json')
         golden.SETS['t']['controls'] = {'noop': {'GT_NOOP': '1'}}
         expect(golden.flip_record('t', [], 'test', 'h') == 1, 'record: a control that reads OK everywhere is RED')
         expect(golden.flip_record('t', [], 'test', 'h', allow_blind={'noop': 'why'}) == 0, 'record: --allow-blind with a reason accepts it')
