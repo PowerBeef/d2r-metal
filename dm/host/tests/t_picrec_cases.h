@@ -9,7 +9,7 @@
     { "MacBook Air M1 (7-core GPU), 1280 x 800", "Apple M1", 7, 2560, 1600, 1, 1, 0, 2, 0, 0, 0 },
     { "MacBook Air M1, default 1440 x 900", "Apple M1", 8, 2880, 1800, 1, 1, 0, 3, 0, 0, 0 },
     { "MacBook Air M1, 1280 x 800", "Apple M1", 8, 2560, 1600, 1, 1, 0, 2, 1, 2, 0 },
-    { "Mac mini M1 on a 4K display", "Apple M1", 8, 3840, 2160, 1, 0, 1, 0, 1, 2, 1 },
+    { "Mac mini M1 on a 4K display", "Apple M1", 8, 3840, 2160, 1, 0, 1, 0, 1, 2, 0 },
     { "MacBook Pro 14 M1 Pro", "Apple M1 Pro", 14, 3024, 1890, 1, 1, 0, 1, 1, 2, 0 },
     { "MacBook Pro 14 M1 Pro (16-core GPU)", "Apple M1 Pro", 16, 3024, 1890, 1, 1, 0, 0, 1, 2, 0 },
     { "MacBook Pro 16 M1 Max", "Apple M1 Max", 32, 3456, 2160, 1, 1, 0, 0, 1, 2, 1 },

@@ -66,8 +66,10 @@ static void grid(void) {
                     rec_of(chips[c], cores, w, h, mfx, &r[k][s]);
 #define AT " (%s, %d cores, %dx%d, mfx %d)"
 #define AT_ARGS chips[c], cores, w, h, mfx
-                    // I1: a GPU at least as fast as the slowest real chip (the 7-core M1, speed 0.273) always gets a picture within its capacity
-                    check(x->speed < 0.27 || x->load <= 1.0, &shown[1], "I1 load %.3f at speed %.3f" AT, x->load, x->speed, AT_ARGS);
+                    // I1: a GPU at least as fast as the slowest real chip (the 7-core M1, speed 0.273) always gets a picture within its capacity; a
+                    // fixed resolution's scene fits by itself, and Frame Drops lowers the 3D when its enlargement into the screen takes it above
+                    check(x->speed < 0.27 || x->load <= 1.0 || (!x->native && !x->q3d && x->load - x->pres <= 1.0), &shown[1], "I1 load %.3f (present %.3f) at speed %.3f" AT,
+                          x->load, x->pres, x->speed, AT_ARGS);
                     // I2: Frame Drops lowers the 3D exactly when the light picture was needed or the choice is close to the capacity
                     check(x->q3d == !(!x->envsh || x->load > 0.85), &shown[2], "I2 q3d %d with envsh %d, load %.3f" AT, x->q3d, x->envsh, x->load, AT_ARGS);
                     // I3: wherever Frame Drops = lower is recommended, the controller has levels below the chosen 3D scale to lower to
@@ -153,8 +155,9 @@ static void grid_rate_drawable(void) {
             dm_mac_spec sp = { .gpu = chip, .cores = cores, .out_w = 3840, .out_h = 2160, .mfx = mfx, .drw_w = dw, .drw_h = dh };
             int enl = dm_picrec_enlarges(&sp);
             check(enl == (d >= 2), &shown[11], "I11 %dx%d %s an enlargement of 3840x2160", dw, dh, enl ? "counts as" : "is not");
-            check((r.pres > 0) == (r.native && enl), &shown[11], "I11 pres %.3f with native %d into %dx%d (%s, %d cores, mfx %d)", r.pres, r.native, dw, dh, chip, cores, mfx);
-            check(r.speed < 0.27 || r.load <= 1.0, &shown[1], "I1 load %.3f at speed %.3f into %dx%d (%s, %d cores, mfx %d)", r.load, r.speed, dw, dh, chip, cores, mfx);
+            check(r.native ? (r.pres > 0) == enl : r.pres > 0, &shown[11], "I11 pres %.3f with native %d into %dx%d (%s, %d cores, mfx %d)", r.pres, r.native, dw, dh, chip, cores, mfx);   // a fixed picture is always enlarged into these
+            check(r.speed < 0.27 || r.load <= 1.0 || (!r.native && !r.q3d && r.load - r.pres <= 1.0), &shown[1], "I1 load %.3f (present %.3f) at speed %.3f into %dx%d (%s, %d cores, mfx %d)",
+                  r.load, r.pres, r.speed, dw, dh, chip, cores, mfx);
             check(r.q3d == !(!r.envsh || r.load > 0.85), &shown[2], "I2 q3d %d with envsh %d, load %.3f into %dx%d (%s, %d cores, mfx %d)", r.q3d, r.envsh, r.load, dw, dh, chip, cores, mfx);
             if (d) check(lighter_or_same(&prev, &r), &shown[11], "I11 %dx%d → %dx%d gave a heavier choice: native %d → %d, 3D %d%% → %d%%, envsh %d → %d (%s, %d cores, mfx %d)",
                          k_drw[d - 1][0], k_drw[d - 1][1], dw, dh, prev.native, r.native, k_pct[prev.s3d], k_pct[r.s3d], prev.envsh, r.envsh, chip, cores, mfx);

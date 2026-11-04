@@ -24,7 +24,9 @@ typedef struct {
     int gen, tier;        // the chip as read: generation (0 = unknown), tier 0 base / 1 Pro / 2 Max / 3 Ultra; tier -1 = an iPhone chip (A)
     double speed;         // estimated GPU speed against the M6 the model is anchored on (1.0)
     double load;          // the recommendation's share of the GPU's estimated capacity at the screen's frame rate (0–1; above 1 = nothing lighter left)
-    double pres;          // the load units of the present's enlargement counted in it (Native picture smaller than its viewport; 0 otherwise)
+    double pres;          // the part of load that is the present's enlargement into its viewport (a Native picture smaller than its viewport, or a
+                          // fixed resolution smaller than the screen; 0 otherwise). A fixed picture's scene fits by itself: when the enlargement takes
+                          // load above 1, Frame Drops lowers the 3D for a while
 } dm_mac_rec;
 
 void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r);

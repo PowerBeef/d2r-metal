@@ -22,7 +22,9 @@
 //    4480 x 2520, a 5K display's 5120 x 2880, front_mac.m mac_rec). It costs per viewport pixel, above the 1:1 present the output weight already
 //    carries: with the 3D at 100% the present enlarges with MetalFX (no 3D MetalFX frame before it, nvn_mtl.m mfx_want), with the 3D lower it enlarges
 //    with bilinear filtering after the 3D pass's MetalFX (one MetalFX pass on the world, MFX-2). PRES_MFX / PRES_BIL below are from the M6 (present GPU
-//    p50 over 300 presents). A fixed resolution's MetalFX enlargement is not counted: that path keeps the model it was chosen with.
+//    p50 over 300 presents). A fixed resolution is enlarged into its viewport too (MetalFX, or bilinear filtering without it): that cost does not
+//    change the picture the fixed path picks (the full one when its scene fits), but counts toward Frame Drops, so a slow Mac on a big screen (a
+//    7-core M1 iMac at 4.5K, about 124% of its capacity) lowers its 3D for a while instead of dropping frames (decided 2026-11-03, wave 4).
 // 6. Frame rate: the capacity is per 60 fps. A screen whose frame rate is another even fraction of its refresh (72 fps on 144 Hz, 100 on 100 Hz, 50 on
 //    50 Hz; nvn_pace.h) scales every load by rate / 60, so a 144 Hz screen gets a correspondingly lighter recommendation.
 // No MetalFX: a fixed resolution, the picture by its load. A fixed resolution has the game picture's shape (s->aspect: 1920 x 1200 on a 16:10 screen,
@@ -92,9 +94,9 @@ static double pres_load(const dm_mac_spec *s, int full_3d) {
 
 // An iPhone chip keeps the phone's shadows whatever its speed: environment shadows off and the Standard map (their cost on an A-series GPU is not
 // measured). The 3D Resolution the model picked stays; Frame Drops lowers it, as with any light picture. scene: the full picture's load at that 3D
-// Resolution; pres, rate and cap as the choice counted them
+// Resolution; rate and cap as the choice counted them
 static void iphone_chip_light(dm_mac_rec *r, double scene, double rate, double cap) {
-    if (r->tier == -1 && r->envsh) { r->envsh = 0; r->shq = 0; r->load = (scene / LIGHT_GAIN + r->pres / rate) * rate / cap; r->q3d = 0; }
+    if (r->tier == -1 && r->envsh) { r->envsh = 0; r->shq = 0; r->load = scene / LIGHT_GAIN * rate / cap + r->pres; r->q3d = 0; }
 }
 
 void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r) {
@@ -112,7 +114,7 @@ void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r) {
             for (int i = 0; i < (light ? LIGHT_MIN + 1 : 3); i++) {
                 double scene = load(s->out_w, s->out_h, k_scale[i]), pr = pres_load(s, i == 0), l = (scene / (light ? LIGHT_GAIN : 1) + pr) * rate;
                 if (l <= cap) {
-                    r->native = 1; r->s3d = i; r->envsh = !light; r->shq = light ? 0 : 2; r->load = l / cap; r->pres = pr * rate; r->q3d = !(light || r->load > CLOSE);
+                    r->native = 1; r->s3d = i; r->envsh = !light; r->shq = light ? 0 : 2; r->load = l / cap; r->pres = pr * rate / cap; r->q3d = !(light || r->load > CLOSE);
                     iphone_chip_light(r, scene, rate, cap); return;
                 }
             }
@@ -120,7 +122,11 @@ void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r) {
     for (int i = 0; i < 3; i++) if (k_fixed_w[i] <= (s->out_w * 3 / 4 > 1600 ? s->out_w * 3 / 4 : 1600) && (i < 2 || r->speed >= 0.5)) r->tier_res = i;
     int w = k_fixed_w[r->tier_res], h = s->aspect > 0 ? (int)(w / s->aspect / 2 + 0.5) * 2 : w * 9 / 16;   // the game renders the fixed width at the picture's shape
     double scene = load(w, h, 1), full = scene * rate, light = full / LIGHT_GAIN;
-    r->native = 0; r->s3d = 0; r->envsh = full <= cap; r->shq = r->envsh ? 2 : 0;
-    r->load = (r->envsh ? full : light) / cap; r->q3d = !(!r->envsh || r->load > CLOSE);
+    // the present's enlargement of the fixed picture into its viewport (the Native picture's viewport, or the screen's own size when that is not
+    // past the cap): MetalFX, or bilinear filtering on a Mac without it; above the 1:1 present the output weight already carries
+    double vw = s->drw_w > 0 ? s->drw_w : s->out_w, vh = s->drw_h > 0 ? s->drw_h : s->out_h, vp = vw * vh / 1e6, fp = (double)w * h / 1e6;
+    double pres = vw > w * 1.05 && vh > h * 1.05 ? (s->mfx ? PRES_MFX * vp - PRES_ONE * fp : PRES_BIL * (vp - fp)) * rate : 0;
+    r->native = 0; r->s3d = 0; r->envsh = full <= cap; r->shq = r->envsh ? 2 : 0; r->pres = pres / cap;
+    r->load = ((r->envsh ? full : light) + pres) / cap; r->q3d = !(!r->envsh || r->load > CLOSE);
     iphone_chip_light(r, scene, rate, cap);
 }
