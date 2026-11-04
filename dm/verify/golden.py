@@ -272,11 +272,13 @@ def drop_shot(png, keep=()):
 # 3D area; a screenshot-gate page as the whole frame without its spec's mask rects. Pixels that moved between the two recording shots are left out too.
 # Controls turn one setting back off: each must read RED on at least one page, so a set that cannot see its own setting is caught (--allow-blind takes a
 # measured reason). The REC75 and PHONE sets keep the 3D scale fixed (Frame Drops off): a scale that moves can have no picture baseline.
+# The character-select page is in no FLIP set: its campfire's flicker lights most of the frame (46-49% of the pixels moved between two recording
+# shots, 2026-11-04, against UNSTABLE_MAX 2%), so it keeps only its SSIM screenshot-gate check.
 SETS: dict[str, dict[str, Any]] = {
     'pages': dict(env={}, pages=None, judge='ssim', dir='m4', controls={}, log_allow=()),
-    'orig': dict(env={}, pages=LB_ALL + ['charselect'], judge='flip', dir='orig', log_allow=(),
+    'orig': dict(env={}, pages=list(LB_ALL), judge='flip', dir='orig', log_allow=(),
                  controls={'aa_off': {'DM_AA_MODE': '0'}, 'shadow_1024': {'DM_SHADOW_SIZE': '1024'}}),
-    'rec': dict(env=picture.REC, pages=LB_ALL + ['inventory', 'charselect'], judge='flip', dir='rec', log_allow=(),
+    'rec': dict(env=picture.REC, pages=LB_ALL + ['inventory'], judge='flip', dir='rec', log_allow=(),
                 controls={'fxaa': {'DM_AA_MODE': '1'}, 'aniso_off': {'DM_NVN_ANISO': '0'}, 'envsh_off': {'DM_ENV_SHADOWS': '0'}, 'shadow_2100': {'DM_SHADOW_SIZE': '2100'}}),
     'rec75': dict(env=picture.REC75, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
     'bright': dict(env=dict(picture.REC, DM_BRIGHT_K='4'), pages=['lb_crypt_a1'], judge='flip', dir='bright', log_allow=(), controls={'bright_off': {'DM_BRIGHT_K': '1'}}),
