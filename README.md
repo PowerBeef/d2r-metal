@@ -32,53 +32,54 @@ D2R Metal draws the game for the screen in front of you. The first time it start
 - **Clean edges and crisp ground.** The game's PC anti-aliasing (SMAA) and 16x texture filtering keep edges smooth and the ground sharp into the distance.
 - **Shadows everywhere.** On the Mac, trees, walls, fences and buildings cast their shadows as on PC, and finer shadow maps keep the shading on characters detailed.
 - **True colors.** The picture is shown in the colors the game was made in, on any screen, wide-gamut ones included.
+- **Dark places you can see.** Caves, crypts, Hell and night scenes are drawn brighter than the game's own exposure, with highlights left as they are. Turn off **Brighten dark areas** on the Extras tab for the original look.
 
 The pictures below show the same moment in the game: on the left, the Nintendo Switch version your files come from; on the right, D2R Metal. They are windows of the frame at 1:1 pixels, so on a Retina screen you see every pixel of both.
 
 <p align="center">
-  <img src="docs/images/r2-split-mac-v3.jpg" width="100%" alt="The Rogue Encampment at 1:1 pixels: on the left the Switch version's 1600 × 900 picture enlarged to the screen, on the right D2R Metal on a Mac drawing at 2560 × 1440">
+  <img src="docs/images/r2-split-mac-v4.jpg" width="100%" alt="The Rogue Encampment at 1:1 pixels: on the left the Switch version's 1600 × 900 picture enlarged to the screen, on the right D2R Metal on a Mac drawing at 2560 × 1440">
 </p>
 
 <p align="center"><sub><b>On a Mac with a 2560 × 1440 screen.</b> Left: the Switch version's docked picture (1600 × 900), enlarged to the screen as a TV or monitor would. Right: D2R Metal with the settings it picked for this Mac: everything drawn at 2560 × 1440 with the 3D world at full resolution, SMAA, 16x filtering, environment shadows and fine shadow maps.</sub></p>
 
 <p align="center">
-  <img src="docs/images/r2-split-iphone-1to1.jpg" width="100%" alt="The Rogue Encampment at 1:1 iPhone 17 Pro pixels: on the left the Switch version's 1280 × 720 handheld picture enlarged, on the right D2R Metal on the iPhone">
+  <img src="docs/images/r2-split-iphone-v4.jpg" width="100%" alt="The Rogue Encampment at 1:1 iPhone 17 Pro pixels: on the left the Switch version's 1280 × 720 handheld picture enlarged, on the right D2R Metal on the iPhone">
 </p>
 
 <p align="center"><sub><b>On an iPhone 17 Pro.</b> Left: the Switch version's handheld picture (1280 × 720), enlarged to the phone's screen. Right: D2R Metal at its iPhone and iPad Recommended settings (the same on every iPhone and iPad): the 3D world at 75% enlarged by MetalFX, with SMAA and 16x filtering, at 60 fps on this phone (drawn by the iOS app at the phone's resolution and settings).</sub></p>
 
 <h2 align="center" id="across-sanctuary"><img src="docs/images/r2-plate-sanctuary.jpg" width="100%" alt="Across Sanctuary"></h2>
 
-One stop in every act: the Switch version on the left, D2R Metal on a Mac on the right, the same moment at 1:1 pixels.
+One stop in every act: the Switch version on the left, D2R Metal on a Mac on the right, the same moment at 1:1 pixels. The Switch side keeps the game's own exposure; D2R Metal brightens caves, crypts, Hell and nights by default (**Brighten dark areas** on the Extras tab), which is why the Catacombs and the River of Flame look lighter on the right. Each pair is taken at the same time of day in the game on both sides.
 
 <p align="center">
-  <img src="docs/images/r2-zone-catacombs-v3.jpg" width="100%" alt="Act I, the Catacombs: torchlight in a dungeon, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r2-zone-catacombs-v4.jpg" width="100%" alt="Act I, the Catacombs: torchlight in a dungeon, the Switch version on the left, D2R Metal on the right">
 </p>
 <p align="center">
-  <img src="docs/images/r2-zone-lutgholein-v3.jpg" width="100%" alt="Act II, Lut Gholein: desert sun and long shadows, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r2-zone-lutgholein-v4.jpg" width="100%" alt="Act II, Lut Gholein: desert sun and long shadows, the Switch version on the left, D2R Metal on the right">
 </p>
 <p align="center">
-  <img src="docs/images/r2-zone-arcane-v3.jpg" width="100%" alt="Act II, the Arcane Sanctuary: marble walkways over the void, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r2-zone-arcane-v4.jpg" width="100%" alt="Act II, the Arcane Sanctuary: marble walkways over the void, the Switch version on the left, D2R Metal on the right">
 </p>
 <p align="center">
-  <img src="docs/images/r2-zone-flayer-v3.jpg" width="100%" alt="Act III, the Flayer Jungle: foliage and ruins, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r2-zone-flayer-v4.jpg" width="100%" alt="Act III, the Flayer Jungle: foliage and ruins, the Switch version on the left, D2R Metal on the right">
 </p>
 <p align="center">
-  <img src="docs/images/r2-zone-riverflame-v3.jpg" width="100%" alt="Act IV, the River of Flame: lava light in Hell, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r2-zone-riverflame-v4.jpg" width="100%" alt="Act IV, the River of Flame: lava light in Hell, the Switch version on the left, D2R Metal on the right">
 </p>
 <p align="center">
-  <img src="docs/images/r2-zone-harrogath-v3.jpg" width="100%" alt="Act V, Harrogath: snow, stone and timber, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r2-zone-harrogath-v4.jpg" width="100%" alt="Act V, Harrogath: snow, stone and timber, the Switch version on the left, D2R Metal on the right">
 </p>
 
 **More of Sanctuary in D2R Metal:**
 
 <p align="center">
-  <img src="docs/images/r2-gallery-darkwood-v3.jpg" width="49%" alt="Act I, the Dark Wood in D2R Metal">
-  <img src="docs/images/r2-gallery-faroasis-v3.jpg" width="49%" alt="Act II, the Far Oasis in D2R Metal">
-  <img src="docs/images/r2-gallery-docks-v3.jpg" width="49%" alt="Act III, the Kurast Docks in D2R Metal">
-  <img src="docs/images/r2-gallery-pandemonium-v3.jpg" width="49%" alt="Act IV, the Pandemonium Fortress in D2R Metal">
-  <img src="docs/images/r2-gallery-frigid-v3.jpg" width="49%" alt="Act V, the Frigid Highlands in D2R Metal">
-  <img src="docs/images/r2-gallery-arreat-v3.jpg" width="49%" alt="Act V, the Arreat Plateau in D2R Metal">
+  <img src="docs/images/r2-gallery-darkwood-v4.jpg" width="49%" alt="Act I, the Dark Wood in D2R Metal">
+  <img src="docs/images/r2-gallery-faroasis-v4.jpg" width="49%" alt="Act II, the Far Oasis in D2R Metal">
+  <img src="docs/images/r2-gallery-docks-v4.jpg" width="49%" alt="Act III, the Kurast Docks in D2R Metal">
+  <img src="docs/images/r2-gallery-pandemonium-v4.jpg" width="49%" alt="Act IV, the Pandemonium Fortress in D2R Metal">
+  <img src="docs/images/r2-gallery-frigid-v4.jpg" width="49%" alt="Act V, the Frigid Highlands in D2R Metal">
+  <img src="docs/images/r2-gallery-arreat-v4.jpg" width="49%" alt="Act V, the Arreat Plateau in D2R Metal">
 </p>
 
 <h2 align="center" id="a-true-mac-game"><img src="docs/images/r2-plate-mac.jpg" width="100%" alt="A True Mac Game"></h2>
@@ -230,7 +231,7 @@ These came out of a full audit of the port, a bug hunt with sanitizers and Metal
 
 The rules, drop rates, economy, skills and their caps, the stash with its tabs, the automap and the difficulty are the ones Blizzard shipped, with no gameplay systems added on top. The game's logic is left alone apart from the part of a community fix that lets it run offline.
 
-A few conveniences sit on the **Extras** tab of Options, each one a switch you can turn off: light beams on valuable drops, item notes, potion pickup and belt refill, and a buzz on valuable drops (iPhone). A new game starts beside the town's waypoint, and the pause menu has **Quick Restart** (save, exit and rejoin with the same character and difficulty).
+A few conveniences sit on the **Extras** tab of Options, each one a switch you can turn off: light beams on valuable drops, brighter dark areas, item notes, potion pickup and belt refill, and a buzz on valuable drops (iPhone). A new game starts beside the town's waypoint, and the pause menu has **Quick Restart** (save, exit and rejoin with the same character and difficulty).
 
 <h2 align="center" id="questions-and-answers"><img src="docs/images/r2-plate-faq.jpg" width="100%" alt="Questions and Answers"></h2>
 
