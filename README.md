@@ -25,7 +25,7 @@ You need your own copy of the **Nintendo Switch version** of the game; D2R Metal
 
 <h2 align="center" id="stunning-on-every-screen"><img src="docs/images/r2-plate-stunning.jpg" width="100%" alt="Stunning on Every Screen"></h2>
 
-D2R Metal draws the game for the screen in front of you. The first time it starts, it looks at your device and turns on as much as it can keep at a steady 60 fps. Those settings are listed as **Recommended** in the game's Options, and you can change any of them ([Picture settings](#picture-settings)).
+D2R Metal draws the game for the screen in front of you. The first time it starts on a Mac, it looks at the Mac's graphics chip and screen and turns on as much as it estimates the Mac can keep at a steady 60 fps. iPhone and iPad start from one set of settings, the same on every device, tested on an iPhone 17 Pro. Those settings are listed as **Recommended** in the game's Options, and you can change any of them ([Picture settings](#picture-settings)).
 
 - **Sharp at your screen's resolution.** The interface and text are drawn at your display's own resolution, up to 4K on a Mac, and never stretched. The 3D world is drawn as sharp as your device can hold at 60 fps: at full resolution on the newest Macs.
 - **MetalFX.** When the 3D world is drawn below your screen's resolution, Apple's upscaler enlarges it with far more detail than a plain stretch.
@@ -45,7 +45,7 @@ The pictures below show the same moment in the game: on the left, the Nintendo S
   <img src="docs/images/r2-split-iphone-1to1.jpg" width="100%" alt="The Rogue Encampment at 1:1 iPhone 17 Pro pixels: on the left the Switch version's 1280 × 720 handheld picture enlarged, on the right D2R Metal on the iPhone">
 </p>
 
-<p align="center"><sub><b>On an iPhone 17 Pro.</b> Left: the Switch version's handheld picture (1280 × 720), enlarged to the phone's screen. Right: D2R Metal with the settings it picks for this iPhone: the 3D world at 75% enlarged by MetalFX, with SMAA and 16x filtering, at 60 fps (drawn by the iOS app at the phone's resolution and settings).</sub></p>
+<p align="center"><sub><b>On an iPhone 17 Pro.</b> Left: the Switch version's handheld picture (1280 × 720), enlarged to the phone's screen. Right: D2R Metal at its iPhone and iPad Recommended settings (the same on every iPhone and iPad): the 3D world at 75% enlarged by MetalFX, with SMAA and 16x filtering, at 60 fps on this phone (drawn by the iOS app at the phone's resolution and settings).</sub></p>
 
 <h2 align="center" id="across-sanctuary"><img src="docs/images/r2-plate-sanctuary.jpg" width="100%" alt="Across Sanctuary"></h2>
 
@@ -117,7 +117,7 @@ Everything about playing on the Mac (keys, mouse, saves, iCloud) is in [docs/MAC
 - **The same sharp picture on the go:** the 3D world enlarged by MetalFX, with SMAA, 16x filtering and true colors. The 3D resolution can go from 50 to 100%.
 - **Smooth when the action gets busy:** the 3D resolution dips for a moment while frames drop, then comes back. A 30 fps setting saves battery.
 - **Saves when the app goes to the background,** so swiping it away loses nothing, and **iCloud sync** carries your characters between devices.
-- **Older iPhones and iPads** (A14 to A16) play with a [Legacy Device Pack](docs/LEGACY_DEVICES.md).
+- **Older iPhones and iPads** (A14 to A16) play with a [Legacy Device Pack](docs/LEGACY_DEVICES.md). They start from the same picture settings as the newest iPhones, not yet tested on these devices: if the game drops frames, lower 3D Resolution or set Anti-Aliasing to FXAA (Options → Video).
 
 For now the iPhone and iPad app is built from source with Xcode ([Getting started](#on-iphone-and-ipad-or-to-develop-build-from-source)).
 
@@ -187,7 +187,7 @@ D2R Metal draws with Metal 4, which needs an **M1 or A14 chip** or later, and ru
 | iPhone / iPad, A14–A16 | Yes | iOS / iPadOS 27 or later, and a [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
 | A13 and older, Intel Macs | No | — |
 
-A17 Pro means iPhone 15 Pro and later and iPhone 16 and later; A14–A16 covers the iPhone 12 to 14 families and the iPhone 15 / 15 Plus. Devices with 4 GB of memory run, but tightly. Older systems (macOS 15–26, iOS 18–26), Apple TV, Android and HarmonyOS are not supported.
+A17 Pro means iPhone 15 Pro and later and iPhone 16 and later; A14–A16 covers the iPhone 12 to 14 families and the iPhone 15 / 15 Plus. Devices with 4 GB of memory run, but tightly. Older systems (macOS 15–26, iOS 18–26), Apple TV, Android and HarmonyOS are not supported. Every iPhone and iPad starts from the same picture settings, tested on an iPhone 17 Pro only ([Picture settings](#picture-settings)).
 
 <h2 align="center" id="picture-settings"><img src="docs/images/r2-plate-settings.jpg" width="100%" alt="Picture Settings"></h2>
 
@@ -196,9 +196,9 @@ Every setting lives in the game's own Options, on five tabs: **Video**, **Audio*
 **Recommended** is the set of picture settings D2R Metal picks for your device the first time it starts:
 
 - **On a Mac,** it looks at the chip (its generation and how many graphics cores it has) and at your screen, and turns on as much as the Mac can hold at 60 fps. The newest Macs and recent Pro, Max and Ultra chips get the 3D world at full resolution with every effect on. An M1, M2 or M3 MacBook Air, or a MacBook Neo, gets the 3D world at 75%, and its 3D resolution dips for a moment when the action gets busy instead of stuttering.
-- **On iPhone and iPad,** the 3D world at 75% enlarged by MetalFX, with SMAA, 16x filtering and true colors.
+- **On iPhone and iPad,** the same on every device: the 3D world at 75% enlarged by MetalFX, with SMAA, 16x filtering and true colors, and Frame Drops set to lower the 3D resolution for a moment while frames drop. They were tested on an iPhone 17 Pro; on an older iPhone or iPad, lower 3D Resolution or set Anti-Aliasing to FXAA if the game drops frames.
 
-You can change any setting; **Graphic Presets** also offers *Performance* (lighter) and *Quality* (everything on), and **Default** puts the tab you are on back to Recommended.
+You can change any setting; **Graphic Presets** also offers *Performance* (lighter) and *Quality* (on a Mac everything on; on iPhone and iPad the 3D world at 100% with MetalFX, SMAA and 16x filtering, the shadow rows left as they are), and **Default** puts the tab you are on back to Recommended.
 
 - **Video**:
   - On the Mac: Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets, 3D Resolution (100 down to 50%) and Upscaling (Standard / MetalFX).
@@ -288,7 +288,7 @@ Measured on Apple hardware ("edge sharpness" is the edge variance of the whole c
 - **Mac, MetalFX at the last step** (M6, 12 GPU cores, 2560 × 1440 screen, character select): enlarging the same 1600 × 900 picture costs 0.28 ms of GPU time with a plain stretch and 1.38 ms with MetalFX; edge sharpness goes from 235 to 569 ([4ac0543](https://github.com/PowerBeef/d2r-metal/commit/4ac0543)).
 - **iPhone, MetalFX on the 3D world** (iPhone 17 Pro, 3D at 75%: 1967 × 905 inside a 2622 × 1206 frame): steady 60 fps; median GPU time per frame 11.65 → 12.28 ms (+0.6 ms); edge sharpness 404 → 728 with the same colors ([7c2f892](https://github.com/PowerBeef/d2r-metal/commit/7c2f892)).
 - **iPhone, SMAA and 16x filtering** (iPhone 17 Pro standing in town, 3D at 75%, runs alternated, 110 s each): both hold 60 fps with frame time p95 17.6 ms, CPU per frame about 16 ms and the thermal state the same as without them. The phone doesn't show their GPU cost to an app: its GPU slows its clock until each frame's work fills the frame (about 15 ms whatever the setting), and the process energy reading follows the CPU.
-- Not measured yet: any Mac slower than the M6, battery and heat on phones over long sessions, and environment shadows on a phone.
+- Not measured yet: any Mac slower than the M6; any iPhone or iPad other than the iPhone 17 Pro (all of them start from the same Recommended); battery and heat on phones over long sessions; and the shadow settings on a phone (environment shadows, and the Switch's own 2100-pixel shadow map, which phones now use too).
 
 </details>
 
