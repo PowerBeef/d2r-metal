@@ -289,17 +289,20 @@ FLIP_SETS = [s for s in SETS if SETS[s]['judge'] == 'flip']
 # images: a uniform +1/+2 LSB shift gives a per-pixel FLIP of at most 0.062 (mean 0.03-0.057) and passes; +3 LSB everywhere fails on the mean; +6 LSB marks
 # every pixel hot; a 100 x 100 patch at +0.3 marks 5.9% of a 640 x 295 view hot.
 # Real shots of one frozen tick are not identical (measured 2026-11-04 on the 13 look-set pages): the rain, flames and idle animations move, and the
-# game's dither shifts about a quarter of the 3D view by one level. Recording therefore takes three shots: the first two give the moving pixels
-# (unstable_mask, grown UNSTABLE_GROW pixels; at most UNSTABLE_MAX of the frame, measured up to 22%) and must agree elsewhere to REPEAT_MAX (the
-# dither alone gives 0.002-0.011); the third, judged against the first outside that mask, is the page's own noise, which a check meets again (rain
-# lands somewhere new each run: up to 0.28% of a view's pixels hot, against FLIP_HOT_MAX 0.05%). A check allows each region NOISE_K times its
-# recorded noise, never less than the fixed limits (page_limits).
+# game's dither shifts about a quarter of the 3D view by one level. Recording therefore takes RECORD_SHOTS shots. The first MASK_SHOTS give the moving
+# pixels: every pixel that differs between the first shot and any of the next ones (unstable_mask, grown UNSTABLE_GROW pixels; at most UNSTABLE_MAX
+# of the frame), so the zones a torch's flicker lights differently from run to run are left out; the rest must agree to REPEAT_MAX (the dither
+# alone gives 0.002-0.011). The remaining shots, each judged against the first outside that mask, give the page's own noise, the worst of them per
+# region, which a check meets again (rain lands somewhere new each run). One mask pair and one noise shot were too few: a torch-lit crypt page
+# measured 0.002% of its pixels hot in the noise shot, then 0.3-1.0% in checks of the same build (2026-11-04). A check allows each region NOISE_K
+# times its recorded noise, never less than the fixed limits (page_limits).
 # A softer or sharper picture (the 3D MetalFX pass off, another anti-aliasing) moves FLIP's mean less than a harmless uniform one-level shift does
 # (0.023 against 0.03), so each region also compares its fine detail: the mean absolute Laplacian of luminance over the kept pixels, test / base.
 # Measured 2026-11-04 on the look-set pages: a repeat shot 0.999-1.002, a uniform one-level shift 1.000, FXAA for SMAA 0.89, the 3D MetalFX pass off
 # 0.68-0.79. A region fails when the ratio is more than DETAIL_TOL from 1 (or NOISE_K times its recorded noise)
 FLIP_HOT, FLIP_HOT_MAX, FLIP_MEAN_MAX, DETAIL_TOL = 0.1, 0.0005, 0.06, 0.02
-UNSTABLE_GROW, UNSTABLE_MAX, REPEAT_MAX, NOISE_K = 2, 0.30, 0.02, 3
+UNSTABLE_GROW, UNSTABLE_MAX, REPEAT_MAX, NOISE_K = 2, 0.45, 0.02, 3
+RECORD_SHOTS, MASK_SHOTS = 6, 4
 NOT_ALLOWED = 'not allowed'
 LB_REGIONS = {'view': [0, 0, 1, 0.82], 'hud': [0, 0.82, 1, 1]}
 
@@ -426,22 +429,28 @@ def flip_record(s, names, reason, host, controls=True, allow_blind=None):
     st, d, runs, bad = SETS[s], set_dir(s), run_dir(f'rec_{s}'), 0
     os.makedirs(d, exist_ok=True)
     for p in set_pages(s, names):
-        shots, why, un, rep, noise = [os.path.join(runs, p + '.png'), os.path.join(runs, p + '.2.png'), os.path.join(runs, p + '.3.png')], None, None, {}, {}
+        shots, why, un, rep, noise = [os.path.join(runs, p + ('.png' if i == 0 else f'.{i + 1}.png')) for i in range(RECORD_SHOTS)], None, None, {}, {}
         for png in shots:
             ok, w = take_shot(host, p, png, st['env'])
             if not ok: why = f'screenshot failed: {w}'; break
             red = red_lines(png, st)
             if red: why = f"red lines in a clean baseline run: {' | '.join(red)}; fix them, or add a regex with a reason to SETS[{s!r}]['log_allow']"; break
         if why is None:
-            a, b, c = (imgdiff.load(x) for x in shots)
-            if a.shape != b.shape or a.shape != c.shape: why = f'the shots differ in size ({a.shape[1]}x{a.shape[0]}, {b.shape[1]}x{b.shape[0]}, {c.shape[1]}x{c.shape[0]})'
+            imgs = [imgdiff.load(x) for x in shots]; a = imgs[0]
+            if any(x.shape != a.shape for x in imgs): why = 'the shots differ in size (' + ', '.join(f'{x.shape[1]}x{x.shape[0]}' for x in imgs) + ')'
             else:
-                un = unstable_mask(a, b); share = float(un.mean()); keep = page_keep(p, a.shape) & ~un
-                rep, _ = judge_page(a, b, keep, page_regions(p))
-                noise, _ = judge_page(a, c, keep, page_regions(p))   # the third shot outside the moving pixels: the noise a check meets again
+                un = unstable_mask(a, imgs[1])
+                for x in imgs[2:MASK_SHOTS]: un |= unstable_mask(a, x)
+                share = float(un.mean()); keep = page_keep(p, a.shape) & ~un
+                reps = [judge_page(a, x, keep, page_regions(p))[0] for x in imgs[1:MASK_SHOTS]]
+                rep = {r: dict(mean=max(x[r]['mean'] for x in reps)) for r in reps[0]}
+                # the later shots outside the moving pixels: the noise a check meets again, the worst of them per region
+                ns = [judge_page(a, x, keep, page_regions(p))[0] for x in imgs[MASK_SHOTS:]]
+                noise = {r: dict(mean=max(x[r]['mean'] for x in ns), hot=max(x[r]['hot'] for x in ns), detail=max((x[r]['detail'] for x in ns), key=lambda v: abs(v - 1)))
+                         for r in ns[0]}
                 worst = max(float(r['mean']) for r in rep.values())
                 if share > UNSTABLE_MAX or worst > REPEAT_MAX:
-                    why = f'page moves between two shots ({share:.1%} moving, repeat FLIP mean {worst:.4f}): not stable enough for a FLIP baseline'
+                    why = f'page moves between its shots ({share:.1%} moving, repeat FLIP mean {worst:.4f}): not stable enough for a FLIP baseline'
         if why: bad += 1; print(f'GOLDEN-REC {s}/{p} RED {why}'); continue
         dst = os.path.join(d, p + '.png'); shutil.copy(shots[0], dst + '.new.png'); os.replace(dst + '.new.png', dst)
         up = os.path.join(d, p + '.unstable.png')
