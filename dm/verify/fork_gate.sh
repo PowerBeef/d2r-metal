@@ -91,7 +91,7 @@ for tier in "${TIERS[@]}"; do
     step quick_literals 120 -- python3 "$DM/i18n/scan_literals.py"
     step quick_i18n 120 -- python3 "$DM/ios/tools/dm_i18n.py" --check
     step quick_switches 120 -- python3 "$DM/tools/switches.py" check
-    step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/golden/"*.scn "$DM/verify/bench/"*.scn
+    step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/scenarios/picture/"*.scn "$DM/verify/scenarios/heap/"*.scn "$DM/verify/scenarios/manual/"*.scn "$DM/verify/golden/"*.scn "$DM/verify/bench/"*.scn
     step quick_hudgen 300 -- bash "$DM/ios/tools/check_hud_gen.sh"
     step quick_readdr 300 -- python3 "$DM/tools/re/addrcheck.py"   # cited main+0x... addresses vs the game program and the private analysis export (unavailable without them)
     ;;
@@ -112,6 +112,8 @@ for tier in "${TIERS[@]}"; do
     lock_on 10
     step core_front_scenarios 900 -- bash -c 'scn_run "$@" --backend cli' _ $(front_scenarios $(scenarios))   # windowed, one at a time, in the background (front-end lifecycle: minimize / quit)
     step core_touchcases 900 -- bash -c touch_cases
+    # The picture chain at this Mac's Recommended on the CLI host (scenarios/picture: SMAA, 16x, shadows, 3D 75% with the MetalFX 3D pass, AA switched live)
+    step core_picture 900 -- bash -c 'par_scenarios cli 2 "$@"' _ "$DM/verify/scenarios/picture/rec.scn" "$DM/verify/scenarios/picture/rec75.scn" "$DM/verify/scenarios/picture/aa_toggle.scn"
     ;;
   full)
     lock_on 15
@@ -121,9 +123,12 @@ for tier in "${TIERS[@]}"; do
     step full_smoke_mac 900 -- bash "$DM/ios/tools/smoke_mac.sh" 1   # 也按 HEAD 重出 iOS 包的 Mac 版（ios-mac 场景用它） | also rebuilds the iOS package for the Mac from HEAD (the ios-mac scenarios use it)
     step full_iosmac_scenarios 1800 -- bash -c 'scn_run "$@" --backend ios-mac' _ $(scenarios)   # front runs (the iOS package takes the front): a disturbed one is redone, then ⚪
     step full_metal_validation 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/enter_game.scn" --backend cli --headless --metal-validation api
+    step full_metal_validation_rec 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/picture/rec.scn" --backend cli --headless --metal-validation api   # at the Recommended picture
+    step full_macapp_picture 900 -- bash -c 'scn_run "$@" --backend mac-app' _ "$DM/verify/scenarios/picture/"mac_*.scn   # first launches: this Mac and an M1 stand-in
     # 我们自己的基线（golden.py；没录过 = ⚪ 不可用，不算红） | our own baselines (golden.py; never recorded = ⚪ unavailable, not red)
     step full_golden_replay 1800 -- bash -c 'python3 "$DM/verify/golden.py" replay check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
     step full_golden_shots 1200 -- bash -c 'python3 "$DM/verify/golden.py" shots check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
+    step full_golden_picture 2400 -- bash -c 'python3 "$DM/verify/golden.py" shots check --set orig,rec,rec75,bright,phone; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # FLIP sets (screenshot_gate.md)
     step full_faults 1200 -- bash -c 'par_scenarios cli 3 "$@"' _ $(headless_scenarios "$DM/verify/scenarios/faults/"*.scn)   # 故障矩阵（scenarios/faults/README.md） | the fault matrix (scenarios/faults/README.md)
     step full_faults_front 600 -- bash -c 'scn_run "$@" --backend cli' _ $(front_scenarios "$DM/verify/scenarios/faults/"*.scn)
     ;;
@@ -132,6 +137,9 @@ for tier in "${TIERS[@]}"; do
     # Benchmarks first, while the machine is cool. They run in front by design; a rep still disturbed after its redos is not judged (exit 3 = unavailable, not red)
     for r in town_loop combat ui_heavy rejoin; do step "long_bench_$r" 1800 -- bash -c 'python3 "$1/tools/bench.py" run "$1/verify/bench/$2.scn" --reps 3; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc' _ "$DM" "$r"; done
     step long_profile 900 -- bash -c 'python3 "$1/tools/bench.py" profile "$1/verify/bench/combat.scn"; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc' _ "$DM"   # sampled attribution + hitches
+    # GPU heap 0 at the Native cap (scenarios/heap, the readings behind DM_SCR_MAX_PX): measurements, so front runs in real full screen, one at a time
+    step long_heap 1800 -- bash -c 'scn_run "$@" --backend cli' _ "$DM/verify/scenarios/heap/"*.scn
+    step long_heap_mac 600 -- bash -c 'fresh_mac_app && scn_run "$@" --backend mac-app' _ "$DM/verify/scenarios/heap/"*.scn
     step long_regress 2400 -- bash -c 'python3 "$DM/tools/bench.py" regress "$DM/verify/bench/town_loop.scn" --reps 6; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # 对留存基线（bench.py baseline save）；没有基线为 ⚪ | against the kept baseline (bench.py baseline save); none = ⚪
     step long_playbot 3600 -- python3 "$DM/tools/playbot.py" run --seed 1 --episodes 4 --intents 15   # 试玩机器人：玩家意图 + 不变量（dm/tools/playbot.py） | the playtest bot: player intents + invariants (dm/tools/playbot.py)
     step long_soak 3600 -- python3 "$DM/tools/playbot.py" soak --minutes 30 --seed 2   # Mac 浸泡：soak_report.py 的四条判据 | Mac soak: soak_report.py's four criteria

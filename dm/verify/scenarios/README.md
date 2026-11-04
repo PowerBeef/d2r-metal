@@ -94,6 +94,8 @@ Full-screen geometry: judge it by the `layout` event (event_stream.md), which ca
 
 At the first red event, or when a step fails, the runner asks the host for the `engine` snapshot (panels, focus, save state, the latest actions and UI messages) and stores it as `engine.json` in the run folder, beside `crash.txt` when the process crashed.
 
+Scenarios in `picture/` check the picture players get, through events (`picture`, `scale3d`, `mfx`) and the renderer's own bytes (`expect_mem`): the CLI ones pin a picture set through its switches (`dm/tools/picture.py`), the Mac App ones take this Mac's Recommended at first launch (or an M1 stand-in's). `heap/` holds the GPU heap 0 readings behind the Native cap: measurements, run in front in real full screen (the long tier).
+
 Scenarios in `manual/` are run by hand only: no gate step runs them (`hero_select_shot.scn` captures a picture for a person to look at).
 **Control schemes.** One scenario per behaviour, written once: the scheme-neutral steps (`use_unit`, `open`, `back`, `menu_pick`, `key`) are carried out through the control scheme of the run, `scenario.py run … --scheme pc|controller|touch` (default: the first of the scenario's `schemes`). `only=<scheme>[,<scheme>]` on any step runs it in those schemes only. A step a scheme cannot do yet ends the run as not judged for that scheme (⚪, exit 3), never RED. `--aspect 16x10` fakes a MacBook-shaped main screen (`DM_TEST_SCREEN_ASPECT`). Example: `npc_talk.scn` runs in all three schemes and replaces the PC-only NPC scenarios.
 

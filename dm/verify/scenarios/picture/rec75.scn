@@ -1,0 +1,24 @@
+# Recommended with the 3D at 75% (dm/tools/picture.py REC75: the base M chips' Recommended at a 2560-class screen, Frame Drops pinned off so the
+# scale stays put): the renderer's 3D scale byte holds 0.75, the 3D pass is enlarged by MetalFX (one scaler build, the game's ps_upsample_p
+# replaced), no second MetalFX at the present (the user's choice, MFX-2), and the game's own upscale sharpen follows the 75% (0.22, MFX-7)
+name pic_rec75
+requires cli
+save warlock
+timeout 180
+env DM_3D_SCALE=0.75 DM_GAME_RES=2560x1440 DM_MFX=1 DM_MFX3D=1 DM_AA_MODE=2 DM_NVN_ANISO=16 DM_COLORSPACE=srgb DM_ENV_SHADOWS=1 DM_SHADOW_SIZE=4096 DM_3D_SCALE_DYN=0 DM_GAME_SEED=305419896
+
+enter_game
+expect_state in_game=true hp>=1 area=1 timeout=10
+sleep 6
+expect_mem main+0x31e0848 4 chain=0x66a4 hex=0000403f
+expect_mem main+0x31e0848 1 chain=0x6614 hex=02
+walk_to 5789 4470 timeout=20
+quit
+check no_red
+check no_red_log
+check exit 0
+check event scale3d pct=75
+check event mfx who=3d op=build
+check no_event mfx who=pres op=build
+check log_has "3D upscale: MetalFX replaces ps_upsample_p"
+check log_has "upscale sharpen: 0\.060 -> 0\.220"
