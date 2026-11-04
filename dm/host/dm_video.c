@@ -15,6 +15,7 @@
 //   s3d    Mac: the 3D Resolution with Native output, 0 = 100 / 85 / 75 / 67 / 50 %, read every tick by hle_oe.c s3_cfg (dm_video_scale3d)
 //   envsh  environment shadows; shq the shadow map, 0 Standard 2100 / 1 High 3072 / 2 Ultra 4096 texels. Both are latched at launch, because every guest
 //          thread gets them through thread.c's KESHADOW and KSHSIZE slots (dm_video_env_shadows / dm_video_shadow_size); a change shows the restart hint
+//          (none while DM_ENV_SHADOWS / DM_SHADOW_SIZE force them; DM_SHADOW_SIZE is clamped to 512..4096 and made even)
 // Recommended: rec_<key> holds the recommendation, rec_v its version (REC_V) and rec_id the machine it was worked out for (front_video_rec_id: the Mac
 // App's GPU and main screen; none on iOS, the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1). It is worked out (front_video_firstboot for
 // the first three keys, front_video_rec for the others) on first boot, for a missing or out-of-range key (only that key is filled), and when rec_v is
@@ -86,6 +87,9 @@ __attribute__((weak)) void front_video_color(int accurate) { (void)accurate; }  
 // Which machine the recommendation is worked out for (front_mac.m: dm_picrec_id of the GPU and the main screen); -1 = the recommendation does not depend on
 // the machine (iOS, the CLI host, test copies without DM_TEST_VIDEO_FIRSTBOOT=1)
 __attribute__((weak)) int front_video_rec_id(void) { return -1; }
+// 1 = the window's screen no longer suits the launch picture and a restart would fix it (front_mac.m picture_screen_check): the Resolution row shows
+// the restart hint even though its value did not change; 0 = no (iOS, the unit tests)
+__attribute__((weak)) int front_video_screen_stale(void) { return 0; }
 
 static const char *vals_str(const int *v) {   // "mode=1 res=1 ...": for logs (static buffer, not thread-safe; only used under g_mu or at launch)
     static char b[160]; size_t L = 0; b[0] = 0;
@@ -193,10 +197,11 @@ float dm_video_scale3d(void) {   // the 3D resolution (read every tick by s3_cfg
     int t = atomic_load(&g_val[K_S3D]); return t > 0 && t < 5 ? m[t] : 0;
 }
 static _Atomic int g_esh_launch = -1;   // environment shadows as latched at launch (what the game's threads got); -1 = not latched yet
+static _Atomic int g_esh_forced, g_shq_forced;   // 1 = DM_ENV_SHADOWS / DM_SHADOW_SIZE fixed the value: the Options page's choice does not take effect, so no restart hint
 int dm_video_env_shadows(void) {   // every guest thread at its start (thread.c, KESHADOW slot): the first answer once the settings are known holds for the session
     int x = atomic_load(&g_esh_launch); if (x >= 0) return x;
     const char *e = getenv("DM_ENV_SHADOWS");   // DM_ENV_SHADOWS=0/1 forces it (tests, A/B runs)
-    if (e && *e) x = atoi(e) != 0;
+    if (e && *e) { x = atoi(e) != 0; atomic_store(&g_esh_forced, 1); }
     else { load_once(); if (!atomic_load(&g_loaded)) return 0; x = atomic_load(&g_val[K_ESH]) == 1; }
     int exp = -1; if (atomic_compare_exchange_strong(&g_esh_launch, &exp, x)) LOG("Environment shadows: %s (%s)", x ? "on" : "off", e && *e ? "DM_ENV_SHADOWS" : "picture setting");
     return atomic_load(&g_esh_launch);
@@ -205,10 +210,15 @@ static const int k_shq_px[3] = { 2100, 3072, 4096 };   // Standard = the Switch'
 static _Atomic int g_shq_launch = -1;   // the shadow map edge as latched at launch (what the game's threads got); -1 = not latched yet
 int dm_video_shadow_size(void) {   // every guest thread at its start (thread.c, KSHSIZE slot): the shadow init reads it once, so the first answer holds for the session
     int x = atomic_load(&g_shq_launch); if (x > 0) return x;
-    const char *e = getenv("DM_SHADOW_SIZE");   // DM_SHADOW_SIZE=<px> forces it (tests, A/B runs), clamped to 512..8192
-    if (e && *e) { x = atoi(e); x = x < 512 ? 512 : x > 8192 ? 8192 : x; }
+    // DM_SHADOW_SIZE=<px> forces the edge (tests, A/B runs), clamped to 512..4096 and made even: 4096 is the game's own Ultra edge, and 8192 took
+    // 256 MiB of GPU heap 0
+    const char *e = getenv("DM_SHADOW_SIZE"); int raw = 0;
+    if (e && *e) { raw = atoi(e); x = (raw < 512 ? 512 : raw > 4096 ? 4096 : raw) & ~1; atomic_store(&g_shq_forced, 1); }
     else { load_once(); if (!atomic_load(&g_loaded)) return k_shq_px[0]; int t = atomic_load(&g_val[K_SHQ]); x = k_shq_px[t >= 0 && t < 3 ? t : 0]; }
-    int exp = -1; if (atomic_compare_exchange_strong(&g_shq_launch, &exp, x)) LOG("Shadow map: %d px (%s)", x, e && *e ? "DM_SHADOW_SIZE" : "picture setting");
+    int exp = -1; if (atomic_compare_exchange_strong(&g_shq_launch, &exp, x)) {
+        if (!(e && *e)) LOG("Shadow map: %d px (picture setting)", x);
+        else if (x != raw) LOG("Shadow map: %d px (DM_SHADOW_SIZE, clamped from %d)", x, raw);
+        else LOG("Shadow map: %d px (DM_SHADOW_SIZE)", x); }
     return atomic_load(&g_shq_launch);
 }
 void dm_video_fullscreen_note(int on) {   // the player switched full screen from the menu / ⌃⌘F: the setting follows the window (as the PC Display Mode)
@@ -306,12 +316,12 @@ static void hint_at(uint64_t sp, const char *hint, const char *label, int show) 
     int x = show ? ((int32_t *)(lw + 0x70))[0] : 99999; int32_t *r = (int32_t *)(hw + 0x70);
     if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)hw + 0x10))(hw); }
 }
-static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows, shadow quality)
+static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows, shadow quality); also under Resolution when the window's screen no longer suits the launch picture
     int run = front_video_running_res(), esh = atomic_load(&g_esh_launch);
-    hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && shown(K_RES) != run);
-    hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && shown(K_ESH) != esh);
+    hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && (shown(K_RES) != run || front_video_screen_stale()));
+    hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && !atomic_load(&g_esh_forced) && shown(K_ESH) != esh);   // a forced value never follows the page: no hint
     int shq = atomic_load(&g_shq_launch), sq = shown(K_SHQ);
-    hint_at(sp, "TouchVideoShqHint", "TouchVideo_shq_Text", shq > 0 && sq >= 0 && sq < 3 && k_shq_px[sq] != shq);
+    hint_at(sp, "TouchVideoShqHint", "TouchVideo_shq_Text", shq > 0 && !atomic_load(&g_shq_forced) && sq >= 0 && sq < 3 && k_shq_px[sq] != shq);
 }
 // The phone's 3D Resolution row lists 50 / 67 / 75 / 85 / 100 % while its stored values keep their meaning (0 = 75, 1 = 85, 2 = 100, 3 = 67, 4 = 50):
 // car_of turns a row's value into the selector index, val_of back; every other row is the identity

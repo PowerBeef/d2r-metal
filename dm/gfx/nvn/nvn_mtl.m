@@ -43,6 +43,7 @@
 #include "nvn_hmap.h"
 #include "nvn_ratelog.h"   // GPU error lines: the first 8 of a kind in full, then one summary every 10 s (gerr_flush)
 #include "../../host/dm.h"
+#include "../../host/dm_geom.h"   // the present's fit of the picture into the drawable, shared with the front ends (dm_geom_present)
 #import <CommonCrypto/CommonDigest.h>
 #include <stdarg.h>
 #include <mach-o/dyld.h>
@@ -349,7 +350,7 @@ static void mtl_init_once(void) {
     g_bloomq_args = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
     if (!g_bloomq_args) MDIE("建立泛光 1/4 argument table 失败：%s", ate.localizedDescription.UTF8String);
     for (int i = 0; i < 3; i++) {
-        g_present_uv[i] = [g_dev newBufferWithLength:sizeof(float) * 8 options:MTLResourceStorageModeShared];
+        g_present_uv[i] = [g_dev newBufferWithLength:sizeof(float) * 12 options:MTLResourceStorageModeShared];   // Crop: rect, edge, and the down filter's tap (fs_down)
         if (!g_present_uv[i]) MDIE("建立出图 UV 缓冲[%d] 失败", i);
         res_add(g_present_uv[i]);
         g_bloomq_const[i] = [g_dev newBufferWithLength:sizeof(float) * 8 options:MTLResourceStorageModeShared];
@@ -5365,6 +5366,8 @@ frz_plain:;
     // A scissor starting from the top edge (y <= 0) does not have its top edge moved down: when the host lifts top-anchored widgets (minimap, area name etc.) back to the real top of the picture, they are drawn above the UI rectangle and must not be clipped.
     // Exception: the untextured block that exactly covers the whole UI rectangle (the dimming when a panel opens, the black curtain of a transition) is changed to cover the whole picture -- the viewport is scaled vertically by 1/h and not moved down, otherwise the 3D outside the UI rectangle is left with a light/dark dividing line.
     // When nobody registered the entry or the UI rectangle is the whole picture (iPhone, Mac default), vo = so = 0, vs = 1, the matrix is not changed, and what follows is word-for-word the same as before.
+    // The classic renderer's immediate rectangle (main+0x859500) has the same shape and is shifted too; that is harmless only while patch_nso.py cuts the
+    // Legacy Graphics toggle (the classic frame never shows). Restoring that toggle needs this test scoped to the UI pass (its colour target), not only the draw's shape.
     long vo = 0, so = 0; double vs = 1, moff = 0;
     if (g_ui_rect_fn && dw && dw->count == 4 && S.nattr == 2 && S.stream[0].stride == 20) { double uy = 0, uh = 1; g_ui_rect_fn(&uy, &uh);
         if (uh > 0 && uh < 1) { if (ui_cover_all(uh)) vs = 1 / uh; else if (uy > 0) { so = lround(uy * th); if (ui_mat_ok()) moff = 2 * uy; else { vo = so; static int n; if (n++ < 4) MLOG("界面下移：投影矩阵这次读不到，退回挪视口（通道 %llu）", g_stat_pass); } } } }
@@ -6582,13 +6585,28 @@ double mtl_pace_hz(void) { double r = mtl_display_refresh(); return mtl_fps_targ
 static _Atomic uint64_t g_present_stall_ns;   // 单测用：出图线程每次出图前额外停顿（模拟 drawable 迟迟不可用） | For unit tests: an extra pause before each present on the present thread (simulating a drawable that stays unavailable)
 static CAMetalLayer *g_present_layer_resident;
 void mtl_present_test_stall(uint64_t ns) { g_present_stall_ns = ns; }
-// 出图着色器：全屏三角形，按 Crop 取源纹理有效区（MetalFX 的拷贝趟也用它） | Present shader: a full-screen triangle sampling the source's valid area per Crop (the MetalFX copy pass uses it too)
+// Present shaders: a full-screen triangle sampling the source's valid area per Crop (fs; the MetalFX copy pass uses it too). fs_down is the
+// present's down filter (MFX-11): when the picture shrinks by more than 1.34x (a Native picture in a smaller window), one bilinear tap per pixel
+// would skip texels and alias, so it averages n x n bilinear taps spread over the pixel's footprint (tap.xy = one output pixel in the source's uv,
+// tap.z = n, 2-4); the Crop it reads is 12 floats
 static const char *g_present_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"
     "struct V { float4 p [[position]]; float2 uv; };\n"
     "vertex V vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); V o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); o.uv = uv; return o; }\n"
     "struct Crop { float4 rect; float4 edge; };\n"
-    "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant Crop& c [[buffer(0)]]) { return t.sample(s, clamp(in.uv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw)); }\n";
+    "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant Crop& c [[buffer(0)]]) { return t.sample(s, clamp(in.uv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw)); }\n"
+    "struct CropD { float4 rect; float4 edge; float4 tap; };\n"
+    "fragment float4 fs_down(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant CropD& c [[buffer(0)]]) {\n"
+    "  float2 uv = in.uv * c.rect.zw + c.rect.xy; int n = int(c.tap.z); float4 a = 0;\n"
+    "  for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) { float2 o = (float2(i, j) + 0.5) / float(n) - 0.5; a += t.sample(s, clamp(uv + o * c.tap.xy, c.edge.xy, c.edge.zw)); }\n"
+    "  return a / float(n * n); }\n";
+static id<MTLRenderPipelineState> g_blit_pso_down;   // fs_down's pipeline, built with g_blit_pso
+// The down filter's taps per axis for a crop of cw x ch shown in viewport vp: 0 (one bilinear tap, fs) up to a 1.34x shrink, else ceil(shrink),
+// at most 4. After a MetalFX enlargement the source is already at the viewport's size, so the two never combine
+static int present_down_taps(NSUInteger cw, NSUInteger ch, MTLViewport vp) {
+    if (vp.width <= 0 || vp.height <= 0) return 0;
+    double k = fmax(cw / vp.width, ch / vp.height); return k > 1.34 ? (int)fmin(4, ceil(k)) : 0;
+}
 static void present_pipeline(MTLPixelFormat format) {
     if (!g_blit_pso || g_blit_fmt != format) {
         NSError *e = nil;
@@ -6599,6 +6617,9 @@ static void present_pipeline(MTLPixelFormat format) {
         pd.colorAttachments[0].pixelFormat = format;
         g_blit_pso = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
         if (!g_blit_pso) MDIE("出图管线失败 %s", e.localizedDescription.UTF8String);
+        pd.fragmentFunction = [lib newFunctionWithName:@"fs_down"];
+        g_blit_pso_down = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
+        if (!g_blit_pso_down) MDIE("present: the down filter's pipeline failed: %s", e.localizedDescription.UTF8String);
         g_blit_fmt = format;
         MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.supportArgumentBuffers = YES;
         g_blit_samp = [g_dev newSamplerStateWithDescriptor:sd];
@@ -7034,13 +7055,13 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src0, id<MTLTe
              (unsigned long)cx, (unsigned long)cy, (unsigned long)cw, (unsigned long)ch, (unsigned long)dst.width, (unsigned long)dst.height); }
     present_pipeline(dst.pixelFormat);
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-    // 保持游戏画面宽高比居中，余下留黑边（屏幕比例与游戏不同时不拉伸，如 iPhone 约 19.5:9 对游戏 16:9）；
-    // 比例差 < 1%（全屏口径下游戏宽度取 8 的倍数带来的零头，如 1952x900 对 2868x1320 差 0.17%）直接铺满，不留几像素的边
-    // Keep the game picture's aspect ratio and center it, leaving black bars in the rest (no stretching when the screen ratio differs from the game's, e.g. iPhone about 19.5:9 versus the game's 16:9);
-    // when the ratio difference is < 1% (the remainder from the game width being a multiple of 8 in the full-screen setup, e.g. 1952x900 versus 2868x1320 differs by 0.17%) fill directly, leaving no few-pixel border
-    double dw = dst.width, dh = dst.height, s = fmin(dw / cw, dh / ch);
-    MTLViewport vp = {floor((dw - cw * s) / 2), floor((dh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};
-    if (fabs((dw / dh) / ((double)cw / ch) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
+    // The picture's fit (dm_geom_present, shared with the live present below and the front ends): up to 16 px larger than the drawable is shown 1:1
+    // from its centre; aspects within 1% fill the drawable (e.g. 1952x900 on 2868x1320, the remainder of the game width's rounding); otherwise
+    // the picture keeps its aspect, centred, with black bars (an iPhone's 19.5:9 against the game's 16:9)
+    double dw = dst.width, dh = dst.height;
+    dm_geom_pfit fit = dm_geom_present(dw, dh, (unsigned)cx, (unsigned)cy, (unsigned)cw, (unsigned)ch);
+    cx = fit.sx; cy = fit.sy; cw = fit.sw; ch = fit.sh;
+    MTLViewport vp = {fit.x, fit.y, fit.w, fit.h, 0, 1};
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
 #if TARGET_OS_OSX
     if (mfx_want(&g_mfx_grab, 0, cw, ch, vp)) {   // 整窗截图：与上屏一样走 MetalFX | whole-window screenshot: MetalFX like the present
@@ -7056,13 +7077,32 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src0, id<MTLTe
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     id<MTLRenderCommandEncoder> en = [cb renderCommandEncoderWithDescriptor:rp];
     [en setViewport:vp];
-    [en setRenderPipelineState:g_blit_pso]; [en setFragmentTexture:src atIndex:0]; [en setFragmentSamplerState:g_blit_samp atIndex:0];
-    float uv[8] = {(float)cx / src.width, (float)cy / src.height, (float)cw / src.width, (float)ch / src.height,
-                   (cx + 0.5f) / src.width, (cy + 0.5f) / src.height, (cx + cw - 0.5f) / src.width, (cy + ch - 0.5f) / src.height};
+    int taps = present_down_taps(cw, ch, vp);   // a shrink past 1.34x: the down filter (fs_down)
+    [en setRenderPipelineState:taps ? g_blit_pso_down : g_blit_pso]; [en setFragmentTexture:src atIndex:0]; [en setFragmentSamplerState:g_blit_samp atIndex:0];
+    float uv[12] = {(float)cx / src.width, (float)cy / src.height, (float)cw / src.width, (float)ch / src.height,
+                    (cx + 0.5f) / src.width, (cy + 0.5f) / src.height, (cx + cw - 0.5f) / src.width, (cy + ch - 0.5f) / src.height,
+                    (float)(cw / vp.width / src.width), (float)(ch / vp.height / src.height), (float)taps, 0};
     [en setFragmentBytes:uv length:sizeof uv atIndex:0];
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [en endEncoding];
     return 1;
+}
+// The last live present's geometry, for the front ends' checks (front_mac.m's layout event; front_ios.m): the viewport x, y, w, h, the drawable w, h
+// and the sampled part of the crop w, h, in pixels. Written by the present thread one element at a time (a reader that judges settled states does
+// not mind a torn set); the screenshot path (present_encode) does not record
+static _Atomic int g_pres_geom[8];
+void mtl_present_geom(int out[8]) { for (int i = 0; i < 8; i++) out[i] = atomic_load(&g_pres_geom[i]); }
+static void pres_geom_note(const dm_geom_pfit *f, double dw, double dh) {
+    const int v[8] = { (int)f->x, (int)f->y, (int)f->w, (int)f->h, (int)dw, (int)dh, (int)f->sw, (int)f->sh };
+    for (int i = 0; i < 8; i++) atomic_store(&g_pres_geom[i], v[i]);
+}
+// One English line whenever the live present's fit changes (the screenshot path logs its own Chinese viewport line, which screen_check.py reads)
+static void pres_geom_log(const dm_geom_pfit *f, double dw, double dh, int mfx) {
+    static double last[8]; const double now[8] = { dw, dh, f->sx, f->sy, f->sw, f->sh, f->kind, mfx };
+    if (!memcmp(last, now, sizeof now)) return;
+    memcpy(last, now, sizeof now);
+    MLOG("present: picture %ux%u at %u,%u -> drawable %.0fx%.0f, viewport %.0f,%.0f %.0fx%.0f (%s%s)", f->sw, f->sh, f->sx, f->sy, dw, dh, f->x, f->y, f->w, f->h,
+         f->kind == DM_GEOM_ONE ? "1:1" : f->kind == DM_GEOM_FILL ? "fill" : "fit", mfx ? ", MetalFX" : "");
 }
 static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, const int crop[4], int uv_i) {
     id<MTLTexture> src = present_src(src0);
@@ -7075,19 +7115,21 @@ static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, c
         cx = crop[0]; cy = crop[1]; cw = crop[2]; ch = crop[3];
     }
     present_pipeline(dst.pixelFormat);
-    double dw = dst.width, dh = dst.height, s = fmin(dw / cw, dh / ch);
-    MTLViewport vp = {floor((dw - cw * s) / 2), floor((dh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};
-    if (fabs((dw / dh) / ((double)cw / ch) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
+    double dw = dst.width, dh = dst.height;
+    dm_geom_pfit fit = dm_geom_present(dw, dh, (unsigned)cx, (unsigned)cy, (unsigned)cw, (unsigned)ch);   // the same fit as present_encode
+    cx = fit.sx; cy = fit.sy; cw = fit.sw; ch = fit.sh;
+    MTLViewport vp = {fit.x, fit.y, fit.w, fit.h, 0, 1};
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
-#if TARGET_OS_OSX
+    pres_geom_note(&fit, dw, dh);
     int mfx = 0;
+#if TARGET_OS_OSX
     mfx_pres_tick();
     if (mfx_want(&g_mfx_pres, MFX_M4, cw, ch, vp)) {
         if (!mfx_scale(&g_mfx_pres, cb, src, cx, cy, cw, ch)) return 0;
         src = g_mfx_pres.out; cx = cy = 0; cw = src.width; ch = src.height; mfx = 1;
     }
-    (void)mfx;
 #endif
+    pres_geom_log(&fit, dw, dh, mfx);
     RPD *rp = [RPD new];
     rp.colorAttachments[0].texture = dst;
     rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : MTLLoadActionClear;
@@ -7105,8 +7147,10 @@ static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, c
     float *uv = g_present_uv[uv_i].contents;
     uv[0] = (float)cx / src.width; uv[1] = (float)cy / src.height; uv[2] = (float)cw / src.width; uv[3] = (float)ch / src.height;
     uv[4] = (cx + 0.5f) / src.width; uv[5] = (cy + 0.5f) / src.height; uv[6] = (cx + cw - 0.5f) / src.width; uv[7] = (cy + ch - 0.5f) / src.height;
+    int taps = present_down_taps(cw, ch, vp);   // a shrink past 1.34x: the down filter (fs_down; never after MetalFX, whose output has the viewport's size)
+    uv[8] = (float)(cw / vp.width / src.width); uv[9] = (float)(ch / vp.height / src.height); uv[10] = (float)taps; uv[11] = 0;
     [g_present_args setAddress:g_present_uv[uv_i].gpuAddress atIndex:0];
-    [en setViewport:vp]; [en setRenderPipelineState:g_blit_pso];
+    [en setViewport:vp]; [en setRenderPipelineState:taps ? g_blit_pso_down : g_blit_pso];
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     m4_end(en);
     return 1;

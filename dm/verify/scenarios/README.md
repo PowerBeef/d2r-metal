@@ -90,7 +90,7 @@ Final checks (`check …`, evaluated after the run):
 
 `mem <at> [len] [chain=…]` steps (guest memory reads for engine checks, `control_port.md`) are kept whole in `mem.ndjson` in the run folder, since `steps.tsv` cuts details at 300 characters.
 
-Full-screen geometry: the live Metal 4 present logs neither its crop nor its viewport, so check what the window and a grab of the live drawable report. `env DM_TEST_PRESENT_SHOT=<s>:{run}/present.png` grabs the next live present at that time (count it from the window's creation, after the full-screen switch has settled) and logs the drawable size, content area and picture placement (`DM_TEST_PRESENT_SHOT：<path> WxH（内容区 …，游戏画面 … 在 (x,y)…）`); judge the window with `check log_has last="窗口：内容区" "…"`, since the first layout line reads the same before the switch.
+Full-screen geometry: judge it by the `layout` event (event_stream.md), which carries the window's layout and the last live Metal 4 present's viewport, drawable and crop: send `fe "0 layout"` once the picture has settled and `expect layout …` its fields (`check event layout …` for any moment of the run). `env DM_TEST_PRESENT_SHOT=<s>:{run}/present.png` grabs the next live present at that time (count it from the window's creation, after the full-screen switch has settled) for a picture to look at. The layout log line (`window: content …`) reads the same before and after a full-screen switch on this 2x screen, so a log check needs `last=`.
 
 At the first red event, or when a step fails, the runner asks the host for the `engine` snapshot (panels, focus, save state, the latest actions and UI messages) and stores it as `engine.json` in the run folder, beside `crash.txt` when the process crashed.
 

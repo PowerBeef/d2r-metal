@@ -34,6 +34,8 @@ static void check(id<MTLTexture> src, const char *name, const int crop[4], int w
         }
         if(q==-2) { // crop=(1,1,4,4)：3×3红、末列绿、末行蓝、右下1格黄。 | crop=(1,1,4,4): 3×3 red, last column green, last row blue, bottom-right 1 cell yellow.
             q=(x+1>=4)+2*(y+1>=4);
+        } else if(q==-3) { // the unshifted quadrants of the 8x8 source, texel for texel (a near-match 1:1 present: -1 splits at w/2, which is 3 for w = 7)
+            q=(x>=4)+2*(y>=4);
         } else if(q<0) { // 同尺寸默认整帧：分界在正中。 | same-size default whole frame: the boundary is dead center.
             q=(x>=w/2)+2*(y>=h/2);
         }
@@ -41,6 +43,29 @@ static void check(id<MTLTexture> src, const char *name, const int crop[4], int w
     }
     EXPECT(name,0,bad);free(out);
 }
+
+// The present's down filter (MFX-11): a 64x8 source of 1-px columns, even ones black and odd ones white, shrunk into w x h. One bilinear tap per
+// pixel lands between a black and a white texel at varying weights (42.5-212.5 at 24x3); the filter's n x n taps average a pixel's whole footprint,
+// so every pixel reads a mid grey within [lo, hi], neutral (G = B = R) and opaque. m4 = through present_encode_m4 on the Metal 4 queue
+#ifndef CROP_LEGACY_HEADER
+static void check_down(id<MTLTexture> src, const char *name, int w, int h, int lo, int hi, int m4) {
+    MTLTextureDescriptor *d=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:w height:h mipmapped:NO];
+    d.storageMode=MTLStorageModeShared;d.usage=MTLTextureUsageRenderTarget;
+    id<MTLTexture> dst=[g_dev newTextureWithDescriptor:d];
+    if(!m4) { id<MTLCommandBuffer> cb=[g_q commandBuffer]; EXPECT("down: encoded",1,ENCODE(cb,src,dst,NULL)); [cb commit]; [cb waitUntilCompleted]; }
+    else {
+        res_add(src); res_add(dst); res_commit();
+        [g_present_alloc4[0] reset]; CBUF cb=g_present_cb[0]; [cb beginCommandBufferWithAllocator:g_present_alloc4[0]];
+        EXPECT("down M4: encoded",1,present_encode_m4(cb,src,dst,NULL,0)); [cb endCommandBuffer];
+        id<MTLSharedEvent> ev=[g_dev newSharedEvent]; CBUF bufs[]={cb}; [g_q4 commit:bufs count:1]; [g_q4 signalEvent:ev value:1];
+        EXPECT("down M4: GPU done in 5 s",1,[ev waitUntilSignaledValue:1 timeoutMS:5000]);
+    }
+    uint8_t *out=malloc(w*h*4);[dst getBytes:out bytesPerRow:w*4 fromRegion:MTLRegionMake2D(0,0,w,h) mipmapLevel:0];
+    int bad=0, mn=255, mx=0;
+    for(int i=0;i<w*h;i++) { const uint8_t *p=out+4*i; if(p[0]<mn) mn=p[0]; if(p[0]>mx) mx=p[0]; bad+=p[0]<lo||p[0]>hi||p[1]!=p[0]||p[2]!=p[0]||p[3]!=255; }
+    printf("%s: R %d..%d (want %d..%d)\n",name,mn,mx,lo,hi); EXPECT(name,0,bad); free(out);
+}
+#endif
 
 int main(void) { @autoreleasepool {
     mtl_init();
@@ -58,6 +83,24 @@ int main(void) { @autoreleasepool {
     check(src,"单纹素放大不跨边界256像素全红",one,16,16,0);
     check(src,"非零双偏移16像素逐字节等手写子矩形",inset,4,4,-2);
     check(src,"有效区比例保留，128像素中间红/两侧黑",tl,16,8,4);
+    // A picture up to 16 px larger than the drawable is shown pixel for pixel, centred (dm_geom.h DM_GEOM_ONE), not resampled: 8x8 into 7x7 shows
+    // texels 0..6 (a bilinear shrink would blend texels 3 and 4 at pixel 3); 8x8 into 6x6 shows texels 1..6
+    check(src,"near-match 1:1: an 8x8 picture into a 7x7 drawable is shown pixel for pixel",zero,7,7,-3);
+    check(src,"near-match centred: 8x8 into 6x6 shows texels 1..6",zero,6,6,-2);
+#ifndef CROP_LEGACY_HEADER
+    // the down filter's taps per axis (present_down_taps), and its pixels through both encoders
+    struct { int cw, ch; double vw, vh; int taps; } dt[] = { {64,8,48,6,0}, {64,8,47,6,2}, {64,8,40,5,2}, {64,8,24,3,3}, {64,8,16,2,4}, {64,8,10,1,4},
+                                                             {96,54,96,54,0} };   // the last: a MetalFX output at the viewport's size never gets the down filter (P4's rule)
+    for(unsigned i=0;i<sizeof dt/sizeof *dt;i++) { char nm[96]; snprintf(nm,sizeof nm,"down filter taps %dx%d into %.0fx%.0f",dt[i].cw,dt[i].ch,dt[i].vw,dt[i].vh);
+        EXPECT(nm,dt[i].taps,present_down_taps(dt[i].cw,dt[i].ch,(MTLViewport){0,0,dt[i].vw,dt[i].vh,0,1})); }
+    { MTLTextureDescriptor *cd=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:64 height:8 mipmapped:NO];cd.storageMode=MTLStorageModeShared;cd.usage=MTLTextureUsageShaderRead;
+      id<MTLTexture> cols=[g_dev newTextureWithDescriptor:cd];uint8_t cp[64*8*4];
+      for(int i=0;i<64*8;i++) { uint8_t v=(i%64)&1?255:0; cp[4*i]=cp[4*i+1]=cp[4*i+2]=v; cp[4*i+3]=255; }
+      [cols replaceRegion:MTLRegionMake2D(0,0,64,8) mipmapLevel:0 withBytes:cp bytesPerRow:64*4];
+      check_down(cols,"down filter: 64x8 columns into 24x3 average to grey",24,3,90,165,0);
+      check_down(cols,"down filter: 64x8 columns into 40x5 average to grey",40,5,85,170,0);
+      check_down(cols,"down filter M4: 64x8 columns into 24x3 average to grey",24,3,90,165,1); }
+#endif
     int invalid[4][4]={{-1,0,4,4},{0,-1,4,4},{0,0,0,4},{7,0,4,4}};
     for(int i=0;i<4;i++) {
         MTLTextureDescriptor *dd=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:8 height:8 mipmapped:NO];dd.usage=MTLTextureUsageRenderTarget;dd.storageMode=MTLStorageModeShared;

@@ -28,6 +28,7 @@ __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn
 #include "dm_ctl.h"
 #include "dm_kbm.h"
 #include "dm_picrec.h"
+#include "dm_screen_mac.h"
 #include "../ios/Sources/dm_vkbd_ui.h"
 #include "../ios/Sources/dm_vkbd.h"
 #include <signal.h>
@@ -53,38 +54,11 @@ static int win_mini(void) { return g_win.miniaturized || g_mini_emul; }
 // The screen the picture is sized for: the main screen (the one with the keyboard focus) in the product; a background run pins the first screen (the one
 // with the menu bar), so neither Recommended nor the emulated full-screen frame follows the user around a multi-display desk
 static NSScreen *dm_screen(void) { return bgrun() ? NSScreen.screens.firstObject : NSScreen.mainScreen; }
-// 真全屏（App 形态，屏幕比 16:9 窄——16:10 的 MacBook，「不能全屏」：全屏后上下各 56 点黑边）：照 iPad 那套（front_ios.m、dm_uiscreen.c）——
-// 启动时按屏幕比例（全屏时的内容区：屏幕扣掉刘海安全区）定游戏分辨率，局内 3D 铺满、界面按 16:9 贴底（开大面板居中），前端各页与读取画面游戏自己按 16:9 出、上下留边。
-// 窗口锁成同一比例，窗口态与全屏态都铺满。屏幕不比 16:9 窄（外接 16:9 / 更宽的屏）：照旧全程 16:9。比例在启动时按主屏定，之后挪到别的屏不重算（游戏分辨率只在启动时定）。
-// 测试开关 DM_TEST_SCREEN_ASPECT=<宽>x<高>：当作主屏是这个比例（16x9 = 外接 16:9 屏的口径）
-// True full screen (App form, screen narrower than 16:9 - a 16:10 MacBook, "cannot go full screen": 56 points of black bar above and below in full screen): the iPad approach (front_ios.m, dm_uiscreen.c) -
-// at launch the game resolution is set from the screen's aspect ratio (the full-screen content area: the screen minus the notch safe area); in game the 3D fills the screen, the interface is 16:9 along the bottom (centred with a large panel open), and the front-end pages and the loading screen are drawn by the game at 16:9 with bars above and below.
-// The window is locked to the same ratio, so both windowed and full screen are filled. Screens not narrower than 16:9 (external 16:9 / wider screens): 16:9 throughout as before. The ratio is set from the main screen at launch and not recomputed when moved to another screen (the game resolution is only set at launch).
-// Test switch DM_TEST_SCREEN_ASPECT=<w>x<h>: treat the main screen as this ratio (16x9 = the external 16:9 screen case)
-static double g_aspect = 16.0 / 9;   // 游戏画面比例（宽 ÷ 高） | aspect ratio of the game picture (width / height)
-static int g_full;                    // 1 = 真全屏已开 | 1 = true full screen is on
-static void full_setup(void) {
-    if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
-    NSScreen *sc = dm_screen(); double w = sc.frame.size.width, h = sc.frame.size.height - sc.safeAreaInsets.top; const char *e = getenv("DM_TEST_SCREEN_ASPECT"); unsigned tw, th;
-    if (e && sscanf(e, "%ux%u", &tw, &th) == 2 && tw && th) { w = tw; h = th; }
-    if (h <= 0 || w / h >= 16.0 / 9 - 0.01) { LOG("画面：主屏 %.0fx%.0f 不比 16:9 窄 → 全程 16:9", w, h); return; }
-    g_aspect = w / h; g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM);
-    LOG("画面：主屏全屏内容区 %.0fx%.0f（比例 %.3f）比 16:9 窄 → 真全屏：窗口锁这个比例，局内铺满、界面贴底，前端 16:9 留边", w, h, g_aspect);
-}
-// 出图分辨率（主机模式的游戏出图宽，高按画面比例）：原版 1600。App 里按选项页「显示 → 分辨率」那一档（dm_video.c 的 res：1600 / 1920 / 2560），
-// 只在启动时定（游戏分辨率启动后不变）；换屏、拉窗口后由出图（MetalFX / 双线性）跟着视口缩放。DM_GAME_RES（直接给分辨率，对拍用）在时不理它
-// Output resolution (the docked game output width; height from the picture's aspect ratio): 1600 originally. In the App it follows the options page "Display → Resolution" tier (res in dm_video.c: 1600 / 1920 / 2560),
-// set only at launch (the game resolution does not change after launch); after a screen change or window resize the present (MetalFX / bilinear) scales to the viewport. Ignored with DM_GAME_RES (which gives the resolution directly, for comparisons)
-// 第四档「原生」（res=3）= 主屏的像素宽（16 对齐，1600–3840）：界面与文字按屏幕原生分辨率画，3D 由「3D 清晰度」单独降（dm_video.c s3d）
-// The fourth tier "Native" (res=3) = the main screen's pixel width (16-aligned, 1600–3840): the interface and text are drawn at the screen's own resolution, and "3D Resolution" lowers the 3D on its own (s3d in dm_video.c)
-static const int k_render_w[3] = { 1600, 1920, 2560 };
-static int g_render_w = 1600, g_render_tier = -1;   // 这次启动用的那一档（-1 = 没按设置定） | the tier used for this launch (-1 = not set from the settings)
-int dm_video_get(const char *key);
-void dm_video_fullscreen_note(int on);
 // DM_TEST_SCREEN_PX=<w>x<h>[+<notch>] (tests): the main screen's backing store counts as w x h pixels, so another Mac's screen (a 13-inch Air's 2940x1912,
 // a 4K display) can be tried on this one; <notch> = the pixel rows the camera housing takes at the top, which full-screen content leaves out. Read once;
-// returns 0 when unset, and logs a red line and returns 0 when malformed. It changes only the Recommended maths: the window, real or emulated full
-// screen, keeps the real screen (dm_screen)
+// returns 0 when unset, and logs a red line and returns 0 when malformed. It stands in for the launch screen (scr_launch): the picture's shape, Native
+// and Recommended follow it, while the window, real or emulated full screen, keeps the real screen (dm_screen), so the present fits that picture into
+// this screen's drawable
 static int test_screen_px(unsigned *w, unsigned *h, unsigned *notch) {
     static unsigned tw, th, tn; static int ok; static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -96,15 +70,85 @@ static int test_screen_px(unsigned *w, unsigned *h, unsigned *notch) {
     if (ok) { if (w) *w = tw; if (h) *h = th; if (notch) *notch = tn; }
     return ok;
 }
-// The main screen's size in pixels (backing store, notch included; the pinned screen in a background run, dm_screen); DM_TEST_SCREEN_PX stands in for it
-static double main_px(void) { unsigned w; if (test_screen_px(&w, NULL, NULL)) return w; NSScreen *sc = dm_screen(); return sc ? sc.frame.size.width * sc.backingScaleFactor : 1600; }
-static double main_px_h(void) { unsigned h; if (test_screen_px(NULL, &h, NULL)) return h; NSScreen *sc = dm_screen(); return sc ? sc.frame.size.height * sc.backingScaleFactor : 900; }
-static int native_w(void) { int w = (int)main_px() / 16 * 16; return w < 1600 ? 1600 : w > 3840 ? 3840 : w; }
+// A screen in pixels: the width, the full-screen content height below the notch (the safe area's top inset left out) and the whole height
+typedef struct { double w, hc, h; } scr_px;
+static scr_px scr_real(NSScreen *sc) {
+    if (!sc) return (scr_px){ 1600, 900, 900 };
+    CGFloat k = sc.backingScaleFactor > 0 ? sc.backingScaleFactor : 2;
+    return (scr_px){ sc.frame.size.width * k, (sc.frame.size.height - sc.safeAreaInsets.top) * k, sc.frame.size.height * k };
+}
+// The launch screen (dm_screen: the main screen, or the pinned first screen in a background run), read at the first call and kept for the whole launch:
+// the picture's shape (full_setup), Native (native_w) and Recommended (mac_rec) all come from it, since the game resolution is set once. NSScreen.mainScreen
+// follows the key window, so reading it again later could drift. front_run makes the first call before it builds the window (mac_rec may come earlier, on
+// the same main thread, at launch). Test switches: DM_TEST_SCREEN_PX gives its pixels; DM_TEST_SCREEN_ASPECT=<w>x<h> keeps the real width and gives
+// the screen that shape (scenario.py --aspect 16x10)
+static int g_scr_test;   // 1 = a test switch stands in for the launch screen
+static scr_px scr_launch(void) {
+    static scr_px s; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        unsigned w, h, n, tw, th; const char *e = getenv("DM_TEST_SCREEN_ASPECT");
+        if (test_screen_px(&w, &h, &n)) { s = (scr_px){ w, h - n, h }; g_scr_test = 1; return; }
+        s = scr_real(dm_screen());
+        if (e && sscanf(e, "%ux%u", &tw, &th) == 2 && tw && th) { s.hc = s.h = s.w * th / tw; g_scr_test = 1; }
+    });
+    return s;
+}
+// The launch screen's backing-store width and whole height in pixels (Recommended's inputs, mac_rec)
+static double main_px(void) { return scr_launch().w; }
+static double main_px_h(void) { return scr_launch().h; }
+// True full screen (the Mac App on a main screen narrower than 16:9: a 16:10 MacBook, which would otherwise show bars above and below in full screen):
+// the iPad's approach (front_ios.m, dm_uiscreen.c). At launch the game resolution takes the launch screen's shape (scr_launch: its full-screen content
+// area, below the notch); in a run the 3D fills the screen and the interface is a 16:9 band along the bottom, while the front-end pages and the
+// loading screen are drawn by the game at 16:9 with bars. The window keeps that shape too, so windowed and full screen are both filled. A screen
+// narrower than 4:3 gets a 4:3 picture with bars (dm_scr_picture: no taller shape has run, and a tall picture at high resolution overflows GPU heap 0).
+// Screens not narrower than 16:9 (external 16:9 or wider screens): 16:9 throughout. The shape is set once (the game resolution is only set at launch):
+// moving the window to another screen does not change it before the next launch. Test switches: DM_TEST_SCREEN_PX and DM_TEST_SCREEN_ASPECT stand
+// in for the launch screen (scr_launch)
+static double g_aspect = 16.0 / 9;   // 游戏画面比例（宽 ÷ 高） | aspect ratio of the game picture (width / height)
+static int g_full;                    // 1 = 真全屏已开 | 1 = true full screen is on
+static void full_setup(void) {
+    if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
+    scr_px sp = scr_launch(); double w = sp.w, h = sp.hc;
+    dm_scr_pic p = dm_scr_picture(w, h);
+    if (!p.full) { LOG("picture: main screen %.0fx%.0f px is not narrower than 16:9 -> 16:9 throughout", w, h); return; }
+    g_aspect = p.aspect; g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM);
+    LOG("picture: main screen content %.0fx%.0f px (aspect %.3f)%s -> true full screen at %.3f, interface along the bottom, front-end pages 16:9 with bars", w, h, w / h,
+        p.clamped ? ", narrower than 4:3: the picture stays 4:3 (the GPU heap 0 range)" : "", g_aspect);
+}
+// 出图分辨率（主机模式的游戏出图宽，高按画面比例）：原版 1600。App 里按选项页「显示 → 分辨率」那一档（dm_video.c 的 res：1600 / 1920 / 2560），
+// 只在启动时定（游戏分辨率启动后不变）；换屏、拉窗口后由出图（MetalFX / 双线性）跟着视口缩放。DM_GAME_RES（直接给分辨率，对拍用）在时不理它
+// Output resolution (the docked game output width; height from the picture's aspect ratio): 1600 originally. In the App it follows the options page "Display → Resolution" tier (res in dm_video.c: 1600 / 1920 / 2560),
+// set only at launch (the game resolution does not change after launch); after a screen change or window resize the present (MetalFX / bilinear) scales to the viewport. Ignored with DM_GAME_RES (which gives the resolution directly, for comparisons)
+// The fourth tier "Native" (res=3) = the width of the picture on the main screen in pixels, even, 1600-3840 (dm_scr_native_w: on a 21:9 screen the
+// 16:9 picture's width; within DM_SCR_MAX_PX, the GPU heap's room): the interface and text are drawn at the screen's own resolution, and
+// "3D Resolution" lowers the 3D on its own (s3d in dm_video.c)
+static const int k_render_w[3] = { 1600, 1920, 2560 };
+static int g_render_w = 1600, g_render_tier = -1;   // 这次启动用的那一档（-1 = 没按设置定） | the tier used for this launch (-1 = not set from the settings)
+int dm_video_get(const char *key);
+void dm_video_fullscreen_note(int on);
+static void panel_px(int *w, int *h);
+static int native_w(void) { scr_px sp = scr_launch(); return dm_scr_native_w(sp.w, sp.hc, dm_scr_picture(sp.w, sp.hc).aspect); }   // from the launch screen, whether or not true full screen is on
+// The in-game picture at Native (Recommended's input, mac_rec): its width, height and aspect, from the launch screen as full_setup and native_w see it
+// (below the notch, in the picture's shape: 3024 x 1890 on a 14-inch MacBook Pro, not the whole 3024 x 1964 backing store), whether or not true full
+// screen is on yet, so it is right whenever dm_video.c loads
+static void native_picture(int *w, int *h, double *aspect) {
+    scr_px sp = scr_launch(); dm_scr_pic p = dm_scr_picture(sp.w, sp.hc);
+    *w = dm_scr_native_w(sp.w, sp.hc, p.aspect); *h = (int)(dm_scr_game_res(*w, p.aspect, p.full, 1) >> 32); *aspect = p.aspect;
+}
 static void render_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
     int t = dm_video_get("res"); if (t < 0 || t > 3) t = 0;
     g_render_tier = t; g_render_w = t == 3 ? native_w() : k_render_w[t];
-    LOG("画面：出图宽 %d（选项页「分辨率」第 %d 档） | render width %d (Resolution tier %d)", g_render_w, t, g_render_w, t);
+    // The backing store is what Native renders; in a scaled display mode (a MacBook Air at its default "looks like") macOS resamples it to an output
+    // with fewer pixels. Backing store, output and panel are logged so a shared log shows which mode the player runs (COL-3: whether Native should
+    // follow the output waits for a display in a scaled mode)
+    // The output mode is what macOS sends to the display; a display can scale that to a panel of another size on its own (a 4K monitor fed 2560x1440)
+    scr_px sp = scr_launch(); int pw, ph, ow = 0, oh = 0; panel_px(&pw, &ph);
+    { NSScreen *sc = dm_screen(); CGDisplayModeRef m = sc ? CGDisplayCopyDisplayMode([sc.deviceDescription[@"NSScreenNumber"] unsignedIntValue]) : NULL;
+      if (m) { ow = (int)CGDisplayModeGetPixelWidth(m); oh = (int)CGDisplayModeGetPixelHeight(m); CGDisplayModeRelease(m); } }
+    LOG("picture: main screen %.0fx%.0f px (backing store; %.0f below the notch)%s, output %dx%d px%s, panel %dx%d px%s; render width %d (Resolution tier %d)", sp.w, sp.h, sp.hc,
+        g_scr_test ? " (test screen)" : "", ow, oh, !g_scr_test && ow > 0 && fabs(ow - sp.w) > 1 ? " (scaled display mode: macOS resamples the backing store to the output)" : "",
+        pw, ph, pw > 0 && ow > 0 && fabs(pw - ow) > 1 ? " (the display scales the output to its panel)" : "", g_render_w, t);
 }
 int front_video_running_res(void) { return g_render_tier; }
 int mtl_mfx_supported(void);   // nvn_mtl.m: the Metal 4 spatial scaler both renderer paths build
@@ -143,7 +187,7 @@ static void panel_px(int *w, int *h) {
     CFRelease(ms);
 }
 static int g_mac_rec_id = -1;   // dm_picrec_id of the spec mac_rec worked from (set once, inside its dispatch_once)
-// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores) and the main screen's backing-store size; memory,
+// The Recommended picture for this Mac (dm_picrec.c), from its chip (name, generation, GPU cores) and the in-game picture at Native (native_picture); memory,
 // the Mac's model, the panel size, the thermal state and Low Power Mode are only logged. Worked out once per launch: first in main.c cloud_boot_start
 // (dm_custom's Frame Drops default, on the main thread, after NSApplication exists), then reused by dm_video.c's load
 static dm_mac_rec mac_rec(void) {
@@ -151,9 +195,8 @@ static dm_mac_rec mac_rec(void) {
     dispatch_once(&once, ^{
         uint64_t mem = 0; size_t n = sizeof mem; sysctlbyname("hw.memsize", &mem, &n, NULL, 0);
         char model[64] = ""; n = sizeof model; sysctlbyname("hw.model", model, &n, NULL, 0);
-        double px = main_px(), ph = main_px_h();
-        int w = native_w(), h = (int)lround(w * ph / fmax(px, 1));
-        NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), w, h, front_video_mfx_ok() };
+        double px = main_px(), ph = main_px_h(), asp; int w, h; native_picture(&w, &h, &asp);
+        NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), w, h, front_video_mfx_ok(), asp };
         dm_mac_recommend(&spec, &r); g_mac_rec_id = dm_picrec_id(&spec);
         int pw, pnh; panel_px(&pw, &pnh); NSProcessInfo *pi = NSProcessInfo.processInfo;
         static const char *const tiers[] = { "iPhone chip", "base", "Pro", "Max", "Ultra" };
@@ -249,8 +292,12 @@ static NSRect game_rect(void) {
     else if (w > h * g_aspect) w = round(h * g_aspect); else h = round(w / g_aspect);
     return NSMakeRect(floor((b.width - w) / 2), floor((b.height - h) / 2), w, h);
 }
-static void vkbd_where(dm_vkbd_host *h) {   // 手柄屏幕键盘画在视图层上、游戏画面里（视图层坐标向上增） | the on-screen controller keyboard is drawn on the view layer, inside the game picture (view layer coordinates grow upward)
-    h->layer = (__bridge void *)g_view.layer; h->pic = NSRectToCGRect(game_rect()); h->y_up = 1; h->scale = g_win.backingScaleFactor > 0 ? g_win.backingScaleFactor : 2;
+// Tests only (the control port's fe scale): a backing scale that stands in for the window's, as a move to a display of that scale would give; 0 = the real one
+static CGFloat g_test_scale;
+// The backing scale the picture is drawn at: the window's (2 when it has none yet), or the test stand-in (fe scale)
+static CGFloat backing_scale(void) { CGFloat k = g_view.window.backingScaleFactor; return g_test_scale > 0 ? g_test_scale : k > 0 ? k : 2; }
+static void vkbd_where(dm_vkbd_host *h) {   // the on-screen controller keyboard is drawn on the view layer, inside the game picture (view layer coordinates grow upward)
+    h->layer = (__bridge void *)g_view.layer; h->pic = NSRectToCGRect(game_rect()); h->y_up = 1; h->scale = backing_scale();
 }
 // DM_TEST_DRAWABLE_PX=<w>x<h> (tests): the canvas gets this many pixels whatever the view's size, and the compositor scales it to the window, so a larger
 // screen's drawable (a 5K display's 5120x2880) can be measured on this one. Read once; returns 0 when unset (a malformed value logs a red line)
@@ -274,14 +321,29 @@ static void window_event(NSRect r, CGFloat sc) {
           (int)lround(r.origin.x), (int)lround(r.origin.y), (int)lround(r.size.width), (int)lround(r.size.height), (int)lround(d.width), (int)lround(d.height),
           (double)sc, full, bgrun(), fit, (int)NSApp.isActive, (int)g_win.isKeyWindow);
 }
+// The window's layout as a test event (event_stream.md `layout`): the view (pt), the picture's rect in it (the layer's frame, pt), the drawable (px), the
+// backing scale the layer uses, full screen (real or emulated), and the last live present's geometry (nvn_mtl.m mtl_present_geom: viewport, drawable
+// and sampled crop, px; right after a change it can still describe the previous size, until the next present). why: change (layout_game) or ask (the
+// control port's fe layout, which a scenario sends to read the state at that moment)
+static void layout_event(const char *why) {
+    void mtl_present_geom(int out[8]); int pg[8]; mtl_present_geom(pg);
+    NSSize b = g_view.bounds.size; NSRect r = g_layer.frame; CGSize d = g_layer.drawableSize;
+    DM_EV("layout", "why:s vw:d vh:d x:d y:d w:d h:d dw:d dh:d scale:d fs:b pvx:d pvy:d pvw:d pvh:d pdw:d pdh:d pcw:d pch:d", why, (int)lround(b.width), (int)lround(b.height),
+          (int)lround(r.origin.x), (int)lround(r.origin.y), (int)lround(r.size.width), (int)lround(r.size.height), (int)lround(d.width), (int)lround(d.height),
+          (int)lround(g_layer.contentsScale), win_full(), pg[0], pg[1], pg[2], pg[3], pg[4], pg[5], pg[6], pg[7]);
+}
+// The layer follows the picture's rect, the backing scale and the drawable together. A CAMetalLayer used as a sublayer changes neither its scale nor its
+// drawableSize when its frame changes (after going full screen it used to keep the windowed canvas, scaled up: blurry); and a move between a 1x and a 2x
+// display, or a HiDPI mode switch with the same point size, changes the scale with the same frame (COL-1, LIF-3), so all three are compared
 static void layout_game(void) {
-    NSRect r = game_rect(); if (NSEqualRects(r, g_layer.frame)) return;
-    CGFloat sc = g_view.window.backingScaleFactor ?: 2;   // 画布跟着改：作为子层的 CAMetalLayer 改 frame 不会自己改 drawableSize，原先进全屏后一直用窗口态的画布放大显示（发糊） | the canvas follows: a CAMetalLayer used as a sublayer does not change its drawableSize when its frame changes, so after going full screen it used to keep the windowed canvas and scale it up (blurry)
+    NSRect r = game_rect(); CGFloat sc = backing_scale();
     CGSize ds = CGSizeMake(round(r.size.width * sc), round(r.size.height * sc)); test_drawable_px(&ds);
+    if (NSEqualRects(r, g_layer.frame) && g_layer.contentsScale == sc && CGSizeEqualToSize(g_layer.drawableSize, ds)) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = sc; g_layer.drawableSize = ds; [CATransaction commit];
-    dm_vkbd_ui_relayout();   // 屏幕键盘跟着画面走 | the on-screen keyboard follows the picture
-    LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
-    window_event(r, sc);
+    dm_vkbd_ui_relayout();   // the on-screen keyboard follows the picture
+    LOG("window: content %.0fx%.0f pt, picture %.0fx%.0f pt at (%.0f,%.0f), drawable %.0fx%.0f px (scale %.0f)", g_view.bounds.size.width, g_view.bounds.size.height,
+        r.size.width, r.size.height, r.origin.x, r.origin.y, ds.width, ds.height, sc);
+    window_event(r, sc); layout_event("change");
 }
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
 // 暂停菜单这类开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
@@ -467,6 +529,32 @@ static void screen_note(void) {
     g_scr_hz = hz; snprintf(g_scr_name, sizeof g_scr_name, "%s", sc.localizedName.UTF8String ?: "?"); pthread_mutex_unlock(&g_scr_mu);
     if (!same) LOG("屏幕：%s，刷新率 %.2f Hz（最高 %ld 帧）", g_scr_name, hz, (long)sc.maximumFramesPerSecond);
 }
+// COL-5: the picture is set once, from the launch screen; a window moved to another screen (or a dock / undock) keeps it. picture_screen_check compares
+// the window's screen with the launch picture (dm_scr_matches) at window creation, when the window changes screen and when the screens change, logs a
+// line on every change and always emits a `screen` event. The Options page's Resolution row shows "Takes effect after restarting the game" only when
+// a restart would fix it (front_video_screen_stale, dm_video.c hint): the window is on the primary display, where a restart opens it. A window dragged
+// to a secondary display gets the log line only, since a restart would open on the main display again. No live resize: a 16:9 <-> 16:10 switch of
+// dm_uiscreen at run time is untested
+static int g_test_win_on; static scr_px g_test_win;   // tests (fe screen): the window's screen counts as this
+static scr_px scr_window(void) {
+    if (g_test_win_on) return g_test_win;
+    if (g_scr_test) return scr_launch();   // an emulated launch screen stands in for the window's too, so emulated runs match
+    return scr_real(g_win.screen ?: dm_screen());
+}
+static _Atomic int g_screen_stale;
+int front_video_screen_stale(void) { return atomic_load(&g_screen_stale); }   // dm_video.c: the Resolution row's restart hint
+static void picture_screen_check(void) {   // main thread
+    if (!getenv("DM_APP") || getenv("DM_GAME_RES") || g_render_tier < 0 || !g_win) return;
+    scr_px s = scr_window(); dm_scr_pic p = dm_scr_picture(s.w, s.hc); int nw = dm_scr_native_w(s.w, s.hc, p.aspect);
+    int ok = dm_scr_matches(g_render_tier, g_render_w, g_full, g_aspect, s.w, s.hc);
+    int fixes = g_test_win_on || g_scr_test || bgrun() || (g_win.screen ?: dm_screen()) == NSScreen.screens.firstObject;
+    atomic_store(&g_screen_stale, !ok && fixes);
+    static double last[4] = { -1 }; const double now[4] = { s.w, s.hc, ok, fixes };
+    if (memcmp(last, now, sizeof now)) { memcpy(last, now, sizeof now);
+        LOG("picture: this window's screen is %.0fx%.0f px (%s, Native %d); the game started at %d wide (%s): %s", s.w, s.hc, p.full ? "true full screen" : "16:9", nw,
+            g_render_w, g_full ? "true full screen" : "16:9", ok ? "still suits it" : fixes ? "restart the game to fit it" : "a restart opens on the main display, not this one: no hint"); }
+    DM_EV("screen", "w:u h:u native_w:d render_w:d full:b match:b restart_fixes:b", (unsigned long long)lround(s.w), (unsigned long long)lround(s.hc), nw, g_render_w, p.full, ok, fixes);
+}
 double front_display_refresh(char *name, size_t n) {
     pthread_mutex_lock(&g_scr_mu); double hz = g_scr_hz; if (name && n) snprintf(name, n, "%s", g_scr_name); pthread_mutex_unlock(&g_scr_mu); return hz;
 }
@@ -476,7 +564,7 @@ double front_display_refresh(char *name, size_t n) {
 - (void)windowDidEnterFullScreen:(NSNotification *)n { (void)n; if (getenv("DM_APP")) dm_video_fullscreen_note(1); }   // 设置跟着窗口走（菜单 / ⌃⌘F 切的也算） | the setting follows the window (switching from the menu / ⌃⌘F counts too)
 - (void)windowDidExitFullScreen:(NSNotification *)n { (void)n; if (getenv("DM_APP")) dm_video_fullscreen_note(0); }
 - (void)windowDidChangeBackingProperties:(NSNotification *)n { (void)n; layout_game(); }
-- (void)windowDidChangeScreen:(NSNotification *)n { (void)n; screen_note(); }
+- (void)windowDidChangeScreen:(NSNotification *)n { (void)n; screen_note(); picture_screen_check(); }
 - (void)quit:(id)s { (void)s; app_quit("菜单退出"); }
 // 系统来的退出（程序坞「退出」、⌘-Tab 时按 Q、注销 / 重启 / 关机、AppleScript quit）都走 terminate:。没有这个委托方法时 AppKit 直接结束进程，不存盘。
 // app_quit 在后台线程上存完盘自己结束进程（dm_host_shutdown 里 _exit），这里一律答「稍后」：注销 / 关机等着这个进程结束，不会像答「取消」那样把注销取消掉；
@@ -496,6 +584,10 @@ double front_display_refresh(char *name, size_t n) {
 }
 - (void)quitEvent:(NSAppleEventDescriptor *)e reply:(NSAppleEventDescriptor *)r { (void)e; (void)r; app_quit("系统退出"); }
 - (void)keys:(id)s { (void)s; show_keys(); }
+// Window > Minimize (Cmd-M): a background test run emulates it, as the control port's app minimize does
+- (void)minimize:(id)s { if (bgrun()) emu_minimize(1); else [g_win miniaturize:s]; }
+// Minimize is off in full screen (as in other Mac apps) and while minimized; every other item stays on
+- (BOOL)validateMenuItem:(NSMenuItem *)it { return it.action != @selector(minimize:) || (g_win && !win_full() && !win_mini()); }
 - (void)share:(id)s { (void)s; share_logs_ui(); }
 @end
 static uint64_t g_btn;
@@ -507,8 +599,7 @@ void *front_metal_layer(void) { return (__bridge void *)g_layer; }
 uint64_t front_game_res(int docked) {
     unsigned w, h; const char *e = getenv("DM_GAME_RES");
     if (e && sscanf(e, "%ux%u", &w, &h) == 2) return docked ? (uint64_t)h << 32 | w : (uint64_t)(h * 4 / 5) << 32 | (w * 4 / 5 + 3) / 4 * 4;
-    if (g_full) return docked ? (uint64_t)(llround(g_render_w / g_aspect / 2) * 2) << 32 | (uint64_t)g_render_w : 720ull << 32 | (uint64_t)(llround(720 * g_aspect / 8) * 8);   // 真全屏：宽 = 出图宽（缺省 1600）、高按屏幕比例（16:10 → 1600x1004） | true full screen: width = render width (1600 by default), height by the screen's aspect ratio (16:10 -> 1600x1004)
-    return docked ? (uint64_t)(llround(g_render_w * 9.0 / 16 / 2) * 2) << 32 | (uint64_t)g_render_w : 720ull << 32 | 1280;   // 缺省 1600x900 | 1600x900 by default
+    return dm_scr_game_res(g_render_w, g_aspect, g_full, docked);   // dm_screen_mac.c: true full screen at the screen's aspect, else 16:9 (1600x900 by default)
 }
 
 static int g_mouse_down;      // 这一笔左键的按下收了（落在画面里）：随后的拖动 / 抬起才交下去 | the press of this left-button gesture was taken (inside the picture): only then are its drags / release passed on
@@ -536,9 +627,9 @@ static void kbm_event_point(NSEvent *e) {   // PC mode: a right / other button e
 }
 // PC mode pointer: macOS draws the game's own PC cursor, the gauntlet (frame 0 of cursor/ohand.sprite, which gen_romfs_overlay.py writes beside the
 // overlay as pc_cursor.png), over the game window while the PC interface set is on screen; the arrow otherwise, and when the overlay has no picture.
-// Its size is a share of the picture's height on screen (the gauntlet about one inventory cell tall), so it keeps its place in the picture at any render resolution,
-// window size or display scaling; it is redrawn at the screen's pixel density, so it stays smooth on a Retina screen
-#define PC_CURSOR_SHARE 0.06
+// Its size is a share of the interface band's height on screen (dm_scr_cursor_pt: the gauntlet about one inventory cell tall; on a 16:10 screen the 16:9
+// band, not the whole picture), so it keeps its place in the interface at any render resolution, window size or display scaling; it is redrawn at
+// the screen's pixel density, so it stays smooth on a Retina screen
 static NSCursor *pc_hand(void) {
     static NSBitmapImageRep *rep; static NSPoint tip; static int tried; static NSCursor *cur; static CGFloat cur_h, cur_sc;
     if (!tried) { tried = 1; const char *ov = getenv("DM_ROMFS_OVERLAY");
@@ -548,7 +639,7 @@ static NSCursor *pc_hand(void) {
             for (NSInteger y = 0; y < rep.pixelsHigh; y++) for (NSInteger x = 0; x < rep.pixelsWide; x++) if (x + y < best && [rep colorAtX:x y:y].alphaComponent > .5) { best = x + y; tip = NSMakePoint(x, y); }
             LOG("PC cursor: the game's gauntlet, %ldx%ld px, tip %.0f,%.0f", (long)rep.pixelsWide, (long)rep.pixelsHigh, tip.x, tip.y); } }
     if (!rep) return nil;
-    CGFloat h = round(fmin(fmax(game_rect().size.height * PC_CURSOR_SHARE, 24), 160)), sc = g_view.window.backingScaleFactor ?: 2;   // points
+    NSRect gr = game_rect(); CGFloat h = dm_scr_cursor_pt(gr.size.width, gr.size.height), sc = backing_scale();   // points
     if (!cur || h != cur_h || sc != cur_sc) {
         CGFloat s = h / rep.pixelsHigh; NSSize pt = NSMakeSize(round(rep.pixelsWide * s), h);
         NSBitmapImageRep *r = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)(pt.width * sc) pixelsHigh:(NSInteger)(pt.height * sc) bitsPerSample:8
@@ -690,7 +781,7 @@ static NSPoint bg_origin(NSSize sz) {
 static NSSize emu_window_size(NSRect content, NSWindowStyleMask sm) {
     NSScreen *sc = dm_screen();
     NSWindow *t = [[NSWindow alloc] initWithContentRect:content styleMask:sm backing:NSBackingStoreBuffered defer:YES screen:sc]; t.releasedWhenClosed = NO;
-    t.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); if (g_full) t.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
+    t.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); t.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
     [t center];
     NSRect f = [t constrainFrameRect:t.frame toScreen:sc];
     return [t contentRectForFrameRect:f].size;
@@ -712,6 +803,26 @@ static void emu_full_toggle(void) {
     if (!on && [d respondsToSelector:@selector(windowDidExitFullScreen:)]) [d windowDidExitFullScreen:n];
 }
 
+// One grab of the next live present (nvn_mtl.m mtl_grab_next_present: the same encoding as the present) written as a PNG: what the player sees, bars
+// and the picture's placement in the window included, not the game's output texture. The on-screen keyboard is a layer above the picture, not in the
+// presented image, so it is composited on top. Main thread; used by DM_TEST_PRESENT_SHOT and the control port's fe pshot
+static void present_shot(NSString *path) {
+    void mtl_grab_next_present(void (^cb)(CGImageRef img));
+    NSSize vb = g_view.bounds.size; NSRect gr = game_rect(); double fy = 0, fh = 1; ui_rect_frac(&fy, &fh);
+    CGRect kr; CGImageRef kimg = dm_vkbd_ui_snapshot(&kr);
+    mtl_grab_next_present(^(CGImageRef img0) { if (!img0) { LOG("【红】present shot: %s was not taken", path.UTF8String); if (kimg) CGImageRelease(kimg); return; }
+        CGImageRef img = CGImageRetain(img0);
+        if (kimg) { size_t W = CGImageGetWidth(img0), H = CGImageGetHeight(img0); double sc = W / gr.size.width;
+            CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB); CGContextRef c = CGBitmapContextCreate(NULL, W, H, 8, 0, cs, (CGBitmapInfo)kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little); CGColorSpaceRelease(cs);
+            if (c) { CGContextDrawImage(c, CGRectMake(0, 0, W, H), img0); CGContextDrawImage(c, CGRectMake(kr.origin.x * sc, H - (kr.origin.y + kr.size.height) * sc, kr.size.width * sc, kr.size.height * sc), kimg);
+                CGImageRelease(img); img = CGBitmapContextCreateImage(c); CGContextRelease(c); }
+            CGImageRelease(kimg); }
+        CGImageDestinationRef d = CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], (__bridge CFStringRef)@"public.png", 1, NULL);
+        if (d) { CGImageDestinationAddImage(d, img, NULL); CGImageDestinationFinalize(d); CFRelease(d); }
+        LOG("present shot: %s %zux%zu (content %.0fx%.0f pt, picture %.0fx%.0f pt at (%.0f,%.0f), interface band y %.3f height %.3f, %s%s)", path.UTF8String, CGImageGetWidth(img), CGImageGetHeight(img),
+            vb.width, vb.height, gr.size.width, gr.size.height, gr.origin.x, gr.origin.y, fy, fh, dm_uiscreen_ingame() ? "in a run" : "out of a run", kimg ? ", on-screen keyboard composited" : "");
+        CGImageRelease(img); });
+}
 typedef struct { void (*fn)(void); } guest_arg;
 // 游戏自己退出（nnMain 返回）：走与关窗口相同的收尾——等这一局还排着的 iCloud 上传，再 dm_host_shutdown（停预取、暂停声音、挂起图形，_exit）。
 // 原先在客体线程上直接 exit(0)：跳过 dm_host_shutdown，排着的上传被掐掉，atexit / C++ 析构跑的时候主线程与出图线程还在动。
@@ -738,15 +849,22 @@ void front_run(void (*guest)(void)) {
             ad[@"NSTreatUnknownArgumentsAsOpen"] = @"NO"; [ud setVolatileDomain:ad forName:NSArgumentDomain]; }
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];   // a background run stays Regular too: accessory / prohibited apps with nothing visible get the Background role (timers ~100 ms late)
-        full_setup(); render_setup();
-        NSRect r = NSMakeRect(0, 0, 1280, floor(1280 / g_aspect));
-        NSWindowStyleMask sm = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
+        (void)scr_launch(); full_setup(); render_setup();   // the launch screen is read before the window exists (scr_launch)
+        // The first window: 1280 points wide in the picture's shape, fitted inside the screen's visible area below its title bar (dm_scr_fit_window),
+        // so it opens whole, with no bars; AppKit used to clamp a 1280 x 720 window on a 1280 x 720 pt screen to 1280 x 658 and the picture sat
+        // in a 1170-wide pillarbox (COL-7)
+        NSWindowStyleMask sm = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;   // minimizable: Window > Minimize
+        NSScreen *home = dm_screen(); double cw = 1280, ch = floor(1280 / g_aspect);
+        CGFloat tb = [NSWindow frameRectForContentRect:NSMakeRect(0, 0, 100, 100) styleMask:sm].size.height - 100;
+        if (home) dm_scr_fit_window(g_aspect, home.visibleFrame.size.width, home.visibleFrame.size.height - tb, &cw, &ch);
+        NSRect r = NSMakeRect(0, 0, cw, ch);
+        LOG("window: first content %.0fx%.0f pt (the screen's visible area %.0fx%.0f pt below a %.0f pt title bar)", cw, ch, home.visibleFrame.size.width, home.visibleFrame.size.height, tb);
         if (bg) { g_emu_win = r.size = emu_window_size(r, sm); sm = NSWindowStyleMaskBorderless; }   // background: borderless (never key), at the size AppKit gives the titled window
         NSWindow *win = [[DmWindow alloc] initWithContentRect:r styleMask:sm backing:NSBackingStoreBuffered defer:NO];
         win.title = @"D2R Metal"; win.restorable = NO; g_win = win; g_dm_ctl_app_fn = ctl_app;
         NSView *v = win.contentView; g_view = v;
         v.wantsLayer = YES; v.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
-        win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary; win.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); if (g_full) win.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
+        win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary; win.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); win.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);   // resizing keeps the picture filling the window
         // Background: on every Space (its display link keeps ticking when the user switches Spaces or opens a full-screen app), out of Mission Control,
         // Cmd-` cycling and the Stage Manager layout
         if (bg) { win.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle |
@@ -769,11 +887,14 @@ void front_run(void (*guest)(void)) {
             [v addTrackingArea:[[NSTrackingArea alloc] initWithRect:NSZeroRect options:NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect owner:v userInfo:nil]];
             [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *t) { (void)t; pc_cursor_sync(); }];   // the PC cursor follows mode changes and the window size without pointer motion
         }
-        { // 菜单栏：应用（退出 ⌘Q）/ 显示（全屏 ⌃⌘F）/ 帮助（键位对照） | Menu bar: application (Quit ⌘Q) / View (Full Screen ⌃⌘F) / Help (key mapping)
+        { // Menu bar: application (Quit Cmd-Q) / View (Full Screen Ctrl-Cmd-F) / Window (Minimize Cmd-M) / Help (key mapping, Share Log)
           NSMenu *bar = [NSMenu new];
           NSMenu *(^add)(const char *) = ^NSMenu *(const char *t) { NSMenuItem *it = [NSMenuItem new]; [bar addItem:it]; NSMenu *m = [[NSMenu alloc] initWithTitle:@(t)]; it.submenu = m; return m; };
           [[add("") addItemWithTitle:@(ui("dmAppQuit")) action:@selector(quit:) keyEquivalent:@"q"] setTarget:ctl];
           NSMenuItem *fs = [add(ui("dmAppMenuView")) addItemWithTitle:@(ui("dmAppFullscreen")) action:@selector(toggleFullScreen:) keyEquivalent:@"f"]; fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+          // Window: Minimize only, targeted at the window controller like the other items, so it works (and can be tested) without the App in front;
+          // DmWinCtl validateMenuItem: disables it in full screen and while minimized. NSApp.windowsMenu is not set, so AppKit adds no window list
+          { NSMenu *wm = add(ui("dmAppMenuWindow")); [[wm addItemWithTitle:@(ui("dmAppMinimize")) action:@selector(minimize:) keyEquivalent:@"m"] setTarget:ctl]; }
           { NSMenu *hm = add(ui("dmAppMenuHelp")); [[hm addItemWithTitle:@(ui("dmAppKeysTitle")) action:@selector(keys:) keyEquivalent:@""] setTarget:ctl]; [[hm addItemWithTitle:@(ui("dmAppShareLog")) action:@selector(share:) keyEquivalent:@""] setTarget:ctl]; }
           NSApp.mainMenu = bar; }
         { void dm_gamepad_start(void (*on_mode)(int pad)), dm_gamepad_on_press(void (*fn)(void)); dm_gamepad_start(NULL); dm_gamepad_on_press(text_input_handoff_pad); }   // 手柄（与 iOS 壳共用 ios/Sources/dm_gamepad.m）：连上即用，与键盘并存 | Gamepad (ios/Sources/dm_gamepad.m, shared with the iOS shell): works as soon as it is connected, alongside the keyboard
@@ -786,8 +907,8 @@ void front_run(void (*guest)(void)) {
         // about twice as long, so fe lines queued behind a `unit` wait went out late, together). The activity lasts for the run; idle system sleep is allowed
         if (bg) { static id act; act = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical reason:@"background test run"]; (void)act; }
         else [win makeKeyAndOrderFront:nil];
-        screen_note();
-        [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note();
+        screen_note(); picture_screen_check();
+        [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note(); picture_screen_check();
             if (bgrun()) bg_place(g_emul_full ? full_size() : g_emu_win); }];   // a display change may move a window that sits off every screen: put it back
         if (!bg) [NSApp activateIgnoringOtherApps:YES];
         // 启动即全屏：选项页「显示模式」是全屏（dm_video.c 的 mode；旧版偏好 StartFullScreen 首次启动时接过来）。全屏测试开关（DM_TEST_FULLSCREEN_AT）在时不理它，
@@ -900,28 +1021,12 @@ void front_run(void (*guest)(void)) {
           int w, h; if ((e = getenv("DM_TEST_WINSIZE")) && sscanf(e, "%dx%d", &w, &h) == 2) { [win setContentSize:NSMakeSize(w, h)]; if (bg) { g_emu_win = NSMakeSize(w, h); bg_place(g_emu_win); } layout_game(); }
           if ((e = getenv("DM_TEST_FULLSCREEN_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)   // 「秒[;秒…]」：每个时刻切一次全屏（来回切） | "seconds[;seconds...]": toggle full screen at each time (back and forth)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [win toggleFullScreen:nil]; });
-          // DM_TEST_PRESENT_SHOT=<秒>:<路径>[;<秒>:<路径>…]：到点取下一次上屏的画面（图形层与上屏同一套编码，见 nvn_mtl.m mtl_grab_next_present）写成 PNG——
-          // 看的是玩家真看到的（含留边位置），不是游戏出图贴图（DM_NVN_SHOT_UI 取的那张，裁切区不居中）
-          // DM_TEST_PRESENT_SHOT=<seconds>:<path>[;<seconds>:<path>...]: at the given time, grab the next presented picture (the graphics layer uses the same encoding as presentation, see nvn_mtl.m mtl_grab_next_present) and write it as PNG -
-          // this is what the player actually sees (including where the bars are), not the game's output texture (the one DM_NVN_SHOT_UI takes, whose crop is not centred)
-          if ((e = getenv("DM_TEST_PRESENT_SHOT"))) { void mtl_grab_next_present(void (^cb)(CGImageRef img));
+          // DM_TEST_PRESENT_SHOT=<seconds>:<path>[;<seconds>:<path>...]: at each time (counted from the window's creation), one grab of the next live present
+          // written as a PNG (present_shot): what the player sees, bars included
+          if ((e = getenv("DM_TEST_PRESENT_SHOT")))
               for (NSString *it in [@(e) componentsSeparatedByString:@";"]) { NSRange c = [it rangeOfString:@":"]; if (c.location == NSNotFound) continue;
                   double at = [it substringToIndex:c.location].doubleValue; NSString *path = [it substringFromIndex:c.location + 1];
-                  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                      NSSize vb = v.bounds.size; NSRect gr = game_rect(); double fy = 0, fh = 1; ui_rect_frac(&fy, &fh);
-                      CGRect kr; CGImageRef kimg = dm_vkbd_ui_snapshot(&kr);   // 屏幕键盘是画面上面的层、不在上屏图里：叠上去，截图才是玩家看到的 | the on-screen keyboard is a layer above the picture, not in the presented image: composite it so the shot is what the player sees
-                      mtl_grab_next_present(^(CGImageRef img0) { if (!img0) { LOG("【红】DM_TEST_PRESENT_SHOT：%s 没取到", path.UTF8String); if (kimg) CGImageRelease(kimg); return; }
-                          CGImageRef img = CGImageRetain(img0);
-                          if (kimg) { size_t W = CGImageGetWidth(img0), H = CGImageGetHeight(img0); double s = W / gr.size.width;
-                              CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB); CGContextRef c = CGBitmapContextCreate(NULL, W, H, 8, 0, cs, (CGBitmapInfo)kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little); CGColorSpaceRelease(cs);
-                              if (c) { CGContextDrawImage(c, CGRectMake(0, 0, W, H), img0); CGContextDrawImage(c, CGRectMake(kr.origin.x * s, H - (kr.origin.y + kr.size.height) * s, kr.size.width * s, kr.size.height * s), kimg);
-                                  CGImageRelease(img); img = CGBitmapContextCreateImage(c); CGContextRelease(c); }
-                              CGImageRelease(kimg); }
-                          CGImageDestinationRef d = CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], (__bridge CFStringRef)@"public.png", 1, NULL);
-                          if (d) { CGImageDestinationAddImage(d, img, NULL); CGImageDestinationFinalize(d); CFRelease(d); }
-                          LOG("DM_TEST_PRESENT_SHOT：%s %zux%zu（内容区 %.0fx%.0f，游戏画面 %.0fx%.0f 在 (%.0f,%.0f)，界面矩形纵向 %.3f 高 %.3f，%s%s）", path.UTF8String, CGImageGetWidth(img), CGImageGetHeight(img),
-                              vb.width, vb.height, gr.size.width, gr.size.height, gr.origin.x, gr.origin.y, fy, fh, dm_uiscreen_ingame() ? "局内" : "局外", kimg ? "，叠了屏幕键盘" : "");
-                          CGImageRelease(img); }); }); } }
+                  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ present_shot(path); }); }
           // DM_TEST_NSMOUSE=<文件>：合成真正的系统鼠标事件（NSEvent）投进 App 的事件队列，走与真人点击同一条分发路（事件监视器 → 换算 → 状态机），不经测试入口。
           // 每行「秒 down|move|up|hover x,y」，x,y 是内容区里的点（左上角为原点；窗口缺省 1280×720），时刻自窗口建好起算。
           // 坐标后可带锚点「@c」「@b」：按 1280×720 写的 y 换算到实际内容区高度——@c 上下居中的界面（前端页、大面板）加 (高 − 720) / 2，@b 贴底的（局内 HUD）加 (高 − 720)；
@@ -1000,6 +1105,49 @@ void front_run(void (*guest)(void)) {
                           if (dn) LOG("DM_TEST_NSMOUSE: %.2f s key code %d to %s%s", NSProcessInfo.processInfo.systemUptime - t0, (int)x, tname(tw), direct ? ", handed to it directly" : "");
                           if (direct) [tw sendEvent:ev]; else [NSApp postEvent:ev atStart:NO]; }); });
                       return 1; }
+                  if (!strcmp(op, "uiscr") || !strcmp(op, "pshot")) {   // "<s> uiscr": the uiscreen res and rect events now (dm_uiscreen_report); "<s> pshot <path>": one grab of the
+                      // next live present as a PNG (present_shot; a relative path lands in DM_APP_SUPPORT, a scenario run's support folder)
+                      char a1[1024] = ""; sscanf(ln.UTF8String, "%*lf %*7s %1023s", a1); NSString *path = @(a1); int shot = op[0] == 'p';
+                      if (shot && !path.length) return 0;
+                      if (shot && !path.absolutePath) { const char *sup = getenv("DM_APP_SUPPORT"); path = [(sup ? @(sup) : NSFileManager.defaultManager.currentDirectoryPath) stringByAppendingPathComponent:path]; }
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+                          if (shot) present_shot(path); else dm_uiscreen_report(); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
+                      return 1; }
+                  if (!strcmp(op, "screen")) {   // "<s> screen <w>x<h>|off": the window's screen counts as w x h pixels (off = the real one again), then the check runs (picture_screen_check)
+                      char a1[32] = ""; sscanf(ln.UTF8String, "%*lf %*7s %31s", a1); unsigned tw = 0, th = 0; int on = sscanf(a1, "%ux%u", &tw, &th) == 2 && tw && th;
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+                          g_test_win_on = on; g_test_win = (scr_px){ tw, th, th }; LOG("DM_TEST_NSMOUSE: the window's screen counts as %s", on ? [NSString stringWithFormat:@"%ux%u px", tw, th].UTF8String : "the real one");
+                          picture_screen_check(); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
+                      return 1; }
+                  if (!strcmp(op, "scale") || !strcmp(op, "layout") || !strcmp(op, "fs") || !strcmp(op, "menukey")) {
+                      // Window test hooks, on the main run loop (they work in background runs, with no key window):
+                      // "<s> scale <f>|0": the backing scale counts as f (0 = the real one again), entering through the window delegate's
+                      //   windowDidChangeBackingProperties:, the call a move to a display of that scale makes;
+                      // "<s> layout": a layout event with the values of that moment (layout_event);
+                      // "<s> fs 0|1": full screen off / on through front_video_fullscreen, the Options page's path (toggleFullScreen:, emulated in a
+                      //   background run);
+                      // "<s> menukey <char> [cmd,ctrl,opt,shift]": that key equivalent through the main menu ([NSApp.mainMenu performKeyEquivalent:], after
+                      //   the menus validate their items), as a real key press reaches a menu item; an item with an explicit target needs no key window
+                      char a1[16] = "", a2[32] = ""; sscanf(ln.UTF8String, "%*lf %*7s %15s %31s", a1, a2); NSString *k1 = @(a1), *k2 = @(a2);
+                      int what = op[0] == 's' ? 0 : op[0] == 'l' ? 1 : op[0] == 'f' ? 2 : 3;
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+                          if (what == 0) { double f = k1.doubleValue; g_test_scale = f > 0 ? f : 0; LOG("DM_TEST_NSMOUSE: backing scale %s", f > 0 ? k1.UTF8String : "real again");
+                              [(id<NSWindowDelegate>)win.delegate windowDidChangeBackingProperties:[NSNotification notificationWithName:NSWindowDidChangeBackingPropertiesNotification object:win]]; }
+                          else if (what == 1) layout_event("ask");
+                          else if (what == 2) { LOG("DM_TEST_NSMOUSE: full screen %s (the Options page's path)", k1.intValue ? "on" : "off"); front_video_fullscreen(k1.intValue); }
+                          else {
+                              NSEventModifierFlags mf = ([k2 containsString:@"cmd"] ? NSEventModifierFlagCommand : 0) | ([k2 containsString:@"ctrl"] ? NSEventModifierFlagControl : 0) |
+                                                        ([k2 containsString:@"opt"] ? NSEventModifierFlagOption : 0) | ([k2 containsString:@"shift"] ? NSEventModifierFlagShift : 0);
+                              NSEvent *ev = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:mf timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber
+                                                              context:nil characters:k1 charactersIgnoringModifiers:k1 isARepeat:NO keyCode:0];
+                              NSMenuItem *hit = nil;   // the item with this key equivalent, for the log: AppKit takes the key for a disabled item too, and does nothing
+                              for (NSMenuItem *it in NSApp.mainMenu.itemArray) { [it.submenu update];
+                                  for (NSMenuItem *x in it.submenu.itemArray) if ([x.keyEquivalent isEqualToString:k1] && (x.keyEquivalentModifierMask & 0x1e0000) == (mf & 0x1e0000)) hit = x; }
+                              BOOL took = [NSApp.mainMenu performKeyEquivalent:ev];
+                              LOG("DM_TEST_NSMOUSE: menu key %s%s%s -> %s%s%s (%s)", k2.UTF8String, k2.length ? "+" : "", k1.UTF8String, hit ? "\"" : "", hit ? hit.title.UTF8String : "no item",
+                                  hit ? (hit.enabled ? "\" enabled" : "\" disabled") : "", took ? "taken" : "not taken"); }
+                      }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
+                      return 1; }
                   if (!strcmp(op, "unit") || !strcmp(op, "unith")) {   // 「秒 unit <类型>,<类号>」：盯住这类单位（类号 16777214 = 敌对且可选中的怪、16777215 = 任意），它一在画面里就在它身体框中心投一次真正的鼠标点击；unith = 按住 2.5 秒才抬起 | "<seconds> unit <type>,<class>": watch for units of this kind (class 16777214 = hostile and selectable monster, 16777215 = any) and post one real mouse click at the centre of its body box as soon as it is on screen; unith = hold for 2.5 seconds before releasing
                       double hold = !strcmp(op, "unith") ? 2.5 : 0.1;
                       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ void dm_world_watch(int, uint32_t); int dm_world_watch_pos(float *, float *); float nx = 0, ny = 0; int ok = 0;
@@ -1033,15 +1181,12 @@ void front_run(void (*guest)(void)) {
                   LOG("DM_TEST_NSMOUSE：%d 条排好", n); } }
           if ((e = getenv("DM_TEST_SHARELOG"))) { NSString *to = @(e); dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSString *er = share_logs(to); LOG("DM_TEST_SHARELOG：第 8 秒打包到 %s → %s", to.lastPathComponent.UTF8String, er ? er.UTF8String : "OK"); }); }   // 测试：不弹存储面板，第 8 秒直接把压缩包写到这个路径 | test: no save panel, write the archive directly to this path at second 8
           if ((e = getenv("DM_TEST_QUIT_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ app_quit("DM_TEST_QUIT_AT"); });
-          // DM_TEST_TERMINATE_AT=<秒>：走一次系统退出（退出 Apple 事件，同程序坞「退出」）；DM_TEST_MINI_AT=<秒>[;<秒>…]：每个时刻切一次最小化（来回切）。
-          // 游戏窗口本来不带「可最小化」（没有黄色按钮、没有 ⌘M）：这个开关只在测试时给窗口加上，验上面的最小化处理
-          // DM_TEST_TERMINATE_AT=<seconds>: go through one system quit (the quit Apple event, same as Quit in the Dock); DM_TEST_MINI_AT=<seconds>[;<seconds>...]: toggle minimize at each time (back and forth).
-          // The game window is not minimizable by itself (no yellow button, no Cmd-M): this switch adds that only for the test, to check the minimize handling above
+          // DM_TEST_TERMINATE_AT=<seconds>: go through one system quit (the quit Apple event, same as Quit in the Dock); DM_TEST_MINI_AT=<seconds>[;<seconds>...]:
+          // toggle minimize at each time (back and forth). The window is minimizable (Window > Minimize, Cmd-M); the switch only schedules the toggles
           // 退出走主线程运行循环的公共模式（不排主队列）：模态弹框（如键位对照）的模态循环跑在主队列的一个块里，那时主队列不走，真的「程序坞退出」却照样进来
           // The quit goes through the main run loop's common modes (not the main queue): a modal dialog's (such as the key map's) modal loop runs inside a main-queue block, during which the main queue does not run, yet a real "Quit in the Dock" still comes in
           if ((e = getenv("DM_TEST_TERMINATE_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
               CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{ send_quit_event(); }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
-          if ((e = getenv("DM_TEST_MINI_AT")) && !bg) win.styleMask |= NSWindowStyleMaskMiniaturizable;
           if ((e = getenv("DM_TEST_MINI_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)   // background: emulated (emu_minimize)
               dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (bg) emu_minimize(!g_mini_emul); else if (win.miniaturized) [win deminiaturize:nil]; else [win miniaturize:nil]; }); }
         // 生命周期（hle.h / dm.h）：失焦 → 2、拿回焦点 → 1；最小化 → 3 + 音频暂停 + GPU 挂起，还原 → 恢复（随后拿回焦点 → 1）

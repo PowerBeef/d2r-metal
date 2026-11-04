@@ -76,14 +76,14 @@ static result run(const char *txt) { return run_do(txt, NULL); }
 // (21) the shadow latch: the first answers once the settings are known hold for the session. In a child: set or clear DM_ENV_SHADOWS / DM_SHADOW_SIZE
 // (NULL = unset), ask both; then, to prove they are latched, flip both switches (DM_ENV_SHADOWS to the opposite, DM_SHADOW_SIZE=1234) and ask again.
 // With nodir the settings directory is unknown at the first ask; the second ask comes after it became known, with the switches untouched
-typedef struct { int e1, s1, e2, s2; } latch;
+typedef struct { int e1, s1, e2, s2, fe, fs; } latch;   // fe / fs: the forced flags after the first asks (no restart hint for a forced value)
 static latch run_latch(const char *txt, const char *esh, const char *shsz, int nodir) {
-    file_put(txt); int pp[2]; latch l = { -9, -9, -9, -9 }; if (pipe(pp)) return l;
+    file_put(txt); int pp[2]; latch l = { -9, -9, -9, -9, -9, -9 }; if (pipe(pp)) return l;
     pid_t pid = fork();
     if (!pid) { close(pp[0]); latch x;
         if (esh) setenv("DM_ENV_SHADOWS", esh, 1); else unsetenv("DM_ENV_SHADOWS");
         if (shsz) setenv("DM_SHADOW_SIZE", shsz, 1); else unsetenv("DM_SHADOW_SIZE");
-        g_nodir = nodir; x.e1 = dm_video_env_shadows(); x.s1 = dm_video_shadow_size();
+        g_nodir = nodir; x.e1 = dm_video_env_shadows(); x.s1 = dm_video_shadow_size(); x.fe = atomic_load(&g_esh_forced); x.fs = atomic_load(&g_shq_forced);
         if (nodir) g_nodir = 0; else { setenv("DM_ENV_SHADOWS", x.e1 ? "0" : "1", 1); setenv("DM_SHADOW_SIZE", "1234", 1); }
         x.e2 = dm_video_env_shadows(); x.s2 = dm_video_shadow_size();
         if (write(pp[1], &x, sizeof x) != (ssize_t)sizeof x) _exit(1); _exit(0); }
@@ -330,9 +330,14 @@ int main(void) {
       CHECK(l.e1 == 1 && l.e2 == 1, "(21) envsh 0 stored, DM_ENV_SHADOWS=1 forces it on, latched; got %d then %d", l.e1, l.e2);
       l = run_latch(LATCH_FILE(1, 1, 2, 2), "0", NULL, 0);
       CHECK(l.e1 == 0 && l.e2 == 0, "(21) envsh 1 stored, DM_ENV_SHADOWS=0 forces it off, latched; got %d then %d", l.e1, l.e2);
-      static const char *const sz[3] = { "100", "9000", "3000" }; static const int want[3] = { 512, 8192, 3000 };
-      for (int i = 0; i < 3; i++) { l = run_latch(LATCH_FILE(1, 1, 2, 2), NULL, sz[i], 0);
-          CHECK(l.s1 == want[i] && l.s2 == want[i], "(21) DM_SHADOW_SIZE=%s: %d, latched; got %d then %d", sz[i], want[i], l.s1, l.s2); }
+      // DM_SHADOW_SIZE: clamped to 512..4096 and made even (SHD-7), forced (no restart hint), latched
+      static const char *const sz[6] = { "100", "9000", "3000", "8193", "3071", "abc" }; static const int want[6] = { 512, 4096, 3000, 4096, 3070, 512 };
+      for (int i = 0; i < 6; i++) { l = run_latch(LATCH_FILE(1, 1, 2, 2), NULL, sz[i], 0);
+          CHECK(l.s1 == want[i] && l.s2 == want[i] && l.fs == 1, "(21) DM_SHADOW_SIZE=%s: %d, forced, latched; got %d (forced %d) then %d", sz[i], want[i], l.s1, l.fs, l.s2); }
+      l = run_latch(LATCH_FILE(1, 1, 2, 2), NULL, NULL, 0);
+      CHECK(l.fs == 0 && l.fe == 0, "(21) neither switch set: nothing forced, so the restart hints follow the page; got forced %d / %d", l.fe, l.fs);
+      l = run_latch(LATCH_FILE(0, 1, 2, 2), "1", NULL, 0);
+      CHECK(l.fe == 1 && l.fs == 0, "(21) DM_ENV_SHADOWS set: environment shadows forced, the map not; got %d / %d", l.fe, l.fs);
       l = run_latch(LATCH_FILE(1, 1, 2, 2), NULL, NULL, 1);
       CHECK(l.e1 == 0 && l.s1 == 2100 && l.e2 == 1 && l.s2 == 4096,
             "(21) settings directory unknown: 0 / 2100 (the Switch look), not latched, so 1 / 4096 once it is known; got %d / %d, then %d / %d", l.e1, l.s1, l.e2, l.s2); }

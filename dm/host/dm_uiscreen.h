@@ -17,3 +17,4 @@ int dm_uiscreen_panel(void);                 // 上面那个状态：局内开�
 #include <stdint.h>
 uint64_t dm_game_res(int docked);            // 游戏出图分辨率参数位此刻该给的值（{u32 宽, u32 高} 打包）：前端的原生值，真全屏打开且不在局里时改成屏宽的 16:9 | The value the game's render resolution parameter slot should give right now (packed {u32 width, u32 height}): the front end's native value, changed to 16:9 of the screen width when true fullscreen is on and not in a run
 void dm_uiscreen_res_reread(void);            // 只许 hle_oe.c 在游戏取走「性能模式变化」通知时调 | May only be called by hle_oe.c when the game takes the "performance mode changed" notification
+void dm_uiscreen_report(void);               // tests (the control port's fe uiscr): emits the uiscreen res and rect events with the current values; any thread

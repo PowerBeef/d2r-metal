@@ -1,0 +1,81 @@
+# GPU heap 0 through 3D Resolution changes on the Options page at Native 3840 (LIF-4's Options-page path): the Mac App test copy at Recommended for
+# a 4K main screen (DM_TEST_SCREEN_PX=3840x2160: Native 3840x2160, 3D 100%, environment shadows, Ultra, SMAA), in a run, opens Options as a player
+# does (open_pause, tap_ui Settings), and on the Video tab steps 3D Resolution 100% -> 50% and back three times with the controller (the Mac rows
+# are mode, res, color, preset, s3d: four DOWN presses reach it), applying each time; every Apply rebuilds the 3D targets in game (dm_video_scale3d ->
+# hle_oe.c s3_cfg). Frame Drops is pinned to Keep (DM_TEST_Q3D=1), so only the page changes the scale. The gpuheap events record heap 0 after each
+# rebuild; pool_mb=768 is the positive control. --env DM_TEST_SCREEN_PX=3840x2880 runs the 4:3 cap (3324x2494). Heap readings are measurements,
+# so it runs in front and in real full screen (the test copy's own Recommended); run it alone.
+name options_s3d_cycle_mac
+requires mac-app
+front fullscreen
+save warlock
+timeout 300
+env DM_TEST_SCREEN_PX=3840x2160 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_Q3D=1
+
+expect main_menu timeout=120
+enter_game
+sleep 3
+open_pause
+tap_ui Settings
+sleep 2
+inputmode mode=controller
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+sleep 0.5
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+sleep 0.5
+msg OptionsPanelMessage:AcceptChanges
+expect scale3d pct=50 timeout=10
+sleep 3
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+sleep 0.5
+msg OptionsPanelMessage:AcceptChanges
+expect scale3d pct=100 timeout=10
+sleep 3
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+sleep 0.5
+msg OptionsPanelMessage:AcceptChanges
+expect scale3d pct=50 timeout=10
+sleep 3
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+sleep 0.5
+msg OptionsPanelMessage:AcceptChanges
+expect scale3d pct=100 timeout=10
+sleep 3
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+sleep 0.5
+msg OptionsPanelMessage:AcceptChanges
+expect scale3d pct=50 timeout=10
+sleep 3
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+sleep 0.5
+msg OptionsPanelMessage:AcceptChanges
+expect scale3d pct=100 timeout=10
+sleep 3
+quit
+check no_red
+check no_red_log
+check event video_row row=s3d value=4
+check event picture how=apply s3d=4
+check event picture how=apply s3d=0
+check event gpuheap pool_mb=768

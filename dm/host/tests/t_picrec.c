@@ -15,8 +15,10 @@ static const double k_scale[5] = { 1.0, 0.85, 0.75, 0.67, 0.5 };
 static const int k_fixed_w[3] = { 1600, 1920, 2560 };
 static int n, fails;
 
+// The cases give the in-game picture at Native (front_mac.m native_picture); a picture narrower than 16:9 is true full screen, whose aspect a fixed
+// resolution takes too (spec.aspect), so it is derived from the picture's own shape here
 static void rec_of(const char *gpu, int cores, int w, int h, int mfx, dm_mac_rec *r) {
-    dm_mac_spec s = { .gpu = gpu, .cores = cores, .out_w = w, .out_h = h, .mfx = mfx };
+    dm_mac_spec s = { .gpu = gpu, .cores = cores, .out_w = w, .out_h = h, .mfx = mfx, .aspect = (long)w * 9 < (long)h * 16 ? (double)w / h : 0 };
     dm_mac_recommend(&s, r);
 }
 
@@ -35,10 +37,11 @@ static int drop_levels(double scale) { return dm_3d_scale_levels((float)scale); 
 #define MIN_DROP_LEVELS 2   // Frame Drops = lower must have somewhere to go: dm_picrec.c LIGHT_MIN is chosen so that it does
 
 // The grid: every M generation the model knows and one past it, in each tier; the iPhone chips' Pro parts; core counts from below the smallest
-// real part to above the largest; screens from the 1600 floor to 16:10 4K, sorted by area (then width).
+// real part to above the largest; in-game pictures at Native (as front_mac.m native_picture feeds them) from the 1600 floor to the heap cap's 16:9 4K,
+// 16:9 and 16:10 (below the notch) mixed, sorted by area (then width).
 static const int k_grid_cores[] = { 4, 5, 6, 7, 8, 10, 12, 14, 16, 18, 19, 20, 24, 30, 32, 38, 40, 48, 60, 64, 76, 80 };
-static const int k_grid_scr[][2] = { { 1600, 900 }, { 2400, 1500 }, { 2560, 1440 }, { 2560, 1600 }, { 2560, 1664 }, { 2880, 1800 }, { 2928, 1904 },
-                                     { 3024, 1964 }, { 3408, 2216 }, { 3456, 2234 }, { 3840, 2160 }, { 3840, 2400 } };
+static const int k_grid_scr[][2] = { { 1600, 900 }, { 2400, 1500 }, { 2560, 1440 }, { 2560, 1600 }, { 2880, 1800 }, { 2940, 1838 }, { 3024, 1890 },
+                                     { 3420, 2150 }, { 3456, 2160 }, { 3642, 2276 }, { 3840, 2160 } };
 #define NCORES ((int)(sizeof k_grid_cores / sizeof *k_grid_cores))
 #define NSCR ((int)(sizeof k_grid_scr / sizeof *k_grid_scr))
 

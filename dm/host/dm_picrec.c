@@ -18,7 +18,8 @@
 //    100%. Frame Drops lowers the 3D resolution for a while (as on the phone) when the light picture was needed or the choice uses more than 85%
 //    of the capacity. An iPhone chip (tier -1) keeps the phone's shadows (no environment shadows, the Standard map): their cost on an A-series
 //    GPU is not measured, on the phone or the MacBook Neo.
-// No MetalFX: a fixed resolution, the picture by its load.
+// No MetalFX: a fixed resolution, the picture by its load. A fixed resolution has the game picture's shape (s->aspect: 1920 x 1200 on a 16:10 screen,
+// as front_mac.m front_game_res renders it), not 16:9.
 // Memory is not an input: no 8 GB Mac has been measured (the GPU heap is a fixed 768 MiB).
 #include "dm_picrec.h"
 #include <stdint.h>
@@ -90,7 +91,7 @@ void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r) {
             }
     // a fixed resolution: the highest width up to 3/4 of the screen (the 2560 one from half the M6's speed), the 3D at 100%, the picture by its load
     for (int i = 0; i < 3; i++) if (k_fixed_w[i] <= (s->out_w * 3 / 4 > 1600 ? s->out_w * 3 / 4 : 1600) && (i < 2 || r->speed >= 0.5)) r->tier_res = i;
-    int w = k_fixed_w[r->tier_res], h = w * 9 / 16;
+    int w = k_fixed_w[r->tier_res], h = s->aspect > 0 ? (int)(w / s->aspect / 2 + 0.5) * 2 : w * 9 / 16;   // the game renders the fixed width at the picture's shape
     double full = load(w, h, 1), light = full / LIGHT_GAIN;
     r->native = 0; r->s3d = 0; r->envsh = full <= cap; r->shq = r->envsh ? 2 : 0;
     r->load = (r->envsh ? full : light) / cap; r->q3d = !(!r->envsh || r->load > CLOSE);
