@@ -1,0 +1,20 @@
+# The walk dm/verify/motion_gate.py measures: the hero runs in four directions in town, so that her limbs and the camera both move. It needs a held stick and a real clock (see motion_gate.py)
+name motion_walk
+requires cli
+save warlock
+env DM_GAME_SEED=305419896
+timeout 100
+
+enter_game
+sleep 8
+mark go
+stick 0.7 0.5 90
+sleep 2.2
+stick -0.6 0.6 90
+sleep 2.2
+stick -0.6 -0.6 90
+sleep 2.2
+stick 0.6 -0.6 90
+sleep 3
+quit
+check no_red

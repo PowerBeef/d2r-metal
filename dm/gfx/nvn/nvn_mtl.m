@@ -5548,6 +5548,7 @@ static uint64_t g_stall_t0, g_stall_n;   // 定义在显示节拍那段 | Define
 static _Atomic float g_bright_applied = 1.0f;   // the exposure k the last LUT rewrite used (1 = none); written by bright_lut on the replay thread, read by the magenta probe's completion handler
 static int mp_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_MAGENTA_PROBE_OFF"); v = !(e && *e && strcmp(e, "0")); } return v; }
 static int mp_fmt_ok(MTLPixelFormat f) { return f == MTLPixelFormatRGBA8Unorm || f == MTLPixelFormatRGBA8Unorm_sRGB || f == MTLPixelFormatBGRA8Unorm || f == MTLPixelFormatBGRA8Unorm_sRGB || f == MTLPixelFormatRGB10A2Unorm || f == MTLPixelFormatRGBA16Float; }
+#include "nvn_framerec.inc"
 static void mp_encode(CBUF cb, id<MTLTexture> src, int i) {
     uint64_t t_start = bp_now();   // 成本测量：CPU 耗时起点 | Cost measurement: CPU time start
     g_mp_fmt[i] = 0; g_mp_haslut[i] = 0;
@@ -7332,6 +7333,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     [cb beginCommandBufferWithAllocator:g_present_alloc4[alloc_i]];
     if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) { [cb endCommandBuffer]; [g_q4 signalDrawable:dr]; return 0; }
     mp_encode(cb, src, alloc_i);
+    int fr_i = fr_encode(cb, src, ticket, frame, g_present_gen != nil, target_ts);
     [cb endCommandBuffer];
     MTL4CommitOptions *o = [MTL4CommitOptions new];
     [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
@@ -7339,6 +7341,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
             if (t == NVN_RL_FULL) MLOG("【红】GPU error in a present command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
             else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in present command buffers: %llu more since the last line (%llu in all)", (unsigned long long)more, (unsigned long long)total); }
         else mp_check(alloc_i, ticket);
+        fr_done(fr_i);
 #if TARGET_OS_OSX
         if (!f.error) mfx_gpu_note(f.GPUEndTime - f.GPUStartTime);
 #endif

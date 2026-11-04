@@ -103,6 +103,7 @@ run: \
 	$(PY) ../../tools/test_fuzz_corpus.py
 	python3 ../../verify/test_d2save.py
 	python3 ../../verify/test_golden.py
+	$(PY) ../../verify/test_motion_scan.py
 	python3 ../../tools/test_tickdiff.py
 	python3 ../../tools/test_explore.py
 	python3 ../../tools/test_playbot.py

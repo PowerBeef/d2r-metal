@@ -92,6 +92,7 @@ static int mv_init(void) {
 
 static void mv_dump_raw(id<MTLTexture> t, size_t bpp, const char *suffix, uint64_t frame) {
     if (!t) return;
+    { const char *only = getenv("DM_MV_DUMP_ONLY"); if (only && !strstr(only, suffix)) return; }   // a list of the suffixes to write: comp,swap for a clip
     size_t row = t.width * bpp, n = row * t.height; id<MTLBuffer> b = [g_dev newBufferWithLength:n options:MTLResourceStorageModeShared];
     id<MTLCommandBuffer> cb = q_cb(); id<MTLBlitCommandEncoder> e = [cb blitCommandEncoder];
     [e copyFromTexture:t sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(t.width, t.height, 1) toBuffer:b destinationOffset:0 destinationBytesPerRow:row destinationBytesPerImage:n];
@@ -225,6 +226,39 @@ static int mv_moved(const mv_draw *d, const mv_draw *p, int prev_ri) {
     return 0;
 }
 
+// DM_MV_TRACE=<file>: one line per drawn frame about the hero's limbs, from the velocity target. The camera follows her, so her body stays still on the screen while the ground slides under her, and
+// what moves in her area is her limbs: a pose that freezes reads near zero however the picture looks, with no video or capture involved. The copy of her area goes in the frame's own command
+// buffer and is read a few frames later, when it has surely run, so this never waits for the GPU. dm/tools/motion_scan.py --trace judges the result
+enum { MVT_RING = 8 };
+static struct { FILE *f; int on; __strong id<MTLBuffer> buf[MVT_RING]; uint64_t frame[MVT_RING]; double cw[MVT_RING], ch[MVT_RING], t[MVT_RING]; NSUInteger x0, y0, bw, bh; } g_mvt;
+static float mvt_half(uint16_t h) { uint32_t s = (h & 0x8000u) << 16, e = (h >> 10) & 31, m = h & 1023; union { uint32_t u; float f; } v; if (!e) { v.f = (float)m * (1.0f / (1 << 24)); v.u |= s; return v.f; } if (e == 31) { v.u = s | 0x7f800000u | (m << 13); return v.f; } v.u = s | ((e + 112) << 23) | (m << 13); return v.f; }
+static int mvt_cmp(const void *a, const void *b) { float x = *(const float *)a, y = *(const float *)b; return x < y ? -1 : x > y; }
+static void mvt_read(int k) {
+    if (!g_mvt.frame[k]) return;
+    const uint16_t *p = g_mvt.buf[k].contents; size_t n = g_mvt.bw * g_mvt.bh; static float *xs, *ys, *limb; if (!xs) { xs = malloc(n * sizeof(float)); ys = malloc(n * sizeof(float)); limb = malloc(n * sizeof(float)); }
+    double cw = g_mvt.cw[k], ch = g_mvt.ch[k]; size_t m = 0;
+    for (size_t i = 0; i < n; i += 3) { xs[m] = mvt_half(p[i * 2]) * (float)cw; ys[m] = mvt_half(p[i * 2 + 1]) * (float)ch; m++; }
+    // the ground: the commonest motion in her area, read at the edges of the area where she isn't
+    size_t e = 0; static float *ex, *ey; if (!ex) { ex = malloc(n * sizeof(float)); ey = malloc(n * sizeof(float)); }
+    for (NSUInteger y = 0; y < g_mvt.bh; y += 2) for (NSUInteger x = 0; x < g_mvt.bw; x += 2) if (x < g_mvt.bw / 8 || x >= g_mvt.bw * 7 / 8) { size_t i = y * g_mvt.bw + x; ex[e] = mvt_half(p[i * 2]) * (float)cw; ey[e] = mvt_half(p[i * 2 + 1]) * (float)ch; e++; }
+    qsort(ex, e, sizeof(float), mvt_cmp); qsort(ey, e, sizeof(float), mvt_cmp); float gx = e ? ex[e / 2] : 0, gy = e ? ey[e / 2] : 0, cam = hypotf(gx, gy);
+    size_t h = 0; for (size_t i = 0; i < m; i++) if (hypotf(xs[i] - gx, ys[i] - gy) > fmaxf(1.5f, cam * 0.35f)) limb[h++] = hypotf(xs[i], ys[i]);
+    float p50 = 0, p95 = 0; if (h) { qsort(limb, h, sizeof(float), mvt_cmp); p50 = limb[h / 2]; p95 = limb[h * 95 / 100]; }
+    fprintf(g_mvt.f, "%llu\t%.2f\t%.2f\t%zu\t%.2f\t%.2f\n", (unsigned long long)g_mvt.frame[k], g_mvt.t[k], cam, h * 3, p50, p95); fflush(g_mvt.f);
+    g_mvt.frame[k] = 0;
+}
+static void mv_trace(uint64_t frame, double cw, double ch) {
+    if (!g_mvt.on) { static int tried; if (tried) return; tried = 1; const char *e = getenv("DM_MV_TRACE"); if (!e) return; g_mvt.f = fopen(e, "w"); if (!g_mvt.f) return; fprintf(g_mvt.f, "frame\tt_ms\tcam_px\thero_px\tlimb_p50\tlimb_p95\n"); g_mvt.on = 1;
+        g_mvt.bw = g_mv.vel.width * 14 / 100; g_mvt.bh = g_mv.vel.height * 30 / 100; g_mvt.x0 = g_mv.vel.width / 2 - g_mvt.bw / 2; g_mvt.y0 = g_mv.vel.height * 49 / 100 - g_mvt.bh / 2;
+        for (int i = 0; i < MVT_RING; i++) { g_mvt.buf[i] = [g_dev newBufferWithLength:g_mvt.bw * g_mvt.bh * 4 options:MTLResourceStorageModeShared]; res_add(g_mvt.buf[i]); } res_commit(); }
+    if (g_mvt.x0 + g_mvt.bw > g_mv.vel.width || g_mvt.y0 + g_mvt.bh > g_mv.vel.height) return;   // the 3D target shrank below the area: no line rather than a wrong one
+    static int k; k = (k + 1) % MVT_RING; mvt_read(k);
+    CENC e = enc_c_begin(NULL);
+    [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+    enc_b_copy_texture_buffer(e, g_mv.vel, 0, 0, MTLOriginMake(g_mvt.x0, g_mvt.y0, 0), MTLSizeMake(g_mvt.bw, g_mvt.bh, 1), g_mvt.buf[k], 0, g_mvt.bw * 4, g_mvt.bw * g_mvt.bh * 4);
+    m4_end(e);
+    g_mvt.frame[k] = frame; g_mvt.cw[k] = cw; g_mvt.ch[k] = ch; g_mvt.t[k] = bp_now() / 1e6;
+}
 static int mat4_inv(const double m[16], double o[16]) {   // column-major; 0 = singular
     double a[4][8]; for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) { a[r][c] = m[c * 4 + r]; a[r][c + 4] = r == c; }
     for (int c = 0; c < 4; c++) { int p = c; for (int r = c + 1; r < 4; r++) if (fabs(a[r][c]) > fabs(a[p][c])) p = r;
@@ -305,6 +339,7 @@ static int mv_resolve(id<MTLTexture> src) {
         if (en) { [en updateFence:g_mv.fence afterEncoderStages:MTLStageFragment]; pg_render_finish(en); enc_host_r_end(en); pg_end_render(); }
     }
     if (moved != g_mv.moved_last) { g_mv.moved_last = moved; PD("V %llu motion vectors: %d of %d prepass draws moved", g_stat_pass, moved, g_mv.n[c]); }
+    mv_trace(frame, g_mv.view[2], g_mv.view[3]);
     { static int once; if (!once++) MLOG("motion vectors: velocity target %lux%lu, content viewport %.0f,%.0f %.0fx%.0f", (unsigned long)g_mv.vel.width, (unsigned long)g_mv.vel.height, g_mv.view[0], g_mv.view[1], g_mv.view[2], g_mv.view[3]); }
     g_mv.stat_frames++; g_mv.stat_moved += moved; g_mv.stat_draws += g_mv.n[c]; if (g_mv.used > g_mv.stat_peak) g_mv.stat_peak = g_mv.used;
     if (g_mv.stat_frames % 600 == 0) { MLOG("motion vectors: %llu frames, %.0f prepass draws a frame, %.1f moved, copies at most %.1f MB of %d, draws left with the camera's motion for lack of room %d, too far for one frame %d; camera cuts %d", (unsigned long long)g_mv.stat_frames, (double)g_mv.stat_draws / g_mv.stat_frames, (double)g_mv.stat_moved / g_mv.stat_frames, g_mv.stat_peak / 1048576.0, MV_SNAP_BYTES >> 20, g_mv.stat_full, g_mv.stat_far, g_mv.stat_cuts); }

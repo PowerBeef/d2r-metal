@@ -118,6 +118,8 @@ for tier in "${TIERS[@]}"; do
     step core_touchcases 900 -- bash -c touch_cases
     # The picture chain at this Mac's Recommended on the CLI host (scenarios/picture: SMAA, 16x, shadows, 3D 75% with the MetalFX 3D pass, AA switched live)
     step core_picture 900 -- bash -c 'par_scenarios cli 2 "$@"' _ "$DM/verify/scenarios/picture/rec.scn" "$DM/verify/scenarios/picture/rec75.scn" "$DM/verify/scenarios/picture/rect.scn" "$DM/verify/scenarios/picture/rec75t.scn" "$DM/verify/scenarios/picture/aa_toggle.scn"
+    # Motion: frame generation and the hero's animation on a walk, with a control (motion_gate.py: motion_scan.py on the shown frames and the limbs' trace)
+    step core_motion 400 -- python3 "$DM/verify/motion_gate.py"
     # Pipeline warm-up coverage: the town route with Recommended's features forced builds no pipeline that the seed (dm/gfx/nvn/pso_manifest.tsv) or
     # the reviewed allow-list (pso_allow.tsv) lacks (PSO_GATE OK rows=0)
     step core_pso_cli 900 -- python3 "$DM/tools/pso_seed.py" gate --backend cli --headless
