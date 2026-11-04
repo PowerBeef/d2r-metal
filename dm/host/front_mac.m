@@ -313,6 +313,19 @@ static void window_event(NSRect r, CGFloat sc) {
           (int)lround(r.origin.x), (int)lround(r.origin.y), (int)lround(r.size.width), (int)lround(r.size.height), (int)lround(d.width), (int)lround(d.height),
           (double)sc, full, bgrun(), fit, (int)NSApp.isActive, (int)g_win.isKeyWindow);
 }
+// The window's layout as a test event (event_stream.md `layout`): the view (pt), the picture's rect in it (the layer's frame, pt), the drawable (px), the
+// backing scale the layer uses, full screen (real or emulated), and the last live present's geometry (nvn_mtl.m mtl_present_geom: viewport, drawable
+// and sampled crop, px; right after a change it can still describe the previous size, until the next present). why: change (layout_game) or ask (the
+// control port's fe layout, which a scenario sends to read the state at that moment)
+static void layout_event(const char *why) {
+    void mtl_present_geom(int out[8]); int pg[8]; mtl_present_geom(pg);
+    NSSize b = g_view.bounds.size; NSRect r = g_layer.frame; CGSize d = g_layer.drawableSize;
+    DM_EV("layout", "why:s vw:d vh:d x:d y:d w:d h:d dw:d dh:d scale:d fs:b pvx:d pvy:d pvw:d pvh:d pdw:d pdh:d pcw:d pch:d", why, (int)lround(b.width), (int)lround(b.height),
+          (int)lround(r.origin.x), (int)lround(r.origin.y), (int)lround(r.size.width), (int)lround(r.size.height), (int)lround(d.width), (int)lround(d.height),
+          (int)lround(g_layer.contentsScale), win_full(), pg[0], pg[1], pg[2], pg[3], pg[4], pg[5], pg[6], pg[7]);
+}
+// Tests only (the control port's fe scale): a backing scale that stands in for the window's, as a move to a display of that scale would give; 0 = the real one
+static CGFloat g_test_scale;
 static void layout_game(void) {
     NSRect r = game_rect(); if (NSEqualRects(r, g_layer.frame)) return;
     CGFloat sc = g_view.window.backingScaleFactor ?: 2;   // 画布跟着改：作为子层的 CAMetalLayer 改 frame 不会自己改 drawableSize，原先进全屏后一直用窗口态的画布放大显示（发糊） | the canvas follows: a CAMetalLayer used as a sublayer does not change its drawableSize when its frame changes, so after going full screen it used to keep the windowed canvas and scale it up (blurry)
@@ -320,7 +333,7 @@ static void layout_game(void) {
     [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = sc; g_layer.drawableSize = ds; [CATransaction commit];
     dm_vkbd_ui_relayout();   // 屏幕键盘跟着画面走 | the on-screen keyboard follows the picture
     LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
-    window_event(r, sc);
+    window_event(r, sc); layout_event("change");
 }
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
 // 暂停菜单这类开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
@@ -1037,6 +1050,32 @@ void front_run(void (*guest)(void)) {
                                                           context:nil characters:chars charactersIgnoringModifiers:chars isARepeat:NO keyCode:(unsigned short)x];
                           if (dn) LOG("DM_TEST_NSMOUSE: %.2f s key code %d to %s%s", NSProcessInfo.processInfo.systemUptime - t0, (int)x, tname(tw), direct ? ", handed to it directly" : "");
                           if (direct) [tw sendEvent:ev]; else [NSApp postEvent:ev atStart:NO]; }); });
+                      return 1; }
+                  if (!strcmp(op, "scale") || !strcmp(op, "layout") || !strcmp(op, "fs") || !strcmp(op, "menukey")) {
+                      // Window test hooks, on the main run loop (they work in background runs, with no key window):
+                      // "<s> scale <f>|0": the backing scale counts as f (0 = the real one again), entering through the window delegate's
+                      //   windowDidChangeBackingProperties:, the call a move to a display of that scale makes;
+                      // "<s> layout": a layout event with the values of that moment (layout_event);
+                      // "<s> fs 0|1": full screen off / on through front_video_fullscreen, the Options page's path (toggleFullScreen:, emulated in a
+                      //   background run);
+                      // "<s> menukey <char> [cmd,ctrl,opt,shift]": that key equivalent through the main menu ([NSApp.mainMenu performKeyEquivalent:], after
+                      //   the menus validate their items), as a real key press reaches a menu item; an item with an explicit target needs no key window
+                      char a1[16] = "", a2[32] = ""; sscanf(ln.UTF8String, "%*lf %*7s %15s %31s", a1, a2); NSString *k1 = @(a1), *k2 = @(a2);
+                      int what = op[0] == 's' ? 0 : op[0] == 'l' ? 1 : op[0] == 'f' ? 2 : 3;
+                      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)), tq, ^{ CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+                          if (what == 0) { double f = k1.doubleValue; g_test_scale = f > 0 ? f : 0; LOG("DM_TEST_NSMOUSE: backing scale %s", f > 0 ? k1.UTF8String : "real again");
+                              [(id<NSWindowDelegate>)win.delegate windowDidChangeBackingProperties:[NSNotification notificationWithName:NSWindowDidChangeBackingPropertiesNotification object:win]]; }
+                          else if (what == 1) layout_event("ask");
+                          else if (what == 2) { LOG("DM_TEST_NSMOUSE: full screen %s (the Options page's path)", k1.intValue ? "on" : "off"); front_video_fullscreen(k1.intValue); }
+                          else {
+                              NSEventModifierFlags mf = ([k2 containsString:@"cmd"] ? NSEventModifierFlagCommand : 0) | ([k2 containsString:@"ctrl"] ? NSEventModifierFlagControl : 0) |
+                                                        ([k2 containsString:@"opt"] ? NSEventModifierFlagOption : 0) | ([k2 containsString:@"shift"] ? NSEventModifierFlagShift : 0);
+                              NSEvent *ev = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:mf timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:win.windowNumber
+                                                              context:nil characters:k1 charactersIgnoringModifiers:k1 isARepeat:NO keyCode:0];
+                              for (NSMenuItem *it in NSApp.mainMenu.itemArray) [it.submenu update];
+                              BOOL took = [NSApp.mainMenu performKeyEquivalent:ev];
+                              LOG("DM_TEST_NSMOUSE: menu key %s%s%s -> %s", k2.UTF8String, k2.length ? "+" : "", k1.UTF8String, took ? "a menu item took it" : "no enabled item"); }
+                      }); CFRunLoopWakeUp(CFRunLoopGetMain()); });
                       return 1; }
                   if (!strcmp(op, "unit") || !strcmp(op, "unith")) {   // 「秒 unit <类型>,<类号>」：盯住这类单位（类号 16777214 = 敌对且可选中的怪、16777215 = 任意），它一在画面里就在它身体框中心投一次真正的鼠标点击；unith = 按住 2.5 秒才抬起 | "<seconds> unit <type>,<class>": watch for units of this kind (class 16777214 = hostile and selectable monster, 16777215 = any) and post one real mouse click at the centre of its body box as soon as it is on screen; unith = hold for 2.5 seconds before releasing
                       double hold = !strcmp(op, "unith") ? 2.5 : 0.1;
