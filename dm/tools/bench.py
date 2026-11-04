@@ -80,13 +80,18 @@ def pct(xs, q):
     return s[lo] + (s[hi] - s[lo]) * (k - lo)
 
 
+def slow_limit(v):
+    """A run whose frames take two refreshes by design (frame generation's real frames, the power saver) is judged on the same slip, a frame one refresh late."""
+    return SLOW_MS * 2 if pct(v, 50) > 25 else SLOW_MS
+
+
 def seg_stats(ivs):
     """一段的逐帧上屏间隔 → 统计。0 = 没有读数（不算），负数 = 被系统丢弃。 | Per-frame present intervals of one segment -> statistics. 0 = no reading (ignored), negative = dropped by the system."""
     v = [x for x in ivs if x > 0]; dropped = sum(1 for x in ivs if x < 0)
     if not v: return dict(frames=0, dropped=dropped)
     mean = statistics.fmean(v)
     return dict(frames=len(v), dropped=dropped, mean_ms=round(mean, 3), p50_ms=round(pct(v, 50), 3), p95_ms=round(pct(v, 95), 3), p99_ms=round(pct(v, 99), 3),
-                max_ms=round(max(v), 3), slow_share=round(sum(1 for x in v if x > SLOW_MS) / len(v), 4), fps=round(1000 / mean, 2))
+                max_ms=round(max(v), 3), slow_share=round(sum(1 for x in v if x > slow_limit(v)) / len(v), 4), fps=round(1000 / mean, 2))
 
 
 def mann_whitney(a, b):
@@ -619,7 +624,7 @@ def main(argv):
     rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli',), help='the kept host runs on the command-line host only'); rg.add_argument('--reps', type=int, default=6)
     rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50', help='comma-separated; gpu_ms is left out by default: on a fast Mac it is clock-scaled'); rg.add_argument('--cool', type=float, default=120); rg.add_argument('--keep', action='store_true', help='write .keep into the result folder')
     for sp in (r, b, pr, rg):
-        sp.add_argument('--picture', default='rec', choices=('rec', 'rect', 'orig', 'rec75', 'rec75t', 'phone'),
+        sp.add_argument('--picture', default='rec', choices=('rec', 'rect', 'conv', 'orig', 'rec75', 'rec75t', 'phone'),
                         help="rec (default): this Mac's Recommended in full screen (dm/tools/picture.py); orig: the host's own defaults, windowed; rec75 / phone: those sets")
     for x in (r, b, pr, rg): x.add_argument('--redo', type=int, default=REDO, help=f'how many times a disturbed rep is redone in its slot before the benchmark is not judged (default {REDO})')
     a = ap.parse_args(argv)

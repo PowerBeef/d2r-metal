@@ -196,6 +196,7 @@ Every setting lives in the game's own Options, on five tabs: **Video**, **Audio*
 
 **Recommended** is the set of picture settings D2R Metal picks for your device the first time it starts:
 
+- **On chips that support it,** D2R Metal builds detail from several frames and creates every other frame, so motion stays smooth while the graphics chip draws half as many frames. The system tells the game whether a chip can do this; other chips get the settings below with real frames. You can turn it off under **Frame Generation** to play at real frames. It hasn't been tried on an iPhone or iPad yet.
 - **On a Mac,** it looks at the graphics chip (its generation and how many graphics cores it has) and at your screen, and turns on as much as it estimates the Mac can hold at 60 fps (or at the faster rate of a 144 Hz screen). Fast Macs get the 3D world at full resolution with every effect on. Lighter Macs, such as most MacBook Airs, get the 3D world at a lower resolution enlarged by MetalFX, often without environment shadows and with Standard shadows, and their 3D resolution dips for a moment when the action gets busy instead of stuttering. It works this out again when you change screens. The estimate rests on public benchmarks of each chip; [docs/MAC.md](docs/MAC.md#what-recommended-picks) has examples.
 - **On iPhone and iPad,** the same on every device: the 3D world at 75% enlarged by MetalFX, with SMAA, 16x filtering and true colors, and Frame Drops set to lower the 3D resolution for a moment while frames drop. They were tested on an iPhone 17 Pro; on an older iPhone or iPad, lower 3D Resolution or set Anti-Aliasing to FXAA if the game drops frames.
 
@@ -204,7 +205,7 @@ You can change any setting; **Graphic Presets** also offers *Performance* (light
 - **Video**:
   - On the Mac: Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets, 3D Resolution (100 down to 50%) and Upscaling (Standard, MetalFX, or Temporal, which builds detail from several frames for the cleanest picture and uses more of the graphics chip).
   - On iPhone and iPad: 3D Resolution (50 to 100%), Color, Graphic Presets and Upscaling (the same three; Temporal hasn't been measured on a phone yet).
-  - On both: **Anti-Aliasing** (FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Environment Shadows** and **Shadow Quality** (Standard up to Ultra; both take effect at the next start), **Frame Rate** (60 fps, or 30 to save power; 72 or 36 on a 144 Hz Mac screen) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
+  - On both: **Anti-Aliasing** (FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Environment Shadows** and **Shadow Quality** (Standard up to Ultra; both take effect at the next start), **Frame Rate** (60 fps, or 30 to save power; 72 or 36 on a 144 Hz Mac screen), **Frame Generation** (off for real frames; needs Temporal) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
 - **Apply, Discard and Default** work like the game's own option pages.
 

@@ -24,7 +24,11 @@
 __attribute__((weak)) int dm_video_temporal_active(void) { return 0; }   // the host's dm_video.c
 static int g_mt_want, g_mv_want;   // read at the start of each submission (mv_sub_begin), replay thread
 static inline int mv_on(void) { return g_mv_want; }
-int mtl_mfx_temporal_supported(void) { static int v = -1; if (v < 0) v = g_dev && [MTLFXTemporalScalerDescriptor supportsMetal4FX:g_dev]; return v; }
+int mtl_mfx_temporal_supported(void) {   // any thread, before the renderer has a device too (the recommendation asks at launch)
+    static int ok; static dispatch_once_t once;
+    dispatch_once(&once, ^{ id<MTLDevice> d = MTLCreateSystemDefaultDevice(); ok = d && [MTLFXTemporalScalerDescriptor supportsMetal4FX:d]; MLOG("MetalFX: Metal 4 temporal scaler supported: %s", ok ? "yes" : "no"); });
+    return ok;
+}
 
 enum { MV_MAX_DRAWS = 4096, MV_TAB = 16384, MV_MAX_CB = 8, MV_RING = 5, MV_SNAP_BYTES = 8 << 20, MV_DEDUPE = 4096, MV_VIEW_REG = 3, MV_FRAME_REG = 10, MV_VP_OFF = 336, MV_PROJ_OFF = 208 };
 typedef struct { uint32_t off, size; int8_t reg, aid; } mv_cb;

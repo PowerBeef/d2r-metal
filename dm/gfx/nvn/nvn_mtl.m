@@ -7248,9 +7248,9 @@ static void present_rgb(id<MTLTexture> dt, uint64_t ticket) {
 static double g_link_it_tin;   // 节拍回调正在上屏的那一帧的入队时刻（只在节拍线程读写） | Enqueue time of the frame the display-link callback is presenting (read and written only on the display-link thread)
 // Frame generation's real measure: the time between all shown frames, generated and real (the bench's present times cover the real ones only). Presented handlers run one at a time
 static void fg_shown(double t) {
-    static double last, longest; static uint64_t n, late; extern double mtl_display_refresh(void);
+    static double last, longest; static uint64_t n, late;
     if (t <= 0) return;
-    if (last > 0 && t > last) { double dt = t - last, tick = 1.0 / 60; n++; if (dt > tick * 1.5) late++; if (dt > longest) longest = dt; }
+    if (last > 0 && t > last) { double dt = t - last, tick = 1.0 / mtl_pace_hz(); n++; if (dt > tick * 1.5) late++; if (dt > longest) longest = dt; }
     last = t;
     if (n && n % 600 == 0) { MLOG("frame generation: %llu frames shown, %llu late (%.2f%%), longest %.1f ms", (unsigned long long)n, (unsigned long long)late, 100.0 * late / n, longest * 1e3); DM_EV("fg_shown", "n:u late:u longest_ms:f", (unsigned long long)n, (unsigned long long)late, longest * 1e3); }
 }
@@ -7639,6 +7639,8 @@ int mtl_present_offscreen(void) { return atomic_load(&g_present_project) && !lin
 static _Atomic int g_present_idle;
 void mtl_present_idle_set(int on) { atomic_store(&g_present_idle, on != 0); }
 int mtl_present_idle(void) { return atomic_load(&g_present_idle); }
+static uint64_t fg_queue_in(void) { pthread_mutex_lock(&g_pq_mu); uint64_t v = g_pq_in; pthread_mutex_unlock(&g_pq_mu); return v; }
+static uint64_t fg_queue_done(void) { pthread_mutex_lock(&g_pq_mu); uint64_t v = g_pq_done; pthread_mutex_unlock(&g_pq_mu); return v; }
 // The generated frame of this frame (nvn_fg.inc), queued right before the real one; the replay thread, in the present job
 static void fg_present(const tex_t *t, double period, const int crop[4]) {
     if (!g_fg.ready || g_fg.ready_frame != atomic_load(&g_cur_frame)) return;

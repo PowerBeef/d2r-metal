@@ -233,7 +233,7 @@ class BenchTest(unittest.TestCase):
                 self.assertNotIn('DM_AA_MODE', got)
                 runs = call(['ab', ROUTE, '--reps', '1', '--b-env', 'DM_AA_MODE=1'])
                 self.assertEqual(len(runs), 2); self.assertTrue(all(got['DM_NVN_ANISO'] == '16' for _, got in runs))
-                self.assertEqual([got['DM_AA_MODE'] for _, got in runs], ['2', '1'])
+                self.assertEqual([got['DM_AA_MODE'] for _, got in runs], ['0', '1'])
                 [(_, got)] = call(['profile', ROUTE])
                 self.assertEqual((got['DM_SAMPLE'], got['DM_SHADOW_SIZE']), ('4:*', '4096'))
                 runs = call(['regress', ROUTE, '--reps', '6'], 3)   # the fake runs measure nothing, so no comparison is judged: grey, not OK

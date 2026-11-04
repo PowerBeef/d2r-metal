@@ -1705,6 +1705,7 @@ void dm_longframe_note(const char *what) {
     time_t w = time(NULL); struct tm tmv; localtime_r(&w, &tmv); char ts[16]; strftime(ts, sizeof ts, "%H:%M:%S", &tmv);
     fprintf(fp, "长帧\t%s\t%s；%s\n", ts, what, ctx); fclose(fp);
 }
+__attribute__((weak)) int mtl_fg_active(void); __attribute__((weak)) double nvn_frame_period_ms(void);
 void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 帧的实际上屏间隔 ms；−1 = 被系统丢弃，0 = 无读数） | Called once per frame by the present thread (the actual present interval in ms, lagging by 8 frames; −1 = dropped by the system, 0 = no reading)
     static const char *path; static int init; static unsigned c16, c25, c33, disc; static double sum; static uint64_t t0, f0, cpu0, tstart;
     static unsigned none;   // presents with no reading (0): their time never came back
@@ -1714,7 +1715,9 @@ void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 �
       if (!fi) { fi = 1; const char *e = getenv("DM_FRAMES"); if (e && *e && (ff = fopen(e, "w"))) { setvbuf(ff, NULL, _IOLBF, 0); fputs("t\tiv_ms\n", ff); } }
       if (ff) fprintf(ff, "%.4f\t%.3f\n", dm_events_now_s(), iv); }
     // Counted whether or not perf.txt is written (DM_PERF_FILE; phones only by default): the perf event goes out every 10 s either way
-    if (iv < 0) disc++; else if (iv > 0) { sum += iv; if (iv <= 20.8) c16++; else if (iv <= 29.2) c25++; else c33++; } else none++;
+    // Frame generation: a real frame takes two ticks of the screen, so the buckets read the time past the first (a frame one tick late lands where it does at 60 fps)
+    if (iv < 0) disc++; else if (iv > 0) { sum += iv; double b = iv; if (mtl_fg_active && nvn_frame_period_ms && mtl_fg_active()) { double tick = nvn_frame_period_ms() / 2; if (b > tick) b -= tick; }
+        if (b <= 20.8) c16++; else if (b <= 29.2) c25++; else c33++; } else none++;
     uint64_t now = now_ns(); if (now - t0 < 10000000000ull) return;
     unsigned n = c16 + c25 + c33; uint64_t f = dm_nvn_frame_count(), cpu = dm_nvn_sub_cpu_ns();
     // The window's readings (dm/verify/event_stream.md): n frames with an on-screen interval, disc not shown (-1), none with no reading (0).

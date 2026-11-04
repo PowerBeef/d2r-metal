@@ -1,10 +1,11 @@
 # Upscaling = Temporal through the Video tab, live (dm_video.c dm_video_temporal_active, nvn_mv.inc). From this Mac's Recommended the controller picks the third Upscaling option
 # and Apply starts the temporal scaler from the next frame with no restart (the game's own anti-aliasing off, its Halton jitter on: the log lines prove each), at 100% with the
 # 3D target at 99%. 3D Resolution 75% then rebuilds it for the new size, and MetalFX puts it down again. Rows: mode, res, color, preset, s3d, upscale
+# DM_TEST_NO_FG=1: as on a chip with no frame interpolator, whose Recommended is the conventional picture; Recommended itself is video_fg_mac.scn
 name video_temporal_mac
 requires mac-app
 save warlock
-env DM_TEST_VIDEO_FIRSTBOOT=1
+env DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_NO_FG=1
 timeout 240
 
 enter_game

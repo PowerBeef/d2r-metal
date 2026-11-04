@@ -50,7 +50,7 @@ def scale_tables():
 class PictureTest(unittest.TestCase):
     def test_every_set_pins_every_key_with_a_value_the_host_takes(self):
         for name, s in picture.SETS.items():
-            self.assertEqual(sorted(k for k in s if k != 'DM_MFXT'), sorted(picture.KEYS), name)
+            self.assertEqual(sorted(k for k in s if k not in ('DM_MFXT', 'DM_FG')), sorted(picture.KEYS), name)
             self.assertRegex(s['DM_GAME_RES'], r'^\d+x\d+$', name)
             self.assertTrue(0.5 <= float(s['DM_3D_SCALE']) <= 1.0, name)   # hle_oe.c s3_cfg dies outside 0.5-1.0
             self.assertIn(s['DM_AA_MODE'], ('0',) if s.get('DM_MFXT') == '1' else ('1', '2'), name)   # T2x (3) fails inside the game; the temporal scaler replaces the game's AA (hle_oe.c aa_tick)
@@ -82,7 +82,7 @@ class PictureTest(unittest.TestCase):
 
     def test_front_end_recommendations(self):
         mac, ios = front_rec(DM / 'host' / 'front_mac.m'), front_rec(DM / 'ios' / 'Sources' / 'front_ios.m')
-        for name, fr, s in (('mac', mac, picture.REC), ('ios', ios, picture.PHONE)):
+        for name, fr, s in (('mac', mac, picture.CONV), ('ios', ios, picture.PHONE)):
             self.assertEqual((fr.get('aa'), s['DM_AA_MODE']), ('1', '2'), name)          # aa 1 = SMAA = mode byte 2 (dm_video_aa_mode)
             self.assertEqual((fr.get('aniso'), s['DM_NVN_ANISO']), ('3', '16'), name)    # aniso 3 = 16x (dm_video_aniso)
             self.assertEqual((fr.get('color'), s['DM_COLORSPACE']), ('1', 'srgb'), name)  # color 1 = Accurate
@@ -99,12 +99,14 @@ class PictureTest(unittest.TestCase):
         self.assertIsNotNone(res, 'front_ios.m front_video_firstboot no longer sets a fixed 3D resolution (rec[1])')
         self.assertEqual(float(picture.PHONE['DM_3D_SCALE']), phone[int(res.group(1)) if res else 0])   # the phone's res index through dm_video.c's phone table: 75%
         # up = MetalFX wherever it is supported (the iPhone 17 Pro, this Mac): DM_MFX (the present) and DM_MFX3D (the 3D upscale pass) on
-        self.assertRegex(ios, r'rec\[2\] = front_video_mfx_ok\(\) \? 1 : 0;')
+        self.assertRegex(ios, r'rec\[2\] = rec_fg\(\) \? 2 : front_video_mfx_ok\(\) \? 1 : 0;')
+        self.assertEqual((mac.get('fg') if (mac := front_rec(DM / 'host' / 'front_mac.m')) else None, front_rec(DM / 'ios' / 'Sources' / 'front_ios.m').get('fg')), ('rec_fg()', 'rec_fg()'))   # Temporal and Frame Generation together, wherever the chip has both
+        self.assertEqual((picture.REC['DM_MFXT'], picture.REC['DM_AA_MODE'], picture.REC['DM_FG']), ('1', '0', '1'))
         self.assertEqual((picture.PHONE['DM_MFX'], picture.PHONE['DM_MFX3D']), ('1', '1'))
         mac_fb = firstboot(DM / 'host' / 'front_mac.m')
         self.assertRegex(mac_fb, r'rec\[0\] = 1;')   # full screen: picture.env adds FULLSCREEN on the cli backend
         self.assertEqual(picture.env('rec', 'cli', {})['DM_TEST_FULLSCREEN_AT'], '1')
-        self.assertRegex(mac_fb, r'rec\[2\] = front_video_mfx_ok\(\) && \(nres >= 0 \|\|')   # with Native (nres >= 0) up = MetalFX support alone
+        self.assertRegex(mac_fb, r'rec\[2\] = rec_fg\(\) \? 2 : front_video_mfx_ok\(\) && \(nres >= 0 \|\|')   # a chip without them: with Native (nres >= 0) up = MetalFX support alone
         r = picrec_rows()[THIS_MAC]
         self.assertEqual((r['native'], r['mfx']), (1, 1))   # this Mac's row: Native, MetalFX supported
         for name in ('REC', 'REC75'): self.assertEqual((getattr(picture, name)['DM_MFX'], getattr(picture, name)['DM_MFX3D']), ('1', '1'), name)

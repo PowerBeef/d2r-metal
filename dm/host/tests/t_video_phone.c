@@ -45,8 +45,8 @@ static result child_run(const char *txt, void (*more)(result *)) {
 #define TAIL(a, ra, n, rn, c, rc) "aa=" #a "\nrec_aa=" #ra "\naniso=" #n "\nrec_aniso=" #rn "\ncolor=" #c "\nrec_color=" #rc "\n"
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
 #define ES(e, re) "envsh=" #e "\nrec_envsh=" #re "\n"
-#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\n"
-#define RV "rec_v=8\n"   // REC_V in dm_video.c: a bump changes this line and the cases below in the same commit
+#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=0\nrec_fg=0\n"
+#define RV "rec_v=9\n"   // REC_V in dm_video.c: a bump changes this line and the cases below in the same commit
 // The phone's first-boot file (front_ios.m: 75% + MetalFX; SMAA, 16x, Accurate; no s3d / envsh / shq recommendation), with res as given
 #define CUR(s) FULL(0, 0, s, 0, 1, 1) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV
 

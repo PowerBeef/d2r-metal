@@ -1057,14 +1057,17 @@ void front_video_color(int accurate) { dispatch_async(dispatch_get_main_queue(),
 // Platform hooks for the picture settings (dm_video.c): whether MetalFX is available; recommended values on first boot = 3D resolution 75% (the previous default) + MetalFX when available.
 // It asks nvn_mtl.m's mtl_mfx_supported, the check the renderer itself uses.
 int front_video_mfx_ok(void) { int mtl_mfx_supported(void); return mtl_mfx_supported(); }
+int mtl_mfx_temporal_supported(void), mtl_mfx_fg_supported(void);
+// MetalFX Temporal with Frame Generation wherever the chip has both (the game draws half the frames, the screen shows them all); other chips keep MetalFX's spatial scaler and the real rate
+static int rec_fg(void) { return mtl_mfx_temporal_supported() && mtl_mfx_fg_supported(); }
 int front_video_firstboot(int rec[3], int cur[3]) {
-    rec[0] = 0; rec[1] = 0; rec[2] = front_video_mfx_ok() ? 1 : 0; for (int i = 0; i < 3; i++) cur[i] = rec[i];
+    rec[0] = 0; rec[1] = 0; rec[2] = rec_fg() ? 2 : front_video_mfx_ok() ? 1 : 0; for (int i = 0; i < 3; i++) cur[i] = rec[i];
     // the same choice on every iPhone and iPad; the log names the device, its GPU and screen, so later device runs can be matched to what it got.
     // front_game_res (cached on the main thread at launch) rather than UIScreen, since dm_video.c may ask from a game thread
     char hw[64] = ""; size_t n = sizeof hw; sysctlbyname("hw.machine", hw, &n, NULL, 0);
     id<MTLDevice> d = MTLCreateSystemDefaultDevice(); uint64_t res = front_game_res(1);
     LOG("picture settings: Recommended for %s (%s, %s), screen %ux%u → 3D 75%%, %s", hw[0] ? hw : "?", d.name.UTF8String ?: "?",
-        d.supportsBCTextureCompression ? "BC textures" : "no BC textures", (unsigned)(res & 0xffffffff), (unsigned)(res >> 32), rec[2] ? "MetalFX" : "Standard (no MetalFX)");
+        d.supportsBCTextureCompression ? "BC textures" : "no BC textures", (unsigned)(res & 0xffffffff), (unsigned)(res >> 32), rec[2] == 2 ? "MetalFX Temporal, Frame Generation" : rec[2] ? "MetalFX" : "Standard (no MetalFX)");
     return 1;
 }
 // Recommendations for the picture keys added later (asked when the file lacks the key or holds an older rec_v): SMAA, 16x and Accurate colour on every
@@ -1076,6 +1079,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "aa")) return 1;
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "color")) return 1;
+    if (!strcmp(key, "fg")) return rec_fg();
     return -1;
 }
 // Docked profile = the screen's native pixels (the UI text native, the 3D scaled separately by the game's own render scale, see hle_oe.c
