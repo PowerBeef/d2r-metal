@@ -13,6 +13,7 @@
 // Companion pieces: world taps are computed on the real frame (dm_world.c uses dm_screen_real); the dm_ui_* entry points take "normalized coordinates within the UI rectangle", converted by the caller (touch front end / test tap path).
 // Off by default. To turn on: the front end calls dm_uiscreen_enable; for Mac host testing use the environment variables DM_UI_169=1 (equivalent to top-aligned) and DM_UI_YPOS=top | center | bottom.
 #include "dm_uiscreen.h"
+#include "dm_gpuheap.h"
 #include "hle.h"
 #include "dm.h"
 #include <stdatomic.h>
@@ -94,6 +95,7 @@ uint64_t dm_game_res(int docked) { uint64_t r = front_game_res(docked); uint32_t
 
 void dm_uiscreen_pump(void) {
     uint8_t *b = main_base(); if (!b) return;
+    dm_gpuheap_pump();   // GPU heap 0 readings, once a second (dm_gpuheap.c)
     { int world = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)) != 0;
       int first = !atomic_exchange(&g_res_live, 1);
       if ((atomic_exchange(&g_world, world) != world || (first && !world)) && mode() != DM_UISCREEN_OFF) { LOG("界面画面：%s → 游戏分辨率切到 %u x %u", world ? "玩家单位建立" : first ? "窗口已建好、在前端" : "玩家单位销毁", (unsigned)dm_game_res(1), (unsigned)(dm_game_res(1) >> 32)); dm_oe_res_changed(); } }
