@@ -43,6 +43,7 @@ int dm_gpuheap_read(dm_gpuheap_info *o) {
         uint64_t start = b[1], take = b[5];
         if (start < end || start + take > base + csz) return 0;   // out of address order: changed under the walk
         if (start - end > o->gap) o->gap = start - end;
+        if (take > o->big) o->big = take;
         end = start + take; o->blocks++; blk = b[3];
     }
     o->top = end - base;
@@ -51,7 +52,7 @@ int dm_gpuheap_read(dm_gpuheap_info *o) {
 }
 
 void dm_gpuheap_pump(void) {
-    static unsigned n; static int off, warned; static dm_gpuheap_info last; static uint64_t pk_used, pk_top, min_gap = UINT64_MAX;
+    static unsigned n; static int off, warned; static dm_gpuheap_info last; static uint64_t pk_used, pk_top, pk_big, min_gap = UINT64_MAX;
     if (off || n++ % 60) return;
     dm_gpuheap_info h; int r = dm_gpuheap_read(&h);
     if (r < 0) { off = 1; LOG("GPU heap 0: counters not as expected (pool %llu bytes, not the 768 MiB budget, or the block list unreadable): not reported", (unsigned long long)h.pool); return; }
@@ -59,16 +60,17 @@ void dm_gpuheap_pump(void) {
     if (h.used > pk_used) pk_used = h.used;
     if (h.top > pk_top) pk_top = h.top;
     if (h.gap < min_gap) min_gap = h.gap;
+    if (h.big > pk_big) pk_big = h.big;
     const uint64_t step = 4ull << 20;
 #define MOVED(f) (h.f > last.f ? h.f - last.f >= step : last.f - h.f >= step)
     if (last.pool && !MOVED(used) && !MOVED(top) && !MOVED(gap)) return;
 #undef MOVED
     last = h;
-    LOG("GPU heap 0: %.1f MiB used, the highest block ends at %.1f MiB, largest free gap %.1f MiB, of %.0f MiB (%u blocks; peaks: %.1f used, %.1f top, smallest gap %.1f)",
-        h.used / MIB, h.top / MIB, h.gap / MIB, h.pool / MIB, h.blocks, pk_used / MIB, pk_top / MIB, min_gap / MIB);
-    DM_EV("gpuheap", "used_mb:u top_mb:u gap_mb:u pool_mb:u blocks:u peak_used_mb:u peak_top_mb:u min_gap_mb:u", (unsigned long long)(h.used >> 20),
-          (unsigned long long)(h.top >> 20), (unsigned long long)(h.gap >> 20), (unsigned long long)(h.pool >> 20), (unsigned long long)h.blocks,
-          (unsigned long long)(pk_used >> 20), (unsigned long long)(pk_top >> 20), (unsigned long long)(min_gap >> 20));
+    LOG("GPU heap 0: %.1f MiB used, the highest block ends at %.1f MiB, largest free gap %.1f MiB, of %.0f MiB (%u blocks, the largest %.1f MiB; peaks: %.1f used, %.1f top, smallest gap %.1f)",
+        h.used / MIB, h.top / MIB, h.gap / MIB, h.pool / MIB, h.blocks, h.big / MIB, pk_used / MIB, pk_top / MIB, min_gap / MIB);
+    DM_EV("gpuheap", "used_mb:u top_mb:u gap_mb:u pool_mb:u blocks:u big_mb:u peak_used_mb:u peak_top_mb:u min_gap_mb:u peak_big_mb:u", (unsigned long long)(h.used >> 20),
+          (unsigned long long)(h.top >> 20), (unsigned long long)(h.gap >> 20), (unsigned long long)(h.pool >> 20), (unsigned long long)h.blocks, (unsigned long long)(h.big >> 20),
+          (unsigned long long)(pk_used >> 20), (unsigned long long)(pk_top >> 20), (unsigned long long)(min_gap >> 20), (unsigned long long)(pk_big >> 20));
     if (!warned && h.gap < (64ull << 20)) { warned = 1;
         LOG("【红】GPU heap 0: the largest free gap is %.1f MiB of %.0f MiB, under the 64 MiB margin: the next large render target may not fit (a failed allocation faults at main+0x17417a4)",
             h.gap / MIB, h.pool / MIB); }

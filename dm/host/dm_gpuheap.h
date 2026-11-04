@@ -7,6 +7,7 @@ typedef struct {
     uint64_t used;     // bytes in live blocks, as the heap counts them
     uint64_t top;      // the end of the highest live block, from the pool's start (first-fit high-water mark)
     uint64_t gap;      // the largest free gap between live blocks or above the highest one: the largest allocation that still fits
+    uint64_t big;      // the largest live block (the largest single target a rebuild makes again)
     unsigned blocks;   // live blocks walked
 } dm_gpuheap_info;
 
