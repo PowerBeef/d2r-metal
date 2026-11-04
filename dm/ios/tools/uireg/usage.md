@@ -137,12 +137,16 @@ The scope when no run name is given:
 
 ## Packages for the iPad profiles
 
-The repository has no separate script for building an iPad package. The procedure is the same as the two packaging steps in `tools/smoke_mac.sh`, with just one more build setting:
+`tools/smoke_mac.sh` builds it: the same build and wrapping as its iPhone package, with `DM_DEVICE_FAMILY=1,2` (iPhone and iPad, so the Mac runs it with the iPad idiom, in a 1366x1024 pt window):
 
-1. The same `xcodebuild` command, with its `DM_DEVICE_FAMILY=1` replaced by `DM_DEVICE_FAMILY=1,2` (adds iPad to the device family; `tools/smoke_mac.sh` always builds its package for iPhone only, regardless of the default in `../../project.yml`).
-2. Wrap it the same way as `<name>.app/Wrapper/DmIOS.app`, plus the `WrappedBundle` symlink.
+```bash
+SMOKE_MAC_FAMILY=1,2 SMOKE_MAC_PKG_ONLY=1 dm/ios/tools/smoke_mac.sh 1     # → .iosdd_mac_pad/DmMacSmokePad.app
+UIREG_APP_IPAD=$PWD/.iosdd_mac_pad/DmMacSmokePad.app python3 dm/ios/tools/uireg/uireg.py ipadfull a top
+```
 
-Use a new directory name each time you build a package, then give the path to `UIREG_APP_IPAD`.
+- It only builds (`SMOKE_MAC_PKG_ONLY=1` is required) and writes no smoke ledger row.
+- Before rebuilding it, wait until the last run's mount is gone (`mount | grep -F .iosdd_mac_pad/` prints nothing); the script refuses while it is still mounted (see the rules below).
+- When done, move `.iosdd_mac_pad` to the Trash (once the mount is gone): its derived data takes several GB, and a stale test app shows up in the Mac's app search.
 
 ## Rules for swapping packages
 
