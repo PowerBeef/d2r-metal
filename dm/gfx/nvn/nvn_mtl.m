@@ -43,6 +43,7 @@
 #include "nvn_hmap.h"
 #include "nvn_ratelog.h"   // GPU error lines: the first 8 of a kind in full, then one summary every 10 s (gerr_flush)
 #include "../../host/dm.h"
+#include "../../host/dm_geom.h"   // the present's fit of the picture into the drawable, shared with the front ends (dm_geom_present)
 #import <CommonCrypto/CommonDigest.h>
 #include <stdarg.h>
 #include <mach-o/dyld.h>
@@ -7034,13 +7035,13 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src0, id<MTLTe
              (unsigned long)cx, (unsigned long)cy, (unsigned long)cw, (unsigned long)ch, (unsigned long)dst.width, (unsigned long)dst.height); }
     present_pipeline(dst.pixelFormat);
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-    // 保持游戏画面宽高比居中，余下留黑边（屏幕比例与游戏不同时不拉伸，如 iPhone 约 19.5:9 对游戏 16:9）；
-    // 比例差 < 1%（全屏口径下游戏宽度取 8 的倍数带来的零头，如 1952x900 对 2868x1320 差 0.17%）直接铺满，不留几像素的边
-    // Keep the game picture's aspect ratio and center it, leaving black bars in the rest (no stretching when the screen ratio differs from the game's, e.g. iPhone about 19.5:9 versus the game's 16:9);
-    // when the ratio difference is < 1% (the remainder from the game width being a multiple of 8 in the full-screen setup, e.g. 1952x900 versus 2868x1320 differs by 0.17%) fill directly, leaving no few-pixel border
-    double dw = dst.width, dh = dst.height, s = fmin(dw / cw, dh / ch);
-    MTLViewport vp = {floor((dw - cw * s) / 2), floor((dh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};
-    if (fabs((dw / dh) / ((double)cw / ch) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
+    // The picture's fit (dm_geom_present, shared with the live present below and the front ends): up to 16 px larger than the drawable is shown 1:1
+    // from its centre; aspects within 1% fill the drawable (e.g. 1952x900 on 2868x1320, the remainder of the game width's rounding); otherwise
+    // the picture keeps its aspect, centred, with black bars (an iPhone's 19.5:9 against the game's 16:9)
+    double dw = dst.width, dh = dst.height;
+    dm_geom_pfit fit = dm_geom_present(dw, dh, (unsigned)cx, (unsigned)cy, (unsigned)cw, (unsigned)ch);
+    cx = fit.sx; cy = fit.sy; cw = fit.sw; ch = fit.sh;
+    MTLViewport vp = {fit.x, fit.y, fit.w, fit.h, 0, 1};
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
 #if TARGET_OS_OSX
     if (mfx_want(&g_mfx_grab, 0, cw, ch, vp)) {   // 整窗截图：与上屏一样走 MetalFX | whole-window screenshot: MetalFX like the present
@@ -7064,6 +7065,23 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src0, id<MTLTe
     [en endEncoding];
     return 1;
 }
+// The last live present's geometry, for the front ends' checks (front_mac.m's layout event; front_ios.m): the viewport x, y, w, h, the drawable w, h
+// and the sampled part of the crop w, h, in pixels. Written by the present thread one element at a time (a reader that judges settled states does
+// not mind a torn set); the screenshot path (present_encode) does not record
+static _Atomic int g_pres_geom[8];
+void mtl_present_geom(int out[8]) { for (int i = 0; i < 8; i++) out[i] = atomic_load(&g_pres_geom[i]); }
+static void pres_geom_note(const dm_geom_pfit *f, double dw, double dh) {
+    const int v[8] = { (int)f->x, (int)f->y, (int)f->w, (int)f->h, (int)dw, (int)dh, (int)f->sw, (int)f->sh };
+    for (int i = 0; i < 8; i++) atomic_store(&g_pres_geom[i], v[i]);
+}
+// One English line whenever the live present's fit changes (the screenshot path logs its own Chinese viewport line, which screen_check.py reads)
+static void pres_geom_log(const dm_geom_pfit *f, double dw, double dh, int mfx) {
+    static double last[8]; const double now[8] = { dw, dh, f->sx, f->sy, f->sw, f->sh, f->kind, mfx };
+    if (!memcmp(last, now, sizeof now)) return;
+    memcpy(last, now, sizeof now);
+    MLOG("present: picture %ux%u at %u,%u -> drawable %.0fx%.0f, viewport %.0f,%.0f %.0fx%.0f (%s%s)", f->sw, f->sh, f->sx, f->sy, dw, dh, f->x, f->y, f->w, f->h,
+         f->kind == DM_GEOM_ONE ? "1:1" : f->kind == DM_GEOM_FILL ? "fill" : "fit", mfx ? ", MetalFX" : "");
+}
 static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, const int crop[4], int uv_i) {
     id<MTLTexture> src = present_src(src0);
     NSUInteger cx = 0, cy = 0, cw = src.width, ch = src.height;
@@ -7075,19 +7093,21 @@ static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, c
         cx = crop[0]; cy = crop[1]; cw = crop[2]; ch = crop[3];
     }
     present_pipeline(dst.pixelFormat);
-    double dw = dst.width, dh = dst.height, s = fmin(dw / cw, dh / ch);
-    MTLViewport vp = {floor((dw - cw * s) / 2), floor((dh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};
-    if (fabs((dw / dh) / ((double)cw / ch) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
+    double dw = dst.width, dh = dst.height;
+    dm_geom_pfit fit = dm_geom_present(dw, dh, (unsigned)cx, (unsigned)cy, (unsigned)cw, (unsigned)ch);   // the same fit as present_encode
+    cx = fit.sx; cy = fit.sy; cw = fit.sw; ch = fit.sh;
+    MTLViewport vp = {fit.x, fit.y, fit.w, fit.h, 0, 1};
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
-#if TARGET_OS_OSX
+    pres_geom_note(&fit, dw, dh);
     int mfx = 0;
+#if TARGET_OS_OSX
     mfx_pres_tick();
     if (mfx_want(&g_mfx_pres, MFX_M4, cw, ch, vp)) {
         if (!mfx_scale(&g_mfx_pres, cb, src, cx, cy, cw, ch)) return 0;
         src = g_mfx_pres.out; cx = cy = 0; cw = src.width; ch = src.height; mfx = 1;
     }
-    (void)mfx;
 #endif
+    pres_geom_log(&fit, dw, dh, mfx);
     RPD *rp = [RPD new];
     rp.colorAttachments[0].texture = dst;
     rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : MTLLoadActionClear;

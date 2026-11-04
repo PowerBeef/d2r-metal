@@ -34,6 +34,8 @@ static void check(id<MTLTexture> src, const char *name, const int crop[4], int w
         }
         if(q==-2) { // crop=(1,1,4,4)：3×3红、末列绿、末行蓝、右下1格黄。 | crop=(1,1,4,4): 3×3 red, last column green, last row blue, bottom-right 1 cell yellow.
             q=(x+1>=4)+2*(y+1>=4);
+        } else if(q==-3) { // the unshifted quadrants of the 8x8 source, texel for texel (a near-match 1:1 present: -1 splits at w/2, which is 3 for w = 7)
+            q=(x>=4)+2*(y>=4);
         } else if(q<0) { // 同尺寸默认整帧：分界在正中。 | same-size default whole frame: the boundary is dead center.
             q=(x>=w/2)+2*(y>=h/2);
         }
@@ -58,6 +60,10 @@ int main(void) { @autoreleasepool {
     check(src,"单纹素放大不跨边界256像素全红",one,16,16,0);
     check(src,"非零双偏移16像素逐字节等手写子矩形",inset,4,4,-2);
     check(src,"有效区比例保留，128像素中间红/两侧黑",tl,16,8,4);
+    // A picture up to 16 px larger than the drawable is shown pixel for pixel, centred (dm_geom.h DM_GEOM_ONE), not resampled: 8x8 into 7x7 shows
+    // texels 0..6 (a bilinear shrink would blend texels 3 and 4 at pixel 3); 8x8 into 6x6 shows texels 1..6
+    check(src,"near-match 1:1: an 8x8 picture into a 7x7 drawable is shown pixel for pixel",zero,7,7,-3);
+    check(src,"near-match centred: 8x8 into 6x6 shows texels 1..6",zero,6,6,-2);
     int invalid[4][4]={{-1,0,4,4},{0,-1,4,4},{0,0,0,4},{7,0,4,4}};
     for(int i=0;i<4;i++) {
         MTLTextureDescriptor *dd=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:8 height:8 mipmapped:NO];dd.usage=MTLTextureUsageRenderTarget;dd.storageMode=MTLStorageModeShared;
