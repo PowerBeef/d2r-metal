@@ -7088,7 +7088,7 @@ static int mfx3d_draw(NvShader *f) {   // replay thread, at the game's ps_upsamp
     id<MTLTexture> src = tex_mtl(&t10), mask = tex_mtl(&t11), dst = tex_mtl(R.rt.color[0]); if (!src || !mask || !dst) return 0;
     double vx = S.vp[0][0], vy = S.vp[0][1], vw = S.vp[0][2], vh = S.vp[0][3];
     NSUInteger cw = (NSUInteger)llround(c[0] * src.width), ch = (NSUInteger)llround(c[1] * src.height);
-    if (!cw || !ch || cw > src.width || ch > src.height || vw < cw * 1.05 || vh < ch * 1.05 || vx + vw > dst.width + 0.5 || vy + vh > dst.height + 0.5) return 0;
+    if (!cw || !ch || cw > src.width || ch > src.height || vw < cw * (g_mt_want ? 1.001 : 1.05) || vh < ch * (g_mt_want ? 1.001 : 1.05) || vx + vw > dst.width + 0.5 || vy + vh > dst.height + 0.5) return 0;   // nearly 1:1 is worth it only to the temporal scaler, which then antialiases
     float cfg = dm_3d_scale_cfg(); NSUInteger aw, ah; mfx3d_alloc(cw, ch, (NSUInteger)llround(vw), (NSUInteger)llround(vh), cfg, &g_mfx_3d, &aw, &ah);
     if (!mfx3d_encode(src, cw, ch, aw, ah, cfg, mask, (MTLViewport){vx, vy, vw, vh, 0, 1})) return 0;
     g_mfx_3d.last_use = g_sub_serial; atomic_fetch_add(&g_mfx3d_gen, 1);

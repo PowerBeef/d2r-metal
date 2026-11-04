@@ -16,8 +16,7 @@
 // DM_MV_DUMP=<first frame>:<count>:<path prefix> writes the velocity target and the 3D picture of those frames as raw files for an offline check
 // (dm/gfx/tools/mv_check.py warps one frame onto the next), at the next frame's first prepass draw.
 //
-// The temporal scaler (Upscaling = MetalFX Temporal with a 3D Resolution below 100%; dm_video_temporal_active, DM_MFXT=0/1 forces it) replaces the spatial MetalFX of the
-// 3D pass. It takes the game's 3D picture and depth directly, with these velocities, and needs a camera that moves by a fraction of a pixel each frame: the game's own
+// The temporal scaler (Upscaling = MetalFX Temporal; dm_video_temporal_active, DM_MFXT=0/1 forces it) replaces the spatial MetalFX of the 3D pass. It takes the game's 3D picture and depth directly, with these velocities, and needs a camera that moves by a fraction of a pixel each frame: the game's own
 // Halton(2,3) mode (32 steps), which the Switch build never selects and the rewriter's KJITTER slot does (patch_nso.py SWITCHES, the csel rows). The offset of this frame
 // comes out of the jittered projection, so the velocities can leave it out: MetalFX wants the motion of the surface, not of the sampling. SMAA and FXAA are off with it
 // (hle_oe.c aa_tick): jittered frames are what it antialiases. Nothing here is built on the frame thread: the libraries, pipelines and the scaler (0.7 s the first time)
@@ -313,22 +312,24 @@ static int mv_resolve(id<MTLTexture> src) {
 
 static struct { __strong id<MTL4FXTemporalScaler> s; __strong id<MTLTexture> out; __strong id<MTLRenderPipelineState> wb; NSUInteger aw, ah, ow, oh; MTLPixelFormat cf, df; int bad, reset, building, seen, still; float min_scale;
                 __strong id<MTL4FXTemporalScaler> ns; __strong id<MTLTexture> nout; __strong id<MTLRenderPipelineState> nwb; NSUInteger naw, nah, now, noh; MTLPixelFormat ncf, ndf; float nmin; _Atomic int next_ok; } g_mt;
-enum { MT_SHARP_PCT = 50 };   // 0.5 reads as sharp as Native on the look set, without the crawl of the spatial scaler's
 // The write-back of the temporal scaler's picture: as the spatial path's (rgb x the game's mask), plus a contrast-adaptive sharpen. The scaler's picture is clean but
 // soft, and it has no sharpening of its own: each pixel is pushed away from its four neighbours by an amount that shrinks where the local contrast is already high
-static id<MTLRenderPipelineState> mt_wb_build(MTLPixelFormat fmt) {   // background queue
-    static id<MTLLibrary> lib; NSError *e = nil;
-    if (!lib) { NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n"
+// How hard goes by the enlargement, as much as it reads about as sharp as Native with SMAA does (2026-11-04, town, fine detail against Native's 0.081: 0.079 at 75% with 6.5; at 99%
+// 0.092 with 6.5, 0.072 with 9, so 8), without the crawl of the spatial scaler's
+static double mt_sharp_div(double enlarge) { double t = (enlarge - 1) / 0.33; t = t < 0 ? 0 : t > 1 ? 1 : t; return 8.0 + (6.5 - 8.0) * t; }
+static id<MTLRenderPipelineState> mt_wb_build(MTLPixelFormat fmt, double enlarge) {   // background queue
+    NSError *e = nil;
+    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n"
         "struct V { float4 p [[position]]; float2 uv; };\n"
         "vertex V vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); V o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); o.uv = uv; return o; }\n"
         "fragment float4 fs(V in [[stage_in]], texture2d<float> c [[texture(0)]], texture2d<float> m [[texture(1)]], sampler sl [[sampler(0)]], sampler sn [[sampler(1)]]) {\n"
         "  int2 z = int2(c.get_width() - 1, c.get_height() - 1), q = clamp(int2(in.uv * float2(z + 1)), int2(0), z);\n"
         "  float3 e = c.read(uint2(q)).rgb, a = c.read(uint2(clamp(q + int2(0, -1), int2(0), z))).rgb, b = c.read(uint2(clamp(q + int2(0, 1), int2(0), z))).rgb, l = c.read(uint2(clamp(q + int2(-1, 0), int2(0), z))).rgb, r = c.read(uint2(clamp(q + int2(1, 0), int2(0), z))).rgb;\n"
         "  float3 mn = min(e, min(a, min(b, min(l, r)))), mx = max(e, max(a, max(b, max(l, r))));\n"
-        "  float3 w = -sqrt(saturate(min(mn, 1.0 - mx) / max(mx, 1e-4))) / mix(8.0, 5.0, %f);\n"
-        "  return float4(max((e + w * (a + b + l + r)) / (1.0 + 4.0 * w), 0.0) * m.sample(sn, in.uv).r, 1.0); }\n", MT_SHARP_PCT / 100.0];
-        lib = [g_dev newLibraryWithSource:src options:nil error:&e];
-        if (!lib) { MLOG("【红】temporal scaler: the write-back did not compile (%s)", e.localizedDescription.UTF8String); return nil; } }
+        "  float3 w = -sqrt(saturate(min(mn, 1.0 - mx) / max(mx, 1e-4))) / %f;\n"
+        "  return float4(max((e + w * (a + b + l + r)) / (1.0 + 4.0 * w), 0.0) * m.sample(sn, in.uv).r, 1.0); }\n", mt_sharp_div(enlarge)];
+    id<MTLLibrary> lib = [g_dev newLibraryWithSource:src options:nil error:&e];
+    if (!lib) { MLOG("【红】temporal scaler: the write-back did not compile (%s)", e.localizedDescription.UTF8String); return nil; }
     MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
     pd.vertexFunction = [lib newFunctionWithName:@"vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"fs"]; pd.colorAttachments[0].pixelFormat = fmt;
     id<MTLRenderPipelineState> r = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
@@ -374,7 +375,7 @@ static int mt_ready(id<MTLTexture> src, MTLPixelFormat dfmt, NSUInteger ow, NSUI
         id<MTL4FXTemporalScaler> s = (id<MTL4FXTemporalScaler>)[d newTemporalScalerWithDevice:g_dev compiler:comp];
         id<MTLTexture> out = nil; id<MTLRenderPipelineState> wb = nil;
         if (s) { MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:ow height:oh mipmapped:NO];
-                 td.storageMode = MTLStorageModePrivate; td.usage = s.outputTextureUsage | MTLTextureUsageShaderRead; out = [g_dev newTextureWithDescriptor:td]; wb = mt_wb_build(dfmt); }
+                 td.storageMode = MTLStorageModePrivate; td.usage = s.outputTextureUsage | MTLTextureUsageShaderRead; out = [g_dev newTextureWithDescriptor:td]; wb = mt_wb_build(dfmt, (double)ow / aw); }
         if (!s || !out || !wb) { MLOG("【红】temporal scaler: could not be created (%lux%lu format %lu -> %lux%lu); the spatial scaler draws for the session", (unsigned long)aw, (unsigned long)ah, (unsigned long)cf, (unsigned long)ow, (unsigned long)oh); g_mt.bad = 1; return; }
         s.fence = fence; s.depthReversed = YES;
         g_mt.ns = s; g_mt.nout = out; g_mt.nwb = wb; g_mt.naw = aw; g_mt.nah = ah; g_mt.now = ow; g_mt.noh = oh; g_mt.ncf = cf; g_mt.ndf = dfmt; g_mt.nmin = lo;

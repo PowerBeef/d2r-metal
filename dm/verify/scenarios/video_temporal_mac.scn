@@ -1,6 +1,6 @@
-# Upscaling = MetalFX Temporal through the Video tab, live (dm_video.c dm_video_temporal_active, nvn_mv.inc): the controller sets 3D Resolution to 75% and Upscaling to
-# its third option, Apply starts the temporal scaler from the next frame with no restart (the game's own anti-aliasing off, its Halton jitter on: the log lines prove
-# each), and stepping back to MetalFX puts it down again. Starts from this Mac's Recommended, as a player does; rows: mode, res, color, preset, s3d, upscale
+# Upscaling = Temporal through the Video tab, live (dm_video.c dm_video_temporal_active, nvn_mv.inc). From this Mac's Recommended the controller picks the third Upscaling option
+# and Apply starts the temporal scaler from the next frame with no restart (the game's own anti-aliasing off, its Halton jitter on: the log lines prove each), at 100% with the
+# 3D target at 99%. 3D Resolution 75% then rebuilds it for the new size, and MetalFX puts it down again. Rows: mode, res, color, preset, s3d, upscale
 name video_temporal_mac
 requires mac-app
 save warlock
@@ -18,17 +18,22 @@ press DOWN
 press DOWN
 press DOWN
 press DOWN
-press RIGHT
-sleep 0.5
-press RIGHT
-sleep 0.5
 press DOWN
 press RIGHT
 sleep 1
 screenshot video_temporal.png
 msg OptionsPanelMessage:AcceptChanges
-sleep 6
-screenshot temporal_on.png
+sleep 5
+screenshot temporal_full.png
+press UP
+press RIGHT
+sleep 0.5
+press RIGHT
+sleep 1
+msg OptionsPanelMessage:AcceptChanges
+sleep 5
+screenshot temporal_75.png
+press DOWN
 press LEFT
 sleep 1
 msg OptionsPanelMessage:AcceptChanges
@@ -36,8 +41,10 @@ sleep 3
 quit
 check event video_row row=upscale value=2
 check event picture how=apply up=2
+check event scale3d pct=99
+check event scale3d pct=75
 check log_has "temporal scaler: wanted"
-check log_has "temporal scaler: .* built in"
+check log_has "temporal scaler: .* built in" min=2
 check log_has "temporal scaler: camera jitter seen"
 check log_has "temporal scaler: no longer wanted"
 check event picture how=apply up=1

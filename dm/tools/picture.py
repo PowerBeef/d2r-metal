@@ -58,7 +58,8 @@ REC = {
     'DM_MFXT': '0',
 }
 REC75 = dict(REC, DM_3D_SCALE='0.75')
-REC75T = dict(REC75, DM_MFXT='1', DM_AA_MODE='0')   # REC75 with the temporal scaler in place of the spatial one; the game's own AA is off with it (hle_oe.c aa_tick)
+RECT = dict(REC, DM_MFXT='1', DM_AA_MODE='0')   # REC with the temporal scaler: the 3D target at 99%, the game's own AA off with it (hle_oe.c scale3d_tick, aa_tick)
+REC75T = dict(REC75, DM_MFXT='1', DM_AA_MODE='0')   # REC75 with the temporal scaler in place of the spatial one
 PHONE = {
     'DM_GAME_RES': '2622x1206',
     'DM_3D_SCALE': '0.75',
@@ -74,7 +75,7 @@ PHONE = {
 }
 MAC_APP_REC = {'DM_TEST_VIDEO_FIRSTBOOT': '1'}
 FULLSCREEN = {'DM_TEST_FULLSCREEN_AT': '1'}
-SETS = {'rec': REC, 'rec75': REC75, 'rec75t': REC75T, 'phone': PHONE}
+SETS = {'rec': REC, 'rect': RECT, 'rec75': REC75, 'rec75t': REC75T, 'phone': PHONE}
 KEYS = tuple(REC)   # every set pins every one of these
 
 

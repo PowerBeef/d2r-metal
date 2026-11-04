@@ -281,7 +281,10 @@ SETS: dict[str, dict[str, Any]] = {
     'rec': dict(env=picture.REC, pages=LB_ALL + ['inventory'], judge='flip', dir='rec', log_allow=(),
                 controls={'fxaa': {'DM_AA_MODE': '1'}, 'aniso_off': {'DM_NVN_ANISO': '0'}, 'envsh_off': {'DM_ENV_SHADOWS': '0'}, 'shadow_2100': {'DM_SHADOW_SIZE': '2100'}}),
     'rec75': dict(env=picture.REC75, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
-    'rec75t': dict(env=picture.REC75T, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75t', log_allow=(), controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
+    # The temporal sets' camera jitters, so each shot lands on another offset and about half the frame differs by a level or two (45-53% against the usual limit of 45%,
+    # measured 2026-11-04), while repeat FLIP stays small (0.008-0.010 against REPEAT_MAX); their limit on moving pixels is therefore looser
+    'rect': dict(env=picture.RECT, pages=['lb_town_a1', 'lb_wild_a1', 'lb_crypt_a1'], judge='flip', dir='rect', log_allow=(), unstable_max=0.65, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
+    'rec75t': dict(env=picture.REC75T, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75t', log_allow=(), unstable_max=0.65, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
     'bright': dict(env=dict(picture.REC, DM_BRIGHT_K='4'), pages=['lb_crypt_a1'], judge='flip', dir='bright', log_allow=(), controls={'bright_off': {'DM_BRIGHT_K': '1'}}),
     'phone': dict(env=picture.PHONE, pages=['lb_town_a1', 'lb_crypt_a1'], judge='flip', dir='phone', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
 }
@@ -452,7 +455,7 @@ def flip_record(s, names, reason, host, controls=True, allow_blind=None):
                 noise = {r: dict(mean=max(x[r]['mean'] for x in ns), hot=max(x[r]['hot'] for x in ns), detail=max((x[r]['detail'] for x in ns), key=lambda v: abs(v - 1)))
                          for r in ns[0]}
                 worst = max(float(r['mean']) for r in rep.values())
-                if share > UNSTABLE_MAX or worst > REPEAT_MAX:
+                if share > st.get('unstable_max', UNSTABLE_MAX) or worst > REPEAT_MAX:
                     why = f'page moves between its shots ({share:.1%} moving, repeat FLIP mean {worst:.4f}): not stable enough for a FLIP baseline'
         if why: bad += 1; print(f'GOLDEN-REC {s}/{p} RED {why}'); continue
         dst = os.path.join(d, p + '.png'); shutil.copy(shots[0], dst + '.new.png'); os.replace(dst + '.new.png', dst)

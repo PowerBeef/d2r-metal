@@ -9,7 +9,7 @@
 //          launch. Phones: the 3D resolution, stored 0..4 = 75 / 85 / 100 / 67 / 50 % (the first three are the oldest values) and listed 50 .. 100 %
 //          through car_of / val_of, live
 //   up     0 Standard / 1 MetalFX / 2 MetalFX Temporal: the present's enlargement on the Mac, and the game's 3D upscale pass (nvn_mtl.m mfx3d_draw), from the next frame.
-//          2 is the temporal scaler in that pass, with a 3D Resolution below 100% (nvn_mv.inc); the present's enlargement stays the spatial scaler
+//          2 is the temporal scaler in that pass (nvn_mv.inc), which also takes over from Anti-Aliasing; the present's enlargement stays the spatial scaler
 //   aa     0 FXAA (the original) / 1 SMAA: the renderer's mode byte, written by hle_oe.c aa_tick (dm_video_aa_mode)
 //   aniso  0 the game's own / 4x / 8x / 16x: the sampler override, latched per submission by nvn_mtl.m aniso_latch
 //   color  0 Vivid (the present layer untagged) / 1 Accurate (tagged sRGB, front_video_color), at once
@@ -217,13 +217,12 @@ int dm_video_env_shadows(void) {   // every guest thread at its start (thread.c,
 }
 static const int k_shq_px[3] = { 2100, 3072, 4096 };   // Standard = the Switch's level-1 edge; High / Ultra = the game's own edges at levels 2 and 3
 static _Atomic int g_shq_launch = -1;   // the shadow map edge as latched at launch (what the game's threads got); -1 = not latched yet
-// Upscaling = MetalFX Temporal takes effect while the game's 3D upscale pass exists, that is with a 3D Resolution below 100%; DM_MFXT=0/1 forces it (the 3D scale still decides).
-// Read by the replay thread each submission (nvn_mv.inc), by the threads that record commands (the KJITTER slot: thread.c dm_jitter_refresh) and by aa_tick
-__attribute__((weak)) float dm_3d_scale_cfg(void) { return dm_video_scale3d(); }   // hle_oe.c gives the strong one (DM_3D_SCALE counts)
+// Upscaling = MetalFX Temporal, at every 3D Resolution (at 100% the 3D target is 99% of the output: hle_oe.c scale3d_tick, so that the game's upscale pass exists for it to replace);
+// DM_MFXT=0/1 forces it. Read by the replay thread each submission (nvn_mv.inc), by the threads that record commands (the KJITTER slot: thread.c dm_jitter_refresh), by aa_tick and scale3d_tick
 __attribute__((weak)) int mtl_mfx_temporal_supported(void) { return 0; }
 int dm_video_temporal_active(void) {
     static int env = -2; if (env == -2) { const char *e = getenv("DM_MFXT"); env = e && *e ? atoi(e) > 0 : -1; }
-    if (!env || dm_3d_scale_cfg() >= 1) return 0;
+    if (!env) return 0;
     return env > 0 || (dm_video_get("up") == 2 && mtl_mfx_temporal_supported());
 }
 int dm_video_jitter_mode(void) { return dm_video_temporal_active() ? 3 : 0; }   // 3 = the game's Halton mode (patch_nso.py SWITCHES, the csel rows)
