@@ -27,7 +27,7 @@ You need your own copy of the **Nintendo Switch version** of the game; D2R Metal
 
 D2R Metal draws the game for the screen in front of you. The first time it starts on a Mac, it looks at the Mac's graphics chip and screen and turns on as much as it estimates the Mac can keep at a steady 60 fps. iPhone and iPad start from one set of settings, the same on every device, tested on an iPhone 17 Pro. Those settings are listed as **Recommended** in the game's Options, and you can change any of them ([Picture settings](#picture-settings)).
 
-- **Sharp at your screen's resolution.** The interface and text are drawn at your display's own resolution, up to 4K on a Mac, and never stretched. The 3D world is drawn as sharp as your device can hold at 60 fps: at full resolution on the newest Macs.
+- **Sharp at your screen's resolution.** On a Mac the interface and text are drawn at the resolution macOS draws your display at, up to 4K. A larger screen (5K or 6K, or a 4K one set to look like 2560 × 1440) gets the 4K picture enlarged, and a Mac too light for its screen's full resolution starts with a smaller picture enlarged by MetalFX. On iPhone and iPad they are drawn at the screen's full resolution. The 3D world is drawn at full resolution on the fastest Macs, and lower, enlarged by MetalFX, on lighter Macs, iPhone and iPad.
 - **MetalFX.** When the 3D world is drawn below your screen's resolution, Apple's upscaler enlarges it with far more detail than a plain stretch.
 - **Clean edges and crisp ground.** The game's PC anti-aliasing (SMAA) and 16x texture filtering keep edges smooth and the ground sharp into the distance.
 - **Shadows everywhere.** On the Mac, trees, walls, fences and buildings cast their shadows as on PC, and finer shadow maps keep the shading on characters detailed.
@@ -124,9 +124,9 @@ For now the iPhone and iPad app is built from source with Xcode ([Getting starte
 | At a glance | Mac | iPhone / iPad |
 |---|---|---|
 | Controls | Mouse and keyboard as on PC, trackpad, controller | Touch, controller |
-| Picture | Your screen's own resolution, up to 4K | Your screen's full resolution |
+| Picture | Up to your screen's own resolution, at most 4K | Your screen's full resolution |
 | 3D world | Up to full resolution, enlarged by MetalFX below it | 50–100%, enlarged by MetalFX |
-| Environment shadows | On, where the Mac can hold 60 fps with them | Available, off by default |
+| Environment shadows | On where the Mac is expected to hold 60 fps with them | Available, off by default |
 | Saves | On every quit and when minimized | When sent to the background |
 | Install | D2R Metal Launcher | Build from source with Xcode |
 | System | macOS 27 or later | iOS / iPadOS 27 or later |
@@ -182,7 +182,7 @@ D2R Metal draws with Metal 4, which needs an **M1 or A14 chip** or later, and ru
 | Device | Plays? | What you need |
 |---|---|---|
 | Mac, M1 or later | Yes | macOS 27 or later |
-| MacBook Neo (A18 Pro) | Should; not tried on one yet | macOS 27 or later |
+| MacBook Neo (A18 Pro) | Should; not tried on one yet (starts with lighter shadows) | macOS 27 or later |
 | iPhone / iPad, A17 Pro or M chip | Yes | iOS / iPadOS 27 or later |
 | iPhone / iPad, A14–A16 | Yes | iOS / iPadOS 27 or later, and a [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
 | A13 and older, Intel Macs | No | — |
@@ -195,7 +195,7 @@ Every setting lives in the game's own Options, on five tabs: **Video**, **Audio*
 
 **Recommended** is the set of picture settings D2R Metal picks for your device the first time it starts:
 
-- **On a Mac,** it looks at the chip (its generation and how many graphics cores it has) and at your screen, and turns on as much as the Mac can hold at 60 fps. The newest Macs and recent Pro, Max and Ultra chips get the 3D world at full resolution with every effect on. An M1, M2 or M3 MacBook Air, or a MacBook Neo, gets the 3D world at 75%, and its 3D resolution dips for a moment when the action gets busy instead of stuttering.
+- **On a Mac,** it looks at the graphics chip (its generation and how many graphics cores it has) and at your screen, and turns on as much as it estimates the Mac can hold at 60 fps (or at the faster rate of a 144 Hz screen). Fast Macs get the 3D world at full resolution with every effect on. Lighter Macs, such as most MacBook Airs, get the 3D world at a lower resolution enlarged by MetalFX, often without environment shadows and with Standard shadows, and their 3D resolution dips for a moment when the action gets busy instead of stuttering. It works this out again when you change screens. The estimate rests on public benchmarks of each chip; [docs/MAC.md](docs/MAC.md#what-recommended-picks) has examples.
 - **On iPhone and iPad,** the same on every device: the 3D world at 75% enlarged by MetalFX, with SMAA, 16x filtering and true colors, and Frame Drops set to lower the 3D resolution for a moment while frames drop. They were tested on an iPhone 17 Pro; on an older iPhone or iPad, lower 3D Resolution or set Anti-Aliasing to FXAA if the game drops frames.
 
 You can change any setting; **Graphic Presets** also offers *Performance* (lighter) and *Quality* (on a Mac everything on; on iPhone and iPad the 3D world at 100% with MetalFX, SMAA and 16x filtering, the shadow rows left as they are), and **Default** puts the tab you are on back to Recommended.
@@ -203,7 +203,7 @@ You can change any setting; **Graphic Presets** also offers *Performance* (light
 - **Video**:
   - On the Mac: Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets, 3D Resolution (100 down to 50%) and Upscaling (Standard / MetalFX).
   - On iPhone and iPad: 3D Resolution (50 to 100%), Color, Graphic Presets and Upscaling.
-  - On both: **Anti-Aliasing** (FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Environment Shadows** and **Shadow Quality** (Standard up to Ultra; both take effect at the next start), **Frame Rate** (60 fps, or 30 to save power) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
+  - On both: **Anti-Aliasing** (FXAA or SMAA), **Anisotropic Filtering** (Original up to 16x), **Environment Shadows** and **Shadow Quality** (Standard up to Ultra; both take effect at the next start), **Frame Rate** (60 fps, or 30 to save power; 72 or 36 on a 144 Hz Mac screen) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
 - **Apply, Discard and Default** work like the game's own option pages.
 
