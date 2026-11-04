@@ -1,7 +1,10 @@
 // Picture geometry shared by the present (dm/gfx/nvn/nvn_mtl.m present_encode, present_encode_m4) and the front ends: where a picture of the game
-// goes in a drawable, and which part of it is shown. Pure C11, header-only, shared by the Mac and iOS builds; unit-tested by t_geom.
+// goes in a drawable, and which part of it is shown; for the iOS front end (dm/ios/Sources/front_ios.m) also which picture its game view is
+// placed by, where the game view (the UI band) sits inside it, and the render size a window gets. Pure C11, header-only, shared by the Mac and
+// iOS builds; unit-tested by t_geom.
 #pragma once
 #include <math.h>
+#include <stdint.h>
 
 #define DM_GEOM_NEAR_PX 16   // a picture up to this many pixels larger than the drawable each way is shown 1:1, centred
 enum { DM_GEOM_ONE, DM_GEOM_FILL, DM_GEOM_FIT };
@@ -34,4 +37,36 @@ static inline void dm_geom_fit(double dw, double dh, double pw, double ph, doubl
     if (dw <= 0 || dh <= 0 || pw < 1 || ph < 1) return;
     dm_geom_pfit f = dm_geom_present(dw, dh, 0, 0, (unsigned)pw, (unsigned)ph);
     out[0] = f.x; out[1] = f.y; out[2] = f.w; out[3] = f.h;
+}
+// The picture the iOS game view is placed by (out = width, height): the real picture rw x rh once the game has written its size, which is when its
+// UI band is shorter than it (in a run, true full screen) or it is at least 16:9 (out of a run the game renders 16:9 of the width, or wider);
+// otherwise 16:9 (the game's boot default of 800x600, before the game writes its size). Returns 1 when it used the real picture
+static inline int dm_geom_pic(int rw, int rh, int ui_h, double out[2]) {
+    if (rw > 0 && rh > 0 && ((ui_h > 0 && ui_h < rh) || (int64_t)rw * 9 >= (int64_t)rh * 16)) { out[0] = rw; out[1] = rh; return 1; }
+    out[0] = 16; out[1] = 9; return 0;
+}
+// The game view inside a picture rect p (x, y, w, h): the UI band at ui_y, ui_h of the real picture's rh rows, in points (k = scale; edges
+// rounded to whole pixels) or in pixels (k = 1). A band that is the whole picture (or no band) gives p unchanged
+static inline void dm_geom_ui_view(const double p[4], int rh, int ui_y, int ui_h, double k, double out[4]) {
+    for (int i = 0; i < 4; i++) out[i] = p[i];
+    if (rh > 0 && ui_h > 0 && ui_h < rh && k > 0) { out[1] = p[1] + round(p[3] * ui_y / rh * k) / k; out[3] = round(p[3] * ui_h / rh * k) / k; }
+}
+// The render size for a window of vw x vh points at scale k (out = width, height in pixels), scaled down into the cap (capw x caph, the size the game
+// built its window at; it only takes sizes within it) and truncated to even sizes.
+//   min_aspect <= 0 (phones): the long side is the width, as a landscape phone (or a foldable's) window always is
+//   min_aspect > 0 (iPad: 4/3): never narrower than that aspect; a narrower window keeps its width and gets a lower picture, shown with bars above
+//   and below (4:3 is the narrowest picture the game has run at). Returns 1 when that rule lowered the height
+static inline int dm_geom_window_px(double vw, double vh, double k, double capw, double caph, double min_aspect, uint32_t out[2]) {
+    double w = round(vw * k), h = round(vh * k); int clamp = 0;
+    out[0] = out[1] = 0;
+    if (w <= 0 || h <= 0 || capw <= 0 || caph <= 0) return 0;
+    if (min_aspect <= 0) { double a = fmax(w, h); h = fmin(w, h); w = a; }
+    else if (w < h * min_aspect - 0.5) { h = round(w / min_aspect); clamp = 1; }
+    double f = fmin(1, fmin(capw / w, caph / h));
+    out[0] = (uint32_t)(w * f) & ~1u; out[1] = (uint32_t)(h * f) & ~1u;
+    return clamp;
+}
+// Two rects (x, y, w, h) whose left, top, right and bottom edges each agree within tol
+static inline int dm_geom_same(const double a[4], const double b[4], double tol) {
+    return fabs(a[0] - b[0]) <= tol && fabs(a[1] - b[1]) <= tol && fabs(a[0] + a[2] - b[0] - b[2]) <= tol && fabs(a[1] + a[3] - b[1] - b[3]) <= tol;
 }
