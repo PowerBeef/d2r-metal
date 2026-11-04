@@ -54,6 +54,48 @@ static int win_mini(void) { return g_win.miniaturized || g_mini_emul; }
 // The screen the picture is sized for: the main screen (the one with the keyboard focus) in the product; a background run pins the first screen (the one
 // with the menu bar), so neither Recommended nor the emulated full-screen frame follows the user around a multi-display desk
 static NSScreen *dm_screen(void) { return bgrun() ? NSScreen.screens.firstObject : NSScreen.mainScreen; }
+// DM_TEST_SCREEN_PX=<w>x<h>[+<notch>] (tests): the main screen's backing store counts as w x h pixels, so another Mac's screen (a 13-inch Air's 2940x1912,
+// a 4K display) can be tried on this one; <notch> = the pixel rows the camera housing takes at the top, which full-screen content leaves out. Read once;
+// returns 0 when unset, and logs a red line and returns 0 when malformed. It stands in for the launch screen (scr_launch): the picture's shape, Native
+// and Recommended follow it, while the window, real or emulated full screen, keeps the real screen (dm_screen), so the present fits that picture into
+// this screen's drawable
+static int test_screen_px(unsigned *w, unsigned *h, unsigned *notch) {
+    static unsigned tw, th, tn; static int ok; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        const char *e = getenv("DM_TEST_SCREEN_PX"); if (!e || !*e) return;
+        unsigned a = 0, b = 0, c = 0; int n = sscanf(e, "%ux%u+%u", &a, &b, &c);
+        if (n >= 2 && a && b > (n == 3 ? c : 0)) { tw = a; th = b; tn = n == 3 ? c : 0; ok = 1; LOG("DM_TEST_SCREEN_PX: the main screen counts as %ux%u px, %u px tall below the notch", tw, th, th - tn); }
+        else LOG("【红】DM_TEST_SCREEN_PX=%s is not <w>x<h>[+<notch>] in pixels: ignored", e);
+    });
+    if (ok) { if (w) *w = tw; if (h) *h = th; if (notch) *notch = tn; }
+    return ok;
+}
+// A screen in pixels: the width, the full-screen content height below the notch (the safe area's top inset left out) and the whole height
+typedef struct { double w, hc, h; } scr_px;
+static scr_px scr_real(NSScreen *sc) {
+    if (!sc) return (scr_px){ 1600, 900, 900 };
+    CGFloat k = sc.backingScaleFactor > 0 ? sc.backingScaleFactor : 2;
+    return (scr_px){ sc.frame.size.width * k, (sc.frame.size.height - sc.safeAreaInsets.top) * k, sc.frame.size.height * k };
+}
+// The launch screen (dm_screen: the main screen, or the pinned first screen in a background run), read at the first call and kept for the whole launch:
+// the picture's shape (full_setup), Native (native_w) and Recommended (mac_rec) all come from it, since the game resolution is set once. NSScreen.mainScreen
+// follows the key window, so reading it again later could drift. front_run makes the first call before it builds the window (mac_rec may come earlier, on
+// the same main thread, at launch). Test switches: DM_TEST_SCREEN_PX gives its pixels; DM_TEST_SCREEN_ASPECT=<w>x<h> keeps the real width and gives
+// the screen that shape (scenario.py --aspect 16x10)
+static int g_scr_test;   // 1 = a test switch stands in for the launch screen
+static scr_px scr_launch(void) {
+    static scr_px s; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        unsigned w, h, n, tw, th; const char *e = getenv("DM_TEST_SCREEN_ASPECT");
+        if (test_screen_px(&w, &h, &n)) { s = (scr_px){ w, h - n, h }; g_scr_test = 1; return; }
+        s = scr_real(dm_screen());
+        if (e && sscanf(e, "%ux%u", &tw, &th) == 2 && tw && th) { s.hc = s.h = s.w * th / tw; g_scr_test = 1; }
+    });
+    return s;
+}
+// The launch screen's backing-store width and whole height in pixels (Recommended's inputs, mac_rec)
+static double main_px(void) { return scr_launch().w; }
+static double main_px_h(void) { return scr_launch().h; }
 // 真全屏（App 形态，屏幕比 16:9 窄——16:10 的 MacBook，「不能全屏」：全屏后上下各 56 点黑边）：照 iPad 那套（front_ios.m、dm_uiscreen.c）——
 // 启动时按屏幕比例（全屏时的内容区：屏幕扣掉刘海安全区）定游戏分辨率，局内 3D 铺满、界面按 16:9 贴底（开大面板居中），前端各页与读取画面游戏自己按 16:9 出、上下留边。
 // 窗口锁成同一比例，窗口态与全屏态都铺满。屏幕不比 16:9 窄（外接 16:9 / 更宽的屏）：照旧全程 16:9。比例在启动时按主屏定，之后挪到别的屏不重算（游戏分辨率只在启动时定）。
@@ -66,8 +108,7 @@ static double g_aspect = 16.0 / 9;   // 游戏画面比例（宽 ÷ 高） | asp
 static int g_full;                    // 1 = 真全屏已开 | 1 = true full screen is on
 static void full_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
-    NSScreen *sc = dm_screen(); double w = sc.frame.size.width, h = sc.frame.size.height - sc.safeAreaInsets.top; const char *e = getenv("DM_TEST_SCREEN_ASPECT"); unsigned tw, th;
-    if (e && sscanf(e, "%ux%u", &tw, &th) == 2 && tw && th) { w = tw; h = th; }
+    scr_px sp = scr_launch(); double w = sp.w, h = sp.hc;
     dm_scr_pic p = dm_scr_picture(w, h);
     if (!p.full) { LOG("画面：主屏 %.0fx%.0f 不比 16:9 窄 → 全程 16:9", w, h); return; }
     g_aspect = p.aspect; g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM);
@@ -83,30 +124,18 @@ static const int k_render_w[3] = { 1600, 1920, 2560 };
 static int g_render_w = 1600, g_render_tier = -1;   // 这次启动用的那一档（-1 = 没按设置定） | the tier used for this launch (-1 = not set from the settings)
 int dm_video_get(const char *key);
 void dm_video_fullscreen_note(int on);
-// DM_TEST_SCREEN_PX=<w>x<h>[+<notch>] (tests): the main screen's backing store counts as w x h pixels, so another Mac's screen (a 13-inch Air's 2940x1912,
-// a 4K display) can be tried on this one; <notch> = the pixel rows the camera housing takes at the top, which full-screen content leaves out. Read once;
-// returns 0 when unset, and logs a red line and returns 0 when malformed. It changes only the Recommended maths: the window, real or emulated full
-// screen, keeps the real screen (dm_screen)
-static int test_screen_px(unsigned *w, unsigned *h, unsigned *notch) {
-    static unsigned tw, th, tn; static int ok; static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        const char *e = getenv("DM_TEST_SCREEN_PX"); if (!e || !*e) return;
-        unsigned a = 0, b = 0, c = 0; int n = sscanf(e, "%ux%u+%u", &a, &b, &c);
-        if (n >= 2 && a && b > (n == 3 ? c : 0)) { tw = a; th = b; tn = n == 3 ? c : 0; ok = 1; LOG("DM_TEST_SCREEN_PX: the main screen counts as %ux%u px, %u px tall below the notch", tw, th, th - tn); }
-        else LOG("【红】DM_TEST_SCREEN_PX=%s is not <w>x<h>[+<notch>] in pixels: ignored", e);
-    });
-    if (ok) { if (w) *w = tw; if (h) *h = th; if (notch) *notch = tn; }
-    return ok;
-}
-// The main screen's size in pixels (backing store, notch included; the pinned screen in a background run, dm_screen); DM_TEST_SCREEN_PX stands in for it
-static double main_px(void) { unsigned w; if (test_screen_px(&w, NULL, NULL)) return w; NSScreen *sc = dm_screen(); return sc ? sc.frame.size.width * sc.backingScaleFactor : 1600; }
-static double main_px_h(void) { unsigned h; if (test_screen_px(NULL, &h, NULL)) return h; NSScreen *sc = dm_screen(); return sc ? sc.frame.size.height * sc.backingScaleFactor : 900; }
+static void panel_px(int *w, int *h);
 static int native_w(void) { return dm_scr_native_w(main_px(), main_px_h(), 16.0 / 9); }
 static void render_setup(void) {
     if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
     int t = dm_video_get("res"); if (t < 0 || t > 3) t = 0;
     g_render_tier = t; g_render_w = t == 3 ? native_w() : k_render_w[t];
-    LOG("画面：出图宽 %d（选项页「分辨率」第 %d 档） | render width %d (Resolution tier %d)", g_render_w, t, g_render_w, t);
+    // The backing store is what Native renders; in a scaled display mode (a MacBook Air at its default "looks like") macOS resamples it to a panel
+    // with fewer pixels. Both are logged so a shared log shows which mode the player runs (COL-3: whether Native should follow the panel waits for a
+    // display in a scaled mode)
+    scr_px sp = scr_launch(); int pw, ph; panel_px(&pw, &ph);
+    LOG("picture: main screen %.0fx%.0f px (backing store; %.0f below the notch)%s, panel %dx%d px%s; render width %d (Resolution tier %d)", sp.w, sp.h, sp.hc,
+        g_scr_test ? " (test screen)" : "", pw, ph, !g_scr_test && pw > 0 && fabs(pw - sp.w) > 1 ? " (scaled display mode: macOS resamples the backing store to the panel)" : "", g_render_w, t);
 }
 int front_video_running_res(void) { return g_render_tier; }
 int mtl_mfx_supported(void);   // nvn_mtl.m: the Metal 4 spatial scaler both renderer paths build
@@ -739,7 +768,7 @@ void front_run(void (*guest)(void)) {
             ad[@"NSTreatUnknownArgumentsAsOpen"] = @"NO"; [ud setVolatileDomain:ad forName:NSArgumentDomain]; }
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];   // a background run stays Regular too: accessory / prohibited apps with nothing visible get the Background role (timers ~100 ms late)
-        full_setup(); render_setup();
+        (void)scr_launch(); full_setup(); render_setup();   // the launch screen is read before the window exists (scr_launch)
         NSRect r = NSMakeRect(0, 0, 1280, floor(1280 / g_aspect));
         NSWindowStyleMask sm = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
         if (bg) { g_emu_win = r.size = emu_window_size(r, sm); sm = NSWindowStyleMaskBorderless; }   // background: borderless (never key), at the size AppKit gives the titled window
