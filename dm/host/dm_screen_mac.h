@@ -29,3 +29,7 @@ void dm_scr_fit_window(double aspect, double max_w, double max_h, double *w, dou
 // Whether a screen of w x h pixels (h below the notch) still suits the picture the game was launched with (Resolution tier, render width, true full
 // screen, aspect): the same shape, and for Native the same width. A fixed tier only needs the same shape (the present scales it)
 int dm_scr_matches(int tier, int render_w, int full, double aspect, double w, double h);
+// The PC pointer's height in points (front_mac.m pc_hand) for a picture of pic_w x pic_h points on screen: a share of the interface band's height
+// (the gauntlet about one inventory cell tall), so on a 16:10 screen it follows the 16:9 band, not the whole picture; 24-160 points
+#define DM_SCR_CURSOR_SHARE 0.06
+int dm_scr_cursor_pt(double pic_w, double pic_h);

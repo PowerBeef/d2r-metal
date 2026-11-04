@@ -623,9 +623,9 @@ static void kbm_event_point(NSEvent *e) {   // PC mode: a right / other button e
 }
 // PC mode pointer: macOS draws the game's own PC cursor, the gauntlet (frame 0 of cursor/ohand.sprite, which gen_romfs_overlay.py writes beside the
 // overlay as pc_cursor.png), over the game window while the PC interface set is on screen; the arrow otherwise, and when the overlay has no picture.
-// Its size is a share of the picture's height on screen (the gauntlet about one inventory cell tall), so it keeps its place in the picture at any render resolution,
-// window size or display scaling; it is redrawn at the screen's pixel density, so it stays smooth on a Retina screen
-#define PC_CURSOR_SHARE 0.06
+// Its size is a share of the interface band's height on screen (dm_scr_cursor_pt: the gauntlet about one inventory cell tall; on a 16:10 screen the 16:9
+// band, not the whole picture), so it keeps its place in the interface at any render resolution, window size or display scaling; it is redrawn at
+// the screen's pixel density, so it stays smooth on a Retina screen
 static NSCursor *pc_hand(void) {
     static NSBitmapImageRep *rep; static NSPoint tip; static int tried; static NSCursor *cur; static CGFloat cur_h, cur_sc;
     if (!tried) { tried = 1; const char *ov = getenv("DM_ROMFS_OVERLAY");
@@ -635,7 +635,7 @@ static NSCursor *pc_hand(void) {
             for (NSInteger y = 0; y < rep.pixelsHigh; y++) for (NSInteger x = 0; x < rep.pixelsWide; x++) if (x + y < best && [rep colorAtX:x y:y].alphaComponent > .5) { best = x + y; tip = NSMakePoint(x, y); }
             LOG("PC cursor: the game's gauntlet, %ldx%ld px, tip %.0f,%.0f", (long)rep.pixelsWide, (long)rep.pixelsHigh, tip.x, tip.y); } }
     if (!rep) return nil;
-    CGFloat h = round(fmin(fmax(game_rect().size.height * PC_CURSOR_SHARE, 24), 160)), sc = backing_scale();   // points
+    NSRect gr = game_rect(); CGFloat h = dm_scr_cursor_pt(gr.size.width, gr.size.height), sc = backing_scale();   // points
     if (!cur || h != cur_h || sc != cur_sc) {
         CGFloat s = h / rep.pixelsHigh; NSSize pt = NSMakeSize(round(rep.pixelsWide * s), h);
         NSBitmapImageRep *r = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)(pt.width * sc) pixelsHigh:(NSInteger)(pt.height * sc) bitsPerSample:8

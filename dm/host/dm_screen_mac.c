@@ -35,3 +35,8 @@ int dm_scr_matches(int tier, int render_w, int full, double aspect, double w, do
     if (p.full != full || (full && fabs(p.aspect / aspect - 1) > 0.01)) return 0;
     return tier != 3 || dm_scr_native_w(w, h, p.aspect) == render_w;
 }
+
+int dm_scr_cursor_pt(double pic_w, double pic_h) {
+    double band = fmin(pic_h, pic_w * 9 / 16), h = round(band * DM_SCR_CURSOR_SHARE);
+    return h < 24 ? 24 : h > 160 ? 160 : (int)h;
+}

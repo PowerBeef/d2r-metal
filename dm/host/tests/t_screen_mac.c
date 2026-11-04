@@ -80,6 +80,10 @@ int main(void) {
     match(0, 1600, 1, 1.6, 3456, 2160, 1);
     match(3, 3840, 0, 16.0 / 9, 5120, 2880, 1);
     match(3, 2560, 0, 16.0 / 9, 3440, 1440, 1);
+    // the PC pointer: a share of the interface band's height (16:9 band), 24-160 pt
+    { static const double k[][3] = { { 1280, 720, 43 }, { 1152, 720, 39 }, { 1187, 667, 40 }, { 2560, 1440, 86 }, { 300, 200, 24 }, { 6000, 3375, 160 } };
+      for (unsigned i = 0; i < sizeof k / sizeof *k; i++) { int got = dm_scr_cursor_pt(k[i][0], k[i][1]);
+          CHECK(got == (int)k[i][2], "dm_scr_cursor_pt(%.0f, %.0f) = %d, expected %.0f", k[i][0], k[i][1], got, k[i][2]); } }
     // a rotated 5K: 2880 x 5120 used to render 2880 x 5120 (14.7 Mpx) against heap 0; now a 4:3 picture within the cap
     { dm_scr_pic p = dm_scr_picture(2880, 5120); int w = dm_scr_native_w(2880, 5120, p.aspect); uint64_t r = dm_scr_game_res(w, p.aspect, p.full, 1);
       CHECK(w == 2880 && (uint32_t)r == 2880 && (uint32_t)(r >> 32) == 2160, "a rotated 5K: Native %d, game resolution %ux%u, expected 2880x2160", w, (unsigned)(uint32_t)r, (unsigned)(r >> 32)); }
