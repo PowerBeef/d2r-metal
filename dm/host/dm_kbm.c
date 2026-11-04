@@ -180,9 +180,13 @@ int dm_kbm_step(uint64_t *buttons) {   // returns 1 when PC input is live (the c
         g_mods = e.mods;
         if (e.op <= 2) {
             if (e.op != 2 || e.btn > 1) { g_x = e.nx; g_y = e.ny; }
-            // The game's cursor: W x H is the interface (on a 16:10 screen the 16:9 band, dm_uiscreen.c), so over the interface it takes the
-            // interface position, as the panels' own pointer pump writes it (dm_cursor.c); over the world it keeps the whole-picture height
-            int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c); if (W > 0 && H > 0) dm_cursor_set((int)(g_x * W), (int)((open || g_y > HUD_BAND ? g_y : ui_to_screen_y(g_y)) * H));
+            // The game's cursor: W x H is the interface (on a 16:10 screen the 16:9 band, dm_uiscreen.c), so it takes the pointer's interface position
+            // everywhere, as the panels' own pointer pump writes it (dm_cursor.c). World hover and clicks don't read it: they go through the host's hit
+            // test at the picture's height (dm_world_pc_hover / dm_world_pc_click). Above the band (16:10) the cursor is above the interface, where
+            // nothing hovers. It used to take the picture's height over the world, which put the cursor over the PC HUD while the pointer was on the
+            // world just above it (NFS-6; probed 2026-11-03 on a 16:10 emulation in PC mode: the hovered widget and the hover target read the same as
+            // before at every point, and the strip's cursor is at y 1138 of 1296 instead of 1153, the HUD starting at 1147)
+            int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c); if (W > 0 && H > 0) dm_cursor_set((int)(g_x * W), (int)(g_y * H));
             if (e.op == 0) { if (!e.btn) { dm_touch_host_live(3, g_x, g_y); dm_ui_ptr(DM_UP_MOVE, g_x, g_y, 0); } else if (g_btn[0].down && g_btn[0].ui == 1) dm_touch_host_live(1, g_x, g_y); continue; }   // hover: the panels' tooltips and the PC HUD's   // hover, or a drag on a panel (a held world click just follows the cursor)
             if (e.btn > 1) { int k[4], n = dm_kbm_match(b + BIND_LIST, BIND_N, 0x100 + e.btn - 2, g_mods, k, 4); for (int i = 0; i < n; i++) run_binding(b, k[i], e.op == 1); continue; }   // mouse 3-5: their bindings
             int bt = e.btn;
