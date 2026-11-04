@@ -288,8 +288,12 @@ static NSRect game_rect(void) {
     else if (w > h * g_aspect) w = round(h * g_aspect); else h = round(w / g_aspect);
     return NSMakeRect(floor((b.width - w) / 2), floor((b.height - h) / 2), w, h);
 }
-static void vkbd_where(dm_vkbd_host *h) {   // 手柄屏幕键盘画在视图层上、游戏画面里（视图层坐标向上增） | the on-screen controller keyboard is drawn on the view layer, inside the game picture (view layer coordinates grow upward)
-    h->layer = (__bridge void *)g_view.layer; h->pic = NSRectToCGRect(game_rect()); h->y_up = 1; h->scale = g_win.backingScaleFactor > 0 ? g_win.backingScaleFactor : 2;
+// Tests only (the control port's fe scale): a backing scale that stands in for the window's, as a move to a display of that scale would give; 0 = the real one
+static CGFloat g_test_scale;
+// The backing scale the picture is drawn at: the window's (2 when it has none yet), or the test stand-in (fe scale)
+static CGFloat backing_scale(void) { CGFloat k = g_view.window.backingScaleFactor; return g_test_scale > 0 ? g_test_scale : k > 0 ? k : 2; }
+static void vkbd_where(dm_vkbd_host *h) {   // the on-screen controller keyboard is drawn on the view layer, inside the game picture (view layer coordinates grow upward)
+    h->layer = (__bridge void *)g_view.layer; h->pic = NSRectToCGRect(game_rect()); h->y_up = 1; h->scale = backing_scale();
 }
 // DM_TEST_DRAWABLE_PX=<w>x<h> (tests): the canvas gets this many pixels whatever the view's size, and the compositor scales it to the window, so a larger
 // screen's drawable (a 5K display's 5120x2880) can be measured on this one. Read once; returns 0 when unset (a malformed value logs a red line)
@@ -324,15 +328,17 @@ static void layout_event(const char *why) {
           (int)lround(r.origin.x), (int)lround(r.origin.y), (int)lround(r.size.width), (int)lround(r.size.height), (int)lround(d.width), (int)lround(d.height),
           (int)lround(g_layer.contentsScale), win_full(), pg[0], pg[1], pg[2], pg[3], pg[4], pg[5], pg[6], pg[7]);
 }
-// Tests only (the control port's fe scale): a backing scale that stands in for the window's, as a move to a display of that scale would give; 0 = the real one
-static CGFloat g_test_scale;
+// The layer follows the picture's rect, the backing scale and the drawable together. A CAMetalLayer used as a sublayer changes neither its scale nor its
+// drawableSize when its frame changes (after going full screen it used to keep the windowed canvas, scaled up: blurry); and a move between a 1x and a 2x
+// display, or a HiDPI mode switch with the same point size, changes the scale with the same frame (COL-1, LIF-3), so all three are compared
 static void layout_game(void) {
-    NSRect r = game_rect(); if (NSEqualRects(r, g_layer.frame)) return;
-    CGFloat sc = g_view.window.backingScaleFactor ?: 2;   // 画布跟着改：作为子层的 CAMetalLayer 改 frame 不会自己改 drawableSize，原先进全屏后一直用窗口态的画布放大显示（发糊） | the canvas follows: a CAMetalLayer used as a sublayer does not change its drawableSize when its frame changes, so after going full screen it used to keep the windowed canvas and scale it up (blurry)
+    NSRect r = game_rect(); CGFloat sc = backing_scale();
     CGSize ds = CGSizeMake(round(r.size.width * sc), round(r.size.height * sc)); test_drawable_px(&ds);
+    if (NSEqualRects(r, g_layer.frame) && g_layer.contentsScale == sc && CGSizeEqualToSize(g_layer.drawableSize, ds)) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = sc; g_layer.drawableSize = ds; [CATransaction commit];
-    dm_vkbd_ui_relayout();   // 屏幕键盘跟着画面走 | the on-screen keyboard follows the picture
-    LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
+    dm_vkbd_ui_relayout();   // the on-screen keyboard follows the picture
+    LOG("window: content %.0fx%.0f pt, picture %.0fx%.0f pt at (%.0f,%.0f), drawable %.0fx%.0f px (scale %.0f)", g_view.bounds.size.width, g_view.bounds.size.height,
+        r.size.width, r.size.height, r.origin.x, r.origin.y, ds.width, ds.height, sc);
     window_event(r, sc); layout_event("change");
 }
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
@@ -599,7 +605,7 @@ static NSCursor *pc_hand(void) {
             for (NSInteger y = 0; y < rep.pixelsHigh; y++) for (NSInteger x = 0; x < rep.pixelsWide; x++) if (x + y < best && [rep colorAtX:x y:y].alphaComponent > .5) { best = x + y; tip = NSMakePoint(x, y); }
             LOG("PC cursor: the game's gauntlet, %ldx%ld px, tip %.0f,%.0f", (long)rep.pixelsWide, (long)rep.pixelsHigh, tip.x, tip.y); } }
     if (!rep) return nil;
-    CGFloat h = round(fmin(fmax(game_rect().size.height * PC_CURSOR_SHARE, 24), 160)), sc = g_view.window.backingScaleFactor ?: 2;   // points
+    CGFloat h = round(fmin(fmax(game_rect().size.height * PC_CURSOR_SHARE, 24), 160)), sc = backing_scale();   // points
     if (!cur || h != cur_h || sc != cur_sc) {
         CGFloat s = h / rep.pixelsHigh; NSSize pt = NSMakeSize(round(rep.pixelsWide * s), h);
         NSBitmapImageRep *r = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)(pt.width * sc) pixelsHigh:(NSInteger)(pt.height * sc) bitsPerSample:8
