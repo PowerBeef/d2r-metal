@@ -319,6 +319,7 @@ There is no recording of the original game on a console or emulator; to learn wh
   - shader-chain sources or tools → `./setup.sh`, which re-registers the chain and re-translates
   - NVN names or prototypes → `gfx/tools/nvn_slots.py` + `gen_protos.py`
   - `pso_manifest.tsv` row order matters; don't sort it.
+  - A new picture feature (a pass, a setting, a forced switch) builds pipelines the warm-up seed lacks: re-record it with `python3 dm/tools/pso_seed.py record` and `merge --dir <record folder> --write`, or the gate's pso steps (`core_pso_cli`, `full_pso_mac`, `full_pso_ios`: `pso_seed.py gate`, `PSO_GATE OK rows=0`) go red. A row that belongs in no seed goes in `dm/gfx/nvn/pso_allow.tsv` only after review, with a `# why` line above it.
 - **Mac App:**
   - It links to build outputs under `$DM_ROOT`; the bundle ID is `org.d2rmobile.mac`.
   - Its resource folder is stored as the `RomfsDir` default.

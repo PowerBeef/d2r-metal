@@ -94,6 +94,8 @@ Every segment × metric of one regression is one family of comparisons, and the 
 
 Every benchmark run and every `dm/ios/tools/bootprof.sh` run appends the time from process start to each boot stage to `$DM_ROOT/run/bootprof/history.tsv`, with the git revision. The stages come from the event stream (`boot`, `main_menu`, `game_enter`, `loading_done`) and from the `DM_BOOTPROF` table (⓪–⑥). `python3 dm/tools/boothist.py show --label bench:cli` compares the median of the latest runs with the runs before and marks stages more than 10% and 50 ms slower.
 
+iOS test runs (`DM_SAVE_FRESH`, as `bootprof.sh` and `smoke_mac.sh` start them) keep their pipeline manifest in `Documents/settings.test` (`main.m`) and start each run with an empty one: the warm-up builds the seed (`pso_manifest.tsv`) alone, as on a first install, and the player's own `pso_user.tsv` is neither read nor grown. A true cold start, with the system's Metal cache emptied too, is `dm/tools/pso_seed.py cold` (a row in `$DM_ROOT/run/pso/cold.tsv`; the long tier runs one on the Mac App).
+
 ## Routes
 
 | Route | Segments | Notes |
