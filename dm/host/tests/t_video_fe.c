@@ -2,7 +2,7 @@
 // translation unit than the included dm_video.c, so the linker picks them; weak definitions are never inlined), the settings directory, and a small
 // fake of the custom settings store (dm_custom.c) that the Video tab's Frame Rate / Frame Drops rows go through. Two front ends, chosen by g_fe:
 //   'G' the generic stub the load cases were written against: recommendation 1 / g_fe_rec_res / 1, first-boot current values 1 / 2 / 0, and for the later
-//       keys aa 1, aniso 3, envsh 1, shq 2 (color, s3d: none, so 0)
+//       keys aa 1, aniso 3, envsh 1, shq 2, envd 1 (color, s3d: none, so 0)
 //   'M' front_mac.m on this Mac (a Mac mini M6 at 2560 x 1440, real recommendation): full screen, Native, MetalFX when g_mfx; SMAA, 16x, Accurate,
 //       3D 100%, environment shadows, Ultra shadows (the t_picrec row "Mac mini M6, 2560 display (measured)")
 // The phone build has its own stub file (t_video_phone_stubs.c, mirroring front_ios.m). The knobs are set by a case before it forks.
@@ -31,7 +31,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "aa")) return 1;
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "envsh")) return 1;
-    if (!strcmp(key, "shq")) return 2;
+    if (!strcmp(key, "shq")) return 2; if (!strcmp(key, "envd")) return 1;
     if (g_fe == 'M' && !strcmp(key, "color")) return 1;
     if (g_fe == 'M' && !strcmp(key, "s3d")) return 0;
     if (g_fe == 'M' && !strcmp(key, "fg")) return g_fgok;

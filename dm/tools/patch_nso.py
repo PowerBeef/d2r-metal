@@ -171,6 +171,7 @@ CUTS = {'db0507f36b84200ac05f75d76ed5026f': [
 # ---- Registered observation gates: {NSO build ID: [(offset, number, original instruction word, reason)]}. Numbers match OBS_* in the host's hle.h;
 # the original instruction must be position independent (no PC-relative / branch / anything involving x18 or tpidr), asserted offline; when the host has no callback attached the gate block goes in and out once and returns ----
 OBS = {'db0507f36b84200ac05f75d76ed5026f': [
+    (0x15ff470, 23, '6db923e9', "Renderer_Init entry (renderer, graphics context, config x2), once at boot, before the 0xd5-byte config is copied to renderer+0x65f4: the host raises the game's own quality settings (dm_video.c dm_video_renderer_cfg_obs, the Environment Detail setting); with it at Standard nothing changes"),
     (0xb1dc60, 1, 'd10603ff', 'UI 消息总线虚函数实现入口（x1 = 消息 {u64 类型哈希, u64 动作哈希, char* 面板名, …}）：'
      'DM_UIMSG 消息流与 DM_BOOTPROF 启动分段的唯一来源；原指令 sub sp, sp, #0x180'),
     (0x5d3bc0, 2, 'd10503ff', '服务端拍入口（x0 = 游戏对象 G）：DM_TICKS 逐拍 6 格状态哈希（dm/verify/tick_state_format.md，与真值 swtick.py 同一采集点）；'

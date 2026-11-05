@@ -294,6 +294,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "color")) return 1;
     if (!strcmp(key, "envsh")) return mac_rec().envsh;
+    if (!strcmp(key, "envd")) return mac_rec().envsh;   // goes with the full picture, as environment shadows do; no GPU cost measured on an M6 (dm_video.c dm_video_env_detail)
     if (!strcmp(key, "shq")) return mac_rec().shq;   // 2 = Ultra (a 4096-texel map) with the full picture, 0 = Standard (the Switch's 2100) with the light one
     if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
     if (!strcmp(key, "fg")) return rec_fg();

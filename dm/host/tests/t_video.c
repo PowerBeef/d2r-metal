@@ -36,17 +36,17 @@ static void file_putn(const char *b, size_t n) { char p[600]; snprintf(p, sizeof
 static const char *file_get(void) { static char b[1200]; char p[600]; snprintf(p, sizeof p, "%s/sw_video.txt", g_dir); FILE *f = fopen(p, "r"); if (!f) return ""; size_t n = fread(b, 1, sizeof b - 1, f); b[n] = 0; fclose(f); return b; }
 
 // The event recorder: the last 'picture' event (how and its eleven values) and the last 'video_row' event, plus how many of each were sent
-static struct { int n, v[12], rn, rv, rp; char how[16], row[16]; } g_ev;
+static struct { int n, v[13], rn, rv, rp; char how[16], row[16]; } g_ev;
 static void ev_rec(const char *ev, const char *sig, ...) {
     (void)sig; va_list ap; va_start(ap, sig);
-    if (!strcmp(ev, "picture")) { const char *h = va_arg(ap, const char *); strlcpy(g_ev.how, h ? h : "(null)", sizeof g_ev.how); for (int i = 0; i < 12; i++) g_ev.v[i] = va_arg(ap, int); g_ev.n++; }
+    if (!strcmp(ev, "picture")) { const char *h = va_arg(ap, const char *); strlcpy(g_ev.how, h ? h : "(null)", sizeof g_ev.how); for (int i = 0; i < 13; i++) g_ev.v[i] = va_arg(ap, int); g_ev.n++; }
     else if (!strcmp(ev, "video_row")) { const char *r = va_arg(ap, const char *); strlcpy(g_ev.row, r ? r : "(null)", sizeof g_ev.row); g_ev.rv = va_arg(ap, int); g_ev.rp = va_arg(ap, int); g_ev.rn++; }
     va_end(ap);
 }
 
 // One load in a child: every key's value, how often the front end was asked (first boot, full screen, colour), the file after the load (file0) and
 // after the case's own steps (file), the last 'picture' event, and what `act` records in x[]
-typedef struct { int v[NV], fb, full, full_last, cc, cl, evn, ev[12], x[32]; char how[16], file0[1200], file[1200]; } result;
+typedef struct { int v[NV], fb, full, full_last, cc, cl, evn, ev[13], x[32]; char how[16], file0[1200], file[1200]; } result;
 static result child(void (*act)(result *)) {
     int pp[2]; result r; memset(&r, 0, sizeof r); if (pipe(pp)) { r.v[0] = -9; return r; }
     pid_t pid = fork();
@@ -71,8 +71,8 @@ static result run(const char *txt) { return run_do(txt, NULL); }
 #define TAIL(a, ra, n, rn, c, rc) "aa=" #a "\nrec_aa=" #ra "\naniso=" #n "\nrec_aniso=" #rn "\ncolor=" #c "\nrec_color=" #rc "\n"
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
 #define ES(e, re) "envsh=" #e "\nrec_envsh=" #re "\n"
-#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=0\nrec_fg=0\n"   // fg, the key after shq, stays 0 unless a case says so (G recommends none, M only with g_fgok)
-#define RV "rec_v=9\n"   // REC_V in dm_video.c (without it = version 1, worked out again at load): a bump changes this line, t_video_phone's and the cases below in one commit
+#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=0\nrec_fg=0\nenvd=1\nrec_envd=1\n"   // fg, the key after shq, stays 0 unless a case says so (G recommends none, M only with g_fgok)
+#define RV "rec_v=10\n"   // REC_V in dm_video.c (without it = version 1, worked out again at load): a bump changes this line, t_video_phone's and the cases below in one commit
 #define NEWREC TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV   // how the later keys are filled when missing (G's front_video_rec)
 
 // (21) the shadow latch: the first answers once the settings are known hold for the session. In a child: set or clear DM_ENV_SHADOWS / DM_SHADOW_SIZE
@@ -92,6 +92,26 @@ static latch run_latch(const char *txt, const char *esh, const char *shsz, int n
     close(pp[1]); if (read(pp[0], &l, sizeof l) != (ssize_t)sizeof l) l.e1 = -9; close(pp[0]); waitpid(pid, NULL, 0); return l;
 }
 
+// (22) Environment Detail at the renderer's boot config, in a child (the answer latches). env: DM_ENV_DETAIL or NULL; rcfg: DM_TEST_RCFG or NULL. out: the config afterwards, which starts filled with 0x55;
+// *forced: the forced flag; *flip: the answer after DM_ENV_DETAIL flips
+static void run_cfg(const char *txt, const char *env, const char *rcfg, uint8_t *out, int *forced, int *flip) {
+    file_put(txt); int pp[2]; memset(out, 0, 0xd5); *forced = *flip = -9; if (pipe(pp)) return;
+    pid_t pid = fork();
+    if (!pid) { close(pp[0]); uint8_t c[0xd5]; memset(c, 0x55, sizeof c); uint64_t regs[8] = { 0, 0, (uint64_t)c };
+        if (env) setenv("DM_ENV_DETAIL", env, 1); else unsetenv("DM_ENV_DETAIL");
+        if (rcfg) setenv("DM_TEST_RCFG", rcfg, 1); else unsetenv("DM_TEST_RCFG");
+        dm_video_renderer_cfg_obs(regs); int fo = atomic_load(&g_ed_forced), first = dm_video_env_detail();
+        setenv("DM_ENV_DETAIL", first ? "0" : "1", 1); int fl = dm_video_env_detail();
+        if (write(pp[1], c, sizeof c) != (ssize_t)sizeof c || write(pp[1], &fo, sizeof fo) != (ssize_t)sizeof fo || write(pp[1], &fl, sizeof fl) != (ssize_t)sizeof fl) _exit(1);
+        _exit(0); }
+    close(pp[1]); if (read(pp[0], out, 0xd5) != 0xd5) out[0] = 0;
+    if (read(pp[0], forced, sizeof *forced) != (ssize_t)sizeof *forced) *forced = -9;
+    if (read(pp[0], flip, sizeof *flip) != (ssize_t)sizeof *flip) *flip = -9;
+    close(pp[0]); waitpid(pid, NULL, 0);
+}
+static uint32_t cfg_w(const uint8_t *c, unsigned off) { uint32_t v; memcpy(&v, c + off - 0x65f4, 4); return v; }
+static int cfg_rest(const uint8_t *c) { int n = 0; for (unsigned i = 0; i < 0xd5; i++) { unsigned o = i + 0x65f4; if ((o >= 0x664c && o < 0x6650) || o == 0x6622 || (o >= 0x66bc && o < 0x66c0)) continue; n += c[i] != 0x55; } return n; }
+
 // A case's steps, run in the child after the load
 static void act_aa0(result *x) { (void)x; atomic_store(&g_pend[K_AA], 0); dm_video_on_uimsg("OptionsPanelMessage", "AcceptChanges", ""); }
 static void act_preset(result *x) { x->x[0] = preset_of(); }
@@ -107,7 +127,7 @@ static void act_18d(result *x) { apply_preset(P_QUAL); accept(); x->x[0] = prese
 static void act_18i(result *x) { apply_preset(P_PERF); x->x[0] = atomic_load(&g_pend[K_UP]); cancel(); apply_preset(P_QUAL); x->x[1] = atomic_load(&g_pend[K_UP]); }
 static void act_18e(result *x) { x->x[0] = preset_of(); apply_preset(P_REC); x->x[1] = atomic_load(&g_pend[K_MODE]); accept(); x->x[2] = g_full_calls; x->x[3] = preset_of(); }
 static void act_18f(result *x) {
-    g_tshown = 1; atomic_store(&g_crows, (1 << 10) | (1 << 12));   // the Video tab is on screen with its Frame Rate and Frame Drops rows
+    g_tshown = 1; atomic_store(&g_crows, (1 << 11) | (1 << 13));   // the Video tab is on screen with its Frame Rate and Frame Drops rows
     dm_video_on_uimsg("OptionsPanelMessage", "ResetToDefaults", "");
     x->x[0] = atomic_load(&g_pend[K_MODE]); x->x[1] = g_cset[0]; x->x[2] = g_cset[1]; x->x[3] = preset_of(); accept();
 }
@@ -326,6 +346,16 @@ int main(void) {
     // (18g) Colour applied: handed to the front end and saved
     r = run_do(M_REC(1, 1), act_18g);
     CHECK(r.cl == 0 && strstr(r.file, "\ncolor=0\n"), "(18g) Vivid applied: front end told %d, saved\n%s", r.cl, r.file);
+    // (22) Environment Detail: High raises the game's own decal size, terrain tier and effect-light budget in the renderer's boot config and nothing else; Standard leaves it all as the game built it
+    { uint8_t c[0xd5]; int fo, fl;
+      run_cfg(FULL(1, 1, 1, 1, 1, 1) NEWREC, NULL, NULL, c, &fo, &fl);
+      CHECK(cfg_w(c, 0x664c) == 9 && c[0x6622 - 0x65f4] == 3 && cfg_w(c, 0x66bc) == 4 && !cfg_rest(c) && !fo, "(22a) High from the setting: decals 9, terrain 3, lights 4, nothing else, not forced; got %u %u %u, %d others, forced %d", cfg_w(c, 0x664c), c[0x6622 - 0x65f4], cfg_w(c, 0x66bc), cfg_rest(c), fo);
+      CHECK(fl == 1, "(22b) latched at launch: a later answer holds, got %d", fl);
+      run_cfg(FULL(1, 1, 1, 1, 1, 1) NEWREC, "0", NULL, c, &fo, &fl);
+      CHECK(cfg_w(c, 0x664c) == 0x55555555 && c[0x6622 - 0x65f4] == 0x55 && cfg_w(c, 0x66bc) == 0x55555555 && !cfg_rest(c) && fo == 1 && fl == 0, "(22c) DM_ENV_DETAIL=0: the config untouched, forced, latched; got %u, %d others, forced %d, later %d", cfg_w(c, 0x664c), cfg_rest(c), fo, fl);
+      run_cfg(FULL(1, 1, 1, 1, 1, 1) NEWREC, "0", "6634.w=5,6621.b=1,9999.w=1", c, &fo, &fl);
+      CHECK(cfg_w(c, 0x6634) == 5 && c[0x6621 - 0x65f4] == 1 && cfg_w(c, 0x664c) == 0x55555555, "(22d) DM_TEST_RCFG writes its fields, an offset outside the config is refused; got %u %u", cfg_w(c, 0x6634), c[0x6621 - 0x65f4]);
+    }
     // (18h) a windowed player across a rec_v bump, with 3D 75% the old recommendation: the graphics keys move to the new one (3D 100%), the window stays
     r = run("mode=0\nrec_mode=1\nres=3\nrec_res=3\nup=1\nrec_up=1\n" TAIL(1, 1, 3, 3, 1, 1) S3(2, 2) ES(1, 1) SQ(2, 2) "rec_v=6\n");   // an older version than REC_V
     CHECK(r.v[K_MODE] == 0 && r.v[K_S3D] == 0 && !strcmp(r.file, FULL(0, 1, 3, 3, 1, 1) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(1, 1) SQ(2, 2) RV),

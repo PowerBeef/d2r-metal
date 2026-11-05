@@ -17,6 +17,8 @@
 //   envsh  environment shadows; shq the shadow map, 0 Standard 2100 / 1 High 3072 / 2 Ultra 4096 texels. Both are latched at launch, because every guest
 //          thread gets them through thread.c's KESHADOW and KSHSIZE slots (dm_video_env_shadows / dm_video_shadow_size); a change shows the restart hint
 //          (none while DM_ENV_SHADOWS / DM_SHADOW_SIZE force them; DM_SHADOW_SIZE is clamped to 512..4096 and made even)
+//   envd   Environment Detail, 0 Standard (the Switch's) / 1 High: three of the game's own quality settings, written into the renderer's config as it boots (dm_video_renderer_cfg_obs). Latched at launch, a
+//          change shows the restart hint (none while DM_ENV_DETAIL=0/1 forces it)
 // Recommended: rec_<key> holds the recommendation, rec_v its version (REC_V) and rec_id the machine it was worked out for (front_video_rec_id: the Mac
 // App's GPU and main screen; none on iOS, the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1). It is worked out (front_video_firstboot for
 // the first three keys, front_video_rec for the others) on first boot, for a missing or out-of-range key (only that key is filled), and when rec_v is
@@ -58,29 +60,30 @@
 uint64_t dm_custom_find_w(uint64_t w, const char *name);
 int dm_custom_shown(void);
 int dm_custom_path(const char *name, char *p, size_t n);
-enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, K_FG, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
-static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq", "fg" };
-static const int k_n[NV] = { 2, 4, 3, 2, 4, 2, 5, 2, 3, 2 };
-#define REC_V 9   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);
+enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, K_FG, K_ED, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
+static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq", "fg", "envd" };
+static const int k_n[NV] = { 2, 4, 3, 2, 4, 2, 5, 2, 3, 2, 2 };
+#define REC_V 10   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);
                   // 6 = a Mac on an iPhone chip (MacBook Neo) gets the phone's (front_mac.m); 7 = chosen from the chip's generation, GPU cores and the screen (dm_picrec.c);
                   // 8 = Native's light ladder stops at 67%, an iPhone chip keeps the phone's shadows, A-chip table and smallest-part core counts (dm_picrec.c);
-                  // 9 = MetalFX Temporal with Frame Generation wherever the chip has both (front_mac.m, front_ios.m rec_fg)
+                  // 9 = MetalFX Temporal with Frame Generation wherever the chip has both (front_mac.m, front_ios.m rec_fg);
+                  // 10 = Environment Detail High with the Mac's full picture (front_mac.m)
 static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on phones res is the five 3D-resolution tiers; on the Mac res has the extra "Native" tier
 // Display preferences: the Mac's Display section (Display Mode, Color). First launch and Default set them from the recommendation, but they never decide
 // whether the picture is on Recommended, the Graphic Presets row leaves them alone (as Performance and Quality always did), and a rec_v or screen move
 // changes one only while it still equals its old recommendation. On phones Color sits in the Graphics section next to Graphic Presets, so it stays part
 // of Recommended there; phones have no Display Mode row (mode is always 0, its recommendation)
 static int pref_key(int k) { return k == K_MODE || (k == K_COLOR && !DM_PHONE); }
-#define NR 13
-static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "shq", "fps", "fg", "drops" };   // row order on the page (rows the page lacks are skipped)
-static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, K_SHQ, -2, K_FG, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
-static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", 0, "q3d" };
+#define NR 14
+static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "shq", "envd", "fps", "fg", "drops" };   // row order on the page (rows the page lacks are skipped)
+static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, K_SHQ, K_ED, -2, K_FG, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
+static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", 0, "q3d" };
 static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // options in the selector: the key's tiers; presets 4; custom settings keys 2 (options 0 / 1 = values 0 / 1: 60 / 30 fps; lower / keep)
 int dm_custom_shown_value(const char *key); void dm_custom_set_pending(const char *key, int v); int dm_custom_default(const char *key);
 static _Atomic int g_crows;   // the custom-key rows the page has (one bit per row): Default resets only those
 enum { P_REC, P_PERF, P_QUAL, P_CUSTOM };
-static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
-_Static_assert(NV == 10, "g_pend initialiser count");
+static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
+_Static_assert(NV == 11, "g_pend initialiser count");
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // load / save: written by both the front end's main thread (launch, full-screen changes) and the game thread (Apply)
 
 // Provided by the front end (front_mac.m, front_ios.m); builds without one (unit tests) use the weak definitions here
@@ -123,11 +126,11 @@ static void save_locked(void) {
     LOG("画面设置：存盘%s %s（推荐 %s）", ok ? "" : "【红】失败", vals_str(v), rs);
 }
 static void picture_ev(const char *how) {   // the 'picture' event: the values in effect, the rec_v and rec_id saved
-    DM_EV("picture", "how:s mode:d res:d up:d aa:d aniso:d color:d s3d:d envsh:d shq:d fg:d rec_v:d rec_id:d", how, atomic_load(&g_val[K_MODE]), atomic_load(&g_val[K_RES]),
+    DM_EV("picture", "how:s mode:d res:d up:d aa:d aniso:d color:d s3d:d envsh:d shq:d fg:d rec_v:d rec_id:d envd:d", how, atomic_load(&g_val[K_MODE]), atomic_load(&g_val[K_RES]),
           atomic_load(&g_val[K_UP]), atomic_load(&g_val[K_AA]), atomic_load(&g_val[K_ANISO]), atomic_load(&g_val[K_COLOR]), atomic_load(&g_val[K_S3D]), atomic_load(&g_val[K_ESH]),
-          atomic_load(&g_val[K_SHQ]), atomic_load(&g_val[K_FG]), atomic_load(&g_rv_keep), atomic_load(&g_rec_id));
+          atomic_load(&g_val[K_SHQ]), atomic_load(&g_val[K_FG]), atomic_load(&g_rv_keep), atomic_load(&g_rec_id), atomic_load(&g_val[K_ED]));
 }
-_Static_assert(NV == 10, "the picture event lists every key");
+_Static_assert(NV == 11, "the picture event lists every key");
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
     pthread_mutex_lock(&g_mu);
@@ -238,6 +241,38 @@ int dm_video_fg_active(void) {
     return env > 0 || (dm_video_get("fg") == 1 && mtl_mfx_fg_supported());
 }
 int dm_video_jitter_mode(void) { return dm_video_temporal_active() ? 3 : 0; }   // 3 = the game's Halton mode (patch_nso.py SWITCHES, the csel rows)
+// Environment Detail: the renderer's boot config (renderer+0x65f4, 0xd5 bytes, the game's main+0x15ff470 copies it; every module reads its knob once at creation) as the Switch's quality level 1 left it, raised to
+// what the game itself uses at its top levels. Decal arrays (renderer+0x664c) 7 -> 9: at 7 the Monastery's Outer Cloister has no stone court, only grass. Terrain data tier (+0x6622) 0 -> 3. Effect-light budget
+// (+0x66bc) 2 -> 4: torches light the walls near them and glint on polished floors. About 36 MiB of memory; no GPU cost measured at 2560 x 1440 on an M6 (ABBA x4 at the Far Oasis and the Burial Grounds: -0.12 and +0.05 ms, both within noise). The game's other level settings stay: bloom mode 2 would misfire
+// the host's own bloom (nvn_mtl.m), and reflections (+0x6634) need a normal and roughness target nothing writes on Switch, so everything would be a mirror. DM_ENV_DETAIL=0/1 forces it
+static _Atomic int g_ed_launch = -1, g_ed_forced;
+int dm_video_env_detail(void) {
+    int x = atomic_load(&g_ed_launch); if (x >= 0) return x;
+    const char *e = getenv("DM_ENV_DETAIL");
+    if (e && *e) { x = atoi(e) != 0; atomic_store(&g_ed_forced, 1); }
+    else { load_once(); if (!atomic_load(&g_loaded)) return 0; x = atomic_load(&g_val[K_ED]) == 1; }
+    int exp = -1; if (atomic_compare_exchange_strong(&g_ed_launch, &exp, x)) LOG("Environment detail: %s (%s)", x ? "High" : "Standard", e && *e ? "DM_ENV_DETAIL" : "picture setting");
+    return atomic_load(&g_ed_launch);
+}
+enum { RCFG_BASE = 0x65f4, RCFG_SIZE = 0xd5 };
+static void rcfg_put(uint8_t *cfg, unsigned off, int size, uint32_t val) {
+    if (off < RCFG_BASE || off + (unsigned)size > RCFG_BASE + RCFG_SIZE) { LOG("【红】renderer config: offset %#x is outside it", off); return; }
+    uint32_t old = 0; memcpy(&old, cfg + off - RCFG_BASE, (size_t)size); memcpy(cfg + off - RCFG_BASE, &val, (size_t)size);
+    LOG("renderer config +%#x: %u -> %u", off, old, val);
+}
+// The observation gate at the game's Renderer_Init (OBS_RENDERER_CFG, patch_nso.py), once at boot: x2 = the config, before the renderer copies it.
+// DM_TEST_RCFG=<hex renderer offset>.<b|w>=<value>[,...] tries the game's other settings one at a time (dm/verify/debugging.md); a test switch, nothing the game or the player sees uses it
+void dm_video_renderer_cfg_obs(const uint64_t *regs) {
+    uint8_t *cfg = (uint8_t *)regs[2];
+    if (dm_video_env_detail()) { rcfg_put(cfg, 0x664c, 4, 9); rcfg_put(cfg, 0x6622, 1, 3); rcfg_put(cfg, 0x66bc, 4, 4); }
+    const char *e = getenv("DM_TEST_RCFG"); if (!e || !*e) return;
+    char spec[512]; strlcpy(spec, e, sizeof spec);
+    for (char *t = strtok(spec, ","); t; t = strtok(NULL, ",")) {
+        char *d = NULL; unsigned long off = strtoul(t, &d, 16); int size = d && d[0] == '.' ? (d[1] == 'b' ? 1 : d[1] == 'w' ? 4 : 0) : 0;
+        if (!size || d[2] != '=') { LOG("【红】DM_TEST_RCFG: <hex renderer offset>.<b|w>=<value>, got %s", t); continue; }
+        rcfg_put(cfg, (unsigned)off, size, (uint32_t)strtoul(d + 3, NULL, 0));
+    }
+}
 int dm_video_shadow_size(void) {   // every guest thread at its start (thread.c, KSHSIZE slot): the shadow init reads it once, so the first answer holds for the session
     int x = atomic_load(&g_shq_launch); if (x > 0) return x;
     // DM_SHADOW_SIZE=<px> forces the edge (tests, A/B runs), clamped to 512..4096 and made even: 4096 is the game's own Ultra edge, and 8192 took
@@ -272,6 +307,7 @@ static int tier_of(int k, int t) {
     case K_ESH: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch look, Quality = environment shadows; phone presets leave it alone (cost not measured there yet)
     case K_SHQ: return DM_PHONE ? -1 : t ? 2 : 0;   // Mac: Performance = Standard (the Switch's map), Quality = Ultra; phone presets leave it alone
     case K_FG: return 0;   // neither preset uses the temporal scaler it needs
+    case K_ED: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch's, Quality = High; phone presets leave it alone (cost not measured there yet)
     default: return -1;
     }
 }
@@ -347,12 +383,14 @@ static void hint_at(uint64_t sp, const char *hint, const char *label, int show) 
     int x = show ? ((int32_t *)(lw + 0x70))[0] : 99999; int32_t *r = (int32_t *)(hw + 0x70);
     if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)hw + 0x10))(hw); }
 }
-static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows, shadow quality); also under Resolution when the window's screen no longer suits the launch picture
+static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effect after restarting the game" under the row (resolution, environment shadows, shadow quality, environment detail); also under Resolution when the window's screen no longer suits the launch picture
     int run = front_video_running_res(), esh = atomic_load(&g_esh_launch);
     hint_at(sp, "TouchVideoResHint", "TouchVideo_res_Text", run >= 0 && (shown(K_RES) != run || front_video_screen_stale()));
     hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && !atomic_load(&g_esh_forced) && shown(K_ESH) != esh);   // a forced value never follows the page: no hint
     int shq = atomic_load(&g_shq_launch), sq = shown(K_SHQ);
     hint_at(sp, "TouchVideoShqHint", "TouchVideo_shq_Text", shq > 0 && !atomic_load(&g_shq_forced) && sq >= 0 && sq < 3 && k_shq_px[sq] != shq);
+    int ed = atomic_load(&g_ed_launch);
+    hint_at(sp, "TouchVideoEnvdHint", "TouchVideo_envd_Text", ed >= 0 && !atomic_load(&g_ed_forced) && shown(K_ED) != ed);
 }
 // The phone's 3D Resolution row lists 50 / 67 / 75 / 85 / 100 % while its stored values keep their meaning (0 = 75, 1 = 85, 2 = 100, 3 = 67, 4 = 50):
 // car_of turns a row's value into the selector index, val_of back; every other row is the identity

@@ -16,6 +16,7 @@ Each Video-tab key and the switch that pins it:
   Color (color)                                   DM_COLORSPACE: srgb = Accurate (a tag on the layer; no capture sees it)
   Environment Shadows (envsh)                     DM_ENV_SHADOWS: 0 / 1
   Shadow Quality (shq)                            DM_SHADOW_SIZE: 2100 Standard / 3072 High / 4096 Ultra
+  Environment Detail (envd)                       DM_ENV_DETAIL: 0 / 1
   Frame Drops (q3d)                               DM_3D_SCALE_DYN=0: the 3D scale stays where it is set
   Frame Rate (eco_fps)                            not pinned: 60 fps, every set's default
   Display Mode (mode)                             FULLSCREEN below, kept apart because headless shots have no window
@@ -58,6 +59,7 @@ CONV = {
     'DM_COLORSPACE': 'srgb',
     'DM_ENV_SHADOWS': '1',
     'DM_SHADOW_SIZE': '4096',
+    'DM_ENV_DETAIL': '1',
     'DM_3D_SCALE_DYN': '0',
 }
 REC75 = dict(CONV, DM_3D_SCALE='0.75')
@@ -74,6 +76,7 @@ PHONE = {
     'DM_COLORSPACE': 'srgb',
     'DM_ENV_SHADOWS': '0',
     'DM_SHADOW_SIZE': '2100',
+    'DM_ENV_DETAIL': '0',
     'DM_3D_SCALE_DYN': '0',
 }
 MAC_APP_REC = {'DM_TEST_VIDEO_FIRSTBOOT': '1'}

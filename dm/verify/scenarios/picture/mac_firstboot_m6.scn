@@ -15,8 +15,9 @@ expect_mem main+0x31e0848 1 chain=0x6614 hex=00
 system_quit
 check no_red
 check no_red_log
-check event picture how=first mode=1 res=3 up=2 aa=1 aniso=3 color=1 s3d=0 envsh=1 shq=2 fg=1
+check event picture how=first mode=1 res=3 up=2 aa=1 aniso=3 color=1 s3d=0 envsh=1 shq=2 fg=1 envd=1
 check log_has "Recommended for this Mac.*MetalFX Temporal, Frame Generation"
 check log_has "frame generation: interpolator .* built in"
 check log_has "→ Recommended Native 2560, 3D 100%, environment shadows on, shadows Ultra, Frame Drops keep"
 check no_event mfx who=pres op=build
+check log_has "renderer config \+0x664c: 7 -> 9"
