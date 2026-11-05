@@ -101,13 +101,13 @@ class PictureTest(unittest.TestCase):
         self.assertEqual(float(picture.PHONE['DM_3D_SCALE']), phone[int(res.group(1)) if res else 0])   # the phone's res index through dm_video.c's phone table: 75%
         # up = MetalFX wherever it is supported (the iPhone 17 Pro, this Mac): DM_MFX (the present) and DM_MFX3D (the 3D upscale pass) on
         self.assertRegex(ios, r'rec\[2\] = rec_fg\(\) \? 2 : front_video_mfx_ok\(\) \? 1 : 0;')
-        self.assertEqual((mac.get('fg') if (mac := front_rec(DM / 'host' / 'front_mac.m')) else None, front_rec(DM / 'ios' / 'Sources' / 'front_ios.m').get('fg')), ('rec_fg()', 'rec_fg()'))   # Temporal and Frame Generation together, wherever the chip has both
+        self.assertEqual((mac.get('fg') if (mac := front_rec(DM / 'host' / 'front_mac.m')) else None, front_rec(DM / 'ios' / 'Sources' / 'front_ios.m').get('fg')), ('mac_rec().fg', 'rec_fg()'))   # Temporal and Frame Generation together, wherever the chip has both
         self.assertEqual((picture.REC['DM_MFXT'], picture.REC['DM_AA_MODE'], picture.REC['DM_FG']), ('1', '0', '1'))
         self.assertEqual((picture.PHONE['DM_MFX'], picture.PHONE['DM_MFX3D']), ('1', '1'))
         mac_fb = firstboot(DM / 'host' / 'front_mac.m')
         self.assertRegex(mac_fb, r'rec\[0\] = 1;')   # full screen: picture.env adds FULLSCREEN on the cli backend
         self.assertEqual(picture.env('rec', 'cli', {})['DM_TEST_FULLSCREEN_AT'], '1')
-        self.assertRegex(mac_fb, r'rec\[2\] = rec_fg\(\) \? 2 : front_video_mfx_ok\(\) && \(nres >= 0 \|\|')   # a chip without them: with Native (nres >= 0) up = MetalFX support alone
+        self.assertRegex(mac_fb, r'rec\[2\] = mac_rec\(\)\.fg \? 2 : front_video_mfx_ok\(\) && \(nres >= 0 \|\|')   # a chip without them: with Native (nres >= 0) up = MetalFX support alone
         r = picrec_rows()[THIS_MAC]
         self.assertEqual((r['native'], r['mfx']), (1, 1))   # this Mac's row: Native, MetalFX supported
         for name in ('REC', 'REC75'): self.assertEqual((getattr(picture, name)['DM_MFX'], getattr(picture, name)['DM_MFX3D']), ('1', '1'), name)

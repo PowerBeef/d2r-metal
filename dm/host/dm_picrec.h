@@ -13,6 +13,7 @@ typedef struct {
                           // mac_rec); larger than out_w x out_h past the heap cap (a 5K display: 3840 x 2160 into 5120 x 2880); 0 = the picture's own size
     double pace_hz;       // the frame rate on the main screen (dm_pace_hz(refresh, 60): 60 on 60 and 120 Hz screens, 72 on 144 Hz, 100 on 100 Hz, 50 on
                           // 50 Hz); 0 = 60
+    int fg;               // the system offers MetalFX Temporal and the frame interpolator on this GPU (front_mac.m rec_fg)
 } dm_mac_spec;
 
 typedef struct {
@@ -21,6 +22,7 @@ typedef struct {
     int s3d;              // 3D Resolution row: 0 = 100%, 1 = 85%, 2 = 75%, 3 = 67%, 4 = 50%
     int envsh, shq;       // Environment Shadows (0 / 1), Shadow Quality (0 Standard, 1 High, 2 Ultra)
     int q3d;              // Frame Drops: 0 = lower the 3D resolution for a while, 1 = keep it
+    int fg;               // 1 = MetalFX Temporal with Frame Generation: the full picture fits at half the drawn rate, what they cost counted
     int gen, tier;        // the chip as read: generation (0 = unknown), tier 0 base / 1 Pro / 2 Max / 3 Ultra; tier -1 = an iPhone chip (A)
     double speed;         // estimated GPU speed against the M6 the model is anchored on (1.0)
     double load;          // the recommendation's share of the GPU's estimated capacity at the screen's frame rate (0–1; above 1 = nothing lighter left)

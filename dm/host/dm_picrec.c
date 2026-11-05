@@ -27,6 +27,11 @@
 //    7-core M1 iMac at 4.5K, about 124% of its capacity) lowers its 3D for a while instead of dropping frames (decided 2026-11-03, wave 4).
 // 6. Frame rate: the capacity is per 60 fps. A screen whose frame rate is another even fraction of its refresh (72 fps on 144 Hz, 100 on 100 Hz, 50 on
 //    50 Hz; nvn_pace.h) scales every load by rate / 60, so a 144 Hz screen gets a correspondingly lighter recommendation.
+// 7. Frame Generation: where the system offers it and the full picture still fits at Native, down to 75%, what the game draws at half the rate with what MetalFX Temporal and the interpolator cost on top.
+//    Measured on the M6 at full clock (bench.py headroom, open ground, Recommended, 2026-11-05): 11.8 ms a drawn frame at 2560 x 1440, 17.9 at 3024 x 1890, 23.9 at 3840 x 2160, out of 33.3: FG_BASE +
+//    FG_PER_MP per output megapixel; 3D Resolution saves FG_3D_PER_MP of it (100% to 50% at 2560 x 1440: 11.9 to 8.4 ms). So at this Mac's sizes it costs more GPU per second than real frames do, and
+//    what it buys is free time per drawn frame (21.5 ms against 9.4 at 2560 x 1440) and smooth motion on a chip that holds it. On a Mac where it doesn't fit, the conventional choice below stands, at real
+//    frame rate, rather than a smaller picture: only the M6 has been measured, and elsewhere this is the same estimate from public benchmark speeds as the rest.
 // No MetalFX: a fixed resolution, the picture by its load. A fixed resolution has the game picture's shape (s->aspect: 1920 x 1200 on a 16:10 screen,
 // as front_mac.m front_game_res renders it), not 16:9.
 // Memory is not an input: no 8 GB Mac has been measured (the GPU heap is a fixed 768 MiB).
@@ -53,6 +58,10 @@ static const double k_core_m[] = { 0, 3975, 4500, 4690, 5300, 7000, 8500 };   //
 // The light picture's lowest 3D Resolution (index 3 = 67%): the light picture always comes with Frame Drops = lower, and the 3D scale controller
 // (hle_oe.c, floor 0.60) keeps two steps below 67% and none below 50%. Below it the fixed resolution takes over (t_picrec invariants I3, I8).
 #define LIGHT_MIN 3
+#define FG_BASE 2.1               // load units (about ms of the M6's GPU) of a generated pair at full clock, 7. above
+#define FG_PER_MP 2.63
+#define FG_3D_PER_MP 1.26
+#define FG_MIN 2                  // Frame Generation's lowest 3D Resolution: 75%
 static const float k_scale[5] = { 1.0f, 0.85f, 0.75f, 0.67f, 0.5f };   // the 3D Resolution row
 static const int k_fixed_w[3] = { 1600, 1920, 2560 };                   // the Resolution row's fixed widths
 
@@ -72,7 +81,8 @@ int dm_picrec_real(int app, int app_support, int test_firstboot) { return app &&
 int dm_picrec_id(const dm_mac_spec *s) {
     uint32_t h = 2166136261u;
     for (const unsigned char *g = (const unsigned char *)(s->gpu ? s->gpu : ""); *g; g++) h = (h ^ *g) * 16777619u;
-    int v[7] = { s->cores, s->out_w, s->out_h, s->mfx }, n = 4;
+    int v[8] = { s->cores, s->out_w, s->out_h, s->mfx }, n = 4;
+    if (s->fg) v[n++] = 1;
     long hz = s->pace_hz > 0 ? lround(s->pace_hz * 100) : 6000;
     if (dm_picrec_enlarges(s)) { v[n++] = s->drw_w; v[n++] = s->drw_h; }   // only an input that changes the model: a plain 60 Hz machine keeps its id
     if (hz != 6000) v[n++] = (int)hz;
@@ -109,6 +119,16 @@ void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r) {
     int cores = s->cores > 0 ? s->cores : iphone ? 5 : k_min_cores[r->tier];
     r->speed = cores * core_speed(iphone, r->gen) / REF_SCORE;
     double cap = CAPACITY * r->speed, rate = s->pace_hz > 0 ? s->pace_hz / 60 : 1;
+    if (s->mfx && s->fg) {   // Frame Generation: the full picture, half the drawn frames; the present still runs at the shown rate
+        double out = (double)s->out_w * s->out_h / 1e6;
+        for (int i = 0; i <= FG_MIN; i++) {
+            double pr = pres_load(s, i == 0), l = ((FG_BASE + out * (FG_PER_MP - FG_3D_PER_MP * (1 - (double)k_scale[i] * k_scale[i]))) / 2 + pr) * rate;
+            if (l > cap) continue;
+            r->fg = 1; r->native = 1; r->s3d = i; r->load = l / cap; r->pres = pr * rate / cap; r->q3d = r->tier != -1 && r->load <= CLOSE;
+            r->envsh = r->tier != -1; r->shq = r->tier != -1 ? 2 : 0;   // an iPhone chip keeps the phone's shadows, as below
+            return;
+        }
+    }
     if (s->mfx)   // Native: the full picture down to 75%, else the light one down to 67%; the present's enlargement and the frame rate counted
         for (int light = 0; light < 2; light++)
             for (int i = 0; i < (light ? LIGHT_MIN + 1 : 3); i++) {
