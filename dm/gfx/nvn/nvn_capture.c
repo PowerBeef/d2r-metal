@@ -169,8 +169,8 @@ int cap_next(cap_reader *r, cap_chunk *c, uint8_t **data) {
     r->pos += c->stored; *data = d; return 1;
 }
 void cap_unload(cap_reader *r) { free(r->buf); memset(r, 0, sizeof *r); }
-size_t cap_stat_text(char *out, size_t n, uint64_t host_latch, double bright_k, int aniso, int mfx3d) {
-    int l = snprintf(out, n, "host_latch\t%llu\nbright_k\t%.9g\naniso\t%d\nmfx3d\t%d\n", (unsigned long long)host_latch, bright_k, aniso, mfx3d);
+size_t cap_stat_text(char *out, size_t n, uint64_t host_latch, int aniso, int mfx3d) {
+    int l = snprintf(out, n, "host_latch\t%llu\naniso\t%d\nmfx3d\t%d\n", (unsigned long long)host_latch, aniso, mfx3d);
     return l < 0 ? 0 : (size_t)l < n ? (size_t)l : n ? n - 1 : 0;
 }
 const char *cap_kv(const char *text, size_t n, const char *key, char *out, size_t on) {

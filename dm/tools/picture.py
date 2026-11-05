@@ -19,7 +19,6 @@ Each Video-tab key and the switch that pins it:
   Frame Drops (q3d)                               DM_3D_SCALE_DYN=0: the 3D scale stays where it is set
   Frame Rate (eco_fps)                            not pinned: 60 fps, every set's default
   Display Mode (mode)                             FULLSCREEN below, kept apart because headless shots have no window
-Brightening of dark 3D areas (DM_BRIGHT_K) is not a Video-tab key and stays at the host's default, which the Mac App has too.
 
 The sets:
   REC    this Mac's Recommended (a Mac mini M6 with a 12-core GPU on a 2560 x 1440 screen): the t_picrec row "Mac mini M6, 2560 display (measured)"

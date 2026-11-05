@@ -179,7 +179,7 @@ First result: on the UBSan host, three episodes of seed 21 all went red with mis
 
 ## One GPU frame, captured and replayed
 
-`DM_NVN_CAPTURE=<frame>:1:<file>` writes one frame at the replay boundary: the pools, the texture and sampler registries, the draw state the frame starts from, the textures whose content lives only in Metal, each submission's records (pointers relocated), the host settings each submit was drawn with (the latched drawing switches, the 3D brightening factor), and the presented frame's digest and pixels. `dm/gfx/tests/nvn_replay` replays it against the current replay layer, in a process of its own, and compares. Use it to check a change to `nvn_mtl.m` on a fixed frame without running the game, or to bisect a rendering difference to one frame.
+`DM_NVN_CAPTURE=<frame>:1:<file>` writes one frame at the replay boundary: the pools, the texture and sampler registries, the draw state the frame starts from, the textures whose content lives only in Metal, each submission's records (pointers relocated), the host settings each submit was drawn with (the latched drawing switches), and the presented frame's digest and pixels. `dm/gfx/tests/nvn_replay` replays it against the current replay layer, in a process of its own, and compares. Use it to check a change to `nvn_mtl.m` on a fixed frame without running the game, or to bisect a rendering difference to one frame.
 
 ```bash
 DM_WATCH_STALL=300 DM_NVN_SYNC=1 DM_NVN_CAPTURE=800:1:$DM_ROOT/run/capture/town800.nvncap \

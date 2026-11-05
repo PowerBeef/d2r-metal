@@ -229,9 +229,9 @@ LB_ALL = list(LB_PAGES)
 
 
 def shot_env(page_env, extra):
-    """A shot's environment. Brightening is fixed at k=1 so a stray shell value never changes the gate; the page spec's env wins over that, and the
-    caller's or set's env (extra) wins over both. The deterministic clock unless the shell, the page or the caller sets its own."""
-    env = dict(os.environ); env['DM_BRIGHT_K'] = '1'; env.setdefault('DM_DETCLOCK', '16666667')
+    """A shot's environment: the page spec's env wins over the shell's, and the caller's or set's env (extra) wins over both. The deterministic clock unless
+    the shell, the page or the caller sets its own."""
+    env = dict(os.environ); env.setdefault('DM_DETCLOCK', '16666667')
     env.update(page_env or {}); env.update(extra or {})
     return env
 
@@ -251,7 +251,6 @@ def take_shot(host, p, png, extra=None):
         if h.get('keys'): page_env['DM_KEYS'] = h['keys']
         trigger, timeout = h['trigger'], '240'
     env = shot_env(page_env, extra)
-    if env['DM_BRIGHT_K'] != '1': print(f"  {p}: brightening fixed at k={env['DM_BRIGHT_K']}")
     # DM_SHOT_PRODUCT=<output dir>: shoot another rewrite output (to compare rewrite variants such as the shadow-map size); default keypage
     prod = os.environ.get('DM_SHOT_PRODUCT') or subprocess.run(['bash', os.path.join(DM, 'tools', 'product.sh'), 'path', 'keypage'], capture_output=True, text=True, check=False).stdout.strip()
     p_ = subprocess.run(['bash', os.path.join(HERE, 'hostshot.sh'), host, prod, trigger, png, timeout], env=env, capture_output=True, text=True, check=False)
@@ -286,7 +285,6 @@ SETS: dict[str, dict[str, Any]] = {
     # rain crossing what is left comes and goes (rect lb_town_a1: 0.007-0.124% hot over 7 checks of one build, 0.016% in its 2 noise shots), so they take 10 shots: the usual 4 for the mask and 6 for the noise
     'rect': dict(env=picture.RECT, pages=['lb_town_a1', 'lb_wild_a1', 'lb_crypt_a1'], judge='flip', dir='rect', log_allow=(), unstable_max=0.65, record_shots=10, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
     'rec75t': dict(env=picture.REC75T, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75t', log_allow=(), unstable_max=0.65, record_shots=10, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
-    'bright': dict(env=dict(picture.CONV, DM_BRIGHT_K='4'), pages=['lb_crypt_a1'], judge='flip', dir='bright', log_allow=(), controls={'bright_off': {'DM_BRIGHT_K': '1'}}),
     'phone': dict(env=picture.PHONE, pages=['lb_town_a1', 'lb_crypt_a1'], judge='flip', dir='phone', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
 }
 FLIP_SETS = [s for s in SETS if SETS[s]['judge'] == 'flip']

@@ -52,7 +52,7 @@ def spec(p):
 
 def take_shot(host, p, png, extra=None):
     """One page through golden.take_shot (both the screenshot-gate pages and the look set's own pages); extra wins over the page's own env, so a
-    variant can set DM_BRIGHT_K."""
+    variant can set a picture switch."""
     return golden.take_shot(host, p, png, extra)
 
 

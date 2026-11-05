@@ -140,7 +140,7 @@ for tier in "${TIERS[@]}"; do
     # 我们自己的基线（golden.py；没录过 = ⚪ 不可用，不算红） | our own baselines (golden.py; never recorded = ⚪ unavailable, not red)
     step full_golden_replay 1800 -- bash -c 'python3 "$DM/verify/golden.py" replay check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
     step full_golden_shots 1200 -- bash -c 'python3 "$DM/verify/golden.py" shots check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
-    step full_golden_picture 2400 -- bash -c 'python3 "$DM/verify/golden.py" shots check --set orig,conv,rect,rec75,rec75t,bright,phone; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # FLIP sets (screenshot_gate.md)
+    step full_golden_picture 2400 -- bash -c 'python3 "$DM/verify/golden.py" shots check --set orig,conv,rect,rec75,rec75t,phone; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # FLIP sets (screenshot_gate.md)
     step full_faults 1200 -- bash -c 'par_scenarios cli 3 "$@"' _ $(headless_scenarios "$DM/verify/scenarios/faults/"*.scn)   # 故障矩阵（scenarios/faults/README.md） | the fault matrix (scenarios/faults/README.md)
     step full_faults_front 600 -- bash -c 'scn_run "$@" --backend cli' _ $(front_scenarios "$DM/verify/scenarios/faults/"*.scn)
     ;;

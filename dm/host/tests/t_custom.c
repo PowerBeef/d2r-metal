@@ -1,7 +1,7 @@
 // Custom settings unit test (dm_custom.c, takes a second): Frame Drops (q3d) follows its default, which the front end gives per device (front_q3d_default:
 // the Mac App's recommendation, 0 on phones, -1 = k_def, 1 on the CLI host), unless the player picked the other value. sw_custom.txt format 2 (custom_v)
 // writes q3d only while it differs from that default; an older file's q3d equal to the old default (k_def) follows today's default instead of pinning it.
-// Also checked: the Extras key bright (Brighten dark areas) defaults to on, is saved when turned off and read back. Each case runs in a forked child after
+// Also checked: a line of a key this build no longer knows loads without a red line or a lost setting. Each case runs in a forked child after
 // dm_custom_init(<tmpdir>), since dm_custom.c loads its file once per process. The stubs below stand in for the front end, the language, the 3D scale
 // controller and the picture settings.
 #include <stdio.h>
@@ -13,6 +13,7 @@
 #include "../dm_custom.h"
 #include "../dm_i18n.h"
 #include "../hle.h"
+#include <stdarg.h>
 
 module_t g_mod[MAX_MOD]; int g_nmod;
 static int g_q3d_def = -1, g_qmode = -1;
@@ -30,14 +31,18 @@ static int fails, checks;
 static void file_put(const char *txt) { char p[600]; snprintf(p, sizeof p, "%s/sw_custom.txt", g_tdir); if (!txt) { unlink(p); return; } FILE *f = fopen(p, "w"); fputs(txt, f); fclose(f); }
 static const char *file_get(void) { static char b[600]; char p[600]; snprintf(p, sizeof p, "%s/sw_custom.txt", g_tdir); FILE *f = fopen(p, "r"); if (!f) return ""; size_t n = fread(b, 1, sizeof b - 1, f); b[n] = 0; fclose(f); return b; }
 
-// One load in a child: q3d and bright as loaded, the 3D quality mode handed to the controller, the file after the load (file0); then, when set_key is
-// given, that key's pending value and an Apply, q3d after it and the file (file)
-typedef struct { int q3d, bright, qmode, q3d_after; char file0[600], file[600]; } result;
+// Log lines and red lines the load printed (the child's log hook)
+static int g_logs, g_red;
+static void log_cap(const char *file, int line, const char *fmt, ...) { (void)file; (void)line; char b[1024]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap); g_logs++; if (strstr(b, "【红】")) g_red++; }
+
+// One load in a child: q3d and eco_fps as loaded, the log and red lines printed, the 3D quality mode handed to the controller, the file after the load (file0); then,
+// when set_key is given, that key's pending value and an Apply, q3d after it and the file (file)
+typedef struct { int q3d, eco_fps, logs, red, qmode, q3d_after; char file0[600], file[600]; } result;
 static result run(const char *txt, int q3d_def, const char *set_key, int set_v) {
     file_put(txt); int pp[2]; result r; memset(&r, 0, sizeof r); r.q3d = -9; if (pipe(pp)) return r;
     pid_t pid = fork();
-    if (!pid) { close(pp[0]); result x; memset(&x, 0, sizeof x); g_q3d_def = q3d_def; dm_custom_init(g_tdir);
-        x.q3d = dm_custom_get("q3d"); x.bright = dm_custom_get("bright"); x.qmode = g_qmode; strlcpy(x.file0, file_get(), sizeof x.file0);
+    if (!pid) { close(pp[0]); result x; memset(&x, 0, sizeof x); g_q3d_def = q3d_def; g_dm_log_hook = log_cap; dm_custom_init(g_tdir);
+        x.q3d = dm_custom_get("q3d"); x.eco_fps = dm_custom_get("eco_fps"); x.logs = g_logs; x.red = g_red; x.qmode = g_qmode; strlcpy(x.file0, file_get(), sizeof x.file0);
         if (set_key) { void dm_custom_set_pending(const char *key, int v); dm_custom_set_pending(set_key, set_v); dm_custom_on_uimsg("OptionsPanelMessage", "AcceptChanges", ""); }
         x.q3d_after = dm_custom_get("q3d"); strlcpy(x.file, file_get(), sizeof x.file);
         if (write(pp[1], &x, sizeof x) != (ssize_t)sizeof x) _exit(1); _exit(0); }
@@ -74,11 +79,12 @@ int main(void) {
     // (c7) the CLI host (no front-end default: k_def, Keep): an older q3d=1 reads 1, and an Apply leaves it out
     r = run("eco_fps=0\nq3d=1\n", -1, "eco_fps", 1);
     CHECK(r.q3d == 1 && !strstr(r.file, "q3d="), "(c7) CLI: q3d 1 (%d), not saved at its default\n%s", r.q3d, r.file);
-    // (c8) bright (Brighten dark areas, the Extras page): on by default, saved when turned off, read back
-    r = run(NULL, 0, "bright", 0);
-    CHECK(r.bright == 1 && strstr(r.file, "bright=0\n"), "(c8) bright: default on (%d), saved off\n%s", r.bright, r.file);
-    r = run("custom_v=2\nbright=0\n", 0, NULL, 0);
-    CHECK(r.bright == 0, "(c8) bright=0 read back, got %d", r.bright);
+    // (c8) a settings file with a key this build no longer knows (bright, from when the port brightened dark areas): the settings around it load, no red line,
+    //      nothing is rewritten at load, and the next Apply saves without it
+    r = run("custom_v=2\nbright=1\neco_fps=1\nq3d=1\n", 0, "eco_fps", 0);
+    CHECK(r.q3d == 1 && r.eco_fps == 1 && r.logs > 0 && r.red == 0, "(c8) the settings around bright=1 load: q3d %d, eco_fps %d, log lines %d, red lines %d", r.q3d, r.eco_fps, r.logs, r.red);
+    CHECK(!strcmp(r.file0, "custom_v=2\nbright=1\neco_fps=1\nq3d=1\n"), "(c8) not rewritten at load\n%s", r.file0);
+    CHECK(!strstr(r.file, "bright") && strstr(r.file, "eco_fps=0\n") && strstr(r.file, "q3d=1\n"), "(c8) an Apply saves without bright and keeps the rest\n%s", r.file);
     // (c9) a newer build's file (custom_v 3): an Apply here keeps its custom_v, as sw_video.txt keeps a newer rec_v, so this build never claims a
     //      newer file's format as its own; junk or an older custom_v is saved as this build's 2
     r = run("custom_v=3\neco_fps=0\n", 0, "eco_fps", 1);

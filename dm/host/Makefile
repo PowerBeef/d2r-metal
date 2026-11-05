@@ -38,13 +38,13 @@ SRC=\
 	romfs_validate.c \
 	dm_actions.c \
 	dm_beltauto.c \
-	dm_bright.c \
 	dm_cloudsync.c \
 	dm_ctl.c \
 	dm_ctl_cmds.c \
 	dm_cursor.c \
 	dm_cursor_item.c \
 	dm_custom.c \
+	dm_daytime.c \
 	dm_dropfilter.c \
 	dm_drophaptic.c \
 	dm_engine.c \
@@ -63,6 +63,7 @@ SRC=\
 	dm_screen_mac.c \
 	dm_scrub.c \
 	dm_staterep.m \
+	dm_tables.c \
 	dm_textbox.c \
 	dm_textbox_core.c \
 	dm_textinput.c \
@@ -97,27 +98,20 @@ print-macos-min:
 # 由原版表生成的头文件：不进仓库，构建时从玩家自己的游戏文件（Switch 版 3.3.94012 的 Update/RomFS）生成；路径用环境变量 DM_ROMFS_SRC 指定
 # Headers generated from the original game's tables: not checked into the repository, generated at build time from the player's own game files (Update/RomFS of Switch version 3.3.94012); the path is given by the environment variable DM_ROMFS_SRC
 ROMFS?=$(or $(DM_ROMFS_SRC),$(DM_ROOT)/data/switch/3.3.94012/Update/RomFS)
-GENH=dm_hud_exp.h dm_bright_levels.inc
-# The Mac host reads the same two tables at start (dm_tables.h) instead of compiling them in, so it builds without the game's files and can be shipped
-# (dm/tools/install.py generates them on the player's Mac). They are made next to dmhost when the game files are here; the iOS app keeps the headers
-TABLES=tables/hud_exp.tsv tables/bright_levels.tsv
+GENH=dm_hud_exp.h
+# The Mac host reads the same table at start (dm_tables.h) instead of compiling it in, so it builds without the game's files and can be shipped
+# (dm/tools/install.py generates it on the player's Mac). It is made next to dmhost when the game files are here; the iOS app keeps the header
+TABLES=tables/hud_exp.tsv
 HAVE_ROMFS:=$(wildcard $(ROMFS)/data/build_manifest.psv)
 NEED_ROMFS=@test -f "$(ROMFS)/data/build_manifest.psv" || { echo "🔴 没找到游戏文件：$(ROMFS)/data/build_manifest.psv。把 Switch 版 3.3.94012 的 Update/RomFS 放到这里，或用环境变量 DM_ROMFS_SRC 指过去（见 dm/README.md「从你的游戏文件生成资源」）"; exit 1; }
 dm_hud_exp.h: ../ios/tools/gen_hud_exp.py ../ios/tools/romfs_art.py
 	$(NEED_ROMFS)
 	python3 ../ios/tools/gen_hud_exp.py "$(ROMFS)" > $@.tmp && mv $@.tmp $@
-dm_bright_levels.inc: ../tools/gen_bright_levels.py ../ios/tools/touch_layout.py
-	$(NEED_ROMFS)
-	python3 ../tools/gen_bright_levels.py "$(ROMFS)" > $@.tmp && mv $@.tmp $@
 tables: $(TABLES)
 tables/hud_exp.tsv: ../ios/tools/gen_hud_exp.py ../ios/tools/romfs_art.py
 	$(NEED_ROMFS)
 	@mkdir -p tables
 	python3 ../ios/tools/gen_hud_exp.py --tsv "$(ROMFS)" $@.tmp && mv $@.tmp $@
-tables/bright_levels.tsv: ../tools/gen_bright_levels.py ../ios/tools/touch_layout.py
-	$(NEED_ROMFS)
-	@mkdir -p tables
-	python3 ../tools/gen_bright_levels.py --tsv "$(ROMFS)" $@.tmp && mv $@.tmp $@
 dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h dm_s3lv.h dm_screen_mac.h dm_gpuheap.h dm_geom.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] ../ios/Sources/dm_vkbd.h ../ios/Sources/dm_vkbd_ui.h $(GFX_H) dm_tables.h | $(if $(HAVE_ROMFS),$(TABLES))
 	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network -framework IOKit
 # 消毒器版宿主（调试用，不在缺省目标里）：make dmhost_asan（地址 + 未定义行为）/ dmhost_ubsan / dmhost_tsan；只插桩宿主代码，游戏程序不插桩。

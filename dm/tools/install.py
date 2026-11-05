@@ -472,17 +472,16 @@ def step_overlay(c, a):
     return s, True
 
 
-def tables_stamp(c): return tree_sha([c.dm('ios', 'tools', 'gen_hud_exp.py'), c.dm('ios', 'tools', 'romfs_art.py'), c.dm('tools', 'gen_bright_levels.py'), c.dm('ios', 'tools', 'touch_layout.py')])
+def tables_stamp(c): return tree_sha([c.dm('ios', 'tools', 'gen_hud_exp.py'), c.dm('ios', 'tools', 'romfs_art.py'), c.dm('ios', 'tools', 'touch_layout.py')])
 
 
 def step_tables(c, a):
     s = tables_stamp(c); d = os.path.join(c.build, 'tables', s)
-    if not a.force and all(os.path.isfile(os.path.join(d, n)) for n in ('hud_exp.tsv', 'bright_levels.tsv')): return s, False
+    if not a.force and os.path.isfile(os.path.join(d, 'hud_exp.tsv')): return s, False
     rom = os.path.join(c.game, 'RomFS')
     def gen(part):
         os.makedirs(part)
-        for script, name in ((c.dm('ios', 'tools', 'gen_hud_exp.py'), 'hud_exp.tsv'), (c.dm('tools', 'gen_bright_levels.py'), 'bright_levels.tsv')):
-            c.run('tables', [c.python, *PY, script, '--tsv', rom, os.path.join(part, name)])
+        c.run('tables', [c.python, *PY, c.dm('ios', 'tools', 'gen_hud_exp.py'), '--tsv', rom, os.path.join(part, 'hud_exp.tsv')])
     write_atomic(d, gen)
     return s, True
 

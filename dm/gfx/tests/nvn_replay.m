@@ -262,9 +262,8 @@ int main(int argc, char **argv) { @autoreleasepool {
             else if (c->tag == CAP_TREG) for (size_t o = 0; o + sizeof(cap_treg) <= c->raw; o += sizeof(cap_treg)) { cap_treg *e = (cap_treg *)(d + o); mtl_reg_tex(e->tid, e->ok ? &e->t : NULL, e->has_v ? &e->v : NULL); }
             else if (c->tag == CAP_SREG) for (size_t o = 0; o + sizeof(cap_sreg) <= c->raw; o += sizeof(cap_sreg)) { cap_sreg e; memcpy(&e, d + o, sizeof e); mtl_reg_samp(e.sid, &e.p); }
             else if (c->tag == CAP_TPIX) fill_tex(d, c->raw);
-            else if (c->tag == CAP_STAT) {   // the host settings the submit was drawn with: the latched drawing switches, the 3D brightening factor (dm_bright_k)
-                if (cap_kv((const char *)d, c->raw, "host_latch", v, sizeof v)) latch = strtoull(v, NULL, 10);
-                if (cap_kv((const char *)d, c->raw, "bright_k", v, sizeof v)) g_bright_fixed = strtof(v, NULL); }
+            else if (c->tag == CAP_STAT) {   // the host settings the submit was drawn with: the latched drawing switches
+                if (cap_kv((const char *)d, c->raw, "host_latch", v, sizeof v)) latch = strtoull(v, NULL, 10); }
         }
         // this submit's segments: copied, decoded (jumps point at the copies), handed to the replay as the host hands the game's handles
         uint32_t nh = 0; const uint32_t *top = NULL; rp_nseg = 0;

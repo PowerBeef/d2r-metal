@@ -40,15 +40,15 @@ with tempfile.TemporaryDirectory() as t:
     expect(sha == ref, 'the save fingerprint equals savesha.sh')
     expect('.lock' not in open(os.path.join(root, 'data', 'switch', 'save_ref_x', 'MANIFEST.sha256')).read(), '.lock is left out of the manifest')
 
-# ---- shot environment: brightening fixed at k=1 < the page spec < the caller or set (INH-1) ----
-old_k = os.environ.get('DM_BRIGHT_K'); os.environ['DM_BRIGHT_K'] = '3'
+# ---- shot environment: the shell < the page spec < the caller or set (INH-1) ----
+old_aa = os.environ.get('DM_AA_MODE'); os.environ['DM_AA_MODE'] = '0'
 try:
-    expect(golden.shot_env({}, {})['DM_BRIGHT_K'] == '1', 'a shell DM_BRIGHT_K never reaches a shot (k=1)')
-    expect(golden.shot_env({'DM_BRIGHT_K': '4'}, {})['DM_BRIGHT_K'] == '4', "the page spec's DM_BRIGHT_K wins over k=1")
-    expect(golden.shot_env({'DM_BRIGHT_K': '4'}, {'DM_BRIGHT_K': '2'})['DM_BRIGHT_K'] == '2', "the caller's DM_BRIGHT_K wins over the page's")
+    expect(golden.shot_env({}, {})['DM_AA_MODE'] == '0', 'a shell DM_AA_MODE passes through when nothing else sets it')
+    expect(golden.shot_env({'DM_AA_MODE': '1'}, {})['DM_AA_MODE'] == '1', "the page spec's DM_AA_MODE wins over the shell's")
+    expect(golden.shot_env({'DM_AA_MODE': '1'}, {'DM_AA_MODE': '2'})['DM_AA_MODE'] == '2', "the caller's DM_AA_MODE wins over the page's")
 finally:
-    if old_k is None: os.environ.pop('DM_BRIGHT_K', None)
-    else: os.environ['DM_BRIGHT_K'] = old_k
+    if old_aa is None: os.environ.pop('DM_AA_MODE', None)
+    else: os.environ['DM_AA_MODE'] = old_aa
 old_clock = os.environ.pop('DM_DETCLOCK', None)
 try:
     expect(golden.shot_env({}, {})['DM_DETCLOCK'] == '16666667' and golden.shot_env({'DM_DETCLOCK': '1'}, {})['DM_DETCLOCK'] == '1', 'the deterministic clock is the default, a page value wins')
@@ -70,12 +70,12 @@ try:
         expect('DM_TEST_GOTO_LEVEL' not in env and cmd[4] == 'DM:Tick:420#+2', 'lb_town_a1 stays in camp (no level switch) and shoots at tick 420')
         golden.take_shot('h', 'lb_crypt_a1', os.path.join(t, 'b.png'))
         expect(calls[-1][1]['DM_TEST_GOTO_LEVEL'] == '150:34', 'lb_crypt_a1 switches to level 34 at tick 150')
-        golden.take_shot('h', 'lb_crypt_a1', os.path.join(t, 'c.png'), {'DM_BRIGHT_K': '4'})
-        expect(calls[-1][1]['DM_BRIGHT_K'] == '4', "a set's DM_BRIGHT_K reaches a look-set shot")
+        golden.take_shot('h', 'lb_crypt_a1', os.path.join(t, 'c.png'), {'DM_AA_MODE': '1'})
+        expect(calls[-1][1]['DM_AA_MODE'] == '1', "a set's DM_AA_MODE reaches a look-set shot")
         pages = os.path.join(t, 'pages'); os.makedirs(pages)
-        json.dump(dict(host=dict(trigger='X+1', env={'DM_BRIGHT_K': '4'})), open(os.path.join(pages, 'tp.json'), 'w'))
+        json.dump(dict(host=dict(trigger='X+1', env={'DM_AA_MODE': '1'})), open(os.path.join(pages, 'tp.json'), 'w'))
         old_pages = golden.PAGES; golden.PAGES = pages
-        try: golden.take_shot('h', 'tp', os.path.join(t, 'd.png')); expect(calls[-1][1]['DM_BRIGHT_K'] == '4' and calls[-1][0][4] == 'X+1', "a page spec's DM_BRIGHT_K reaches its shot")
+        try: golden.take_shot('h', 'tp', os.path.join(t, 'd.png')); expect(calls[-1][1]['DM_AA_MODE'] == '1' and calls[-1][0][4] == 'X+1', "a page spec's DM_AA_MODE reaches its shot")
         finally: golden.PAGES = old_pages
     import lookbook  # noqa: E402  # pyright: ignore[reportMissingImports]
     seen = []
@@ -83,8 +83,8 @@ try:
     golden.take_shot = lambda host, p, png, extra=None: seen.append((p, extra)) or (True, '')
     try:
         with tempfile.TemporaryDirectory() as t:
-            lookbook.OUT = t; lookbook.shoot('t', {'DM_BRIGHT_K': '4'}, '3200x1800', 'h', ['lb_crypt_a1'])
-            expect(seen == [('lb_crypt_a1', {'DM_BRIGHT_K': '4', 'DM_GAME_RES': '3200x1800'})] and 'DM_GAME_RES' not in os.environ, 'lookbook passes its variant as the caller env and leaves os.environ alone')
+            lookbook.OUT = t; lookbook.shoot('t', {'DM_AA_MODE': '1'}, '3200x1800', 'h', ['lb_crypt_a1'])
+            expect(seen == [('lb_crypt_a1', {'DM_AA_MODE': '1', 'DM_GAME_RES': '3200x1800'})] and 'DM_GAME_RES' not in os.environ, 'lookbook passes its variant as the caller env and leaves os.environ alone')
     finally: golden.take_shot, lookbook.OUT = old_ts, old_out
 finally:
     golden.subprocess.run = old_run

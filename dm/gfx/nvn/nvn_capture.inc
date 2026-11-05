@@ -7,7 +7,7 @@
 // From the frame's first submit until its present: every live pool's bytes, the registries, the programs' stage keys, the contents of every texture whose content
 // lives only in Metal that the frame can reach (registered or named by a record), and each submission's record bytes with pointers written as region offsets and
 // object indices. Before each later submit of the frame, the pool bytes that changed (GPU writes included) and the registry entries that changed. With each submit,
-// its state set outside records (CAP_STAT): the latched host switches, the 3D brightening factor, the anisotropy level and whether the MetalFX 3D pass is on, the levels
+// its state set outside records (CAP_STAT): the latched host switches, the anisotropy level and whether the MetalFX 3D pass is on, the levels
 // it is drawn with; the replayer applies the first submit's anisotropy and MetalFX 3D before the live run's settings. Regions stream from the pools into the file
 // (cap_put2), so a capture adds no copy of a pool to the host's footprint, and every capture table is freed once the file is closed (cap_release). At the present:
 // the presented texture's SHA-256, read back the way the replayer reads its own (cap_digest). Each capture step first waits for the GPU (mtl_finish), so what is
@@ -381,7 +381,7 @@ void nvn_cap_submit(int n, const uint64_t *h, uint64_t host) {
     for (uint32_t i = 0; i < g_cap_nseg; i++) cap_seg_write(i);   // segments jumped to are queued while the earlier ones are written
     cap_flush_objs(g_cap_cur_submit);
     // the host settings this submit is drawn with: mtl_sub_begin latches aniso_want right after this hook, on this thread, and mfx3d_draw reads mfx3d_on
-    char latch[160]; size_t ll = cap_stat_text(latch, sizeof latch, host, bright_k(), aniso_want(), mfx3d_on());
+    char latch[160]; size_t ll = cap_stat_text(latch, sizeof latch, host, aniso_want(), mfx3d_on());
     cap_put(&g_cap_w, CAP_STAT, g_cap_cur_submit, latch, ll, 0);
     cap_buf s = {0}; uint32_t nn = (uint32_t)n; cap_buf_put(&s, &nn, 4); cap_buf_put(&s, top, (size_t)n * 4);
     cap_put(&g_cap_w, CAP_SUBM, g_cap_cur_submit, s.p, s.n, 0); cap_buf_free(&s); free(top);
