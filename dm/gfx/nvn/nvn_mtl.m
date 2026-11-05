@@ -3496,10 +3496,10 @@ static void bind_args(id en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, 
 // Past the part Ryujinx's layout uses, what ray tracing hands every forward shader (nvn_rt.inc, dmsh_rules.py rt_shadow_hook): at 2048 {on, width, height}, at 4096 the mask, one byte a pixel
 int rtx_want(void);
 #if TARGET_OS_IPHONE
-static size_t rtx_mask_bytes(void) { return getenv("DM_RT") ? 4096 + (size_t)2868 * 2064 * 2 : 65536; }   // no Ray Tracing row there yet: measuring only
+static size_t rtx_mask_bytes(void) { return getenv("DM_RT") ? 4096 + (size_t)2868 * 2064 * 3 : 65536; }   // no Ray Tracing row there yet: measuring only
 #else
 int mtl_rt_supported(void);
-static size_t rtx_mask_bytes(void) { return mtl_rt_supported() ? 4096 + (size_t)3840 * 2160 * 2 : 65536; }   // the widest picture, twice: the mask and the occlusion. Pages nothing writes to cost nothing
+static size_t rtx_mask_bytes(void) { return mtl_rt_supported() ? 4096 + (size_t)3840 * 2160 * 3 : 65536; }   // the widest picture: the mask, the occlusion, and the local lights (four channels at half the size each way). Pages nothing writes to cost nothing
 #endif
 static id<MTLBuffer> support_buf(void) {
     static __strong id<MTLBuffer> b; if (b) return b;

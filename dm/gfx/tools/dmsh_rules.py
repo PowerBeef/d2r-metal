@@ -109,5 +109,42 @@ def rt_ao_hook(src):
     return src[:e.start()] + helper + src[e.start():]
 
 
+def rt_local_hook(src):
+    """Torches, spot lights and unit lights take the ray-traced visibility nvn_rt.inc works out for the first four local lights of a pixel's tile. All three loops read their light's position from the same texel buffer,
+    and walk the tile's list with a running offset: the offset past the decals is the slot. The point lights have no shadow to hook, so their contribution is scaled where it joins the sum; spot and unit lights
+    scale the shadow they already have. Off, header word 5 reads 0 and every light is as it was."""
+    if 'dm_rt_key(' not in src: return src
+    count = re.search(r'float (_\d+) = as_type<float>\(\(\*spvDescriptorSet0\.fp_s0\)\._m0\[int\(_\d+\)\]\);', src)
+    pat = re.compile(r'float3 _\d+ = spvDescriptorSet0\.fp_t_tcb_6A\.read\(uint\(as_type<int>\(_\d+\)\)\)\.xyz;')
+    reads = list(pat.finditer(src))
+    if not count or len(reads) != 3: raise ValueError('the local light loops are not the three expected')
+    sp = re.search(r'float (_\d+) = spvDepthCast\(spvDescriptorSet0\.fp_t_cb196610_105980AA\)\.sample_compare\([^\n]*\n\s*(_\d+) = \1;', src)
+    cu = re.search(r'float (_\d+) = spvDepthCast\(spvDescriptorSet0\.fp_t_cb196610_105A009C\)\.sample_compare\([^\n]*\n\s*(_\d+) = \1;', src)
+    if not sp or not cu: raise ValueError('the spot and unit light shadows were not found')
+    # the point lights' sum: the three values the loop starts from, each joined by one fma
+    head = src[max(0, reads[0].start() - 900):reads[0].start()]
+    accs = re.findall(r'float (_\d+) = _\d+;', head)[-3:]
+    body = src[reads[0].end():reads[1].start()]
+    for a in accs:
+        body, n = re.subn(r'(float _\d+ = fma\()(_\d+), (_\d+), ' + a + r'\);', lambda m: f'{m.group(1)}{m.group(2)} * dm_lv0, {m.group(3)}, {a});', body)
+        if n != 1: raise ValueError('the point lights do not join the sum as expected')
+    src = src[:reads[0].end()] + body + src[reads[1].start():]
+    for name, m in (('dm_lv1', sp), ('dm_lv2', cu)):
+        src, n = re.subn(re.escape(m.group(2)) + r' = ' + re.escape(m.group(1)) + r';', f'{m.group(2)} = {m.group(1)} * {name};', src, count=1)
+        src, k = re.subn(r'(else\s*\n\s*\{\s*\n\s*)' + re.escape(m.group(2)) + r' = 1\.0;', lambda x: f'{x.group(1)}{m.group(2)} = {name};', src, count=1)
+        if n != 1 or k != 1: raise ValueError('a local shadow does not end as expected')
+    out, last = [], 0
+    for i, m in enumerate(pat.finditer(src)):
+        off = re.findall(r'int (_\d+) = (_\d+) << 2;\n\s*int _\d+ = \1 >> 2;\n\s*int _\d+ = _\d+ << 8;', src[max(0, m.start() - 1600):m.start()])
+        if not off: raise ValueError('the walk of the light list was not found')
+        out += [src[last:m.end()], f'\n            float dm_lv{i} = dm_rt_local(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {off[-1][1]} - (as_type<int>({count.group(1)}) & 63));']
+        last = m.end()
+    src = ''.join(out) + src[last:]
+    helper = ('static inline float dm_rt_local(constant uchar* sb, float4 fc, int slot)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[5] == 0u || slot < 0 || slot >= 4) return 1.0;\n'
+              '    uint w = h[1] >> 1, x = min(uint(fc.x) >> 1, w - 1u), y = min(uint(fc.y) >> 1, (h[2] >> 1) - 1u);\n    return float(sb[4096u + 2u * h[1] * h[2] + (y * w + x) * 4u + uint(slot)]) / 255.0;\n}\n\n')
+    e = re.search(r'^fragment \w+ main0\(', src, re.M)
+    return src[:e.start()] + helper + src[e.start():]
+
+
 RULES = [(hdr_switch_split, lambda name, key: key in HDR_SWITCH_KEYS), (velocity_entry, lambda name, key: key in VELOCITY_VS_KEYS), (capture_entry, lambda name, key: key in VELOCITY_VS_KEYS),
-         (rt_shadow_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_ao_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES)]
+         (rt_shadow_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_ao_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_local_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES)]

@@ -145,7 +145,8 @@ class HdrSwitchSplit(unittest.TestCase):
     def test_rule_table(self):
         self.assertEqual(len(dmsh_rules.HDR_SWITCH_KEYS), 7)
         self.assertTrue(all(re.fullmatch(r'[0-9a-f]{16}', k) for k in dmsh_rules.HDR_SWITCH_KEYS))
-        (f, applies), (g, applies2), (h, _), (i, applies3), (j, applies4) = dmsh_rules.RULES
+        (f, applies), (g, applies2), (h, _), (i, applies3), (j, applies4), (k, _) = dmsh_rules.RULES
+        self.assertIs(k, dmsh_rules.rt_local_hook)
         self.assertIs(h, dmsh_rules.capture_entry)
         self.assertIs(i, dmsh_rules.rt_shadow_hook)
         self.assertIs(j, dmsh_rules.rt_ao_hook)
@@ -176,6 +177,25 @@ class HdrSwitchSplit(unittest.TestCase):
         plain = src.replace(read, '1.0')
         self.assertEqual(dmsh_rules.rt_shadow_hook(plain), plain)
         self.assertEqual(dmsh_rules.rt_ao_hook(plain), plain)
+
+    def test_rt_local_hook(self):
+        # the three loops as every forward shader has them: the running offset, the light's position, then how its contribution or its shadow ends
+        walk = lambda n: f'int _{n}1 = _{n}0 << 2;\n    int _{n}2 = _{n}1 >> 2;\n    int _{n}3 = _9 << 8;\n'
+        pos = lambda n: f'float3 _{n}4 = spvDescriptorSet0.fp_t_tcb_6A.read(uint(as_type<int>(_{n}5))).xyz;\n'
+        cmp = lambda t: f'float _7{t} = spvDepthCast(spvDescriptorSet0.fp_t_cb196610_{t}).sample_compare(s, c, 0);\n    _8{t} = _7{t};\n    else\n    {{\n        _8{t} = 1.0;\n'
+        src = ('fragment main0_out main0()\n{\n    float _5 = as_type<float>((*spvDescriptorSet0.fp_s0)._m0[int(_6)]);\n    dm_rt_key(\n'
+               '    float _21 = _31;\n    float _22 = _32;\n    float _23 = _33;\n' + walk(10) + pos(10) +
+               '    float _41 = fma(_51, _61, _21);\n    float _42 = fma(_51, _62, _22);\n    float _43 = fma(_51, _63, _23);\n' + walk(11) + pos(11) + cmp('105980AA') + walk(12) + pos(12) + cmp('105A009C') + '}\n')
+        out = dmsh_rules.rt_local_hook(src)
+        self.assertIn('static inline float dm_rt_local(', out)
+        for i, off in enumerate(('_100', '_110', '_120')):
+            self.assertIn(f'float dm_lv{i} = dm_rt_local(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {off} - (as_type<int>(_5) & 63));', out)
+        for acc in ('_21', '_22', '_23'):
+            self.assertRegex(out, r'fma\(_51 \* dm_lv0, _6\d, ' + acc + r'\);')
+        self.assertIn('_8105980AA = _7105980AA * dm_lv1;', out); self.assertIn('_8105980AA = dm_lv1;', out)
+        self.assertIn('_8105A009C = _7105A009C * dm_lv2;', out); self.assertIn('_8105A009C = dm_lv2;', out)
+        self.assertEqual(dmsh_rules.rt_local_hook('no shadow read'), 'no shadow read')
+        with self.assertRaises(ValueError): dmsh_rules.rt_local_hook('dm_rt_key( but no light loops')
 
     def test_rules_self_contained(self):
         # The shader cache fingerprints only each applying rule's own text (dmsh_build.shader_rule_source), and the chain version leaves dmsh_rules.py
