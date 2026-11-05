@@ -839,7 +839,7 @@ _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') els
 # where the host puts "Takes effect after restarting the game" while a change is waiting for a restart (like the language row's hint). There is mouse hover, so each row has an original-style hover description
 # iOS (DM_OVERLAY_IOS, set by dm/ios/run.sh when it generates the overlay): only the "Graphics" section, which is the header row itself -- 3D Resolution (50%, 67%, 75%, 85%, 100%),
 # Color, Graphic Presets, Upscaling (whether the game's 3D upscale pass uses MetalFX), Anti-Aliasing, Anisotropic Filtering, Environment Shadows, Shadow Quality, Frame Rate
-# (60 / 30 power saver), Frame Drops (lower / keep the 3D resolution); no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
+# (60 / 30 power saver), Frame Generation, Frame Drops (lower / keep the 3D resolution); no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
 # Mac 与 iOS 上这几行独占「视频」页签（页首标题 = 第一节的名字，在表格的标题行里）；自定义各行在第五个页签「附加」那一页（_EXTRAS_PANEL）
 # On the Mac and iOS these rows have the "Video" tab to themselves (the page title = the first section's name, in the table's title row); the custom rows are on the page of the fifth tab, "Extras" (_EXTRAS_PANEL)
 _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVideoModeTip'),
@@ -854,6 +854,7 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), 'dmVideoEnvShadowsTip'),
            ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), 'dmVideoShadowQTip'),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), 'dmVideoFpsTip'),
+           ('fg', '@dmVideoFg', ('dmVideoFgOff', 'dmVideoFgOn'), 'dmVideoFgTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
           (('res', '@dmVideo3DRes', ('dmVideoScale50', 'dmVideoScale67', 'dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),   # selector order; dm_video.c car_of maps it to the stored values
            ('color', '@dmVideoColor', ('dmVideoColorVivid', 'dmVideoColorAccurate'), None),
@@ -864,6 +865,7 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), None),
            ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), None),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), None),
+           ('fg', '@dmVideoFg', ('dmVideoFgOff', 'dmVideoFgOn'), None),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), None)) if _VIDEO_IOS else ())
 _VIDEO_H = _CUSTOM_LINE_H * len(_VIDEO)
 _VIDEO_RESTART = {'res': 'TouchVideoResHint', 'envsh': 'TouchVideoEnvshHint', 'shq': 'TouchVideoShqHint'}   # rows applied at the next launch -> the name of their hint (dm_video.c hint)

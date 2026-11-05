@@ -1,4 +1,4 @@
-# This Mac's Recommended picture on the CLI host (dm/tools/picture.py REC pinned through its switches: SMAA, 16x filtering, environment shadows,
+# The conventional picture of a chip without Temporal and Frame Generation, on the CLI host (dm/tools/picture.py CONV pinned through its switches: SMAA, 16x filtering, environment shadows,
 # the 4096 shadow map, 3D 100%). Filtering alternates between 16x and the original every 60 frames (DM_NVN_UB), so the sampler latch rebuilds the
 # samplers both ways. Judged on the renderer's AA byte (2 = SMAA), the host's own reports and the user's choice of one MetalFX pass (no MetalFX
 # at the present). No GPU timing, so fork_gate also runs it under Metal API validation (full_metal_validation_rec)

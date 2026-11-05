@@ -24,7 +24,11 @@
 __attribute__((weak)) int dm_video_temporal_active(void) { return 0; }   // the host's dm_video.c
 static int g_mt_want, g_mv_want;   // read at the start of each submission (mv_sub_begin), replay thread
 static inline int mv_on(void) { return g_mv_want; }
-int mtl_mfx_temporal_supported(void) { static int v = -1; if (v < 0) v = g_dev && [MTLFXTemporalScalerDescriptor supportsMetal4FX:g_dev]; return v; }
+int mtl_mfx_temporal_supported(void) {   // any thread, before the renderer has a device too (the recommendation asks at launch)
+    static int ok; static dispatch_once_t once;
+    dispatch_once(&once, ^{ id<MTLDevice> d = MTLCreateSystemDefaultDevice(); ok = d && [MTLFXTemporalScalerDescriptor supportsMetal4FX:d]; MLOG("MetalFX: Metal 4 temporal scaler supported: %s", ok ? "yes" : "no"); });
+    return ok;
+}
 
 enum { MV_MAX_DRAWS = 4096, MV_TAB = 16384, MV_MAX_CB = 8, MV_RING = 5, MV_SNAP_BYTES = 8 << 20, MV_DEDUPE = 4096, MV_VIEW_REG = 3, MV_FRAME_REG = 10, MV_VP_OFF = 336, MV_PROJ_OFF = 208 };
 typedef struct { uint32_t off, size; int8_t reg, aid; } mv_cb;
@@ -36,10 +40,10 @@ typedef struct { uint64_t key; int idx; } mv_slot;
 static struct {
     __strong id<MTLBuffer> snap[MV_RING]; uint64_t gpu[MV_RING]; size_t used; int ri;
     mv_draw *d[2]; int n[2], cur; mv_slot *tab[2]; struct { uint64_t key; int n; } *occ; struct { uint64_t addr, size; uint32_t off; uint32_t stamp; } *dd; uint32_t stamp;
-    uint64_t frame[2]; float vp[2][16], jit[2][2]; int has_vp[2]; double view[6]; int have_prev, moved_last, stat_overflow, stat_full; uint64_t stat_frames, stat_moved, stat_draws, last_use; size_t stat_peak; int stat_cuts, stat_far;
+    uint64_t frame[2]; float vp[2][16], jit[2][2], view_m[2][16], proj_m[2][16], nearf[2], farf[2]; int has_vp[2]; double view[6]; int have_prev, moved_last, stat_overflow, stat_full; uint64_t stat_frames, stat_moved, stat_draws, last_use; size_t stat_peak; int stat_cuts, stat_far;
     __strong id<MTLTexture> depth, vel; __strong id<MTLLibrary> lib; __strong id<MTLFunction> obj_fn; __strong id<MTLRenderPipelineState> cam; __strong id<MTLDepthStencilState> dss;
     __strong id<MTL4ArgumentTable> vt, ft; __strong id<MTLBuffer> zero, unif; __strong id<MTLFence> fence;
-    long dump_first, dump_count; const char *dump_path; __strong id<MTLTexture> dump_col; __strong id<MTLTexture> dump_vel; __strong id<MTLTexture> dump_out; uint64_t dump_frame; int inited;
+    long dump_first, dump_count; const char *dump_path; __strong id<MTLTexture> dump_col; __strong id<MTLTexture> dump_vel; __strong id<MTLTexture> dump_out; __strong id<MTLTexture> dump_gen; __strong id<MTLTexture> dump_real; __strong id<MTLTexture> dump_comp; __strong id<MTLTexture> dump_swap; uint64_t dump_frame; int inited;
 } g_mv;
 static nvn_hmap g_mv_pso = {.klen = sizeof(pso_key)};
 
@@ -92,6 +96,7 @@ static int mv_init(void) {
 
 static void mv_dump_raw(id<MTLTexture> t, size_t bpp, const char *suffix, uint64_t frame) {
     if (!t) return;
+    { const char *only = getenv("DM_MV_DUMP_ONLY"); if (only && !strstr(only, suffix)) return; }   // a list of the suffixes to write: comp,swap for a clip
     size_t row = t.width * bpp, n = row * t.height; id<MTLBuffer> b = [g_dev newBufferWithLength:n options:MTLResourceStorageModeShared];
     id<MTLCommandBuffer> cb = q_cb(); id<MTLBlitCommandEncoder> e = [cb blitCommandEncoder];
     [e copyFromTexture:t sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(t.width, t.height, 1) toBuffer:b destinationOffset:0 destinationBytesPerRow:row destinationBytesPerImage:n];
@@ -103,8 +108,8 @@ static void mv_dump_raw(id<MTLTexture> t, size_t bpp, const char *suffix, uint64
 // A new frame's first prepass draw: last frame's draws become the previous ones, the next copy buffer starts
 static void mv_frame_begin(uint64_t frame) {
     if (g_mv.dump_vel) {   // the velocity and picture targets of a dumped frame: nothing has written them yet this frame
-        mtl_finish_gpu(); mv_dump_raw(g_mv.dump_vel, 4, "mv", g_mv.dump_frame); mv_dump_raw(g_mv.dump_col, 4, "col", g_mv.dump_frame); mv_dump_raw(g_mv.dump_out, 8, "out", g_mv.dump_frame);
-        g_mv.dump_vel = nil; g_mv.dump_col = nil; g_mv.dump_out = nil;
+        mtl_finish_gpu(); mv_dump_raw(g_mv.dump_vel, 4, "mv", g_mv.dump_frame); mv_dump_raw(g_mv.dump_col, 4, "col", g_mv.dump_frame); mv_dump_raw(g_mv.dump_out, 8, "out", g_mv.dump_frame); mv_dump_raw(g_mv.dump_gen, g_mv.dump_gen.pixelFormat == MTLPixelFormatRGBA16Float ? 8 : 4, "gen", g_mv.dump_frame); mv_dump_raw(g_mv.dump_real, g_mv.dump_real.pixelFormat == MTLPixelFormatRGBA16Float ? 8 : 4, "real", g_mv.dump_frame); mv_dump_raw(g_mv.dump_comp, 4, "comp", g_mv.dump_frame); mv_dump_raw(g_mv.dump_swap, 4, "swap", g_mv.dump_frame);
+        g_mv.dump_comp = nil; g_mv.dump_swap = nil; g_mv.dump_vel = nil; g_mv.dump_col = nil; g_mv.dump_out = nil; g_mv.dump_gen = nil; g_mv.dump_real = nil;
     }
     g_mv.cur ^= 1; g_mv.ri = (g_mv.ri + 1) % MV_RING; g_mv.used = 0; g_mv.stamp++;
     int c = g_mv.cur; g_mv.n[c] = 0; g_mv.frame[c] = frame; g_mv.has_vp[c] = 0; memset(g_mv.tab[c], 0, MV_TAB * sizeof(mv_slot)); memset(g_mv.occ, 0, MV_TAB * sizeof *g_mv.occ);
@@ -171,7 +176,9 @@ static void mv_note_draw(NvProg *pr, const p_draw_idx *di) {
         if (b->reg == MV_VIEW_REG && !g_mv.has_vp[c] && S.ubo[0][b->reg].size >= MV_VP_OFF + 64) { const float *pj = (const float *)((uint8_t *)g_mv.snap[g_mv.ri].contents + o - 1 + MV_PROJ_OFF);
             memcpy(g_mv.vp[c], (uint8_t *)g_mv.snap[g_mv.ri].contents + o - 1 + MV_VP_OFF, 64); g_mv.has_vp[c] = 1;
             // the frustum is centred, so these hold nothing but the offset: the world's camera is orthographic (w comes from the fourth row), the character screen's a perspective one (the third)
-            int wr = pj[11] != 0 ? 8 : 12; g_mv.jit[c][0] = pj[wr + 3] != 0 ? pj[wr] / pj[wr + 3] : 0; g_mv.jit[c][1] = pj[wr + 3] != 0 ? pj[wr + 1] / pj[wr + 3] : 0; }
+            int wr = pj[11] != 0 ? 8 : 12; g_mv.jit[c][0] = pj[wr + 3] != 0 ? pj[wr] / pj[wr + 3] : 0; g_mv.jit[c][1] = pj[wr + 3] != 0 ? pj[wr + 1] / pj[wr + 3] : 0;
+            // for the frame interpolator (nvn_fg.inc): the view, the projection without the offset, and the depth range (block +0x50, +0xd0; +0x250 / +0x254 hold far / near for an orthographic camera)
+            { const uint8_t *blk = (const uint8_t *)g_mv.snap[g_mv.ri].contents + o - 1; memcpy(g_mv.view_m[c], blk + 0x50, 64); memcpy(g_mv.proj_m[c], pj, 64); g_mv.proj_m[c][wr] = 0; g_mv.proj_m[c][wr + 1] = 0; g_mv.farf[c] = ((const float *)(blk + 0x250))[0]; g_mv.nearf[c] = ((const float *)(blk + 0x250))[1]; } }
     }
     d->pso = mv_pso(vs);   // nil for now: nothing to draw again, but next frame's match still finds this one's constants
     uint64_t h = 1469598103934665603ull;
@@ -223,6 +230,39 @@ static int mv_moved(const mv_draw *d, const mv_draw *p, int prev_ri) {
     return 0;
 }
 
+// DM_MV_TRACE=<file>: one line per drawn frame about the hero's limbs, from the velocity target. The camera follows her, so her body stays still on the screen while the ground slides under her, and
+// what moves in her area is her limbs: a pose that freezes reads near zero however the picture looks, with no video or capture involved. The copy of her area goes in the frame's own command
+// buffer and is read a few frames later, when it has surely run, so this never waits for the GPU. dm/tools/motion_scan.py --trace judges the result
+enum { MVT_RING = 8 };
+static struct { FILE *f; int on; __strong id<MTLBuffer> buf[MVT_RING]; uint64_t frame[MVT_RING]; double cw[MVT_RING], ch[MVT_RING], t[MVT_RING]; NSUInteger x0, y0, bw, bh; } g_mvt;
+static float mvt_half(uint16_t h) { uint32_t s = (h & 0x8000u) << 16, e = (h >> 10) & 31, m = h & 1023; union { uint32_t u; float f; } v; if (!e) { v.f = (float)m * (1.0f / (1 << 24)); v.u |= s; return v.f; } if (e == 31) { v.u = s | 0x7f800000u | (m << 13); return v.f; } v.u = s | ((e + 112) << 23) | (m << 13); return v.f; }
+static int mvt_cmp(const void *a, const void *b) { float x = *(const float *)a, y = *(const float *)b; return x < y ? -1 : x > y; }
+static void mvt_read(int k) {
+    if (!g_mvt.frame[k]) return;
+    const uint16_t *p = g_mvt.buf[k].contents; size_t n = g_mvt.bw * g_mvt.bh; static float *xs, *ys, *limb; if (!xs) { xs = malloc(n * sizeof(float)); ys = malloc(n * sizeof(float)); limb = malloc(n * sizeof(float)); }
+    double cw = g_mvt.cw[k], ch = g_mvt.ch[k]; size_t m = 0;
+    for (size_t i = 0; i < n; i += 3) { xs[m] = mvt_half(p[i * 2]) * (float)cw; ys[m] = mvt_half(p[i * 2 + 1]) * (float)ch; m++; }
+    // the ground: the commonest motion in her area, read at the edges of the area where she isn't
+    size_t e = 0; static float *ex, *ey; if (!ex) { ex = malloc(n * sizeof(float)); ey = malloc(n * sizeof(float)); }
+    for (NSUInteger y = 0; y < g_mvt.bh; y += 2) for (NSUInteger x = 0; x < g_mvt.bw; x += 2) if (x < g_mvt.bw / 8 || x >= g_mvt.bw * 7 / 8) { size_t i = y * g_mvt.bw + x; ex[e] = mvt_half(p[i * 2]) * (float)cw; ey[e] = mvt_half(p[i * 2 + 1]) * (float)ch; e++; }
+    qsort(ex, e, sizeof(float), mvt_cmp); qsort(ey, e, sizeof(float), mvt_cmp); float gx = e ? ex[e / 2] : 0, gy = e ? ey[e / 2] : 0, cam = hypotf(gx, gy);
+    size_t h = 0; for (size_t i = 0; i < m; i++) if (hypotf(xs[i] - gx, ys[i] - gy) > fmaxf(1.5f, cam * 0.35f)) limb[h++] = hypotf(xs[i], ys[i]);
+    float p50 = 0, p95 = 0; if (h) { qsort(limb, h, sizeof(float), mvt_cmp); p50 = limb[h / 2]; p95 = limb[h * 95 / 100]; }
+    fprintf(g_mvt.f, "%llu\t%.2f\t%.2f\t%zu\t%.2f\t%.2f\n", (unsigned long long)g_mvt.frame[k], g_mvt.t[k], cam, h * 3, p50, p95); fflush(g_mvt.f);
+    g_mvt.frame[k] = 0;
+}
+static void mv_trace(uint64_t frame, double cw, double ch) {
+    if (!g_mvt.on) { static int tried; if (tried) return; tried = 1; const char *e = getenv("DM_MV_TRACE"); if (!e) return; g_mvt.f = fopen(e, "w"); if (!g_mvt.f) return; fprintf(g_mvt.f, "frame\tt_ms\tcam_px\thero_px\tlimb_p50\tlimb_p95\n"); g_mvt.on = 1;
+        g_mvt.bw = g_mv.vel.width * 14 / 100; g_mvt.bh = g_mv.vel.height * 30 / 100; g_mvt.x0 = g_mv.vel.width / 2 - g_mvt.bw / 2; g_mvt.y0 = g_mv.vel.height * 49 / 100 - g_mvt.bh / 2;
+        for (int i = 0; i < MVT_RING; i++) { g_mvt.buf[i] = [g_dev newBufferWithLength:g_mvt.bw * g_mvt.bh * 4 options:MTLResourceStorageModeShared]; res_add(g_mvt.buf[i]); } res_commit(); }
+    if (g_mvt.x0 + g_mvt.bw > g_mv.vel.width || g_mvt.y0 + g_mvt.bh > g_mv.vel.height) return;   // the 3D target shrank below the area: no line rather than a wrong one
+    static int k; k = (k + 1) % MVT_RING; mvt_read(k);
+    CENC e = enc_c_begin(NULL);
+    [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+    enc_b_copy_texture_buffer(e, g_mv.vel, 0, 0, MTLOriginMake(g_mvt.x0, g_mvt.y0, 0), MTLSizeMake(g_mvt.bw, g_mvt.bh, 1), g_mvt.buf[k], 0, g_mvt.bw * 4, g_mvt.bw * g_mvt.bh * 4);
+    m4_end(e);
+    g_mvt.frame[k] = frame; g_mvt.cw[k] = cw; g_mvt.ch[k] = ch; g_mvt.t[k] = bp_now() / 1e6;
+}
 static int mat4_inv(const double m[16], double o[16]) {   // column-major; 0 = singular
     double a[4][8]; for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) { a[r][c] = m[c * 4 + r]; a[r][c + 4] = r == c; }
     for (int c = 0; c < 4; c++) { int p = c; for (int r = c + 1; r < 4; r++) if (fabs(a[r][c]) > fabs(a[p][c])) p = r;
@@ -303,6 +343,7 @@ static int mv_resolve(id<MTLTexture> src) {
         if (en) { [en updateFence:g_mv.fence afterEncoderStages:MTLStageFragment]; pg_render_finish(en); enc_host_r_end(en); pg_end_render(); }
     }
     if (moved != g_mv.moved_last) { g_mv.moved_last = moved; PD("V %llu motion vectors: %d of %d prepass draws moved", g_stat_pass, moved, g_mv.n[c]); }
+    mv_trace(frame, g_mv.view[2], g_mv.view[3]);
     { static int once; if (!once++) MLOG("motion vectors: velocity target %lux%lu, content viewport %.0f,%.0f %.0fx%.0f", (unsigned long)g_mv.vel.width, (unsigned long)g_mv.vel.height, g_mv.view[0], g_mv.view[1], g_mv.view[2], g_mv.view[3]); }
     g_mv.stat_frames++; g_mv.stat_moved += moved; g_mv.stat_draws += g_mv.n[c]; if (g_mv.used > g_mv.stat_peak) g_mv.stat_peak = g_mv.used;
     if (g_mv.stat_frames % 600 == 0) { MLOG("motion vectors: %llu frames, %.0f prepass draws a frame, %.1f moved, copies at most %.1f MB of %d, draws left with the camera's motion for lack of room %d, too far for one frame %d; camera cuts %d", (unsigned long long)g_mv.stat_frames, (double)g_mv.stat_draws / g_mv.stat_frames, (double)g_mv.stat_moved / g_mv.stat_frames, g_mv.stat_peak / 1048576.0, MV_SNAP_BYTES >> 20, g_mv.stat_full, g_mv.stat_far, g_mv.stat_cuts); }

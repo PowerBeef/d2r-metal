@@ -261,6 +261,10 @@ static int real_recommendation(void) { return dm_picrec_real(getenv("DM_APP") !=
 // with Native for the 3D upscale pass, with a fixed width when it is smaller than the screen. The older StartFullScreen / RenderScale /
 // MetalFXUpscale preferences carry over once as the current values. The CLI host and test copies (unless DM_TEST_VIDEO_FIRSTBOOT=1) get the
 // original look: windowed, 1600, Standard
+int mtl_mfx_temporal_supported(void), mtl_mfx_fg_supported(void);
+// MetalFX Temporal with Frame Generation wherever the chip has both: the game draws half the frames and the screen shows them all, 30 / 60 on a 60 Hz screen. Other chips keep the
+// conventional picture and the real rate. A player who prefers real frames has the Frame Generation row
+static int rec_fg(void) { return mtl_mfx_temporal_supported() && mtl_mfx_fg_supported(); }
 int front_video_firstboot(int rec[3], int cur[3]) {
     if (!real_recommendation()) {
         for (int i = 0; i < 3; i++) rec[i] = cur[i] = 0;
@@ -269,7 +273,7 @@ int front_video_firstboot(int rec[3], int cur[3]) {
     }
     double px = main_px(); NSString *gpu = gpu_name();
     int t = mac_rec().tier_res, nres, ns3d; rec_native(&nres, &ns3d);
-    rec[0] = 1; rec[1] = nres >= 0 ? nres : t; rec[2] = front_video_mfx_ok() && (nres >= 0 || k_render_w[t] < px) ? 1 : 0;   // 原生时 MetalFX 管 3D 放大趟 | with Native, MetalFX does the 3D upscale pass
+    rec[0] = 1; rec[1] = nres >= 0 ? nres : t; rec[2] = rec_fg() ? 2 : front_video_mfx_ok() && (nres >= 0 || k_render_w[t] < px) ? 1 : 0;   // 原生时 MetalFX 管 3D 放大趟 | with Native, MetalFX does the 3D upscale pass
     for (int i = 0; i < 3; i++) cur[i] = rec[i];
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults; int legacy = 0;
     if ([ud objectForKey:@"StartFullScreen"]) { cur[0] = [ud boolForKey:@"StartFullScreen"]; legacy = 1; }
@@ -277,7 +281,7 @@ int front_video_firstboot(int rec[3], int cur[3]) {
     if (k > 0 && isfinite(k)) { double w = fmin(fmax(px * fmin(k, 1.0), 1600), 2560); cur[1] = 0; for (int i = 0; i < 3; i++) if (k_render_w[i] <= w) cur[1] = i; legacy = 1; }
     if ([ud objectForKey:@"MetalFXUpscale"]) { cur[2] = [ud boolForKey:@"MetalFXUpscale"] && front_video_mfx_ok(); legacy = 1; }
     LOG("picture settings: Recommended for this Mac: main screen %.0f px wide, GPU %s → full screen / %d%s / %s%s", px, gpu.UTF8String, nres >= 0 ? native_w() : k_render_w[t],
-        nres >= 0 ? " (Native)" : "", rec[2] ? "MetalFX" : "Standard", legacy ? "; values from the older preferences fill missing keys" : "");
+        nres >= 0 ? " (Native)" : "", rec[2] == 2 ? "MetalFX Temporal, Frame Generation" : rec[2] ? "MetalFX" : "Standard", legacy ? "; values from the older preferences fill missing keys" : "");
     return 1;
 }
 // Recommendations for the picture keys after the first three (asked by dm_video.c together with front_video_firstboot): SMAA, 16x and Accurate colour,
@@ -292,6 +296,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "envsh")) return mac_rec().envsh;
     if (!strcmp(key, "shq")) return mac_rec().shq;   // 2 = Ultra (a 4096-texel map) with the full picture, 0 = Standard (the Switch's 2100) with the light one
     if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
+    if (!strcmp(key, "fg")) return rec_fg();
     return -1;
 }
 // Frame Drops' default (dm_custom.c q3d): the recommendation's choice (lower when the light picture is needed or the choice uses more than 85% of the

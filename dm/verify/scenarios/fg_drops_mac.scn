@@ -1,0 +1,20 @@
+# Frame Drops with Frame Generation on, this Mac's Recommended: a level down rebuilds the game's 3D targets, so the temporal scaler and the interpolator built with it are built again and generated
+# frames come back at each level. The controller is made to step (DM_TEST_Q3D=0 runs it, the injection counts every frame from 5 s after the first judged one as dropped; hle_oe.c s3_fg_view reads
+# a frame one tick late as a drop under frame generation).
+name fg_drops_mac
+requires mac-app
+save warlock
+env DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_Q3D=0 DM_3D_SCALE_DYN_INJECT=+150-100000000
+timeout 200
+
+enter_game
+expect scale3d lv=1 timeout=60
+sleep 4
+expect scale3d lv=2 timeout=60
+sleep 4
+quit
+check event picture how=first up=2 fg=1
+check log_has "frame generation: interpolator .* built in" min=3
+check log_has "temporal scaler: .* built in" min=3
+check no_red
+check no_red_log

@@ -1,0 +1,70 @@
+# Frame Generation through the Video tab, live (dm_video.c dm_video_fg_active, nvn_fg.inc). This Mac's Recommended has it on with Temporal, so the game starts with both. Off goes back to
+# real frames with no restart and puts the interpolator down, On builds it again; leaving Temporal turns it off with it, and turning it on from there selects Temporal again.
+# Rows: mode, res, color, preset, s3d, upscale, aa, aniso, envsh, shq, fps, fg, drops
+name video_fg_mac
+requires mac-app
+save warlock
+env DM_TEST_VIDEO_FIRSTBOOT=1
+timeout 240
+
+enter_game
+sleep 5
+open_pause
+tap_ui Settings
+sleep 2
+inputmode mode=controller
+sleep 1
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press LEFT
+sleep 1
+screenshot video_fg_off.png
+msg OptionsPanelMessage:AcceptChanges
+sleep 3
+press RIGHT
+sleep 1
+msg OptionsPanelMessage:AcceptChanges
+sleep 3
+press UP
+press UP
+press UP
+press UP
+press UP
+press UP
+press LEFT
+sleep 1
+screenshot video_fg_left_temporal.png
+msg OptionsPanelMessage:AcceptChanges
+sleep 3
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press RIGHT
+sleep 1
+screenshot video_fg_on_again.png
+msg OptionsPanelMessage:AcceptChanges
+sleep 5
+quit
+check event picture how=first up=2 fg=1
+check event video_row row=fg value=0
+check event video_row row=fg value=1
+check event video_row row=upscale value=1
+check event picture how=apply up=2 fg=0
+check event picture how=apply up=1 fg=0
+check log_has "frame generation: put down" min=2
+check log_has "frame generation: interpolator .* built in" min=3
+check log_has "temporal scaler: no longer wanted"
+check no_red
+check no_red_log

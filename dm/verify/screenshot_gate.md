@@ -99,9 +99,9 @@ The pages above are judged at the original look only, on grayscale SSIM. `golden
 | Set | Picture | Pages | Controls (each must read RED on some page) |
 |---|---|---|---|
 | `orig` | the original look (the host's own defaults) | the five look-set pages | AA off, the 1024 shadow map |
-| `rec` | this Mac's Recommended (`picture.REC`) | the five look-set pages, `inventory` | FXAA, 1x filtering, environment shadows off, the 2100 map |
-| `rec75` | Recommended at 75% 3D with MetalFX (the base M chips) | `lb_town_a1`, `lb_wild_a1` | the 3D MetalFX pass off |
-| `bright` | Recommended with brightening fixed at k=4 | `lb_crypt_a1` | brightening off (k=1) |
+| `conv` | the conventional picture of a chip without Temporal and Frame Generation (`picture.CONV`: MetalFX, SMAA; baselines in `shots/rec`) | the five look-set pages, `inventory` | FXAA, 1x filtering, environment shadows off, the 2100 map |
+| `rec75` | `conv` at 75% 3D with MetalFX (the base M chips without them) | `lb_town_a1`, `lb_wild_a1` | the 3D MetalFX pass off |
+| `bright` | `conv` with brightening fixed at k=4 | `lb_crypt_a1` | brightening off (k=1) |
 | `phone` | the iPhone 17 Pro's Recommended at 2622 x 1206, drawn by the Mac host | `lb_town_a1`, `lb_crypt_a1` | the 3D MetalFX pass off |
 
 - The look-set pages (`lb_town_a1`, `lb_wild_a1`, `lb_crypt_a1`, `lb_jungle_a3`, `lb_lava_a4`) freeze the game clock at a fixed tick, so two shots of one build differ only where the client animates on its own: rain, flames, idle animations, and the game's dither, which shifts about a quarter of the 3D view by one level. `charselect` is in no FLIP set: its campfire's flicker lights most of the frame (46-49% of the pixels moved between two shots), so it keeps only its SSIM check above. Their 3D view and HUD band are judged as separate regions; a screenshot-gate page is judged as one frame without its mask rects.

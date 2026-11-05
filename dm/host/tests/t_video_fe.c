@@ -13,6 +13,9 @@
 module_t g_mod[MAX_MOD]; int g_nmod;
 char g_dir[512];   // the settings directory (one per test run, under TMPDIR)
 int g_nodir;       // 1 = the settings directory is not known yet (dm_custom_path answers 0, as before the save is mounted)
+int g_fgok;   // the chip has MetalFX Temporal and Frame Generation (M: Recommended takes both)
+int mtl_mfx_fg_supported(void) { return g_fgok; }
+int mtl_mfx_temporal_supported(void) { return g_fgok; }
 int g_fe = 'G', g_mfx = 1, g_fe_rec_id = -1, g_fe_rec_res = 1;   // which front end, MetalFX support, the machine's rec_id (-1 = none), G's recommended res
 int g_fb_calls, g_full_calls, g_full_last = -1, g_color_calls, g_color_last = -1;   // what the code under test asked of the front end
 
@@ -21,7 +24,7 @@ uint64_t dm_custom_find_w(uint64_t w, const char *name) { (void)w; (void)name; r
 
 int front_video_firstboot(int rec[3], int cur[3]) {
     g_fb_calls++;
-    if (g_fe == 'M') { rec[0] = 1; rec[1] = 3; rec[2] = g_mfx; for (int i = 0; i < 3; i++) cur[i] = rec[i]; return 1; }
+    if (g_fe == 'M') { rec[0] = 1; rec[1] = 3; rec[2] = g_fgok ? 2 : g_mfx; for (int i = 0; i < 3; i++) cur[i] = rec[i]; return 1; }
     rec[0] = 1; rec[1] = g_fe_rec_res; rec[2] = 1; cur[0] = 1; cur[1] = 2; cur[2] = 0; return 1;
 }
 int front_video_rec(const char *key) {
@@ -31,6 +34,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "shq")) return 2;
     if (g_fe == 'M' && !strcmp(key, "color")) return 1;
     if (g_fe == 'M' && !strcmp(key, "s3d")) return 0;
+    if (g_fe == 'M' && !strcmp(key, "fg")) return g_fgok;
     return -1;
 }
 int front_video_mfx_ok(void) { return g_mfx; }

@@ -9,7 +9,8 @@ today, and the remediation's REC-5 fix turns it off).
 Each Video-tab key and the switch that pins it:
   Resolution (res; Native = the screen's width)   DM_GAME_RES=<w>x<h>, the render size
   3D Resolution (s3d)                             DM_3D_SCALE (0.5-1.0)
-  Upscaling (up)                                  DM_MFX (the present) and DM_MFX3D (the game's own 3D upscale pass); MetalFX acts only while it enlarges
+  Upscaling (up)                                  DM_MFX (the present) and DM_MFX3D (the game's own 3D upscale pass); MetalFX acts only while it enlarges; DM_MFXT=1 for Temporal
+  Frame Generation (fg)                           DM_FG: 0 / 1
   Anti-Aliasing (aa)                              DM_AA_MODE: the renderer's mode byte, 1 = FXAA (the original), 2 = SMAA
   Anisotropic Filtering (aniso)                   DM_NVN_ANISO: 0 / 4 / 8 / 16
   Color (color)                                   DM_COLORSPACE: srgb = Accurate (a tag on the layer; no capture sees it)
@@ -23,13 +24,17 @@ Brightening of dark 3D areas (DM_BRIGHT_K) is not a Video-tab key and stays at t
 The sets:
   REC    this Mac's Recommended (a Mac mini M6 with a 12-core GPU on a 2560 x 1440 screen): the t_picrec row "Mac mini M6, 2560 display (measured)"
          (Native 2560 x 1440, 3D 100%, environment shadows on, Ultra shadows, Frame Drops keep) plus what front_mac.m front_video_firstboot /
-         front_video_rec give every Mac (full screen, MetalFX, SMAA, 16x, Accurate). The Mac App picks exactly this on this Mac: its log line
-         reads "picture: Apple M6 ..., 12 GPU cores ..., screen 2560x1440 ... -> Recommended Native 2560, 3D 100%, environment shadows on,
-         shadows Ultra, Frame Drops keep".
-  REC75  REC with the 3D at 75%, so MetalFX does the 3D upscale: the base M chips' Recommended at a 2560-class screen (the t_picrec rows
+         front_video_rec give every Mac (full screen, 16x, Accurate) and every chip with both (MetalFX Temporal, Frame Generation; the Anti-Aliasing
+         row reads SMAA, which Temporal replaces, so the mode byte is 0). The Mac App picks exactly this on this Mac: its log line reads
+         "picture: Apple M6 ..., 12 GPU cores ..., screen 2560x1440 ... -> Recommended Native 2560, 3D 100%, environment shadows on, shadows Ultra,
+         Frame Drops keep".
+  RECT   REC at the real frame rate (the Frame Generation row off). Frame generation changes nothing the game draws, only what the screen shows between: golden pictures use RECT
+         (each frame is drawn the same) and dm/verify/motion_gate.py judges the frames in between.
+  CONV   the conventional picture of a chip without them, on this Mac: MetalFX's spatial scaler for the 3D pass, SMAA, the real frame rate.
+  REC75  CONV with the 3D at 75%, so MetalFX does the 3D upscale: the base M chips' conventional picture at a 2560-class screen (the t_picrec rows
          "MacBook Air M1, 1280 x 800" and the M2 13-inch 8-core row at 1280 x 832; the M3's picks 85% since the model reads the picture below
          the notch). Two deliberate differences: those Airs are 16:10 (2560 x 1600 below the notch), and REC75 keeps 2560 x 1440 so it compares
-         with REC; and their Frame Drops default is lower (q3d 0),
+         with CONV; and their Frame Drops default is lower (q3d 0),
          while REC75 keeps the 3D scale fixed (DM_3D_SCALE_DYN=0), because a scale that moves can have no picture baseline.
   PHONE  the iPhone 17 Pro's Recommended, drawn by the Mac host: its native 2622 x 1206, 3D 75% with MetalFX (front_ios.m front_video_firstboot),
          SMAA, 16x and Accurate (front_video_rec), and no environment-shadow or shadow-quality recommendation, so environment shadows off and
@@ -44,7 +49,7 @@ or front_ios.m, dm_video.c's 3D-scale tables) updates this file in the same comm
 Standard library only.
 """
 
-REC = {
+CONV = {
     'DM_GAME_RES': '2560x1440',
     'DM_3D_SCALE': '1.0',
     'DM_MFX': '1',
@@ -56,8 +61,9 @@ REC = {
     'DM_SHADOW_SIZE': '4096',
     'DM_3D_SCALE_DYN': '0',
 }
-REC75 = dict(REC, DM_3D_SCALE='0.75')
-RECT = dict(REC, DM_MFXT='1', DM_AA_MODE='0')   # REC with the temporal scaler: the 3D target at 99%, the game's own AA off with it (hle_oe.c scale3d_tick, aa_tick)
+REC75 = dict(CONV, DM_3D_SCALE='0.75')
+RECT = dict(CONV, DM_MFXT='1', DM_AA_MODE='0')   # the temporal scaler at the real frame rate: the 3D target at 99%, the game's own AA off with it (hle_oe.c scale3d_tick, aa_tick)
+REC = dict(RECT, DM_FG='1')
 REC75T = dict(REC75, DM_MFXT='1', DM_AA_MODE='0')   # REC75 with the temporal scaler in place of the spatial one
 PHONE = {
     'DM_GAME_RES': '2622x1206',
@@ -73,8 +79,8 @@ PHONE = {
 }
 MAC_APP_REC = {'DM_TEST_VIDEO_FIRSTBOOT': '1'}
 FULLSCREEN = {'DM_TEST_FULLSCREEN_AT': '1'}
-SETS = {'rec': REC, 'rect': RECT, 'rec75': REC75, 'rec75t': REC75T, 'phone': PHONE}
-KEYS = tuple(REC)   # every set pins every one of these; RECT and REC75T also pin DM_MFXT (nothing turns the temporal scaler on in the others: the CLI host's Upscaling is 0)
+SETS = {'rec': REC, 'rect': RECT, 'conv': CONV, 'rec75': REC75, 'rec75t': REC75T, 'phone': PHONE}
+KEYS = tuple(CONV)   # every set pins every one of these; REC, RECT and REC75T also pin DM_MFXT (nothing turns the temporal scaler on in the others: the CLI host's Upscaling is 0)
 
 
 def env(name, backend='cli', user=None):

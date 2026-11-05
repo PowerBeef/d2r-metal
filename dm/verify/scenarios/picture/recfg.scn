@@ -1,0 +1,21 @@
+# This Mac's Recommended on the CLI host (dm/tools/picture.py REC): MetalFX Temporal with Frame Generation. The interpolator builds in the background and the screen gets a generated frame before each
+# real one, the interface over it. No GPU timing, so fork_gate also runs it under Metal API validation (full_metal_validation_rec). Motion itself: dm/verify/motion_gate.py
+name pic_recfg
+requires cli
+save warlock
+timeout 180
+env DM_3D_SCALE=1.0 DM_MFXT=1 DM_FG=1 DM_GAME_RES=2560x1440 DM_MFX=1 DM_MFX3D=1 DM_AA_MODE=0 DM_NVN_ANISO=16 DM_COLORSPACE=srgb DM_ENV_SHADOWS=1 DM_SHADOW_SIZE=4096 DM_3D_SCALE_DYN=0 DM_GAME_SEED=305419896
+
+enter_game
+expect_state in_game=true hp>=1 area=1 timeout=10
+sleep 6
+walk_to 5789 4470 timeout=25
+sleep 2
+quit
+check no_red
+check no_red_log
+check exit 0
+check event scale3d pct=99
+check event mfx who=temporal op=build
+check log_has "frame generation: interpolator .* built in"
+check log_has "frame generation: world .* format"

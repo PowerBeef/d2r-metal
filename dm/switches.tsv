@@ -47,7 +47,7 @@ DM_DBG_COVER	host	host/dm_cursor.c	-
 DM_DBG_FE_SEND	host	host/dm_cursor.c	-
 DM_DESWIZZLE_LIB	ios-tools	ios/tools/dxt5.py ios/tools/romfs_art.py	-
 DM_DETCLOCK	gfx,host,verify	gfx/nvn/hle_nvn.c host/hle_os.c host/touch_mac.c verify/test_golden.py	y
-DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	-
+DM_DETCLOCK_PACE	gfx	gfx/nvn/hle_nvn.c	y
 DM_DEVBATTERY	ios-tools	ios/run.sh ios/tools/devlock.sh	-
 DM_DEVBATTERY_APP_MAX_AGE_S	ios-tools	ios/tools/devbattery.sh	-
 DM_DEVBATTERY_INRUN	ios-tools	ios/tools/devbattery.sh	-
@@ -71,9 +71,11 @@ DM_EVENTS	gfx,host	gfx/tests/nvn_replay.m host/dm_ctl_cmds.c host/dm_events.c ho
 DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-
 DM_FE_AUTO	host	host/dm_cursor.c	-
+DM_FG	host	host/dm_video.c	y
 DM_FIXED_TIME	host,tools	host/hle_time.c host/main.c tools/replay.py	y
 DM_FPS	gfx	gfx/nvn/nvn_mtl.m	y
 DM_FRAMES	gfx,host	gfx/tests/nvn_replay.m host/diag.c	y
+DM_FRAME_REC	gfx	gfx/nvn/nvn_framerec.inc	y
 DM_FREE_ACCOUNT	ios-tools	ios/run.sh	-
 DM_FROM_LAUNCHER	host,other	host/app_mac.m launcher/Sources/D2RMetalLauncher/LauncherModel.swift	-
 DM_FS	host	host/main.c	-
@@ -154,8 +156,8 @@ DM_MEM_CAP_GB	gfx	gfx/nvn/hle_nvn.c	-
 DM_MEM_STAT_ALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_METAL_COLD	ios	ios/Sources/main.m	-
 DM_MFX	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_mfx_on.m	y
-DM_MFX3D	gfx	gfx/nvn/nvn_capture.c gfx/nvn/nvn_mtl.m gfx/tests/t_capture.c gfx/tests/t_mfx_on.m	y
-DM_MFXT	host	host/dm_video.c	-
+DM_MFX3D	gfx	gfx/nvn/nvn_capture.c gfx/nvn/nvn_mtl.m gfx/tests/t_capture.c gfx/tests/t_mfx_on.m	-
+DM_MFXT	host	host/dm_video.c	y
 DM_MFX_STACK	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_mfx_on.m	-
 DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
@@ -165,6 +167,8 @@ DM_MSL_DIR	gfx,host,ios,tools	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m host/app_
 DM_MSL_IOS	ios-tools	ios/run.sh	-
 DM_MV	gfx	gfx/nvn/nvn_mv.inc	-
 DM_MV_DUMP	gfx	gfx/nvn/nvn_mv.inc	-
+DM_MV_DUMP_ONLY	gfx	gfx/nvn/nvn_mv.inc	-
+DM_MV_TRACE	gfx	gfx/nvn/nvn_mv.inc	y
 DM_NATIVE_ART_DIR	ios-tools	ios/tests/test_native_art_capture.py	-
 DM_NICK	host	host/hle_account.c	-
 DM_NOTARY_PROFILE	tools	tools/release_mac.sh	-
@@ -391,6 +395,7 @@ DM_TEST_MON_KILL	host	host/diag.c	-
 DM_TEST_NOTE_PANEL_Y	host	host/dm_cursor.c	-
 DM_TEST_NO_BC	gfx,ios	gfx/nvn/nvn_mtl.m ios/Sources/main.m	y
 DM_TEST_NO_DL_BASE	ios	ios/Sources/asset_dl.m ios/Sources/main.m	-
+DM_TEST_NO_FG	gfx	gfx/nvn/nvn_fg.inc	-
 DM_TEST_NO_METAL3	ios	ios/Sources/main.m	-
 DM_TEST_NSMOUSE	host	host/front_mac.m	y
 DM_TEST_OBJREC	host	host/dm_world.c	-

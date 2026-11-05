@@ -305,6 +305,11 @@ static int s3_gates(s3_feed_state *f, uint64_t now, int judging) {
     if (!f->was_in) { f->was_in = 1; if (f->inj0 < 0) scale3d_ctl_hold(c, now, 20 * S3_SEC); }
     return 0;
 }
+// Frame generation: a real frame takes two ticks of the screen and the feed sees the real frames only, so a frame one tick late reads 1.5 periods, which the rule lets pass
+// (S3_LATE_MARGIN_MS). On screen it is the same slip as a 60 fps frame one refresh late, so the time past the first tick is judged against one tick
+static void s3_fg_view(double *iv_ms, double *period_ms) { double tick = *period_ms / 2; *period_ms = tick; if (*iv_ms > tick) *iv_ms -= tick; }
+__attribute__((weak)) int mtl_fg_active(void) { return 0; }
+__attribute__((weak)) int mtl_link_active(void) { return 0; }
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
     s3_feed_state *f = &g_s3f; scale3d_ctl *c = &f->c;
     if (f->on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); f->on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
@@ -332,7 +337,7 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     if (s3_gates(f, now, 1)) return;   // frames not shown, menus, loading screens and their holds
     // The target period is the pacer's real frame period (hle_nvn.c nvn_frame_period_ms: the power saver, DM_PRESENT_HZ, the adaptive tier, 72 fps
     // on a 144 Hz screen); 0 (uncapped) judges against 60 fps. Judging pauses 2 s after it changes
-    { double nvn_frame_period_ms(void), p = nvn_frame_period_ms(); if (fabs(p - c->period_ms) > 0.01) { c->period_ms = p; scale3d_ctl_hold(c, now, 2 * S3_SEC); } }
+    { double nvn_frame_period_ms(void), p = nvn_frame_period_ms(); if (mtl_fg_active() && mtl_link_active()) s3_fg_view(&iv_ms, &p); if (fabs(p - c->period_ms) > 0.01) { c->period_ms = p; scale3d_ctl_hold(c, now, 2 * S3_SEC); } }
     // Injection: every frame within the segment counts as a dropped frame (two periods). The + form is latched at the first frame scale3d_ctl_step
     // judges (no hold left: the holds above are all set by now), and frames before it count as clean
     if (f->inj0 >= 0) { double per = c->period_ms > 0 ? c->period_ms : 1000.0 / 60;
@@ -411,7 +416,19 @@ static int aa_env_parse(const char *e) {
     if (!e[1] && *e >= '3' && *e <= '5') return AA_ENV_CRASH;
     return AA_ENV_BAD;
 }
+// The game stencils out the 3D under opaque interface pixels (renderer+0x66b4 set: ps_ui_stencil_p, main+0x16d8e0c), which leaves a black interface-shaped hole in the world. The world is
+// reprojected by the temporal scaler and warped by the frame interpolator, where that hole moves and shows past the interface's edge, so it is drawn whole with them
+static void ui_stencil_tick(void) {
+    static module_t *main; static int saved = -1;
+    if (!main) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) main = &g_mod[i];
+    if (!main || dm_nvn_frame_count() < 30) return;
+    uintptr_t renderer = *(uintptr_t *)(main->base + 0x31e0848); if (!renderer) return;
+    volatile uint8_t *f = (volatile uint8_t *)(renderer + 0x66b4); int want_off = dm_video_temporal_active();
+    if (want_off && *f) { if (saved < 0) { saved = *f; LOG("UI stencil off (temporal scaler; was %d, frame %llu)", saved, (unsigned long long)dm_nvn_frame_count()); } dm_guest_write_prepare((void *)f, 1); *f = 0; }
+    else if (!want_off && saved >= 0) { dm_guest_write_prepare((void *)f, 1); *f = (uint8_t)saved; saved = -1; }
+}
 static void aa_tick(void) {
+    ui_stencil_tick();
     static int force = -2; static module_t *main;
     if (force == -2) { const char *e = getenv("DM_AA_MODE"); force = aa_env_parse(e);
         if (force == AA_ENV_CRASH) LOG("【红】DM_AA_MODE=%s refused: modes 3-5 (SMAA T2x) crash the game in its SMAA pass (main+0x16aa23c), which copies from a velocity target the console build never creates; the picture setting decides", e);

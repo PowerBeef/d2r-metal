@@ -25,6 +25,7 @@
 #error "t_video is the Mac build; the phone build is t_video_phone"
 #endif
 extern char g_dir[512];
+extern int g_fgok; extern int g_cval[], g_cpend[];
 extern int g_nodir, g_fe, g_mfx, g_fe_rec_id, g_fe_rec_res, g_fb_calls, g_full_calls, g_full_last, g_color_calls, g_color_last;
 extern int g_tshown, g_cdef_q3d, g_cval[2], g_cpend[2], g_cset[2];
 
@@ -35,17 +36,17 @@ static void file_putn(const char *b, size_t n) { char p[600]; snprintf(p, sizeof
 static const char *file_get(void) { static char b[1200]; char p[600]; snprintf(p, sizeof p, "%s/sw_video.txt", g_dir); FILE *f = fopen(p, "r"); if (!f) return ""; size_t n = fread(b, 1, sizeof b - 1, f); b[n] = 0; fclose(f); return b; }
 
 // The event recorder: the last 'picture' event (how and its eleven values) and the last 'video_row' event, plus how many of each were sent
-static struct { int n, v[11], rn, rv, rp; char how[16], row[16]; } g_ev;
+static struct { int n, v[12], rn, rv, rp; char how[16], row[16]; } g_ev;
 static void ev_rec(const char *ev, const char *sig, ...) {
     (void)sig; va_list ap; va_start(ap, sig);
-    if (!strcmp(ev, "picture")) { const char *h = va_arg(ap, const char *); strlcpy(g_ev.how, h ? h : "(null)", sizeof g_ev.how); for (int i = 0; i < 11; i++) g_ev.v[i] = va_arg(ap, int); g_ev.n++; }
+    if (!strcmp(ev, "picture")) { const char *h = va_arg(ap, const char *); strlcpy(g_ev.how, h ? h : "(null)", sizeof g_ev.how); for (int i = 0; i < 12; i++) g_ev.v[i] = va_arg(ap, int); g_ev.n++; }
     else if (!strcmp(ev, "video_row")) { const char *r = va_arg(ap, const char *); strlcpy(g_ev.row, r ? r : "(null)", sizeof g_ev.row); g_ev.rv = va_arg(ap, int); g_ev.rp = va_arg(ap, int); g_ev.rn++; }
     va_end(ap);
 }
 
 // One load in a child: every key's value, how often the front end was asked (first boot, full screen, colour), the file after the load (file0) and
 // after the case's own steps (file), the last 'picture' event, and what `act` records in x[]
-typedef struct { int v[NV], fb, full, full_last, cc, cl, evn, ev[11], x[32]; char how[16], file0[1200], file[1200]; } result;
+typedef struct { int v[NV], fb, full, full_last, cc, cl, evn, ev[12], x[32]; char how[16], file0[1200], file[1200]; } result;
 static result child(void (*act)(result *)) {
     int pp[2]; result r; memset(&r, 0, sizeof r); if (pipe(pp)) { r.v[0] = -9; return r; }
     pid_t pid = fork();
@@ -70,8 +71,8 @@ static result run(const char *txt) { return run_do(txt, NULL); }
 #define TAIL(a, ra, n, rn, c, rc) "aa=" #a "\nrec_aa=" #ra "\naniso=" #n "\nrec_aniso=" #rn "\ncolor=" #c "\nrec_color=" #rc "\n"
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
 #define ES(e, re) "envsh=" #e "\nrec_envsh=" #re "\n"
-#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\n"
-#define RV "rec_v=8\n"   // REC_V in dm_video.c (without it = version 1, worked out again at load): a bump changes this line, t_video_phone's and the cases below in one commit
+#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=0\nrec_fg=0\n"   // fg, the key after shq, stays 0 unless a case says so (G recommends none, M only with g_fgok)
+#define RV "rec_v=9\n"   // REC_V in dm_video.c (without it = version 1, worked out again at load): a bump changes this line, t_video_phone's and the cases below in one commit
 #define NEWREC TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV   // how the later keys are filled when missing (G's front_video_rec)
 
 // (21) the shadow latch: the first answers once the settings are known hold for the session. In a child: set or clear DM_ENV_SHADOWS / DM_SHADOW_SIZE
@@ -106,13 +107,25 @@ static void act_18d(result *x) { apply_preset(P_QUAL); accept(); x->x[0] = prese
 static void act_18i(result *x) { apply_preset(P_PERF); x->x[0] = atomic_load(&g_pend[K_UP]); cancel(); apply_preset(P_QUAL); x->x[1] = atomic_load(&g_pend[K_UP]); }
 static void act_18e(result *x) { x->x[0] = preset_of(); apply_preset(P_REC); x->x[1] = atomic_load(&g_pend[K_MODE]); accept(); x->x[2] = g_full_calls; x->x[3] = preset_of(); }
 static void act_18f(result *x) {
-    g_tshown = 1; atomic_store(&g_crows, (1 << 10) | (1 << 11));   // the Video tab is on screen with its Frame Rate and Frame Drops rows
+    g_tshown = 1; atomic_store(&g_crows, (1 << 10) | (1 << 12));   // the Video tab is on screen with its Frame Rate and Frame Drops rows
     dm_video_on_uimsg("OptionsPanelMessage", "ResetToDefaults", "");
     x->x[0] = atomic_load(&g_pend[K_MODE]); x->x[1] = g_cset[0]; x->x[2] = g_cset[1]; x->x[3] = preset_of(); accept();
 }
 static void act_18g(result *x) { (void)x; atomic_store(&g_pend[K_COLOR], 0); accept(); }
 static void act_18k(result *x) { x->x[0] = preset_of(); apply_preset(P_REC); x->x[1] = atomic_load(&g_pend[K_COLOR]); }
 
+// (24): what the Video tab's rows do to Frame Generation, as dm_video_pump calls them. Index of the row by its name: k_rows
+static int row_of(const char *name) { for (int i = 0; i < NR; i++) if (!strcmp(k_rows[i], name)) return i; return -1; }
+static void clear_pend(void) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], -1); dm_custom_set_pending("eco_fps", -1); }
+static void act_fg(result *x) {
+    x->x[0] = preset_of();
+    fg_rules(row_of("upscale"), 1); atomic_store(&g_pend[K_UP], 1); x->x[1] = atomic_load(&g_pend[K_FG]); x->x[2] = atomic_load(&g_pend[K_UP]); clear_pend();
+    dm_custom_set_pending("eco_fps", 1); atomic_store(&g_pend[K_UP], 1); atomic_store(&g_pend[K_FG], 1); fg_rules(row_of("fg"), 1);
+    x->x[3] = atomic_load(&g_pend[K_FG]); x->x[4] = atomic_load(&g_pend[K_UP]); x->x[5] = dm_custom_shown_value("eco_fps"); clear_pend();
+    dm_custom_set_pending("eco_fps", 1); x->x[6] = row_want(row_of("fg")); x->x[7] = shown(K_FG); x->x[8] = preset_of(); clear_pend();
+    apply_preset(P_PERF); x->x[9] = atomic_load(&g_pend[K_FG]); clear_pend(); apply_preset(P_QUAL); x->x[10] = atomic_load(&g_pend[K_FG]); clear_pend();
+    atomic_store(&g_val[K_UP], 1); atomic_store(&g_val[K_FG], 0); apply_preset(P_REC); x->x[11] = atomic_load(&g_pend[K_UP]); x->x[12] = atomic_load(&g_pend[K_FG]);
+}
 int main(void) {
     snprintf(g_dir, sizeof g_dir, "%s/t_video.%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", getpid()); mkdir(g_dir, 0755);
     g_dm_event_fn = ev_rec;
@@ -145,9 +158,9 @@ int main(void) {
     // (6) no file / empty file: first boot, all three from the first boot
     r = run(NULL);
     CHECK(r.v[0] == 1 && r.v[1] == 2 && r.v[2] == 0 && r.fb == 1 && !strcmp(r.file, FULL(1, 1, 2, 1, 0, 1) NEWREC), "(6) no file: first boot 1/2/0, recommendation 1/1/1 saved, got %d/%d/%d\n%s", r.v[0], r.v[1], r.v[2], r.file);
-    { static const int want[11] = { 1, 2, 0, 1, 3, 0, 0, 1, 2, REC_V, -1 }; int same = !memcmp(r.ev, want, sizeof want);
+    { static const int want[12] = { 1, 2, 0, 1, 3, 0, 0, 1, 2, 0, REC_V, -1 }; int same = !memcmp(r.ev, want, sizeof want);
       CHECK(r.evn == 1 && !strcmp(r.how, "first") && same, "(6) picture how=first with the values loaded, rec_v %d, no rec_id; got %d events, '%s', %d %d %d … rec_v %d rec_id %d",
-            REC_V, r.evn, r.how, r.ev[0], r.ev[1], r.ev[2], r.ev[9], r.ev[10]); }
+            REC_V, r.evn, r.how, r.ev[0], r.ev[1], r.ev[2], r.ev[10], r.ev[11]); }
     r = run("");
     CHECK(r.v[0] == 1 && r.v[1] == 2 && r.v[2] == 0, "(6) empty file: as a first boot, got %d/%d/%d", r.v[0], r.v[1], r.v[2]);
     // (7) a file from before the update (only the first three keys): those three stay, the later keys are filled from front_video_rec (aa 1, aniso 3,
@@ -222,7 +235,7 @@ int main(void) {
 #define NEWER(m, rm, s, rs, u, ru) FULL(m, rm, s, rs, u, ru) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) "rec_v=99\n"
     r = run(NEWER(0, 1, 9, 1, 0, 1));
     CHECK(r.v[1] == 1 && !strcmp(r.file, NEWER(0, 1, 9, 1, 0, 1)), "(19c) newer file, res=9: res 1 in memory (%d), file unchanged\n%s", r.v[1], r.file);
-    CHECK(!strcmp(r.how, "newer") && r.ev[9] == 99, "(19c) picture how=newer, rec_v 99; got '%s', %d", r.how, r.ev[9]);
+    CHECK(!strcmp(r.how, "newer") && r.ev[10] == 99, "(19c) picture how=newer, rec_v 99; got '%s', %d", r.how, r.ev[10]);
     // (19d) an unknown line is kept: not rewritten at load, and written back after the known keys by the next Apply
     r = run_do(FULL(0, 1, 2, 1, 0, 1) NEWREC "future=3\n", act_aa0);
     CHECK(!strcmp(r.file0, FULL(0, 1, 2, 1, 0, 1) NEWREC "future=3\n") && !strcmp(r.file, FULL(0, 1, 2, 1, 0, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "future=3\n"),
@@ -264,8 +277,8 @@ int main(void) {
           "(17a) no rec_id: asked once (%d), res 1 (%d), how=rescreen ('%s'), rec_id saved\n%s", r.fb, r.v[K_RES], r.how, r.file);
     // (17b) the same machine: read, nothing asked or written
     r = run(FULL(1, 1, 1, 1, 1, 1) NEWREC "rec_id=2222\n");
-    CHECK(r.fb == 0 && !strcmp(r.how, "read") && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) NEWREC "rec_id=2222\n") && r.ev[10] == 2222,
-          "(17b) same rec_id: nothing asked (%d), how=read ('%s'), file unchanged, event rec_id %d\n%s", r.fb, r.how, r.ev[10], r.file);
+    CHECK(r.fb == 0 && !strcmp(r.how, "read") && !strcmp(r.file, FULL(1, 1, 1, 1, 1, 1) NEWREC "rec_id=2222\n") && r.ev[11] == 2222,
+          "(17b) same rec_id: nothing asked (%d), how=read ('%s'), file unchanged, event rec_id %d\n%s", r.fb, r.how, r.ev[11], r.file);
     // (17c) another machine whose recommendation is Native (res 3): a player on Recommended moves
     g_fe_rec_res = 3;
     r = run(FULL(1, 1, 1, 1, 1, 1) NEWREC "rec_id=1111\n");
@@ -359,6 +372,35 @@ int main(void) {
       CHECK(fps_labels(144, "%s 帧", hi, lo, sizeof hi) && !strcmp(hi, "72 帧") && !strcmp(lo, "36 帧"), "(22) the language's format: expect 72 帧 / 36 帧, got %s / %s", hi, lo);
       CHECK(fps_labels(144, "dmVideoFpsRate", hi, lo, sizeof hi) && !strcmp(hi, "72 fps"), "(22) a format without its placeholder (a missing entry) falls back to %%s fps: got %s", hi);
       CHECK(fps_labels(144, NULL, hi, lo, sizeof hi) && !strcmp(lo, "36 fps"), "(22) no format: %%s fps; got %s", lo); }
+
+    // ---- (23) Frame Generation, the recommendation (rec_v 9): a chip with MetalFX Temporal and the interpolator takes both, others keep the conventional picture
+    g_fe = 'M'; g_fgok = 1;
+#define V8(up, rup, a) "mode=1\nrec_mode=1\nres=3\nrec_res=3\nup=" #up "\nrec_up=" #rup "\naa=" #a "\nrec_aa=1\naniso=3\nrec_aniso=3\ncolor=1\nrec_color=1\ns3d=0\nrec_s3d=0\nenvsh=1\nrec_envsh=1\nshq=2\nrec_shq=2\nrec_v=8\n"
+    r = run(NULL);
+    CHECK(r.v[K_UP] == 2 && r.v[K_FG] == 1 && strstr(r.file, "rec_up=2\n") && strstr(r.file, "rec_fg=1\n"), "(23a) first boot on a chip with both: Temporal and Frame Generation, got up %d fg %d\n%s", r.v[K_UP], r.v[K_FG], r.file);
+    r = run(V8(1, 1, 1));
+    CHECK(r.v[K_UP] == 2 && r.v[K_FG] == 1 && !strcmp(r.how, "update"), "(23b) a player on the old Recommended moves: up 2 fg 1, how=update; got %d %d '%s'\n%s", r.v[K_UP], r.v[K_FG], r.how, r.file);
+    r = run(V8(1, 1, 0));
+    CHECK(r.v[K_UP] == 1 && r.v[K_FG] == 0 && r.v[K_AA] == 0 && strstr(r.file, "rec_up=2\n") && strstr(r.file, "rec_fg=1\n"), "(23c) a player's own settings stay, real frames with them; only the recommendation moves; got up %d fg %d\n%s", r.v[K_UP], r.v[K_FG], r.file);
+    r = run(V8(2, 1, 1));
+    CHECK(r.v[K_UP] == 2 && r.v[K_FG] == 0, "(23d) a player who chose Temporal keeps the frames they had: fg 0, got %d", r.v[K_FG]);
+    g_fgok = 0;
+    r = run(NULL);
+    CHECK(r.v[K_UP] == 1 && r.v[K_FG] == 0 && strstr(r.file, "rec_fg=0\n"), "(23e) a chip without them: the conventional picture, up 1 fg 0; got %d %d", r.v[K_UP], r.v[K_FG]);
+    r = run(V8(1, 1, 1));
+    CHECK(r.v[K_UP] == 1 && r.v[K_FG] == 0 && !strcmp(r.how, "update"), "(23f) the update changes nothing on a chip without them, got up %d fg %d '%s'", r.v[K_UP], r.v[K_FG], r.how);
+    g_fgok = 1;
+    r = run("mode=1\nrec_mode=1\nres=3\nrec_res=3\nup=1\nrec_up=2\naa=1\nrec_aa=1\naniso=3\nrec_aniso=3\ncolor=1\nrec_color=1\ns3d=0\nrec_s3d=0\nenvsh=1\nrec_envsh=1\nshq=2\nrec_shq=2\nfg=1\nrec_fg=1\nrec_v=9\n");
+    CHECK(r.v[K_UP] == 1 && r.v[K_FG] == 0, "(23g) fg=1 without Temporal can't hold: fg 0, got %d", r.v[K_FG]);
+    // (24) the rows that move together, and the presets
+    r = run_do(NULL, act_fg);
+    CHECK(r.x[0] == P_REC, "(24a) first boot reads Recommended, got %d", r.x[0]);
+    CHECK(r.x[1] == 0 && r.x[2] == 1, "(24b) leaving Temporal turns it off: fg pending %d, up pending %d", r.x[1], r.x[2]);
+    CHECK(r.x[3] == 1 && r.x[4] == 2 && r.x[5] == 0, "(24c) turning it on selects Temporal and the normal rate: fg %d up %d eco %d", r.x[3], r.x[4], r.x[5]);
+    CHECK(r.x[6] == 0 && r.x[7] == 1 && r.x[8] == P_REC, "(24d) at the power saver's rate the row reads Off (%d), the setting stays (%d), and it is still Recommended (%d)", r.x[6], r.x[7], r.x[8]);
+    CHECK(r.x[9] == 0 && r.x[10] == 0, "(24e) Performance and Quality use real frames: fg %d, %d", r.x[9], r.x[10]);
+    CHECK(r.x[11] == 2 && r.x[12] == 1, "(24f) Recommended brings both back: up %d fg %d", r.x[11], r.x[12]);
+    g_fgok = 0; g_fe = 'G';
 
     file_put(NULL); rmdir(g_dir);
     printf("t_video: %d checks, %d failed\n", checks, fails);

@@ -221,6 +221,24 @@ Measured:
 
 Recordings are derived from the game program and stay local.
 
+## Motion and animation
+
+A still picture cannot show a frozen walk or a frame out of order, and a video only shows them to someone watching. These give numbers:
+
+- `DM_FRAME_REC=<first s>:<seconds>:<prefix>[:x,y,w,h]` writes every frame the screen is given, in order, as `<prefix>.raw` and `<prefix>.tsv` (game frame, generated or real, planned time). It copies in the present's own command buffer, never stalls the game and needs no screen-recording permission; when the writer falls behind it counts a drop instead of waiting. A whole 2560 x 1440 picture is about 885 MB/s.
+- `DM_MV_TRACE=<file>` writes one line per drawn frame about the hero's limbs, from the velocity target: the camera's motion, how many pixels move apart from the ground, and how fast the limbs go. The camera follows the hero, so whatever moves in her area is her animation. It needs the temporal scaler (`DM_MFXT=1`), which draws the velocity target.
+- `dm/tools/motion_scan.py <prefix | video> [--trace file]` judges them: shown-frame cadence, repeated frames, picture steps that go backwards, whether generated frames sit half way, and the longest run of frames with a frozen pose. `--clip` and `--sheet` make a video and a contact sheet. Its detectors are pinned by `dm/verify/test_motion_scan.py`.
+- `motion_scan.py --events <run's events.ndjson>` gives input to picture: from each mark named `inN` to the first shown frame that moves, on the time the system planned to show it. A trial is a mark, a stick push and a walk from standing; judge the mean over about 25 trials. On an M6 in town: 96 ms with frame generation, 73.5 ms at real 60, Temporal or not (two runs each).
+- `dm/verify/motion_gate.py` (gate step `core_motion`) runs them on a walk with frame generation, then on the fixed clock as a control, which must read as frozen.
+
+Traps:
+
+- **Never judge animation on the fixed clock.** With `DM_DETCLOCK` the hero's pose holds for about half a second of game time, then jumps, with or without frame generation (limb motion 0 for up to 16 drawn frames at 33 ms, 33 at 17 ms; healthy runs had at most 2). The cause isn't known. Golden picture tests run on this clock, so they say nothing about animation.
+- Recording the whole picture adds an occasional late frame (2 to 4 in 18 s, up to 83 ms; none in the same runs without the recorder). To judge pacing use a rectangle, as the gate does, or no recorder and `DM_FRAMES`.
+- Without `DM_DETCLOCK_PACE=1` the fixed clock outruns the display and shown frames are skipped, so a recording of it isn't complete.
+- Frames in a scenario's `stick` step are drawn frames: under frame generation (30 drawn per second) the same step lasts twice as long.
+- A scenario `--out` folder holds that run's save: reusing it gives a false red about uncommitted save changes, or a stalled start.
+
 ## PC mode probes
 
 Test switches for finding out how far the Switch build's own PC (keyboard and mouse) mode still works. They change nothing unless set, and players never set them.
