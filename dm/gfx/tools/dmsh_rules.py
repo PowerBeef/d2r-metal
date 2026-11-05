@@ -82,7 +82,7 @@ RT_SHADOW_NAMES = ('ps_models_p', 'ps_terrain', 'ps_hair_p', 'ps_alpha_threshold
 
 def rt_shadow_hook(src):
     """Each compare on the directional shadow map (reg 39, the texture this name stands for in every package) also takes the ray-traced mask, in the support buffer past Ryujinx's layout, when it is on and the
-    layer is the key light's (0): the darker of the two, or the mask alone with header word 0 at 2; at 3 no mask was traced. nvn_rt.inc writes it; off, the header reads 0 and the result is the map's alone."""
+    layer is the key light's (0): the darker of the two, or the mask alone with header word 0 at 2; at 3 no mask was traced. nvn_rt.inc writes it; off, the header reads 0 and the result is the map's alone. Layer 1, the characters' own shadow, takes the darker of its map and the characters' rays when header word 7 says they ran."""
     pat = re.compile(r'(float _\d+ = )(spvDepthCast\(spvDescriptorSet0\.fp_t_cb196610_105980A8\)\.sample_compare\(spvDescriptorSet0\.fp_t_cb196610_105980A8Smplr, (_\d+)\.xy, uint\(rint\(\3\.z\)\), _\d+\));')
     if not pat.search(src): return src
     m = re.search(r'^fragment \w+ main0\(([^\n]*)\)\n', src, re.M)
@@ -91,7 +91,7 @@ def rt_shadow_hook(src):
     elif 'gl_FragCoord [[position]]' not in m.group(1): raise ValueError('the fragment position has another name')
     src = pat.sub(lambda x: f'{x.group(1)}dm_rt_key(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {x.group(2)}, uint(rint({x.group(3)}.z)));', src)
     helper = ('static inline float dm_rt_ao(constant uchar* sb, float4 fc);\nstatic inline float dm_rt_key(constant uchar* sb, float4 fc, float cmp, uint layer)\n{\n'
-              '    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || layer != 0u) return cmp;\n    if (h[0] == 3u) return cmp / dm_rt_ao(sb, fc);\n'
+              '    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u) return cmp;\n    if (layer != 0u) { if (h[7] == 0u) return cmp; uint cw = h[1] >> h[6], cx = min(uint(fc.x) >> h[6], cw - 1u), cy = min(uint(fc.y) >> h[6], (h[2] >> h[6]) - 1u); return min(cmp, float(sb[4096u + 3u * h[1] * h[2] + cy * cw + cx]) / 255.0); }\n    if (h[0] == 3u) return cmp / dm_rt_ao(sb, fc);\n'
               '    uint w = h[1] >> h[6], x = min(uint(fc.x) >> h[6], w - 1u), y = min(uint(fc.y) >> h[6], (h[2] >> h[6]) - 1u);\n    float mask = float(sb[4096u + y * w + x]) / 255.0;\n    return (h[0] == 2u ? mask : min(cmp, mask)) / dm_rt_ao(sb, fc);\n}\n\n')
     e = re.search(r'^fragment \w+ main0\(', src, re.M)
     return src[:e.start()] + helper + src[e.start():]

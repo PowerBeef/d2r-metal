@@ -13,21 +13,24 @@
 //   5. traces short rays (DM_RT_AO=<rays>, 2 by default, 0 = none) around each pixel's normal (from depth) into a plane of their own, then a box over the 4 x 4 pattern of their directions into the plane behind the mask.
 // The forward shaders read both at their own pixel (dmsh_rules.py rt_shadow_hook, rt_ao_hook): for layer 0 the darker of the mask and the game's shadow map (DM_RT=2: the mask alone), and the colour times the occlusion,
 // which the key and local lights divide back out, so it stays on the ambient terms. Alpha-tested casters (foliage, hair) aren't in the structures, as opaque triangles would cast solid cards: they stay in the map. Characters (what the game draws
-// into its layer 1, nvn_mv.inc rtu_*) keep that shadow and are left out of the key light's rays by their instance mask; they do occlude.
+// into its layer 1, nvn_mv.inc rtu_*) stay out of the key light's rays by their instance mask, since that view's axis differs by a few degrees and they would have two shadows. They get rays of their own along it (DM_RT_CHAR=0
+// turns those off, DM_RT_CHAR_SUN=<radius, tangent> spreads them), which hit characters only, and the game's layer 1 then draws only what can't be in the structures (hair, cloaks), so the rays decide the shape: sharp at
+// the feet, softer toward the head. The occlusion's rays hit them too.
 // DM_RT_BIAS=<world units> moves the ray's start off the surface, DM_RT_AO_R=<world units> is the occlusion's reach, DM_RT_AO_P=<power> its curve, DM_RT_AO_HALF=0 traces it at the whole picture rather than half each way, DM_RT=3 traces no key light, DM_RT_AO_CHARS=2/1/0 lets its rays hit every character, the hero alone or none, DM_RT_DUMP=<frame>:<file.pgm> writes the planes as they stand.
-@interface RtBlas : NSObject { @public __strong id<MTLAccelerationStructure> as; uint64_t last, hash; NSUInteger tris, bytes; int built, chr, sized; NSUInteger sz_tris; MTLAccelerationStructureSizes sz; } @end
+@interface RtBlas : NSObject { @public __strong id<MTLAccelerationStructure> as; uint64_t last, hash; NSUInteger tris, bytes; int built, chr, sized; float pos[3]; NSUInteger sz_tris; MTLAccelerationStructureSizes sz; } @end
 @implementation RtBlas @end
-enum { RT_WORLD = 1, RT_CHAR = 2, RT_MAX_INST = 8192, RT_CAP_BYTES = 32 << 20, RT_SCRATCH_BYTES = 96 << 20, RT_U_STRIDE = 256, RT_KEEP_FRAMES = 600 };
-typedef struct { float ivp[16]; float iview[16]; float view[4]; float dir[4]; uint32_t size[2]; float bias, maxd; float ao_r, ao_cam[3], ao_pow; uint32_t ao_rays, ao_shift, tiles[2]; float l_src, l_stop, sun; uint32_t key_shift; float l_fill; } rtx_u;
+enum { RT_WORLD = 1, RT_CHAR = 2, RT_MAX_INST = 8192, RT_CAP_BYTES = 32 << 20, RT_SCRATCH_BYTES = 96 << 20, RT_U_STRIDE = 256, RT_KEEP_FRAMES = 600, RT_KEEP_RADIUS = 70, RT_AS_MAX_MB = 256 };
+typedef struct { float ivp[16]; float iview[16]; float view[4]; float dir[4]; uint32_t size[2]; float bias, maxd; float ao_r, ao_cam[3], ao_pow; uint32_t ao_rays, ao_shift, tiles[2]; float l_src, l_stop, sun; uint32_t key_shift; float l_fill; float dir2[3], char_sun; } rtx_u;
 static struct {
     int inited, bad; NSMutableDictionary<NSNumber *, RtBlas *> *blas;
-    __strong id<MTLBuffer> cap, scratch, inst, unif; __strong id<MTLAccelerationStructure> tlas; NSUInteger tlas_bytes; __strong id<MTLComputePipelineState> kpso, kblurpso, aopso, blurpso, lpso, lblurpso; __strong id<MTLBuffer> aoraw, lraw, kraw; __strong id<MTL4ArgumentTable> ct;
-    uint64_t built_frame, frames, built_blas, built_tris, reused; float dir[3]; size_t as_bytes; float bias, ao_r, ao_p; int dir_logged, mode, ao_rays, ao_shift, ao_chars, local, key_shift; float l_src, l_stop, sun, l_fill;
+    __strong id<MTLBuffer> cap, scratch, inst, unif; __strong id<MTLAccelerationStructure> tlas; NSUInteger tlas_bytes; __strong id<MTLComputePipelineState> cpso, kpso, kblurpso, aopso, blurpso, lpso, lblurpso; __strong id<MTLBuffer> aoraw, lraw, kraw, craw; __strong id<MTL4ArgumentTable> ct;
+    uint64_t built_frame, frames, built_blas, built_tris, reused, since; float cam[3]; float dir[3]; size_t as_bytes; float bias, ao_r, ao_p; int dir_logged, mode, ao_rays, ao_shift, ao_chars, local, key_shift; float l_src, l_stop, sun, l_fill, char_sun, char_dir[3]; int char_on;
 } g_rtx;
 static const char *g_rtx_who = "";
+int rtx_chars_traced(void) { return g_rtx.inited && !g_rtx.bad && g_rtx.char_on; }
 static const char *g_rtx_msl =
     "#include <metal_stdlib>\n#include <metal_raytracing>\nusing namespace metal;\nusing namespace metal::raytracing;\n"
-    "struct U { float4x4 ivp; float4x4 iview; float4 view; float4 dir; uint2 size; float bias; float maxd; float ao_r; packed_float3 ao_cam; float ao_pow; uint ao_rays; uint ao_shift; packed_uint2 tiles; float l_src; float l_stop; float sun; uint key_shift; float l_fill; };\n"
+    "struct U { float4x4 ivp; float4x4 iview; float4 view; float4 dir; uint2 size; float bias; float maxd; float ao_r; packed_float3 ao_cam; float ao_pow; uint ao_rays; uint ao_shift; packed_uint2 tiles; float l_src; float l_stop; float sun; uint key_shift; float l_fill; packed_float3 dir2; float char_sun; };\n"
     "constant float bayer[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};\n"
     "static float3 rt_world(constant U& u, uint2 id, float d) { float2 ndc = float2(2 * (id.x + 0.5 - u.view.x) / u.view.z - 1, 1 - 2 * (id.y + 0.5 - u.view.y) / u.view.w); float4 w = u.ivp * float4(ndc, d, 1); return w.xyz / w.w; }\n"
     "kernel void rt_shadow(uint2 id [[thread_position_in_grid]], depth2d<float> dp [[texture(0)]], constant U& u [[buffer(0)]], instance_acceleration_structure as [[buffer(1)]], device uchar *out [[buffer(2)]]) {\n"
@@ -42,6 +45,14 @@ static const char *g_rtx_msl =
     "  uint2 gs = u.size >> u.key_shift; if (id.x >= gs.x || id.y >= gs.y) return; uint at = id.y * gs.x + id.x; float d = dp.read(id << u.key_shift), sum = 0, wt = 0;\n"
     "  for (int y = -2; y < 2; y++) for (int x = -2; x < 2; x++) { int2 q = int2(id) + int2(x, y); if (q.x < 0 || q.y < 0 || q.x >= int(gs.x) || q.y >= int(gs.y)) continue; float dq = dp.read(uint2(q) << u.key_shift); if (abs(dq - d) < 0.0015) { sum += float(in[uint(q.y) * gs.x + uint(q.x)]); wt += 1; } }\n"
     "  out[at] = wt > 0 ? uchar(sum / wt + 0.5) : in[at]; }\n"
+    "kernel void rt_char(uint2 id [[thread_position_in_grid]], depth2d<float> dp [[texture(0)]], constant U& u [[buffer(0)]], instance_acceleration_structure as [[buffer(1)]], device uchar *out [[buffer(2)]]) {\n"
+    "  uint2 gs = u.size >> u.key_shift; if (id.x >= gs.x || id.y >= gs.y) return; uint at = id.y * gs.x + id.x; uint2 fp = id << u.key_shift; float d = dp.read(fp);\n"
+    "  if (d <= 0.0) { out[at] = 255; return; }\n"
+    "  float3 p = rt_world(u, fp, d), dir = float3(u.dir2); float3 t = abs(dir.y) < 0.9 ? normalize(cross(dir, float3(0, 1, 0))) : normalize(cross(dir, float3(1, 0, 0))), b = cross(dir, t);\n"
+    "  float dith = (bayer[(id.y & 3) * 4 + (id.x & 3)] + 0.5) / 16.0, a = 6.2831853 * fract(dith * 5.0), rr = sqrt(dith) * u.char_sun; float3 dj = normalize(dir + t * (rr * cos(a)) + b * (rr * sin(a)));\n"
+    "  ray r; r.origin = p + dir * 0.1; r.direction = dj; r.min_distance = 0; r.max_distance = 30;\n"
+    "  intersector<instancing, triangle_data> i; i.accept_any_intersection(true); i.force_opacity(forced_opacity::opaque);\n"
+    "  auto h = i.intersect(r, as, 2); out[at] = h.type == intersection_type::none ? 255 : 0; }\n"
     "kernel void rt_ao(uint2 id [[thread_position_in_grid]], depth2d<float> dp [[texture(0)]], constant U& u [[buffer(0)]], instance_acceleration_structure as [[buffer(1)]], device uchar *out [[buffer(2)]]) {\n"
     "  uint2 gs = u.size >> u.ao_shift; if (id.x >= gs.x || id.y >= gs.y) return; uint at = id.y * gs.x + id.x; uint st = 1u << u.ao_shift; uint2 fp = id * st; float d = dp.read(fp);\n"
     "  if (d <= 0.0 || fp.x < st || fp.y < st || fp.x + st >= u.size.x || fp.y + st >= u.size.y) { out[at] = 255; return; }\n"
@@ -93,7 +104,9 @@ static int rtx_init(void) {
     if (g_rtx.inited) return !g_rtx.bad; g_rtx.inited = 1;
     NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_rtx_msl) options:nil error:&e]; id<MTLFunction> fn = [lib newFunctionWithName:@"rt_shadow"], fa = [lib newFunctionWithName:@"rt_ao"], fb = [lib newFunctionWithName:@"rt_ao_blur"];
     g_rtx.kpso = fn ? [g_dev newComputePipelineStateWithFunction:fn error:&e] : nil;
-    { id<MTLFunction> fk = [lib newFunctionWithName:@"rt_shadow_blur"]; g_rtx.kblurpso = fk ? [g_dev newComputePipelineStateWithFunction:fk error:&e] : nil; g_rtx.kraw = [g_dev newBufferWithLength:(NSUInteger)3840 * 2160 options:MTLResourceStorageModePrivate]; const char *kh = getenv("DM_RT_KEY_HALF"), *su = getenv("DM_RT_SUN"); g_rtx.key_shift = kh ? atoi(kh) > 0 : 1; g_rtx.sun = su ? (float)atof(su) : 0.03f; if (g_rtx.kraw) res_add(g_rtx.kraw); }
+    { id<MTLFunction> fk = [lib newFunctionWithName:@"rt_shadow_blur"]; g_rtx.kblurpso = fk ? [g_dev newComputePipelineStateWithFunction:fk error:&e] : nil; g_rtx.kraw = [g_dev newBufferWithLength:(NSUInteger)3840 * 2160 options:MTLResourceStorageModePrivate]; const char *kh = getenv("DM_RT_KEY_HALF"), *su = getenv("DM_RT_SUN"); g_rtx.key_shift = kh ? atoi(kh) > 0 : 1; g_rtx.sun = su ? (float)atof(su) : 0.03f; if (g_rtx.kraw) res_add(g_rtx.kraw);
+      const char *ce_ = getenv("DM_RT_CHAR"), *cs_ = getenv("DM_RT_CHAR_SUN"); g_rtx.char_on = ce_ ? atoi(ce_) > 0 : 1; g_rtx.char_sun = cs_ ? (float)atof(cs_) : 0.06f;
+      if (g_rtx.char_on) { id<MTLFunction> fc_ = [lib newFunctionWithName:@"rt_char"]; g_rtx.cpso = fc_ ? [g_dev newComputePipelineStateWithFunction:fc_ error:&e] : nil; g_rtx.craw = [g_dev newBufferWithLength:(NSUInteger)3840 * 2160 options:MTLResourceStorageModePrivate]; if (!g_rtx.cpso || !g_rtx.craw) { MLOG("【红】ray tracing: can't start the character rays (%s)", e.localizedDescription.UTF8String); g_rtx.char_on = 0; } else res_add(g_rtx.craw); } }
     { const char *le = getenv("DM_RT_LOCAL"), *sr = getenv("DM_RT_LOCAL_SRC"), *st = getenv("DM_RT_LOCAL_STOP"); g_rtx.local = le ? atoi(le) > 0 : 1; g_rtx.l_src = sr ? (float)atof(sr) : 1.0f; { const char *fi = getenv("DM_RT_LOCAL_FILL"); g_rtx.l_fill = fi ? (float)atof(fi) : 0.35f; } g_rtx.l_stop = st ? (float)atof(st) : 2.0f;
       if (g_rtx.local) { id<MTLFunction> fl = [lib newFunctionWithName:@"rt_local"], flb = [lib newFunctionWithName:@"rt_local_blur"]; g_rtx.lpso = fl ? [g_dev newComputePipelineStateWithFunction:fl error:&e] : nil; g_rtx.lblurpso = flb ? [g_dev newComputePipelineStateWithFunction:flb error:&e] : nil; g_rtx.lraw = [g_dev newBufferWithLength:(NSUInteger)1920 * 1080 * 4 options:MTLResourceStorageModePrivate];
           if (!g_rtx.lpso || !g_rtx.lblurpso || !g_rtx.lraw) { MLOG("【红】ray tracing: can't start the local lights (%s)", e.localizedDescription.UTF8String); g_rtx.local = 0; } else { res_add(g_rtx.lraw); MLOG("ray tracing: local lights on, source %.2f, stop %.2f short", g_rtx.l_src, g_rtx.l_stop); } } }
@@ -149,6 +162,15 @@ static int rtx_char_wanted(const mv_draw *d, int c) {
     float x = V[0] * w[0] + V[4] * w[1] + V[8] * w[2] + V[12], y = V[1] * w[0] + V[5] * w[1] + V[9] * w[2] + V[13];
     return fabsf(x) < 0.08f && fabsf(y) < 0.15f;
 }
+// Whether this draw's object changed lately. Its slot (d->key) is the same from frame to frame, so a change of position or shape shows up here: anything that changed in the last second keeps its slot's structure, rebuilt in
+// place. A key made of its state would be a new structure every frame for anything animated, and they would pile up
+enum { RT_SLOTS = 16384 }; static struct { uint64_t key, hash, until; } g_rt_slot[RT_SLOTS];
+static int rtx_slot_moving(uint64_t key, uint64_t h, uint64_t frame) {
+    for (int i = 0; i < 32; i++) { typeof(&g_rt_slot[0]) e = &g_rt_slot[(key + (uint64_t)i) % RT_SLOTS];
+        if (e->key == key) { if (e->hash != h) { e->hash = h; e->until = frame + 30; } return frame < e->until; }
+        if (!e->key) { e->key = key; e->hash = h; e->until = 0; return 0; } }
+    return 1;   // the table is full around here: treat it as moving, which never adds a structure
+}
 // Replay thread, at a draw that reads the shadow map, before its pass opens: this frame's mask, once. Leaves the state so that the draw goes on as usual
 static void rtx_mask_off(void) { ((uint32_t *)((uint8_t *)support_buf().contents + 2048))[0] = 0; }
 static void rtx_frame(void) {
@@ -171,28 +193,38 @@ static void rtx_frame(void) {
     double len = sqrt(wd[0] * wd[0] + wd[1] * wd[1] + wd[2] * wd[2]); if (len < 1e-12) return; if (wd[1] < 0) len = -len;
     for (int i = 0; i < 3; i++) g_rtx.dir[i] = (float)(wd[i] / len);
     if (!g_rtx.dir_logged++) MLOG("ray tracing: toward the key light %.3f %.3f %.3f", g_rtx.dir[0], g_rtx.dir[1], g_rtx.dir[2]);
+    { float q1[9]; int ok1 = 1; for (int r = 0; r < 3; r++) for (int i = 0; i < 3; i++) if (!ubo_float(1, (uint16_t)(10 << 8 | (18 + r) << 2 | i), &q1[r * 3 + i])) ok1 = 0;   // the character shadow's view, the same way
+      if (ok1) { double a0[3] = {q1[0], q1[3], q1[6]}, a1[3] = {q1[1], q1[4], q1[7]}, ac[3] = {a0[1] * a1[2] - a0[2] * a1[1], a0[2] * a1[0] - a0[0] * a1[2], a0[0] * a1[1] - a0[1] * a1[0]}, w1[3]; for (int i = 0; i < 3; i++) w1[i] = vm[i * 4] * ac[0] + vm[i * 4 + 1] * ac[1] + vm[i * 4 + 2] * ac[2];
+          double l1 = sqrt(w1[0] * w1[0] + w1[1] * w1[1] + w1[2] * w1[2]); if (l1 > 1e-12) { if (w1[1] < 0) l1 = -l1; for (int i = 0; i < 3; i++) g_rtx.char_dir[i] = (float)(w1[i] / l1); } } }
     double vd[16], inv[16]; for (int i = 0; i < 16; i++) vd[i] = g_mv.vp[c][i]; if (!mat4_inv(vd, inv)) return;
     rtx_u u; for (int i = 0; i < 16; i++) u.ivp[i] = (float)inv[i];
     { double vv[16], iv[16]; for (int i = 0; i < 16; i++) vv[i] = g_mv.view_m[c][i]; if (!mat4_inv(vv, iv)) { rtx_mask_off(); return; } for (int i = 0; i < 16; i++) u.iview[i] = (float)iv[i]; }
     for (int i = 0; i < 4; i++) u.view[i] = (float)g_mv.view[i];
-    for (int i = 0; i < 3; i++) u.dir[i] = g_rtx.dir[i]; u.dir[3] = 0; u.size[0] = (uint32_t)g_mv.depth.width; u.size[1] = (uint32_t)g_mv.depth.height; u.bias = g_rtx.bias; u.maxd = 1000; u.ao_r = g_rtx.ao_r; u.ao_rays = (uint32_t)g_rtx.ao_rays; u.ao_pow = g_rtx.ao_p; u.ao_shift = (uint32_t)g_rtx.ao_shift; u.l_src = g_rtx.l_src; u.l_stop = g_rtx.l_stop; u.sun = g_rtx.sun; u.l_fill = g_rtx.l_fill; u.key_shift = (uint32_t)g_rtx.key_shift;
+    for (int i = 0; i < 3; i++) u.dir[i] = g_rtx.dir[i]; u.dir[3] = 0; u.size[0] = (uint32_t)g_mv.depth.width; u.size[1] = (uint32_t)g_mv.depth.height; u.bias = g_rtx.bias; u.maxd = 120; u.ao_r = g_rtx.ao_r; u.ao_rays = (uint32_t)g_rtx.ao_rays; u.ao_pow = g_rtx.ao_p; for (int i = 0; i < 3; i++) u.dir2[i] = g_rtx.char_dir[i]; u.ao_shift = (uint32_t)g_rtx.ao_shift; u.l_src = g_rtx.l_src; u.l_stop = g_rtx.l_stop; u.sun = g_rtx.sun; u.char_sun = g_rtx.char_sun; u.l_fill = g_rtx.l_fill; u.key_shift = (uint32_t)g_rtx.key_shift;
     { float tc[2]; u.tiles[0] = u.tiles[1] = 0; if (ubo_float(1, (uint16_t)(10 << 8 | 13 << 2 | 2), &tc[0]) && ubo_float(1, (uint16_t)(10 << 8 | 13 << 2 | 3), &tc[1])) { memcpy(&u.tiles[0], &tc[0], 4); memcpy(&u.tiles[1], &tc[1], 4); } }   // the tile grid's size, integers in the scene block
     { double c2[3]; for (int i = 0; i < 3; i++) c2[i] = inv[8 + i]; double ln = sqrt(c2[0] * c2[0] + c2[1] * c2[1] + c2[2] * c2[2]); for (int i = 0; i < 3; i++) u.ao_cam[i] = (float)(ln > 0 ? c2[i] / ln : 0); }   // the orthographic camera's axis: depth grows toward the viewer
-    if (rtx_mask_bytes() < 4096 + (size_t)u.size[0] * u.size[1] * 3) { if (!g_rtx.bad++) MLOG("【红】ray tracing: the mask doesn't fit a %ux%u picture", u.size[0], u.size[1]); return; }
+    if (rtx_mask_bytes() < 4096 + (size_t)u.size[0] * u.size[1] * 3 + ((size_t)u.size[0] * u.size[1] >> (2 * g_rtx.key_shift))) { if (!g_rtx.bad++) MLOG("【红】ray tracing: the mask doesn't fit a %ux%u picture", u.size[0], u.size[1]); return; }
     NSUInteger ui = (NSUInteger)g_mv.ri * RT_U_STRIDE; memcpy((uint8_t *)g_rtx.unif.contents + ui, &u, sizeof u); uint64_t u_gpu = g_rtx.unif.gpuAddress + ui;
     rp_end();
     // 1. what is new or has moved, drawn again with no rasterization
     enum { MAXB = 2048 }; static mv_draw *todo[MAXB]; static uint64_t toff[MAXB], tlen[MAXB], thash[MAXB]; static RtBlas *tb[MAXB]; int nt = 0; size_t cap_at = 0, scr_at = 0;
-    static uint64_t ikey[RT_MAX_INST]; int ni = 0;
+    static uint64_t ikey[RT_MAX_INST], tkey[2048]; int ni = 0;
     for (int i = 0; i < g_mv.n[c] && ni < RT_MAX_INST; i++) {
-        mv_draw *d = &g_mv.d[c][i]; if (!d->rt_opaque || !d->ib_cpu || d->count < 3 || (d->rt_char && !rtx_char_wanted(d, c))) continue;
-        NSNumber *k = @(d->key); RtBlas *b = g_rtx.blas[k]; uint64_t h = rtx_state_hash(d); if (b) b->chr = d->rt_char;
-        if (b && b->built && b->hash == h) { b->last = frame; ikey[ni++] = d->key; g_rtx.reused++; continue; }
-        if (!d->cap_pso || nt >= MAXB) { if (b && b->built) { b->last = frame; ikey[ni++] = d->key; } continue; }   // its pipeline is still building: last frame's shape, or none yet
-        uint32_t vm = rtx_vmax(d); uint64_t len = (uint64_t)(vm + 1) * 16; if (cap_at + len > RT_CAP_BYTES) { if (b && b->built) { b->last = frame; ikey[ni++] = d->key; } continue; }
+        mv_draw *d = &g_mv.d[c][i]; if (!d->rt_opaque || !d->ib_cpu || d->count < 3 || (d->rt_char && !g_rtx.char_on && !rtx_char_wanted(d, c))) continue;
+        uint64_t h = rtx_state_hash(d), okey = d->rt_char || rtx_slot_moving(d->key, h, frame) ? d->key : d->base ^ h; NSNumber *k = @(okey); RtBlas *b = g_rtx.blas[k]; if (b) b->chr = d->rt_char;   // what stands still is known by its mesh and place, so a rock keeps its structure whatever else comes and goes; what moves keeps its slot
+        if (b && b->built && b->hash == h) { b->last = frame; ikey[ni++] = okey; g_rtx.reused++; continue; }
+        if (!d->cap_pso || nt >= MAXB) { if (b && b->built) { b->last = frame; ikey[ni++] = okey; } continue; }   // its pipeline is still building: last frame's shape, or none yet
+        uint32_t vm = rtx_vmax(d); uint64_t len = (uint64_t)(vm + 1) * 16; if (cap_at + len > RT_CAP_BYTES) { if (b && b->built) { b->last = frame; ikey[ni++] = okey; } continue; }
         if (!b) { b = [RtBlas new]; g_rtx.blas[k] = b; b->chr = d->rt_char; }
-        todo[nt] = d; toff[nt] = cap_at; tlen[nt] = len; thash[nt] = h; tb[nt] = b; nt++; cap_at += len; ikey[ni++] = d->key; b->last = frame;
+        { float w[6]; mv_where(d, g_mv.snap[g_mv.ri].contents, w); b->pos[0] = w[0]; b->pos[1] = w[1]; b->pos[2] = w[2]; }
+        tkey[nt] = okey; todo[nt] = d; toff[nt] = cap_at; tlen[nt] = len; thash[nt] = h; tb[nt] = b; nt++; cap_at += len; ikey[ni++] = okey; b->last = frame;
     }
+    // What the prepass didn't draw this frame but drew lately is still there, just off the picture: the rays go on seeing it, or the shading at the picture's edges would change as it scrolls away. A jump of the camera
+    // is a new place: nothing before it counts
+    { const float *vm = g_mv.view_m[c]; float cx = -(vm[0] * vm[12] + vm[1] * vm[13] + vm[2] * vm[14]), cy = -(vm[4] * vm[12] + vm[5] * vm[13] + vm[6] * vm[14]), cz = -(vm[8] * vm[12] + vm[9] * vm[13] + vm[10] * vm[14]);
+      float jx = cx - g_rtx.cam[0], jy = cy - g_rtx.cam[1], jz = cz - g_rtx.cam[2]; if (jx * jx + jy * jy + jz * jz > 40 * 40) g_rtx.since = frame; g_rtx.cam[0] = cx; g_rtx.cam[1] = cy; g_rtx.cam[2] = cz;
+      for (NSNumber *k in g_rtx.blas) { RtBlas *b = g_rtx.blas[k]; if (ni >= RT_MAX_INST) break; if (!b->built || b->chr || b->last == frame || b->last < g_rtx.since) continue;
+          float dx = b->pos[0] - cx, dy = b->pos[1] - cy, dz = b->pos[2] - cz, al = dx * vm[2] + dy * vm[6] + dz * vm[10], ox = dx - al * vm[2], oy = dy - al * vm[6], oz = dz - al * vm[10]; if (ox * ox + oy * oy + oz * oz < RT_KEEP_RADIUS * RT_KEEP_RADIUS) ikey[ni++] = k.unsignedLongLongValue; } }   // near the picture only: the distance from the camera's axis
     if (nt) {
         MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new]; rp.renderTargetWidth = 16; rp.renderTargetHeight = 16; rp.defaultRasterSampleCount = 1;
         RENC en = [g_cb renderCommandEncoderWithDescriptor:rp];
@@ -222,7 +254,7 @@ static void rtx_frame(void) {
         g.indexBuffer = MTL4BufferRangeMake(d->ib_gpu, d->ib_len); g.indexType = d->itype == 1 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32; g.triangleCount = (NSUInteger)d->count / 3; g.opaque = YES;
         MTL4PrimitiveAccelerationStructureDescriptor *desc = [MTL4PrimitiveAccelerationStructureDescriptor new]; desc.geometryDescriptors = @[g]; desc.usage = MTLAccelerationStructureUsagePreferFastBuild;
         if (!b->sized || b->sz_tris != g.triangleCount) { b->sz = [g_dev accelerationStructureSizesWithDescriptor:desc]; b->sized = 1; b->sz_tris = g.triangleCount; } MTLAccelerationStructureSizes sz = b->sz;   // the same mesh takes the same size, and asking costs more than the rest of this loop
-        if (scr_at + sz.buildScratchBufferSize > RT_SCRATCH_BYTES) { if (!b->built) { for (int j = 0; j < ni; j++) if (ikey[j] == d->key) { ikey[j] = ikey[--ni]; break; } } continue; }
+        if (scr_at + sz.buildScratchBufferSize > RT_SCRATCH_BYTES) { if (!b->built) { for (int j = 0; j < ni; j++) if (ikey[j] == tkey[i]) { ikey[j] = ikey[--ni]; break; } } continue; }
         if (!b->as || b->bytes < sz.accelerationStructureSize) { if (b->as) { g_rtx.as_bytes -= b->bytes; fg_bury(b->as); } b->as = [g_dev newAccelerationStructureWithSize:sz.accelerationStructureSize]; b->bytes = sz.accelerationStructureSize; g_rtx.as_bytes += b->bytes; res_add(b->as); }
         if (!b->as) continue;
         [ce buildAccelerationStructure:b->as descriptor:desc scratchBuffer:MTL4BufferRangeMake(g_rtx.scratch.gpuAddress + scr_at, sz.buildScratchBufferSize)];
@@ -251,6 +283,15 @@ static void rtx_frame(void) {
             [g_rtx.ct setAddress:g_rtx.kraw.gpuAddress atIndex:1]; [g_rtx.ct setAddress:support_gpu() + 4096 atIndex:2]; [ce setComputePipelineState:g_rtx.kblurpso]; [ce dispatchThreads:kg threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
             [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1];
         }
+        int con = 0;
+        if (g_rtx.char_on && (g_rtx.char_dir[0] != 0 || g_rtx.char_dir[1] != 0 || g_rtx.char_dir[2] != 0)) {   // the characters' own shadow, along their own axis, hitting characters only
+            MTLSize kg = MTLSizeMake(u.size[0] >> u.key_shift, u.size[1] >> u.key_shift, 1);
+            [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+            [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; [g_rtx.ct setAddress:g_rtx.craw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.cpso]; [ce dispatchThreads:kg threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
+            [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+            [g_rtx.ct setAddress:g_rtx.craw.gpuAddress atIndex:1]; [g_rtx.ct setAddress:support_gpu() + 4096 + 3 * (uint64_t)u.size[0] * u.size[1] atIndex:2]; [ce setComputePipelineState:g_rtx.kblurpso]; [ce dispatchThreads:kg threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
+            [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; con = 1;
+        }
         if (g_rtx.ao_rays) {   // 5. the occlusion: its rays into a plane of its own, then a box over the 4 x 4 pattern of their directions, into the plane behind the mask
             uint64_t plane = support_gpu() + 4096 + (uint64_t)u.size[0] * u.size[1];
             [g_rtx.ct setAddress:g_rtx.aoraw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.aopso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> u.ao_shift, u.size[1] >> u.ao_shift, 1) threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
@@ -271,11 +312,13 @@ static void rtx_frame(void) {
                 lon = 1;
             } else { static int once; if (!once++) MLOG("ray tracing: the local light lists aren't bound (shader %s)", g_rtx_who); }
         }
-        uint32_t *hdr = (uint32_t *)((uint8_t *)support_buf().contents + 2048); hdr[1] = u.size[0]; hdr[2] = u.size[1]; hdr[3] = g_rtx.ao_rays > 0; hdr[4] = (uint32_t)g_rtx.ao_shift; hdr[5] = (uint32_t)lon; hdr[6] = (uint32_t)g_rtx.key_shift; hdr[0] = (uint32_t)g_rtx.mode;
+        uint32_t *hdr = (uint32_t *)((uint8_t *)support_buf().contents + 2048); hdr[1] = u.size[0]; hdr[2] = u.size[1]; hdr[3] = g_rtx.ao_rays > 0; hdr[4] = (uint32_t)g_rtx.ao_shift; hdr[5] = (uint32_t)lon; hdr[6] = (uint32_t)g_rtx.key_shift; hdr[7] = (uint32_t)con; hdr[0] = (uint32_t)g_rtx.mode;
     }
     m4_end(ce);
     args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;
     if (++g_rtx.frames % 600 == 1) MLOG("ray tracing: frame %llu, %d objects, %d rebuilt this frame; %llu builds, %llu triangles, %llu reused so far; structures %.1f MiB", (unsigned long long)frame, nu, nt, (unsigned long long)g_rtx.built_blas, (unsigned long long)g_rtx.built_tris, (unsigned long long)g_rtx.reused, g_rtx.as_bytes / 1048576.0);
+    // a safety net: past this, everything off the picture goes now rather than after its time
+    if (g_rtx.as_bytes > (size_t)RT_AS_MAX_MB << 20) { NSMutableArray *gone = [NSMutableArray array]; for (NSNumber *k in g_rtx.blas) { RtBlas *b = g_rtx.blas[k]; if (b->last != frame) { if (b->as) { g_rtx.as_bytes -= b->bytes; fg_bury(b->as); } [gone addObject:k]; } } [g_rtx.blas removeObjectsForKeys:gone]; MLOG("ray tracing: structures over %d MiB, %lu off the picture dropped", RT_AS_MAX_MB, (unsigned long)gone.count); }
     // what hasn't been drawn for a while goes
     if (g_rtx.frames % 120 == 0) { NSMutableArray *gone = [NSMutableArray array]; for (NSNumber *k in g_rtx.blas) { RtBlas *b = g_rtx.blas[k]; if (frame - b->last > RT_KEEP_FRAMES) { if (b->as) { g_rtx.as_bytes -= b->bytes; fg_bury(b->as); } [gone addObject:k]; } } [g_rtx.blas removeObjectsForKeys:gone]; }
 }
@@ -289,6 +332,6 @@ static void rtx_sub_begin(void) {
     if (!g_rtx.inited) return;
     for (NSNumber *k in g_rtx.blas) fg_bury(g_rtx.blas[k]->as);
     [g_rtx.blas removeAllObjects]; fg_bury(g_rtx.tlas); g_rtx.tlas = nil; g_rtx.tlas_bytes = 0; g_rtx.as_bytes = 0;
-    fg_bury(g_rtx.cap); fg_bury(g_rtx.scratch); fg_bury(g_rtx.inst); fg_bury(g_rtx.unif); fg_bury(g_rtx.aoraw); fg_bury(g_rtx.lraw); fg_bury(g_rtx.kraw); g_rtx.cap = g_rtx.scratch = g_rtx.inst = g_rtx.unif = g_rtx.aoraw = g_rtx.lraw = g_rtx.kraw = nil;
-    g_rtx.inited = 0; g_rtx.bad = 0; g_rtx.built_frame = 0;
+    fg_bury(g_rtx.cap); fg_bury(g_rtx.scratch); fg_bury(g_rtx.inst); fg_bury(g_rtx.unif); fg_bury(g_rtx.aoraw); fg_bury(g_rtx.lraw); fg_bury(g_rtx.kraw); fg_bury(g_rtx.craw); g_rtx.cap = g_rtx.scratch = g_rtx.inst = g_rtx.unif = g_rtx.aoraw = g_rtx.lraw = g_rtx.kraw = g_rtx.craw = nil;
+    g_rtx.inited = 0; g_rtx.bad = 0; g_rtx.built_frame = 0; memset(g_rt_slot, 0, sizeof g_rt_slot);
 }

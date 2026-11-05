@@ -3496,10 +3496,10 @@ static void bind_args(id en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, 
 // Past the part Ryujinx's layout uses, what ray tracing hands every forward shader (nvn_rt.inc, dmsh_rules.py rt_shadow_hook): at 2048 {on, width, height}, at 4096 the mask, one byte a pixel
 int rtx_want(void);
 #if TARGET_OS_IPHONE
-static size_t rtx_mask_bytes(void) { return getenv("DM_RT") ? 4096 + (size_t)2868 * 2064 * 3 : 65536; }   // no Ray Tracing row there yet: measuring only
+static size_t rtx_mask_bytes(void) { return getenv("DM_RT") ? 4096 + (size_t)2868 * 2064 * 4 : 65536; }   // no Ray Tracing row there yet: measuring only
 #else
 int mtl_rt_supported(void);
-static size_t rtx_mask_bytes(void) { return mtl_rt_supported() ? 4096 + (size_t)3840 * 2160 * 3 : 65536; }   // the widest picture: the mask, the occlusion, and the local lights (four channels at half the size each way). Pages nothing writes to cost nothing
+static size_t rtx_mask_bytes(void) { return mtl_rt_supported() ? 4096 + (size_t)3840 * 2160 * 4 : 65536; }   // the widest picture: the mask, the occlusion, the local lights (four channels at half the size each way) and the characters' mask. Pages nothing writes to cost nothing
 #endif
 static id<MTLBuffer> support_buf(void) {
     static __strong id<MTLBuffer> b; if (b) return b;
@@ -5178,7 +5178,7 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
     memcpy(&S, &save, sizeof S); args_dirty_all(); R.sc = sc; R.has_sc = has_sc; g_pso_dirty = g_dss_dirty = 1; g_gh.busy = 0;
     for (int i = 0; i < g_gh.n; i++) free(g_gh.c[i].S_); g_gh.n = 0;
 }
-static void mv_note_draw(NvProg *pr, const p_draw_idx *di);   // nvn_mv.inc
+static int mv_note_draw(NvProg *pr, const p_draw_idx *di);   // nvn_mv.inc
 static int mfx3d_draw(NvShader *f);   // 见定义处（MetalFX 换掉游戏的 3D 放大趟） | see the definition (MetalFX replaces the game's 3D upscale pass)
 static void fg_compose(NvShader *f);   // nvn_fg.inc
 static void rtx_frame(void); static void rtx_who(const char *k);   // nvn_rt.inc
@@ -5490,7 +5490,7 @@ frz_plain:;
     rr_snap(dw,di);
 #endif
     udc_note_draw(pr);
-    mv_note_draw(pr, di);
+    if (mv_note_draw(pr, di)) return;
     // 0 个图元的绘制（游戏会发 count=0）不画任何像素，跳过编码；Metal 规定计数必须非零，校验层否则当场中止（营地 / 野外 / 战斗页实测）
     // A draw with 0 primitives (the game does send count=0) draws no pixels, so skip encoding; Metal requires the count to be non-zero, otherwise the validation layer aborts on the spot (measured on the camp / wilderness / combat pages)
     if (dw && prim == 7) {   // 四边形：共享索引 0,1,2,0,2,3 | Quads: shared indices 0,1,2,0,2,3
