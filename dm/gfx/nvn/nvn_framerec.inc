@@ -27,9 +27,12 @@ static int fr_encode(CBUF cb, id<MTLTexture> src, uint64_t ticket, uint64_t fram
         g_fr.row = g_fr.w * 4; char p[1100];
         snprintf(p, sizeof p, "%s.raw", g_fr.prefix); g_fr.raw = fopen(p, "wb"); snprintf(p, sizeof p, "%s.tsv", g_fr.prefix); g_fr.idx = fopen(p, "w");
         if (!g_fr.raw || !g_fr.idx) { MLOG("【红】frame recorder: cannot write %s", g_fr.prefix); g_fr.over = 1; return -1; }
+        // Past the file cache: a whole picture is about 885 MB/s, which through the cache takes memory from the game and stalled it (frames up to 117 ms late, none without the recorder)
+        fcntl(fileno(g_fr.raw), F_NOCACHE, 1); setvbuf(g_fr.raw, NULL, _IONBF, 0);
         fprintf(g_fr.idx, "# w %lu h %lu format %lu\nindex\tticket\tframe\tkind\ttarget_s\n", (unsigned long)g_fr.w, (unsigned long)g_fr.h, (unsigned long)src.pixelFormat);
         for (int i = 0; i < FR_POOL; i++) { g_fr.buf[i] = [g_dev newBufferWithLength:g_fr.row * g_fr.h options:MTLResourceStorageModeShared]; res_add(g_fr.buf[i]); }
         res_commit(); g_fr.q = dispatch_queue_create("dm.framerec", DISPATCH_QUEUE_SERIAL);
+        DM_EV("frame_rec_start", "media_s:f", CACurrentMediaTime());   // ties the event clock to the rows' planned times (motion_scan.py latency)
         MLOG("frame recorder: %lux%lu of %lux%lu from %.1f s for %.1f s", (unsigned long)g_fr.w, (unsigned long)g_fr.h, (unsigned long)src.width, (unsigned long)src.height, g_fr.first, g_fr.secs);
     }
     int i = -1; for (int k = 0; k < FR_POOL; k++) { int z = 0; if (atomic_compare_exchange_strong(&g_fr.busy[k], &z, 1)) { i = k; break; } }

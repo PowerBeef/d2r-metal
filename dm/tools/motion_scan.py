@@ -6,10 +6,11 @@ Reads a DM_FRAME_REC recording (nvn_framerec.inc: <prefix>.raw and <prefix>.tsv)
   repeats   frames identical to the one before
   world     how far the picture moves between shown frames while the hero walks: steps that go backwards are visible judder
   halfway   frame generation: whether each generated frame sits half way between its two real neighbours
+  latency   input to picture (--events, a run's events.ndjson): from each mark named inN to the first shown frame that moves
   limbs     the hero's animation (--trace). The camera follows her, so her body stays still on the screen and what moves in her area is her limbs. A run of frames with next to no limb
             motion while the camera moves is a frozen pose, which is what a "slide show" walk looks like. From the velocity target, so no picture or video compression is involved
 
-  motion_scan.py <prefix | video> [--trace file] [--fps N] [--sheet out.png] [--clip out.mp4] [--clip-range first,count] [--freeze-max N]
+  motion_scan.py <prefix | video> [--trace file] [--events file] [--fps N] [--sheet out.png] [--clip out.mp4] [--clip-range first,count] [--freeze-max N]
   motion_scan.py --trace file       the limbs alone, with no frames
 
 --sheet writes 16 consecutive frames of the first walk, cropped on the hero. --clip writes frames as an H.264 video at their own rate.
@@ -165,6 +166,27 @@ def write_clip(fr, first, count, path):
     p.stdin.close(); p.wait()
 
 
+def latency_scan(fr, steps, events_path, prefix='in', moved_px=1.5):
+    """Input to picture: for each mark named <prefix>N, the time to the first shown frame after it whose picture moves, on the time the system planned to show that frame.
+    The marks are set right before the input step. The world must stand still before each mark (the scenario waits), or the trial is left out. From a game tick and a frame, so judge the mean over many trials."""
+    if not fr.rows: return None
+    with open(events_path, encoding='utf-8') as f: ev = [json.loads(l) for l in f if l.strip()]
+    start = [e for e in ev if e.get('ev') == 'frame_rec_start']
+    if not start: return dict(trials=0, why='no frame_rec_start event')
+    off = start[0]['media_s'] - start[0]['t']   # media clock = event clock + off
+    t = [float(r['target_s']) for r in fr.rows[:fr.n]]; out = []; left = 0
+    for e in ev:
+        if e.get('ev') != 'mark' or not str(e.get('name', '')).startswith(prefix): continue
+        at = e['t'] + off; i = next((k for k in range(1, fr.n) if t[k] > at), None)
+        if i is None: continue
+        if any(np.hypot(*steps[k]) > moved_px for k in range(max(1, i - 6), i)): left += 1; continue
+        j = next((k for k in range(i, min(i + 60, fr.n)) if np.hypot(*steps[k]) > moved_px), None)
+        if j is None: left += 1; continue
+        out.append(round((t[j] - at) * 1000, 1))
+    if not out: return dict(trials=0, left_out=left)
+    return dict(trials=len(out), left_out=left, mean_ms=round(float(np.mean(out)), 1), median_ms=round(float(np.median(out)), 1), p10_ms=round(float(np.percentile(out, 10)), 1), p90_ms=round(float(np.percentile(out, 90)), 1), each_ms=out)
+
+
 def scan(fr):
     steps = world_steps(fr)
     res = dict(frames=fr.n, size=[fr.w, fr.h], fps=round(fr.fps, 2), cadence=cadence_scan(fr), repeats=repeats_scan(fr), world=world_scan(steps), halfway=halfway_scan(fr, steps))
@@ -174,12 +196,13 @@ def scan(fr):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('source', nargs='?'); ap.add_argument('--trace'); ap.add_argument('--fps', type=float); ap.add_argument('--sheet'); ap.add_argument('--clip'); ap.add_argument('--clip-range'); ap.add_argument('--freeze-max', type=int, default=FREEZE_MAX)
+    ap.add_argument('source', nargs='?'); ap.add_argument('--trace'); ap.add_argument('--events'); ap.add_argument('--fps', type=float); ap.add_argument('--sheet'); ap.add_argument('--clip'); ap.add_argument('--clip-range'); ap.add_argument('--freeze-max', type=int, default=FREEZE_MAX)
     a = ap.parse_args(argv)
     if not a.source and not a.trace: ap.error('a recording, a video or --trace is needed')
     res, steps, fr = dict(flags=[]), None, None
     if a.source:
         fr = Frames(a.source, a.fps); res, steps = scan(fr)
+    if a.events and fr: res['latency'] = latency_scan(fr, steps, a.events)
     if a.trace:
         res['limbs'] = limbs_scan(a.trace, a.freeze_max)
         if res['limbs']['flagged']: res['flags'].append('frozen_pose')

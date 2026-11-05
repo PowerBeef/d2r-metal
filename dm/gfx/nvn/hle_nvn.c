@@ -1756,7 +1756,8 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
           static int on = -1; if (on < 0) { const char *e = getenv("DM_LONGFRAME"); on = !(e && !strcmp(e, "0")); }
           // 「长」是相对近况说的：稳定跑在 30 帧（菜单 / 无窗口宿主）或持续过载时每帧都 > 20 ms，那不是长帧，不刷屏——要比近 16 帧的滑动均值高出四成才算
           // "Long" is relative to recent conditions: when running steadily at 30 fps (menus / windowless host) or under sustained overload, every frame is > 20 ms; those are not long frames and must not flood the log - a frame has to be 40% above the sliding mean of the last 16 frames to count
-          static double ef = 16.7, eg = 8; int lf = r->fr > 20.0 && r->fr > 1.4 * ef, lg = g > 16.7 && g > 1.3 * eg;
+          // Frame generation: a real frame has two ticks, so the same limits apply at twice the time
+          int fgk = mtl_fg_active() ? 2 : 1; static double ef = 16.7, eg = 8; int lf = r->fr > 20.0 * fgk && r->fr > 1.4 * ef, lg = g > 16.7 * fgk && g > 1.3 * eg;
           if (r->f == f - 8) { ef += ((r->fr < 3 * ef ? r->fr : 3 * ef) - ef) / 16; eg += ((g < 3 * eg ? g : 3 * eg) - eg) / 16; }
           if (on && r->f == f - 8 && f - 8 > 0 && (lf || lg)) { char b[512];
               snprintf(b, sizeof b, "帧 %llu（%.2f s）整帧 %.1f ms，提交+出图 %.1f ms，GPU %.1f ms；新建管线 %u 条 + 着色器库 %u 个共 %.1f ms；上传贴图 首传 %u 张 + 重传 %u 次 %.1f MB / %.1f ms",

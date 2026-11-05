@@ -1051,12 +1051,14 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     // 原版刷怪 main+0x7ce630(游戏, 房间, 1, 类号, x, y, 1, 0, 0x10)（远处 / 画面边上的首领顶部血条复现用）
     // Test switch DM_TEST_SPAWN=<tick>:<class>:<dx>,<dy> (for test setup): at the tick, find open ground near the player cell + (dx, dy) and spawn one monster -- the original free-spot search main+0x7160d0(game, room, coords, 3, 0x400, &room, 4, 100),
     // the original spawn main+0x7ce630(game, room, 1, class, x, y, 1, 0, 0x10) (for reproducing the boss top health bar with bosses far away / at the screen edge)
-    { static int st = -1, at, cls, dx, dy; uint32_t tq = 0; if (st < 0) { const char *e = getenv("DM_TEST_SPAWN"); st = e && sscanf(e, "%d:%d:%d,%d", &at, &cls, &dx, &dy) == 4 ? 0 : 1; }
+    { static int st = -1, at, cls, dx, dy, count = 1; uint32_t tq = 0; if (st < 0) { const char *e = getenv("DM_TEST_SPAWN"); st = e && sscanf(e, "%d:%d:%d,%d:%d", &at, &cls, &dx, &dy, &count) >= 4 ? 0 : 1; }
       uint64_t pp = 0, room = 0; uint16_t c[4] = {0};
       if (!st && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= (uint32_t)at && tk_rd(player + 0x38, &pp, 8) && pp && tk_rd(pp, c, 8) && tk_rd(pp + 0x20, &room, 8) && room) { st = 1;
-          int32_t pos[2] = { c[1] + dx, c[3] + dy }; uint64_t rr = 0; ((void (*)(uint64_t, uint64_t, int32_t *, int, int, uint64_t *, int, int))(main->base + 0x7160d0))(G, room, pos, 3, 0x400, &rr, 4, 100);
+          // A fifth number spawns that many, spread around the point (a crowd, for picture and pacing tests)
+          for (int k = 0; k < count; k++) {
+          int32_t pos[2] = { c[1] + dx + (k ? (k * 7) % 13 - 6 : 0), c[3] + dy + (k ? (k * 5) % 11 - 5 : 0) }; uint64_t rr = 0; ((void (*)(uint64_t, uint64_t, int32_t *, int, int, uint64_t *, int, int))(main->base + 0x7160d0))(G, room, pos, 3, 0x400, &rr, 4, 100);
           uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(main->base + 0x7ce630))(G, rr, 1, cls, pos[0], pos[1], 1, 0, 0x10) : 0;
-          LOG("DM_TEST_SPAWN：拍 %u 在 %d,%d（玩家 %d,%d）刷类号 %d → %s", tq, pos[0], pos[1], c[1], c[3], cls, u ? "成" : "败"); } }
+          LOG("DM_TEST_SPAWN：拍 %u 在 %d,%d（玩家 %d,%d）刷类号 %d → %s", tq, pos[0], pos[1], c[1], c[3], cls, u ? "成" : "败"); } } }
     // 测试开关 DM_TEST_MAP_FULL=<拍>：到拍切到全屏地图（同触摸点小地图，dm_ui_map_full；要小地图本来开着）
     // Test switch DM_TEST_MAP_FULL=<tick>: at the tick switch to the full-screen map (same as tapping the minimap by touch, dm_ui_map_full; the minimap must already be open)
     { static int at = -1; uint32_t tq = 0; if (at < 0) { const char *e = getenv("DM_TEST_MAP_FULL"); at = e ? atoi(e) : 0; }

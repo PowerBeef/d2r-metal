@@ -53,6 +53,17 @@ class MotionScanTest(unittest.TestCase):
         late = Fake([(16 * (i // 2) + (12 if i % 2 else 0), 0) for i in range(n)], kinds)   # generated at 3/4 of the way, not 1/2
         self.assertGreater(M.scan(late)[0]['halfway']['off_median'], 0.3)
 
+    def test_latency(self):
+        n = 120; o = [(0, 0) for _ in range(n)]
+        for i in range(60, n): o[i] = (8 * (i - 59), 0)   # the picture starts moving at frame 60
+        kinds = ['real'] * n; fr = Fake(o, kinds); _, steps = M.scan(fr)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'e.ndjson')
+            with open(p, 'w', encoding='utf-8') as f:
+                f.write('{"ev":"frame_rec_start","t":10.0,"media_s":0.0}\n{"ev":"mark","name":"in1","t":10.9}\n')   # media 0.9 s, frame 54: motion 6 frames on, at 1.0 s
+            r = M.latency_scan(fr, steps, p)
+        self.assertEqual(r['trials'], 1); self.assertAlmostEqual(r['mean_ms'], 100, delta=2)
+
     def test_frozen_pose_is_flagged_past_the_limit_only(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, 't.tsv')
