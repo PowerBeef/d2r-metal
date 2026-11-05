@@ -64,6 +64,7 @@ DM_DEVLOCK_WD_LOG	ios-tools	ios/tools/devlock.sh	-
 DM_DROPF_LOG	host	host/dm_dropfilter.c	-
 DM_DROP_HAPTIC	host	host/dm_drophaptic.c	-
 DM_DROP_LIGHT	host	host/dm_dropfilter.c	-
+DM_ENV_DETAIL	host	host/dm_video.c host/tests/t_video.c	-
 DM_ENV_SHADOWS	host	host/dm_video.c host/tests/t_video.c	-
 DM_EVENTS	gfx,host	gfx/tests/nvn_replay.m host/dm_ctl_cmds.c host/dm_events.c host/tests/t_events.c	y
 DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
@@ -414,7 +415,7 @@ DM_TEST_PRESENT_RGB	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_PRESENT_SHOT	host	host/front_mac.m	y
 DM_TEST_Q3D	host	host/hle_oe.c host/tests/t_oe.c	-
 DM_TEST_QUIT_AT	host	host/front_mac.m	-
-DM_TEST_RCFG	host	host/diag.c	y
+DM_TEST_RCFG	host	host/dm_video.c host/tests/t_video.c	y
 DM_TEST_RESIGN	ios	ios/Sources/front_ios.m	-
 DM_TEST_RSTICK	host	host/hle_hid.c	-
 DM_TEST_RS_HOLD	host	host/dm_cursor.c	-

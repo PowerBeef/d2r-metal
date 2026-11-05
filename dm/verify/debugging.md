@@ -245,7 +245,11 @@ Traps:
 
 ## The game's own quality settings
 
-`DM_TEST_RCFG=<hex renderer offset>.<b|w>=<value>[,...]` (Mac only, like the probes) changes the renderer's boot settings just before `Renderer_Init` (`main+0x15ff470`) copies them to `renderer+0x65f4` (0xd5 bytes). The Switch build runs the game's lowest level, and most modules read their knob once at creation, so this is how to try the others one at a time. Nothing the game or the player sees uses it.
+`DM_TEST_RCFG=<hex renderer offset>.<b|w>=<value>[,...]` changes the renderer's boot settings at the observation gate at `Renderer_Init` (`main+0x15ff470`), just before it copies them to `renderer+0x65f4` (0xd5 bytes). The Switch build runs the game's lowest level, and most modules read their knob once at creation, so this is how to try the others one at a time. What it found:
+
+- High in the Video tab's Environment Detail: decal size `664c.w=9`, terrain tier `6622.b=3`, effect-light budget `66bc.w=4`.
+- No visible change: VFX key `66b8`, combat level `66c0`, upsample `66a8`, model LOD `6621` / `6650`, atmosphere `662c` / `6630` (fog density is 0 in every shipped area).
+- Don't use: bloom mode `6628.w=2` misfires the host's bloom replacement, and reflections `6634.w=5` turn every surface into a mirror, since nothing writes the normal and roughness target they read on Switch.
 
 ## PC mode probes
 

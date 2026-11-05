@@ -67,6 +67,7 @@ class PictureTest(unittest.TestCase):
         self.assertEqual(picture.REC['DM_3D_SCALE'], S3D[r['s3d']])
         self.assertEqual(picture.REC['DM_ENV_SHADOWS'], str(r['envsh']))
         self.assertEqual(picture.REC['DM_SHADOW_SIZE'], SHQ[r['shq']])
+        self.assertEqual(picture.REC['DM_ENV_DETAIL'], str(r['envsh']))   # front_mac.m: Environment Detail goes with the full picture
         self.assertEqual(r['q3d'], 1, 'Frame Drops keep on this Mac: REC pins DM_3D_SCALE_DYN=0')
         self.assertEqual(r['mfx'], 1)
 

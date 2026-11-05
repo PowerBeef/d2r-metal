@@ -15,7 +15,7 @@ sleep 6
 system_quit
 check no_red
 check no_red_log
-check event picture how=first mode=1 res=3 up=1 aa=1 aniso=3 color=1 s3d=2 envsh=1 shq=2 fg=0
+check event picture how=first mode=1 res=3 up=1 aa=1 aniso=3 color=1 s3d=2 envsh=1 shq=2 fg=0 envd=1
 check log_has "frame interpolator supported: no"
 check log_has "→ Recommended Native 2560, 3D 75%, environment shadows on, shadows Ultra, Frame Drops lower"
 check event scale3d pct=75
