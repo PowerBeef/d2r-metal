@@ -275,7 +275,8 @@ def drop_shot(png, keep=()):
 # shots, 2026-11-04, then against a limit of 2%), so it keeps only its SSIM screenshot-gate check.
 SETS: dict[str, dict[str, Any]] = {
     'pages': dict(env={}, pages=None, judge='ssim', dir='m4', controls={}, log_allow=()),
-    'orig': dict(env={}, pages=list(LB_ALL), judge='flip', dir='orig', log_allow=(),
+    # 10 shots: with poses moving on the fixed clock, lb_jungle_a3's 2 noise shots missed what it can do (0.045% hot in them, then 0.29% in 1 check of 4)
+    'orig': dict(env={}, pages=list(LB_ALL), judge='flip', dir='orig', log_allow=(), record_shots=10,
                  controls={'aa_off': {'DM_AA_MODE': '0'}, 'shadow_1024': {'DM_SHADOW_SIZE': '1024'}}),
     'conv': dict(env=picture.CONV, pages=LB_ALL + ['inventory'], judge='flip', dir='rec', log_allow=(),
                 controls={'fxaa': {'DM_AA_MODE': '1'}, 'aniso_off': {'DM_NVN_ANISO': '0'}, 'envsh_off': {'DM_ENV_SHADOWS': '0'}, 'shadow_2100': {'DM_SHADOW_SIZE': '2100'}, 'envd_off': {'DM_ENV_DETAIL': '0'}}),

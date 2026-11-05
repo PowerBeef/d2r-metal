@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Motion on the game itself: the temporal scaler and frame generation (DM_FG) on a walk, judged by dm/tools/motion_scan.py: shown frames in order and on time, generated frames half way, the
-hero's limbs moving. A control runs the same walk on the fixed clock (DM_DETCLOCK), which freezes her pose whatever else is on: it must read as frozen, or a clean result says nothing.
+hero's limbs moving. A control runs the same walk with the fixed clock aligned 52 days after the game's start (DM_DETCLOCK_ALIGN_NS), where its animation clock moves in half-second steps and freezes her pose whatever else is on: it must read as frozen, or a clean result says nothing.
 Two more runs dump frames (the dump stalls, so never in the first one) and judge whether what moves stays solid in the generated frames, with the moving things put back and, as a control, without.
 Last line MOTION_GATE OK|RED {json}. Frames are recorded in the run's folder, a piece of the ground away from the hero, and removed afterwards: the steps and the sharpness are the ground's, since the
 hero stays put on the screen, and a picture with her in it reads as either motion."""
@@ -64,10 +64,10 @@ def main():
         if on['pale'] > PALE_MAX: bad.append(f'a pale copy near moving things in generated frames: {on}')
         if off['lost'] < on['lost'] * CONTROL_RATIO: bad.append(f'without the moving things put back the check reads no worse, so it is blind: {off} against {on}')
     elif not any('solid' in b for b in bad): bad.append(f'nothing moving to judge: {solid}')
-    rc2, _, trace2 = run('control', {'DM_DETCLOCK': '16666667'})
+    rc2, _, trace2 = run('control', {'DM_DETCLOCK': '16666667', 'DM_DETCLOCK_ALIGN_NS': str(1 << 52)})
     ctl = motion_scan.limbs_scan(trace2) if not rc2 else {}
     if rc2: bad.append('the control run failed')
-    elif not ctl['flagged']: bad.append(f'the control (fixed clock) did not read as a frozen pose, so the check is blind: {ctl}')
+    elif not ctl['flagged']: bad.append(f'the control (fixed clock at 52 days) did not read as a frozen pose, so the check is blind: {ctl}')
     out = dict(fg=res, solid=solid, control=ctl, bad=bad)
     print(('MOTION_GATE RED ' if bad else 'MOTION_GATE OK ') + json.dumps(out))
     return 1 if bad else 0

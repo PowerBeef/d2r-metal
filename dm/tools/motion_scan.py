@@ -32,7 +32,7 @@ MOVING_PX = 3.0         # picture motion per shown frame above which a generated
 STILL_PX = 0.5          # picture motion below this (in pixels of the frame) counts as standing still
 CAM_WALK_PX = 1.0       # camera motion per drawn frame above which the hero counts as walking (limbs)
 FROZEN_LIMB_PX = 1.0    # a drawn frame's fastest limb pixels (95th percentile) below this count as a frozen pose. Measured on an M6, town walk: healthy frames 2.7-17 px, frozen ones 0.0-0.1
-FREEZE_MAX = 3          # the longest run of frozen frames allowed. Healthy runs had at most 1; the fixed clock (DM_DETCLOCK), which does freeze the pose, had 16 and 33
+FREEZE_MAX = 3          # the longest run of frozen frames allowed. Healthy runs had at most 1; the fixed clock at 52 days (DM_DETCLOCK_ALIGN_NS), which does freeze the pose, had 16 and 33
 
 
 class Frames:
