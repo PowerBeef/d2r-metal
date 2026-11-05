@@ -145,7 +145,8 @@ class HdrSwitchSplit(unittest.TestCase):
     def test_rule_table(self):
         self.assertEqual(len(dmsh_rules.HDR_SWITCH_KEYS), 7)
         self.assertTrue(all(re.fullmatch(r'[0-9a-f]{16}', k) for k in dmsh_rules.HDR_SWITCH_KEYS))
-        (f, applies), (g, applies2), (h, _), (i, applies3), (j, applies4), (k, _) = dmsh_rules.RULES
+        (f, applies), (g, applies2), (h, _), (i, applies3), (j, applies4), (k, _), (m, _) = dmsh_rules.RULES
+        self.assertIs(m, dmsh_rules.rt_refl_hook)
         self.assertIs(k, dmsh_rules.rt_local_hook)
         self.assertIs(h, dmsh_rules.capture_entry)
         self.assertIs(i, dmsh_rules.rt_shadow_hook)
@@ -177,6 +178,20 @@ class HdrSwitchSplit(unittest.TestCase):
         plain = src.replace(read, '1.0')
         self.assertEqual(dmsh_rules.rt_shadow_hook(plain), plain)
         self.assertEqual(dmsh_rules.rt_ao_hook(plain), plain)
+
+    def test_rt_refl_hook(self):
+        src = ('struct main0_out\n{\n    float4 m_5 [[color(0)]];\n};\n\nfragment main0_out main0()\n{\n    dm_rt_key(\n    float _1 = fast::max(_2, (*spvDescriptorSet0.fp_c1)._m0[1].y);\n    return out;\n}\n')
+        out = dmsh_rules.rt_refl_hook(src)
+        self.assertIn('out.m_5.xyz += dm_rt_refl(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, _2, out.m_5.xyz);', out)
+        self.assertLess(out.index('static inline float3 dm_rt_refl('), out.index('fragment main0_out main0('))
+        early = src.replace('    dm_rt_key(\n', '    dm_rt_key(\n    if (x) return out;\n')   # a return before the roughness exists stays as it is
+        out2 = dmsh_rules.rt_refl_hook(early)
+        self.assertEqual(out2.count('dm_rt_refl(reinterpret_cast'), 1)
+        self.assertIn('if (x) return out;', out2)
+        self.assertLess(out2.index('fast::max(_2'), out2.index('dm_rt_refl(reinterpret_cast'))
+        no = src.replace('fast::max(_2, (*spvDescriptorSet0.fp_c1)._m0[1].y)', '1.0')
+        self.assertEqual(dmsh_rules.rt_refl_hook(no), no)   # no roughness term: left alone
+        self.assertEqual(dmsh_rules.rt_refl_hook('x'), 'x')
 
     def test_rt_local_hook(self):
         # the three loops as every forward shader has them: the running offset, the light's position, then how its contribution or its shadow ends
