@@ -198,7 +198,7 @@ static uint64_t getinfo(uint64_t id) { uint64_t r[32] = {0, id, 0}; svc_dispatch
 static uint64_t boot_heap(int *n) { uint64_t size = getinfo(6) & ~((2ull << 20) - 1); *n = 0; while (svc(1, 0, size, 0) != 0) { size -= 2ull << 20; ++*n; } return size; }
 static void pool(void) {
     const uint64_t MB = 1ull << 20;
-    if (g_reserve != 5ull << 30) { CHECK(0, "pool: needs the 5120 MiB reservation, got %zu MiB", g_reserve >> 20); return; }
+    if (g_reserve != 5376ull << 20) { CHECK(0, "pool: needs the 5376 MiB reservation, got %zu MiB", g_reserve >> 20); return; }
     size_t cap0 = g_heap_cap;
     g_mod[0] = (module_t){.name = "main", .base = (uint8_t *)0x7100000000ull, .size = 68ull << 20}; g_nmod = 1;
     svc(1, 0, 0, 0);
@@ -210,12 +210,12 @@ static void pool(void) {
            total / MB, heap / MB, n, g_oom_logs - oom0, g_pool_logs - pool0, used / MB);
     CHECK(total == 3908 * MB && heap == 3840 * MB && n == 34 && g_oom_logs == oom0 && g_pool_logs - pool0 == 1 && used == 3908 * MB, "pool: a stepped-down reservation must trim the pool to the region plus the image");
     svc(1, 0, 0, 0);
-    // (b) the 5120 MiB reservation: heap region 4096 MB, nothing trimmed
-    g_heap_cap = 4096 * MB;
+    // (b) the 5376 MiB reservation: heap region 4352 MB, nothing trimmed
+    g_heap_cap = 4352 * MB;
     total = getinfo(6); heap = boot_heap(&n);
-    printf("pool: region 4096 MB: pool reported %llu MB, heap %llu MB after %d refusals, %ld 'SetHeapSize OOM' lines, %ld 'App pool' lines (expect 4053, 3984, 34, 0, 1)\n",
+    printf("pool: region 4352 MB: pool reported %llu MB, heap %llu MB after %d refusals, %ld 'SetHeapSize OOM' lines, %ld 'App pool' lines (expect 4293, 4224, 34, 0, 1)\n",
            total / MB, heap / MB, n, g_oom_logs - oom0, g_pool_logs - pool0);
-    CHECK(total == 4053 * MB && heap == 3984 * MB && n == 34 && g_oom_logs == oom0 && g_pool_logs - pool0 == 1, "pool: the 5120 MiB reservation must keep the 4053 MB pool and the 3984 MB heap");
+    CHECK(total == 4293 * MB && heap == 4224 * MB && n == 34 && g_oom_logs == oom0 && g_pool_logs - pool0 == 1, "pool: the 5376 MiB reservation must keep the 4293 MB pool and the 4224 MB heap");
     svc(1, 0, 0, 0); g_heap_cap = cap0; g_nmod = 0;
     // (c) the pure fit
     uint64_t f1 = pool_fit(4053 * MB, 3968 * MB, 68 * MB), f2 = pool_fit(4053 * MB, 4096 * MB, 68 * MB), f3 = pool_fit(1234 * MB, 0, 68 * MB);

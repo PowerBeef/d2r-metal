@@ -51,8 +51,23 @@ int dm_gpuheap_read(dm_gpuheap_info *o) {
     return 1;
 }
 
+// The upload heap (device+0x1c0, the same object): the game's per-frame constants come out of it in 8 MiB blocks, and so do the vertex and index data it keeps there. A failed block faults at main+0x173e808. Its bytes
+// used, whenever they moved by 8 MiB or more, with one red line under a 32 MiB margin
+static void upload_pump(void) {
+    static uint64_t last, peak; static int warned;
+    uint64_t mb = main_base(), dev = 0, pool = 0, used = 0;
+    if (!mb || !rd(mb + 0x31df3a0, &dev, 8) || !dev || !rd(dev + 0x1c0 + 0xb8, &pool, 8) || !rd(dev + 0x1c0 + 0x88, &used, 8) || !pool || used > pool) return;
+    if (used > peak) peak = used;
+    if ((used > last ? used - last : last - used) < (8ull << 20)) return;
+    last = used;
+    LOG("Upload heap: %.1f MiB used of %.0f MiB (peak %.1f)", used / MIB, pool / MIB, peak / MIB);
+    DM_EV("uploadheap", "used_mb:u pool_mb:u peak_mb:u", (unsigned long long)(used >> 20), (unsigned long long)(pool >> 20), (unsigned long long)(peak >> 20));
+    if (!warned && pool - used < (32ull << 20)) { warned = 1; LOG("【红】Upload heap: %.1f MiB left of %.0f MiB: the next 8 MiB block may not fit (a failed allocation faults at main+0x173e808)", (pool - used) / MIB, pool / MIB); }
+}
+
 void dm_gpuheap_pump(void) {
     static unsigned n; static int off, warned; static dm_gpuheap_info last; static uint64_t pk_used, pk_top, pk_big, min_gap = UINT64_MAX;
+    if (n % 15 == 0) upload_pump();
     if (off || n++ % 60) return;
     dm_gpuheap_info h; int r = dm_gpuheap_read(&h);
     if (r < 0) { off = 1; LOG("GPU heap 0: counters not as expected (pool %llu bytes, not the 768 MiB budget, or the block list unreadable): not reported", (unsigned long long)h.pool); return; }
