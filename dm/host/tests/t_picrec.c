@@ -182,6 +182,32 @@ int main(int argc, char **argv) {
         // the measured machines: the model must keep what they really held at 60 fps within its capacity
         if (strstr(k[i].what, "(measured)")) check(r.load <= 1.0, NULL, "%s: load %.3f above the capacity", k[i].what, r.load);
     }
+    // Frame Generation: where the system offers it and the full picture fits, at half the drawn rate with what it costs counted; else the conventional choice stands, unchanged.
+    // Anchored on what the M6 measured at full clock: 11.8 ms a drawn frame at 2560 x 1440, 23.9 at 3840 x 2160, out of 33.3
+    struct { const char *what, *gpu; int cores, w, h, fg, s3d; } fgs[] = {
+        { "M6, 2560 display (measured)", "Apple M6", 12, 2560, 1440, 1, 0 },
+        { "M6 on a 4K display (measured)", "Apple M6", 12, 3840, 2160, 1, 0 },
+        { "MacBook Air 13 M5, default", "Apple M5", 10, 2940, 1838, 1, 0 },
+        { "M5 on a 4K display: real frames", "Apple M5", 10, 3840, 2160, 0, 0 },
+        { "Mac mini M4, 2560 display", "Apple M4", 10, 2560, 1440, 1, 0 },
+        { "MacBook Air 13 M4, default: 85%", "Apple M4", 10, 2940, 1838, 1, 1 },
+        { "MacBook Air 13 M4 (8-core), default: real frames", "Apple M4", 8, 2940, 1838, 0, 0 },
+        { "Mac mini M4 Pro (16-core) on a 4K display: 85%", "Apple M4 Pro", 16, 3840, 2160, 1, 1 },
+        { "MacBook Pro 14 M4 Pro", "Apple M4 Pro", 20, 3024, 1890, 1, 0 },
+        { "MacBook Air 13 M3 (8-core), default: real frames", "Apple M3", 8, 2940, 1838, 0, 0 },
+        { "MacBook Pro 14 M3 Pro", "Apple M3 Pro", 14, 3024, 1890, 1, 0 },
+    };
+    for (size_t i = 0; i < sizeof fgs / sizeof *fgs; i++) {
+        dm_mac_spec sp = { .gpu = fgs[i].gpu, .cores = fgs[i].cores, .out_w = fgs[i].w, .out_h = fgs[i].h, .mfx = 1, .fg = 1 }; dm_mac_rec r, c; dm_mac_recommend(&sp, &r);
+        sp.fg = 0; dm_mac_recommend(&sp, &c);
+        check(r.fg == fgs[i].fg, NULL, "%s: Frame Generation %d, expected %d (load %.2f)", fgs[i].what, r.fg, fgs[i].fg, r.load);
+        check(!c.fg, NULL, "%s: Frame Generation where the system doesn't offer it", fgs[i].what);
+        if (r.fg) { check(r.native && r.s3d == fgs[i].s3d && r.envsh == 1 && r.shq == 2 && r.load <= 1, NULL, "%s: Native, 3D index %d (got %d), the full picture, within capacity; native %d envsh %d shq %d load %.2f", fgs[i].what, fgs[i].s3d, r.s3d, r.native, r.envsh, r.shq, r.load); }
+        else check(!memcmp(&r, &c, sizeof r), NULL, "%s: without room for it the conventional choice stands", fgs[i].what);
+        if (strstr(fgs[i].what, "(measured)")) check(r.fg && r.load <= 1.0, NULL, "%s: what the M6 really held must fit", fgs[i].what);
+    }
+    { dm_mac_spec a = { .gpu = "Apple M6", .cores = 12, .out_w = 2560, .out_h = 1440, .mfx = 1 }, b = a; b.fg = 1; check(dm_picrec_id(&a) != dm_picrec_id(&b), NULL, "rec_id: the offer of Frame Generation counts as an input"); }
+    { dm_mac_spec sp = { .gpu = "Apple M6", .cores = 12, .out_w = 2560, .out_h = 1440, .mfx = 0, .fg = 1 }; dm_mac_rec r; dm_mac_recommend(&sp, &r); check(!r.fg, NULL, "no MetalFX: no Frame Generation"); }
     // the chip as read: generation and tier from the name
     struct { const char *gpu; int cores, gen, tier; double speed; } names[] = {
         { "Apple M4 Max", 40, 4, 2, 40 * 5300 / 102000.0 },

@@ -223,13 +223,14 @@ static int g_mac_rec_id = -1;   // dm_picrec_id of the spec mac_rec worked from 
 // cap, as on a 5K display; DM_TEST_DRAWABLE_PX's canvas stands in for the drawable) and the frame rate on the launch screen (launch_hz, dm_pace_hz: 72 fps
 // on a 144 Hz screen); memory, the Mac's model, the panel size, the thermal state and Low Power Mode are only logged. Worked out once per launch: first in main.c cloud_boot_start
 // (dm_custom's Frame Drops default, on the main thread, after NSApplication exists), then reused by dm_video.c's load
+static int rec_fg(void);
 static dm_mac_rec mac_rec(void) {
     static dm_mac_rec r; static dispatch_once_t once;
     dispatch_once(&once, ^{
         uint64_t mem = 0; size_t n = sizeof mem; sysctlbyname("hw.memsize", &mem, &n, NULL, 0);
         char model[64] = ""; n = sizeof model; sysctlbyname("hw.model", model, &n, NULL, 0);
         double px = main_px(), ph = main_px_h(), asp; int w, h; native_picture(&w, &h, &asp);
-        NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), w, h, front_video_mfx_ok(), asp };
+        NSString *g = gpu_name(); dm_mac_spec spec = { g.UTF8String, gpu_cores(), w, h, front_video_mfx_ok(), asp }; spec.fg = rec_fg();
         { scr_px sp = scr_launch(); CGSize ds = CGSizeMake(sp.w, sp.hc); test_drawable_px(&ds); double vp[4]; dm_geom_fit(ds.width, ds.height, w, h, vp);
           spec.drw_w = (int)lround(vp[2]); spec.drw_h = (int)lround(vp[3]); }
         double hz = launch_hz(); spec.pace_hz = dm_pace_hz(hz, 60);
@@ -239,12 +240,12 @@ static dm_mac_rec mac_rec(void) {
         static const int pct[5] = { 100, 85, 75, 67, 50 };
         static const int fixed_w[3] = { 1600, 1920, 2560 };
         LOG("picture: %s (%s, generation %d), %d GPU cores, %.0f GB, %s, screen %dx%d (backing %.0fx%.0f%s, panel %dx%d), drawn into %dx%d%s, %.2f Hz%s → %.4g fps, "
-            "thermal state %ld, Low Power Mode %s; about %.2fx the M6's GPU → Recommended %s %d, 3D %d%%, environment shadows %s, shadows %s, Frame Drops %s "
+            "thermal state %ld, Low Power Mode %s; about %.2fx the M6's GPU → Recommended %s %d, 3D %d%%, environment shadows %s, shadows %s, Frame Drops %s, Frame Generation %s "
             "(%.0f%% of the estimated capacity%s); rec_id %d",
             g.UTF8String, tiers[r.tier + 1], r.gen, spec.cores, mem / 1073741824.0, model, w, h, px, ph, test_screen_px(NULL, NULL, NULL) ? " from DM_TEST_SCREEN_PX" : "",
             pw, pnh, spec.drw_w, spec.drw_h, dm_picrec_enlarges(&spec) ? " (the present enlarges it)" : "", hz, test_screen_hz() > 0 ? " from DM_TEST_SCREEN_HZ" : "", spec.pace_hz,
             (long)pi.thermalState, pi.lowPowerModeEnabled ? "on" : "off", r.speed, r.native ? "Native" : "fixed", r.native ? w : fixed_w[r.tier_res], pct[r.s3d],
-            r.envsh ? "on" : "off", r.shq == 2 ? "Ultra" : r.shq ? "High" : "Standard", r.q3d ? "keep" : "lower", r.load * 100,
+            r.envsh ? "on" : "off", r.shq == 2 ? "Ultra" : r.shq ? "High" : "Standard", r.q3d ? "keep" : "lower", r.fg ? "on" : "off", r.load * 100,
             r.pres > 0 ? ", the present's enlargement included" : "", g_mac_rec_id);
     });
     return r;
@@ -262,8 +263,8 @@ static int real_recommendation(void) { return dm_picrec_real(getenv("DM_APP") !=
 // MetalFXUpscale preferences carry over once as the current values. The CLI host and test copies (unless DM_TEST_VIDEO_FIRSTBOOT=1) get the
 // original look: windowed, 1600, Standard
 int mtl_mfx_temporal_supported(void), mtl_mfx_fg_supported(void);
-// MetalFX Temporal with Frame Generation wherever the chip has both: the game draws half the frames and the screen shows them all, 30 / 60 on a 60 Hz screen. Other chips keep the
-// conventional picture and the real rate. A player who prefers real frames has the Frame Generation row
+// The system offers MetalFX Temporal and the frame interpolator: dm_picrec.c takes them where the full picture fits, the game drawing half the frames and the screen showing them all, 30 / 60 on a 60 Hz
+// screen. Other Macs keep the conventional picture and the real rate. A player who prefers real frames has the Frame Generation row
 static int rec_fg(void) { return mtl_mfx_temporal_supported() && mtl_mfx_fg_supported(); }
 int front_video_firstboot(int rec[3], int cur[3]) {
     if (!real_recommendation()) {
@@ -273,7 +274,7 @@ int front_video_firstboot(int rec[3], int cur[3]) {
     }
     double px = main_px(); NSString *gpu = gpu_name();
     int t = mac_rec().tier_res, nres, ns3d; rec_native(&nres, &ns3d);
-    rec[0] = 1; rec[1] = nres >= 0 ? nres : t; rec[2] = rec_fg() ? 2 : front_video_mfx_ok() && (nres >= 0 || k_render_w[t] < px) ? 1 : 0;   // 原生时 MetalFX 管 3D 放大趟 | with Native, MetalFX does the 3D upscale pass
+    rec[0] = 1; rec[1] = nres >= 0 ? nres : t; rec[2] = mac_rec().fg ? 2 : front_video_mfx_ok() && (nres >= 0 || k_render_w[t] < px) ? 1 : 0;   // 原生时 MetalFX 管 3D 放大趟 | with Native, MetalFX does the 3D upscale pass
     for (int i = 0; i < 3; i++) cur[i] = rec[i];
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults; int legacy = 0;
     if ([ud objectForKey:@"StartFullScreen"]) { cur[0] = [ud boolForKey:@"StartFullScreen"]; legacy = 1; }
@@ -297,7 +298,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "envd")) return mac_rec().envsh;   // goes with the full picture, as environment shadows do; no GPU cost measured on an M6 (dm_video.c dm_video_env_detail)
     if (!strcmp(key, "shq")) return mac_rec().shq;   // 2 = Ultra (a 4096-texel map) with the full picture, 0 = Standard (the Switch's 2100) with the light one
     if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
-    if (!strcmp(key, "fg")) return rec_fg();
+    if (!strcmp(key, "fg")) return mac_rec().fg;
     return -1;
 }
 // Frame Drops' default (dm_custom.c q3d): the recommendation's choice (lower when the light picture is needed or the choice uses more than 85% of the
