@@ -70,6 +70,7 @@ DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-
 DM_FE_AUTO	host	host/dm_cursor.c	-
 DM_FG	host	host/dm_video.c	y
+DM_FG_FORE	gfx	gfx/nvn/nvn_fg.inc	-
 DM_FG_SHARP	gfx	gfx/nvn/nvn_fg.inc	-
 DM_FIXED_TIME	host,tools	host/hle_time.c host/main.c tools/replay.py	y
 DM_FPS	gfx	gfx/nvn/nvn_mtl.m	y
@@ -413,6 +414,7 @@ DM_TEST_PRESENT_RGB	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_PRESENT_SHOT	host	host/front_mac.m	y
 DM_TEST_Q3D	host	host/hle_oe.c host/tests/t_oe.c	-
 DM_TEST_QUIT_AT	host	host/front_mac.m	-
+DM_TEST_RCFG	host	host/diag.c	-
 DM_TEST_RESIGN	ios	ios/Sources/front_ios.m	-
 DM_TEST_RSTICK	host	host/hle_hid.c	-
 DM_TEST_RS_HOLD	host	host/dm_cursor.c	-

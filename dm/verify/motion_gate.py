@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Motion on the game itself: the temporal scaler and frame generation (DM_FG) on a walk, judged by dm/tools/motion_scan.py: shown frames in order and on time, generated frames half way, the
 hero's limbs moving. A control runs the same walk on the fixed clock (DM_DETCLOCK), which freezes her pose whatever else is on: it must read as frozen, or a clean result says nothing.
-Last line MOTION_GATE OK|RED {json}. Frames are recorded in the run's folder, 1280 x 720 of the middle of the picture, and removed afterwards."""
+Two more runs dump frames (the dump stalls, so never in the first one) and judge whether what moves stays solid in the generated frames, with the moving things put back and, as a control, without.
+Last line MOTION_GATE OK|RED {json}. Frames are recorded in the run's folder, a piece of the ground away from the hero, and removed afterwards: the steps and the sharpness are the ground's, since the
+hero stays put on the screen, and a picture with her in it reads as either motion."""
+import glob
 import json
 import os
 import shutil
@@ -14,7 +17,11 @@ import motion_scan  # noqa: E402
 import picture  # noqa: E402
 
 ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work'); OUT = os.path.join(ROOT, 'run', 'motion'); SCN = os.path.join(HERE, 'scenarios', 'picture', 'motion_walk.scn')
-LATE_MAX = 0.01; OFF_MAX = 0.1; DETAIL_RANGE = (0.8, 1.25)   # a generated frame's detail against a real one's: nvn_fg.inc's sharpen brings it near 1; without it about 0.76
+LATE_MAX = 0.01; OFF_MAX = 0.1; DETAIL_RANGE = (0.8, 1.25)   # a generated frame's detail against a real one's: nvn_fg.inc's sharpen brings it near 1; without it about 0.87
+SOLID_MIN = 0.85; SOLID_MARGIN = 0.05   # what moves, in a generated frame against a real one; the control without the moving things put back must read lower by the margin, or the check is blind
+
+
+SOLID_FRAME = 420   # in the walk: the first run holds from frame 360 on
 
 
 def run(name, env):
@@ -26,7 +33,7 @@ def run(name, env):
 
 def main():
     bad = []
-    rc, d, trace = run('fg', {'DM_FG': '1', 'DM_FRAME_REC': f"11:10:{os.path.join(OUT, 'fg', 'rec')}:640,360,1280,720"})
+    rc, d, trace = run('fg', {'DM_FG': '1', 'DM_FRAME_REC': f"11:10:{os.path.join(OUT, 'fg', 'rec')}:100,60,800,500"})
     if rc: bad.append('the frame generation run failed')
     rec = os.path.join(d, 'rec'); res = {}
     if not rc:
@@ -43,11 +50,22 @@ def main():
         if not dt.get('pairs') or not DETAIL_RANGE[0] <= dt['median'] <= DETAIL_RANGE[1]: bad.append(f'generated frames not as sharp as real ones: {dt}')
     for f in (rec + '.raw',):
         if os.path.exists(f): os.remove(f)
+    solid = {}
+    for name, extra in (('solid', {}), ('solid_off', {'DM_FG_FORE': '0'})):
+        rcs, ds, _ = run(name, {'DM_FG': '1', 'DM_MV_DUMP': f"{SOLID_FRAME}:6:{os.path.join(OUT, name, 'd_')}", 'DM_MV_DUMP_ONLY': 'real,comp,mv', **extra})
+        solid[name] = motion_scan.solid_scan(os.path.join(ds, 'd_')) if not rcs else {}
+        for f in glob.glob(os.path.join(ds, 'd_*.raw')): os.remove(f)
+        if rcs: bad.append(f'the {name} run failed')
+    on, off = solid.get('solid', {}), solid.get('solid_off', {})
+    if on.get('pairs') and off.get('pairs'):
+        if on['median'] < SOLID_MIN: bad.append(f'moving things not solid in generated frames: {on}')
+        if off['median'] > on['median'] - SOLID_MARGIN: bad.append(f'without the moving things put back the check reads no lower, so it is blind: {off} against {on}')
+    elif not any('solid' in b for b in bad): bad.append(f'nothing moving to judge: {solid}')
     rc2, _, trace2 = run('control', {'DM_DETCLOCK': '16666667'})
     ctl = motion_scan.limbs_scan(trace2) if not rc2 else {}
     if rc2: bad.append('the control run failed')
     elif not ctl['flagged']: bad.append(f'the control (fixed clock) did not read as a frozen pose, so the check is blind: {ctl}')
-    out = dict(fg=res, control=ctl, bad=bad)
+    out = dict(fg=res, solid=solid, control=ctl, bad=bad)
     print(('MOTION_GATE RED ' if bad else 'MOTION_GATE OK ') + json.dumps(out))
     return 1 if bad else 0
 

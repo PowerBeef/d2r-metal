@@ -572,6 +572,36 @@ static void setlang_obs(const uint64_t *regs) {
     static uint32_t last = 0xffffffff; if (idx != last) { last = idx; LOG("SetLanguage：语言 %s（号 %u），重装字符串表", nm ? nm : "?", idx); DM_EV("language", "name:s idx:u", nm, (unsigned long long)idx); }
     if (nm) atomic_store(&g_dm_lang, (int)idx);   // 我们自己的 UIKit 文字跟着换（dm_i18n.c） | our own UIKit text switches along with it (dm_i18n.c)
 }
+#if !TARGET_OS_IPHONE
+// DM_TEST_RCFG=<hex renderer offset>.<b|w>=<value>[,...] (Mac only, like the probes): changes the renderer's boot settings just before Renderer_Init (main+0x15ff470) copies them
+// to renderer+0x65f4 (0xd5 bytes; x2 = the config), to try the game's own higher-quality features one at a time. Most modules read their knob once at creation, so a write
+// after that point has no effect. A test switch: nothing the game or the player sees uses it
+#define RCFG_BASE 0x65f4
+#define RCFG_SIZE 0xd5
+static struct { uint32_t off, val; int size; } g_rcfg[24];
+static int g_nrcfg;
+static void rcfg_apply(ucontext_t *uc) {
+    uint8_t *cfg = (uint8_t *)UC_X(uc, 2);
+    for (int i = 0; i < g_nrcfg; i++) {
+        uint8_t *at = cfg + g_rcfg[i].off - RCFG_BASE; uint32_t old = 0;
+        memcpy(&old, at, (size_t)g_rcfg[i].size); memcpy(at, &g_rcfg[i].val, (size_t)g_rcfg[i].size);
+        LOG("DM_TEST_RCFG renderer+%#x: %u -> %u", g_rcfg[i].off, old, g_rcfg[i].val);
+    }
+}
+static void rcfg_install(void) {
+    const char *e = getenv("DM_TEST_RCFG"); if (!e || !*e) return;
+    char spec[512]; strlcpy(spec, e, sizeof spec);
+    for (char *t = strtok(spec, ","); t; t = strtok(NULL, ",")) {
+        char *d = NULL; unsigned long off = strtoul(t, &d, 16); int size = d && d[0] == '.' ? (d[1] == 'b' ? 1 : d[1] == 'w' ? 4 : 0) : 0;
+        if (!size || d[2] != '=' || g_nrcfg >= (int)(sizeof g_rcfg / sizeof g_rcfg[0]) || off < RCFG_BASE || off + (unsigned long)size > RCFG_BASE + RCFG_SIZE)
+            die("DM_TEST_RCFG: <hex offset in renderer+%#x..%#x>.<b|w>=<value>, at most 24 (%s)", RCFG_BASE, RCFG_BASE + RCFG_SIZE, t);
+        g_rcfg[g_nrcfg].off = (uint32_t)off; g_rcfg[g_nrcfg].size = size; g_rcfg[g_nrcfg].val = (uint32_t)strtoul(d + 3, NULL, 0); g_nrcfg++;
+    }
+    module_t *m = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) m = &g_mod[i];
+    if (!m) die("DM_TEST_RCFG: no main module");
+    probe_add(m, 0x15ff470, -1, rcfg_apply);
+}
+#endif
 void probe_install(void) {
     if (gate_obs_present(OBS_SETLANG)) gate_obs_set(OBS_SETLANG, setlang_obs);
     { void dm_ui_tooltip_obs(const uint64_t *regs); if (gate_obs_present(OBS_TOOLTIP)) gate_obs_set(OBS_TOOLTIP, dm_ui_tooltip_obs); }   // 说明框停靠（dm_cursor.c） | tooltip docking (dm_cursor.c)
@@ -628,6 +658,7 @@ void probe_install(void) {
             }
         }
     }
+    rcfg_install();
     if (g_slots && !g_slots_sealed) { mprotect(g_slots, 0x4000, PROT_READ | PROT_EXEC); sys_icache_invalidate(g_slots, 0x4000); g_slots_sealed = 1; }
     if (g_nprobe) atexit(probe_summary_atexit);
 #endif

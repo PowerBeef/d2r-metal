@@ -20,6 +20,7 @@ The last line is RESULT {json}; exit 0 when nothing is flagged, 1 otherwise. dm/
 A pixel check of the legs' area was tried first and dropped: it did not flag clips whose hero was known to be frozen (healthy runs dip just the same whenever her legs cross).
 """
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -179,6 +180,33 @@ def detail_scan(fr, steps):
         base = (energy(i - 1) + energy(i + 1)) / 2
         if base > 0: out.append(energy(i) / base)
     return dict(pairs=len(out), median=round(float(np.median(out)), 3), p10=round(float(np.percentile(out, 10)), 3), p90=round(float(np.percentile(out, 90)), 3)) if out else dict(pairs=0)
+
+
+def solid_scan(prefix):
+    """Whether things that move stay solid in the generated frames: edges on and around the pixels that move apart from the ground, in a shown generated frame against the real frames either side,
+    1 = as solid. The interpolator alone loses thin things against a sliding background and keeps a pale copy, which reads well below it. From a DM_MV_DUMP with DM_MV_DUMP_ONLY=real,comp,mv"""
+    def rd(path, dtype=np.uint8, ch=4):
+        with open(path, 'rb') as f:
+            w, h, _, row = (int(x) for x in f.readline().split()); d = f.read()
+        return np.frombuffer(d, dtype=dtype).reshape(h, row // np.dtype(dtype).itemsize)[:, :w * ch].reshape(h, w, ch)
+    def lum(a): return a[..., 0].astype(np.float32) * .3 + a[..., 1] * .59 + a[..., 2] * .11
+    def edges(g, m):
+        gx = np.abs(np.diff(g, axis=1))[:-1, :]; gy = np.abs(np.diff(g, axis=0))[:, :-1]; return float((gx * gx + gy * gy)[m[:-1, :-1]].mean())
+    frames = sorted(int(os.path.basename(p).rsplit('_', 2)[-2]) for p in glob.glob(prefix + '*_comp.raw')); out = []
+    for f in frames:
+        pa, pm, pb = f'{prefix}{f - 1}_real.raw', f'{prefix}{f}_mv.raw', f'{prefix}{f}_real.raw'
+        if not (os.path.exists(pa) and os.path.exists(pm)): continue
+        a, g, b = rd(pa), rd(f'{prefix}{f}_comp.raw'), rd(pb); mv = rd(pm, np.float16, 2).astype(np.float32); h, w, _ = a.shape; mh, mw, _ = mv.shape
+        rel = np.hypot((mv[..., 0] - np.median(mv[..., 0])) * w, (mv[..., 1] - np.median(mv[..., 1])) * h); ys, xs = np.where(rel > 6)
+        keep = (np.abs(xs - mw / 2) < mw * .1) & (np.abs(ys - mh * .49) < mh * .2); ys, xs = ys[keep], xs[keep]
+        m = np.zeros((h, w), bool); m[np.clip((ys * h / mh).astype(int), 0, h - 1), np.clip((xs * w / mw).astype(int), 0, w - 1)] = True
+        if m.sum() < 300: continue
+        k = 14; ii = np.zeros((h + 1, w + 1), np.int32); ii[1:, 1:] = m.astype(np.int32).cumsum(0).cumsum(1)   # grown by the reach of a limb: a trail is part of what is judged
+        y0, y1, x0, x1 = np.clip(np.arange(h) - k, 0, h), np.clip(np.arange(h) + k + 1, 0, h), np.clip(np.arange(w) - k, 0, w), np.clip(np.arange(w) + k + 1, 0, w)
+        m = (ii[np.ix_(y1, x1)] - ii[np.ix_(y0, x1)] - ii[np.ix_(y1, x0)] + ii[np.ix_(y0, x0)]) > 0
+        base = (edges(lum(a), m) + edges(lum(b), m)) / 2
+        if base > 0: out.append(edges(lum(g), m) / base)
+    return dict(pairs=len(out), median=round(float(np.median(out)), 3), low=round(float(np.min(out)), 3)) if out else dict(pairs=0)
 
 
 def latency_scan(fr, steps, events_path, prefix='in', moved_px=1.5):

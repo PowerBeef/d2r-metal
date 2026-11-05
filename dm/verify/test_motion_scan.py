@@ -72,6 +72,24 @@ class MotionScanTest(unittest.TestCase):
             return ((a.astype(np.uint16) + np.roll(a, 4, 1)) // 2).astype(np.uint8) if kinds[i] == 'gen' else a
         fr.get = soft; self.assertLess(M.detail_scan(fr, steps)['median'], .8)
 
+    def test_solid(self):
+        rng = np.random.default_rng(3); w, h = 400, 300
+        ground = rng.integers(90, 110, (h, w, 3), dtype=np.uint8)
+        def picture(staff):
+            a = np.dstack([ground.copy(), np.full((h, w), 255, np.uint8)])
+            if staff: a[60:240, 198:202, :3] = 10
+            return a
+        mv = np.zeros((h, w, 2), np.float16); mv[..., 0] = 0.05; mv[60:240, 198:202, 0] = 0.0
+        def put(d, name, arr):
+            with open(os.path.join(d, name), 'wb') as f: f.write(f'{w} {h} 0 {w * arr.shape[2] * arr.dtype.itemsize}\n'.encode()); f.write(arr.tobytes())
+        with tempfile.TemporaryDirectory() as d:
+            for i in (1, 2):
+                put(d, f'd_{i}_real.raw', picture(True))
+            put(d, 'd_2_mv.raw', mv); put(d, 'd_2_comp.raw', picture(True))
+            self.assertAlmostEqual(M.solid_scan(os.path.join(d, 'd_'))['median'], 1.0, 2)
+            put(d, 'd_2_comp.raw', picture(False))   # the staff is gone from the generated frame
+            self.assertLess(M.solid_scan(os.path.join(d, 'd_'))['median'], 0.3)
+
     def test_frozen_pose_is_flagged_past_the_limit_only(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, 't.tsv')

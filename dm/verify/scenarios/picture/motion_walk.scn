@@ -1,20 +1,24 @@
-# The walk dm/verify/motion_gate.py measures: the hero runs in four directions in town, so that her limbs and the camera both move. It needs a held stick and a real clock (see motion_gate.py)
+# The walk dm/verify/motion_gate.py measures: back and forth along the same lines on the open ground of the Far Oasis, so that the hero really moves through the place, the camera follows her and the
+# ground slides behind her the whole time. A wall would stop the camera, and with it most of what goes wrong: thin things lost against moving scenery only show when she keeps going. It needs
+# DM_MV_TRACE (the gate sets it) for the limbs.
 name motion_walk
 requires cli
 save warlock
 env DM_GAME_SEED=305419896
+env DM_TEST_GOTO_LEVEL=150:42
 timeout 100
 
 enter_game
-sleep 8
+sleep 7
 mark go
-stick 0.7 0.5 90
-sleep 2.2
-stick -0.6 0.6 90
-sleep 2.2
-stick -0.6 -0.6 90
-sleep 2.2
-stick 0.6 -0.6 90
-sleep 3
+stick 0.7 0.0 60
+stick -0.7 0.0 60
+stick 0.0 0.7 60
+stick 0.0 -0.7 60
+stick 0.7 0.0 60
+stick -0.7 0.0 60
+stick 0.0 0.7 60
+stick 0.0 -0.7 60
+sleep 1
 quit
 check no_red
