@@ -130,6 +130,7 @@ DM_LAUNCHER_TEST_GAME	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTest
 DM_LAUNCHER_TEST_NETWORK	other	launcher/Tests/LauncherCoreTests/CoreTests.swift	-
 DM_LAUNCHER_TEST_ROOT	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTests.swift	-
 DM_LAUNCHER_VERSION	tools	tools/launcher_app.sh	-
+DM_LINK_TRACE	gfx	gfx/nvn/nvn_mtl.m	y
 DM_LOADHASH	host	host/loader.c	-
 DM_LOCAL_ENV	ios-tools	ios/tools/local_env.sh	y
 DM_LOCAL_ENV_FILE	ios-tools	ios/tools/local_env.sh	-
@@ -245,7 +246,7 @@ DM_POT_PICK	host	host/dm_beltauto.c host/dm_potpick.c	-
 DM_PRELOAD	host	host/main.c	-
 DM_PRESENT_HZ	gfx	gfx/nvn/hle_nvn.c	y
 DM_PRESENT_INTERVAL	gfx	gfx/nvn/hle_nvn.c	-
-DM_PRESENT_LATENCY	gfx	gfx/nvn/nvn_mtl.m	-
+DM_PRESENT_LATENCY	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PRESENT_LINK	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PRIVATE_GATES	tools	tools/patch_nso.py	y
 DM_PROBE	host	host/diag.c	y

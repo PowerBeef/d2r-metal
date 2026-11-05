@@ -7288,6 +7288,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 #if TARGET_OS_OSX
         if (!f.error) mfx_gpu_note(f.GPUEndTime - f.GPUStartTime);
 #endif
+        { static FILE *gf; static int tried; if (!tried) { tried = 1; const char *e = getenv("DM_LINK_TRACE"); if (e && *e) { char p[1024]; snprintf(p, sizeof p, "%s.gpu", e); gf = fopen(p, "w"); } } if (gf) { fprintf(gf, "%llu\t%.6f\t%.6f\t%.6f\t%.6f\n", (unsigned long long)ticket, CACurrentMediaTime(), f.GPUStartTime, f.GPUEndTime, target_ts); if (ticket % 64 == 0) fflush(gf); } }
         pthread_mutex_lock(&g_pq_mu); if (ticket > g_pq_done) g_pq_done = ticket; if (ticket > g_present_alloc_done[alloc_i]) g_present_alloc_done[alloc_i] = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
     }];
     CBUF buffers[] = {cb};
@@ -7394,6 +7395,15 @@ static void link_tick_note(double ts) {   // ts: the tick's target presentation 
     g_link_prev_ts = ts;
 }
 static void link_rate_reset(void) { pthread_mutex_lock(&g_link_mu); g_link_prev_ts = 0; g_link_dt_n = 0; g_link_rate_meas = 0; pthread_mutex_unlock(&g_link_mu); }
+// DM_LINK_TRACE=<file>: one line per display link tick, for finding out why a frame missed its refresh (dm/verify/debugging.md): the tick's time and how long before the target presentation it came, whether a
+// frame was waiting and how long ago it had been queued. Only the link thread writes it
+static double g_link_busy_ms;   // how long the last tick's present took, for DM_LINK_TRACE
+static void link_trace(CAMetalDisplayLinkUpdate *update, int pending, double t_in, uint64_t frame) {
+    static FILE *f; static int tried; if (!tried) { tried = 1; const char *e = getenv("DM_LINK_TRACE"); if (e && *e && (f = fopen(e, "w"))) fprintf(f, "t_ns\tto_target_ms\tpending\tqueued_ms_ago\tframe\tprev_busy_ms\n"); }
+    if (!f) return;
+    uint64_t now = now_ns(); fprintf(f, "%llu\t%.3f\t%d\t%.3f\t%llu\t%.3f\t%.6f\t%.6f\n", (unsigned long long)now, (update.targetPresentationTimestamp - CACurrentMediaTime()) * 1000, pending, pending && t_in > 0 ? (CACurrentMediaTime() - t_in) * 1000 : -1.0, (unsigned long long)frame, g_link_busy_ms, CACurrentMediaTime(), update.targetPresentationTimestamp);
+    if (!(now >> 27 & 1) != !(tried & 2)) { fflush(f); tried ^= 2; }
+}
 @implementation NvMetalDisplayLinkDelegate
 - (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update {
     (void)link;
@@ -7408,7 +7418,7 @@ static void link_rate_reset(void) { pthread_mutex_lock(&g_link_mu); g_link_prev_
     pthread_cond_broadcast(&g_link_cv);
     pthread_mutex_unlock(&g_link_mu);
     pthread_mutex_lock(&g_pq_mu);
-    if (!LINK_WANT() || g_pq_read == g_pq_in) { pthread_mutex_unlock(&g_pq_mu); return; }
+    if (!LINK_WANT() || g_pq_read == g_pq_in) { pthread_mutex_unlock(&g_pq_mu); link_trace(update, 0, 0, 0); return; }
     uint64_t first = g_pq_read + 1, ticket = g_pq_in;
     // With frame generation each tick takes the next present, not the newest: the generated frame and the real one behind it each get theirs. A backlog keeps only the last pair
     if (atomic_load(&g_fg_fifo) && ticket > first) ticket = ticket - first >= 2 ? (ticket - 1) : first;
@@ -7418,8 +7428,11 @@ static void link_rate_reset(void) { pthread_mutex_lock(&g_link_mu); g_link_prev_
     if (ticket > 1 && g_pq_done < ticket - 1) g_pq_done = ticket - 1;
     pthread_cond_broadcast(&g_pq_cv);
     pthread_mutex_unlock(&g_pq_mu);
+    link_trace(update, 1, it.t_in, it.frame);
     int submitted;
+    uint64_t busy0 = now_ns();
     @autoreleasepool { g_present_gen = (__bridge id<MTLTexture>)it.gen; submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, update.drawable, update.targetPresentationTimestamp); g_present_gen = nil; }
+    g_link_busy_ms = (now_ns() - busy0) / 1e6;
     if (!submitted) {
         pthread_mutex_lock(&g_pq_mu);
         if (ticket > g_pq_done) g_pq_done = ticket;

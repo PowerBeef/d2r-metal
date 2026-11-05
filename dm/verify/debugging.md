@@ -243,6 +243,15 @@ Traps:
 - **Judge motion while the hero really moves through the place.** Against a wall her legs run but the camera stands still, and ghosting on thin things doesn't show (`scenarios/picture/motion_walk.scn` goes back and forth on open ground). `DM_TEST_GOTO_LEVEL` plays the game's bright doorway animation first: that is not a bug.
 - **Read steps and sharpness on the ground, away from the hero.** She stays put on the screen, so a picture with her in it reads as either motion (`motion_gate.py` records a piece of the ground).
 
+## A frame that misses a refresh
+
+`DM_LINK_TRACE=<file>` writes one line per display link tick (the time, how long before its target presentation, whether a frame was waiting and how long ago it was queued, how long the last present took), and `<file>.gpu` the present's GPU times. On an M6 at real 60 (conventional, town and the Blood Moor, 2026-11-05), the 1-2% of frames shown for two refreshes are the system's:
+
+- A frame was waiting at every tick around a miss, and the present took 0.1-0.4 ms of the link thread and about 1 ms of GPU, 31 ms before the next tick. The link's callback itself comes one refresh late, 31.4 ms after the last one.
+- `DM_PRESENT_LATENCY=2` changes nothing (ABBA x6: 1.0% and 2.4% against 1.4% and 1.8%, not significant). A single run can read 0%: the misses come and go over minutes, so never judge this from one run.
+- More GPU work removes them: `DM_TEST_LOAD=gpu:1500` (about 6 ms at full clock, ABBA x6: 0.9% and 2.6% to 0%, p 0.002), `gpu:700` nearly (ABBA x4: 1.1% and 2.6% to 0% and 0.4%), `gpu:300` not. So it comes with the GPU running slowly because it has room, which also fits fewer misses at 3840 x 2160. Frame Generation shows none.
+- No fix is in: the only one found so far is to burn GPU time on purpose, for players who turned Frame Generation off. Its energy cost isn't known: `@proc_mj` moved only 2% with 3 ms of added GPU work, so it doesn't seem to count the GPU.
+
 ## The game's own quality settings
 
 `DM_TEST_RCFG=<hex renderer offset>.<b|w>=<value>[,...]` changes the renderer's boot settings at the observation gate at `Renderer_Init` (`main+0x15ff470`), just before it copies them to `renderer+0x65f4` (0xd5 bytes). The Switch build runs the game's lowest level, and most modules read their knob once at creation, so this is how to try the others one at a time. What it found:
