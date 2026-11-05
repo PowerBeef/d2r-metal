@@ -230,7 +230,8 @@ A still picture cannot show a frozen walk or a frame out of order, and a video o
 - `DM_MV_TRACE=<file>` writes one line per drawn frame about the hero's limbs, from the velocity target: the camera's motion, how many pixels move apart from the ground, and how fast the limbs go. The camera follows the hero, so whatever moves in her area is her animation. It needs the temporal scaler (`DM_MFXT=1`), which draws the velocity target.
 - `dm/tools/motion_scan.py <prefix | video> [--trace file]` judges them: shown-frame cadence, repeated frames, picture steps that go backwards, whether generated frames sit half way, and the longest run of frames with a frozen pose. `--clip` and `--sheet` make a video and a contact sheet. Its detectors are pinned by `dm/verify/test_motion_scan.py`.
 - `motion_scan.py --events <run's events.ndjson>` gives input to picture: from each mark named `inN` to the first shown frame that moves, on the time the system planned to show it. A trial is a mark, a stick push and a walk from standing; judge the mean over about 25 trials. On an M6 in town: 96 ms with frame generation, 73.5 ms at real 60, Temporal or not (two runs each).
-- `dm/verify/motion_gate.py` (gate step `core_motion`) runs them on a walk with frame generation, then on the fixed clock as a control, which must read as frozen.
+- `motion_scan.solid_scan(<dump prefix>)` (a `DM_MV_DUMP` with `DM_MV_DUMP_ONLY=real,comp,mv`) says whether what moves stays whole in generated frames, by comparing pixels with where the real frames say they belong. `lost` is the share of the thin parts of moving things (a staff, a limb's edge) whose real colour isn't half way along their motion: 6-16% with the moving things put back, 20-59% with `DM_FG_FORE=0`. `pale` is the share of the ground in a ring around them that matches neither real frame half a camera step away. Edge energy and the whole figure couldn't tell the runs apart: thick parts hold either way.
+- `dm/verify/motion_gate.py` (gate step `core_motion`) runs them on a walk with frame generation, then with `DM_FG_FORE=0` and on the fixed clock as controls: the first must read lower, the second as frozen.
 
 Traps:
 
@@ -239,6 +240,12 @@ Traps:
 - Without `DM_DETCLOCK_PACE=1` the fixed clock outruns the display and shown frames are skipped, so a recording of it isn't complete.
 - Frames in a scenario's `stick` step are drawn frames: under frame generation (30 drawn per second) the same step lasts twice as long.
 - A scenario `--out` folder holds that run's save: reusing it gives a false red about uncommitted save changes, or a stalled start.
+- **Judge motion while the hero really moves through the place.** Against a wall her legs run but the camera stands still, and ghosting on thin things doesn't show (`scenarios/picture/motion_walk.scn` goes back and forth on open ground). `DM_TEST_GOTO_LEVEL` plays the game's bright doorway animation first: that is not a bug.
+- **Read steps and sharpness on the ground, away from the hero.** She stays put on the screen, so a picture with her in it reads as either motion (`motion_gate.py` records a piece of the ground).
+
+## The game's own quality settings
+
+`DM_TEST_RCFG=<hex renderer offset>.<b|w>=<value>[,...]` (Mac only, like the probes) changes the renderer's boot settings just before `Renderer_Init` (`main+0x15ff470`) copies them to `renderer+0x65f4` (0xd5 bytes). The Switch build runs the game's lowest level, and most modules read their knob once at creation, so this is how to try the others one at a time. Nothing the game or the player sees uses it.
 
 ## PC mode probes
 

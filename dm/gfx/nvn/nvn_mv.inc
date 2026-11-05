@@ -30,18 +30,18 @@ int mtl_mfx_temporal_supported(void) {   // any thread, before the renderer has 
     return ok;
 }
 
-enum { MV_MAX_DRAWS = 4096, MV_TAB = 16384, MV_MAX_CB = 8, MV_RING = 5, MV_SNAP_BYTES = 8 << 20, MV_DEDUPE = 4096, MV_VIEW_REG = 3, MV_FRAME_REG = 10, MV_VP_OFF = 336, MV_PROJ_OFF = 208 };
+enum { MV_MAX_DRAWS = 4096, MV_TAB = 16384, MV_MAX_CB = 8, MV_RING = 5, MV_SNAP_BYTES = 8 << 20, MV_DEDUPE = 4096, MV_VIEW_REG = 3, MV_FRAME_REG = 10, MV_VP_OFF = 336, MV_PROJ_OFF = 208, MV_ACTIVE = 30 };
 typedef struct { uint32_t off, size; int8_t reg, aid; } mv_cb;
 typedef struct {
     __unsafe_unretained NvShader *vs; __unsafe_unretained id<MTLRenderPipelineState> pso;
-    uint64_t key, base, vb[15], ib_gpu; NSUInteger ib_len; mv_cb cb[MV_MAX_CB]; int ncb, occ, used, count, itype, instances, base_vertex, base_instance, cull, wind; float bias[3];
+    uint64_t key, base, vb[15], ib_gpu; NSUInteger ib_len; mv_cb cb[MV_MAX_CB]; int ncb, occ, used, count, itype, instances, base_vertex, base_instance, cull, wind, active; float bias[3];   // active: drawn frames left in the moving-things mask since it last moved
 } mv_draw;
 typedef struct { uint64_t key; int idx; } mv_slot;
 static struct {
     __strong id<MTLBuffer> snap[MV_RING]; uint64_t gpu[MV_RING]; size_t used; int ri;
     mv_draw *d[2]; int n[2], cur; mv_slot *tab[2]; struct { uint64_t key; int n; } *occ; struct { uint64_t addr, size; uint32_t off; uint32_t stamp; } *dd; uint32_t stamp;
-    uint64_t frame[2]; float vp[2][16], jit[2][2], view_m[2][16], proj_m[2][16], nearf[2], farf[2]; int has_vp[2]; double view[6]; int have_prev, moved_last, stat_overflow, stat_full; uint64_t stat_frames, stat_moved, stat_draws, last_use; size_t stat_peak; int stat_cuts, stat_far;
-    __strong id<MTLTexture> depth, vel; __strong id<MTLLibrary> lib; __strong id<MTLFunction> obj_fn; __strong id<MTLRenderPipelineState> cam; __strong id<MTLDepthStencilState> dss;
+    uint64_t frame[2]; float vp[2][16], jit[2][2], view_m[2][16], proj_m[2][16], nearf[2], farf[2]; int has_vp[2]; double view[6]; NSUInteger cam_off; int have_prev, moved_last, stat_overflow, stat_full; uint64_t stat_frames, stat_moved, stat_draws, last_use; size_t stat_peak; int stat_cuts, stat_far;
+    __strong id<MTLTexture> depth, vel, fgm; __strong id<MTLLibrary> lib; __strong id<MTLFunction> obj_fn; __strong id<MTLRenderPipelineState> cam; __strong id<MTLDepthStencilState> dss;
     __strong id<MTL4ArgumentTable> vt, ft; __strong id<MTLBuffer> zero, unif; __strong id<MTLFence> fence;
     long dump_first, dump_count; const char *dump_path; __strong id<MTLTexture> dump_col; __strong id<MTLTexture> dump_vel; __strong id<MTLTexture> dump_out; __strong id<MTLTexture> dump_gen; __strong id<MTLTexture> dump_real; __strong id<MTLTexture> dump_comp; __strong id<MTLTexture> dump_swap; uint64_t dump_frame; int inited;
 } g_mv;
@@ -58,7 +58,8 @@ static const char *g_mv_msl =
     "  if (abs(q.w) < 1e-6) return float2(0);\n"
     "  return (q.xy / q.w - ndc) * float2(0.5, -0.5); }\n"
     "struct O { float4 p [[position]]; float4 cur [[user(dm_cur)]]; float4 prev [[user(dm_prev)]]; };\n"
-    "fragment float2 mv_obj(O in [[stage_in]], constant U& u [[buffer(0)]]) { return (in.prev.xy / in.prev.w - in.cur.xy / in.cur.w - u.jit.zw) * float2(0.5, -0.5); }\n";
+    "struct OO { float2 v [[color(0)]]; float m [[color(1)]]; };\n"
+    "fragment OO mv_obj(O in [[stage_in]], constant U& u [[buffer(0)]], constant float& mk [[buffer(1)]]) { OO r; r.v = (in.prev.xy / in.prev.w - in.cur.xy / in.cur.w - u.jit.zw) * float2(0.5, -0.5); r.m = mk; return r; }\n";
 
 static dispatch_queue_t mv_queue(void) {   // pipelines and the scaler: one at a time, never on the frame thread
     static dispatch_queue_t q; static dispatch_once_t o; dispatch_once(&o, ^{ q = dispatch_queue_create("dm.mv.build", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0)); });
@@ -76,7 +77,7 @@ static int mv_init(void) {
     if (!g_mv.occ) g_mv.occ = calloc(MV_TAB, sizeof *g_mv.occ);
     if (!g_mv.dd) g_mv.dd = calloc(MV_DEDUPE, sizeof *g_mv.dd);
     if (!g_mv.vt) { NSError *e = nil; MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 31; g_mv.vt = [g_dev newArgumentTableWithDescriptor:ad error:&e];
-        ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 1; ad.maxTextureBindCount = 1; g_mv.ft = [g_dev newArgumentTableWithDescriptor:ad error:&e];
+        ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 2; ad.maxTextureBindCount = 1; g_mv.ft = [g_dev newArgumentTableWithDescriptor:ad error:&e];
         if (!g_mv.vt || !g_mv.ft) { MLOG("【红】motion vectors: no argument tables (%s)", e.localizedDescription.UTF8String); return 0; } }
     if (!g_mv.dss) { MTLDepthStencilDescriptor *dd = [MTLDepthStencilDescriptor new]; dd.depthCompareFunction = MTLCompareFunctionEqual; dd.depthWriteEnabled = NO; g_mv.dss = [g_dev newDepthStencilStateWithDescriptor:dd]; }
     const char *de = getenv("DM_MV_DUMP"); g_mv.dump_first = -1;
@@ -133,7 +134,7 @@ static uint32_t mv_snap(const p_bind_buf *u) {
 static NSMutableArray *g_mv_done; static os_unfair_lock g_mv_done_lk = OS_UNFAIR_LOCK_INIT;
 static id g_mv_marker;
 static id<MTLRenderPipelineState> mv_pso(NvShader *vs) {
-    uint32_t cfmt[8] = {MTLPixelFormatRG16Float}; pso_key k; pso_key_fill(&k, vs, nil, nil, cfmt, MTLPixelFormatDepth32Float_Stencil8, MTLPixelFormatInvalid, 1, NULL);   // depth only: the stencil plane stays as it is
+    uint32_t cfmt[8] = {MTLPixelFormatRG16Float, MTLPixelFormatR8Unorm}; pso_key k; pso_key_fill(&k, vs, nil, nil, cfmt, MTLPixelFormatDepth32Float_Stencil8, MTLPixelFormatInvalid, 1, NULL);   // depth only: the stencil plane stays as it is
     k.blend_en = 0; k.chmask = 0xffffffff; k.a2c = 0; memset(k.blend, 0, sizeof k.blend);
     id ps = hm_get_id(&g_mv_pso, &k);
     if (ps) return ps == g_mv_marker ? nil : ps;
@@ -141,6 +142,7 @@ static id<MTLRenderPipelineState> mv_pso(NvShader *vs) {
     hm_put_id(&g_mv_pso, &k, g_mv_marker);
     MTLRenderPipelineDescriptor *d = pso_desc(&k, vs, nil, nil, 0);
     d.vertexFunction = vs->vel_fn; d.fragmentFunction = g_mv.obj_fn; d.colorAttachments[0].writeMask = MTLColorWriteMaskRed | MTLColorWriteMaskGreen; d.colorAttachments[0].blendingEnabled = NO;
+    d.colorAttachments[1].pixelFormat = MTLPixelFormatR8Unorm; d.colorAttachments[1].writeMask = MTLColorWriteMaskRed; d.colorAttachments[1].blendingEnabled = NO;
     NSData *key = [NSData dataWithBytes:&k length:sizeof k]; NSString *who = @(vs->key);
     dispatch_async(mv_queue(), ^{ NSError *e = nil; id<MTLRenderPipelineState> r = [g_dev newRenderPipelineStateWithDescriptor:d error:&e];
         if (!r) { MLOG("【红】motion vectors: pipeline for %s failed (%s)", who.UTF8String, e.localizedDescription.UTF8String); return; }
@@ -230,6 +232,14 @@ static int mv_moved(const mv_draw *d, const mv_draw *p, int prev_ri) {
     return 0;
 }
 
+// Whether a draw is a thing that moves in the world: its bones changed, or its own position. Other constants change too without it moving: the ground's follow the camera's scrolling
+static int mv_lives(const mv_draw *d, const mv_draw *p, int prev_ri) {
+    const uint8_t *cur = g_mv.snap[g_mv.ri].contents, *old = g_mv.snap[prev_ri].contents;
+    const mv_cb *a = mv_cb_of(d, 2), *b = mv_cb_of(p, 2); if (a && b && a->size == b->size && memcmp(cur + a->off, old + b->off, a->size)) return 1;
+    float w[6], w2[6]; mv_where(d, cur, w); mv_where(p, old, w2); for (int i = 0; i < 3; i++) if (fabsf(w[i] - w2[i]) > 1e-3f) return 1;
+    return 0;
+}
+
 // DM_MV_TRACE=<file>: one line per drawn frame about the hero's limbs, from the velocity target. The camera follows her, so her body stays still on the screen while the ground slides under her, and
 // what moves in her area is her limbs: a pose that freezes reads near zero however the picture looks, with no video or capture involved. The copy of her area goes in the frame's own command
 // buffer and is read a few frames later, when it has surely run, so this never waits for the GPU. dm/tools/motion_scan.py --trace judges the result
@@ -282,7 +292,10 @@ static int mv_resolve(id<MTLTexture> src) {
     if (!g_mv.vel || g_mv.vel.width != g_mv.depth.width || g_mv.vel.height != g_mv.depth.height) {
         MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRG16Float width:g_mv.depth.width height:g_mv.depth.height mipmapped:NO];
         td.storageMode = MTLStorageModePrivate; td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead; g_mv.vel = [g_dev newTextureWithDescriptor:td]; if (!g_mv.vel) return 0;
-        res_add(g_mv.vel); res_commit(); }
+        // which pixels belong to things that move on their own (their draw changed lately). Their speed can't tell: with the game's logic at 25 ticks a second and 30 frames drawn, a running hero stands still on some frames
+        td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm width:g_mv.depth.width height:g_mv.depth.height mipmapped:NO]; td.storageMode = MTLStorageModePrivate; td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        if (g_mv.fgm) defer_obj_release(g_mv.fgm); g_mv.fgm = [g_dev newTextureWithDescriptor:td]; if (!g_mv.fgm) return 0;
+        res_add(g_mv.vel); res_add(g_mv.fgm); res_commit(); }
     int have_prev = g_mv.has_vp[p] && g_mv.frame[p] + 2 >= frame && g_mv.frame[p] != frame;   // last frame's draws, unless the game drew no prepass for a while (a loading screen)
     g_mv.last_use = g_sub_serial;
     double vc[16], vl[16], inv[16], m[16];
@@ -299,6 +312,9 @@ static int mv_resolve(id<MTLTexture> src) {
     u[20] = (float)jc[0]; u[21] = (float)jc[1]; u[22] = (float)(jl[0] - jc[0]); u[23] = (float)(jl[1] - jc[1]);
     g_mv.have_prev = have_prev;
     NSUInteger uo = (NSUInteger)g_mv.ri * 256; memcpy((uint8_t *)g_mv.unif.contents + uo, u, sizeof u);
+    { double qw = m[11] * 0.5 + m[15], qx = m[8] * 0.5 + m[12], qy = m[9] * 0.5 + m[13]; float cv[2] = {fabs(qw) < 1e-9 ? 0.0f : (float)(qx / qw * 0.5), fabs(qw) < 1e-9 ? 0.0f : (float)(qy / qw * -0.5)};   // the camera's motion at the middle of the picture, the same everywhere with the world's orthographic camera (nvn_fg.inc)
+      g_mv.cam_off = uo + 128; memcpy((uint8_t *)g_mv.unif.contents + g_mv.cam_off, cv, sizeof cv);
+      float mk[2] = {0, 1}; memcpy((uint8_t *)g_mv.unif.contents + uo + 192, &mk[0], 4); memcpy((uint8_t *)g_mv.unif.contents + uo + 208, &mk[1], 4); }   // the moving-things mask's value for a draw, mv_obj buffer(1)
     // pass 1: the camera's motion, every pixel
     MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
     rp.colorAttachments[0].texture = g_mv.vel; rp.colorAttachments[0].loadAction = MTLLoadActionDontCare; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
@@ -317,11 +333,14 @@ static int mv_resolve(id<MTLTexture> src) {
         rp = [MTL4RenderPassDescriptor new];
         rp.colorAttachments[0].texture = g_mv.vel; rp.colorAttachments[0].loadAction = MTLLoadActionLoad; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
         rp.depthAttachment.texture = g_mv.depth; rp.depthAttachment.loadAction = MTLLoadActionLoad; rp.depthAttachment.storeAction = MTLStoreActionStore;
+        rp.colorAttachments[1].texture = g_mv.fgm; rp.colorAttachments[1].loadAction = MTLLoadActionClear; rp.colorAttachments[1].storeAction = MTLStoreActionStore; rp.colorAttachments[1].clearColor = MTLClearColorMake(0, 0, 0, 0);
         en = nil;
         uint8_t *ab = g_mv.snap[g_mv.ri].contents; uint64_t ab_gpu = g_mv.gpu[g_mv.ri], old_gpu = g_mv.gpu[prev_ri];
         for (int i = 0; i < g_mv.n[c]; i++) {
-            const mv_draw *d = &g_mv.d[c][i]; const mv_draw *o = mv_prev_of(d, g_mv.vp[c], prev_ri);
-            if (!o || !d->pso || !mv_moved(d, o, prev_ri)) continue;
+            mv_draw *d = &g_mv.d[c][i]; const mv_draw *o = mv_prev_of(d, g_mv.vp[c], prev_ri);
+            d->active = 0; if (!o) continue;
+            d->active = mv_lives(d, o, prev_ri) ? MV_ACTIVE : o->active > 0 ? o->active - 1 : 0;
+            if (!d->pso || (!d->active && !mv_moved(d, o, prev_ri))) continue;
             size_t need = (d->vs->arg_len * 2 + 15) & ~(size_t)15; if (g_mv.used + need > MV_SNAP_BYTES) break;
             uint64_t *cs = (uint64_t *)(ab + g_mv.used), *ps = (uint64_t *)((uint8_t *)cs + d->vs->arg_len); uint64_t cg = ab_gpu + g_mv.used, pg = cg + d->vs->arg_len; g_mv.used += need;
             memset(cs, 0, need);
@@ -336,11 +355,15 @@ static int mv_resolve(id<MTLTexture> src) {
             }
             [en setRenderPipelineState:d->pso]; [en setCullMode:(MTLCullMode)d->cull]; [en setFrontFacingWinding:(MTLWinding)d->wind]; [en setDepthBias:d->bias[0] slopeScale:d->bias[1] clamp:d->bias[2]];
             for (int s = 0; s < 15; s++) if (d->vb[s]) [g_mv.vt setAddress:d->vb[s] atIndex:16 + s];
-            [g_mv.vt setAddress:cg atIndex:d->vs->rf.abi]; [g_mv.vt setAddress:pg atIndex:1];
+            [g_mv.vt setAddress:cg atIndex:d->vs->rf.abi]; [g_mv.vt setAddress:pg atIndex:1]; [g_mv.ft setAddress:g_mv.unif.gpuAddress + uo + (d->active ? 208 : 192) atIndex:1];
             [en drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:d->count indexType:d->itype == 1 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32 indexBuffer:d->ib_gpu indexBufferLength:d->ib_len instanceCount:d->instances baseVertex:d->base_vertex baseInstance:d->base_instance];
             moved++;
         }
         if (en) { [en updateFence:g_mv.fence afterEncoderStages:MTLStageFragment]; pg_render_finish(en); enc_host_r_end(en); pg_end_render(); }
+    }
+    if (!moved) {   // nothing drew the mask: it still has to be empty
+        MTL4RenderPassDescriptor *mp = [MTL4RenderPassDescriptor new]; mp.colorAttachments[0].texture = g_mv.fgm; mp.colorAttachments[0].loadAction = MTLLoadActionClear; mp.colorAttachments[0].storeAction = MTLStoreActionStore; mp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+        RENC me = [g_cb renderCommandEncoderWithDescriptor:mp]; if (me) enc_host_r_end(me);
     }
     if (moved != g_mv.moved_last) { g_mv.moved_last = moved; PD("V %llu motion vectors: %d of %d prepass draws moved", g_stat_pass, moved, g_mv.n[c]); }
     mv_trace(frame, g_mv.view[2], g_mv.view[3]);
@@ -452,6 +475,7 @@ static void mv_sub_begin(void) {
         for (int i = 0; i < MV_RING; i++) { defer_obj_release(g_mv.snap[i]); g_mv.snap[i] = nil; }
         defer_obj_release(g_mv.unif); g_mv.unif = nil;
         if (g_mv.vel) { defer_obj_release(g_mv.vel); g_mv.vel = nil; }
+        if (g_mv.fgm) { defer_obj_release(g_mv.fgm); g_mv.fgm = nil; }
         g_mv.depth = nil; g_mv_depth_ser = 0; g_mv.inited = 0; MLOG("motion vectors: off");
     }
 }

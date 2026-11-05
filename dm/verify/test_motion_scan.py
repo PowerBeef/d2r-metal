@@ -72,6 +72,25 @@ class MotionScanTest(unittest.TestCase):
             return ((a.astype(np.uint16) + np.roll(a, 4, 1)) // 2).astype(np.uint8) if kinds[i] == 'gen' else a
         fr.get = soft; self.assertLess(M.detail_scan(fr, steps)['median'], .8)
 
+    def test_solid(self):
+        rng = np.random.default_rng(3); w, h = 400, 300
+        base = rng.integers(60, 180, (h, w, 3), dtype=np.uint8)
+        def picture(step, staff=255):   # the ground slid by step pixels; the staff stays put on the screen, as the hero does
+            a = np.dstack([np.roll(base, step, 1), np.full((h, w), 255, np.uint8)])
+            if staff == 255: a[100:190, 196:204, :3] = 10
+            return a
+        mv = np.zeros((h, w, 2), np.float16); mv[..., 0] = 20 / w; mv[100:190, 196:204, 0] = 0.0   # 20 pixels a frame: this pixel was 20 to the right last frame
+        def put(d, name, arr):
+            with open(os.path.join(d, name), 'wb') as f: f.write(f'{w} {h} 0 {w * arr.shape[2] * arr.dtype.itemsize}\n'.encode()); f.write(arr.tobytes())
+        with tempfile.TemporaryDirectory() as d:
+            put(d, 'd_1_real.raw', picture(20)); put(d, 'd_2_real.raw', picture(0)); put(d, 'd_2_mv.raw', mv)
+            put(d, 'd_2_comp.raw', picture(10))
+            r = M.solid_scan(os.path.join(d, 'd_')); self.assertEqual(r['pairs'], 1); self.assertLess(r['lost'], 0.02); self.assertLess(r['pale'], 0.02)
+            put(d, 'd_2_comp.raw', picture(10, staff=0))   # the staff is gone from the generated frame
+            self.assertGreater(M.solid_scan(os.path.join(d, 'd_'))['lost'], 0.5)
+            c = picture(10); c[100:190, 210:218, :3] = (c[100:190, 210:218, :3] * 0.6).astype(np.uint8)   # a pale copy beside it
+            self.assertGreater(M.solid_scan(os.path.join(d, 'd_'))['pale'] if put(d, 'd_2_comp.raw', c) is None else 0, 0.1)
+
     def test_frozen_pose_is_flagged_past_the_limit_only(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, 't.tsv')
