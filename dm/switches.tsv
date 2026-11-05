@@ -283,6 +283,7 @@ DM_RT_DBG	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RT_TEST_NOPSO	gfx	gfx/nvn/nvn_rtex.inc	-
 DM_RULESET	tools	tools/patch_nso.py	y
 DM_SAMPLE	host	host/diag.c	y
+DM_SAMPLER	host	host/dm_sampler.c	y
 DM_SAVE	gfx,host,ios	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m gfx/tests/t_pso_warm.m host/app_mac.m …	y
 DM_SAVE_FRESH	ios,ios-tools	ios/Sources/front_ios.m ios/Sources/main.m ios/TouchSmokeTests/Lifecycle.swift ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_SAVE_KEY	ios-tools	ios/tools/save_key.sh ios/tools/smoke_mac.sh	-
@@ -383,6 +384,7 @@ DM_TEST_LEVEL_INFO	host	host/dm_world.c	-
 DM_TEST_LINK_STALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_TEST_LIVE	host	host/touch_mac.c	-
 DM_TEST_LKEY_CLASH	ios	ios/Sources/front_ios.m	-
+DM_TEST_LOAD	gfx	gfx/nvn/hle_nvn.c gfx/nvn/nvn_testload.inc	y
 DM_TEST_LOADSCREEN_DELAY_MS	host	host/diag.c	-
 DM_TEST_MAP_FULL	host	host/diag.c	-
 DM_TEST_MEMWARN	ios	ios/Sources/main.m	-

@@ -152,6 +152,7 @@ for tier in "${TIERS[@]}"; do
     # GPU heap 0 at the Native cap (scenarios/heap, the readings behind DM_SCR_MAX_PX): measurements, so front runs in real full screen, one at a time
     step long_heap 1800 -- bash -c 'scn_run "$@" --backend cli' _ "$DM/verify/scenarios/heap/"*.scn
     step long_heap_mac 600 -- bash -c 'fresh_mac_app && scn_run "$@" --backend mac-app' _ "$DM/verify/scenarios/heap/"*.scn
+    step long_why 400 -- python3 "$DM/verify/why_gate.py"   # known spikes come back named (bench_why.py), and the samples agree with the CPU clock
     step long_regress 2400 -- bash -c 'python3 "$DM/tools/bench.py" regress "$DM/verify/bench/town_loop.scn" --reps 6; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # 对留存基线（bench.py baseline save）；没有基线为 ⚪ | against the kept baseline (bench.py baseline save); none = ⚪
     # One true cold start of the Mac App (a fresh bundle ID, so an empty Metal cache), in front: a row of its warm-up times goes to $DM_ROOT/run/pso/cold.tsv.
     # Informational (INFO_STEPS); a run still disturbed after its redos is ⚪

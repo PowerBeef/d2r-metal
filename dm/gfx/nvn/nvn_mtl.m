@@ -5172,6 +5172,7 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
 static void mv_note_draw(NvProg *pr, const p_draw_idx *di);   // nvn_mv.inc
 static int mfx3d_draw(NvShader *f);   // 见定义处（MetalFX 换掉游戏的 3D 放大趟） | see the definition (MetalFX replaces the game's 3D upscale pass)
 static void fg_compose(NvShader *f);   // nvn_fg.inc
+static void test_load_gpu(void);   // nvn_testload.inc
 // 着色器碰内存的方式（按反射算一次）：1 读贴图（含类型化缓冲、可写贴图）、2 读存储缓冲、4 写内存（可写贴图、可写存储缓冲）；0x80 = 已算
 // How a shader touches memory (worked out once from its reflection): 1 reads textures (incl. typed buffers and writable textures), 2 reads storage buffers, 4 writes memory (writable textures, writable storage buffers); 0x80 = done
 enum { MF_TEX = 1, MF_BUF = 2, MF_WRITE = 4 };
@@ -5309,7 +5310,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         } else if (g_bloomq.state) bloomq_abort(61, "another draw came in the middle of the chain", f_);
       }
     }
-    if (pr->sh[1] && !strncmp(pr->sh[1]->key, "9a650561e5c40791", 16)) fg_compose(pr->sh[1]);   // the game's compose pass: the generated frame first (frame generation)
+    if (pr->sh[1] && !strncmp(pr->sh[1]->key, "9a650561e5c40791", 16)) { test_load_gpu(); fg_compose(pr->sh[1]); }   // the game's compose pass: the generated frame first (frame generation)
     if (pr->sh[1] && !strncmp(pr->sh[1]->key, "52aac1f2306b8fc5", 16) && mfx3d_draw(pr->sh[1])) return;   // 游戏的 3D 放大趟（ps_upsample_p）改用 MetalFX | the game's 3D upscale pass (ps_upsample_p) through MetalFX
     if (S.poly.cull == NVN_FACE_FRONT_AND_BACK) return;
     // 续用的通道可能是少挂深度 / 模板开的（开法 2 / 3 / 4）：这次绘制要的平面没挂，就在它之前切开（重开时按新前瞻挂）
@@ -6977,6 +6978,7 @@ static void mfx3d_sub_begin(void) {
 }
 #include "nvn_mv.inc"
 #include "nvn_fg.inc"
+#include "nvn_testload.inc"
 static const char *g_mfx3d_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"
     "struct V { float4 p [[position]]; float2 uv; };\n"

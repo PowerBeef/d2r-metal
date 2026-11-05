@@ -73,6 +73,7 @@ SRC=\
 	dm_video.c \
 	dm_world.c \
 	dm_prof.c \
+	dm_sampler.c \
 	thread.c \
 	touch_mac.c \
 	../ios/Sources/cloud_ios.m \
