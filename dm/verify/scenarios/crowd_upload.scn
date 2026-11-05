@@ -1,0 +1,15 @@
+# A big crowd at once: each monster on screen takes about 2.6 MiB of the game's upload heap, and a full heap crashes it (main+0x173e808, buffer creation doesn't check). The original 400 MiB gave way at about 80 Fallen,
+# whatever the picture settings. This crowd must read above 400 MiB, or it proves nothing about the 640 MiB budget (patch_nso.py main+0x8524d0)
+name crowd_upload
+requires cli
+save warlock
+env DM_GAME_SEED=305419896
+env DM_TEST_GOTO_LEVEL=150:17
+env DM_TEST_SPAWN=300:19:3,3:120
+timeout 70
+
+enter_game
+sleep 28
+quit
+check log_has "Upload heap: [0-9.]+ MiB used of 640 MiB \(peak (4[0-9][0-9]|[5-6][0-9][0-9])\."
+check no_red

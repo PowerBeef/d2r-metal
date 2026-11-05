@@ -68,6 +68,11 @@ CUTS = {'db0507f36b84200ac05f75d76ed5026f': [
      'crashed); 512 MiB (the previous value) failed at 3840x2160 at every 3D scale, the Mac Native output for 4K / 5K screens; 768 MiB boots 3840x2160 to 3840x2880 '
      'with the 3D at 67-100%, Ultra shadows and SMAA. Budget only, no game logic (tick-identical replays); the host adds the extra 256 MiB to the '
      'application pool (hle_svc.c APP_POOL_ADD_MB) so the main heap keeps its free space'),
+    # The upload heap: per-frame constants and draw data, in 8 MiB blocks, plus vertex and index data
+    (0x8524d0, '0820a3d2', '0800a5d2', 'Upload heap budget in the device config: mov x8,#0x19000000 (400 MiB) -> mov x8,#0x28000000 (640 MiB); the movk #0x10,lsl #48 (the readback heap, 1 MiB) and the store after it '
+     'are unchanged. The heap is reserved whole at boot and never grows, and buffer creation does not check for a failed allocation: a full heap returns null from main+0x174b018 and main+0x173e808 reads it. '
+     'Each monster on screen takes about 2.6 MiB here (three frames of its draw data), on top of about 240 MiB: about 80 at once crashed at any picture setting. 640 MiB holds about 155; more would leave the main heap under the original 138 MB free on a device that can only reserve 4864 MiB. Budget only, no game logic; '
+     'the host adds the same 240 MiB to the application pool (hle_svc.c) so the main heap keeps its free space'),
     (0x1979bc, 'e8a79f1a', 'e8d79f1a', '离线放行窗口：读存档设置键（0x1d53e80 处字串）的上次在线时刻，'
      '「当前时刻 − 上次在线 < 0x0009356907420000 ns（= 30 天）」置位 [x20+0x2c]；lt→gt'),
     (0x1d53e80, '55736572204c617374204f6e6c696e6500', '566f6963654c616e677561676500000000',
