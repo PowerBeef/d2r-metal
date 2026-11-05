@@ -183,30 +183,35 @@ def detail_scan(fr, steps):
 
 
 def solid_scan(prefix):
-    """Whether things that move stay solid in the generated frames: edges on and around the pixels that move apart from the ground, in a shown generated frame against the real frames either side,
-    1 = as solid. The interpolator alone loses thin things against a sliding background and keeps a pale copy, which reads well below it. From a DM_MV_DUMP with DM_MV_DUMP_ONLY=real,comp,mv"""
+    """Whether things that move stay whole in the generated frames, with no pale copy near them, from a DM_MV_DUMP with DM_MV_DUMP_ONLY=real,comp,mv. Both compare pixels with where the real frames say they belong.
+    lost: of the thin parts of what moves apart from the ground (what an opening by 4 pixels removes: a staff, a limb's edge), the share whose real colour isn't half way along their motion in the generated
+    frame. The interpolator alone loses them against sliding scenery. Thick parts hold either way and would hide it.
+    pale: of the ground in a ring around them, the share that matches neither real frame half a camera step away. The interpolator alone leaves a faint copy there. The hero's shadow moves with her and counts, so 0 can't be reached."""
     def rd(path, dtype=np.uint8, ch=4):
         with open(path, 'rb') as f:
             w, h, _, row = (int(x) for x in f.readline().split()); d = f.read()
         return np.frombuffer(d, dtype=dtype).reshape(h, row // np.dtype(dtype).itemsize)[:, :w * ch].reshape(h, w, ch)
     def lum(a): return a[..., 0].astype(np.float32) * .3 + a[..., 1] * .59 + a[..., 2] * .11
-    def edges(g, m):
-        gx = np.abs(np.diff(g, axis=1))[:-1, :]; gy = np.abs(np.diff(g, axis=0))[:, :-1]; return float((gx * gx + gy * gy)[m[:-1, :-1]].mean())
-    frames = sorted(int(os.path.basename(p).rsplit('_', 2)[-2]) for p in glob.glob(prefix + '*_comp.raw')); out = []
+    def grow(m, k):
+        h, w = m.shape; ii = np.zeros((h + 1, w + 1), np.int32); ii[1:, 1:] = m.astype(np.int32).cumsum(0).cumsum(1)
+        y0, y1, x0, x1 = np.clip(np.arange(h) - k, 0, h), np.clip(np.arange(h) + k + 1, 0, h), np.clip(np.arange(w) - k, 0, w), np.clip(np.arange(w) + k + 1, 0, w)
+        return (ii[np.ix_(y1, x1)] - ii[np.ix_(y0, x1)] - ii[np.ix_(y1, x0)] + ii[np.ix_(y0, x0)]) > 0
+    frames = sorted(int(os.path.basename(p).rsplit('_', 2)[-2]) for p in glob.glob(prefix + '*_comp.raw')); lost, pale = [], []
     for f in frames:
         pa, pm, pb = f'{prefix}{f - 1}_real.raw', f'{prefix}{f}_mv.raw', f'{prefix}{f}_real.raw'
         if not (os.path.exists(pa) and os.path.exists(pm)): continue
-        a, g, b = rd(pa), rd(f'{prefix}{f}_comp.raw'), rd(pb); mv = rd(pm, np.float16, 2).astype(np.float32); h, w, _ = a.shape; mh, mw, _ = mv.shape
-        rel = np.hypot((mv[..., 0] - np.median(mv[..., 0])) * w, (mv[..., 1] - np.median(mv[..., 1])) * h); ys, xs = np.where(rel > 6)
-        keep = (np.abs(xs - mw / 2) < mw * .1) & (np.abs(ys - mh * .49) < mh * .2); ys, xs = ys[keep], xs[keep]
-        m = np.zeros((h, w), bool); m[np.clip((ys * h / mh).astype(int), 0, h - 1), np.clip((xs * w / mw).astype(int), 0, w - 1)] = True
-        if m.sum() < 300: continue
-        k = 14; ii = np.zeros((h + 1, w + 1), np.int32); ii[1:, 1:] = m.astype(np.int32).cumsum(0).cumsum(1)   # grown by the reach of a limb: a trail is part of what is judged
-        y0, y1, x0, x1 = np.clip(np.arange(h) - k, 0, h), np.clip(np.arange(h) + k + 1, 0, h), np.clip(np.arange(w) - k, 0, w), np.clip(np.arange(w) + k + 1, 0, w)
-        m = (ii[np.ix_(y1, x1)] - ii[np.ix_(y0, x1)] - ii[np.ix_(y1, x0)] + ii[np.ix_(y0, x0)]) > 0
-        base = (edges(lum(a), m) + edges(lum(b), m)) / 2
-        if base > 0: out.append(edges(lum(g), m) / base)
-    return dict(pairs=len(out), median=round(float(np.median(out)), 3), low=round(float(np.min(out)), 3)) if out else dict(pairs=0)
+        a, g, b = lum(rd(pa)), lum(rd(f'{prefix}{f}_comp.raw')), lum(rd(pb)); mv = rd(pm, np.float16, 2).astype(np.float32); h, w = a.shape; mh, mw, _ = mv.shape
+        ys, xs = np.mgrid[0:h, 0:w]; mv = mv[ys * mh // h, xs * mw // w]   # the 3D picture can be a little smaller than the output
+        cx, cy = float(np.median(mv[..., 0])), float(np.median(mv[..., 1])); hx, hy = int(round(cx * w / 2)), int(round(cy * h / 2))
+        move = (np.hypot((mv[..., 0] - cx) * w, (mv[..., 1] - cy) * h) > 6) & (np.abs(xs - w / 2) < w * .1) & (np.abs(ys - h * .49) < h * .2)
+        thin = move & ~grow(~grow(~move, 4), 4)
+        if thin.sum() < 30: continue
+        qx = np.clip((xs + 0.5 + mv[..., 0] * w / 2).astype(int), 0, w - 1); qy = np.clip((ys + 0.5 + mv[..., 1] * h / 2).astype(int), 0, h - 1)
+        lost.append(float((np.abs(g[qy, qx] - b)[thin] > 24).mean()))
+        ring = grow(move, 24) & ~grow(move, 4)
+        ground = np.minimum(np.abs(g - np.roll(np.roll(b, hx, 1), hy, 0)), np.abs(g - np.roll(np.roll(a, -hx, 1), -hy, 0)))   # this pixel's ground: this frame's half a step back, last frame's half a step on
+        pale.append(float((ground[ring] > 10).mean()))
+    return dict(pairs=len(lost), lost=round(float(np.median(lost)), 4), pale=round(float(np.median(pale)), 4)) if lost else dict(pairs=0)
 
 
 def latency_scan(fr, steps, events_path, prefix='in', moved_px=1.5):

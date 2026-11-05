@@ -18,7 +18,9 @@ import picture  # noqa: E402
 
 ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work'); OUT = os.path.join(ROOT, 'run', 'motion'); SCN = os.path.join(HERE, 'scenarios', 'picture', 'motion_walk.scn')
 LATE_MAX = 0.01; OFF_MAX = 0.1; DETAIL_RANGE = (0.8, 1.25)   # a generated frame's detail against a real one's: nvn_fg.inc's sharpen brings it near 1; without it about 0.87
-SOLID_MIN = 0.85; SOLID_MARGIN = 0.05   # what moves, in a generated frame against a real one; the control without the moving things put back must read lower by the margin, or the check is blind
+# Shares of pixels out of place in generated frames (motion_scan.solid_scan), this walk, on an M6 (2026-11-05, 3 runs each): moving things put back: lost 6-16%, pale 4-8%; without (DM_FG_FORE=0): lost
+# 20-59%. The second is the control: if it reads no worse, the check is blind
+LOST_MAX = 0.20; PALE_MAX = 0.095; CONTROL_RATIO = 1.3
 
 
 SOLID_FRAME = 420   # in the walk: the first run holds from frame 360 on
@@ -52,14 +54,15 @@ def main():
         if os.path.exists(f): os.remove(f)
     solid = {}
     for name, extra in (('solid', {}), ('solid_off', {'DM_FG_FORE': '0'})):
-        rcs, ds, _ = run(name, {'DM_FG': '1', 'DM_MV_DUMP': f"{SOLID_FRAME}:6:{os.path.join(OUT, name, 'd_')}", 'DM_MV_DUMP_ONLY': 'real,comp,mv', **extra})
+        rcs, ds, _ = run(name, {'DM_FG': '1', 'DM_MV_DUMP': f"{SOLID_FRAME}:10:{os.path.join(OUT, name, 'd_')}", 'DM_MV_DUMP_ONLY': 'real,comp,mv', **extra})
         solid[name] = motion_scan.solid_scan(os.path.join(ds, 'd_')) if not rcs else {}
         for f in glob.glob(os.path.join(ds, 'd_*.raw')): os.remove(f)
         if rcs: bad.append(f'the {name} run failed')
     on, off = solid.get('solid', {}), solid.get('solid_off', {})
     if on.get('pairs') and off.get('pairs'):
-        if on['median'] < SOLID_MIN: bad.append(f'moving things not solid in generated frames: {on}')
-        if off['median'] > on['median'] - SOLID_MARGIN: bad.append(f'without the moving things put back the check reads no lower, so it is blind: {off} against {on}')
+        if on['lost'] > LOST_MAX: bad.append(f'moving things lost from generated frames: {on}')
+        if on['pale'] > PALE_MAX: bad.append(f'a pale copy near moving things in generated frames: {on}')
+        if off['lost'] < on['lost'] * CONTROL_RATIO: bad.append(f'without the moving things put back the check reads no worse, so it is blind: {off} against {on}')
     elif not any('solid' in b for b in bad): bad.append(f'nothing moving to judge: {solid}')
     rc2, _, trace2 = run('control', {'DM_DETCLOCK': '16666667'})
     ctl = motion_scan.limbs_scan(trace2) if not rc2 else {}
