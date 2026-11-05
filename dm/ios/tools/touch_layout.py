@@ -854,6 +854,7 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), 'dmVideoEnvShadowsTip'),
            ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), 'dmVideoShadowQTip'),
            ('envd', '@dmVideoEnvDetail', ('dmVideoShadowStd', 'dmVideoShadowHigh'), 'dmVideoEnvDetailTip'),
+           ('rt', '@dmVideoRt', ('dmVideoRtOff', 'dmVideoRtOn'), 'dmVideoRtTip'),
            ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), 'dmVideoFpsTip'),
            ('fg', '@dmVideoFg', ('dmVideoFgOff', 'dmVideoFgOn'), 'dmVideoFgTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else

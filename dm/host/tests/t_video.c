@@ -71,7 +71,7 @@ static result run(const char *txt) { return run_do(txt, NULL); }
 #define TAIL(a, ra, n, rn, c, rc) "aa=" #a "\nrec_aa=" #ra "\naniso=" #n "\nrec_aniso=" #rn "\ncolor=" #c "\nrec_color=" #rc "\n"
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
 #define ES(e, re) "envsh=" #e "\nrec_envsh=" #re "\n"
-#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=0\nrec_fg=0\nenvd=1\nrec_envd=1\n"   // fg, the key after shq, stays 0 unless a case says so (G recommends none, M only with g_fgok)
+#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=0\nrec_fg=0\nenvd=1\nrec_envd=1\nrt=0\nrec_rt=0\n"   // fg, the key after shq, stays 0 unless a case says so (G recommends none, M only with g_fgok)
 #define RV "rec_v=11\n"   // REC_V in dm_video.c (without it = version 1, worked out again at load): a bump changes this line, t_video_phone's and the cases below in one commit
 #define NEWREC TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV   // how the later keys are filled when missing (G's front_video_rec)
 
@@ -127,7 +127,7 @@ static void act_18d(result *x) { apply_preset(P_QUAL); accept(); x->x[0] = prese
 static void act_18i(result *x) { apply_preset(P_PERF); x->x[0] = atomic_load(&g_pend[K_UP]); cancel(); apply_preset(P_QUAL); x->x[1] = atomic_load(&g_pend[K_UP]); }
 static void act_18e(result *x) { x->x[0] = preset_of(); apply_preset(P_REC); x->x[1] = atomic_load(&g_pend[K_MODE]); accept(); x->x[2] = g_full_calls; x->x[3] = preset_of(); }
 static void act_18f(result *x) {
-    g_tshown = 1; atomic_store(&g_crows, (1 << 11) | (1 << 13));   // the Video tab is on screen with its Frame Rate and Frame Drops rows
+    g_tshown = 1; atomic_store(&g_crows, (1 << 12) | (1 << 14));   // the Video tab is on screen with its Frame Rate and Frame Drops rows
     dm_video_on_uimsg("OptionsPanelMessage", "ResetToDefaults", "");
     x->x[0] = atomic_load(&g_pend[K_MODE]); x->x[1] = g_cset[0]; x->x[2] = g_cset[1]; x->x[3] = preset_of(); accept();
 }

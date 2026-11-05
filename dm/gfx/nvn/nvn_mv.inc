@@ -150,7 +150,7 @@ static id<MTLRenderPipelineState> mv_pso(NvShader *vs) {
     return nil;
 }
 
-int rtx_want(void); static id<MTLRenderPipelineState> rtx_cap_pso(NvShader *vs);   // nvn_rt.inc
+int rtx_want(void); static void rtx_sub_begin(void); static id<MTLRenderPipelineState> rtx_cap_pso(NvShader *vs);   // nvn_rt.inc
 // What the game draws this frame into layer 1 of the directional shadow map, its own shadow for characters: its axis is a few degrees off the key light's, so those in the key light's rays too would have two shadows
 // (nvn_rt.inc). That pass comes before the prepass, so the prepass draw can look itself up: by mesh, or by where its object stands, as a shadow can use a simpler mesh than the picture.
 enum { RTU_SLOTS = 4096 }; static struct { uint64_t key, frame; } g_rtu[RTU_SLOTS];
@@ -480,7 +480,8 @@ static void mv_sub_begin(void) {
     static int env = -1; if (env < 0) { const char *e = getenv("DM_MV"); env = e && atoi(e) > 0; }
     int want = dm_video_temporal_active();
     if (want != g_mt_want) { g_mt_want = want; MLOG("temporal scaler: %s", want ? "wanted" : "no longer wanted"); if (!want) mt_drop(); }
-    g_mv_want = want || env;
+    rtx_sub_begin();
+    g_mv_want = want || env || rtx_want();
     if (g_mv_done.count) { os_unfair_lock_lock(&g_mv_done_lk); NSArray *a = [g_mv_done copy]; [g_mv_done removeAllObjects]; os_unfair_lock_unlock(&g_mv_done_lk);
         for (NSArray *e in a) hm_put_id(&g_mv_pso, ((NSData *)e[0]).bytes, e[1]); }
     if (!g_mv_want && g_mv.inited > 0) {   // the copies and the velocity target go at once; the pipelines stay for the next time

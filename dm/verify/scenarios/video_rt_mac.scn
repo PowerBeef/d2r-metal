@@ -1,0 +1,50 @@
+# Ray Tracing through the Video tab, live (dm_video.c dm_video_rt, nvn_rt.inc): off by default and in Recommended, so the game starts without it. On starts it with no restart, in the world, and Off puts it down again; On once more shows it can come back.
+# Rows: mode, res, color, preset, s3d, upscale, aa, aniso, envsh, shq, envd, rt, fps, fg, drops
+name video_rt_mac
+requires mac-app
+save warlock
+env DM_TEST_VIDEO_FIRSTBOOT=1
+timeout 240
+
+enter_game
+sleep 5
+open_pause
+tap_ui Settings
+sleep 2
+inputmode mode=controller
+sleep 1
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press DOWN
+press RIGHT
+sleep 1
+screenshot video_rt_on.png
+msg OptionsPanelMessage:AcceptChanges
+sleep 4
+press LEFT
+sleep 1
+msg OptionsPanelMessage:AcceptChanges
+sleep 3
+press RIGHT
+sleep 1
+msg OptionsPanelMessage:AcceptChanges
+sleep 4
+quit
+check event picture how=first rt=0
+check event video_row row=rt value=1
+check event video_row row=rt value=0
+check event picture how=apply rt=1
+check event picture how=apply rt=0
+check log_has "ray tracing: wanted" min=2
+check log_has "ray tracing: no longer wanted" min=1
+check log_has "ray tracing: on, ray start" min=2
+check no_red
+check no_red_log

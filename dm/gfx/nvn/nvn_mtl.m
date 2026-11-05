@@ -3495,7 +3495,12 @@ static void bind_args(id en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, 
 // viewport_inverse f4, viewport_size f4, frag_scale_count i32, render_scale f32[73]..., each field aligned to 16 bytes) and the all-0 driver constant segment (64 KB = the upper bound declared by shaders)
 // Past the part Ryujinx's layout uses, what ray tracing hands every forward shader (nvn_rt.inc, dmsh_rules.py rt_shadow_hook): at 2048 {on, width, height}, at 4096 the mask, one byte a pixel
 int rtx_want(void);
-static size_t rtx_mask_bytes(void) { return rtx_want() ? 4096 + (size_t)3840 * 2160 * 2 : 65536; }
+#if TARGET_OS_IPHONE
+static size_t rtx_mask_bytes(void) { return 65536; }   // no Ray Tracing row there yet
+#else
+int mtl_rt_supported(void);
+static size_t rtx_mask_bytes(void) { return mtl_rt_supported() ? 4096 + (size_t)3840 * 2160 * 2 : 65536; }   // the widest picture, twice: the mask and the occlusion. Pages nothing writes to cost nothing
+#endif
 static id<MTLBuffer> support_buf(void) {
     static __strong id<MTLBuffer> b; if (b) return b;
     b = [g_dev newBufferWithLength:rtx_mask_bytes() options:MTLResourceStorageModeShared]; res_add(b);   // 新建即全 0 | All 0 when newly created
