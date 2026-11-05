@@ -56,7 +56,8 @@ static const char *g_rtx_msl =
     "  for (int y = -2; y < 2; y++) for (int x = -2; x < 2; x++) { int2 q = int2(id) + int2(x, y); if (q.x < 0 || q.y < 0 || q.x >= int(gs.x) || q.y >= int(gs.y)) continue; float dq = dp.read(uint2(q) << u.ao_shift); float w = abs(dq - d) < 0.0015 ? 1.0 : 0.0; sum += w * float(in[uint(q.y) * gs.x + uint(q.x)]); wt += w; }\n"
     "  float v = (wt > 0 ? sum / wt : float(in[at])) / 255.0; out[at] = uchar(pow(v, u.ao_pow) * 255 + 0.5); }\n";
 __attribute__((weak)) int dm_video_rt(void) { return 0; }   // the host's dm_video.c
-int mtl_rt_supported(void) { static int c = -1; if (c < 0) c = [MTLCreateSystemDefaultDevice() supportsRaytracing]; return c; }
+// Hardware ray tracing only: supportsRaytracing also answers yes on older chips, which do it in software
+int mtl_rt_supported(void) { static int c = -1; if (c < 0) { id<MTLDevice> d = MTLCreateSystemDefaultDevice(); c = [d supportsRaytracing] && [d supportsFamily:MTLGPUFamilyApple9]; } return c; }
 static int g_rtx_on;   // read at the start of each submission
 int rtx_want(void) { return g_rtx_on; }
 static int rtx_init(void) {

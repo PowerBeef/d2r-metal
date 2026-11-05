@@ -312,7 +312,8 @@ RECORD_SHOTS, MASK_SHOTS = 6, 4
 NOT_ALLOWED = 'not allowed'
 LB_REGIONS = {'view': [0, 0, 1, 0.82], 'hud': [0, 0.82, 1, 1]}
 # A chicken wanders the Rogue Encampment and crosses the world above the interface bar at random (0.04-0.43% of the band hot over one build's checks, against limits of about 0.1%), so on that page the band starts at the bar itself
-PAGE_REGIONS = {'lb_town_a1': {'view': [0, 0, 1, 0.92], 'hud': [0, 0.92, 1, 1]}}
+PAGE_REGIONS = {'lb_town_a1': {'view': [0, 0, 1, 0.92], 'hud': [0, 0.92, 1, 1]},
+                'lb_crypt_a1': {'view': [0, 0, 1, 0.70], 'low': [0.3, 0.70, 1, 0.92], 'hud': [0, 0.92, 1, 1]}}   # the Catacombs: the hero's line on entering (left, 0.70-0.80) is up in some shots and gone in others
 
 
 def page_regions(p):
