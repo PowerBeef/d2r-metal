@@ -203,7 +203,7 @@ The repository contains no images, tables or text derived from the original game
 
 - Build the iOS package: `cd dm/ios && ./run.sh build`. It automatically runs `tools/gen_assets.py` and the host table header generation at the start; there is no need to run them separately.
 - Generate assets only: `python3 dm/ios/tools/gen_assets.py [<Update/RomFS>]`. Nothing is regenerated if the inputs have not changed.
-- Mac host: `make -C dm/host`. The two missing generated files (`dm_hud_exp.h`, `dm_bright_levels.inc`) are generated automatically according to `DM_ROMFS_SRC`.
+- Mac host: `make -C dm/host`. The missing generated file (`dm_hud_exp.h`) is generated automatically according to `DM_ROMFS_SRC`.
 - iOS unit tests: `make -C dm/ios/tests test`. The missing skill index is generated automatically.
 
 When game files are missing, a one-sentence message says directly which directory to put them in. These commands call `python3` and must be run inside the Python environment created by `setup.sh` (Pillow, numpy and the rest are installed there; for versions see [../docs/DEPENDENCIES.md](../docs/DEPENDENCIES.md)): run `source ~/dm-work/build/cache/dm/venv/bin/activate` first (if you set `DM_ROOT`, use it in place of `~/dm-work`).
@@ -216,7 +216,6 @@ When game files are missing, a one-sentence message says directly which director
 | Bottom UI (background and layout) | `dm/ios/Gen/assets/NativeHUD/v4/` | `gen_hud_v4.py` (geometry in `hud_v4_design.py`; layout = original layout + `touchrectv1_patch.json`) |
 | Skill atlas, skill index | `dm/ios/Sources/TouchArt/dm_native_*.png`, `dm/ios/Sources/dm_touch_native_art.c` | `native_art/generate.py` (checks the originals against `dm/ios/Sources/TouchArt/native_art_manifest.json`) |
 | Experience table | `dm/host/dm_hud_exp.h` | `gen_hud_exp.py` (called by `dm/host/Makefile`) |
-| Level day/night table (used by 3D picture brightening) | `dm/host/dm_bright_levels.inc` | `dm/tools/gen_bright_levels.py` (also called by `dm/host/Makefile`) |
 
 The original game text used by item annotations is read from the game's string tables at build time; the repository stores none of it. The old-translation table and the one-line-comment table are not shipped with the repository; you can supply your own, in the format described under `dm/ios/tools/annot/`. Without them these two steps are skipped automatically and the rest of the annotations work as usual.
 

@@ -102,13 +102,12 @@ int main(void) {
     CHECK(last == -1, "a cut file ends in a corrupt chunk, not a clean end");
     cap_unload(&r); unlink(path);
 
-    // Per-submit state text (CAP_STAT): the latched switches, the brightening factor, the anisotropy level and the MetalFX 3D pass the submit is drawn with
-    char st[160]; size_t sl = cap_stat_text(st, sizeof st, 0x100000002ull, 1.25, 16, 1);
-    CHECK(!strcmp(st, "host_latch\t4294967298\nbright_k\t1.25\naniso\t16\nmfx3d\t1\n"), "cap_stat_text writes the four key/value lines");
+    // Per-submit state text (CAP_STAT): the latched switches, the anisotropy level and the MetalFX 3D pass the submit is drawn with
+    char st[160]; size_t sl = cap_stat_text(st, sizeof st, 0x100000002ull, 16, 1);
+    CHECK(!strcmp(st, "host_latch\t4294967298\naniso\t16\nmfx3d\t1\n"), "cap_stat_text writes the three key/value lines");
     CHECK(sl == strlen(st), "cap_stat_text returns the text's length");
     char v[32];
     CHECK(cap_kv(st, sl, "host_latch", v, sizeof v) && !strcmp(v, "4294967298"), "cap_kv: host_latch");
-    CHECK(cap_kv(st, sl, "bright_k", v, sizeof v) && !strcmp(v, "1.25"), "cap_kv: bright_k");
     CHECK(cap_kv(st, sl, "aniso", v, sizeof v) && !strcmp(v, "16"), "cap_kv: aniso");
     CHECK(cap_kv(st, sl, "mfx3d", v, sizeof v) && !strcmp(v, "1"), "cap_kv: mfx3d");
     CHECK(!cap_kv(st, sl, "tex_pool_n", v, sizeof v), "cap_kv: a missing key gives NULL");
@@ -126,6 +125,9 @@ int main(void) {
     unsetenv("DM_NVN_ANISO"); unsetenv("DM_MFX3D");
     { const char *old = "host_latch\t0\nbright_k\t1\n"; cap_stat_env(old, strlen(old)); }
     CHECK(!getenv("DM_NVN_ANISO") && !getenv("DM_MFX3D"), "an older capture without the keys changes nothing");
+    // An older capture also holds a key this build no longer has (bright_k, the 3D brightening factor): it is skipped and the keys after it still read
+    { const char *old = "host_latch\t7\nbright_k\t1.25\naniso\t8\nmfx3d\t0\n"; size_t ol = strlen(old);
+      CHECK(cap_kv(old, ol, "host_latch", v, sizeof v) && !strcmp(v, "7") && cap_kv(old, ol, "aniso", v, sizeof v) && !strcmp(v, "8") && cap_kv(old, ol, "mfx3d", v, sizeof v) && !strcmp(v, "0"), "an older capture's unknown key is skipped"); }
 
     // Two-part chunks (cap_put2): a region header and the region's bytes compressed as one LZ4 stream straight from where they lie. 16 MiB with 13 MiB of noise
     // forces several full 4 MiB output flushes; 5 + 5 MiB of noise puts a flush inside part a and the a → b switch on a partly full output buffer

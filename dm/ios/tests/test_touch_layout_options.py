@@ -31,9 +31,6 @@ for name in ('TouchCustom_touch_swap_above', 'TouchCustom_touch_swap_above_near'
 assert nodes['TouchCustom_touch_swap_above_Text']['fields']['rect']['height'] == 360
 for suffix in ('Near', 'Far'):
     assert any(n.get('fields', {}).get('text') == '@dmCustomTouchSwap' + suffix for n in nodes.values())
-# Brighten dark areas (key bright): a plain checkbox row, the last custom row
-assert nodes['TouchCustom_bright']['type'] == 'ToggleButtonWidget'
-assert nodes['TouchCustom_bright_Text']['fields']['text'] == '@dmCustomBright'
 host_src = (root / 'host/dm_custom.c').read_text()
 def host_variant(voice):   # 宿主按 VOICE_ROW（DM_MOVIE_FFMPEG）条件编译的两份键表：缺省去掉 #if VOICE_ROW 块，开关包只去掉预处理行
     keep = re.sub(r'#if VOICE_ROW\n(.*?)#endif\n', (lambda m: m[1]) if voice else '', host_src, flags=re.S)
@@ -49,7 +46,6 @@ for voice in (False, True):
     assert all(re.fullmatch(r'-?\d+|!?DM_PHONE', x) for x in defaults), defaults
     defaults = [int(x) if re.fullmatch(r'-?\d+', x) else x for x in defaults]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
-    assert defaults[keys.index('bright')] == 1, defaults   # Brighten dark areas: on by default (today's look)
 os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
 host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host
@@ -76,7 +72,6 @@ for flag in ('DM_OVERLAY_MAC', 'DM_OVERLAY_IOS'):
         w = video['TouchVideo_' + row]
         assert w['type'] == 'CarouselWidget' and w['fields']['states'] == states, (flag, row, w)
     assert not {'TouchCustom_eco_fps', 'TouchCustom_q3d', 'TouchCustom_q3d_smooth'} & set(extras), flag
-    assert 'TouchCustom_bright' in extras, flag   # Brighten dark areas is on the Extras page (Mac and iOS)
     assert [k for k, _ in layout._CUSTOM_ALL][1:] == [k for k in all_keys if k not in ('eco_fps', 'q3d')], flag
     page_rows[flag] = [r[0] for r in layout._VIDEO if r[0] != 'hdr']
     page_states[flag] = {r[0]: len(r[2]) for r in layout._VIDEO if r[0] != 'hdr'}

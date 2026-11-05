@@ -118,7 +118,7 @@ static void lut_case(void) {
     tex_t t = tex(4, NVN_FORMAT_RGBA16F); t.d.target = NVN_TEXTURE_TARGET_3D; t.d.depth = 4; t.d.flags = NVN_TEXTURE_FLAGS_IMAGE;
     mtl_reg_tex(1401, &t, NULL); state_reset(); S.img[5][0] = 1401;
     NvShader *cs = [NvShader new]; cs->stage = 5; snprintf(cs->key, sizeof cs->key, "552f45c348a61b86_b"); cs->rf.nb = 1; cs->rf.b[0] = (nvn_rbind){.kind = NVN_RB_IMG, .reg = 0};
-    bright_lut(cs);
+    mp_note_lut(cs);
     os_unfair_lock_lock(&g_mp_lk); int held = g_mp_lut != nil; os_unfair_lock_unlock(&g_mp_lk); EXPECT("调色表：探针记下了这张表 | color table: the probe noted the table", 1, held);
     mtl_tex_release(&t);
     os_unfair_lock_lock(&g_mp_lk); held = g_mp_lut != nil; os_unfair_lock_unlock(&g_mp_lk); EXPECT("调色表释放后：探针放手 | after the color table is released: the probe lets go", 0, held);

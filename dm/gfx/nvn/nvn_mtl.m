@@ -369,7 +369,7 @@ static void mtl_init_once(void) {
     use_init();   // DM_GFXUSE（诊断）：在任何出图 / 提交线程起来之前读开关 | DM_GFXUSE (diagnostic): read the switch before any present / submit thread starts
     MLOG("Metal 设备 %s", g_dev.name.UTF8String);
     udc_selftest();
-    aux_prewarm();   // the helper kernels (3D brightening, bloom 1/4) start compiling on a background queue
+    aux_prewarm();   // the helper kernel (bloom 1/4) starts compiling on a background queue
 }
 
 void dm_mtl_l3_tick(uint32_t tick) {
@@ -797,8 +797,8 @@ __attribute__((constructor)) static void bp_t0(void) { g_bp_t0 = bp_now(); }
 static int bootprof(void) { static int v = -1; if (v < 0) v = getenv("DM_BOOTPROF") != NULL; return v; }
 static uint64_t g_bp_lib_n, g_bp_lib_ns, g_bp_pso_n, g_bp_pso_ns, g_bp_up_bytes, g_bp_first_present;
 // The host's own passes build their libraries and pipelines outside the warm-up: the texture helpers, the present, the MetalFX copy and write-back
-// passes, the Metal 4 compiler and the scalers at first use, on the submit, replay or present thread; the helper kernels (the brightness LUT, bloom
-// 1/4) on their own queue from mtl_init. They are counted here, apart from the game's shaders and pipelines (g_bp_lib_* / g_bp_pso_*, @lib_new /
+// passes, the Metal 4 compiler and the scalers at first use, on the submit, replay or present thread; the helper kernel (bloom
+// 1/4) on its own queue from mtl_init. They are counted here, apart from the game's shaders and pipelines (g_bp_lib_* / g_bp_pso_*, @lib_new /
 // @pso_new), which keep their meaning; a build over 4 ms is logged with its thread, so a cold run shows which one stalls a frame
 static _Atomic uint64_t g_bp_host_lib_n, g_bp_host_lib_ns, g_bp_host_pso_n, g_bp_host_pso_ns;
 static void host_built(int pso, uint64_t t0, const char *what) {
@@ -5529,16 +5529,11 @@ static void warm_claim(void) {
         }
     }
 }
-// ---------- 紫闪探针 ----------
-// A16 视频：重负载下 3D 画面整块变品红 (255,0,254)、界面照常画在上面，0.35 秒一阵。缺省开（DM_MAGENTA_PROBE_OFF=1 关），只在内测包里看日志：
-// 每次出图在上屏命令缓冲末尾把游戏最终画面的 5 个点（中心与四个四分之一点）和调色表 4 格拷进共享缓冲，命令缓冲完成时在回调里判，不等 GPU、不占帧。
-// 画面 5 点里 ≥3 点是品红（R≥200、G≤60、B≥200）记【红】并带上调色表读数、加亮系数、显示节拍停回调段数；调色表格子是非数 / 无穷 / 品红单独记【红】；每 3600 次出图记一行汇总（射程）。
-// 调色表 = 色调映射查的 32³ 表（见下面 3D 画面加亮），由派发 552f45c348a61b86 那里记下。只走 Metal 4 出图路径（iOS / Mac 正式包）
 // ---------- Magenta probe ----------
 // A user video on an A16 device: under heavy load the whole 3D picture turns magenta (255,0,254) while the UI still draws on top, in bursts of about 0.35 s. On by default (DM_MAGENTA_PROBE_OFF=1 turns it off); read the logs from test builds:
 // for each present, at the end of the present command buffer, copy 5 points of the game's final picture (the center and the four quarter points) and 4 cells of the color table into a shared buffer, and judge them in the completion callback — no GPU wait, no frame cost.
-// If ≥3 of the 5 picture points are magenta (R≥200, G≤60, B≥200), log a red line with the color-table readings, the brightening factor and the number of display-link callback stalls; a color-table cell that is NaN / infinite / magenta gets its own red line; log a summary every 3600 presents (coverage).
-// Color table = the 32³ table looked up by tone mapping (see the 3D brightening section below), recorded at dispatch 552f45c348a61b86. Only on the Metal 4 present path (iOS / Mac release builds)
+// If ≥3 of the 5 picture points are magenta (R≥200, G≤60, B≥200), log a red line with the color-table readings and the number of display-link callback stalls; a color-table cell that is NaN / infinite / magenta gets its own red line; log a summary every 3600 presents (coverage).
+// Color table = the 32³ table tone mapping (fragment a1b1aab66933fa8f) looks up, recomputed per region every frame by compute shader 552f45c348a61b86 and recorded at that dispatch (mp_note_lut). Only on the Metal 4 present path (iOS / Mac release builds)
 static os_unfair_lock g_mp_lk = OS_UNFAIR_LOCK_INIT; static id<MTLTexture> g_mp_lut; static uint64_t g_mp_lut_ser;   // g_mp_lut_ser：这张表的贴图序号（释放时据此放手） | g_mp_lut_ser: the texture serial of this table (used to let go of it when it is released)
 // 游戏释放调色表那张贴图（mtl_tex_release）时探针放手：原先一直攥着，每次出图还从已移出驻留集的贴图拷格子
 // When the game releases the color table's texture (mtl_tex_release) the probe lets go: it used to hold on to it and kept copying cells from a texture already removed from the residency set on every present
@@ -5546,7 +5541,6 @@ static void mp_lut_forget(uint64_t ser) { id old = nil; os_unfair_lock_lock(&g_m
 static MTLPixelFormat g_mp_fmt[3]; static int g_mp_haslut[3];
 static _Atomic uint64_t g_mp_n, g_mp_mag, g_mp_lutbad;
 static uint64_t g_stall_t0, g_stall_n;   // 定义在显示节拍那段 | Defined in the display-link section
-static _Atomic float g_bright_applied = 1.0f;   // the exposure k the last LUT rewrite used (1 = none); written by bright_lut on the replay thread, read by the magenta probe's completion handler
 static int mp_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_MAGENTA_PROBE_OFF"); v = !(e && *e && strcmp(e, "0")); } return v; }
 static int mp_fmt_ok(MTLPixelFormat f) { return f == MTLPixelFormatRGBA8Unorm || f == MTLPixelFormatRGBA8Unorm_sRGB || f == MTLPixelFormatBGRA8Unorm || f == MTLPixelFormatBGRA8Unorm_sRGB || f == MTLPixelFormatRGB10A2Unorm || f == MTLPixelFormatRGBA16Float; }
 #include "nvn_framerec.inc"
@@ -5587,39 +5581,19 @@ static void mp_check(int i, uint64_t ticket) {
         int bad = 0; for (int j = 0; j < 3; j++) bad |= c[j] != c[j] || isinf(c[j]); bad |= c[0] > 0.8f && c[1] < 0.2f && c[2] > 0.8f; lutbad |= bad;
         o += snprintf(lt + o, sizeof lt - o, "%s(%.3f,%.3f,%.3f)", k ? " " : "", c[0], c[1], c[2]); } }
     uint64_t n = atomic_fetch_add(&g_mp_n, 1) + 1, nm = mag >= 3 ? atomic_fetch_add(&g_mp_mag, 1) + 1 : atomic_load(&g_mp_mag), nl = lutbad ? atomic_fetch_add(&g_mp_lutbad, 1) + 1 : atomic_load(&g_mp_lutbad);
-    if (mag >= 3 && (nm <= 30 || nm % 50 == 0)) MLOG("【红】紫闪探针：出图 %llu 画面品红（5 点%s，%d 点品红）；调色表 4 格 %s；加亮 k=%.2f；显示节拍停回调累计 %llu 段，此刻%s停顿中；累计品红 %llu 次",
-        (unsigned long long)ticket, pt, mag, lt, (double)atomic_load_explicit(&g_bright_applied, memory_order_relaxed), (unsigned long long)g_stall_n, g_stall_t0 ? "在" : "不在", (unsigned long long)nm);
+    if (mag >= 3 && (nm <= 30 || nm % 50 == 0)) MLOG("【红】紫闪探针：出图 %llu 画面品红（5 点%s，%d 点品红）；调色表 4 格 %s；显示节拍停回调累计 %llu 段，此刻%s停顿中；累计品红 %llu 次",
+        (unsigned long long)ticket, pt, mag, lt, (unsigned long long)g_stall_n, g_stall_t0 ? "在" : "不在", (unsigned long long)nm);
     if (lutbad && (nl <= 30 || nl % 50 == 0)) MLOG("【红】紫闪探针：出图 %llu 调色表格子异常（非数 / 无穷 / 品红）%s；画面 5 点%s；累计 %llu 次", (unsigned long long)ticket, lt, pt, (unsigned long long)nl);
     if (n % 3600 == 0 || n == 600) MLOG("紫闪探针 至出图 %llu：取样 %llu 次，画面品红 %llu 次，调色表异常 %llu 次（本次 5 点%s，调色表 %s）", (unsigned long long)ticket, (unsigned long long)n, (unsigned long long)nm, (unsigned long long)nl, pt, lt);
 }
-// ---------- 3D picture brightening ----------
-// Tone mapping (fragment a1b1aab66933fa8f) = PQ-encode the composited HDR x0.008, then look up a 32^3 color lookup table (recomputed per region every frame by compute shader 552f45c348a61b86, read only by tone mapping).
-// Multiplying HDR by exposure k first is equivalent to replacing the table with L'(u) = L(PQ(k * PQ^-1(u))): after the dispatch in which the game finishes computing the table, make a copy and rewrite it in place accordingly (one small 32^3 dispatch); the table is recomputed every frame, so it does not get brighter with each multiplication.
-// Only the 3D world is touched: UI, text and the health orbs are composited after tone mapping; highlights are compressed by PQ and do not blur into a sheet of white as a final whole-screen multiply would. The normal / readable tile merge / freeze paths all just read this table, so it takes effect in one place.
-// k is given every frame by the host's dm_bright_k() (dm/host/dm_bright.c: 1 out of game, 4 for maze-type areas, 4 where the original game's picture does not follow day and night, the rest derived from the original game's ambient brightness, with smooth transitions); no rewrite when k ~= 1.
-__attribute__((weak)) float dm_bright_k(void) { return 1.0f; }   // the host's dm_bright.c provides the strong definition; graphics unit tests that do not link the host get no brightening
-static float g_bright_fixed = -1;   // dm/gfx/tests/nvn_replay: the factor the captured frame was drawn with (DM_NVN_CAPTURE records it per submit); < 0 = ask the host
-static float bright_k(void) { return g_bright_fixed >= 0 ? g_bright_fixed : dm_bright_k(); }
-static const char k_lut_msl[] =
-"#include <metal_stdlib>\nusing namespace metal;\n"
-"constant float m1 = 0.1593017578125, m2 = 78.84375, c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;\n"   // bit-identical to the PQ constants in the tone mapping shader
-"static float3 pq(float3 v) { float3 p = pow(abs(v), m1); return pow((c1 + c2 * p) / (1.0 + c3 * p), m2); }\n"
-"static float3 pq_inv(float3 u) { float3 q = pow(u, 1.0 / m2); return pow(max(q - c1, 0.0) / max(c2 - c3 * q, 1e-6), 1.0 / m1); }\n"
-"kernel void lutk(texture3d<float> src [[texture(0)]], texture3d<float, access::write> dst [[texture(1)]], constant float &k [[buffer(0)]], uint3 g [[thread_position_in_grid]]) {\n"
-"  uint3 n = uint3(dst.get_width(), dst.get_height(), dst.get_depth()); if (any(g >= n)) return;\n"
-"  constexpr sampler ls(filter::linear, address::clamp_to_edge, coord::normalized);\n"
-"  float3 u = (float3(g) + 0.5) / float3(n); float3 u2 = clamp(pq(k * pq_inv(u)), 0.0, 1.0);\n"
-"  float4 b = src.sample(ls, u2), o = src.read(g);\n"   // b: the output after brightening by exposure k; o: this cell as the game computed it
-"  float s = smoothstep(0.65, 1.0, dot(b.rgb, float3(0.2126, 0.7152, 0.0722)));\n"   // highlight protection: the closer to white after brightening, the more it is pulled back to the original value (snow and skylight do not blur into a sheet of white); in dark areas s = 0 and brightening proceeds as usual
-"  dst.write(float4(max(mix(b.rgb, o.rgb, s), o.rgb), b.a), g); }\n";
 // ---------- Host-made helper kernels ----------
-// Host-made helper kernels (3D brightening's LUT rewrite, bloom 1/4's capture) are compiled on a private serial queue started from mtl_init, not on the replay
-// thread at first use: a cold system shader cache (first launch after an install or an OS update) would otherwise put the compile into the first frame that needs it.
-// The replay thread waits for them at most once, for at most 3 s (aux_wait): dispatch_block_wait on a block submitted to a serial queue lends the waiter's QoS
-// to the build. Until they are ready, or when one could not be built, that rewrite stays off and the game's own picture shows.
+// The host-made helper kernel (bloom 1/4's capture) is compiled on a private serial queue started from mtl_init, not on the replay thread at first use: a cold
+// system shader cache (first launch after an install or an OS update) would otherwise put the compile into the first frame that needs it.
+// The replay thread waits for it at most once, for at most 3 s (aux_wait): dispatch_block_wait on a block submitted to a serial queue lends the waiter's QoS
+// to the build. Until it is ready, or when it could not be built, bloom 1/4 stays off and the game's own chain runs.
 // The same queue then prebuilds what the cold trigger runs found on frame threads (aux_prebuild, a block of its own, so aux_wait never waits for it)
 static os_unfair_lock g_aux_lk = OS_UNFAIR_LOCK_INIT;
-static struct { id<MTLComputePipelineState> bright_ps; id<MTLLibrary> bloom_lib; id<MTLRenderPipelineState> bloom_pso; MTLPixelFormat bloom_fmt; id<MTLSamplerState> bloom_samp;
+static struct { id<MTLLibrary> bloom_lib; id<MTLRenderPipelineState> bloom_pso; MTLPixelFormat bloom_fmt; id<MTLSamplerState> bloom_samp;
                 id<MTLLibrary> present_lib, mfx3d_lib; } g_aux;   // present_lib / mfx3d_lib: aux_prebuild's (nil until it has run)
 static void aux_prebuild(void);
 // A library aux_prebuild compiled: the present's (also the MetalFX copy pass's) or the 3D write-back's; nil before it is ready, and the caller then
@@ -5628,20 +5602,15 @@ static id<MTLLibrary> pre_lib(int mfx3d) { os_unfair_lock_lock(&g_aux_lk); id<MT
 static dispatch_queue_t g_aux_q; static dispatch_block_t g_aux_blk; static dispatch_once_t g_aux_once; static _Atomic int g_aux_done;
 static void aux_build(void) {
     uint64_t t0 = bp_now(), t1 = t0; NSError *e = nil;   // each build is also counted with the host's own (host_built, "another thread": this queue)
-    id<MTLLibrary> ll = [g_dev newLibraryWithSource:@(k_lut_msl) options:nil error:&e]; id<MTLFunction> lf = ll ? [ll newFunctionWithName:@"lutk"] : nil;
-    if (ll) host_built(0, t1, "brightness LUT");
-    t1 = bp_now(); id<MTLComputePipelineState> bps = lf ? [g_dev newComputePipelineStateWithFunction:lf error:&e] : nil;
-    if (bps) host_built(1, t1, "brightness LUT");
-    if (!bps) MLOG("【红】3D brightening: the LUT kernel could not be built (%s): brightening off for this session", e ? e.localizedDescription.UTF8String : "no function");
-    e = nil; t1 = bp_now(); id<MTLLibrary> bl = [g_dev newLibraryWithSource:@(k_bloomq_msl) options:nil error:&e]; id<MTLRenderPipelineState> bp = nil; id<MTLSamplerState> bs = nil;
+    id<MTLLibrary> bl = [g_dev newLibraryWithSource:@(k_bloomq_msl) options:nil error:&e]; id<MTLRenderPipelineState> bp = nil; id<MTLSamplerState> bs = nil;
     if (bl) host_built(0, t1, "bloom 1/4");
     if (bl) { NSError *pe = nil; t1 = bp_now(); bp = bloomq_build_pso(bl, MTLPixelFormatRG11B10Float, &pe); if (bp) host_built(1, t1, "bloom 1/4");   // the bloom mips' format; another format is built from bl on first use (bloomq_pso)
         MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge; sd.supportArgumentBuffers = YES;
         bs = [g_dev newSamplerStateWithDescriptor:sd]; }
     if (!bl || !bs) MLOG("【红】bloom 1/4: the capture shader could not be built (%s): bloom 1/4 off for this session", e ? e.localizedDescription.UTF8String : "no sampler");
-    os_unfair_lock_lock(&g_aux_lk); g_aux.bright_ps = bps; g_aux.bloom_lib = bl; g_aux.bloom_pso = bp; g_aux.bloom_fmt = bp ? MTLPixelFormatRG11B10Float : MTLPixelFormatInvalid; g_aux.bloom_samp = bs; os_unfair_lock_unlock(&g_aux_lk);
+    os_unfair_lock_lock(&g_aux_lk); g_aux.bloom_lib = bl; g_aux.bloom_pso = bp; g_aux.bloom_fmt = bp ? MTLPixelFormatRG11B10Float : MTLPixelFormatInvalid; g_aux.bloom_samp = bs; os_unfair_lock_unlock(&g_aux_lk);
     atomic_store_explicit(&g_aux_done, 1, memory_order_release);
-    MLOG("helper kernels: built on a background queue in %.1f ms (3D brightening %s, bloom 1/4 %s)", (bp_now() - t0) / 1e6, bps ? "ready" : "failed", bl && bs ? "ready" : "failed");
+    MLOG("helper kernels: built on a background queue in %.1f ms (bloom 1/4 %s)", (bp_now() - t0) / 1e6, bl && bs ? "ready" : "failed");
 }
 static void aux_prewarm(void) {
     dispatch_once(&g_aux_once, ^{
@@ -5650,53 +5619,25 @@ static void aux_prewarm(void) {
         dispatch_async(g_aux_q, g_aux_blk);
         dispatch_async(g_aux_q, ^{ @autoreleasepool { aux_prebuild(); } }); });
 }
-// 1 = the helper kernels are built (each may still have failed: check its object). Replay thread only (the tests are single-threaded): it waits once at most,
+// 1 = the helper kernels are built (they may still have failed: check the objects). Replay thread only (the tests are single-threaded): it waits once at most,
 // never with a lock held. A wait that times out does not count as the one wait dispatch_block_wait allows, and it is never repeated
 static int aux_wait(void) {
     if (atomic_load_explicit(&g_aux_done, memory_order_acquire)) return 1;
     aux_prewarm(); static int waited; if (waited) return atomic_load(&g_aux_done); waited = 1;
     uint64_t t0 = bp_now(); long r = dispatch_block_wait(g_aux_blk, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)); double ms = (bp_now() - t0) / 1e6;
-    if (r) MLOG("helper kernels: still building after 3 s; the rewrites stay off until they are ready");
+    if (r) MLOG("helper kernels: still building after 3 s; bloom 1/4 stays off until they are ready");
     else if (ms >= 0.5) MLOG("helper kernels: the replay thread waited %.1f ms for them", ms);
     return atomic_load(&g_aux_done);
 }
 static void aux_bloom_get(id<MTLLibrary> *lib, id<MTLRenderPipelineState> *pso, MTLPixelFormat *fmt, id<MTLSamplerState> *samp) {
     os_unfair_lock_lock(&g_aux_lk); *lib = g_aux.bloom_lib; *pso = g_aux.bloom_pso; *fmt = g_aux.bloom_fmt; *samp = g_aux.bloom_samp; os_unfair_lock_unlock(&g_aux_lk);
 }
-static void bright_lut(NvShader *cs) {
-    static int failed; static id<MTLComputePipelineState> ps; static id<MTLTexture> tmp; static id<MTLBuffer> kb[3]; static int ki;
-    static id<MTL4ArgumentTable> at;
-    if (failed || strncmp(cs->key, "552f45c348a61b86", 16)) return;
+// The magenta probe copies a few cells of the color table at present time: note the table when the game's dispatch that computes it has run
+static void mp_note_lut(NvShader *cs) {
+    if (strncmp(cs->key, "552f45c348a61b86", 16)) return;
     int tid = 0; for (int i = 0; i < cs->rf.nb && !tid; i++) if (cs->rf.b[i].kind == NVN_RB_IMG && cs->rf.b[i].reg < 32) tid = (int)(S.img[5][cs->rf.b[i].reg] & 0xfffff);
     pthread_mutex_lock(&g_rmu); id<MTLTexture> lut = tid ? tex_by_id(tid) : nil; uint64_t lser = lut ? g_treg[tid].t.serial : 0; pthread_mutex_unlock(&g_rmu);
-    if (lut && lut.textureType == MTLTextureType3D) { os_unfair_lock_lock(&g_mp_lk); g_mp_lut = lut; g_mp_lut_ser = lser; os_unfair_lock_unlock(&g_mp_lk); }   // the magenta probe copies a few cells of this table at present time
-    // From the k read on, every return that leaves the table as the game made it tells the magenta probe k = 1 (NO_K)
-#define NO_K() atomic_store_explicit(&g_bright_applied, 1.0f, memory_order_relaxed)
-    float k = bright_k(); if (!(k > 1.005f)) { NO_K(); return; }   // k ~= 1 (out of game / noon): the table stays as the game made it
-    if (k > 4.0f) k = 4.0f;
-    if (!lut || lut.textureType != MTLTextureType3D || !(lut.usage & MTLTextureUsageShaderWrite)) { static int n; if (!n++) MLOG("【红】3D brightening: the color lookup table is not recognised (texture id %d), no brightening", tid); NO_K(); return; }
-    if (!ps) {
-        if (!aux_wait()) { NO_K(); return; }   // still building: this frame keeps the game's brightness
-        os_unfair_lock_lock(&g_aux_lk); id<MTLComputePipelineState> p = g_aux.bright_ps; os_unfair_lock_unlock(&g_aux_lk);
-        if (!p) { failed = 1; NO_K(); return; }   // aux_build already printed the red line
-        NSError *e = nil; MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxBufferBindCount = 1; at = [g_dev newArgumentTableWithDescriptor:ad error:&e];
-        for (int i = 0; i < 3; i++) { kb[i] = [g_dev newBufferWithLength:16 options:MTLResourceStorageModeShared]; if (kb[i]) res_add(kb[i]); }
-        if (M4_ONLY(!at ||) !kb[0] || !kb[1] || !kb[2]) { failed = 1; MLOG("【红】3D brightening: no argument table or k buffers (%s): brightening off for this session", e ? e.localizedDescription.UTF8String : "no memory"); NO_K(); return; }
-        ps = p;
-        MLOG("3D brightening: first LUT rewrite (LUT %lux%lux%lu, k from dm_bright_k each frame)", (unsigned long)lut.width, (unsigned long)lut.height, (unsigned long)lut.depth); }
-    if (!tmp || tmp.width != lut.width || tmp.height != lut.height || tmp.depth != lut.depth || tmp.pixelFormat != lut.pixelFormat) {
-        MTLTextureDescriptor *d = [MTLTextureDescriptor new]; d.textureType = MTLTextureType3D; d.pixelFormat = lut.pixelFormat; d.width = lut.width; d.height = lut.height; d.depth = lut.depth;
-        d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModePrivate; if (tmp) defer_obj_release(tmp); tmp = [g_dev newTextureWithDescriptor:d];
-        if (!tmp) { static int nt; if (!nt++) MLOG("【红】3D brightening: no memory for the %lux%lux%lu LUT copy; frames keep the game's brightness until it can be allocated (retried each frame)", (unsigned long)lut.width, (unsigned long)lut.height, (unsigned long)lut.depth); NO_K(); return; }
-        res_add(tmp); }
-    id<MTLBuffer> b0 = kb[ki]; ki = (ki + 1) % 3; *(float *)b0.contents = k;   // three copies in rotation: frames in flight still read the previous one
-    BENC b = blit(); enc_b_copy_texture(b, lut, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(lut.width, lut.height, lut.depth), tmp, 0, 0, MTLOriginMake(0, 0, 0)); enc_b_end(g_blit); g_blit = nil;
-    CENC ce = (CENC)enc_c_begin(NULL);
-    [ce setArgumentTable:at]; [at setTexture:tmp.gpuResourceID atIndex:0]; [at setTexture:lut.gpuResourceID atIndex:1]; [at setAddress:b0.gpuAddress atIndex:0];
-    enc_c_pso(ce, ps); enc_c_dispatch(ce, MTLSizeMake((lut.width + 3) / 4, (lut.height + 3) / 4, (lut.depth + 3) / 4), MTLSizeMake(4, 4, 4)); enc_c_end(ce);
-    atomic_store_explicit(&g_bright_applied, k, memory_order_relaxed);   // already clamped to 4
-    args_dirty_all();
-#undef NO_K
+    if (lut && lut.textureType == MTLTextureType3D) { os_unfair_lock_lock(&g_mp_lk); g_mp_lut = lut; g_mp_lut_ser = lser; os_unfair_lock_unlock(&g_mp_lk); }
 }
 static void dispatch(const p_dispatch *dp) {
     zskip_clear();
@@ -5737,7 +5678,7 @@ static void dispatch(const p_dispatch *dp) {
     encode_args(ce, cs, 5, 0);
     enc_c_dispatch(ce, MTLSizeMake(dp->x, dp->y, dp->z), MTLSizeMake(tg[0], tg[1], tg[2]));
     pg_compute_end(ce); enc_c_end(ce);
-    bright_lut(cs);   // 3D 画面加亮：游戏算完调色表之后重写 | 3D picture brightening: rewrite after the game finishes computing the color lookup table
+    mp_note_lut(cs);
 }
 // GPU：贴图 → 缓冲（行距取 SetCopyRowStride，0 = 紧排）
 // GPU: texture -> buffer (row stride taken from SetCopyRowStride, 0 = tightly packed)

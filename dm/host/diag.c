@@ -20,7 +20,7 @@ static void exp_load(void) {   // the experience table from hud_exp.tsv (dm_tabl
     if (n == 100) { for (int i = 0; i < 100; i++) k_exp[i] = (uint32_t)v[i]; g_exp_ok = 1; }
     else LOG("Tables: %s %s: the experience bar stays empty", path, n < 0 ? "is missing" : "is incomplete");
 }
-int dm_hud_exp_rows(void) { pthread_once(&g_exp_once, exp_load); return g_exp_rows; }   // for dm_bright.c dm_tables_status (the Tables: line at start, Share Logs)
+int dm_hud_exp_rows(void) { pthread_once(&g_exp_once, exp_load); return g_exp_rows; }   // for dm_tables.c dm_tables_status (the Tables: line at start, Share Logs)
 #endif
 #include <fcntl.h>
 #include <dirent.h>
@@ -2011,7 +2011,7 @@ static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入�
     }
     if (g_spfp) state_dump(regs);
     if (g_tkfp) ticks_hash(regs);
-    { void dm_bright_server_tick(uint64_t G); dm_bright_server_tick(regs[0]); }   // 3D 画面加亮的测试开关 DM_TEST_DAYTIME（dm_bright.c） | The test switch DM_TEST_DAYTIME for 3D picture brightening (dm_bright.c)
+    { void dm_daytime_server_tick(uint64_t G); dm_daytime_server_tick(regs[0]); }   // the test switch DM_TEST_DAYTIME (dm_daytime.c)
     freeze_tick(regs[0]);   // 面板冻结：放在最后，前面各段读到的还是没减过的拍号 | Panel freeze: placed last, so the sections before it still read the tick number before the decrement
 }
 // ---------- DM_SOAK=<路径>[,间隔秒（缺省 60）]：浸泡读数，宿主线程定时写一行 TSV ----------

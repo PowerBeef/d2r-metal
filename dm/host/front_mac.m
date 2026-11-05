@@ -540,7 +540,7 @@ static NSString *share_logs(NSString *to) {
     int n = 0; for (NSString *f in @[@"host.log", @"host.prev.log"]) { NSData *d = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:f] options:NSDataReadingMappedIfSafe error:nil]; if (d && [scrub(d) writeToFile:[dir stringByAppendingPathComponent:f] atomically:YES]) n++; }
     NSString *bt = [NSString stringWithContentsOfFile:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"build.txt"] encoding:NSUTF8StringEncoding error:nil] ?: @"";
     char hw[64] = "?"; size_t hn = sizeof hw; sysctlbyname("hw.model", hw, &hn, NULL, 0); NSProcessInfo *pi = NSProcessInfo.processInfo;
-    char ts[PATH_MAX + 96]; { int dm_tables_status(char *, size_t); dm_tables_status(ts, sizeof ts); }   // the game-derived tables (dm_bright.c), as in the log's Tables: line
+    char ts[PATH_MAX + 96]; { int dm_tables_status(char *, size_t); dm_tables_status(ts, sizeof ts); }   // the game-derived table (dm_tables.c), as in the log's Tables: line
     NSString *info = [NSString stringWithFormat:@"%@\nD2R Metal (macOS) %@ (%@)\n%@\n%@\nmacOS %@\n%@  %.0f GB\n%@\nTables: %@\n", @(ui("dmAppShareInfo")), ver, build, inf[@"CFBundleIdentifier"] ?: @"", [bt stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],
         pi.operatingSystemVersionString, @(hw), pi.physicalMemory / 1073741824.0, [NSLocale.preferredLanguages componentsJoinedByString:@","], @(ts) ?: @"?"];   // %@ keeps a non-ASCII path in UTF-8, so the scrubber still finds the home folder in it
     [scrub([info dataUsingEncoding:NSUTF8StringEncoding]) writeToFile:[dir stringByAppendingPathComponent:@"info.txt"] atomically:YES]; dm_scrub_free(sc);

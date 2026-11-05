@@ -328,8 +328,8 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     }
     // The host's own passes go through host_built, each build once and a cached one not again, and the game's counters do not move: the present
     // (one library, the plain and the down-filter pipelines), the MetalFX copy pass, the 3D write-back pass, the Metal 4 compiler and a scaler (the
-    // compiler is counted with the libraries, a scaler with the pipelines), the helper kernels (the brightness LUT kernel and bloom 1/4's capture
-    // shader, a library and a pipeline each) and a bloom 1/4 pipeline for another format than the prebuilt one. aux_prebuild (queued by mtl_init after
+    // compiler is counted with the libraries, a scaler with the pipelines), the helper kernel (bloom 1/4's capture
+    // shader, a library and a pipeline) and a bloom 1/4 pipeline for another format than the prebuilt one. aux_prebuild (queued by mtl_init after
     // the helper kernels) compiles the present's and the 3D write-back's libraries and warms MetalFX's kernels with a throwaway scaler per format, and
     // the passes take its libraries; without them (not ready yet) a pass compiles its own
     {
@@ -358,7 +358,7 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
             HOST_DELTA("3D MetalFX scaler, built", mfx_ready(&g_mfx_3d, MFX_M4, MTLPixelFormatRGBA16Float, 48, 27, 64, 36), 0, 0);
             mfx_drop(&g_mfx_3d, "off");
         } else printf("  skip the MetalFX scaler cases: no Metal 4 spatial scaler on this device\n");
-        HOST_DELTA("helper kernels", (aux_build(), 0), 2, 2);
+        HOST_DELTA("helper kernels", (aux_build(), 0), 1, 1);
         HOST_DELTA("bloom 1/4 for another format", bloomq_pso(MTLPixelFormatRGBA16Float), 0, 1);
         HOST_DELTA("bloom 1/4 for that format again", bloomq_pso(MTLPixelFormatRGBA16Float), 0, 0);
 #undef HOST_DELTA

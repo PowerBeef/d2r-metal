@@ -13,7 +13,7 @@ Every file opens with a comment saying what it does and what that is based on. A
 
 | File | What it does |
 |---|---|
-| `Makefile` | Builds the Mac host `dmhost`. `hle_*.c` and the graphics-layer sources are picked up by wildcard, so adding a file needs no change here; the two missing tables (`dm_hud_exp.h`, `dm_bright_levels.inc`) are generated from your game files and are not in the repository |
+| `Makefile` | Builds the Mac host `dmhost`. `hle_*.c` and the graphics-layer sources are picked up by wildcard, so adding a file needs no change here; the missing table (`dm_hud_exp.h`) is generated from your game files and is not in the repository |
 | `hle_target.c` | Auto-target priority for touch taps: bosses, then elites, then normal monsters. Hooks the comparison function of the original controller targeting; the original eligibility, range and line-of-sight checks still apply |
 | `hle_private_aim.c` | Aiming by dragging a skill button: converts the right stick's on-screen direction into a direction in the game world |
 | `touch_mac.c`, `touch_mac.h` | The touch front end of the Mac host: feeds touch points tick by tick from a touch script (`DM_TOUCH_SCRIPT`); the touch cases in [dm/verify](../verify/README.md) run on it. In the Mac App it also takes the real mouse (clicks, drags, scroll-bar thumbs) and the wheel / trackpad (`dm_wheel_ui`) |
@@ -49,7 +49,8 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 | File | What it does |
 |---|---|
 | `dm_uiscreen.c`, `dm_uiscreen.h` | On screens narrower than 16:9 (iPad), lays the UI out at 16:9 while the 3D picture still fills the whole screen |
-| `dm_bright.c` | Dynamic exposure for the 3D brightness boost: how much to brighten depends on the kind of level you are in, and the Extras switch `bright` (Brighten dark areas, on by default, live) turns it off; also reports both game-derived tables at start (the `Tables:` line, red in the Mac App when one is missing) |
+| `dm_daytime.c` | The test switch `DM_TEST_DAYTIME`: pins the game's sun angle at a chosen tick |
+| `dm_tables.c` | Reports the game-derived table at start (the `Tables:` line, red in the Mac App when it is missing) |
 | `dm_hud.c`, `dm_hud.h` | The numbers on the bottom UI (level, experience percentage, belt counts), and the request for a player setting (1–8) through the game's `/players` path (controller pause menu, `DM_PLAYERS`, touch scripts) |
 
 ### Text and language

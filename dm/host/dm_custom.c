@@ -33,13 +33,13 @@ static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "drop_light", "item_notes", "icloud", "pot_pick", "drop_haptic", "eco_fps", "q3d", "touch_swap_above", "bright" };   // order = the Custom page's rows from top to bottom (touch_layout.py _CUSTOM_ROWS): the controller moves through the rows in this order
+    "drop_light", "item_notes", "icloud", "pot_pick", "drop_haptic", "eco_fps", "q3d", "touch_swap_above" };   // order = the Custom page's rows from top to bottom (touch_layout.py _CUSTOM_ROWS): the controller moves through the rows in this order
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 0, !DM_PHONE, 0, 1 };   // defaults: power saver (30 fps) off; Frame Drops (q3d) 0 = lower on phones, 1 = keep on the CLI host and Mac test copies (the Mac App takes the recommendation's, front_q3d_default); the group swap sits left of the portal; everything else on, bright (Brighten dark areas, dm_bright.c, read live: no apply hook) included (voice's default is unused: it follows the current language on load, and Default leaves it alone)
+    1, 1, 1, 1, 1, 0, !DM_PHONE, 0 };   // defaults: power saver (30 fps) off; Frame Drops (q3d) 0 = lower on phones, 1 = keep on the CLI host and Mac test copies (the Mac App takes the recommendation's, front_q3d_default); the group swap sits left of the portal; everything else on (voice's default is unused: it follows the current language on load, and Default leaves it alone)
 // q3d (Frame Drops): 0 = lower the 3D resolution for a while when frames drop, 1 = keep it; applied through hle_oe.c dm_3d_quality_mode_set on load and on
 // Apply, so the controller follows it from the next frame; saved only while it differs from its default (CUSTOM_V 2). On the Video tab it is the Frame
 // Drops selector (dm_video.c row drops); the default overlay's single Custom page shows it as a stacked two-option radio (like the language row):

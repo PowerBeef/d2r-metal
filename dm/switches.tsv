@@ -6,7 +6,7 @@ DM_3D_SCALE_FLOOR	host	host/hle_oe.c	y
 DM_AA_MODE	host,verify	host/hle_oe.c host/tests/t_oe.c verify/test_golden.py	y
 DM_AIM_CONE	host	host/hle_private_aim.c	-
 DM_AOC_OWNED	host	host/hle_misc.c	-
-DM_APP	host	host/app_mac.m host/dm_bright.c host/dm_padmode.c host/front_mac.m …	-
+DM_APP	host	host/app_mac.m host/dm_padmode.c host/dm_tables.c host/front_mac.m …	-
 DM_APP_POOL_ADD_MB	host	host/hle_svc.c host/tests/t_svc_mem.c	-
 DM_APP_ROMFS	host,tools	host/app_mac.m host/front_mac.m tools/scenario.py	-
 DM_APP_SUPPORT	host	host/app_mac.m host/dm_ctl_cmds.c host/dm_padmode.c host/front_mac.m …	y
@@ -29,8 +29,6 @@ DM_BINDING_DIAG	ios	ios/Sources/dm_touch_game_bridge.c	-
 DM_BOOTPROF	gfx,host,ios	gfx/nvn/nvn_mtl.m host/main.c ios/Sources/bootprof_ios.m	y
 DM_BREAK_AT_TICK	host	host/diag.c	y
 DM_BRIGHTNESS	ios	ios/Sources/front_ios.m	-
-DM_BRIGHT_K	host,verify	host/dm_bright.c host/tests/t_bright.c verify/golden.py verify/test_golden.py	y
-DM_BRIGHT_TRACE	host	host/dm_bright.c	-
 DM_BUILD_NUMBER	ios-tools	ios/project.yml	-
 DM_BUNDLE_ID	ios-tools	ios/project.yml ios/run.sh ios/tools/bootprof.sh ios/tools/frame_cmp.sh …	y
 DM_C2S_LOG	host,ios-tools	host/diag.c ios/TouchSmokeTests/TouchSmoke.swift	y
@@ -72,6 +70,7 @@ DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-
 DM_FE_AUTO	host	host/dm_cursor.c	-
 DM_FG	host	host/dm_video.c	y
+DM_FG_SHARP	gfx	gfx/nvn/nvn_fg.inc	-
 DM_FIXED_TIME	host,tools	host/hle_time.c host/main.c tools/replay.py	y
 DM_FPS	gfx	gfx/nvn/nvn_mtl.m	y
 DM_FRAMES	gfx,host	gfx/tests/nvn_replay.m host/diag.c	y
@@ -305,7 +304,7 @@ DM_STATE	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	-
 DM_STATEREP	host	host/dm_staterep.m	y
 DM_SVC	host	host/main.c	y
 DM_SYMCHECK	host	host/loader.c	-
-DM_TABLES	host	host/app_mac.m host/dm_tables.h host/tests/t_bright.c	-
+DM_TABLES	host	host/app_mac.m host/dm_tables.h host/tests/t_tables.c	-
 DM_TACTCHK	host	host/hle_tact.c	-
 DM_TACT_PREFETCH	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_LAG	host	host/hle_tact.c	-
@@ -335,7 +334,7 @@ DM_TEST_C2S	host	host/dm_actions.c	-
 DM_TEST_CM_KEYS	host	host/dm_cloudmerge.c	-
 DM_TEST_COVER	host	host/front_mac.m	y
 DM_TEST_CURSOR	host	host/hle_hid.c	-
-DM_TEST_DAYTIME	host	host/dm_bright.c	-
+DM_TEST_DAYTIME	host	host/dm_daytime.c	y
 DM_TEST_DRAWABLE_PX	host	host/front_mac.m	-
 DM_TEST_DROP_SOUND	host	host/dm_dropfilter.c	-
 DM_TEST_DUR	host	host/diag.c	-

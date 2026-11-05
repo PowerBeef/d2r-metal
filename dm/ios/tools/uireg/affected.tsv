@@ -28,7 +28,8 @@ dm/ios/Sources/asset_dl.m	e pk rf2
 dm/ios/Sources/main.m	a e pk rf2 top od
 dm/ios/run.sh	e pk
 dm/i18n/*	a e k rf2
-dm/host/dm_bright*	a top
+dm/host/dm_daytime*	-
+dm/host/dm_tables*	-
 dm/host/dm_world*	ex tb tp dz top i b
 dm/host/dm_actions*	a g n
 dm/host/dm_hud*	a f pk bd bdm q g

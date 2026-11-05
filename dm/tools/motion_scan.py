@@ -7,6 +7,7 @@ Reads a DM_FRAME_REC recording (nvn_framerec.inc: <prefix>.raw and <prefix>.tsv)
   world     how far the picture moves between shown frames while the hero walks: steps that go backwards are visible judder
   halfway   frame generation: whether each generated frame sits half way between its two real neighbours
   latency   input to picture (--events, a run's events.ndjson): from each mark named inN to the first shown frame that moves
+  detail    frame generation: whether a generated frame is as sharp as its real neighbours while the picture moves
   limbs     the hero's animation (--trace). The camera follows her, so her body stays still on the screen and what moves in her area is her limbs. A run of frames with next to no limb
             motion while the camera moves is a frozen pose, which is what a "slide show" walk looks like. From the velocity target, so no picture or video compression is involved
 
@@ -26,6 +27,7 @@ import sys
 
 import numpy as np
 
+MOVING_PX = 3.0         # picture motion per shown frame above which a generated frame is judged for detail
 STILL_PX = 0.5          # picture motion below this (in pixels of the frame) counts as standing still
 CAM_WALK_PX = 1.0       # camera motion per drawn frame above which the hero counts as walking (limbs)
 FROZEN_LIMB_PX = 1.0    # a drawn frame's fastest limb pixels (95th percentile) below this count as a frozen pose. Measured on an M6, town walk: healthy frames 2.7-17 px, frozen ones 0.0-0.1
@@ -166,6 +168,19 @@ def write_clip(fr, first, count, path):
     p.stdin.close(); p.wait()
 
 
+def detail_scan(fr, steps):
+    """Detail in each generated frame against the real frames either side, while the picture moves: gradient energy, 1 = as sharp. Below it the picture pulses at half the shown rate, above it the sharpen overshoots"""
+    if not fr.rows: return None
+    def energy(i):
+        g = fr.get(i)[::2, ::2, 1].astype(np.float32); return float((np.diff(g, axis=1)[:-1, :] ** 2 + np.diff(g, axis=0)[:, :-1] ** 2).mean())
+    out = []
+    for i in range(1, fr.n - 1):
+        if fr.rows[i]['kind'] != 'gen' or fr.rows[i - 1]['kind'] != 'real' or fr.rows[i + 1]['kind'] != 'real' or np.hypot(*steps[i]) < MOVING_PX: continue
+        base = (energy(i - 1) + energy(i + 1)) / 2
+        if base > 0: out.append(energy(i) / base)
+    return dict(pairs=len(out), median=round(float(np.median(out)), 3), p10=round(float(np.percentile(out, 10)), 3), p90=round(float(np.percentile(out, 90)), 3)) if out else dict(pairs=0)
+
+
 def latency_scan(fr, steps, events_path, prefix='in', moved_px=1.5):
     """Input to picture: for each mark named <prefix>N, the time to the first shown frame after it whose picture moves, on the time the system planned to show that frame.
     The marks are set right before the input step. The world must stand still before each mark (the scenario waits), or the trial is left out. From a game tick and a frame, so judge the mean over many trials."""
@@ -189,7 +204,7 @@ def latency_scan(fr, steps, events_path, prefix='in', moved_px=1.5):
 
 def scan(fr):
     steps = world_steps(fr)
-    res = dict(frames=fr.n, size=[fr.w, fr.h], fps=round(fr.fps, 2), cadence=cadence_scan(fr), repeats=repeats_scan(fr), world=world_scan(steps), halfway=halfway_scan(fr, steps))
+    res = dict(frames=fr.n, size=[fr.w, fr.h], fps=round(fr.fps, 2), cadence=cadence_scan(fr), repeats=repeats_scan(fr), world=world_scan(steps), halfway=halfway_scan(fr, steps), detail=detail_scan(fr, steps))
     res['flags'] = ['reversals'] if res['world']['reversal_share'] > 0.02 else []
     return res, steps
 
