@@ -19,6 +19,8 @@
 //          (none while DM_ENV_SHADOWS / DM_SHADOW_SIZE force them; DM_SHADOW_SIZE is clamped to 512..4096 and made even)
 //   envd   Environment Detail, 0 Standard (the Switch's) / 1 High: three of the game's own quality settings, written into the renderer's config as it boots (dm_video_renderer_cfg_obs). Latched at launch, a
 //          change shows the restart hint (none while DM_ENV_DETAIL=0/1 forces it)
+//   rt     Mac: Ray Tracing, 0 Off / 1 On: key-light shadows and ambient occlusion traced on the GPU (dm/gfx/nvn/nvn_rt.inc), live. Off in Recommended and in both presets, which leave it alone. A chip without
+//          hardware ray tracing can't choose On. DM_RT=0/1/2 forces it (2 = the rays alone, without the game's map)
 // Recommended: rec_<key> holds the recommendation, rec_v its version (REC_V) and rec_id the machine it was worked out for (front_video_rec_id: the Mac
 // App's GPU and main screen; none on iOS, the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1). It is worked out (front_video_firstboot for
 // the first three keys, front_video_rec for the others) on first boot, for a missing or out-of-range key (only that key is filled), and when rec_v is
@@ -60,9 +62,9 @@
 uint64_t dm_custom_find_w(uint64_t w, const char *name);
 int dm_custom_shown(void);
 int dm_custom_path(const char *name, char *p, size_t n);
-enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, K_FG, K_ED, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
-static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq", "fg", "envd" };
-static const int k_n[NV] = { 2, 4, 3, 2, 4, 2, 5, 2, 3, 2, 2 };
+enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, K_FG, K_ED, K_RT, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
+static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq", "fg", "envd", "rt" };
+static const int k_n[NV] = { 2, 4, 3, 2, 4, 2, 5, 2, 3, 2, 2, 2 };
 #define REC_V 11   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);
                   // 6 = a Mac on an iPhone chip (MacBook Neo) gets the phone's (front_mac.m); 7 = chosen from the chip's generation, GPU cores and the screen (dm_picrec.c);
                   // 8 = Native's light ladder stops at 67%, an iPhone chip keeps the phone's shadows, A-chip table and smallest-part core counts (dm_picrec.c);
@@ -75,16 +77,16 @@ static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on pho
 // changes one only while it still equals its old recommendation. On phones Color sits in the Graphics section next to Graphic Presets, so it stays part
 // of Recommended there; phones have no Display Mode row (mode is always 0, its recommendation)
 static int pref_key(int k) { return k == K_MODE || (k == K_COLOR && !DM_PHONE); }
-#define NR 14
-static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "shq", "envd", "fps", "fg", "drops" };   // row order on the page (rows the page lacks are skipped)
-static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, K_SHQ, K_ED, -2, K_FG, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
-static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", 0, "q3d" };
+#define NR 15
+static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "shq", "envd", "rt", "fps", "fg", "drops" };   // row order on the page (rows the page lacks are skipped)
+static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, K_SHQ, K_ED, K_RT, -2, K_FG, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
+static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", 0, "q3d" };
 static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // options in the selector: the key's tiers; presets 4; custom settings keys 2 (options 0 / 1 = values 0 / 1: 60 / 30 fps; lower / keep)
 int dm_custom_shown_value(const char *key); void dm_custom_set_pending(const char *key, int v); int dm_custom_default(const char *key);
 static _Atomic int g_crows;   // the custom-key rows the page has (one bit per row): Default resets only those
 enum { P_REC, P_PERF, P_QUAL, P_CUSTOM };
-static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
-_Static_assert(NV == 11, "g_pend initialiser count");
+static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
+_Static_assert(NV == 12, "g_pend initialiser count");
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // load / save: written by both the front end's main thread (launch, full-screen changes) and the game thread (Apply)
 
 // Provided by the front end (front_mac.m, front_ios.m); builds without one (unit tests) use the weak definitions here
@@ -127,11 +129,11 @@ static void save_locked(void) {
     LOG("画面设置：存盘%s %s（推荐 %s）", ok ? "" : "【红】失败", vals_str(v), rs);
 }
 static void picture_ev(const char *how) {   // the 'picture' event: the values in effect, the rec_v and rec_id saved
-    DM_EV("picture", "how:s mode:d res:d up:d aa:d aniso:d color:d s3d:d envsh:d shq:d fg:d rec_v:d rec_id:d envd:d", how, atomic_load(&g_val[K_MODE]), atomic_load(&g_val[K_RES]),
+    DM_EV("picture", "how:s mode:d res:d up:d aa:d aniso:d color:d s3d:d envsh:d shq:d fg:d rec_v:d rec_id:d envd:d rt:d", how, atomic_load(&g_val[K_MODE]), atomic_load(&g_val[K_RES]),
           atomic_load(&g_val[K_UP]), atomic_load(&g_val[K_AA]), atomic_load(&g_val[K_ANISO]), atomic_load(&g_val[K_COLOR]), atomic_load(&g_val[K_S3D]), atomic_load(&g_val[K_ESH]),
-          atomic_load(&g_val[K_SHQ]), atomic_load(&g_val[K_FG]), atomic_load(&g_rv_keep), atomic_load(&g_rec_id), atomic_load(&g_val[K_ED]));
+          atomic_load(&g_val[K_SHQ]), atomic_load(&g_val[K_FG]), atomic_load(&g_rv_keep), atomic_load(&g_rec_id), atomic_load(&g_val[K_ED]), atomic_load(&g_val[K_RT]));
 }
-_Static_assert(NV == 11, "the picture event lists every key");
+_Static_assert(NV == 12, "the picture event lists every key");
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
     pthread_mutex_lock(&g_mu);
@@ -247,6 +249,12 @@ int dm_video_jitter_mode(void) { return dm_video_temporal_active() ? 3 : 0; }   
 // (+0x66bc) 2 -> 4: torches light the walls near them and glint on polished floors. About 36 MiB of memory; no GPU cost measured at 2560 x 1440 on an M6 (ABBA x4 at the Far Oasis and the Burial Grounds: -0.12 and +0.05 ms, both within noise). The game's other level settings stay: bloom mode 2 would misfire
 // the host's own bloom (nvn_mtl.m), and reflections (+0x6634) need a normal and roughness target nothing writes on Switch, so everything would be a mirror. DM_ENV_DETAIL=0/1 forces it
 static _Atomic int g_ed_launch = -1, g_ed_forced;
+__attribute__((weak)) int mtl_rt_supported(void) { return 0; }
+int dm_video_rt(void) {   // read at the start of each submission (nvn_rt.inc)
+    static int env = -2; if (env == -2) { const char *e = getenv("DM_RT"); env = e && *e ? atoi(e) : -1; }
+    if (!mtl_rt_supported()) return 0;
+    return env >= 0 ? env : dm_video_get("rt") == 1;
+}
 int dm_video_env_detail(void) {
     int x = atomic_load(&g_ed_launch); if (x >= 0) return x;
     const char *e = getenv("DM_ENV_DETAIL");
@@ -300,6 +308,7 @@ static int perf_up(void) { return DM_PHONE ? 0 : front_video_mfx_ok() ? 1 : 0; }
 // cost is measured, and the phone Recommended already gives SMAA and 16x (front_ios.m front_video_rec)
 static int tier_of(int k, int t) {
     switch (k) {
+    case K_RT: return -1;   // a first version: the player's own choice, whatever the preset
     case K_RES: return t ? (DM_PHONE ? 2 : 3) : 0;   // Quality: 100% 3D on phones, Native output on the Mac
     case K_UP: return t ? (front_video_mfx_ok() ? 1 : 0) : perf_up();
     case K_AA: return t;   // Performance FXAA (SMAA was about 18% of the phone's GPU work before e070b94), Quality SMAA
@@ -433,6 +442,7 @@ static void fg_rules(int row, int v) {
     else if (k == K_UP && v != 2 && shown(K_FG)) atomic_store(&g_pend[K_FG], 0);
 }
 static void fg_enable(uint64_t w) { *(uint8_t *)(w + 0x7d8 + 1) = mtl_mfx_fg_supported() != 0; }   // a chip without the interpolator can't choose On (the arrows skip it)
+static void rt_enable(uint64_t w) { *(uint8_t *)(w + 0x7d8 + 1) = mtl_rt_supported() != 0; }   // nor one without ray tracing
 static int row_want(int i) { if (k_row_key[i] == K_FG && dm_custom_shown_value("eco_fps")) return 0; return k_row_ckey[i] ? dm_custom_shown_value(k_row_ckey[i]) : k_row_key[i] < 0 ? preset_of() : shown(k_row_key[i]); }   // the option this row should show
 void dm_video_pump(uint64_t sp) {   // called every frame while an Options page of ours is on screen (dm_custom.c); sp = 0: the page is not on screen
     static dm_wref seen[NR];
@@ -449,7 +459,7 @@ void dm_video_pump(uint64_t sp) {   // called every frame while an Options page 
     for (int i = 0; i < NR; i++) want[i] = car_of(i, row_want(i));
     for (int i = 0; i < NR; i++) {
         if (!w[i]) continue;
-        if (dm_wref_get(&seen[i]) != w[i]) { dm_wref_set(&seen[i], w[i]); if (k_row_key[i] == -1) preset_enable(w[i], want[i] == P_CUSTOM); if (k_row_key[i] == K_FG) fg_enable(w[i]); car_set(w[i], want[i]); continue; }   // the page just appeared: show the value it should, and do not treat this frame as a player change
+        if (dm_wref_get(&seen[i]) != w[i]) { dm_wref_set(&seen[i], w[i]); if (k_row_key[i] == -1) preset_enable(w[i], want[i] == P_CUSTOM); if (k_row_key[i] == K_FG) fg_enable(w[i]); if (k_row_key[i] == K_RT) rt_enable(w[i]); car_set(w[i], want[i]); continue; }   // the page just appeared: show the value it should, and do not treat this frame as a player change
         if (ch < 0 && car_get(w[i]) != want[i]) ch = i;
     }
     if (ch >= 0) {

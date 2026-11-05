@@ -1,6 +1,6 @@
 # Frame Generation through the Video tab, live (dm_video.c dm_video_fg_active, nvn_fg.inc). This Mac's Recommended has it on with Temporal, so the game starts with both. Off goes back to
 # real frames with no restart and puts the interpolator down, On builds it again; leaving Temporal turns it off with it, and turning it on from there selects Temporal again.
-# Rows: mode, res, color, preset, s3d, upscale, aa, aniso, envsh, shq, envd, fps, fg, drops
+# Rows: mode, res, color, preset, s3d, upscale, aa, aniso, envsh, shq, envd, rt, fps, fg, drops
 name video_fg_mac
 requires mac-app
 save warlock
@@ -14,6 +14,7 @@ tap_ui Settings
 sleep 2
 inputmode mode=controller
 sleep 1
+press DOWN
 press DOWN
 press DOWN
 press DOWN
@@ -42,11 +43,13 @@ press UP
 press UP
 press UP
 press UP
+press UP
 press LEFT
 sleep 1
 screenshot video_fg_left_temporal.png
 msg OptionsPanelMessage:AcceptChanges
 sleep 3
+press DOWN
 press DOWN
 press DOWN
 press DOWN
