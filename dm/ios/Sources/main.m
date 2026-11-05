@@ -1259,6 +1259,12 @@ int main(int argc, char *argv[]) {
     // We did not hit this before because the system sometimes gives 2560 when launched from devicectl. The first thing at launch is to raise the soft limit to 4096 (not above the hard limit)
     { struct rlimit rl; if (!getrlimit(RLIMIT_NOFILE, &rl)) { rlim_t was = rl.rlim_cur, want = 4096; if (rl.rlim_max != RLIM_INFINITY && want > rl.rlim_max) want = rl.rlim_max;
         if (was < want) { rl.rlim_cur = want; int rc = setrlimit(RLIMIT_NOFILE, &rl); fprintf(stderr, "boot: 文件描述符软上限 %llu → %llu（%s）\n", (unsigned long long)was, (unsigned long long)want, rc ? "失败" : "已设"); g_nofile_was = (int)was; g_nofile_now = rc ? (int)was : (int)want; } else g_nofile_was = g_nofile_now = (int)was; } }
+    // A device playtest: Documents/dm_env.txt holds K=V lines that a launch from the icon can't carry. What the launch already sets wins. No file, nothing changes
+    @autoreleasepool {
+        NSString *envf = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0] stringByAppendingPathComponent:@"dm_env.txt"];
+        NSString *envt = [NSString stringWithContentsOfFile:envf encoding:NSUTF8StringEncoding error:NULL];
+        for (NSString *line in [envt componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) { NSRange eq = [line rangeOfString:@"="]; if (eq.location != NSNotFound && eq.location > 0) setenv([line substringToIndex:eq.location].UTF8String, [line substringFromIndex:eq.location + 1].UTF8String, 0); }
+    }
     g_mode = @"boot";   // 缺省 = 玩家点图标 = 起游戏。原缺省是早期探针 anon（匿名页写后执行），TestFlight 版点图标即被代码签名杀掉（崩溃日志 CODESIGNING Invalid Page）；探针须显式 -mode anon | Default = player taps the icon = start the game. The old default was the early probe anon (write to an anonymous page then execute); in the TestFlight build tapping the icon got it killed by code signing right away (crash log CODESIGNING Invalid Page); the probe now requires an explicit -mode anon
     for (int i = 1; i + 1 < argc; i++) if (!strcmp(argv[i], "-mode")) g_mode = @(argv[i + 1]);
     // -mode thermal：轻探温——只读系统温控档位写一行就退出，不起宿主、不建窗口 / Metal 层（原先探温要拉起主菜单 60 帧渲染 20 s，探温本身在给手机加热）。

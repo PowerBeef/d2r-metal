@@ -82,7 +82,7 @@ RT_SHADOW_NAMES = ('ps_models_p', 'ps_terrain', 'ps_hair_p', 'ps_alpha_threshold
 
 def rt_shadow_hook(src):
     """Each compare on the directional shadow map (reg 39, the texture this name stands for in every package) also takes the ray-traced mask, in the support buffer past Ryujinx's layout, when it is on and the
-    layer is the key light's (0): the darker of the two, or the mask alone with header word 0 at 2. nvn_rt.inc writes it; off, the header reads 0 and the result is the map's alone."""
+    layer is the key light's (0): the darker of the two, or the mask alone with header word 0 at 2; at 3 no mask was traced. nvn_rt.inc writes it; off, the header reads 0 and the result is the map's alone."""
     pat = re.compile(r'(float _\d+ = )(spvDepthCast\(spvDescriptorSet0\.fp_t_cb196610_105980A8\)\.sample_compare\(spvDescriptorSet0\.fp_t_cb196610_105980A8Smplr, (_\d+)\.xy, uint\(rint\(\3\.z\)\), _\d+\));')
     if not pat.search(src): return src
     m = re.search(r'^fragment \w+ main0\(([^\n]*)\)\n', src, re.M)
@@ -91,7 +91,7 @@ def rt_shadow_hook(src):
     elif 'gl_FragCoord [[position]]' not in m.group(1): raise ValueError('the fragment position has another name')
     src = pat.sub(lambda x: f'{x.group(1)}dm_rt_key(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {x.group(2)}, uint(rint({x.group(3)}.z)));', src)
     helper = ('static inline float dm_rt_key(constant uchar* sb, float4 fc, float cmp, uint layer)\n{\n'
-              '    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || layer != 0u) return cmp;\n'
+              '    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[0] == 3u || layer != 0u) return cmp;\n'
               '    uint x = min(uint(fc.x), h[1] - 1u), y = min(uint(fc.y), h[2] - 1u);\n    float mask = float(sb[4096u + y * h[1] + x]) / 255.0;\n    return h[0] == 2u ? mask : min(cmp, mask);\n}\n\n')
     e = re.search(r'^fragment \w+ main0\(', src, re.M)
     return src[:e.start()] + helper + src[e.start():]
@@ -103,7 +103,7 @@ def rt_ao_hook(src):
     out = re.search(r'struct main0_out\s*\{[^}]*?float4 (\w+) \[\[color\(0\)\]\]', src, re.S)
     if not out: raise ValueError('the fragment has no colour output')
     helper = ('static inline float dm_rt_ao(constant uchar* sb, float4 fc)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[3] == 0u) return 1.0;\n'
-              '    uint x = min(uint(fc.x), h[1] - 1u), y = min(uint(fc.y), h[2] - 1u);\n    return float(sb[4096u + h[1] * h[2] + y * h[1] + x]) / 255.0;\n}\n\n')
+              '    uint w = h[1] >> h[4], x = min(uint(fc.x) >> h[4], w - 1u), y = min(uint(fc.y) >> h[4], (h[2] >> h[4]) - 1u);\n    return float(sb[4096u + h[1] * h[2] + y * w + x]) / 255.0;\n}\n\n')
     src = src.replace('return out;', f'out.{out.group(1)}.xyz *= dm_rt_ao(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord);\n    return out;')
     e = re.search(r'^fragment \w+ main0\(', src, re.M)
     return src[:e.start()] + helper + src[e.start():]

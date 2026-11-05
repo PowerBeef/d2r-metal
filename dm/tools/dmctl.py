@@ -33,7 +33,7 @@ def bind(port=0, host='127.0.0.1'):
 
 
 class Ctl:
-    def __init__(self, port=0, host='127.0.0.1', log=None, connect_timeout=30.0, listen=False, server=None):
+    def __init__(self, port=0, host='127.0.0.1', log=None, connect_timeout=30.0, listen=False, server=None, forwarded=False):
         end = time.time() + connect_timeout
         if listen or server:   # Mac 宿主往这边连（它每 0.5 秒重试一次，谁先起都行）；server = 先用 bind() 占好的监听口 | the Mac host connects here (it retries every 0.5 s, so either side may start first); server = a listening socket taken earlier with bind()
             srv = server or bind(port, host)[0]; srv.settimeout(connect_timeout)
@@ -41,7 +41,14 @@ class Ctl:
             finally: srv.close()
         else:
             while True:
-                try: self.sock = socket.create_connection((host, port), timeout=2); break
+                try:
+                    self.sock = socket.create_connection((host, port), timeout=2)
+                    if forwarded:   # iproxy accepts at once and hangs up while nothing listens on the phone yet, so a connection counts only once the far side doesn't close it
+                        self.sock.settimeout(1.0)
+                        try:
+                            if not self.sock.recv(1, socket.MSG_PEEK): raise ConnectionResetError('the far side is not up yet')
+                        except TimeoutError: pass
+                    break
                 except OSError:
                     if time.time() > end: raise
                     time.sleep(0.2)

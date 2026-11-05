@@ -81,6 +81,17 @@ class DmctlTest(unittest.TestCase):
         c = dmctl.Ctl(port, listen=True, connect_timeout=5)
         self.assertTrue(c.cmd('ping')['pong']); c.close()
 
+    def test_forwarded_waits_for_the_far_side(self):   # iproxy: accepted, then closed, until the app on the phone listens
+        srv = socket.socket(); srv.bind(('127.0.0.1', 0)); srv.listen(3); port = srv.getsockname()[1]
+        def forwarder():
+            srv.accept()[0].close(); srv.accept()[0].close()
+            s = srv.accept()[0]; buf = b''
+            while b'\n' not in buf: buf += s.recv(100)
+            s.sendall(b'[dm] RE {"id":%d,"cmd":"ping","ok":true,"pong":true}\n' % json.loads(buf)['id']); time.sleep(0.2); s.close()
+        threading.Thread(target=forwarder, daemon=True).start()
+        c = dmctl.Ctl(port, connect_timeout=10, forwarded=True)
+        self.assertTrue(c.cmd('ping')['pong']); c.close(); srv.close()
+
     def test_reply_timeout_when_closed(self):
         srv = socket.socket(); srv.bind(('127.0.0.1', 0)); srv.listen(1); port = srv.getsockname()[1]
         def accept_and_close(): srv.accept()[0].close()

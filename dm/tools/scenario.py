@@ -375,7 +375,7 @@ class LaunchBackend:
             m = re.match(r'^PORT (\d+)$', line.strip())
             if m: port = int(m.group(1)); break
         if not port: self.stop(); raise ScenarioError(f'{self.name} launch failed: {lines[-1] if lines else "no output"} (see launch.log)')
-        return dmctl.Ctl(port, connect_timeout=90, log=os.path.join(self.run, 'port.log'))
+        return dmctl.Ctl(port, connect_timeout=90, log=os.path.join(self.run, 'port.log'), forwarded=self.name == 'device')
 
     def alive(self): return not self.ended and self._ask('alive', 30) == 'yes'
     def pid(self): return None   # iOS 包的 GPU 截帧走 Xcode | GPU capture of the iOS package goes through Xcode
