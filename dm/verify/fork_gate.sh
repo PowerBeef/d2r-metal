@@ -117,7 +117,7 @@ for tier in "${TIERS[@]}"; do
     step core_front_scenarios 900 -- bash -c 'scn_run "$@" --backend cli' _ $(front_scenarios $(scenarios))   # windowed, one at a time, in the background (front-end lifecycle: minimize / quit)
     step core_touchcases 900 -- bash -c touch_cases
     # The picture chain at this Mac's Recommended on the CLI host (scenarios/picture: SMAA, 16x, shadows, 3D 75% with the MetalFX 3D pass, AA switched live)
-    step core_picture 900 -- bash -c 'par_scenarios cli 2 "$@"' _ "$DM/verify/scenarios/picture/rec.scn" "$DM/verify/scenarios/picture/rec75.scn" "$DM/verify/scenarios/picture/rect.scn" "$DM/verify/scenarios/picture/rec75t.scn" "$DM/verify/scenarios/picture/aa_toggle.scn"
+    step core_picture 900 -- bash -c 'par_scenarios cli 2 "$@"' _ "$DM/verify/scenarios/picture/rec.scn" "$DM/verify/scenarios/picture/rec75.scn" "$DM/verify/scenarios/picture/recfg.scn" "$DM/verify/scenarios/picture/rect.scn" "$DM/verify/scenarios/picture/rec75t.scn" "$DM/verify/scenarios/picture/aa_toggle.scn"
     # Motion: frame generation and the hero's animation on a walk, with a control (motion_gate.py: motion_scan.py on the shown frames and the limbs' trace)
     step core_motion 400 -- python3 "$DM/verify/motion_gate.py"
     # Pipeline warm-up coverage: the town route with Recommended's features forced builds no pipeline that the seed (dm/gfx/nvn/pso_manifest.tsv) or
@@ -134,7 +134,8 @@ for tier in "${TIERS[@]}"; do
     step full_pso_ios 900 -- python3 "$DM/tools/pso_seed.py" gate --backend ios-mac   # and on the iOS package smoke_mac has just rebuilt
     step full_iosmac_scenarios 1800 -- bash -c 'scn_run "$@" --backend ios-mac' _ $(scenarios)   # front runs (the iOS package takes the front): a disturbed one is redone, then ⚪
     step full_metal_validation 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/enter_game.scn" --backend cli --headless --metal-validation api
-    step full_metal_validation_rec 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/picture/rec.scn" --backend cli --headless --metal-validation api   # at the Recommended picture
+    step full_metal_validation_rec 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/picture/recfg.scn" --backend cli --headless --metal-validation api   # at the Recommended picture
+    step full_metal_validation_conv 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/picture/rec.scn" --backend cli --headless --metal-validation api   # at the conventional one
     step full_macapp_picture 900 -- bash -c 'scn_run "$@" --backend mac-app' _ "$DM/verify/scenarios/picture/"mac_*.scn   # first launches: this Mac and an M1 stand-in
     # 我们自己的基线（golden.py；没录过 = ⚪ 不可用，不算红） | our own baselines (golden.py; never recorded = ⚪ unavailable, not red)
     step full_golden_replay 1800 -- bash -c 'python3 "$DM/verify/golden.py" replay check; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
