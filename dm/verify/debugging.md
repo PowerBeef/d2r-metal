@@ -243,6 +243,15 @@ Traps:
 - **Judge motion while the hero really moves through the place.** Against a wall her legs run but the camera stands still, and ghosting on thin things doesn't show (`scenarios/picture/motion_walk.scn` goes back and forth on open ground). `DM_TEST_GOTO_LEVEL` plays the game's bright doorway animation first: that is not a bug.
 - **Read steps and sharpness on the ground, away from the hero.** She stays put on the screen, so a picture with her in it reads as either motion (`motion_gate.py` records a piece of the ground).
 
+## Ray tracing (test switch)
+
+`DM_RT=1` traces the key light's shadows into a mask the forward shaders read (`dm/gfx/nvn/nvn_rt.inc`, hooks in `dmsh_rules.py`): the darker of it and the game's map; `DM_RT=2` the mask alone. `DM_RT_AO=<rays>` adds ambient occlusion (`DM_RT_AO_R=<reach in world units>`, `DM_RT_AO_P=<power>`). `DM_RT_DUMP=<frame>:<file.pgm>` writes the mask, and the occlusion as `<file.pgm>.ao.pgm`. `DM_RT_BIAS` moves the ray's start.
+
+- **The forward lighting works in view space.** The scene block's shadow matrices (rows 14 to 21) and the per-draw light block take view-space positions and directions; the structures are in world space. The ray's direction is the axis of the game's key-light shadow view, turned back by the camera's rotation. A direction used as is still gives shadows of the right shapes, falling the wrong way.
+- **Characters have a shadow of their own.** The game draws them into layer 1 of the directional map, with an axis a few degrees off the key light's. In the key light's rays as well they get two overlapping shadows, so they carry an instance mask of their own: the occlusion rays hit them, the key light's don't.
+- **The key light is often a small part of the picture.** On the Rogue Encampment's ground a full shadow is about 10% darker; most of the light is the unshadowed fill and back lights. The occlusion changes the picture far more than the shadows do.
+- On an M6 at 2560 x 1440, town_loop with frame generation and Temporal, two runs each, `gpu_ms.p50` under `DM_TEST_LOAD=gpu:4000`: both together add 9.1 ms per drawn frame in town and 6.4 ms in the wild.
+
 ## A frame that misses a refresh
 
 `DM_LINK_TRACE=<file>` writes one line per display link tick (the time, how long before its target presentation, whether a frame was waiting and how long ago it was queued, how long the last present took), and `<file>.gpu` the present's GPU times. On an M6 at real 60 (conventional, town and the Blood Moor, 2026-11-05), the 1-2% of frames shown for two refreshes are the system's:

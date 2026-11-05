@@ -33,7 +33,7 @@ int mtl_mfx_temporal_supported(void) {   // any thread, before the renderer has 
 enum { MV_MAX_DRAWS = 4096, MV_TAB = 16384, MV_MAX_CB = 8, MV_RING = 5, MV_SNAP_BYTES = 8 << 20, MV_DEDUPE = 4096, MV_VIEW_REG = 3, MV_FRAME_REG = 10, MV_VP_OFF = 336, MV_PROJ_OFF = 208, MV_ACTIVE = 30 };
 typedef struct { uint32_t off, size; int8_t reg, aid; } mv_cb;
 typedef struct {
-    __unsafe_unretained NvShader *vs; __unsafe_unretained id<MTLRenderPipelineState> pso;
+    __unsafe_unretained NvShader *vs; __unsafe_unretained id<MTLRenderPipelineState> pso, cap_pso; const void *ib_cpu; int rt_opaque, rt_char;   // cap_pso, ib_cpu, rt_opaque, rt_char: nvn_rt.inc
     uint64_t key, base, vb[15], ib_gpu; NSUInteger ib_len; mv_cb cb[MV_MAX_CB]; int ncb, occ, used, count, itype, instances, base_vertex, base_instance, cull, wind, active; float bias[3];   // active: drawn frames left in the moving-things mask since it last moved
 } mv_draw;
 typedef struct { uint64_t key; int idx; } mv_slot;
@@ -150,7 +150,18 @@ static id<MTLRenderPipelineState> mv_pso(NvShader *vs) {
     return nil;
 }
 
+int rtx_want(void); static id<MTLRenderPipelineState> rtx_cap_pso(NvShader *vs);   // nvn_rt.inc
+// What the game draws this frame into layer 1 of the directional shadow map, its own shadow for characters: its axis is a few degrees off the key light's, so those in the key light's rays too would have two shadows
+// (nvn_rt.inc). That pass comes before the prepass, so the prepass draw can look itself up: by mesh, or by where its object stands, as a shadow can use a simpler mesh than the picture.
+enum { RTU_SLOTS = 4096 }; static struct { uint64_t key, frame; } g_rtu[RTU_SLOTS];
+static uint64_t rtu_hash(const void *p, size_t n) { uint64_t h = 1469598103934665603ull; const uint8_t *b = p; for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 1099511628211ull; return h ? h : 1; }
+static uint64_t rtu_mesh(const p_draw_idx *di) { uint64_t v[3] = {di->ibuf, di->count, S.vbuf[0].address}; return rtu_hash(v, sizeof v); }
+static uint64_t rtu_place(void) { float f[3]; int32_t q[3]; for (int i = 0; i < 3; i++) { if (!ubo_float(0, (uint16_t)(3 << 2 | i), &f[i])) return 0; q[i] = (int32_t)lrintf(f[i] * 64); } return rtu_hash(q, sizeof q); }
+static void rtu_put(uint64_t k, uint64_t frame) { if (!k) return; for (int i = 0; i < 32; i++) { typeof(&g_rtu[0]) e = &g_rtu[(k + i) % RTU_SLOTS]; if (e->frame != frame || e->key == k) { e->key = k; e->frame = frame; return; } } }
+static int rtu_get(uint64_t k, uint64_t frame) { if (!k) return 0; for (int i = 0; i < 32; i++) { typeof(&g_rtu[0]) e = &g_rtu[(k + i) % RTU_SLOTS]; if (e->frame != frame) return 0; if (e->key == k) return 1; } return 0; }
+static int rtu_has(const p_draw_idx *di, uint64_t frame) { return rtu_get(rtu_mesh(di), frame) || rtu_get(rtu_place(), frame); }
 static void mv_note_draw(NvProg *pr, const p_draw_idx *di) {
+    if (di && di->count && di->itype != 0 && R.rt.n == 0 && R.rt.depth && R.rt.has_dview && R.rt.dview.set_layers && R.rt.dview.min_layer == 1 && R.rt.depth->d.depth == 2 && rtx_want()) { uint64_t f = atomic_load(&g_cur_frame); rtu_put(rtu_mesh(di), f); rtu_put(rtu_place(), f); }
     NvShader *vs = pr->sh[0];
     if (!g_mv_want || !di || !vs || !vs->vel_fn || R.rt.n != 0 || !R.rt.depth || !S.ds.dw || g_pass.dfmt != MTLPixelFormatDepth32Float_Stencil8 || !di->count || di->itype == 0) return;
     if (!mv_init() || atomic_load(&g_mv_lib_ok) != 1) return;
@@ -182,6 +193,7 @@ static void mv_note_draw(NvProg *pr, const p_draw_idx *di) {
             // for the frame interpolator (nvn_fg.inc): the view, the projection without the offset, and the depth range (block +0x50, +0xd0; +0x250 / +0x254 hold far / near for an orthographic camera)
             { const uint8_t *blk = (const uint8_t *)g_mv.snap[g_mv.ri].contents + o - 1; memcpy(g_mv.view_m[c], blk + 0x50, 64); memcpy(g_mv.proj_m[c], pj, 64); g_mv.proj_m[c][wr] = 0; g_mv.proj_m[c][wr + 1] = 0; g_mv.farf[c] = ((const float *)(blk + 0x250))[0]; g_mv.nearf[c] = ((const float *)(blk + 0x250))[1]; } }
     }
+    if (rtx_want() && vs->cap_fn && pr->sh[1] && !strncmp(pr->sh[1]->key, "949495670492f2e4", 16)) { d->rt_opaque = 1; d->rt_char = rtu_has(di, frame); d->ib_cpu = (const uint8_t *)((__bridge id<MTLBuffer>)mb).contents + mo; d->cap_pso = rtx_cap_pso(vs); }   // ps_alpha_threshold_shadows_p #0, the one with no discard
     d->pso = mv_pso(vs);   // nil for now: nothing to draw again, but next frame's match still finds this one's constants
     uint64_t h = 1469598103934665603ull;
     #define MV_H(x) do { uint64_t v_ = (uint64_t)(x); for (int q_ = 0; q_ < 8; q_++) { h = (h ^ (v_ & 0xff)) * 1099511628211ull; v_ >>= 8; } } while (0)

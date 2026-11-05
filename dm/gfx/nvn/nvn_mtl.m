@@ -2222,7 +2222,7 @@ static void shmap_load(void) {
     // The argument buffer encoded last time
     id<MTLBuffer> ab_buf; uint64_t ab_gpu; size_t ab_off; uint64_t ab_pass;
     int8_t zf_state, zf_nf; zskip_fact zf;   // 全零跳过事实表的查表结果缓存（0 未查 / 1 无 / 2 有）；键不变，表长（单测可增补）没变就不重查   // ab_pass：编这块参数的渲染通道序号——只在同一通道内复用（跨通道 / 跨提交的块所在 arena 可能已回收重写） | Cached lookup result in the all-zero skip fact table (0 not looked up / 1 absent / 2 present); with the key unchanged and the table length (unit tests may append) unchanged, no re-lookup   // ab_pass: render pass index where this argument block was encoded; reused only within the same pass (across passes / submissions the arena holding the block may have been recycled and rewritten)
-    id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; id<MTLFunction> vel_fn; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
+    id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; id<MTLFunction> vel_fn, cap_fn; int rt_fwd; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
 @implementation NvShader @end
 #include "nvn_pso_skey.h"
 @interface NvProg : NSObject { @public NvShader *sh[6]; __unsafe_unretained NvShader *fl_sh[6]; uint8_t fl_ok, fl_img, fl_img_w; uint32_t fl_cmask; } @end   // fl_*：按绘制要用的反射摘要（udc_note_draw），按 sh[] 核对后复用 | fl_*: reflection summary used per draw (udc_note_draw), reused after checking against sh[]
@@ -2525,7 +2525,8 @@ static NvShader *shader_load(NSString *pc, int stage) {
     if (nvn_refl_from_json(j, &o->rf, err, sizeof err)) { MLOG("【红】着色器 %s 反射转换失败：%s", pc.UTF8String, err); return nil; }
     if (rt_range_on()) o->range_ro=rt_range_bindings_ro(j);
     o->fn = [lib newFunctionWithName:j[@"entry"]]; o->stage = stage; strlcpy(o->key, pc.UTF8String, sizeof o->key);
-    if (stage == 0) o->vel_fn = [lib newFunctionWithName:@"dm_velocity"];   // the motion-vector entry of the unit vertex shaders (dmsh_rules.py velocity_entry)
+    if (stage == 0) { o->vel_fn = [lib newFunctionWithName:@"dm_velocity"]; o->cap_fn = [lib newFunctionWithName:@"dm_capture"]; }   // the motion-vector and capture entries of the unit vertex shaders (dmsh_rules.py)
+    if (stage == 1) for (int i = 0; i < o->rf.nb; i++) if (o->rf.b[i].kind == NVN_RB_TEX && o->rf.b[i].reg == 39) o->rt_fwd = 1;   // reads the directional shadow map: nvn_rt.inc
     if (o->rf.nb) {
         o->ae = [o->fn newArgumentEncoderWithBufferIndex:o->rf.abi];
         int max_aid = -1;
@@ -3492,9 +3493,12 @@ static void bind_args(id en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, 
 // viewport_inverse f4、viewport_size f4、frag_scale_count i32、render_scale f32[73]…，各字段按 16 字节对齐）与全 0 驱动常量段（64 KB = 着色器声明的上限）
 // Static constant buffers of route B: the Ryujinx support_buffer (layout in Ryujinx.Graphics.Shader/SupportBuffer.cs: alpha_test u32, is_bgra u32[8],
 // viewport_inverse f4, viewport_size f4, frag_scale_count i32, render_scale f32[73]..., each field aligned to 16 bytes) and the all-0 driver constant segment (64 KB = the upper bound declared by shaders)
+// Past the part Ryujinx's layout uses, what ray tracing hands every forward shader (nvn_rt.inc, dmsh_rules.py rt_shadow_hook): at 2048 {on, width, height}, at 4096 the mask, one byte a pixel
+int rtx_want(void);
+static size_t rtx_mask_bytes(void) { return rtx_want() ? 4096 + (size_t)3840 * 2160 * 2 : 65536; }
 static id<MTLBuffer> support_buf(void) {
     static __strong id<MTLBuffer> b; if (b) return b;
-    b = [g_dev newBufferWithLength:65536 options:MTLResourceStorageModeShared]; res_add(b);   // 新建即全 0 | All 0 when newly created
+    b = [g_dev newBufferWithLength:rtx_mask_bytes() options:MTLResourceStorageModeShared]; res_add(b);   // 新建即全 0 | All 0 when newly created
     const int render_scale_off = 192;   // MSL 布局实测：alpha_test 0、is_bgra[8] 16、viewport_inverse 144、viewport_size 160、frag_scale_count 176、render_scale float4[73] 192（取 .x） | Measured MSL layout: alpha_test 0, is_bgra[8] 16, viewport_inverse 144, viewport_size 160, frag_scale_count 176, render_scale float4[73] 192 (take .x)
     for (int i = 0; i < 73; i++) *(float *)((uint8_t *)b.contents + render_scale_off + 16 * i) = 1.0f;
     return b;
@@ -5172,6 +5176,7 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
 static void mv_note_draw(NvProg *pr, const p_draw_idx *di);   // nvn_mv.inc
 static int mfx3d_draw(NvShader *f);   // 见定义处（MetalFX 换掉游戏的 3D 放大趟） | see the definition (MetalFX replaces the game's 3D upscale pass)
 static void fg_compose(NvShader *f);   // nvn_fg.inc
+static void rtx_frame(void); static void rtx_who(const char *k);   // nvn_rt.inc
 static void test_load_gpu(void);   // nvn_testload.inc
 // 着色器碰内存的方式（按反射算一次）：1 读贴图（含类型化缓冲、可写贴图）、2 读存储缓冲、4 写内存（可写贴图、可写存储缓冲）；0x80 = 已算
 // How a shader touches memory (worked out once from its reflection): 1 reads textures (incl. typed buffers and writable textures), 2 reads storage buffers, 4 writes memory (writable textures, writable storage buffers); 0x80 = done
@@ -5310,6 +5315,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         } else if (g_bloomq.state) bloomq_abort(61, "another draw came in the middle of the chain", f_);
       }
     }
+    if (pr->sh[1] && pr->sh[1]->rt_fwd && rtx_want()) { rtx_who(pr->sh[1]->key); rtx_frame(); }   // the first draw that reads the shadow map, after the depth prepass: this frame's ray-traced mask
     if (pr->sh[1] && !strncmp(pr->sh[1]->key, "9a650561e5c40791", 16)) { test_load_gpu(); fg_compose(pr->sh[1]); }   // the game's compose pass: the generated frame first (frame generation)
     if (pr->sh[1] && !strncmp(pr->sh[1]->key, "52aac1f2306b8fc5", 16) && mfx3d_draw(pr->sh[1])) return;   // 游戏的 3D 放大趟（ps_upsample_p）改用 MetalFX | the game's 3D upscale pass (ps_upsample_p) through MetalFX
     if (S.poly.cull == NVN_FACE_FRONT_AND_BACK) return;
@@ -6919,6 +6925,7 @@ static void mfx3d_sub_begin(void) {
 }
 #include "nvn_mv.inc"
 #include "nvn_fg.inc"
+#include "nvn_rt.inc"
 #include "nvn_testload.inc"
 static const char *g_mfx3d_msl =
     "#include <metal_stdlib>\nusing namespace metal;\n"

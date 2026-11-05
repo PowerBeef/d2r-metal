@@ -279,10 +279,16 @@ DM_ROMFS_TEST_DOC	ios	ios/Sources/asset_dl.m ios/Sources/main.m	-
 DM_ROMFS_TEST_PACK	ios	ios/Sources/main.m	-
 DM_ROOT	gfx,host,ios-tools,tools,verify	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m gfx/tests/t_refl.m gfx/tests/t_refl_lib.m …	y
 DM_RS_PAUSE_PANEL	host	host/dm_cursor.c	-
+DM_RT	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_AB	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RT_AB_TOGGLE	gfx	gfx/nvn/nvn_mtl.m	-
+DM_RT_AO	gfx	gfx/nvn/nvn_rt.inc	y
+DM_RT_AO_P	gfx	gfx/nvn/nvn_rt.inc	y
+DM_RT_AO_R	gfx	gfx/nvn/nvn_rt.inc	y
+DM_RT_BIAS	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_COMP	gfx	gfx/nvn/hle_nvn.c	-
 DM_RT_DBG	gfx	gfx/nvn/nvn_mtl.m	-
+DM_RT_DUMP	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_TEST_NOPSO	gfx	gfx/nvn/nvn_rtex.inc	-
 DM_RULESET	tools	tools/patch_nso.py	y
 DM_SAMPLE	host	host/diag.c	y

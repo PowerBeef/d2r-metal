@@ -62,4 +62,52 @@ def velocity_entry(src):
             '    dm_vel_out o;\n    o.gl_Position = c.gl_Position;\n    o.dm_cur = c.gl_Position;\n    o.dm_prev = p.gl_Position;\n    return o;\n}\n')
 
 
-RULES = [(hdr_switch_split, lambda name, key: key in HDR_SWITCH_KEYS), (velocity_entry, lambda name, key: key in VELOCITY_VS_KEYS)]
+def capture_entry(src):
+    """Add a vertex entry, dm_capture, for a pipeline with no rasterization: the shader's own body, and the world position it computes written by vertex id to the buffer at buffer(2), through the inverse
+    view-projection at buffer(3). Ray tracing builds its geometry from these (nvn_rt.inc). Needs velocity_entry's dm_main0 helper, so it runs after it."""
+    m = re.search(r'^vertex main0_out main0\((.*)\)\n\{\n', src, re.M)
+    if not m: raise ValueError('the vertex entry main0 was not found')
+    params = m.group(1).split(', ')
+    plain = [re.sub(r' \[\[[^]]*\]\]$', '', p) for p in params]; names = [p.rsplit(' ', 1)[1] for p in plain]
+    vid = next((p.rsplit(' ', 2)[-2].strip('& ') for p in params if '[[vertex_id]]' in p), None)
+    extra = '' if vid else ', uint dm_vid [[vertex_id]]'
+    return (src.rstrip('\n') + '\n\n'
+            f'vertex void dm_capture({m.group(1)}{extra}, device float4* dm_out [[buffer(2)]], constant float4x4& dm_ivp [[buffer(3)]])\n{{\n'
+            f'    main0_out c = dm_main0({", ".join(names)});\n    float4 w = dm_ivp * c.gl_Position;\n    dm_out[{vid or "dm_vid"}] = float4(w.xyz / w.w, 1.0);\n}}\n')
+
+
+# The forward shaders whose shadow reads take the ray-traced mask: what is opaque in the depth prepass. Glass, water, lava, blends and the atmosphere see what's behind them at that pixel, so they keep the map
+RT_SHADOW_NAMES = ('ps_models_p', 'ps_terrain', 'ps_hair_p', 'ps_alpha_threshold_p', 'ps_foliage_p', 'ps_detail_normal_p', 'ps_grunge_p', 'ps_default', 'ps_grass_lighting_p')
+
+
+def rt_shadow_hook(src):
+    """Each compare on the directional shadow map (reg 39, the texture this name stands for in every package) also takes the ray-traced mask, in the support buffer past Ryujinx's layout, when it is on and the
+    layer is the key light's (0): the darker of the two, or the mask alone with header word 0 at 2. nvn_rt.inc writes it; off, the header reads 0 and the result is the map's alone."""
+    pat = re.compile(r'(float _\d+ = )(spvDepthCast\(spvDescriptorSet0\.fp_t_cb196610_105980A8\)\.sample_compare\(spvDescriptorSet0\.fp_t_cb196610_105980A8Smplr, (_\d+)\.xy, uint\(rint\(\3\.z\)\), _\d+\));')
+    if not pat.search(src): return src
+    m = re.search(r'^fragment \w+ main0\(([^\n]*)\)\n', src, re.M)
+    if not m: raise ValueError('the fragment entry main0 was not found')
+    if '[[position]]' not in m.group(1): src = src[:m.end(1)] + ', float4 gl_FragCoord [[position]]' + src[m.end(1):]
+    elif 'gl_FragCoord [[position]]' not in m.group(1): raise ValueError('the fragment position has another name')
+    src = pat.sub(lambda x: f'{x.group(1)}dm_rt_key(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {x.group(2)}, uint(rint({x.group(3)}.z)));', src)
+    helper = ('static inline float dm_rt_key(constant uchar* sb, float4 fc, float cmp, uint layer)\n{\n'
+              '    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || layer != 0u) return cmp;\n'
+              '    uint x = min(uint(fc.x), h[1] - 1u), y = min(uint(fc.y), h[2] - 1u);\n    float mask = float(sb[4096u + y * h[1] + x]) / 255.0;\n    return h[0] == 2u ? mask : min(cmp, mask);\n}\n\n')
+    e = re.search(r'^fragment \w+ main0\(', src, re.M)
+    return src[:e.start()] + helper + src[e.start():]
+
+
+def rt_ao_hook(src):
+    """The opaque colour takes the ray-traced ambient occlusion (a first look: the whole colour, not only its ambient terms). Off, header word 3 reads 0 and the colour is untouched."""
+    if 'dm_rt_key(' not in src: return src   # rt_shadow_hook found no shadow read here, and gives the position this needs
+    out = re.search(r'struct main0_out\s*\{[^}]*?float4 (\w+) \[\[color\(0\)\]\]', src, re.S)
+    if not out: raise ValueError('the fragment has no colour output')
+    helper = ('static inline float dm_rt_ao(constant uchar* sb, float4 fc)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[3] == 0u) return 1.0;\n'
+              '    uint x = min(uint(fc.x), h[1] - 1u), y = min(uint(fc.y), h[2] - 1u);\n    return float(sb[4096u + h[1] * h[2] + y * h[1] + x]) / 255.0;\n}\n\n')
+    src = src.replace('return out;', f'out.{out.group(1)}.xyz *= dm_rt_ao(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord);\n    return out;')
+    e = re.search(r'^fragment \w+ main0\(', src, re.M)
+    return src[:e.start()] + helper + src[e.start():]
+
+
+RULES = [(hdr_switch_split, lambda name, key: key in HDR_SWITCH_KEYS), (velocity_entry, lambda name, key: key in VELOCITY_VS_KEYS), (capture_entry, lambda name, key: key in VELOCITY_VS_KEYS),
+         (rt_shadow_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_ao_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES)]

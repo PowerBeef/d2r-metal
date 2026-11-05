@@ -145,7 +145,14 @@ class HdrSwitchSplit(unittest.TestCase):
     def test_rule_table(self):
         self.assertEqual(len(dmsh_rules.HDR_SWITCH_KEYS), 7)
         self.assertTrue(all(re.fullmatch(r'[0-9a-f]{16}', k) for k in dmsh_rules.HDR_SWITCH_KEYS))
-        (f, applies), (g, applies2) = dmsh_rules.RULES
+        (f, applies), (g, applies2), (h, _), (i, applies3), (j, applies4) = dmsh_rules.RULES
+        self.assertIs(h, dmsh_rules.capture_entry)
+        self.assertIs(i, dmsh_rules.rt_shadow_hook)
+        self.assertIs(j, dmsh_rules.rt_ao_hook)
+        for a in (applies3, applies4):
+            self.assertTrue(a('ps_terrain.bin#0', 'any'))
+            self.assertTrue(a('ps_models_p.bin#3', 'any'))
+            self.assertFalse(a('ps_glass_p.bin#0', 'any'))
         self.assertIs(f, dmsh_rules.hdr_switch_split)
         self.assertTrue(applies('any', 'e5fb9d7722af87ad'))
         self.assertFalse(applies('any', '3979464914c7fede'))
@@ -154,6 +161,21 @@ class HdrSwitchSplit(unittest.TestCase):
         self.assertTrue(all(re.fullmatch(r'[0-9a-f]{16}', k) for k in dmsh_rules.VELOCITY_VS_KEYS))
         self.assertTrue(applies2('any', '3deaf68fd65b5298'))
         self.assertFalse(applies2('any', 'e5fb9d7722af87ad'))
+
+    def test_rt_hooks(self):
+        read = 'spvDepthCast(spvDescriptorSet0.fp_t_cb196610_105980A8).sample_compare(spvDescriptorSet0.fp_t_cb196610_105980A8Smplr, _7.xy, uint(rint(_7.z)), _9)'
+        src = ('struct main0_out\n{\n    float4 m_5 [[color(0)]];\n};\n\nfragment main0_out main0(float4 a [[stage_in]])\n{\n    main0_out out = {};\n    float _3 = ' + read + ';\n    return out;\n}\n')
+        one = dmsh_rules.rt_shadow_hook(src)
+        self.assertIn('float4 gl_FragCoord [[position]]', one)
+        self.assertIn('float _3 = dm_rt_key(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, ' + read + ', uint(rint(_7.z)));', one)
+        two = dmsh_rules.rt_ao_hook(one)
+        self.assertIn('out.m_5.xyz *= dm_rt_ao(', two)
+        self.assertLess(two.index('out.m_5.xyz *='), two.index('return out;'))
+        self.assertLess(two.index('static inline float dm_rt_ao('), two.index('fragment main0_out main0('))
+        # no shadow read: neither touches the shader
+        plain = src.replace(read, '1.0')
+        self.assertEqual(dmsh_rules.rt_shadow_hook(plain), plain)
+        self.assertEqual(dmsh_rules.rt_ao_hook(plain), plain)
 
     def test_rules_self_contained(self):
         # The shader cache fingerprints only each applying rule's own text (dmsh_build.shader_rule_source), and the chain version leaves dmsh_rules.py
