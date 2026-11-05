@@ -277,7 +277,9 @@ SETS: dict[str, dict[str, Any]] = {
     'pages': dict(env={}, pages=None, judge='ssim', dir='m4', controls={}, log_allow=()),
     'orig': dict(env={}, pages=list(LB_ALL), judge='flip', dir='orig', log_allow=(),
                  controls={'aa_off': {'DM_AA_MODE': '0'}, 'shadow_1024': {'DM_SHADOW_SIZE': '1024'}}),
-    'conv': dict(env=picture.CONV, pages=LB_ALL + ['inventory'], judge='flip', dir='rec', log_allow=(),
+    # A chicken wanders the Rogue Encampment and crosses the HUD band of lb_town_a1 at random (conv, 2026-11-04/05: 0.06-0.43% hot over 7 checks, against 0.03% in a
+    # baseline whose noise shots had missed it), so these two sets take 10 shots as well: the usual 4 for the mask and 6 for the noise
+    'conv': dict(env=picture.CONV, pages=LB_ALL + ['inventory'], judge='flip', dir='rec', log_allow=(), record_shots=10,
                 controls={'fxaa': {'DM_AA_MODE': '1'}, 'aniso_off': {'DM_NVN_ANISO': '0'}, 'envsh_off': {'DM_ENV_SHADOWS': '0'}, 'shadow_2100': {'DM_SHADOW_SIZE': '2100'}}),
     'rec75': dict(env=picture.REC75, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
     # The temporal sets' camera jitters, so each shot lands on another offset and about half the frame differs by a level or two (45-53% against the usual limit of 45%,
@@ -285,7 +287,7 @@ SETS: dict[str, dict[str, Any]] = {
     # rain crossing what is left comes and goes (rect lb_town_a1: 0.007-0.124% hot over 7 checks of one build, 0.016% in its 2 noise shots), so they take 10 shots: the usual 4 for the mask and 6 for the noise
     'rect': dict(env=picture.RECT, pages=['lb_town_a1', 'lb_wild_a1', 'lb_crypt_a1'], judge='flip', dir='rect', log_allow=(), unstable_max=0.65, record_shots=10, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
     'rec75t': dict(env=picture.REC75T, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75t', log_allow=(), unstable_max=0.65, record_shots=10, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
-    'phone': dict(env=picture.PHONE, pages=['lb_town_a1', 'lb_crypt_a1'], judge='flip', dir='phone', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
+    'phone': dict(env=picture.PHONE, pages=['lb_town_a1', 'lb_crypt_a1'], judge='flip', dir='phone', log_allow=(), record_shots=10, controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
 }
 FLIP_SETS = [s for s in SETS if SETS[s]['judge'] == 'flip']
 # A region passes when at most FLIP_HOT_MAX of its pixels have FLIP above FLIP_HOT and its mean is at most FLIP_MEAN_MAX. Measured with imgdiff on synthetic
