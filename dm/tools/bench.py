@@ -5,8 +5,7 @@
 #        A、B 按 ABBA 交替（抵消发热 / 频率漂移），每段按每遍的指标做 Mann-Whitney U（小样本精确）与 B−A 中位数差的自助法 95% 区间；
 #        区间整个在 0 一侧且 p < 0.05 才算有差别；结论追加到 $DM_ROOT/run/bench/ledger.tsv
 #   show <bench.json>    打印各段摘要
-#   profile <路线> [--ms 4] [--hitch-ms 25]   跑一遍并对全部客体线程采样（DM_SAMPLE=<ms>:*）：按段、按线程角色（主线程 / 任务线程 / 读写池 / 音频 / 其他）出在跑占比与最热的游戏函数
-#        （名字来自本机的引擎符号表 guestsyms.py），再把超过 --hitch-ms 的帧（nvn.tsv 的帧时间）各自那段时间里在跑的函数列出来；写 profile.json
+#   profile <路线> [--ms 4]   见下 | see below
 #   每遍之前看温控（Mac：pmset -g therm；过热就等，最多 --cool 秒）与游戏模式（gamepolicyctl），都记进结果；末行 RESULT {json}
 # Performance benchmark: runs a fixed route (dm/verify/bench/*.scn, scenario format, segments cut by mark) N times, reports per-segment statistics of the per-frame present intervals (DM_FRAMES), writes bench.json; A/B runs interleaved with a significance judgement, the conclusion recorded in a ledger.
 #   run <route> [--backend cli|mac-app] [--reps 3] [--env K=V ...] [--host host executable] [--out bench.json] [--cool seconds]
@@ -14,8 +13,9 @@
 #        A and B alternate as ABBA (cancelling thermal / clock drift); per segment, a Mann-Whitney U on the per-run metric (exact for small samples) and a bootstrap 95% interval of the B-A median difference;
 #        a difference counts only when the interval lies entirely on one side of 0 and p < 0.05; the conclusion is appended to $DM_ROOT/run/bench/ledger.tsv
 #   show <bench.json>    print the per-segment summary
-#   profile <route> [--ms 4] [--hitch-ms 25]  one run with all guest threads sampled (DM_SAMPLE=<ms>:*): per segment and thread role (main / job workers / IO pool / audio / other), the running share and the hottest game functions
-#        (names from the local engine symbol table, guestsyms.py); then, for every frame longer than --hitch-ms (frame time in nvn.tsv), the functions running during it; writes profile.json
+#   headroom <route> [--steps n,n,…] [--env K=V]   one run per load of known GPU work (DM_TEST_LOAD=gpu:<n>, nvn_testload.inc): the frame's own work at full clock and the time really free, by segment
+#   profile <route> [--ms 4] [--top 8] [--env K=V]   one run with every thread of the process sampled (DM_SAMPLER, dm/host/dm_sampler.c), then the reasons behind its numbers (bench_why.py): per segment,
+#        what each stage takes of the frame, why each late frame was late, CPU per thread role and the hot functions; writes why.json and stacks.folded
 #   baseline save [--host host] [--name N]    keeps the current host (default this tree's dm/host/dmhost) with everything it runs on as $DM_ROOT/run/bench/baseline/<N, default the rev>/:
 #        host/dmhost and its tables, the rewrite output it was built against (product/) and its shader library (msl/b-<chain>/, APFS clones), meta.json; current points at it
 #   regress <route> [--reps 6] [--metrics cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50]   baseline host (A, on its own rewrite output and shader library) against the current host (B) in ABBA order,
@@ -393,77 +393,70 @@ def ledger_write(stamp, envinfo, name, m, a_label, b_label, rows):
     return ledger
 
 
-# ---------- 采样归因与卡顿 | sampled attribution and hitches ----------
-WAITS = ('__psynch', '__semwait', 'semaphore_', 'mach_msg', '__ulock', 'kevent', '__select', '__workq', '__wait4', 'nanosleep', '__nanosleep', 'usleep', '__sleep', '_pthread_cond_wait')
-SAMPLE_RE = re.compile(r'\[dm\] SAMPLE #\d+ \[([\d.]+)s\] thr=(0x[0-9a-f]+) pc=(\S+)')
-
-
-def role(name):
-    """线程名 → 角色（按名字粗分；无名的 Thread_0x… 是游戏的任务线程）。 | Thread name -> role (coarsely by name; the unnamed Thread_0x... are the game's job workers)."""
-    if name in ('主线程', 'main'): return 'main'
-    if name.startswith('Thread_0x'): return 'workers'
-    if 'AIO' in name: return 'io'
-    if name.startswith('FMOD'): return 'audio'
-    return 'other'
-
-
-def samples(log):
-    """host.log 的全线程采样 → (线程名表, [(秒, 句柄, 在跑, 最内层游戏函数)])。 | All-thread samples from host.log -> (thread name map, [(seconds, handle, running, innermost game function)])."""
-    sys.path.insert(0, HERE); import guestsyms   # noqa: PLC0415  # pyright: ignore[reportMissingImports]
-    names, out, cur = {}, [], None
-    with open(log, encoding='utf-8', errors='replace') as f:
-        for ln in f:
-            if ln.startswith('[dm] SAMPLE-THR '):
-                h, _, nm = ln[16:].strip().partition(' '); names[int(h, 16)] = nm; continue
-            m = SAMPLE_RE.match(ln)
-            if m: cur = [float(m.group(1)), int(m.group(2), 16), not m.group(3).startswith(WAITS), m.group(3)]; continue
-            if cur and ln.startswith('[dm] bt:'):
-                frames = [cur[3]] + ln[8:].split()
-                game = next((x for x in frames if x.startswith(('main+0x', 'sdk+0x'))), None)
-                sym = guestsyms.lookup(game) if game else ''
-                fn = (sym.split('+0x')[0] if sym else game) if game else 'host:' + cur[3].split('+0x')[0]   # 没名字的游戏函数留模块偏移 | game functions without a name keep their module offset
-                out.append((cur[0], cur[1], cur[2], fn)); cur = None
-    return names, out
-
-
-def attribute(run_dir, hitch_ms):
-    names, smp = samples(os.path.join(run_dir, 'host.log'))
-    evs = dmevents.load(os.path.join(run_dir, 'events.ndjson')) if os.path.exists(os.path.join(run_dir, 'events.ndjson')) else []
-    marks = [(e['t'], e.get('name')) for e in evs if e['ev'] == 'mark']
-    def table(t0, t1):
-        by: dict[str, Any] = {}
-        for t, h, run, fn in smp:
-            if not t0 <= t < t1: continue
-            r = by.setdefault(role(names.get(h, '?')), dict(samples=0, running=0, hot=collections.Counter()))
-            r['samples'] += 1
-            if run: r['running'] += 1; r['hot'][fn] += 1
-        return {k: dict(samples=v['samples'], running_pct=round(100 * v['running'] / v['samples'], 1) if v['samples'] else 0,
-                        hot=[[f, n] for f, n in v['hot'].most_common(6)]) for k, v in sorted(by.items())}
-    segs = {name: table(t0, t1) for (t0, name), (t1, _) in zip(marks, marks[1:], strict=False) if name != 'end'}
-    nv = nvn_rows(os.path.join(run_dir, 'nvn.tsv')); hitches = []
-    for f, row in sorted(nv.items()):
-        ms, t = row.get('frame_ms'), row.get('t_s')
-        if ms is None or t is None or ms <= hitch_ms: continue
-        hot = collections.Counter(fn for ts, h, run, fn in smp if run and t - ms / 1000 <= ts <= t)
-        hitches.append(dict(frame=f, ms=round(ms, 1), t=round(t, 3), running=[[k, n] for k, n in hot.most_common(6)]))
-    return dict(threads={f'{h:#x}': names[h] for h in sorted(names)}, segments=segs, hitches=hitches)
+# ---------- reasons: every thread sampled ----------
 
 
 def cmd_profile(a):
+    """One run with every thread of the process sampled (dm/host/dm_sampler.c), and the reasons behind its numbers (bench_why.py)"""
+    import bench_why   # noqa: PLC0415
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]
     out = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_profile_{stamp}')
-    r = run_once(a.route, a.backend, out, picture_env(a.picture, a.backend, {'DM_SAMPLE': f'{a.ms}:*'}), a.host, a.cool)
-    prof = attribute(out, a.hitch_ms); prof.update(route=name, picture=a.picture, ms=a.ms, hitch_ms=a.hitch_ms, ok=r['ok'], segments_timing=r['segments'])
-    with open(os.path.join(out, 'profile.json'), 'w', encoding='utf-8') as f: json.dump(prof, f, ensure_ascii=False, indent=1)
-    for seg, tab in prof['segments'].items():
-        print(f'== {seg}')
-        for rl, v in tab.items(): print(f"  {rl:<8} 在跑 | running {v['running_pct']:5.1f}%  " + '; '.join(f'{fn} {n}' for fn, n in v['hot'][:4]))
-    print(f"  卡顿 | hitches > {a.hitch_ms} ms: {len(prof['hitches'])}" + ''.join(f"\n    帧 | frame {h['frame']} {h['ms']} ms: " + '; '.join(f'{fn} {n}' for fn, n in h['running'][:4]) for h in prof['hitches'][:8]))
+    r = run_once(a.route, a.backend, out, picture_env(a.picture, a.backend, {'DM_SAMPLER': f'{a.ms}:{{dir}}/prof.tsv', **parse_env(a.env or [])}), a.host, a.cool)
+    res, smp, names = bench_why.analyse(out); res.update(route=name, picture=a.picture, ms=a.ms, ok=r['ok'], segments_timing=r['segments'])
+    with open(os.path.join(out, 'why.json'), 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
+    if smp: bench_why.folded(smp, names, os.path.join(out, 'stacks.folded'))
+    bench_why.report(res, a.top)
+    for fl in res['flags']: print(f'⚠️ {fl}: the samples are off, so the hot tables are only a guide')
     verdict = rep_verdict([r])
     if verdict == 'NOT_JUDGED': print(not_judged_line('BENCH-PROFILE', name, [r]))
-    else: print(f"BENCH-PROFILE {verdict} {name} → {os.path.join(out, 'profile.json')}")
-    print('RESULT ' + json.dumps(dict(name='bench-profile', verdict={'NOT_JUDGED': 'UNAVAILABLE'}.get(verdict, verdict), route=name, hitches=len(prof['hitches']), file=os.path.join(out, 'profile.json')), ensure_ascii=False))
+    else: print(f"BENCH-PROFILE {verdict} {name} → {os.path.join(out, 'why.json')}")
+    print('RESULT ' + json.dumps(dict(name='bench-profile', verdict={'NOT_JUDGED': 'UNAVAILABLE'}.get(verdict, verdict), route=name, late={k: len(v['late']) for k, v in res['segments'].items()}, flags=res['flags'], file=os.path.join(out, 'why.json')), ensure_ascii=False))
     return {'OK': 0, 'NOT_JUDGED': 3}.get(verdict, 1)
+
+
+# ---------- real headroom: known GPU work until frames miss ----------
+HEADROOM_LATE = 0.01   # a step with more than this share of frames a refresh late or not shown has run out of room
+
+
+def headroom_fit(rows, period):
+    """rows: dict(n, gpu_ms, late) by rising load n (DM_TEST_LOAD=gpu:<n>). The GPU lowers its clock to fill the frame, so gpu_ms says nothing until the clock is at full, where it rises in step with the
+    load, late frames or not. A line through the two heaviest steps gives the cost of a step, and where it meets no load is the frame's own work at full clock; what's left of the period is free.
+    last_clean_n: the heaviest load before the first step that ran out of room."""
+    clean = []
+    for r in rows:
+        if r['late'] > HEADROOM_LATE: break
+        clean.append(r)
+    out = dict(last_clean_n=clean[-1]['n'] if clean else None, ms_per_n=None, own_work_ms=None, free_ms=None)
+    if len(rows) >= 2 and rows[-1]['n'] > rows[-2]['n']:
+        k = (rows[-1]['gpu_ms'] - rows[-2]['gpu_ms']) / (rows[-1]['n'] - rows[-2]['n'])
+        if k > 0: own = rows[-1]['gpu_ms'] - k * rows[-1]['n']; out.update(ms_per_n=round(k, 6), own_work_ms=round(own, 2), free_ms=round(period - own, 2))
+    return out
+
+
+def cmd_headroom(a):
+    """One run per load, per segment: how much known GPU work fits before frames start to miss"""
+    stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); name = os.path.splitext(os.path.basename(a.route))[0]; steps = [int(x) for x in a.steps.split(',')]
+    root = os.path.join(DM_ROOT, 'run', 'bench', f'{name}_headroom_{stamp}'); rows = collections.defaultdict(list); periods = {}
+    extra = parse_env(a.env or [])
+    for n in steps:
+        load = f"gpu:{n}" if n else None; env = dict(extra, **({'DM_TEST_LOAD': load} if load else {}))
+        r = run_once(a.route, a.backend, os.path.join(root, f'n{n}'), picture_env(a.picture, a.backend, env), a.host, a.cool)
+        if not r['ok']: print(f'  load {n}: the run failed, so the sweep stops here'); break
+        for seg, sg in (r.get('segments') or {}).items():
+            fr, gpu, slow, dropped, p50 = metric(sg, 'present.frames'), metric(sg, 'gpu_ms.p50'), metric(sg, 'present.slow_share'), metric(sg, 'present.dropped') or 0, metric(sg, 'present.p50_ms')
+            if not fr or gpu is None: continue
+            periods[seg] = min(periods.get(seg, 1e9), p50)
+            # a frame rate that has fallen to the next even rate reads as steady, but it's the target that was missed
+            late = 1.0 if p50 > periods[seg] * 1.25 else (slow or 0) + dropped / fr
+            rows[seg].append(dict(n=n, gpu_ms=round(gpu, 2), late=round(late, 4), fps=metric(sg, 'present.fps')))
+            print(f"  load {n:>6} {seg:<8} GPU {gpu:6.2f} ms  a refresh late or not shown {100 * late:5.2f}%")
+    res = dict(route=name, picture=a.picture, steps=steps, env=extra, segments={})
+    for seg, rr in rows.items():
+        fit = headroom_fit(rr, periods[seg]); res['segments'][seg] = dict(rows=rr, period_ms=periods[seg], **fit)
+        print(f"{seg}: period {periods[seg]:.2f} ms; " + (f"own work {fit['own_work_ms']:.1f} ms at full clock, about {fit['free_ms']:.1f} ms free, {fit['ms_per_n'] * 1000:.2f} ms per 1000 of load; heaviest clean load {fit['last_clean_n']}" if fit['free_ms'] is not None else f"no fit (heaviest clean load {fit['last_clean_n']}): raise the steps"))
+    with open(os.path.join(root, 'headroom.json'), 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1)
+    print('RESULT ' + json.dumps(dict(name='bench-headroom', verdict='OK', route=name, segments={k: {x: v[x] for x in ('own_work_ms', 'free_ms', 'last_clean_n')} for k, v in res['segments'].items()}, file=os.path.join(root, 'headroom.json'))))
+    return 0
 
 
 # ---------- 对留存基线的回归 A/B | regression A/B against a kept baseline ----------
@@ -618,8 +611,9 @@ def main(argv):
     b.add_argument('--out'); b.add_argument('--cool', type=float, default=120); b.add_argument('--keep', action='store_true', help='write .keep into the result folder')
     s = sub.add_parser('show'); s.add_argument('file')
     s.add_argument('--metric', action='append', default=[], help='ab.json：按这些指标重比 A / B（可多给，或逗号分隔）| ab.json: compare A / B again on these metrics (repeat or comma-separate)')
+    hr = sub.add_parser('headroom'); hr.add_argument('route'); hr.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); hr.add_argument('--steps', default='0,2000,4000,6000,8000,10000,12000,14000,16000'); hr.add_argument('--picture', default='rec', choices=('rec', 'rect', 'conv', 'orig', 'rec75', 'rec75t', 'phone')); hr.add_argument('--env', action='append'); hr.add_argument('--host'); hr.add_argument('--cool', type=float, default=0)
     pr = sub.add_parser('profile'); pr.add_argument('route'); pr.add_argument('--backend', default='cli', choices=('cli', 'mac-app')); pr.add_argument('--ms', type=int, default=4)
-    pr.add_argument('--hitch-ms', type=float, default=25); pr.add_argument('--host'); pr.add_argument('--cool', type=float, default=120)
+    pr.add_argument('--top', type=int, default=8); pr.add_argument('--env', action='append'); pr.add_argument('--host'); pr.add_argument('--cool', type=float, default=120)
     bl = sub.add_parser('baseline'); bl.add_argument('op', choices=('save',)); bl.add_argument('--host'); bl.add_argument('--name', help='baseline folder name (default: the git revision)')
     rg = sub.add_parser('regress'); rg.add_argument('route'); rg.add_argument('--backend', default='cli', choices=('cli',), help='the kept host runs on the command-line host only'); rg.add_argument('--reps', type=int, default=6)
     rg.add_argument('--metrics', default='cpu_ms.p50,nvn_ms.p50,proc_cpu_ms.p50', help='comma-separated; gpu_ms is left out by default: on a fast Mac it is clock-scaled'); rg.add_argument('--cool', type=float, default=120); rg.add_argument('--keep', action='store_true', help='write .keep into the result folder')
@@ -629,11 +623,12 @@ def main(argv):
     for x in (r, b, pr, rg): x.add_argument('--redo', type=int, default=REDO, help=f'how many times a disturbed rep is redone in its slot before the benchmark is not judged (default {REDO})')
     a = ap.parse_args(argv)
     REDO = getattr(a, 'redo', REDO)
-    held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * 2} min", a.cmd in ('run', 'ab', 'profile', 'regress'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
+    held = scenario.game_lock(__file__, argv, f"bench {a.cmd} {os.path.basename(getattr(a, 'route', ''))} ~{getattr(a, 'reps', 1) * (10 if a.cmd == 'headroom' else 2)} min", a.cmd in ('run', 'ab', 'profile', 'regress', 'headroom'))   # 开窗跑局先拿 Mac 游戏锁 | runs that open a window take the Mac game lock first
     if held is not None: return held
     if a.cmd == 'run': return cmd_run(a)
     if a.cmd == 'ab': return cmd_ab(a)
     if a.cmd == 'profile': return cmd_profile(a)
+    if a.cmd == 'headroom': return cmd_headroom(a)
     if a.cmd == 'baseline': return cmd_baseline(a)
     if a.cmd == 'regress': return cmd_regress(a)
     with open(a.file, encoding='utf-8') as f: res = json.load(f)

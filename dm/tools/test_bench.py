@@ -73,34 +73,6 @@ class BenchTest(unittest.TestCase):
         summ = bench.summarize([dict(ok=True, segments=seg), dict(ok=True, segments=seg), dict(ok=False, segments={})])
         self.assertEqual((summ['town']['runs'], summ['wild']['gpu_ms.p50']), (2, 7.0))
 
-    def test_attribute_segments_and_hitches(self):   # 合成的采样日志 + 逐帧计时：按段按线程角色出在跑占比与热点，长帧只列它那段时间里在跑的函数 | synthetic samples + per-frame timing: running share and hotspots per segment and thread role; a long frame lists only what ran during it
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d)
-            ev = [dict(seq=1, t=1.0, ev='mark', name='seg', frame=10), dict(seq=2, t=3.0, ev='mark', name='end', frame=70)]
-            (p / 'events.ndjson').write_text(''.join(json.dumps(e) + '\n' for e in ev), encoding='utf-8')
-            log = ['[dm] SAMPLE-THR 0x1001 主线程', '[dm] SAMPLE-THR 0x1005 Thread_0x0000000100000000', '[dm] SAMPLE-THR 0x1007 AIO Pool Thread']
-            for i in range(20):
-                t = 1.0 + i * 0.1
-                log += [f'[dm] SAMPLE #{3 * i + 1} [{t:.3f}s] thr=0x1001 pc=main+0x100', '[dm] bt: main+0x200 dm_thread_enter+0x18']
-                log += [f'[dm] SAMPLE #{3 * i + 2} [{t:.3f}s] thr=0x1005 pc=__psynch_cvwait+0x8 lr=x', '[dm] bt: sdk+0x10 main+0x300']
-                log += [f'[dm] SAMPLE #{3 * i + 3} [{t:.3f}s] thr=0x1007 pc={"main+0x400" if 2.0 <= t < 2.1 else "__semwait_signal+0x8"}', '[dm] bt: main+0x500']
-            (p / 'host.log').write_text('\n'.join(log) + '\n', encoding='utf-8')
-            rows = ['frame\tname\tvalue'] + [f'{f}\t@frame_ms\t{80.0 if f == 40 else 16.7}' for f in range(10, 70)] + [f'{f}\t@t_s\t{1.0 + (f - 10) / 30 + (0.05 if f == 40 else 0):.3f}' for f in range(10, 70)]
-            (p / 'nvn.tsv').write_text('\n'.join(rows) + '\n', encoding='utf-8')
-            real = sys.modules.get('guestsyms'); sys.modules['guestsyms'] = types.SimpleNamespace(lookup=lambda a: '')   # 不靠本机的引擎符号表 | independent of the local engine symbol table
-            try: prof = bench.attribute(str(p), 25)
-            finally:
-                if real: sys.modules['guestsyms'] = real
-                else: sys.modules.pop('guestsyms', None)
-        seg = prof['segments']['seg']
-        self.assertEqual((seg['main']['running_pct'], seg['workers']['running_pct'], seg['io']['running_pct']), (100.0, 0.0, 5.0))
-        self.assertEqual(seg['main']['hot'][0][1], 20)
-        self.assertEqual([h['frame'] for h in prof['hitches']], [40])
-        self.assertEqual(sorted(f for f, _ in prof['hitches'][0]['running']), ['main+0x100', 'main+0x400'])   # 那 80 ms 里两条线程在跑 | two threads were running during those 80 ms
-        self.assertEqual(prof['threads']['0x1007'], 'AIO Pool Thread')
-        self.assertEqual((bench.role('主线程'), bench.role('Thread_0x01'), bench.role('FMOD mixer thread'), bench.role('BGS Thread')), ('main', 'workers', 'audio', 'other'))
-
-
     def test_baseline_snapshot(self):   # the snapshot keeps the host, its tables, the rewrite output and the shader library; saving twice into one folder never nests
         with tempfile.TemporaryDirectory() as t:
             host, prod, msl = fake_tree(t); d = os.path.join(t, 'base', 'r1')
@@ -208,6 +180,13 @@ class BenchTest(unittest.TestCase):
         got = bench.picture_env('rec', 'cli', {'DM_TEST_WINSIZE': '1280x720'})
         self.assertEqual(got['DM_TEST_WINSIZE'], '1280x720'); self.assertNotIn('DM_TEST_FULLSCREEN_AT', got)
 
+    def test_headroom_fit(self):
+        # the clock is at full once gpu_ms rises in step with the load, so the heaviest two steps give the line, even when they ran out of room; the light ones sit at a lowered clock
+        rows = [dict(n=0, gpu_ms=20.0, late=0), dict(n=1000, gpu_ms=20.5, late=0), dict(n=2000, gpu_ms=21.0, late=0), dict(n=4000, gpu_ms=24.0, late=0), dict(n=6000, gpu_ms=28.0, late=0.2), dict(n=8000, gpu_ms=32.0, late=0.8)]
+        r = bench.headroom_fit(rows, 33.33)
+        self.assertEqual(r['last_clean_n'], 4000); self.assertAlmostEqual(r['ms_per_n'], 0.002, places=4); self.assertAlmostEqual(r['own_work_ms'], 16.0, delta=.1); self.assertAlmostEqual(r['free_ms'], 17.33, delta=.1)
+        self.assertIsNone(bench.headroom_fit([dict(n=0, gpu_ms=20.0, late=.5)], 33.33)['last_clean_n'])
+
     def test_picture_reaches_host(self):   # run, ab, profile and regress all hand the picture to the host; regress's A runs also get the baseline's snapshot
         seen = []
         class FakeRunner:
@@ -219,7 +198,7 @@ class BenchTest(unittest.TestCase):
             patches = [mock.patch.object(bench.scenario, 'Runner', FakeRunner), mock.patch.object(bench.scenario, 'game_lock', lambda *a: None),
                        mock.patch.object(bench, 'wait_cool', lambda s: (None, 0)), mock.patch.object(bench, 'thermal', lambda: None),
                        mock.patch.object(bench, 'environment', lambda: {'git': {'rev': 'x'}}), mock.patch.object(bench, 'DM_ROOT', t), mock.patch.object(bench, 'BASE', base),
-                       mock.patch.object(bench, 'current_host', lambda: str(host)), mock.patch.object(bench, 'attribute', lambda d, h: dict(threads={}, segments={}, hitches=[]))]
+                       mock.patch.object(bench, 'current_host', lambda: str(host))]
             with contextlib.ExitStack() as st, contextlib.redirect_stdout(io.StringIO()):
                 for pt in patches: st.enter_context(pt)
                 def call(argv, want=0):
@@ -235,7 +214,7 @@ class BenchTest(unittest.TestCase):
                 self.assertEqual(len(runs), 2); self.assertTrue(all(got['DM_NVN_ANISO'] == '16' for _, got in runs))
                 self.assertEqual([got['DM_AA_MODE'] for _, got in runs], ['0', '1'])
                 [(_, got)] = call(['profile', ROUTE])
-                self.assertEqual((got['DM_SAMPLE'], got['DM_SHADOW_SIZE']), ('4:*', '4096'))
+                self.assertTrue(got['DM_SAMPLER'].startswith('4:') and got['DM_SAMPLER'].endswith('prof.tsv')); self.assertEqual(got['DM_SHADOW_SIZE'], '4096')
                 runs = call(['regress', ROUTE, '--reps', '6'], 3)   # the fake runs measure nothing, so no comparison is judged: grey, not OK
                 self.assertEqual(len(runs), 12)
                 for d, got in runs:

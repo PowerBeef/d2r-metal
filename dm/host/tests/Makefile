@@ -90,6 +90,7 @@ run: \
 	python3 ../../tools/test_scenario_schemes.py
 	python3 ../../tools/test_imgdiff.py
 	python3 ../../tools/test_bench.py
+	python3 ../../tools/test_bench_why.py
 	python3 ../../tools/test_workspace_prune.py
 	python3 ../../tools/test_picture.py
 	python3 ../../tools/test_boothist.py

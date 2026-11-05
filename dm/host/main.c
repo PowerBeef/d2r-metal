@@ -17,6 +17,7 @@ static void *req(const char *n){ void *p=guest_sym(n); if(!p) die("缺符号 %s"
 static char *g_argv[64] = {"D2R"}; static int g_argc = 1;
 
 void crash_sample_self(void);
+void dm_sampler_start(void);
 // 存档落盘节流：游戏把脏了的存档容器写盘并提交的「非强制刷新」每拍调一次（main+0x2497ac → main+0xdff8a4，强制 = 0），
 // 但写档入口 main+0xdfdf80 对同一容器 30 秒只放行一次（常数在 main+0x20cefa8；新容器的时间戳从建档那一刻起算）——
 // 新建角色因此要约 30 秒后才第一次提交，这之前进程被结束（手机上切出去被系统回收是常态）角色就没了。改成 3 秒。
@@ -60,6 +61,7 @@ static void guest_main(void) {
     if (getenv("DM_TEST_GUEST_RETURN")) { LOG("DM_TEST_GUEST_RETURN：客体主函数不进游戏、直接返回（验游戏自己退出时的收尾）"); return; }   // 测试：同 nnMain 返回 | test: as if nnMain returned
     guest_thread_init();
     { void inflate_bench_maybe(void); inflate_bench_maybe(); }   // DM_INFLATE_BENCH 测试模式（诊断用，跑完退出） | DM_INFLATE_BENCH test mode (for diagnostics, exits when done)
+    dm_sampler_start();   // DM_SAMPLER: every thread (dm_sampler.c)
     crash_sample_self();   // DM_SAMPLE 采样（诊断用） | DM_SAMPLE sampling (for diagnostics)
     uint32_t hmain = svc_thread_main_init();   // 主线程句柄：nnosInitialize 的 x0（存入 sdk 全局，ThreadManagerImplByHorizon 取用）；x1 = 参数区指针 | Main thread handle: x0 of nnosInitialize (stored in an sdk global, used by ThreadManagerImplByHorizon); x1 = pointer to the argument area
     // 逐条照抄 Start：_init_libc1 = __nnmusl_init_locks（把 stdio 等锁初始化成递归锁，略过会在 putc 嵌套加锁时自锁死）+ __init_ssp。

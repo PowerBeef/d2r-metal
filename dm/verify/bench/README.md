@@ -28,7 +28,7 @@ The picture is recorded in `bench.json`, `ab.json`, `regress.json` and the ledge
 
 | Series | Source | Notes |
 |---|---|---|
-| `present.*` (`fps`, `mean_ms`, `p95_ms`, `p99_ms`, `slow_share` = share above 20.8 ms, `dropped`) | `DM_FRAMES` (`dm_perf_present`, same source as `perf.txt`) | Pinned by vsync on a fast Mac (16.67 ms), so it shows hitches rather than headroom. |
+| `present.*` (`fps`, `mean_ms`, `p95_ms`, `p99_ms`, `slow_share` = share a refresh late: above 20.8 ms, or 41.6 ms in a run whose frames take two refreshes, `dropped`) | `DM_FRAMES` (`dm_perf_present`, same source as `perf.txt`) | Pinned by vsync on a fast Mac (16.67 ms), so it shows hitches rather than headroom. |
 | `cpu_ms.*` | frame-thread CPU time | Not quantized by the refresh rate. |
 | `nvn_ms.*` | time inside NVN calls (translation layer) | Default A/B metric (`nvn_ms.p50`). |
 | `gpu_ms.*` | GPU time per frame (read 8 frames late) | |
@@ -64,8 +64,29 @@ Checked on this tree (Apple M6, macOS 27):
 | Live Metal stats | `python3 dm/tools/gpucap.py listen --pid <pid> --seconds 10`, or `bench.py run … --mpt` | `metalperftrace listen`: on-glass frame interval, present lateness and skipped frames per second. |
 | Always-on Metal record | `metalperftrace collect --last 10m <dir>` then `metalperftrace overview --aggregate --domain GameState <trace>` | The system's own record, split by `game_state` when the run had `DM_STATEREP=1`. |
 | GPU capture | `python3 dm/tools/gpucap.py capture --pid <pid>` (or the scenario step `gpu_capture`) | One frame at the layer boundary, about 4 GB; the process must start with `MTL_CAPTURE_ENABLED=1`. `gpucap.py summary <trace>` lists command buffers, encoders, draws and dispatches (`gpudebug --json`). Capturing pauses presentation for a few seconds, so the host logs a red "display link silent" line (code `e6db5cb6`). |
-| Sampled attribution | `python3 dm/tools/bench.py profile <route> [--ms 4] [--hitch-ms 25]` | One run with every guest thread sampled (`DM_SAMPLE=<ms>:*`). Per segment and thread role (main, job workers, IO pool, audio, other): the running share and the hottest game functions, named from the local engine symbol table (`guestsyms.py`); then every frame over `--hitch-ms` (`@frame_ms` in `nvn.tsv`) with the functions running during it. Writes `profile.json`. |
+| Reasons | `python3 dm/tools/bench.py profile <route> [--ms 4] [--env K=V]` | One run with every thread of the process sampled, the host's as well as the game's (`DM_SAMPLER`, `dm/host/dm_sampler.c`), read by `dm/tools/bench_why.py`: per segment, what each stage takes of the frame; why each late frame was late, grouped by cause with the time lost; CPU per thread role from the system's clock; hot functions in ms per drawn frame with their sampling range, self and inclusive, and a roll-up by subsystem. `bench_why.py <run> --vs <run>` compares two runs. Writes `why.json` and `stacks.folded`. Names come from the private engine analysis, so the output stays on this machine. |
 | Metal HUD | `python3 dm/tools/gpucap.py hud --pid <pid> on|off` | The system performance overlay, switched on a running process (`metalperftrace setup`). |
+
+## Real headroom
+
+The GPU lowers its clock until its work fills the frame, so `gpu_ms` says nothing about what's free. `python3 dm/tools/bench.py headroom <route> [--picture rec] [--steps n,n,…] [--env K=V]` adds known GPU work instead (`DM_TEST_LOAD=gpu:<n>`, `dm/gfx/nvn/nvn_testload.inc`), one run per load. Once the clock is at full, `gpu_ms` rises in step with the load, so a line through the two heaviest steps gives what a step costs, and where it meets no load is the frame's own work at full clock. The rest of the period is free. A step counts as clean with at most 1% of its frames a refresh late or not shown; a frame rate that has fallen to the next even rate counts as missed. Very heavy loads can trip the test watchdog while the world loads, which ends the sweep there.
+
+Measured on an M6 (12-core GPU), 2560 x 1440, `town_loop`, town segment, one run per load, in ms:
+
+| Picture | Frame's time | Own work at full clock | Free |
+|---|---|---|---|
+| Conventional (`conv`), real 60 | 16.7 | 4.5 | 12.2 |
+| Temporal 100%, real 60 (`rect`) | 16.7 | 7.3 | 9.4 |
+| Temporal 75%, real 60 | 16.7 | 5.5 | 11.2 |
+| Frame generation + Temporal 100% (`rec`) | 33.3 | 11.9 | 21.5 |
+| Frame generation + Temporal 85% | 33.3 | 10.7 | 22.7 |
+| Frame generation + Temporal 75% | 33.3 | 9.8 | 23.6 |
+| Frame generation + Temporal 67% | 33.3 | 9.4 | 24.0 |
+| Frame generation + Temporal 50% | 33.3 | 8.4 | 25.0 |
+
+The heaviest clean load agrees with the fit: at 100% with frame generation, load 5000 (21.2 ms at 4.24 ms per 1000) was still clean, and 5500 (23.3 ms) wasn't. Running at full clock costs energy, which these figures don't show. Other chips will differ, and this is town without a crowd.
+
+`dm/verify/why_gate.py` (gate tier `long`) is the control for the reasons: known spikes on the game thread and the GPU must come back named, and samples must agree with the CPU clock.
 
 ## Regression against a kept baseline
 

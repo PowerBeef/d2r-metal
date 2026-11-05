@@ -1308,8 +1308,17 @@ static uint64_t g_pa_wait;   // 本帧取图里节拍等待（自适应出图档
 static uint64_t g_acq_wait_ns, g_pq_wait_ns;   // 取图里节拍等待 / 等出图队列归还的累计，出图时按帧记（一帧内可有多次取图） | Accumulated display-link wait / wait for the present queue to return inside acquire, recorded per frame at present (there can be several acquires within one frame)
 uint64_t dm_nvn_frame_count(void) { return g_frame; }
 extern uint64_t g_t0_ns;   // 宿主进程起点（main.c；UIMSG 时间戳同基） | Host process start point (main.c; same base as the UIMSG timestamps)
+// Known work on the game thread, the control for measurements: DM_TEST_LOAD=cpu:<ms> spins that long every frame, spike:<every>:<ms> every <every>-th frame (bench_why.py has to name the game thread and this function)
+__attribute__((noinline)) static void dm_test_load_spin(double ms) { uint64_t end = now_ns() + (uint64_t)(ms * 1e6); while (now_ns() < end) { __asm__ volatile("isb"); } }
+static void dm_test_load_cpu(void) {
+    static int parsed, every; static double cpu, spike; static uint64_t n;
+    if (!parsed) { parsed = 1; const char *e = getenv("DM_TEST_LOAD"), *p; if (e && (p = strstr(e, "cpu:"))) cpu = atof(p + 4); if (e && (p = strstr(e, "spike:"))) sscanf(p + 6, "%d:%lf", &every, &spike); }
+    if (cpu > 0) dm_test_load_spin(cpu);
+    if (every > 0 && ++n % (uint64_t)every == 0) dm_test_load_spin(spike);
+}
 NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsync *s, int *idx) {
     win_t *o = (win_t *)w;
+    dm_test_load_cpu();
     *idx = o->ntex ? o->next++ % o->ntex : 0;
     // 垂直同步阻塞在这里（真机 NVN：交换链里的贴图都在等显示时，等下一张被释放），不在出图里——游戏常持锁调出图
     // Vsync blocks here (real-device NVN: when all textures in the swapchain are waiting for display, wait for the next one to be released), not in present -- the game often calls present while holding a lock
