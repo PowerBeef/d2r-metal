@@ -90,20 +90,20 @@ def rt_shadow_hook(src):
     if '[[position]]' not in m.group(1): src = src[:m.end(1)] + ', float4 gl_FragCoord [[position]]' + src[m.end(1):]
     elif 'gl_FragCoord [[position]]' not in m.group(1): raise ValueError('the fragment position has another name')
     src = pat.sub(lambda x: f'{x.group(1)}dm_rt_key(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {x.group(2)}, uint(rint({x.group(3)}.z)));', src)
-    helper = ('static inline float dm_rt_key(constant uchar* sb, float4 fc, float cmp, uint layer)\n{\n'
-              '    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[0] == 3u || layer != 0u) return cmp;\n'
-              '    uint x = min(uint(fc.x), h[1] - 1u), y = min(uint(fc.y), h[2] - 1u);\n    float mask = float(sb[4096u + y * h[1] + x]) / 255.0;\n    return h[0] == 2u ? mask : min(cmp, mask);\n}\n\n')
+    helper = ('static inline float dm_rt_ao(constant uchar* sb, float4 fc);\nstatic inline float dm_rt_key(constant uchar* sb, float4 fc, float cmp, uint layer)\n{\n'
+              '    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || layer != 0u) return cmp;\n    if (h[0] == 3u) return cmp / dm_rt_ao(sb, fc);\n'
+              '    uint w = h[1] >> h[6], x = min(uint(fc.x) >> h[6], w - 1u), y = min(uint(fc.y) >> h[6], (h[2] >> h[6]) - 1u);\n    float mask = float(sb[4096u + y * w + x]) / 255.0;\n    return (h[0] == 2u ? mask : min(cmp, mask)) / dm_rt_ao(sb, fc);\n}\n\n')
     e = re.search(r'^fragment \w+ main0\(', src, re.M)
     return src[:e.start()] + helper + src[e.start():]
 
 
 def rt_ao_hook(src):
-    """The opaque colour takes the ray-traced ambient occlusion (a first look: the whole colour, not only its ambient terms). Off, header word 3 reads 0 and the colour is untouched."""
+    """The opaque colour takes the ray-traced ambient occlusion. The translated sum can't be split into its terms, so the key light (rt_shadow_hook) and the local lights (rt_local_hook) divide it back out where they read their shadow, which leaves it on the ambient terms: the fill and back lights and the light grid. Off, header word 3 reads 0 and the colour is untouched."""
     if 'dm_rt_key(' not in src: return src   # rt_shadow_hook found no shadow read here, and gives the position this needs
     out = re.search(r'struct main0_out\s*\{[^}]*?float4 (\w+) \[\[color\(0\)\]\]', src, re.S)
     if not out: raise ValueError('the fragment has no colour output')
     helper = ('static inline float dm_rt_ao(constant uchar* sb, float4 fc)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[3] == 0u) return 1.0;\n'
-              '    uint w = h[1] >> h[4], x = min(uint(fc.x) >> h[4], w - 1u), y = min(uint(fc.y) >> h[4], (h[2] >> h[4]) - 1u);\n    return float(sb[4096u + h[1] * h[2] + y * w + x]) / 255.0;\n}\n\n')
+              '    uint w = h[1] >> h[4], x = min(uint(fc.x) >> h[4], w - 1u), y = min(uint(fc.y) >> h[4], (h[2] >> h[4]) - 1u);\n    return max(float(sb[4096u + h[1] * h[2] + y * w + x]) / 255.0, 0.05);\n}\n\n')
     src = src.replace('return out;', f'out.{out.group(1)}.xyz *= dm_rt_ao(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord);\n    return out;')
     e = re.search(r'^fragment \w+ main0\(', src, re.M)
     return src[:e.start()] + helper + src[e.start():]
@@ -140,8 +140,8 @@ def rt_local_hook(src):
         out += [src[last:m.end()], f'\n            float dm_lv{i} = dm_rt_local(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {off[-1][1]} - (as_type<int>({count.group(1)}) & 63));']
         last = m.end()
     src = ''.join(out) + src[last:]
-    helper = ('static inline float dm_rt_local(constant uchar* sb, float4 fc, int slot)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[5] == 0u || slot < 0 || slot >= 4) return 1.0;\n'
-              '    uint w = h[1] >> 1, x = min(uint(fc.x) >> 1, w - 1u), y = min(uint(fc.y) >> 1, (h[2] >> 1) - 1u);\n    return float(sb[4096u + 2u * h[1] * h[2] + (y * w + x) * 4u + uint(slot)]) / 255.0;\n}\n\n')
+    helper = ('static inline float dm_rt_local(constant uchar* sb, float4 fc, int slot)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u) return 1.0;\n    if (h[5] == 0u || slot < 0 || slot >= 4) return 1.0 / dm_rt_ao(sb, fc);\n'
+              '    uint w = h[1] >> 1, x = min(uint(fc.x) >> 1, w - 1u), y = min(uint(fc.y) >> 1, (h[2] >> 1) - 1u);\n    return float(sb[4096u + 2u * h[1] * h[2] + (y * w + x) * 4u + uint(slot)]) / 255.0 / dm_rt_ao(sb, fc);\n}\n\n')
     e = re.search(r'^fragment \w+ main0\(', src, re.M)
     return src[:e.start()] + helper + src[e.start():]
 

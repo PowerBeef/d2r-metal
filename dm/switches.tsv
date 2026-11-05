@@ -291,10 +291,13 @@ DM_RT_BIAS	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_COMP	gfx	gfx/nvn/hle_nvn.c	-
 DM_RT_DBG	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RT_DUMP	gfx	gfx/nvn/nvn_rt.inc	y
+DM_RT_KEY_HALF	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_LIGHTLOG	gfx	gfx/nvn/nvn_rt.inc	-
 DM_RT_LOCAL	gfx	gfx/nvn/nvn_rt.inc	-
+DM_RT_LOCAL_FILL	gfx	gfx/nvn/nvn_rt.inc	-
 DM_RT_LOCAL_SRC	gfx	gfx/nvn/nvn_rt.inc	-
 DM_RT_LOCAL_STOP	gfx	gfx/nvn/nvn_rt.inc	-
+DM_RT_SUN	gfx	gfx/nvn/nvn_rt.inc	-
 DM_RT_TEST_NOPSO	gfx	gfx/nvn/nvn_rtex.inc	-
 DM_RULESET	tools	tools/patch_nso.py	y
 DM_SAMPLE	host	host/diag.c	y
