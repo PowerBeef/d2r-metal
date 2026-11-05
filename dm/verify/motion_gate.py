@@ -14,7 +14,7 @@ import motion_scan  # noqa: E402
 import picture  # noqa: E402
 
 ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work'); OUT = os.path.join(ROOT, 'run', 'motion'); SCN = os.path.join(HERE, 'scenarios', 'picture', 'motion_walk.scn')
-LATE_MAX = 0.01; OFF_MAX = 0.1
+LATE_MAX = 0.01; OFF_MAX = 0.1; DETAIL_RANGE = (0.8, 1.25)   # a generated frame's detail against a real one's: nvn_fg.inc's sharpen brings it near 1; without it about 0.76
 
 
 def run(name, env):
@@ -39,6 +39,8 @@ def main():
         if c['late_share'] > LATE_MAX: bad.append(f"{c['late_share']:.2%} of shown frames late")
         if res['repeats'] > c['frames'] * 0.01: bad.append(f"{res['repeats']} repeated frames")
         if not h.get('pairs') or h['off_median'] > OFF_MAX: bad.append(f'generated frames not half way: {h}')
+        dt = res['detail']
+        if not dt.get('pairs') or not DETAIL_RANGE[0] <= dt['median'] <= DETAIL_RANGE[1]: bad.append(f'generated frames not as sharp as real ones: {dt}')
     for f in (rec + '.raw',):
         if os.path.exists(f): os.remove(f)
     rc2, _, trace2 = run('control', {'DM_DETCLOCK': '16666667'})

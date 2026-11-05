@@ -64,6 +64,14 @@ class MotionScanTest(unittest.TestCase):
             r = M.latency_scan(fr, steps, p)
         self.assertEqual(r['trials'], 1); self.assertAlmostEqual(r['mean_ms'], 100, delta=2)
 
+    def test_detail(self):
+        n = 40; kinds = ['real' if i % 2 == 0 else 'gen' for i in range(n)]; fr = Fake([(8 * i, 0) for i in range(n)], kinds); plain = fr.get
+        _, steps = M.scan(fr); self.assertAlmostEqual(M.detail_scan(fr, steps)['median'], 1.0, delta=.05)
+        def soft(i):   # a generated frame blurred sideways keeps less of its detail
+            a = plain(i)
+            return ((a.astype(np.uint16) + np.roll(a, 4, 1)) // 2).astype(np.uint8) if kinds[i] == 'gen' else a
+        fr.get = soft; self.assertLess(M.detail_scan(fr, steps)['median'], .8)
+
     def test_frozen_pose_is_flagged_past_the_limit_only(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, 't.tsv')

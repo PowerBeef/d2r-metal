@@ -34,7 +34,15 @@ static const char *g_fg_msl =
     "struct V { float4 p [[position]]; float2 uv; };\n"
     "vertex V vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); V o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); o.uv = uv; return o; }\n"
     // as the game's compose: the interface's alpha is how much of the world shows through
-    "fragment float4 fs(V in [[stage_in]], texture2d<float> w [[texture(0)]], texture2d<float> u [[texture(1)]], sampler s [[sampler(0)]]) { float4 ui = u.sample(s, in.uv); return float4(mix(ui.rgb, w.sample(s, in.uv).rgb, ui.a), 1.0); }\n";
+    // Generated frames come out softer than real ones where things move (scenery at a run keeps about 76% of a real frame's detail, so the picture would pulse at half the shown rate) and match them
+    // where nothing moves (98%), so the world gets a contrast-adaptive sharpen that follows each pixel's motion, here, under the interface: the less room a pixel has before clipping, the less it moves
+    "fragment float4 fs(V in [[stage_in]], texture2d<float> w [[texture(0)]], texture2d<float> u [[texture(1)]], texture2d<float> mv [[texture(2)]], sampler s [[sampler(0)]]) {\n"
+    "  float4 ui = u.sample(s, in.uv); float2 t = 1.0 / float2(w.get_width(), w.get_height()); float3 c = w.sample(s, in.uv).rgb;\n"
+    "  float k = FG_SHARP * saturate(length(mv.sample(s, in.uv).xy / t) / FG_SHARP_FULL_PX);\n"
+    "  if (k > 0.0) { float3 a = w.sample(s, in.uv + float2(0, -t.y)).rgb, b = w.sample(s, in.uv + float2(-t.x, 0)).rgb, d = w.sample(s, in.uv + float2(t.x, 0)).rgb, e = w.sample(s, in.uv + float2(0, t.y)).rgb;\n"
+    "    float3 mn = min(c, min(a, min(b, min(d, e)))), mx = max(c, max(a, max(b, max(d, e)))); float3 amp = sqrt(saturate(min(mn, 1.0 - mx) / max(mx, 1e-4))); float3 lobe = amp * -k * 0.2;\n"
+    "    c = saturate(((a + b + d + e) * lobe + c) / (1.0 + 4.0 * lobe)); }\n"
+    "  return float4(mix(ui.rgb, c, ui.a), 1.0); }\n";
 
 // The present queue holds generated frames by pointer, and a queued one may outlast the frame's submission: what goes down waits until the queue has passed it (fg_reap)
 static NSMutableArray *g_fg_old; static uint64_t g_fg_old_after;
@@ -75,7 +83,8 @@ static void fg_build(NSUInteger iw, NSUInteger ih, NSUInteger ow, NSUInteger oh,
         td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:bf width:ow height:oh mipmapped:NO];
         td.storageMode = MTLStorageModePrivate; td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead | MTLTextureUsagePixelFormatView;
         for (int i = 0; i < FG_RING; i++) { g_fg.nout[i] = [g_dev newTextureWithDescriptor:td]; g_fg.nrv[i] = vf != bf ? [g_fg.nout[i] newTextureViewWithPixelFormat:vf] : g_fg.nout[i]; }
-        id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_fg_msl) options:nil error:&e];
+        const char *sh = getenv("DM_FG_SHARP");
+        id<MTLLibrary> lib = [g_dev newLibraryWithSource:[NSString stringWithFormat:@"#define FG_SHARP %.3f\n#define FG_SHARP_FULL_PX 8.0\n%s", sh ? atof(sh) : 0.5, g_fg_msl] options:nil error:&e];
         MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
         pd.vertexFunction = [lib newFunctionWithName:@"vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"fs"]; pd.colorAttachments[0].pixelFormat = vf;
         id<MTLRenderPipelineState> pso = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
@@ -143,11 +152,11 @@ static void fg_compose(NvShader *f) {
     MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
     rp.colorAttachments[0].texture = g_fg.rv[k]; rp.colorAttachments[0].loadAction = MTLLoadActionDontCare; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     id<MTL4RenderCommandEncoder> en = [g_cb renderCommandEncoderWithDescriptor:rp]; if (!en) return;
-    if (!g_fg.args) { MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 2; ad.maxSamplerStateBindCount = 1; NSError *e = nil; g_fg.args = [g_dev newArgumentTableWithDescriptor:ad error:&e]; }
+    if (!g_fg.args) { MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 3; ad.maxSamplerStateBindCount = 1; NSError *e = nil; g_fg.args = [g_dev newArgumentTableWithDescriptor:ad error:&e]; }
     [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
     [en waitForFence:g_fg.fence beforeEncoderStages:MTLStageFragment];
     [en setArgumentTable:g_fg.args atStages:MTLRenderStageFragment];
-    [g_fg.args setTexture:g_fg.wout.gpuResourceID atIndex:0]; [g_fg.args setTexture:ui.gpuResourceID atIndex:1]; [g_fg.args setSamplerState:mfx_samp(1).gpuResourceID atIndex:0];
+    [g_fg.args setTexture:g_fg.wout.gpuResourceID atIndex:0]; [g_fg.args setTexture:ui.gpuResourceID atIndex:1]; [g_fg.args setTexture:g_mv.vel.gpuResourceID atIndex:2]; [g_fg.args setSamplerState:mfx_samp(1).gpuResourceID atIndex:0];
     [en setViewport:(MTLViewport){0, 0, g_fg.out[k].width, g_fg.out[k].height, 0, 1}]; [en setRenderPipelineState:g_fg.pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; enc_host_r_end(en);
     args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;
     g_fg.ready = !reset; g_fg.ready_frame = frame; if (!reset) g_fg.made++;

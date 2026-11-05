@@ -72,6 +72,7 @@ DM_EVENTS_OSLOG	host	host/dm_events.c host/tests/t_events.c	y
 DM_FD_LOG	host	host/hle_fdstat.c	-
 DM_FE_AUTO	host	host/dm_cursor.c	-
 DM_FG	host	host/dm_video.c	y
+DM_FG_SHARP	gfx	gfx/nvn/nvn_fg.inc	-
 DM_FIXED_TIME	host,tools	host/hle_time.c host/main.c tools/replay.py	y
 DM_FPS	gfx	gfx/nvn/nvn_mtl.m	y
 DM_FRAMES	gfx,host	gfx/tests/nvn_replay.m host/diag.c	y
