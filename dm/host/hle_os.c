@@ -67,6 +67,7 @@ static int detclock_cfg(void) {
 static _Atomic uint64_t g_glast;
 static uint64_t wall_guest_ns(void) {
     uint64_t v = atomic_load(&g_gfz) ? atomic_load(&g_gfrozen) : now_ns() - atomic_load(&g_glag);
+    if (detclock_cfg()) { static _Atomic uint64_t base; uint64_t b = atomic_load(&base); if (!b) { uint64_t want = now_ns() - 1000000000ull, none = 0; b = atomic_compare_exchange_strong(&base, &none, want) ? want : none; } v -= b; }   // a run on the fixed clock doesn't count from the Mac's boot: what it measures shouldn't depend on the Mac's uptime
     uint64_t last = atomic_load_explicit(&g_glast, memory_order_relaxed);
     while (v > last) if (atomic_compare_exchange_weak_explicit(&g_glast, &last, v, memory_order_relaxed, memory_order_relaxed)) return v;
     return last;
@@ -75,19 +76,21 @@ uint64_t guest_ns(void) { return atomic_load(&g_gdet_on) ? atomic_load(&g_gdet) 
 int dm_detclock_enabled(void) { return detclock_cfg() && atomic_load(&g_gdet_on); }
 // 进局对齐：前端 / 选角阶段出图帧数随真实时间变（装载在后台线程按墙钟推进），首帧起累计的客体时钟值因此每局不同——
 // 依赖绝对时刻的画面（如生命 / 法力球液面）在同拍仍不同（实测拍 E + 2 帧两遍差约 1.8 万像素，集中在两侧球位）。
-// 见到 UI 消息 FrontEndNavigation:ToGame（建局、服务端拍时限初始化之前）即把客体时钟设为固定值 2^52 ns（只许前跳），
+// 见到 UI 消息 FrontEndNavigation:ToGame（建局、服务端拍时限初始化之前）即把客体时钟设为固定值（DET_TOGAME_NS，只许前跳），
 // 此后纯按出图推进：拍 E 落在第几帧、那一刻的绝对时刻都只由步长决定。
 // Run entry alignment: the number of presented frames in the front end / character select phase varies with real time (loading advances on a background thread by wall clock), so the guest clock value accumulated since the first frame differs every run --
 // pictures that depend on absolute time (such as the liquid level of the life / mana orbs) still differ at the same tick (measured: at tick E + 2 frames two passes differ by about 18,000 pixels, concentrated at the two orb positions).
-// On seeing the UI message FrontEndNavigation:ToGame (before the run is created and the server tick deadline is initialized) the guest clock is set to the fixed value 2^52 ns (forward jumps only),
+// On seeing the UI message FrontEndNavigation:ToGame (before the run is created and the server tick deadline is initialized) the guest clock is set to a fixed value, DET_TOGAME_NS (forward jumps only),
 // from then on it advances purely by presents: which frame tick E lands on and the absolute time at that moment are determined by the step alone.
-#define DET_TOGAME_NS (1ull << 52)
+// DM_DETCLOCK_ALIGN_NS=<ns> sets the value, as an experiment or a control. The default was 2^52 until 2026-11-05: that is 52 days after the game's start, where its animation clock, 32-bit seconds, moves only in steps of half a second, so every pose held for half a second and then jumped
+static uint64_t det_togame_ns(void) { static uint64_t v; if (!v) { const char *e = getenv("DM_DETCLOCK_ALIGN_NS"); v = e && *e ? strtoull(e, 0, 0) : (1ull << 40); } return v; }
+#define DET_TOGAME_NS det_togame_ns()
 static void det_on_uimsg(const char *cat, const char *act, const char *arg) {
     (void)arg; if (strcmp(cat, "FrontEndNavigation") || strcmp(act, "ToGame")) return;
     uint64_t cur = atomic_load(&g_gdet);
-    if (cur >= DET_TOGAME_NS) { LOG("【红】DM_DETCLOCK：进局时客体时钟 %llu ≥ 对齐值 2^52，不回拨（对齐未生效）", (unsigned long long)cur); return; }
+    if (cur >= DET_TOGAME_NS) { LOG("【红】DM_DETCLOCK: the guest clock at ToGame, %llu, is already past the alignment value %llu; not moved back, so the alignment did not take effect", (unsigned long long)cur, (unsigned long long)DET_TOGAME_NS); return; }
     atomic_store(&g_gdet, DET_TOGAME_NS);
-    LOG("DM_DETCLOCK：进局（ToGame）客体时钟对齐到 2^52 ns（前跳 %.3f s）", (DET_TOGAME_NS - cur) / 1e9);
+    LOG("DM_DETCLOCK: guest clock aligned at ToGame to %llu ns (forward by %.3f s)", (unsigned long long)DET_TOGAME_NS, (DET_TOGAME_NS - cur) / 1e9);
 }
 void dm_guest_frame_tick(void) {
     crash_watch_frame();
@@ -96,7 +99,7 @@ void dm_guest_frame_tick(void) {
     if (!atomic_load(&g_gdet_on)) {
         atomic_store(&g_gdet, wall_guest_ns()); atomic_store(&g_gdet_on, 1);
         void uimsg_subscribe(void (*)(const char *, const char *, const char *)); uimsg_subscribe(det_on_uimsg);
-        LOG("DM_DETCLOCK：首次出图起客体时钟按出图推进，步长 %llu ns；进局时对齐到 2^52 ns", (unsigned long long)g_gdet_step); return;
+        LOG("DM_DETCLOCK: from the first present the guest clock advances per present, step %llu ns; aligned at ToGame to %llu ns", (unsigned long long)g_gdet_step, (unsigned long long)DET_TOGAME_NS); return;
     }
     if (!atomic_load(&g_gfz)) { atomic_fetch_add(&g_gdet, g_gdet_step); dm_guest_clock_advanced(); }
 }
