@@ -1,8 +1,8 @@
 // Picture settings: the rows of the Options Video tab (layout touch_layout.py _VIDEO), stored in sw_video.txt beside the custom settings (dm_custom_path).
-// The Mac page has two sections: Display (Display Mode, Resolution, Color) and Graphics (Graphic Presets, 3D Resolution, Upscaling, Anti-Aliasing,
+// The Mac page has two sections: Display (Display Mode, Resolution, Color) and Graphics (Graphic Presets, 3D Resolution,
 // Anisotropic Filtering, Environment Shadows, Shadow Quality, Environment Detail, Ray Tracing, Frame Drops). The phone page (DM_PHONE, overlay DM_OVERLAY_IOS) has the Graphics
 // section only: no Display Mode, Resolution (phones render at the screen's native size), Ray Tracing or Frame Drops, and its 3D Resolution is the res row.
-// MetalFX Temporal and Frame Generation have no rows: they are always on wherever the system offers them, the game drawing 30 frames and the screen showing 60 (decided 2026-11-06).
+// MetalFX Temporal and Frame Generation have no rows: they are always on wherever the system offers them, the game drawing 30 frames and the screen showing 60 (decided 2026-11-06). Temporal does the antialiasing, so that has no row either.
 // Keys, saved by name (new keys go at the end); value 0 is always the original look, which the CLI host and Mac test copies
 // (without DM_TEST_VIDEO_FIRSTBOOT=1) keep:
 //   mode   0 windowed / 1 full screen (Mac). Switched at once on Apply; the menu and ⌃⌘F write it back (dm_video_fullscreen_note)
@@ -12,7 +12,7 @@
 //   up     no row, the recommendation whatever the file says: 0 Standard / 1 MetalFX / 2 MetalFX Temporal: the present's enlargement on the Mac, and the game's 3D upscale pass (nvn_mtl.m mfx3d_draw).
 //          2 is the temporal scaler in that pass (nvn_mv.inc), which also takes over from Anti-Aliasing; the present's enlargement stays the spatial scaler
 //   fg     no row, the recommendation whatever the file says: 1 = Frame Generation (dm_video_fg_active), with up = 2
-//   aa     0 FXAA (the original) / 1 SMAA: the renderer's mode byte, written by hle_oe.c aa_tick (dm_video_aa_mode)
+//   aa     no row, the recommendation whatever the file says: 0 FXAA (the original) / 1 SMAA: the renderer's mode byte, written by hle_oe.c aa_tick (dm_video_aa_mode), which only reads it on a chip without Temporal
 //   aniso  0 the game's own / 4x / 8x / 16x: the sampler override, latched per submission by nvn_mtl.m aniso_latch
 //   color  0 Vivid (the present layer untagged) / 1 Accurate (tagged sRGB, front_video_color), at once
 //   s3d    Mac: the 3D Resolution with Native output, 0 = 100 / 85 / 75 / 67 / 50 %, read every tick by hle_oe.c s3_cfg (dm_video_scale3d)
@@ -32,7 +32,7 @@
 // them, the Graphic Presets row leaves them alone, and a move changes one only while it still equals its old recommendation.
 // Graphic Presets is derived: the preset the player last picked while the values still match it, else Recommended, Performance or Quality (tier_of),
 // whichever matches first, else Custom.
-// On the page a selector changes a pending value. Apply makes it take effect and saves: Display Mode and Color at once, Anti-Aliasing,
+// On the page a selector changes a pending value. Apply makes it take effect and saves: Display Mode and Color at once,
 // Anisotropic Filtering and 3D Resolution from the next frame, Resolution, Environment Shadows and Shadow Quality at the next launch ("Takes effect after
 // restarting the game" under the row). Discard drops the pending values; Default sets every key back to the recommendation, and Frame Drops
 // to its default. The "has changes" bit is shared with the custom settings (dm_custom.c lights Apply from dm_video_dirty too). Events
@@ -78,10 +78,12 @@ static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on pho
 // changes one only while it still equals its old recommendation. On phones Color sits in the Graphics section next to Graphic Presets, so it stays part
 // of Recommended there; phones have no Display Mode row (mode is always 0, its recommendation)
 static int pref_key(int k) { return k == K_MODE || (k == K_COLOR && !DM_PHONE); }
-#define NR 12
-static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "aa", "aniso", "envsh", "shq", "envd", "rt", "drops" };   // row order on the page (rows the page lacks are skipped)
-static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_AA, K_ANISO, K_ESH, K_SHQ, K_ED, K_RT, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
-static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "q3d" };
+// Nobody's choice: no row, and what the recommendation gives whatever the file says (load_once). So they never decide whether a player is on Recommended, and the presets leave them alone
+static int fixed_key(int k) { return k == K_UP || k == K_FG || k == K_AA; }
+#define NR 11
+static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "aniso", "envsh", "shq", "envd", "rt", "drops" };   // row order on the page (rows the page lacks are skipped)
+static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_ANISO, K_ESH, K_SHQ, K_ED, K_RT, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
+static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "q3d" };
 static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // options in the selector: the key's tiers; presets 4; custom settings keys 2 (options 0 / 1 = values 0 / 1: lower / keep)
 int dm_custom_shown_value(const char *key); void dm_custom_set_pending(const char *key, int v); int dm_custom_default(const char *key);
 static _Atomic int g_crows;   // the custom-key rows the page has (one bit per row): Default resets only those
@@ -173,7 +175,7 @@ static void load_once(void) {
             if (!front_video_firstboot(rec, cur)) memcpy(cur, rec, 3 * sizeof cur[0]);
             for (int i = 3; i < NV; i++) { int x = front_video_rec(k_keys[i]); rec[i] = cur[i] = x >= 0 && x < kn(i) ? x : 0; }
             if (bump) {   // still on the old recommendation (every graphics key read equals it): move to the new one; changed settings stay, only the recommendation changes
-                int on_rec = 1; for (int i = 0; i < NV; i++) if (!pref_key(i) && i != K_UP && i != K_FG && v[i] >= 0 && r[i] >= 0 && v[i] != r[i]) on_rec = 0;   // judged by the graphics keys a player can set
+                int on_rec = 1; for (int i = 0; i < NV; i++) if (!pref_key(i) && !fixed_key(i) && v[i] >= 0 && r[i] >= 0 && v[i] != r[i]) on_rec = 0;   // judged by the graphics keys a player can set
                 for (int i = 0; i < NV; i++) { int nr = rec[i] >= 0 && rec[i] < kn(i) ? rec[i] : 0, was = v[i] >= 0 && r[i] >= 0 && v[i] == r[i];
                     if (v[i] >= 0 && (pref_key(i) ? was : on_rec)) v[i] = nr; r[i] = nr; }   // a display preference moves only while it equals its old recommendation
                 if (rv_file < REC_V) LOG("picture settings: recommendation version %d → %d; %s", rv_file, REC_V, on_rec ? "moved to the new Recommended" : "changed settings kept");
@@ -184,9 +186,9 @@ static void load_once(void) {
                 if (v[i] < 0) v[i] = had_r ? r[i] : cur[i] >= 0 && cur[i] < kn(i) ? cur[i] : r[i]; }   // current value missing: back to the stored recommendation; only when both are missing, the first-boot current value (incl. older preferences)
             if (!first && s3d_missing && v[K_RES] != 3) v[K_S3D] = 0;   // 3D Resolution only goes with Native output: older settings not on Native get 100% (the old look)
         }
-        // Upscaling and Frame Generation are nobody's choice: whatever the file says (an older version's row, older preferences, a hand edit), what the recommendation gives. That's Temporal and Frame Generation
+        // Upscaling, Frame Generation and Anti-Aliasing are nobody's choice: whatever the file says (an older version's row, older preferences, a hand edit), what the recommendation gives. That's Temporal and Frame Generation
         // wherever the system offers them, and the original look on the CLI host and test copies. An older file's saved 30 fps (the power saver) is ignored the same way: dm_custom.c no longer knows that key
-        v[K_UP] = r[K_UP]; v[K_FG] = r[K_FG] == 1 && v[K_UP] == 2;
+        v[K_UP] = r[K_UP]; v[K_FG] = r[K_FG] == 1 && v[K_UP] == 2; v[K_AA] = r[K_AA];
         for (int i = 0; i < NV; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_rec[i], r[i]); }
         atomic_store(&g_loaded, 1);
         if (miss && !first) { char mk[128] = ""; for (int i = 0; i < 2 * NV; i++) if (miss >> i & 1) snprintf(mk + strlen(mk), sizeof mk - strlen(mk), "%s%s%s", mk[0] ? " " : "", i >= NV ? "rec_" : "", k_keys[i % NV]);
@@ -320,16 +322,14 @@ void dm_video_fullscreen_note(int on) {   // the player switched full screen fro
     atomic_store(&g_repaint, 1);
 }
 static int shown(int k) { int p = atomic_load(&g_pend[k]); return p >= 0 ? p : atomic_load(&g_val[k]); }
-// Each key's value in the Performance / Quality presets (t 0 = Performance, 1 = Quality); -1 = the preset leaves this key alone. Anti-Aliasing and
-// Anisotropic Filtering follow the same tiers on both platforms (the phone page has both rows too: touch_layout.py _VIDEO, iOS list): Performance =
-// FXAA and leaves anisotropy alone, Quality = SMAA and 16x. On phones the presets leave Environment Shadows and Shadow Quality alone until their phone
-// cost is measured, and the phone Recommended already gives SMAA and 16x (front_ios.m front_video_rec)
+// Each key's value in the Performance / Quality presets (t 0 = Performance, 1 = Quality); -1 = the preset leaves this key alone. Anisotropic
+// Filtering follows the same tiers on both platforms (the phone page has the row too: touch_layout.py _VIDEO, iOS list): Performance leaves it alone, Quality = 16x. On phones the presets leave Environment Shadows and Shadow Quality alone until their phone
+// cost is measured, and the phone Recommended already gives 16x (front_ios.m front_video_rec)
 static int tier_of(int k, int t) {
     switch (k) {
     case K_RT: return -1;   // a first version: the player's own choice, whatever the preset
     case K_RES: return t ? (DM_PHONE ? 2 : 3) : DM_PHONE ? 4 : 0;   // Quality: 100% 3D on phones, Native output on the Mac; Performance: 50% 3D on phones (stored 4), 1600 output on the Mac
-    case K_UP: case K_FG: return -1;   // nobody's choice: load_once
-    case K_AA: return t;   // Performance FXAA (SMAA was about 18% of the phone's GPU work before e070b94), Quality SMAA
+    case K_UP: case K_FG: case K_AA: return -1;   // nobody's choice: load_once
     case K_ANISO: return t ? 3 : -1;
     case K_S3D: return DM_PHONE ? -1 : 0;   // Mac: both Performance (1600 output) and Quality (Native) draw the 3D at 100%
     case K_ESH: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch look, Quality = environment shadows; phone presets leave it alone (cost not measured there yet)
@@ -390,7 +390,7 @@ static int car_ok(uint64_t w, int n) {
 static int car_get(uint64_t w) { return *(int32_t *)(w + 0x7ec); }
 static void car_set(uint64_t w, int i) { if (car_get(w) != i) ((void (*)(uint64_t, int))(main_base() + 0xab0c84))(w, i); }
 static void preset_enable(uint64_t w, int custom) { *(uint8_t *)(w + 0x7d8 + P_CUSTOM) = custom != 0; }   // Custom can only be chosen while the row shows it (no preset matches; the arrows skip it)
-static int present_rows(uint64_t sp, int idx[NR]) {   // the rows the page really has, in page order: twelve on the Mac; eight on phones (no Display Mode, Ray Tracing or Frame Drops, and 3D Resolution is the res row, with no separate s3d row)
+static int present_rows(uint64_t sp, int idx[NR]) {   // the rows the page really has, in page order: eleven on the Mac; seven on phones (no Display Mode, Ray Tracing or Frame Drops, and 3D Resolution is the res row, with no separate s3d row)
     int n = 0; for (int i = 0; i < NR && sp; i++) { uint64_t w = row_w(sp, i); if (w && *(uint8_t *)(w + 0x50)) idx[n++] = i; } return n;
 }
 int dm_video_rows(uint64_t sp) { int idx[NR]; return present_rows(sp, idx); }

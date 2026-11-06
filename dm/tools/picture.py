@@ -11,7 +11,7 @@ Each Video-tab key and the switch that pins it:
   3D Resolution (s3d)                             DM_3D_SCALE (0.5-1.0)
   Upscaling (up, no row: Temporal wherever offered)  DM_MFX (the present) and DM_MFX3D (the game's own 3D upscale pass); MetalFX acts only while it enlarges; DM_MFXT=1 for Temporal
   Frame Generation (fg, no row: on wherever offered) DM_FG: 0 / 1
-  Anti-Aliasing (aa)                              DM_AA_MODE: the renderer's mode byte, 1 = FXAA (the original), 2 = SMAA
+  Anti-Aliasing (aa, no row: Temporal does it)    DM_AA_MODE: the renderer's mode byte, 1 = FXAA (the original), 2 = SMAA
   Anisotropic Filtering (aniso)                   DM_NVN_ANISO: 0 / 4 / 8 / 16
   Color (color)                                   DM_COLORSPACE: srgb = Accurate (a tag on the layer; no capture sees it)
   Environment Shadows (envsh)                     DM_ENV_SHADOWS: 0 / 1

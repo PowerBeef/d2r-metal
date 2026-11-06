@@ -126,7 +126,7 @@ static void act_18c(result *x) { apply_preset(P_QUAL); x->x[0] = dm_video_dirty(
 static void act_18d(result *x) { apply_preset(P_QUAL); accept(); x->x[0] = preset_of(); }
 static void act_18e(result *x) { x->x[0] = preset_of(); apply_preset(P_REC); x->x[1] = atomic_load(&g_pend[K_MODE]); accept(); x->x[2] = g_full_calls; x->x[3] = preset_of(); }
 static void act_18f(result *x) {
-    g_tshown = 1; atomic_store(&g_crows, 1 << 11);   // the Video tab is on screen with its Frame Drops row
+    g_tshown = 1; atomic_store(&g_crows, 1 << 10);   // the Video tab is on screen with its Frame Drops row
     dm_video_on_uimsg("OptionsPanelMessage", "ResetToDefaults", "");
     x->x[0] = atomic_load(&g_pend[K_MODE]); x->x[1] = g_cset[0]; x->x[2] = g_cset[1]; x->x[3] = preset_of(); accept();
 }
@@ -183,10 +183,10 @@ int main(void) {
     CHECK(r.v[0] == 0 && r.v[1] == 2 && r.v[2] == 1 && r.v[3] == 1 && r.v[4] == 3 && r.v[5] == 0 && !strcmp(r.file, FULL(0, 1, 2, 1, 1, 1) NEWREC),
           "(7) older file: 0/2/1 stays, aa/aniso/color filled with 1/3/0, got %d/%d/%d %d/%d/%d\n%s", r.v[0], r.v[1], r.v[2], r.v[3], r.v[4], r.v[5], r.file);
     // (8) the later keys are read as stored; an out-of-range one goes back to its stored recommendation
-    r = run(FULL(0, 1, 2, 1, 1, 1) TAIL(0, 1, 2, 3, 1, 1) S3(0, 0) ES(1, 1) SQ(2, 2) RV);
-    CHECK(r.v[3] == 0 && r.v[4] == 2 && r.v[5] == 1 && r.fb == 0, "(8) aa/aniso/color read as 0/2/1, nothing asked, got %d/%d/%d (asked %d times)", r.v[3], r.v[4], r.v[5], r.fb);
-    r = run(FULL(0, 1, 2, 1, 1, 1) TAIL(0, 1, 9, 3, 1, 1) S3(0, 0) ES(1, 1) SQ(2, 2) RV);
-    CHECK(r.v[4] == 3 && !strcmp(r.file, FULL(0, 1, 2, 1, 1, 1) TAIL(0, 1, 3, 3, 1, 1) S3(0, 0) ES(1, 1) SQ(2, 2) RV), "(8) aniso=9 out of range: back to the recommendation 3, got %d\n%s", r.v[4], r.file);
+    r = run(FULL(0, 1, 2, 1, 1, 1) TAIL(1, 1, 2, 3, 1, 1) S3(0, 0) ES(1, 1) SQ(2, 2) RV);
+    CHECK(r.v[3] == 1 && r.v[4] == 2 && r.v[5] == 1 && r.fb == 0, "(8) aa/aniso/color read as 1/2/1, nothing asked, got %d/%d/%d (asked %d times)", r.v[3], r.v[4], r.v[5], r.fb);
+    r = run(FULL(0, 1, 2, 1, 1, 1) TAIL(1, 1, 9, 3, 1, 1) S3(0, 0) ES(1, 1) SQ(2, 2) RV);
+    CHECK(r.v[4] == 3 && !strcmp(r.file, FULL(0, 1, 2, 1, 1, 1) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(1, 1) SQ(2, 2) RV), "(8) aniso=9 out of range: back to the recommendation 3, got %d\n%s", r.v[4], r.file);
     // (9) old recommendation version (no rec_v), player on the old recommendation (every key equal to it, 0): moved to the new one (1/1/1, aa 1,
     // aniso 3, color 0); s3d missing and not on Native → 0
     r = run(FULL(0, 0, 0, 0, 0, 0) TAIL(0, 0, 0, 0, 0, 0));
@@ -200,7 +200,7 @@ int main(void) {
           "(10) display mode changed, graphics on the old Recommended: graphics moved to 1/1 1/3, mode kept 1; got %d/%d/%d %d/%d\n%s", r.v[0], r.v[1], r.v[2], r.v[3], r.v[4], r.file);
     // (10b) old version, a graphics key changed (res 2 ≠ 0): settings kept, only the recommendation updated
     r = run(FULL(1, 0, 2, 0, 0, 0) TAIL(0, 0, 0, 0, 0, 0));
-    CHECK(r.v[0] == 1 && r.v[1] == 2 && r.v[2] == 1 && r.v[3] == 0 && r.v[4] == 0 && !strcmp(r.file, FULL(1, 1, 2, 1, 1, 1) TAIL(0, 1, 0, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
+    CHECK(r.v[0] == 1 && r.v[1] == 2 && r.v[2] == 1 && r.v[3] == 1 && r.v[4] == 0 && !strcmp(r.file, FULL(1, 1, 2, 1, 1, 1) TAIL(1, 1, 0, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV),
           "(10b) a graphics key changed: settings kept, recommendation updated; got %d/%d/%d %d/%d\n%s", r.v[0], r.v[1], r.v[2], r.v[3], r.v[4], r.file);
     // (10c) old version, a windowed player (mode 0 ≠ recommended 1) on the old graphics recommendation: the graphics keys move, the window stays
     r = run(FULL(0, 1, 0, 0, 0, 0) TAIL(0, 0, 0, 0, 0, 0));
@@ -298,9 +298,9 @@ int main(void) {
     r = run(FULL(1, 1, 1, 1, 1, 1) NEWREC "rec_id=1111\n");
     CHECK(r.v[K_RES] == 3 && !strcmp(r.how, "rescreen") && !strcmp(r.file, FULL(1, 1, 3, 3, 1, 1) TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "rec_id=2222\n"),
           "(17c) moved: res 3 (%d), how=rescreen ('%s')\n%s", r.v[K_RES], r.how, r.file);
-    // (17d) the same with a graphics key changed (aa 0): settings kept, only the recommendation and the id updated
-    r = run(FULL(1, 1, 1, 1, 1, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "rec_id=1111\n");
-    CHECK(r.v[K_RES] == 1 && !strcmp(r.file, FULL(1, 1, 1, 3, 1, 1) TAIL(0, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "rec_id=2222\n"), "(17d) changed settings kept: res 1 (%d)\n%s", r.v[K_RES], r.file);
+    // (17d) the same with a graphics key changed (aniso 0): settings kept, only the recommendation and the id updated
+    r = run(FULL(1, 1, 1, 1, 1, 1) TAIL(1, 1, 0, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "rec_id=1111\n");
+    CHECK(r.v[K_RES] == 1 && !strcmp(r.file, FULL(1, 1, 1, 3, 1, 1) TAIL(1, 1, 0, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV "rec_id=2222\n"), "(17d) changed settings kept: res 1 (%d)\n%s", r.v[K_RES], r.file);
     // (17e) a newer file on another machine: no move, nothing written
     r = run(NEWER(1, 1, 1, 1, 1, 1) "rec_id=1111\n");
     CHECK(r.v[K_RES] == 1 && !strcmp(r.how, "newer") && !strcmp(r.file, NEWER(1, 1, 1, 1, 1, 1) "rec_id=1111\n"), "(17e) newer: res 1 (%d), how=newer ('%s'), file unchanged\n%s", r.v[K_RES], r.how, r.file);
@@ -314,8 +314,8 @@ int main(void) {
     // (18b) Performance: pending res 1600, FXAA, 3D 100%, no environment shadows, Standard; Upscaling, anisotropy and the display keys left alone;
     // shown as Performance and dirty; Discard → Recommended, clean
     r = run_do(NULL, act_18b);
-    CHECK(r.x[0] == 0 && r.x[1] == -1 && r.x[2] == 0 && r.x[3] == 0 && r.x[4] == 0 && r.x[5] == 0 && r.x[6] == -1 && r.x[7] == -1 && r.x[8] == -1,
-          "(18b) Performance pending: res 0 aa 0 s3d 0 envsh 0 shq 0, up / aniso / mode / color untouched; got %d %d %d %d %d %d, %d / %d / %d", r.x[0], r.x[1], r.x[2], r.x[3], r.x[4], r.x[5], r.x[6], r.x[7], r.x[8]);
+    CHECK(r.x[0] == 0 && r.x[1] == -1 && r.x[2] == -1 && r.x[3] == 0 && r.x[4] == 0 && r.x[5] == 0 && r.x[6] == -1 && r.x[7] == -1 && r.x[8] == -1,
+          "(18b) Performance pending: res 0 s3d 0 envsh 0 shq 0, up / aa / aniso / mode / color untouched; got %d %d %d %d %d %d, %d / %d / %d", r.x[0], r.x[1], r.x[2], r.x[3], r.x[4], r.x[5], r.x[6], r.x[7], r.x[8]);
     CHECK(r.x[9] == P_PERF && r.x[10] == 1 && r.x[11] == P_REC && r.x[12] == 0, "(18b) shown as Performance (%d), dirty (%d); after Discard Recommended (%d), clean (%d)", r.x[9], r.x[10], r.x[11], r.x[12]);
     // (18c) Quality on this M6 equals Recommended: nothing to apply, but the row keeps showing Quality (it used to snap back to Recommended); Discard → Recommended
     r = run_do(NULL, act_18c);
@@ -391,7 +391,7 @@ int main(void) {
     r = run(V8(1, 1, 1));
     CHECK(r.v[K_UP] == 2 && r.v[K_FG] == 1 && !strcmp(r.how, "update"), "(23b) a player on the old Recommended moves: up 2 fg 1, how=update; got %d %d '%s'\n%s", r.v[K_UP], r.v[K_FG], r.how, r.file);
     r = run(V8(1, 1, 0));
-    CHECK(r.v[K_UP] == 2 && r.v[K_FG] == 1 && r.v[K_AA] == 0 && strstr(r.file, "up=2\n") && strstr(r.file, "rec_fg=1\n"), "(23c) a player's own anti-aliasing stays, Temporal and Frame Generation come anyway; got up %d fg %d aa %d\n%s", r.v[K_UP], r.v[K_FG], r.v[K_AA], r.file);
+    CHECK(r.v[K_UP] == 2 && r.v[K_FG] == 1 && r.v[K_AA] == 1 && !strcmp(r.how, "update") && strstr(r.file, "up=2\n") && strstr(r.file, "rec_fg=1\n"), "(23c) FXAA chosen on the old row doesn't count as a change of one's own either; got up %d fg %d aa %d\n%s", r.v[K_UP], r.v[K_FG], r.v[K_AA], r.file);
     r = run(V8(2, 1, 1));
     CHECK(r.v[K_UP] == 2 && r.v[K_FG] == 1 && !strcmp(r.how, "update"), "(23d) real frames chosen on the old row don't count as a change of one's own: moved, got up %d fg %d '%s'", r.v[K_UP], r.v[K_FG], r.how);
     r = run(V12(1, 2, 0, 1));

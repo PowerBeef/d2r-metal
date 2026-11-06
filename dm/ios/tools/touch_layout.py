@@ -833,12 +833,12 @@ _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') els
 # Mac App (DM_OVERLAY_MAC): this page first gets two sections of picture settings, "Display" and "Graphics" (host dm_video.c), followed by the "Custom" section.
 # Modeled on the original console video page / PC graphics page: section headers (original heading style + gold divider), a label on the left of each row and the original left/right selector (CarouselWidget,
 # the same fields as the console "Graphics Mode", centered in the second column: x 1000 + (700 - 596) / 2) on the right. Labels and choices use original strings where they exist (Display / Display Mode / Windowed / Fullscreen / Resolution /
-# Graphics / Graphic Presets / Performance / Quality / Custom / Anti-Aliasing / FXAA / SMAA / Anisotropic Filtering / 4x 8x 16x, the last few from the game's PC options), so they come in every language the game has;
+# Graphics / Graphic Presets / Performance / Quality / Custom / Anisotropic Filtering / 4x 8x 16x, the last few from the game's PC options), so they come in every language the game has;
 # the ones the game lacks (Standard, Recommended, the resolution tiers, Color / Vivid / Accurate, anisotropy's "Original") are in the string table.
 # A selector sends TouchVideoMessage:<key>, a category nothing in the game handles: a selector replaces the message's third part with its own value, so the checkboxes' harmless PanelManager:ClosePanel:<name> became ClosePanel with no name, which crashed (lookup of a NULL child name at main+0xb1ee2c). The host reads each selector's current choice and handles apply / discard / default. The Resolution row keeps a line below it,
 # where the host puts "Takes effect after restarting the game" while a change is waiting for a restart (like the language row's hint). There is mouse hover, so each row has an original-style hover description
 # iOS (DM_OVERLAY_IOS, set by dm/ios/run.sh when it generates the overlay): only the "Graphics" section, which is the header row itself -- 3D Resolution (50%, 67%, 75%, 85%, 100%),
-# Color, Graphic Presets, Anti-Aliasing, Anisotropic Filtering, Environment Shadows, Shadow Quality, Environment Detail; no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
+# Color, Graphic Presets, Anisotropic Filtering, Environment Shadows, Shadow Quality, Environment Detail; no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
 # Mac 与 iOS 上这几行独占「视频」页签（页首标题 = 第一节的名字，在表格的标题行里）；自定义各行在第五个页签「附加」那一页（_EXTRAS_PANEL）
 # On the Mac and iOS these rows have the "Video" tab to themselves (the page title = the first section's name, in the table's title row); the custom rows are on the page of the fifth tab, "Extras" (_EXTRAS_PANEL)
 _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVideoModeTip'),
@@ -847,7 +847,6 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('hdr', '@Graphics'),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), 'dmVideoPresetTip'),
            ('s3d', '@dmVideo3DRes', ('dmVideoScale100', 'dmVideoScale85', 'dmVideoScale75', 'dmVideoScale67', 'dmVideoScale50'), 'dmVideo3DResTip'),
-           ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), 'OptionsMenuAntiAliasingTooltip'),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), 'OptionsMenuAnisotropicFilteringTooltip'),
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), 'dmVideoEnvShadowsTip'),
            ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), 'dmVideoShadowQTip'),
@@ -857,7 +856,6 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
           (('res', '@dmVideo3DRes', ('dmVideoScale50', 'dmVideoScale67', 'dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),   # selector order; dm_video.c car_of maps it to the stored values
            ('color', '@dmVideoColor', ('dmVideoColorVivid', 'dmVideoColorAccurate'), None),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), None),
-           ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), None),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), None),
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), None),
            ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), None),

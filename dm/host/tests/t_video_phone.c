@@ -10,7 +10,7 @@
 //   (6) a recommendation-version bump while on the old Recommended: moved to the new one
 //   (7) the same bump with a resolution the player chose: settings kept, only the recommendation updated
 //   (8) the phone's 3D scale comes from res and ignores s3d
-//   (20e)-(20g) the phone presets mirror the Mac for anti-aliasing and anisotropy: Performance = 50% FXAA, Quality = 100% SMAA 16x
+//   (20e)-(20g) the phone presets mirror the Mac for anisotropy: Performance = 50%, Quality = 100% 16x
 //   (20h) Colour still decides "on Recommended" on phones (the Mac leaves its display preferences out)
 #include <stdio.h>
 #include <stdlib.h>
@@ -120,10 +120,10 @@ int main(void) {
     r = child_run(NULL, presets);
     CHECK(r.x[0] == P_REC, "(5) first boot shows Recommended, got %d", r.x[0]);
     CHECK(r.x[1] == 4 && r.x[2] == 2 && r.x[3] == -1 && r.x[4] == -1, "(5) tiers: res 4 / 2 (50 / 100%%), Upscaling and Frame Generation left alone; got res %d / %d, up %d, fg %d", r.x[1], r.x[2], r.x[3], r.x[4]);
-    CHECK(r.x[5] == 3, "(5) beyond res the phone presets set only aa (both) and aniso (Quality), leaving mode, color, s3d, envsh and shq alone: %d tiers set, expected 3", r.x[5]);
+    CHECK(r.x[5] == 1, "(5) beyond res the phone presets set only aniso (Quality), leaving mode, color, s3d, envsh and shq alone: %d tiers set, expected 1", r.x[5]);
     CHECK(r.x[6] == -1, "(5) Performance leaves Frame Generation alone, got %d", r.x[6]);
-    CHECK(r.x[7] == 4 && r.x[8] == -1 && r.x[9] == 1 && r.x[10] == P_PERF && r.x[11] == 1,
-          "(5) Performance: pending res 4 and aa (FXAA) only, shown as Performance, dirty; got res %d up %d, %d others, preset %d, dirty %d", r.x[7], r.x[8], r.x[9], r.x[10], r.x[11]);
+    CHECK(r.x[7] == 4 && r.x[8] == -1 && r.x[9] == 0 && r.x[10] == P_PERF && r.x[11] == 0,
+          "(5) Performance: pending res 4 only, which Recommended already is, so shown as Performance and clean; got res %d up %d, %d others, preset %d, dirty %d", r.x[7], r.x[8], r.x[9], r.x[10], r.x[11]);
     CHECK(r.x[12] == 2 && r.x[13] == -1 && r.x[14] == P_QUAL, "(5) Quality: pending res 2, up untouched, shown as Quality; got res %d up %d, preset %d", r.x[12], r.x[13], r.x[14]);
     CHECK(r.x[15] == P_CUSTOM, "(5) res 85%% matches no preset: Custom, got %d", r.x[15]);
     CHECK(r.x[16] == P_REC && r.x[17] == 0, "(5) Recommended again: shown as Recommended, not dirty; got preset %d, dirty %d", r.x[16], r.x[17]);
@@ -137,9 +137,9 @@ int main(void) {
 
     // (7) the same with res=2 (100%) chosen by the player: settings kept, only the recommendation updated
     r = child_run(FULL(0, 0, 2, 0, 1, 1) TAIL(0, 0, 0, 0, 0, 0) "rec_v=2\n", NULL);
-    CHECK(r.v[K_RES] == 2 && r.v[K_AA] == 0 && r.v[K_ANISO] == 0 && r.v[K_COLOR] == 0 && r.cc == 0
-          && r.v[K_UP] == 2 && r.v[K_FG] == 1 && !strcmp(r.file, FULL(0, 0, 2, 4, 2, 2) TAIL(0, 1, 0, 3, 0, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV),
-          "(7) changed settings kept, Temporal and Frame Generation anyway: expect res 2, aa / aniso / color 0, no colour call; got res %d aa %d aniso %d color %d, %d colour calls\n%s",
+    CHECK(r.v[K_RES] == 2 && r.v[K_AA] == 1 && r.v[K_ANISO] == 0 && r.v[K_COLOR] == 0 && r.cc == 0
+          && r.v[K_UP] == 2 && r.v[K_FG] == 1 && !strcmp(r.file, FULL(0, 0, 2, 4, 2, 2) TAIL(1, 1, 0, 3, 0, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV),
+          "(7) changed settings kept, Temporal and Frame Generation anyway: expect res 2, aa 1 (nobody's choice), aniso / color 0, no colour call; got res %d aa %d aniso %d color %d, %d colour calls\n%s",
           r.v[K_RES], r.v[K_AA], r.v[K_ANISO], r.v[K_COLOR], r.cc, r.file);
 
     // (8) the phone ignores s3d: res 0 with s3d 4 stored is still 75%. s3d 4 is 50% on the Mac, so a phone build that honoured s3d would answer 0.5
@@ -147,22 +147,22 @@ int main(void) {
     r = child_run(FULL(0, 0, 0, 0, 1, 1) TAIL(1, 1, 3, 3, 1, 1) S3(4, 0) ES(0, 0) SQ(0, 0) RV, NULL);
     CHECK(r.v[K_S3D] == 4 && r.s3 == 0.75f, "(8) s3d=4 stored, res 0: 3D scale 0.75 (not the Mac's 0.5), got s3d %d scale %g", r.v[K_S3D], r.s3);
 
-    // (20e) Performance: res 4 (50%), FXAA; anisotropy and the shadow rows left alone. Quality: res 2 (100%), SMAA, 16x
+    // (20e) Performance: res 4 (50%); anisotropy and the shadow rows left alone. Quality: res 2 (100%), 16x
     r = child_run(NULL, phone_tiers);
-    CHECK(r.x[0] == 4 && r.x[1] == -1 && r.x[2] == 0 && r.x[3] == -1 && r.x[4] == -1 && r.x[5] == -1 && r.x[6] == -1 && r.x[7] == P_PERF && r.x[8] == 1,
-          "(20e) Performance pending: res 4 aa 0, up / aniso / s3d / envsh / shq untouched, shown as Performance, dirty; got %d %d %d, %d %d %d %d, preset %d, dirty %d",
+    CHECK(r.x[0] == 4 && r.x[1] == -1 && r.x[2] == -1 && r.x[3] == -1 && r.x[4] == -1 && r.x[5] == -1 && r.x[6] == -1 && r.x[7] == P_PERF && r.x[8] == 0,
+          "(20e) Performance pending: res 4, up / aa / aniso / s3d / envsh / shq untouched, shown as Performance, clean; got %d %d %d, %d %d %d %d, preset %d, dirty %d",
           r.x[0], r.x[1], r.x[2], r.x[3], r.x[4], r.x[5], r.x[6], r.x[7], r.x[8]);
-    CHECK(r.x[9] == 2 && r.x[10] == -1 && r.x[11] == 1 && r.x[12] == 3 && r.x[13] == P_QUAL, "(20e) Quality pending: res 2 aa 1 aniso 3, up untouched, shown as Quality; got %d %d %d %d, preset %d",
+    CHECK(r.x[9] == 2 && r.x[10] == -1 && r.x[11] == -1 && r.x[12] == 3 && r.x[13] == P_QUAL, "(20e) Quality pending: res 2 aniso 3, up / aa untouched, shown as Quality; got %d %d %d %d, preset %d",
           r.x[9], r.x[10], r.x[11], r.x[12], r.x[13]);
     // (20f) 75%, a player's own, is neither Recommended nor Performance now
     r = child_run(FULL(0, 0, 0, 4, 2, 2) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV, act_preset_of);
     CHECK(r.x[0] == P_CUSTOM, "(20f) 75%% with SMAA: Custom, got %d", r.x[0]);
-    // (20g) without MetalFX (Recommended = 50% Standard SMAA): Performance stays shown as Performance, it does not snap back to Recommended (aa differs)
+    // (20g) without MetalFX: Performance stays shown as Performance, the player's pick, though Recommended is the same 50%
     g_mfx = 0; g_fgok = 0; r = child_run(NULL, perf_only); g_mfx = 1; g_fgok = 1;
     CHECK(r.x[0] == P_REC && r.x[1] == P_PERF, "(20g) no MetalFX: Recommended at first boot (%d), Performance once picked (%d)", r.x[0], r.x[1]);
     // (20h) see vivid()
     r = child_run(FULL(0, 0, 4, 4, 2, 2) TAIL(1, 1, 3, 3, 0, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV, vivid);
-    CHECK(r.x[0] == P_CUSTOM && r.x[1] == 1 && r.x[2] == P_REC, "(20h) Vivid on the phone: Custom (%d); Recommended sets colour 1 (%d) and shows Recommended (%d)", r.x[0], r.x[1], r.x[2]);
+    CHECK(r.x[0] == P_PERF && r.x[1] == 1 && r.x[2] == P_REC, "(20h) Vivid on the phone: not Recommended, which leaves Performance, the 50%% it matches (%d); Recommended sets colour 1 (%d) and shows Recommended (%d)", r.x[0], r.x[1], r.x[2]);
 
     file_put(NULL); rmdir(g_dir);
     printf("t_video_phone: %d checks, %d failed\n", checks, fails);

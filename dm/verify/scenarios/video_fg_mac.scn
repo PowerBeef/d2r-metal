@@ -1,6 +1,6 @@
-# MetalFX Temporal and Frame Generation are always on, with no rows (dm_video.c load_once, nvn_mv.inc, nvn_fg.inc): the game starts with both on this Mac's Recommended. The Video tab has no row for them or for the
-# frame rate, so eleven DOWN presses go from Display Mode to Frame Drops, the last row (a video_row event naming another row means the rows changed). A 3D Resolution of 75% rebuilds the scaler and the interpolator live,
-# and 100% again. Performance leaves them alone (video_presets_mac.scn). Rows: mode, res, color, preset, s3d, aa, aniso, envsh, shq, envd, rt, drops
+# MetalFX Temporal and Frame Generation are always on, with no rows (dm_video.c load_once, nvn_mv.inc, nvn_fg.inc): the game starts with both on this Mac's Recommended. The Video tab has no row for them, for anti-aliasing or for the
+# frame rate, so ten DOWN presses go from Display Mode to Frame Drops, the last row (a video_row event naming another row means the rows changed), where LEFT goes from this Mac's Keep to Lower. A 3D Resolution of 75% rebuilds the scaler and the interpolator live,
+# and 100% again. Performance leaves them alone (video_presets_mac.scn). Rows: mode, res, color, preset, s3d, aniso, envsh, shq, envd, rt, drops
 name video_fg_mac
 requires mac-app
 save warlock
@@ -24,13 +24,11 @@ press DOWN
 press DOWN
 press DOWN
 press DOWN
-press DOWN
-press RIGHT
+press LEFT
 sleep 1
 screenshot video_rows.png
 msg OptionsPanelMessage:AcceptChanges
 sleep 3
-press UP
 press UP
 press UP
 press UP
@@ -52,7 +50,7 @@ msg OptionsPanelMessage:AcceptChanges
 sleep 5
 quit
 check event picture how=first up=2 fg=1
-check event video_row row=drops
+check event video_row row=drops value=0
 check event video_row row=s3d
 check event picture how=apply up=2 fg=1
 check event scale3d pct=75

@@ -38,6 +38,6 @@ quit
 check event picture how=first aa=1 aniso=3 color=1
 check event video_row row=preset value=1 preset=1
 check event video_row row=preset value=2 preset=2
-check event picture how=apply res=0 up=2 fg=1 aa=0 envsh=0 shq=0 envd=0
+check event picture how=apply res=0 up=2 fg=1 aa=1 envsh=0 shq=0 envd=0
 check no_red
 check no_red_log

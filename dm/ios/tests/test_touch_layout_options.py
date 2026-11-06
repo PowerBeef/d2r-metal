@@ -67,7 +67,7 @@ page_rows, page_states = {}, {}
 for flag in ('DM_OVERLAY_MAC', 'DM_OVERLAY_IOS'):
     os.environ[flag] = '1'; layout = importlib.reload(layout)
     video = page_nodes(layout._custom_page(FAKE, 'video')[0]); extras = page_nodes(layout._custom_page(FAKE, 'extras')[0])
-    assert not {'TouchVideo_upscale', 'TouchVideo_fps', 'TouchVideo_fg'} & set(video), flag   # Temporal and Frame Generation are always on, the game draws 30 and shows 60
+    assert not {'TouchVideo_upscale', 'TouchVideo_fps', 'TouchVideo_fg', 'TouchVideo_aa'} & set(video), flag   # Temporal and Frame Generation are always on, the game draws 30 and shows 60, and Temporal does the antialiasing
     if flag == 'DM_OVERLAY_MAC':
         w = video['TouchVideo_drops']
         assert w['type'] == 'CarouselWidget' and w['fields']['states'] == ['dmVideoDropsLower', 'dmVideoDropsKeep'], (flag, w)
