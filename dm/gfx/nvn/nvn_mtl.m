@@ -7205,6 +7205,13 @@ static void fg_shown(double t) {
     if (n && n % 600 == 0) { MLOG("frame generation: %llu frames shown, %llu late (%.2f%%), longest %.1f ms", (unsigned long long)n, (unsigned long long)late, 100.0 * late / n, longest * 1e3); DM_EV("fg_shown", "n:u late:u longest_ms:f", (unsigned long long)n, (unsigned long long)late, longest * 1e3); }
 }
 static __unsafe_unretained id<MTLTexture> g_present_gen;   // a generated frame instead of the swap texture (frame generation); the thread that presents
+// DM_LINK_TRACE's <file>.shown: for each present, whether it was a generated frame, the time the link asked for and the time it really reached the screen (0 = the system discarded it). Presented handlers run one at a time
+static void link_shown(uint64_t ticket, int gen, double target, double shown) {
+    static FILE *f; static int tried; if (!tried) { tried = 1; const char *e = getenv("DM_LINK_TRACE"); if (e && *e) { char p[1024]; snprintf(p, sizeof p, "%s.shown", e); f = fopen(p, "w"); } }
+    if (!f) return;
+    fprintf(f, "%llu\t%d\t%.6f\t%.6f\n", (unsigned long long)ticket, gen, target, shown);
+    if (ticket % 120 == 0) fflush(f);
+}
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
@@ -7326,10 +7333,11 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     // in the display-link path old frames get merged and dropped, and those tickets read -1. The game's present count runs ahead of the tickets
     // (presents dropped at the door get none), so hle_nvn.c maps each game present to its job and the job to its ticket (present_time_of).
     // A background test run projects the link's target timestamp when the system reports none (nvn_presproj.h, mtl_present_project)
-    uint64_t pn = ticket; int proj = atomic_load(&g_present_project);
+    uint64_t pn = ticket; int proj = atomic_load(&g_present_project), shown_gen = g_present_gen != nil;
     [dr addPresentedHandler:^(id<MTLDrawable> d) {   // the actual presentation time (when this frame really replaced the previous one on screen; CACurrentMediaTime base); projected in background runs
         g_pres[pn % PRING] = (pres_ent){pn, nvn_presented_or_projected(d.presentedTime, proj, target_ts)};
         if (atomic_load(&g_fg_fifo)) fg_shown(d.presentedTime);
+        link_shown(pn, shown_gen, target_ts, d.presentedTime);
     }];
     // 每张至少显示一个出图周期：GPU 完成时刻在 120 Hz 刷新边界附近抖动时，不再出现「25 ms + 8.33 ms」成对的顿挫
     // Each frame is displayed for at least one present period: when the GPU completion time jitters around a 120 Hz refresh boundary, the paired "25 ms + 8.33 ms" stutter no longer appears
