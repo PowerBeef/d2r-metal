@@ -1,14 +1,15 @@
 # Native at a width that is not a multiple of 16 (REC-10), through the Mac App's own pipeline: the test copy stands in for a 13-inch MacBook Air M2
 # (8-core GPU) at its default display setting ("looks like" 1470 x 956: a 2940x1912 backing store with a 74-pixel notch strip; DM_TEST_SCREEN_PX,
-# DM_TEST_GPU_NAME / DM_TEST_GPU_CORES) at its Recommended (DM_TEST_VIDEO_FIRSTBOOT=1): Native 2940 (no longer 2928), 3D 67% with the MetalFX 3D
-# pass, the light picture, SMAA, true full screen at 16:10 below the notch (2940x1838 in a run, 2940x1652 in the front end). It departs from this
-# Mac's own Recommended because this M6's never produces that combination. The present minifies the picture into this screen's drawable, which is
-# not what the Air does; the near-match 1:1 present is t_present_crop's and dm_geom's.
+# DM_TEST_GPU_NAME / DM_TEST_GPU_CORES) at the Recommended of a chip with no Frame Generation (DM_TEST_VIDEO_FIRSTBOOT=1, DM_TEST_NO_FG=1): Native 2940
+# (no longer 2928), 3D 67% with the MetalFX 3D pass, the light picture, SMAA, true full screen at 16:10 below the notch (2940x1838 in a run, 2940x1652
+# in the front end). A real M2 is offered Frame Generation and gets a fixed width instead (picture/mac_firstboot_m1_fg.scn), so only this ladder still
+# reaches Native on that screen. It departs from this Mac's own Recommended because this M6's never produces that combination. The present minifies
+# the picture into this screen's drawable, which is not what the Air does; the near-match 1:1 present is t_present_crop's and dm_geom's.
 name native_2940_mac
 requires mac-app
 save warlock
 timeout 300
-env DM_TEST_SCREEN_PX=2940x1912+74 DM_TEST_VIDEO_FIRSTBOOT=1 "DM_TEST_GPU_NAME=Apple M2" DM_TEST_GPU_CORES=8
+env DM_TEST_SCREEN_PX=2940x1912+74 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_NO_FG=1 "DM_TEST_GPU_NAME=Apple M2" DM_TEST_GPU_CORES=8
 
 expect main_menu timeout=150
 enter_game
