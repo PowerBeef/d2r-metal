@@ -160,7 +160,14 @@ static uint64_t rtu_place(void) { float f[3]; int32_t q[3]; for (int i = 0; i < 
 static void rtu_put(uint64_t k, uint64_t frame) { if (!k) return; for (int i = 0; i < 32; i++) { typeof(&g_rtu[0]) e = &g_rtu[(k + i) % RTU_SLOTS]; if (e->frame != frame || e->key == k) { e->key = k; e->frame = frame; return; } } }
 static int rtu_get(uint64_t k, uint64_t frame) { if (!k) return 0; for (int i = 0; i < 32; i++) { typeof(&g_rtu[0]) e = &g_rtu[(k + i) % RTU_SLOTS]; if (e->frame != frame) return 0; if (e->key == k) return 1; } return 0; }
 static int rtu_has(const p_draw_idx *di, uint64_t frame) { return rtu_get(rtu_mesh(di), frame) || rtu_get(rtu_place(), frame); }
-static void mv_note_draw(NvProg *pr, const p_draw_idx *di) {
+static void mv_record_draw(NvProg *pr, const p_draw_idx *di);
+int rtx_chars_traced(void);
+// Replay thread, every draw. Answers 1 for a draw to skip: an opaque draw into the character shadow's layer, whose shape the rays draw instead (nvn_rt.inc)
+static int mv_note_draw(NvProg *pr, const p_draw_idx *di) {
+    if (di && di->count && di->itype != 0 && R.rt.n == 0 && R.rt.depth && R.rt.has_dview && R.rt.dview.set_layers && R.rt.dview.min_layer == 1 && R.rt.depth->d.depth == 2 && rtx_want() && rtx_chars_traced() && pr->sh[1] && pr->sh[1]->key && !strncmp(pr->sh[1]->key, "949495670492f2e4", 16)) { uint64_t f = atomic_load(&g_cur_frame); rtu_put(rtu_mesh(di), f); rtu_put(rtu_place(), f); return 1; }
+    mv_record_draw(pr, di); return 0;
+}
+static void mv_record_draw(NvProg *pr, const p_draw_idx *di) {
     if (di && di->count && di->itype != 0 && R.rt.n == 0 && R.rt.depth && R.rt.has_dview && R.rt.dview.set_layers && R.rt.dview.min_layer == 1 && R.rt.depth->d.depth == 2 && rtx_want()) { uint64_t f = atomic_load(&g_cur_frame); rtu_put(rtu_mesh(di), f); rtu_put(rtu_place(), f); }
     NvShader *vs = pr->sh[0];
     if (!g_mv_want || !di || !vs || !vs->vel_fn || R.rt.n != 0 || !R.rt.depth || !S.ds.dw || g_pass.dfmt != MTLPixelFormatDepth32Float_Stencil8 || !di->count || di->itype == 0) return;

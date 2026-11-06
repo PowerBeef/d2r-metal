@@ -4,7 +4,7 @@ name video_rt_mac
 requires mac-app
 save warlock
 env DM_TEST_VIDEO_FIRSTBOOT=1
-timeout 240
+timeout 280
 
 enter_game
 sleep 5
@@ -37,12 +37,30 @@ press RIGHT
 sleep 1
 msg OptionsPanelMessage:AcceptChanges
 sleep 4
+# A different 3D Resolution with the rays running: the planes follow the depth target's size, and one more step back to the first
+press UP
+press UP
+press UP
+press UP
+press UP
+press UP
+press UP
+press LEFT
+sleep 1
+msg OptionsPanelMessage:AcceptChanges
+sleep 4
+screenshot video_rt_s3d.png
+press RIGHT
+sleep 1
+msg OptionsPanelMessage:AcceptChanges
+sleep 4
 quit
 check event picture how=first rt=0
 check event video_row row=rt value=1
 check event video_row row=rt value=0
 check event picture how=apply rt=1
 check event picture how=apply rt=0
+check event video_row row=s3d
 check log_has "ray tracing: wanted" min=2
 check log_has "ray tracing: no longer wanted" min=1
 check log_has "ray tracing: on, ray start" min=2

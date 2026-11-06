@@ -44,7 +44,7 @@ int main(void) { @autoreleasepool {
     {   NSDictionary *j = load("5c1ca4e7c3e4657c_b");
         if (j) { int f1 = fail;
             check("B 片元：转换成功", 0, nvn_refl_from_json(j, &r, err, sizeof err));
-            check("B 片元：B 标记", 1, r.route_b); check("B 片元：参数缓冲槽", 0, r.abi); check("B 片元：绑定数", 44, r.nb); check("B 片元：顶点输入数", 0, r.nv);
+            check("B 片元：B 标记", 1, r.route_b); check("B 片元：参数缓冲槽", 0, r.abi); check("B 片元：绑定数", 45, r.nb);   /* 44 of the shader's own, plus the image lighting cube that dmsh_rules.py rt_env_hook adds */ check("B 片元：顶点输入数", 0, r.nv);
             check("B 片元：有 c1", 1, r.has_c1); check("B 片元：c1 长 256（控制段字段）", 256, r.c1_len);
             uint32_t c1w; memcpy(&c1w, r.c1, 4); check("B 片元：c1 首字 = −√1.5（0xbf9cc471）", 0xbf9cc471u, c1w);
             NSString *t28 = j[@"bindings"][28][@"msl_type"], *t34 = j[@"bindings"][34][@"msl_type"];
@@ -64,7 +64,7 @@ int main(void) { @autoreleasepool {
                 if (w[k].dtt >= 0) { snprintf(m, sizeof m, "B 绑定[%d] 哑贴图类型", w[k].i); check(m, w[k].dtt, g->dtt);
                                      snprintf(m, sizeof m, "B 绑定[%d] 哑贴图像素类", w[k].i); check(m, w[k].dpf, g->dpf); }
             }
-            printf("%-60s %s\n", "B 片元 ps_models_p#0：44 个绑定（含 support / c1 / 驱动段 / 存储缓冲指针）", fail == f1 ? "✓" : "✗");
+            printf("%-60s %s\n", "B 片元 ps_models_p#0：45 个绑定（含 support / c1 / 驱动段 / 存储缓冲指针）", fail == f1 ? "✓" : "✗");
         } }
     {   NSDictionary *j = load("54f730a6c0efc118_b");
         if (j) { int f1 = fail;

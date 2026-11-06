@@ -145,7 +145,9 @@ class HdrSwitchSplit(unittest.TestCase):
     def test_rule_table(self):
         self.assertEqual(len(dmsh_rules.HDR_SWITCH_KEYS), 7)
         self.assertTrue(all(re.fullmatch(r'[0-9a-f]{16}', k) for k in dmsh_rules.HDR_SWITCH_KEYS))
-        (f, applies), (g, applies2), (h, _), (i, applies3), (j, applies4) = dmsh_rules.RULES
+        (f, applies), (g, applies2), (h, _), (i, applies3), (j, applies4), (k, _), (m, _) = dmsh_rules.RULES
+        self.assertIs(m, dmsh_rules.rt_env_hook)
+        self.assertIs(k, dmsh_rules.rt_local_hook)
         self.assertIs(h, dmsh_rules.capture_entry)
         self.assertIs(i, dmsh_rules.rt_shadow_hook)
         self.assertIs(j, dmsh_rules.rt_ao_hook)
@@ -176,6 +178,49 @@ class HdrSwitchSplit(unittest.TestCase):
         plain = src.replace(read, '1.0')
         self.assertEqual(dmsh_rules.rt_shadow_hook(plain), plain)
         self.assertEqual(dmsh_rules.rt_ao_hook(plain), plain)
+
+    def test_rt_env_hook(self):
+        c = '(*spvDescriptorSet0.fp_c1)._m0[1].'
+        src = ('struct main0_out\n{\n    float4 m_5 [[color(0)]];\n};\n\nstruct spvDescriptorSetBuffer0\n{\n    constant _10* support_buffer [[id(0)]];\n    texture2d<float> t [[id(7)]];\n};\n\nfragment main0_out main0()\n{\n    dm_rt_key(\n    float _2 = 0.5;\n    float _30 = 0.0;\n    float _31 = 0.0;\n    float _32 = 1.0;\n'
+               f'    float _1 = fast::max(_2, {c}y);\n    float _20 = fma(_30, {c}z, _40);\n    float _21 = fma(_31, {c}z, _41);\n    float _22 = fma(_32, {c}z, _42);\n'
+               '    float _50 = _60 + (-0.039999999105930328369140625);\n    float _51 = _61 + (-0.039999999105930328369140625);\n    float _52 = _62 + (-0.039999999105930328369140625);\n'
+               f'    float _70 = fma(_9, _50, {c}y);\n    float _71 = fma(_9, _51, {c}y);\n    float _72 = fma(_9, _52, {c}y);\n    return out;\n}}\n')
+        out = dmsh_rules.rt_env_hook(src)
+        self.assertIn('out.m_5.xyz = dm_rt_env(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, dm_rt_wet(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), _2, _9), float3(_70, _71, _72), float3(_30, _31, _32), out.m_5.xyz, out.m_5.w, spvDescriptorSet0.fp_t_cb196610_1056809E);', out)
+        self.assertIn('float _1 = fast::max(dm_rt_wet(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), _2, _9), ', out)
+        self.assertIn('texturecube<float> fp_t_cb196610_1056809E [[id(8)]];', out)
+        self.assertLess(out.index('static inline float3 dm_rt_env('), out.index('fragment main0_out main0('))
+        plain = re.sub(r'    float _7\d = fma\(_9.*\n', '', src)   # no metalness: a plain dielectric
+        self.assertIn('_2, 0.0), float3(0.04), float3(_30, _31, _32)', dmsh_rules.rt_env_hook(plain))
+        early = src.replace('    dm_rt_key(\n', '    dm_rt_key(\n    if (x) return out;\n')   # a return before the terms exist stays as it is
+        out2 = dmsh_rules.rt_env_hook(early)
+        self.assertEqual(out2.count('dm_rt_env(reinterpret_cast'), 1)
+        two = src.replace('    return out;\n}', '    if (y)\n    {\n        return out;\n    }\n    return out;\n}')   # a model's two lighting paths both take it
+        self.assertEqual(dmsh_rules.rt_env_hook(two).count('dm_rt_env(reinterpret_cast'), 2)
+        self.assertIn('if (x) return out;', out2)
+        no = src.replace(f'fast::max(_2, {c}y)', '1.0')
+        self.assertEqual(dmsh_rules.rt_env_hook(no), no)   # no roughness term: left alone
+        self.assertEqual(dmsh_rules.rt_env_hook('x'), 'x')
+
+    def test_rt_local_hook(self):
+        # the three loops as every forward shader has them: the running offset, the light's position, then how its contribution or its shadow ends
+        walk = lambda n: f'int _{n}1 = _{n}0 << 2;\n    int _{n}2 = _{n}1 >> 2;\n    int _{n}3 = _9 << 8;\n'
+        pos = lambda n: f'float3 _{n}4 = spvDescriptorSet0.fp_t_tcb_6A.read(uint(as_type<int>(_{n}5))).xyz;\n'
+        cmp = lambda t, n: f'float _7{n} = spvDepthCast(spvDescriptorSet0.fp_t_cb196610_{t}).sample_compare(s, c, 0);\n    _8{n} = _7{n};\n    else\n    {{\n        _8{n} = 1.0;\n'
+        src = ('fragment main0_out main0()\n{\n    float _5 = as_type<float>((*spvDescriptorSet0.fp_s0)._m0[int(_6)]);\n    dm_rt_key(\n'
+               '    float _21 = _31;\n    float _22 = _32;\n    float _23 = _33;\n' + walk(10) + pos(10) +
+               '    float _41 = fma(_51, _61, _21);\n    float _42 = fma(_51, _62, _22);\n    float _43 = fma(_51, _63, _23);\n' + walk(11) + pos(11) + cmp('105980AA', 1) + walk(12) + pos(12) + cmp('105A009C', 2) + '}\n')
+        src = 'x\n' + src
+        out = dmsh_rules.rt_local_hook(src)
+        self.assertIn('static inline float dm_rt_local(', out)
+        for i, off in enumerate(('_100', '_110', '_120')):
+            self.assertIn(f'float dm_lv{i} = dm_rt_local(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {off} - (as_type<int>(_5) & 63));', out)
+        for acc in ('_21', '_22', '_23'):
+            self.assertRegex(out, r'fma\(_51 \* dm_lv0, _6\d, ' + acc + r'\);')
+        self.assertIn('_81 = _71 * dm_lv1;', out); self.assertIn('_81 = dm_lv1;', out)
+        self.assertIn('_82 = _72 * dm_lv2;', out); self.assertIn('_82 = dm_lv2;', out)
+        self.assertEqual(dmsh_rules.rt_local_hook('no shadow read'), 'no shadow read')
+        with self.assertRaises(ValueError): dmsh_rules.rt_local_hook('dm_rt_key( but no light loops')
 
     def test_rules_self_contained(self):
         # The shader cache fingerprints only each applying rule's own text (dmsh_build.shader_rule_source), and the chain version leaves dmsh_rules.py
