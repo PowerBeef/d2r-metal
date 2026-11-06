@@ -429,7 +429,7 @@ DM_TEST_MON_KILL	host	host/diag.c	-
 DM_TEST_NOTE_PANEL_Y	host	host/dm_cursor.c	-
 DM_TEST_NO_BC	gfx,ios	gfx/nvn/nvn_mtl.m ios/Sources/main.m	y
 DM_TEST_NO_DL_BASE	ios	ios/Sources/asset_dl.m ios/Sources/main.m	-
-DM_TEST_NO_FG	gfx	gfx/nvn/nvn_fg.inc	-
+DM_TEST_NO_FG	gfx	gfx/nvn/nvn_fg.inc	y
 DM_TEST_NO_METAL3	ios	ios/Sources/main.m	-
 DM_TEST_NSMOUSE	host	host/front_mac.m	y
 DM_TEST_OBJREC	host	host/dm_world.c	-
