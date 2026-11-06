@@ -1,15 +1,13 @@
 // 「自定义」设置：我们自己加的功能的启停开关。接口见 dm_custom.h。
-// 存储：存档提交目录旁的 sw_custom.txt（iOS 上在 Documents 里，升级包不丢），一行一个「键=0/1」；没有这个文件 / 没写的键 = 各键缺省（省电模式关，其余开）；不认识的行（旧版的 drop_filter、ver）读时跳过。
 // 掉落筛选照红叶 mod 一件都不藏，整块拆掉，drop_filter 键与它的 ver=2 迁移一起删了
 // 不写进游戏自己的设置存档：不依赖它的格式与写盘时机，应用 / 放弃 / 默认由我们自己按原版选项页的语义做。
 // 界面：选项面板「自定义」页（借原版视频页 VideoOptionsPanel），每行一个原版勾选框，控件名 TouchCustom_<键>（布局 touch_layout.py 的 _custom_page）。勾选只记成待定值，
-// 「应用」（OptionsPanelMessage:AcceptChanges）才生效并存盘，「放弃」（CancelChanges）丢掉待定值，「默认」（ResetToDefaults）待定值回各键缺省（省电模式关、其余开；还要点应用）
 // 「自定义」(Custom) settings: on/off switches for the features we added ourselves. For the interface see dm_custom.h.
-// Storage: sw_custom.txt next to the save commit directory (on iOS it is in Documents and survives app upgrades), one 'key=0/1' per line; without this file / for keys not written = each key's default (power-saving mode off, the rest on); unrecognized lines (drop_filter and ver from old versions) are skipped when reading.
+// Storage: sw_custom.txt next to the save commit directory (on iOS it is in Documents and survives app upgrades), one 'key=0/1' per line; without this file / for keys not written = each key's default (on); unrecognized lines (drop_filter, ver and eco_fps from old versions) are skipped when reading.
 // Drop filtering follows the Hongye community mod and hides nothing, so the whole block was removed, and the drop_filter key was deleted together with its ver=2 migration
 // Not written into the game's own settings save: no dependence on its format or on when it writes to disk; apply / discard / default are done by ourselves following the semantics of the original game's options page.
 // UI: the 「自定义」(Custom) page of the options panel (borrowing the original game's video page VideoOptionsPanel), one original-game checkbox per row, widget name TouchCustom_<key> (_custom_page in the layout touch_layout.py). Checking only records a pending value;
-// only 「应用」(Apply) (OptionsPanelMessage:AcceptChanges) makes it take effect and saves to disk, 「放弃」(Discard) (CancelChanges) throws away the pending values, and 「默认」(Default) (ResetToDefaults) sets the pending values back to each key's default (power-saving mode off, the rest on; Apply still has to be tapped)
+// only 「应用」(Apply) (OptionsPanelMessage:AcceptChanges) makes it take effect and saves to disk, 「放弃」(Discard) (CancelChanges) throws away the pending values, and 「默认」(Default) (ResetToDefaults) sets the pending values back to each key's default (on; Apply still has to be tapped)
 #include "dm_custom.h"
 #include "dm_widget.h"
 #include "dm_cursor.h"
@@ -33,16 +31,16 @@ static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "drop_light", "item_notes", "icloud", "pot_pick", "drop_haptic", "eco_fps", "q3d", "touch_swap_above" };   // order = the Custom page's rows from top to bottom (touch_layout.py _CUSTOM_ROWS): the controller moves through the rows in this order
+    "drop_light", "item_notes", "icloud", "pot_pick", "drop_haptic", "q3d", "touch_swap_above" };   // order = the Custom page's rows from top to bottom (touch_layout.py _CUSTOM_ROWS): the controller moves through the rows in this order
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 0, !DM_PHONE, 0 };   // defaults: power saver (30 fps) off; Frame Drops (q3d) 0 = lower on phones, 1 = keep on the CLI host and Mac test copies (the Mac App takes the recommendation's, front_q3d_default); the group swap sits left of the portal; everything else on (voice's default is unused: it follows the current language on load, and Default leaves it alone)
+    1, 1, 1, 1, 1, !DM_PHONE, 0 };   // defaults: Frame Drops (q3d) 0 = lower on phones, 1 = keep on the CLI host and Mac test copies (the Mac App takes the recommendation's, front_q3d_default); the group swap sits left of the portal; everything else on (voice's default is unused: it follows the current language on load, and Default leaves it alone)
 // q3d (Frame Drops): 0 = lower the 3D resolution for a while when frames drop, 1 = keep it; applied through hle_oe.c dm_3d_quality_mode_set on load and on
-// Apply, so the controller follows it from the next frame; saved only while it differs from its default (CUSTOM_V 2). On the Video tab it is the Frame
-// Drops selector (dm_video.c row drops); the default overlay's single Custom page shows it as a stacked two-option radio (like the language row):
+// Apply, so the controller follows it from the next frame; saved only while it differs from its default (CUSTOM_V 2). On the Mac's Video tab it is the Frame
+// Drops selector (dm_video.c row drops), phones have none and never lower it (hle_oe.c dm_3d_scale_feed); the default overlay's single Custom page shows it as a stacked two-option radio (like the language row):
 // TouchCustom_q3d is the "keep" cell (checked = 1), TouchCustom_q3d_smooth its inverse
 // sw_custom.txt format version (the custom_v line): 2 = q3d is written only while it differs from its default, so it follows the device's default (the
 // Mac App's recommendation) until the player picks the other value. A version-1 file's q3d that equals the old default (k_def) follows today's default
@@ -51,8 +49,8 @@ static const int k_def[NK] = { 0,
 // The custom_v saved: CUSTOM_V, or a newer file's own, so an older build never stamps its format onto a newer file (as sw_video.txt keeps a newer rec_v)
 static _Atomic int g_cv_keep = CUSTOM_V;
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
-#define K_Q3D (7 + VOICE_ROW)
-#define K_TOUCH_SWAP (8 + VOICE_ROW)
+#define K_Q3D (6 + VOICE_ROW)
+#define K_TOUCH_SWAP (7 + VOICE_ROW)
 // The front end may set Frame Drops' default for its device (front_mac.m: the recommendation's choice from dm_picrec.c); -1 = keep k_def
 __attribute__((weak)) int front_q3d_default(void) { return -1; }
 static int def_of(int i) { if (i == K_Q3D) { int x = front_q3d_default(); if (x == 0 || x == 1) return x; } return k_def[i]; }
@@ -123,7 +121,7 @@ static void load_once(void) {
     atomic_store(&g_voice_explicit, voice);
     for (int i = 0; i < NK; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_pend[i], -1); }
     dm_3d_quality_mode_set(v[K_Q3D]); LOG("自定义设置：3D 画质读盘为%s（q3d=%d，已交给 3D 比例控制）", v[K_Q3D] ? "画质优先" : "流畅优先", v[K_Q3D]);
-    if (!atomic_exchange(&g_loaded, 1)) LOG("自定义设置：读盘 %s%s lang=%d%s%s drop_light=%d item_notes=%d icloud=%d pot_pick=%d drop_haptic=%d eco_fps=%d", p, f ? "" : "（没有文件，全按缺省）", v[0], lang < 0 ? "（没写，按当前语言）" : "", vlog, v[1 + VOICE_ROW], v[2 + VOICE_ROW], v[3 + VOICE_ROW], v[4 + VOICE_ROW], v[5 + VOICE_ROW], v[6 + VOICE_ROW]);
+    if (!atomic_exchange(&g_loaded, 1)) LOG("自定义设置：读盘 %s%s lang=%d%s%s drop_light=%d item_notes=%d icloud=%d pot_pick=%d drop_haptic=%d", p, f ? "" : "（没有文件，全按缺省）", v[0], lang < 0 ? "（没写，按当前语言）" : "", vlog, v[1 + VOICE_ROW], v[2 + VOICE_ROW], v[3 + VOICE_ROW], v[4 + VOICE_ROW], v[5 + VOICE_ROW]);
 }
 int dm_custom_get(const char *key) {
     load_once(); int i = key_index(key); if (i < 0) return 1;
@@ -131,14 +129,11 @@ int dm_custom_get(const char *key) {
 }
 int dm_custom_lang_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_lang_explicit) : -1; }
 int dm_custom_voice_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_voice_explicit) : -1; }
-// 「视频」页签上的两个切换框（dm_video.c 的帧率 / 掉帧时两行）读写这里的键 eco_fps / q3d：显示值 = 待定值，没改就是生效值；改了只记待定值，
-// 「应用 / 放弃」照自定义各行处理、存在 sw_custom.txt（存档里原来的值照用）。-1 = 撤掉待定值
-// The two selectors on the Video tab (the Frame Rate / Frame Drops rows of dm_video.c) read and write the keys eco_fps / q3d here: the value shown = the pending value, else the one in effect; a change only sets
+// The selector on the Mac's Video tab (the Frame Drops row of dm_video.c) reads and writes the key q3d here: the value shown = the pending value, else the one in effect; a change only sets
 // the pending value, and Apply / Discard handle it as for the custom rows, saved in sw_custom.txt (values already saved carry over). -1 = drop the pending value
 int dm_custom_shown_value(const char *key) { load_once(); int i = key_index(key); if (i < 0) return 0; int p = atomic_load(&g_pend[i]); return p >= 0 ? p : atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : def_of(i); }
 void dm_custom_set_pending(const char *key, int v) { int i = key_index(key); if (i > 0) atomic_store(&g_pend[i], v < 0 ? -1 : v); }
 int dm_custom_default(const char *key) { int i = key_index(key); return i >= 0 ? def_of(i) : 0; }
-int dm_fps_setting(void) { return dm_custom_get("eco_fps") ? 30 : 60; }   // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义） | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol)
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL && fprintf(f, "custom_v=%d\n", atomic_load(&g_cv_keep)) > 0;

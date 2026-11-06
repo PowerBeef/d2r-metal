@@ -5,7 +5,7 @@
 # Graphic Presets (a video_row event naming another row means the row order changed). RIGHT steps the options; Custom is skipped while disabled.
 # A test copy already runs the controller layouts (no padmode event follows inputmode). msg sends the same OptionsPanelMessage the page's buttons send.
 # The screenshot is a second, visual check: the row must read Quality. The first-boot check takes only keys every Mac's Recommended shares and no older
-# preference seeds (SMAA, 16x, Accurate; the original look a test copy keeps has 0 there): Resolution, Upscaling and the shadows depend on the chip and
+# preference seeds (SMAA, 16x, Accurate; the original look a test copy keeps has 0 there): Resolution and the shadows depend on the chip and
 # the screen (dm_picrec.c), so the scenario holds on any Mac
 name video_presets_mac
 requires mac-app
@@ -38,6 +38,6 @@ quit
 check event picture how=first aa=1 aniso=3 color=1
 check event video_row row=preset value=1 preset=1
 check event video_row row=preset value=2 preset=2
-check event picture how=apply res=0 up=1 aa=0 envsh=0 shq=0 envd=0
+check event picture how=apply res=0 up=2 fg=1 aa=1 envsh=0 shq=0 envd=0
 check no_red
 check no_red_log

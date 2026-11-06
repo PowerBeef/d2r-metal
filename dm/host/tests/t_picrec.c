@@ -116,11 +116,11 @@ static void grid(void) {
 }
 
 // A choice at least as light as another: not Native where the other is fixed, no higher 3D Resolution with Native, no environment shadows the other
-// lacks with the same output, and never a larger fixed width
+// lacks at the same output (a wider fixed picture can trade them), and never a larger fixed width
 static int lighter_or_same(const dm_mac_rec *a, const dm_mac_rec *b) {   // b is no heavier than a
     if (b->native && !a->native) return 0;
     if (a->native && b->native && k_pct[b->s3d] > k_pct[a->s3d]) return 0;
-    if (a->native == b->native && b->envsh && !a->envsh) return 0;
+    if (a->native == b->native && (a->native || a->tier_res == b->tier_res) && b->envsh && !a->envsh) return 0;
     if (!a->native && !b->native && b->tier_res > a->tier_res) return 0;
     return 1;
 }
@@ -166,6 +166,37 @@ static void grid_rate_drawable(void) {
     }
 }
 
+// With Frame Generation offered, over the same chips, core counts and screens:
+//   F1  it is always on; F2 the slowest real chip up gets a picture within its capacity (a fixed one by itself: its enlargement into a big screen can take it above, and Frame Drops lowers the 3D then)
+//   F3  Frame Drops lowers the 3D exactly when the light picture was needed or the choice is close to the capacity; F4 more GPU cores never give a lesser choice; F5 a larger screen never a heavier one
+//   F6  an iPhone chip keeps the phone's shadows
+static void grid_fg(void) {
+    static const char *const k_tiers[4] = { "", " Pro", " Max", " Ultra" };
+    char chips[64][32]; int nchips = 0, shown[8] = { 0 };
+    for (int g = 1; g <= 7; g++) for (int t = 0; t < 4; t++) snprintf(chips[nchips++], sizeof chips[0], "Apple M%d%s", g, k_tiers[t]);
+    for (int a = 14; a <= 21; a++) snprintf(chips[nchips++], sizeof chips[0], "Apple A%d Pro GPU", a);
+    static dm_mac_rec r[NCORES][NSCR];
+    for (int c = 0; c < nchips; c++) {
+        for (int k = 0; k < NCORES; k++) for (int s = 0; s < NSCR; s++) {
+            int cores = k_grid_cores[k], w = k_grid_scr[s][0], h = k_grid_scr[s][1];
+            dm_mac_spec sp = { .gpu = chips[c], .cores = cores, .out_w = w, .out_h = h, .mfx = 1, .aspect = (long)w * 9 < (long)h * 16 ? (double)w / h : 0, .fg = 1 };
+            dm_mac_recommend(&sp, &r[k][s]); const dm_mac_rec *x = &r[k][s];
+            check(x->fg, &shown[1], "F1 Frame Generation off (%s, %d cores, %dx%d)", chips[c], cores, w, h);
+            check(x->speed < 0.27 || x->load <= 1.0 || (!x->native && x->load - x->pres <= 1.0), &shown[2], "F2 load %.3f (present %.3f) at speed %.3f (%s, %d cores, %dx%d)", x->load, x->pres, x->speed, chips[c], cores, w, h);
+            check(x->q3d == !(!x->envsh || x->load > 0.85), &shown[3], "F3 q3d %d with envsh %d, load %.3f (%s, %d cores, %dx%d)", x->q3d, x->envsh, x->load, chips[c], cores, w, h);
+            check(x->tier != -1 || (!x->envsh && !x->shq), &shown[6], "F6 iPhone chip with envsh %d shq %d (%s, %d cores, %dx%d)", x->envsh, x->shq, chips[c], cores, w, h);
+        }
+        for (int k = 1; k < NCORES; k++) for (int s = 0; s < NSCR; s++) check(lighter_or_same(&r[k][s], &r[k - 1][s]), &shown[4], "F4 %d → %d cores gave a lesser choice: native %d → %d, 3D %d%% → %d%%, envsh %d → %d (%s, %dx%d)",
+              k_grid_cores[k - 1], k_grid_cores[k], r[k - 1][s].native, r[k][s].native, k_pct[r[k - 1][s].s3d], k_pct[r[k][s].s3d], r[k - 1][s].envsh, r[k][s].envsh, chips[c], k_grid_scr[s][0], k_grid_scr[s][1]);
+        for (int k = 0; k < NCORES; k++) for (int s = 1; s < NSCR; s++) for (int p = 0; p < s; p++) {
+            if (k_grid_scr[s][0] < k_grid_scr[p][0] || k_grid_scr[s][1] < k_grid_scr[p][1]) continue;
+            const dm_mac_rec *a = &r[k][p], *b = &r[k][s];
+            check(a->native || !b->native, &shown[5], "F5 fixed turned Native (%s, %d cores, %dx%d → %dx%d)", chips[c], k_grid_cores[k], k_grid_scr[p][0], k_grid_scr[p][1], k_grid_scr[s][0], k_grid_scr[s][1]);
+            check(!(a->native && b->native) || k_pct[b->s3d] <= k_pct[a->s3d], &shown[5], "F5 3D %d%% → %d%% (%s, %d cores, %dx%d → %dx%d)", k_pct[a->s3d], k_pct[b->s3d], chips[c], k_grid_cores[k], k_grid_scr[p][0], k_grid_scr[p][1], k_grid_scr[s][0], k_grid_scr[s][1]);
+        }
+    }
+}
+
 int main(int argc, char **argv) {
     int verbose = argc > 1 && !strcmp(argv[1], "-v");
     static const want k[] = {
@@ -182,29 +213,21 @@ int main(int argc, char **argv) {
         // the measured machines: the model must keep what they really held at 60 fps within its capacity
         if (strstr(k[i].what, "(measured)")) check(r.load <= 1.0, NULL, "%s: load %.3f above the capacity", k[i].what, r.load);
     }
-    // Frame Generation: where the system offers it and the full picture fits, at half the drawn rate with what it costs counted; else the conventional choice stands, unchanged.
-    // Anchored on what the M6 measured at full clock: 11.8 ms a drawn frame at 2560 x 1440, 23.9 at 3840 x 2160, out of 33.3
-    struct { const char *what, *gpu; int cores, w, h, fg, s3d; } fgs[] = {
-        { "M6, 2560 display (measured)", "Apple M6", 12, 2560, 1440, 1, 0 },
-        { "M6 on a 4K display (measured)", "Apple M6", 12, 3840, 2160, 1, 0 },
-        { "MacBook Air 13 M5, default", "Apple M5", 10, 2940, 1838, 1, 0 },
-        { "M5 on a 4K display: real frames", "Apple M5", 10, 3840, 2160, 0, 0 },
-        { "Mac mini M4, 2560 display", "Apple M4", 10, 2560, 1440, 1, 0 },
-        { "MacBook Air 13 M4, default: 85%", "Apple M4", 10, 2940, 1838, 1, 1 },
-        { "MacBook Air 13 M4 (8-core), default: real frames", "Apple M4", 8, 2940, 1838, 0, 0 },
-        { "Mac mini M4 Pro (16-core) on a 4K display: 85%", "Apple M4 Pro", 16, 3840, 2160, 1, 1 },
-        { "MacBook Pro 14 M4 Pro", "Apple M4 Pro", 20, 3024, 1890, 1, 0 },
-        { "MacBook Air 13 M3 (8-core), default: real frames", "Apple M3", 8, 2940, 1838, 0, 0 },
-        { "MacBook Pro 14 M3 Pro", "Apple M3 Pro", 14, 3024, 1890, 1, 0 },
+    // Frame Generation: on every Mac the system offers it to (decided 2026-11-06); the picture gives way, Native from 3D 100% to 50%, the light picture, then a smaller fixed resolution. Without the offer the conventional choice stands.
+    // Anchored on what the M6 measured at full clock: 11.8 ms a drawn frame at 2560 x 1440, 23.9 at 3840 x 2160, out of 33.3. Built-in screens are at macOS's default display setting; dw x dh is an iMac's viewport
+    struct { const char *what, *gpu; int cores, w, h, dw, dh, native, tier_res, s3d, envsh, q3d; } fgs[] = {
+#include "t_picrec_fg_cases.h"
     };
     for (size_t i = 0; i < sizeof fgs / sizeof *fgs; i++) {
-        dm_mac_spec sp = { .gpu = fgs[i].gpu, .cores = fgs[i].cores, .out_w = fgs[i].w, .out_h = fgs[i].h, .mfx = 1, .fg = 1 }; dm_mac_rec r, c; dm_mac_recommend(&sp, &r);
+        double asp = (long)fgs[i].w * 9 < (long)fgs[i].h * 16 ? (double)fgs[i].w / fgs[i].h : 0;
+        dm_mac_spec sp = { .gpu = fgs[i].gpu, .cores = fgs[i].cores, .out_w = fgs[i].w, .out_h = fgs[i].h, .mfx = 1, .aspect = asp, .drw_w = fgs[i].dw, .drw_h = fgs[i].dh, .fg = 1 }; dm_mac_rec r, c; dm_mac_recommend(&sp, &r);
         sp.fg = 0; dm_mac_recommend(&sp, &c);
-        check(r.fg == fgs[i].fg, NULL, "%s: Frame Generation %d, expected %d (load %.2f)", fgs[i].what, r.fg, fgs[i].fg, r.load);
+        int ok = r.fg && r.native == fgs[i].native && (r.native || r.tier_res == fgs[i].tier_res) && r.s3d == fgs[i].s3d && r.envsh == fgs[i].envsh && r.shq == (fgs[i].envsh ? 2 : 0) && r.q3d == fgs[i].q3d;
+        char out[16]; if (r.native) snprintf(out, sizeof out, "Native"); else snprintf(out, sizeof out, "fixed %d", k_fixed_w[r.tier_res]);
+        if (!ok || verbose) printf("%s FG %-50s %-18s %2d cores %4dx%-4d speed %.2f → %-10s 3D %3d%% envsh %d q3d %d (%.0f%%)%s\n", ok ? "  " : "✗", fgs[i].what, fgs[i].gpu, fgs[i].cores, fgs[i].w, fgs[i].h, r.speed, out, k_pct[r.s3d], r.envsh, r.q3d, r.load * 100, ok ? "" : "  ← expected otherwise");
+        n++; fails += !ok;
         check(!c.fg, NULL, "%s: Frame Generation where the system doesn't offer it", fgs[i].what);
-        if (r.fg) { check(r.native && r.s3d == fgs[i].s3d && r.envsh == 1 && r.shq == 2 && r.load <= 1, NULL, "%s: Native, 3D index %d (got %d), the full picture, within capacity; native %d envsh %d shq %d load %.2f", fgs[i].what, fgs[i].s3d, r.s3d, r.native, r.envsh, r.shq, r.load); }
-        else check(!memcmp(&r, &c, sizeof r), NULL, "%s: without room for it the conventional choice stands", fgs[i].what);
-        if (strstr(fgs[i].what, "(measured)")) check(r.fg && r.load <= 1.0, NULL, "%s: what the M6 really held must fit", fgs[i].what);
+        if (strstr(fgs[i].what, "(measured)")) check(r.load <= 1.0, NULL, "%s: what the M6 really held must fit", fgs[i].what);
     }
     { dm_mac_spec a = { .gpu = "Apple M6", .cores = 12, .out_w = 2560, .out_h = 1440, .mfx = 1 }, b = a; b.fg = 1; check(dm_picrec_id(&a) != dm_picrec_id(&b), NULL, "rec_id: the offer of Frame Generation counts as an input"); }
     { dm_mac_spec sp = { .gpu = "Apple M6", .cores = 12, .out_w = 2560, .out_h = 1440, .mfx = 0, .fg = 1 }; dm_mac_rec r; dm_mac_recommend(&sp, &r); check(!r.fg, NULL, "no MetalFX: no Frame Generation"); }
@@ -266,6 +289,7 @@ int main(int argc, char **argv) {
           check(dm_picrec_enlarges(&sp) == e[i].want, NULL, "dm_picrec_enlarges(%dx%d into %dx%d) = %d, expected %d", e[i].w, e[i].h, e[i].dw, e[i].dh, dm_picrec_enlarges(&sp), e[i].want); } }
     grid();
     grid_rate_drawable();
+    grid_fg();
     printf("t_picrec: %d checks, %d failed\n", n, fails);
     return fails != 0;
 }

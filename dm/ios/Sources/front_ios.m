@@ -1054,19 +1054,19 @@ static void layer_color_ios(int accurate) {   // 主线程 | main thread
     LOG("画面：色彩%s（出图层的色彩空间 %s） | picture: colour %s (present layer colour space %s)", accurate ? "准确" : "鲜艳", accurate ? "sRGB" : "不标", accurate ? "Accurate" : "Vivid", accurate ? "sRGB" : "untagged");
 }
 void front_video_color(int accurate) { dispatch_async(dispatch_get_main_queue(), ^{ layer_color_ios(accurate); }); }   // 应用 / 读盘（任何线程） | Apply / load (any thread)
-// Platform hooks for the picture settings (dm_video.c): whether MetalFX is available; recommended values on first boot = 3D resolution 75% (the previous default) + MetalFX when available.
+// Platform hooks for the picture settings (dm_video.c): whether MetalFX is available; recommended values on first boot = 3D resolution 50% + MetalFX Temporal with Frame Generation.
 // It asks nvn_mtl.m's mtl_mfx_supported, the check the renderer itself uses.
 int front_video_mfx_ok(void) { int mtl_mfx_supported(void); return mtl_mfx_supported(); }
 int mtl_mfx_temporal_supported(void), mtl_mfx_fg_supported(void);
-// MetalFX Temporal with Frame Generation wherever the chip has both (the game draws half the frames, the screen shows them all); other chips keep MetalFX's spatial scaler and the real rate
+// MetalFX Temporal with Frame Generation on every chip the system offers them to (the game draws 30 frames, the screen shows 60), with no row to turn them off; a chip without both keeps MetalFX's spatial scaler and the real rate
 static int rec_fg(void) { return mtl_mfx_temporal_supported() && mtl_mfx_fg_supported(); }
 int front_video_firstboot(int rec[3], int cur[3]) {
-    rec[0] = 0; rec[1] = 0; rec[2] = rec_fg() ? 2 : front_video_mfx_ok() ? 1 : 0; for (int i = 0; i < 3; i++) cur[i] = rec[i];
+    rec[0] = 0; rec[1] = 4; rec[2] = rec_fg() ? 2 : front_video_mfx_ok() ? 1 : 0; for (int i = 0; i < 3; i++) cur[i] = rec[i];
     // the same choice on every iPhone and iPad; the log names the device, its GPU and screen, so later device runs can be matched to what it got.
     // front_game_res (cached on the main thread at launch) rather than UIScreen, since dm_video.c may ask from a game thread
     char hw[64] = ""; size_t n = sizeof hw; sysctlbyname("hw.machine", hw, &n, NULL, 0);
     id<MTLDevice> d = MTLCreateSystemDefaultDevice(); uint64_t res = front_game_res(1);
-    LOG("picture settings: Recommended for %s (%s, %s), screen %ux%u → 3D 75%%, %s", hw[0] ? hw : "?", d.name.UTF8String ?: "?",
+    LOG("picture settings: Recommended for %s (%s, %s), screen %ux%u → 3D 50%%, %s", hw[0] ? hw : "?", d.name.UTF8String ?: "?",
         d.supportsBCTextureCompression ? "BC textures" : "no BC textures", (unsigned)(res & 0xffffffff), (unsigned)(res >> 32), rec[2] == 2 ? "MetalFX Temporal, Frame Generation" : rec[2] ? "MetalFX" : "Standard (no MetalFX)");
     return 1;
 }
@@ -1280,11 +1280,8 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
 // Focus (scene lifecycle): sceneWillResignActive → 2; sceneDidEnterBackground → 3 + audio pause + GPU suspend; sceneWillEnterForeground → GPU resume + audio resume + 2; sceneDidBecomeActive → 1.
 //   Measured on a real device with iOS 27: for a legacy App without a scene manifest, applicationState stays 1 (foreground inactive) after launch and activation / deactivation never arrive, hence the switch to UIScene.
 //   On focus 3 the game only sends event 0x2c and does not stop rendering by itself ⇒ on entering background the host blocks the GPU: dm_gfx_suspend(1) returns only after in-flight commands complete (submitting GPU work in background gets killed by the system).
-// Overheating: thermal-state changes are only logged (thermal_apply). The 3D render scale follows actual dropped frames instead (hle_oe.c's Frame
-// Drops: the configured value, then up to three steps of x0.93 below it, never below 50%: 0.70 / 0.65 / 0.60 at the phones' 75%, dm_s3lv.h; the UI
-// stays native); Frame Drops 'Keep' (q3d = 1) turns that off. An earlier version switched to handheld mode on overheating, which lowered the UI too
-// (and the run-time mode switch had a width-mask bug, main+0xe10e48, fixed in r27). DM_THERMAL_NOFALLBACK=1 pins the 3D scale (the dynamic scaler
-// is off) for power and frame-time measurements.
+// Overheating: thermal-state changes are only logged (thermal_apply). The 3D render scale stays as set: phones have no Frame Drops (hle_oe.c dm_3d_scale_feed).
+// An earlier version switched to handheld mode on overheating, which lowered the UI too (and the run-time mode switch had a width-mask bug, main+0xe10e48, fixed in r27).
 // Audio session: Playback with MixWithOthers (sound plays with the silent switch on and other apps' audio keeps playing, #77); stopping sound on
 // lock / background / interruption relies on the lifecycle and interruption handling below (entering the background and being interrupted both call
 // dm_audio_suspend); no background audio capability.

@@ -5969,17 +5969,12 @@ static void rt_toggle_poll(void) { static int tg = -1; if (tg < 0) { const char 
     if (tg > 0) { int v = (int)((time(NULL) / tg) & 1); if (v != g_dm_rt_ab) { g_dm_rt_ab = v; MLOG("DM_RT_AB_TOGGLE：画法切到 %s", v ? "B" : "A"); } } }
 void mtl_rt_force_full(int n) { atomic_store(&g_force_req, n); }   // 宿主调：要换 3D 渲染比例等画面整体变化前，之后 n 帧一律全画（随下一次提交生效） | Called by the host: before a change to the whole picture such as switching the 3D render scale, draw everything for the next n frames (takes effect with the next submit)
 void mtl_host_apply(uint64_t v) { int frz = (int)(uint32_t)v - 1, force = (int)(v >> 32); if (frz >= 0) g_frz_on = frz; if (force) g_rt.force_full = force; }
-// ---------- 省电模式（30 帧）----------
-// 开：显示节拍对象改 30 Hz（帧率范围 30–30，ProMotion 屏跟着降刷新率；front_ios.m 的帧率提示一起降），游戏每拍出一帧；运行时外推关（每帧真画）。
-// 游戏逻辑本来就按 25 拍 / 秒走、单位位置按时间插值，30 帧下没有重复帧（真机实测：每帧镜头位移的变异系数 30 帧 0.292、60 帧 0.296）。
-// 开关在「自定义」页（dm_custom.c eco_fps，缺省关，应用即生效）；测试开关 DM_FPS=30/60 钉住。
-// ---------- Power-saving mode (30 frames) ----------
-// On: the display link object changes to 30 Hz (frame rate range 30–30, a ProMotion screen lowers its refresh rate accordingly; the frame rate hint in front_ios.m is lowered together), the game presents one frame per display-link tick; runtime extrapolation off (really draws every frame).
-// Game logic already runs at 25 ticks / second and unit positions are interpolated by time, so there are no repeated frames at 30 frames (measured on a real device: coefficient of variation of per-frame camera displacement 0.292 at 30 frames, 0.296 at 60 frames).
-// The switch is on the 「自定义」(Custom) page (dm_custom.c eco_fps, off by default, takes effect on apply); the test switch DM_FPS=30/60 pins it.
-__attribute__((weak)) int dm_fps_setting(void) { return 60; }   // 宿主 dm_custom.c 提供强定义；图形单测不链宿主时恒 60 | The host's dm_custom.c provides the strong definition; always 60 when graphics unit tests do not link the host
+// ---------- The frame rate target ----------
+// 60: with Frame Generation (always on where the system offers it) the game draws 30 and the screen shows 60 (dm_video.c, nvn_fg.inc); screens that don't divide 60 evenly: nvn_pace.h.
+// The test switch DM_FPS=30 runs what used to be a power-saving option: the display link object at 30 Hz (frame rate range 30–30, a ProMotion screen lowers its refresh rate accordingly; the frame rate hint in
+// front_ios.m is lowered together), real frames only, runtime extrapolation off. DM_FPS=60 pins 60.
 int mtl_fps_target(void) { static int env = -2; if (env == -2) { const char *e = getenv("DM_FPS"); env = e ? atoi(e) : -1; if (env != 30 && env != 60) env = -1; else MLOG("DM_FPS=%d：帧数由测试开关钉住", env); }
-    return env > 0 ? env : dm_fps_setting() == 30 ? 30 : 60; }
+    return env > 0 ? env : 60; }
 // 外推启用状态一变（省电模式切换、世界冻结接手 / 交回）：先让「跨帧不写回」账本重学（试用期里照常写回），外推晚一帧再真正切换——
 // 保证切换前最后一次提交是全量写回的。不然 30 帧时每帧先清空的附件被学成不写回，切回 60 帧的第一个外推帧读到旧内容、闪一帧（测试版实测，xv 自检报红后才撤销）
 // Whenever the extrapolation enabled state changes (power-saving mode toggled, world freeze takes over / hands back): first let the "no store across frames" ledger relearn (during the trial period it stores as usual), and the extrapolation really switches one frame later --
@@ -7210,6 +7205,13 @@ static void fg_shown(double t) {
     if (n && n % 600 == 0) { MLOG("frame generation: %llu frames shown, %llu late (%.2f%%), longest %.1f ms", (unsigned long long)n, (unsigned long long)late, 100.0 * late / n, longest * 1e3); DM_EV("fg_shown", "n:u late:u longest_ms:f", (unsigned long long)n, (unsigned long long)late, longest * 1e3); }
 }
 static __unsafe_unretained id<MTLTexture> g_present_gen;   // a generated frame instead of the swap texture (frame generation); the thread that presents
+// DM_LINK_TRACE's <file>.shown: for each present, whether it was a generated frame, the time the link asked for and the time it really reached the screen (0 = the system discarded it). Presented handlers run one at a time
+static void link_shown(uint64_t ticket, int gen, double target, double shown) {
+    static FILE *f; static int tried; if (!tried) { tried = 1; const char *e = getenv("DM_LINK_TRACE"); if (e && *e) { char p[1024]; snprintf(p, sizeof p, "%s.shown", e); f = fopen(p, "w"); } }
+    if (!f) return;
+    fprintf(f, "%llu\t%d\t%.6f\t%.6f\n", (unsigned long long)ticket, gen, target, shown);
+    if (ticket % 120 == 0) fflush(f);
+}
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
@@ -7331,10 +7333,11 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     // in the display-link path old frames get merged and dropped, and those tickets read -1. The game's present count runs ahead of the tickets
     // (presents dropped at the door get none), so hle_nvn.c maps each game present to its job and the job to its ticket (present_time_of).
     // A background test run projects the link's target timestamp when the system reports none (nvn_presproj.h, mtl_present_project)
-    uint64_t pn = ticket; int proj = atomic_load(&g_present_project);
+    uint64_t pn = ticket; int proj = atomic_load(&g_present_project), shown_gen = g_present_gen != nil;
     [dr addPresentedHandler:^(id<MTLDrawable> d) {   // the actual presentation time (when this frame really replaced the previous one on screen; CACurrentMediaTime base); projected in background runs
         g_pres[pn % PRING] = (pres_ent){pn, nvn_presented_or_projected(d.presentedTime, proj, target_ts)};
         if (atomic_load(&g_fg_fifo)) fg_shown(d.presentedTime);
+        link_shown(pn, shown_gen, target_ts, d.presentedTime);
     }];
     // 每张至少显示一个出图周期：GPU 完成时刻在 120 Hz 刷新边界附近抖动时，不再出现「25 ms + 8.33 ms」成对的顿挫
     // Each frame is displayed for at least one present period: when the GPU completion time jitters around a 120 Hz refresh boundary, the paired "25 ms + 8.33 ms" stutter no longer appears

@@ -286,7 +286,7 @@ SETS: dict[str, dict[str, Any]] = {
     # rain crossing what is left comes and goes (rect lb_town_a1: 0.007-0.124% hot over 7 checks of one build, 0.016% in its 2 noise shots), so they take 10 shots: the usual 4 for the mask and 6 for the noise
     'rect': dict(env=picture.RECT, pages=['lb_town_a1', 'lb_wild_a1', 'lb_crypt_a1'], judge='flip', dir='rect', log_allow=(), unstable_max=0.65, record_shots=10, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
     'rec75t': dict(env=picture.REC75T, pages=['lb_town_a1', 'lb_wild_a1'], judge='flip', dir='rec75t', log_allow=(), unstable_max=0.65, record_shots=10, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
-    'phone': dict(env=picture.PHONE, pages=['lb_town_a1', 'lb_crypt_a1'], judge='flip', dir='phone', log_allow=(), controls={'mfx3d_off': {'DM_MFX3D': '0'}}),
+    'phone': dict(env={**picture.PHONE, 'DM_FG': '0'}, pages=['lb_town_a1', 'lb_crypt_a1'], judge='flip', dir='phone', log_allow=(), unstable_max=0.65, record_shots=10, controls={'temporal_off': {'DM_MFXT': '0', 'DM_AA_MODE': '2'}}),
 }
 FLIP_SETS = [s for s in SETS if SETS[s]['judge'] == 'flip']
 # A region passes when at most FLIP_HOT_MAX of its pixels have FLIP above FLIP_HOT and its mean is at most FLIP_MEAN_MAX. Measured with imgdiff on synthetic

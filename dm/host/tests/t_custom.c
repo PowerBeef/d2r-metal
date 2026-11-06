@@ -35,14 +35,14 @@ static const char *file_get(void) { static char b[600]; char p[600]; snprintf(p,
 static int g_logs, g_red;
 static void log_cap(const char *file, int line, const char *fmt, ...) { (void)file; (void)line; char b[1024]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap); g_logs++; if (strstr(b, "【红】")) g_red++; }
 
-// One load in a child: q3d and eco_fps as loaded, the log and red lines printed, the 3D quality mode handed to the controller, the file after the load (file0); then,
+// One load in a child: q3d and drop_haptic as loaded, the log and red lines printed, the 3D quality mode handed to the controller, the file after the load (file0); then,
 // when set_key is given, that key's pending value and an Apply, q3d after it and the file (file)
-typedef struct { int q3d, eco_fps, logs, red, qmode, q3d_after; char file0[600], file[600]; } result;
+typedef struct { int q3d, haptic, logs, red, qmode, q3d_after; char file0[600], file[600]; } result;
 static result run(const char *txt, int q3d_def, const char *set_key, int set_v) {
     file_put(txt); int pp[2]; result r; memset(&r, 0, sizeof r); r.q3d = -9; if (pipe(pp)) return r;
     pid_t pid = fork();
     if (!pid) { close(pp[0]); result x; memset(&x, 0, sizeof x); g_q3d_def = q3d_def; g_dm_log_hook = log_cap; dm_custom_init(g_tdir);
-        x.q3d = dm_custom_get("q3d"); x.eco_fps = dm_custom_get("eco_fps"); x.logs = g_logs; x.red = g_red; x.qmode = g_qmode; strlcpy(x.file0, file_get(), sizeof x.file0);
+        x.q3d = dm_custom_get("q3d"); x.haptic = dm_custom_get("drop_haptic"); x.logs = g_logs; x.red = g_red; x.qmode = g_qmode; strlcpy(x.file0, file_get(), sizeof x.file0);
         if (set_key) { void dm_custom_set_pending(const char *key, int v); dm_custom_set_pending(set_key, set_v); dm_custom_on_uimsg("OptionsPanelMessage", "AcceptChanges", ""); }
         x.q3d_after = dm_custom_get("q3d"); strlcpy(x.file, file_get(), sizeof x.file);
         if (write(pp[1], &x, sizeof x) != (ssize_t)sizeof x) _exit(1); _exit(0); }
@@ -54,42 +54,45 @@ int main(void) {
     result r;
     // (c1) no file, the device's default Lower (0): q3d 0, handed to the controller; an Apply of another key writes custom_v 2 and no q3d (nor lang,
     //      never picked)
-    r = run(NULL, 0, "eco_fps", 1);
+    r = run(NULL, 0, "drop_haptic", 0);
     CHECK(r.q3d == 0 && r.qmode == 0, "(c1) no file: q3d 0 (%d), controller mode 0 (%d)", r.q3d, r.qmode);
-    CHECK(strstr(r.file, "custom_v=2\n") == r.file && strstr(r.file, "eco_fps=1\n") && !strstr(r.file, "q3d=") && !strstr(r.file, "lang="), "(c1) saved: custom_v=2 first, eco_fps=1, no q3d or lang\n%s", r.file);
+    CHECK(strstr(r.file, "custom_v=2\n") == r.file && strstr(r.file, "drop_haptic=0\n") && !strstr(r.file, "q3d=") && !strstr(r.file, "lang="), "(c1) saved: custom_v=2 first, drop_haptic=0, no q3d or lang\n%s", r.file);
     // (c2) an older file (no custom_v) with q3d=1, the old default (k_def), and today's default Lower: q3d follows the default; nothing is written at load,
     //      and the next Apply drops the q3d line
-    r = run("drop_light=1\neco_fps=0\nq3d=1\n", 0, "eco_fps", 1);
-    CHECK(r.q3d == 0 && r.qmode == 0 && !strcmp(r.file0, "drop_light=1\neco_fps=0\nq3d=1\n"), "(c2) older q3d=1 (the old default): follows Lower, q3d %d (mode %d), not rewritten at load\n%s", r.q3d, r.qmode, r.file0);
+    r = run("drop_light=1\ndrop_haptic=1\nq3d=1\n", 0, "drop_haptic", 0);
+    CHECK(r.q3d == 0 && r.qmode == 0 && !strcmp(r.file0, "drop_light=1\ndrop_haptic=1\nq3d=1\n"), "(c2) older q3d=1 (the old default): follows Lower, q3d %d (mode %d), not rewritten at load\n%s", r.q3d, r.qmode, r.file0);
     CHECK(strstr(r.file, "custom_v=2\n") && !strstr(r.file, "q3d="), "(c2) after an Apply: custom_v=2, no q3d line\n%s", r.file);
     // (c3) an older file with q3d=0 and today's default Keep: 0 differs from the old default, so it is the player's choice (a v1.2.0 Lower) and stays saved
-    r = run("eco_fps=0\nq3d=0\n", 1, "eco_fps", 1);
+    r = run("drop_haptic=1\nq3d=0\n", 1, "drop_haptic", 0);
     CHECK(r.q3d == 0 && strstr(r.file, "q3d=0\n"), "(c3) older q3d=0 with a Keep default: kept 0 (%d), still saved\n%s", r.q3d, r.file);
     // (c4) a format-2 file's q3d is always the player's choice
     r = run("custom_v=2\nq3d=1\n", 0, NULL, 0);
     CHECK(r.q3d == 1 && r.qmode == 1, "(c4) custom_v 2, q3d=1 with a Lower default: the player's Keep (%d, mode %d)", r.q3d, r.qmode);
     // (c5) a format-2 file without q3d follows the default, whichever it is
-    r = run("custom_v=2\neco_fps=0\n", 1, NULL, 0);
+    r = run("custom_v=2\ndrop_haptic=1\n", 1, NULL, 0);
     CHECK(r.q3d == 1, "(c5) no q3d, default Keep: 1, got %d", r.q3d);
-    r = run("custom_v=2\neco_fps=0\n", 0, NULL, 0);
+    r = run("custom_v=2\ndrop_haptic=1\n", 0, NULL, 0);
     CHECK(r.q3d == 0, "(c5) no q3d, default Lower: 0, got %d", r.q3d);
     // (c6) the player sets Frame Drops back to its default: the q3d line goes, so it follows the default again
     r = run("custom_v=2\nq3d=1\n", 0, "q3d", 0);
     CHECK(r.q3d_after == 0 && !strstr(r.file, "q3d="), "(c6) q3d back to the default: %d, no q3d line\n%s", r.q3d_after, r.file);
     // (c7) the CLI host (no front-end default: k_def, Keep): an older q3d=1 reads 1, and an Apply leaves it out
-    r = run("eco_fps=0\nq3d=1\n", -1, "eco_fps", 1);
+    r = run("drop_haptic=1\nq3d=1\n", -1, "drop_haptic", 0);
     CHECK(r.q3d == 1 && !strstr(r.file, "q3d="), "(c7) CLI: q3d 1 (%d), not saved at its default\n%s", r.q3d, r.file);
     // (c8) a settings file with a key this build no longer knows (bright, from when the port brightened dark areas): the settings around it load, no red line,
     //      nothing is rewritten at load, and the next Apply saves without it
-    r = run("custom_v=2\nbright=1\neco_fps=1\nq3d=1\n", 0, "eco_fps", 0);
-    CHECK(r.q3d == 1 && r.eco_fps == 1 && r.logs > 0 && r.red == 0, "(c8) the settings around bright=1 load: q3d %d, eco_fps %d, log lines %d, red lines %d", r.q3d, r.eco_fps, r.logs, r.red);
-    CHECK(!strcmp(r.file0, "custom_v=2\nbright=1\neco_fps=1\nq3d=1\n"), "(c8) not rewritten at load\n%s", r.file0);
-    CHECK(!strstr(r.file, "bright") && strstr(r.file, "eco_fps=0\n") && strstr(r.file, "q3d=1\n"), "(c8) an Apply saves without bright and keeps the rest\n%s", r.file);
+    r = run("custom_v=2\nbright=1\ndrop_haptic=0\nq3d=1\n", 0, "drop_haptic", 1);
+    CHECK(r.q3d == 1 && r.haptic == 0 && r.logs > 0 && r.red == 0, "(c8) the settings around bright=1 load: q3d %d, drop_haptic %d, log lines %d, red lines %d", r.q3d, r.haptic, r.logs, r.red);
+    CHECK(!strcmp(r.file0, "custom_v=2\nbright=1\ndrop_haptic=0\nq3d=1\n"), "(c8) not rewritten at load\n%s", r.file0);
+    CHECK(!strstr(r.file, "bright") && strstr(r.file, "drop_haptic=1\n") && strstr(r.file, "q3d=1\n"), "(c8) an Apply saves without bright and keeps the rest\n%s", r.file);
+    // (c10) an older file's power saver (eco_fps, a row until 2026-11-06) is such a key too: no 30 fps left to choose
+    r = run("custom_v=2\neco_fps=1\nq3d=1\n", 0, "drop_haptic", 0);
+    CHECK(r.q3d == 1 && r.red == 0 && !strstr(r.file, "eco_fps"), "(c10) eco_fps=1 ignored and gone after an Apply: q3d %d, red lines %d\n%s", r.q3d, r.red, r.file);
     // (c9) a newer build's file (custom_v 3): an Apply here keeps its custom_v, as sw_video.txt keeps a newer rec_v, so this build never claims a
     //      newer file's format as its own; junk or an older custom_v is saved as this build's 2
-    r = run("custom_v=3\neco_fps=0\n", 0, "eco_fps", 1);
-    CHECK(strstr(r.file, "custom_v=3\n") == r.file && strstr(r.file, "eco_fps=1\n"), "(c9) custom_v 3 kept by an Apply\n%s", r.file);
-    r = run("custom_v=x\neco_fps=0\n", 0, "eco_fps", 1);
+    r = run("custom_v=3\ndrop_haptic=1\n", 0, "drop_haptic", 0);
+    CHECK(strstr(r.file, "custom_v=3\n") == r.file && strstr(r.file, "drop_haptic=0\n"), "(c9) custom_v 3 kept by an Apply\n%s", r.file);
+    r = run("custom_v=x\ndrop_haptic=1\n", 0, "drop_haptic", 0);
     CHECK(strstr(r.file, "custom_v=2\n") == r.file, "(c9) custom_v junk: saved as 2\n%s", r.file);
     file_put(NULL); rmdir(g_tdir);
     printf("t_custom: %d checks, %d failed\n", checks, fails);

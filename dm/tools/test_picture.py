@@ -84,7 +84,7 @@ class PictureTest(unittest.TestCase):
     def test_front_end_recommendations(self):
         mac, ios = front_rec(DM / 'host' / 'front_mac.m'), front_rec(DM / 'ios' / 'Sources' / 'front_ios.m')
         for name, fr, s in (('mac', mac, picture.CONV), ('ios', ios, picture.PHONE)):
-            self.assertEqual((fr.get('aa'), s['DM_AA_MODE']), ('1', '2'), name)          # aa 1 = SMAA = mode byte 2 (dm_video_aa_mode)
+            self.assertEqual((fr.get('aa'), s['DM_AA_MODE']), ('1', '0' if s.get('DM_MFXT') == '1' else '2'), name)          # aa 1 = SMAA = mode byte 2 (dm_video_aa_mode)
             self.assertEqual((fr.get('aniso'), s['DM_NVN_ANISO']), ('3', '16'), name)    # aniso 3 = 16x (dm_video_aniso)
             self.assertEqual((fr.get('color'), s['DM_COLORSPACE']), ('1', 'srgb'), name)  # color 1 = Accurate
         self.assertNotIn('envsh', ios); self.assertNotIn('shq', ios)   # the phone recommends neither: environment shadows off, the Switch's 2100 map
@@ -98,7 +98,7 @@ class PictureTest(unittest.TestCase):
         ios = firstboot(DM / 'ios' / 'Sources' / 'front_ios.m')
         res = re.search(r'rec\[1\] = (\d+);', ios)
         self.assertIsNotNone(res, 'front_ios.m front_video_firstboot no longer sets a fixed 3D resolution (rec[1])')
-        self.assertEqual(float(picture.PHONE['DM_3D_SCALE']), phone[int(res.group(1)) if res else 0])   # the phone's res index through dm_video.c's phone table: 75%
+        self.assertEqual(float(picture.PHONE['DM_3D_SCALE']), phone[int(res.group(1)) if res else 0])   # the phone's res index through dm_video.c's phone table: 50%
         # up = MetalFX wherever it is supported (the iPhone 17 Pro, this Mac): DM_MFX (the present) and DM_MFX3D (the 3D upscale pass) on
         self.assertRegex(ios, r'rec\[2\] = rec_fg\(\) \? 2 : front_video_mfx_ok\(\) \? 1 : 0;')
         self.assertEqual((mac.get('fg') if (mac := front_rec(DM / 'host' / 'front_mac.m')) else None, front_rec(DM / 'ios' / 'Sources' / 'front_ios.m').get('fg')), ('mac_rec().fg', 'rec_fg()'))   # Temporal and Frame Generation together, wherever the chip has both

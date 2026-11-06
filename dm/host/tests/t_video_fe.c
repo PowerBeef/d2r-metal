@@ -25,7 +25,7 @@ uint64_t dm_custom_find_w(uint64_t w, const char *name) { (void)w; (void)name; r
 int front_video_firstboot(int rec[3], int cur[3]) {
     g_fb_calls++;
     if (g_fe == 'M') { rec[0] = 1; rec[1] = 3; rec[2] = g_fgok ? 2 : g_mfx; for (int i = 0; i < 3; i++) cur[i] = rec[i]; return 1; }
-    rec[0] = 1; rec[1] = g_fe_rec_res; rec[2] = 1; cur[0] = 1; cur[1] = 2; cur[2] = 0; return 1;
+    rec[0] = 1; rec[1] = g_fe_rec_res; rec[2] = 1; cur[0] = 1; cur[1] = 2; cur[2] = 1; return 1;
 }
 int front_video_rec(const char *key) {
     if (!strcmp(key, "aa")) return 1;
@@ -43,20 +43,12 @@ int front_video_running_res(void) { return -1; }
 void front_video_fullscreen(int on) { g_full_calls++; g_full_last = on; }
 void front_video_color(int accurate) { g_color_calls++; g_color_last = accurate; }
 
-// The custom settings store (dm_custom.c), reduced to the two keys the Video tab shows: eco_fps (default 0) and q3d (default g_cdef_q3d).
+// The custom settings store (dm_custom.c), reduced to the key the Video tab shows: q3d (default g_cdef_q3d).
 // set_pending records the last value set per key (-9 = never called)
 int g_tshown;                                           // dm_custom_shown: 1 = the picture settings' page is on screen
 int g_cdef_q3d = 1, g_cval[2], g_cpend[2] = { -1, -1 }, g_cset[2] = { -9, -9 };
-static int ckey(const char *k) { return !strcmp(k, "eco_fps") ? 0 : !strcmp(k, "q3d") ? 1 : -1; }
+static int ckey(const char *k) { return !strcmp(k, "q3d") ? 0 : -1; }
 int dm_custom_shown(void) { return g_tshown; }
 int dm_custom_shown_value(const char *key) { int i = ckey(key); return i < 0 ? 0 : g_cpend[i] >= 0 ? g_cpend[i] : g_cval[i]; }
 void dm_custom_set_pending(const char *key, int v) { int i = ckey(key); if (i >= 0) { g_cpend[i] = v < 0 ? -1 : v; g_cset[i] = v; } }
-int dm_custom_default(const char *key) { int i = ckey(key); return i == 1 ? g_cdef_q3d : 0; }
-// The present's refresh reading, the frame-rate rules and the string lookup the Frame Rate row's labels use (dm_video.c fps_labels, fps_row): the rules
-// are the real ones (nvn_pace.h), the refresh rate is g_scr_hz, and dm_str hands back the key, as no game string table is loaded here
-#include "../../gfx/nvn/nvn_pace.h"
-double g_scr_hz = 60;
-double mtl_display_refresh(void) { return g_scr_hz; }
-double dm_pace_hz(double screen_hz, double floor_hz) { return nvn_pace_hz(screen_hz, floor_hz); }
-double dm_eco_hz(double screen_hz) { return nvn_eco_hz(screen_hz); }
-const char *dm_str(uint8_t *b, const char *key) { (void)b; return key; }
+int dm_custom_default(const char *key) { int i = ckey(key); return i == 0 ? g_cdef_q3d : 0; }
