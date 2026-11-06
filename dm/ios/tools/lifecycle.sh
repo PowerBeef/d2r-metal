@@ -55,7 +55,7 @@ fi
 timeout 60 xcrun devicectl device copy from --device $D --domain-type appDataContainer --domain-identifier $B --source Documents/boot.txt --destination "$R/boot.txt" > "$R/pull.log" 2>&1 || { t "🔴 拉 boot.txt 失败"; echo "LIFECYCLE RED"; exit 1; }
 L="$R/boot.txt"; bad=0
 chk(){ if [ "$2" = 1 ]; then echo "✓ $1"; else echo "✗ $1"; bad=1; fi; }
-bg=$(grep -n "前端：sceneDidEnterBackground" "$L" | head -1 | cut -d: -f1); fg=$(grep -n "前端：sceneWillEnterForeground" "$L" | tail -1 | cut -d: -f1)
+bg=$(grep -n "前端：sceneDidEnterBackground" "$L" | tail -1 | cut -d: -f1); fg=$(grep -n "前端：sceneWillEnterForeground" "$L" | tail -1 | cut -d: -f1)
 chk "同一份日志里先进后台、后回前台（进程没重开）：行 ${bg:-无} → ${fg:-无}" $([ -n "$bg" ] && [ -n "$fg" ] && [ "$fg" -gt "$bg" ] && echo 1 || echo 0)
 chk "进后台时图形已挂起" $(grep -q "图形挂起：在途 GPU 工作已清空" "$L" && echo 1 || echo 0)
 cb=$(grep "前端：sceneDidEnterBackground" "$L" | head -1 | sed -E 's/.*客体时钟 ([0-9.]+) s.*/\1/'); cf=$(grep "前端：sceneWillEnterForeground" "$L" | tail -1 | sed -E 's/.*客体时钟 ([0-9.]+) s.*/\1/')
@@ -99,7 +99,8 @@ cr=$(head -n "${bg:-1}" "$L" | grep "前端：sceneWillResignActive" | tail -1 |
 ddmax=$(python3 -c "import math; f, m = map(int, '${pre:-0 0}'.split()); print(max(1, math.ceil(m * ${3:-0} * 300 / f)) if f else 0)" 2>/dev/null || echo 0)
 dbmax=$(python3 -c "import math; print(math.ceil((float('$cb') - float('$cr')) * 60) + 4)" 2>/dev/null || echo 12)
 chk "回前台那一窗上了屏的帧没有间隔超 25 ms 的：${1:-无读数} 帧" $([ "${1:--1}" = 0 ] && echo 1 || echo 0)
-chk "回前台后完整显示节拍窗 ≥ 2 个、空节拍不新增、合并丢弃不比进后台前多：${3:-0} 窗（每窗 300 节拍），空节拍 +${4:-?}，丢弃 +${5:-?}（上限 ${ddmax}，按进后台前 ${pre:-无读数}）" $([ "${3:-0}" -ge 2 ] && [ "${4:--1}" = 0 ] && [ "${5:--1}" -ge 0 ] && [ "${5:-99}" -le "$ddmax" ] && echo 1 || echo 0)
+# Frame generation presents with no display link, so a run may have no link windows at all: then the present readings below are the check
+if grep -q "显示节拍 至" "$L"; then chk "回前台后完整显示节拍窗 ≥ 2 个、空节拍不新增、合并丢弃不比进后台前多：${3:-0} 窗（每窗 300 节拍），空节拍 +${4:-?}，丢弃 +${5:-?}（上限 ${ddmax}，按进后台前 ${pre:-无读数}）" $([ "${3:-0}" -ge 2 ] && [ "${4:--1}" = 0 ] && [ "${5:--1}" -ge 0 ] && [ "${5:-99}" -le "$ddmax" ] && echo 1 || echo 0); else echo "✓ no display link in this run (frame generation presents without it): nothing to read for its windows"; fi
 chk "进后台那一刻丢弃的帧数在上限内（只防失控，≤ ${dbmax}：失活 ${cr:-?} → 进后台 ${cb:-?} s）：${2:-无读数} 帧" $([ "${2:--1}" -ge 0 ] && [ "${2:-99}" -le "$dbmax" ] && echo 1 || echo 0)
 # Frame Drops after returning: no step-down line at all (the old check grepped the 3D render scale lines for 0.70 / 0.72, which the
 # relative levels no longer produce, and passed while the controller was frozen by the present-time drift, S3D-1)
