@@ -1056,9 +1056,9 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
 // Period for the real-time thread declarations: the present pacing is still computed at the 60 tier (present_period, see there), and power-saving mode (30 fps) is slowed down by the display link - the declaration has to follow the actual frame period;
 // power-saving mode used to keep declaring a 60 Hz deadline, so the system scheduled and raised clocks for a 16.7 ms deadline (power wasted). When the display link is not running (no window / off) power-saving mode has no effect and the period is unchanged
 int mtl_fps_target(void);
-int mtl_fg_active(void);
+int mtl_fg_active(void); int mtl_fg_pace_wait(uint64_t frame);
 static uint64_t rt_decl_period(uint64_t period_ns) {
-    if (period_ns && mtl_fg_active() && mtl_link_active()) return period_ns * 2;   // frame generation: the game draws every other present
+    if (period_ns && mtl_fg_active()) return period_ns * 2;   // frame generation: the game draws every other present
     if (!period_ns || mtl_fps_target() != 30 || !mtl_link_active()) return period_ns;
     double hz = dm_eco_hz(mtl_display_refresh()); uint64_t eco = hz > 0 ? (uint64_t)(1e9 / hz) : 0;   // the power saver's real rate (nvn_eco_hz)
     return eco > period_ns ? eco : period_ns;
@@ -1334,6 +1334,7 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
         // ticks at 25 Hz through catch-up ticks, as in power saving
         if (hidden_hz() && mtl_present_idle()) { static uint64_t idle_last; uint64_t dl = idle_last + 1000000000ull / (uint64_t)hidden_hz(); if (dl > now_ns()) sleep_until_ns(dl); idle_last = now_ns(); }
         else if (mtl_link_active()) { if (!link_wait(decl ? 2 * decl : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK: pacing fully follows the display link (wait for the next tick when running fast, go at once when behind); our own 60 Hz clock is only the fallback when no tick arrives
+        else if (mtl_fg_pace_wait(g_frame)) {}   // frame generation with no link: on the screen's clock (nvn_mtl.m)
         else if (wait) sleep_until_ns(at);
     } else {   // DM_DETCLOCK_PACE=1（画面闸门用）：客体时钟按帧走的同时，每帧墙钟不短于一个步长——帧数与游戏内时间确定，后台加载线程每帧至少有一个步长的墙钟可用； | DM_DETCLOCK_PACE=1 (used by the screenshot gate): while the guest clock advances per frame, each frame's wall clock is no shorter than one step -- frame count and in-game time are deterministic, and the background loading thread has at least one step of wall clock available per frame;
                // 机器满载时帧只会更慢、后台得到的墙钟只会更多，所以「消息后第 N 帧」截到的画面与负载无关

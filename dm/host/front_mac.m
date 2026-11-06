@@ -478,12 +478,13 @@ static int ctl_app(const char *w) {
     if (!strcmp(w, "cover") || !strcmp(w, "uncover")) { int on = !strcmp(w, "cover");
         dispatch_sync(dispatch_get_main_queue(), ^{ test_cover(on); LOG("control port: test cover %s (the game window %s the key window)", on ? "on" : "off", g_win.isKeyWindow ? "is" : "is not"); });
         return 0; }
-    if (!strcmp(w, "link_inactive") || !strcmp(w, "link_active")) { int on = !strcmp(w, "link_inactive"); void mtl_present_inactive(int on); int mtl_link_active(void);
+    if (!strcmp(w, "link_inactive") || !strcmp(w, "link_active")) { int on = !strcmp(w, "link_inactive"); void mtl_present_inactive(int on); int mtl_link_active(void), mtl_fg_active(void);
         __block int ok = 1;
         dispatch_sync(dispatch_get_main_queue(), ^{
             // With no present link driving presents (DM_PRESENT_LINK=0, no window, a stall rescue) there is nothing to pause: presents would go on,
-            // and a test that expects nothing on screen would pass for the wrong reason, so the verb fails
-            if (on && !mtl_link_active()) { ok = 0; LOG("【红】control port: link_inactive: no present link drives presents (DM_PRESENT_LINK=0, no window, or a stall rescue), nothing paused"); return; }
+            // and a test that expects nothing on screen would pass for the wrong reason, so the verb fails. Frame generation's own present thread
+            // has no link either, and there the flag stops presents at the door (mtl_present)
+            if (on && !mtl_link_active() && !mtl_fg_active()) { ok = 0; LOG("【红】control port: link_inactive: no present link drives presents (DM_PRESENT_LINK=0, no window, or a stall rescue), nothing paused"); return; }
             // Active again restores the focus the window has, real or emulated (a background run's window is never key in AppKit's eyes; a front run
             // may have lost the key window to another app meanwhile), never a forced 1
             int fo = on ? 2 : win_mini() ? 3 : win_key_now() ? 1 : 2;

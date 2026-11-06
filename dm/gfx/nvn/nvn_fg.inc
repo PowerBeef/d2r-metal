@@ -36,6 +36,7 @@ static struct {
     __strong id<MTL4FXFrameInterpolator> ns; __strong id<MTLTexture> nwout; __strong id<MTLTexture> nout[FG_RING]; __strong id<MTLTexture> nrv[FG_RING]; __strong id<MTLRenderPipelineState> npso; NSUInteger niw, nih, now, noh; MTLPixelFormat ncf, nbf, nvf; void *nscaler; _Atomic int next_ok;
     uint64_t made, skipped;
 } g_fg;
+static void fgp_reset(void);
 static _Atomic int g_fg_fifo;   // 1 = the display link takes one queued present per tick instead of the newest
 
 static const char *g_fg_msl =
@@ -190,7 +191,7 @@ static void fg_compose(NvShader *f) {
         }
     }
     #undef FG_SAME
-    atomic_store(&g_fg_fifo, 1);
+    if (!atomic_exchange(&g_fg_fifo, 1)) fgp_reset();
     int c = g_mv.cur; double now = CACurrentMediaTime(), dt = g_fg.last_t > 0 ? now - g_fg.last_t : 1.0 / 30; g_fg.last_t = now;
     int reset = g_fg.reset || !g_mv.have_prev; g_fg.reset = 0;
     rp_end();
