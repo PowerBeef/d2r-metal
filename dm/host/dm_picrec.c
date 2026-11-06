@@ -40,7 +40,7 @@
 //    with the 3D at 100%. Costs were measured on the M6 at full clock on a Cathedral walk, 2026-11-06 (RT_* below); they scale by public benchmarks, not by the speeds at the top of this file:
 //    the picture by Geekbench 7 Metal and the rays by Blender Open Data 4.5 Metal (k_rt_chip), so every chip but the M6 is an estimate, good to about one step of 3D Resolution. A MacBook Air
 //    or Neo runs at FANLESS of that under a sustained load, which is a guess. So with rays on Frame Drops is always Lower: on a chip the estimate was kind to, the 3D dips for a while instead of
-//    frames dropping, and on one it wasn't, nothing happens. Published per chip at https://claude.ai/artifact/WAuEUs6s4WpsLFCGwQGEsE
+//    frames dropping, and on one it wasn't, nothing happens. docs/MAC.md lists every chip's result
 // Memory is otherwise not an input: rays add about 0.3 GB and the GPU heap is a fixed 768 MiB.
 #include "dm_picrec.h"
 #include <math.h>

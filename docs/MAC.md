@@ -118,6 +118,55 @@ Temporal and Frame Generation cost more graphics time than they save at most siz
 
 **Ray Tracing** goes on where a drawn frame's estimated GPU time stays under 28.3 of its 33.3 ms, on a chip with hardware rays, with at least 16 GB (a precaution: nothing with less has been tried). The order is Full at 3D 100, 85 and 75%, then Standard at the same steps, then Light down to 67%, and the first that fits wins; on a fixed resolution, only at that resolution with the 3D at 100%. Costs were measured on the M6 and scale by Geekbench 7 Metal for the picture and Blender Open Data 4.5 Metal for the rays; a MacBook Air or Neo counts as 85% of that (a guess, for having no fan). With rays on, Frame Drops is set to lower the 3D for a while, in case the estimate is too kind to a Mac.
 
+<details id="which-chips-get-ray-tracing"><summary>What each chip gets on its usual screen</summary>
+
+| Chip | GPU cores | Usual screen | Ray Tracing | 3D Resolution |
+|---|---|---|---|---|
+| M6 | 12 | 1440p display | Full | 100% |
+| M5 Ultra | 64 | 4K display | Full | 100% |
+| M5 Ultra | 80 | 4K display | Full | 100% |
+| M5 Max | 32 | 16-inch Pro | Full | 100% |
+| M5 Max | 40 | 16-inch Pro | Full | 100% |
+| M5 Pro | 16 | 14-inch Pro | Full | 100% |
+| M5 Pro | 20 | 14-inch Pro | Full | 100% |
+| M5 | 8 | 13-inch Air | Off | – |
+| M5 | 10 | 13-inch Air | Light | 67% |
+| M4 Max | 32 | 16-inch Pro | Full | 100% |
+| M4 Max | 40 | 16-inch Pro | Full | 100% |
+| M4 Pro | 16 | 14-inch Pro | Full | 85% |
+| M4 Pro | 20 | 14-inch Pro | Full | 85% |
+| M4 | 8 | 13-inch Air | Off | – |
+| M4 | 10 | 13-inch Air | Off | – |
+| M3 Ultra | 60 | 4K display | Full | 100% |
+| M3 Ultra | 80 | 4K display | Full | 100% |
+| M3 Max | 30 | 16-inch Pro | Full | 85% |
+| M3 Max | 40 | 16-inch Pro | Full | 100% |
+| M3 Pro | 14 | 14-inch Pro | Light | 67% |
+| M3 Pro | 18 | 14-inch Pro | Standard | 75% |
+| M3 | 8 | 13-inch Air | Off | – |
+| M3 | 10 | 13-inch Air | Off | – |
+| M2 Ultra | 60 | 4K display | Off (no hardware rays) | – |
+| M2 Ultra | 76 | 4K display | Off (no hardware rays) | – |
+| M2 Max | 30 | 16-inch Pro | Off (no hardware rays) | – |
+| M2 Max | 38 | 16-inch Pro | Off (no hardware rays) | – |
+| M2 Pro | 16 | 14-inch Pro | Off (no hardware rays) | – |
+| M2 Pro | 19 | 14-inch Pro | Off (no hardware rays) | – |
+| M2 | 8 | 13-inch Air | Off (no hardware rays) | – |
+| M2 | 10 | 13-inch Air | Off (no hardware rays) | – |
+| M1 Ultra | 48 | 4K display | Off (no hardware rays) | – |
+| M1 Ultra | 64 | 4K display | Off (no hardware rays) | – |
+| M1 Max | 24 | 16-inch Pro | Off (no hardware rays) | – |
+| M1 Max | 32 | 16-inch Pro | Off (no hardware rays) | – |
+| M1 Pro | 14 | 14-inch Pro | Off (no hardware rays) | – |
+| M1 Pro | 16 | 14-inch Pro | Off (no hardware rays) | – |
+| M1 | 7 | 13-inch Air | Off (no hardware rays) | – |
+| M1 | 8 | 13-inch Air | Off (no hardware rays) | – |
+| A18 Pro (MacBook Neo) | 5 | MacBook Neo | Off | – |
+
+A MacBook Air's screen at its default setting counts for the base chips, a 14- or 16-inch MacBook Pro's for Pro and Max, and a 4K display for Ultra; the M6 is the measured Mac mini on a 2560 × 1440 display. Another screen gives another result. M1 and M2 chips have no hardware rays: only Off can be chosen.
+
+</details>
+
 Examples from the App's own model (the unit tests check it against `dm/host/tests/t_picrec_rt_cases.h`, every chip with hardware rays on its usual screen). Each row is at 16 GB or more. Built-in screens are at macOS's default display setting (a 13-inch MacBook Air looks like 1470 × 956, the M1 one 1440 × 900); external displays at the setting named, at 60 Hz unless the row says otherwise. Only the first row has been measured with rays, and only the first two without; the others are the model's estimate. *Full* is the full picture (Environment Shadows on, Ultra shadows); *light* has no environment shadows and Standard shadows. Every Mac also gets 16x filtering, and starts in full screen with Accurate color.
 
 | Mac | Screen | Picture | Ray Tracing |

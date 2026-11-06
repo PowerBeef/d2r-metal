@@ -1,4 +1,4 @@
-// Cases for t_picrec.c with ray tracing offered, written from the list published at https://claude.ai/artifact/WAuEUs6s4WpsLFCGwQGEsE: GPU name, GPU cores, Native width x height, fanless, expected level (0 Off, 1 Light, 2 Standard, 3 Full), 3D Resolution (0 100% / 1 85% / 2 75% / 3 67%; -1 = any, the rays are off)
+// Cases for t_picrec.c with ray tracing offered, from the per-chip list in docs/MAC.md: GPU name, GPU cores, Native width x height, fanless, expected level (0 Off, 1 Light, 2 Standard, 3 Full), 3D Resolution (0 100% / 1 85% / 2 75% / 3 67%; -1 = any, the rays are off)
 // Only the Mac mini M6 row has been measured; the others are the same estimate from public benchmarks.
     { "Apple M6", 12, 2560, 1440, 0, 3, 0 },
     { "Apple M5 Ultra", 64, 3840, 2160, 0, 3, 0 },
