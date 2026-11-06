@@ -210,13 +210,13 @@ static void vis_ring_case(void) {
 // F-GFX-2: when the display link merges old frames it bumps the ticket straight to "this frame - 1", so an in-flight earlier frame is counted as done too; a present slot (a Metal 4 command allocator) may be reused only after that slot's previous command buffer has really completed.
 // Here the GPU queue first waits for an event, so ticket 1's command buffer stays in flight; g_pq_done is bumped to 3 as the merge does, then ticket 4 (same slot as ticket 1) is presented: it must not return before the event is signaled
 static tex_t t_psrc; static id<CAMetalDrawable> t_d4; static _Atomic int t_p4_done;
-static void *present4(void *arg) { (void)arg; @autoreleasepool { present_now(&t_psrc, 0, 4, 4, NULL, t_d4, 0); } atomic_store(&t_p4_done, 1); return NULL; }
+static void *present4(void *arg) { (void)arg; @autoreleasepool { present_now(&t_psrc, 0, 4, 4, NULL, t_d4, 0, 0); } atomic_store(&t_p4_done, 1); return NULL; }
 static void present_slot_case(void) {
     t_layer = [CAMetalLayer layer]; t_layer.device = g_dev; t_layer.pixelFormat = MTLPixelFormatBGRA8Unorm; t_layer.drawableSize = CGSizeMake(16, 16);
     t_psrc = tex(8, NVN_FORMAT_RGBA8); state_reset(); memset(&R, 0, sizeof R); mtl_sub_begin(); tex_mtl(&t_psrc); commit();
     id<MTLSharedEvent> ev = [g_dev newSharedEvent];
     [g_q4 waitForEvent:ev value:1];
-    int ok1; @autoreleasepool { ok1 = present_now(&t_psrc, 0, 1, 1, NULL, [t_layer nextDrawable], 0); }
+    int ok1; @autoreleasepool { ok1 = present_now(&t_psrc, 0, 1, 1, NULL, [t_layer nextDrawable], 0, 0); }
     EXPECT("出图：票 1 已提交（GPU 上被事件挡着）| present: ticket 1 committed (held by the event on the GPU)", 1, ok1);
     pthread_mutex_lock(&g_pq_mu); if (g_pq_done < 3) g_pq_done = 3; pthread_mutex_unlock(&g_pq_mu);   // 同显示节拍合并票 2、3 时的 g_pq_done = ticket - 1 | Same as g_pq_done = ticket - 1 when the display link merges tickets 2 and 3
     t_d4 = [t_layer nextDrawable]; pthread_t th; pthread_create(&th, NULL, present4, NULL);

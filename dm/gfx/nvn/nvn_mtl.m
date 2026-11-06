@@ -80,6 +80,12 @@ static NSMutableArray *g_l3_gpu_leaks;
 static int g_nvn_deswz_gpu;
 static id<MTLCommandQueue> g_q;
 static id<MTL4CommandQueue> g_q4;
+// A second queue, for presents only, when no display link hands out drawables (present_now): waiting for a drawable holds up everything behind it on its queue, and on g_q4 that is the next frame's own
+// work, so the GPU falls behind by as long as the wait (seen on the phone: a generated frame's present ended about 75 ms after the frame's start, with 30 ms of work). Apple's frame interpolation guide
+// has a present queue too. It runs no game work, so WaitSync's one-queue rule below still holds: its presents wait on g_ev for the frame they show, and a swap texture is not drawn again until its last
+// present is done (nvnWindowAcquireTexture → mtl_present_wait)
+static id<MTL4CommandQueue> g_present_q4;
+static _Atomic uint64_t g_ev_last;   // the last value g_ev was told to reach: a present made now shows work up to there
 static dispatch_queue_t g_feedback_q;
 // 命令流队列只许一条：游戏的命令缓冲与出图都提交到它（Metal 4 = g_q4，旧接口 = g_q；Metal 4 构建里的 g_q 只给 CPU 同步等完的回读 / 截图 / 收尾用）。
 // WaitSync 空跑即正确靠这个前提（见 hle_nvn.c g_nops 里 WaitSync 的注释）：建命令流队列一律经这里，第二次建即报红中止
@@ -125,6 +131,7 @@ static int g_pq_inflight;   // 持 g_pq_mu：已提交给 GPU、完成回调还�
 int g_dm_present_link;   // 出图节拍模式（DM_PRESENT_LINK 的运行时值，同进程交替测量时直接改它）：0 = 自己取 drawable；1 = 显示节拍 60 Hz；2 = 120 Hz 节拍、游戏隔拍出一帧 | Present pacing mode (runtime value of DM_PRESENT_LINK, modified directly during same-process alternating measurement): 0 = acquire the drawable itself; 1 = display link at 60 Hz; 2 = display link at 120 Hz, the game presents a frame every other display-link tick
 static int g_present_latency = 1;
 static int g_present_link_set;   // DM_PRESENT_LINK was given: it decides, whatever the Mac's default
+static int g_present_own_q = 1;   // presents with no link go on their own queue; DM_PRESENT_QUEUE=0 puts them back on the game's
 static uint64_t g_pq_done;
 static uint64_t g_pq_read;
 static id<MTLResidencySet> g_res;
@@ -301,6 +308,7 @@ static void aux_prewarm(void);
 static void mtl_init_once(void) {
     if (g_dev) return;
     const char *link = getenv("DM_PRESENT_LINK"); g_present_link_set = link != NULL;
+    { const char *e = getenv("DM_PRESENT_QUEUE"); if (e && *e) g_present_own_q = atoi(e) != 0; }
     g_dm_present_link = link ? atoi(link) : 1; if (g_dm_present_link < 0 || g_dm_present_link > 2) g_dm_present_link = 1;   // 缺省 1（真机同进程交替：负载超一拍时长帧 15% → 0、帧间隔变匀；稳 60 时与 0 无差别）；DM_PRESENT_LINK=0 关   // 1 = 60 Hz 节拍每拍出图；2 = 120 Hz 节拍、游戏隔拍出一帧（落后时下一个 8.33 ms 拍就能上屏） | Default 1 (real-device same-process alternation: when load exceeds one display-link period, long frames 15% → 0 and frame intervals even out; no difference from 0 at a steady 60); DM_PRESENT_LINK=0 turns it off   // 1 = present on every tick of a 60 Hz display link; 2 = 120 Hz display link, the game presents a frame every other display-link tick (when behind, it can present on the next 8.33 ms display-link tick)
     const char *latency = getenv("DM_PRESENT_LATENCY");
     if (latency && atoi(latency) > 0) g_present_latency = atoi(latency);
@@ -323,6 +331,9 @@ static void mtl_init_once(void) {
     if (!g_q4) MDIE("建立 MTL4CommandQueue 失败");
     stream_queue_once();
     [g_q4 addResidencySet:g_res];
+    g_present_q4 = [g_dev newMTL4CommandQueueWithDescriptor:q4d error:&re];
+    if (!g_present_q4) MDIE("建立 MTL4CommandQueue 失败");
+    [g_present_q4 addResidencySet:g_res];
     g_alloc_n = 3;
     for (int i = 0; i < 3; i++) {
         MTL4CommandAllocatorDescriptor *ad = [MTL4CommandAllocatorDescriptor new];
@@ -977,6 +988,7 @@ uint64_t mtl_sub_commit(void) {
     CBUF buffers[] = {g_cb};
     [g_q4 commit:buffers count:1 options:o];
     [g_q4 signalEvent:g_ev value:fence];
+    atomic_store(&g_ev_last, fence);
     cb_committed();
     g_alloc_fence[g_alloc_cur] = fence;
     g_cb = nil;
@@ -7238,7 +7250,7 @@ static void link_shown(uint64_t ticket, int gen, double target, double shown, ui
     fprintf(f, "%llu\t%d\t%.6f\t%.6f\t%llu\n", (unsigned long long)ticket, gen, target, shown, (unsigned long long)frame);
     if (ticket % 120 == 0) fflush(f);
 }
-static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts) {
+static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts, uint64_t ev_value) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
     if (g_use != USE_OFF && g_use != USE_DONE) use_tick();
@@ -7293,7 +7305,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     if (g_burst_left > 0) burst_grab(src);   // 测试：连拍 | test: burst capture
     CAMetalLayer *layer = (__bridge CAMetalLayer *)front_metal_layer();
     if (!layer) return 0;
-    if (g_present_layer_resident != layer) { [g_q4 addResidencySet:layer.residencySet]; g_present_layer_resident = layer; }
+    if (g_present_layer_resident != layer) { [g_q4 addResidencySet:layer.residencySet]; [g_present_q4 addResidencySet:layer.residencySet]; g_present_layer_resident = layer; }
 #if TARGET_OS_OSX
     if (!layer.displaySyncEnabled) layer.displaySyncEnabled = YES;   // 窗口模式按显示器垂直同步，防撕裂 | Windowed mode follows the display's vsync to prevent tearing
 #endif
@@ -7311,10 +7323,12 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
         pthread_mutex_unlock(&g_pq_mu);
     }
     [g_present_alloc4[alloc_i] reset];
-    [g_q4 waitForDrawable:dr];
+    id<MTL4CommandQueue> pq = !supplied && g_present_own_q ? g_present_q4 : g_q4;
+    if (pq != g_q4 && ev_value) [pq waitForEvent:g_ev value:ev_value];
+    [pq waitForDrawable:dr];
     CBUF cb = g_present_cb[alloc_i];
     [cb beginCommandBufferWithAllocator:g_present_alloc4[alloc_i]];
-    if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) { [cb endCommandBuffer]; [g_q4 signalDrawable:dr]; return 0; }
+    if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) { [cb endCommandBuffer]; [pq signalDrawable:dr]; return 0; }
     mp_encode(cb, src, alloc_i);
     int fr_i = fr_encode(cb, src, ticket, frame, g_present_gen != nil, target_ts);
     [cb endCommandBuffer];
@@ -7333,7 +7347,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     }];
     CBUF buffers[] = {cb};
     pthread_mutex_lock(&g_pq_mu); g_pq_inflight++; pthread_mutex_unlock(&g_pq_mu);
-    [g_q4 commit:buffers count:1 options:o];
+    [pq commit:buffers count:1 options:o];
     if (supplied && target_ts > 0) {
         static double leads[300], e2e[300];   // e2e：游戏入队 → 系统预定上屏（含在队列里等节拍回调的时间），输入延迟里我们这一侧能读到的全程 | e2e: game enqueue -> system-scheduled present (including the time waiting in the queue for the display-link callback), the full span of input latency that our side can read
         static uint64_t lead_n;
@@ -7350,7 +7364,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
         }
     }
     if (present_rgb_n()) present_rgb(dr.texture, ticket);
-    [g_q4 signalDrawable:dr];
+    [pq signalDrawable:dr];
     g_present_alloc_fence[alloc_i] = ticket;
 #if TARGET_OS_SIMULATOR   // iOS 模拟器 SDK 没有呈现时刻回调与最短显示时长（只作画面验收用，不计节拍） | The iOS simulator SDK has no presentation-time callback and no minimum display duration (used only for picture acceptance, display-link ticks are not counted)
     (void)period; M3_PRESENT(cb, dr);
@@ -7387,10 +7401,10 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 // Swapchain texture return: before AcquireTexture gets a texture it waits for the ticket of that texture's previous present to be processed (mtl_present_wait), after which the commands the game draws into it
 // are necessarily ordered after that blit on the GPU queue.
 #define PQ 8
-typedef struct { tex_t t; double period; uint64_t frame; int crop[4]; double t_in; void *gen; double plan; } pq_item;   // t_in：游戏把这一帧交进出图队列的时刻（CACurrentMediaTime） | t_in: the time the game handed this frame into the present queue (CACurrentMediaTime)
+typedef struct { tex_t t; double period; uint64_t frame; int crop[4]; double t_in; void *gen; double plan; uint64_t ev; } pq_item;   // t_in：游戏把这一帧交进出图队列的时刻（CACurrentMediaTime） | t_in: the time the game handed this frame into the present queue (CACurrentMediaTime)
 static pq_item g_pq[PQ];
 static uint64_t g_pq_in;
-static int present_now(const tex_t *, double, uint64_t, uint64_t, const int[4], id<CAMetalDrawable>, double);
+static int present_now(const tex_t *, double, uint64_t, uint64_t, const int[4], id<CAMetalDrawable>, double, uint64_t);
 
 @interface NvMetalDisplayLinkDelegate : NSObject <CAMetalDisplayLinkDelegate>
 @end
@@ -7473,7 +7487,7 @@ static void link_trace(CAMetalDisplayLinkUpdate *update, int pending, double t_i
     link_trace(update, 1, it.t_in, it.frame);
     int submitted;
     uint64_t busy0 = now_ns();
-    @autoreleasepool { g_present_gen = (__bridge id<MTLTexture>)it.gen; submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, update.drawable, update.targetPresentationTimestamp); g_present_gen = nil; }
+    @autoreleasepool { g_present_gen = (__bridge id<MTLTexture>)it.gen; submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, update.drawable, update.targetPresentationTimestamp, 0); g_present_gen = nil; }
     g_link_busy_ms = (now_ns() - busy0) / 1e6;
     if (!submitted) {
         pthread_mutex_lock(&g_pq_mu);
@@ -7530,11 +7544,9 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
     // rescue state is the game thread's too (mtl_present_wait): checked and changed under g_pq_mu
     { int back = 0; pthread_mutex_lock(&g_pq_mu);
       if (g_rescue_mode && now_ns() >= g_rescue_back_at) { back = g_rescue_mode; LINK_SET(g_rescue_mode); g_rescue_mode = 0; g_stall_t0 = 0; __atomic_store_n(&g_link_tick_ns, now_ns(), __ATOMIC_RELAXED); }
-#if TARGET_OS_OSX
-      // Frame generation on the Mac presents without the link, as Apple's frame interpolation guide does: its callback skips a refresh now and then when the GPU has been idle
-      // (12 late images against 1 over six runs each, dm/verify/debugging.md). The iPhone stays on the link until this is measured there. DM_PRESENT_LINK decides when set
+      // Frame generation presents without the link, as Apple's frame interpolation guide does (dm/verify/debugging.md): on the Mac the link's callback skips a refresh now and then when the GPU has been idle,
+      // and on the iPhone a generated frame that misses its tick costs the real one. DM_PRESENT_LINK decides when set
       { static int fg_was; int f = fg_on(); if (!g_present_link_set && !g_rescue_mode && f != fg_was) { fg_was = f; LINK_SET(f ? 0 : 1); } }
-#endif
       pthread_mutex_unlock(&g_pq_mu);
       if (back) MLOG("显示节拍：抢救期满，换回节拍模式 %d 再试（帧 %llu）", back, (unsigned long long)atomic_load(&g_cur_frame)); }
     int want = LINK_WANT();
@@ -7616,7 +7628,7 @@ static void *present_main(void *arg) {
         pthread_mutex_unlock(&g_pq_mu);
         if (it.gen) gen_t = CACurrentMediaTime();
         int submitted;
-        @autoreleasepool { g_present_gen = (__bridge id<MTLTexture>)it.gen; submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, nil, it.plan); g_present_gen = nil; }
+        @autoreleasepool { g_present_gen = (__bridge id<MTLTexture>)it.gen; submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, nil, it.plan, it.ev); g_present_gen = nil; }
         pthread_mutex_lock(&g_pq_mu); g_classic_busy = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
         if (!submitted) {
             pthread_mutex_lock(&g_pq_mu);
@@ -7660,7 +7672,7 @@ static void fg_present(const tex_t *t, double period, const int crop[4]) {
     g_fg.ready = 0;
     pthread_mutex_lock(&g_pq_mu);
     while (g_pq_in - g_pq_done >= PQ) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
-    pq_item *it = &g_pq[g_pq_in % PQ]; *it = (pq_item){*t, period, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime(), (__bridge void *)g_fg.out[g_fg.idx], fgp_plan(atomic_load(&g_cur_frame), 0)};
+    pq_item *it = &g_pq[g_pq_in % PQ]; *it = (pq_item){*t, period, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime(), (__bridge void *)g_fg.out[g_fg.idx], fgp_plan(atomic_load(&g_cur_frame), 0), atomic_load(&g_ev_last)};
     if (crop) memcpy(it->crop, crop, sizeof it->crop);
     ++g_pq_in; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
 }
@@ -7681,7 +7693,7 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     fg_present(t, period, crop);
     pthread_mutex_lock(&g_pq_mu);
     while (g_pq_in - g_pq_done >= PQ) pthread_cond_wait(&g_pq_cv, &g_pq_mu);   // 队满才等；正常由 AcquireTexture 先挡住 | Wait only when the queue is full; normally AcquireTexture blocks first
-    pq_item *it = &g_pq[g_pq_in % PQ]; *it = (pq_item){*t, period, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime(), NULL, atomic_load(&g_fg_fifo) ? fgp_plan(atomic_load(&g_cur_frame), 1) : 0};
+    pq_item *it = &g_pq[g_pq_in % PQ]; *it = (pq_item){*t, period, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime(), NULL, atomic_load(&g_fg_fifo) ? fgp_plan(atomic_load(&g_cur_frame), 1) : 0, atomic_load(&g_ev_last)};
     if (crop) memcpy(it->crop, crop, sizeof it->crop);   // 当帧状态随票号入队，不在出图线程晚读可变window | The current frame's state is enqueued with the ticket number, rather than reading the mutable window late on the present thread
     uint64_t tk = ++g_pq_in;
     pthread_cond_broadcast(&g_pq_cv);
