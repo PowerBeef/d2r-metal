@@ -221,6 +221,16 @@ static int g_mac_rec_id = -1;   // dm_picrec_id of the spec mac_rec worked from 
 // on a 144 Hz screen); memory, the Mac's model, the panel size, the thermal state and Low Power Mode are only logged. Worked out once per launch: first in main.c cloud_boot_start
 // (dm_custom's Frame Drops default, on the main thread, after NSApplication exists), then reused by dm_video.c's load
 static int rec_fg(void);
+// A MacBook Air or Neo, from the machine's product name ("MacBook Air (13-inch, M2, 2022)"); DM_TEST_PRODUCT stands in for it (tests)
+static int mac_fanless(void) {
+    char name[128] = ""; const char *t = getenv("DM_TEST_PRODUCT");
+    if (t && *t) snprintf(name, sizeof name, "%s", t);
+    else { io_registry_entry_t e = IORegistryEntryFromPath(kIOMainPortDefault, "IODeviceTree:/product");
+        if (e) { CFTypeRef v = IORegistryEntryCreateCFProperty(e, CFSTR("product-name"), kCFAllocatorDefault, 0);
+            if (v && CFGetTypeID(v) == CFDataGetTypeID()) { CFIndex n = CFDataGetLength(v); if (n > 127) n = 127; CFDataGetBytes(v, CFRangeMake(0, n), (UInt8 *)name); name[n] = 0; }
+            if (v) CFRelease(v); IOObjectRelease(e); } }
+    return strstr(name, "MacBook Air") || strstr(name, "MacBook Neo");
+}
 static dm_mac_rec mac_rec(void) {
     static dm_mac_rec r; static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -231,18 +241,19 @@ static dm_mac_rec mac_rec(void) {
         { scr_px sp = scr_launch(); CGSize ds = CGSizeMake(sp.w, sp.hc); test_drawable_px(&ds); double vp[4]; dm_geom_fit(ds.width, ds.height, w, h, vp);
           spec.drw_w = (int)lround(vp[2]); spec.drw_h = (int)lround(vp[3]); }
         double hz = launch_hz(); spec.pace_hz = dm_pace_hz(hz, 60);
+        { int mtl_rt_supported(void); const char *e = getenv("DM_TEST_RAM_GB"); spec.hw_rt = mtl_rt_supported(); spec.ram_gb = e && *e ? atoi(e) : (int)(mem / 1073741824ull); spec.fanless = mac_fanless(); }
         dm_mac_recommend(&spec, &r); g_mac_rec_id = dm_picrec_id(&spec);
         int pw, pnh; panel_px(&pw, &pnh); NSProcessInfo *pi = NSProcessInfo.processInfo;
         static const char *const tiers[] = { "iPhone chip", "base", "Pro", "Max", "Ultra" };
         static const int pct[5] = { 100, 85, 75, 67, 50 };
         static const int fixed_w[3] = { 1600, 1920, 2560 };
         LOG("picture: %s (%s, generation %d), %d GPU cores, %.0f GB, %s, screen %dx%d (backing %.0fx%.0f%s, panel %dx%d), drawn into %dx%d%s, %.2f Hz%s → %.4g fps, "
-            "thermal state %ld, Low Power Mode %s; about %.2fx the M6's GPU → Recommended %s %d, 3D %d%%, environment shadows %s, shadows %s, Frame Drops %s, Frame Generation %s "
+            "thermal state %ld, Low Power Mode %s; about %.2fx the M6's GPU → Recommended %s %d, 3D %d%%, environment shadows %s, shadows %s, Frame Drops %s, Frame Generation %s, Ray Tracing %s "
             "(%.0f%% of the estimated capacity%s); rec_id %d",
             g.UTF8String, tiers[r.tier + 1], r.gen, spec.cores, mem / 1073741824.0, model, w, h, px, ph, test_screen_px(NULL, NULL, NULL) ? " from DM_TEST_SCREEN_PX" : "",
             pw, pnh, spec.drw_w, spec.drw_h, dm_picrec_enlarges(&spec) ? " (the present enlarges it)" : "", hz, test_screen_hz() > 0 ? " from DM_TEST_SCREEN_HZ" : "", spec.pace_hz,
             (long)pi.thermalState, pi.lowPowerModeEnabled ? "on" : "off", r.speed, r.native ? "Native" : "fixed", r.native ? w : fixed_w[r.tier_res], pct[r.s3d],
-            r.envsh ? "on" : "off", r.shq == 2 ? "Ultra" : r.shq ? "High" : "Standard", r.q3d ? "keep" : "lower", r.fg ? "on" : "off", r.load * 100,
+            r.envsh ? "on" : "off", r.shq == 2 ? "Ultra" : r.shq ? "High" : "Standard", r.q3d ? "keep" : "lower", r.fg ? "on" : "off", (const char *[]){ "off", "Light", "Standard", "Full" }[r.rt], r.load * 100,
             r.pres > 0 ? ", the present's enlargement included" : "", g_mac_rec_id);
     });
     return r;
@@ -296,6 +307,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "shq")) return mac_rec().shq;   // 2 = Ultra (a 4096-texel map) with the full picture, 0 = Standard (the Switch's 2100) with the light one
     if (!strcmp(key, "s3d")) { int r, s3; rec_native(&r, &s3); return s3; }
     if (!strcmp(key, "fg")) return mac_rec().fg;
+    if (!strcmp(key, "rt")) return mac_rec().rt;
     return -1;
 }
 // Frame Drops' default (dm_custom.c q3d): the recommendation's choice (lower when the light picture is needed or the choice uses more than 85% of the
@@ -478,12 +490,13 @@ static int ctl_app(const char *w) {
     if (!strcmp(w, "cover") || !strcmp(w, "uncover")) { int on = !strcmp(w, "cover");
         dispatch_sync(dispatch_get_main_queue(), ^{ test_cover(on); LOG("control port: test cover %s (the game window %s the key window)", on ? "on" : "off", g_win.isKeyWindow ? "is" : "is not"); });
         return 0; }
-    if (!strcmp(w, "link_inactive") || !strcmp(w, "link_active")) { int on = !strcmp(w, "link_inactive"); void mtl_present_inactive(int on); int mtl_link_active(void);
+    if (!strcmp(w, "link_inactive") || !strcmp(w, "link_active")) { int on = !strcmp(w, "link_inactive"); void mtl_present_inactive(int on); int mtl_link_active(void), mtl_fg_active(void);
         __block int ok = 1;
         dispatch_sync(dispatch_get_main_queue(), ^{
             // With no present link driving presents (DM_PRESENT_LINK=0, no window, a stall rescue) there is nothing to pause: presents would go on,
-            // and a test that expects nothing on screen would pass for the wrong reason, so the verb fails
-            if (on && !mtl_link_active()) { ok = 0; LOG("【红】control port: link_inactive: no present link drives presents (DM_PRESENT_LINK=0, no window, or a stall rescue), nothing paused"); return; }
+            // and a test that expects nothing on screen would pass for the wrong reason, so the verb fails. Frame generation's own present thread
+            // has no link either, and there the flag stops presents at the door (mtl_present)
+            if (on && !mtl_link_active() && !mtl_fg_active()) { ok = 0; LOG("【红】control port: link_inactive: no present link drives presents (DM_PRESENT_LINK=0, no window, or a stall rescue), nothing paused"); return; }
             // Active again restores the focus the window has, real or emulated (a background run's window is never key in AppKit's eyes; a front run
             // may have lost the key window to another app meanwhile), never a forced 1
             int fo = on ? 2 : win_mini() ? 3 : win_key_now() ? 1 : 2;

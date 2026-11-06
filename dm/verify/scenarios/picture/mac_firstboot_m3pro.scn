@@ -1,0 +1,17 @@
+# The Mac App test copy's first launch as if on an 18-core M3 Pro with 18 GB in a 14-inch MacBook Pro (DM_TEST_GPU_NAME / DM_TEST_GPU_CORES / DM_TEST_RAM_GB / DM_TEST_SCREEN_PX / DM_TEST_PRODUCT): a chip Recommended turns rays on for at a cheaper level
+# and a lower 3D Resolution (t_picrec_rt_cases.h's model). This M6 draws it, so this checks the glue, not an M3 Pro's speed.
+name pic_mac_firstboot_m3pro
+requires mac-app
+save warlock
+timeout 300
+env DM_TEST_VIDEO_FIRSTBOOT=1 "DM_TEST_GPU_NAME=Apple M3 Pro" DM_TEST_GPU_CORES=18 DM_TEST_RAM_GB=18 DM_TEST_SCREEN_PX=3024x1964+74 "DM_TEST_PRODUCT=MacBook Pro (14-inch, Nov 2023)" DM_GAME_SEED=305419896
+
+expect main_menu timeout=120
+enter_game
+sleep 8
+screenshot m3pro.png
+system_quit
+check no_red
+check no_red_log
+check event picture how=first fg=1 rt=2
+check log_has "ray tracing: on, ray start"

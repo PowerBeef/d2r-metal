@@ -851,7 +851,7 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), 'dmVideoEnvShadowsTip'),
            ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), 'dmVideoShadowQTip'),
            ('envd', '@dmVideoEnvDetail', ('dmVideoShadowStd', 'dmVideoShadowHigh'), 'dmVideoEnvDetailTip'),
-           ('rt', '@dmVideoRt', ('dmVideoRtOff', 'dmVideoRtOn'), 'dmVideoRtTip'),
+           ('rt', '@dmVideoRt', ('dmVideoRtOff', 'dmVideoRtLight', 'dmVideoRtStandard', 'dmVideoRtFull'), 'dmVideoRtTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
           (('res', '@dmVideo3DRes', ('dmVideoScale50', 'dmVideoScale67', 'dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),   # selector order; dm_video.c car_of maps it to the stored values
            ('color', '@dmVideoColor', ('dmVideoColorVivid', 'dmVideoColorAccurate'), None),

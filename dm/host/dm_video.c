@@ -21,8 +21,8 @@
 //          (none while DM_ENV_SHADOWS / DM_SHADOW_SIZE force them; DM_SHADOW_SIZE is clamped to 512..4096 and made even)
 //   envd   Environment Detail, 0 Standard (the Switch's) / 1 High: three of the game's own quality settings, written into the renderer's config as it boots (dm_video_renderer_cfg_obs). Latched at launch, a
 //          change shows the restart hint (none while DM_ENV_DETAIL=0/1 forces it)
-//   rt     Mac: Ray Tracing, 0 Off / 1 On: key-light shadows and ambient occlusion traced on the GPU (dm/gfx/nvn/nvn_rt.inc), live. Off in Recommended and in both presets, which leave it alone. A chip without
-//          hardware ray tracing can't choose On. DM_RT=0/1/2 forces it (2 = the rays alone, without the game's map)
+//   rt     Mac: Ray Tracing, 0 Off / 1 Light / 2 Standard / 3 Full: shadows, occlusion and material response traced on the GPU (dm/gfx/nvn/nvn_rt.inc), live. Recommended sets it by chip (dm_picrec.c); both
+//          presets leave it alone. A chip without hardware ray tracing has only Off. DM_RT=0/1/2 forces it (2 = the rays alone, without the game's map)
 // Recommended: rec_<key> holds the recommendation, rec_v its version (REC_V) and rec_id the machine it was worked out for (front_video_rec_id: the Mac
 // App's GPU and main screen; none on iOS, the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1). It is worked out (front_video_firstboot for
 // the first three keys, front_video_rec for the others) on first boot, for a missing or out-of-range key (only that key is filled), and when rec_v is
@@ -64,8 +64,8 @@ int dm_custom_shown(void);
 int dm_custom_path(const char *name, char *p, size_t n);
 enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, K_FG, K_ED, K_RT, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
 static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq", "fg", "envd", "rt" };
-static const int k_n[NV] = { 2, 4, 3, 2, 4, 2, 5, 2, 3, 2, 2, 2 };
-#define REC_V 12   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);
+static const int k_n[NV] = { 2, 4, 3, 2, 4, 2, 5, 2, 3, 2, 2, 4 };
+#define REC_V 13   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);, 13 = ray tracing by chip
                   // 6 = a Mac on an iPhone chip (MacBook Neo) gets the phone's (front_mac.m); 7 = chosen from the chip's generation, GPU cores and the screen (dm_picrec.c);
                   // 8 = Native's light ladder stops at 67%, an iPhone chip keeps the phone's shadows, A-chip table and smallest-part core counts (dm_picrec.c);
                   // 9 = MetalFX Temporal with Frame Generation wherever the chip has both (front_mac.m, front_ios.m rec_fg);
@@ -274,7 +274,12 @@ float dm_env_wetness(void) {
 int dm_video_rt(void) {   // read at the start of each submission (nvn_rt.inc)
     static int env = -2; if (env == -2) { const char *e = getenv("DM_RT"); env = e && *e ? atoi(e) : -1; }
     if (!mtl_rt_supported()) return 0;
-    return env >= 0 ? env : dm_video_get("rt") == 1;
+    return env >= 0 ? env : dm_video_get("rt") > 0;
+}
+// Which rays: 1 Light, 2 Standard, 3 Full (the row's value; DM_RT forcing them on means Full). Read with dm_video_rt, nvn_rt.inc
+int dm_video_rt_level(void) {
+    static int env = -2; if (env == -2) { const char *e = getenv("DM_RT"); env = e && *e ? atoi(e) : -1; }
+    return env >= 0 ? (env ? 3 : 0) : dm_video_get("rt");
 }
 int dm_video_env_detail(void) {
     int x = atomic_load(&g_ed_launch); if (x >= 0) return x;
@@ -423,7 +428,7 @@ static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effe
 // car_of turns a row's value into the selector index, val_of back; every other row is the identity
 static int car_of(int row, int v) { static const int m[5] = { 2, 3, 4, 1, 0 }; return DM_PHONE && k_row_key[row] == K_RES && v >= 0 && v < 5 ? m[v] : v; }
 static int val_of(int row, int c) { static const int m[5] = { 4, 3, 0, 1, 2 }; return DM_PHONE && k_row_key[row] == K_RES && c >= 0 && c < 5 ? m[c] : c; }
-static void rt_enable(uint64_t w) { *(uint8_t *)(w + 0x7d8 + 1) = mtl_rt_supported() != 0; }   // a chip without ray tracing can't choose On (the arrows skip it)
+static void rt_enable(uint64_t w) { for (int i = 1; i < k_n[K_RT]; i++) *(uint8_t *)(w + 0x7d8 + i) = mtl_rt_supported() != 0; }   // a chip without ray tracing has only Off (the arrows skip the rest)
 static int row_want(int i) { return k_row_ckey[i] ? dm_custom_shown_value(k_row_ckey[i]) : k_row_key[i] < 0 ? preset_of() : shown(k_row_key[i]); }   // the option this row should show
 void dm_video_pump(uint64_t sp) {   // called every frame while an Options page of ours is on screen (dm_custom.c); sp = 0: the page is not on screen
     static dm_wref seen[NR];

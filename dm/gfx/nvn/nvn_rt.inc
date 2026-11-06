@@ -30,7 +30,11 @@ static struct {
     uint64_t built_frame, frames, built_blas, built_tris, reused, since; float cam[3]; float dir[3]; size_t as_bytes; float bias, ao_r, ao_p; int dir_logged, mode, ao_rays, ao_shift, ao_chars, local, key_shift; float l_src, l_stop, sun, l_fill, char_sun, char_dir[3], refl_reach, refl_k, refl_seen, dark; int show; int char_on, refl_on;
 } g_rtx;
 static const char *g_rtx_who = "";
-int rtx_chars_traced(void) { return g_rtx.inited && !g_rtx.bad && g_rtx.char_on; }
+// The row's level, read at each submission: Light traces the key light, the occlusion and the materials; Standard adds the characters' own shadows; Full adds the local lights. DM_RT_CHAR, DM_RT_LOCAL and DM_RT_AO can still turn a part off at launch
+static int g_rtx_lv = 3;
+#define RTX_CHAR_NOW() (g_rtx.char_on && g_rtx_lv >= 2)
+#define RTX_LOCAL_NOW() (g_rtx.local && g_rtx_lv >= 3)
+int rtx_chars_traced(void) { return g_rtx.inited && !g_rtx.bad && RTX_CHAR_NOW(); }
 static const char *g_rtx_msl =
     "#include <metal_stdlib>\n#include <metal_raytracing>\nusing namespace metal;\nusing namespace metal::raytracing;\n"
     "struct U { float4x4 ivp; float4x4 iview; float4x4 pvp; float4 view; float4 dir; uint2 size; float bias; float maxd; float ao_r; packed_float3 ao_cam; float ao_pow; uint ao_rays; uint ao_shift; packed_uint2 tiles; float l_src; float l_stop; float sun; uint key_shift; float l_fill; packed_float3 dir2; float char_sun; float refl_reach; float dark; };\n"
@@ -126,6 +130,7 @@ static const char *g_rtx_msl =
     "  for (int y = -2; y < 2; y++) for (int x = -2; x < 2; x++) { int2 q = int2(id) + int2(x, y); if (q.x < 0 || q.y < 0 || q.x >= int(gs.x) || q.y >= int(gs.y)) continue; float dq = dp.read(uint2(q) << u.ao_shift); float w = abs(dq - d) < 0.0015 ? 1.0 : 0.0; sum += w * float(in[uint(q.y) * gs.x + uint(q.x)]); wt += w; }\n"
     "  float v = (wt > 0 ? sum / wt : float(in[at])) / 255.0; out[at] = uchar(pow(v, u.ao_pow) * 255 + 0.5); }\n";
 __attribute__((weak)) int dm_video_rt(void) { return 0; }   // the host's dm_video.c
+__attribute__((weak)) int dm_video_rt_level(void) { return 3; }
 __attribute__((weak)) float dm_env_wetness(void) { return 0.0f; }   // the host's dm_video.c: how damp this place is
 __attribute__((weak)) float dm_env_ibl_intensity(void) { return 1.0f; }   // the host's dm_video.c: the iblIntensity this environment's artists set
 // Hardware ray tracing only: supportsRaytracing also answers yes on older chips, which do it in software
@@ -247,7 +252,7 @@ static void rtx_frame(void) {
     enum { MAXB = 2048 }; static mv_draw *todo[MAXB]; static uint64_t toff[MAXB], tlen[MAXB], thash[MAXB]; static RtBlas *tb[MAXB]; int nt = 0, nfresh = 0; size_t cap_at = 0, scr_at = 0;
     static uint64_t ikey[RT_MAX_INST], tkey[2048]; int ni = 0;
     for (int i = 0; i < g_mv.n[c] && ni < RT_MAX_INST; i++) {
-        mv_draw *d = &g_mv.d[c][i]; if (!d->rt_opaque || !d->ib_cpu || d->count < 3 || (d->rt_char && !g_rtx.char_on && !rtx_char_wanted(d, c))) continue;
+        mv_draw *d = &g_mv.d[c][i]; if (!d->rt_opaque || !d->ib_cpu || d->count < 3 || (d->rt_char && !RTX_CHAR_NOW() && !rtx_char_wanted(d, c))) continue;
         uint64_t h = rtx_state_hash(d), okey = d->rt_char || rtx_slot_moving(d->key, h, frame) ? d->key : d->base ^ h; NSNumber *k = @(okey); RtBlas *b = g_rtx.blas[k]; if (b) b->chr = d->rt_char;   // what stands still is known by its mesh and place, so a rock keeps its structure whatever else comes and goes; what moves keeps its slot
         if (b && b->built && b->hash == h) { b->last = frame; ikey[ni++] = okey; g_rtx.reused++; continue; }
         int fresh = !b || !b->built;   // a level brings hundreds of new structures at once: they come in over a few frames (RT_NEW_PER_FRAME), as over a hundred in one frame stalled the GPU for good in about one level change in ten
@@ -325,7 +330,7 @@ static void rtx_frame(void) {
             [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1];
         }
         int con = 0;
-        if (g_rtx.char_on && (g_rtx.char_dir[0] != 0 || g_rtx.char_dir[1] != 0 || g_rtx.char_dir[2] != 0)) {   // the characters' own shadow, along their own axis, hitting characters only
+        if (RTX_CHAR_NOW() && (g_rtx.char_dir[0] != 0 || g_rtx.char_dir[1] != 0 || g_rtx.char_dir[2] != 0)) {   // the characters' own shadow, along their own axis, hitting characters only
             MTLSize kg = MTLSizeMake(u.size[0] >> u.key_shift, u.size[1] >> u.key_shift, 1);
             [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
             [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; [g_rtx.ct setAddress:g_rtx.craw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.cpso]; [ce dispatchThreads:kg threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
@@ -341,7 +346,7 @@ static void rtx_frame(void) {
         }
         // 6. the first four local lights of each pixel's tile: rays at half the picture each way, then the same box
         int lon = 0;
-        if (g_rtx.local && u.tiles[0] && u.tiles[1] && u.tiles[0] <= 64 && u.tiles[1] <= 64) {
+        if (RTX_LOCAL_NOW() && u.tiles[0] && u.tiles[1] && u.tiles[0] <= 64 && u.tiles[1] <= 64) {
             const p_bind_buf *sc = &S.ssbo[1][4], *sl = &S.ssbo[1][5]; void *mb; uint64_t mo, gc = 0, gl = 0, trid = 0; void *tv = NULL; int tid = (int)(S.tex[1][8] & 0xfffff); if (tid) trid = tex_fast_rid(tid, &tv);
             if (sc->addr && sl->addr && trid && mtl_gpu_addr(sc->addr, sc->size ? sc->size : 1, &mb, &mo, &gc) && mtl_gpu_addr(sl->addr, sl->size ? sl->size : 1, &mb, &mo, &gl)) {
                 uint64_t plane = support_gpu() + 4096 + 2 * (uint64_t)u.size[0] * u.size[1];
@@ -383,6 +388,7 @@ static void rtx_frame(void) {
 static void rtx_who(const char *k) { g_rtx_who = k; }
 // Replay thread, at the start of a submission: the setting. Off, the shaders go back to the map at once and everything goes down
 static void rtx_sub_begin(void) {
+    g_rtx_lv = dm_video_rt_level();
     int on = dm_video_rt(); if (on == g_rtx_on) return;
     g_rtx_on = on; MLOG("ray tracing: %s", on ? "wanted" : "no longer wanted");
     if (on) { g_rtx.mode = on; return; }

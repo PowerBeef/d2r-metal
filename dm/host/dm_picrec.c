@@ -35,7 +35,13 @@
 //    Only the M6 has been measured; elsewhere this is the same estimate from public benchmark speeds as the rest. A Mac the system offers neither to (none Apple lists since the M1) keeps the conventional choice below.
 // No MetalFX: a fixed resolution, the picture by its load. A fixed resolution has the game picture's shape (s->aspect: 1920 x 1200 on a 16:10 screen,
 // as front_mac.m front_game_res renders it), not 16:9.
-// Memory is not an input: no 8 GB Mac has been measured (the GPU heap is a fixed 768 MiB).
+// 8. Ray tracing: on where a drawn frame's estimated GPU time stays under 85% of the 33.3 ms it has, with hardware rays (M3 and later), Frame Generation and at least 16 GB (no 8 GB Mac has
+//    been measured, so this is caution). Full at 3D 100, 85 and 75%, then Standard at the same steps, then Light down to 67%; the first that fits wins. On a fixed resolution, at that resolution
+//    with the 3D at 100%. Costs were measured on the M6 at full clock on a Cathedral walk, 2026-11-06 (RT_* below); they scale by public benchmarks, not by the speeds at the top of this file:
+//    the picture by Geekbench 7 Metal and the rays by Blender Open Data 4.5 Metal (k_rt_chip), so every chip but the M6 is an estimate, good to about one step of 3D Resolution. A MacBook Air
+//    or Neo runs at FANLESS of that under a sustained load, which is a guess. So with rays on Frame Drops is always Lower: on a chip the estimate was kind to, the 3D dips for a while instead of
+//    frames dropping, and on one it wasn't, nothing happens. Published per chip at https://claude.ai/artifact/WAuEUs6s4WpsLFCGwQGEsE
+// Memory is otherwise not an input: rays add about 0.3 GB and the GPU heap is a fixed 768 MiB.
 #include "dm_picrec.h"
 #include <math.h>
 #include <stdint.h>
@@ -65,6 +71,51 @@ static const double k_core_m[] = { 0, 3975, 4500, 4690, 5300, 7000, 8500 };   //
 #define FG_MIN 4                  // Frame Generation's lowest 3D Resolution: 50%
 static const float k_scale[5] = { 1.0f, 0.85f, 0.75f, 0.67f, 0.5f };   // the 3D Resolution row
 static const int k_fixed_w[3] = { 1600, 1920, 2560 };                   // the Resolution row's fixed widths
+
+// Ray tracing's costs (ms of the M6's GPU at full clock, a drawn frame), 8. above: mp output megapixels, s the 3D scale
+#define RT_BUDGET (33.33 * 0.85)
+#define RT_LIGHT_K 1.9
+#define RT_LIGHT_MP 1.07
+#define FANLESS 0.85
+static double rt_pic_ms(double mp, double s) { return 2.0 + 2.72 * mp - 1.26 * mp * (1 - s * s); }
+static const struct { double k, per_mp; int steps; } k_rt_level[3] = {   // indexed by level - 1: Light, Standard, Full
+    { RT_LIGHT_K, RT_LIGHT_MP, 4 }, { 2.0, 1.36, 3 }, { 3.0, 2.2, 3 } };
+// Against the M6's 89020 (Geekbench 7 Metal) and 2490.43 (Blender Open Data 4.5 Metal): the part with the most cores, its core count, and the Blender score of the part with the fewest
+typedef struct { int gen, tier, hi, lo; double gb, bl_hi, bl_lo; } rt_chip;
+static const rt_chip k_rt_chip[] = {
+    { 6, 0, 12, 12, 89020, 2490.43, 2490.43 },
+    { 5, 3, 80, 64, 355191, 14180.98, 11344.78 }, { 5, 2, 40, 32, 238992, 7065.02, 5738.15 }, { 5, 1, 20, 16, 139128, 3673.15, 3161.94 }, { 5, 0, 10, 8, 70000, 1734.16, 1387.33 },
+    { 4, 2, 40, 32, 202701, 5266.87, 4452.30 }, { 4, 1, 20, 16, 114578, 2568.39, 2372.98 }, { 4, 0, 10, 8, 54802, 1080.60, 1060.10 },
+    { 3, 3, 80, 60, 245441, 7431.22, 6498.43 }, { 3, 2, 40, 30, 156470, 4263.07, 3440.05 }, { 3, 1, 18, 14, 76857, 1756.38, 1655.48 }, { 3, 0, 10, 8, 47700, 914.80, 869.81 },
+};
+// A chip's two speeds against the M6, 0 = no hardware rays. Parts the table doesn't list (a newer generation, a tier not out yet) count per core as the newest base chip known
+static void rt_speeds(int gen, int tier, int cores, double *sr, double *st) {
+    *sr = *st = 0;
+    if (gen < 3 || tier < 0) return;
+    for (size_t i = 0; i < sizeof k_rt_chip / sizeof *k_rt_chip; i++) {
+        const rt_chip *c = &k_rt_chip[i];
+        if (c->gen != gen || c->tier != tier) continue;
+        *sr = c->gb * cores / c->hi / 89020;
+        *st = (cores >= c->hi || c->hi == c->lo ? c->bl_hi * cores / c->hi : cores <= c->lo ? c->bl_lo * cores / c->lo : c->bl_lo + (c->bl_hi - c->bl_lo) * (cores - c->lo) / (c->hi - c->lo)) / 2490.43;
+        return;
+    }
+    *sr = *st = cores / 12.0;
+}
+// Rays on top of the picture chosen: w x h is what it draws, full whether the 3D Resolution may change (Native)
+static void rt_choose(const dm_mac_spec *s, dm_mac_rec *r, int cores, int w, int h, int native, double pres_ms) {
+    if (!s->hw_rt || !r->fg || s->ram_gb < 16) return;
+    double sr, st; rt_speeds(r->gen, r->tier, cores, &sr, &st);
+    if (st <= 0) return;
+    if (s->fanless) { sr *= FANLESS; st *= FANLESS; }
+    double mp = (double)w * h / 1e6, budget = RT_BUDGET * (s->pace_hz > 0 ? 60 / s->pace_hz : 1);
+    for (int lv = 3; lv >= 1; lv--)
+        for (int i = 0; i < (native ? k_rt_level[lv - 1].steps : 1); i++) {
+            double sc = k_scale[i], ms = (rt_pic_ms(mp, sc) + pres_ms) / sr + (k_rt_level[lv - 1].k + k_rt_level[lv - 1].per_mp * mp * sc * sc) / st;
+            if (ms > budget) continue;
+            r->rt = lv; r->rt_ms = ms; r->s3d = i; r->envsh = 1; r->shq = 2; r->q3d = 0; r->load = ms / 33.33;
+            return;
+        }
+}
 
 static double core_speed(int iphone, int gen) {
     if (iphone) {
@@ -136,7 +187,7 @@ void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r) {
                 if (l > cap) continue;
                 r->native = 1; r->s3d = i; r->envsh = !light; r->shq = light ? 0 : 2; r->load = l / cap; r->pres = pr * rate / cap; r->q3d = !(light || r->load > CLOSE); in = 1;
             }
-        if (in) return;
+        if (in) { rt_choose(s, r, cores, s->out_w, s->out_h, 1, 2 * pres_load(s, 1)); return; }
         // Not at Native: the widest fixed resolution up to 3/4 of the screen (the 2560 one from half the M6's speed) that fits with its enlargement into the screen, the 3D at 100%. The smallest and the light picture when nothing fits
         int top = 0; for (int i = 0; i < 3; i++) if (k_fixed_w[i] <= (s->out_w * 3 / 4 > 1600 ? s->out_w * 3 / 4 : 1600) && (i < 2 || r->speed >= 0.5)) top = i;
         for (int t = top; t >= 0 && !in; t--)
@@ -146,6 +197,7 @@ void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r) {
                 double l = fg_load(w, h, 1, light) * rate, pr = vw > w * 1.05 && vh > h * 1.05 ? (PRES_MFX * vp - PRES_ONE * fp) * rate : 0;
                 if (l + pr > cap && (t || !light)) continue;
                 r->native = 0; r->tier_res = t; r->s3d = 0; r->envsh = !light; r->shq = light ? 0 : 2; r->pres = pr / cap; r->load = (l + pr) / cap; r->q3d = !(light || r->load > CLOSE); in = 1;
+                rt_choose(s, r, cores, w, h, 0, 2 * pr / rate);
             }
         return;
     }

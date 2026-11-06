@@ -35,6 +35,8 @@ t_ratelog: t_ratelog.c ../nvn/nvn_ratelog.h
 	clang -O1 -g -fsanitize=thread -Wall -Werror -o $@ t_ratelog.c
 t_presproj: t_presproj.c ../nvn/nvn_presproj.h
 	clang -O1 -Wall -o $@ t_presproj.c
+t_fgpace: t_fgpace.c ../nvn/nvn_fgpace.h
+	clang -O1 -Wall -o $@ t_fgpace.c -lm
 t_capture: t_capture.c ../nvn/nvn_capture.c ../nvn/nvn_capture.h ../nvn/nvn_obj.h
 	clang -O1 -Wall -I../nvn/include -o $@ t_capture.c ../nvn/nvn_capture.c
 # DM_NVN_CAPTURE replayer (nvn_capture.inc): not in run, it needs a capture: ./nvn_replay <file.nvncap> [--repeat n] [--max-pixels n] [--png path]
@@ -127,6 +129,7 @@ run: \
 	t_pace \
 	t_timestamp \
 	t_presproj \
+	t_fgpace \
 	t_capture \
 	t_pfv \
 	t_present_crop \
@@ -159,6 +162,7 @@ run: \
 	./t_pace
 	./t_timestamp
 	./t_presproj
+	./t_fgpace
 	./t_capture
 	./t_ratelog
 	./t_adaptive_pace

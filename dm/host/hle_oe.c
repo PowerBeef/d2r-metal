@@ -337,7 +337,7 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     if (s3_gates(f, now, 1)) return;   // frames not shown, menus, loading screens and their holds
     // The target period is the pacer's real frame period (hle_nvn.c nvn_frame_period_ms: the power saver, DM_PRESENT_HZ, the adaptive tier, 72 fps
     // on a 144 Hz screen); 0 (uncapped) judges against 60 fps. Judging pauses 2 s after it changes
-    { double nvn_frame_period_ms(void), p = nvn_frame_period_ms(); if (mtl_fg_active() && mtl_link_active()) s3_fg_view(&iv_ms, &p); if (fabs(p - c->period_ms) > 0.01) { c->period_ms = p; scale3d_ctl_hold(c, now, 2 * S3_SEC); } }
+    { double nvn_frame_period_ms(void), p = nvn_frame_period_ms(); if (mtl_fg_active()) s3_fg_view(&iv_ms, &p); if (fabs(p - c->period_ms) > 0.01) { c->period_ms = p; scale3d_ctl_hold(c, now, 2 * S3_SEC); } }
     // Injection: every frame within the segment counts as a dropped frame (two periods). The + form is latched at the first frame scale3d_ctl_step
     // judges (no hold left: the holds above are all set by now), and frames before it count as clean
     if (f->inj0 >= 0) { double per = c->period_ms > 0 ? c->period_ms : 1000.0 / 60;

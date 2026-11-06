@@ -7,6 +7,7 @@ t_builtin.dSYM/
 t_pace
 t_timestamp
 t_presproj
+t_fgpace
 t_adaptive_pace
 t_completion_wait
 .precommit.err

@@ -13,7 +13,7 @@ screenshot m1_air.png
 system_quit
 check no_red
 check no_red_log
-check event picture how=first mode=1 res=0 up=2 aa=1 aniso=3 color=1 s3d=0 envsh=1 shq=2 fg=1 envd=1
+check event picture how=first mode=1 res=0 up=2 aa=1 aniso=3 color=1 s3d=0 envsh=1 shq=2 fg=1 envd=1 rt=0
 check log_has "→ Recommended fixed 1600, 3D 100%, environment shadows on, shadows Ultra, Frame Drops lower, Frame Generation on"
 check log_has "temporal scaler: .* built in"
 check log_has "frame generation: interpolator .* built in"
