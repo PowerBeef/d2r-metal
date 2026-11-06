@@ -147,14 +147,16 @@ def rt_local_hook(src):
 
 
 def rt_refl_hook(src):
-    """The opaque colour takes what nvn_rt.inc found in the mirror direction, as much as the surface's roughness lets through (grass and dust reflect nothing, polished and wet stone up to a limit), and only as far as the surface is itself lit, so a floor in the dark stays dark and shows nothing against it: the light radius is gameplay. The shaders clamp roughness to a minimum at the top of the lighting, which is where this finds it. A variant without that clamp has no such term and is left alone. Off, header word 8 reads 0."""
+    """The opaque colour takes what nvn_rt.inc found in the mirror direction, at the strength the game's own reflection pass gives a floor (its limit on roughness and its Fresnel, with the split-sum table taken as 1, 0), and only as far as the surface is itself lit, so a floor in the dark stays dark and shows nothing against it: the light radius is gameplay. The shaders clamp roughness to a minimum at the top of the lighting, which is where this finds it. A variant without that clamp has no such term and is left alone. Off, header word 8 reads 0."""
     if 'dm_rt_key(' not in src: return src
     r = re.search(r'^    float _\d+ = fast::max\((_\d+), \(\*spvDescriptorSet0\.fp_c1\)\._m0\[1\]\.y\);', src, re.M)
     out = re.search(r'struct main0_out\s*\{[^}]*?float4 (\w+) \[\[color\(0\)\]\]', src, re.S)
     if not r or not out: return src
     helper = ('static inline float3 dm_rt_refl(constant uchar* sb, float4 fc, float rough, float3 lit)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[8] == 0u) return float3(0.0);\n'
               '    uint w = h[1] >> 1, x = min(uint(fc.x) >> 1, w - 1u), y = min(uint(fc.y) >> 1, (h[2] >> 1) - 1u);\n    constant uchar* p = sb + h[10] + (y * w + x) * 4u;\n'
-              '    float g = clamp(1.0 - rough, 0.0, 1.0);\n    float3 c = float3(p[0], p[1], p[2]) / 255.0;\n    float gate = as_type<float>(h[11]), seen = gate > 0.0 ? clamp(dot(lit, float3(0.2126, 0.7152, 0.0722)) / gate, 0.0, 1.0) : 1.0;\n    float g0 = as_type<float>(h[13]), g1 = as_type<float>(h[14]);\n    return c * c * 16.0 * smoothstep(g0, g1, g) * as_type<float>(h[12]) * as_type<float>(h[9]) * seen;\n}\n\n')
+              '    float r = clamp(rough, 0.0, 1.0), a = as_type<float>(h[13]), b = as_type<float>(h[14]), keep = 1.0 - clamp((r - a) / max(b - a, 0.0001), 0.0, 1.0);\n    if (r >= a && b <= a) keep = 0.0;\n'
+              '    float q = 1.0 - max(0.0, as_type<float>(h[12]) + 2.5 * min(r, 0.2) - 0.5), f = q * q * q * q * q * (max(1.0 - r, 0.04) - 0.04) + 0.04;\n'
+              '    float3 c = float3(p[0], p[1], p[2]) / 255.0;\n    float gate = as_type<float>(h[11]), seen = gate > 0.0 ? clamp(dot(lit, float3(0.2126, 0.7152, 0.0722)) / gate, 0.0, 1.0) : 1.0;\n    return c * c * 16.0 * f * keep * as_type<float>(h[9]) * seen;\n}\n\n')
     last = src.rfind('return out;')   # only the end of the shader: an earlier return is a path that stops before the roughness exists
     if last < r.end(): return src
     src = src[:last] + f'out.{out.group(1)}.xyz += dm_rt_refl(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {r.group(1)}, out.{out.group(1)}.xyz);\n    ' + src[last:]

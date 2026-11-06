@@ -291,7 +291,7 @@ DM_RT_BIAS	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_CHAR	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_CHAR_SUN	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_COMP	gfx	gfx/nvn/hle_nvn.c	-
-DM_RT_DARK	gfx	gfx/nvn/nvn_rt.inc	-
+DM_RT_DARK	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_DBG	gfx	gfx/nvn/nvn_mtl.m	-
 DM_RT_DUMP	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_KEY_HALF	gfx	gfx/nvn/nvn_rt.inc	y
@@ -302,10 +302,9 @@ DM_RT_LOCAL_SRC	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_LOCAL_STOP	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_REFL	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_REFL_K	gfx	gfx/nvn/nvn_rt.inc	y
-DM_RT_REFL_MAX	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_REFL_REACH	gfx	gfx/nvn/nvn_rt.inc	y
+DM_RT_REFL_ROUGH	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_REFL_SEEN	gfx	gfx/nvn/nvn_rt.inc	y
-DM_RT_REFL_SMOOTH	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_SUN	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_TEST_NOPSO	gfx	gfx/nvn/nvn_rtex.inc	-
 DM_RULESET	tools	tools/patch_nso.py	y
