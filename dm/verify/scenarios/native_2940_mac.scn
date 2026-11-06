@@ -9,7 +9,9 @@ name native_2940_mac
 requires mac-app
 save warlock
 timeout 300
-env DM_TEST_SCREEN_PX=2940x1912+74 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_NO_FG=1 "DM_TEST_GPU_NAME=Apple M2" DM_TEST_GPU_CORES=8
+# DM_PRESENT_LINK=0 as every Mac presents since frame generation: without frame generation this run would otherwise be on the display link, which went silent for seconds in a background
+# run (dm/verify/debugging.md), and that isn't what this scenario is about
+env DM_TEST_SCREEN_PX=2940x1912+74 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_NO_FG=1 DM_PRESENT_LINK=0 "DM_TEST_GPU_NAME=Apple M2" DM_TEST_GPU_CORES=8
 
 expect main_menu timeout=150
 enter_game

@@ -385,7 +385,7 @@ DM_TEST_GLYPH	host	host/dm_padmode.c	-
 DM_TEST_GOLD	host	host/diag.c	-
 DM_TEST_GOTO_LEVEL	host	host/diag.c	y
 DM_TEST_GPU_CORES	host	host/front_mac.m	-
-DM_TEST_GPU_NAME	host	host/front_mac.m	-
+DM_TEST_GPU_NAME	host,ios	host/front_mac.m ios/Sources/front_ios.m	-
 DM_TEST_GUEST_RETURN	host	host/main.c	-
 DM_TEST_HAND_GUARD	host	host/dm_cursor.c	-
 DM_TEST_HID_STALL_MS	host	host/hle_hid.c	-
@@ -417,6 +417,7 @@ DM_TEST_LIVE	host	host/touch_mac.c	-
 DM_TEST_LKEY_CLASH	ios	ios/Sources/front_ios.m	-
 DM_TEST_LOAD	gfx	gfx/nvn/hle_nvn.c gfx/nvn/nvn_testload.inc	y
 DM_TEST_LOADSCREEN_DELAY_MS	host	host/diag.c	-
+DM_TEST_MACHINE	ios	ios/Sources/front_ios.m	-
 DM_TEST_MAP_FULL	host	host/diag.c	-
 DM_TEST_MEMWARN	ios	ios/Sources/main.m	-
 DM_TEST_MERC_HP	host	host/diag.c	-
@@ -428,7 +429,7 @@ DM_TEST_MON_KILL	host	host/diag.c	-
 DM_TEST_NOTE_PANEL_Y	host	host/dm_cursor.c	-
 DM_TEST_NO_BC	gfx,ios	gfx/nvn/nvn_mtl.m ios/Sources/main.m	y
 DM_TEST_NO_DL_BASE	ios	ios/Sources/asset_dl.m ios/Sources/main.m	-
-DM_TEST_NO_FG	gfx	gfx/nvn/nvn_fg.inc	-
+DM_TEST_NO_FG	gfx	gfx/nvn/nvn_fg.inc	y
 DM_TEST_NO_METAL3	ios	ios/Sources/main.m	-
 DM_TEST_NSMOUSE	host	host/front_mac.m	y
 DM_TEST_OBJREC	host	host/dm_world.c	-

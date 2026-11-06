@@ -43,6 +43,7 @@ run: \
 	$(B)/t_namegen \
 	$(B)/t_oe \
 	$(B)/t_padmap \
+	$(B)/t_picios \
 	$(B)/t_picrec \
 	$(B)/t_ctl \
 	$(B)/t_events \
@@ -157,6 +158,7 @@ run: \
 	$(B)/t_mv_restore
 	$(B)/t_modetx
 	$(B)/t_padmap
+	$(B)/t_picios
 	$(B)/t_picrec
 	$(B)/t_unit_level
 	$(B)/t_widget
@@ -189,6 +191,9 @@ $(B)/t_screen_mac: t_screen_mac.c ../dm_screen_mac.c ../dm_screen_mac.h ../dm_ui
 	clang -O1 -Wall -Werror -I.. -o $@ t_screen_mac.c ../dm_screen_mac.c -lm
 $(B)/t_geom: t_geom.c ../dm_geom.h | $(B)
 	clang -std=c11 -O1 -Wall -Wextra -Werror -pedantic -I.. -o $@ t_geom.c -lm
+$(B)/t_picios: t_picios.c t_picios_devices.h ../dm_picios.c ../dm_picios.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_picios.c ../dm_picios.c -lm
+
 $(B)/t_picrec: t_picrec.c t_picrec_cases.h t_picrec_fg_cases.h t_picrec_rt_cases.h ../dm_picrec.c ../dm_picrec.h ../dm_s3lv.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_picrec.c ../dm_picrec.c -lm
 # the Mac build of dm_video.c (t_video.c includes dm_video.c; t_video_fe.c holds the front-end stubs: generic and front_mac.m on this M6)

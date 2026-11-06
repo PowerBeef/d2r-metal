@@ -223,5 +223,10 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmVideoRtLight", "轻度", "Light", "Ligero", "Ligero", "Низкое", "낮음" },
     { "dmVideoRtStandard", "标准", "Standard", "Estándar", "Estándar", "Среднее", "보통" },
     { "dmVideoRtFull", "完整", "Full", "Completo", "Completo", "Полное", "전체" },
+    { "dmVideoPicSize", "画面大小", "Picture Size", "Tamaño de imagen", "Tamaño de imagen", "Размер картинки", "화면 크기" },
+    { "dmVideoPicFull", "完整", "Full", "Completo", "Completo", "Полный", "전체" },
+    { "dmVideoPicHigh", "高", "High", "Alto", "Alto", "Высокий", "높음" },
+    { "dmVideoPicMedium", "中", "Medium", "Medio", "Medio", "Средний", "중간" },
+    { "dmVideoPicLow", "低", "Low", "Bajo", "Bajo", "Низкий", "낮음" },
     { "dmVideoRtTip", "用真实光线绘制太阳、火光和角色的阴影、物体相接处的柔和暗部，并让每种材质按自身特性反射周围环境。对 GPU 要求较高。需要支持硬件光线追踪的芯片。", "Traces light rays for the shadows of the sun, of fire and of characters, for the soft shade where things meet, and for what each material reflects of its surroundings. Demanding on the GPU. Needs a chip with hardware ray tracing.", "Traza rayos de luz para las sombras del sol, del fuego y de los personajes, la penumbra donde se juntan los objetos y lo que cada material refleja de su entorno. Exige mucho a la GPU. Requiere un chip con trazado de rayos por hardware.", "Traza rayos de luz para las sombras del sol, del fuego y de los personajes, la penumbra donde se juntan los objetos y lo que cada material refleja de su entorno. Exige mucho a la GPU. Requiere un chip con trazado de rayos por hardware.", "Трассирует лучи света для теней от солнца, огня и персонажей, мягкого затенения там, где предметы соприкасаются, и того, что каждый материал отражает из окружения. Требовательна к GPU. Нужен чип с аппаратной трассировкой лучей.", "태양, 불빛, 캐릭터의 그림자와 물체가 맞닿는 곳의 부드러운 음영, 각 재질이 주변을 반사하는 모습을 광선 추적으로 그립니다. GPU 부담이 큽니다. 하드웨어 광선 추적을 지원하는 칩이 필요합니다." },
 };

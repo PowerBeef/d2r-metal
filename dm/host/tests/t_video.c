@@ -71,8 +71,8 @@ static result run(const char *txt) { return run_do(txt, NULL); }
 #define TAIL(a, ra, n, rn, c, rc) "aa=" #a "\nrec_aa=" #ra "\naniso=" #n "\nrec_aniso=" #rn "\ncolor=" #c "\nrec_color=" #rc "\n"
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
 #define ES(e, re) "envsh=" #e "\nrec_envsh=" #re "\n"
-#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=0\nrec_fg=0\nenvd=1\nrec_envd=1\nrt=0\nrec_rt=0\n"   // fg, the key after shq, stays 0 unless a case says so (G recommends none, M only with g_fgok)
-#define RV "rec_v=13\n"   // REC_V in dm_video.c (without it = version 1, worked out again at load): a bump changes this line, t_video_phone's and the cases below in one commit
+#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=0\nrec_fg=0\nenvd=1\nrec_envd=1\nrt=0\nrec_rt=0\nosz=0\nrec_osz=0\n"   // fg, the key after shq, stays 0 unless a case says so (G recommends none, M only with g_fgok)
+#define RV "rec_v=14\n"   // REC_V in dm_video.c (without it = version 1, worked out again at load): a bump changes this line, t_video_phone's and the cases below in one commit
 #define NEWREC TAIL(1, 1, 3, 3, 0, 0) S3(0, 0) ES(1, 1) SQ(2, 2) RV   // how the later keys are filled when missing (G's front_video_rec)
 
 // (21) the shadow latch: the first answers once the settings are known hold for the session. In a child: set or clear DM_ENV_SHADOWS / DM_SHADOW_SIZE
@@ -126,7 +126,7 @@ static void act_18c(result *x) { apply_preset(P_QUAL); x->x[0] = dm_video_dirty(
 static void act_18d(result *x) { apply_preset(P_QUAL); accept(); x->x[0] = preset_of(); }
 static void act_18e(result *x) { x->x[0] = preset_of(); apply_preset(P_REC); x->x[1] = atomic_load(&g_pend[K_MODE]); accept(); x->x[2] = g_full_calls; x->x[3] = preset_of(); }
 static void act_18f(result *x) {
-    g_tshown = 1; atomic_store(&g_crows, 1 << 10);   // the Video tab is on screen with its Frame Drops row
+    g_tshown = 1; atomic_store(&g_crows, 1 << 11);   // the Video tab is on screen with its Frame Drops row
     dm_video_on_uimsg("OptionsPanelMessage", "ResetToDefaults", "");
     x->x[0] = atomic_load(&g_pend[K_MODE]); x->x[1] = g_cset[0]; x->x[2] = g_cset[1]; x->x[3] = preset_of(); accept();
 }
@@ -356,7 +356,7 @@ int main(void) {
     r = run_do(M_REC(1, 0), act_18k);
     CHECK(r.x[0] == P_REC && r.x[1] == -1, "(18k) Vivid on Recommended: shown as Recommended (%d), colour not pending (%d)", r.x[0], r.x[1]);
     // (18j) the Mac's rows map values to the selector one to one (only the phone's 3D Resolution row is reordered)
-    for (int v = 0; v < 4; v++) CHECK(car_of(1, v) == v && val_of(1, v) == v, "(18j) res row on the Mac is the identity: car_of(1, %d) = %d, val_of = %d", v, car_of(1, v), val_of(1, v));
+    for (int v = 0; v < 4; v++) CHECK(car_of(2, v) == v && val_of(2, v) == v, "(18j) res row on the Mac is the identity: car_of(2, %d) = %d, val_of = %d", v, car_of(2, v), val_of(2, v));
 
     // ---- (21) the shadow latch (G)
 #define LATCH_FILE(e, re, q, rq) FULL(1, 1, 3, 3, 1, 1) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(e, re) SQ(q, rq) RV
@@ -385,7 +385,7 @@ int main(void) {
     // ---- (23) Upscaling and Frame Generation (rec_v 12): a chip the system offers MetalFX Temporal and the interpolator to always has both, whatever the file says; others keep the conventional picture
     g_fe = 'M'; g_fgok = 1;
 #define V8(up, rup, a) "mode=1\nrec_mode=1\nres=3\nrec_res=3\nup=" #up "\nrec_up=" #rup "\naa=" #a "\nrec_aa=1\naniso=3\nrec_aniso=3\ncolor=1\nrec_color=1\ns3d=0\nrec_s3d=0\nenvsh=1\nrec_envsh=1\nshq=2\nrec_shq=2\nrec_v=8\n"
-#define V12(u, ru, f, rf) "mode=1\nrec_mode=1\nres=3\nrec_res=3\nup=" #u "\nrec_up=" #ru "\naa=1\nrec_aa=1\naniso=3\nrec_aniso=3\ncolor=1\nrec_color=1\ns3d=0\nrec_s3d=0\nenvsh=1\nrec_envsh=1\nshq=2\nrec_shq=2\nfg=" #f "\nrec_fg=" #rf "\nenvd=1\nrec_envd=1\nrt=0\nrec_rt=0\n" RV
+#define V12(u, ru, f, rf) "mode=1\nrec_mode=1\nres=3\nrec_res=3\nup=" #u "\nrec_up=" #ru "\naa=1\nrec_aa=1\naniso=3\nrec_aniso=3\ncolor=1\nrec_color=1\ns3d=0\nrec_s3d=0\nenvsh=1\nrec_envsh=1\nshq=2\nrec_shq=2\nfg=" #f "\nrec_fg=" #rf "\nenvd=1\nrec_envd=1\nrt=0\nrec_rt=0\nosz=0\nrec_osz=0\n" RV
     r = run(NULL);
     CHECK(r.v[K_UP] == 2 && r.v[K_FG] == 1 && strstr(r.file, "rec_up=2\n") && strstr(r.file, "rec_fg=1\n"), "(23a) first boot on a chip with both: Temporal and Frame Generation, got up %d fg %d\n%s", r.v[K_UP], r.v[K_FG], r.file);
     r = run(V8(1, 1, 1));

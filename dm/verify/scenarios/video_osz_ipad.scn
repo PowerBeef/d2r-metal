@@ -1,0 +1,21 @@
+# Picture Size on an iPad (dm_picios.c): the iOS package on the Mac stands in for an iPad with an A14, whose chip gets Low: 720 rows of interface, so 1280 x 890 in a run, where the
+# picture fills the screen and the interface is 16:9 across its width. Pixel values assume scale 2 (this Mac's displays), as ios_window_resize.scn does, and the same window rules hold: the
+# picture follows the window, at Picture Size's share of its pixels.
+name video_osz_ipad
+requires ios-mac
+save warlock
+timeout 300
+env DM_TEST_IDIOM=pad DM_TEST_SCREEN=2360x1640 DM_TEST_MACHINE=iPad13,18 DM_TEST_GPU_NAME=A14
+
+expect main_menu timeout=150
+app resize_1180x820
+expect geom ok=1 ingame=0 win_w=1180 win_h=820 rw=1280 rh=720 follow=1 timeout=20
+enter_game
+expect geom ok=1 ingame=1 win_w=1180 win_h=820 rw=1280 rh=888 follow=1 timeout=30
+sleep 3
+screenshot osz_ipad_low.png
+# A smaller window keeps 720 rows of interface: 1280 wide, or as much as the window has
+app resize_1000x640
+expect geom ok=1 ingame=1 win_w=1000 win_h=640 rw=1280 rh=818 follow=1 timeout=15
+check log_has "Picture Size 3: 1280x890 of the screen's 2360x1640"
+check no_red

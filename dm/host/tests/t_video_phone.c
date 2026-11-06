@@ -12,6 +12,7 @@
 //   (8) the phone's 3D scale comes from res and ignores s3d
 //   (20e)-(20g) the phone presets mirror the Mac for anisotropy: Performance = 50%, Quality = 100% 16x
 //   (20h) Colour still decides "on Recommended" on phones (the Mac leaves its display preferences out)
+//   (21) Picture Size: the chip's pick at first boot and after an update, a player's own kept, latched at launch, the presets' Low and Full
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +24,7 @@
 #error "t_video_phone needs -DDM_PHONE=1"
 #endif
 extern char g_dir[512];
-extern int g_fb_calls, g_color_calls, g_color_last, g_mfx, g_fgok;
+extern int g_fb_calls, g_color_calls, g_color_last, g_mfx, g_fgok, g_osz;
 
 static int fails, checks;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("  ✗ "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -45,8 +46,8 @@ static result child_run(const char *txt, void (*more)(result *)) {
 #define TAIL(a, ra, n, rn, c, rc) "aa=" #a "\nrec_aa=" #ra "\naniso=" #n "\nrec_aniso=" #rn "\ncolor=" #c "\nrec_color=" #rc "\n"
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
 #define ES(e, re) "envsh=" #e "\nrec_envsh=" #re "\n"
-#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=1\nrec_fg=1\nenvd=0\nrec_envd=0\nrt=0\nrec_rt=0\n"
-#define RV "rec_v=13\n"   // REC_V in dm_video.c: a bump changes this line and the cases below in the same commit
+#define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=1\nrec_fg=1\nenvd=0\nrec_envd=0\nrt=0\nrec_rt=0\nosz=0\nrec_osz=0\n"
+#define RV "rec_v=14\n"   // REC_V in dm_video.c: a bump changes this line and the cases below in the same commit
 // The phone's first-boot file (front_ios.m: 50% + MetalFX Temporal + Frame Generation; SMAA, 16x, Accurate; no s3d / envsh / shq recommendation), with res as given
 #define CUR(s) FULL(0, 0, s, 4, 2, 2) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV
 
@@ -69,6 +70,8 @@ static void presets(result *x) {
 
 // (20h) a Vivid phone player with the graphics keys on Recommended: on phones Colour sits in the Graphics section next to Graphic Presets, so it still
 // decides "on Recommended" (only the Mac leaves its display preferences out), and picking Recommended restores Accurate
+// (21) what the game was launched with holds whatever the page changes, until the next launch
+static void osz_latch(result *x) { x->x[0] = preset_of(); x->x[1] = dm_video_picture_size(); atomic_store(&g_val[K_OSZ], 0); x->x[2] = dm_video_picture_size(); }
 // (20e) after the first-boot load: Performance, Discard, Quality
 static void phone_tiers(result *x) {
     apply_preset(P_PERF); static const int k[7] = { K_RES, K_UP, K_AA, K_ANISO, K_S3D, K_ESH, K_SHQ };
@@ -107,14 +110,14 @@ int main(void) {
     r = child_run(FULL(0, 0, 5, 4, 2, 2) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV, NULL);
     CHECK(r.v[K_RES] == 4 && r.s3 == 0.5f && !strcmp(r.file, CUR(4)), "(3) res=5: back to res 4 (50%%), got res %d scale %g\n%s", r.v[K_RES], r.s3, r.file);
 
-    // (4) the 3D Resolution row (row 1 = res) against the stored values; every other row is the identity
+    // (4) the 3D Resolution row (row 2 = res) against the stored values; every other row is the identity
     { static const int car[5] = { 2, 3, 4, 1, 0 }, val[5] = { 4, 3, 0, 1, 2 };
       for (int v = 0; v < 5; v++) {
-          CHECK(car_of(1, v) == car[v], "(4) car_of(res, %d): expect %d, got %d", v, car[v], car_of(1, v));
-          CHECK(val_of(1, v) == val[v], "(4) val_of(res, %d): expect %d, got %d", v, val[v], val_of(1, v));
-          CHECK(val_of(1, car_of(1, v)) == v, "(4) val_of(car_of(res, %d)) round trip: got %d", v, val_of(1, car_of(1, v))); }
-      CHECK(car_of(2, 1) == 1 && val_of(2, 1) == 1, "(4) the color row is the identity: got car %d val %d", car_of(2, 1), val_of(2, 1));
-      CHECK(car_of(1, 7) == 7 && val_of(1, 7) == 7, "(4) an out-of-range value passes through: got car %d val %d", car_of(1, 7), val_of(1, 7)); }
+          CHECK(car_of(2, v) == car[v], "(4) car_of(res, %d): expect %d, got %d", v, car[v], car_of(2, v));
+          CHECK(val_of(2, v) == val[v], "(4) val_of(res, %d): expect %d, got %d", v, val[v], val_of(2, v));
+          CHECK(val_of(2, car_of(2, v)) == v, "(4) val_of(car_of(res, %d)) round trip: got %d", v, val_of(2, car_of(2, v))); }
+      CHECK(car_of(3, 1) == 1 && val_of(3, 1) == 1, "(4) the color row is the identity: got car %d val %d", car_of(3, 1), val_of(3, 1));
+      CHECK(car_of(2, 7) == 7 && val_of(2, 7) == 7, "(4) an out-of-range value passes through: got car %d val %d", car_of(2, 7), val_of(2, 7)); }
 
     // (5) presets, after the first-boot load
     r = child_run(NULL, presets);
@@ -122,8 +125,8 @@ int main(void) {
     CHECK(r.x[1] == 4 && r.x[2] == 2 && r.x[3] == -1 && r.x[4] == -1, "(5) tiers: res 4 / 2 (50 / 100%%), Upscaling and Frame Generation left alone; got res %d / %d, up %d, fg %d", r.x[1], r.x[2], r.x[3], r.x[4]);
     CHECK(r.x[5] == 1, "(5) beyond res the phone presets set only aniso (Quality), leaving mode, color, s3d, envsh and shq alone: %d tiers set, expected 1", r.x[5]);
     CHECK(r.x[6] == -1, "(5) Performance leaves Frame Generation alone, got %d", r.x[6]);
-    CHECK(r.x[7] == 4 && r.x[8] == -1 && r.x[9] == 0 && r.x[10] == P_PERF && r.x[11] == 0,
-          "(5) Performance: pending res 4 only, which Recommended already is, so shown as Performance and clean; got res %d up %d, %d others, preset %d, dirty %d", r.x[7], r.x[8], r.x[9], r.x[10], r.x[11]);
+    CHECK(r.x[7] == 4 && r.x[8] == -1 && r.x[9] == 0 && r.x[10] == P_PERF && r.x[11] == 1,
+          "(5) Performance: pending res 4, which Recommended already is, and Picture Size Low, which it isn't: shown as Performance, with something to apply; got res %d up %d, %d others, preset %d, dirty %d", r.x[7], r.x[8], r.x[9], r.x[10], r.x[11]);
     CHECK(r.x[12] == 2 && r.x[13] == -1 && r.x[14] == P_QUAL, "(5) Quality: pending res 2, up untouched, shown as Quality; got res %d up %d, preset %d", r.x[12], r.x[13], r.x[14]);
     CHECK(r.x[15] == P_CUSTOM, "(5) res 85%% matches no preset: Custom, got %d", r.x[15]);
     CHECK(r.x[16] == P_REC && r.x[17] == 0, "(5) Recommended again: shown as Recommended, not dirty; got preset %d, dirty %d", r.x[16], r.x[17]);
@@ -149,8 +152,8 @@ int main(void) {
 
     // (20e) Performance: res 4 (50%); anisotropy and the shadow rows left alone. Quality: res 2 (100%), 16x
     r = child_run(NULL, phone_tiers);
-    CHECK(r.x[0] == 4 && r.x[1] == -1 && r.x[2] == -1 && r.x[3] == -1 && r.x[4] == -1 && r.x[5] == -1 && r.x[6] == -1 && r.x[7] == P_PERF && r.x[8] == 0,
-          "(20e) Performance pending: res 4, up / aa / aniso / s3d / envsh / shq untouched, shown as Performance, clean; got %d %d %d, %d %d %d %d, preset %d, dirty %d",
+    CHECK(r.x[0] == 4 && r.x[1] == -1 && r.x[2] == -1 && r.x[3] == -1 && r.x[4] == -1 && r.x[5] == -1 && r.x[6] == -1 && r.x[7] == P_PERF && r.x[8] == 1,
+          "(20e) Performance pending: res 4, up / aa / aniso / s3d / envsh / shq untouched, shown as Performance, with Picture Size Low to apply; got %d %d %d, %d %d %d %d, preset %d, dirty %d",
           r.x[0], r.x[1], r.x[2], r.x[3], r.x[4], r.x[5], r.x[6], r.x[7], r.x[8]);
     CHECK(r.x[9] == 2 && r.x[10] == -1 && r.x[11] == -1 && r.x[12] == 3 && r.x[13] == P_QUAL, "(20e) Quality pending: res 2 aniso 3, up / aa untouched, shown as Quality; got %d %d %d %d, preset %d",
           r.x[9], r.x[10], r.x[11], r.x[12], r.x[13]);
@@ -162,7 +165,30 @@ int main(void) {
     CHECK(r.x[0] == P_REC && r.x[1] == P_PERF, "(20g) no MetalFX: Recommended at first boot (%d), Performance once picked (%d)", r.x[0], r.x[1]);
     // (20h) see vivid()
     r = child_run(FULL(0, 0, 4, 4, 2, 2) TAIL(1, 1, 3, 3, 0, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV, vivid);
-    CHECK(r.x[0] == P_PERF && r.x[1] == 1 && r.x[2] == P_REC, "(20h) Vivid on the phone: not Recommended, which leaves Performance, the 50%% it matches (%d); Recommended sets colour 1 (%d) and shows Recommended (%d)", r.x[0], r.x[1], r.x[2]);
+    CHECK(r.x[0] == P_CUSTOM && r.x[1] == 1 && r.x[2] == P_REC, "(20h) Vivid on the phone at Full: not Recommended, and not Performance, which is Low: Custom (%d); Recommended sets colour 1 (%d) and shows Recommended (%d)", r.x[0], r.x[1], r.x[2]);
+
+    // (21) Picture Size: the chip's pick at first boot, shown as Recommended; what the game was launched with holds until the next launch
+    g_osz = 2; r = child_run(NULL, osz_latch);
+    CHECK(r.v[K_OSZ] == 2 && r.x[0] == P_REC && r.x[1] == 2 && r.x[2] == 2, "(21) first boot: Medium on Recommended, latched; got %d, preset %d, launch %d then %d", r.v[K_OSZ], r.x[0], r.x[1], r.x[2]);
+    // (21b) an older version's file with the player on Recommended moves to the pick
+    #define OLD13 "shq=0\nrec_shq=0\nfg=1\nrec_fg=1\nenvd=0\nrec_envd=0\nrt=0\nrec_rt=0\nrec_v=13\n"
+    r = child_run(FULL(0, 0, 4, 4, 2, 2) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(0, 0) OLD13, NULL);
+    CHECK(r.v[K_OSZ] == 2 && strstr(r.file, "osz=2\nrec_osz=2\nrec_v=14\n"), "(21b) older file on Recommended: moved to Medium, got %d\n%s", r.v[K_OSZ], r.file);
+    // (21c) a player's own 3D resolution stays; the new key still comes from the pick
+    r = child_run(FULL(0, 0, 2, 4, 2, 2) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(0, 0) OLD13, NULL);
+    CHECK(r.v[K_RES] == 2 && r.v[K_OSZ] == 2, "(21c) own 3D 100%% kept, Picture Size from the pick; got res %d, osz %d", r.v[K_RES], r.v[K_OSZ]);
+    // (21d) a player's own Picture Size stays; out of range goes back to the stored recommendation
+    #define NEW14(o, ro) "shq=0\nrec_shq=0\nfg=1\nrec_fg=1\nenvd=0\nrec_envd=0\nrt=0\nrec_rt=0\nosz=" #o "\nrec_osz=" #ro "\n" RV
+    r = child_run(FULL(0, 0, 4, 4, 2, 2) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(0, 0) NEW14(1, 2), act_preset_of);
+    CHECK(r.v[K_OSZ] == 1 && r.x[0] == P_CUSTOM, "(21d) own High on a Medium chip: kept, Custom; got %d, preset %d", r.v[K_OSZ], r.x[0]);
+    r = child_run(FULL(0, 0, 4, 4, 2, 2) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(0, 0) NEW14(9, 2), NULL);
+    CHECK(r.v[K_OSZ] == 2, "(21d) osz=9: back to the stored recommendation, got %d", r.v[K_OSZ]);
+    // (21e) on a chip whose pick is Low, Performance has nothing to change
+    g_osz = 3; r = child_run(NULL, perf_only);
+    CHECK(r.v[K_OSZ] == 3 && r.x[0] == P_REC && r.x[1] == P_PERF, "(21e) Low chip: Recommended at first boot (%d), Performance once picked (%d)", r.x[0], r.x[1]);
+    g_osz = 0;
+    // (21f) the presets' Picture Size: Performance Low, Quality Full
+    CHECK(tier_of(K_OSZ, 0) == 3 && tier_of(K_OSZ, 1) == 0, "(21f) presets: Low / Full, got %d / %d", tier_of(K_OSZ, 0), tier_of(K_OSZ, 1));
 
     file_put(NULL); rmdir(g_dir);
     printf("t_video_phone: %d checks, %d failed\n", checks, fails);
