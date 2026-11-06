@@ -196,7 +196,7 @@ Every setting lives in the game's own Options, on five tabs: **Video**, **Audio*
 **Recommended** is the set of picture settings D2R Metal picks for your device the first time it starts:
 
 - **On every device,** D2R Metal builds detail from several frames and creates every other frame: the game draws 30 frames, you see 60, and the graphics chip has time to spare for the picture. This is always on, with nothing to set. It has been measured on an M6 Mac and an iPhone 17 Pro so far.
-- **On a Mac,** it looks at the graphics chip (its generation and how many graphics cores it has) and at your screen, and turns on as much as it estimates the Mac can hold. Fast Macs get the 3D world at full resolution with every effect on. Lighter Macs, such as most MacBook Airs, get the 3D world at a lower resolution or a smaller picture enlarged by MetalFX, and their 3D resolution dips for a moment when the action gets busy instead of stuttering. It works this out again when you change screens. The estimate rests on public benchmarks of each chip; [docs/MAC.md](docs/MAC.md#what-recommended-picks) has examples.
+- **On a Mac,** it looks at the graphics chip (its generation and how many graphics cores it has) and at your screen, and turns on as much as it estimates the Mac can hold. Fast Macs get the 3D world at full resolution with every effect on, and Macs from the M3 on with at least 16 GB get ray tracing wherever the estimate says it fits, at a level that suits the chip. Lighter Macs, such as most MacBook Airs, get the 3D world at a lower resolution or a smaller picture enlarged by MetalFX, and their 3D resolution dips for a moment when the action gets busy instead of stuttering. It works this out again when you change screens. The estimate rests on public benchmarks of each chip; [docs/MAC.md](docs/MAC.md#what-recommended-picks) has examples.
 - **On iPhone and iPad,** the same on every device: the 3D world at 50%, with 16x filtering and true colors. It was measured on an iPhone 17 Pro; on an older iPhone or iPad it may be too heavy.
 
 You can change any setting; **Graphic Presets** also offers *Performance* (lighter) and *Quality* (on a Mac everything on; on iPhone and iPad the 3D world at 100% with 16x filtering, the shadow rows left as they are), and **Default** puts the tab you are on back to Recommended.
@@ -205,7 +205,7 @@ You can change any setting; **Graphic Presets** also offers *Performance* (light
   - On the Mac: Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets and 3D Resolution (100 down to 50%).
   - On iPhone and iPad: 3D Resolution (50 to 100%), Color and Graphic Presets.
   - On both: **Anisotropic Filtering** (Original up to 16x), **Environment Shadows**, **Shadow Quality** (Standard up to Ultra) and **Environment Detail** (all three take effect at the next start).
-  - On the Mac: **Ray Tracing** and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
+  - On the Mac: **Ray Tracing** (Off, Light, Standard, Full) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
 - **Apply, Discard and Default** work like the game's own option pages.
 

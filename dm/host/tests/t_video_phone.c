@@ -46,7 +46,7 @@ static result child_run(const char *txt, void (*more)(result *)) {
 #define S3(s, rs) "s3d=" #s "\nrec_s3d=" #rs "\n"
 #define ES(e, re) "envsh=" #e "\nrec_envsh=" #re "\n"
 #define SQ(q, rq) "shq=" #q "\nrec_shq=" #rq "\nfg=1\nrec_fg=1\nenvd=0\nrec_envd=0\nrt=0\nrec_rt=0\n"
-#define RV "rec_v=12\n"   // REC_V in dm_video.c: a bump changes this line and the cases below in the same commit
+#define RV "rec_v=13\n"   // REC_V in dm_video.c: a bump changes this line and the cases below in the same commit
 // The phone's first-boot file (front_ios.m: 50% + MetalFX Temporal + Frame Generation; SMAA, 16x, Accurate; no s3d / envsh / shq recommendation), with res as given
 #define CUR(s) FULL(0, 0, s, 4, 2, 2) TAIL(1, 1, 3, 3, 1, 1) S3(0, 0) ES(0, 0) SQ(0, 0) RV
 

@@ -13,7 +13,7 @@ screenshot m1_fg.png
 system_quit
 check no_red
 check no_red_log
-check event picture how=first mode=1 res=3 up=2 aa=1 aniso=3 color=1 s3d=4 envsh=1 shq=2 fg=1 envd=1
+check event picture how=first mode=1 res=3 up=2 aa=1 aniso=3 color=1 s3d=4 envsh=1 shq=2 fg=1 envd=1 rt=0
 check log_has "→ Recommended Native 2560, 3D 50%, environment shadows on, shadows Ultra, Frame Drops lower, Frame Generation on"
 check event scale3d pct=50
 check log_has "temporal scaler: .* built in"

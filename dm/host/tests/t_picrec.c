@@ -197,6 +197,38 @@ static void grid_fg(void) {
     }
 }
 
+// Ray tracing on top of the picture (dm_picrec.c 8.): the choices of the list published for players, then what must hold on any machine
+static void rt_cases(void) {
+    static const struct { const char *gpu; int cores, w, h, fanless, lv, s3d; } c[] = {
+#include "t_picrec_rt_cases.h"
+    };
+    int shown = 0;
+    for (size_t i = 0; i < sizeof c / sizeof *c; i++) {
+        dm_mac_spec sp = { .gpu = c[i].gpu, .cores = c[i].cores, .out_w = c[i].w, .out_h = c[i].h, .mfx = 1, .aspect = (long)c[i].w * 9 < (long)c[i].h * 16 ? (double)c[i].w / c[i].h : 0, .fg = 1, .hw_rt = 1, .ram_gb = 36, .fanless = c[i].fanless };
+        dm_mac_rec r; dm_mac_recommend(&sp, &r);
+        check(r.rt == c[i].lv && (c[i].lv == 0 || r.s3d == c[i].s3d), &shown, "rays on %s, %d cores, %dx%d: level %d, 3D step %d, expected level %d, step %d", c[i].gpu, c[i].cores, c[i].w, c[i].h, r.rt, r.s3d, c[i].lv, c[i].s3d);
+        check(r.rt == 0 || (r.envsh && r.shq == 2 && r.rt_ms <= 33.33 * 0.85), &shown, "rays on %s: envsh %d shq %d, %.1f ms", c[i].gpu, r.envsh, r.shq, r.rt_ms);
+        check(r.rt == 0 || r.q3d == 0, &shown, "rays on %s: Frame Drops %d", c[i].gpu, r.q3d);
+    }
+    const dm_mac_spec base = { .gpu = "Apple M6", .cores = 12, .out_w = 2560, .out_h = 1440, .mfx = 1, .fg = 1, .hw_rt = 1, .ram_gb = 16 };
+    dm_mac_rec r; dm_mac_spec sp = base;
+    dm_mac_recommend(&sp, &r); check(r.rt == 3, NULL, "the M6 with 16 GB: level %d", r.rt);
+    sp = base; sp.ram_gb = 8; dm_mac_recommend(&sp, &r); check(r.rt == 0, NULL, "8 GB: level %d", r.rt);
+    sp = base; sp.hw_rt = 0; dm_mac_recommend(&sp, &r); check(r.rt == 0, NULL, "no hardware rays: level %d", r.rt);
+    sp = base; sp.fg = 0; dm_mac_recommend(&sp, &r); check(r.rt == 0, NULL, "no Frame Generation: level %d", r.rt);
+    sp = base; sp.gpu = "Apple M2 Max"; sp.cores = 38; dm_mac_recommend(&sp, &r); check(r.rt == 0, NULL, "an M2 Max, faked as having rays: level %d", r.rt);
+    sp = base; sp.gpu = "Apple A18 Pro GPU"; sp.cores = 5; dm_mac_recommend(&sp, &r); check(r.rt == 0, NULL, "an iPhone chip: level %d", r.rt);
+    sp = base; sp.gpu = "Apple M7 Max"; sp.cores = 40; dm_mac_recommend(&sp, &r); check(r.rt == 3, NULL, "a generation the table doesn't know, with many cores: level %d", r.rt);
+    sp = base; sp.pace_hz = 120; dm_mac_recommend(&sp, &r); check(r.rt < 3, NULL, "twice the frame rate leaves less for rays: level %d", r.rt);
+    // More GPU cores, or no fan to lose, never a lesser level
+    static const char *const k_rt_chips[] = { "Apple M3", "Apple M3 Pro", "Apple M3 Max", "Apple M4", "Apple M4 Pro", "Apple M4 Max", "Apple M5", "Apple M5 Pro", "Apple M5 Max", "Apple M6" };
+    for (size_t g = 0; g < sizeof k_rt_chips / sizeof *k_rt_chips; g++) for (int s = 0; s < NSCR; s++) { int was = -1, was_out = -1; for (int k = 0; k < NCORES; k++) {
+        dm_mac_spec a = base; a.gpu = k_rt_chips[g]; a.cores = k_grid_cores[k]; a.out_w = k_grid_scr[s][0]; a.out_h = k_grid_scr[s][1]; a.aspect = (long)a.out_w * 9 < (long)a.out_h * 16 ? (double)a.out_w / a.out_h : 0;
+        dm_mac_rec x; dm_mac_recommend(&a, &x); int out = x.native ? 3 : x.tier_res;   // a chip too slow for Native has a smaller picture to trace
+        check(x.rt >= was || out != was_out, &shown, "%s %dx%d: %d cores level %d after %d", a.gpu, a.out_w, a.out_h, a.cores, x.rt, was); was = x.rt; was_out = out;
+        a.fanless = 1; dm_mac_rec y; dm_mac_recommend(&a, &y); check(y.rt <= x.rt, &shown, "%s %dx%d, %d cores: fanless level %d above %d", a.gpu, a.out_w, a.out_h, a.cores, y.rt, x.rt); } }
+}
+
 int main(int argc, char **argv) {
     int verbose = argc > 1 && !strcmp(argv[1], "-v");
     static const want k[] = {
@@ -290,6 +322,7 @@ int main(int argc, char **argv) {
     grid();
     grid_rate_drawable();
     grid_fg();
+    rt_cases();
     printf("t_picrec: %d checks, %d failed\n", n, fails);
     return fails != 0;
 }
