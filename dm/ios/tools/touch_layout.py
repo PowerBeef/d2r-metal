@@ -797,7 +797,7 @@ def _drop_rows(*rows):
 # 视频页的表格整个换成我们的行：分节标题 + 每个开关一行原版勾选框（照「游戏」页「自动拾取金币」那一行的字段）。控件名 TouchCustom_<键>，
 # 宿主 dm_custom.c 读勾没勾、按应用 / 放弃 / 默认处理。勾选框的消息发一条无害的 ClosePanel，游戏不认
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('drop_light', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'eco_fps', 'q3d', 'touch_swap_above')
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('drop_light', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'q3d', 'touch_swap_above')
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines
@@ -821,9 +821,9 @@ _CUSTOM_ROWS = tuple((k, '@' + _custom_key(k)) for k in _CUSTOM_KEYS)
 _CUSTOM_TITLE_H, _CUSTOM_LINE_H = 180, 180
 _VIDEO_MAC = bool(os.environ.get('DM_OVERLAY_MAC'))
 _VIDEO_IOS = bool(os.environ.get('DM_OVERLAY_IOS')) and not _VIDEO_MAC
-# Power saver (eco_fps) and 3D quality (q3d) are picture settings: on the Mac and iOS they are two selectors in the Video tab's Graphics section (fps / drops in _VIDEO; the host's dm_video.c reads and writes the same
-# two keys, so saved values carry over), not rows on the Extras page; the default overlay (no DM_OVERLAY_MAC / _IOS: the CLI host's DM_ROMFS_OVERLAY=auto and touchchain.sh) has a single custom page and keeps them as checkbox rows there. The host moves through the rows a page really has (dm_custom.c); its key table k_keys still lists every key
-_VIDEO_TAB_KEYS = ('eco_fps', 'q3d') if _VIDEO_MAC or _VIDEO_IOS else ()
+# 3D quality (q3d) is a picture setting: on the Mac it is a selector in the Video tab's Graphics section (drops in _VIDEO; the host's dm_video.c reads and writes the same key, so saved values carry over), and iOS has none
+# (phones never lower the 3D resolution); neither has a row on the Extras page. The default overlay (no DM_OVERLAY_MAC / _IOS: the CLI host's DM_ROMFS_OVERLAY=auto and touchchain.sh) has a single custom page and keeps it as a row there.
+_VIDEO_TAB_KEYS = ('q3d',) if _VIDEO_MAC or _VIDEO_IOS else ()
 _CUSTOM_ALL = (('lang', '@dmCustomLang'),) + tuple(r for r in _CUSTOM_ROWS if r[0] not in _VIDEO_TAB_KEYS)
 _CUSTOM_TEST_ROWS = int(os.environ.get('DM_CUSTOM_TEST_ROWS', '0'))   # 测试（造现场）：末尾多摆这么多行假行，验更多行时的滚动；产品不设 | test (test setup): append this many dummy rows at the end, to verify scrolling with more rows; not set in the product
 # 「3D 画质」（q3d）是单选的两项、每项下面一行说明小字，占两行高（_CUSTOM_Q3D_H）；其余各行一行高
@@ -834,12 +834,11 @@ _CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') els
 # Modeled on the original console video page / PC graphics page: section headers (original heading style + gold divider), a label on the left of each row and the original left/right selector (CarouselWidget,
 # the same fields as the console "Graphics Mode", centered in the second column: x 1000 + (700 - 596) / 2) on the right. Labels and choices use original strings where they exist (Display / Display Mode / Windowed / Fullscreen / Resolution /
 # Graphics / Graphic Presets / Performance / Quality / Custom / Anti-Aliasing / FXAA / SMAA / Anisotropic Filtering / 4x 8x 16x, the last few from the game's PC options), so they come in every language the game has;
-# the ones the game lacks (Upscaling, MetalFX, Standard, Recommended, the resolution tiers, Color / Vivid / Accurate, anisotropy's "Original") are in the string table.
+# the ones the game lacks (Standard, Recommended, the resolution tiers, Color / Vivid / Accurate, anisotropy's "Original") are in the string table.
 # A selector sends TouchVideoMessage:<key>, a category nothing in the game handles: a selector replaces the message's third part with its own value, so the checkboxes' harmless PanelManager:ClosePanel:<name> became ClosePanel with no name, which crashed (lookup of a NULL child name at main+0xb1ee2c). The host reads each selector's current choice and handles apply / discard / default. The Resolution row keeps a line below it,
 # where the host puts "Takes effect after restarting the game" while a change is waiting for a restart (like the language row's hint). There is mouse hover, so each row has an original-style hover description
 # iOS (DM_OVERLAY_IOS, set by dm/ios/run.sh when it generates the overlay): only the "Graphics" section, which is the header row itself -- 3D Resolution (50%, 67%, 75%, 85%, 100%),
-# Color, Graphic Presets, Upscaling (whether the game's 3D upscale pass uses MetalFX), Anti-Aliasing, Anisotropic Filtering, Environment Shadows, Shadow Quality, Frame Rate
-# (60 / 30 power saver), Frame Generation, Frame Drops (lower / keep the 3D resolution); no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
+# Color, Graphic Presets, Anti-Aliasing, Anisotropic Filtering, Environment Shadows, Shadow Quality, Environment Detail; no display mode or resolution (phones render at the screen's native size). Touch has no hover, so no hover descriptions
 # Mac 与 iOS 上这几行独占「视频」页签（页首标题 = 第一节的名字，在表格的标题行里）；自定义各行在第五个页签「附加」那一页（_EXTRAS_PANEL）
 # On the Mac and iOS these rows have the "Video" tab to themselves (the page title = the first section's name, in the table's title row); the custom rows are on the page of the fifth tab, "Extras" (_EXTRAS_PANEL)
 _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVideoModeTip'),
@@ -848,28 +847,21 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('hdr', '@Graphics'),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), 'dmVideoPresetTip'),
            ('s3d', '@dmVideo3DRes', ('dmVideoScale100', 'dmVideoScale85', 'dmVideoScale75', 'dmVideoScale67', 'dmVideoScale50'), 'dmVideo3DResTip'),
-           ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX', 'dmVideoUpTemporal'), 'dmVideoUpscaleTip'),
            ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), 'OptionsMenuAntiAliasingTooltip'),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), 'OptionsMenuAnisotropicFilteringTooltip'),
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), 'dmVideoEnvShadowsTip'),
            ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), 'dmVideoShadowQTip'),
            ('envd', '@dmVideoEnvDetail', ('dmVideoShadowStd', 'dmVideoShadowHigh'), 'dmVideoEnvDetailTip'),
            ('rt', '@dmVideoRt', ('dmVideoRtOff', 'dmVideoRtOn'), 'dmVideoRtTip'),
-           ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), 'dmVideoFpsTip'),
-           ('fg', '@dmVideoFg', ('dmVideoFgOff', 'dmVideoFgOn'), 'dmVideoFgTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
           (('res', '@dmVideo3DRes', ('dmVideoScale50', 'dmVideoScale67', 'dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),   # selector order; dm_video.c car_of maps it to the stored values
            ('color', '@dmVideoColor', ('dmVideoColorVivid', 'dmVideoColorAccurate'), None),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), None),
-           ('upscale', '@dmVideoUpscale', ('dmVideoUpStandard', 'dmVideoUpMetalFX', 'dmVideoUpTemporal'), None),
            ('aa', '@AntiAliasing', ('FXAA', 'SMAA1x'), None),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), None),
            ('envsh', '@dmVideoEnvShadows', ('dmVideoEnvShadowsOff', 'dmVideoEnvShadowsOn'), None),
            ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), None),
-           ('envd', '@dmVideoEnvDetail', ('dmVideoShadowStd', 'dmVideoShadowHigh'), None),
-           ('fps', '@dmVideoFps', ('dmVideoFps60', 'dmVideoFps30'), None),
-           ('fg', '@dmVideoFg', ('dmVideoFgOff', 'dmVideoFgOn'), None),
-           ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), None)) if _VIDEO_IOS else ())
+           ('envd', '@dmVideoEnvDetail', ('dmVideoShadowStd', 'dmVideoShadowHigh'), None)) if _VIDEO_IOS else ())
 _VIDEO_H = _CUSTOM_LINE_H * len(_VIDEO)
 _VIDEO_RESTART = {'res': 'TouchVideoResHint', 'envsh': 'TouchVideoEnvshHint', 'shq': 'TouchVideoShqHint', 'envd': 'TouchVideoEnvdHint'}   # rows applied at the next launch -> the name of their hint (dm_video.c hint)
 _CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]

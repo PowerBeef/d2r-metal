@@ -1,15 +1,17 @@
 // Picture settings: the rows of the Options Video tab (layout touch_layout.py _VIDEO), stored in sw_video.txt beside the custom settings (dm_custom_path).
 // The Mac page has two sections: Display (Display Mode, Resolution, Color) and Graphics (Graphic Presets, 3D Resolution, Upscaling, Anti-Aliasing,
-// Anisotropic Filtering, Environment Shadows, Shadow Quality, Frame Rate, Frame Drops). The phone page (DM_PHONE, overlay DM_OVERLAY_IOS) has the Graphics
-// section only: no Display Mode or Resolution (phones render at the screen's native size), and its 3D Resolution is the res row.
+// Anisotropic Filtering, Environment Shadows, Shadow Quality, Environment Detail, Ray Tracing, Frame Drops). The phone page (DM_PHONE, overlay DM_OVERLAY_IOS) has the Graphics
+// section only: no Display Mode, Resolution (phones render at the screen's native size), Ray Tracing or Frame Drops, and its 3D Resolution is the res row.
+// MetalFX Temporal and Frame Generation have no rows: they are always on wherever the system offers them, the game drawing 30 frames and the screen showing 60 (decided 2026-11-06).
 // Keys, saved by name (new keys go at the end); value 0 is always the original look, which the CLI host and Mac test copies
 // (without DM_TEST_VIDEO_FIRSTBOOT=1) keep:
 //   mode   0 windowed / 1 full screen (Mac). Switched at once on Apply; the menu and ⌃⌘F write it back (dm_video_fullscreen_note)
 //   res    Mac: the output width, 0 = 1600 / 1 = 1920 / 2 = 2560 / 3 = Native (the main screen's backing-store width, front_mac.m native_w), at the next
 //          launch. Phones: the 3D resolution, stored 0..4 = 75 / 85 / 100 / 67 / 50 % (the first three are the oldest values) and listed 50 .. 100 %
 //          through car_of / val_of, live
-//   up     0 Standard / 1 MetalFX / 2 MetalFX Temporal: the present's enlargement on the Mac, and the game's 3D upscale pass (nvn_mtl.m mfx3d_draw), from the next frame.
+//   up     no row, the recommendation whatever the file says: 0 Standard / 1 MetalFX / 2 MetalFX Temporal: the present's enlargement on the Mac, and the game's 3D upscale pass (nvn_mtl.m mfx3d_draw).
 //          2 is the temporal scaler in that pass (nvn_mv.inc), which also takes over from Anti-Aliasing; the present's enlargement stays the spatial scaler
+//   fg     no row, the recommendation whatever the file says: 1 = Frame Generation (dm_video_fg_active), with up = 2
 //   aa     0 FXAA (the original) / 1 SMAA: the renderer's mode byte, written by hle_oe.c aa_tick (dm_video_aa_mode)
 //   aniso  0 the game's own / 4x / 8x / 16x: the sampler override, latched per submission by nvn_mtl.m aniso_latch
 //   color  0 Vivid (the present layer untagged) / 1 Accurate (tagged sRGB, front_video_color), at once
@@ -30,15 +32,14 @@
 // them, the Graphic Presets row leaves them alone, and a move changes one only while it still equals its old recommendation.
 // Graphic Presets is derived: the preset the player last picked while the values still match it, else Recommended, Performance or Quality (tier_of),
 // whichever matches first, else Custom.
-// On the page a selector changes a pending value. Apply makes it take effect and saves: Display Mode and Color at once, Upscaling, Anti-Aliasing,
+// On the page a selector changes a pending value. Apply makes it take effect and saves: Display Mode and Color at once, Anti-Aliasing,
 // Anisotropic Filtering and 3D Resolution from the next frame, Resolution, Environment Shadows and Shadow Quality at the next launch ("Takes effect after
-// restarting the game" under the row). Discard drops the pending values; Default sets every key back to the recommendation, and Frame Rate / Frame Drops
-// to their defaults. The "has changes" bit is shared with the custom settings (dm_custom.c lights Apply from dm_video_dirty too). Events
+// restarting the game" under the row). Discard drops the pending values; Default sets every key back to the recommendation, and Frame Drops
+// to its default. The "has changes" bit is shared with the custom settings (dm_custom.c lights Apply from dm_video_dirty too). Events
 // (dm/verify/event_stream.md): 'picture' at load and after an Apply that saved, 'video_row' for each change the player makes.
-// Frame Rate and Frame Drops are custom keys (eco_fps / q3d in sw_custom.txt, dm_custom.c): this file only drives their selectors, pending values and
-// Apply go through the custom settings, and the presets leave them alone. The Frame Rate row's two options name the real rates on the window's
-// screen (fps_labels: 72 / 36 fps on a 144 Hz screen), the layout's 60 / 30 fps where those are the rates.
-// Phones: Recommended is 75% + MetalFX + SMAA + 16x + Accurate on every device (front_ios.m); no Display Mode, Native or s3d.
+// Frame Drops is a custom key (q3d in sw_custom.txt, dm_custom.c): this file only drives its selector, pending values and Apply go through the custom
+// settings, and the presets leave it alone.
+// Phones: Recommended is 50% + MetalFX Temporal + Frame Generation + 16x + Accurate on every device (front_ios.m); no Display Mode, Native, s3d or Frame Drops.
 // Selectors are the game's CarouselWidget (read on the host, 3.3.94012): the option count at +0x7e8, the current option at +0x7ec, and from +0x7d8 one byte
 // per option saying whether it can be chosen (0 = skipped). The current option is set through the game's own setter main+0xab0c84 (widget, index), which
 // clamps to the count, skips options that cannot be chosen and shows the option's text in the current language: it looks the option's string (from +0x558,
@@ -48,11 +49,9 @@
 #include "dm.h"
 #include "dm_cursor.h"
 #include "dm_hud.h"
-#include "dm_i18n.h"
 #include "dm_widget.h"
 #include <errno.h>
 #include <limits.h>
-#include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -66,23 +65,24 @@ int dm_custom_path(const char *name, char *p, size_t n);
 enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, K_FG, K_ED, K_RT, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
 static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq", "fg", "envd", "rt" };
 static const int k_n[NV] = { 2, 4, 3, 2, 4, 2, 5, 2, 3, 2, 2, 2 };
-#define REC_V 11   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);
+#define REC_V 12   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);
                   // 6 = a Mac on an iPhone chip (MacBook Neo) gets the phone's (front_mac.m); 7 = chosen from the chip's generation, GPU cores and the screen (dm_picrec.c);
                   // 8 = Native's light ladder stops at 67%, an iPhone chip keeps the phone's shadows, A-chip table and smallest-part core counts (dm_picrec.c);
                   // 9 = MetalFX Temporal with Frame Generation wherever the chip has both (front_mac.m, front_ios.m rec_fg);
                   // 10 = Environment Detail High with the Mac's full picture (front_mac.m);
-                  // 11 = on the Mac, Frame Generation where the full picture fits with what it costs (dm_picrec.c)
+                  // 11 = on the Mac, Frame Generation where the full picture fits with what it costs (dm_picrec.c);
+                  // 12 = MetalFX Temporal and Frame Generation on every chip the system offers them to, with no choice; the Mac's picture gives way instead (dm_picrec.c); iOS 3D 50%
 static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on phones res is the five 3D-resolution tiers; on the Mac res has the extra "Native" tier
 // Display preferences: the Mac's Display section (Display Mode, Color). First launch and Default set them from the recommendation, but they never decide
 // whether the picture is on Recommended, the Graphic Presets row leaves them alone (as Performance and Quality always did), and a rec_v or screen move
 // changes one only while it still equals its old recommendation. On phones Color sits in the Graphics section next to Graphic Presets, so it stays part
 // of Recommended there; phones have no Display Mode row (mode is always 0, its recommendation)
 static int pref_key(int k) { return k == K_MODE || (k == K_COLOR && !DM_PHONE); }
-#define NR 15
-static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "upscale", "aa", "aniso", "envsh", "shq", "envd", "rt", "fps", "fg", "drops" };   // row order on the page (rows the page lacks are skipped)
-static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_UP, K_AA, K_ANISO, K_ESH, K_SHQ, K_ED, K_RT, -2, K_FG, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
-static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "eco_fps", 0, "q3d" };
-static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // options in the selector: the key's tiers; presets 4; custom settings keys 2 (options 0 / 1 = values 0 / 1: 60 / 30 fps; lower / keep)
+#define NR 12
+static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "aa", "aniso", "envsh", "shq", "envd", "rt", "drops" };   // row order on the page (rows the page lacks are skipped)
+static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_AA, K_ANISO, K_ESH, K_SHQ, K_ED, K_RT, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
+static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "q3d" };
+static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // options in the selector: the key's tiers; presets 4; custom settings keys 2 (options 0 / 1 = values 0 / 1: lower / keep)
 int dm_custom_shown_value(const char *key); void dm_custom_set_pending(const char *key, int v); int dm_custom_default(const char *key);
 static _Atomic int g_crows;   // the custom-key rows the page has (one bit per row): Default resets only those
 enum { P_REC, P_PERF, P_QUAL, P_CUSTOM };
@@ -94,7 +94,6 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // load / save: writt
 __attribute__((weak)) int front_video_firstboot(int rec[3], int cur[3]) { (void)rec; (void)cur; return 0; }
 __attribute__((weak)) void front_video_fullscreen(int on) { (void)on; }
 __attribute__((weak)) int front_video_running_res(void) { return -1; }
-__attribute__((weak)) int front_video_mfx_ok(void) { return 0; }
 __attribute__((weak)) int front_video_rec(const char *key) { (void)key; return -1; }   // the recommendation for the keys after front_video_firstboot's three; -1 = none (0, the old look)
 __attribute__((weak)) void front_video_color(int accurate) { (void)accurate; }   // Color applied, or Accurate read at load
 // Which machine the recommendation is worked out for (front_mac.m: dm_picrec_id of the GPU and the main screen); -1 = the recommendation does not depend on
@@ -103,10 +102,6 @@ __attribute__((weak)) int front_video_rec_id(void) { return -1; }
 // 1 = the window's screen no longer suits the launch picture and a restart would fix it (front_mac.m picture_screen_check): the Resolution row shows
 // the restart hint even though its value did not change; 0 = no (iOS, the unit tests)
 __attribute__((weak)) int front_video_screen_stale(void) { return 0; }
-// The refresh rate of the window's screen the Frame Rate row is labelled for (Hz, 0 = no window): front_mac.m lets a test stand in for it
-// (DM_TEST_SCREEN_HZ); elsewhere the present's own reading (nvn_mtl.m mtl_display_refresh)
-double mtl_display_refresh(void); double dm_pace_hz(double screen_hz, double floor_hz); double dm_eco_hz(double screen_hz);
-__attribute__((weak)) double front_video_screen_hz(void) { return mtl_display_refresh(); }
 
 static const char *vals_str(const int *v) {   // "mode=1 res=1 ...": for logs (static buffer, not thread-safe; only used under g_mu or at launch)
     static char b[160]; size_t L = 0; b[0] = 0;
@@ -172,14 +167,13 @@ static void load_once(void) {
         // (an older build must not stamp this machine's id onto values it did not work out)
         int id_now = front_video_rec_id(), moved = !first && !newer && !ro && id_now >= 0 && id_file != id_now;
         atomic_store(&g_rec_id, newer ? id_file : id_now >= 0 ? id_now : id_file);
-        int bump = !first && (rv_file < REC_V || moved), s3d_missing = v[K_S3D] < 0, fg_missing = v[K_FG] < 0, kept = 0;
+        int bump = !first && (rv_file < REC_V || moved), s3d_missing = v[K_S3D] < 0;
         if (miss || bump) {   // work out the recommendation (no front end = the original: windowed, 1600, Standard), filling only the missing keys
             int rec[NV] = { 0 }, cur[NV] = { 0 };   // the front end sets the first three together (front_video_firstboot), the later keys one by one (front_video_rec; current = recommended)
             if (!front_video_firstboot(rec, cur)) memcpy(cur, rec, 3 * sizeof cur[0]);
             for (int i = 3; i < NV; i++) { int x = front_video_rec(k_keys[i]); rec[i] = cur[i] = x >= 0 && x < kn(i) ? x : 0; }
             if (bump) {   // still on the old recommendation (every graphics key read equals it): move to the new one; changed settings stay, only the recommendation changes
-                int on_rec = 1; for (int i = 0; i < NV; i++) if (!pref_key(i) && v[i] >= 0 && r[i] >= 0 && v[i] != r[i]) on_rec = 0;   // judged by the graphics keys
-                kept = !on_rec;
+                int on_rec = 1; for (int i = 0; i < NV; i++) if (!pref_key(i) && i != K_UP && i != K_FG && v[i] >= 0 && r[i] >= 0 && v[i] != r[i]) on_rec = 0;   // judged by the graphics keys a player can set
                 for (int i = 0; i < NV; i++) { int nr = rec[i] >= 0 && rec[i] < kn(i) ? rec[i] : 0, was = v[i] >= 0 && r[i] >= 0 && v[i] == r[i];
                     if (v[i] >= 0 && (pref_key(i) ? was : on_rec)) v[i] = nr; r[i] = nr; }   // a display preference moves only while it equals its old recommendation
                 if (rv_file < REC_V) LOG("picture settings: recommendation version %d → %d; %s", rv_file, REC_V, on_rec ? "moved to the new Recommended" : "changed settings kept");
@@ -189,9 +183,10 @@ static void load_once(void) {
                 if (r[i] < 0) r[i] = rv;
                 if (v[i] < 0) v[i] = had_r ? r[i] : cur[i] >= 0 && cur[i] < kn(i) ? cur[i] : r[i]; }   // current value missing: back to the stored recommendation; only when both are missing, the first-boot current value (incl. older preferences)
             if (!first && s3d_missing && v[K_RES] != 3) v[K_S3D] = 0;   // 3D Resolution only goes with Native output: older settings not on Native get 100% (the old look)
-            if (kept && fg_missing) v[K_FG] = 0;   // a player's own settings keep the frames they had
         }
-        if (v[K_FG] == 1 && v[K_UP] != 2) v[K_FG] = 0;   // it needs the temporal scaler (older preferences can give MetalFX here, or a hand-edited file)
+        // Upscaling and Frame Generation are nobody's choice: whatever the file says (an older version's row, older preferences, a hand edit), what the recommendation gives. That's Temporal and Frame Generation
+        // wherever the system offers them, and the original look on the CLI host and test copies. An older file's saved 30 fps (the power saver) is ignored the same way: dm_custom.c no longer knows that key
+        v[K_UP] = r[K_UP]; v[K_FG] = r[K_FG] == 1 && v[K_UP] == 2;
         for (int i = 0; i < NV; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_rec[i], r[i]); }
         atomic_store(&g_loaded, 1);
         if (miss && !first) { char mk[128] = ""; for (int i = 0; i < 2 * NV; i++) if (miss >> i & 1) snprintf(mk + strlen(mk), sizeof mk - strlen(mk), "%s%s%s", mk[0] ? " " : "", i >= NV ? "rec_" : "", k_keys[i % NV]);
@@ -236,7 +231,7 @@ int dm_video_temporal_active(void) {
     if (!env) return 0;
     return env > 0 || (dm_video_get("up") == 2 && mtl_mfx_temporal_supported());
 }
-// Frame Generation = MetalFX's frame interpolator, live. Its motion, depth and camera offset come from the temporal scaler, so it needs that; the power saver's rate is left to the
+// Frame Generation = MetalFX's frame interpolator. Its motion, depth and camera offset come from the temporal scaler, so it needs that; the test switch DM_FPS=30 is left to the
 // graphics layer (nvn_fg.inc fg_on). DM_FG=0/1 forces it. Read by the replay thread at each compose draw
 __attribute__((weak)) int mtl_mfx_fg_supported(void) { return 0; }
 int dm_video_fg_active(void) {
@@ -325,7 +320,6 @@ void dm_video_fullscreen_note(int on) {   // the player switched full screen fro
     atomic_store(&g_repaint, 1);
 }
 static int shown(int k) { int p = atomic_load(&g_pend[k]); return p >= 0 ? p : atomic_load(&g_val[k]); }
-static int perf_up(void) { return DM_PHONE ? 0 : front_video_mfx_ok() ? 1 : 0; }   // Performance's upscaling: phone = Standard (saves power), Mac = MetalFX (cheap there)
 // Each key's value in the Performance / Quality presets (t 0 = Performance, 1 = Quality); -1 = the preset leaves this key alone. Anti-Aliasing and
 // Anisotropic Filtering follow the same tiers on both platforms (the phone page has both rows too: touch_layout.py _VIDEO, iOS list): Performance =
 // FXAA and leaves anisotropy alone, Quality = SMAA and 16x. On phones the presets leave Environment Shadows and Shadow Quality alone until their phone
@@ -333,14 +327,13 @@ static int perf_up(void) { return DM_PHONE ? 0 : front_video_mfx_ok() ? 1 : 0; }
 static int tier_of(int k, int t) {
     switch (k) {
     case K_RT: return -1;   // a first version: the player's own choice, whatever the preset
-    case K_RES: return t ? (DM_PHONE ? 2 : 3) : 0;   // Quality: 100% 3D on phones, Native output on the Mac
-    case K_UP: return t ? (front_video_mfx_ok() ? 1 : 0) : perf_up();
+    case K_RES: return t ? (DM_PHONE ? 2 : 3) : DM_PHONE ? 4 : 0;   // Quality: 100% 3D on phones, Native output on the Mac; Performance: 50% 3D on phones (stored 4), 1600 output on the Mac
+    case K_UP: case K_FG: return -1;   // nobody's choice: load_once
     case K_AA: return t;   // Performance FXAA (SMAA was about 18% of the phone's GPU work before e070b94), Quality SMAA
     case K_ANISO: return t ? 3 : -1;
     case K_S3D: return DM_PHONE ? -1 : 0;   // Mac: both Performance (1600 output) and Quality (Native) draw the 3D at 100%
     case K_ESH: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch look, Quality = environment shadows; phone presets leave it alone (cost not measured there yet)
     case K_SHQ: return DM_PHONE ? -1 : t ? 2 : 0;   // Mac: Performance = Standard (the Switch's map), Quality = Ultra; phone presets leave it alone
-    case K_FG: return 0;   // neither preset uses the temporal scaler it needs
     case K_ED: return DM_PHONE ? -1 : t;   // Mac: Performance = the Switch's, Quality = High; phone presets leave it alone (cost not measured there yet)
     default: return -1;
     }
@@ -382,7 +375,7 @@ void dm_video_on_uimsg(const char *cat, const char *act, const char *arg) {
     else if (!strcmp(act, "ResetToDefaults") && (dm_custom_shown() & 1)) { for (int i = 0; i < NV; i++) atomic_store(&g_pend[i], atomic_load(&g_rec[i]));   // every key, the display preferences included
         atomic_store(&g_pick_pend, P_REC);
         for (int i = 0; i < NR; i++) if (k_row_ckey[i] && (atomic_load(&g_crows) >> i & 1)) dm_custom_set_pending(k_row_ckey[i], dm_custom_default(k_row_ckey[i]));
-        atomic_store(&g_repaint, 1); LOG("画面设置：默认 → 推荐值、帧率与掉帧时回缺省（点「应用」生效）"); }
+        atomic_store(&g_repaint, 1); LOG("picture settings: Default → the recommendation, Frame Drops to its default (Apply makes it take effect)"); }
 }
 
 // ---- Selectors on the page
@@ -397,7 +390,7 @@ static int car_ok(uint64_t w, int n) {
 static int car_get(uint64_t w) { return *(int32_t *)(w + 0x7ec); }
 static void car_set(uint64_t w, int i) { if (car_get(w) != i) ((void (*)(uint64_t, int))(main_base() + 0xab0c84))(w, i); }
 static void preset_enable(uint64_t w, int custom) { *(uint8_t *)(w + 0x7d8 + P_CUSTOM) = custom != 0; }   // Custom can only be chosen while the row shows it (no preset matches; the arrows skip it)
-static int present_rows(uint64_t sp, int idx[NR]) {   // the rows the page really has, in page order: thirteen on the Mac; eleven on phones (no Display Mode, and 3D Resolution is the res row, with no separate s3d row)
+static int present_rows(uint64_t sp, int idx[NR]) {   // the rows the page really has, in page order: twelve on the Mac; eight on phones (no Display Mode, Ray Tracing or Frame Drops, and 3D Resolution is the res row, with no separate s3d row)
     int n = 0; for (int i = 0; i < NR && sp; i++) { uint64_t w = row_w(sp, i); if (w && *(uint8_t *)(w + 0x50)) idx[n++] = i; } return n;
 }
 int dm_video_rows(uint64_t sp) { int idx[NR]; return present_rows(sp, idx); }
@@ -430,44 +423,8 @@ static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effe
 // car_of turns a row's value into the selector index, val_of back; every other row is the identity
 static int car_of(int row, int v) { static const int m[5] = { 2, 3, 4, 1, 0 }; return DM_PHONE && k_row_key[row] == K_RES && v >= 0 && v < 5 ? m[v] : v; }
 static int val_of(int row, int c) { static const int m[5] = { 4, 3, 0, 1, 2 }; return DM_PHONE && k_row_key[row] == K_RES && c >= 0 && c < 5 ? m[c] : c; }
-// The Frame Rate row's labels for a screen of hz: the normal rate (the smallest even fraction of the refresh at or above 60, dm_pace_hz) and the power
-// saver's (dm_eco_hz), each as a whole number when within 0.1 of one, else with one decimal, put into fmt (dmVideoFpsRate, "%s fps"). Returns 0 when
-// both read 60 / 30 (60 and 120 Hz screens, NTSC 59.94, no window): the layout's own options (dmVideoFps60 / dmVideoFps30) stay
-static void fps_num(char *b, size_t n, double hz) { if (fabs(hz - round(hz)) < 0.1) snprintf(b, n, "%ld", lround(hz)); else snprintf(b, n, "%.1f", hz); }
-static int fps_labels(double screen_hz, const char *fmt, char *hi, char *lo, size_t n) {
-    char a[16], b[16]; fps_num(a, sizeof a, dm_pace_hz(screen_hz, 60)); fps_num(b, sizeof b, dm_eco_hz(screen_hz));
-    if (!strcmp(a, "60") && !strcmp(b, "30")) return 0;
-    if (!fmt || !strstr(fmt, "%s")) fmt = "%s fps";   // the format must carry its one placeholder (dm_i18n.py checks every language)
-    snprintf(hi, n, fmt, a); snprintf(lo, n, fmt, b); return 1;
-}
-// Writes the Frame Rate selector's two options (our own TouchVideo_fps, a CarouselWidget whose vtable and option count car_ok checked): the labels for the
-// screen, or back to the layout's own keys, then has the game's setter show the current option again. Only on a change: the strings are compared first
-static void fps_row(uint64_t w) {
-    static const char *const k_own[2] = { "dmVideoFps60", "dmVideoFps30" };   // the layout's options (touch_layout.py _VIDEO, row fps)
-    const char *nm = *(const char **)(w + 8); if (!nm || strcmp(nm, "TouchVideo_fps")) return;
-    char hi[48], lo[48]; const char *want[2] = { k_own[0], k_own[1] };
-    double hz = front_video_screen_hz();
-    if (fps_labels(hz, dm_str(main_base(), "dmVideoFpsRate"), hi, lo, sizeof hi)) { want[0] = hi; want[1] = lo; }
-    int ch = 0;
-    for (int i = 0; i < 2; i++) {
-        uint64_t st = w + 0x558 + 0x28 * (uint64_t)i; const char *cur = *(const char **)st; uint64_t len = *(uint64_t *)(st + 8); size_t n = strlen(want[i]);
-        if (cur && len == n && !memcmp(cur, want[i], n)) continue;
-        ((void *(*)(uint64_t, const char *, uint64_t))(main_base() + 0x136e5c))(st, want[i], n); ch = 1;
-    }
-    if (!ch) return;
-    ((void (*)(uint64_t, int))(main_base() + 0xab0c84))(w, car_get(w));   // show the current option with its new text
-    LOG("picture settings: Frame Rate row labelled %s / %s (screen %.2f Hz)", want[0], want[1], hz);
-}
-// Frame Generation takes its inputs from the temporal scaler and has no room at the power saver's rate. Turning it on selects Temporal and the normal rate; leaving Temporal turns it
-// off. The power saver only overrides it (nvn_fg.inc fg_on), so the row reads Off meanwhile and the setting comes back with the normal rate. The presets have their own value (tier_of)
-static void fg_rules(int row, int v) {
-    int k = k_row_key[row];
-    if (k == K_FG && v == 1) { atomic_store(&g_pend[K_UP], 2); if (dm_custom_shown_value("eco_fps")) dm_custom_set_pending("eco_fps", 0); }
-    else if (k == K_UP && v != 2 && shown(K_FG)) atomic_store(&g_pend[K_FG], 0);
-}
-static void fg_enable(uint64_t w) { *(uint8_t *)(w + 0x7d8 + 1) = mtl_mfx_fg_supported() != 0; }   // a chip without the interpolator can't choose On (the arrows skip it)
-static void rt_enable(uint64_t w) { *(uint8_t *)(w + 0x7d8 + 1) = mtl_rt_supported() != 0; }   // nor one without ray tracing
-static int row_want(int i) { if (k_row_key[i] == K_FG && dm_custom_shown_value("eco_fps")) return 0; return k_row_ckey[i] ? dm_custom_shown_value(k_row_ckey[i]) : k_row_key[i] < 0 ? preset_of() : shown(k_row_key[i]); }   // the option this row should show
+static void rt_enable(uint64_t w) { *(uint8_t *)(w + 0x7d8 + 1) = mtl_rt_supported() != 0; }   // a chip without ray tracing can't choose On (the arrows skip it)
+static int row_want(int i) { return k_row_ckey[i] ? dm_custom_shown_value(k_row_ckey[i]) : k_row_key[i] < 0 ? preset_of() : shown(k_row_key[i]); }   // the option this row should show
 void dm_video_pump(uint64_t sp) {   // called every frame while an Options page of ours is on screen (dm_custom.c); sp = 0: the page is not on screen
     static dm_wref seen[NR];
     uint64_t w[NR] = { 0 }; int ok = sp != 0 && dm_video_rows(sp) > 0;
@@ -483,7 +440,7 @@ void dm_video_pump(uint64_t sp) {   // called every frame while an Options page 
     for (int i = 0; i < NR; i++) want[i] = car_of(i, row_want(i));
     for (int i = 0; i < NR; i++) {
         if (!w[i]) continue;
-        if (dm_wref_get(&seen[i]) != w[i]) { dm_wref_set(&seen[i], w[i]); if (k_row_key[i] == -1) preset_enable(w[i], want[i] == P_CUSTOM); if (k_row_key[i] == K_FG) fg_enable(w[i]); if (k_row_key[i] == K_RT) rt_enable(w[i]); car_set(w[i], want[i]); continue; }   // the page just appeared: show the value it should, and do not treat this frame as a player change
+        if (dm_wref_get(&seen[i]) != w[i]) { dm_wref_set(&seen[i], w[i]); if (k_row_key[i] == -1) preset_enable(w[i], want[i] == P_CUSTOM); if (k_row_key[i] == K_RT) rt_enable(w[i]); car_set(w[i], want[i]); continue; }   // the page just appeared: show the value it should, and do not treat this frame as a player change
         if (ch < 0 && car_get(w[i]) != want[i]) ch = i;
     }
     if (ch >= 0) {
@@ -491,10 +448,8 @@ void dm_video_pump(uint64_t sp) {   // called every frame while an Options page 
         if (k_row_ckey[ch]) { dm_custom_set_pending(k_row_ckey[ch], cur); LOG("画面设置：%s → %d（自定义设置里的键；点「应用」生效）", k_row_ckey[ch], cur); }
         else if (k < 0) { if (cur != P_CUSTOM) apply_preset(cur); LOG("画面设置：图形预设 → %d（点「应用」生效）", cur); }
         else { atomic_store(&g_pend[k], cur); LOG("画面设置：%s → %d（点「应用」生效）", k_keys[k], cur); }
-        fg_rules(ch, cur);
         for (int i = 0; i < NR; i++) { if (!w[i]) continue; int v = row_want(i); if (k_row_key[i] == -1) preset_enable(w[i], v == P_CUSTOM); car_set(w[i], car_of(i, v)); }   // presets move the other rows, and the other rows move the preset
         DM_EV("video_row", "row:s value:d preset:d", k_rows[ch], cur, preset_of());   // the player's change and what the Graphic Presets row shows after it
     }
-    for (int i = 0; i < NR; i++) if (w[i] && !strcmp(k_rows[i], "fps")) fps_row(w[i]);   // the Frame Rate row names this screen's rates
     hint(sp);
 }

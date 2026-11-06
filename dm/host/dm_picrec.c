@@ -27,11 +27,12 @@
 //    7-core M1 iMac at 4.5K, about 124% of its capacity) lowers its 3D for a while instead of dropping frames (decided 2026-11-03, wave 4).
 // 6. Frame rate: the capacity is per 60 fps. A screen whose frame rate is another even fraction of its refresh (72 fps on 144 Hz, 100 on 100 Hz, 50 on
 //    50 Hz; nvn_pace.h) scales every load by rate / 60, so a 144 Hz screen gets a correspondingly lighter recommendation.
-// 7. Frame Generation: where the system offers it and the full picture still fits at Native, down to 75%, what the game draws at half the rate with what MetalFX Temporal and the interpolator cost on top.
+// 7. Frame Generation: always, wherever the system offers it: every Mac draws 30 frames and shows 60, and has no other way to run (decided 2026-11-06). What the game draws at half the rate with what MetalFX Temporal and the interpolator cost on top.
 //    Measured on the M6 at full clock (bench.py headroom, open ground, Recommended, 2026-11-05): 11.8 ms a drawn frame at 2560 x 1440, 17.9 at 3024 x 1890, 23.9 at 3840 x 2160, out of 33.3: FG_BASE +
 //    FG_PER_MP per output megapixel; 3D Resolution saves FG_3D_PER_MP of it (100% to 50% at 2560 x 1440: 11.9 to 8.4 ms). So at this Mac's sizes it costs more GPU per second than real frames do, and
-//    what it buys is free time per drawn frame (21.5 ms against 9.4 at 2560 x 1440) and smooth motion on a chip that holds it. On a Mac where it doesn't fit, the conventional choice below stands, at real
-//    frame rate, rather than a smaller picture: only the M6 has been measured, and elsewhere this is the same estimate from public benchmark speeds as the rest.
+//    what it buys is free time per drawn frame (21.5 ms against 9.4 at 2560 x 1440) and smooth motion on a chip that holds it. So the picture is what gives way: Native with the full picture from 3D 100% down to 50%, then
+//    the light picture at Native, then a smaller fixed resolution (the output is the big lever, as the scaler and the interpolator work at its size). The light picture saves its share of the scene, not of the interpolator.
+//    Only the M6 has been measured; elsewhere this is the same estimate from public benchmark speeds as the rest. A Mac the system offers neither to (none Apple lists since the M1) keeps the conventional choice below.
 // No MetalFX: a fixed resolution, the picture by its load. A fixed resolution has the game picture's shape (s->aspect: 1920 x 1200 on a 16:10 screen,
 // as front_mac.m front_game_res renders it), not 16:9.
 // Memory is not an input: no 8 GB Mac has been measured (the GPU heap is a fixed 768 MiB).
@@ -61,7 +62,7 @@ static const double k_core_m[] = { 0, 3975, 4500, 4690, 5300, 7000, 8500 };   //
 #define FG_BASE 2.1               // load units (about ms of the M6's GPU) of a generated pair at full clock, 7. above
 #define FG_PER_MP 2.63
 #define FG_3D_PER_MP 1.26
-#define FG_MIN 2                  // Frame Generation's lowest 3D Resolution: 75%
+#define FG_MIN 4                  // Frame Generation's lowest 3D Resolution: 50%
 static const float k_scale[5] = { 1.0f, 0.85f, 0.75f, 0.67f, 0.5f };   // the 3D Resolution row
 static const int k_fixed_w[3] = { 1600, 1920, 2560 };                   // the Resolution row's fixed widths
 
@@ -93,6 +94,13 @@ int dm_picrec_id(const dm_mac_spec *s) {
 // load of a picture: 3D at `scale` of an output w x h
 static double load(int w, int h, double scale) { double out = (double)w * h / 1e6; return out * scale * scale + OUT_WEIGHT * out; }
 
+// What Frame Generation asks of the GPU per shown frame: a drawn frame's cost (7. above), halved. The light picture saves its share of the scene (LIGHT_GAIN), the interpolator's part stays
+static double fg_load(int w, int h, double scale, int light) {
+    double out = (double)w * h / 1e6, ms = FG_BASE + out * (FG_PER_MP - FG_3D_PER_MP * (1 - scale * scale));
+    if (light) ms -= load(w, h, scale) * (1 - 1 / LIGHT_GAIN);
+    return ms / 2;
+}
+
 int dm_picrec_enlarges(const dm_mac_spec *s) { return s->drw_w > s->out_w * 1.05 && s->drw_h > s->out_h * 1.05; }
 // The present's enlargement of the Native picture into its viewport, in load units (0 when it does not enlarge): MetalFX with the 3D at 100%,
 // bilinear filtering after a 3D MetalFX pass; both above the 1:1 present of the picture
@@ -119,15 +127,27 @@ void dm_mac_recommend(const dm_mac_spec *s, dm_mac_rec *r) {
     int cores = s->cores > 0 ? s->cores : iphone ? 5 : k_min_cores[r->tier];
     r->speed = cores * core_speed(iphone, r->gen) / REF_SCORE;
     double cap = CAPACITY * r->speed, rate = s->pace_hz > 0 ? s->pace_hz / 60 : 1;
-    if (s->mfx && s->fg) {   // Frame Generation: the full picture, half the drawn frames; the present still runs at the shown rate
-        double out = (double)s->out_w * s->out_h / 1e6;
-        for (int i = 0; i <= FG_MIN; i++) {
-            double pr = pres_load(s, i == 0), l = ((FG_BASE + out * (FG_PER_MP - FG_3D_PER_MP * (1 - (double)k_scale[i] * k_scale[i]))) / 2 + pr) * rate;
-            if (l > cap) continue;
-            r->fg = 1; r->native = 1; r->s3d = i; r->load = l / cap; r->pres = pr * rate / cap; r->q3d = r->tier != -1 && r->load <= CLOSE;
-            r->envsh = r->tier != -1; r->shq = r->tier != -1 ? 2 : 0;   // an iPhone chip keeps the phone's shadows, as below
-            return;
-        }
+    if (s->mfx && s->fg) {   // Frame Generation: half the drawn frames; the present still runs at the shown rate. An iPhone chip only ever has the light picture
+        int lo = r->tier == -1, in = 0;
+        r->fg = 1;
+        for (int light = lo; light < 2 && !in; light++)
+            for (int i = 0; i <= FG_MIN && !in; i++) {
+                double pr = pres_load(s, i == 0), l = (fg_load(s->out_w, s->out_h, k_scale[i], light) + pr) * rate;
+                if (l > cap) continue;
+                r->native = 1; r->s3d = i; r->envsh = !light; r->shq = light ? 0 : 2; r->load = l / cap; r->pres = pr * rate / cap; r->q3d = !(light || r->load > CLOSE); in = 1;
+            }
+        if (in) return;
+        // Not at Native: the widest fixed resolution up to 3/4 of the screen (the 2560 one from half the M6's speed) that fits with its enlargement into the screen, the 3D at 100%. The smallest and the light picture when nothing fits
+        int top = 0; for (int i = 0; i < 3; i++) if (k_fixed_w[i] <= (s->out_w * 3 / 4 > 1600 ? s->out_w * 3 / 4 : 1600) && (i < 2 || r->speed >= 0.5)) top = i;
+        for (int t = top; t >= 0 && !in; t--)
+            for (int light = lo; light < 2 && !in; light++) {
+                int w = k_fixed_w[t], h = s->aspect > 0 ? (int)(w / s->aspect / 2 + 0.5) * 2 : w * 9 / 16;
+                double vw = s->drw_w > 0 ? s->drw_w : s->out_w, vh = s->drw_h > 0 ? s->drw_h : s->out_h, vp = vw * vh / 1e6, fp = (double)w * h / 1e6;
+                double l = fg_load(w, h, 1, light) * rate, pr = vw > w * 1.05 && vh > h * 1.05 ? (PRES_MFX * vp - PRES_ONE * fp) * rate : 0;
+                if (l + pr > cap && (t || !light)) continue;
+                r->native = 0; r->tier_res = t; r->s3d = 0; r->envsh = !light; r->shq = light ? 0 : 2; r->pres = pr / cap; r->load = (l + pr) / cap; r->q3d = !(light || r->load > CLOSE); in = 1;
+            }
+        return;
     }
     if (s->mfx)   // Native: the full picture down to 75%, else the light one down to 67%; the present's enlargement and the frame rate counted
         for (int light = 0; light < 2; light++)

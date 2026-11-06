@@ -191,22 +191,19 @@ static void panel_px(int *w, int *h) {
     }
     CFRelease(ms);
 }
-// DM_TEST_SCREEN_HZ=<hz> (tests): the screen's refresh rate as Recommended (mac_rec, through launch_hz) and the Frame Rate row's labels
-// (front_video_screen_hz) count it; the present still paces by the real display. Read once; 0 = unset (a value that is not a rate logs a red line)
+// DM_TEST_SCREEN_HZ=<hz> (tests): the screen's refresh rate as Recommended (mac_rec, through launch_hz) counts it; the present still paces by the real display. Read once; 0 = unset (a value that is not a rate logs a red line)
 static double test_screen_hz(void) {
     static double hz; static dispatch_once_t once;
     dispatch_once(&once, ^{
         const char *e = getenv("DM_TEST_SCREEN_HZ"); if (!e || !*e) return;
         char *end; double v = strtod(e, &end);
-        if (end != e && !*end && v > 0 && v <= 1000) { hz = v; LOG("DM_TEST_SCREEN_HZ: the screen counts as %.2f Hz for Recommended and the Frame Rate labels", v); }
+        if (end != e && !*end && v > 0 && v <= 1000) { hz = v; LOG("DM_TEST_SCREEN_HZ: the screen counts as %.2f Hz for Recommended", v); }
         else LOG("【红】DM_TEST_SCREEN_HZ=%s is not a refresh rate in Hz: ignored", e);
     });
     return hz;
 }
 double mtl_display_refresh(void);   // nvn_mtl.m: the window's screen (screen_note's copy)
 double dm_pace_hz(double screen_hz, double floor_hz);   // nvn_mtl.m: the frame rate on a screen of that refresh (nvn_pace.h)
-// The refresh rate the Frame Rate row is labelled for (dm_video.c fps_row, on the game thread): the window's screen, or the test stand-in
-double front_video_screen_hz(void) { double t = test_screen_hz(); return t > 0 ? t : mtl_display_refresh(); }
 // The launch screen's refresh rate (Hz; 0 = unknown), for Recommended: its display mode's, else the screen's maximum frame rate, as screen_note
 // reads the window's screen; DM_TEST_SCREEN_HZ stands in for it
 static double launch_hz(void) {
@@ -263,8 +260,8 @@ static int real_recommendation(void) { return dm_picrec_real(getenv("DM_APP") !=
 // MetalFXUpscale preferences carry over once as the current values. The CLI host and test copies (unless DM_TEST_VIDEO_FIRSTBOOT=1) get the
 // original look: windowed, 1600, Standard
 int mtl_mfx_temporal_supported(void), mtl_mfx_fg_supported(void);
-// The system offers MetalFX Temporal and the frame interpolator: dm_picrec.c takes them where the full picture fits, the game drawing half the frames and the screen showing them all, 30 / 60 on a 60 Hz
-// screen. Other Macs keep the conventional picture and the real rate. A player who prefers real frames has the Frame Generation row
+// The system offers MetalFX Temporal and the frame interpolator: always on, with no row, the game drawing half the frames and the screen showing them all, 30 / 60 on a 60 Hz screen; dm_picrec.c fits the picture to them.
+// A Mac the system offers neither to keeps the conventional picture and the real rate
 static int rec_fg(void) { return mtl_mfx_temporal_supported() && mtl_mfx_fg_supported(); }
 int front_video_firstboot(int rec[3], int cur[3]) {
     if (!real_recommendation()) {

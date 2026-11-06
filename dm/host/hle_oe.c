@@ -141,6 +141,7 @@ HLE_FORCE("_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE", "前后台
 // intervals hle_nvn.c reports for every present (diag.c dm_perf_present, the same source as perf.txt and the perf event), on the Mac as on iOS. Its
 // levels are up to three steps of x0.93 below the configured value, never below 50% (dm_s3lv.h): 0.70 / 0.65 / 0.60 at 75%, 0.86 / 0.80 / 0.75 at
 // 100% (the first x0.93 step is skipped there, S3_FIRST_AT_FULL), none at 50%. Its rules: scale3d_ctl_step; frames not shown, loading screens and gaps in the presents: dm_3d_scale_feed.
+// Phones have no Frame Drops: the controller stays off there (decided 2026-11-06; a DM_3D_SCALE_DYN_INJECT test still runs it, for the rebuilds it exercises).
 // Switches: DM_3D_SCALE_DYN=0 disables it; DM_THERMAL_NOFALLBACK=1 (power / frame-time measurement) also disables it, since the scale must be pinned
 // while measuring. DM_3D_SCALE_FLOOR=<scale> allows deeper levels for device sweeps (up to 12, never below 50%).
 // DM_3D_SCALE_DYN_INJECT=<a>-<b> (frames counted by dm_nvn_frame_count) tests the whole step-down / step-up chain: in that range every interval fed to
@@ -164,7 +165,7 @@ static void s3_env_read(void) {
 static float s3_cfg(void) {   // 配置的 3D 比例：DM_3D_SCALE 定死；没给就按选项页（手机，点「应用」后 scale3d_tick 下一拍就换），再没有就平台缺省 | configured 3D scale: DM_3D_SCALE fixes it; otherwise the options page (phones; scale3d_tick switches on the next tick after "Apply"), otherwise the platform default
     static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, s3_env_read);   // the game, present and replay threads all call it
     if (g_s3_env > 0) return g_s3_env;
-    float v = dm_video_scale3d(); return v >= 0.5f && v <= 1.0f ? v : DM_PHONE ? 0.75f : 1.0f;
+    float v = dm_video_scale3d(); return v >= 0.5f && v <= 1.0f ? v : DM_PHONE ? 0.5f : 1.0f;
 }
 // Pure-function controller (the unit test t_oe.c feeds it sequences directly): level 0 = the configured value, higher = lower. It judges only what
 // reached the screen:
@@ -241,8 +242,7 @@ static void scale3d_ctl_retarget(scale3d_ctl *c, float cfg, float floor, uint64_
     c->max_level = s3_max_level(cfg, floor); c->level = 0; c->last_up = 0; c->need_good = 0; scale3d_ctl_hold(c, now, 3 * S3_SEC);
 }
 // The Frame Drops setting: 0 = Lower (the 3D scale steps down on dropped frames), 1 = Keep (the configured value stays). The Video tab's Frame Drops
-// row sets it (dm_video.c row "drops", custom key q3d in sw_custom.txt, dm_custom.c); the default is Lower on phones and comes from the Mac's
-// recommendation (front_q3d_default)
+// row sets it on the Mac (dm_video.c row "drops", custom key q3d in sw_custom.txt, dm_custom.c), and the default comes from the Mac's recommendation (front_q3d_default)
 static _Atomic int g_3d_quality_mode;
 void dm_3d_quality_mode_set(int mode) { atomic_store(&g_3d_quality_mode, mode == 1 ? 1 : 0); }
 int dm_3d_quality_mode_get(void) { return atomic_load(&g_3d_quality_mode); }
@@ -312,7 +312,7 @@ __attribute__((weak)) int mtl_fg_active(void) { return 0; }
 __attribute__((weak)) int mtl_link_active(void) { return 0; }
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
     s3_feed_state *f = &g_s3f; scale3d_ctl *c = &f->c;
-    if (f->on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); f->on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
+    if (f->on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); f->on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK") && (!DM_PHONE || j);
         if (j) f->inj_rel = s3_inject_parse(j, &f->inj0, &f->inj1);
         const char *fe = getenv("DM_3D_SCALE_FLOOR"); f->fl = fe ? strtof(fe, NULL) : 0;   // a deeper floor for device sweeps (dm_s3_max_level); 0 = the levels of dm_s3lv.h
         f->cfg_at = s3_cfg(); c->max_level = s3_max_level(f->cfg_at, f->fl);

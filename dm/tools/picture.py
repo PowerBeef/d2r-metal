@@ -9,8 +9,8 @@ today, and the remediation's REC-5 fix turns it off).
 Each Video-tab key and the switch that pins it:
   Resolution (res; Native = the screen's width)   DM_GAME_RES=<w>x<h>, the render size
   3D Resolution (s3d)                             DM_3D_SCALE (0.5-1.0)
-  Upscaling (up)                                  DM_MFX (the present) and DM_MFX3D (the game's own 3D upscale pass); MetalFX acts only while it enlarges; DM_MFXT=1 for Temporal
-  Frame Generation (fg)                           DM_FG: 0 / 1
+  Upscaling (up, no row: Temporal wherever offered)  DM_MFX (the present) and DM_MFX3D (the game's own 3D upscale pass); MetalFX acts only while it enlarges; DM_MFXT=1 for Temporal
+  Frame Generation (fg, no row: on wherever offered) DM_FG: 0 / 1
   Anti-Aliasing (aa)                              DM_AA_MODE: the renderer's mode byte, 1 = FXAA (the original), 2 = SMAA
   Anisotropic Filtering (aniso)                   DM_NVN_ANISO: 0 / 4 / 8 / 16
   Color (color)                                   DM_COLORSPACE: srgb = Accurate (a tag on the layer; no capture sees it)
@@ -18,7 +18,6 @@ Each Video-tab key and the switch that pins it:
   Shadow Quality (shq)                            DM_SHADOW_SIZE: 2100 Standard / 3072 High / 4096 Ultra
   Environment Detail (envd)                       DM_ENV_DETAIL: 0 / 1
   Frame Drops (q3d)                               DM_3D_SCALE_DYN=0: the 3D scale stays where it is set
-  Frame Rate (eco_fps)                            not pinned: 60 fps, every set's default
   Display Mode (mode)                             FULLSCREEN below, kept apart because headless shots have no window
 
 The sets:
@@ -28,18 +27,17 @@ The sets:
          row reads SMAA, which Temporal replaces, so the mode byte is 0). The Mac App picks exactly this on this Mac: its log line reads
          "picture: Apple M6 ..., 12 GPU cores ..., screen 2560x1440 ... -> Recommended Native 2560, 3D 100%, environment shadows on, shadows Ultra,
          Frame Drops keep".
-  RECT   REC at the real frame rate (the Frame Generation row off). Frame generation changes nothing the game draws, only what the screen shows between: golden pictures use RECT
+  RECT   REC at the real frame rate (DM_FG off; players have no such choice). Frame generation changes nothing the game draws, only what the screen shows between: golden pictures use RECT
          (each frame is drawn the same) and dm/verify/motion_gate.py judges the frames in between.
-  CONV   the conventional picture of a chip without them, on this Mac: MetalFX's spatial scaler for the 3D pass, SMAA, the real frame rate.
+  CONV   the conventional picture of a chip the system offers neither to, on this Mac: MetalFX's spatial scaler for the 3D pass, SMAA, the real frame rate.
   REC75  CONV with the 3D at 75%, so MetalFX does the 3D upscale: the base M chips' conventional picture at a 2560-class screen (the t_picrec rows
          "MacBook Air M1, 1280 x 800" and the M2 13-inch 8-core row at 1280 x 832; the M3's picks 85% since the model reads the picture below
          the notch). Two deliberate differences: those Airs are 16:10 (2560 x 1600 below the notch), and REC75 keeps 2560 x 1440 so it compares
          with CONV; and their Frame Drops default is lower (q3d 0),
          while REC75 keeps the 3D scale fixed (DM_3D_SCALE_DYN=0), because a scale that moves can have no picture baseline.
-  PHONE  the iPhone 17 Pro's Recommended, drawn by the Mac host: its native 2622 x 1206, 3D 75% with MetalFX (front_ios.m front_video_firstboot),
-         SMAA, 16x and Accurate (front_video_rec), and no environment-shadow or shadow-quality recommendation, so environment shadows off and
-         the Switch's 2100 map. Frame Drops is pinned off as in REC75 (the phone's default is lower). It is the phone's picture chain, not a
-         phone capture: the Mac host lays out the interface for that size itself.
+  PHONE  the iPhone 17 Pro's Recommended, drawn by the Mac host: its native 2622 x 1206, 3D 50% with MetalFX Temporal and Frame Generation (front_ios.m front_video_firstboot, front_video_rec),
+         16x and Accurate, and no environment-shadow or shadow-quality recommendation, so environment shadows off and the Switch's 2100 map. Frame Drops is off, as phones have none. It is the phone's
+         picture chain, not a phone capture: the Mac host lays out the interface for that size itself. golden.py shoots it at the real frame rate, as RECT.
   MAC_APP_REC   the Mac App test copy takes this Mac's real Recommended at first boot and starts full screen by itself
   FULLSCREEN    the command-line host goes full screen one second after its window opens: real full screen in a front run (bench.py), emulated in
                 a background run (scenario.py's default for windowed runs: the off-screen window takes the screen's full-screen size, no Space switch)
@@ -68,10 +66,12 @@ REC = dict(RECT, DM_FG='1')
 REC75T = dict(REC75, DM_MFXT='1', DM_AA_MODE='0')   # REC75 with the temporal scaler in place of the spatial one
 PHONE = {
     'DM_GAME_RES': '2622x1206',
-    'DM_3D_SCALE': '0.75',
+    'DM_3D_SCALE': '0.5',
     'DM_MFX': '1',
     'DM_MFX3D': '1',
-    'DM_AA_MODE': '2',
+    'DM_MFXT': '1',
+    'DM_FG': '1',
+    'DM_AA_MODE': '0',
     'DM_NVN_ANISO': '16',
     'DM_COLORSPACE': 'srgb',
     'DM_ENV_SHADOWS': '0',
@@ -82,7 +82,7 @@ PHONE = {
 MAC_APP_REC = {'DM_TEST_VIDEO_FIRSTBOOT': '1'}
 FULLSCREEN = {'DM_TEST_FULLSCREEN_AT': '1'}
 SETS = {'rec': REC, 'rect': RECT, 'conv': CONV, 'rec75': REC75, 'rec75t': REC75T, 'phone': PHONE}
-KEYS = tuple(CONV)   # every set pins every one of these; REC, RECT and REC75T also pin DM_MFXT (nothing turns the temporal scaler on in the others: the CLI host's Upscaling is 0)
+KEYS = tuple(CONV)   # every set pins every one of these; REC, RECT, REC75T and PHONE also pin DM_MFXT (nothing turns the temporal scaler on in the others: the CLI host's Upscaling is 0)
 
 
 def env(name, backend='cli', user=None):

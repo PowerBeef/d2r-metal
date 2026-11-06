@@ -1,0 +1,16 @@
+# A chip the system offers no frame interpolator to (DM_TEST_NO_FG=1; Apple lists it from the M1 on, so this is the fallback nobody should need): the conventional picture at the real frame rate, with no row to change it.
+# With interpolators (every Mac so far) it's video_fg_mac.scn
+name video_no_fg_mac
+requires mac-app
+save warlock
+env DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_NO_FG=1
+timeout 200
+
+enter_game
+sleep 6
+system_quit
+check event picture how=first up=1 fg=0
+check log_has "frame interpolator supported: no"
+check no_event mfx who=temporal op=build
+check no_red
+check no_red_log

@@ -1,6 +1,6 @@
-# Frame Generation through the Video tab, live (dm_video.c dm_video_fg_active, nvn_fg.inc). This Mac's Recommended has it on with Temporal, so the game starts with both. Off goes back to
-# real frames with no restart and puts the interpolator down, On builds it again; leaving Temporal turns it off with it, and turning it on from there selects Temporal again.
-# Rows: mode, res, color, preset, s3d, upscale, aa, aniso, envsh, shq, envd, rt, fps, fg, drops
+# MetalFX Temporal and Frame Generation are always on, with no rows (dm_video.c load_once, nvn_mv.inc, nvn_fg.inc): the game starts with both on this Mac's Recommended. The Video tab has no row for them or for the
+# frame rate, so eleven DOWN presses go from Display Mode to Frame Drops, the last row (a video_row event naming another row means the rows changed). A 3D Resolution of 75% rebuilds the scaler and the interpolator live,
+# and 100% again. Performance leaves them alone (video_presets_mac.scn). Rows: mode, res, color, preset, s3d, aa, aniso, envsh, shq, envd, rt, drops
 name video_fg_mac
 requires mac-app
 save warlock
@@ -25,52 +25,40 @@ press DOWN
 press DOWN
 press DOWN
 press DOWN
-press DOWN
-press DOWN
-press LEFT
+press RIGHT
 sleep 1
-screenshot video_fg_off.png
+screenshot video_rows.png
 msg OptionsPanelMessage:AcceptChanges
 sleep 3
+press UP
+press UP
+press UP
+press UP
+press UP
+press UP
+press UP
+press RIGHT
+sleep 0.5
 press RIGHT
 sleep 1
 msg OptionsPanelMessage:AcceptChanges
-sleep 3
-press UP
-press UP
-press UP
-press UP
-press UP
-press UP
-press UP
-press UP
+sleep 5
+screenshot fg_75.png
+press LEFT
+sleep 0.5
 press LEFT
 sleep 1
-screenshot video_fg_left_temporal.png
-msg OptionsPanelMessage:AcceptChanges
-sleep 3
-press DOWN
-press DOWN
-press DOWN
-press DOWN
-press DOWN
-press DOWN
-press DOWN
-press DOWN
-press RIGHT
-sleep 1
-screenshot video_fg_on_again.png
 msg OptionsPanelMessage:AcceptChanges
 sleep 5
 quit
 check event picture how=first up=2 fg=1
-check event video_row row=fg value=0
-check event video_row row=fg value=1
-check event video_row row=upscale value=1
-check event picture how=apply up=2 fg=0
-check event picture how=apply up=1 fg=0
-check log_has "frame generation: put down" min=2
+check event video_row row=drops
+check event video_row row=s3d
+check event picture how=apply up=2 fg=1
+check event scale3d pct=75
+check event scale3d pct=99
+check log_has "temporal scaler: .* built in" min=3
+check log_has "temporal scaler: camera jitter seen"
 check log_has "frame generation: interpolator .* built in" min=3
-check log_has "temporal scaler: no longer wanted"
 check no_red
 check no_red_log

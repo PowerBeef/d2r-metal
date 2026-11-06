@@ -1,6 +1,6 @@
 // Frame generation: the screen shows twice as many frames as the game draws, the extra ones made by MetalFX's frame interpolator. Included by nvn_mtl.m; replay thread
-// unless a comment says otherwise. The Video tab's Frame Generation row (dm_video.c dm_video_fg_active; DM_FG=0/1 forces it) turns it on, live, and it needs the temporal scaler
-// (nvn_mv.inc): its motion vectors, depth and camera offset are the interpolator's inputs. The power saver's rate has no room for it.
+// unless a comment says otherwise. It is always on wherever the system offers it, with no row (dm_video.c dm_video_fg_active; DM_FG=0/1 forces it), and it needs the temporal scaler
+// (nvn_mv.inc): its motion vectors, depth and camera offset are the interpolator's inputs. The test switch DM_FPS=30 has no room for it.
 //
 // The game keeps the world and the interface apart until the last moment: the world's Final Result and the Offscreen UI target are blended by its compose pass (ps_compose_p,
 // key 9a650561e5c40791, main+0x16831a4) into the swap texture. So at that draw fg_compose interpolates the world alone, between last frame's Final Result and this one, and
