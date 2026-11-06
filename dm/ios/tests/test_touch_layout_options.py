@@ -85,7 +85,7 @@ ckey = re.findall(r'(0|"\w+")', re.search(r'k_row_ckey\[NR\] = \{([^}]*)\}', vid
 assert len(ckey) == len(k_rows) and dict(zip(k_rows, ckey))['drops'] == '"q3d"', (k_rows, ckey)
 for flag, rows in page_rows.items():
     it = iter(k_rows); assert all(r in it for r in rows), (flag, rows, k_rows)
-assert page_rows['DM_OVERLAY_MAC'] == k_rows, page_rows['DM_OVERLAY_MAC']   # Mac 页上全有 | the Mac page has every row
+assert page_rows['DM_OVERLAY_MAC'] == [r for r in k_rows if r != 'osz'], page_rows['DM_OVERLAY_MAC']   # Mac 页上全有 | the Mac page has every row but Picture Size, which is the phones'
 # Each selector has as many options as the host expects (dm_video.c car_ok refuses a selector whose count differs, and the row then does nothing):
 # a key's tiers (k_n, by k_keys; the phone's res has the five 3D-resolution tiers, kn), Graphic Presets 4, Frame Drops 2
 k_keys = re.findall(r'"(\w+)"', re.search(r'k_keys\[NV\] = \{([^}]*)\}', video_src).group(1))

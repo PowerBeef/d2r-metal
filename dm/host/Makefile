@@ -56,6 +56,7 @@ SRC=\
 	dm_movie_decode.c \
 	dm_namegen.c \
 	dm_padmode.c \
+	dm_picios.c \
 	dm_picrec.c \
 	dm_potpick.c \
 	dm_cloudmerge.c \

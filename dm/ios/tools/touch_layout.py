@@ -853,7 +853,8 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('envd', '@dmVideoEnvDetail', ('dmVideoShadowStd', 'dmVideoShadowHigh'), 'dmVideoEnvDetailTip'),
            ('rt', '@dmVideoRt', ('dmVideoRtOff', 'dmVideoRtLight', 'dmVideoRtStandard', 'dmVideoRtFull'), 'dmVideoRtTip'),
            ('drops', '@dmVideoDrops', ('dmVideoDropsLower', 'dmVideoDropsKeep'), 'dmVideoDropsTip')) if _VIDEO_MAC else
-          (('res', '@dmVideo3DRes', ('dmVideoScale50', 'dmVideoScale67', 'dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),   # selector order; dm_video.c car_of maps it to the stored values
+          (('osz', '@dmVideoPicSize', ('dmVideoPicFull', 'dmVideoPicHigh', 'dmVideoPicMedium', 'dmVideoPicLow'), None),
+           ('res', '@dmVideo3DRes', ('dmVideoScale50', 'dmVideoScale67', 'dmVideoScale75', 'dmVideoScale85', 'dmVideoScale100'), None),   # selector order; dm_video.c car_of maps it to the stored values
            ('color', '@dmVideoColor', ('dmVideoColorVivid', 'dmVideoColorAccurate'), None),
            ('preset', '@GraphicPresetsText', ('dmVideoPresetRec', 'Performance', 'Quality', 'Custom'), None),
            ('aniso', '@AnisotropicFiltering', ('dmVideoAnisoGame', 'Anisotropy4', 'Anisotropy8', 'Anisotropy16'), None),
@@ -861,7 +862,7 @@ _VIDEO = ((('mode', '@OptionsMenuDisplayMode', ('Windowed', 'Fullscreen'), 'dmVi
            ('shq', '@dmVideoShadowQ', ('dmVideoShadowStd', 'dmVideoShadowHigh', 'dmVideoShadowUltra'), None),
            ('envd', '@dmVideoEnvDetail', ('dmVideoShadowStd', 'dmVideoShadowHigh'), None)) if _VIDEO_IOS else ())
 _VIDEO_H = _CUSTOM_LINE_H * len(_VIDEO)
-_VIDEO_RESTART = {'res': 'TouchVideoResHint', 'envsh': 'TouchVideoEnvshHint', 'shq': 'TouchVideoShqHint', 'envd': 'TouchVideoEnvdHint'}   # rows applied at the next launch -> the name of their hint (dm_video.c hint)
+_VIDEO_RESTART = {'res': 'TouchVideoResHint', 'osz': 'TouchVideoOszHint', 'envsh': 'TouchVideoEnvshHint', 'shq': 'TouchVideoShqHint', 'envd': 'TouchVideoEnvdHint'}   # rows applied at the next launch -> the name of their hint (dm_video.c hint)
 _CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
 _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
 def _video_rows():

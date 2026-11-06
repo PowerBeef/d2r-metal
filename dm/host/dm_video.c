@@ -1,8 +1,9 @@
 // Picture settings: the rows of the Options Video tab (layout touch_layout.py _VIDEO), stored in sw_video.txt beside the custom settings (dm_custom_path).
 // The Mac page has two sections: Display (Display Mode, Resolution, Color) and Graphics (Graphic Presets, 3D Resolution,
 // Anisotropic Filtering, Environment Shadows, Shadow Quality, Environment Detail, Ray Tracing, Frame Drops). The phone page (DM_PHONE, overlay DM_OVERLAY_IOS) has the Graphics
-// section only: no Display Mode, Resolution (phones render at the screen's native size), Ray Tracing or Frame Drops, and its 3D Resolution is the res row.
+// section only: no Display Mode, Resolution (phones have Picture Size instead), Ray Tracing or Frame Drops, and its 3D Resolution is the res row.
 // MetalFX Temporal and Frame Generation have no rows: they are always on wherever the system offers them, the game drawing 30 frames and the screen showing 60 (decided 2026-11-06). Temporal does the antialiasing, so that has no row either.
+// Phones also have Picture Size (osz), which only they use.
 // Keys, saved by name (new keys go at the end); value 0 is always the original look, which the CLI host and Mac test copies
 // (without DM_TEST_VIDEO_FIRSTBOOT=1) keep:
 //   mode   0 windowed / 1 full screen (Mac). Switched at once on Apply; the menu and ⌃⌘F write it back (dm_video_fullscreen_note)
@@ -23,8 +24,10 @@
 //          change shows the restart hint (none while DM_ENV_DETAIL=0/1 forces it)
 //   rt     Mac: Ray Tracing, 0 Off / 1 Light / 2 Standard / 3 Full: shadows, occlusion and material response traced on the GPU (dm/gfx/nvn/nvn_rt.inc), live. Recommended sets it by chip (dm_picrec.c); both
 //          presets leave it alone. A chip without hardware ray tracing has only Off. DM_RT=0/1/2 forces it (2 = the rays alone, without the game's map)
+//   osz    phones: Picture Size, 0 Full (the screen's own pixels) / 1 High (75% of its rows) / 2 Medium (62.5%) / 3 Low (720 rows of interface): the picture the game draws, enlarged to the screen
+//          (dm_picios.c, front_ios.m front_game_res). Latched at launch, a change shows the restart hint; Recommended goes by the chip (dm_picios_tier). The Mac has no row and stays 0
 // Recommended: rec_<key> holds the recommendation, rec_v its version (REC_V) and rec_id the machine it was worked out for (front_video_rec_id: the Mac
-// App's GPU and main screen; none on iOS, the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1). It is worked out (front_video_firstboot for
+// App's GPU and main screen; an iPhone's or iPad's model; none on the CLI host and test copies without DM_TEST_VIDEO_FIRSTBOOT=1). It is worked out (front_video_firstboot for
 // the first three keys, front_video_rec for the others) on first boot, for a missing or out-of-range key (only that key is filled), and when rec_v is
 // older or rec_id differs (a move): a player still on Recommended moves with it, changed settings stay. A file that cannot be read, or that a newer
 // version wrote, is not rewritten at load; lines with a key this build does not know are kept, and lines longer than 62 characters are skipped.
@@ -39,7 +42,7 @@
 // (dm/verify/event_stream.md): 'picture' at load and after an Apply that saved, 'video_row' for each change the player makes.
 // Frame Drops is a custom key (q3d in sw_custom.txt, dm_custom.c): this file only drives its selector, pending values and Apply go through the custom
 // settings, and the presets leave it alone.
-// Phones: Recommended is 50% + MetalFX Temporal + Frame Generation + 16x + Accurate on every device (front_ios.m); no Display Mode, Native, s3d or Frame Drops.
+// Phones: Recommended is 50% + MetalFX Temporal + Frame Generation + 16x + Accurate on every device, with the Picture Size its chip can hold (front_ios.m, dm_picios.c); no Display Mode, Native, s3d or Frame Drops.
 // Selectors are the game's CarouselWidget (read on the host, 3.3.94012): the option count at +0x7e8, the current option at +0x7ec, and from +0x7d8 one byte
 // per option saying whether it can be chosen (0 = skipped). The current option is set through the game's own setter main+0xab0c84 (widget, index), which
 // clamps to the count, skips options that cannot be chosen and shows the option's text in the current language: it looks the option's string (from +0x558,
@@ -62,16 +65,17 @@
 uint64_t dm_custom_find_w(uint64_t w, const char *name);
 int dm_custom_shown(void);
 int dm_custom_path(const char *name, char *p, size_t n);
-enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, K_FG, K_ED, K_RT, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
-static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq", "fg", "envd", "rt" };
-static const int k_n[NV] = { 2, 4, 3, 2, 4, 2, 5, 2, 3, 2, 2, 4 };
-#define REC_V 13   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);, 13 = ray tracing by chip
+enum { K_MODE, K_RES, K_UP, K_AA, K_ANISO, K_COLOR, K_S3D, K_ESH, K_SHQ, K_FG, K_ED, K_RT, K_OSZ, NV };   // new keys go at the end (saved by name; keys an older file lacks are filled at load)
+static const char *const k_keys[NV] = { "mode", "res", "up", "aa", "aniso", "color", "s3d", "envsh", "shq", "fg", "envd", "rt", "osz" };
+static const int k_n[NV] = { 2, 4, 3, 2, 4, 2, 5, 2, 3, 2, 2, 4, 4 };
+#define REC_V 14   // version of the recommendation: 2 = native output + 3D resolution (Mac); 3 = iOS also recommends SMAA, 16x, accurate colour; 4 = environment shadows (Mac); 5 = Ultra shadows (Mac);, 13 = ray tracing by chip
                   // 6 = a Mac on an iPhone chip (MacBook Neo) gets the phone's (front_mac.m); 7 = chosen from the chip's generation, GPU cores and the screen (dm_picrec.c);
                   // 8 = Native's light ladder stops at 67%, an iPhone chip keeps the phone's shadows, A-chip table and smallest-part core counts (dm_picrec.c);
                   // 9 = MetalFX Temporal with Frame Generation wherever the chip has both (front_mac.m, front_ios.m rec_fg);
                   // 10 = Environment Detail High with the Mac's full picture (front_mac.m);
                   // 11 = on the Mac, Frame Generation where the full picture fits with what it costs (dm_picrec.c);
                   // 12 = MetalFX Temporal and Frame Generation on every chip the system offers them to, with no choice; the Mac's picture gives way instead (dm_picrec.c); iOS 3D 50%
+                  // 14 = iPhone and iPad: Picture Size by the chip (dm_picios.c)
 static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on phones res is the five 3D-resolution tiers; on the Mac res has the extra "Native" tier
 // Display preferences: the Mac's Display section (Display Mode, Color). First launch and Default set them from the recommendation, but they never decide
 // whether the picture is on Recommended, the Graphic Presets row leaves them alone (as Performance and Quality always did), and a rec_v or screen move
@@ -80,16 +84,16 @@ static int kn(int i) { return i == K_RES && DM_PHONE ? 5 : k_n[i]; }   // on pho
 static int pref_key(int k) { return k == K_MODE || (k == K_COLOR && !DM_PHONE); }
 // Nobody's choice: no row, and what the recommendation gives whatever the file says (load_once). So they never decide whether a player is on Recommended, and the presets leave them alone
 static int fixed_key(int k) { return k == K_UP || k == K_FG || k == K_AA; }
-#define NR 11
-static const char *const k_rows[NR] = { "mode", "res", "color", "preset", "s3d", "aniso", "envsh", "shq", "envd", "rt", "drops" };   // row order on the page (rows the page lacks are skipped)
-static const int k_row_key[NR] = { K_MODE, K_RES, K_COLOR, -1, K_S3D, K_ANISO, K_ESH, K_SHQ, K_ED, K_RT, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
-static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "q3d" };
+#define NR 12
+static const char *const k_rows[NR] = { "mode", "osz", "res", "color", "preset", "s3d", "aniso", "envsh", "shq", "envd", "rt", "drops" };   // row order on the page (rows the page lacks are skipped)
+static const int k_row_key[NR] = { K_MODE, K_OSZ, K_RES, K_COLOR, -1, K_S3D, K_ANISO, K_ESH, K_SHQ, K_ED, K_RT, -2 };   // -1 = graphic presets (derived); -2 = a custom settings key (k_row_ckey)
+static const char *const k_row_ckey[NR] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "q3d" };
 static int row_n(int i) { return k_row_key[i] >= 0 ? kn(k_row_key[i]) : k_row_key[i] == -1 ? 4 : 2; }   // options in the selector: the key's tiers; presets 4; custom settings keys 2 (options 0 / 1 = values 0 / 1: lower / keep)
 int dm_custom_shown_value(const char *key); void dm_custom_set_pending(const char *key, int v); int dm_custom_default(const char *key);
 static _Atomic int g_crows;   // the custom-key rows the page has (one bit per row): Default resets only those
 enum { P_REC, P_PERF, P_QUAL, P_CUSTOM };
-static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
-_Static_assert(NV == 12, "g_pend initialiser count");
+static _Atomic int g_val[NV], g_pend[NV] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 }, g_rec[NV], g_loaded, g_repaint;
+_Static_assert(NV == 13, "g_pend initialiser count");
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // load / save: written by both the front end's main thread (launch, full-screen changes) and the game thread (Apply)
 
 // Provided by the front end (front_mac.m, front_ios.m); builds without one (unit tests) use the weak definitions here
@@ -127,11 +131,11 @@ static void save_locked(void) {
     LOG("画面设置：存盘%s %s（推荐 %s）", ok ? "" : "【红】失败", vals_str(v), rs);
 }
 static void picture_ev(const char *how) {   // the 'picture' event: the values in effect, the rec_v and rec_id saved
-    DM_EV("picture", "how:s mode:d res:d up:d aa:d aniso:d color:d s3d:d envsh:d shq:d fg:d rec_v:d rec_id:d envd:d rt:d", how, atomic_load(&g_val[K_MODE]), atomic_load(&g_val[K_RES]),
+    DM_EV("picture", "how:s mode:d res:d up:d aa:d aniso:d color:d s3d:d envsh:d shq:d fg:d rec_v:d rec_id:d envd:d rt:d osz:d", how, atomic_load(&g_val[K_MODE]), atomic_load(&g_val[K_RES]),
           atomic_load(&g_val[K_UP]), atomic_load(&g_val[K_AA]), atomic_load(&g_val[K_ANISO]), atomic_load(&g_val[K_COLOR]), atomic_load(&g_val[K_S3D]), atomic_load(&g_val[K_ESH]),
-          atomic_load(&g_val[K_SHQ]), atomic_load(&g_val[K_FG]), atomic_load(&g_rv_keep), atomic_load(&g_rec_id), atomic_load(&g_val[K_ED]), atomic_load(&g_val[K_RT]));
+          atomic_load(&g_val[K_SHQ]), atomic_load(&g_val[K_FG]), atomic_load(&g_rv_keep), atomic_load(&g_rec_id), atomic_load(&g_val[K_ED]), atomic_load(&g_val[K_RT]), atomic_load(&g_val[K_OSZ]));
 }
-_Static_assert(NV == 12, "the picture event lists every key");
+_Static_assert(NV == 13, "the picture event lists every key");
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
     pthread_mutex_lock(&g_mu);
@@ -281,6 +285,13 @@ int dm_video_rt_level(void) {
     static int env = -2; if (env == -2) { const char *e = getenv("DM_RT"); env = e && *e ? atoi(e) : -1; }
     return env >= 0 ? (env ? 3 : 0) : dm_video_get("rt");
 }
+// Picture Size (phones): front_ios.m asks once, before the game's window exists, and the answer holds for the session; a change shows the restart hint. Never asked with DM_GAME_RES set: no hint then
+static _Atomic int g_osz_launch = -1;
+int dm_video_picture_size(void) {
+    int x = atomic_load(&g_osz_launch); if (x >= 0) return x;
+    load_once(); if (!atomic_load(&g_loaded)) return 0;
+    x = atomic_load(&g_val[K_OSZ]); atomic_store(&g_osz_launch, x); return x;
+}
 int dm_video_env_detail(void) {
     int x = atomic_load(&g_ed_launch); if (x >= 0) return x;
     const char *e = getenv("DM_ENV_DETAIL");
@@ -332,6 +343,7 @@ static int shown(int k) { int p = atomic_load(&g_pend[k]); return p >= 0 ? p : a
 // cost is measured, and the phone Recommended already gives 16x (front_ios.m front_video_rec)
 static int tier_of(int k, int t) {
     switch (k) {
+    case K_OSZ: return DM_PHONE ? (t ? 0 : 3) : -1;   // phones: Quality = Full, Performance = Low; the Mac has no such row
     case K_RT: return -1;   // a first version: the player's own choice, whatever the preset
     case K_RES: return t ? (DM_PHONE ? 2 : 3) : DM_PHONE ? 4 : 0;   // Quality: 100% 3D on phones, Native output on the Mac; Performance: 50% 3D on phones (stored 4), 1600 output on the Mac
     case K_UP: case K_FG: case K_AA: return -1;   // nobody's choice: load_once
@@ -395,7 +407,7 @@ static int car_ok(uint64_t w, int n) {
 static int car_get(uint64_t w) { return *(int32_t *)(w + 0x7ec); }
 static void car_set(uint64_t w, int i) { if (car_get(w) != i) ((void (*)(uint64_t, int))(main_base() + 0xab0c84))(w, i); }
 static void preset_enable(uint64_t w, int custom) { *(uint8_t *)(w + 0x7d8 + P_CUSTOM) = custom != 0; }   // Custom can only be chosen while the row shows it (no preset matches; the arrows skip it)
-static int present_rows(uint64_t sp, int idx[NR]) {   // the rows the page really has, in page order: eleven on the Mac; seven on phones (no Display Mode, Ray Tracing or Frame Drops, and 3D Resolution is the res row, with no separate s3d row)
+static int present_rows(uint64_t sp, int idx[NR]) {   // the rows the page really has, in page order: eleven on the Mac; eight on phones (no Display Mode, Ray Tracing or Frame Drops, and 3D Resolution is the res row, with no separate s3d row)
     int n = 0; for (int i = 0; i < NR && sp; i++) { uint64_t w = row_w(sp, i); if (w && *(uint8_t *)(w + 0x50)) idx[n++] = i; } return n;
 }
 int dm_video_rows(uint64_t sp) { int idx[NR]; return present_rows(sp, idx); }
@@ -421,6 +433,8 @@ static void hint(uint64_t sp) {   // a change waiting for a restart: "Takes effe
     hint_at(sp, "TouchVideoEnvshHint", "TouchVideo_envsh_Text", esh >= 0 && !atomic_load(&g_esh_forced) && shown(K_ESH) != esh);   // a forced value never follows the page: no hint
     int shq = atomic_load(&g_shq_launch), sq = shown(K_SHQ);
     hint_at(sp, "TouchVideoShqHint", "TouchVideo_shq_Text", shq > 0 && !atomic_load(&g_shq_forced) && sq >= 0 && sq < 3 && k_shq_px[sq] != shq);
+    int osz = atomic_load(&g_osz_launch);
+    hint_at(sp, "TouchVideoOszHint", "TouchVideo_osz_Text", osz >= 0 && shown(K_OSZ) != osz);
     int ed = atomic_load(&g_ed_launch);
     hint_at(sp, "TouchVideoEnvdHint", "TouchVideo_envd_Text", ed >= 0 && !atomic_load(&g_ed_forced) && shown(K_ED) != ed);
 }

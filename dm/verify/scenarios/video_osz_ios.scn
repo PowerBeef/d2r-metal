@@ -1,0 +1,29 @@
+# Picture Size on iPhone and iPad (dm_picios.c, front_ios.m front_game_res, dm_video.c): the iOS package on the Mac stands in for an iPhone 12, whose chip gets Low.
+# The game is launched at 1558 x 720 and the picture fills the view. The row comes first on the phone's page, and Medium waits for the next launch: Apply saves it and the game stays at Low.
+# Rows on the phone: osz, res, color, preset, aniso, envsh, shq, envd
+name video_osz_ios
+requires ios-mac
+save warlock
+timeout 300
+env DM_TEST_MACHINE=iPhone13,2 DM_TEST_GPU_NAME=A14 DM_TEST_SCREEN=2532x1170
+
+expect main_menu timeout=150
+enter_game
+expect geom ok=1 ingame=1 rw=1558 rh=720 timeout=30
+sleep 5
+screenshot osz_low.png
+open_pause
+tap_ui Settings
+sleep 2
+inputmode mode=controller
+sleep 1
+press LEFT
+sleep 1
+screenshot osz_medium_hint.png
+msg OptionsPanelMessage:AcceptChanges
+sleep 2
+check log_has "Recommended for iPhone13,2 \(A14.*screen 2532x1170 → Picture Size Low \(1558x720"
+check log_has "Picture Size 3: 1558x720 of the screen's 2532x1170"
+check event video_row row=osz value=2
+check event picture how=apply osz=2
+check no_red

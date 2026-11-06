@@ -33,6 +33,7 @@ static void vkbd_where(dm_vkbd_host *h); static void alert_handoff_pad(void);   
 #include "../../host/dm_ctl.h"
 #include "../../host/dm_uiscreen.h"
 #include "../../host/dm_geom.h"
+#include "../../host/dm_picios.h"
 #include "../../host/dm_actions.h"
 #include "../../host/dm_i18n.h"
 static NSString *SWT(const char *k) { return @(dm_ui(k)); }   // 我们自己的界面文字（中英表 dm/i18n/ui_text.tsv，语言跟原版设置走） | our own UI text (Chinese-English string table dm/i18n/ui_text.tsv, language follows the original game's setting)
@@ -85,6 +86,10 @@ static int g_full;
 static __weak UIWindowScene *g_scene;     // the scene the game view lives in (front_ios_view, front_ios_scene_geometry; main thread)
 static _Atomic uint64_t g_res_now;        // 当前出图尺寸 {u32 宽, u32 高}（真全屏下随窗口变，见 front_game_res 上的说明）
 static uint64_t g_res_cap;                // 报给游戏建窗口的尺寸（上限）
+static double g_res_aspect; static unsigned g_res_fw, g_res_fh;   // the picture's shape and size (front_game_res)
+static unsigned g_nat_w, g_nat_h;         // the screen's own pixels, before Picture Size
+static int g_osz_t;                       // Picture Size, once read (res_tier); true full screen applies it to the window's pixels (window_k)
+static int g_res_reserved;                // the launch window was reserved larger than the picture (a foldable): Picture Size leaves that alone
 // The iPad paths (DM_TEST_IDIOM=pad|phone, read once, lets either iOS package on the Mac take the iPad or the phone paths; unset = the device's idiom)
 static int ios_pad(void) {
     static int v = -1;
@@ -912,10 +917,15 @@ static CGRect letterbox_rect(CGRect f, CGFloat k) {
 // narrower than 4:3, a narrower window shows a 4:3 picture with bars), and once the game window is built, 31 is pushed so the game re-reads it.
 // Phones and iPads follow the window; DM_TEST_FOLD and the control port's `app do=resize_<w>x<h>` (test_resize) exercise it on the Mac
 void dm_oe_res_changed(void);
+// The scale from the window's points to the picture: Picture Size's rule on the window's own pixels, so a small window on a Low iPad still has 720 rows of interface
+static double window_k(CGSize s, CGFloat k) {
+    double w = round(fmax(s.width, s.height) * k), h = round(fmin(s.width, s.height) * k); unsigned o[2]; if (!g_osz_t || w <= 0 || h <= 0) return k;
+    dm_picios_size((unsigned)w, (unsigned)h, g_osz_t, o); return k * o[1] / h;
+}
 static void window_px(CGSize s, CGFloat k) {
     if (!g_full || getenv("DM_GAME_RES") || s.width <= 0 || s.height <= 0 || k <= 0) return;
     double cw = (uint32_t)g_res_cap, ch = (double)(g_res_cap >> 32); uint32_t px[2];
-    dm_geom_window_px(s.width, s.height, k, cw, ch, ios_pad() ? 4.0 / 3 : 0, px);
+    dm_geom_window_px(s.width, s.height, window_k(s, k), cw, ch, ios_pad() ? 4.0 / 3 : 0, px);
     uint64_t v = (uint64_t)px[1] << 32 | px[0], old = atomic_exchange(&g_res_now, v);
     if (old == v || !old) return;
     LOG("画面：窗口变成 %.0fx%.0f 点 → 出图 %ux%u（原 %ux%u，启动预留 %.0fx%.0f）%s", s.width, s.height, (unsigned)v, (unsigned)(v >> 32), (unsigned)old, (unsigned)(old >> 32), cw, ch,
@@ -984,7 +994,7 @@ static void geom_watch(DmMetalView *v) {
     double want[4]; dm_geom_ui_view(vp, rh, y, h, 1.0, want);
     int ok_pic = dm_geom_same(e, vp, 3), ok_dr = labs(pg[4] - lround(f.size.width * k)) <= 1 && labs(pg[5] - lround(f.size.height * k)) <= 1, ok_view = dm_geom_same(g, want, 2);
     CGSize ts = top.bounds.size; uint32_t wp[2] = { 0, 0 };
-    int clamp = dm_geom_window_px(ts.width, ts.height, k, (double)(uint32_t)g_res_cap, (double)(g_res_cap >> 32), ios_pad() ? 4.0 / 3 : 0, wp), follow = -1;
+    int clamp = dm_geom_window_px(ts.width, ts.height, window_k(ts, k), (double)(uint32_t)g_res_cap, (double)(g_res_cap >> 32), ios_pad() ? 4.0 / 3 : 0, wp), follow = -1;
     if (g_full && !getenv("DM_GAME_RES")) { uint64_t o = dm_game_res(1); follow = rw == (int)(uint32_t)o && rh == (int)(o >> 32) && (uint32_t)o == wp[0]; }
     const int st[13] = { ok_pic && ok_dr && ok_view, dm_uiscreen_ingame(), (int)lround(ts.width), (int)lround(ts.height), pg[0], pg[1], pg[2], pg[3], rw, rh, follow, clamp, (int)lround(k * 100) };
     if (memcmp(st, cand, sizeof st)) { memcpy(cand, st, sizeof st); n = 0; }
@@ -1058,20 +1068,33 @@ void front_video_color(int accurate) { dispatch_async(dispatch_get_main_queue(),
 // It asks nvn_mtl.m's mtl_mfx_supported, the check the renderer itself uses.
 int front_video_mfx_ok(void) { int mtl_mfx_supported(void); return mtl_mfx_supported(); }
 int mtl_mfx_temporal_supported(void), mtl_mfx_fg_supported(void);
-// MetalFX Temporal with Frame Generation on every chip the system offers them to (the game draws 30 frames, the screen shows 60), with no row to turn them off; a chip without both keeps MetalFX's spatial scaler and the real rate
+// MetalFX Temporal with Frame Generation on every chip the system offers them to (the game draws 30 frames, the screen shows 60), with no row to turn them off; a chip without both keeps MetalFX's spatial scaler and the Standard path
 static int rec_fg(void) { return mtl_mfx_temporal_supported() && mtl_mfx_fg_supported(); }
+static void res_native(void);
+int dm_custom_path(const char *name, char *p, size_t n), dm_video_picture_size(void);
+// The device the Recommended Picture Size is worked out for (dm_picios.c). DM_TEST_MACHINE and DM_TEST_GPU_NAME stand in for another device's model and GPU name; the iOS package on a Mac counts as no iPhone or iPad
+static dm_ios_spec ios_spec(void) {
+    static char hw[64], gpu[64];
+    res_native();
+    if (!hw[0]) { const char *t = getenv("DM_TEST_MACHINE"); size_t n = sizeof hw;
+        if (t && *t) strlcpy(hw, t, sizeof hw);
+        else if (NSProcessInfo.processInfo.isiOSAppOnMac) strlcpy(hw, "Mac", sizeof hw);
+        else if (sysctlbyname("hw.machine", hw, &n, NULL, 0)) strlcpy(hw, "?", sizeof hw);
+        t = getenv("DM_TEST_GPU_NAME"); strlcpy(gpu, t && *t ? t : MTLCreateSystemDefaultDevice().name.UTF8String ?: "", sizeof gpu); }
+    return (dm_ios_spec){ hw, gpu, g_nat_w, g_nat_h, rec_fg() };
+}
+int front_video_rec_id(void) { dm_ios_spec s = ios_spec(); return dm_picios_id(&s); }   // a backup restored on another device works its Picture Size out again
 int front_video_firstboot(int rec[3], int cur[3]) {
     rec[0] = 0; rec[1] = 4; rec[2] = rec_fg() ? 2 : front_video_mfx_ok() ? 1 : 0; for (int i = 0; i < 3; i++) cur[i] = rec[i];
-    // the same choice on every iPhone and iPad; the log names the device, its GPU and screen, so later device runs can be matched to what it got.
-    // front_game_res (cached on the main thread at launch) rather than UIScreen, since dm_video.c may ask from a game thread
-    char hw[64] = ""; size_t n = sizeof hw; sysctlbyname("hw.machine", hw, &n, NULL, 0);
-    id<MTLDevice> d = MTLCreateSystemDefaultDevice(); uint64_t res = front_game_res(1);
-    LOG("picture settings: Recommended for %s (%s, %s), screen %ux%u → 3D 50%%, %s", hw[0] ? hw : "?", d.name.UTF8String ?: "?",
-        d.supportsBCTextureCompression ? "BC textures" : "no BC textures", (unsigned)(res & 0xffffffff), (unsigned)(res >> 32), rec[2] == 2 ? "MetalFX Temporal, Frame Generation" : rec[2] ? "MetalFX" : "Standard (no MetalFX)");
+    // The log names the device, its GPU and screen, so later device runs can be matched to what it got. Never through front_game_res, which asks dm_video.c for Picture Size: this runs inside dm_video.c's load
+    id<MTLDevice> d = MTLCreateSystemDefaultDevice(); dm_ios_spec s = ios_spec(); unsigned o[2]; int t = dm_picios_tier(&s); dm_picios_size(g_nat_w, g_nat_h, t, o);
+    static const char *const nm[DM_OSZ_N] = { "Full", "High", "Medium", "Low" };
+    LOG("picture settings: Recommended for %s (%s, %s), screen %ux%u → Picture Size %s (%ux%u, estimated %.1f ms a drawn frame), 3D 50%%, %s", s.machine, s.gpu,
+        d.supportsBCTextureCompression ? "BC textures" : "no BC textures", g_nat_w, g_nat_h, nm[t], o[0], o[1], dm_picios_ms(&s, o[0] * (double)o[1] / 1e6), rec[2] == 2 ? "MetalFX Temporal, Frame Generation" : rec[2] ? "MetalFX" : "Standard (no MetalFX)");
     return 1;
 }
 // Recommendations for the picture keys added later (asked when the file lacks the key or holds an older rec_v): SMAA, 16x and Accurate colour on every
-// iPhone and iPad (rec_v 3). The rec_v 3 check on an iPhone 17 Pro (steady 60 fps; frame pacing, CPU and thermal state unchanged) could not see GPU cost:
+// iPhone and iPad (rec_v 3), and the Picture Size the chip can hold (rec_v 14). The rec_v 3 check on an iPhone 17 Pro (steady 60 fps; frame pacing, CPU and thermal state unchanged) could not see GPU cost:
 // the GPU lowers its clock to fill the frame. A later per-pass reading (DM_NVN_PASSGPU), taken before e070b94 specialised SMAA's shaders on the HDR switch
 // (about half the edge-pass cost on the Mac), put SMAA edge + blend at about 18% of the phone's GPU work. The cost after e070b94 is not measured on a
 // phone. The 3D Resolution step (s3d) only goes with the Mac's Native output, so the phone recommends none
@@ -1080,6 +1103,7 @@ int front_video_rec(const char *key) {
     if (!strcmp(key, "aniso")) return 3;
     if (!strcmp(key, "color")) return 1;
     if (!strcmp(key, "fg")) return rec_fg();
+    if (!strcmp(key, "osz")) { dm_ios_spec s = ios_spec(); return dm_picios_tier(&s); }
     return -1;
 }
 // Docked profile = the screen's native pixels (the UI text native, the 3D scaled separately by the game's own render scale, see hle_oe.c
@@ -1091,35 +1115,51 @@ int front_video_rec(const char *key) {
 // re-read it. The game only takes new values within its launch window size (dm_uiscreen.c), so the boot cap is the largest screen: the larger of
 // the main screen and the scene's screen (a scene that starts in a window sits on a screen the window's size), and phone screens narrower than
 // 16:9 (only foldables have that shape) reserve 2160 rows, so an outer-screen launch also fits the inner screen.
-// The first call must happen on the main thread, after g_scene is set: front_ios_view makes it.
+// The first call must happen on the main thread, after g_scene is set: front_ios_view makes it. Below 720 rows the game's HUD loses its orb and belt art (measured at 644 rows, cause not looked into), so nothing goes there.
+static void res_native(void) {
+    if (g_res_aspect) return;
+    double aspect; unsigned fw = 0, fh = 0;
+    CGRect m = UIScreen.mainScreen.nativeBounds, sc = g_scene.screen.nativeBounds;
+    CGRect b = CGRectMake(0, 0, fmax(fmax(m.size.width, m.size.height), fmax(sc.size.width, sc.size.height)), fmax(fmin(m.size.width, m.size.height), fmin(sc.size.width, sc.size.height)));
+    // Tests: DM_TEST_SCREEN=<w>x<h> takes the screen as one of that many pixels (the iOS package on the Mac pretending to be an iPhone Duo's
+    // outer screen 2034x1398, or an iPad's 2732x2048); it counts as a phone screen unless DM_TEST_IDIOM says which idiom it is
+    const char *ts = getenv("DM_TEST_SCREEN"), *ti = getenv("DM_TEST_IDIOM"); unsigned tw = 0, th = 0; int phone = !ios_pad();
+    if (ts && sscanf(ts, "%ux%u", &tw, &th) == 2 && tw && th) { b = CGRectMake(0, 0, tw, th); if (!(ti && *ti)) phone = 1; }
+    aspect = fmax(b.size.width, b.size.height) / fmin(b.size.width, b.size.height);
+    g_nat_w = (unsigned)fmax(b.size.width, b.size.height); g_nat_h = (unsigned)fmin(b.size.width, b.size.height);
+    const char *e = getenv("DM_GAME_RES"); if (e && sscanf(e, "%ux%u", &fw, &fh) == 2) aspect = (double)fw / fh;
+    else { fw = g_nat_w; fh = g_nat_h;
+        // True full screen (the default) on every iPad and on phone screens narrower than 16:9: the in-run picture has the window's native
+        // aspect with the 3D filling it, and the host lays the UI out at 16:9 at the bottom; front-end pages and the loading screen stay 16:9 with
+        // bars (dm_uiscreen). iPad windows change size, so iPads take it whatever the screen's shape (the game UI scales by the picture's height and
+        // is designed for 16:9 or wider: on 4:3 its panels do not fit across).
+        // DM_IPAD_FULL=0: no true full screen; a screen narrower than 16:9 then gets 16:9 of its width throughout, centred with black bars
+        int narrow = aspect < 16.0 / 9 - 0.01;
+        if (narrow || ios_pad()) { const char *fu = getenv("DM_IPAD_FULL");
+            if (!fu || atoi(fu)) { g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM); } else if (narrow) { aspect = 16.0 / 9; fh = (unsigned)llround(fw * 9.0 / 16 / 2) * 2; } } }
+    g_res_cap = (uint64_t)fh << 32 | fw;
+    if (g_full && !e && phone && fh < 2160) {
+        unsigned cw = (unsigned)llround(2160.0 * fw / fh / 2) * 2; g_res_cap = (uint64_t)2160 << 32 | cw; g_res_reserved = 1;
+        LOG("画面：比 16:9 窄的手机屏 %ux%u（折叠屏）→ 窗口按 %ux2160 预留，内外屏切换时出图尺寸在这以内跟着窗口变", fw, fh, cw); }
+    atomic_store(&g_res_now, (uint64_t)fh << 32 | fw);
+    g_res_fw = fw; g_res_fh = fh; g_res_aspect = aspect;
+}
+// Picture Size (dm_picios.c): the picture the game draws, enlarged to the screen. Read once the settings folder is known: the scene's first layout comes before that (main.m boot_prepare), but only needs
+// the picture's shape, which Picture Size keeps. The game asks for the size only after it. DM_GAME_RES overrides it
+static void res_tier(void) {
+    static dispatch_once_t once; char p[8];
+    if (getenv("DM_GAME_RES") || !dm_custom_path("x", p, sizeof p)) return;
+    dispatch_once(&once, ^{
+        int t = dm_video_picture_size(); unsigned o[2]; dm_picios_size(g_res_fw, g_res_fh, t, o);
+        LOG("Picture Size %d: %ux%u of the screen's %ux%u", t, o[0], o[1], g_res_fw, g_res_fh);
+        g_osz_t = t; g_res_fw = o[0]; g_res_fh = o[1];
+        if (!g_res_reserved) g_res_cap = (uint64_t)o[1] << 32 | o[0];
+        atomic_store(&g_res_now, (uint64_t)o[1] << 32 | o[0]); });
+}
 uint64_t front_game_res(int docked) {
-    static double aspect; static unsigned fw, fh;
-    if (!aspect) {
-        CGRect m = UIScreen.mainScreen.nativeBounds, sc = g_scene.screen.nativeBounds;
-        CGRect b = CGRectMake(0, 0, fmax(fmax(m.size.width, m.size.height), fmax(sc.size.width, sc.size.height)), fmax(fmin(m.size.width, m.size.height), fmin(sc.size.width, sc.size.height)));
-        // Tests: DM_TEST_SCREEN=<w>x<h> takes the screen as one of that many pixels (the iOS package on the Mac pretending to be an iPhone Duo's
-        // outer screen 2034x1398, or an iPad's 2732x2048); it counts as a phone screen unless DM_TEST_IDIOM says which idiom it is
-        const char *ts = getenv("DM_TEST_SCREEN"), *ti = getenv("DM_TEST_IDIOM"); unsigned tw = 0, th = 0; int phone = !ios_pad();
-        if (ts && sscanf(ts, "%ux%u", &tw, &th) == 2 && tw && th) { b = CGRectMake(0, 0, tw, th); if (!(ti && *ti)) phone = 1; }
-        aspect = fmax(b.size.width, b.size.height) / fmin(b.size.width, b.size.height);
-        const char *e = getenv("DM_GAME_RES"); if (e && sscanf(e, "%ux%u", &fw, &fh) == 2) aspect = (double)fw / fh;
-        else { fw = (unsigned)fmax(b.size.width, b.size.height); fh = (unsigned)fmin(b.size.width, b.size.height);
-            // True full screen (the default) on every iPad and on phone screens narrower than 16:9: the in-run picture has the window's native
-            // aspect with the 3D filling it, and the host lays the UI out at 16:9 at the bottom; front-end pages and the loading screen stay 16:9 with
-            // bars (dm_uiscreen). iPad windows change size, so iPads take it whatever the screen's shape (the game UI scales by the picture's height and
-            // is designed for 16:9 or wider: on 4:3 its panels do not fit across).
-            // DM_IPAD_FULL=0: no true full screen; a screen narrower than 16:9 then gets 16:9 of its width throughout, centred with black bars
-            int narrow = aspect < 16.0 / 9 - 0.01;
-            if (narrow || ios_pad()) { const char *fu = getenv("DM_IPAD_FULL");
-                if (!fu || atoi(fu)) { g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM); } else if (narrow) { aspect = 16.0 / 9; fh = (unsigned)llround(fw * 9.0 / 16 / 2) * 2; } } }
-        g_res_cap = (uint64_t)fh << 32 | fw;
-        if (g_full && !e && phone && fh < 2160) {
-            unsigned cw = (unsigned)llround(2160.0 * fw / fh / 2) * 2; g_res_cap = (uint64_t)2160 << 32 | cw;
-            LOG("画面：比 16:9 窄的手机屏 %ux%u（折叠屏）→ 窗口按 %ux2160 预留，内外屏切换时出图尺寸在这以内跟着窗口变", fw, fh, cw); }
-        atomic_store(&g_res_now, (uint64_t)fh << 32 | fw);
-    }
-    if (fw && docked) return dm_uiscreen_res_live() ? atomic_load(&g_res_now) : g_res_cap;
-    uint64_t h = docked ? 900 : 720, w = (uint64_t)llround(h * aspect / 8) * 8;
+    res_native(); res_tier();
+    if (g_res_fw && docked) return dm_uiscreen_res_live() ? atomic_load(&g_res_now) : g_res_cap;
+    uint64_t h = docked ? 900 : 720, w = (uint64_t)llround(h * g_res_aspect / 8) * 8;
     return h << 32 | w;
 }
 
