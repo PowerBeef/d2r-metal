@@ -664,13 +664,13 @@ final class LauncherModel {
 }
 
 extension LauncherModel {
-    /// DM_LAUNCHER_PREVIEW=welcome|empty|offline|continue|damaged|working|stopping|home|reverted|game|failed: one screen with sample data and
+    /// DM_LAUNCHER_PREVIEW=welcome|empty|offline|continue|damaged|working|stopping|home|current|reverted|game|failed: one screen with sample data and
     /// nothing run, to look at the design (screenshots, docs)
     func showPreview(_ which: String) {
         let json = #"""
-        {"schema": 1, "version": "1.1.0", "build": 420, "commit": "abc1234", "date": "2026-11-02", "macos_min": "27.0", "chain": "", "product": "",
-         "notes": "D2R Metal 1.1 plays with a mouse and keyboard the way Diablo II: Resurrected plays on PC.\n\n## What's new\n\n- **PC mouse and keyboard controls.** The game shows its own PC interface, and the keys are D2R's PC defaults:\n  - left click walks, attacks and picks up; right click casts your right skill;\n  - I, C, T and Q open the inventory, character, skill tree and quests.\n- **A controller brings the console interface back** the moment you press a button.\n\n**Not yet:** the keys can't be rebound. Everything about the controls is in [docs/MAC.md](https://github.com/PowerBeef/d2r-metal/blob/main/docs/MAC.md).",
-         "runtime": {"name": "r", "version": "1.1.0", "sha256": "", "size": 0}, "tools": {"name": "t", "version": "1", "sha256": "", "size": 0}}
+        {"schema": 1, "version": "2.0.1", "build": 800, "commit": "abc1234", "date": "2026-11-06", "macos_min": "27.0", "chain": "", "product": "",
+         "notes": "D2R Metal 2.0 brings ray tracing to Diablo II: Resurrected on the Mac, on by default wherever the Mac can hold it, together with MetalFX Temporal and frame generation.\n\n## What's new\n\n- **Ray tracing, on by default where it fits.** Rays draw the shadows of the sun, of fire and of characters, the soft shade where things meet, and what each surface reflects of its surroundings.\n- **MetalFX Temporal and frame generation, always on.** The game draws 30 frames a second, and you see 60.\n- **A steadier picture.** Frames reach the screen the way Apple's guide for frame generation does it.",
+         "runtime": {"name": "r", "version": "2.0.1", "sha256": "", "size": 0}, "tools": {"name": "t", "version": "1", "sha256": "", "size": 0}}
         """#
         let sample = try? JSONDecoder().decode(Manifest.self, from: Data(json.utf8))
         NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)   // in front, so the screenshot shows the active window
@@ -687,9 +687,10 @@ extension LauncherModel {
             steps = [StepRow.download] + StepRow.engineSteps
             for (i, seconds) in [14.0, 160, 13, 21].enumerated() { steps[i].state = .done; steps[i].seconds = seconds }   // download … packs
             if let i = steps.firstIndex(where: { $0.id == "shaders" }) { steps[i].state = .running; steps[i].done = 4224; steps[i].total = 6927 }
-        case "home": installed = ("1.0.0", 412); latest = sample; canRevert = true; phase = .home
-        case "reverted": installed = ("1.0.0", 412); latest = sample; canRevert = true; revertedFrom = 420; phase = .home
-        case "game": installed = ("1.0.0", 412); latest = sample; canRevert = true; phase = .home; quitGamePrompt = true
+        case "home": installed = ("2.0.0", 765); latest = sample; canRevert = true; phase = .home
+        case "current": installed = ("2.0.1", 800); latest = sample; canRevert = true; phase = .home
+        case "reverted": installed = ("2.0.0", 765); latest = sample; canRevert = true; revertedFrom = 800; phase = .home
+        case "game": installed = ("2.0.0", 765); latest = sample; canRevert = true; phase = .home; quitGamePrompt = true
         case "empty": latest = sample; phase = .welcome
         case "offline": feedError = LauncherError.offline.localizedDescription; online = false; phase = .welcome
         case "continue": latest = sample; hasGameFiles = true; phase = .welcome
