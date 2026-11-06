@@ -252,7 +252,7 @@ The tables list what **Recommended** picks for each device the first time it sta
 > - **Simulated** rows ran on that iPhone 17 Pro at the device's picture size, with extra graphics work added so that each drawn frame took as long as we estimate it would take there. Each held 60 fps in 30 seconds of play, with at most 2 late images. The processor wasn't slowed, so a real device can do worse in a big fight, and these short runs don't show heat over a long session.
 > - **Estimated** rows are the same estimate, not run at all.
 >
-> None of these devices has run the game with us yet. If you have one, please [tell us](https://github.com/PowerBeef/d2r-metal/issues/new/choose) how it goes.
+> None of the others has run the game with us yet. If you have one, please [tell us](https://github.com/PowerBeef/d2r-metal/issues/new/choose) how it goes.
 
 | Device | Chip | Screen | Picture Size | Picture | World | How we know |
 |---|---|---|---|---|---|---|

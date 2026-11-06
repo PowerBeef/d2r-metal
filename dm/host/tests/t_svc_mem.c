@@ -112,7 +112,7 @@ static void det5(void) {
     pthread_create(&tb, NULL, call_thr, &b); usleep(100000);
     release(); pthread_join(ta, NULL); pthread_join(tb, NULL);
     printf("det5: Map A %#llx, Map B (same target) %#llx, entries %d\n", a.r, b.r, g_nmap);
-    CHECK(g_nmap == 1 && a.r == 0 && b.r == 0xD401, "det5: one mapping, the second Map must fail with InvalidCurrentMemory 0xd401 (expect entries 1, A 0, B 0xd401)");
+    CHECK(g_nmap == 1 && ((a.r == 0 && b.r == 0xD401) || (a.r == 0xD401 && b.r == 0)), "det5: one mapping, the other Map must fail with InvalidCurrentMemory 0xd401 (expect entries 1; A 0 and B 0xd401, or the other way round when B gets there first on a busy machine)");
     reset_map();
 }
 
