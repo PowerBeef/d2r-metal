@@ -22,7 +22,7 @@
 // DM_RT_BIAS=<world units> moves the ray's start off the surface, DM_RT_AO_R=<world units> is the occlusion's reach, DM_RT_AO_P=<power> its curve, DM_RT_AO_HALF=0 traces it at the whole picture rather than half each way, DM_RT=3 traces no key light, DM_RT_AO_CHARS=2/1/0 lets its rays hit every character, the hero alone or none, DM_RT_DUMP=<frame>:<file.pgm> writes the planes as they stand.
 @interface RtBlas : NSObject { @public __strong id<MTLAccelerationStructure> as; uint64_t last, hash; NSUInteger tris, bytes; int built, chr, sized; float pos[3]; NSUInteger sz_tris; MTLAccelerationStructureSizes sz; } @end
 @implementation RtBlas @end
-enum { RT_WORLD = 1, RT_CHAR = 2, RT_MAX_INST = 8192, RT_CAP_BYTES = 32 << 20, RT_SCRATCH_BYTES = 96 << 20, RT_U_STRIDE = 512, RT_KEEP_FRAMES = 600, RT_KEEP_RADIUS = 70, RT_AS_MAX_MB = 256 };
+enum { RT_NEW_PER_FRAME = 24, RT_WORLD = 1, RT_CHAR = 2, RT_MAX_INST = 8192, RT_CAP_BYTES = 32 << 20, RT_SCRATCH_BYTES = 96 << 20, RT_U_STRIDE = 512, RT_KEEP_FRAMES = 600, RT_KEEP_RADIUS = 70, RT_AS_MAX_MB = 256 };
 typedef struct { float ivp[16]; float iview[16]; float pvp[16]; float view[4]; float dir[4]; uint32_t size[2]; float bias, maxd; float ao_r, ao_cam[3], ao_pow; uint32_t ao_rays, ao_shift, tiles[2]; float l_src, l_stop, sun; uint32_t key_shift; float l_fill; float dir2[3], char_sun, refl_reach, dark; } rtx_u;
 static struct {
     int inited, bad; NSMutableDictionary<NSNumber *, RtBlas *> *blas;
@@ -244,17 +244,18 @@ static void rtx_frame(void) {
     id<MTLTexture> last = R.has_rt && R.rt.n >= 1 && R.rt.color[0] ? tex_mtl(R.rt.color[0]) : nil; if (!last) { rtx_mask_off(); return; }
     rp_end();
     // 1. what is new or has moved, drawn again with no rasterization
-    enum { MAXB = 2048 }; static mv_draw *todo[MAXB]; static uint64_t toff[MAXB], tlen[MAXB], thash[MAXB]; static RtBlas *tb[MAXB]; int nt = 0; size_t cap_at = 0, scr_at = 0;
+    enum { MAXB = 2048 }; static mv_draw *todo[MAXB]; static uint64_t toff[MAXB], tlen[MAXB], thash[MAXB]; static RtBlas *tb[MAXB]; int nt = 0, nfresh = 0; size_t cap_at = 0, scr_at = 0;
     static uint64_t ikey[RT_MAX_INST], tkey[2048]; int ni = 0;
     for (int i = 0; i < g_mv.n[c] && ni < RT_MAX_INST; i++) {
         mv_draw *d = &g_mv.d[c][i]; if (!d->rt_opaque || !d->ib_cpu || d->count < 3 || (d->rt_char && !g_rtx.char_on && !rtx_char_wanted(d, c))) continue;
         uint64_t h = rtx_state_hash(d), okey = d->rt_char || rtx_slot_moving(d->key, h, frame) ? d->key : d->base ^ h; NSNumber *k = @(okey); RtBlas *b = g_rtx.blas[k]; if (b) b->chr = d->rt_char;   // what stands still is known by its mesh and place, so a rock keeps its structure whatever else comes and goes; what moves keeps its slot
         if (b && b->built && b->hash == h) { b->last = frame; ikey[ni++] = okey; g_rtx.reused++; continue; }
-        if (!d->cap_pso || nt >= MAXB) { if (b && b->built) { b->last = frame; ikey[ni++] = okey; } continue; }   // its pipeline is still building: last frame's shape, or none yet
+        int fresh = !b || !b->built;   // a level brings hundreds of new structures at once: they come in over a few frames (RT_NEW_PER_FRAME), as over a hundred in one frame stalled the GPU for good in about one level change in ten
+        if (!d->cap_pso || nt >= MAXB || (fresh && nfresh >= RT_NEW_PER_FRAME)) { if (b && b->built) { b->last = frame; ikey[ni++] = okey; } continue; }   // its pipeline is still building: last frame's shape, or none yet
         uint32_t vm = rtx_vmax(d); uint64_t len = (uint64_t)(vm + 1) * 16; if (cap_at + len > RT_CAP_BYTES) { if (b && b->built) { b->last = frame; ikey[ni++] = okey; } continue; }
         if (!b) { b = [RtBlas new]; g_rtx.blas[k] = b; b->chr = d->rt_char; }
         { float w[6]; mv_where(d, g_mv.snap[g_mv.ri].contents, w); b->pos[0] = w[0]; b->pos[1] = w[1]; b->pos[2] = w[2]; }
-        tkey[nt] = okey; todo[nt] = d; toff[nt] = cap_at; tlen[nt] = len; thash[nt] = h; tb[nt] = b; nt++; cap_at += len; ikey[ni++] = okey; b->last = frame;
+        nfresh += fresh; tkey[nt] = okey; todo[nt] = d; toff[nt] = cap_at; tlen[nt] = len; thash[nt] = h; tb[nt] = b; nt++; cap_at += len; ikey[ni++] = okey; b->last = frame;
     }
     // What the prepass didn't draw this frame but drew lately is still there, just off the picture: the rays go on seeing it, or the shading at the picture's edges would change as it scrolls away. A jump of the camera
     // is a new place: nothing before it counts
@@ -275,7 +276,8 @@ static void rtx_frame(void) {
                 for (int k = 0; k < d->ncb; k++) { const mv_cb *a = &d->cb[k]; cs[a->aid] = ab_gpu + a->off; }
                 [en setRenderPipelineState:d->cap_pso];
                 for (int s = 0; s < 15; s++) if (d->vb[s]) [g_mv.vt setAddress:d->vb[s] atIndex:16 + s];
-                [g_mv.vt setAddress:cg atIndex:d->vs->rf.abi]; [g_mv.vt setAddress:g_rtx.cap.gpuAddress + toff[i] atIndex:2];
+                [g_mv.vt setAddress:cg atIndex:d->vs->rf.abi]; [g_mv.vt setAddress:g_rtx.cap.gpuAddress + toff[i] - (int64_t)d->base_vertex * 16 atIndex:2];   // written by vertex id, which counts the base vertex; the structure reads by index, which doesn't
+               
                 [en drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:d->count indexType:d->itype == 1 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32 indexBuffer:d->ib_gpu indexBufferLength:d->ib_len instanceCount:1 baseVertex:d->base_vertex baseInstance:d->base_instance];
             }
             enc_host_r_end(en);

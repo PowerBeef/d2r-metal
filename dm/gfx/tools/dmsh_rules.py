@@ -64,7 +64,7 @@ def velocity_entry(src):
 
 def capture_entry(src):
     """Add a vertex entry, dm_capture, for a pipeline with no rasterization: the shader's own body, and the world position it computes written by vertex id to the buffer at buffer(2), through the inverse
-    view-projection at buffer(3). Ray tracing builds its geometry from these (nvn_rt.inc). Needs velocity_entry's dm_main0 helper, so it runs after it."""
+    view-projection at buffer(3). Ray tracing builds its geometry from these (nvn_rt.inc). A vertex with no finite position (w 0, as some have in the first frames of a level) comes out NaN, which leaves its triangle out of the structure: an infinite one must not reach the builder. Needs velocity_entry's dm_main0 helper, so it runs after it."""
     m = re.search(r'^vertex main0_out main0\((.*)\)\n\{\n', src, re.M)
     if not m: raise ValueError('the vertex entry main0 was not found')
     params = m.group(1).split(', ')
@@ -73,7 +73,7 @@ def capture_entry(src):
     extra = '' if vid else ', uint dm_vid [[vertex_id]]'
     return (src.rstrip('\n') + '\n\n'
             f'vertex void dm_capture({m.group(1)}{extra}, device float4* dm_out [[buffer(2)]], constant float4x4& dm_ivp [[buffer(3)]])\n{{\n'
-            f'    main0_out c = dm_main0({", ".join(names)});\n    float4 w = dm_ivp * c.gl_Position;\n    dm_out[{vid or "dm_vid"}] = float4(w.xyz / w.w, 1.0);\n}}\n')
+            f'    main0_out c = dm_main0({", ".join(names)});\n    float4 w = dm_ivp * c.gl_Position;\n    float3 p = w.xyz / w.w;\n    dm_out[{vid or "dm_vid"}] = all(abs(p) < 1000000.0) ? float4(p, 1.0) : float4(as_type<float>(0x7fc00000u));\n}}\n')
 
 
 # The forward shaders whose shadow reads take the ray-traced mask: what is opaque in the depth prepass. Glass, water, lava, blends and the atmosphere see what's behind them at that pixel, so they keep the map
