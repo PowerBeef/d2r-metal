@@ -904,7 +904,11 @@ void front_run(void (*guest)(void)) {
         if (bg) { NSUserDefaults *ud = NSUserDefaults.standardUserDefaults; NSMutableDictionary *ad = [[ud volatileDomainForName:NSArgumentDomain] mutableCopy] ?: [NSMutableDictionary dictionary];
             ad[@"NSTreatUnknownArgumentsAsOpen"] = @"NO"; [ud setVolatileDomain:ad forName:NSArgumentDomain]; }
         [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];   // a background run stays Regular too: accessory / prohibited apps with nothing visible get the Background role (timers ~100 ms late)
+        // A background run stays Regular too: accessory / prohibited apps with nothing visible get the Background role (timers ~100 ms late). Only for its first second is it
+        // prohibited: launched from the frontmost app (the terminal or Claude app running the tests), the system gives it the front about 0.2 s in, whatever the arguments,
+        // and an accessory app is no exception (tried: 1 launch of 3 with the Claude app in front, none of 3 with this)
+        [NSApp setActivationPolicy:bg ? NSApplicationActivationPolicyProhibited : NSApplicationActivationPolicyRegular];
+        if (bg) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]; });
         (void)scr_launch(); full_setup(); render_setup();   // the launch screen is read before the window exists (scr_launch)
         // The first window: 1280 points wide in the picture's shape, fitted inside the screen's visible area below its title bar (dm_scr_fit_window),
         // so it opens whole, with no bars; AppKit used to clamp a 1280 x 720 window on a 1280 x 720 pt screen to 1280 x 658 and the picture sat
