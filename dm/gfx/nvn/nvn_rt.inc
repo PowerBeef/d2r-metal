@@ -9,8 +9,8 @@
 //   4. traces one ray toward the key light per pixel of half the picture each way (DM_RT_KEY_HALF=0: the whole of it), spread over a small sun (DM_RT_SUN=<radius, tangent>), then a depth-aware box over the 4 x 4
 //      pattern of those spreads, into the mask in the support buffer (support_buf), which every shader has bound: sharp at contact, softer with distance;
 //   Each pass skips what was black in last frame's picture (DM_RT_DARK=<linear luminance, 0 = nothing skipped>): it shows nothing whatever a ray finds, and most of a dungeon's picture is black.
-//   7. traces mirror rays off flat surfaces at half the picture each way and reads what they hit from last frame's picture, so a surface the picture doesn't show gives nothing (DM_RT_REFL=0 turns it
-//      off, DM_RT_REFL_REACH=<world units>, DM_RT_REFL_K=<times the game's strength, 2.5 by default>, DM_RT_REFL_ROUGH=<a>:<b>, the roughness below which a surface takes the whole of the game's strength and at which it has faded to nothing (0.2:0.7 by default; 0.2:0.2 with K 1 is the game's own rule, under which the stone of most dungeons reflects nothing), DM_RT_REFL_SEEN=<how lit a surface must be to show them all, 0 = always>: a floor in the dark stays dark, as the light radius is gameplay);
+//   7. traces mirror rays off every surface at half the picture each way, every other pixel, and reads what they hit from last frame's picture; the forward shaders (dmsh_rules.py rt_env_hook) add that to each surface by its own normal, roughness and reflectance, the game's image lighting cube standing in where a ray hit nothing (DM_RT_SHOW=1 roughness bands, 2 normals, 3 this term alone, 4 reflectance, 5 the cube's part, 6 the rays' part; DM_RT_REFL=0 turns it
+//      off, DM_RT_REFL_REACH=<world units>, DM_RT_REFL_K=<times the physical strength, 1 by default>, DM_RT_WET=<0..1 forces how damp the place is, else dm_video.c's table by level>, DM_RT_REFL_SEEN=<how lit a surface must be to show them all, 0 = always>: a floor in the dark stays dark, as the light radius is gameplay);
 //   6. traces rays to the first four local lights of each pixel's tile (torches, spot lights, the hero's light, missiles) at half the picture each way, then the same box (DM_RT_LOCAL=0 turns it off, DM_RT_LOCAL_SRC=<world
 //      units> is the size of the flame, DM_RT_LOCAL_STOP=<world units> how far short of the light a ray stops, so a torch doesn't shadow itself, DM_RT_LOCAL_FILL=<0..1> what a blocked ray leaves, for the bounced light nothing traces);
 //   5. traces short rays (DM_RT_AO=<rays>, 1 by default, 0 = none) around each pixel's normal (from depth) into a plane of their own, then a box over the 4 x 4 pattern of their directions into the plane behind the mask.
@@ -27,7 +27,7 @@ typedef struct { float ivp[16]; float iview[16]; float pvp[16]; float view[4]; f
 static struct {
     int inited, bad; NSMutableDictionary<NSNumber *, RtBlas *> *blas;
     __strong id<MTLBuffer> cap, scratch, inst, unif; __strong id<MTLAccelerationStructure> tlas; NSUInteger tlas_bytes; __strong id<MTLComputePipelineState> rpso, rbpso, cpso, kpso, kblurpso, aopso, blurpso, lpso, lblurpso; __strong id<MTLBuffer> aoraw, lraw, kraw, craw, rraw; __strong id<MTL4ArgumentTable> ct;
-    uint64_t built_frame, frames, built_blas, built_tris, reused, since; float cam[3]; float dir[3]; size_t as_bytes; float bias, ao_r, ao_p; int dir_logged, mode, ao_rays, ao_shift, ao_chars, local, key_shift; float l_src, l_stop, sun, l_fill, char_sun, char_dir[3], refl_reach, refl_k, refl_seen, refl_r0, refl_r1, dark; int char_on, refl_on;
+    uint64_t built_frame, frames, built_blas, built_tris, reused, since; float cam[3]; float dir[3]; size_t as_bytes; float bias, ao_r, ao_p; int dir_logged, mode, ao_rays, ao_shift, ao_chars, local, key_shift; float l_src, l_stop, sun, l_fill, char_sun, char_dir[3], refl_reach, refl_k, refl_seen, dark; int show; int char_on, refl_on;
 } g_rtx;
 static const char *g_rtx_who = "";
 int rtx_chars_traced(void) { return g_rtx.inited && !g_rtx.bad && g_rtx.char_on; }
@@ -67,7 +67,6 @@ static const char *g_rtx_msl =
     "  float3 ax = abs(dl - d) < abs(dr - d) ? p - rt_world(u, uint2(fp.x - 2, fp.y), dl) : rt_world(u, uint2(fp.x + 2, fp.y), dr) - p;\n"
     "  float3 ay = abs(du - d) < abs(dd - d) ? p - rt_world(u, uint2(fp.x, fp.y - 2), du) : rt_world(u, uint2(fp.x, fp.y + 2), dd) - p;\n"
     "  float3 n = cross(ax, ay); float nn = length(n); if (nn < 1e-9) { out[at] = o; return; } n /= nn; float3 cam = float3(u.ao_cam); if (dot(n, cam) < 0) n = -n;\n"
-    "  if (n.y < 0.7) { out[at] = o; return; }\n"   // floors: the flat surfaces that catch a flame
     "  float3 dir = reflect(-cam, n);\n"
     "  ray r; r.origin = p + n * u.bias; r.direction = dir; r.min_distance = 0; r.max_distance = u.refl_reach;\n"
     "  intersector<instancing> i; i.force_opacity(forced_opacity::opaque); auto h = i.intersect(r, as, 3);\n"
@@ -127,6 +126,8 @@ static const char *g_rtx_msl =
     "  for (int y = -2; y < 2; y++) for (int x = -2; x < 2; x++) { int2 q = int2(id) + int2(x, y); if (q.x < 0 || q.y < 0 || q.x >= int(gs.x) || q.y >= int(gs.y)) continue; float dq = dp.read(uint2(q) << u.ao_shift); float w = abs(dq - d) < 0.0015 ? 1.0 : 0.0; sum += w * float(in[uint(q.y) * gs.x + uint(q.x)]); wt += w; }\n"
     "  float v = (wt > 0 ? sum / wt : float(in[at])) / 255.0; out[at] = uchar(pow(v, u.ao_pow) * 255 + 0.5); }\n";
 __attribute__((weak)) int dm_video_rt(void) { return 0; }   // the host's dm_video.c
+__attribute__((weak)) float dm_env_wetness(void) { return 0.0f; }   // the host's dm_video.c: how damp this place is
+__attribute__((weak)) float dm_env_ibl_intensity(void) { return 1.0f; }   // the host's dm_video.c: the iblIntensity this environment's artists set
 // Hardware ray tracing only: supportsRaytracing also answers yes on older chips, which do it in software
 int mtl_rt_supported(void) { static int c = -1; if (c < 0) { id<MTLDevice> d = MTLCreateSystemDefaultDevice(); c = [d supportsRaytracing] && [d supportsFamily:MTLGPUFamilyApple9]; } return c; }
 static int g_rtx_on;   // read at the start of each submission
@@ -136,7 +137,7 @@ static int rtx_init(void) {
     NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_rtx_msl) options:nil error:&e]; id<MTLFunction> fn = [lib newFunctionWithName:@"rt_shadow"], fa = [lib newFunctionWithName:@"rt_ao"], fb = [lib newFunctionWithName:@"rt_ao_blur"];
     g_rtx.kpso = fn ? [g_dev newComputePipelineStateWithFunction:fn error:&e] : nil;
     { id<MTLFunction> fk = [lib newFunctionWithName:@"rt_shadow_blur"]; g_rtx.kblurpso = fk ? [g_dev newComputePipelineStateWithFunction:fk error:&e] : nil; g_rtx.kraw = [g_dev newBufferWithLength:(NSUInteger)3840 * 2160 options:MTLResourceStorageModePrivate]; const char *kh = getenv("DM_RT_KEY_HALF"), *su = getenv("DM_RT_SUN"); g_rtx.key_shift = kh ? atoi(kh) > 0 : 1; g_rtx.sun = su ? (float)atof(su) : 0.03f; if (g_rtx.kraw) res_add(g_rtx.kraw);
-      { const char *re_ = getenv("DM_RT_REFL"), *rr_ = getenv("DM_RT_REFL_REACH"), *rk_ = getenv("DM_RT_REFL_K"), *rg_ = getenv("DM_RT_REFL_SEEN"), *rs_ = getenv("DM_RT_REFL_ROUGH"); g_rtx.refl_r0 = 0.2f; g_rtx.refl_r1 = 0.7f; if (rs_) sscanf(rs_, "%f:%f", &g_rtx.refl_r0, &g_rtx.refl_r1); g_rtx.refl_seen = rg_ ? (float)atof(rg_) : 0.005f; g_rtx.refl_on = re_ ? atoi(re_) > 0 : 1; g_rtx.refl_reach = rr_ ? (float)atof(rr_) : 40.0f; g_rtx.refl_k = rk_ ? (float)atof(rk_) : 2.5f;
+      { const char *re_ = getenv("DM_RT_REFL"), *rr_ = getenv("DM_RT_REFL_REACH"), *rk_ = getenv("DM_RT_REFL_K"), *rg_ = getenv("DM_RT_REFL_SEEN"), *rs_ = getenv("DM_RT_SHOW"); g_rtx.show = rs_ ? atoi(rs_) : 0; g_rtx.refl_seen = rg_ ? (float)atof(rg_) : 0.005f; g_rtx.refl_on = re_ ? atoi(re_) > 0 : 1; g_rtx.refl_reach = rr_ ? (float)atof(rr_) : 40.0f; g_rtx.refl_k = rk_ ? (float)atof(rk_) : 1.0f;
         if (g_rtx.refl_on) { id<MTLFunction> fr_ = [lib newFunctionWithName:@"rt_refl"]; g_rtx.rpso = fr_ ? [g_dev newComputePipelineStateWithFunction:fr_ error:&e] : nil; { id<MTLFunction> frb_ = [lib newFunctionWithName:@"rt_refl_blur"]; g_rtx.rbpso = frb_ ? [g_dev newComputePipelineStateWithFunction:frb_ error:&e] : nil; } g_rtx.rraw = [g_dev newBufferWithLength:(NSUInteger)1920 * 1080 * 4 options:MTLResourceStorageModePrivate]; if (!g_rtx.rpso || !g_rtx.rbpso || !g_rtx.rraw) { MLOG("【红】ray tracing: can't start the reflections (%s)", e.localizedDescription.UTF8String); g_rtx.refl_on = 0; } else res_add(g_rtx.rraw); } }
       { const char *dk_ = getenv("DM_RT_DARK"); g_rtx.dark = dk_ ? (float)atof(dk_) : 0.0005f; }
       const char *ce_ = getenv("DM_RT_CHAR"), *cs_ = getenv("DM_RT_CHAR_SUN"); g_rtx.char_on = ce_ ? atoi(ce_) > 0 : 1; g_rtx.char_sun = cs_ ? (float)atof(cs_) : 0.06f;
@@ -363,7 +364,11 @@ static void rtx_frame(void) {
                 ron = 1;
             }
         }
-        uint32_t *hdr = (uint32_t *)((uint8_t *)support_buf().contents + 2048); hdr[1] = u.size[0]; hdr[2] = u.size[1]; hdr[3] = g_rtx.ao_rays > 0; hdr[4] = (uint32_t)g_rtx.ao_shift; hdr[5] = (uint32_t)lon; hdr[6] = (uint32_t)g_rtx.key_shift; hdr[7] = (uint32_t)con; hdr[8] = (uint32_t)ron; memcpy(&hdr[9], &g_rtx.refl_k, 4); hdr[10] = refl_off; memcpy(&hdr[11], &g_rtx.refl_seen, 4); { float nv_ = fabsf(u.ao_cam[1]); memcpy(&hdr[12], &nv_, 4); } memcpy(&hdr[13], &g_rtx.refl_r0, 4); memcpy(&hdr[14], &g_rtx.refl_r1, 4); hdr[0] = key_rays ? (uint32_t)g_rtx.mode : 3;
+        uint32_t *hdr = (uint32_t *)((uint8_t *)support_buf().contents + 2048); hdr[1] = u.size[0]; hdr[2] = u.size[1]; hdr[3] = g_rtx.ao_rays > 0; hdr[4] = (uint32_t)g_rtx.ao_shift; hdr[5] = (uint32_t)lon; hdr[6] = (uint32_t)g_rtx.key_shift; hdr[7] = (uint32_t)con; hdr[8] = (uint32_t)ron; memcpy(&hdr[9], &g_rtx.refl_k, 4); hdr[10] = refl_off; memcpy(&hdr[11], &g_rtx.refl_seen, 4); hdr[12] = (uint32_t)g_rtx.show; { float wt_ = dm_env_wetness(); memcpy(&hdr[13], &wt_, 4); }
+        { float ib = dm_env_ibl_intensity(), ex = 1, rot[9]; ubo_float(1, (uint16_t)(10 << 8), &ex);
+          { static float seen_ib = -1; if (ib != seen_ib) { seen_ib = ib; MLOG("ray tracing: image lighting %.3f, exposure %.3f", ib, ex); } }
+          for (int i = 0; i < 3; i++) for (int k = 0; k < 3; k++) rot[i * 3 + k] = u.iview[i * 4 + k]; memcpy(&hdr[15], &ib, 4); memcpy(&hdr[16], &ex, 4); memcpy(&hdr[17], rot, sizeof rot); }
+        hdr[0] = key_rays ? (uint32_t)g_rtx.mode : 3;
     }
     m4_end(ce);
     args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;

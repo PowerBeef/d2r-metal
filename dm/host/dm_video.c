@@ -47,6 +47,7 @@
 #include "hle.h"
 #include "dm.h"
 #include "dm_cursor.h"
+#include "dm_hud.h"
 #include "dm_i18n.h"
 #include "dm_widget.h"
 #include <errno.h>
@@ -250,6 +251,29 @@ int dm_video_jitter_mode(void) { return dm_video_temporal_active() ? 3 : 0; }   
 // the host's own bloom (nvn_mtl.m), and reflections (+0x6634) need a normal and roughness target nothing writes on Switch, so everything would be a mirror. DM_ENV_DETAIL=0/1 forces it
 static _Atomic int g_ed_launch = -1, g_ed_forced;
 __attribute__((weak)) int mtl_rt_supported(void) { return 0; }
+static module_t *video_main_module(void) {
+    for (int i = 0; i < g_nmod; ++i)
+        if (!strcmp(g_mod[i].name, "main")) return &g_mod[i];
+    return NULL;
+}
+// The iblIntensity this environment's artists set (vis files; main+0x31d28a0, copied each frame into the global block the PC's forward shaders read): how much the surroundings show in its surfaces (nvn_rt.inc)
+float dm_env_ibl_intensity(void) { module_t *m = video_main_module(); float v = 1.0f; if (m) memcpy(&v, m->base + 0x31d28a0, sizeof v); return v; }
+// How damp each place is, in percent, by levels.txt Id: how far the stone there catches the light (nvn_rt.inc, dmsh_rules.py rt_env_hook). The game has no such value: this is art direction, read from the places and the
+// artists' captures. Sewers and swamps are wet, caves less so; the Catacombs and the Cathedral damp; the Crypt dusty; the desert, the Tombs and Act IV's fire dry. What isn't listed is 0.
+static const struct { uint8_t from, to, wet; } k_wet[] = {
+    {1, 7, 25}, {8, 16, 45}, {17, 17, 25}, {18, 19, 20}, {20, 20, 25}, {21, 25, 30}, {26, 27, 25}, {28, 28, 35}, {29, 31, 50}, {32, 32, 25}, {33, 33, 50}, {34, 37, 60}, {38, 38, 30}, {39, 39, 20},   // Act I
+    {47, 49, 80}, {50, 51, 10}, {52, 54, 25}, {62, 64, 75}, {65, 65, 20}, {74, 74, 10},   // Act II: Lut Gholein, the desert and the Tombs stay dry
+    {75, 75, 50}, {76, 78, 60}, {79, 82, 50}, {83, 83, 35}, {84, 85, 70}, {86, 87, 80}, {88, 89, 70}, {90, 90, 80}, {91, 91, 70}, {92, 93, 80}, {94, 99, 40}, {100, 102, 65},   // Act III
+    {103, 103, 5},   // Act IV: the Fortress; the plains, the River of Flame and the Sanctuary stay dry
+    {109, 112, 30}, {113, 116, 70}, {117, 117, 30}, {118, 119, 70}, {120, 120, 30}, {121, 124, 30}, {125, 127, 30}, {128, 132, 25}, {133, 133, 20}, {135, 137, 30},   // Act V: melting snow, ice
+};
+float dm_env_wetness(void) {
+    static float force = -2; if (force == -2) { const char *e = getenv("DM_RT_WET"); force = e && *e ? (float)atof(e) : -1; }
+    if (force >= 0) return force;
+    dm_hud_info h; dm_hud_get(&h);
+    for (size_t i = 0; i < sizeof k_wet / sizeof *k_wet; i++) if (h.area >= k_wet[i].from && h.area <= k_wet[i].to) return k_wet[i].wet / 100.0f;
+    return 0;
+}
 int dm_video_rt(void) {   // read at the start of each submission (nvn_rt.inc)
     static int env = -2; if (env == -2) { const char *e = getenv("DM_RT"); env = e && *e ? atoi(e) : -1; }
     if (!mtl_rt_supported()) return 0;

@@ -146,7 +146,7 @@ class HdrSwitchSplit(unittest.TestCase):
         self.assertEqual(len(dmsh_rules.HDR_SWITCH_KEYS), 7)
         self.assertTrue(all(re.fullmatch(r'[0-9a-f]{16}', k) for k in dmsh_rules.HDR_SWITCH_KEYS))
         (f, applies), (g, applies2), (h, _), (i, applies3), (j, applies4), (k, _), (m, _) = dmsh_rules.RULES
-        self.assertIs(m, dmsh_rules.rt_refl_hook)
+        self.assertIs(m, dmsh_rules.rt_env_hook)
         self.assertIs(k, dmsh_rules.rt_local_hook)
         self.assertIs(h, dmsh_rules.capture_entry)
         self.assertIs(i, dmsh_rules.rt_shadow_hook)
@@ -179,19 +179,28 @@ class HdrSwitchSplit(unittest.TestCase):
         self.assertEqual(dmsh_rules.rt_shadow_hook(plain), plain)
         self.assertEqual(dmsh_rules.rt_ao_hook(plain), plain)
 
-    def test_rt_refl_hook(self):
-        src = ('struct main0_out\n{\n    float4 m_5 [[color(0)]];\n};\n\nfragment main0_out main0()\n{\n    dm_rt_key(\n    float _1 = fast::max(_2, (*spvDescriptorSet0.fp_c1)._m0[1].y);\n    return out;\n}\n')
-        out = dmsh_rules.rt_refl_hook(src)
-        self.assertIn('out.m_5.xyz += dm_rt_refl(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, _2, out.m_5.xyz);', out)
-        self.assertLess(out.index('static inline float3 dm_rt_refl('), out.index('fragment main0_out main0('))
-        early = src.replace('    dm_rt_key(\n', '    dm_rt_key(\n    if (x) return out;\n')   # a return before the roughness exists stays as it is
-        out2 = dmsh_rules.rt_refl_hook(early)
-        self.assertEqual(out2.count('dm_rt_refl(reinterpret_cast'), 1)
+    def test_rt_env_hook(self):
+        c = '(*spvDescriptorSet0.fp_c1)._m0[1].'
+        src = ('struct main0_out\n{\n    float4 m_5 [[color(0)]];\n};\n\nstruct spvDescriptorSetBuffer0\n{\n    constant _10* support_buffer [[id(0)]];\n    texture2d<float> t [[id(7)]];\n};\n\nfragment main0_out main0()\n{\n    dm_rt_key(\n    float _2 = 0.5;\n    float _30 = 0.0;\n    float _31 = 0.0;\n    float _32 = 1.0;\n'
+               f'    float _1 = fast::max(_2, {c}y);\n    float _20 = fma(_30, {c}z, _40);\n    float _21 = fma(_31, {c}z, _41);\n    float _22 = fma(_32, {c}z, _42);\n'
+               '    float _50 = _60 + (-0.039999999105930328369140625);\n    float _51 = _61 + (-0.039999999105930328369140625);\n    float _52 = _62 + (-0.039999999105930328369140625);\n'
+               f'    float _70 = fma(_9, _50, {c}y);\n    float _71 = fma(_9, _51, {c}y);\n    float _72 = fma(_9, _52, {c}y);\n    return out;\n}}\n')
+        out = dmsh_rules.rt_env_hook(src)
+        self.assertIn('out.m_5.xyz = dm_rt_env(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, dm_rt_wet(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), _2, _9), float3(_70, _71, _72), float3(_30, _31, _32), out.m_5.xyz, out.m_5.w, spvDescriptorSet0.fp_t_cb196610_1056809E);', out)
+        self.assertIn('float _1 = fast::max(dm_rt_wet(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), _2, _9), ', out)
+        self.assertIn('texturecube<float> fp_t_cb196610_1056809E [[id(8)]];', out)
+        self.assertLess(out.index('static inline float3 dm_rt_env('), out.index('fragment main0_out main0('))
+        plain = re.sub(r'    float _7\d = fma\(_9.*\n', '', src)   # no metalness: a plain dielectric
+        self.assertIn('_2, 0.0), float3(0.04), float3(_30, _31, _32)', dmsh_rules.rt_env_hook(plain))
+        early = src.replace('    dm_rt_key(\n', '    dm_rt_key(\n    if (x) return out;\n')   # a return before the terms exist stays as it is
+        out2 = dmsh_rules.rt_env_hook(early)
+        self.assertEqual(out2.count('dm_rt_env(reinterpret_cast'), 1)
+        two = src.replace('    return out;\n}', '    if (y)\n    {\n        return out;\n    }\n    return out;\n}')   # a model's two lighting paths both take it
+        self.assertEqual(dmsh_rules.rt_env_hook(two).count('dm_rt_env(reinterpret_cast'), 2)
         self.assertIn('if (x) return out;', out2)
-        self.assertLess(out2.index('fast::max(_2'), out2.index('dm_rt_refl(reinterpret_cast'))
-        no = src.replace('fast::max(_2, (*spvDescriptorSet0.fp_c1)._m0[1].y)', '1.0')
-        self.assertEqual(dmsh_rules.rt_refl_hook(no), no)   # no roughness term: left alone
-        self.assertEqual(dmsh_rules.rt_refl_hook('x'), 'x')
+        no = src.replace(f'fast::max(_2, {c}y)', '1.0')
+        self.assertEqual(dmsh_rules.rt_env_hook(no), no)   # no roughness term: left alone
+        self.assertEqual(dmsh_rules.rt_env_hook('x'), 'x')
 
     def test_rt_local_hook(self):
         # the three loops as every forward shader has them: the running offset, the light's position, then how its contribution or its shadow ends

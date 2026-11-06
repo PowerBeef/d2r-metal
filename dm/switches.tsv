@@ -303,10 +303,11 @@ DM_RT_LOCAL_STOP	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_REFL	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_REFL_K	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_REFL_REACH	gfx	gfx/nvn/nvn_rt.inc	y
-DM_RT_REFL_ROUGH	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_REFL_SEEN	gfx	gfx/nvn/nvn_rt.inc	y
+DM_RT_SHOW	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_SUN	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_TEST_NOPSO	gfx	gfx/nvn/nvn_rtex.inc	-
+DM_RT_WET	host	host/dm_video.c	y
 DM_RULESET	tools	tools/patch_nso.py	y
 DM_SAMPLE	host	host/diag.c	y
 DM_SAMPLER	host	host/dm_sampler.c	y

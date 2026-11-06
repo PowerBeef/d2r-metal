@@ -146,23 +146,56 @@ def rt_local_hook(src):
     return src[:e.start()] + helper + src[e.start():]
 
 
-def rt_refl_hook(src):
-    """The opaque colour takes what nvn_rt.inc found in the mirror direction, at the strength the game's own reflection pass gives a floor (its limit on roughness and its Fresnel, with the split-sum table taken as 1, 0), and only as far as the surface is itself lit, so a floor in the dark stays dark and shows nothing against it: the light radius is gameplay. The shaders clamp roughness to a minimum at the top of the lighting, which is where this finds it. A variant without that clamp has no such term and is left alone. Off, header word 8 reads 0."""
+def rt_env_hook(src):
+    """What the Switch's forward shaders leave out and the PC's have: each surface's specular response to its surroundings, for its own normal, roughness and reflectance. The surroundings are what nvn_rt.inc's mirror rays hit, read from last frame's picture, and where they hit nothing the game's own image-based lighting cube for this environment (engine slot 34, which the skybox reads), at the iblIntensity its artists set for that environment and under the rays' occlusion. The split-sum table is Karis's fit. A dielectric's response stops at 0.3. What a draw adds is scaled by its own alpha: the models the artists blend into the ground are drawn in layers, premultiplied, and at full strength they pile up to white. Only a surface that is itself lit shows it, so a surface in the dark stays dark: the light radius is gameplay. A shader whose material terms can't be found is left alone. Off, header word 8 reads 0 and the colour is as it was."""
     if 'dm_rt_key(' not in src: return src
-    r = re.search(r'^    float _\d+ = fast::max\((_\d+), \(\*spvDescriptorSet0\.fp_c1\)\._m0\[1\]\.y\);', src, re.M)
+    c1 = r'\(\*spvDescriptorSet0\.fp_c1\)\._m0\[\d+\]\.[xyzw]'
+    rough = re.search(r'^    float _\d+ = fast::max\((_\d+), ' + c1 + r'\);', src, re.M)
     out = re.search(r'struct main0_out\s*\{[^}]*?float4 (\w+) \[\[color\(0\)\]\]', src, re.S)
-    if not r or not out: return src
-    helper = ('static inline float3 dm_rt_refl(constant uchar* sb, float4 fc, float rough, float3 lit)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[8] == 0u) return float3(0.0);\n'
+    body = re.search(r'struct spvDescriptorSetBuffer0\s*\{(.*?)\n\};', src, re.S)
+    if not rough or not out or not body: return src
+    # The normal: the one triple that offsets the view vector along it, by a single constant. View x, y, z are declared in that order
+    trip = {}
+    for a, c, v in re.findall(r'^    float _\d+ = fma\((_\d+), (' + c1 + r'), (_\d+)\);', src, re.M): trip.setdefault(c, []).append((int(v[1:]), a))
+    normal = next((sorted(t) for t in trip.values() if len(t) == 3), None)
+    if not normal: return src
+    # The reflectance at normal incidence: 0.04 toward the albedo by the metalness, three lines; terrain and grass are plain dielectrics
+    minus = set(re.findall(r'^    float (_\d+) = _\d+ \+ \(-0\.0399999991059303283691\d*\);', src, re.M))
+    metal = {}
+    for f, m, a in re.findall(r'^    float (_\d+) = fma\((_\d+), (_\d+), ' + c1 + r'\);', src, re.M):
+        if a in minus: metal.setdefault(m, []).append(f)
+    mname = next((m for m, v in metal.items() if len(v) >= 3), None)
+    f0 = f'float3({metal[mname][0]}, {metal[mname][1]}, {metal[mname][2]})' if mname else 'float3(0.04)'
+    # Every return after these exist: a model has two whole lighting paths, each with its own. An earlier return is a path that stops before them
+    used = [rough.group(1)] + [t[1] for t in normal] + re.findall(r'_\d+', f0)
+    start = max((m.end() for v in used for m in re.finditer(r'\bfloat ' + v + r' = ', src)), default=-1)
+    if start < 0 or src.find('return out;', start) < 0: return src
+    helper = ('static inline float dm_rt_wet(constant uchar* sb, float r, float metal)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[8] == 0u) return r;\n'
+              '    float w = as_type<float>(h[13]) * (1.0 - clamp(metal, 0.0, 1.0)) * (1.0 - smoothstep(0.6, 0.95, r));\n    return r * (1.0 - 0.55 * w);\n}\n\n'
+              'static inline float3 dm_rt_env(constant uchar* sb, float4 fc, float rough, float3 f0, float3 n, float3 lit, float alpha, texturecube<float> ibl)\n{\n    constant uint* h = reinterpret_cast<constant uint*>(sb + 2048);\n    if (h[0] == 0u || h[8] == 0u) return lit;\n'
+              '    constexpr sampler s(filter::linear, mip_filter::linear, address::clamp_to_edge);\n    constant float* hf = reinterpret_cast<constant float*>(sb + 2048);\n'
+              '    float r = clamp(rough, 0.0, 1.0);\n    if (!(dot(n, n) > 0.0)) return lit;\n    float3 N = normalize(n);\n    float nv = clamp(N.z, 0.0, 1.0);\n'
+              '    float3 R = float3(2.0 * N.z * N.x, 2.0 * N.z * N.y, 2.0 * N.z * N.z - 1.0);\n    float3 W = R.x * float3(hf[17], hf[18], hf[19]) + R.y * float3(hf[20], hf[21], hf[22]) + R.z * float3(hf[23], hf[24], hf[25]);\n'
+              '    float3 cube = ibl.sample(s, W, level(r * float(ibl.get_num_mip_levels() - 1))).rgb * hf[15] * hf[16];\n'
               '    uint w = h[1] >> 1, x = min(uint(fc.x) >> 1, w - 1u), y = min(uint(fc.y) >> 1, (h[2] >> 1) - 1u);\n    constant uchar* p = sb + h[10] + (y * w + x) * 4u;\n'
-              '    float r = clamp(rough, 0.0, 1.0), a = as_type<float>(h[13]), b = as_type<float>(h[14]), keep = 1.0 - clamp((r - a) / max(b - a, 0.0001), 0.0, 1.0);\n    if (r >= a && b <= a) keep = 0.0;\n'
-              '    float q = 1.0 - max(0.0, as_type<float>(h[12]) + 2.5 * min(r, 0.2) - 0.5), f = q * q * q * q * q * (max(1.0 - r, 0.04) - 0.04) + 0.04;\n'
-              '    float3 c = float3(p[0], p[1], p[2]) / 255.0;\n    float gate = as_type<float>(h[11]), seen = gate > 0.0 ? clamp(dot(lit, float3(0.2126, 0.7152, 0.0722)) / gate, 0.0, 1.0) : 1.0;\n    return c * c * 16.0 * f * keep * as_type<float>(h[9]) * seen;\n}\n\n')
-    last = src.rfind('return out;')   # only the end of the shader: an earlier return is a path that stops before the roughness exists
-    if last < r.end(): return src
-    src = src[:last] + f'out.{out.group(1)}.xyz += dm_rt_refl(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, {r.group(1)}, out.{out.group(1)}.xyz);\n    ' + src[last:]
+              '    float3 c = float3(p[0], p[1], p[2]) / 255.0;\n    float3 hit = c * c * 16.0, miss = (1.0 - float(p[3]) / 255.0) * cube * dm_rt_ao(sb, fc), env = hit + miss;\n'
+              '    float q = 1.0 - nv, q5 = q * q * q * q * q;\n    float3 F = f0 + (max(float3(1.0 - r), f0) - f0) * q5;\n'
+              '    float4 r4 = r * float4(-1.0, -0.0275, -0.572, 0.022) + float4(1.0, 0.0425, 1.04, -0.04);\n    float a = min(r4.x * r4.x, exp(-6.4325 * nv)) * r4.x + r4.y;\n    float3 spec = F * (-1.04 * a + r4.z) + (1.04 * a + r4.w);\n    spec = min(spec, float3(max(0.3, max(f0.x, max(f0.y, f0.z)))));\n'
+              '    float gate = hf[11], seen = gate > 0.0 ? clamp(dot(lit, float3(0.2126, 0.7152, 0.0722)) / gate, 0.0, 1.0) : 1.0;\n    float cover = clamp(alpha, 0.0, 1.0);\n    float3 add = env * spec * hf[9] * seen * cover;\n'
+              '    if (h[12] == 1u) return cover * (r < 0.2 ? float3(1.0, 0.0, 0.0) : r < 0.4 ? float3(1.0, 0.45, 0.0) : r < 0.6 ? float3(0.0, 0.8, 0.0) : r < 0.8 ? float3(0.0, 0.3, 1.0) : float3(0.25));\n'
+              '    if (h[12] == 2u) return cover * (N * 0.5 + 0.5);\n    if (h[12] == 3u) return add;\n    if (h[12] == 4u) return cover * f0;\n    if (h[12] == 5u) return cover * miss * spec;\n    if (h[12] == 6u) return cover * hit * spec;\n'
+              '    return lit + add;\n}\n\n')
+    name = 'fp_t_cb196610_1056809E'   # engine slot 34 under the name dmsh_build.reflect reads, as the skybox has it
+    ids = [int(x) for x in re.findall(r'\[\[id\((\d+)\)\]\]', body.group(1))]
+    call = f'out.{out.group(1)}.xyz = dm_rt_env(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), gl_FragCoord, dm_rt_wet(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), {rough.group(1)}, {mname or "0.0"}), {f0}, float3({normal[0][1]}, {normal[1][1]}, {normal[2][1]}), out.{out.group(1)}.xyz, out.{out.group(1)}.w, spvDescriptorSet0.{name});\n'
+    src = src[:start] + re.sub(r'^( *)return out;', lambda m: m.group(1) + call + m.group(0), src[start:], flags=re.M)
+    # Damp stone: the lights' own highlights and the surroundings both see a smoother surface. Metal doesn't change, and what is very rough (earth, cloth, moss) soaks it up
+    wet = f'dm_rt_wet(reinterpret_cast<constant uchar*>(spvDescriptorSet0.support_buffer), {rough.group(1)}, {mname or "0.0"})'
+    src = re.sub(r'(^    float _\d+ = fast::max\()' + rough.group(1) + r'(, ' + c1 + r'\);)', lambda m: m.group(1) + wet + m.group(2), src, flags=re.M)
+    src = src[:body.end(1)] + f'\n    texturecube<float> {name} [[id({max(ids) + 1})]];' + src[body.end(1):]
     e = re.search(r'^fragment \w+ main0\(', src, re.M)
     return src[:e.start()] + helper + src[e.start():]
 
 
 RULES = [(hdr_switch_split, lambda name, key: key in HDR_SWITCH_KEYS), (velocity_entry, lambda name, key: key in VELOCITY_VS_KEYS), (capture_entry, lambda name, key: key in VELOCITY_VS_KEYS),
-         (rt_shadow_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_ao_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_local_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_refl_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES)]
+         (rt_shadow_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_ao_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_local_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES), (rt_env_hook, lambda name, key: name.split('.')[0].split('#')[0] in RT_SHADOW_NAMES)]
