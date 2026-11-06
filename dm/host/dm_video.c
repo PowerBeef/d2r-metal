@@ -261,7 +261,7 @@ float dm_env_ibl_intensity(void) { module_t *m = video_main_module(); float v = 
 // How damp each place is, in percent, by levels.txt Id: how far the stone there catches the light (nvn_rt.inc, dmsh_rules.py rt_env_hook). The game has no such value: this is art direction, read from the places and the
 // artists' captures. Sewers and swamps are wet, caves less so; the Catacombs and the Cathedral damp; the Crypt dusty; the desert, the Tombs and Act IV's fire dry. What isn't listed is 0.
 static const struct { uint8_t from, to, wet; } k_wet[] = {
-    {1, 7, 25}, {8, 16, 45}, {17, 17, 25}, {18, 19, 20}, {20, 20, 25}, {21, 25, 30}, {26, 27, 25}, {28, 28, 35}, {29, 31, 50}, {32, 32, 25}, {33, 33, 50}, {34, 37, 60}, {38, 38, 30}, {39, 39, 20},   // Act I
+    {1, 7, 25}, {8, 16, 35}, {17, 17, 25}, {18, 19, 20}, {20, 20, 25}, {21, 25, 30}, {26, 27, 25}, {28, 28, 35}, {29, 31, 50}, {32, 32, 25}, {33, 33, 50}, {34, 37, 60}, {38, 38, 30}, {39, 39, 20},   // Act I
     {47, 49, 80}, {50, 51, 10}, {52, 54, 25}, {62, 64, 75}, {65, 65, 20}, {74, 74, 10},   // Act II: Lut Gholein, the desert and the Tombs stay dry
     {75, 75, 50}, {76, 78, 60}, {79, 82, 50}, {83, 83, 35}, {84, 85, 70}, {86, 87, 80}, {88, 89, 70}, {90, 90, 80}, {91, 91, 70}, {92, 93, 80}, {94, 99, 40}, {100, 102, 65},   // Act III
     {103, 103, 5},   // Act IV: the Fortress; the plains, the River of Flame and the Sanctuary stay dry

@@ -268,7 +268,7 @@ On a phone the row isn't there yet. Pin it with the switches: `DM_RT=3` traces n
 - **The cost is the number of rays.** On an M6 about 400 million a second, under `DM_TEST_LOAD=gpu:4000`; the blur passes are free by comparison, and better structures, shorter rays and dropping the triangle data barely move it. So what helps is tracing fewer: pixels that were black last frame trace nothing (`DM_RT_DARK=<linear luminance>`, most of a dungeon's picture), where the scene block's row 51 gives the key light no strength it gets no rays, the occlusion takes one ray, and the mirror rays leave out every other pixel.
 - **A plane of four channels sits on a four-byte boundary.** The reflections came out bright blue for as long as theirs didn't: the shader and the kernel disagreed by a few bytes, so the strength read as colour.
 - **Last frame's picture is still in the forward pass's own colour target** until that pass opens. The game's copy with mips is made later in the frame.
-- On an M6 at 2560 x 1440 with frame generation and Temporal, one run each, `gpu_ms.p50` under `DM_TEST_LOAD=gpu:4000`: +6.1 ms per drawn frame in town, +5.2 in the wild, +10.4 walking in the Cathedral, everything on. Free before it: about 21.5.
+- On an M6 at 2560 x 1440 with frame generation and Temporal, one run each, `gpu_ms.p50` under `DM_TEST_LOAD=gpu:4000`: +6.4 ms per drawn frame in town, +5.3 in the wild, +11.3 walking in the Cathedral, everything on. Free before it: about 21.5.
 
 ## A frame that misses a refresh
 
