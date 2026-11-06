@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <picture><source srcset="docs/images/r3-clip-cath.mp4" type="video/mp4"><source srcset="docs/images/r3-clip-cath.avif" type="image/avif"><img src="docs/images/r3-clip-cath.jpg" width="100%" alt="The Cathedral in motion: the hero runs over dark, damp stone between two burning torches, her shadow swinging as she passes them"></picture>
+  <picture><source srcset="docs/images/r3-clip-cath.avif" type="image/avif"><img src="docs/images/r3-clip-cath.jpg" width="100%" alt="The Cathedral in motion: the hero runs over dark, damp stone between two burning torches, her shadow swinging as she passes them"></picture>
 </p>
 
 D2R Metal is a native Apple silicon port of **Diablo II: Resurrected with Reign of the Warlock**. The game's own code runs directly on your chip, every frame is drawn with Metal 4, and it plays fully offline. It isn't an emulator, a stream or a remake.
@@ -34,12 +34,12 @@ You bring your own copy of the game: D2R Metal builds itself on your device from
 Ray tracing is a finishing layer over the game's own lighting. It shows best in motion, and in the dark, where torchlight, wet stone and shadows are all you have. Every clip here is the game on a Mac mini with an M6, in full screen at the settings it picked for itself, with rays at Full.
 
 <p align="center">
-  <picture><source srcset="docs/images/r3-clip-harem.mp4" type="video/mp4"><source srcset="docs/images/r3-clip-harem.avif" type="image/avif"><img src="docs/images/r3-clip-harem.jpg" width="49%" alt="The Harem in Act II: firelight runs across a polished checkered floor as the hero walks through"></picture>
-  <picture><source srcset="docs/images/r3-clip-sewer.mp4" type="video/mp4"><source srcset="docs/images/r3-clip-sewer.avif" type="image/avif"><img src="docs/images/r3-clip-sewer.jpg" width="49%" alt="The Sewers in Act II: wet stone glints in the dark as the hero runs past a broken arch"></picture>
+  <picture><source srcset="docs/images/r3-clip-harem.avif" type="image/avif"><img src="docs/images/r3-clip-harem.jpg" width="49%" alt="The Harem in Act II: firelight runs across a polished checkered floor as the hero walks through"></picture>
+  <picture><source srcset="docs/images/r3-clip-sewer.avif" type="image/avif"><img src="docs/images/r3-clip-sewer.jpg" width="49%" alt="The Sewers in Act II: wet stone glints in the dark as the hero runs past a broken arch"></picture>
 </p>
 <p align="center">
-  <picture><source srcset="docs/images/r3-clip-wstone.mp4" type="video/mp4"><source srcset="docs/images/r3-clip-wstone.avif" type="image/avif"><img src="docs/images/r3-clip-wstone.jpg" width="49%" alt="The Worldstone Keep in Act V: firelight moves across carved stone and a patterned floor"></picture>
-  <picture><source srcset="docs/images/r3-clip-glacial.mp4" type="video/mp4"><source srcset="docs/images/r3-clip-glacial.avif" type="image/avif"><img src="docs/images/r3-clip-glacial.jpg" width="49%" alt="An ice cave in Act V: the hero runs across the ice between braziers, their flames shining on the wet floor"></picture>
+  <picture><source srcset="docs/images/r3-clip-wstone.avif" type="image/avif"><img src="docs/images/r3-clip-wstone.jpg" width="49%" alt="The Worldstone Keep in Act V: firelight moves across carved stone and a patterned floor"></picture>
+  <picture><source srcset="docs/images/r3-clip-glacial.avif" type="image/avif"><img src="docs/images/r3-clip-glacial.jpg" width="49%" alt="An ice cave in Act V: the hero runs across the ice between braziers, their flames shining on the wet floor"></picture>
 </p>
 
 - **Materials answer the light.** Polished stone, ice and metal catch what's around them as you move, and damp places shine more than dry ones. The dark stays as dark as the game's artists made it.
