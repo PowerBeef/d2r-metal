@@ -1,90 +1,123 @@
 <p align="center">
-  <img src="docs/images/r2-hero3.jpg" width="100%" alt="D2R Metal: Diablo II: Resurrected and Reign of the Warlock. The best way to play on Apple silicon Macs, iPhone and iPad">
+  <img src="docs/images/r3-hero.jpg" width="100%" alt="D2R Metal: Diablo II: Resurrected and Reign of the Warlock, ray traced and native on Apple silicon">
 </p>
 
 <p align="center">
   <img alt="macOS 27 and later" src="https://img.shields.io/badge/macOS-27%2B-a07638?style=for-the-badge&labelColor=1a110d">
   <img alt="iOS and iPadOS 27 and later" src="https://img.shields.io/badge/iOS%20%2F%20iPadOS-27%2B-a07638?style=for-the-badge&labelColor=1a110d">
-  <img alt="Metal 4 and MetalFX" src="https://img.shields.io/badge/Metal%204-MetalFX-7a1d12?style=for-the-badge&labelColor=1a110d">
+  <img alt="Metal 4, MetalFX and ray tracing" src="https://img.shields.io/badge/Metal%204-MetalFX%20%C2%B7%20Ray%20Tracing-7a1d12?style=for-the-badge&labelColor=1a110d">
   <img alt="Plays offline" src="https://img.shields.io/badge/plays-offline-7a1d12?style=for-the-badge&labelColor=1a110d">
   <a href="https://github.com/PowerBeef/d2r-metal/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/PowerBeef/d2r-metal?style=for-the-badge&labelColor=1a110d&color=7a1d12&label=release"></a>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-5a4a3a?style=for-the-badge&labelColor=1a110d">
 </p>
 
-<h3 align="center">The best way to play Diablo II: Resurrected on Apple silicon Macs, iPhone and iPad.</h3>
+<h3 align="center">Diablo II: Resurrected, native on Apple silicon: ray traced, rebuilt by MetalFX, smooth at 60 fps.</h3>
 
-D2R Metal turns your own copy of **Diablo II: Resurrected with Reign of the Warlock** into a native app for your Mac, iPhone or iPad. The game's own code runs directly on your Apple chip, and every frame is drawn with Metal 4: Sanctuary is sharp at your screen's full resolution, smooth at 60 fps and, on Macs that can hold it, lit with ray tracing, with controls made for each device, and it plays fully offline. It isn't an emulator, a stream or a remake. It is Blizzard's game, as it shipped.
+D2R Metal is a native Apple silicon port of **Diablo II: Resurrected with Reign of the Warlock**. The game's own code runs directly on your chip, and every frame is drawn with Metal 4. On a Mac that can hold it, Sanctuary is lit with ray tracing. On every Mac, iPhone and iPad, the game draws 30 frames a second, MetalFX builds the detail and creates the frames between, and you see 60. On the Mac, one app installs the game, keeps it up to date and starts it.
 
-You need your own copy of the **Nintendo Switch version** of the game; D2R Metal builds itself from your files and contains none of the game.
+It isn't an emulator, a stream or a remake, and it plays fully offline. You bring your own copy of the game: D2R Metal builds itself on your device from the Nintendo Switch version's files and contains none of the game.
 
-<p align="center"><b><a href="https://github.com/PowerBeef/d2r-metal/releases/latest">Download D2R Metal Launcher</a></b> for the Mac &nbsp;·&nbsp; <a href="#getting-started">Getting started</a> &nbsp;·&nbsp; <a href="#questions-and-answers">Questions and answers</a></p>
-
-<p align="center">
-  <img src="docs/images/r2-plaques3.jpg" width="100%" alt="Native: Apple silicon and Metal 4, no emulation, no streaming. Stunning: your screen's resolution, MetalFX and ray tracing. 60 fps: smooth on Mac, iPhone and iPad. Your way: mouse and keyboard, controller or touch.">
-</p>
-
-<h2 align="center" id="stunning-on-every-screen"><img src="docs/images/r2-plate-stunning.jpg" width="100%" alt="Stunning on Every Screen"></h2>
-
-D2R Metal draws the game for the screen in front of you. The first time it starts on a Mac, it looks at the Mac's graphics chip and screen and turns on as much as it estimates the Mac can keep at a steady 60 fps. iPhone and iPad start from one set of settings, the same on every device, tested on an iPhone 17 Pro. Those settings are listed as **Recommended** in the game's Options, and you can change any of them ([Picture settings](#picture-settings)).
-
-- **Sharp at your screen's resolution.** On a Mac the interface and text are drawn at the resolution macOS draws your display at, up to 4K. A larger screen (5K or 6K, or a 4K one set to look like 2560 × 1440) gets the 4K picture enlarged, and a Mac too light for its screen's full resolution starts with a smaller picture enlarged by MetalFX. On iPhone and iPad they are drawn at the screen's full resolution. The 3D world is drawn at full resolution on the fastest Macs, and lower, enlarged by MetalFX, on lighter Macs, iPhone and iPad.
-- **Ray tracing on the Mac.** On Macs from the M3 on with at least 16 GB, where it fits, rays draw the shadows of the sun, of fire and of characters, the soft shade where things meet, and what each surface reflects of its surroundings, by its own material: polished stone, ice and metal catch the light, and damp places more than dry ones.
-- **MetalFX in every frame.** Apple's MetalFX builds detail from several frames, smooths the edges and creates every other frame, so you see 60 frames a second while the graphics chip draws 30 and has time to spare for the picture.
-- **Crisp ground.** 16x texture filtering keeps the ground sharp into the distance.
-- **Shadows everywhere.** On the Mac, trees, walls, fences and buildings cast their shadows as on PC, and finer shadow maps keep the shading on characters detailed.
-- **True colors.** The picture is shown in the colors the game was made in, on any screen, wide-gamut ones included.
-
-The pictures below show the same moment in the game: on the left, the Nintendo Switch version your files come from; on the right, D2R Metal. They are windows of the frame at 1:1 pixels, so on a Retina screen you see every pixel of both.
+<p align="center"><b><a href="https://github.com/PowerBeef/d2r-metal/releases/latest">Download D2R Metal Launcher</a></b> for the Mac &nbsp;·&nbsp; <a href="#getting-started">Getting started</a> &nbsp;·&nbsp; <a href="#supported-devices">Supported devices</a> &nbsp;·&nbsp; <a href="#questions-and-answers">Questions and answers</a></p>
 
 <p align="center">
-  <img src="docs/images/r2-split-mac-v4.jpg" width="100%" alt="The Rogue Encampment at 1:1 pixels: on the left the Switch version's 1600 × 900 picture enlarged to the screen, on the right D2R Metal on a Mac drawing at 2560 × 1440">
+  <img src="docs/images/r3-plaques.jpg" width="100%" alt="Ray traced: shadows and materials, picked for your chip. Native: Apple silicon and Metal 4, no emulation. 60 fps: 30 drawn, 60 shown by MetalFX. One app: the launcher installs, updates and starts the game.">
 </p>
 
-<p align="center"><sub><b>On a Mac with a 2560 × 1440 screen.</b> Left: the Switch version's docked picture (1600 × 900), enlarged to the screen as a TV or monitor would. Right: D2R Metal with the settings it picked for this Mac: everything drawn at 2560 × 1440 with the 3D world at full resolution, ray tracing, MetalFX, 16x filtering, environment shadows and fine shadow maps.</sub></p>
+<h2 align="center" id="ray-traced-sanctuary"><img src="docs/images/r3-plate-rays.jpg" width="100%" alt="Ray-Traced Sanctuary"></h2>
 
 <p align="center">
-  <img src="docs/images/r2-split-iphone-v4.jpg" width="100%" alt="The Rogue Encampment at 1:1 iPhone 17 Pro pixels: on the left the Switch version's 1280 × 720 handheld picture enlarged, on the right D2R Metal on the iPhone">
+  <img src="docs/images/r3-ray-fortress.jpg" width="100%" alt="Act IV, the Pandemonium Fortress: torchlight glints across polished stone floors and steps, drawn with ray tracing">
 </p>
 
-<p align="center"><sub><b>On an iPhone 17 Pro.</b> Left: the Switch version's handheld picture (1280 × 720), enlarged to the phone's screen. Right: D2R Metal on the iPhone as it was before the settings below: the 3D world at 75% enlarged by MetalFX, with SMAA and 16x filtering, at 60 fps on this phone (drawn by the iOS app at the phone's resolution and settings).</sub></p>
+On a Mac with an M3 or later and at least 16 GB, rays trace the light through the scene on the graphics chip:
+
+- **The sun's shadows** fall across every wall, tree and fence.
+- **Soft shade** gathers where things meet: at the foot of a wall, under a ledge, between flagstones.
+- **Characters cast ray-traced shadows** as they move through the world.
+- **Fire casts shadows too.** Torches and other nearby lights throw the shadows of whatever stands in front of them.
+- **Every material answers the light its own way.** Polished stone, ice and metal catch what's around them. Damp places such as the sewers and catacombs shine more than dry ones such as the desert. The dark stays as dark as the game's artists made it.
+
+<p align="center">
+  <img src="docs/images/r3-ray-ice.jpg" width="49%" alt="Act V, an ice cave: walls of ice lit by braziers, their flames shining on the wet floor">
+  <img src="docs/images/r3-ray-keep.jpg" width="49%" alt="Act V, the Worldstone Keep: firelight on carved stone and a patterned floor">
+</p>
+<p align="center">
+  <img src="docs/images/r3-ray-burial.jpg" width="49%" alt="Act I, the Burial Grounds: a stone tomb and iron fences at night, with shadows falling across the grass">
+  <img src="docs/images/r3-ray-chaos.jpg" width="49%" alt="Act IV, the Chaos Sanctuary: rivers of fire lighting black stone">
+</p>
+
+The **Ray Tracing** row on the Video tab has four levels, and a change shows at once with no restart: **Off**, **Light** (the sun's shadows, soft shade and materials), **Standard** (adds characters' shadows) and **Full** (adds the shadows of fire and other nearby lights). Recommended turns on the level your Mac can hold ([every Mac's pick](#supported-devices)), and you can turn it on yourself on any Mac with an M3 or later. On an M6, Full adds about 11 ms of graphics work to each drawn frame in the Cathedral. iPhone and iPad don't have rays yet.
 
 <h2 align="center" id="across-sanctuary"><img src="docs/images/r2-plate-sanctuary.jpg" width="100%" alt="Across Sanctuary"></h2>
 
-One stop in every act: the Switch version on the left, D2R Metal on a Mac on the right, the same moment at 1:1 pixels. Each pair is taken at the same time of day in the game on both sides.
+Every act, as a Mac with an M6 draws it at the settings it picked for itself, in full screen at 2560 × 1440.
 
 <p align="center">
-  <img src="docs/images/r2-zone-catacombs-v4.jpg" width="100%" alt="Act I, the Catacombs: torchlight in a dungeon, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r3-act-darkwood.jpg" width="100%" alt="Act I, the Dark Wood">
 </p>
 <p align="center">
-  <img src="docs/images/r2-zone-lutgholein-v4.jpg" width="100%" alt="Act II, Lut Gholein: desert sun and long shadows, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r3-act-lutgholein.jpg" width="100%" alt="Act II, Lut Gholein: desert sun and long shadows">
 </p>
 <p align="center">
-  <img src="docs/images/r2-zone-arcane-v4.jpg" width="100%" alt="Act II, the Arcane Sanctuary: marble walkways over the void, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r3-act-docks.jpg" width="100%" alt="Act III, the Kurast Docks">
 </p>
 <p align="center">
-  <img src="docs/images/r2-zone-flayer-v4.jpg" width="100%" alt="Act III, the Flayer Jungle: foliage and ruins, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r3-act-riverflame.jpg" width="100%" alt="Act IV, the River of Flame">
 </p>
 <p align="center">
-  <img src="docs/images/r2-zone-riverflame-v4.jpg" width="100%" alt="Act IV, the River of Flame: lava light in Hell, the Switch version on the left, D2R Metal on the right">
-</p>
-<p align="center">
-  <img src="docs/images/r2-zone-harrogath-v4.jpg" width="100%" alt="Act V, Harrogath: snow, stone and timber, the Switch version on the left, D2R Metal on the right">
+  <img src="docs/images/r3-act-arreat.jpg" width="100%" alt="Act V, the Arreat Plateau">
 </p>
 
-**More of Sanctuary in D2R Metal:**
+<h2 align="center" id="built-for-apple-silicon"><img src="docs/images/r3-plate-apple.jpg" width="100%" alt="Built for Apple Silicon"></h2>
+
+D2R Metal is written for Apple's chips and Apple's graphics, with no other platform to hold it back.
+
+- **The game's own code, on your chip.** The game's Arm code runs directly on the processor. The few instructions an ordinary app can't run are rewritten once, ahead of time, and nothing is generated while you play.
+- **Metal 4 only.** Every frame goes through Metal 4's command queues, argument tables and residency sets, with no older path kept alongside. The game's shaders are translated to Metal when it installs, and prepared ahead so they aren't built in the middle of a fight.
+- **Unified memory.** The processor and graphics chip share the game's memory, so there's nothing to copy between them.
+- **Hardware ray tracing** on the M3 and later, with structures built for what's on screen and new ones spread over several frames so a level change doesn't stall.
+- **MetalFX in every frame.** Temporal upscaling builds detail from several frames, so the world can be drawn at less than full size, and frame interpolation creates every other frame. The interface is never warped, so text stays crisp, and moving things stay solid in the created frames.
+- **Presented the way Apple's guide describes.** Finished frames reach the screen on a thread and a queue of their own, timed from when the screen really showed the last ones, so a frame waiting for the screen never holds up the work on the next.
+- **Picked for your chip.** The first time it starts, D2R Metal reads your chip's generation, its graphics cores, your screen, your memory and whether the Mac has a fan, and sets the picture to match. It works this out again when you change screens.
+- **Light on the chip.** Skipping repeated state changes cuts the processor's work replaying a frame by 13%, and letting render passes overlap saves 8.5% of the graphics time, both measured on an M6.
+- **True colors.** The picture is shown in the colors the game was made in, on any screen, wide-gamut ones included.
+
+<h2 align="center" id="smooth-by-design"><img src="docs/images/r3-plate-smooth.jpg" width="100%" alt="Smooth by Design"></h2>
+
+The game draws 30 frames a second, and MetalFX creates the 30 between. That leaves the graphics chip twice the time for each frame it draws, which is what pays for the rays, and you see 60 either way.
 
 <p align="center">
-  <img src="docs/images/r2-gallery-darkwood-v4.jpg" width="49%" alt="Act I, the Dark Wood in D2R Metal">
-  <img src="docs/images/r2-gallery-faroasis-v4.jpg" width="49%" alt="Act II, the Far Oasis in D2R Metal">
-  <img src="docs/images/r2-gallery-docks-v4.jpg" width="49%" alt="Act III, the Kurast Docks in D2R Metal">
-  <img src="docs/images/r2-gallery-pandemonium-v4.jpg" width="49%" alt="Act IV, the Pandemonium Fortress in D2R Metal">
-  <img src="docs/images/r2-gallery-frigid-v4.jpg" width="49%" alt="Act V, the Frigid Highlands in D2R Metal">
-  <img src="docs/images/r2-gallery-arreat-v4.jpg" width="49%" alt="Act V, the Arreat Plateau in D2R Metal">
+  <img src="docs/images/r3-chart-smooth.jpg" width="100%" alt="Two line charts of the time between images on screen, both nearly flat at 16.7 milliseconds. Mac mini with an M6, rays at Full, walking the Cathedral: 3,305 images in 55 seconds, 2 of them late, at 33.3 ms. iPhone 17 Pro, 3D at 50%, walking the Far Oasis: 19,518 images in 325 seconds, 3 of them late, at 29.2 ms.">
 </p>
 
-<h2 align="center" id="a-true-mac-game"><img src="docs/images/r2-plate-mac.jpg" width="100%" alt="A True Mac Game"></h2>
+<p align="center"><sub>Each image's time since the last one, over one run, leaving out the first 5 seconds as the place settles in. Measured on the only two devices these numbers exist for: a Mac mini with an M6 and an iPhone 17 Pro.</sub></p>
 
-**Plays like D2R on PC.** With a mouse and keyboard you get the game's own PC interface: the PC HUD with the angel and demon beside the orbs, the PC menus and character screens, and the game's gauntlet pointer, sized to your screen. The keys are D2R's PC defaults:
+- **Busy scenes.** A crowd of 100 monsters on an iPhone 17 Pro runs at about 54 fps, with 10–16% of images late. With rays on, a Mac lowers the world's resolution for a moment rather than dropping frames.
+- **What it costs.** Controls respond slightly later than at a real 60 fps: on an M6 with rays off, a click reaches the screen in about 96 ms against 73.5 ms, and a little later for a moment in the heaviest scenes.
+
+<h2 align="center" id="the-launcher"><img src="docs/images/r3-plate-launcher.jpg" width="100%" alt="The Launcher"></h2>
+
+On the Mac, **D2R Metal Launcher** is the only thing you download. Point it at your game files, press **Install**, and press **Play**.
+
+<p align="center">
+  <img src="docs/images/r3-launcher-home.jpg" width="100%" alt="D2R Metal Launcher, ready to play: the game's version, the Play button, and a note that it's up to date">
+</p>
+
+- **It builds the game on your Mac,** from your own files, in about 10–15 minutes the first time, with nothing else to install. It needs about 30 GB free while installing.
+- **It keeps everything current.** It updates itself and the game when a new version is out, about 6 minutes for the game, and the game's main menu tells you too. Your saves stay as they are.
+- **It can go back.** If an update doesn't suit you, it returns to the previous version, and it repairs a damaged install.
+- **It is signed and notarized by Apple,** and your game files and what's built from them never leave your Mac.
+
+<p align="center">
+  <img src="docs/images/r3-launcher-welcome.jpg" width="49%" alt="The launcher's first screen, asking for your game files">
+  <img src="docs/images/r3-launcher-working.jpg" width="49%" alt="The launcher building the game, with its progress">
+</p>
+
+More in [docs/LAUNCHER.md](docs/LAUNCHER.md).
+
+<h2 align="center" id="play-your-way"><img src="docs/images/r3-plate-controls.jpg" width="100%" alt="Play Your Way"></h2>
+
+**Mouse and keyboard, exactly as on PC.** You get the game's own PC interface: the PC HUD with the angel and demon beside the orbs, the PC menus and character screens, and the game's gauntlet pointer, sized to your screen. The keys are D2R's PC defaults:
 
 - click to walk, attack, talk and pick up, and hold to keep going; right click casts your right skill at the pointer, or uses the item under it;
 - Shift + click attacks without moving, and holding Shift compares an item with what you wear;
@@ -99,38 +132,29 @@ The inventory, stash, vendors and the cube are worked with the mouse, and item d
   <img src="docs/images/r2-frame-pc-panels-v3.jpg" width="49%" alt="The stash and inventory open with a mouse and keyboard, with the gauntlet pointer on an item">
 </p>
 
-**Or pick up a controller.** Press a button and the console interface comes up, with button hints for what you hold: Xbox, PlayStation or Switch. Move the mouse or press a key and the PC interface returns. Naming a character or entering an amount of gold with a controller brings up an in-game keyboard in the game's own style.
+**A controller, with the console interface.** Press a button and the console interface comes up, with button hints for what you hold: Xbox, PlayStation or Switch. Move the mouse or press a key and the PC interface returns. Naming a character or entering an amount of gold brings up an in-game keyboard in the game's own style.
 
 <p align="center">
   <img src="docs/images/r2-frame-controller-keyboard-v3.jpg" width="80%" alt="Naming a character with a controller on the Mac: the in-game keyboard under the game's name box">
 </p>
 
-- **Full screen at your display's own resolution** from the first launch. View → Full Screen (⌃⌘F) switches, and the App remembers it. The window can be resized freely, and the picture fills it.
-- **It saves like a Mac app should:** on every quit, from the Dock, at logout, even with a text box open.
-- **The wheel and trackpad scroll** the game's lists, and scroll bars and sliders drag.
-- **iCloud save sync** with your iPhone or iPad comes with a Mac App you build and sign yourself with a paid developer account; the App the launcher installs keeps its saves on the Mac, and moving a character over by hand takes a minute ([docs/MAC.md](docs/MAC.md#saves-logs-and-icloud)).
+**A true Mac app.** It opens in full screen at your display's own resolution, and View → Full Screen (⌃⌘F) switches. The window can be resized freely and the picture fills it. The wheel and trackpad scroll the game's lists, and scroll bars and sliders drag.
 
 Everything about playing on the Mac (keys, mouse, saves, iCloud) is in [docs/MAC.md](docs/MAC.md).
 
 <h2 align="center" id="made-for-iphone-and-ipad"><img src="docs/images/r2-plate-iphone.jpg" width="100%" alt="Made for iPhone and iPad"></h2>
 
+<p align="center">
+  <img src="docs/images/r3-iphone.jpg" width="100%" alt="The Rogue Encampment on an iPhone 17 Pro, with its touch controls: the stick, skill buttons and belt">
+</p>
+
 - **Touch controls made for the game,** or a controller with the game's own console interface.
-- **The same sharp picture on the go:** the 3D world at 50%, rebuilt by MetalFX from several frames, with 16x filtering and true colors. The 3D resolution can go up to 100%.
-- **Smooth and easy on the battery:** the game draws 30 frames and MetalFX creates the ones between, so you see 60.
+- **MetalFX in your pocket.** The world is drawn at half size and rebuilt by MetalFX, with 16x filtering and true colors, and you see 60 frames a second from the 30 the game draws. The world's resolution can go up to 100%.
+- **Picture Size for your chip.** A smaller picture gives a slower chip room to hold 60. Recommended picks the size from your device, and the row on the Video tab lets you change it ([every device's pick](#iphone-and-ipad)).
 - **Saves when the app goes to the background,** so swiping it away loses nothing, and **iCloud sync** carries your characters between devices.
-- **Older iPhones and iPads** (A14 to A16) play with a [Legacy Device Pack](docs/LEGACY_DEVICES.md). They start from the same picture settings as the newest iPhones, which haven't been tested on these devices and may be too heavy for them.
+- **Older iPhones and iPads** (A14 to A16, and the iPhone 15 and 15 Plus) play with a [Legacy Device Pack](docs/LEGACY_DEVICES.md).
 
 For now the iPhone and iPad app is built from source with Xcode ([Getting started](#on-iphone-and-ipad-or-to-develop-build-from-source)).
-
-| At a glance | Mac | iPhone / iPad |
-|---|---|---|
-| Controls | Mouse and keyboard as on PC, trackpad, controller | Touch, controller |
-| Picture | Up to your screen's own resolution, at most 4K | Your screen's full resolution |
-| 3D world | Up to full resolution, enlarged by MetalFX below it | 50–100%, enlarged by MetalFX |
-| Environment shadows | On where the Mac is expected to hold 60 fps with them | Available, off by default |
-| Saves | On every quit and when minimized | When sent to the background |
-| Install | D2R Metal Launcher | Build from source with Xcode |
-| System | macOS 27 or later | iOS / iPadOS 27 or later |
 
 <h2 align="center" id="getting-started"><img src="docs/images/r2-plate-start.jpg" width="100%" alt="Getting Started"></h2>
 
@@ -178,44 +202,124 @@ Run `./setup.sh` again after updating to a new commit. It also rewrites three fi
 
 <h2 align="center" id="supported-devices"><img src="docs/images/r2-plate-devices.jpg" width="100%" alt="Supported Devices"></h2>
 
-D2R Metal draws with Metal 4, which needs an **M1 or A14 chip** or later, and runs on **macOS 27 and iOS / iPadOS 27** or later.
+D2R Metal draws with Metal 4, which needs an **M1 or A14 chip** or later, and runs on **macOS 27 and iOS / iPadOS 27** or later. A13 and older chips, Intel Macs, older systems (macOS 15–26, iOS 18–26), Apple TV, Android and HarmonyOS aren't supported.
 
-| Device | Plays? | What you need |
-|---|---|---|
-| Mac, M1 or later | Yes | macOS 27 or later |
-| MacBook Neo (A18 Pro) | Should; not tried on one yet (starts with lighter shadows) | macOS 27 or later |
-| iPhone / iPad, A17 Pro or M chip | Yes | iOS / iPadOS 27 or later |
-| iPhone / iPad, A14–A16 | Yes | iOS / iPadOS 27 or later, and a [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
-| A13 and older, Intel Macs | No | — |
+The tables list what **Recommended** picks for each device the first time it starts. You can change any of it.
 
-A17 Pro means iPhone 15 Pro and later and iPhone 16 and later; A14–A16 covers the iPhone 12 to 14 families and the iPhone 15 / 15 Plus. Devices with 4 GB of memory run, but tightly. Older systems (macOS 15–26, iOS 18–26), Apple TV, Android and HarmonyOS are not supported. Every iPhone and iPad starts from the same picture settings, tested on an iPhone 17 Pro only ([Picture settings](#picture-settings)).
+### Mac
+
+**Every Mac** also gets MetalFX Temporal, frame generation, 16x filtering and Accurate color. The picks below are for each chip on its usual screen; another screen can change them. **Picture** is the size of the interface and the final image. **World** is the size the 3D world is drawn at before MetalFX enlarges it, with its share of the picture in smaller print. A larger share doesn't always mean more detail: a small picture at 100% can have fewer pixels than a large one at 50%.
+
+| Chip | GPU cores | Usual screen | Picture | World | Ray Tracing | Shadows |
+|---|---|---|---|---|---|---|
+| **M6, measured** | 12 | 2560 × 1440 display | 2560 × 1440 | 2560 × 1440 <sub>100%</sub> | **Full** | Environment, Ultra |
+| M5 Ultra | 64, 80 | 4K display | 3840 × 2160 | 3840 × 2160 <sub>100%</sub> | **Full** | Environment, Ultra |
+| M5 Max | 32, 40 | 16-inch MacBook Pro | 3456 × 2160 | 3456 × 2160 <sub>100%</sub> | **Full** | Environment, Ultra |
+| M5 Pro | 16, 20 | 14-inch MacBook Pro | 3024 × 1890 | 3024 × 1890 <sub>100%</sub> | **Full** | Environment, Ultra |
+| M5 | 8 | 13-inch MacBook Air | 2940 × 1838 | 2500 × 1562 <sub>85%</sub> | Off | Environment, Ultra |
+| M5 | 10 | 13-inch MacBook Air | 2940 × 1838 | 1970 × 1232 <sub>67%</sub> | **Light** | Environment, Ultra |
+| M4 Max | 32, 40 | 16-inch MacBook Pro | 3456 × 2160 | 3456 × 2160 <sub>100%</sub> | **Full** | Environment, Ultra |
+| M4 Pro | 16, 20 | 14-inch MacBook Pro | 3024 × 1890 | 2570 × 1606 <sub>85%</sub> | **Full** | Environment, Ultra |
+| M4 | 8 | 13-inch MacBook Air | 2940 × 1838 | 1470 × 920 <sub>50%</sub> | Off | Environment, Ultra |
+| M4 | 10 | 13-inch MacBook Air | 2940 × 1838 | 2500 × 1562 <sub>85%</sub> | Off | Environment, Ultra |
+| M3 Ultra | 60, 80 | 4K display | 3840 × 2160 | 3840 × 2160 <sub>100%</sub> | **Full** | Environment, Ultra |
+| M3 Max | 30 | 16-inch MacBook Pro | 3456 × 2160 | 2938 × 1836 <sub>85%</sub> | **Full** | Environment, Ultra |
+| M3 Max | 40 | 16-inch MacBook Pro | 3456 × 2160 | 3456 × 2160 <sub>100%</sub> | **Full** | Environment, Ultra |
+| M3 Pro | 14 | 14-inch MacBook Pro | 3024 × 1890 | 2026 × 1266 <sub>67%</sub> | **Light** | Environment, Ultra |
+| M3 Pro | 18 | 14-inch MacBook Pro | 3024 × 1890 | 2268 × 1418 <sub>75%</sub> | **Standard** | Environment, Ultra |
+| M3 | 8 | 13-inch MacBook Air | 1920 × 1200 <sub>enlarged</sub> | 1920 × 1200 <sub>100%</sub> | Off | Environment, Ultra |
+| M3 | 10 | 13-inch MacBook Air | 2940 × 1838 | 1970 × 1232 <sub>67%</sub> | Off | Environment, Ultra |
+| M2 Ultra | 60, 76 | 4K display | 3840 × 2160 | 3840 × 2160 <sub>100%</sub> | Off | Environment, Ultra |
+| M2 Max | 30, 38 | 16-inch MacBook Pro | 3456 × 2160 | 3456 × 2160 <sub>100%</sub> | Off | Environment, Ultra |
+| M2 Pro | 16, 19 | 14-inch MacBook Pro | 3024 × 1890 | 3024 × 1890 <sub>100%</sub> | Off | Environment, Ultra |
+| M2 | 8 | 13-inch MacBook Air | 1920 × 1200 <sub>enlarged</sub> | 1920 × 1200 <sub>100%</sub> | Off | Environment, Ultra |
+| M2 | 10 | 13-inch MacBook Air | 2940 × 1838 | 1470 × 920 <sub>50%</sub> | Off | Environment, Ultra |
+| M1 Ultra | 48, 64 | 4K display | 3840 × 2160 | 3840 × 2160 <sub>100%</sub> | Off | Environment, Ultra |
+| M1 Max | 24, 32 | 16-inch MacBook Pro | 3456 × 2160 | 3456 × 2160 <sub>100%</sub> | Off | Environment, Ultra |
+| M1 Pro | 14 | 14-inch MacBook Pro | 3024 × 1890 | 2570 × 1606 <sub>85%</sub> | Off | Environment, Ultra |
+| M1 Pro | 16 | 14-inch MacBook Pro | 3024 × 1890 | 3024 × 1890 <sub>100%</sub> | Off | Environment, Ultra |
+| M1 | 7 | 13-inch MacBook Air | 1600 × 1000 <sub>enlarged</sub> | 1600 × 1000 <sub>100%</sub> | Off | Standard |
+| M1 | 8 | 13-inch MacBook Air | 1600 × 1000 <sub>enlarged</sub> | 1600 × 1000 <sub>100%</sub> | Off | Environment, Ultra |
+| A18 Pro | 5 | MacBook Neo | 2408 × 1506 | 1204 × 752 <sub>50%</sub> | Off | Standard |
+
+> **How sure are these?** Only the **Mac mini with an M6** has been measured. Every other Mac is an estimate from public benchmarks of its chip, which could be about one step of 3D Resolution off. If yours struggles or has room to spare, change the row, and please [tell us](https://github.com/PowerBeef/d2r-metal/issues/new/choose) what chip it is. [docs/MAC.md](docs/MAC.md#what-recommended-picks) explains how the picks are made.
+
+<h3 id="iphone-and-ipad">iPhone and iPad</h3>
+
+**Every iPhone and iPad** also gets MetalFX Temporal, frame generation, the world at 50%, 16x filtering, Accurate color and Standard shadows, with no rays yet. They differ in **Picture Size**: **Full** is the screen's own pixels, **High** 75% of its rows, **Medium** 62.5%, and **Low** 720 rows of interface.
+
+> **⚠️ Only one row here was measured on its own hardware: the iPhone 17 Pro.**
+> - **Simulated** rows ran on that iPhone 17 Pro at the device's picture size, with extra graphics work added so that each drawn frame took as long as we estimate it would take there. Each held 60 fps in 30 seconds of play, with at most 2 late images. The processor wasn't slowed, so a real device can do worse in a big fight, and these short runs don't show heat over a long session.
+> - **Estimated** rows are the same estimate, not run at all.
+>
+> None of these devices has run the game with us yet. If you have one, please [tell us](https://github.com/PowerBeef/d2r-metal/issues/new/choose) how it goes.
+
+| Device | Chip | Screen | Picture Size | Picture | World | How we know |
+|---|---|---|---|---|---|---|
+| iPhone 18 Pro | A20 Pro | 2622 × 1206 | **Full** | 2622 × 1206 | 1311 × 603 | Estimated |
+| iPhone 18 Pro Max | A20 Pro | 2868 × 1320 | **Full** | 2868 × 1320 | 1434 × 660 | Estimated |
+| iPhone 17 Pro | A19 Pro | 2622 × 1206 | **Full** | 2622 × 1206 | 1311 × 603 | **Measured** |
+| iPhone 17 Pro Max | A19 Pro | 2868 × 1320 | **Full** | 2868 × 1320 | 1434 × 660 | Estimated |
+| iPhone 17 | A19 | 2622 × 1206 | **Full** | 2622 × 1206 | 1311 × 603 | Simulated |
+| iPhone Air | A19 Pro | 2736 × 1260 | **High** | 2054 × 946 | 1027 × 473 | Estimated |
+| iPhone 17e | A19 | 2532 × 1170 | **High** | 1900 × 878 | 950 × 439 | Estimated |
+| iPhone 16 Pro | A18 Pro | 2622 × 1206 | **High** | 1966 × 904 | 983 × 452 | Simulated |
+| iPhone 16 Pro Max | A18 Pro | 2868 × 1320 | **High** | 2152 × 990 | 1076 × 495 | Estimated |
+| iPhone 16 | A18 | 2556 × 1179 | **High** | 1916 × 884 | 958 × 442 | Estimated |
+| iPhone 16 Plus | A18 | 2796 × 1290 | **High** | 2098 × 968 | 1049 × 484 | Estimated |
+| iPhone 16e | A18 | 2532 × 1170 | **High** | 1900 × 878 | 950 × 439 | Simulated |
+| iPhone 15 Pro | A17 Pro | 2556 × 1179 | **High** | 1916 × 884 | 958 × 442 | Simulated |
+| iPhone 15 Pro Max | A17 Pro | 2796 × 1290 | **Medium** | 1746 × 806 | 873 × 403 | Estimated |
+| iPhone 15, iPhone 14 Pro | A16 | 2556 × 1179 | **Medium** | 1596 × 736 | 798 × 368 | Simulated |
+| iPhone 15 Plus, iPhone 14 Pro Max | A16 | 2796 × 1290 | **Medium** | 1746 × 806 | 873 × 403 | Estimated |
+| iPhone 14, iPhone 13 Pro | A15 | 2532 × 1170 | **Medium** | 1584 × 732 | 792 × 366 | Simulated |
+| iPhone 14 Plus, iPhone 13 Pro Max | A15 | 2778 × 1284 | **Low** | 1558 × 720 | 779 × 360 | Estimated |
+| iPhone 13 | A15 | 2532 × 1170 | **Low** | 1558 × 720 | 779 × 360 | Simulated |
+| iPhone 13 mini | A15 | 2340 × 1080 | **Low** | 1560 × 720 | 780 × 360 | Estimated |
+| iPhone SE (3rd gen) | A15 | 1334 × 750 | **Full** | 1334 × 750 | 667 × 375 | Estimated |
+| iPhone 12 Pro Max | A14 | 2778 × 1284 | **Low** | 1558 × 720 | 779 × 360 | Estimated |
+| iPhone 12 Pro, iPhone 12 | A14 | 2532 × 1170 | **Low** | 1558 × 720 | 779 × 360 | Simulated |
+| iPhone 12 mini | A14 | 2340 × 1080 | **Low** | 1560 × 720 | 780 × 360 | Estimated |
+
+| Device | Chip | Screen | Picture Size | Picture | World | How we know |
+|---|---|---|---|---|---|---|
+| iPad Pro 13, M5 | M5 | 2752 × 2064 | **Full** | 2752 × 2064 | 1376 × 1032 | Estimated |
+| iPad Pro 11, M5 | M5 | 2420 × 1668 | **Full** | 2420 × 1668 | 1210 × 834 | Estimated |
+| iPad Pro 13, M4 | M4 | 2752 × 2064 | **High** | 2064 × 1548 | 1032 × 774 | Estimated |
+| iPad Pro 11, M4 | M4 | 2420 × 1668 | **Full** | 2420 × 1668 | 1210 × 834 | Estimated |
+| iPad Pro 12.9, M2, iPad Air 13, M2 | M2 | 2732 × 2048 | **High** | 2050 × 1536 | 1025 × 768 | Estimated |
+| iPad Pro 11, M2 | M2 | 2388 × 1668 | **Full** | 2388 × 1668 | 1194 × 834 | Estimated |
+| iPad Pro 12.9, M1 | M1 | 2732 × 2048 | **Medium** | 1708 × 1280 | 854 × 640 | Estimated |
+| iPad Pro 11, M1 | M1 | 2388 × 1668 | **High** | 1792 × 1252 | 896 × 626 | Estimated |
+| iPad Air 13, M4 | M4 | 2732 × 2048 | **High** | 2050 × 1536 | 1025 × 768 | Estimated |
+| iPad Air 11, M4 | M4 | 2360 × 1640 | **Full** | 2360 × 1640 | 1180 × 820 | Estimated |
+| iPad Air 13, M3 | M3 | 2732 × 2048 | **High** | 2050 × 1536 | 1025 × 768 | Estimated |
+| iPad Air 11, M3 | M3 | 2360 × 1640 | **Full** | 2360 × 1640 | 1180 × 820 | Estimated |
+| iPad Air 11, M2 | M2 | 2360 × 1640 | **High** | 1770 × 1230 | 885 × 615 | Estimated |
+| iPad Air, M1 | M1 | 2360 × 1640 | **High** | 1770 × 1230 | 885 × 615 | Estimated |
+| iPad mini, A17 Pro | A17 Pro | 2388 × 1668 | **Medium** | 1492 × 1042 | 746 × 521 | Estimated |
+| iPad mini, A15 | A15 | 2388 × 1668 | **Low** | 1280 × 894 | 640 × 447 | Estimated |
+| iPad, A16 | A16 | 2360 × 1640 | **Medium** | 1476 × 1026 | 738 × 513 | Estimated |
+| iPad, A14, iPad Air, A14 | A14 | 2360 × 1640 | **Low** | 1280 × 890 | 640 × 445 | Estimated |
+
+Big fights are where the slowest devices will show it: in a simulated crowd of 100 monsters, the iPhone 16 Pro's settings held 55 fps with 8.6% of images late, and the iPhone 12's and 13's 44 fps with 51% late. Devices with 4 GB of memory run, but tightly. A14 to A16 devices need a [Legacy Device Pack](docs/LEGACY_DEVICES.md).
 
 <h2 align="center" id="picture-settings"><img src="docs/images/r2-plate-settings.jpg" width="100%" alt="Picture Settings"></h2>
 
-Every setting lives in the game's own Options, on five tabs: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**.
-
-**Recommended** is the set of picture settings D2R Metal picks for your device the first time it starts:
-
-- **On every device,** D2R Metal builds detail from several frames and creates every other frame: the game draws 30 frames, you see 60, and the graphics chip has time to spare for the picture. This is always on, with nothing to set. It has been measured on an M6 Mac and an iPhone 17 Pro so far.
-- **On a Mac,** it looks at the graphics chip (its generation and how many graphics cores it has) and at your screen, and turns on as much as it estimates the Mac can hold. Fast Macs get the 3D world at full resolution with every effect on, and Macs from the M3 on with at least 16 GB get ray tracing wherever the estimate says it fits, at a level that suits the chip. Lighter Macs, such as most MacBook Airs, get the 3D world at a lower resolution or a smaller picture enlarged by MetalFX, and their 3D resolution dips for a moment when the action gets busy instead of stuttering. It works this out again when you change screens. The estimate rests on public benchmarks of each chip; [docs/MAC.md](docs/MAC.md#what-recommended-picks) has examples.
-- **On iPhone and iPad,** the same on every device: the 3D world at 50%, with 16x filtering and true colors. It was measured on an iPhone 17 Pro; on an older iPhone or iPad it may be too heavy.
-
-You can change any setting; **Graphic Presets** also offers *Performance* (lighter) and *Quality* (on a Mac everything on; on iPhone and iPad the 3D world at 100% with 16x filtering, the shadow rows left as they are), and **Default** puts the tab you are on back to Recommended.
+Every setting lives in the game's own Options, on five tabs: **Video**, **Audio**, **Gameplay**, **Settings** and **Extras**. MetalFX Temporal and frame generation are always on and have no rows: the game draws 30 frames and shows 60 wherever it runs.
 
 - **Video**:
   - On the Mac: Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets and 3D Resolution (100 down to 50%).
-  - On iPhone and iPad: 3D Resolution (50 to 100%), Color and Graphic Presets.
-  - On both: **Anisotropic Filtering** (Original up to 16x), **Environment Shadows**, **Shadow Quality** (Standard up to Ultra) and **Environment Detail** (all three take effect at the next start).
+  - On iPhone and iPad: **Picture Size** (Full, High, Medium, Low; at the next start), 3D Resolution (50 to 100%), Color and Graphic Presets.
+  - On both: **Anisotropic Filtering** (Original up to 16x), **Environment Shadows**, **Shadow Quality** (Standard up to Ultra) and **Environment Detail** (all three at the next start).
   - On the Mac: **Ray Tracing** (Off, Light, Standard, Full) and **Frame Drops** (lower the 3D resolution while frames drop, or keep it).
+- **Graphic Presets** offers *Recommended*, *Performance* (lighter) and *Quality* (on a Mac everything on but the rays, which stay your choice; on iPhone and iPad the world at 100% with 16x filtering and Picture Size Full).
 - **Settings** holds the game's own **Offline Difficulty Scaling**, which sets the player count and takes effect at once.
-- **Apply, Discard and Default** work like the game's own option pages.
+- **Apply, Discard and Default** work like the game's own option pages, and **Default** puts the tab you are on back to Recommended.
 
 <p align="center">
   <img src="docs/images/r2-frame-video-display-v4.jpg" width="49%" alt="The Mac Video tab: Display Mode Fullscreen, Resolution Native, Color Accurate, Graphic Presets Recommended, 3D Resolution 100%">
   <img src="docs/images/r2-frame-video-graphics-v4.jpg" width="49%" alt="The Mac Video tab's graphics rows: 3D Resolution 100%, Anisotropic Filtering 16x, Environment Shadows On, Shadow Quality Ultra, Environment Detail High, Ray Tracing Full">
-</p>
-<p align="center">
-  <img src="docs/images/r2-frame-settings-v3.jpg" width="49%" alt="The Settings tab with the game's own Offline Difficulty Scaling row">
 </p>
 
 <h2 align="center" id="saves-you-can-trust"><img src="docs/images/r2-plate-saves.jpg" width="100%" alt="Saves You Can Trust"></h2>
@@ -224,6 +328,7 @@ You can change any setting; **Graphic Presets** also offers *Performance* (light
 - The iPhone app saves when it goes to the background, so swiping it away doesn't lose progress.
 - A failed save (a full disk, for example) is refused with a message, and the next one goes through: one failure can't silently stop every later save.
 - A damaged shared stash can't hang iCloud sync.
+- **iCloud sync** works on iPhone and iPad, and on a Mac App you build and sign yourself with a paid developer account. The App the launcher installs keeps its saves on the Mac, and moving a character over by hand takes a minute ([docs/MAC.md](docs/MAC.md#saves-logs-and-icloud)).
 
 These came out of a full audit of the port, a bug hunt with sanitizers and Metal validation, and a study of how the game itself saves.
 
@@ -239,13 +344,15 @@ A few conveniences sit on the **Extras** tab of Options, each one a switch you c
 
 **Is this an emulator?** No. The game's own code, from the Switch release, runs directly on your Apple chip; only the handful of instructions an ordinary app can't run are rewritten ahead of time, and the Switch's graphics are rebuilt on Metal 4. Nothing is streamed.
 
-**Do I need a Switch?** You need your own copy of the Switch version of the game and its update, dumped from your own console with its keys ([docs/GAME_FILES.md](docs/GAME_FILES.md)). D2R Metal contains no game files and never will.
+**Why do I need the Switch version?** It's the Arm build of the game that D2R Metal runs. You need your own copy and its update, dumped from your own console with its keys ([docs/GAME_FILES.md](docs/GAME_FILES.md)). D2R Metal contains no game files and never will.
 
 **I own the PC (Battle.net) version. Can I use it?** No, D2R Metal is built on the Switch release. On a Mac, CrossOver runs the PC version.
 
 **Can I play online?** No, D2R Metal plays offline only.
 
-**Does it work on my Mac?** Any Mac with Apple silicon (M1 or later) on macOS 27 or later. The game picks its picture settings for your Mac the first time it starts. Intel Macs aren't supported.
+**Does it work on my Mac?** Any Mac with Apple silicon (M1 or later) on macOS 27 or later. [Supported devices](#supported-devices) lists what each one gets. Intel Macs aren't supported.
+
+**Will I get ray tracing?** On a Mac with an M3 or later and at least 16 GB, where the estimate says it holds 60 fps. On any other Mac with an M3 or later you can still turn it on yourself. iPhone and iPad don't have it yet.
 
 **How do updates work?** The launcher checks this project's releases, updates the game and itself, and can go back to the previous version. The game's main menu also tells you when a new version is out.
 
@@ -282,17 +389,14 @@ The tools in the repository:
 - **A/B benchmarks** with statistics, regression checks against a kept build, sampled profiles per game thread and function, per-pass GPU timing, and **frame capture and replay**;
 - **sanitizer builds** (ASan, UBSan, TSan), seeded **random exploration** with shrinking, **replay**, and LLDB commands that read the game's panels, focus and saves ([debugging.md](dm/verify/debugging.md)).
 
-Measured on Apple hardware ("edge sharpness" is the edge variance of the whole captured frame: one number for how much contrast its edges have; higher is crisper, and it only compares frames of the same scene):
+Measured on Apple hardware:
 
-- **Mac with an M6 chip, frame generation and ray tracing** (Mac App in front, full screen, 2560 × 1440, 2026-11-06): the game draws 30 frames and shows 60. Presenting without the display link, as Apple's frame interpolation guide does, took late images from 15 to 0 over four 24 s runs in town with rays off, and from 58 to 3 (discarded images 48 to 0) in a 52 s walk through the Cathedral with rays on. Input to picture is about 96 ms against 73.5 at real 60 (two runs of 26 trials, rays off). Rays at Full take about 11 ms more GPU time per drawn frame in the Cathedral, measured at full clock.
-- **Mac with an M6 chip, the settings D2R Metal picked for it before frame generation** (town route 12 runs, combat route 3 runs, 2026-11-04): Native 2560 × 1440 with the 3D world at full resolution and every effect on runs at 59–60 fps (GPU time per frame p50 8.0–8.3 ms, p95 about 13 ms in town). In every run about 1–2% of frames miss one screen refresh (33 ms instead of 16.7), in town and on the combat route's walk; that frame pacing is not new in this release (the same share in an A/B against the build of the day before, 6 + 6 runs) and is still open. Drawing 3840 × 2160 on the town route takes about 12.4 ms per frame, with fewer missed refreshes (0.1–0.4%). This GPU lowers its clock when it has room, so its time per frame barely moves with the 3D resolution (8.4 → 6.6 ms from 100% to 50%) and cannot rank the settings' costs on a fast Mac; the settings for other chips are estimated from public GPU benchmarks per chip ([docs/MAC.md](docs/MAC.md)).
-- **Mac with an M6 chip, the 3D world at 75%** (2560 × 1440 screen, town route, 6 + 6 alternating runs): Native output with the 3D at 75% + MetalFX takes about the same GPU time per frame as 1920 × 1080 + MetalFX (game frame 6.1 → 7.5 ms, present 1.7–2.1 → 0.3–0.4 ms). The game's SMAA added about 0.5 ms before the shader change below, and 16x filtering adds about 0.2 ms; both are GPU time at the lowered clock this GPU runs at when it has room, so they are relative sizes, not costs. Letting rendering passes overlap saves 0.54 ms (−8.5%). Skipping repeated state binds cuts bind records by 57% and the replay thread's instructions by 13%.
-- **Mac, SMAA** (4 + 4 alternating runs): building the anti-aliasing shaders without the HDR curve the game computes and then discards here cut the SMAA edge pass from 0.68 to 0.31 ms and the GPU time per frame from 7.25 to 6.72 ms, with a captured frame replaying pixel-identical ([e070b94](https://github.com/PowerBeef/d2r-metal/commit/e070b94)).
-- **Mac, environment and Ultra shadows** (M6 with a 12-core GPU, town route, 6 + 6 alternating runs per comparison, 2026-11-04; measured at the clock this GPU chose, so not an estimate for slower Macs): drawing a 3840 × 2160 picture (where this GPU has less room to lower its clock), scenery shadows add about 0.70 ms of shadow-pass time per frame in town and 0.38 ms in the Blood Moor with Ultra shadows (0.55 / 0.32 ms with Standard); for the whole frame the difference is too small to separate from run-to-run noise in 6 + 6 alternating runs (median +0.24 ms in town). Ultra shadows take about 0.59 ms more shadow-pass time than Standard. At this Mac's Recommended (Native 2560 × 1440, 3D 100%) the town route runs at 59–60 fps with environment shadows on and off alike, with the same 1–2% of missed refreshes either way. (The first measurement, [4f952ed](https://github.com/PowerBeef/d2r-metal/commit/4f952ed), used the 1024-pixel shadow map of earlier builds.)
-- **Mac, MetalFX at the last step** (M6, 12 GPU cores, 2560 × 1440 screen, character select): enlarging the same 1600 × 900 picture costs 0.28 ms of GPU time with a plain stretch and 1.38 ms with MetalFX; edge sharpness goes from 235 to 569 ([4ac0543](https://github.com/PowerBeef/d2r-metal/commit/4ac0543)).
-- **iPhone, MetalFX on the 3D world** (iPhone 17 Pro, 3D at 75%: 1967 × 905 inside a 2622 × 1206 frame): steady 60 fps; edge sharpness 404 → 728 with the same colors ([7c2f892](https://github.com/PowerBeef/d2r-metal/commit/7c2f892)). Its GPU time per frame is no cost measurement: this phone's GPU time fills the frame (see below).
-- **iPhone, SMAA and 16x filtering** (iPhone 17 Pro standing in town, 3D at 75%, runs alternated, 110 s each): both hold 60 fps with frame time p95 17.6 ms, CPU per frame about 16 ms and the thermal state the same as without them. The phone doesn't show their GPU cost to an app: its GPU slows its clock until each frame's work fills the frame (about 15 ms whatever the setting), and the process energy reading follows the CPU.
-- Not measured yet: any Mac slower than the M6; any iPhone or iPad other than the iPhone 17 Pro (all of them start from the same Recommended); battery and heat on phones over long sessions; and the shadow settings on a phone (environment shadows, and the Switch's own 2100-pixel shadow map, which phones now use too).
+- **Mac with an M6, frame generation and ray tracing** (Mac App in front, full screen, 2560 × 1440, 2026-11-06): the game draws 30 frames and shows 60. Presenting without the display link, as Apple's frame interpolation guide does, took late images from 15 to 0 over four 24 s runs in town with rays off, and from 58 to 3 (discarded images 48 to 0) in a 52 s walk through the Cathedral with rays on. Input to picture is about 96 ms against 73.5 at real 60 (two runs of 26 trials, rays off). Rays at Full take about 11 ms more GPU time per drawn frame in the Cathedral, measured at full clock.
+- **iPhone 17 Pro, the same with presents on their own queue** (3D at 50%, alternating runs, 30 s counted, 2026-11-06): late images in town from 1.7–1.9% to 0.06–0.11%, real frames discarded from about 30 to none, and a crowd of 100 monsters from 24 fps to about 54. A 5.5-minute walk at thermal state 2 had 5 late images of 19,200. The image follows its frame's start by 56 ms against 50 with the display link.
+- **iPhone 17 Pro, what each picture size costs** (3D at 50%, own GPU time under a fixed added load): 2622 × 1206 23.5 ms, 1952 × 900 13.7, 1640 × 754 10.2, 1568 × 720 9.3, 1280 × 590 7.1, which fit 1.4 + 7.0 ms per megapixel. Below 720 rows the HUD loses its orb and belt art.
+- **Slower iPhones, simulated on the iPhone 17 Pro** (each device's picture size, plus added GPU work to reach its estimated time; [debugging.md](dm/verify/debugging.md)): 60 fps in town with at most 2 late images in 30 s on every tier. A crowd of 100: 55 fps at the iPhone 16 Pro's settings, 44 at the iPhone 12's. The CPU isn't slowed.
+- **Mac, the costs behind the settings** (M6, 12 GPU cores, alternating runs, before frame generation): the 3D at 75% takes about the same GPU time as a 1920 × 1080 picture with MetalFX; letting rendering passes overlap saves 0.54 ms (−8.5%); skipping repeated state binds cuts bind records by 57% and the replay thread's instructions by 13%; Ultra shadows take about 0.59 ms more shadow-pass time than Standard. This GPU lowers its clock when it has room, so these are relative sizes on this machine, not costs for slower Macs.
+- Not measured yet: any Mac slower than the M6; any iPhone or iPad other than the iPhone 17 Pro; battery and heat on phones over long sessions; and the shadow settings on a phone.
 
 </details>
 
@@ -303,6 +407,7 @@ Measured on Apple hardware ("edge sharpness" is the edge variance of the whole c
 - **1.0** (2026-10-31) is the first release, with D2R Metal Launcher for the Mac. Releases are listed on the [releases page](https://github.com/PowerBeef/d2r-metal/releases).
 - **1.1** (2026-11-02) plays with a mouse and keyboard as D2R does on PC: the game's own PC interface, gauntlet pointer and PC keys; a controller brings the console interface back.
 - **1.2** (2026-11-03) picks the picture settings for your Mac from its chip and screen.
+- **2.0** (2026-11-06) brings ray tracing, MetalFX Temporal and frame generation, and a steadier picture.
 - `main` is the trunk. Changes are checked by the project's own gate ([dm/verify/FORK_GATE.md](dm/verify/FORK_GATE.md)); see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>
