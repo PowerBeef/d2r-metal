@@ -277,7 +277,7 @@ On a phone the row isn't there yet. Pin it with the switches: `DM_RT=3` traces n
 - A frame was waiting at every tick around a miss, and the present took 0.1-0.4 ms of the link thread and about 1 ms of GPU, 31 ms before the next tick. The link's callback itself comes one refresh late, 31.4 ms after the last one.
 - `DM_PRESENT_LATENCY=2` changes nothing (ABBA x6: 1.0% and 2.4% against 1.4% and 1.8%, not significant). A single run can read 0%: the misses come and go over minutes, so never judge this from one run.
 - More GPU work removes them: `DM_TEST_LOAD=gpu:1500` (about 6 ms at full clock, ABBA x6: 0.9% and 2.6% to 0%, p 0.002), `gpu:700` nearly (ABBA x4: 1.1% and 2.6% to 0% and 0.4%), `gpu:300` not. So it comes with the GPU running slowly because it has room, which also fits fewer misses at 3840 x 2160. Frame Generation shows none.
-- No fix is in: the only one found so far is to burn GPU time on purpose, for players who turned Frame Generation off. Its energy cost isn't known: `@proc_mj` moved only 2% with 3 ms of added GPU work, so it doesn't seem to count the GPU.
+- No fix is in, and players no longer get real frames (Frame Generation has no row since 2026-11-06): the only one found was to burn GPU time on purpose. Its energy cost isn't known: `@proc_mj` moved only 2% with 3 ms of added GPU work, so it doesn't seem to count the GPU.
 
 ## The game's own quality settings
 
