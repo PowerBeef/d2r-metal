@@ -5,7 +5,8 @@ name pc_vendor_mac
 requires mac-app
 save warlock
 timeout 300
-env DM_PC_MODE=1 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_GOLD=1300 DM_TEST_GIVE=r01:2:3@60 DM_TEST_GIVE_INV=1 DM_TEST_WORLD_GO=near2:1:c154@400
+# A fixed seed, as his shelf is random: in about one run in ten the axe cost more than the gold given, the game refused the sale and its notice blocked the next click
+env DM_GAME_SEED=305419896 DM_PC_MODE=1 DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_GOLD=1300 DM_TEST_GIVE=r01:2:3@60 DM_TEST_GIVE_INV=1 DM_TEST_WORLD_GO=near2:1:c154@400
 
 expect main_menu timeout=120
 enter_game

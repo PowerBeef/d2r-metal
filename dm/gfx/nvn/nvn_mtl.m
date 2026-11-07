@@ -1036,6 +1036,7 @@ static int g_red_once[64];
 
 // ---------- 贴图 → MTLTexture ----------
 // ---------- Texture → MTLTexture ----------
+static NSUInteger fmt_block_bytes(MTLPixelFormat f) { switch (f) { case MTLPixelFormatBC1_RGBA: case MTLPixelFormatBC1_RGBA_sRGB: case MTLPixelFormatBC4_RUnorm: case MTLPixelFormatBC4_RSnorm: return 8; case MTLPixelFormatBC2_RGBA: case MTLPixelFormatBC2_RGBA_sRGB: case MTLPixelFormatBC3_RGBA: case MTLPixelFormatBC3_RGBA_sRGB: case MTLPixelFormatBC5_RGUnorm: case MTLPixelFormatBC5_RGSnorm: case MTLPixelFormatBC6H_RGBFloat: case MTLPixelFormatBC6H_RGBUfloat: case MTLPixelFormatBC7_RGBAUnorm: case MTLPixelFormatBC7_RGBAUnorm_sRGB: return 16; default: return 0; } }   // bytes per 4 x 4 block of the BC formats; 0 for any other
 static int fmt_compressed(int f) { return (f >= 0x41 && f <= 0x50) || (f >= 0x79 && f <= 0x94); }
 static int fmt_depth(int f) { return f >= 0x31 && f <= 0x36; }
 typedef struct { MTLPixelFormat a, b; } pfv_pair;
@@ -5853,6 +5854,12 @@ static int copy_t2t_astc(id<MTLTexture> s, id<MTLTexture> d, unsigned sl, unsign
 }
 // GPU：贴图 → 贴图（原先误列为空操作，选角页每帧 3 次）。等尺寸、不镜像、同格式 → 逐层 blit；其余语义（缩放带过滤、镜像、换格式）blit 表达不了，报红待实现
 // GPU: texture -> texture (previously mislisted as a no-op, 3 times per frame on the character select page). Same size, not mirrored, same format -> blit layer by layer; the other semantics (scaling with filtering, mirroring, format change) cannot be expressed by blit: report a failure, to be implemented
+// One level of one layer of an array to zero (copy_t2t: a level no source reaches). Private textures have no defined contents until written. Uncompressed on devices without BC (bc_unpack: 4 bytes a pixel)
+static void copy_t2t_zero_level(id<MTLTexture> d, NSUInteger slice, NSUInteger lv, NSUInteger w, NSUInteger h) {
+    NSUInteger block = fmt_block_bytes(d.pixelFormat), row = block ? MAX((w + 3) / 4, 1u) * block : w * 4, img = row * (block ? MAX((h + 3) / 4, 1u) : h);
+    static id<MTLBuffer> zero; if (zero.length < img) { if (zero) defer_obj_release(zero); zero = [g_dev newBufferWithLength:MAX(img, (NSUInteger)1 << 18) options:MTLResourceStorageModeShared]; res_add(zero); res_commit(); }
+    enc_b_copy_buffer_texture(blit(), zero, 0, row, img, MTLSizeMake(w, h, 1), d, slice, lv, MTLOriginMake(0, 0, 0));
+}
 static void copy_t2t(const p_copy_t2t *c) {
     if (c->src) xv_check(c->src->serial, c->has_sv && c->sv.set_levels ? c->sv.base_level : 0, c->has_sv && c->sv.set_layers ? c->sv.min_layer : 0, "贴图拷贝源");
     rp_flush();   // 挂起的纯清除通道先落地（零源候选在通道结束时才进集合）；下面 blit() 本来也会结束通道 | Land the pending pure-clear render pass first (zero-source candidates only enter the set when the render pass ends); the blit() below would end the render pass anyway
@@ -5870,6 +5877,21 @@ static void copy_t2t(const p_copy_t2t *c) {
     unsigned sz0 = c->has_sv && c->sv.set_layers ? c->sv.min_layer : 0, dz0 = c->has_dv && c->dv.set_layers ? c->dv.min_layer : 0;
     PD("t src=%llu lv%u sl%u xyz=%d,%d,%d dst=%llu lv%u sl%u xyz=%d,%d,%d size=%d,%d,%d", c->src->serial, sl, sz0, c->sr.xoffset, c->sr.yoffset, c->sr.zoffset,
        c->dst->serial, dl, dz0, c->dr.xoffset, c->dr.yoffset, c->dr.zoffset, c->sr.width, c->sr.height, c->sr.depth);
+    // A copy larger than its source: at Environment Detail High the game copies each decal layer into a 512 px array level by level, and the Switch's assets are 128 px, so a request
+    // of (512 >> n) from source level n reads past the source (a release build doesn't check: stripes on floors). Each array level below the source's size takes the source level of its
+    // own size; the levels above it take the part of the copy that exists, in their corner, and read as zero elsewhere, defined rather than whatever a read past the source gave. The arrays stay 512 px: made 128 px, as the game makes them at
+    // Standard, the Outer Cloister's stone court and the blood go (2026-11-07), and those are the look of High
+    p_copy_t2t cm; NSUInteger over = 0; while (d.textureType == MTLTextureType2DArray && fmt_compressed(c->src->d.format) && (s.width << over) < ((NSUInteger)c->sr.width << sl)) over++;
+    if (over) {
+        NSUInteger w = MAX(d.width >> dl, 1u), h = MAX(d.height >> dl, 1u);
+        if (dl < over) {   // the part of the game's copy that exists, in its corner, as asked; the rest of the level zero
+            copy_t2t_zero_level(d, dz0 + c->dr.zoffset, dl, w, h);
+            enc_b_copy_texture(blit(), s, sz0 + c->sr.zoffset, dl, MTLOriginMake(0, 0, 0), MTLSizeMake(MAX(s.width >> dl, 1u), MAX(s.height >> dl, 1u), 1), d, dz0 + c->dr.zoffset, dl, MTLOriginMake(0, 0, 0));
+            return; }
+        sl = dl - (unsigned)over;
+        if (sl >= s.mipmapLevelCount || MAX(s.width >> sl, 1u) != w || MAX(s.height >> sl, 1u) != h) { RED_ONCE(77, "decal copy: a %lux%lu source with %lu levels has no level of %lux%lu", (unsigned long)s.width, (unsigned long)s.height, (unsigned long)s.mipmapLevelCount, (unsigned long)w, (unsigned long)h); return; }
+        cm = *c; cm.sr.width = cm.dr.width = (int)w; cm.sr.height = cm.dr.height = (int)h; c = &cm;
+    }
     int s3 = c->src->d.target == 2, d3 = c->dst->d.target == 2, nz = c->sr.depth ? c->sr.depth : 1;
     if (no_bc() && (s.pixelFormat == MTLPixelFormatASTC_4x4_LDR || s.pixelFormat == MTLPixelFormatASTC_4x4_sRGB) && (d.pixelFormat == MTLPixelFormatRGBA8Unorm || d.pixelFormat == MTLPixelFormatRGBA8Unorm_sRGB)
         && !s3 && !d3 && c->sr.width == c->dr.width && c->sr.height == c->dr.height && (d.usage & MTLTextureUsageShaderWrite)) {   // 无 BC：ASTC 源 → 解压格式目标（见 copy_t2t_astc） | No BC: ASTC source -> decompressed-format destination (see copy_t2t_astc)

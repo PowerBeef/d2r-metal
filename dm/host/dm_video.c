@@ -248,7 +248,7 @@ int dm_video_fg_active(void) {
 int dm_video_jitter_mode(void) { return dm_video_temporal_active() ? 3 : 0; }   // 3 = the game's Halton mode (patch_nso.py SWITCHES, the csel rows)
 // Environment Detail: the renderer's boot config (renderer+0x65f4, 0xd5 bytes, the game's main+0x15ff470 copies it; every module reads its knob once at creation) as the Switch's quality level 1 left it, raised to
 // what the game itself uses at its top levels. Decal arrays (renderer+0x664c) 7 -> 9: at 7 the Monastery's Outer Cloister has no stone court, only grass. Terrain data tier (+0x6622) 0 -> 3. Effect-light budget
-// (+0x66bc) 2 -> 4: torches light the walls near them and glint on polished floors. About 36 MiB of memory; no GPU cost measured at 2560 x 1440 on an M6 (ABBA x4 at the Far Oasis and the Burial Grounds: -0.12 and +0.05 ms, both within noise). The game's other level settings stay: bloom mode 2 would misfire
+// (+0x66bc) 2 -> 4: torches light the walls near them and glint on polished floors. The decal assets stay 128 px in those 512 px arrays: nvn_mtl.m copy_t2t. About 36 MiB of memory; no GPU cost measured at 2560 x 1440 on an M6 (ABBA x4 at the Far Oasis and the Burial Grounds: -0.12 and +0.05 ms, both within noise). The game's other level settings stay: bloom mode 2 would misfire
 // the host's own bloom (nvn_mtl.m), and reflections (+0x6634) need a normal and roughness target nothing writes on Switch, so everything would be a mirror. DM_ENV_DETAIL=0/1 forces it
 static _Atomic int g_ed_launch = -1, g_ed_forced;
 __attribute__((weak)) int mtl_rt_supported(void) { return 0; }

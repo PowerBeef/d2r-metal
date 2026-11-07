@@ -82,9 +82,11 @@ touch_cases() {   # 触屏功能用例：退出码 3 = 本机缺前缀录制（�
 }
 export -f touch_cases
 fresh_mac_app() {   # Mac App 测试副本按 HEAD 重出（构建号对不上就重出；测试用 bundle id，玩家的数据不碰） | rebuild the Mac App test copy for HEAD (when its stamp differs; test bundle id, the player's data is untouched)
-  local dir="$DM_ROOT/out/macapp_test" stamp="$DM_ROOT/out/macapp_test/.gate_head"
-  [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$HEAD_SHA+$DIRTY" ] && return 0
-  DM_MAC_BUNDLE_ID=org.d2rmobile.mac.test bash "$DM/tools/mac_app.sh" "$dir" && echo "$HEAD_SHA+$DIRTY" > "$stamp"
+  # The stamp is the content of the uncommitted changes, not their number: two different trees with five changed files each once shared a stamp, and the Mac tier ran the older build
+  local dir="$DM_ROOT/out/macapp_test" stamp="$DM_ROOT/out/macapp_test/.gate_head" want
+  want="$HEAD_SHA+$( { git -C "$DM" status --porcelain; git -C "$DM" diff HEAD; } | shasum | cut -c1-16)"
+  [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$want" ] && return 0
+  DM_MAC_BUNDLE_ID=org.d2rmobile.mac.test bash "$DM/tools/mac_app.sh" "$dir" && echo "$want" > "$stamp"
 }
 export -f fresh_mac_app
 
@@ -135,6 +137,7 @@ for tier in "${TIERS[@]}"; do
     step full_iosmac_scenarios 1800 -- bash -c 'scn_run "$@" --backend ios-mac' _ $(scenarios)   # front runs (the iOS package takes the front): a disturbed one is redone, then ⚪
     step full_metal_validation 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/enter_game.scn" --backend cli --headless --metal-validation api
     step full_metal_validation_rec 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/picture/recfg.scn" --backend cli --headless --metal-validation api   # at the Recommended picture
+    step full_metal_validation_rt 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/picture/recfg.scn" --backend cli --headless --metal-validation api --env DM_RT=1   # the same, with ray tracing on
     step full_metal_validation_conv 600 -- python3 "$DM/tools/scenario.py" run "$DM/verify/scenarios/picture/rec.scn" --backend cli --headless --metal-validation api   # at the conventional one
     step full_macapp_picture 900 -- bash -c 'scn_run "$@" --backend mac-app' _ "$DM/verify/scenarios/picture/"mac_*.scn   # first launches: this Mac and an M1 stand-in
     # 我们自己的基线（golden.py；没录过 = ⚪ 不可用，不算红） | our own baselines (golden.py; never recorded = ⚪ unavailable, not red)
