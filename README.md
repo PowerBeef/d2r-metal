@@ -48,7 +48,7 @@ You know these places. Now walk them with the light traced through them: torches
 - **Your shadow is real.** Torches, braziers and your own character throw ray-traced shadows that swing as you pass.
 - **Shade settles where it should,** at the foot of walls, under ledges, between the stones, and the sun's shadows are traced across the Blood Moor too.
 
-Ray tracing has four levels, **Off, Light, Standard and Full**, and switches instantly. It needs a Mac with an M3 or later; the game turns it on by itself where your Mac can hold 60 fps ([which Macs](#supported-devices)). iPhone and iPad don't have it yet. The torch glints on polished floors are the game's own effect lights, turned up with Environment Detail, so the lighter levels keep them.
+Ray tracing has four levels, **Off, Light, Standard and Full**, and switches instantly. It needs a Mac with an M3 or later; the game turns it on by itself where your Mac can hold 60 fps ([which Macs](#supported-devices)). Ray tracing is a Mac feature; iPhone and iPad don't get it. The torch glints on polished floors are the game's own effect lights, turned up with Environment Detail, so the lighter levels keep them.
 
 <h2 align="center" id="across-sanctuary"><img src="docs/images/r3-plate-sanctuary.jpg" width="100%" alt="Across Sanctuary"></h2>
 
@@ -340,7 +340,7 @@ A few quality-of-life switches live on the **Extras** tab of Options, each one o
 
 **Can I play online?** No. D2R Metal is single player, offline, forever yours.
 
-**Will I get ray tracing?** On a Mac with an M3 or later and at least 16 GB, the game turns it on where it estimates you'll hold 60 fps. On any other M3-or-later Mac you can turn it on yourself. iPhone and iPad don't have it yet.
+**Will I get ray tracing?** On a Mac with an M3 or later and at least 16 GB, the game turns it on where it estimates you'll hold 60 fps. On any other M3-or-later Mac you can turn it on yourself. Ray tracing is a Mac feature; iPhone and iPad don't get it.
 
 **How do updates work?** The launcher watches this project's releases, updates the game and itself, and can roll back. The game's main menu also lets you know when something new is out.
 
