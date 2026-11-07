@@ -1773,6 +1773,23 @@ static void pg_compute_end(id e) {   // 收 pg_compute 开的计算编码器之�
     if (g_pg_copen >= 0 && e) { [(CENC)e writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed intoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)g_pg_copen]; g_pg_copen = -1; }
 }
 static void pg_end_render(void) { if (g_pg_open >= 0) { g_pg_pass[g_pg_open].draws += (int)g_stat_draw; g_pg_open = -1; } }
+// 宿主自己的工作块（光线追踪的捕获、结构构建、各内核）：kind H，标签写在 load 栏，同一个计算编码器里按块起止各写一个精确时间戳（宽松粒度在编码器内只给一个点）
+// Host work blocks (the rays' capture, structure builds, kernels): kind H with the label in the load column; inside one compute encoder each block writes a precise start and end
+// timestamp (the relaxed granularity gives one point per encoder). pg_host_render marks a host render pass the same way: open it, pg_render_begin / pg_render_finish around its draws
+static int g_pg_hopen = -1;
+static void pg_host_begin(id ce, const char *label) {
+    pg_pass *p = pg_new(2, 2); if (!p || !ce) { g_pg_hopen = -1; return; }
+    p->draws = 0; strlcpy(p->load, label, sizeof p->load); g_pg_hopen = g_pg_np - 1;
+    [(CENC)ce writeTimestampWithGranularity:MTL4TimestampGranularityPrecise intoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)p->slot];
+}
+static void pg_host_end(id ce) {
+    if (g_pg_hopen < 0 || !ce) return;
+    [(CENC)ce writeTimestampWithGranularity:MTL4TimestampGranularityPrecise intoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)g_pg_pass[g_pg_hopen].slot + 1]; g_pg_hopen = -1;
+}
+static void pg_host_render(const char *label) {
+    pg_pass *p = pg_new(2, PG_RSLOTS); if (!p) return;
+    p->draws = 0; strlcpy(p->load, label, sizeof p->load); g_pg_open = g_pg_np - 1;
+}
 static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回调解析；fb = FB_ON(o, g_cb)（旧接口是命令缓冲的完成回调，Metal 4 是提交选项的反馈回调） | Hands this submission's pass table to the completion callback for parsing; fb = FB_ON(o, g_cb) (on the legacy API the command buffer completion handler, on Metal 4 the commit options feedback handler)
     if (!g_pg || !g_pg_np) return;
     int n = g_pg_np; pg_pass *ps = malloc(n * sizeof *ps); memcpy(ps, g_pg_pass, n * sizeof *ps);
@@ -1795,7 +1812,7 @@ static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回�
             double ms = (b - a) / 1e6;   // 时间戳与 CPU 同为 ns（本机 sampleTimestamps 实测 1:1） | Timestamps are in ns, same as the CPU (measured 1:1 via sampleTimestamps on this machine)
             double inc = b > prev_end ? (b - (a > prev_end ? a : prev_end)) / 1e6 : 0;
             if (b > prev_end) prev_end = b;
-            fprintf(g_pg_f, "%llu\t%d\t%c\t%.4f\t%.4f\t%d\t%d\t%u\t%u\t%s\t%d\t%llu\t%llu\t%llu\n", (unsigned long long)p->frame, p->idx, p->kind ? 'C' : 'R', ms, inc,
+            fprintf(g_pg_f, "%llu\t%d\t%c\t%.4f\t%.4f\t%d\t%d\t%u\t%u\t%s\t%d\t%llu\t%llu\t%llu\n", (unsigned long long)p->frame, p->idx, "RCH"[p->kind], ms, inc,
                     p->w, p->h, p->cfmt0, p->dfmt, p->load, p->draws, (unsigned long long)a, (unsigned long long)b, (unsigned long long)p->pass);
             if (p->idx < 256 && p->frame > 300) { pg_stat *st = &g_pg_st[p->idx]; st->sum += inc; st->n++; st->last = inc; st->meta = *p; }
             if (p->frame >= g_pg_rep_frame + 300 && p->frame > 300) {   // 每 300 帧报一次前五（第 300 帧起累计） | Report the top five every 300 frames (accumulated from frame 300)

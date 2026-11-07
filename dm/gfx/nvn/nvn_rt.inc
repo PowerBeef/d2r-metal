@@ -26,16 +26,19 @@ enum { RT_NEW_PER_FRAME = 24, RT_WORLD = 1, RT_CHAR = 2, RT_MAX_INST = 8192, RT_
 typedef struct { float ivp[16]; float iview[16]; float pvp[16]; float view[4]; float dir[4]; uint32_t size[2]; float bias, maxd; float ao_r, ao_cam[3], ao_pow; uint32_t ao_rays, ao_shift, tiles[2]; float l_src, l_stop, sun; uint32_t key_shift; float l_fill; float dir2[3], char_sun, refl_reach, dark; } rtx_u;
 static struct {
     int inited, bad; NSMutableDictionary<NSNumber *, RtBlas *> *blas;
-    __strong id<MTLBuffer> cap, scratch, inst, unif; __strong id<MTLAccelerationStructure> tlas; NSUInteger tlas_bytes; __strong id<MTLComputePipelineState> rpso, rbpso, cpso, kpso, kblurpso, aopso, blurpso, lpso, lblurpso; __strong id<MTLBuffer> aoraw, lraw, kraw, craw, rraw; __strong id<MTL4ArgumentTable> ct;
+    __strong id<MTLBuffer> cap, scratch, inst, unif; __strong id<MTLAccelerationStructure> tlas; NSUInteger tlas_bytes; __strong id<MTLComputePipelineState> noppso, rpso, rbpso, cpso, kpso, kblurpso, aopso, blurpso, lpso, lblurpso; __strong id<MTLBuffer> aoraw, lraw, kraw, craw, rraw; __strong id<MTL4ArgumentTable> ct;
     uint64_t built_frame, frames, built_blas, built_tris, reused, since; float cam[3]; float dir[3]; size_t as_bytes; float bias, ao_r, ao_p; int dir_logged, mode, ao_rays, ao_shift, ao_chars, local, key_shift; float l_src, l_stop, sun, l_fill, char_sun, char_dir[3], refl_reach, refl_k, refl_seen, dark; int show; int char_on, refl_on;
 } g_rtx;
 static const char *g_rtx_who = "";
 // The row's level, read at each submission: Light traces the key light, the occlusion and the materials; Standard adds the characters' own shadows; Full adds the local lights. DM_RT_CHAR, DM_RT_LOCAL and DM_RT_AO can still turn a part off at launch
 static int g_rtx_lv = 3;
+#define RTX_TG MTLSizeMake(32, 32, 1)   // the kernels' threadgroup (16 x 16 measured the same, 2026-11-07)
+typedef struct { __unsafe_unretained id<MTLComputePipelineState> pso; uint64_t raw, plane; MTLSize grid; } blur_t;   // a trace's blur, run after every trace is in flight: one barrier for all of them instead of one per part (Cathedral −1.1 ms a frame, ABBA 4+4, 2026-11-07; the picture is the same by construction)
 #define RTX_CHAR_NOW() (g_rtx.char_on && g_rtx_lv >= 2)
 #define RTX_LOCAL_NOW() (g_rtx.local && g_rtx_lv >= 3)
 int rtx_chars_traced(void) { return g_rtx.inited && !g_rtx.bad && RTX_CHAR_NOW(); }
 static const char *g_rtx_msl =
+    "kernel void rt_nop(uint id [[thread_position_in_grid]]) {}\n"   // one thread, nothing: a timestamp after the structure builds lands on it (DM_NVN_PASSGPU rt_build)
     "#include <metal_stdlib>\n#include <metal_raytracing>\nusing namespace metal;\nusing namespace metal::raytracing;\n"
     "struct U { float4x4 ivp; float4x4 iview; float4x4 pvp; float4 view; float4 dir; uint2 size; float bias; float maxd; float ao_r; packed_float3 ao_cam; float ao_pow; uint ao_rays; uint ao_shift; packed_uint2 tiles; float l_src; float l_stop; float sun; uint key_shift; float l_fill; packed_float3 dir2; float char_sun; float refl_reach; float dark; };\n"
     "constant float bayer[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};\n"
@@ -141,6 +144,7 @@ static int rtx_init(void) {
     if (g_rtx.inited) return !g_rtx.bad; g_rtx.inited = 1;
     NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(g_rtx_msl) options:nil error:&e]; id<MTLFunction> fn = [lib newFunctionWithName:@"rt_shadow"], fa = [lib newFunctionWithName:@"rt_ao"], fb = [lib newFunctionWithName:@"rt_ao_blur"];
     g_rtx.kpso = fn ? [g_dev newComputePipelineStateWithFunction:fn error:&e] : nil;
+    { id<MTLFunction> fz = [lib newFunctionWithName:@"rt_nop"]; g_rtx.noppso = fz ? [g_dev newComputePipelineStateWithFunction:fz error:&e] : nil; }
     { id<MTLFunction> fk = [lib newFunctionWithName:@"rt_shadow_blur"]; g_rtx.kblurpso = fk ? [g_dev newComputePipelineStateWithFunction:fk error:&e] : nil; g_rtx.kraw = [g_dev newBufferWithLength:(NSUInteger)3840 * 2160 options:MTLResourceStorageModePrivate]; const char *kh = getenv("DM_RT_KEY_HALF"), *su = getenv("DM_RT_SUN"); g_rtx.key_shift = kh ? atoi(kh) > 0 : 1; g_rtx.sun = su ? (float)atof(su) : 0.03f; if (g_rtx.kraw) res_add(g_rtx.kraw);
       { const char *re_ = getenv("DM_RT_REFL"), *rr_ = getenv("DM_RT_REFL_REACH"), *rk_ = getenv("DM_RT_REFL_K"), *rg_ = getenv("DM_RT_REFL_SEEN"), *rs_ = getenv("DM_RT_SHOW"); g_rtx.show = rs_ ? atoi(rs_) : 0; g_rtx.refl_seen = rg_ ? (float)atof(rg_) : 0.005f; g_rtx.refl_on = re_ ? atoi(re_) > 0 : 1; g_rtx.refl_reach = rr_ ? (float)atof(rr_) : 40.0f; g_rtx.refl_k = rk_ ? (float)atof(rk_) : 1.0f;
         if (g_rtx.refl_on) { id<MTLFunction> fr_ = [lib newFunctionWithName:@"rt_refl"]; g_rtx.rpso = fr_ ? [g_dev newComputePipelineStateWithFunction:fr_ error:&e] : nil; { id<MTLFunction> frb_ = [lib newFunctionWithName:@"rt_refl_blur"]; g_rtx.rbpso = frb_ ? [g_dev newComputePipelineStateWithFunction:frb_ error:&e] : nil; } g_rtx.rraw = [g_dev newBufferWithLength:(NSUInteger)1920 * 1080 * 4 options:MTLResourceStorageModePrivate]; if (!g_rtx.rpso || !g_rtx.rbpso || !g_rtx.rraw) { MLOG("【红】ray tracing: can't start the reflections (%s)", e.localizedDescription.UTF8String); g_rtx.refl_on = 0; } else res_add(g_rtx.rraw); } }
@@ -270,9 +274,11 @@ static void rtx_frame(void) {
           float dx = b->pos[0] - cx, dy = b->pos[1] - cy, dz = b->pos[2] - cz, al = dx * vm[2] + dy * vm[6] + dz * vm[10], ox = dx - al * vm[2], oy = dy - al * vm[6], oz = dz - al * vm[10]; if (ox * ox + oy * oy + oz * oz < RT_KEEP_RADIUS * RT_KEEP_RADIUS) ikey[ni++] = k.unsignedLongLongValue; } }   // near the picture only: the distance from the camera's axis
     if (nt) {
         MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new]; rp.renderTargetWidth = 16; rp.renderTargetHeight = 16; rp.defaultRasterSampleCount = 1;
+        pg_host_render("rt_cap");   // DM_NVN_PASSGPU: the rays' blocks as H rows, labelled
         RENC en = [g_cb renderCommandEncoderWithDescriptor:rp];
         if (en) {
             [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+            pg_render_begin(en);
             [en setArgumentTable:g_mv.vt atStages:MTLRenderStageVertex]; [g_mv.vt setAddress:g_mv.zero.gpuAddress atIndex:VB_ZERO]; [g_mv.vt setAddress:u_gpu atIndex:3];
             uint8_t *ab = g_mv.snap[g_mv.ri].contents; uint64_t ab_gpu = g_mv.gpu[g_mv.ri];
             for (int i = 0; i < nt; i++) {
@@ -285,8 +291,8 @@ static void rtx_frame(void) {
                
                 [en drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:d->count indexType:d->itype == 1 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32 indexBuffer:d->ib_gpu indexBufferLength:d->ib_len instanceCount:1 baseVertex:d->base_vertex baseInstance:d->base_instance];
             }
-            enc_host_r_end(en);
-        } else nt = 0;
+            pg_render_finish(en); enc_host_r_end(en); pg_end_render();
+        } else { nt = 0; pg_end_render(); }
     }
     CENC ce = enc_c_begin(NULL);
     [ce barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
@@ -318,31 +324,36 @@ static void rtx_frame(void) {
     if (scr_at + ts.buildScratchBufferSize <= RT_SCRATCH_BYTES && nu) {
         [ce buildAccelerationStructure:g_rtx.tlas descriptor:td scratchBuffer:MTL4BufferRangeMake(g_rtx.scratch.gpuAddress + scr_at, ts.buildScratchBufferSize)];
         [ce barrierAfterEncoderStages:MTLStageAccelerationStructure beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+        if (pg_on() && g_rtx.noppso) {   // the builds' cost: the build stage lands between no block's timestamps, so a one-thread dispatch right after them carries it as its own increment
+            pg_host_begin(ce, "rt_build"); [ce setComputePipelineState:g_rtx.noppso]; [ce dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)]; pg_host_end(ce);
+            [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice]; }
         // 4. the mask
         [ce setArgumentTable:g_rtx.ct]; [g_rtx.ct setTexture:g_mv.depth.gpuResourceID atIndex:0]; [g_rtx.ct setTexture:last.gpuResourceID atIndex:2]; [g_rtx.ct setAddress:u_gpu atIndex:0]; [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1];
+        blur_t blurs[6]; int nblur = 0;   // the traces write their own raw buffers and read only depth, last frame and the structures, so they need no barrier between them
         // Where the game gives the key light no strength (scene block row 51: nothing in most dungeons) its rays would change nothing
         int key_rays = g_rtx.mode != 3; if (key_rays) { float kc[3]; int kok = 1; for (int i = 0; i < 3; i++) if (!ubo_float(1, (uint16_t)(10 << 8 | 51 << 2 | i), &kc[i])) kok = 0; if (kok && fabsf(kc[0]) < 0.01f && fabsf(kc[1]) < 0.01f && fabsf(kc[2]) < 0.01f) key_rays = 0; }
         if (key_rays) {
             MTLSize kg = MTLSizeMake(u.size[0] >> u.key_shift, u.size[1] >> u.key_shift, 1);
-            [g_rtx.ct setAddress:g_rtx.kraw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.kpso]; [ce dispatchThreads:kg threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
-            [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-            [g_rtx.ct setAddress:g_rtx.kraw.gpuAddress atIndex:1]; [g_rtx.ct setAddress:support_gpu() + 4096 atIndex:2]; [ce setComputePipelineState:g_rtx.kblurpso]; [ce dispatchThreads:kg threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
-            [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1];
+            pg_host_begin(ce, "rt_key");
+            [g_rtx.ct setAddress:g_rtx.kraw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.kpso]; [ce dispatchThreads:kg threadsPerThreadgroup:RTX_TG];
+            blurs[nblur++] = (blur_t){g_rtx.kblurpso, g_rtx.kraw.gpuAddress, support_gpu() + 4096, kg};
+            pg_host_end(ce);
         }
         int con = 0;
         if (RTX_CHAR_NOW() && (g_rtx.char_dir[0] != 0 || g_rtx.char_dir[1] != 0 || g_rtx.char_dir[2] != 0)) {   // the characters' own shadow, along their own axis, hitting characters only
             MTLSize kg = MTLSizeMake(u.size[0] >> u.key_shift, u.size[1] >> u.key_shift, 1);
-            [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-            [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; [g_rtx.ct setAddress:g_rtx.craw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.cpso]; [ce dispatchThreads:kg threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
-            [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-            [g_rtx.ct setAddress:g_rtx.craw.gpuAddress atIndex:1]; [g_rtx.ct setAddress:support_gpu() + 4096 + 3 * (uint64_t)u.size[0] * u.size[1] atIndex:2]; [ce setComputePipelineState:g_rtx.kblurpso]; [ce dispatchThreads:kg threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
-            [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; con = 1;
+            pg_host_begin(ce, "rt_char");
+            [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; [g_rtx.ct setAddress:g_rtx.craw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.cpso]; [ce dispatchThreads:kg threadsPerThreadgroup:RTX_TG];
+            blurs[nblur++] = (blur_t){g_rtx.kblurpso, g_rtx.craw.gpuAddress, support_gpu() + 4096 + 3 * (uint64_t)u.size[0] * u.size[1], kg};
+            con = 1;
+            pg_host_end(ce);
         }
         if (g_rtx.ao_rays) {   // 5. the occlusion: its rays into a plane of its own, then a box over the 4 x 4 pattern of their directions, into the plane behind the mask
             uint64_t plane = support_gpu() + 4096 + (uint64_t)u.size[0] * u.size[1];
-            [g_rtx.ct setAddress:g_rtx.aoraw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.aopso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> u.ao_shift, u.size[1] >> u.ao_shift, 1) threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
-            [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-            [g_rtx.ct setAddress:g_rtx.aoraw.gpuAddress atIndex:1]; [g_rtx.ct setAddress:plane atIndex:2]; [ce setComputePipelineState:g_rtx.blurpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> u.ao_shift, u.size[1] >> u.ao_shift, 1) threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
+            pg_host_begin(ce, "rt_ao");
+            [g_rtx.ct setAddress:g_rtx.aoraw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.aopso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> u.ao_shift, u.size[1] >> u.ao_shift, 1) threadsPerThreadgroup:RTX_TG];
+            blurs[nblur++] = (blur_t){g_rtx.blurpso, g_rtx.aoraw.gpuAddress, plane, MTLSizeMake(u.size[0] >> u.ao_shift, u.size[1] >> u.ao_shift, 1)};
+            pg_host_end(ce);
         }
         // 6. the first four local lights of each pixel's tile: rays at half the picture each way, then the same box
         int lon = 0;
@@ -350,12 +361,11 @@ static void rtx_frame(void) {
             const p_bind_buf *sc = &S.ssbo[1][4], *sl = &S.ssbo[1][5]; void *mb; uint64_t mo, gc = 0, gl = 0, trid = 0; void *tv = NULL; int tid = (int)(S.tex[1][8] & 0xfffff); if (tid) trid = tex_fast_rid(tid, &tv);
             if (sc->addr && sl->addr && trid && mtl_gpu_addr(sc->addr, sc->size ? sc->size : 1, &mb, &mo, &gc) && mtl_gpu_addr(sl->addr, sl->size ? sl->size : 1, &mb, &mo, &gl)) {
                 uint64_t plane = support_gpu() + 4096 + 2 * (uint64_t)u.size[0] * u.size[1];
-                [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                pg_host_begin(ce, "rt_local");
                 [g_rtx.ct setTexture:g_mv.depth.gpuResourceID atIndex:0]; [g_rtx.ct setTexture:(MTLResourceID){trid} atIndex:1]; [g_rtx.ct setAddress:u_gpu atIndex:0]; [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; [g_rtx.ct setAddress:g_rtx.lraw.gpuAddress atIndex:2]; [g_rtx.ct setAddress:gc atIndex:3]; [g_rtx.ct setAddress:gl atIndex:4];
-                [ce setComputePipelineState:g_rtx.lpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
-                [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-                [g_rtx.ct setAddress:g_rtx.lraw.gpuAddress atIndex:1]; [g_rtx.ct setAddress:plane atIndex:2]; [ce setComputePipelineState:g_rtx.lblurpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
-                lon = 1;
+                [ce setComputePipelineState:g_rtx.lpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1) threadsPerThreadgroup:RTX_TG];
+                blurs[nblur++] = (blur_t){g_rtx.lblurpso, g_rtx.lraw.gpuAddress, plane, MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1)};
+                lon = 1; pg_host_end(ce);
             } else { static int once; if (!once++) MLOG("ray tracing: the local light lists aren't bound (shader %s)", g_rtx_who); }
         }
         // 7. the mirror direction, off flat surfaces: what's there, read from last frame's picture, still in the forward pass's own colour target since that pass hasn't opened. A surface that isn't in the picture gives nothing
@@ -363,13 +373,17 @@ static void rtx_frame(void) {
         if (g_rtx.refl_on) {
             {
                 uint64_t plane = support_gpu() + refl_off;   // four channels: on a four-byte boundary, unlike what the plane before it leaves
-                [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                pg_host_begin(ce, "rt_refl");
                 [g_rtx.ct setTexture:g_mv.depth.gpuResourceID atIndex:0]; [g_rtx.ct setAddress:u_gpu atIndex:0]; [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; [g_rtx.ct setAddress:g_rtx.rraw.gpuAddress atIndex:2];
-                [ce setComputePipelineState:g_rtx.rpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
-                [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-                [g_rtx.ct setAddress:g_rtx.rraw.gpuAddress atIndex:1]; [g_rtx.ct setAddress:plane atIndex:2]; [ce setComputePipelineState:g_rtx.rbpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 32, 1)];
-                ron = 1;
+                [ce setComputePipelineState:g_rtx.rpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1) threadsPerThreadgroup:RTX_TG];
+                blurs[nblur++] = (blur_t){g_rtx.rbpso, g_rtx.rraw.gpuAddress, plane, MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1)};
+                ron = 1; pg_host_end(ce);
             }
+        }
+        if (nblur) {   // every trace is in flight together; one barrier, then the blurs (depth, last frame and the constants are still bound from the traces)
+            pg_host_begin(ce, "rt_blurs"); [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+            for (int i = 0; i < nblur; i++) { [g_rtx.ct setAddress:blurs[i].raw atIndex:1]; [g_rtx.ct setAddress:blurs[i].plane atIndex:2]; [ce setComputePipelineState:blurs[i].pso]; [ce dispatchThreads:blurs[i].grid threadsPerThreadgroup:RTX_TG]; }
+            pg_host_end(ce);
         }
         uint32_t *hdr = (uint32_t *)((uint8_t *)support_buf().contents + 2048); hdr[1] = u.size[0]; hdr[2] = u.size[1]; hdr[3] = g_rtx.ao_rays > 0; hdr[4] = (uint32_t)g_rtx.ao_shift; hdr[5] = (uint32_t)lon; hdr[6] = (uint32_t)g_rtx.key_shift; hdr[7] = (uint32_t)con; hdr[8] = (uint32_t)ron; memcpy(&hdr[9], &g_rtx.refl_k, 4); hdr[10] = refl_off; memcpy(&hdr[11], &g_rtx.refl_seen, 4); hdr[12] = (uint32_t)g_rtx.show; { float wt_ = dm_env_wetness(); memcpy(&hdr[13], &wt_, 4); }
         { float ib = dm_env_ibl_intensity(), ex = 1, rot[9]; ubo_float(1, (uint16_t)(10 << 8), &ex);
