@@ -39,9 +39,9 @@ t_fgpace: t_fgpace.c ../nvn/nvn_fgpace.h
 	clang -O1 -Wall -o $@ t_fgpace.c -lm
 t_capture: t_capture.c ../nvn/nvn_capture.c ../nvn/nvn_capture.h ../nvn/nvn_obj.h
 	clang -O1 -Wall -I../nvn/include -o $@ t_capture.c ../nvn/nvn_capture.c
-# DM_NVN_CAPTURE replayer (nvn_capture.inc): not in run, it needs a capture: ./nvn_replay <file.nvncap> [--repeat n] [--max-pixels n] [--png path]
-nvn_replay: nvn_replay.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
-	clang $(CFLAGS) -fobjc-arc -o $@ nvn_replay.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
+# DM_NVN_CAPTURE replayer (nvn_capture.inc): not in run, it needs a capture: ./nvn_replay <file.nvncap> [--repeat n] [--max-pixels n] [--png path] [--rays --frames n --planes f --planes-ref f]
+nvn_replay: nvn_replay.m nvn_replay_rt.c ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ nvn_replay.m nvn_replay_rt.c ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_adaptive_pace: t_adaptive_pace.c ../nvn/nvn_adaptive_pace.h ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_adaptive_pace.c
 t_fuse_check: t_fuse_check.m ../../host/crash.c $(GFX) $(GFX_H)

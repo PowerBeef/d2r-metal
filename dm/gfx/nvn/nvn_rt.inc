@@ -217,6 +217,18 @@ static int rtx_slot_moving(uint64_t key, uint64_t h, uint64_t frame) {
 }
 // Replay thread, at a draw that reads the shadow map, before its pass opens: this frame's mask, once. Leaves the state so that the draw goes on as usual
 static void rtx_mask_off(void) { ((uint32_t *)((uint8_t *)support_buf().contents + 2048))[0] = 0; }
+// The five planes the rays leave in the support buffer, from the header the last traced frame wrote (rtx_frame): what dm/gfx/tests/nvn_replay --planes compares byte
+// for byte. Returns 0 when no rays ran or the header names planes past n bytes
+typedef struct { const char *name; size_t off, len; } rtx_plane;
+__attribute__((unused)) static int rtx_planes(const uint8_t *sb, size_t n, rtx_plane p[5]) {
+    if (n < 2048 + 64) return 0;
+    const uint32_t *h = (const uint32_t *)(sb + 2048); if (!h[0] || !h[1] || !h[2]) return 0;
+    size_t w = h[1], hh = h[2], wh = w * hh, ks = wh >> (2 * h[6]), half = (w >> 1) * (hh >> 1) * 4;
+    p[0] = (rtx_plane){"key", 4096, ks}; p[1] = (rtx_plane){"occlusion", 4096 + wh, wh >> (2 * h[4])}; p[2] = (rtx_plane){"local", 4096 + 2 * wh, half};
+    p[3] = (rtx_plane){"character", 4096 + 3 * wh, ks}; p[4] = (rtx_plane){"reflection", h[10], half};
+    for (int i = 0; i < 5; i++) if (p[i].off + p[i].len > n) return 0;
+    return 5;
+}
 static void rtx_frame(void) {
     uint64_t frame = atomic_load(&g_cur_frame); int c = g_mv.cur;
     if (g_rtx.built_frame == frame) return;

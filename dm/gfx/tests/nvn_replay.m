@@ -2,10 +2,14 @@
 // with the one the live run took. Built like the gfx tests that include nvn_mtl.m and hle_nvn.c in one translation unit (t_link_ticks.m): the replayer reaches the
 // replay layer's own tables without any entry point added for it.
 //   make -C dm/gfx/tests nvn_replay
-//   ./nvn_replay <capture> [--repeat n] [--max-pixels n] [--png path] [--list]
+//   ./nvn_replay <capture> [--repeat n] [--max-pixels n] [--png path] [--list] [--rays] [--frames n] [--planes file] [--planes-ref file]
 // --repeat n: n replays, each in a fresh process. --max-pixels n: a replay whose frame differs from the live one in at most n pixels still counts as a match (default 0,
 // bit for bit). Shaders come from the same libraries the host loads (DM_MSL_DIR, default $DM_ROOT/build/cache/metal_shader_cache). The anisotropy and MetalFX 3D
 // levels recorded with the first submit are applied first, then the live run's DM_* settings; a setting given to the replayer wins over both.
+// --rays turns the Mac's ray tracing on at Full (a test build otherwise has it off: nvn_replay_rt.c). --frames n replays the frame's submits n times as consecutive frames,
+// which the rays need to settle (they bring in at most 24 new structures a frame). --planes file writes the rays' result planes (the support buffer's first bytes, header
+// included) after the last frame; --planes-ref file compares them byte for byte, plane by plane (nvn_rt.inc rtx_planes), with the planes of a reference run, and then
+// the planes decide the exit status, not the picture: dm/verify/rays_replay.sh keeps a reference and runs a control that must change one plane.
 // Exit status: 0 the replayed frame equals the live one (within --max-pixels), 1 it differs, 2 the capture cannot be replayed by this build (record layout or shader
 // interface changed, a corrupt file): a 【红】 line says which. Captures hold game memory: keep them in $DM_ROOT, never in git.
 // Adapted from nxnative (github.com/seedds/nxnative, MIT, (c) 2026 seedds).
@@ -133,8 +137,30 @@ static void check_programs(const char *cap_chain) {   // every program resolves 
     if (missing) RFAIL("%d program stages resolve differently than at capture: the same libraries (DM_MSL_DIR) are needed", missing);
 }
 
+// --planes / --planes-ref: the rays' planes after the last frame, written and compared plane by plane. Returns 0 when they match the reference (or none is given), 1 when they
+// differ; a replay where no rays ran can't be judged (exit 2)
+static int planes_check(const char *out, const char *ref) {
+    const uint8_t *sb = (const uint8_t *)support_buf().contents; size_t n = MIN(rtx_mask_bytes(), (size_t)support_buf().length); rtx_plane p[5];
+    if (!rtx_planes(sb, n, p)) RFAIL("no ray planes after the last frame: the rays did not run (--rays, a frame with a world, hardware ray tracing)");
+    if (out) { FILE *f = fopen(out, "wb"); if (!f || fwrite(sb, 1, n, f) != n) RFAIL("cannot write %s", out); fclose(f); }
+    for (int i = 0; i < 5; i++) { uint64_t lit = 0; for (size_t k = 0; k < p[i].len; k++) lit += sb[p[i].off + k] != 0; printf("planes: %s %zu bytes, %.1f%% not zero\n", p[i].name, p[i].len, 100.0 * lit / MAX(p[i].len, 1u)); }
+    if (!ref) return 0;
+    FILE *f = fopen(ref, "rb"); if (!f) RFAIL("cannot read %s", ref);
+    uint8_t *r = malloc(n); size_t got = fread(r, 1, n, f); fclose(f); rtx_plane q[5];
+    if (got != n || !rtx_planes(r, n, q)) RFAIL("%s is not a planes file of this size (%zu bytes): record it again", ref, n);
+    int differ = 0;
+    for (int i = 0; i < 5; i++) {
+        if (q[i].off != p[i].off || q[i].len != p[i].len) { printf("planes: %s laid out differently from the reference (picture size or ray settings)\n", p[i].name); differ = 1; continue; }
+        uint64_t d = 0; for (size_t k = 0; k < p[i].len; k++) d += sb[p[i].off + k] != r[q[i].off + k];
+        printf("planes: %s %llu bytes differ from %s\n", p[i].name, (unsigned long long)d, ref); differ |= d != 0;
+    }
+    free(r);
+    printf(differ ? "【红】PLANES DIFFER from the reference\n" : "PLANES MATCH: every ray plane equals the reference byte for byte\n");
+    return differ;
+}
+
 int main(int argc, char **argv) { @autoreleasepool {
-    const char *path = NULL, *png = NULL, *maxpx_arg = "0"; int repeat = 1, index = 1, list = 0;
+    const char *path = NULL, *png = NULL, *maxpx_arg = "0", *planes = NULL, *planes_ref = NULL; int repeat = 1, index = 1, list = 0, frames = 1; extern int g_rp_rays;
     setvbuf(stdout, NULL, _IOLBF, 0); crash_install();   // pool pages the replay writes may be write-protected by the dirty tracker, as in the host
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--repeat") && i + 1 < argc) repeat = MAX(1, atoi(argv[++i]));
@@ -142,17 +168,21 @@ int main(int argc, char **argv) { @autoreleasepool {
         else if (!strcmp(argv[i], "--max-pixels") && i + 1 < argc) maxpx_arg = argv[++i];
         else if (!strcmp(argv[i], "--index") && i + 1 < argc) index = MAX(1, atoi(argv[++i]));   // (the n-th fresh replay of --repeat)
         else if (!strcmp(argv[i], "--list")) list = 1;   // print the captured textures (serial, size, format) and stop
+        else if (!strcmp(argv[i], "--rays")) g_rp_rays = 1;
+        else if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = MAX(1, atoi(argv[++i]));
+        else if (!strcmp(argv[i], "--planes") && i + 1 < argc) planes = argv[++i];
+        else if (!strcmp(argv[i], "--planes-ref") && i + 1 < argc) planes_ref = argv[++i];
         else if (argv[i][0] != '-' && !path) path = argv[i];
-        else { fprintf(stderr, "usage: %s <capture> [--repeat n] [--max-pixels n] [--png path] [--list]\n", argv[0]); return 2; }
+        else { fprintf(stderr, "usage: %s <capture> [--repeat n] [--max-pixels n] [--png path] [--list] [--rays] [--frames n] [--planes file] [--planes-ref file]\n", argv[0]); return 2; }
     }
     if (!path) { fprintf(stderr, "usage: %s <capture> [--repeat n] [--max-pixels n] [--png path]\n", argv[0]); return 2; }
     uint64_t maxpx = strtoull(maxpx_arg, NULL, 10);
     if (repeat > 1) {   // each replay in a fresh process: a replay in the same process would start from the replay layer's state the one before left
         int ok = 0, worst = 0;
         for (int k = 1; k <= repeat; k++) {
-            char idx[16]; snprintf(idx, sizeof idx, "%d", k); const char *args[12]; int na = 0;
-            args[na++] = argv[0]; args[na++] = path; args[na++] = "--index"; args[na++] = idx; args[na++] = "--max-pixels"; args[na++] = maxpx_arg;
-            if (png) { args[na++] = "--png"; args[na++] = png; }
+            char idx[16]; snprintf(idx, sizeof idx, "%d", k); const char *args[64]; int na = 0;   // the same arguments, without --repeat, plus this replay's index
+            for (int i = 0; i < argc && na < 60; i++) { if (!strcmp(argv[i], "--repeat") || !strcmp(argv[i], "--index")) { i++; continue; } args[na++] = argv[i]; }
+            args[na++] = "--index"; args[na++] = idx;
             args[na] = NULL;
             pid_t pid; extern char **environ; int st = 0; char self[1024]; uint32_t sn = sizeof self;   // this executable by its path (argv[0] may have come from PATH)
             if (_NSGetExecutablePath(self, &sn)) strlcpy(self, argv[0], sizeof self);
@@ -252,7 +282,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     for (size_t i = 0; i < rp_nch; i++) if (rp_ch[i].c.tag == CAP_LPIX) { lpix = rp_ch[i].d; lpixn = rp_ch[i].c.raw; }
     char live[65]; cap_hex(pres->sha256, live);
     uint64_t exec_ns = 0, pass0 = 0, draw0 = 0, frame_no = mtl_frame ? mtl_frame : 1;
-    for (uint32_t s = 1; s <= nsub; s++) {
+    for (int fr = 0; fr < frames; fr++, frame_no++) for (uint32_t s = 1; s <= nsub; s++) {   // --frames: the same submits again as the next frame
         uint64_t latch = 0;
         for (size_t i = 0; i < rp_nch; i++) {   // what changed before this submit, in the order it was captured
             cap_chunk *c = &rp_ch[i].c; uint8_t *d = rp_ch[i].d; if (c->submit != s) continue;
@@ -286,6 +316,9 @@ int main(int argc, char **argv) { @autoreleasepool {
         mtl_finish();   // the capture read the next submit's inputs after the GPU finished this one: so does the replay
         free(hs); for (uint32_t i = 0; i < rp_nseg; i++) free(rp_seg[i]);
     }
+    frame_no--;   // the loop stepped past the last frame it drew
+    int planes_rc = -1;   // -1: no --planes-ref; 0 the planes match; 1 they differ
+    if (planes || planes_ref) planes_rc = planes_check(planes, planes_ref);
     td_note(nil, 0); if (g_td_frame == (long)frame_no && !g_td_done) td_dump();   // DM_NVN_TEXDUMP=<frame>:<path> of the live frame number: the replay has no next frame to trigger it
     uint64_t pv = pres->tex; if (!dec_obj(NULL, CAP_K_TEX, &pv)) RFAIL("the presented texture is not in the capture");
     tex_t pt = *(const tex_t *)(uintptr_t)pv;
@@ -318,5 +351,6 @@ int main(int argc, char **argv) { @autoreleasepool {
     if (same) printf("MATCH: the replayed frame equals the live frame\n");
     else if (ok) printf("MATCH within --max-pixels %llu: the replayed frame differs from the live frame in %llu pixels\n", (unsigned long long)maxpx, (unsigned long long)npx);
     else printf("【红】MISMATCH: the replayed frame differs from the live frame%s\n", lpix ? "" : " (no live pixels in the capture: compared by digest only)");
+    if (planes_rc >= 0) return planes_rc;   // with a reference, the planes decide: the rays change the picture the live run took
     return ok ? 0 : 1;
 } }

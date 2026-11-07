@@ -472,7 +472,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Why:** Skinning and transforms come from the game's own code. A hundred new structures in one frame could stall the GPU for good.
 - **Setting:** Ray Tracing
 - **Switch:** DM_RT
-- **Test:** video_rt_mac, full_metal_validation_rt
+- **Test:** video_rt_mac, full_metal_validation_rt, dm/verify/rays_replay.sh
 - **Commit:** 52d7e81, 6bb74db
 - **Measured:** Builds 0.7 ms per drawn frame (M6, 2026-11-07). Level-change freezes 12 of 120 before the limit, 0 of 60 after (M6, 2026-11-05).
 - **Status:** confirmed
@@ -524,7 +524,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Why:** Fewer stalls between kernels. The result planes are byte-identical to the old order.
 - **Setting:** Ray Tracing
 - **Switch:** DM_RT
-- **Test:** video_rt_mac
+- **Test:** video_rt_mac, dm/verify/rays_replay.sh
 - **Commit:** acb1b72
 - **Measured:** Cathedral -1.1 ms (M6, ABBA, p 0.03, 2026-11-07).
 - **Status:** confirmed

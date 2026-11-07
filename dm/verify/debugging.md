@@ -194,6 +194,21 @@ DM_NVN_TEXDUMP=<frame>:<dir>/rep_%d.png dm/gfx/tests/nvn_replay …             
 - The replayer refuses a capture whose record layout (`nvn_obj.h`) or draw state (`nvn_mtl.m` `S`) changed, and stops when a program's translated shaders take other bindings than at capture. Captures hold game memory: they stay in `$DM_ROOT`, and the pre-commit guard refuses `*.nvncap`.
 - Debug a mismatch with `DM_NVN_PASSDUMP=<mtl_frame>` and `DM_NVN_TEXDUMP` on both sides (the capture's header names `mtl_frame`): the first render target that differs points at the missing input.
 
+### The rays, byte for byte
+
+A plain replay never traces rays: in a test build the host's ray tracing switch answers off. `--rays` turns them on at Full, `--frames n` replays the frame's submits as n consecutive frames (the rays bring in at most 24 new structures a frame, so give them about 600), `--planes <file>` writes the five ray planes after the last frame, and `--planes-ref <file>` compares them with another run's, plane by plane, byte for byte: then the planes decide the exit status, not the picture.
+
+```bash
+dm/gfx/tests/nvn_replay town.nvncap --rays --frames 600 --planes a.bin
+dm/gfx/tests/nvn_replay town.nvncap --rays --frames 600 --planes b.bin --planes-ref a.bin       # PLANES MATCH / 【红】PLANES DIFFER
+dm/verify/rays_replay.sh record --reason "<why>"     # keeps a town capture and its planes in $DM_ROOT/data/switch/golden/rays
+dm/verify/rays_replay.sh check                       # this tree's replay layer against them, with a control (gate step full_rays_replay)
+```
+
+The check's control replays with a larger sun (`DM_RT_SUN=0.5`): the key plane must change and no other, or a match proves nothing. (Occlusion off isn't a control: it also changes that plane's layout.) A change meant to alter what the rays draw records again, with its reason (`LOG.tsv` beside the capture). The planes are what the kernels wrote; how the forward shaders use them is judged by the picture sets. `DM_RT=2` with `--rays` traces in the rays-alone mode. After about 600 frames the replay's scene holds the live run's objects (town: 165, about 86,000 triangles).
+
+Open (2026-11-07): in a replay the rays don't reach the picture. The forward pass's output and the presented frame are byte-identical with rays off, on, rays-alone or occlusion off, although the planes are computed and the forward shaders carry the hooks. In the live game they do reach it. Until that is understood, judge the rays' look on the live game, not on a replayed picture.
+
 ## What the terrain material arrays hold
 
 The game keeps ground materials, terrain decals and terrain stamp masks in three texture arrays (BC1 colour, BC3 normals, BC4 single channels), filled by copying each source level to the array level with the same index. The terrain composite reads them only at level 0.
