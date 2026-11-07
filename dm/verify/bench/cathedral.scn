@@ -1,0 +1,30 @@
+# 基准路线：大教堂（第 1 幕，关卡 33）里来回走（cath）——暗处、反光地面：光线追踪最贵的地方。固定存档、固定地图种子，mark 切段。
+# Benchmark route: back and forth inside the Cathedral (Act 1, level 33; `cath`): dark, with reflective floors, the dearest place for ray tracing. Fixed save and map seed; mark cuts the segment.
+# Same walk as the README clip (readme_art rec.sh "cath 33"), repeated; stick walking on open ground, the automap closed.
+name cathedral
+requires cli
+save warlock
+env DM_GAME_SEED=305419896
+env DM_TEST_GOTO_LEVEL=150:33
+timeout 240
+
+enter_game
+sleep 6
+msg PanelManager:ClosePanel:AutoMap
+sleep 1
+mark cath
+stick -0.6 -0.2 40
+stick 0.6 0.2 80
+stick -0.6 -0.2 80
+stick 0.6 0.2 80
+stick -0.6 -0.2 80
+stick 0.6 0.2 80
+stick -0.6 -0.2 80
+stick 0.6 0.2 80
+stick -0.6 -0.2 80
+stick 0.6 0.2 80
+stick -0.6 -0.2 40
+mark end
+sleep 1
+quit
+check no_red
