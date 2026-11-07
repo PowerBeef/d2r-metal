@@ -279,7 +279,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Switch:** DM_ENV_DETAIL, DM_TEST_RCFG
 - **Test:** recfg, full_metal_validation_rec, full_metal_validation_rt
 - **Commit:** ff85299
-- **Measured:** No GPU cost at 2560 x 1440, ABBA x4, Far Oasis -0.12 ms, Burial Grounds +0.05 (M6, 2026-11-05).
+- **Measured:** No GPU cost at 2560 x 1440, ABBA x4, Far Oasis -0.12 ms, Burial Grounds +0.05 (M6, 2026-11-05). Each alone, share of pixels changed against Standard: the tier 13% in the Outer Cloister (its lawn texture only), 0.1 to 0.3% elsewhere; the lights 2.7% in the Barracks and 1.7% in the Cathedral, where torches burn (M6, fixed clock, 2026-11-07).
 - **Status:** confirmed
 - **Covers:** main+0x15ff470, renderer+0x6622, renderer+0x66bc
 
@@ -287,12 +287,12 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Layer:** engine field
 - **Engine:** Keeps ground materials and masks in three texture arrays whose edge comes from the boot config (128 px on Switch, 512 at the game's top level), and copies each source level into the array level with the same index, assuming source and array are the same size. The terrain composite reads these arrays only at level 0, for terrain stamps and terrain decals.
 - **Ours:** High raises the edge to 512. The Switch's assets stay 128 px, so `copy_t2t` fills the top two levels with the part that exists, in their corner, and zero elsewhere.
-- **Why:** Chosen on 2026-11-05 because the Outer Cloister then showed a stone court, read as closer to the PC captures. That reading was wrong: this is a known artifact. Each stamp and terrain decal shrinks to one corner, a sixteenth of its area, so what the artists painted there mostly disappears and the ground beneath shows. The Cloister's lawn and moss beds are the data's intent, and an artist's capture of the place shows grass with a walled bed. In the Barracks, the paving and cobble the artists laid over the old floor's blood shrink the same way, so that blood shows. Arrays the size of the assets (128 px) give back what was authored. That's the player's decision, as it changes the look.
+- **Why:** Chosen on 2026-11-05 because the Outer Cloister then showed a stone court, read as closer to the PC captures. That reading was wrong: this is a known artifact. Each stamp and terrain decal shrinks to one corner, a sixteenth of its area, so what the artists painted there mostly disappears and the ground beneath shows. The Cloister's lawn and moss beds are the data's intent, and an artist's capture of the place shows grass with a walled bed. In the Barracks, the paving and cobble the artists laid over the old floor's blood shrink the same way, so that blood shows. Arrays the size of the assets (128 px) give back what was authored. That's the player's decision, as it changes the look. Related, not a change of ours: the Switch build never draws its ordinary decals (blood stains, ash): at `main+0x165a960` every one of them fails its visibility test (1 against a bound of 0; 12,240 of 12,240 tests in the Barracks, 2026-11-07). The artists' Barracks captures show them.
 - **Setting:** Environment Detail
 - **Switch:** DM_ENV_DETAIL, DM_NVN_ARRDUMP
 - **Test:** recfg, full_metal_validation_rec, full_metal_validation_rt
 - **Commit:** ff85299, 02ffbbb
-- **Measured:** Arrays 73.4 MB at 512 px against 4.6 MB at 128 px. At 512 px, 5.5 to 6.2% of a mask's blocks hold data at level 0; at 128 px they match the source byte for byte (M6, 2026-11-07).
+- **Measured:** Alone, it changes 51% of the Outer Cloister's pixels, 4% in the Barracks (M6, fixed clock, 2026-11-07). Arrays 73.4 MB at 512 px against 4.6 MB at 128 px. At 512 px, 5.5 to 6.2% of a mask's blocks hold data at level 0; at 128 px they match the source byte for byte (M6, 2026-11-07).
 - **Status:** confirmed
 - **Covers:** renderer+0x664c
 
