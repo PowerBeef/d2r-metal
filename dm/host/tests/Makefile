@@ -116,6 +116,8 @@ run: \
 	python3 ../../tools/scenario.py check ../../verify/scenarios/*.scn ../../verify/scenarios/saves/*.scn ../../verify/scenarios/faults/*.scn ../../verify/scenarios/manual/*.scn ../../verify/scenarios/heap/*.scn ../../verify/scenarios/picture/*.scn ../../verify/golden/*.scn
 	$(if $(wildcard ../../verify/scenarios/pending/*.scn),python3 ../../tools/scenario.py check $(wildcard ../../verify/scenarios/pending/*.scn))
 	python3 ../../tools/test_switches.py
+	python3 ../../tools/test_enginemap.py
+	python3 ../../tools/test_arrdump.py
 	python3 ../../tools/switches.py check
 	$(B)/t_ctl
 	python3 test_ctl_transport.py

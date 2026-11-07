@@ -86,7 +86,7 @@ The scripts in `tools/`; usage is written in each file's header:
 |---|---|
 | `dmsh_xlate/` | The shader translation tool (C#), which references the translation library in `dm/third_party/ryujinx` |
 | `dmsh_build.py` | Drives the whole translation chain to produce the shader libraries; when the environment variable `IOSOUT=directory` is set, it also produces the iOS version |
-| `dmsh_rules.py` | MSL rewrite rules applied to `spirv-cross` output by shader key (each rule's source is part of its shaders' cache fingerprint); today one rule, which specialises the 7 fragment shaders that read the game's HDR output switch: the SMAA edge pass, the three variants of the final compose pass (drawn every frame, with FXAA too) and the three SMAA resolve variants (AA modes 3-5, never drawn here), so none of them computes the PQ curve it throws away. A rule may use only `re` and builtins (the cache fingerprints only its own text); `tests/test_dmsh_rules.py` checks that and each key's role against `shader_map.tsv` |
+| `dmsh_rules.py` | MSL rewrite rules applied to `spirv-cross` output by shader key (each rule's source is part of its shaders' cache fingerprint): seven today, each with a row in [docs/ENGINE_CHANGES.md](../../docs/ENGINE_CHANGES.md): `hdr_switch_split`, `velocity_entry`, `capture_entry`, `rt_shadow_hook`, `rt_ao_hook`, `rt_local_hook` and `rt_env_hook` |
 | `dmsh_chain.py`, `dmsh_chain.lock` | Translation chain version and tool fingerprints |
 | `dmsh_facts.py` | Generation and checking of the answer table `shader_facts.tsv` |
 | `dmsh_fetch.py` | Generates the "readable tile" versions of fragment shaders |
@@ -166,6 +166,7 @@ Logging and capture:
 | `DM_NVN_SHOT=frame[,frame…]:path` | Saves the swapchain texture as an image at the specified frames; `%d` in the path is replaced by the frame number |
 | `DM_NVN_SHOT_OUT=WxH` | Makes the screenshot above capture the picture after upscaling to this resolution instead |
 | `DM_NVN_TEXDUMP=frame:path` | Saves each color render target used in that frame as an image |
+| `DM_NVN_ARRDUMP=frame:dir` | Writes every compressed texture array a copy has filled, all levels and layers as raw blocks; `dm/tools/arrdump.py` reads them (see `dm/verify/debugging.md`) |
 | `DM_NVN_PASSDUMP=frame` or `start-end` | Writes each render pass's attachments, samples and presentation for these frames to standard error entry by entry, for analysis by `tools/tbdr_*.py`; additionally setting `DM_NVN_PASSDUMP_ALL` logs every draw |
 | `DM_NVN_PASSGPU=file` | Per-pass GPU time (requires device support for counter sampling at stage boundaries) |
 | `DM_NVN_PROF=1` | Wraps the implemented NVN functions in a timing wrapper and collects the time each function takes during recording |
@@ -191,4 +192,6 @@ The following paths are not implemented and report red in the log when reached (
 - indexed quad primitives, 8-bit indices;
 - some forms of texture-to-texture copy and texture clear.
 
-Functions listed in `g_nops`, such as `MultiDraw*IndirectCount`, `DispatchComputeIndirect`, `SetDepthBounds` and `DownsampleTextureView`, are empty implementations: calling them neither reports red nor has any effect.
+Functions listed in `g_nops` (`hle_nvn.c`), such as `DispatchComputeIndirect` and `SetDepthBounds`, are empty implementations: calling them neither reports red nor has any effect. `SetPatchSize`, `MultiDraw*IndirectCount` and `DownsampleTextureView` aren't among them: they report red if the game ever calls them, which it never has in about 42,000 frames.
+
+Everything the port changes in the game's engine, graphics or otherwise, is listed with its reason, switch, test and measurements in [docs/ENGINE_CHANGES.md](../../docs/ENGINE_CHANGES.md).

@@ -420,8 +420,25 @@ static void cap_release(void) {
     free(g_cap_sreg0); g_cap_sreg0 = NULL; free(g_cap_sreg0_ok); g_cap_sreg0_ok = NULL; g_cap_nsreg0 = 0;
     cap_buf_free(&g_cap_tobj); cap_buf_free(&g_cap_pobj); cap_buf_free(&g_cap_progb); cap_buf_free(&g_cap_dpolb);
 }
+// DM_NVN_ARRDUMP: see nvn_mtl.m. One file per array: arr_<serial>_pf<MTLPixelFormat>_<w>x<h>_m<levels>_l<layers>.bin, level by level, each level's layers in order
+static void arrdump_present(void) {
+    if (!arrdump_on()) return;
+    static long presents; if (++presents != g_ad_frame) return;
+    g_ad_on = 0; mkdir(g_ad_dir, 0755);
+    if (!g_ad_n) MLOG("【红】DM_NVN_ARRDUMP: no copy has written a compressed array by frame %d", g_ad_frame);
+    for (int i = 0; i < g_ad_n; i++) @autoreleasepool {
+        id<MTLTexture> t = g_ad_tex[i]; cap_tsub *subs; uint32_t nsub; id<MTLBuffer> b = cap_tex_readback(t, &subs, &nsub); char p[1300]; uint64_t total = 0;
+        snprintf(p, sizeof p, "%s/arr_%llu_pf%lu_%lux%lu_m%lu_l%lu.bin", g_ad_dir, (unsigned long long)g_ad_ser[i], (unsigned long)t.pixelFormat, (unsigned long)t.width, (unsigned long)t.height, (unsigned long)t.mipmapLevelCount, (unsigned long)t.arrayLength);
+        FILE *f = b ? fopen(p, "wb") : NULL;
+        for (uint32_t k = 0; b && k < nsub; k++) total += subs[k].bytes;
+        if (!f || fwrite(b.contents, 1, total, f) != total) MLOG("【红】DM_NVN_ARRDUMP: cannot write %s", p); else MLOG("DM_NVN_ARRDUMP: %s (%.1f MB)", p, total / 1e6);
+        if (f) fclose(f);
+        free(subs);
+    }
+}
 // Hook: the translation thread, before a present is queued (hle_nvn.c x_run)
 void nvn_cap_present(const tex_t *t, const int crop[4]) {
+    arrdump_present();
     if (!nvn_cap_enabled()) return;
     g_cap_presents++;
     if (!g_cap_active || g_cap_presents != (uint64_t)g_cap_frame) {

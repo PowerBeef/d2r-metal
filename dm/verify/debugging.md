@@ -194,6 +194,21 @@ DM_NVN_TEXDUMP=<frame>:<dir>/rep_%d.png dm/gfx/tests/nvn_replay …             
 - The replayer refuses a capture whose record layout (`nvn_obj.h`) or draw state (`nvn_mtl.m` `S`) changed, and stops when a program's translated shaders take other bindings than at capture. Captures hold game memory: they stay in `$DM_ROOT`, and the pre-commit guard refuses `*.nvncap`.
 - Debug a mismatch with `DM_NVN_PASSDUMP=<mtl_frame>` and `DM_NVN_TEXDUMP` on both sides (the capture's header names `mtl_frame`): the first render target that differs points at the missing input.
 
+## What the terrain material arrays hold
+
+The game keeps ground materials, terrain decals and terrain stamp masks in three texture arrays (BC1 colour, BC3 normals, BC4 single channels), filled by copying each source level to the array level with the same index. The terrain composite reads them only at level 0.
+
+`DM_NVN_ARRDUMP=<frame>:<dir>` writes every compressed array a copy has filled by that frame, all levels and layers as raw blocks, one file per array. `<frame>` counts presents from 1; a headless run shows about 27 a second.
+
+```bash
+python3 dm/tools/scenario.py run dm/verify/scenarios/enter_game.scn --backend cli --headless --env "DM_NVN_ARRDUMP=800:$DM_ROOT/run/arr"
+python3 dm/tools/arrdump.py list $DM_ROOT/run/arr
+python3 dm/tools/arrdump.py nonzero <file> <layer> [--level N]        # how much of a layer holds data, and where
+python3 dm/tools/arrdump.py sheet <file> out.png [--layers a,b-c] [--level N] [--cell 128]
+```
+
+To find which layer a place uses, read the per-tile records through the control port (`mem`, at most 4096 bytes a read): terrain decals at `main+0x3208ea0`, 196 records of 0x70 bytes; terrain stamps at `main+0x31fd6e0`, 196 tiles of 0xf0 bytes, a count and then up to two records of 0x70. A place with no terrain decals, such as the Outer Cloister, reads all zero there: run a place that has them, such as the Barracks, as a control. The dumps hold your own game's assets, so keep them and pictures made from them out of the repository, and delete them when done.
+
 ## Replay and the first divergent tick
 
 `dm/tools/replay.py` records a scenario run's client command packets and per-tick state (`DM_C2S_LOG`, `DM_TICKS_FULL`), then replays the packets on any host build (`DM_C2S_REPLAY`) and compares tick by tick. This answers whether a change or a build changes the game logic.

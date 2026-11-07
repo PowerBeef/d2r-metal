@@ -5854,6 +5854,19 @@ static int copy_t2t_astc(id<MTLTexture> s, id<MTLTexture> d, unsigned sl, unsign
 }
 // GPU：贴图 → 贴图（原先误列为空操作，选角页每帧 3 次）。等尺寸、不镜像、同格式 → 逐层 blit；其余语义（缩放带过滤、镜像、换格式）blit 表达不了，报红待实现
 // GPU: texture -> texture (previously mislisted as a no-op, 3 times per frame on the character select page). Same size, not mirrored, same format -> blit layer by layer; the other semantics (scaling with filtering, mirroring, format change) cannot be expressed by blit: report a failure, to be implemented
+// DM_NVN_ARRDUMP=<frame>:<dir>: the compressed texture arrays copies have written so far, every level and layer as raw blocks, at that frame's present (nvn_capture.inc; dm/tools/arrdump.py reads the files)
+static id<MTLTexture> g_ad_tex[16]; static uint64_t g_ad_ser[16]; static int g_ad_n, g_ad_on = -1, g_ad_frame; static char g_ad_dir[1024];
+static int arrdump_on(void) {
+    if (g_ad_on < 0) { const char *e = getenv("DM_NVN_ARRDUMP"); int used = 0; g_ad_on = 0; if (!e) return 0;
+        if (sscanf(e, "%d:%n", &g_ad_frame, &used) < 1 || !used || g_ad_frame < 1 || !e[used]) { MLOG("【红】DM_NVN_ARRDUMP=%s: expected <frame>:<dir>", e); return 0; }
+        snprintf(g_ad_dir, sizeof g_ad_dir, "%s", e + used); g_ad_on = 1; }
+    return g_ad_on;
+}
+static void arrdump_note(id<MTLTexture> d, uint64_t serial) {
+    if (!arrdump_on() || d.textureType != MTLTextureType2DArray) return;
+    for (int i = 0; i < g_ad_n; i++) if (g_ad_ser[i] == serial) return;
+    if (g_ad_n < 16) { g_ad_tex[g_ad_n] = d; g_ad_ser[g_ad_n++] = serial; }
+}
 // One level of one layer of an array to zero (copy_t2t: a level no source reaches). Private textures have no defined contents until written. Uncompressed on devices without BC (bc_unpack: 4 bytes a pixel)
 static void copy_t2t_zero_level(id<MTLTexture> d, NSUInteger slice, NSUInteger lv, NSUInteger w, NSUInteger h) {
     NSUInteger block = fmt_block_bytes(d.pixelFormat), row = block ? MAX((w + 3) / 4, 1u) * block : w * 4, img = row * (block ? MAX((h + 3) / 4, 1u) : h);
@@ -5873,14 +5886,14 @@ static void copy_t2t(const p_copy_t2t *c) {
     id<MTLTexture> s = tex_mtl(c->src), d = tex_mtl(c->dst);
     PD("T src=%llu dst=%llu %dx%dx%d→%dx%dx%d flags=%#x", c->src->serial, c->dst->serial, c->sr.width, c->sr.height, c->sr.depth, c->dr.width, c->dr.height, c->dr.depth, c->flags);
     if (!s || !d) return;
+    if (fmt_compressed(c->dst->d.format)) arrdump_note(d, c->dst->serial);
     unsigned sl = c->has_sv && c->sv.set_levels ? c->sv.base_level : 0, dl = c->has_dv && c->dv.set_levels ? c->dv.base_level : 0;
     unsigned sz0 = c->has_sv && c->sv.set_layers ? c->sv.min_layer : 0, dz0 = c->has_dv && c->dv.set_layers ? c->dv.min_layer : 0;
     PD("t src=%llu lv%u sl%u xyz=%d,%d,%d dst=%llu lv%u sl%u xyz=%d,%d,%d size=%d,%d,%d", c->src->serial, sl, sz0, c->sr.xoffset, c->sr.yoffset, c->sr.zoffset,
        c->dst->serial, dl, dz0, c->dr.xoffset, c->dr.yoffset, c->dr.zoffset, c->sr.width, c->sr.height, c->sr.depth);
     // A copy larger than its source: at Environment Detail High the game copies each decal layer into a 512 px array level by level, and the Switch's assets are 128 px, so a request
     // of (512 >> n) from source level n reads past the source (a release build doesn't check: stripes on floors). Each array level below the source's size takes the source level of its
-    // own size; the levels above it take the part of the copy that exists, in their corner, and read as zero elsewhere, defined rather than whatever a read past the source gave. The arrays stay 512 px: made 128 px, as the game makes them at
-    // Standard, the Outer Cloister's stone court and the blood go (2026-11-07), and those are the look of High
+    // own size; the levels above it take the part of the copy that exists, in their corner, and read as zero elsewhere, defined rather than whatever a read past the source gave. The terrain composite reads only level 0, so stamps and terrain decals shrink to that corner: docs/ENGINE_CHANGES.md EC-020. Arrays of 128 px, as at Standard, don't take this path
     p_copy_t2t cm; NSUInteger over = 0; while (d.textureType == MTLTextureType2DArray && fmt_compressed(c->src->d.format) && (s.width << over) < ((NSUInteger)c->sr.width << sl)) over++;
     if (over) {
         NSUInteger w = MAX(d.width >> dl, 1u), h = MAX(d.height >> dl, 1u);

@@ -42,14 +42,16 @@ Two conventions that run through the whole table:
 | DrawArrays / DrawElementsInstanced | Draw / indexed draw | Metal has no quad primitive: non-indexed quads are drawn as two triangles using the shared indices 0,1,2,0,2,3; indexed quads and 8-bit indices are not implemented and report red when encountered |
 | DispatchCompute | Compute encoder, with the thread group size taken from the reflection json | The 4 compute shaders embedded in the main program use the hand-written versions in `nvn/nvn_builtin.h` |
 | CopyBufferToBuffer / UpdateUniformBuffer | Buffer copies inserted in order into the command stream | The data of `UpdateUniformBuffer` is copied into command memory at record time, because NVN allows the caller to modify the original data after recording |
-| CopyBufferToTexture / CopyTextureToBuffer / CopyTextureToTexture | Texture copies | Some forms of texture-to-texture are not implemented and report red when encountered. A compressed array copy larger than its source (Environment Detail High: 128 px decal assets into 512 px arrays) takes each array level from the source level of its own size; the levels above take the part of the copy that exists, in their corner, and read as zero elsewhere |
+| CopyBufferToTexture / CopyTextureToBuffer / CopyTextureToTexture | Texture copies | Some forms of texture-to-texture are not implemented and report red when encountered. A compressed array copy larger than its source (Environment Detail High: 128 px material assets into 512 px arrays, a known artifact, [EC-020](../../docs/ENGINE_CHANGES.md)) takes each array level from the source level of its own size; the levels above take the part of the copy that exists, in their corner, and read as zero elsewhere |
 | ReportCounter / ResetCounter | The counter's value is written back after the GPU completes | The "samples passed" kind is implemented with Metal's visibility result buffer |
 | SignalEvent | The event's value is written, which happens after the GPU completes | — |
 | SetTexturePool / SetSamplerPool | Recorded into the command stream, noting the descriptor pool currently in use | — |
 
 The following are empty implementations (`g_nops` in `hle_nvn.c`); calling them neither reports red nor has any effect:
 
-`SetPatchSize`, `MultiDrawArraysIndirectCount`, `MultiDrawElementsIndirectCount`, `DispatchComputeIndirect`, `SetDepthBounds`, `DownsampleTextureView`, `WaitSync`, `SetShaderScratchMemory`, `PushDebugGroupDynamic`, `PopDebugGroup`, `InsertDebugMarkerDynamic`, `WaitEvent`, and `nvnWindowFinalize`.
+`DispatchComputeIndirect`, `SetDepthBounds`, `WaitSync`, `SetShaderScratchMemory`, `PushDebugGroupDynamic`, `PopDebugGroup`, `InsertDebugMarkerDynamic`, `WaitEvent` and `nvnWindowFinalize`.
+
+`SetPatchSize`, `MultiDrawArraysIndirectCount`, `MultiDrawElementsIndirectCount` and `DownsampleTextureView` aren't in that list. They go to the red-reporting stub, so a call would show rather than silently miss a draw. The game hasn't called them in about 42,000 frames.
 
 ## 3. Shader bindings
 
@@ -69,7 +71,18 @@ Switch shaders obtain their resources through a few constant sections maintained
 
 A texture slot with nothing bound is given a dummy texture, whose type and pixel class are taken from the reflection.
 
-## 4. Adding a function that is not implemented yet
+## 4. What this table doesn't cover
+
+This page maps NVN onto Metal one to one. What the port adds on top has its reasons, switches, tests and measurements in [docs/ENGINE_CHANGES.md](../../docs/ENGINE_CHANGES.md):
+
+- MetalFX scalers and the frame interpolator: EC-039 to EC-042
+- Ray tracing: EC-034 to EC-038
+- Pass barriers and bind filtering: EC-030, EC-031
+- Tile memory, load and store: EC-049
+- Argument tables, residency and queues: its "Metal 4" section
+- Present: EC-053
+
+## 5. Adding a function that is not implemented yet
 
 1. In `nvn/hle_nvn.c`, write the implementation with the `NVN(name, return type, parameters…)` macro. The macro does a signature check against `nvn/nvn_protos.h` and registers the implementation in the slot table; if the name is not in `nvn/names.txt`, the program aborts at startup.
 2. If it is a command: add the record format in `nvn/nvn_obj.h`, write the recording in `hle_nvn.c`, and write the replay in `nvn/nvn_mtl.m`.

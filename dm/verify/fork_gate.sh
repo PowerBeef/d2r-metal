@@ -97,6 +97,7 @@ for tier in "${TIERS[@]}"; do
     step quick_literals 120 -- python3 "$DM/i18n/scan_literals.py"
     step quick_i18n 120 -- python3 "$DM/ios/tools/dm_i18n.py" --check
     step quick_switches 120 -- python3 "$DM/tools/switches.py" check
+    step quick_enginemap 120 -- python3 "$DM/tools/enginemap.py" check
     step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/scenarios/picture/"*.scn "$DM/verify/scenarios/heap/"*.scn "$DM/verify/scenarios/manual/"*.scn "$DM/verify/golden/"*.scn "$DM/verify/bench/"*.scn
     step quick_hudgen 300 -- bash "$DM/ios/tools/check_hud_gen.sh"
     step quick_readdr 300 -- python3 "$DM/tools/re/addrcheck.py"   # cited main+0x... addresses vs the game program and the private analysis export (unavailable without them)
