@@ -22,7 +22,7 @@ dm/verify/fork_gate.sh full         # before rebuilding the apps: Mac App, the i
 | `python3 dm/ios/tools/dm_i18n.py --check` | Whether every row of `dm/i18n/ui_text.tsv` follows the rules, and whether the checked-in `dm/host/dm_i18n_tab.h` was generated from it |
 | `python3 dm/tools/switches.py check` | Whether `dm/switches.tsv` lists every `DM_*` switch the sources read, and no script sets a switch nothing reads (`switches.py gen` rewrites it) |
 
-GitHub CI (`.github/workflows/tests.yml`) runs these checks, the scenario parser, the HUD-derivatives check and the Python tool tests on every push to `main` and every pull request, with an empty workspace. The host, graphics and iOS suites need macOS 27 / Xcode 27.1 and partly the game's files, so they stay local. A nightly job (`fuzz.yml`) fuzzes the file parsers (`dm/tools/fuzz`).
+GitHub CI (`.github/workflows/tests.yml`) runs these checks, the scenario parser, the HUD-derivatives check and the Python tool tests on every push to `main` and every pull request, with an empty workspace. The host, graphics and iOS suites need macOS 27 / Xcode 27 and partly the game's files, so they stay local. A nightly job (`fuzz.yml`) fuzzes the file parsers (`dm/tools/fuzz`).
 
 ### Game files and a prepared workspace needed
 

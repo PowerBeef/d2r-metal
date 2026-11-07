@@ -47,7 +47,7 @@ it some other way (a Dock icon kept from an earlier session, say), it opens the 
   releases page instead; move it to Applications to let it update itself.
 - An update downloads the new release and redoes only what that release changed. Usually that is only the app itself (seconds). A release that changes the shader translation redoes it and the compile (a few minutes).
 - **Quit D2R Metal first:** an update, a repair or going back changes the game's files, so while the game runs the launcher asks you to quit it (leave your game first so your progress is saved).
-- **Go Back to the Previous Version** (under Manage) restores the app from before the last update. The version you went back from is then offered under Manage (**Update to …**) instead of as the main button, until a newer one comes out.
+- **Previous Version** (under Manage) restores the app from before the last update. The version you went back from is then offered under Manage (**Update to …**) instead of as the main button, until a newer one comes out.
 - There is one channel: the release GitHub shows as the project's latest. **Check for Updates** (under Manage, or in the app menu) asks GitHub again.
 - **After a macOS update**, macOS's Metal compiler is new, so the game compiles its shaders again the first time it starts. A small window shows the progress for a few minutes; this happens once.
 
@@ -55,7 +55,7 @@ it some other way (a Dock icon kept from an earlier session, say), it opens the 
 
 | What | Where |
 |---|---|
-| The game app | `~/Library/Application Support/D2R Metal/Game.noindex/D2R Metal.app` (**Show Game in Finder** under Manage; `.noindex` keeps it out of Spotlight and app search) |
+| The game app | `~/Library/Application Support/D2R Metal/Game.noindex/D2R Metal.app` (**Show in Finder** under Manage; `.noindex` keeps it out of Spotlight and app search) |
 | Game files, build outputs, the release packs, logs | `~/Library/Application Support/D2R Metal/` |
 | Your characters and settings | `~/Library/Application Support/D2R Mobile/` (the folder keeps the project's former name, so saves from earlier builds carry over) |
 
@@ -176,7 +176,7 @@ DM_LAUNCHER_FEED=file://$HOME/dm-work/release/1.0.0/manifest.json DM_LAUNCHER_RO
 - `DM_LAUNCHER_BUNDLE_ID` gives the installed app its own preferences and Metal cache.
 - Start the installed app with `DM_APP_SUPPORT` to keep its saves apart (a test copy also skips the hand-over to the launcher).
 - `DM_LAUNCHER_AUTORUN=update` (or `repair`, or `selfupdate`) runs that job as its button does, prints `LAUNCHER-AUTORUN OK|RED …` and quits.
-- `DM_LAUNCHER_PREVIEW=welcome|empty|offline|continue|damaged|working|stopping|home|reverted|game|failed` shows one screen with sample data (screenshots). `DM_LAUNCHER_PREVIEW_SIZE=<width>x<height>` sets the window's size, to check how the layout scales.
+- `DM_LAUNCHER_PREVIEW=welcome|empty|offline|continue|damaged|working|stopping|home|current|reverted|game|failed` shows one screen with sample data (screenshots). `DM_LAUNCHER_PREVIEW_SIZE=<width>x<height>` sets the window's size, to check how the layout scales.
 - A launcher built from source is build 0 unless `DM_LAUNCHER_BUILD` says otherwise: it never updates itself and never looks newer than a
   release to macOS. `DM_LAUNCHER_APP_ID` builds it with another bundle id.
 - A release launcher reads `DM_LAUNCHER_FEED` too, but every manifest it reads must carry the release key's signature; it ignores and removes the
