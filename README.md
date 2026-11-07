@@ -15,6 +15,7 @@
   <img alt="iOS and iPadOS 27 and later" src="https://img.shields.io/badge/iOS%20%2F%20iPadOS-27%2B-3a2c1c?style=flat-square&labelColor=0e0b09">
   <img alt="Metal 4 and MetalFX" src="https://img.shields.io/badge/Metal%204-MetalFX-3a2c1c?style=flat-square&labelColor=0e0b09">
   <img alt="Plays offline" src="https://img.shields.io/badge/plays-offline-3a2c1c?style=flat-square&labelColor=0e0b09">
+  <a href="#getting-started"><img alt="Needs your own Switch copy of the game" src="https://img.shields.io/badge/needs-your%20own%20Switch%20copy-7a2a1a?style=flat-square&labelColor=0e0b09"></a>
 </p>
 
 <p align="center">
@@ -23,7 +24,8 @@
 
 Sanctuary belongs on Apple silicon. D2R Metal brings **Diablo II: Resurrected with Reign of the Warlock** to your Mac, iPhone and iPad as a real native game: Blizzard's own code running on your chip, drawn by Metal 4, with ray-traced light on Macs that can carry it. No emulator, no streaming, no remake, no account, no internet. Just the Rogue Encampment waiting for you.
 
-You bring your own copy: D2R Metal builds itself from the Nintendo Switch version's files on your device, and ships none of the game.
+> ### 🎮 You need your own copy of the game, the Nintendo Switch version.
+> D2R Metal is not the game. It's the port: it builds itself from the files of **your own Switch copy of Diablo II: Resurrected with Reign of the Warlock**, dumped from your own console, and it ships none of the game. The Battle.net PC version can't be used. [How to get your files ready →](docs/GAME_FILES.md)
 
 <p align="center">
   <img src="docs/images/r3-plaques.jpg" width="100%" alt="Ray traced: shadows, shade and materials, picked for your chip. Native: the game's own code on your chip, Metal 4 only. 60 fps: 30 drawn, 60 shown, MetalFX in every frame. One app: installs, updates and starts the game.">
@@ -246,7 +248,7 @@ iPhones and iPads with an A14 to A16 chip also need a one-time [Legacy Device Pa
 
 <h2 align="center" id="getting-started"><img src="docs/images/r3-plate-start.jpg" width="100%" alt="Get Started"></h2>
 
-You'll need your own copy of the **Nintendo Switch version** of Diablo II: Resurrected with Reign of the Warlock, updated to 1.0.34.0 and dumped from your own console ([how](docs/GAME_FILES.md)). That's the Arm build of the game, the one that can run natively on Apple silicon. D2R Metal contains none of the game, and we don't distribute or endorse anyone who does.
+**First, the game itself.** D2R Metal needs your own copy of the **Nintendo Switch version** of Diablo II: Resurrected with Reign of the Warlock, updated to 1.0.34.0 and dumped from your own console ([how](docs/GAME_FILES.md)). The Switch version is the Arm build of the game, the one that can run natively on Apple silicon; the PC version can't be used. D2R Metal contains none of the game, and we don't distribute or endorse anyone who does.
 
 **On a Mac:**
 
