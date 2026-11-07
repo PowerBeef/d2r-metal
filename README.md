@@ -2,7 +2,7 @@
   <img src="docs/images/r3-hero.jpg" width="100%" alt="D2R Metal, native on Apple silicon: Diablo II: Resurrected and Reign of the Warlock">
 </p>
 
-<h3 align="center">Diablo II: Resurrected, ray traced and native on Apple silicon.</h3>
+<h3 align="center">Diablo II: Resurrected on your Mac, iPhone and iPad. Native, ray traced, and yours to play offline.</h3>
 
 <p align="center">
   <a href="https://github.com/PowerBeef/d2r-metal/releases/latest"><img src="docs/images/r3-btn-mac.png" height="66" alt="Download for Mac"></a>
@@ -21,9 +21,9 @@
   <picture><source media="(max-width: 700px)" srcset="docs/images/r3-clip-cath-s.avif" type="image/avif"><source srcset="docs/images/r3-clip-cath.avif" type="image/avif"><img src="docs/images/r3-clip-cath.jpg" width="100%" alt="The Cathedral in motion: the hero runs over dark, damp stone between two burning torches, her shadow swinging as she passes them"></picture>
 </p>
 
-D2R Metal is a native Apple silicon port of **Diablo II: Resurrected with Reign of the Warlock**. The game's own code runs directly on your chip, every frame is drawn with Metal 4, and it plays fully offline. It isn't an emulator, a stream or a remake.
+Sanctuary belongs on Apple silicon. D2R Metal brings **Diablo II: Resurrected with Reign of the Warlock** to your Mac, iPhone and iPad as a real native game: Blizzard's own code running on your chip, drawn by Metal 4, with ray-traced light on Macs that can carry it. No emulator, no streaming, no remake, no account, no internet. Just the Rogue Encampment waiting for you.
 
-You bring your own copy of the game: D2R Metal builds itself on your device from the Nintendo Switch version's files and contains none of the game.
+You bring your own copy: D2R Metal builds itself from the Nintendo Switch version's files on your device, and ships none of the game.
 
 <p align="center">
   <img src="docs/images/r3-plaques.jpg" width="100%" alt="Ray traced: shadows, shade and materials, picked for your chip. Native: the game's own code on your chip, Metal 4 only. 60 fps: 30 drawn, 60 shown, MetalFX in every frame. One app: installs, updates and starts the game.">
@@ -31,7 +31,7 @@ You bring your own copy of the game: D2R Metal builds itself on your device from
 
 <h2 align="center" id="ray-traced-sanctuary"><img src="docs/images/r3-plate-rays.jpg" width="100%" alt="Ray-Traced Sanctuary"></h2>
 
-Ray tracing is a finishing layer over the game's own lighting. It shows best in motion, and in the dark, where torchlight, wet stone and shadows are all you have. Every clip here is the game on a Mac mini with an M6, in full screen at the settings it picked for itself, with rays at Full.
+You know these places. Now walk them with the light traced through them: torches that throw your shadow across the Cathedral floor, flagstones that have never been this wet, and dark that is still properly dark. Rays sit on top of the game's own lighting, the way its artists meant it, and show best where the torches do the work. Every clip is the game as it runs on a Mac mini with an M6, at the settings it chose for itself, rays at Full.
 
 <p align="center">
   <picture><source media="(max-width: 700px)" srcset="docs/images/r3-clip-harem-s.avif" type="image/avif"><source srcset="docs/images/r3-clip-harem.avif" type="image/avif"><img src="docs/images/r3-clip-harem.jpg" width="49%" alt="The Harem in Act II: firelight runs across a polished checkered floor as the hero walks through"></picture>
@@ -42,13 +42,11 @@ Ray tracing is a finishing layer over the game's own lighting. It shows best in 
   <picture><source media="(max-width: 700px)" srcset="docs/images/r3-clip-glacial-s.avif" type="image/avif"><source srcset="docs/images/r3-clip-glacial.avif" type="image/avif"><img src="docs/images/r3-clip-glacial.jpg" width="49%" alt="An ice cave in Act V: the hero runs across the ice between braziers, their flames shining on the wet floor"></picture>
 </p>
 
-- **Materials answer the light.** Polished stone, ice and metal catch what's around them as you move, and damp places shine more than dry ones. The dark stays as dark as the game's artists made it.
-- **Fire and characters cast ray-traced shadows** that swing as you walk past.
-- **Soft shade** gathers where things meet, and the sun's shadows are traced too.
+- **Every surface answers the light its own way.** Marble, ice and steel catch the glow around them as you move. The Sewers and the Catacombs glisten; the desert stays dry; the Durance of Hate stays black.
+- **Your shadow is real.** Torches, braziers and your own character throw ray-traced shadows that swing as you pass.
+- **Shade settles where it should,** at the foot of walls, under ledges, between the stones, and the sun's shadows are traced across the Blood Moor too.
 
-The torch glints on polished floors aren't rays: they're the game's own effect lights, which D2R Metal turns up with Environment Detail.
-
-The **Ray Tracing** row has Off, Light, Standard and Full, and a change shows at once. It needs an M3 or later, and Recommended turns it on where it fits ([every Mac's pick](#supported-devices)). iPhone and iPad don't have rays yet.
+Ray tracing has four levels, **Off, Light, Standard and Full**, and switches instantly. It needs a Mac with an M3 or later; the game turns it on by itself where your Mac can hold 60 fps ([which Macs](#supported-devices)). iPhone and iPad don't have it yet. The torch glints on polished floors are the game's own effect lights, turned up with Environment Detail, so the lighter levels keep them.
 
 <h2 align="center" id="across-sanctuary"><img src="docs/images/r3-plate-sanctuary.jpg" width="100%" alt="Across Sanctuary"></h2>
 
@@ -63,26 +61,27 @@ The **Ray Tracing** row has Off, Light, Standard and Full, and a change shows at
 
 <h2 align="center" id="built-for-apple-silicon"><img src="docs/images/r3-plate-apple.jpg" width="100%" alt="Built for Apple Silicon"></h2>
 
-- **The game's own code, on your chip.** The few instructions an ordinary app can't run are rewritten once, ahead of time, and nothing is generated while you play.
-- **Metal 4 only.** Its command queues, argument tables and residency sets, with no older path kept alongside, and unified memory with nothing to copy.
-- **MetalFX in every frame.** Temporal upscaling builds detail from several frames, and frame interpolation creates every other frame. The interface is never warped, so text stays crisp.
-- **Hardware ray tracing** on the M3 and later.
-- **Presented the way Apple's guide describes,** on a thread and a queue of their own, so a frame waiting for the screen never holds up the next.
-- **Picked for your chip.** It reads your chip's generation, graphics cores, screen, memory and cooling, and sets the picture to match.
+This isn't a Windows game squeezed through a translation layer. It's Diablo II, rebuilt from the inside for the hardware you own.
+
+- **Blizzard's code, your chip.** The game runs directly on Apple silicon, with nothing in between to slow it or break it.
+- **Metal 4, and only Metal 4.** The graphics were rebuilt from scratch for Apple's newest graphics API, with no older code path dragging behind.
+- **MetalFX in every frame.** Apple's upscaler rebuilds detail from several frames and creates the frames in between, so the game can spend its time on light instead of pixels. Text and panels stay pin sharp.
+- **Hardware ray tracing** on the M3 and later, the way Apple designed it to be used.
+- **It sets itself up.** The first time it opens, it reads your chip, your screen, your memory and even whether your Mac has a fan, and picks the picture to match. Change screens and it works it out again.
 
 <h2 align="center" id="smooth-by-design"><img src="docs/images/r3-plate-smooth.jpg" width="100%" alt="Smooth by Design"></h2>
 
-The game draws 30 frames a second and MetalFX creates the 30 between. Each drawn frame gets twice the time, which is what pays for the rays, and you see 60.
+Diablo II lives on its rhythm: the click, the swing, the loot hitting the ground. D2R Metal draws 30 frames a second and MetalFX builds the 30 between, so your eye sees a steady 60 while every drawn frame gets twice the time. That's what pays for the rays. Here's what a play session looks like on screen: a flat line is a game that never stutters.
 
 <p align="center">
   <img src="docs/images/r3-chart-smooth.jpg" width="100%" alt="Two line charts of the milliseconds between images on screen, both nearly flat at 16.7. Mac mini with an M6, rays at Full, walking the Cathedral: 3,305 images in 55 seconds, 2 of them late, at 33.3 ms. iPhone 17 Pro, the world at 50%, walking the Far Oasis: 19,518 images in 325 seconds, 3 of them late, at 29.2 ms.">
 </p>
 
-<sub>One run each, leaving out the first 5 seconds as the place settles in. These are the only two devices measured so far. In a crowd of 100 monsters the iPhone 17 Pro runs at about 54 fps. Controls respond slightly later than at a real 60 fps: on an M6 with rays off, a click reaches the screen in about 96 ms against 73.5 ms.</sub>
+<sub>One session each, skipping the first 5 seconds while the area loads in. These are the two devices we've measured ourselves. Honest footnote: with 100 monsters on screen the iPhone 17 Pro dips to about 54 fps, and generated frames add a touch of input delay, about 22 ms on an M6. Nothing a Baal run will notice.</sub>
 
 <h2 align="center" id="the-launcher"><img src="docs/images/r3-plate-launcher.jpg" width="100%" alt="The Launcher"></h2>
 
-On the Mac, **D2R Metal Launcher** is the only thing you download. Point it at your game files, press **Install**, and press **Play**.
+No terminal, no scripts, no wiki page of steps. On the Mac you download one app, **D2R Metal Launcher**, show it your game files, press **Install**, and a coffee later you press **Play**.
 
 <p align="center">
   <img src="docs/images/r3-launcher-home.jpg" width="100%" alt="D2R Metal Launcher, ready to play, with the release notes, the installed version and a Play button">
@@ -92,17 +91,17 @@ On the Mac, **D2R Metal Launcher** is the only thing you download. Point it at y
   <img src="docs/images/r3-launcher-working.jpg" width="49%" alt="The launcher building the game, with its progress">
 </p>
 
-- **Builds the game on your Mac** from your own files, in about 10–15 minutes the first time. Nothing leaves your Mac.
-- **Keeps everything current.** It updates itself and the game, and your saves stay as they are.
-- **Can go back** to the previous version, and repairs a damaged install. Signed and notarized by Apple.
+- **Builds the game on your Mac,** from your own files, in about 10 to 15 minutes the first time. Nothing is uploaded anywhere.
+- **Keeps you current.** New version out? It tells you, updates itself and the game in a few minutes, and never touches your characters.
+- **Has your back.** It can roll back to the previous version, repair a damaged install, and it's signed and notarized by Apple so macOS just opens it.
 
 <h2 align="center" id="play-your-way"><img src="docs/images/r3-plate-controls.jpg" width="100%" alt="Play Your Way"></h2>
 
 | Mouse and keyboard | Controller | Touch |
 |---|---|---|
-| The game's own PC interface and D2R's PC keys, with the gauntlet pointer | The console interface, with hints for Xbox, PlayStation or Switch | Controls made for the game, on iPhone and iPad |
+| The real PC interface, the gauntlet pointer and the keys you already know | The console interface, with the right button hints for Xbox, PlayStation or Switch | Controls built for the game, on iPhone and iPad |
 
-Switching is automatic: press a button and the console interface comes up, move the mouse and the PC one returns.
+Pick up a controller mid-game and the console interface appears; touch the mouse and the PC one is back. No menu to visit.
 
 <p align="center">
   <img src="docs/images/r3-pc-world.jpg" width="49%" alt="Mouse and keyboard on the Mac: the game's PC HUD with its angel and demon beside the orbs, and the gauntlet pointer">
@@ -112,12 +111,14 @@ Switching is automatic: press a button and the console interface comes up, move 
 <details>
 <summary><b>The keys</b></summary>
 
-- Click to walk, attack, talk and pick up, and hold to keep going. Right click casts your right skill at the pointer, or uses the item under it.
-- Shift + click attacks without moving, and holding Shift compares an item with what you wear.
-- 1 – 4 drink from the belt, F1 – F8 pick skills, and the wheel steps through them.
-- I, C, T and Q open the inventory, character, skill tree and quests. Tab shows the map, Alt the items on the ground, W swaps weapons, and Esc closes what is open or opens the game menu.
+They're D2R's own PC defaults, so your hands already know them:
 
-Keys can't be rebound yet. Everything about playing on the Mac is in [docs/MAC.md](docs/MAC.md).
+- Click to walk, attack, talk and pick up; hold to keep going. Right click casts your right skill, or uses the item under the pointer.
+- Shift + click attacks without moving. Hold Shift over an item to compare it with what you wear.
+- 1 to 4 drink from the belt, F1 to F8 pick skills, the wheel steps through them.
+- I, C, T and Q for inventory, character, skills and quests. Tab for the map, Alt to show the loot on the ground, W to swap weapons, Esc to close things or open the menu.
+
+Rebinding isn't in yet. Everything else about the Mac version is in [docs/MAC.md](docs/MAC.md).
 
 </details>
 
@@ -127,15 +128,15 @@ Keys can't be rebound yet. Everything about playing on the Mac is in [docs/MAC.m
   <img src="docs/images/r3-iphone.jpg" width="100%" alt="The Rogue Encampment on an iPhone 17 Pro, with its touch controls">
 </p>
 
-The same game on the go: the world drawn at half size and rebuilt by MetalFX, at the picture size your chip can hold, with saves when the app goes to the background and iCloud sync between devices. For now the app is built from source with Xcode ([how](#on-iphone-and-ipad-or-to-develop-build-from-source)).
+The whole game, in your pocket, with touch controls made for it or any controller you pair. MetalFX rebuilds the world from half size so your phone stays cool and the frames stay steady, and each iPhone and iPad gets a picture size its chip can carry. It saves the moment you swipe away, and iCloud carries your characters between your devices. For now the iPhone and iPad app is built from source with Xcode ([how](#on-iphone-and-ipad-or-to-develop-build-from-source)).
 
 <h2 align="center" id="supported-devices"><img src="docs/images/r3-plate-devices.jpg" width="100%" alt="Supported Devices"></h2>
 
-**Needs:** a Mac with an M1 or later on macOS 27, or an iPhone or iPad with an A14 or later on iOS / iPadOS 27. **Rays need** an M3 or later. Here's what **Recommended** picks the first time it starts. You can change any of it.
+**You need:** a Mac with an M1 or later on macOS 27, or an iPhone or iPad with an A14 or later on iOS / iPadOS 27. **For ray tracing,** an M3 or later. Below is what the game picks for each device the first time it starts; you can change all of it in Options.
 
 #### Mac
 
-Each cell is the ray tracing level, then how many pixels wide the 3D world is drawn on that chip's usual screen. Two lines mean the larger GPU, then the smaller. The M6 is on a 2560 × 1440 display.
+Each cell shows the ray tracing level and how wide the 3D world is drawn, in pixels, on that chip's usual screen. Two lines mean the bigger GPU option, then the smaller. The M6 is on a 2560 × 1440 display.
 
 | | M6 | M5 | M4 | M3 | M2 | M1 |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -144,11 +145,11 @@ Each cell is the ray tracing level, then how many pixels wide the 3D world is dr
 | **Pro**<br><sub>14-inch</sub> | – | **Full**&nbsp;3024 | **Full**&nbsp;2570 | **Standard**&nbsp;2268<br>**Light**&nbsp;2026 | Off&nbsp;3024 | Off&nbsp;3024<br>Off&nbsp;2570 |
 | **Base**<br><sub>13-inch Air</sub> | **Full**&nbsp;2560 ✓ | **Light**&nbsp;1970<br>Off&nbsp;2500 | Off&nbsp;2500<br>Off&nbsp;1470 | Off&nbsp;1970<br>Off&nbsp;1920 | Off&nbsp;1470<br>Off&nbsp;1920 | Off&nbsp;1600 |
 
-Every Mac also gets MetalFX Temporal, frame generation, 16x filtering, Accurate color, Environment Shadows and Ultra shadow maps, except the 7-core M1 and the MacBook Neo (A18 Pro: Off, 1204 wide), which get lighter shadows. **✓ Only the M6 has been measured.** The rest are estimates from public benchmarks, about one step of 3D Resolution either way ([how they're made](docs/MAC.md#what-recommended-picks)).
+Every Mac also gets MetalFX, frame generation, 16x filtering, true colors, environment shadows and the finest shadow maps, except the 7-core M1 and the MacBook Neo (A18 Pro: no rays, 1204 wide), which get lighter shadows. **✓ marks the one Mac we've measured ourselves.** The rest are our best estimates from public benchmarks, and could be a notch off either way ([how we pick](docs/MAC.md#what-recommended-picks)). If your Mac has room to spare or struggles, nudge the 3D Resolution and Ray Tracing rows, and [tell us](https://github.com/PowerBeef/d2r-metal/issues/new/choose) what you've got.
 
 <h4 id="iphone-and-ipad">iPhone and iPad</h4>
 
-Every device gets MetalFX Temporal, frame generation, the world at 50%, 16x filtering and Accurate color. They differ in Picture Size.
+Every iPhone and iPad gets MetalFX, frame generation, the world at half size, 16x filtering and true colors. What changes from one device to the next is the Picture Size.
 
 | Picture Size | iPhone | iPad |
 |---|---|---|
@@ -157,9 +158,9 @@ Every device gets MetalFX Temporal, frame generation, the world at 50%, 16x filt
 | **Medium**<br><sub>62.5%</sub> | 15 Pro Max, 15 ≈, 15 Plus, 14 Pro ≈, 14 Pro Max, 14 ≈, 13 Pro ≈ | Pro 12.9 M1, mini A17 Pro, iPad A16 |
 | **Low**<br><sub>720 rows</sub> | 14 Plus, 13 Pro Max, 13 ≈, 13 mini, 12 Pro Max, 12 Pro ≈, 12 ≈, 12 mini | mini A15, iPad A14, Air A14 |
 
-> **✓ Measured** on the device itself: only the iPhone 17 Pro. **≈ Simulated** on that iPhone 17 Pro, at the device's picture size with extra graphics work to match our estimate: each held 60 fps in 30 seconds of play, but the processor isn't slowed, so a real device can do worse in a big fight. **No mark: estimated,** not run at all. If you have one of these, please [tell us](https://github.com/PowerBeef/d2r-metal/issues/new/choose) how it goes.
+> **✓** we played it on that very device (only the iPhone 17 Pro so far). **≈** we simulated it on the iPhone 17 Pro, slowing its graphics to match that chip: each one held 60 fps in town, but a real phone's slower processor could still dip in a big fight. **No mark:** an estimate from benchmarks, never run. Own one of these? [Tell us](https://github.com/PowerBeef/d2r-metal/issues/new/choose) how it plays.
 
-A14 to A16 devices also need a [Legacy Device Pack](docs/LEGACY_DEVICES.md), and those with 4 GB of memory run tightly.
+iPhones and iPads with an A14 to A16 chip also need a one-time [Legacy Device Pack](docs/LEGACY_DEVICES.md), and the 4 GB models run with little room to spare.
 
 <details>
 <summary><b>Every device in detail</b></summary>
@@ -245,13 +246,13 @@ A14 to A16 devices also need a [Legacy Device Pack](docs/LEGACY_DEVICES.md), and
 
 <h2 align="center" id="getting-started"><img src="docs/images/r3-plate-start.jpg" width="100%" alt="Get Started"></h2>
 
-You need your own copy of the Nintendo Switch version of Diablo II: Resurrected with Reign of the Warlock, updated to 1.0.34.0 and dumped from your own console ([how](docs/GAME_FILES.md)). D2R Metal contains none of the game, and we don't distribute or endorse anyone who does.
+You'll need your own copy of the **Nintendo Switch version** of Diablo II: Resurrected with Reign of the Warlock, updated to 1.0.34.0 and dumped from your own console ([how](docs/GAME_FILES.md)). That's the Arm build of the game, the one that can run natively on Apple silicon. D2R Metal contains none of the game, and we don't distribute or endorse anyone who does.
 
 **On a Mac:**
 
 1. **Download** `D2R-Metal-Launcher-<version>.dmg` from the [latest release](https://github.com/PowerBeef/d2r-metal/releases/latest) and drag **D2R Metal Launcher** to Applications.
 2. **Choose your game files:** the game packages (`.nsp` or `.xci`: the base game and the 1.0.34.0 update) with your console's `prod.keys`, or a folder you already extracted.
-3. **Press Install,** then **Play**. It needs about 30 GB free while installing. More in [docs/LAUNCHER.md](docs/LAUNCHER.md).
+3. **Press Install,** go make a coffee, then press **Play**. Keep about 30 GB free while it builds. More in [docs/LAUNCHER.md](docs/LAUNCHER.md).
 
 <details id="on-iphone-and-ipad-or-to-develop-build-from-source">
 <summary><b>On iPhone and iPad, or to develop: build from source</b></summary>
@@ -286,12 +287,12 @@ Run `./setup.sh` again after updating to a new commit. It also rewrites three fi
 <details id="picture-settings">
 <summary><b>Picture settings</b></summary>
 
-Every setting lives in the game's own Options. MetalFX Temporal and frame generation are always on and have no rows.
+Everything lives in the game's own Options screen, on the Video tab. MetalFX and frame generation are always on and have no switch.
 
 - **Mac:** Display Mode, Resolution (1600 × 900 to 2560 × 1440, or Native), Color (Accurate / Vivid), Graphic Presets, 3D Resolution (100 down to 50%), Ray Tracing and Frame Drops (lower the 3D resolution while frames drop, or keep it).
 - **iPhone and iPad:** Picture Size (at the next start), 3D Resolution (50 to 100%), Color and Graphic Presets.
 - **Both:** Anisotropic Filtering (Original up to 16x), Environment Shadows, Shadow Quality (Standard up to Ultra) and Environment Detail (all three at the next start).
-- **Graphic Presets:** Recommended, Performance (lighter) and Quality (on a Mac everything on but the rays, which stay your choice; on iPhone and iPad the world at 100% and Picture Size Full).
+- **Graphic Presets:** Recommended (what the game picked for you), Performance (lighter) and Quality (everything on; rays stay your call on the Mac, and iPhone and iPad get the world at full size).
 
 <p align="center">
   <img src="docs/images/r3-video-top.jpg" width="49%" alt="The Mac Video tab: Display Mode, Resolution, Color, Graphic Presets, 3D Resolution">
@@ -303,39 +304,41 @@ Every setting lives in the game's own Options. MetalFX Temporal and frame genera
 <details id="saves-you-can-trust">
 <summary><b>Saves you can trust</b></summary>
 
-- The Mac App saves on every quit, including from the Dock, at logout and with a text box still open; minimizing is treated like an iPhone going to the background.
-- The iPhone app saves when it goes to the background, so swiping it away doesn't lose progress.
-- A failed save (a full disk, for example) is refused with a message, and the next one goes through: one failure can't silently stop every later save.
-- A damaged shared stash can't hang iCloud sync.
-- **iCloud sync** works on iPhone and iPad, and on a Mac App you build and sign yourself with a paid developer account. The App the launcher installs keeps its saves on the Mac, and moving a character over by hand takes a minute ([docs/MAC.md](docs/MAC.md#saves-logs-and-icloud)).
+Nothing hurts like a lost character, so saving got real attention.
+
+- The Mac app saves whenever you quit, however you quit: from the Dock, at logout, even with a text box still open. Minimizing saves too.
+- The iPhone app saves the moment it goes to the background, so swiping it away loses nothing.
+- If a save can't be written (a full disk, say), the game tells you, and the next save still goes through. One failure can never quietly block the rest.
+- A damaged shared stash can't jam iCloud sync.
+- **iCloud sync** works between iPhones and iPads, and with a Mac app you build and sign yourself with a paid developer account. The Mac app from the launcher keeps its saves on the Mac; moving a character over by hand takes a minute ([docs/MAC.md](docs/MAC.md#saves-logs-and-icloud)).
 
 </details>
 
 <details id="the-game-as-it-shipped">
 <summary><b>The game as it shipped</b></summary>
 
-**D2R Metal changes the platform, not the game.** The rules, drop rates, economy, skills and their caps, the stash with its tabs, the automap and the difficulty are the ones Blizzard shipped, with no gameplay systems added on top. The game's logic is left alone apart from the part of a community fix that lets it run offline.
+**D2R Metal changes the platform, not the game.** Drop rates, the economy, skills and their caps, the stash, the automap and the difficulties are exactly what Blizzard shipped. No mods, no balance changes, no added systems. The only touch to the game's logic is the piece of a community fix that lets it run offline.
 
-A few conveniences sit on the **Extras** tab of Options, each one a switch you can turn off: light beams on valuable drops, item notes, potion pickup and belt refill, and a buzz on valuable drops (iPhone). A new game starts beside the town's waypoint, and the pause menu has **Quick Restart**.
+A few quality-of-life switches live on the **Extras** tab of Options, each one off if you want it off: light beams on valuable drops, item notes, potion pickup and belt refill, and a buzz on valuable drops on iPhone. New games start beside the town waypoint, and the pause menu has a **Quick Restart** for your farming runs.
 
 </details>
 
 <details id="questions-and-answers">
 <summary><b>Questions and answers</b></summary>
 
-**Is this an emulator?** No. The game's own code, from the Switch release, runs directly on your Apple chip; only the handful of instructions an ordinary app can't run are rewritten ahead of time, and the Switch's graphics are rebuilt on Metal 4. Nothing is streamed.
+**Is this an emulator?** No. The game's own code, from the Switch release, runs directly on your Apple chip. The handful of instructions a normal app can't run are rewritten once, ahead of time, and the graphics are rebuilt on Metal 4. Nothing is emulated and nothing is streamed.
 
-**Why do I need the Switch version?** It's the Arm build of the game that D2R Metal runs. You need your own copy and its update, dumped from your own console with its keys ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
+**Why the Switch version?** Because it's the Arm build of the game, which is what Apple silicon speaks. You need your own copy and its update, dumped from your own console with its keys ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
 
-**I own the PC (Battle.net) version. Can I use it?** No, D2R Metal is built on the Switch release. On a Mac, CrossOver runs the PC version.
+**I own it on Battle.net. Can I use that?** Not with D2R Metal, which is built on the Switch release. On a Mac, CrossOver runs the PC version.
 
-**Can I play online?** No, D2R Metal plays offline only.
+**Can I play online?** No. D2R Metal is single player, offline, forever yours.
 
-**Will I get ray tracing?** On a Mac with an M3 or later and at least 16 GB, where the estimate says it holds 60 fps. On any other Mac with an M3 or later you can still turn it on yourself. iPhone and iPad don't have it yet.
+**Will I get ray tracing?** On a Mac with an M3 or later and at least 16 GB, the game turns it on where it estimates you'll hold 60 fps. On any other M3-or-later Mac you can turn it on yourself. iPhone and iPad don't have it yet.
 
-**How do updates work?** The launcher checks this project's releases, updates the game and itself, and can go back to the previous version. The game's main menu also tells you when a new version is out.
+**How do updates work?** The launcher watches this project's releases, updates the game and itself, and can roll back. The game's main menu also lets you know when something new is out.
 
-**Coming from D2R Mobile?** Its saves load here. Items kept in its extra stash space (the wider columns, extra pages, Pouch or vault) don't carry over.
+**Coming from D2R Mobile?** Your saves load straight in. Items kept in its extra stash space (the wider columns, extra pages, Pouch or vault) don't carry over.
 
 </details>
 
