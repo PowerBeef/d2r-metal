@@ -138,16 +138,20 @@ The whole game, in your pocket, with touch controls made for it or any controlle
 
 #### Mac
 
-Each cell shows the ray tracing level and how wide the 3D world is drawn, in pixels, on that chip's usual screen. Two lines mean the bigger GPU option, then the smaller. The M6 is on a 2560 × 1440 display.
+Your picture is always your own screen's resolution, up to 4K. What the chip decides is the **ray tracing level** and **how much of that resolution the 3D world is drawn at** before MetalFX brings it back up. Each cell shows both, for the screen that chip usually comes with: a 13-inch MacBook Air's for Base chips, a 14-inch MacBook Pro's for Pro, a 16-inch for Max, a 4K display for Ultra. Two lines mean the bigger GPU option, then the smaller. A slow chip on a big screen may get a smaller picture enlarged by MetalFX instead ("1920 wide").
 
-| | M6 | M5 | M4 | M3 | M2 | M1 |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Ultra**<br><sub>4K display</sub> | – | **Full**&nbsp;3840 | – | **Full**&nbsp;3840 | Off&nbsp;3840 | Off&nbsp;3840 |
-| **Max**<br><sub>16-inch</sub> | – | **Full**&nbsp;3456 | **Full**&nbsp;3456 | **Full**&nbsp;3456<br>**Full**&nbsp;2938 | Off&nbsp;3456 | Off&nbsp;3456 |
-| **Pro**<br><sub>14-inch</sub> | – | **Full**&nbsp;3024 | **Full**&nbsp;2570 | **Standard**&nbsp;2268<br>**Light**&nbsp;2026 | Off&nbsp;3024 | Off&nbsp;3024<br>Off&nbsp;2570 |
-| **Base**<br><sub>13-inch Air</sub> | **Full**&nbsp;2560 ✓ | **Light**&nbsp;1970<br>Off&nbsp;2500 | Off&nbsp;2500<br>Off&nbsp;1470 | Off&nbsp;1970<br>Off&nbsp;1920 | Off&nbsp;1470<br>Off&nbsp;1920 | Off&nbsp;1600 |
+Another screen changes the pick, and the game works it out again when you change screens: the measured M6 (✓), a Mac mini on a 2560 × 1440 display, gets Full at 100%; the same M6 on a 4K display gets Light at 75%, and on a 5K display a 4K picture enlarged, with rays off.
 
-Every Mac also gets MetalFX, frame generation, 16x filtering, true colors, environment shadows and the finest shadow maps, except the 7-core M1 and the MacBook Neo (A18 Pro: no rays, 1204 wide), which get lighter shadows. **✓ marks the one Mac we've measured ourselves.** The rest are our best estimates from public benchmarks, and could be a notch off either way ([how we pick](docs/MAC.md#what-recommended-picks)). If your Mac has room to spare or struggles, nudge the 3D Resolution and Ray Tracing rows, and [tell us](https://github.com/PowerBeef/d2r-metal/issues/new/choose) what you've got.
+| | Base | Pro | Max | Ultra |
+|---|:---:|:---:|:---:|:---:|
+| **M6** ✓ | **Full**&nbsp;100% | – | – | – |
+| **M5** | **Light**&nbsp;67%<br>Off&nbsp;85% | **Full**&nbsp;100% | **Full**&nbsp;100% | **Full**&nbsp;100% |
+| **M4** | Off&nbsp;85%<br>Off&nbsp;50% | **Full**&nbsp;85% | **Full**&nbsp;100% | – |
+| **M3** | Off&nbsp;67%<br>Off&nbsp;1920&nbsp;wide | **Standard**&nbsp;75%<br>**Light**&nbsp;67% | **Full**&nbsp;100%<br>**Full**&nbsp;85% | **Full**&nbsp;100% |
+| **M2** | Off&nbsp;50%<br>Off&nbsp;1920&nbsp;wide | Off&nbsp;100% | Off&nbsp;100% | Off&nbsp;100% |
+| **M1** | Off&nbsp;1600&nbsp;wide | Off&nbsp;100%<br>Off&nbsp;85% | Off&nbsp;100% | Off&nbsp;100% |
+
+Every Mac also gets MetalFX, frame generation, 16x filtering, true colors, environment shadows and the finest shadow maps, except the 7-core M1 and the MacBook Neo (A18 Pro: no rays, the world at 50%), which get lighter shadows. **✓ marks the one Mac we've measured ourselves.** The rest are our best estimates from public benchmarks, and could be a notch off either way ([how we pick](docs/MAC.md#what-recommended-picks)). If your Mac has room to spare or struggles, nudge the 3D Resolution and Ray Tracing rows, and [tell us](https://github.com/PowerBeef/d2r-metal/issues/new/choose) what you've got.
 
 <h4 id="iphone-and-ipad">iPhone and iPad</h4>
 
