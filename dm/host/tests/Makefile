@@ -50,6 +50,7 @@ run: \
 	$(B)/t_interaction_diag \
 	$(B)/t_loader_weak \
 	$(B)/t_map_diag \
+	$(B)/t_map_guard \
 	$(B)/t_romfs_validate \
 	$(B)/t_save_hooks \
 	$(B)/t_scrub \
@@ -126,6 +127,7 @@ run: \
 	$(B)/t_interaction_diag
 	$(B)/t_loader_weak
 	$(B)/t_map_diag
+	$(B)/t_map_guard
 	TMPDIR="$(abspath $(B))" $(B)/t_tables 2>/dev/null
 	$(B)/t_textbox
 	$(B)/t_touch
@@ -322,6 +324,8 @@ $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 
 $(B)/t_map_diag: t_map_diag.c ../dm_cursor.c ../dm_unit.h | $(B)
 	clang -O1 -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_map_diag.c
+$(B)/t_map_guard: t_map_guard.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_map_guard.c
 
 
 $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)

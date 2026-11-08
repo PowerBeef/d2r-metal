@@ -1,0 +1,23 @@
+# Quick Restart with Automap Size at Full Screen (touch): the game's map switch must not run outside a run.
+# The HUD readout stays valid for a moment after leaving a run, and calling the switch then rebuilds the map from freed level data
+# (D2R Mobile saw it crash at main+0x4117cc on the frame after the load was sent; upstream 64156a3). DM_TEST_AUTOMAP sets the
+# setting to Full Screen once in the run, as the Options page would; the touch branch then keeps the full-screen map up.
+name map_restart_full
+save warlock
+env DM_TEST_AUTOMAP=60:0
+timeout 300
+
+enter_game
+expect_state in_game=true
+sleep 3
+open_pause
+msg PanelManager:ClosePanel:TouchRestart
+expect loading_done timeout=90
+expect_state in_game=true timeout=30
+sleep 3
+quit
+check no_red
+check no_red_log
+check log_has "一键重开：已进局"
+check log_has "透视地图尺寸」读到 0"
+check exit 0

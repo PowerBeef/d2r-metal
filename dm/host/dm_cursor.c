@@ -1958,7 +1958,41 @@ static void ui_map_center(module_t *m, uint64_t root, int mini) {
     if (*sc == want || (*sc != ours && *sc != 0)) { if (*sc == want) ours = want; return; }   // 已是目标值；或是别人写的非零值（不是我们上次写的）：不动 | Already the target value; or a non-zero value written by someone else (not what we last wrote): leave it alone
     { static int lg; if (lg++ < 8) LOG("全屏地图中心：纵向卷动量 %d → %d 格", *sc, want); } *sc = want; ours = want;
 }
-static void ui_map_pump(module_t *m) {
+// Cutscenes close the minimap: the first story act change with an NPC (Warriv A1 -> A2, Meshif A2 -> A3) plays the next act's intro
+// (ProgressionMessage:PlayVideo) and closes AutoMap in the same tick, and nothing reopens it. A controller player reopens it with the map key (-);
+// touch has no map key and relies on the game's "AutoMap Open On Load" option (config object main+0x2d485a8, value at +0xC), which opens it only on
+// entering a run, so the minimap stayed gone until a restart. A cutscene arms g_map_reopen; in touch mode, with that option on, once the run is back
+// (in game, no loading screen, no cutscene, no panel open) and the AutoMap panel is still closed, the map key is pressed for the player: the game's own
+// path, which brings back the area name at the top right too (PanelManager:OpenPanel AutoMap alone did not). At most three presses, two seconds apart;
+// disarmed once the map has stayed open for two seconds, when the option is off, on leaving the run and on leaving touch mode. From D2R Mobile
+// (upstream d1275c7), armed by the cutscene here rather than by any closed map.
+static _Atomic int g_map_movie, g_map_reopen;
+int dm_ui_open_panels(void);
+static void ui_map_reopen_step(module_t *m, uint64_t root, int valid) {
+    if (!atomic_load(&g_map_reopen) || atomic_load(&g_map_movie) || !valid || dm_ui_open_panels()) return;
+    uint64_t am = root ? ui_panel(root, "AutoMap") : 0; if (!am || *(uint64_t *)am != (uint64_t)m->base + 0x20c58a0) return;
+    static uint64_t sent, open_since; static int presses; uint64_t fr = dm_guest_frame();
+    if (atomic_load(&g_map_reopen) == 1) { atomic_store(&g_map_reopen, 2); presses = 0; sent = 0; open_since = 0; }
+    if (*(uint8_t *)(am + 0x50)) { if (!open_since) open_since = fr; else if (fr >= open_since + 120) { atomic_store(&g_map_reopen, 0); LOG("map: open again after the cutscene (%d press%s)", presses, presses == 1 ? "" : "es"); } return; }
+    open_since = 0;
+    if (!*(volatile int32_t *)(m->base + 0x2d485b4)) { atomic_store(&g_map_reopen, 0); LOG("map: closed by a cutscene; AutoMap Open On Load is off, so it stays closed (the game's own behaviour)"); return; }
+    if (presses >= 3) { atomic_store(&g_map_reopen, 0); LOG("【红】map: still closed after three map-key presses following a cutscene"); return; }
+    if (sent && fr < sent + 120) return;
+    void dm_ui_key_pulse_alone(uint64_t mask, int frames); sent = fr; presses++;
+    dm_ui_key_pulse_alone(DM_BTN_MINUS, 4); LOG("map: closed by a cutscene, AutoMap Open On Load is on -> map key (-) pressed for the player (%d)", presses);
+}
+static void ui_map_pump(module_t *m, uint64_t root) {
+    // Outside a run (the front-end pages and the loading screen, judged from this frame's UI: dm_uiscreen_ingame, the HUD up and no loading screen) the game's map
+    // switch main+0x40f780 is never called: through main+0x411540 it rebuilds the map lines from the current level, and in the frames after leaving a run that
+    // level is already freed. The HUD readout's valid flag does not mean "in a run": the server tick publishes it, and with no ticks after leaving it keeps its last
+    // value 1. D2R Mobile found this as a crash at main+0x4117cc on the frame after Quick Restart sent its load with Automap Size at Full Screen (upstream 64156a3).
+    // Requests made outside a run are dropped, not carried into the next one.
+    if (!dm_uiscreen_ingame()) {
+        int pending = atomic_exchange(&g_map_req, -1);
+        atomic_store(&g_map_full_now, 0);
+        if (pending >= 0) { static int n; if (n++ < 4) LOG("map: a switch request outside a run was dropped (the game's map switch is only called in a run)"); }
+        return;
+    }
     int cfg = *(volatile int32_t *)(m->base + 0x2d479f4), mini = *(volatile int32_t *)(m->base + 0x2d5c748);
     // 测试开关 DM_TEST_AUTOMAP=<帧>:<档>：到帧把配置改成这一档并调回调（当作玩家在选项页选了它）
     // Test switch DM_TEST_AUTOMAP=<frame>:<setting>: at that frame, change the config to this setting and call the callback (as if the player had picked it on the options page)
@@ -1977,10 +2011,11 @@ static void ui_map_pump(module_t *m) {
         g_map_want = cfg == 0; { static int n; if (n++ < 8) LOG("地图：「透视地图尺寸」读到 %d → 触屏下%s", cfg, cfg == 0 ? "缺省全屏地图（点空处回小地图）" : "缺省小地图"); } g_map_cfg_seen = cfg; }
     if (r >= 0 && g_map_want != r) { g_map_want = r; LOG("地图：玩家点了 → 记住%s", r ? "全屏地图" : "小地图"); }
     int small = cfg == 1 ? 1 : 2, hold = atomic_load(&g_map_hold), want = g_map_want == 1 && !hold;   // 全屏档时小地图按微缩放右显示 | with the full-screen setting, the minimap is shown as minimap right
-    if (hi.valid && (mini == 0) != want) {   // 局内才切（局外原版地图面板还没建）；换区域后游戏按配置重建、开关面板，都在这里对回去 | switch only in a run (outside one the original map panel does not exist yet); after an area change the game rebuilds from the config, and panels open / close: both are put right here
+    if (hi.valid && (mini == 0) != want) {   // outside a run this function already returned at the top; valid only means the player is readable. After an area change the game rebuilds the map from the config, and panels open and close: both are switched back here
         ((void (*)(int))(m->base + 0x40f780))(want ? 0 : small); mini = *(volatile int32_t *)(m->base + 0x2d5c748);
         static int n; if (n++ < 40) LOG("地图：→ %s（%s；配置值 %d 不动）", want ? "全屏" : small == 1 ? "微缩放左" : "微缩放右", hold ? "面板开着先让开" : g_map_want ? "玩家要全屏" : "玩家要小地图", cfg); }
     atomic_store(&g_map_full_now, mini == 0);
+    ui_map_reopen_step(m, root, hi.valid);
 }
 // ---------- 右上角小地图的位置：触摸层把它当点击区（点一下 = 地图开关键），矩形取游戏自己的 AutoMap 面板，不写死 ----------
 // AutoMap 控件（虚表 main+0x20c58a0）：+0x70 / +0x74 = x / y、+0x78 / +0x7c = 宽 / 高（布局单位，2160 = 画面高；微缩地图放右时 x = −宽，即贴着画面右边），+0x80 缩放。
@@ -2701,7 +2736,7 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
                 else fix = 0; }
             if (th) { ui_auto_key(th); tnext = fr + 8; } } } }
     { module_t *pm = main_module(); uint64_t proot = 0; if (pm) { memcpy(&proot, pm->base + 0x2f05458, 8); int32_t pw = *(int32_t *)(pm->base + 0x211da38), phh = *(int32_t *)(pm->base + 0x211da3c);
-        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } if (atomic_load(&g_uidump_req)) { ui_dump(proot, 0, g_uidump_want, 0, pm); atomic_store(&g_uidump_req, 0); } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_stash_arrows_pump(proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); mv_audit_pump(proot, fr); dm_engine_pump(proot); } } }
+        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } if (atomic_load(&g_uidump_req)) { ui_dump(proot, 0, g_uidump_want, 0, pm); atomic_store(&g_uidump_req, 0); } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_stash_arrows_pump(proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); mv_audit_pump(proot, fr); dm_engine_pump(proot); } } }
     ut_promote();   // 在途的那下发完了：接上排着的下一下 | the click in flight is done: take up the next one waiting
     if (atomic_load(&g_fe_name_open) && atomic_load(&g_ut_phase) == 2) {   // 起名页：点输入框（底板 / 文本框）= 重新弹系统键盘，不发鼠标点击 | naming page: tapping the input box (backplate / text box) = pop up the system keyboard again, no mouse click is sent
         module_t *nm = main_module(); uint64_t nroot = 0; if (nm) memcpy(&nroot, nm->base + 0x2f05458, 8); uint64_t pn = nroot ? ui_find(nroot, "CharacterCreateNamePanel", 0) : 0;
@@ -2864,6 +2899,9 @@ void dm_ui_on_uimsg(const char *cat, const char *act, const char *arg) {
           ld = !strcmp(cat, "PanelManager") && arg && !strcmp(arg, "LoadScreenPanel") && !strcmp(act, "OpenPanel");
       if (ex || ld) { module_t *pm = main_module(); uint64_t root = 0; if (pm) memcpy(&root, pm->base + 0x2f05458, 8); if (ex) g_nd_hold = 1;   // 提示框停靠：停靠条件结束，当场写回原值 | notice docking: the docking condition ended, write the original value back on the spot
           note_dock_restore(root, ex ? (act[0] == 'E' ? "保存并退出" : "回到前端") : "读取画面（切场景）"); } }
+    if (!strcmp(cat, "ProgressionMessage") && !strcmp(act, "PlayVideo")) { atomic_store(&g_map_movie, 1); atomic_store(&g_map_reopen, 1); }   // a cutscene starts: see ui_map_reopen_step
+    else if (!strcmp(cat, "Cinematics") && !strcmp(act, "MovieComplete")) atomic_store(&g_map_movie, 0);   // it ended (a skip included)
+    else if (!strcmp(cat, "FrontEndNavigation") && !strcmp(act, "ToFrontEnd")) { atomic_store(&g_map_movie, 0); atomic_store(&g_map_reopen, 0); }   // left the run
     if (!strcmp(cat, "QuestLogPanelMessage") && !strcmp(act, "DialogueFinished")) atomic_store(&g_speech_end, dm_guest_frame());
     if (!strcmp(cat, "PanelManager")) ui_panel_note(act, arg ? arg : "");
     if (!strcmp(cat, "ChroniclePanelMessage") && !strcmp(act, "ToggleChildPanel") && arg && arg[0]) { int c = 0; while (c < 8 && g_chr_child[c][0] && strcmp(g_chr_child[c], arg)) c++; if (c < 8 && !g_chr_child[c][0]) strlcpy(g_chr_child[c], arg, sizeof g_chr_child[c]); }
@@ -3178,6 +3216,7 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
 void dm_ui_auto_mode_leave(void) {
     atomic_store(&g_fe_skip_tut, 0); atomic_store(&g_fe_back, 0); atomic_store(&g_fe_options, 0); atomic_store(&g_fe_name, 0); atomic_store(&g_fe_name_done, 0); atomic_store(&g_fe_name_key, 0); atomic_store(&g_fe_name_tap, 0);
     atomic_store(&g_fe_key_until, 0); atomic_store(&g_fe_key_mask, 0); atomic_store(&g_pulse_until, 0);   // 「独占的一下」（g_alone_*：进局常态替按一次显示物品键）不在此列：它不是触摸点击排下的，两种模式都要发，由它自己等切换完成（dm_ui_alone_take） | "The exclusive press" (g_alone_*: the one show-items key press made routinely on entering a run) is not among these: it is not queued by a touch tap and must be sent in both modes; it waits for the switch to finish by itself (dm_ui_alone_take)
+    atomic_store(&g_map_reopen, 0);   // the cutscene map reopen (ui_map_reopen_step) is touch-only: a controller player has the map key
     atomic_store(&g_set_back_at, 0); atomic_store(&g_speech_back_at, 0); atomic_store(&g_tab_left, 0); atomic_store(&g_tab_direct, 0); atomic_store(&g_tab_then, 0); atomic_store(&g_del_q, 0); atomic_store(&g_del_hold, 0);
 }
 // 界面触摸这一层记着的控件地址与挪位表：挪过的原版控件先写回原值（重建后有的面板原样留着），再把记的地址清掉（重建后旧地址是悬空的，新控件正好分配在旧地址上时认不出）
