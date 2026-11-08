@@ -133,6 +133,13 @@ STEP = re.compile(r'(?:^|[;&|]\s*|\bthen\s+|\bdo\s+)step\s+("?[\w$]+"?)\s+\d+\s+
 DMPATH = re.compile(r'"\$DM/([^"$]*)"([^\s"\'$;)]*)')
 
 
+def ignored(path):
+    """A path git ignores is a build output (dmhost_tsan): it need not exist in a clean checkout, so the lint accepts it."""
+    d = os.path.dirname(path)
+    while d and not os.path.isdir(d): d = os.path.dirname(d)
+    return subprocess.run(['git', '-C', d or '.', 'check-ignore', '-q', path], capture_output=True).returncode == 0
+
+
 def lint(gate, dm):
     """Problems in the gate script's step lines: a "$DM/..." path that names nothing (a glob must match a file), a step name used twice.
     Checked without running anything, so a typo in a tier auto did not pick still fails the quick tier."""
@@ -152,7 +159,7 @@ def lint(gate, dm):
             rel = pm.group(1) + pm.group(2)
             if not rel or rel.endswith('/'):
                 continue
-            if not glob.glob(os.path.join(dm, rel)):
+            if not glob.glob(os.path.join(dm, rel)) and not ignored(os.path.join(dm, rel)):
                 problems.append(f'line {i}: step {name}: $DM/{rel} names nothing')
     return n, problems
 

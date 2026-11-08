@@ -121,6 +121,14 @@ class Lint(unittest.TestCase):
         self.assertEqual(len(problems), 2, problems)
         self.assertIn('$DM/tools/gone.py names nothing', problems[0])
 
+    def test_build_output_may_be_missing(self):   # a clean checkout has no dmhost_tsan until the long tier builds it
+        subprocess.run(['git', 'init', '-q', self.tmp.name], check=True)
+        with open(os.path.join(self.tmp.name, '.gitignore'), 'w') as f: f.write('dm/host/dmhost_*\n')
+        n, problems = self.lint('step long_x 60 -- python3 "$DM/tools/a.py" --dmhost "$DM/host/dmhost_tsan"\n')
+        self.assertEqual(problems, [])
+        n, problems = self.lint('step long_x 60 -- python3 "$DM/tools/gone.py"\n')
+        self.assertEqual(len(problems), 1)
+
     def test_duplicate_name(self):
         n, problems = self.lint('step quick_a 60 -- true\nstep quick_a 60 -- true\n')
         self.assertEqual(problems, ['line 2: step quick_a already at line 1'])
