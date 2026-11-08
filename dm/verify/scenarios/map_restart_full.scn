@@ -2,8 +2,10 @@
 # The HUD readout stays valid for a moment after leaving a run, and calling the switch then rebuilds the map from freed level data
 # (D2R Mobile saw it crash at main+0x4117cc on the frame after the load was sent; upstream 64156a3). DM_TEST_AUTOMAP sets the
 # setting to Full Screen once in the run, as the Options page would; the touch branch then keeps the full-screen map up.
+# Touch only: the Mac App runs the console set, where the map follows the controller's map key.
 name map_restart_full
 save warlock
+requires cli ios-mac
 env DM_TEST_AUTOMAP=60:0
 timeout 300
 
