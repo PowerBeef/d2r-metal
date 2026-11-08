@@ -76,6 +76,8 @@ class DmtestTest(unittest.TestCase):
         self.assertEqual(res['verdict'], 'red')   # a row for another step does not cover it
         self.assertEqual(res['unexpected_unavailable'], ['⚪ golden replays unavailable: never recorded'])
         self.assertEqual(self.wrap(script + '; echo "⚪ golden replays unavailable"', '--name', 't')[1]['verdict'], 'ok')   # without the list: as before
+        ok.write_text('*\tnot judged: disturbed\ta front run the user disturbed\n', encoding='utf-8')   # * covers every test
+        self.assertEqual(self.wrap('echo "⚪ SCENARIO x not judged: disturbed (focus)"', '--name', 'any', '--unavailable-ok', str(ok))[1]['verdict'], 'ok')
 
     def test_timeout_is_error_and_kills_the_group(self):
         p, res = self.wrap('sleep 30 & sleep 30; echo never', '--timeout', '1')

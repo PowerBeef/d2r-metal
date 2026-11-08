@@ -2,6 +2,10 @@
 # With interpolators (every Mac so far) it's video_fg_mac.scn
 name video_no_fg_mac
 requires mac-app
+# In front: without frame generation the Mac presents straight into the window, and a background run's window sits outside every screen, where the
+# system sometimes holds its images back: the GPU then waits on them, the game stops in its present wait and a quit can't save (2 of 20 runs in
+# the background on 2026-11-07, 0 of 20 in front; dm/verify/debugging.md)
+front visibility
 save warlock
 env DM_TEST_VIDEO_FIRSTBOOT=1 DM_TEST_NO_FG=1
 timeout 200

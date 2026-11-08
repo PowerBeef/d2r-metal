@@ -5,6 +5,10 @@
 # without a frame interpolator, whichever chips those are (the system answers on each device)
 name pic_mac_firstboot_m1
 requires mac-app
+# In front: without frame generation the Mac presents straight into the window, and a background run's window sits outside every screen, where the
+# system sometimes holds its images back: the GPU then waits on them, the game stops in its present wait and a quit can't save (2 of 20 runs in
+# the background on 2026-11-07, 0 of 20 in front; dm/verify/debugging.md)
+front visibility
 save warlock
 timeout 300
 env DM_TEST_VIDEO_FIRSTBOOT=1 "DM_TEST_GPU_NAME=Apple M1" DM_TEST_GPU_CORES=8 DM_TEST_NO_FG=1 DM_GAME_SEED=305419896

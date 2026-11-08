@@ -104,13 +104,13 @@ def verdict_of(rc, timed_out, sc, strict, rc_only=False):
 
 
 def unexpected_unavailable(lines, name, path):
-    """The ⚪ lines that no row of the expected list (<name>\t<text>\t<why>, # comments) names for this test."""
+    """The ⚪ lines that no row of the expected list (<name>\t<text>\t<why>, # comments; name * = any test) names for this test."""
     rows = []
     with open(path, encoding='utf-8') as f:
         for l in f:
             cols = l.rstrip('\n').split('\t')
             if l.strip() and not l.startswith('#') and len(cols) >= 2: rows.append((cols[0], cols[1]))
-    return [l for l in lines if not any(n == name and t and t in l for n, t in rows)]
+    return [l for l in lines if not any(n in (name, '*') and t and t in l for n, t in rows)]
 
 
 def junit(res, path, log_tail):

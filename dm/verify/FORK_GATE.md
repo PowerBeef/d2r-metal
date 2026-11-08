@@ -116,6 +116,17 @@ The fork generates what it can:
 - `golden.py prefix` records `prefix_wild_warlock` for `skill_main`.
 - `inv_double_tap` stays ⚪: it needs the Horadric Cube.
 
+## Known intermittent reds
+
+A red that passes when rerun is still a finding: it gets a line here with its signature, and a repeat gets diagnosed. The gate never retries on its own.
+
+| Scenario | Signature | Seen | Rerun alone |
+|---|---|---|---|
+| `pc_vendor_mac` | `expect pc_item did=move item=r01`: not seen | once, 2026-11-07 (full gate) | 20 of 20 OK, 2026-11-07 |
+| `pc_items_mac` | `expect panel act=OpenPanel name=HoradricCubeLayout`: not seen | once, 2026-11-06, in a gate with the background-run reds fixed that day | 20 of 20 OK, 2026-11-07 |
+
+Solved: `native_2940_mac` and `video_no_fg_mac` stalled in background runs without frame generation, and run in front since 2026-11-07 (`debugging.md`, "A background run without frame generation can stall on its window").
+
 ## What it doesn't do
 
 - No recording of the original game on a console or emulator: the baselines are our own.
