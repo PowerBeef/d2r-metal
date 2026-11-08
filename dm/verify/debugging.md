@@ -320,6 +320,13 @@ With Frame Generation, what the trace shows differs by device (2026-11-06, the g
 - **Slower iPhones, simulated on an iPhone 17 Pro (2026-11-06, 3D 50%, 30 s counted).** Each device's Picture Size through `DM_GAME_RES`, plus `DM_TEST_LOAD=gpu:<n>` so a drawn frame takes as long as `dm_picios_ms` says it would there: n = 1000 × (the estimate - the time at that size here) / 14, as 1000 is about 14 ms here. iPhone 17 at Full gpu:336: 60 fps, 0 late. 16 Pro at High gpu:531 in the Cathedral: 60 fps, 1 late of 1800. 16e at High gpu:1050: 60 fps, 1 late. 15 Pro at High gpu:812: 60 fps, 2 late. 15 at Medium gpu:842: 60 fps, 2 late. 14 at Medium gpu:1128: 60 fps, 2 late. 12 at Low gpu:1540: 60 fps, 0 late in town and on a walk, and the image lags its frame's start by 83 ms against 56. A crowd of 100 on the 16 Pro's settings: 55 fps, 8.6% late; on the 12's: 44 fps, 51% late. The CPU isn't slowed, so a real older phone can only do worse in a crowd, and these runs don't show heat over a long session.
 - A generated image needs far less after its GPU work ends on the phone (about 2 ms at least) than on this Mac (about 15 ms), so the Mac's limit on starting later isn't the queue.
 
+## The touch overlay's CPU on the phone
+
+`DM_THRCPU=<file>,<s>` writes each thread's CPU every few seconds (100 = one core; the process's first thread is the iOS main thread, which draws the touch overlay), and `DM_NVN_TSV` carries `@proc_mj` and `@t_s` per frame. `touch_e2e.sh` takes them through `E2E_ENV`; pull the files with `devicectl device copy from` afterwards.
+
+- **Joystick held and circled for 60 s in camp (iPhone 17 Pro, 2026-11-08, ABBA, one build installed in turn: before and after af874db).** iOS main thread 23.6% and 19.1% of a core before, 1.3% and 1.2% after; the whole process 86% and 79% before, 66% and 66% after; energy 259 and 387 mW before, 206 and 215 mW after (single runs vary, as `@proc_mj` does); 30 frames drawn a second in all four, thermal state 0. The game's main thread didn't move (13%): walking in camp has no fight, so the skill-button hook's half isn't in this route.
+- Before, every finger move redrew the whole overlay in Core Graphics; after, the joystick is two layers that move, and the overlay redraws only when a button's look changes or, for HUD numbers, only the bottom bar.
+
 ## The game's own quality settings
 
 `DM_TEST_RCFG=<hex renderer offset>.<b|w>=<value>[,...]` changes the renderer's boot settings at the observation gate at `Renderer_Init` (`main+0x15ff470`), just before it copies them to `renderer+0x65f4` (0xd5 bytes). The Switch build runs the game's lowest level, and most modules read their knob once at creation, so this is how to try the others one at a time. What it found:

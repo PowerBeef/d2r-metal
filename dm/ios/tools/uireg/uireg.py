@@ -711,8 +711,9 @@ def groups():
     gs.append(g)
     # mapf 局：选项页把「透视地图尺寸」选成全屏（测试开关 DM_TEST_AUTOMAP 到帧改配置并调原版回调，同选项页那条路）→ 触屏下直接全屏地图，配置值不被改写
     # mapf run: "automap size" set to full screen on the options page (test switch DM_TEST_AUTOMAP changes the config at a frame and calls the original callback, the same path as the options page) → in touch mode the full-screen map shows directly and the config value is not rewritten
-    g=G("mapf",env="DM_TEST_AUTOMAP=2400:0"); g.sect("mapf",0); g.enter(2); g.t=max(g.t,38.0)
-    g.item("选项里选了全屏","直接全屏地图，不改回小地图档",r"地图：「透视地图尺寸」读到 0 → 触屏下缺省全屏地图",r"改回微缩地图放右"); g.at("pos",.3); g.wait(12.0); g.shot()   # 测试开关在帧 2400（约脚本第 46 秒）改档，这一项要把它框进来
+    # The switch counts game frames, drawn at 30 a second since frame generation became the default: frame 1200 is about second 40, inside the first item
+    g=G("mapf",env="DM_TEST_AUTOMAP=1200:0"); g.sect("mapf",0); g.enter(2); g.t=max(g.t,38.0)
+    g.item("选项里选了全屏","直接全屏地图，不改回小地图档",r"地图：「透视地图尺寸」读到 0 → 触屏下缺省全屏地图",r"改回微缩地图放右"); g.at("pos",.3); g.wait(12.0); g.shot()   # the switch changes the setting at frame 1200 (about script second 40); this item has to frame it
     g.item("点底栏十字开物品栏","全屏地图先让成小地图",r"地图：→ 微缩放右（面板开着先让开"); g.tap("@menu",1.5); g.shot()
     g.item("点右上角 X 关物品栏","回到全屏地图",r"地图：→ 全屏（玩家要全屏"); g.tap(P(615,17),1.5); g.shot()
     g.item("全屏地图点空处","仍是全屏地图（点地面走路不再切回小地图，#186）",r"pos 区域 \d+",r"→ 回小地图|记住小地图"); g.tap(P(300,150)); g.at("pos",.3); g.shot()
