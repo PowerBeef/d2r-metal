@@ -247,9 +247,11 @@ int dm_video_fg_active(void) {
 }
 int dm_video_jitter_mode(void) { return dm_video_temporal_active() ? 3 : 0; }   // 3 = the game's Halton mode (patch_nso.py SWITCHES, the csel rows)
 // Environment Detail: the renderer's boot config (renderer+0x65f4, 0xd5 bytes, the game's main+0x15ff470 copies it; every module reads its knob once at creation) as the Switch's quality level 1 left it, raised to
-// what the game itself uses at its top levels. Material arrays (renderer+0x664c) 7 -> 9: a known artifact with these 128 px assets, which shrinks terrain stamps and terrain decals to a corner (docs/ENGINE_CHANGES.md EC-020). Terrain data tier (+0x6622) 0 -> 3. Effect-light budget
-// (+0x66bc) 2 -> 4: torches light the walls near them and glint on polished floors. The decal assets stay 128 px in those 512 px arrays: nvn_mtl.m copy_t2t. About 36 MiB of memory; no GPU cost measured at 2560 x 1440 on an M6 (ABBA x4 at the Far Oasis and the Burial Grounds: -0.12 and +0.05 ms, both within noise). The game's other level settings stay: bloom mode 2 would misfire
-// the host's own bloom (nvn_mtl.m), and reflections (+0x6634) need a normal and roughness target nothing writes on Switch, so everything would be a mirror. DM_ENV_DETAIL=0/1 forces it
+// what the game itself uses at its top levels. Terrain data tier (+0x6622) 0 -> 3: the biomes' full terrain data (the grass layers' full textures, denser clutter). Effect-light budget (+0x66bc)
+// 2 -> 4: torches light the walls near them and glint on polished floors. No GPU cost measured at 2560 x 1440 on an M6 (ABBA x4 at the Far Oasis and the Burial Grounds: -0.12 and +0.05 ms, both within noise).
+// The game's other level settings stay. Its material arrays (+0x664c) stay at 7, 128 px, the size of the Switch's assets: at 9 every terrain stamp and terrain decal shrinks to a corner
+// (docs/ENGINE_CHANGES.md EC-020). Bloom mode 2 would misfire the host's own bloom (nvn_mtl.m), and reflections (+0x6634) need a normal and roughness target nothing writes on Switch, so
+// everything would be a mirror. DM_ENV_DETAIL=0/1 forces it
 static _Atomic int g_ed_launch = -1, g_ed_forced;
 __attribute__((weak)) int mtl_rt_supported(void) { return 0; }
 static module_t *video_main_module(void) {
@@ -310,7 +312,7 @@ static void rcfg_put(uint8_t *cfg, unsigned off, int size, uint32_t val) {
 // DM_TEST_RCFG=<hex renderer offset>.<b|w>=<value>[,...] tries the game's other settings one at a time (dm/verify/debugging.md); a test switch, nothing the game or the player sees uses it
 void dm_video_renderer_cfg_obs(const uint64_t *regs) {
     uint8_t *cfg = (uint8_t *)regs[2];
-    if (dm_video_env_detail()) { rcfg_put(cfg, 0x664c, 4, 9); rcfg_put(cfg, 0x6622, 1, 3); rcfg_put(cfg, 0x66bc, 4, 4); }
+    if (dm_video_env_detail()) { rcfg_put(cfg, 0x6622, 1, 3); rcfg_put(cfg, 0x66bc, 4, 4); }
     const char *e = getenv("DM_TEST_RCFG"); if (!e || !*e) return;
     char spec[512]; strlcpy(spec, e, sizeof spec);
     for (char *t = strtok(spec, ","); t; t = strtok(NULL, ",")) {

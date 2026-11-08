@@ -19,7 +19,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 | Lights gathered | Kept, with more effect lights at High | Kept + field | No cost seen | `DM_ENV_DETAIL=0` | EC-019 |
 | Directional shadow map, two layers | Kept, at a larger edge and with environment models casting | Kept + switch | 0.65 + 0.19 ms at 4096 | `DM_SHADOW_SIZE`, `DM_ENV_SHADOWS=0` | EC-016, EC-017 |
 | Colour grading table (compute) | Kept | Kept | - | - | EC-047 |
-| Terrain composite (compute, one tile at a time) | Kept. Its material arrays are resized at High | Kept + field | No cost seen | `DM_ENV_DETAIL=0` | EC-020 |
+| Terrain composite (compute, one tile at a time) | Kept, with the arrays at the assets' size | Kept | - | - | EC-020 |
 | Grass and clutter node | Kept; on Switch most of it is compiled out or empty | Kept | - | - | - |
 | Depth prepass | Kept; we note each draw for motion vectors and rays | Kept + notes | - | `DM_MV=0` | EC-040 |
 | Light grid (compute) | Kept | Kept | - | - | - |
@@ -283,18 +283,18 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Status:** confirmed
 - **Covers:** main+0x15ff470, renderer+0x6622, renderer+0x66bc
 
-### EC-020 Environment Detail: terrain material arrays at 512 px
-- **Layer:** engine field
+### EC-020 Material arrays stay the size of the assets
+- **Layer:** replay layer
 - **Engine:** Keeps ground materials and masks in three texture arrays whose edge comes from the boot config (128 px on Switch, 512 at the game's top level), and copies each source level into the array level with the same index, assuming source and array are the same size. The terrain composite reads these arrays only at level 0, for terrain stamps and terrain decals.
-- **Ours:** High raises the edge to 512. The Switch's assets stay 128 px, so `copy_t2t` fills the top two levels with the part that exists, in their corner, and zero elsewhere.
-- **Why:** Chosen on 2026-11-05 because the Outer Cloister then showed a stone court, read as closer to the PC captures. That reading was wrong: this is a known artifact. Each stamp and terrain decal shrinks to one corner, a sixteenth of its area, so what the artists painted there mostly disappears and the ground beneath shows. The Cloister's lawn and moss beds are the data's intent, and an artist's capture of the place shows grass with a walled bed. In the Barracks, the paving and cobble the artists laid over the old floor's blood shrink the same way, so that blood shows. Arrays the size of the assets (128 px) give back what was authored. That's the player's decision, as it changes the look. Related, not a change of ours: the Switch build never draws its ordinary decals (blood stains, ash): at `main+0x165a960` every one of them fails its visibility test (1 against a bound of 0; 12,240 of 12,240 tests in the Barracks, 2026-11-07). The artists' Barracks captures show them.
+- **Ours:** Environment Detail High leaves the edge at the Switch's 128 px, the size of every channel texture the Switch ships (2,524 of them). A copy larger than its source, which only a raised edge asks for, is refused with a red line instead of reading past the source.
+- **Why:** Raising the edge to 512 (2026-11-05 to 2026-11-07) shrank each stamp and terrain decal to one corner, a sixteenth of its area: the Outer Cloister lost its authored lawn and moss beds, and the Barracks its paving, uncovering floor blood the artists had paved over. The data, the level's geometry and an artist's 2019 capture of the Cloister agree on the lawn; the player chose the authored look. Related, not a change of ours: the Switch build never draws its ordinary decals (blood stains, ash): at `main+0x165a960` every one of them fails its visibility test (1 against a bound of 0; 12,240 of 12,240 tests in the Barracks, 2026-11-07). The artists' Barracks captures show them.
 - **Setting:** Environment Detail
-- **Switch:** DM_ENV_DETAIL, DM_NVN_ARRDUMP
-- **Test:** recfg, full_metal_validation_rec, full_metal_validation_rt
-- **Commit:** ff85299, 02ffbbb
-- **Measured:** Alone, it changes 51% of the Outer Cloister's pixels, 4% in the Barracks (M6, fixed clock, 2026-11-07). Arrays 73.4 MB at 512 px against 4.6 MB at 128 px. At 512 px, 5.5 to 6.2% of a mask's blocks hold data at level 0; at 128 px they match the source byte for byte (M6, 2026-11-07).
+- **Switch:** DM_TEST_RCFG, DM_NVN_ARRDUMP
+- **Test:** recfg, t_video, full_golden_picture
+- **Commit:** 02ffbbb
+- **Measured:** At 512 px the arrays took 73.4 MB and changed 51% of the Outer Cloister's pixels against Standard; at 128 px they take 4.6 MB and match the source textures byte for byte (M6, 2026-11-07).
 - **Status:** confirmed
-- **Covers:** renderer+0x664c
+- **Covers:** none
 
 ### EC-021 Anti-aliasing mode
 - **Layer:** engine field
@@ -753,7 +753,7 @@ Listed so they aren't tried again without new evidence. All on an M6 unless note
 | Small pass skips | The transparency resolve reads pyramid levels 1 and 2 every frame; nothing above 0.1 ms | 2026-11-07 |
 | The engine's dynamic resolution on real GPU times | Reverted experiment; real per-scope times are still missing (EC-022) | 2026-11-07 |
 | Zeroed top levels in the material arrays | Stamps and terrain decals vanish entirely | 2026-11-07 |
-| 128 px material arrays | First rejected on a wrong reading of the PC captures; now the candidate fix for EC-020 | 2026-11-07 |
+| 512 px material arrays at Environment Detail High | Stamps and terrain decals shrink to a corner with the Switch's 128 px assets: the Outer Cloister's lawn became a stone court (EC-020) | 2026-11-07 |
 | Game quality level 2 and above | Level 2 mirrors characters on the ground; levels 3 and 4 crash | 2026-10-27 |
 | Temporal SMAA | Needs a velocity target the Switch build doesn't create; crashes | 2026-10-27 |
 | Reflections field at `renderer+0x6634` | Everything turns into a mirror: nothing writes the target it reads | 2026-11-05 |

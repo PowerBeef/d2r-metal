@@ -21,4 +21,4 @@ check log_has "Recommended for this Mac.*MetalFX Temporal, Frame Generation"
 check log_has "frame generation: interpolator .* built in"
 check log_has "→ Recommended Native 2560, 3D 100%, environment shadows on, shadows Ultra, Frame Drops lower, Frame Generation on, Ray Tracing Full"
 check no_event mfx who=pres op=build
-check log_has "renderer config \+0x664c: 7 -> 9"
+check log_has "renderer config \+0x6622: 0 -> 3"

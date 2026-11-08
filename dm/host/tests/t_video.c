@@ -110,7 +110,7 @@ static void run_cfg(const char *txt, const char *env, const char *rcfg, uint8_t 
     close(pp[0]); waitpid(pid, NULL, 0);
 }
 static uint32_t cfg_w(const uint8_t *c, unsigned off) { uint32_t v; memcpy(&v, c + off - 0x65f4, 4); return v; }
-static int cfg_rest(const uint8_t *c) { int n = 0; for (unsigned i = 0; i < 0xd5; i++) { unsigned o = i + 0x65f4; if ((o >= 0x664c && o < 0x6650) || o == 0x6622 || (o >= 0x66bc && o < 0x66c0)) continue; n += c[i] != 0x55; } return n; }
+static int cfg_rest(const uint8_t *c) { int n = 0; for (unsigned i = 0; i < 0xd5; i++) { unsigned o = i + 0x65f4; if (o == 0x6622 || (o >= 0x66bc && o < 0x66c0)) continue; n += c[i] != 0x55; } return n; }
 
 // A case's steps, run in the child after the load
 static void act_aa0(result *x) { (void)x; atomic_store(&g_pend[K_AA], 0); dm_video_on_uimsg("OptionsPanelMessage", "AcceptChanges", ""); }
@@ -337,10 +337,11 @@ int main(void) {
     // (18g) Colour applied: handed to the front end and saved
     r = run_do(M_REC(1, 1), act_18g);
     CHECK(r.cl == 0 && strstr(r.file, "\ncolor=0\n"), "(18g) Vivid applied: front end told %d, saved\n%s", r.cl, r.file);
-    // (22) Environment Detail: High raises the game's own decal size, terrain tier and effect-light budget in the renderer's boot config and nothing else; Standard leaves it all as the game built it
+    // (22) Environment Detail: High raises the game's own terrain tier and effect-light budget in the renderer's boot config and nothing else (the material arrays stay the assets' size); Standard
+    // leaves it all as the game built it
     { uint8_t c[0xd5]; int fo, fl;
       run_cfg(FULL(1, 1, 1, 1, 1, 1) NEWREC, NULL, NULL, c, &fo, &fl);
-      CHECK(cfg_w(c, 0x664c) == 9 && c[0x6622 - 0x65f4] == 3 && cfg_w(c, 0x66bc) == 4 && !cfg_rest(c) && !fo, "(22a) High from the setting: decals 9, terrain 3, lights 4, nothing else, not forced; got %u %u %u, %d others, forced %d", cfg_w(c, 0x664c), c[0x6622 - 0x65f4], cfg_w(c, 0x66bc), cfg_rest(c), fo);
+      CHECK(cfg_w(c, 0x664c) == 0x55555555 && c[0x6622 - 0x65f4] == 3 && cfg_w(c, 0x66bc) == 4 && !cfg_rest(c) && !fo, "(22a) High from the setting: terrain 3, lights 4, arrays untouched, nothing else, not forced; got %#x %u %u, %d others, forced %d", cfg_w(c, 0x664c), c[0x6622 - 0x65f4], cfg_w(c, 0x66bc), cfg_rest(c), fo);
       CHECK(fl == 1, "(22b) latched at launch: a later answer holds, got %d", fl);
       run_cfg(FULL(1, 1, 1, 1, 1, 1) NEWREC, "0", NULL, c, &fo, &fl);
       CHECK(cfg_w(c, 0x664c) == 0x55555555 && c[0x6622 - 0x65f4] == 0x55 && cfg_w(c, 0x66bc) == 0x55555555 && !cfg_rest(c) && fo == 1 && fl == 0, "(22c) DM_ENV_DETAIL=0: the config untouched, forced, latched; got %u, %d others, forced %d, later %d", cfg_w(c, 0x664c), cfg_rest(c), fo, fl);
