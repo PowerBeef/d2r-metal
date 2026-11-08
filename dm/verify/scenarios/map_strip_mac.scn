@@ -1,0 +1,24 @@
+# Mac mouse, console set: the area-name strip at the top of the minimap switches to the full-screen map and back; a click on the ground in between
+# walks and leaves the full-screen map up (it used to switch back to the minimap, so walking by clicking turned the map off; upstream 541074c).
+# The second strip click can only say "-> minimap" if the map was still full screen after the ground click.
+name map_strip_mac
+save warlock
+requires mac-app
+env DM_PC_MODE=0
+timeout 240
+
+enter_game
+expect_state in_game=true
+sleep 2
+drag 0.83 0.075 0.83 0.075 2
+sleep 1.5
+drag 0.40 0.62 0.40 0.62 2
+sleep 1.5
+drag 0.83 0.075 0.83 0.075 2
+sleep 1.5
+quit
+check no_red
+check no_red_log
+check log_has "clicked the area-name strip of the minimap -> full-screen map"
+check log_has "clicked the area-name strip of the minimap -> minimap"
+check exit 0
