@@ -130,7 +130,7 @@ Usage is `dmhost <build output directory> [module…] [-- game arguments…]`. `
 
 **Build the iOS package**: `cd dm/ios && ./run.sh build`; to install on a device use `./run.sh install`. For signing configuration see the top-level README.
 
-**The gate**: `dm/verify/fork_gate.sh quick|unit|core|full|long|device` runs the source checks, the test suites, the scenarios, our own baselines and the benchmarks in tiers; see [verify/FORK_GATE.md](verify/FORK_GATE.md).
+**The gate**: `dm/verify/fork_gate.sh auto|quick|unit|core|full|long|device` runs the source checks, the test suites, the scenarios, our own baselines and the benchmarks in tiers; see [verify/FORK_GATE.md](verify/FORK_GATE.md).
 
 ## Files in host/
 

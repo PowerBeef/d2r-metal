@@ -3,15 +3,28 @@
 d2r-metal's verification run. It runs only what this Mac can check by itself: source checks, the test suites, scenarios on our own builds, the touch cases, faults, sanitizers and benchmarks. The reference behaviour comes from the original image (rewrite equivalence), our own baselines (`golden.py`) and the private analysis of the game's code; see [README.md](README.md#where-the-reference-behaviour-comes-from).
 
 ```bash
+dm/verify/fork_gate.sh auto             # the tiers this change needs (below)
 dm/verify/fork_gate.sh quick            # < 1 min: source checks
-dm/verify/fork_gate.sh quick unit       # ~6 min: + the test suites
-dm/verify/fork_gate.sh core             # ≤ 15 min: scenarios on the CLI host + touch cases
-dm/verify/fork_gate.sh full             # ~25 min: + Mac App, iOS package on the Mac, Metal validation, faults
+dm/verify/fork_gate.sh quick unit       # ~3 min: + the test suites
+dm/verify/fork_gate.sh core             # ~9 min: scenarios on the CLI host + touch cases
+dm/verify/fork_gate.sh full             # ~30 min: + Mac App, iOS package on the Mac, Metal validation, faults, replays, picture sets
 dm/verify/fork_gate.sh long             # on demand, 1.5–2.5 h: benchmarks, sanitizer runs, fuzzing
 dm/verify/fork_gate.sh device           # when the iPhone is reachable
 ```
 
 Several tiers can be given at once; they run in the order given.
+
+## Picking the tiers: `auto`
+
+`fork_gate.sh auto` runs the tiers the change needs and first prints why, file by file (`dm/tools/gate_pick.py explain`; test `test_gate_pick.py`). The change is everything since the merge base with `origin/main` (`DM_GATE_BASE` names another base): commits not pushed yet, edits, deletions and new files, never the three files `setup.sh` rewrites. Each file asks for a tier and the gate runs up to the highest:
+
+| Asks for | Files |
+|---|---|
+| quick unit | docs (`*.md`, `docs/`), unit tests, the switch registry, the launcher, release packaging, the engine-analysis and check tools, benchmarks, brand art, GitHub CI |
+| core | the game host (`dm/host/`), scenario saves and helpers, the gate script, a curated scenario that runs on the CLI host, and any file no rule names |
+| full | graphics (`dm/gfx/`), the iOS app, the Mac App front end and window, the picture settings (`dm_video`, `dm_picios`), game data, the binary rules and product, the scenario runner, pipeline warm-up, third-party code, the apps' text, the baselines and the rays replay, picture and fault scenarios, and a curated scenario whose `requires` line leaves out the CLI host (19 run only on the Mac App) |
+
+The rules are `RULES` in `gate_pick.py`, first match wins. `auto` never picks `long` or `device`, and it doesn't replace `full` before rebuilding the apps or making a release: a host change gets `core`, which runs the scenarios on the CLI host but not on the two apps.
 
 ## Results
 
@@ -26,9 +39,9 @@ Several tiers can be given at once; they run in the order given.
 
 | Tier | Steps |
 |---|---|
-| quick | `scan_literals.py`, `dm_i18n.py --check`, `switches.py check`, `enginemap.py check` (`docs/ENGINE_CHANGES.md` against the sources), `scenario.py check` on every scenario, `check_hud_gen.sh`, `addrcheck.py` (cited game addresses; ⚪ without the analysis export) |
+| quick | `scan_literals.py`, `dm_i18n.py --check`, `switches.py check`, `enginemap.py check` (`docs/ENGINE_CHANGES.md` against the sources), `bash -n` on this script (`auto` may skip the tier where a typo sits), `scenario.py check` on every scenario, `check_hud_gen.sh`, `addrcheck.py` (cited game addresses; ⚪ without the analysis export) |
 | unit | host, gfx and iOS suites; `regress.sh`; the Mac packaging tools (`test_mac_bundle.py`, `test_install.py`, the launcher's core tests) |
-| core | builds the host; the scenarios without front-end steps run headless, three at a time; the ones that minimize, background or quit (or carry the `front` header) run windowed, one at a time, in the background; then the touch cases; the picture chain at this Mac's Recommended on the CLI host (`scenarios/picture/` rec, rec75, recfg, rect, rec75t, aa_toggle: this Mac's Recommended, 3D 75% with the MetalFX 3D pass, frame generation, Temporal at 100% and 75%, AA switched live); the motion check (`motion_gate.py`: frame generation and the hero's animation on a walk over open ground, against a control run); the pipeline warm-up check (`pso_seed.py gate --backend cli --headless`: the town route with Recommended's features forced builds no pipeline that the seed `dm/gfx/nvn/pso_manifest.tsv` or the reviewed allow-list `pso_allow.tsv` lacks, `PSO_GATE OK rows=0`) |
+| core | builds the host; the scenarios without front-end steps run headless, three at a time; the ones that minimize, background or quit (or carry the `front` header) run windowed, one at a time, in the background; then the touch cases, three at a time on one shared UI overlay (each in its own folder on the deterministic clock, so load doesn't change a verdict: 1–2 min against 6 one at a time); the picture chain at this Mac's Recommended on the CLI host (`scenarios/picture/` rec, rec75, recfg, rect, rec75t, aa_toggle: this Mac's Recommended, 3D 75% with the MetalFX 3D pass, frame generation, Temporal at 100% and 75%, AA switched live); the motion check (`motion_gate.py`: frame generation and the hero's animation on a walk over open ground, against a control run); the pipeline warm-up check (`pso_seed.py gate --backend cli --headless`: the town route with Recommended's features forced builds no pipeline that the seed `dm/gfx/nvn/pso_manifest.tsv` or the reviewed allow-list `pso_allow.tsv` lacks, `PSO_GATE OK rows=0`) |
 | full | rebuilds the Mac App test copy for the current commit, runs the scenarios on it at this Mac's Recommended picture (`DM_TEST_VIDEO_FIRSTBOOT=1`; full screen emulated in the background), then the pipeline warm-up check on it (`pso_seed.py gate --backend mac-app`); `smoke_mac.sh 1` (which also rebuilds the iOS package for the Mac), the same check on that package (`--backend ios-mac`), the scenarios on it; Metal API validation on one scenario and on the Recommended picture (`picture/rec.scn`); the Mac App first launches (`picture/mac_firstboot_m6`, `mac_firstboot_m1`: the whole Recommended set from the `picture` event); the fault scenarios; the golden replays, screenshot pages and FLIP picture sets (`golden.py shots check --set orig,rec,rec75,phone`, ⚪ until recorded); the Mac ray planes byte for byte against a kept capture (`rays_replay.sh check`, ⚪ until recorded) |
 | long | `bench.py` on the four routes, one profile and the regression (first, while the machine is cool; at this Mac's Recommended in real full screen, in front; a disturbed rep is redone and otherwise ⚪ not judged); one true cold start of the Mac App (`pso_seed.py cold --backend mac-app`: a fresh bundle ID, so an empty Metal cache, in front; a row of its warm-up times, loading wait and pipelines built while drawing is appended to `$DM_ROOT/run/pso/cold.tsv`; informational); GPU heap 0 at the Native cap (`scenarios/heap/`, measurements: front runs in real full screen, one at a time); `explore.py` on the ASan and UBSan hosts; TSan alone; `fnfuzz.py` |
 | device | `smoke.sh`, `lifecycle.sh` on the iPhone; ⚪ when it isn't reachable |

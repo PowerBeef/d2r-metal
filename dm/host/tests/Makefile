@@ -118,6 +118,7 @@ run: \
 	python3 ../../tools/test_switches.py
 	python3 ../../tools/test_enginemap.py
 	python3 ../../tools/test_arrdump.py
+	python3 ../../tools/test_gate_pick.py
 	python3 ../../tools/switches.py check
 	$(B)/t_ctl
 	python3 test_ctl_transport.py

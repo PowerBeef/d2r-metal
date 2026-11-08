@@ -1,6 +1,7 @@
 #!/bin/bash
 # d2r-metal 自己的验收闸门：只用本机能跑的检查（不靠模拟器真值录制），按层跑，每步经 dmtest.py 出机器可读结果，末行 FORKGATE OK|RED {json}。
 #   用法：dm/verify/fork_gate.sh [层…]      层 = quick | unit | core | full | long | device，缺省 quick unit；可写多层（core 含不含 unit 由调用方决定）
+#   dm/verify/fork_gate.sh auto        按改动挑层（dm/tools/gate_pick.py：文档与单测 quick unit，宿主 core，图形、两个 App、游戏数据 full）；发版与重装 App 前照旧跑 full
 #   quick  源码检查（< 1 分钟）：字面量、中英表、开关登记、场景解析、HUD 派生物不入库
 #   unit   单测（约 3 分钟）：宿主、图形、iOS 单测，改写等价回归 regress.sh
 #   core   游戏局（≤ 15 分钟）：精选场景无窗口并行 3 局 + 触屏功能用例（持 Mac 游戏锁）
@@ -10,6 +11,7 @@
 #   结果：$DM_ROOT/run/gate/<时间>_<层>/（每步一个目录：log.txt、result.json、junit.xml），summary.json；latest 指向最近一次
 # d2r-metal's own acceptance gate: only checks that run on this machine (no emulator ground-truth recordings), in tiers; every step goes through dmtest.py for a machine-readable result; last line FORKGATE OK|RED {json}.
 #   Usage: dm/verify/fork_gate.sh [tier...]      tier = quick | unit | core | full | long | device, default quick unit; several tiers may be given
+#   dm/verify/fork_gate.sh auto        the tiers this change needs (dm/tools/gate_pick.py: docs and unit tests quick unit, the host core, graphics, the apps and game data full); full still runs before a release or an app rebuild
 #   quick  source checks (< 1 min): literals, string table, switch registry, scenario parsing, no HUD derivatives in git
 #   unit   unit tests (~3 min): host, graphics, iOS, rewrite equivalence regress.sh
 #   core   game runs (<= 15 min): curated scenarios headless, 3 at a time + the touch function cases (under the Mac game lock)
@@ -22,6 +24,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"; DM="$R
 export DM_ROOT="${DM_ROOT:-$HOME/dm-work}"
 VENV="$DM_ROOT/build/cache/dm/venv/bin/activate"; [ -f "$VENV" ] && source "$VENV"
 TIERS=("$@"); [ ${#TIERS[@]} -gt 0 ] || TIERS=(quick unit)
+if [ "${TIERS[*]}" = auto ]; then   # the tiers the change against origin/main needs (DM_GATE_BASE names another base), with each file's reason
+  PICK=$(python3 "$DM/tools/gate_pick.py" explain) || { echo "🔴 gate_pick.py 失败 | failed"; exit 2; }
+  read -ra TIERS <<< "$(head -1 <<< "$PICK")"; tail -n +2 <<< "$PICK"
+fi
 for t in "${TIERS[@]}"; do case "$t" in quick|unit|core|full|long|device) ;; *) echo "🔴 未知层 | unknown tier: $t"; exit 2;; esac; done
 OUT="$DM_ROOT/run/gate/$(date +%Y%m%d_%H%M%S)_$(IFS=_; echo "${TIERS[*]}")"; mkdir -p "$OUT"; ln -sfn "$OUT" "$DM_ROOT/run/gate/latest"
 STEPS="$OUT/steps.tsv"; : > "$STEPS"
@@ -71,14 +77,21 @@ scn_run() {   # scn_run <scenario.py run arguments…>: windowed runs are backgr
 }
 export -f scn_run
 export OUT DM DM_ROOT HEAD_SHA DIRTY
-touch_cases() {   # 触屏功能用例：退出码 3 = 本机缺前缀录制（不可用，不算红） | touch function cases: exit code 3 = prefix recording missing here (unavailable, not red)
-  local bad=0
-  for d in "$DM/verify/touchcases/"*/; do
-    local c; c=$(basename "$d"); [ -f "$d/script.txt" ] && [ -f "$d/assert.py" ] || continue
-    bash "$DM/verify/touchchain.sh" "$c" > "$OUT/touch_$c.log" 2>&1; local rc=$?
-    case $rc in 0) echo "TOUCHCASE $c OK";; 3) echo "⚪ TOUCHCASE $c 不可用 | unavailable（$(grep -m1 '⚪' "$OUT/touch_$c.log" | cut -c1-120)）";; *) echo "TOUCHCASE $c RED（$OUT/touch_$c.log）"; bad=1;; esac
-  done
-  return $bad
+touch_one() {   # touch_one <用例 | case>: one touch function case, its verdict line on stdout; exit code 3 = prefix recording missing here (unavailable, not red)
+  local c=$1
+  bash "$DM/verify/touchchain.sh" "$c" > "$OUT/touch_$c.log" 2>&1; local rc=$?
+  case $rc in 0) echo "TOUCHCASE $c OK";; 3) echo "⚪ TOUCHCASE $c 不可用 | unavailable（$(grep -m1 '⚪' "$OUT/touch_$c.log" | cut -c1-120)）";; *) echo "TOUCHCASE $c RED（$OUT/touch_$c.log）"; return 1;; esac
+}
+export -f touch_one
+touch_cases() {   # 触屏功能用例，3 例并行 | the touch function cases, 3 at a time: each runs in its own folder on the deterministic clock, so load doesn't change its verdict (touchchain.sh)
+  local cases=() d
+  for d in "$DM/verify/touchcases/"*/; do [ -f "$d/script.txt" ] && [ -f "$d/assert.py" ] && cases+=("$(basename "$d")"); done
+  # The UI overlay once for every case (touchchain.sh takes DM_ROMFS_OVERLAY; the generator also writes _astc and _variants folders beside it), removed after
+  export DM_ROMFS_OVERLAY="$OUT/romfs_overlay"
+  python3 "$DM/ios/tools/gen_romfs_overlay.py" "${DM_ROMFS_SRC:-$DM_ROOT/data/switch/3.3.94012/Update/RomFS}" "$DM_ROMFS_OVERLAY" > "$OUT/touch_overlay.log" 2>&1 || { echo "TOUCHCASE overlay RED ($OUT/touch_overlay.log)"; return 1; }
+  printf '%s\n' "${cases[@]}" | xargs -P 3 -I{} bash -c 'touch_one "$1"' _ {}; local rc=$?
+  rm -rf "$DM_ROMFS_OVERLAY" "$DM_ROMFS_OVERLAY"_astc "$DM_ROMFS_OVERLAY"_variants "$DM_ROMFS_OVERLAY"_astc_variants
+  return $(( rc != 0 ))
 }
 export -f touch_cases
 fresh_mac_app() {   # Mac App 测试副本按 HEAD 重出（构建号对不上就重出；测试用 bundle id，玩家的数据不碰） | rebuild the Mac App test copy for HEAD (when its stamp differs; test bundle id, the player's data is untouched)
@@ -98,6 +111,7 @@ for tier in "${TIERS[@]}"; do
     step quick_i18n 120 -- python3 "$DM/ios/tools/dm_i18n.py" --check
     step quick_switches 120 -- python3 "$DM/tools/switches.py" check
     step quick_enginemap 120 -- python3 "$DM/tools/enginemap.py" check
+    step quick_gate 60 -- bash -n "$DM/verify/fork_gate.sh"   # this script parses (auto runs only the tiers a change needs, so a typo in another tier would wait for it)
     step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/scenarios/picture/"*.scn "$DM/verify/scenarios/heap/"*.scn "$DM/verify/scenarios/manual/"*.scn "$DM/verify/golden/"*.scn "$DM/verify/bench/"*.scn
     step quick_hudgen 300 -- bash "$DM/ios/tools/check_hud_gen.sh"
     step quick_readdr 300 -- python3 "$DM/tools/re/addrcheck.py"   # cited main+0x... addresses vs the game program and the private analysis export (unavailable without them)

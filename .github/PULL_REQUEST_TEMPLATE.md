@@ -12,9 +12,10 @@
 
 <!-- Tick what you actually ran on this change and paste the last line of output. Leave unticked what you did not run. -->
 
+- [ ] `dm/verify/fork_gate.sh auto` (picks the tiers below from the change)
 - [ ] `dm/verify/fork_gate.sh quick unit`
-- [ ] `dm/verify/fork_gate.sh core` (host or graphics changes)
-- [ ] `dm/verify/fork_gate.sh full` (before an app rebuild)
+- [ ] `dm/verify/fork_gate.sh core` (host changes)
+- [ ] `dm/verify/fork_gate.sh full` (graphics and app changes, before an app rebuild)
 - [ ] `dm/verify/regress.sh --fresh` (if `dm/tools/patch_nso.py` changed)
 - [ ] `python3 dm/verify/golden.py replay check` / `shots check`
 

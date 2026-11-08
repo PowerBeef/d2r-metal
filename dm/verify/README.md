@@ -27,7 +27,7 @@ External tools:
 
 ## The gate: `fork_gate.sh`
 
-`fork_gate.sh quick|unit|core|full|long|device` runs the checks below in tiers, each step with a machine-readable result. See [FORK_GATE.md](FORK_GATE.md).
+`fork_gate.sh auto|quick|unit|core|full|long|device` runs the checks below in tiers (`auto`: the tiers a change needs), each step with a machine-readable result. See [FORK_GATE.md](FORK_GATE.md).
 
 ## Where the reference behaviour comes from
 
