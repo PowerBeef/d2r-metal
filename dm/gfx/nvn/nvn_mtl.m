@@ -131,7 +131,12 @@ static int g_pq_inflight;   // 持 g_pq_mu：已提交给 GPU、完成回调还�
 int g_dm_present_link;   // 出图节拍模式（DM_PRESENT_LINK 的运行时值，同进程交替测量时直接改它）：0 = 自己取 drawable；1 = 显示节拍 60 Hz；2 = 120 Hz 节拍、游戏隔拍出一帧 | Present pacing mode (runtime value of DM_PRESENT_LINK, modified directly during same-process alternating measurement): 0 = acquire the drawable itself; 1 = display link at 60 Hz; 2 = display link at 120 Hz, the game presents a frame every other display-link tick
 static int g_present_latency = 1;
 static int g_present_link_set;   // DM_PRESENT_LINK was given: it decides, whatever the Mac's default
-static int g_present_own_q = 1;   // presents with no link go on their own queue; DM_PRESENT_QUEUE=0 puts them back on the game's
+// Presents with no link go on their own queue on an iPhone or iPad only (DM_PRESENT_QUEUE=0/1 decides when set). On Apple silicon Macs (the Mac App
+// and the iOS package on a Mac) a second queue hung the GPU now and then: the kernel logged "AGX: Channel error 2" and the game's command buffer of
+// that frame ran exactly 4 s before the driver recovered it. 23 hangs in about 1,800 Mac runs from 2026-11-06, when the queue came in (4d31858),
+// to 11-08; native_2940 in the background, ABAB: 5 of 40 runs hung with the queue, 0 of 40 with presents on the game's queue. On the Mac the queue
+// had made no measurable difference; on the iPhone it fixed late and discarded frames, and no phone log shows such a hang (dm/verify/debugging.md)
+static int g_present_own_q = -1;
 static uint64_t g_pq_done;
 static uint64_t g_pq_read;
 static id<MTLResidencySet> g_res;
@@ -309,6 +314,14 @@ static void mtl_init_once(void) {
     if (g_dev) return;
     const char *link = getenv("DM_PRESENT_LINK"); g_present_link_set = link != NULL;
     { const char *e = getenv("DM_PRESENT_QUEUE"); if (e && *e) g_present_own_q = atoi(e) != 0; }
+    if (g_present_own_q < 0) {
+#if TARGET_OS_OSX
+        g_present_own_q = 0;
+#else
+        g_present_own_q = !NSProcessInfo.processInfo.isiOSAppOnMac;   // the iOS package on a Mac runs on the Mac's GPU
+#endif
+    }
+    MLOG("present: presents go on %s (DM_PRESENT_QUEUE%s)", g_present_own_q ? "their own queue" : "the game's queue", getenv("DM_PRESENT_QUEUE") ? " set" : " not set: by device");
     g_dm_present_link = link ? atoi(link) : 1; if (g_dm_present_link < 0 || g_dm_present_link > 2) g_dm_present_link = 1;   // 缺省 1（真机同进程交替：负载超一拍时长帧 15% → 0、帧间隔变匀；稳 60 时与 0 无差别）；DM_PRESENT_LINK=0 关   // 1 = 60 Hz 节拍每拍出图；2 = 120 Hz 节拍、游戏隔拍出一帧（落后时下一个 8.33 ms 拍就能上屏） | Default 1 (real-device same-process alternation: when load exceeds one display-link period, long frames 15% → 0 and frame intervals even out; no difference from 0 at a steady 60); DM_PRESENT_LINK=0 turns it off   // 1 = present on every tick of a 60 Hz display link; 2 = 120 Hz display link, the game presents a frame every other display-link tick (when behind, it can present on the next 8.33 ms display-link tick)
     const char *latency = getenv("DM_PRESENT_LATENCY");
     if (latency && atoi(latency) > 0) g_present_latency = atoi(latency);

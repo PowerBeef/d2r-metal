@@ -7,10 +7,8 @@
 # the picture into this screen's drawable, which is not what the Air does; the near-match 1:1 present is t_present_crop's and dm_geom's.
 name native_2940_mac
 requires mac-app
-# In front: without frame generation the Mac presents straight into the window, and a background run's window sits outside every screen, where the
-# system sometimes holds its images back: the GPU then waits on them, the game stops in its present wait and a quit can't save (2 of 20 runs in
-# the background on 2026-11-07, 0 of 20 in front; dm/verify/debugging.md)
-front visibility
+# A background run again since 2026-11-08: the stall that once kept it in front (2 of 20 runs in the background on 2026-11-07) was the GPU hang a
+# separate present queue caused on Macs, not the off-screen window (dm/verify/debugging.md, "The GPU hangs for 4 s")
 save warlock
 timeout 300
 # DM_PRESENT_LINK=0 as every Mac presents since frame generation: without frame generation this run would otherwise be on the display link, which went silent for seconds in a background

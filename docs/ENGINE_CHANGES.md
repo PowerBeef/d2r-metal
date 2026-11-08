@@ -715,13 +715,13 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-053 Present
 - **Layer:** present
 - **Engine:** Acquires a texture, waits for vertical sync there, and queues a present.
-- **Ours:** The present thread draws the swap texture to a `CAMetalLayer`. With frame generation there's no display link: as in Apple's guide, each image stays on screen at least 90% of a refresh, a frame starts from the last generated image's real time plus two refreshes minus a lead, and presents go on a queue of their own.
+- **Ours:** The present thread draws the swap texture to a `CAMetalLayer`. With frame generation there's no display link: as in Apple's guide, each image stays on screen at least 90% of a refresh, a frame starts from the last generated image's real time plus two refreshes minus a lead. On an iPhone or iPad presents go on a queue of their own; on Macs they share the game's queue, as a second queue hung the Mac's GPU about one run in eighty.
 - **Why:** A late link callback cost a whole refresh on the Mac; on the phone a late generated frame discarded the real one.
 - **Setting:** none
 - **Switch:** DM_PRESENT_LINK, DM_PRESENT_QUEUE, DM_FG_LEAD_MS, DM_PRESENT_HZ
 - **Test:** native_2940_mac, t_fgpace, t_pace, t_adaptive_pace, t_link_ticks
 - **Commit:** 4eda105, 4d31858
-- **Measured:** Mac town: 15 late and 12 discarded to 0 (M6, 2026-11-06). iPhone 17 Pro town: 1.7 to 1.9% late to 0.06 to 0.11%, none discarded (2026-11-06).
+- **Measured:** Mac town: 15 late and 12 discarded to 0 (M6, 2026-11-06). iPhone 17 Pro town: 1.7 to 1.9% late to 0.06 to 0.11%, none discarded (2026-11-06). The Mac's own present queue: native_2940_mac in the background, 5 of 40 runs with a 4 s GPU hang (kernel `AGX: Channel error 2`) against 0 of 40 on the game's queue (M6, 2026-11-08).
 - **Status:** confirmed
 - **Covers:** none
 
