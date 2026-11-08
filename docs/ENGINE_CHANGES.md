@@ -1,6 +1,6 @@
 # What this port changes in the game's engine
 
-D2R Metal runs the Switch build's own aarch64 code. This page lists everything we change on top of it: what the engine does by itself, what we do instead, why, how to turn it off, what test pins it, and what it measured. `dm/tools/enginemap.py check` (gate step `quick_enginemap`) keeps the page and the sources in step: a rewrite entry, shader rule, hard-coded shader key or raised engine field with no row turns the gate red, and so does a row that cites a switch, test, commit or address that no longer exists.
+D2R Metal runs the Switch build's own aarch64 code. This page lists everything we change on top of it: what the engine does by itself, what we do instead, why, how to turn it off, what test pins it, and what it measured. `dm/tools/enginemap.py check` (gate step `quick_enginemap`) keeps the page and the sources in step: a rewrite entry, shader rule, hard-coded shader key, raised engine field or replay-layer file (`dm/gfx/nvn/*.inc`, tools aside) with no row turns the gate red, and so does a row that cites a switch, test, commit or address that no longer exists. Other host take-overs and present-path changes have rows too, but no check finds them: they are reviewed by hand.
 
 **When you change engine behaviour, add or update its row in the same commit.** A row's status is `confirmed` when we know what the engine does there, or `assumes:<id>` when it rests on an open question in the private analysis ledger. Addresses are offsets into the original 3.3.94012 `main` image. Everything here is in our own words. No game content or analysis output belongs on this page.
 
@@ -546,7 +546,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-040 MetalFX Temporal and motion vectors
 - **Layer:** shader rule
 - **Engine:** Has no velocity pass on Switch, and its camera is orthographic in the world.
-- **Ours:** The rule adds a second vertex entry that runs the shader's body on this frame's and last frame's constants. At the upscale we fill motion from depth and the two view-projections, then redraw what changed, depth-equal. A sharpen on write-back restores detail.
+- **Ours:** The rule adds a second vertex entry that runs the shader's body on this frame's and last frame's constants. At the upscale we fill motion from depth and the two view-projections, then redraw what changed, depth-equal. A sharpen on write-back restores detail. Code: `dm/gfx/nvn/nvn_mv.inc`.
 - **Why:** Stable edges and the input frame generation needs.
 - **Setting:** none (on where the chip has it)
 - **Switch:** DM_MFXT, DM_MV
@@ -559,7 +559,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-041 Frame generation
 - **Layer:** replay layer
 - **Engine:** Presents the frames it draws.
-- **Ours:** MetalFX's frame interpolator runs between two Final Results, and this frame's interface is blended over at the game's compose draw, so it's never warped.
+- **Ours:** MetalFX's frame interpolator runs between two Final Results, and this frame's interface is blended over at the game's compose draw, so it's never warped. Code: `dm/gfx/nvn/nvn_fg.inc`.
 - **Why:** Render 30, show 60, which pays for rays.
 - **Setting:** none (on where the chip has it)
 - **Switch:** DM_FG
@@ -611,7 +611,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-045 Extrapolated 3D frames (off)
 - **Layer:** replay layer
 - **Engine:** Draws the whole 3D scene each frame.
-- **Ours:** An inherited extrapolation path keeps only skinned units on alternate frames and moves last frame's picture. Off by default: it stuttered in released builds upstream. The ten keys name skinned vertex shaders.
+- **Ours:** An inherited extrapolation path keeps only skinned units on alternate frames and moves last frame's picture. Off by default: it stuttered in released builds upstream. The ten keys name skinned vertex shaders. Code: `dm/gfx/nvn/nvn_rtex.inc`.
 - **Why:** Inherited as a power saver.
 - **Setting:** none
 - **Switch:** DM_RT_AB, DM_RT_AB_TOGGLE

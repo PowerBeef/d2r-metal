@@ -54,6 +54,11 @@ class Map(unittest.TestCase):
         with open(self.doc, 'w', encoding='utf-8') as f: f.write(text)
         return enginemap.check(self.root, self.doc, ledger)[3]
 
+    def test_replay_layer_file_needs_a_row(self):
+        with open(os.path.join(self.root, 'dm/gfx/nvn/nvn_new.inc'), 'w') as f: f.write('// a new hook\n')
+        self.assertTrue(any('nvn_new.inc has no row' in r for r in self.red()))
+        row = ROW.format(sha=self.sha, status='confirmed', covers=ALL).replace('- **Ours:** does another', '- **Ours:** does another (`nvn_new.inc`)')
+        self.assertEqual(self.red(row), [])
     def test_complete(self):
         self.assertEqual(self.red(), [])
 

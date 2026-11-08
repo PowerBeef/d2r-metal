@@ -10,6 +10,8 @@ The sources are read, not imported (patch_nso.py runs at import):
   dm/gfx/tools/dmsh_rules.py   RULES (function names)
   dm/gfx/nvn/nvn_mtl.m, *.inc  shader keys named in code ("<16 hex digits>")
   dm/host/dm_video.c           renderer config fields the host raises (rcfg_put)
+  dm/gfx/nvn/*.inc             each replay-layer file a row names, or a tool listed in TOOL_INC
+Other host take-overs and present-path changes have rows too, but nothing finds them for the check: those are reviewed by hand.
 
 A row in the doc's Register section:
 
@@ -30,6 +32,7 @@ Unknown ids name rows of the private unknowns ledger. Where the ledger is at han
 assume a question still open: one that was settled must become confirmed, or the row must change.
 """
 import ast
+import glob
 import os
 import re
 import subprocess
@@ -46,6 +49,13 @@ SHADER_KEY = re.compile(r'"([0-9a-f]{16})"')
 ADDR = re.compile(r'\bmain\+0x[0-9a-f]+\b')
 FIELD_ADDR = re.compile(r'\brenderer\+0x[0-9a-f]+\b')
 UNKNOWN_ID = re.compile(r'^u-[a-z0-9]+-\d+$')
+# The replay layer's included files (dm/gfx/nvn/*.inc): one that changes what the engine draws must be named by a row; these are tools, each with why
+TOOL_INC = {
+    'nvn_capture.inc': 'frame capture for debugging (DM_NVN_CAPTURE)',
+    'nvn_framerec.inc': 'the frame recorder the motion checks read',
+    'nvn_testload.inc': 'known GPU work, the control for measurements (DM_TEST_LOAD)',
+    'rt_range_check.inc': 'a private checker, not in normal builds',
+}
 
 
 def read(root, path):
@@ -190,6 +200,10 @@ def check(root, doc_path, ledger_path):
                     elif ledger is not None and ledger.get(uid) != 'open': red.append(f'{rid}: assumes {uid}, which the ledger has as {ledger.get(uid, "missing")}')
     for item, where in sorted(items.items()):
         if item not in covered: red.append(f'{item} ({where}) has no row')
+    named = '\n'.join(' '.join(str(v) for v in r.values()) for r in rows.values())
+    for f in sorted(glob.glob(os.path.join(root, 'dm', 'gfx', 'nvn', '*.inc'))):
+        b = os.path.basename(f)
+        if b not in TOOL_INC and b not in named: red.append(f'dm/gfx/nvn/{b} has no row that names it (a tool goes in TOOL_INC, with why)')
     for rid in cited:
         if rid not in rows: red.append(f'{rid} is cited but has no row')
     for sw in sorted(set(SWITCH.findall(doc))):

@@ -5,6 +5,8 @@
 #   check  登记表与源码一致，且每个「设」的开关都有人读；不符打 SWITCHES RED 与明细、退出码 1
 # Registry of environment switches (DM_*): scans the sources for who reads which switches and generates dm/switches.tsv; checks that every switch a script sets is read by something (a misspelt / long-removed switch silently does nothing when set).
 #   Reads: "DM_..." literals in C / ObjC sources (both direct getenv and reads through name tables count), Python's os.environ.get / os.environ[...] / os.getenv, $DM_... / ${DM_...} in shell and Makefiles
+#   Only names written out whole count: a switch name built at run time ("DM_" + suffix) is in neither the registry nor the check, so never build one
+#   Files: tracked ones and new ones not yet added (not ignored), so the gate sees a new file before its commit
 #   Sets: shell DM_...= / export / env -u / --env DM_...= / DEVICECTL_CHILD_DM_...= (prefix removed), Python environment dict keys / dict(..., DM_...=) / 'DM_...=value' strings,
 #         and the env lines of scenario files (*.scn: `env DM_...=value ...`, shell-quoted words, # comments ignored)
 #   gen    regenerate dm/switches.tsv (columns: switch, parts that read it, files that read it, mentioned in the docs or not)

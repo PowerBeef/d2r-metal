@@ -21,7 +21,7 @@ dm/verify/fork_gate.sh full         # host, graphics and app changes, and before
 |---|---|
 | `python3 dm/i18n/scan_literals.py` | Whether any Chinese text the player can see bypasses the string table; see [dm/i18n/README.md](dm/i18n/README.md) |
 | `python3 dm/ios/tools/dm_i18n.py --check` | Whether every row of `dm/i18n/ui_text.tsv` follows the rules, and whether the checked-in `dm/host/dm_i18n_tab.h` was generated from it |
-| `python3 dm/tools/switches.py check` | Whether `dm/switches.tsv` lists every `DM_*` switch the sources read, and no script sets a switch nothing reads (`switches.py gen` rewrites it) |
+| `python3 dm/tools/switches.py check` | Whether `dm/switches.tsv` lists every `DM_*` switch the sources read by its whole name (a name built at run time isn't seen, so don't build one), and no script sets a switch nothing reads (`switches.py gen` rewrites it) |
 
 GitHub CI (`.github/workflows/tests.yml`) runs these checks, the scenario parser, the HUD-derivatives check and the Python tool tests on every push to `main` and every pull request, with an empty workspace. The host, graphics and iOS suites need macOS 27 / Xcode 27 and partly the game's files, so they stay local. A nightly job (`fuzz.yml`) fuzzes the file parsers (`dm/tools/fuzz`).
 
