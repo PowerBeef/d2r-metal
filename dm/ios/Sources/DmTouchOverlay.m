@@ -42,6 +42,7 @@ static dm_ta_glyph shown_glyph(const dm_tg_snapshot *n, uint64_t button, uint64_
     UIImage *_circle, *_socket, *_map, *_menu, *_nativeAtlases[DM_TA_ATLASES], *_silAtlases[DM_TA_ATLASES];   // _sil：同帧位的银色剪影图集（gen_hud_v4.py） | _sil: silver silhouette atlas at the same frame positions (gen_hud_v4.py)
     NSMutableDictionary<NSString *,UIImage *> *_glyphFrames, *_buttonFrames;
     dm_ta_glyph _nativeVisualGlyphs[5];
+    CALayer *_joyBase, *_joyThumb; uint64_t _sig; CGRect _v4rect;   // the joystick's own layers; the visual state drawRect last drew; where the bottom bar last drew
 }
 - (instancetype)initWithFrame:(CGRect)f {
     if (!(self = [super initWithFrame:f])) return nil;
@@ -121,14 +122,45 @@ static dm_ta_glyph shown_glyph(const dm_tg_snapshot *n, uint64_t button, uint64_
     }];
     [image drawInRect:rect];
 }
-- (void)drawJoystickPart:(CGRect)rect base:(BOOL)base active:(BOOL)active {
-    NSString *key=[NSString stringWithFormat:@"stick:%d:%d",base,active];
-    UIImage *image=[self controlArt:key size:rect.size draw:^(CGContextRef c){
-        if(base) dm_joystick_base_draw(c,(CGRect){CGPointZero,rect.size},active);
-        else dm_joystick_thumb_draw(c,(CGRect){CGPointZero,rect.size},active);
+- (UIImage *)joystickArt:(CGSize)size base:(BOOL)base active:(BOOL)active {
+    return [self controlArt:[NSString stringWithFormat:@"stick:%d:%d",base,active] size:size draw:^(CGContextRef c){
+        if(base) dm_joystick_base_draw(c,(CGRect){CGPointZero,size},active);
+        else dm_joystick_thumb_draw(c,(CGRect){CGPointZero,size},active);
     }];
-    [image drawInRect:rect];
 }
+// The joystick lives on two layers of its own: a finger move only moves them, instead of redrawing the whole overlay in Core Graphics (D2R Mobile's Time
+// Profiler: CPU image blits dominated the main thread; upstream 7b62d9c). Hidden on death and while a panel is open (the stick cannot start then: the
+// stick-start condition in dm_touch_controls.c includes !navigation_mode, and on an iPad the panels fill the width)
+- (void)syncJoystick {
+    const dm_tc_state *s=self.controls; if(!s) return; const dm_tc_layout *l=&s->layout; CGFloat k=l->joy_radius/60;
+    if(!_joyBase) { _joyBase=[CALayer layer]; _joyThumb=[CALayer layer]; [self.layer addSublayer:_joyBase]; [self.layer addSublayer:_joyThumb]; }
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    BOOL show=k>0 && !(self.hud.valid && self.hud.dead) && !s->navigation_mode; _joyBase.hidden=_joyThumb.hidden=!show;
+    if(show) { BOOL moving=s->joy_slot>=0; CGFloat r=l->joy_radius;
+        CGPoint o=moving?CGPointMake(s->joy_origin_x,s->joy_origin_y):CGPointMake(l->joy_x,l->joy_y);
+        CGRect base=CGRectMake(o.x-r,o.y-r,r*2,r*2), thumb=CGRectMake(o.x+s->lx/32767.0*r-23*k,o.y-s->ly/32767.0*r-23*k,46*k,46*k);
+        _joyBase.contents=(id)[self joystickArt:base.size base:YES active:moving].CGImage; _joyBase.frame=base;
+        _joyThumb.contents=(id)[self joystickArt:thumb.size base:NO active:moving].CGImage; _joyThumb.frame=thumb; }
+    [CATransaction commit];
+}
+// The control state drawRect reads: held buttons, the map's cancel state, the skill set, panel (navigation) mode, the held cross and the visible targets.
+// The full overlay is redrawn only when it changes
+static uint64_t visual_sig(const dm_tc_state *s) {
+    uint64_t g=0; for(int i=0;i<DM_TC_COUNT;i++) g|=(uint64_t)button_held(s,i)<<i;
+    return g | (uint64_t)button_held(s,DM_TC_SWAP)<<20 | (uint64_t)(s->map_cancel_active!=0)<<21 | (uint64_t)(s->skill_set!=0)<<23
+        | (uint64_t)(s->navigation_mode!=0)<<24 | (uint64_t)((s->buttons&DM_BTN_PLUS)!=0)<<25 | (uint64_t)s->enabled_targets<<32;
+}
+- (void)controlsChanged { if(!self.controls) return; [self syncJoystick]; if(visual_sig(self.controls)!=_sig) [self setNeedsDisplay]; }
+// HUD numbers (life, mana, experience, belt, points) changing redraw only where the bottom bar last drew; in-run, death and the players setting redraw everything
+- (void)setHud:(dm_hud_info)h {
+    dm_hud_info o=_hud; _hud=h;
+    if(o.valid!=h.valid || o.dead!=h.dead || o.players!=h.players || CGRectIsEmpty(_v4rect)) { [self setNeedsDisplay]; return; }
+    [self setNeedsDisplayInRect:_v4rect];
+}
+// Hidden (controller mode): no Core Graphics redraws; one full redraw when shown again
+- (void)setNeedsDisplay { if(!self.hidden) [super setNeedsDisplay]; }
+- (void)setNeedsDisplayInRect:(CGRect)r { if(!self.hidden) [super setNeedsDisplayInRect:r]; }
+- (void)setHidden:(BOOL)h { BOOL was=self.hidden; [super setHidden:h]; if(was && !h) [super setNeedsDisplay]; }
 - (void)setNavigationMode:(BOOL)n { _navigationMode = n; [self setNeedsDisplay]; }
 // ---- 底部 UI v4：UIKit 部分（经验条、「Lv · %」、角标、十字两态），素材与几何由 tools/gen_hud_v4.py 生成（App 内 hud_v4_ui/）----
 // 几何单位 = 2868×1320 效果图像素：点 = (像素 − 1434) × 屏高/1320 + 屏宽/2（x），像素 × 屏高/1320（y）——与原生 HUD 同样按屏高缩放、以屏幕中线居中
@@ -149,54 +181,60 @@ static UIImage *v4img(NSString *name) {
 }
 // 逐字贴预渲染字形（字效与效果图同源）；align：0 居中、1 右对齐；(x, baseline) 为效果图像素
 // Blit pre-rendered glyphs character by character (text effect from the same source as the mockup); align: 0 centered, 1 right-aligned; (x, baseline) are in mockup pixels
-static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat baseline, int align, CGFloat W, CGFloat u) {
+static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat baseline, int align, CGFloat W, CGFloat u, CGRect *acc) {   // acc: grows by every glyph drawn (NULL: not kept)
     CGFloat adv=0; for(NSUInteger i=0;i<str.length;i++) adv+=[glyphs[[str substringWithRange:NSMakeRange(i,1)]][@"adv"] doubleValue];
     CGFloat pen=align==1?x-adv:x-adv/2;
     for(NSUInteger i=0;i<str.length;i++) {
         NSDictionary *gm=glyphs[[str substringWithRange:NSMakeRange(i,1)]]; if(!gm) continue;
         UIImage *im=[gm[@"file"] isKindOfClass:NSString.class]?v4img(gm[@"file"]):nil;
-        if(im) [im drawInRect:CGRectMake((pen+[gm[@"dx"] doubleValue]-1434)*u+W/2,(baseline+[gm[@"dy"] doubleValue])*u,im.size.width*u,im.size.height*u)];
+        if(im) { CGRect r=CGRectMake((pen+[gm[@"dx"] doubleValue]-1434)*u+W/2,(baseline+[gm[@"dy"] doubleValue])*u,im.size.width*u,im.size.height*u); [im drawInRect:r]; if(acc) *acc=CGRectUnion(*acc,r); }
         pen+=[gm[@"adv"] doubleValue];
     }
 }
 - (void)drawV4:(CGContextRef)c {
     NSDictionary *ui=v4ui(); const dm_hud_info h=self.hud; const dm_tc_state *s=self.controls;
+    _v4rect=CGRectNull;
     if(!ui || !dm_hud_bar_visible(&h,self.navigationMode && !self.dialogOnly,self.hudBlocked)) return;   // 只在局内常态显示：面板 / 读取画面 / 过场（导航态）与死亡时让开，不挡游戏自己的画面（dm_hud.h） | Shown only in the normal in-run state: yields during panels / loading screen / cutscenes (navigation mode) and on death, so it does not cover the game's own picture (dm_hud.h)
     CGFloat W=self.bounds.size.width, u=self.bounds.size.height/1320.0;
     CGFloat (^X)(CGFloat)=^(CGFloat px){ return (px-1434)*u+W/2; };
     // 底栏静态美术：效果图原生分辨率直接贴（不经游戏 1568×720 渲染再放大）；腰带格内挖空透出游戏画的药水、球心挖空透出球液
     // Bottom bar static art: blit the mockup directly at native resolution (not rendered by the game at 1568×720 and then upscaled); the belt cells are cut out to show the potions drawn by the game, and the orb centers are cut out to show the orb liquid
+    CGRect acc=CGRectNull;
     UIImage *full=v4img(@"base_full.png"); NSDictionary *bo=ui[@"base"];
-    if(full) [full drawInRect:CGRectMake(X([bo[@"x"] doubleValue]),[bo[@"y"] doubleValue]*u,full.size.width*u,full.size.height*u)];
+    if(full) { CGFloat sc=self.contentScaleFactor; CGRect r=CGRectMake(round(X([bo[@"x"] doubleValue])*sc)/sc,round([bo[@"y"] doubleValue]*u*sc)/sc,round(full.size.width*u*sc)/sc,round(full.size.height*u*sc)/sc);
+        [[self controlArt:@"v4base" size:r.size draw:^(CGContextRef cc){ (void)cc; [full drawInRect:(CGRect){CGPointZero,r.size}]; }] drawInRect:r]; acc=CGRectUnion(acc,r); }   // scaled to the screen once and kept, so a redraw blits it 1:1
     // 第 4 格（五格布局的最右格）= 原版十字按钮整格替换（含边框）；按住第 1 帧。两态：有未分配点数时红色 + 外圈金光（原版「有点可加」提示），否则默认色（暗底金十字）
     // Cell 4 (the rightmost of the five cells) = the original game's cross button replacing the whole cell (border included); frame 1 while held. Two states: with unspent points it is red + an outer gold glow (the original game's "points available" hint), otherwise the default color (gold cross on dark base)
     { NSArray *s6=ui[@"slots"][4]; BOOL held=s && (s->buttons & DM_BTN_PLUS), alert=h.points>0 || h.quest_unread;
       UIImage *btn=v4img(alert?(held?@"lvl_1.png":@"lvl_0.png"):(held?@"lvl_d1.png":@"lvl_d0.png")); CGRect r=CGRectMake(X([s6[0] doubleValue]),[s6[1] doubleValue]*u,([s6[2] doubleValue]-[s6[0] doubleValue])*u,([s6[3] doubleValue]-[s6[1] doubleValue])*u);
       if(h.points>0) { CGContextSaveGState(c); CGContextSetShadowWithColor(c,CGSizeZero,10*u,[UIColor colorWithRed:1 green:.82 blue:.35 alpha:.95].CGColor); [btn drawInRect:r]; CGContextRestoreGState(c); }
-      if(btn) [btn drawInRect:r]; }
+      if(btn) [btn drawInRect:r];
+      acc=CGRectUnion(acc,CGRectInset(r,-12*u,-12*u)); }   // with the glow
     // 经验条：底槽 + 描边 + 填充（本级‰）+ 20 等分刻度，同效果图
     // Experience bar: base groove + outline + fill (‰ of the current level) + 20 equal tick marks, same as the mockup
     NSDictionary *e=ui[@"exp"]; CGFloat x0=[e[@"x0"] doubleValue], x1=[e[@"x1"] doubleValue], y=[e[@"y"] doubleValue], eh=[e[@"h"] doubleValue];
     UIColor *(^rgb)(NSArray *)=^(NSArray *a){ return [UIColor colorWithRed:[a[0] doubleValue]/255 green:[a[1] doubleValue]/255 blue:[a[2] doubleValue]/255 alpha:1]; };
-    CGContextSetFillColorWithColor(c,rgb(e[@"track"]).CGColor); CGContextFillRect(c,CGRectMake(X(x0),y*u,(x1-x0)*u,eh*u));
+    CGContextSetFillColorWithColor(c,rgb(e[@"track"]).CGColor); CGContextFillRect(c,CGRectMake(X(x0),y*u,(x1-x0)*u,eh*u)); acc=CGRectUnion(acc,CGRectInset(CGRectMake(X(x0),y*u,(x1-x0)*u,eh*u),-u,-u));
     CGContextSetStrokeColorWithColor(c,rgb(e[@"edge"]).CGColor); CGContextSetLineWidth(c,u); CGContextStrokeRect(c,CGRectMake(X(x0)+u/2,y*u+u/2,(x1-x0-1)*u,(eh-1)*u));
     CGContextSetFillColorWithColor(c,rgb(e[@"fill"]).CGColor); CGContextFillRect(c,CGRectMake(X(x0+1),(y+1)*u,(x1-x0-2)*u*h.exp_permille/1000.0,(eh-2)*u));
     int ticks=[e[@"ticks"] intValue]; CGContextSetFillColorWithColor(c,rgb(e[@"track"]).CGColor);
     for(int t=1;t<ticks;t++) CGContextFillRect(c,CGRectMake(X(x0+round((x1-x0)*t/(double)ticks)),(y+1)*u,u,(eh-2)*u));
     NSDictionary *vt=ui[@"vital"];   // 生命 / 法力：球顶上方居中，效果图字形原生分辨率（原生数值文字已挪出屏幕） | Life / mana: centered above the top of the orb, mockup glyphs at native resolution (the native numeric text has been moved off screen)
-    v4text([NSString stringWithFormat:@(dm_ui("dmHudLife")),h.hp,h.hp_max],vt[@"glyphs"],[vt[@"left_x"] doubleValue],[vt[@"baseline"] doubleValue],0,W,u);
-    v4text([NSString stringWithFormat:@(dm_ui("dmHudMana")),h.mp,h.mp_max],vt[@"glyphs"],[vt[@"right_x"] doubleValue],[vt[@"baseline"] doubleValue],0,W,u);
+    v4text([NSString stringWithFormat:@(dm_ui("dmHudLife")),h.hp,h.hp_max],vt[@"glyphs"],[vt[@"left_x"] doubleValue],[vt[@"baseline"] doubleValue],0,W,u,&acc);
+    v4text([NSString stringWithFormat:@(dm_ui("dmHudMana")),h.mp,h.mp_max],vt[@"glyphs"],[vt[@"right_x"] doubleValue],[vt[@"baseline"] doubleValue],0,W,u,&acc);
     NSDictionary *lv=ui[@"lv"];
-    v4text([NSString stringWithFormat:@"Lv %d · %d%%",h.level,h.exp_permille/10],lv[@"glyphs"],[lv[@"x"] doubleValue],[lv[@"baseline"] doubleValue],0,W,u);
+    v4text([NSString stringWithFormat:@"Lv %d · %d%%",h.level,h.exp_permille/10],lv[@"glyphs"],[lv[@"x"] doubleValue],[lv[@"baseline"] doubleValue],0,W,u,&acc);
     // 角标：腰带四列件数（第 0–3 格），右下内角右对齐（回城钮在技能弧上、不在这里，第 4 格是十字）
     // Badges: item counts of the four belt columns (cells 0–3), right-aligned at the inner bottom-right corner (the town portal button is on the skill arc, not here; cell 4 is the cross)
     NSArray *slots=ui[@"slots"], *in=ui[@"inner"]; NSDictionary *bd=ui[@"badge"];
     for(int i=0;i<4;i++) { if(!h.belt[i]) continue;
-        v4text([NSString stringWithFormat:@"%d",h.belt[i]],bd[@"glyphs"],[slots[i][0] doubleValue]+[in[2] doubleValue]+[bd[@"dx"] doubleValue],[slots[i][1] doubleValue]+[in[3] doubleValue]+[bd[@"dy"] doubleValue],1,W,u); }
+        v4text([NSString stringWithFormat:@"%d",h.belt[i]],bd[@"glyphs"],[slots[i][0] doubleValue]+[in[2] doubleValue]+[bd[@"dx"] doubleValue],[slots[i][1] doubleValue]+[in[3] doubleValue]+[bd[@"dy"] doubleValue],1,W,u,&acc); }
+    // Numbers grow and shrink (a wider "Lv 10 · 100%", a third belt digit): keep the whole band from the bar's top to the bottom of the screen, a little wider
+    if(!CGRectIsNull(acc)) _v4rect=CGRectMake(acc.origin.x-40*u,acc.origin.y-8*u,acc.size.width+80*u,self.bounds.size.height-acc.origin.y+8*u);
 }
 - (void)drawRect:(CGRect)rect {
-    (void)rect;
     const dm_tc_state *s = self.controls; if (!s) return;
+    [self syncJoystick]; _sig=visual_sig(s);
     const dm_tc_layout *l = &s->layout;
     CGFloat k = l->joy_radius / 60;
     if (k <= 0) return;
@@ -212,6 +250,7 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
                                                       // 原先只在游戏态跳过：只开着 NPC 对话菜单时（导航态 3，十字可点）这一格被画成圆底 + 写死的中文「功能」，英文界面也写中文。回城（技能弧上方圆钮）照技能钮画
                                                       // Previously skipped only in the gameplay state: with only the NPC dialog menu open (navigation state 3, cross tappable) this cell was drawn as a round base plus the hardcoded Chinese "功能" (Functions), even in the English UI. Town Portal (the round button above the skill arc) is drawn like a skill button
         const dm_tc_target *t = &l->target[i]; CGRect b = CGRectMake(t->x-t->r,t->y-t->r,t->r*2,t->r*2);
+        if (!CGRectIntersectsRect(CGRectInset(b,-t->r*.5,-t->r*.5),rect)) continue;   // a bar-only redraw (setHud) skips buttons outside it (inflated by half a radius for the glow and badges)
         BOOL held=button_held(s,i);
         CGFloat opacity = held ? .6 : .28;
         if(!self.navigationMode && i==DM_TC_MAP && s->map_cancel_active) {
@@ -258,10 +297,10 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
                 CGContextSetLineWidth(c,MAX(1,br*.14)); CGContextSetStrokeColorWithColor(c,[UIColor colorWithRed:.63 green:.50 blue:.27 alpha:1].CGColor); CGContextStrokeEllipseInRect(c,lw2);
                 CGFloat ts=br*1.15; caption(@"Ⅱ",CGRectMake(bx-br,by-ts*.62,br*2,ts*1.4),ts,1); }
             if(ssKind&2) { NSDictionary *ui=v4ui(); CGFloat W=self.bounds.size.width, u=self.bounds.size.height/1320.0; NSDictionary *bd=ui[@"badge"];
-                if(bd && u>0) v4text([NSString stringWithFormat:@"%d",ssCharges<0?0:ssCharges],bd[@"glyphs"],(t->x+t->r*.66-W/2)/u+1434,(t->y+t->r*.42)/u,1,W,u); }
+                if(bd && u>0) v4text([NSString stringWithFormat:@"%d",ssCharges<0?0:ssCharges],bd[@"glyphs"],(t->x+t->r*.66-W/2)/u+1434,(t->y+t->r*.42)/u,1,W,u,NULL); }
             if(bare) continue;
             NSString *ln=i==DM_TC_MAIN?@"lbl_main.png":[NSString stringWithFormat:@"lbl_f%d.png",i-DM_TC_SKILL1+1+(s->skill_set?4:0)];
-            UIImage *lbl=[UIImage imageWithContentsOfFile:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:[@"hud_v4_ui" stringByAppendingPathComponent:ln]]];
+            UIImage *lbl=v4img(ln);
             if(lbl) { CGFloat lh=t->r*(i==DM_TC_MAIN?.30:.36), lw_=lbl.size.width*lh/lbl.size.height;
                 [lbl drawInRect:CGRectMake(t->x-lw_/2,t->y+t->r*.50-lh/2,lw_,lh)]; }
             continue;
@@ -276,7 +315,7 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
         if(showCaption) caption(labels[i],CGRectMake(b.origin.x,t->y-textSize*.6,b.size.width,textSize*1.6),textSize,held ? 1 : .84);
         if (i>=DM_TC_BELT1 && i<=DM_TC_BELT4) caption([NSString stringWithFormat:@"%d",i-DM_TC_BELT1+1],CGRectMake(t->x-10*k,t->y+8*k,20*k,12*k),8*k,.65);
     }
-    if (!self.navigationMode && l->swap.r > 0) {   // 技能组切换键：显示当前第几套 | skill set switch button: shows which set is current
+    if (!self.navigationMode && l->swap.r > 0 && CGRectIntersectsRect(CGRectInset(dm_button_rect(l->swap.x,l->swap.y,l->swap.r),-l->swap.r*.5,-l->swap.r*.5),rect)) {   // skill set switch button: shows which set is current
         CGRect b=dm_button_rect(l->swap.x,l->swap.y,l->swap.r);
         BOOL sheld=button_held(s,DM_TC_SWAP);
         [self drawButton:b held:sheld empty:NO primary:NO];
@@ -285,16 +324,7 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
     [self drawV4:c];   // 底栏：它自己按面板栈 / 死亡判显隐（dm_hud_bar_visible）。原先放在摇杆之后，被下面「面板开着就不画摇杆」的提前返回一起跳过—— | Bottom bar: it decides its own visibility from the panel stack / death (dm_hud_bar_visible). It used to come after the joystick and was skipped along with the early return below for "don't draw the joystick while a panel is open" —
                        // 只开着 NPC 对话菜单 / 说话框时（设计上底栏照常显示）UIKit 底栏不画，露出游戏层那份：没有数值和经验条、难度格空、十字位写着「功能」
                        // When only the NPC dialog menu / speech box is open (by design the bottom bar stays visible), the UIKit bottom bar is not drawn and the game-layer copy shows through: no values or experience bar, the difficulty cell empty, and "功能" (Functions) written in the cross slot
-    if (self.hud.valid && self.hud.dead) return;   // 死亡画面：右侧圆钮已由掩码收起，左侧摇杆圈也不画（截图：死后摇杆圈还在） | death screen: the round buttons on the right are already hidden by the mask, and the stick ring on the left is not drawn either (screenshot: the stick ring was still there after death)
-    if (s->navigation_mode) return;   // 面板开着（与起摇杆同一个判定：dm_touch_controls.c 起摇杆的条件带 !navigation_mode）：摇杆起不来，静止淡影只会压在面板上（iPad 上双面板占满整宽）——不画 | a panel is open (the same check as starting the stick: the stick-start condition in dm_touch_controls.c includes !navigation_mode): the stick cannot start, and the idle faint shadow would only sit on top of the panel (on iPad the dual panels fill the whole width) - not drawn
-    BOOL moving = s->joy_slot >= 0;
-    CGPoint o = moving ? CGPointMake(s->joy_origin_x,s->joy_origin_y) : CGPointMake(l->joy_x,l->joy_y);
-    CGFloat radius=l->joy_radius;
-    CGRect base=CGRectMake(o.x-radius,o.y-radius,radius*2,radius*2);
-    [self drawJoystickPart:base base:YES active:moving];
-    CGFloat dx=s->lx/32767.0*radius,dy=-s->ly/32767.0*radius;
-    CGRect thumb=CGRectMake(o.x+dx-23*k,o.y+dy-23*k,46*k,46*k);
-    [self drawJoystickPart:thumb base:NO active:moving];
+    // the joystick is drawn by its own layers (syncJoystick)
 
 }
 - (NSDictionary *)controlMetadata {

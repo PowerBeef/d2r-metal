@@ -314,7 +314,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
         _overlay.nativeMapping.secondary_group,_overlay.nativeMapping.group_seen,_overlay.nativeMapping.identity_scope);
         _touchPublishedEventSeq=_touchEventSeq;
     }
-    [_overlay setNeedsDisplay];
+    [_overlay controlsChanged];
 }
 - (void)cancelControlsFrom:(const char *)source {
     _pendEnd=nil; _finalAsked=NO;
@@ -373,7 +373,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
         dm_tc_resize(&_controls,self.bounds.size.width,self.bounds.size.height);[_overlay setNeedsDisplay];
     }
     hud_stack_watch();
-    { dm_hud_info h, o=_overlay.hud; dm_hud_get(&h); h.x=h.y=0; if (memcmp(&h,&o,sizeof h)) { _overlay.hud=h; [_overlay setNeedsDisplay]; } }   // 覆盖层不画玩家坐标：不清掉的话走路时每个逻辑拍都判「变了」、整层全屏重画一遍 | The overlay does not draw player coordinates: without clearing them, every logic tick while walking would be judged "changed" and redraw the whole layer fullscreen
+    { dm_hud_info h, o=_overlay.hud; dm_hud_get(&h); h.x=h.y=0; if (memcmp(&h,&o,sizeof h)) _overlay.hud=h; }   // the overlay doesn't draw the player's position: cleared, or every logic tick while walking would count as a change; setHud picks what to redraw (DmTouchOverlay.m)
     dm_tg_snapshot snapshot={0};
     dm_touch_game_snapshot(&snapshot);
     _overlay.nativeMapping=snapshot;
