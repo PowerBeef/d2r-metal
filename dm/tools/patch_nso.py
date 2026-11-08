@@ -158,6 +158,8 @@ CUTS = {'db0507f36b84200ac05f75d76ed5026f': [
     # → svc #0x8a (player) / #0x8b (corpse): the host forwards the call as is; when the run is entered in town it instead picks the point by "waypoint cell 13 + a fixed safe distance", and the player, corpse and mercenary are placed in one go by the original game (the player is no longer moved by a level change on tick 2, and the corpse no longer stays at the original spawn point) (dm_townwp.c svc_join_spawn)
     (0x5d8040, 'a005fe97', '411100d4', '玩家进局取出生点调用点 bl 0x5596c0 → svc #0x8a：宿主原样代调，进局在城镇时出生点换成小站旁（hle.h SVC_HOST_JOIN_SPAWN）', '仅宿主'),
     (0x5d8400, 'b004fe97', '611100d4', '进局给尸体取落点调用点 bl 0x5596c0 → svc #0x8b：同上，尸体与人取同一个点（hle.h SVC_HOST_JOIN_CORPSE）', '仅宿主'),
+    # The button legend lays out eight entries and its relayout reads a ninth past them (main+0x390b44): every append goes through a capacity gate first
+    (0xaa9f88, '9c000094', 'e11100d4', 'button legend append bl 0xaaa1f8 -> svc #0x8f: at most eight entries, our optional hints make room first (dm_padmode.c, hle.h SVC_HOST_LEGEND_APPEND)', '仅宿主'),
     (0x11f0914, '77100094', '811000d4', '段读取 0x11f07d0 逐块解码 bl 0x11f4af0(ctx, 块, 长度) → svc #0x84：同上（hle.h SVC_HOST_GRANNY_B）', '仅宿主'),
     # 存档写失败后不再永远不提交（仅宿主）：存档任务 0xe0bb64 写某个文件失败（写方式打开 / 建文件 / 截断失败，盘满时真会发生）后，
     # 0xe0c04c 记一笔日志就跳到 0xe0c0b0，跳过了它自己的「卸下」块 0xe0c06c–0xe0c0ac（挂载模式回 1、清挂载路径、清「写入排队」）；

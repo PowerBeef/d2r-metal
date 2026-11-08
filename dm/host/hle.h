@@ -58,24 +58,6 @@ void dm_focus_set(int st);
 void dm_audio_suspend(int on);
 uint64_t dm_audio_render_calls(void);   // 声卡回调累计次数（静音接收端不计） | Cumulative sound card callback count (the silent sink is not counted)
 
-// ---------- 宿主调用号登记表（剪口把游戏内部函数入口换成 `svc #号; ret`，改写器把它变成宿主门）----------
-// Horizon 的 SVC 号只用到 0x7F，0x80 起留作宿主调用。新增必须在这里登记，号码不得重复；分派在 hle_svc.c → svc_host_call。
-//   号     用途                                         所在文件        剪口（main 偏移）
-//   0x80   TACT BLTE 块 zlib 解码 → libdeflate           hle_tact.c      0x1b0ee60（DecodeZlib 入口）
-//   0x81   客户端命令包投递（收包泵 → 服务端收包）         diag.c          0x5d3a88（bl 0x632510 调用点；缺省原样转调，DM_C2S_REPLAY 时丢弃）
-//   0x82   系统类客户端消息投递（收包泵 → 0x6310b0）       diag.c          0x5d39c8（bl 0x6310b0 调用点；缺省原样转调，DM_C2S_REPLAY 时文件首拍起丢弃）
-//   0x83   Granny 段逐块解码（段读取 0x11f0110）           hle_granny.c    0x11f02dc（bl 0x11f4af0 调用点；缺省按预解码候选替换，核不上即原样转调）
-//   0x84   Granny 修正表逐块解码（段读取 0x11f07d0）       hle_granny.c    0x11f0914（bl 0x11f4af0 调用点；同上）
-//   0x85   私有技能 HUD 自绘查询（只读，写 x8）          hle_tact.c      0x3e443c（分支门：x8≠0 跳 0x3e4460，否则执行原指令回 0x3e4440；仅触屏私有门）
-//   0x86   私有技能地面方向（转调原 0x2b4ef8 再按右摇杆改向） hle_private_aim.c 0x2faf04（bl 0x2b4ef8 调用点；仅触屏私有门）
-//   0x87   地上物品外观路径（转调原 0xa14dc4 再按规则改指带光变体） dm_dropfilter.c 0x8fa590（bl 0xa14dc4 调用点；只改模式 3 / 5 的物品，输出在 x8 字符串）
-//   0x88   物品落地掉落音（转调原 0x470c20 再把一档物品换成提示音） dm_dropfilter.c 0x468f2c（bl 0x470c20 调用点；写 x0 = 声音号）
-//   0x89   已停用：大秘境删掉（2026-10-27）。号码保留、不再复用（旧产物 gates.tsv 里还有）
-//   0x8a   进局给玩家取出生点（转调原 0x5596c0；进局在城镇时换成小站旁）  dm_townwp.c     0x5d8040（bl 0x5596c0 调用点；玩家进局函数 0x5d7f70 里）
-//   0x8b   进局给尸体取落点（同上，与玩家取同一个点）                      dm_townwp.c     0x5d8400（bl 0x5596c0 调用点；同一函数里）
-//   0x8c   已停用：大秘境删掉（2026-10-27）。号码保留、不再复用（旧产物 gates.tsv 里还有）
-//   0x8d   已停用：大秘境删掉（2026-10-27）。号码保留、不再复用（旧产物 gates.tsv 里还有）
-//   0x8e   已停用：大秘境删掉（2026-10-27）。号码保留、不再复用（旧产物 gates.tsv 里还有）
 // ---------- Host call number registry (a cut replaces a game-internal function entry with `svc #number; ret`, and the rewriter turns it into a host gate) ----------
 // Horizon's SVC numbers only go up to 0x7F; 0x80 onward is reserved for host calls. New ones must be registered here and numbers must not repeat; dispatch is in hle_svc.c → svc_host_call.
 //   No.    Purpose                                      File            Cut (main offset)
@@ -94,4 +76,5 @@ uint64_t dm_audio_render_calls(void);   // 声卡回调累计次数（静音接�
 //   0x8c   Retired: the Greater Rift was removed (2026-10-27). The number stays reserved and is never reused (old build outputs' gates.tsv still have it)
 //   0x8d   Retired: the Greater Rift was removed (2026-10-27). The number stays reserved and is never reused (old build outputs' gates.tsv still have it)
 //   0x8e   Retired: the Greater Rift was removed (2026-10-27). The number stays reserved and is never reused (old build outputs' gates.tsv still have it)
-enum { SVC_HOST_TACT_ZLIB = 0x80, SVC_HOST_C2S_DELIVER = 0x81, SVC_HOST_C2S_SYS = 0x82, SVC_HOST_GRANNY_A = 0x83, SVC_HOST_GRANNY_B = 0x84, SVC_HOST_PRIVATE_SKILL_RENDER = 0x85, SVC_HOST_PRIVATE_SKILL_AIM = 0x86, SVC_HOST_GROUND_ASSET = 0x87, SVC_HOST_DROP_SOUND = 0x88, SVC_HOST_JOIN_SPAWN = 0x8a, SVC_HOST_JOIN_CORPSE = 0x8b };   // 0x87：地上物品取模型路径（dm_dropfilter.c 掉落光）   // 0x83/0x84：Granny 逐块解码调用点（hle_granny.c） | 0x87: fetch the model path for ground items (dm_dropfilter.c drop light)   // 0x83/0x84: Granny per-block decode call sites (hle_granny.c)
+//   0x8f   Button legend append capacity gate (at most eight entries; our hints make room first) dm_padmode.c 0xaa9f88 (bl 0xaaa1f8 call site in the legend's add function 0xaa9ef4)
+enum { SVC_HOST_TACT_ZLIB = 0x80, SVC_HOST_C2S_DELIVER = 0x81, SVC_HOST_C2S_SYS = 0x82, SVC_HOST_GRANNY_A = 0x83, SVC_HOST_GRANNY_B = 0x84, SVC_HOST_PRIVATE_SKILL_RENDER = 0x85, SVC_HOST_PRIVATE_SKILL_AIM = 0x86, SVC_HOST_GROUND_ASSET = 0x87, SVC_HOST_DROP_SOUND = 0x88, SVC_HOST_JOIN_SPAWN = 0x8a, SVC_HOST_JOIN_CORPSE = 0x8b, SVC_HOST_LEGEND_APPEND = 0x8f };   // 0x87：地上物品取模型路径（dm_dropfilter.c 掉落光）   // 0x83/0x84：Granny 逐块解码调用点（hle_granny.c） | 0x87: fetch the model path for ground items (dm_dropfilter.c drop light)   // 0x83/0x84: Granny per-block decode call sites (hle_granny.c)

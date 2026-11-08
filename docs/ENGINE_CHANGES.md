@@ -725,6 +725,19 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Status:** confirmed
 - **Covers:** none
 
+### EC-054 The button legend keeps to its eight slots
+- **Layer:** binary rule
+- **Engine:** The controller button legend lays out eight entries and its relayout doesn't check that bound: a ninth entry is read past the eight slots, a crash at main+0x390b44 (seen with the mercenary page and the inventory open).
+- **Ours:** Every new entry goes through a capacity gate at the legend's append call (host call 0x8f). At eight entries our own optional hints on the bottom legend make room first, newest first; if the legend is still full, the new entry is skipped. Replacing an existing entry's text never reaches the gate.
+- **Why:** Our hints already stayed under eight, but the game's own additions could still push past it while ours were shown. Ported from D2R Mobile.
+- **Setting:** none
+- **Switch:** none
+- **Test:** t_legend
+- **Commit:** the commit that adds this row (ported from D2R Mobile)
+- **Measured:** none: a bound check.
+- **Status:** confirmed
+- **Covers:** main+0xaa9f88
+
 ## Metal 4
 
 The port runs only on Metal 4 (macOS and iOS 27 and later, decided 2026-10-27). The encoder macros at the top of `nvn_mtl.m` name the Metal 4 types.

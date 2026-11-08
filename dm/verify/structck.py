@@ -134,7 +134,7 @@ for off, ob, nb, why in cuts:
 #   the x0..x7 return values and x19..x28 / sp are preserved by the host gate contract (checked gate by gate by gatefn).
 _hreg = {}
 for l in open(os.path.join(os.path.dirname(__file__), '..', 'host', 'hle.h'), encoding='utf-8'):
-    m = re.match(r'//\s+(0x[0-9a-fA-F]+)\s.*?\s(0x[0-9a-fA-F]+)（([^）]*)', l)
+    m = re.match(r'//\s+(0x[0-9a-fA-F]+)\s.*?\s(0x[0-9a-fA-F]+)\s*[（(]([^）)]*)', l)   # the English table: '0x8a  ...  dm_townwp.c  0x5d8040 (bl 0x5596c0 call site; ...'
     if m: _hreg[int(m[1], 16)] = (int(m[2], 16), m[3])
 def _bl(w, o): return o + 4 * (((w & 0x3FFFFFF) ^ 0x2000000) - 0x2000000) if w & 0xFC000000 == 0x94000000 else None
 for a, n in _hostcall.items():
@@ -148,7 +148,7 @@ for a, n in _hostcall.items():
         if t is None: bad(f'宿主调用 svc #{n:#x} {a:#x}：登记为调用点形，原指令 {W(orig, a):#010x} 不是 bl')
         elif t != int(mt[1], 16): bad(f'宿主调用 svc #{n:#x} {a:#x}：原 bl 目标 {t:#x} ≠ 登记 {mt[1]}')
         if len(nbw) != 4: bad(f'宿主调用 svc #{n:#x} {a:#x}：调用点形剪口只许换这一条指令')
-    elif '入口' in form:
+    elif '入口' in form or re.search(r'\bentry\b', form):
         if a not in set(nsoimg.func_starts(orig, TE)): bad(f'宿主调用 svc #{n:#x} {a:#x}：登记为入口形，不是 eh_frame 函数入口')
         if nbw[4:8] != (0xD65F03C0).to_bytes(4, 'little'): bad(f'宿主调用 svc #{n:#x} {a:#x}：入口形新字节不是 svc ; ret')
     else: bad(f'宿主调用 svc #{n:#x}：登记表形态认不出（须含「bl 0x目标」或「入口」）：{form}')
@@ -360,10 +360,10 @@ for off, oid, ow, why in obs:
 #   ldp x8,xzr ; b target ; ldp x8,xzr ; original instruction ; b original site+4 - x8 is restored to its original value on both paths, the host result is only used to pick the path; gates.tsv records (svc, number, original site)
 nbranch = 0
 for n, (roff, form) in _hreg.items():
-    if not form.startswith('分支门'): continue
+    if not (form.startswith('分支门') or form.startswith('branch gate')): continue
     cut = next((c for c in cuts if c[0] == roff), None)
     if cut is None: continue                                       # 本产物没开这扇私有门 | This build output does not enable this private gate
-    mt, mb = re.search(r'跳 (0x[0-9a-fA-F]+)', form), re.search(r'回 (0x[0-9a-fA-F]+)', form)
+    mt, mb = re.search(r'(?:跳|jumps to) (0x[0-9a-fA-F]+)', form), re.search(r'(?:回|returns to) (0x[0-9a-fA-F]+)', form)
     if not mt or not mb or int(mb[1], 16) != roff + 4: bad(f'分支门 svc #{n:#x}：登记表形态缺跳转目标或回点 ≠ 原处+4：{form}'); continue
     tgt = int(mt[1], 16); s_ = btarget(roff); ks = keyseq(s_ + 8) if s_ is not None else None
     if s_ is None or not (PO <= s_ < len(pat)) or W(pat, s_) != 0xA9BF7FE8 or W(pat, s_ + 4) != 0xA9BF7BFD or not ks or ks[1] != KEY.get('KGATE') \

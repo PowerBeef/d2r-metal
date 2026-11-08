@@ -282,7 +282,24 @@ static uint64_t pm_find(uint64_t w, const char *name, int dep) {   // 按名字�
 // Action ids are read from the original's own hints (in parentheses: the keycap measured one by one on the iOS app on the local Mac): 0 = A (Select),
 // 1 = Y (Drop), 2 = X (Compare), 4 = press right stick (Sort), 7 = ZL, 8 = ZR, 10 = - (Advanced Stats),
 // 11 / 14 = D-pad left / right, 12 / 13 = D-pad up / down, 19 = L, 20 = R, 23 = B (Close menu)
-enum { LG_MAX = 6 };
+// The legend lays out eight entries: inline text boxes from +0x680, 0x230 apart, up to the timer field at +0x1800 (LG_CAP; see svc_legend_append)
+enum { LG_MAX = 6, LG_CAP = 8 };
+// The game's legend functions, bound from the main image (a host test points them at its own stand-ins)
+static struct {
+    uint8_t *base;
+    void (*make)(void *, int, int, void *);   // main+0xaa9358(entry, action id, 0, {text, length})
+    void (*add)(uint64_t, void *);            // main+0xaa9ef4(legend, entry)
+    void (*remove)(uint64_t, int);            // main+0xaaa610(legend, action id)
+    void (*append)(uint64_t, uint64_t);       // main+0xaaa1f8(legend + 0x88, entry): the append inside add, behind the gate at main+0xaa9f88
+} g_lg_api;
+static void legend_bind(uint8_t *b) {
+    if (!b || g_lg_api.base == b) return;
+    g_lg_api.base = b;
+    g_lg_api.make = (void (*)(void *, int, int, void *))(b + 0xaa9358);
+    g_lg_api.add = (void (*)(uint64_t, void *))(b + 0xaa9ef4);
+    g_lg_api.remove = (void (*)(uint64_t, int))(b + 0xaaa610);
+    g_lg_api.append = (void (*)(uint64_t, uint64_t))(b + 0xaaa1f8);
+}
 static struct { int act; char text[48]; } g_lg[LG_MAX], g_lg_on[LG_MAX]; static int g_lg_n, g_lg_on_n; static uint64_t g_lg_frame;
 void dm_padmode_legend(int act, const char *text) {   // 游戏主线程，页在屏上时每帧调 | Game main thread; called every frame while the page is on screen
     uint64_t f = dm_guest_frame(); if (f != g_lg_frame) { g_lg_frame = f; g_lg_n = 0; }
@@ -306,12 +323,33 @@ static void legend_free(uint8_t *b, uint64_t *ent) {   // 条目里的串超过 
     if (!(ent[4] >> 63) && (*(volatile uint8_t *)(b + 0x3211700) & 1)) { uint64_t al = rd8((uint64_t)(uintptr_t)(b + 0x32116f8)); ((void (*)(uint64_t, uint64_t))rd8(rd8(al) + 0x28))(al, ent[2]); }
 }
 static uint64_t legend_find(uint8_t *b, uint64_t lg, int act) {   // 提示条里这个动作号的那一条（按原版同一套比法：建一个空字条目取它的键帽，再比）；没有返回 0 | The entry for this action id in the button legend (compared the same way the original does: build an entry with empty text to get its keycap, then compare); returns 0 if there is none
-    uint64_t ent[8] = { 0 }; struct { const char *p; uint64_t n; } sv = { "", 0 }; ((void (*)(void *, int, int, void *))(b + 0xaa9358))(ent, act, 0, &sv); legend_free(b, ent);
+    legend_bind(b); uint64_t ent[8] = { 0 }; struct { const char *p; uint64_t n; } sv = { "", 0 }; g_lg_api.make(ent, act, 0, &sv); legend_free(b, ent);
     if ((int32_t)ent[1] != 1) return 0;
     uint64_t arr = rd8(lg + 0x88), n = rd8(lg + 0x90); for (uint64_t i = 0; arr && i < n && i < 32; i++) { uint64_t e = arr + 0x40 * i; if (*(int32_t *)(uintptr_t)(e + 8) == 1 && *(uint32_t *)(uintptr_t)e == (uint32_t)ent[0]) return e; }
     return 0;
 }
 static int legend_ours(uint64_t e, const char *text) { size_t n = strlen(text); return rd8(e + 0x18) == n && !memcmp((const void *)(uintptr_t)rd8(e + 0x10), text, n); }
+// Capacity gate at the legend's append: main+0xaa9f88, the bl main+0xaaa1f8 inside the add function main+0xaa9ef4, becomes host call 0x8f (patch_nso.py).
+// The legend's relayout does not check its eight slots: a ninth entry is read past them, the crash at main+0x390b44 (mercenary page + inventory).
+// legend_pump already keeps our own hints under that, but the game's own additions could still go past it while our hints were shown. Every new entry
+// comes through here (a same-keycap update only replaces the text and never does). At eight entries our hints on the bottom legend are removed first,
+// newest first; if it is still full the append is skipped. Registers at the call site: x0 = legend + 0x88, x1 = the entry, x19 = the legend.
+// From D2R Mobile (upstream fb3baaf).
+void svc_legend_append(uint64_t *regs) {
+    uint8_t *b = g_b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) { b = (uint8_t *)g_mod[i].base; break; }
+    if (!b) die("legend append gate: main not found");
+    legend_bind(b);
+    uint64_t lg = regs[19];
+    if (rd8(lg + 0x90) >= LG_CAP) {
+        int evicted = 0; uint64_t mine = legend_obj(b, 1);
+        while (rd8(lg + 0x90) >= LG_CAP && lg == mine && g_lg_on_n > 0) {
+            int k = --g_lg_on_n; uint64_t e = legend_find(b, lg, g_lg_on[k].act);   // ownership released before the removal: it relays out at once
+            if (e && legend_ours(e, g_lg_on[k].text)) { g_lg_api.remove(lg, g_lg_on[k].act); evicted++; } }
+        if (evicted) { static int n; if (n++ < 8) LOG("controller legend: %d of our hints removed to make room for the game's entry", evicted); }
+        if (rd8(lg + 0x90) >= LG_CAP) { static int n; if (n++ < 8) LOG("controller legend: full at %d entries, the game's new entry is skipped (it lays out only %d)", LG_CAP, LG_CAP); return; }
+    }
+    g_lg_api.append(regs[0], regs[1]);
+}
 // 鼠标点在按键提示条的某一条上 = 按它那个键（Mac App：手柄版布局里底部的「ⓧ 默认　ⓑ 关闭菜单」是提示、不是按钮，鼠标点它没有任何响应）。
 // 提示条控件（局内底部那条虚表 main+0x20b7960，前端各页的 main+0x20b7a30）自己画、没有子控件，读不到每一条的矩形：点落在控件里时按它的排法估——整排居中，每条 = 键帽 + 字，
 // 字宽按字数算（全角 1 个字宽、半角约半个），条与条之间留空。量自 1600×900 截图：字宽约屏高的 2.8%，键帽连间隔约 1.3 个字宽，条间约 0.4–0.95 个字宽（取 0.67）。
@@ -355,7 +393,7 @@ uint64_t dm_padmode_legend_click(float nx, float ny) {
     uint64_t e = arr + 0x40 * (uint64_t)hit; uint32_t gl = *(uint32_t *)(uintptr_t)e; uint64_t btn = 0;
     static const struct { int act; uint64_t btn; } km[] = { { 0, DM_BTN_A }, { 1, DM_BTN_Y }, { 2, DM_BTN_X }, { 4, DM_BTN_RS }, { 7, DM_BTN_ZL }, { 8, DM_BTN_ZR }, { 10, DM_BTN_MINUS }, { 11, DM_BTN_LEFT }, { 14, DM_BTN_RIGHT }, { 12, DM_BTN_UP }, { 13, DM_BTN_DOWN }, { 19, DM_BTN_L }, { 20, DM_BTN_R }, { 23, DM_BTN_B } };
     if (*(int32_t *)(uintptr_t)(e + 8) == 1) for (unsigned k = 0; k < sizeof km / sizeof *km && !btn; k++) {   // 键帽 → 键：照 legend_find 的比法，拿动作号建一个空字条目取它的键帽来比 | key cap -> key: the same comparison as legend_find, build an entry with empty text from the action number and take its key cap to compare
-        uint64_t ent[8] = { 0 }; struct { const char *p; uint64_t n; } sv = { "", 0 }; ((void (*)(void *, int, int, void *))(b + 0xaa9358))(ent, km[k].act, 0, &sv); legend_free(b, ent);
+        uint64_t ent[8] = { 0 }; struct { const char *p; uint64_t n; } sv = { "", 0 }; legend_bind(b); g_lg_api.make(ent, km[k].act, 0, &sv); legend_free(b, ent);
         if ((int32_t)ent[1] == 1 && (uint32_t)ent[0] == gl) btn = km[k].btn; }
     if (!btn && gl == 0xe008) btn = DM_BTN_LS;   // 按左摇杆（物品栏「打开魔盒」）同样没有动作号可比（实测 e008） | pressing the left stick (inventory "Open Cube") likewise has no action number to compare with (measured e008)
     if (!btn && gl == 0xe005) btn = DM_BTN_PLUS;   // ＋ 键没有对应的动作号可比（主菜单「＋ 新角色」）：直接认它的键帽码（实测 e005） | the + key has no action number to compare with (main menu "+ New Character"): recognise its key-cap code directly (measured e005)
@@ -390,7 +428,8 @@ int dm_padmode_hud_click(float nx, float ny, uint64_t *btn) {
     #undef HUD_HIT
     return 0;
 }
-static void legend_pump(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧 | Game main thread, every frame
+static void legend_pump(uint8_t *b, uint64_t frame) {   // game main thread, every frame
+    legend_bind(b);
     static int miss, tot; static uint64_t logged; int test = getenv("DM_TEST_LEGEND") != NULL;
     // 测试开关 DM_TEST_LEGEND=<动作号>:<字>[,…]：手柄模式下一直声明这些条目；DM_TEST_LEGEND_OFF=<帧>：到这一帧起不再声明。DM_TEST_LEGEND_LOG=1：每 120 帧记一行提示条现状（不声明条目）
     // Test switch DM_TEST_LEGEND=<action id>:<text>[,...]: keep declaring these entries in controller mode; DM_TEST_LEGEND_OFF=<frame>: stop declaring from
@@ -399,23 +438,23 @@ static void legend_pump(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧
       static long off = -1; if (off < 0) { const char *e = getenv("DM_TEST_LEGEND_OFF"); off = e ? atol(e) : 0; }
       if (!off || frame < (uint64_t)off) for (int i = 0; i < n; i++) dm_padmode_legend(tv[i].a, tv[i].t); }
     if (g_cur && frame - g_lh_frame <= 2) for (int i = 0; i < g_lh_n; i++) { uint64_t w = pm_find(rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), g_lh[i].legend, 0);
-        if (w && legend_find(b, w, g_lh[i].act)) { ((void (*)(uint64_t, int))(b + 0xaaa610))(w, g_lh[i].act); static int lgd; if (lgd++ < 8) LOG("手柄提示条：%s 上原版的动作 %d 那一条拿掉（这一页把这个键收掉了）", g_lh[i].legend, g_lh[i].act); } }
+        if (w && legend_find(b, w, g_lh[i].act)) { g_lg_api.remove(w, g_lh[i].act); static int lgd; if (lgd++ < 8) LOG("手柄提示条：%s 上原版的动作 %d 那一条拿掉（这一页把这个键收掉了）", g_lh[i].legend, g_lh[i].act); } }
     uint64_t lg = g_cur ? legend_obj(b, 0) : 0; if (!lg) {   // 提示条不在屏上（面板关了 / 回触屏模式）：控件还在、只是藏着。我们加的条目当场从它上面删掉再清记录——原版重新填条目时不删我们的，残留会把条目数顶过 8（见下面追加处） | Button legend not on screen (panel closed / back to touch mode): the widget still exists, only hidden. Remove the entries we added from it right away, then clear the record -- when the original refills the legend it does not remove ours, and leftovers push the count past 8 (see the append below)
         uint64_t hid = g_lg_on_n ? legend_obj(b, 1) : 0;
-        for (int k = 0; hid && k < g_lg_on_n; k++) { uint64_t e = legend_find(b, hid, g_lg_on[k].act); if (e && legend_ours(e, g_lg_on[k].text)) ((void (*)(uint64_t, int))(b + 0xaaa610))(hid, g_lg_on[k].act); }
+        for (int k = 0; hid && k < g_lg_on_n; k++) { uint64_t e = legend_find(b, hid, g_lg_on[k].act); if (e && legend_ours(e, g_lg_on[k].text)) g_lg_api.remove(hid, g_lg_on[k].act); }
         g_lg_on_n = 0; return; }
     int live = frame - g_lg_frame <= 2 ? g_lg_n : 0;   /* 页的声明与这里谁先谁后不定：两帧内声明过都算在屏上 | The order between a page's declaration and this code is not fixed: anything declared within the last two frames counts as on screen */
     for (int k = 0; k < g_lg_on_n; k++) { int keep = 0; for (int i = 0; i < live; i++) keep |= g_lg[i].act == g_lg_on[k].act;   // 上一轮加过、这一轮不再声明的：删 | Added last round and no longer declared this round: remove
-        if (!keep) { uint64_t e = legend_find(b, lg, g_lg_on[k].act); if (e && legend_ours(e, g_lg_on[k].text)) ((void (*)(uint64_t, int))(b + 0xaaa610))(lg, g_lg_on[k].act); } }
+        if (!keep) { uint64_t e = legend_find(b, lg, g_lg_on[k].act); if (e && legend_ours(e, g_lg_on[k].text)) g_lg_api.remove(lg, g_lg_on[k].act); } }
     for (int i = 0; i < live; i++) { tot++; uint64_t e = legend_find(b, lg, g_lg[i].act); if (e && legend_ours(e, g_lg[i].text)) continue; miss++;
         // 原版提示条只有 8 个排版槽（+0x680 起每个 0x230，到 +0x1800 为止），重排时不查上限：第 9 条越界读、在 main+0x390b44 崩（佣兵栏 + 背包时）。
         //   已有同一键帽的只换字不加条；要新加且已满 8 条就不加。
         // The original legend has only 8 layout slots (0x230 each from +0x680, ending at +0x1800) and its relayout does not check the
         //   bound: a 9th entry is read out of bounds and crashes at main+0x390b44 (mercenary page + inventory). An existing entry with the
         //   same keycap only has its text replaced; a new one is not added once there are 8.
-        if (!e && rd8(lg + 0x90) >= 8) { static int full; if (full++ < 8) LOG("手柄提示条：已有 %llu 条，动作 %d「%s」不再加（原版只排得下 8 条）", (unsigned long long)rd8(lg + 0x90), g_lg[i].act, g_lg[i].text); continue; }
+        if (!e && rd8(lg + 0x90) >= LG_CAP) { static int full; if (full++ < 8) LOG("手柄提示条：已有 %llu 条，动作 %d「%s」不再加（原版只排得下 8 条）", (unsigned long long)rd8(lg + 0x90), g_lg[i].act, g_lg[i].text); continue; }
         uint64_t ent[8] = { 0 }; struct { const char *p; uint64_t n; } sv = { g_lg[i].text, strlen(g_lg[i].text) };
-        ((void (*)(void *, int, int, void *))(b + 0xaa9358))(ent, g_lg[i].act, 0, &sv); ((void (*)(uint64_t, void *))(b + 0xaa9ef4))(lg, ent); legend_free(b, ent); }
+        g_lg_api.make(ent, g_lg[i].act, 0, &sv); g_lg_api.add(lg, ent); legend_free(b, ent); }
     g_lg_on_n = live; memcpy(g_lg_on, g_lg, sizeof g_lg[0] * (size_t)live);
     if ((test || getenv("DM_TEST_LEGEND_LOG")) && frame - logged >= 120) { logged = frame; uint64_t arr = rd8(lg + 0x88), n = rd8(lg + 0x90); char o[300]; size_t L = 0; o[0] = 0;
         for (uint64_t i = 0; arr && i < n && i < 10; i++) L += (size_t)snprintf(o + L, L < sizeof o ? sizeof o - L : 0, " %x", *(uint32_t *)(uintptr_t)(arr + 0x40 * i));
