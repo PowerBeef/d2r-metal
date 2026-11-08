@@ -518,7 +518,7 @@ DM_TEXTBOX_STAT	host	host/dm_textbox.c	-
 DM_TEX_SAMPLES	gfx	gfx/tex/tests/t_tex.c	-
 DM_THERMAL_NOFALLBACK	host,ios	host/hle_oe.c ios/Sources/front_ios.m	-
 DM_THR	host	host/main.c	-
-DM_THRCPU	host	host/memstat.m	-
+DM_THRCPU	host	host/memstat.m	y
 DM_TICKS	host,ios-tools	host/diag.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_TICKS_FULL	host,ios-tools	host/diag.c ios/TouchSmokeTests/TouchSmoke.swift	y
 DM_TICKS_N	host,verify	host/diag.c verify/touchchain.sh	y
