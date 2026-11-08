@@ -96,6 +96,22 @@ class Passed(unittest.TestCase):
             self.assertEqual(os.path.basename(g.passed(sha, runs)), '20261107_140000_good')
 
 
+class LongOnly(unittest.TestCase):
+    def test_list_is_honest(self):   # every entry names a real file, and no step outside long runs it (quick_scenarios only parses scenario files)
+        gate = open(os.path.join(g.ROOT, 'dm', 'verify', 'fork_gate.sh'), encoding='utf-8').read()
+        start, end = gate.index('\n  long)'), gate.index('\n  device)')
+        others = [l for l in (gate[:start] + gate[end:]).splitlines() if l.strip().startswith('step ') and 'quick_scenarios' not in l]
+        for p in g.LONG_ONLY:
+            self.assertTrue(g.glob.glob(os.path.join(g.ROOT, p)), p)
+            stem = p.rstrip('*').replace('dm/', '', 1)
+            self.assertFalse([l for l in others if stem in l], p)
+
+    def test_explain_notes_it(self):
+        out = subprocess.run([sys.executable, os.path.join(g.ROOT, 'dm', 'tools', 'gate_pick.py'), 'explain', '--base', 'HEAD'],
+                             capture_output=True, text=True, cwd=g.ROOT).stdout
+        self.assertIn('GATE_PICK', out)
+
+
 class Lint(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.dm = os.path.join(self.tmp.name, 'dm')

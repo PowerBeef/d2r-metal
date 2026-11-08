@@ -50,6 +50,8 @@ The rules are `RULES` in `gate_pick.py`, first match wins. `auto` never picks `l
 
 ## Rules it keeps
 
+- **A `timeout` command is required past `quick`** (macOS 27 ships one; on older macOS `brew install coreutils`, docs/DEPENDENCIES.md): it bounds the touch cases and the rewrite regression, so the gate stops with `FORKGATE RED` instead of running them unbounded.
+- **`auto` never runs `long`:** when a change touches a tool or input only `long` uses (`LONG_ONLY` in `gate_pick.py`: the benchmarks, exploration, the playtest bot, fuzzing, the heap scenarios), its explanation says so.
 - **The Mac game lock.** Windowed runs steal each other's frames. The gate takes the lock (`dm/ios/tools/mlock.sh`) once for the tiers that open windows and sets `XT_LOCK_HELD=1`, so nested tools don't take it again. `scenario.py` (the `cli` backend when windowed, and `mac-app`), `bench.py`, `explore.py` and `replay.py` now take it themselves when it isn't held; headless runs don't need it.
 - **Test apps from the current commit.** The `mac-app` test copy (`$DM_ROOT/out/macapp_test`, bundle ID `org.d2rmobile.mac.test`) is rebuilt when its stamp (`.gate_head`) doesn't match the commit and the working tree state. Never the player's app in `out/macapp`.
 - **Red markers.** `assertlib.RED_MARKERS` also catches Metal command-buffer errors and GPU faults (`logred.sh`'s patterns), checked first against the existing scenario logs for false hits.
@@ -124,6 +126,9 @@ A red that passes when rerun is still a finding: it gets a line here with its si
 |---|---|---|---|
 | `pc_vendor_mac` | `expect pc_item did=move item=r01`: not seen | once, 2026-11-07 (full gate) | 20 of 20 OK, 2026-11-07 |
 | `pc_items_mac` | `expect panel act=OpenPanel name=HoradricCubeLayout`: not seen | once, 2026-11-06, in a gate with the background-run reds fixed that day | 20 of 20 OK, 2026-11-07 |
+| `core_motion` | one 655 ms frame in the frame-generation clip, then 31 repeated frames (`bad: 31 repeated frames`) | once, 2026-11-08 (auto gate) | 3 of 3 OK, 2026-11-08 (longest frame 16.7 ms) |
+
+Explained (2026-11-08 triage of every red since 2026-11-05 in `full_golden_picture`, `core_motion` and `core_front_scenarios`): each was a real catch during that work, or a test-design problem fixed since: a chicken crossing the town page's HUD band (more shots, then a band that starts at the bar), a chat line in the crypt picture (70d49ab), a gate run that overlapped a re-record, a clock change whose re-record missed one page, and a background run taking the front at launch (293f673). None of those causes recurs; a later one-off hitch is in the table above.
 
 Solved: `native_2940_mac` and `video_no_fg_mac` stalled in background runs without frame generation, and run in front since 2026-11-07 (`debugging.md`, "A background run without frame generation can stall on its window").
 

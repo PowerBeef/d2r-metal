@@ -32,6 +32,10 @@ ORDER = ('quick', 'unit', 'core', 'full')
 SETUP_FILES = ('dm/gfx/tools/dmsh_chain.lock', 'dm/gfx/nvn/dmsh_chain.h', 'dm/gfx/nvn/c1_full.tsv')   # rewritten by setup.sh, never committed
 SCENARIO = 'scenario'   # a curated scenario: core or full by its requires line
 
+# Tools and inputs only the long tier runs: auto never picks long, so it says when a change touches one (test_gate_pick checks no other tier uses them)
+LONG_ONLY = ('dm/tools/bench.py', 'dm/tools/bench_why.py', 'dm/tools/explore.py', 'dm/tools/playbot.py', 'dm/verify/why_gate.py', 'dm/verify/fnfuzz.py',
+             'dm/verify/bench/*', 'dm/verify/scenarios/heap/*')
+
 RULES = [
     # Words only: the quick tier's checks read them (enginemap, switches, the string tables)
     ('*.md', 'unit', 'docs'),
@@ -210,6 +214,9 @@ def main():
             print(f'  {t:<5} {f}: {why}')
         if len(rows) > 40:
             print(f'  … and {len(rows) - 40} more')
+        long_only = [f for f in files if any(fnmatch.fnmatchcase(f, p) for p in LONG_ONLY)]
+        if long_only:
+            print(f"  note: only the long tier runs {', '.join(long_only[:6])}{' …' if len(long_only) > 6 else ''}: run dm/verify/fork_gate.sh long to exercise them (auto never picks it)")
     return 0
 
 

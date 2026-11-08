@@ -59,9 +59,10 @@ HEAD_SHA=$(git -C "$ROOT" rev-parse --short HEAD); DIRTY=$(git -C "$ROOT" status
 T0=$SECONDS
 echo "FORKGATE 开始 | start: 层 | tiers ${TIERS[*]} @ $HEAD_SHA（未提交改动 | uncommitted changes: $DIRTY）→ $OUT"
 
-# 本机缺 GNU timeout（regress.sh 要）：给一个直通替身，只放在本次结果目录里 | GNU timeout missing on this machine (regress.sh needs it): provide a pass-through stand-in, only inside this run's folder
-if ! command -v timeout >/dev/null; then
-  mkdir -p "$OUT/bin"; printf '#!/bin/bash\nwhile [[ "$1" == -* ]]; do shift; done; shift; exec "$@"\n' > "$OUT/bin/timeout"; chmod +x "$OUT/bin/timeout"; export PATH="$OUT/bin:$PATH"
+# GNU timeout (coreutils, docs/DEPENDENCIES.md) bounds the touch cases and the rewrite regression. A stand-in that ran them without a limit used to hide
+# a hang, so every tier past quick needs the real one
+if ! command -v timeout >/dev/null && [ "${TIERS[*]}" != quick ]; then
+  echo "🔴 timeout 不在 | missing (macOS 27 ships one; older macOS: brew install coreutils)"; gate_abort "timeout is missing (older macOS: brew install coreutils)"
 fi
 [ -z "${LLVM_BIN:-}" ] && [ -x /opt/homebrew/opt/llvm/bin/llvm-objdump ] && export LLVM_BIN=/opt/homebrew/opt/llvm/bin
 
