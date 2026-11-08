@@ -6,7 +6,8 @@
 #        release_mac.sh --check-latest
 #   <version>     e.g. 1.0.0 (tag v<version>). Built from the committed HEAD in a temporary worktree: uncommitted changes and the three files ./setup.sh
 #                 rewrites never enter a release. The build number is the commit count (monotonic, what update checks compare); an upload needs HEAD
-#                 on origin/main and a build above every published release's.
+#                 on origin/main, a build above every published release's, and a gate run of quick unit core full that passed on that commit with
+#                 nothing uncommitted (dm/tools/gate_pick.py passed)
 #   --unsigned    a local test release: ad-hoc signatures, no notarization, no team in the manifest (a test launcher then checks the checksums, and
 #                 the manifest signature when the release key is in this keychain); DM_LAUNCHER_FEED=file://<out>/manifest.json points a launcher
 #                 at it. Implies --no-upload
@@ -79,6 +80,9 @@ if [ -n "$UPLOAD" ]; then
     curl -fsSL "https://github.com/$GH_REPO/releases/download/$t/manifest.json" 2>/dev/null | /usr/bin/python3 -I -c 'import json, sys; print(json.load(sys.stdin)["build"])' 2>/dev/null || true
   done | sort -n | tail -1)
   [ "$BUILD" -gt "${PUBLISHED:-0}" ] || die "build $BUILD is not above the newest published release's ($PUBLISHED): updates would not see it"
+  # a release ships only a commit the whole gate passed on, with nothing uncommitted (FORK_GATE.md): its run folder is named in the log
+  GATE_RUN=$(/usr/bin/python3 -I "$HERE/gate_pick.py" passed --runs "$ROOT/run/gate") || die "$GATE_RUN; run dm/verify/fork_gate.sh quick unit core full on $COMMIT first"
+  say "gate passed on $COMMIT: $GATE_RUN"
   # a release of anything else marked "latest" would hide this one from the launchers
   OTHER=$(gh api "repos/$GH_REPO/releases?per_page=30" --jq '.[] | select(.draft | not) | select(.prerelease | not) | select(.tag_name | startswith("v") | not) | .tag_name')
   [ -z "$OTHER" ] || die "these releases are not D2R Metal releases and not pre-releases, so GitHub may call one of them latest: $OTHER (gh release edit <tag> --prerelease)"

@@ -4,6 +4,8 @@
   gate_pick.py tiers [--base REF]     the tiers, in order, on one line: quick unit [core] [full]
   gate_pick.py explain [--base REF]   the same, then every changed file with the tier it asks for and why
   gate_pick.py lint [--gate FILE]     every step line of fork_gate.sh: each "$DM/..." path names a file, no step name twice
+  gate_pick.py passed [--sha REV]     the newest gate run that passed quick unit core full on that commit with nothing uncommitted
+                                      (what a release and an app rebuild need); exit 1 when there is none
 
 The change is everything between the merge base with origin/main (or --base, or DM_GATE_BASE) and the working tree:
 commits not pushed yet, staged and unstaged edits, deletions and new files. The three files setup.sh rewrites are
@@ -19,6 +21,7 @@ auto never picks long or device, and it does not replace full before rebuilding 
 import argparse
 import fnmatch
 import glob
+import json
 import os
 import re
 import subprocess
@@ -154,12 +157,37 @@ def lint(gate, dm):
     return n, problems
 
 
+RELEASE_TIERS = ('quick', 'unit', 'core', 'full')
+
+
+def passed(sha, runs):
+    """The newest gate run that passed every tier a release needs on commit sha (full id) with nothing uncommitted, or None.
+    A run of an uncommitted tree doesn't count for the commit made from it: the release is built from the commit."""
+    for f in sorted(glob.glob(os.path.join(runs, '*', 'summary.json')), reverse=True):
+        try:
+            with open(f, encoding='utf-8') as fh: s = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        short = str(s.get('sha') or '')
+        if (len(short) >= 7 and sha.startswith(short) and s.get('verdict') == 'OK' and s.get('uncommitted') == 0
+                and all(t in s.get('tiers', []) for t in RELEASE_TIERS)):
+            return os.path.dirname(f)
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description="Pick the gate's tiers from what a change touches (fork_gate.sh auto).")
-    ap.add_argument('what', choices=('tiers', 'explain', 'lint'))
+    ap.add_argument('what', choices=('tiers', 'explain', 'lint', 'passed'))
+    ap.add_argument('--sha', help='passed: the commit (default HEAD)')
+    ap.add_argument('--runs', default=os.path.join(os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work'), 'run', 'gate'), help='passed: the gate runs folder')
     ap.add_argument('--gate', default=os.path.join(ROOT, 'dm', 'verify', 'fork_gate.sh'), help='lint: the gate script')
     ap.add_argument('--base', default=os.environ.get('DM_GATE_BASE') or 'origin/main')
     a = ap.parse_args()
+    if a.what == 'passed':
+        sha = git(ROOT, 'rev-parse', a.sha or 'HEAD').strip()
+        run = passed(sha, a.runs)
+        print(run or f"GATE_PASSED none: no run of {' '.join(RELEASE_TIERS)} passed on {sha[:9]} with nothing uncommitted in {a.runs}")
+        return 0 if run else 1
     if a.what == 'lint':
         n, problems = lint(a.gate, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(a.gate)))))
         for problem in problems: print('  ' + problem)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """gate_pick.py: docs stay at quick and unit, host code asks for core, graphics and the apps for full, a scenario by its requires line;
 the change is read from a made-up git repository, setup.sh's rewrites left out."""
+import json
 import os
 import subprocess
 import sys
@@ -73,6 +74,26 @@ class Pick(unittest.TestCase):
         self.assertEqual(g.pick(files, self.root)[0][-1], 'full')
         _, files = g.changed('no-such-ref', self.root)   # no merge base: the working tree against HEAD
         self.assertEqual(files, ['dm/gfx/nvn/old.m', 'dm/tools/new.py', 'docs/a.md'])
+
+
+class Passed(unittest.TestCase):
+    def test_only_a_clean_full_run_of_that_commit(self):
+        with tempfile.TemporaryDirectory() as runs:
+            def run(name, **kw):
+                os.makedirs(os.path.join(runs, name))
+                s = dict(sha='abc1234', verdict='OK', uncommitted=0, tiers=['quick', 'unit', 'core', 'full']); s.update(kw)
+                with open(os.path.join(runs, name, 'summary.json'), 'w') as f: json.dump(s, f)
+            sha = 'abc1234' + '0' * 33
+            self.assertIsNone(g.passed(sha, runs))
+            run('20261107_100000_red', verdict='RED')
+            run('20261107_110000_dirty', uncommitted=3)              # a run of the tree before the commit
+            run('20261107_120000_core', tiers=['quick', 'unit', 'core'])
+            run('20261107_130000_other', sha='def5678')
+            self.assertIsNone(g.passed(sha, runs))
+            run('20261107_090000_good')
+            self.assertEqual(os.path.basename(g.passed(sha, runs)), '20261107_090000_good')
+            run('20261107_140000_good')                                # the newest wins
+            self.assertEqual(os.path.basename(g.passed(sha, runs)), '20261107_140000_good')
 
 
 class Lint(unittest.TestCase):

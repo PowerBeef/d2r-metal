@@ -140,7 +140,7 @@ move that a stop never cuts; outputs an installed app uses are never rewritten i
 - `D2RMobile --warm-shaders` fills macOS's per-app cache once, with the libraries in two worker processes, then the preset pipelines (`pso_manifest.tsv`) and the player's own (`pso_user.tsv`, beside the save folder).
 - Measured on an M6 against the Xcode-compiled libraries: the same pictures (a replayed town frame differs in 6 of 1.44 M pixels) and the same frame pacing.
 
-**Building a release** (on this Mac; GitHub has no macOS 27 runners):
+**Building a release** (on this Mac; GitHub has no macOS 27 runners). An upload needs HEAD on `origin/main` and a gate run of `quick unit core full` that passed on that commit with nothing uncommitted (`dm/tools/gate_pick.py passed`):
 
 ```bash
 dm/tools/release_mac.sh 1.0.0 --notes notes.md   # signed, notarized, uploaded as a draft release to publish on github.com

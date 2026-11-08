@@ -24,7 +24,7 @@ Several tiers can be given at once; they run in the order given.
 | core | scenario saves and helpers, the gate script, a curated scenario that runs on the CLI host, and any file no rule names |
 | full | the game host (`dm/host/`: the Mac App runs the same program and the iOS app compiles every host source, while 19 scenarios run only on the Mac App and 8 only on the iOS app), graphics (`dm/gfx/`), the iOS app, game data, the binary rules and product, the scenario runner, pipeline warm-up, third-party code, the apps' text, the baselines and the rays replay, picture and fault scenarios, and a curated scenario whose `requires` line leaves out the CLI host (19 run only on the Mac App) |
 
-The rules are `RULES` in `gate_pick.py`, first match wins. `auto` never picks `long` or `device`, and it doesn't replace `full` before rebuilding the apps or making a release. A change to the gate script gets `core`: `quick_gate` checks that the script parses and that every step names files that exist (`gate_pick.py lint`).
+The rules are `RULES` in `gate_pick.py`, first match wins. `auto` never picks `long` or `device`, and it doesn't replace `full` before rebuilding the apps or making a release: `release_mac.sh` refuses to upload, and the app rebuild stops, without a run of `quick unit core full` that passed on that commit with nothing uncommitted (`gate_pick.py passed`). A change to the gate script gets `core`: `quick_gate` checks that the script parses and that every step names files that exist (`gate_pick.py lint`).
 
 ## Results
 

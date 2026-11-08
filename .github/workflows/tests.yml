@@ -46,7 +46,10 @@ jobs:
           python dm/i18n/scan_literals.py
           python dm/ios/tools/dm_i18n.py --check
           python dm/tools/switches.py check
-          python dm/tools/scenario.py check dm/verify/scenarios/*.scn
+          python dm/tools/enginemap.py check
+          python dm/tools/scenario.py check dm/verify/scenarios/*.scn dm/verify/scenarios/saves/*.scn dm/verify/scenarios/faults/*.scn dm/verify/scenarios/picture/*.scn \
+            dm/verify/scenarios/heap/*.scn dm/verify/scenarios/manual/*.scn dm/verify/golden/*.scn dm/verify/bench/*.scn
+          bash -n dm/verify/fork_gate.sh && python dm/tools/gate_pick.py lint
           bash dm/ios/tools/check_hud_gen.sh
       - name: Release and install scripts
         # the launcher's release, packaging and install scripts parse, and shellcheck (on the runner image) finds no warning in them
@@ -54,12 +57,10 @@ jobs:
           for f in dm/tools/release_mac.sh dm/tools/launcher_app.sh dm/tools/extract_game.sh dm/tools/product.sh; do bash -n "$f"; done
           shellcheck -S warning dm/tools/release_mac.sh dm/tools/launcher_app.sh dm/tools/extract_game.sh dm/tools/product.sh
       - name: Tool tests
+        # every tool test, by name pattern, so a new one runs here without being listed (test_mac_bundle skips itself off macOS)
         run: |
           failed=0
-          for t in dm/tools/test_dmtest.py dm/tools/test_dmevents.py dm/tools/test_dmctl.py dm/tools/test_scenario.py dm/tools/test_imgdiff.py \
-                   dm/tools/test_bench.py dm/tools/test_boothist.py dm/tools/test_guestsyms.py dm/tools/test_tickdiff.py dm/tools/test_explore.py \
-                   dm/tools/test_nso_fnmap.py dm/tools/test_fuzz_corpus.py dm/tools/test_install.py dm/tools/re/test_nso2elf.py dm/tools/re/test_addrcheck.py \
-                   dm/tools/re/test_export.py dm/tools/re/test_dbprofile.py dm/verify/test_d2save.py dm/verify/test_golden.py; do
+          for t in dm/tools/test_*.py dm/tools/re/test_*.py dm/verify/test_*.py dm/verify/touchcases/test_*.py; do
             echo "::group::$t"
             python "$t" || { echo "::error::$t failed"; failed=1; }
             echo "::endgroup::"
