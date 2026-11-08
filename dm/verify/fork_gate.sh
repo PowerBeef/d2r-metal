@@ -23,17 +23,38 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"; DM="$ROOT/dm"
 export DM_ROOT="${DM_ROOT:-$HOME/dm-work}"
 VENV="$DM_ROOT/build/cache/dm/venv/bin/activate"; [ -f "$VENV" ] && source "$VENV"
+# The verdict: summary.json and the last line FORKGATE OK|RED {json}, from steps.tsv; with an argument, the run stopped early for that reason (RED).
+# Every exit goes through here, so the last line is always the verdict
+gate_summary() {   # gate_summary [abort reason]; exit status 0 = OK, 1 = RED
+  python3 - "${STEPS:-}" "${OUT:-}" "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null)" "${DIRTY:-0}" "$((SECONDS - ${T0:-$SECONDS}))" "${TIERS[*]}" "${1:-}" <<'PYEOF'
+import json, os, sys
+steps_f, out, sha, dirty, secs, tiers, abort = sys.argv[1:8]
+steps = [dict(zip(('name', 'verdict', 's', 'unavailable'), l.rstrip('\n').split('\t'))) for l in open(steps_f) if l.strip()] if steps_f and os.path.exists(steps_f) else []
+for s in steps: s['s'] = int(s['s']); s['unavailable'] = int(s['unavailable'])
+bad = [s['name'] for s in steps if s['verdict'] in ('RED', 'ERROR')] + (['abort'] if abort else [])
+res = dict(name='fork_gate', verdict='RED' if bad else 'OK', tiers=tiers.split(), sha=sha, uncommitted=int(dirty), s=int(secs),
+           red=bad, unavailable=sum(s['unavailable'] for s in steps), steps=steps)
+if abort: res['abort'] = abort
+if out and os.path.isdir(out): json.dump(res, open(os.path.join(out, 'summary.json'), 'w'), indent=1)
+print('FORKGATE ' + res['verdict'] + ' ' + json.dumps({k: res[k] for k in ('tiers', 'sha', 's', 'red', 'unavailable', 'abort') if k in res}))
+sys.exit(1 if bad else 0)
+PYEOF
+}
+gate_abort() { gate_summary "$1"; exit 2; }   # gate_abort <reason>: stop before the tiers ran to the end, still with the verdict line
 TIERS=("$@"); [ ${#TIERS[@]} -gt 0 ] || TIERS=(quick unit)
 if [ "${TIERS[*]}" = auto ]; then   # the tiers the change against origin/main needs (DM_GATE_BASE names another base), with each file's reason
-  PICK=$(python3 "$DM/tools/gate_pick.py" explain) || { echo "🔴 gate_pick.py 失败 | failed"; exit 2; }
+  PICK=$(python3 "$DM/tools/gate_pick.py" explain) || { echo "🔴 gate_pick.py 失败 | failed"; gate_abort "gate_pick.py failed"; }
   read -ra TIERS <<< "$(head -1 <<< "$PICK")"; tail -n +2 <<< "$PICK"
 fi
-for t in "${TIERS[@]}"; do case "$t" in quick|unit|core|full|long|device) ;; *) echo "🔴 未知层 | unknown tier: $t"; exit 2;; esac; done
+for t in "${TIERS[@]}"; do case "$t" in quick|unit|core|full|long|device) ;; *) echo "🔴 未知层 | unknown tier: $t"; gate_abort "unknown tier: $t";; esac; done
 OUT="$DM_ROOT/run/gate/$(date +%Y%m%d_%H%M%S)_$(IFS=_; echo "${TIERS[*]}")"; mkdir -p "$OUT"; ln -sfn "$OUT" "$DM_ROOT/run/gate/latest"
 STEPS="$OUT/steps.tsv"; : > "$STEPS"
 # Informational steps (measurements with no threshold): a RED verdict is recorded as INFO and doesn't make the gate red; ERROR (a timeout, a command
 # that could not start) still does
 INFO_STEPS="long_pso_cold"
+# This machine's expected unavailable (⚪) items, <step>\t<text the ⚪ line contains>\t<why> (dmtest.py --unavailable-ok). When the file exists, any
+# other ⚪ makes its step red: a lost baseline or recording fails the gate instead of passing it quietly. Without it, ⚪ never makes a step red
+UNAVAIL_OK="$DM_ROOT/gate/unavailable_ok.tsv"
 HEAD_SHA=$(git -C "$ROOT" rev-parse --short HEAD); DIRTY=$(git -C "$ROOT" status --porcelain -- . ':!dm/gfx/tools/dmsh_chain.lock' ':!dm/gfx/nvn/dmsh_chain.h' ':!dm/gfx/nvn/c1_full.tsv' | wc -l | tr -d ' ')
 T0=$SECONDS
 echo "FORKGATE 开始 | start: 层 | tiers ${TIERS[*]} @ $HEAD_SHA（未提交改动 | uncommitted changes: $DIRTY）→ $OUT"
@@ -47,17 +68,18 @@ fi
 # 跑一步：dmtest.py 包住命令，记 名字 / 结论 / 秒数 / 不可用条数 | run one step: dmtest.py wraps the command; record name / verdict / seconds / unavailable count
 step() {   # step <名字 | name> <超时秒 | timeout s> -- <命令 | command…>
   local name=$1 to=$2; shift 3; local s=$SECONDS d="$OUT/$name" rco=()
-  case $name in unit_*) rco=(--rc-only);; esac   # 测试套：退出码就是结论（套里的负向用例自己会打 RED 行） | test suites: the exit code is the verdict (their negative cases print RED lines)
+  case $name in unit_*) rco=(--rc-only);; *) rco=(--strict-log);; esac   # 测试套：退出码就是结论（套里的负向用例自己会打 RED 行） | test suites: the exit code is the verdict (their negative cases print RED lines); any other step is also red on a red-marker line
+  [ -f "$UNAVAIL_OK" ] && rco+=(--unavailable-ok "$UNAVAIL_OK")
   python3 "$DM/tools/dmtest.py" --name "$name" --out "$d" --junit "$d/junit.xml" --timeout "$to" ${rco[@]+"${rco[@]}"} -- "$@" > "$d.console" 2>&1
   local rc=$? v; case $rc in 0) v=OK;; 1) v=RED;; *) v=ERROR;; esac
   if [ "$v" = RED ]; then case " $INFO_STEPS " in *" $name "*) v=INFO;; esac; fi   # an informational step's RED is reported, not counted
-  local un; un=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("unavailable", [])))' "$d/result.json" 2>/dev/null || echo 0)
+  local un ux; read -r un ux <<< "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(len(r.get("unavailable", [])), len(r.get("unexpected_unavailable", [])))' "$d/result.json" 2>/dev/null || echo 0 0)"
   printf '%s\t%s\t%s\t%s\n' "$name" "$v" "$((SECONDS - s))" "$un" >> "$STEPS"
-  printf '%-28s %-5s %4ss%s\n' "$name" "$v" "$((SECONDS - s))" "$([ "$un" != 0 ] && echo "  ⚪ $un 项不可用 | unavailable")"
+  printf '%-28s %-5s %4ss%s%s\n' "$name" "$v" "$((SECONDS - s))" "$([ "$un" != 0 ] && echo "  ⚪ $un 项不可用 | unavailable")" "$([ "${ux:-0}" != 0 ] && echo ", $ux not expected here ($UNAVAIL_OK)")"
 }
 lock_on() {   # 开窗的层持 Mac 游戏锁；子进程见 XT_LOCK_HELD=1 就不再取 | tiers that open windows hold the Mac game lock; children see XT_LOCK_HELD=1 and do not take it again
   [ "${XT_LOCK_HELD:-}" = 1 ] && return 0
-  source "$DM/ios/tools/mlock.sh" && mlock_acquire "fork_gate ${TIERS[*]} ~$1 min" || { echo "🔴 拿不到 Mac 游戏锁 | could not take the Mac game lock"; exit 2; }
+  source "$DM/ios/tools/mlock.sh" && mlock_acquire "fork_gate ${TIERS[*]} ~$1 min" || { echo "🔴 拿不到 Mac 游戏锁 | could not take the Mac game lock"; gate_abort "could not take the Mac game lock"; }
   trap mlock_release EXIT
 }
 scenarios() {   # 精选场景：scenarios/*.scn（不含 saves/ 生成器与 faults/） | curated scenarios: scenarios/*.scn (not the saves/ generators or faults/)
@@ -111,7 +133,7 @@ for tier in "${TIERS[@]}"; do
     step quick_i18n 120 -- python3 "$DM/ios/tools/dm_i18n.py" --check
     step quick_switches 120 -- python3 "$DM/tools/switches.py" check
     step quick_enginemap 120 -- python3 "$DM/tools/enginemap.py" check
-    step quick_gate 60 -- bash -n "$DM/verify/fork_gate.sh"   # this script parses (auto runs only the tiers a change needs, so a typo in another tier would wait for it)
+    step quick_gate 60 -- bash -c 'bash -n "$1" && python3 "$2" lint' _ "$DM/verify/fork_gate.sh" "$DM/tools/gate_pick.py"   # this script parses and every step names files that exist (auto runs only the tiers a change needs, so a typo in another tier would otherwise wait for it)
     step quick_scenarios 120 -- python3 "$DM/tools/scenario.py" check "$DM/verify/scenarios/"*.scn "$DM/verify/scenarios/saves/"*.scn "$DM/verify/scenarios/faults/"*.scn "$DM/verify/scenarios/picture/"*.scn "$DM/verify/scenarios/heap/"*.scn "$DM/verify/scenarios/manual/"*.scn "$DM/verify/golden/"*.scn "$DM/verify/bench/"*.scn
     step quick_hudgen 300 -- bash "$DM/ios/tools/check_hud_gen.sh"
     step quick_readdr 300 -- python3 "$DM/tools/re/addrcheck.py"   # cited main+0x... addresses vs the game program and the private analysis export (unavailable without them)
@@ -128,7 +150,7 @@ for tier in "${TIERS[@]}"; do
       { ! command -v shellcheck > /dev/null || shellcheck -S warning "$1"/tools/{release_mac,launcher_app,extract_game,product}.sh; }' _ "$DM"
     ;;
   core)
-    make -C "$DM/host" -s >/dev/null 2>&1 || { echo "🔴 宿主编译失败 | host build failed"; exit 2; }
+    make -C "$DM/host" -s >/dev/null 2>&1 || { echo "🔴 宿主编译失败 | host build failed"; gate_abort "host build failed"; }
     step core_scenarios 1200 -- bash -c 'par_scenarios cli 3 "$@"' _ $(headless_scenarios $(scenarios))
     lock_on 10
     step core_front_scenarios 900 -- bash -c 'scn_run "$@" --backend cli' _ $(front_scenarios $(scenarios))   # windowed, one at a time, in the background (front-end lifecycle: minimize / quit)
@@ -178,11 +200,13 @@ for tier in "${TIERS[@]}"; do
     step long_pso_cold 1200 -- bash -c 'python3 "$DM/tools/pso_seed.py" cold --backend mac-app; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
     step long_playbot 3600 -- python3 "$DM/tools/playbot.py" run --seed 1 --episodes 4 --intents 15   # 试玩机器人：玩家意图 + 不变量（dm/tools/playbot.py） | the playtest bot: player intents + invariants (dm/tools/playbot.py)
     step long_soak 3600 -- python3 "$DM/tools/playbot.py" soak --minutes 30 --seed 2   # Mac 浸泡：soak_report.py 的四条判据 | Mac soak: soak_report.py's four criteria
+    # The sanitizer hosts' builds are steps of their own: a failed build is a red row, not a skipped run
     for san in asan ubsan; do
-      make -C "$DM/host" "dmhost_$san" -s >/dev/null 2>&1 || { echo "🔴 dmhost_$san 编译失败 | build failed"; continue; }
-      step "long_explore_$san" 3600 -- python3 "$DM/tools/explore.py" run --seed 1 --episodes 4 --dmhost "$DM/host/dmhost_$san"
+      step "long_build_$san" 900 -- make -C "$DM/host" "dmhost_$san" -s
+      tail -1 "$STEPS" | grep -q $'\tOK\t' && step "long_explore_$san" 3600 -- python3 "$DM/tools/explore.py" run --seed 1 --episodes 4 --dmhost "$DM/host/dmhost_$san"
     done
-    make -C "$DM/host" dmhost_tsan -s >/dev/null 2>&1 && step long_explore_tsan 3600 -- python3 "$DM/tools/explore.py" run --seed 2 --episodes 2 --dmhost "$DM/host/dmhost_tsan"   # TSan 单独跑：内存 5–10 倍 | TSan alone: 5-10x memory
+    step long_build_tsan 900 -- make -C "$DM/host" dmhost_tsan -s
+    tail -1 "$STEPS" | grep -q $'\tOK\t' && step long_explore_tsan 3600 -- python3 "$DM/tools/explore.py" run --seed 2 --episodes 2 --dmhost "$DM/host/dmhost_tsan"   # TSan 单独跑：内存 5–10 倍 | TSan alone: 5-10x memory
     step long_fnfuzz 3600 -- python3 "$DM/verify/fnfuzz.py" "$("$DM/tools/product.sh" path rules)" main "$DM_ROOT/data/switch/3.3.94012/Update/ExeFS/main" --trials 3
     ;;
   device)
@@ -198,15 +222,4 @@ for tier in "${TIERS[@]}"; do
   esac
 done
 
-red=$(awk -F'\t' '$2 == "RED" || $2 == "ERROR"' "$STEPS" | wc -l | tr -d ' ')
-python3 - "$STEPS" "$OUT/summary.json" "$HEAD_SHA" "$DIRTY" "$((SECONDS - T0))" "${TIERS[*]}" <<'EOF'
-import json, sys
-steps = [dict(zip(('name', 'verdict', 's', 'unavailable'), l.rstrip('\n').split('\t'))) for l in open(sys.argv[1]) if l.strip()]
-for s in steps: s['s'] = int(s['s']); s['unavailable'] = int(s['unavailable'])
-bad = [s['name'] for s in steps if s['verdict'] in ('RED', 'ERROR')]
-res = dict(name='fork_gate', verdict='RED' if bad else 'OK', tiers=sys.argv[6].split(), sha=sys.argv[3], uncommitted=int(sys.argv[4]), s=int(sys.argv[5]),
-           red=bad, unavailable=sum(s['unavailable'] for s in steps), steps=steps)
-json.dump(res, open(sys.argv[2], 'w'), indent=1)
-print('FORKGATE ' + res['verdict'] + ' ' + json.dumps({k: res[k] for k in ('tiers', 'sha', 's', 'red', 'unavailable')}))
-EOF
-[ "$red" = 0 ]
+gate_summary

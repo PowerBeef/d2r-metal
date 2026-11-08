@@ -67,6 +67,16 @@ class DmtestTest(unittest.TestCase):
         self.assertEqual(len(res['unavailable']), 2)
         self.assertEqual(len(res['skipped']), 1)
 
+    def test_unexpected_unavailable_is_red(self):
+        ok = Path(self.temp.name) / 'ok.tsv'
+        ok.write_text('# expected here\nt\tshot cube unavailable\tthe save has no Cube\nother\tgolden\tanother step\n', encoding='utf-8')
+        script = 'echo "⚪ shot cube unavailable: no Cube"'
+        self.assertEqual(self.wrap(script, '--name', 't', '--unavailable-ok', str(ok))[1]['verdict'], 'ok')
+        _, res = self.wrap(script + '; echo "⚪ golden replays unavailable: never recorded"', '--name', 't', '--unavailable-ok', str(ok))
+        self.assertEqual(res['verdict'], 'red')   # a row for another step does not cover it
+        self.assertEqual(res['unexpected_unavailable'], ['⚪ golden replays unavailable: never recorded'])
+        self.assertEqual(self.wrap(script + '; echo "⚪ golden replays unavailable"', '--name', 't')[1]['verdict'], 'ok')   # without the list: as before
+
     def test_timeout_is_error_and_kills_the_group(self):
         p, res = self.wrap('sleep 30 & sleep 30; echo never', '--timeout', '1')
         self.assertEqual((p.returncode, res['verdict'], res['timed_out']), (2, 'error', True))

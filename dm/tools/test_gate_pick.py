@@ -31,12 +31,12 @@ class Pick(unittest.TestCase):
         self.assertEqual(self.tiers('dm/host/tests/t_video.c', 'dm/tools/test_gate_pick.py', 'dm/launcher/Sources/x.swift'), ['quick', 'unit'])
 
     def test_core(self):
-        self.assertEqual(self.tiers('dm/host/dm_ctl.c'), ['quick', 'unit', 'core'])
         self.assertEqual(self.tiers('dm/verify/motion_gate.py'), ['quick', 'unit', 'core'])   # no rule names it
         self.assertEqual(self.tiers('dm/verify/fork_gate.sh'), ['quick', 'unit', 'core'])
 
     def test_full(self):
         for f in ('dm/gfx/nvn/nvn_mtl.m', 'dm/gfx/tests/nvn_replay.m', 'dm/ios/Sources/x.m', 'dm/host/front_mac.m', 'dm/host/dm_video.c',
+                  'dm/host/dm_kbm.c', 'dm/host/dm_ctl.c', 'dm/host/Makefile',
                   'dm/tools/patch_nso.py', 'dm/verify/golden.py', 'dm/verify/scenarios/picture/rec.scn', 'dm/i18n/ui_text.tsv'):
             self.assertEqual(self.tiers(f, 'docs/MAC.md'), ['quick', 'unit', 'core', 'full'], f)
         self.assertEqual(g.classify('dm/gfx/tests/t_nvn.c')[0], 'unit')   # the other graphics tests are unit tests
@@ -73,6 +73,40 @@ class Pick(unittest.TestCase):
         self.assertEqual(g.pick(files, self.root)[0][-1], 'full')
         _, files = g.changed('no-such-ref', self.root)   # no merge base: the working tree against HEAD
         self.assertEqual(files, ['dm/gfx/nvn/old.m', 'dm/tools/new.py', 'docs/a.md'])
+
+
+class Lint(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.dm = os.path.join(self.tmp.name, 'dm')
+        for f in ('tools/a.py', 'verify/scenarios/picture/mac_x.scn', 'verify/b.sh'):
+            os.makedirs(os.path.dirname(os.path.join(self.dm, f)), exist_ok=True); open(os.path.join(self.dm, f), 'w').close()  # noqa: SIM115
+        self.gate = os.path.join(self.dm, 'verify', 'fork_gate.sh')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def lint(self, body):
+        with open(self.gate, 'w') as f: f.write(body)
+        return g.lint(self.gate, self.dm)
+
+    def test_good(self):
+        n, problems = self.lint('step quick_a 60 -- python3 "$DM/tools/a.py" check   # a comment naming "$DM/tools/gone.py"\n'
+                                "    step full_b 900 -- bash -c 'scn_run \"$@\"' _ \"$DM/verify/scenarios/picture/\"mac_*.scn\n"
+                                '    for r in x y; do step "long_$r" 60 -- bash "$DM/verify/b.sh" "$DM/verify/bench/$r.scn"; done\n')
+        self.assertEqual((n, problems), (3, []))
+
+    def test_missing_path_and_glob(self):
+        n, problems = self.lint('step quick_a 60 -- python3 "$DM/tools/gone.py"\nstep full_b 60 -- ls "$DM/verify/scenarios/picture/"ios_*.scn\n')
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn('$DM/tools/gone.py names nothing', problems[0])
+
+    def test_duplicate_name(self):
+        n, problems = self.lint('step quick_a 60 -- true\nstep quick_a 60 -- true\n')
+        self.assertEqual(problems, ['line 2: step quick_a already at line 1'])
+
+    def test_the_real_gate(self):
+        n, problems = g.lint(os.path.join(g.ROOT, 'dm', 'verify', 'fork_gate.sh'), os.path.join(g.ROOT, 'dm'))
+        self.assertGreater(n, 40); self.assertEqual(problems, [])
 
 
 if __name__ == '__main__':

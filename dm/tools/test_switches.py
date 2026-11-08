@@ -51,6 +51,14 @@ class SwitchesTest(unittest.TestCase):
         rc, out = self.run_tool('check')
         self.assertEqual(rc, 1); self.assertIn('switches.py gen', out)
 
+    def test_new_file_counts_before_git_add(self):   # the gate runs before the commit: a switch read in a file not yet added is drift too
+        self.run_tool('gen')
+        (self.root / 'tools/new.py').write_text('import os\nos.environ.get("DM_UNADDED")\n', encoding='utf-8')
+        rc, out = self.run_tool('check')
+        self.assertEqual(rc, 1); self.assertIn('switches.py gen', out)
+        self.run_tool('gen')
+        self.assertIn('DM_UNADDED', (self.root / 'switches.tsv').read_text(encoding='utf-8'))
+
 
     def test_scenario_env_lines_are_sets(self):   # a scenario's env line sets switches: one nothing reads is reported with its file and line
         (self.root / 'verify').mkdir(exist_ok=True)

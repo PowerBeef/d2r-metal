@@ -11,8 +11,8 @@ The gate runs them in tiers and prints one machine-readable last line, `FORKGATE
 ```
 dm/verify/fork_gate.sh auto         # every change: picks the tiers below from the files it touches, and says why
 dm/verify/fork_gate.sh quick unit   # source checks + the test suites (~3 min)
-dm/verify/fork_gate.sh core         # host changes: scenarios on the CLI host + the touch cases (~15 min)
-dm/verify/fork_gate.sh full         # graphics and app changes, and before rebuilding the apps: Mac App, the iOS package on the Mac, Metal validation, faults, baselines
+dm/verify/fork_gate.sh core         # scenarios on the CLI host + the touch cases (~12 min)
+dm/verify/fork_gate.sh full         # host, graphics and app changes, and before rebuilding the apps: Mac App, the iOS package on the Mac, Metal validation, faults, baselines
 ```
 
 ### No game files needed

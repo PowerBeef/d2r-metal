@@ -11,7 +11,8 @@
 #   Lines read: "NAME [case] OK|RED|FAIL|PASS ..." verdict lines, "RESULT {json}" result lines, ⚪ / ⏭ unavailable and skipped lines, 【红】 / 🔴 / FATAL / CRASH sig= red-marker lines
 #   Verdict: ok = exit code 0 and no RED / FAIL verdict; red = non-zero exit code or a RED / FAIL verdict (with --strict-log red-marker lines count too); error = timeout / the command could not start
 #   Outputs: <result dir>/log.txt (full output), result.json; --junit also writes JUnit XML; last line RESULT {json}
-# Usage: dmtest.py [--name NAME] [--out DIR] [--junit FILE] [--timeout SEC] [--strict-log] -- <command> [args...]
+# Usage: dmtest.py [--name NAME] [--out DIR] [--junit FILE] [--timeout SEC] [--strict-log] [--rc-only] [--unavailable-ok FILE] -- <command> [args...]
+#   --unavailable-ok: the ⚪ items this machine expects (<name>\t<text>\t<why>); any other ⚪ line makes the run red
 #   The result directory defaults to $DM_ROOT/run/dmtest/<name>_<time>_<pid>; exit code 0 = ok, 1 = red, 2 = error / usage
 import argparse
 import datetime
@@ -38,6 +39,7 @@ KEEP = 50   # 每类最多留几行进 result.json（计数照记全部） | at 
 class Scan:
     def __init__(self):
         self.verdicts, self.results, self.unavailable, self.skipped, self.red, self.red_n = [], [], [], [], [], 0
+        self.unavailable_all = []   # every ⚪ line, for --unavailable-ok (result.json keeps KEEP of them) | every unavailable line
 
     def line(self, raw, n):
         s = ANSI.sub('', raw.rstrip('\r\n'))
@@ -48,7 +50,9 @@ class Scan:
             return
         m = VERDICT.match(s)
         if m: self.verdicts.append(dict(name=m.group(1), verdict=m.group(2), detail=m.group(3)[:300], line=n))
-        if UNAVAIL.match(s) and len(self.unavailable) < KEEP: self.unavailable.append(s.strip()[:300])
+        if UNAVAIL.match(s):
+            self.unavailable_all.append(s.strip()[:300])
+            if len(self.unavailable) < KEEP: self.unavailable.append(s.strip()[:300])
         if SKIPPED.match(s) and len(self.skipped) < KEEP: self.skipped.append(s.strip()[:300])
         if RED.search(s):
             self.red_n += 1
@@ -99,6 +103,16 @@ def verdict_of(rc, timed_out, sc, strict, rc_only=False):
     return 'red' if rc != 0 or bad or (strict and sc.red_n) else 'ok'
 
 
+def unexpected_unavailable(lines, name, path):
+    """The ⚪ lines that no row of the expected list (<name>\t<text>\t<why>, # comments) names for this test."""
+    rows = []
+    with open(path, encoding='utf-8') as f:
+        for l in f:
+            cols = l.rstrip('\n').split('\t')
+            if l.strip() and not l.startswith('#') and len(cols) >= 2: rows.append((cols[0], cols[1]))
+    return [l for l in lines if not any(n == name and t and t in l for n, t in rows)]
+
+
 def junit(res, path, log_tail):
     """每条判定行 / 结果行一个用例；都没有时整条命令一个用例。 | One test case per verdict / result line; one for the whole command when there are none."""
     suite = ET.Element('testsuite', name=res['name'], timestamp=res['started'], time=f"{res['elapsed_s']:.3f}")
@@ -127,6 +141,7 @@ def main(argv):
     ap.add_argument('--name'); ap.add_argument('--out'); ap.add_argument('--junit'); ap.add_argument('--timeout', type=float, default=0)
     ap.add_argument('--strict-log', action='store_true', help='red-marker lines (【红】 / 🔴 / FATAL / CRASH) make the run red')
     ap.add_argument('--rc-only', action='store_true', help='the verdict comes from the exit code only (for test suites whose negative cases print RED lines); lines are still recorded')
+    ap.add_argument('--unavailable-ok', metavar='FILE', help='the unavailable (⚪) items this machine expects, one per line: <name>\t<text the ⚪ line contains>\t<why>; any other ⚪ of this run makes it red')
     ap.add_argument('cmd', nargs=argparse.REMAINDER)
     a = ap.parse_args(argv)
     cmd = a.cmd[1:] if a.cmd[:1] == ['--'] else a.cmd
@@ -140,14 +155,17 @@ def main(argv):
     res = dict(schema='dmtest/1', name=name, cmd=cmd, cwd=os.getcwd(), started=started.isoformat(timespec='seconds'), elapsed_s=round(time.monotonic() - t0, 3),
                rc=rc, timed_out=timed_out, verdict=verdict_of(rc, timed_out, sc, a.strict_log, a.rc_only),
                verdicts=sc.verdicts[-KEEP:], results=sc.results[-KEEP:], unavailable=sc.unavailable, skipped=sc.skipped,
-               red_lines=dict(count=sc.red_n, first=sc.red), git=git_info(os.path.dirname(os.path.abspath(__file__))),
+               unexpected_unavailable=[], red_lines=dict(count=sc.red_n, first=sc.red), git=git_info(os.path.dirname(os.path.abspath(__file__))),
                host=dict(os=platform.system(), release=platform.release(), machine=platform.machine()), log='log.txt')
+    if a.unavailable_ok:   # this machine's expected ⚪ items: anything else unavailable (a lost baseline, a missing recording) is red, not quietly skipped
+        res['unexpected_unavailable'] = unexpected_unavailable(sc.unavailable_all, name, a.unavailable_ok)[:KEEP]
+        if res['unexpected_unavailable'] and res['verdict'] == 'ok': res['verdict'] = 'red'
     with open(os.path.join(out, 'result.json'), 'w', encoding='utf-8') as f: json.dump(res, f, ensure_ascii=False, indent=1); f.write('\n')
     if a.junit:
         with open(os.path.join(out, 'log.txt'), encoding='utf-8', errors='replace') as f: tail = ''.join(f.readlines()[-200:])
         junit(res, a.junit, tail)
     print('RESULT ' + json.dumps(dict(name='dmtest', test=name, verdict=res['verdict'], rc=rc, timed_out=timed_out, elapsed_s=res['elapsed_s'],
-                                      verdicts=len(sc.verdicts), red_lines=sc.red_n, first_red=sc.red[0]['text'] if sc.red else '', unavailable=len(sc.unavailable), dir=out), ensure_ascii=False))
+                                      verdicts=len(sc.verdicts), red_lines=sc.red_n, first_red=sc.red[0]['text'] if sc.red else '', unavailable=len(sc.unavailable), unexpected_unavailable=len(res['unexpected_unavailable']), dir=out), ensure_ascii=False))
     return dict(ok=0, red=1).get(res['verdict'], 2)
 
 

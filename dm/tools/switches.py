@@ -32,8 +32,8 @@ SH_UNSET = re.compile(r'\benv\b[^|;]*?-u\s+(?:DEVICECTL_CHILD_)?(' + NAME + r')'
 SET_STR = re.compile(r'^(?:--env[ =])?(?:DEVICECTL_CHILD_)?(' + NAME + r')=')
 
 
-def files(root):
-    out = subprocess.run(['git', '-C', root, 'ls-files', '-z', '--', '.'], capture_output=True, text=True, check=True).stdout
+def files(root):   # tracked files and new ones not yet added (not ignored): the gate runs before the commit, so a new file must count already
+    out = subprocess.run(['git', '-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'], capture_output=True, text=True, check=True).stdout
     return [f for f in out.split('\0') if f and not f.startswith('third_party/')]
 
 

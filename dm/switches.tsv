@@ -88,6 +88,7 @@ DM_FSLOG	host	host/hle_fs.c	-
 DM_FSLOG_HASH	host	host/hle_fs.c	-
 DM_GAME_RES	host,ios	host/front_mac.m ios/Sources/front_ios.m	y
 DM_GAME_SEED	host,tools	host/main.c tools/replay.py	y
+DM_GATE_BASE	tools	tools/gate_pick.py	y
 DM_GATE_SAVE	verify	verify/gfxq/ruler.sh verify/hostshot.sh	y
 DM_GEN_ASSETS	ios-tools	ios/tools/gen_paths.py	-
 DM_GEN_ONLY	ios-tools	ios/run.sh	y

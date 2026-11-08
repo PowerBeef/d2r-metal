@@ -115,7 +115,7 @@ dm/tools/product.sh build|path <touch|rules|keypage>|rev
 
 - **Keep the workspace small** (the user asked on 2026-11-01): `python3 -I dm/tools/workspace_prune.py` lists what is safe to remove from `$DM_ROOT` (older shader-library versions and rewrite products, test runs older than 7 days, bench baselines older than 7 days other than the current one, older local releases, Mac App test copies older than a day); `--apply` moves it to the Trash. Under `run/` it goes by rules, not a list: only folders under `run/<area>/` are run outputs (plain files there, such as `run/bench/ledger.tsv`, are never listed), nothing named `*.lock` or `*.queue` is listed (the game and device locks and their queues), a `.keep` file protects its area or entry (`bench.py --keep` writes one), and a `latest` link and its target stay. Run it after a shader-chain or product change and after long investigations, and delete scratch outputs (captures, probe overlays) when done with them.
 - Use `regress.sh --fresh` whenever `dm/tools/patch_nso.py` changed.
-- **The fork's gate is `dm/verify/fork_gate.sh auto|quick|unit|core|full|long|device`** (`dm/verify/FORK_GATE.md`): each step through `dmtest.py`, results in `$DM_ROOT/run/gate/latest/`, last line `FORKGATE OK|RED {json}`. Run `auto` for every change: it picks `quick unit` (~3 min), `core` (~12 min) or `full` (~45 min) from the files the change touches (`dm/tools/gate_pick.py`; a new kind of file gets a rule there). Run `full` before rebuilding the apps or making a release.
+- **The fork's gate is `dm/verify/fork_gate.sh auto|quick|unit|core|full|long|device`** (`dm/verify/FORK_GATE.md`): each step through `dmtest.py`, results in `$DM_ROOT/run/gate/latest/`, last line `FORKGATE OK|RED {json}`. Run `auto` for every change: it picks `quick unit` (~3 min), `core` (~12 min) or `full` (~45 min; every host, graphics or app change) from the files the change touches (`dm/tools/gate_pick.py`; a new kind of file gets a rule there). Run `full` before rebuilding the apps or making a release.
 
 **Machine-readable results** (prefer these to grepping Chinese log lines):
 
@@ -314,7 +314,7 @@ There is no recording of the original game on a console or emulator; to learn wh
 - **A stuck save job crashes the game:** save jobs run on the game's async job pool; with one job blocked about 8 s, the tasks queued every frame exhaust the pool's task allocator and the pool's enqueue function (main+0x14f0590) writes through NULL. Never hold the save path (host hooks, locks, slow I/O) for seconds; keep `fault delay` under ~5 s.
 - **Don't edit a shell script while it runs** (`fork_gate.sh`, `touchchain.sh`, `re.sh`): bash reads scripts incrementally, so the running copy executes shifted text and fails with a syntax error.
 - **Test suites under `dmtest.py`:** their negative cases print `RED` verdict lines; wrap suites with `--rc-only` (the fork gate does for `unit_*`).
-- **Flaky test:** `t_svc_mem` det5 is a timing test. It has failed inside the full host suite under load and then passed alone; rerun it before suspecting a change.
+- **`t_svc_mem` det5:** a timing test that failed inside the full host suite under load until 5db1bbd (either Map may win the race); since then a red there is a real failure, not a reason to rerun.
 - **Regenerate after editing:**
   - `patch_nso.py` or `dm/PRODUCT` → `dm/tools/product.sh build`
   - shader-chain sources or tools → `./setup.sh`, which re-registers the chain and re-translates

@@ -3,21 +3,24 @@
 
   gate_pick.py tiers [--base REF]     the tiers, in order, on one line: quick unit [core] [full]
   gate_pick.py explain [--base REF]   the same, then every changed file with the tier it asks for and why
+  gate_pick.py lint [--gate FILE]     every step line of fork_gate.sh: each "$DM/..." path names a file, no step name twice
 
 The change is everything between the merge base with origin/main (or --base, or DM_GATE_BASE) and the working tree:
 commits not pushed yet, staged and unstaged edits, deletions and new files. The three files setup.sh rewrites are
 never part of it.
 
 Each file takes the tier of the first rule that matches it (RULES below; `*` in a pattern also matches `/`), and the
-gate runs up to the highest: quick and unit always, core when a file needs a game run, full when it needs the Mac App,
-the iOS app on the Mac, the replays or the picture sets. A curated scenario asks for core when it runs on the
+gate runs up to the highest: quick and unit always, core when a file needs a game run on the command-line host, full
+when it needs the Mac App, the iOS app on the Mac, the replays or the picture sets (all host code does). A curated scenario asks for core when it runs on the
 command-line host and for full when its `requires` line leaves that host out. Files no rule names ask for core.
 
 auto never picks long or device, and it does not replace full before rebuilding the apps or making a release.
 """
 import argparse
 import fnmatch
+import glob
 import os
+import re
 import subprocess
 import sys
 
@@ -40,12 +43,9 @@ RULES = [
     ('dm/verify/touchcases/test_lib.py', 'unit', 'unit tests'),
     ('dm/gfx/*', 'full', 'graphics: the replay layer, shaders and textures'),
     ('dm/ios/*', 'full', 'the iOS app'),
-    ('dm/host/app_mac*', 'full', 'the Mac App front end'),
-    ('dm/host/front_mac.m', 'full', 'the Mac App front end'),
-    ('dm/host/front.h', 'full', 'the front ends'),
-    ('dm/host/dm_screen_mac.*', 'full', 'the Mac App window'),
-    ('dm/host/dm_picios.*', 'full', 'the iOS picture settings'),
-    ('dm/host/dm_video.*', 'full', 'the picture settings, which the Mac App video scenarios check'),
+    # The host is one program for all three: the Mac App ships this dmhost (mac_app.sh) and the iOS app compiles every host source
+    # (ios/project.yml), while 19 scenarios run only on the Mac App and 8 only on the iOS app
+    ('dm/host/*', 'full', 'the game host: the Mac App runs the same program and the iOS app compiles it'),
     ('dm/data/*', 'full', 'game data the apps ship'),
     ('dm/PRODUCT', 'full', 'the rewritten game program'),
     ('setup.sh', 'full', 'the rewritten game program'),
@@ -76,8 +76,7 @@ RULES = [
     ('dm/verify/bench/*', 'unit', 'benchmarks (long tier, on demand)'),
     ('dm/i18n/*', 'unit', 'the string checks (quick)'),
     ('dm/brand/*', 'unit', 'brand art'),
-    # Core: the game host, the gate and anything else that a game run uses
-    ('dm/host/*', 'core', 'the game host'),
+    # Core: the gate, the harness and anything else that a game run on the command-line host uses
     ('dm/verify/fork_gate.sh', 'core', 'the gate itself (quick_gate parses it)'),
     ('*', 'core', 'no rule names it: a game run'),
 ]
@@ -100,7 +99,7 @@ def changed(base, root=ROOT):
 def scenario_tier(path, root=ROOT):
     """core when the scenario runs on the command-line host (no requires line, or one naming cli), full otherwise; a deleted one asks for core."""
     try:
-        lines = open(os.path.join(root, path), encoding='utf-8').read().splitlines()
+        with open(os.path.join(root, path), encoding='utf-8') as f: lines = f.read().splitlines()
     except OSError:
         return 'core'
     for line in lines:
@@ -127,12 +126,45 @@ def pick(files, root=ROOT):
     top = max([ORDER.index('unit')] + [ORDER.index(t) for t, _ in each.values()])
     return list(ORDER[:top + 1]), each
 
+STEP = re.compile(r'(?:^|[;&|]\s*|\bthen\s+|\bdo\s+)step\s+("?[\w$]+"?)\s+\d+\s+--\s+(.*)$')
+DMPATH = re.compile(r'"\$DM/([^"$]*)"([^\s"\'$;)]*)')
+
+
+def lint(gate, dm):
+    """Problems in the gate script's step lines: a "$DM/..." path that names nothing (a glob must match a file), a step name used twice.
+    Checked without running anything, so a typo in a tier auto did not pick still fails the quick tier."""
+    problems, names, n = [], {}, 0
+    with open(gate, encoding='utf-8') as f: text = f.read().splitlines()
+    for i, line in enumerate(text, 1):
+        code = line.split('   # ')[0]
+        m = STEP.search(code.strip())
+        if not m:
+            continue
+        n += 1
+        name = m.group(1).strip('"')
+        if '$' not in name:
+            if name in names: problems.append(f'line {i}: step {name} already at line {names[name]}')
+            names.setdefault(name, i)
+        for pm in DMPATH.finditer(m.group(2)):
+            rel = pm.group(1) + pm.group(2)
+            if not rel or rel.endswith('/'):
+                continue
+            if not glob.glob(os.path.join(dm, rel)):
+                problems.append(f'line {i}: step {name}: $DM/{rel} names nothing')
+    return n, problems
+
 
 def main():
     ap = argparse.ArgumentParser(description="Pick the gate's tiers from what a change touches (fork_gate.sh auto).")
-    ap.add_argument('what', choices=('tiers', 'explain'))
+    ap.add_argument('what', choices=('tiers', 'explain', 'lint'))
+    ap.add_argument('--gate', default=os.path.join(ROOT, 'dm', 'verify', 'fork_gate.sh'), help='lint: the gate script')
     ap.add_argument('--base', default=os.environ.get('DM_GATE_BASE') or 'origin/main')
     a = ap.parse_args()
+    if a.what == 'lint':
+        n, problems = lint(a.gate, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(a.gate)))))
+        for problem in problems: print('  ' + problem)
+        print(f"GATE_LINT {'RED' if problems or not n else 'OK'} {n} steps{', ' + str(len(problems)) + ' problems' if problems else ''}")
+        return 1 if problems or not n else 0
     mb, files = changed(a.base)
     tiers, each = pick(files)
     print(' '.join(tiers))
