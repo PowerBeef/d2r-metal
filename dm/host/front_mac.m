@@ -413,16 +413,18 @@ static void layout_game(void) {
 // The save guarantee is unchanged: the game's own save runs on the game thread and frames go through the display-link thread, neither needs the main thread; g_quitting is set when the quit starts, after which a focus loss is no longer passed to the game (with the main thread blocked it never reached the game either),
 // and a quit from the system is answered "later" (applicationShouldTerminate), so log out / shut down wait for this process to end by itself instead of being cancelled
 static _Atomic int g_quitting;
+static _Atomic int g_gpu_lost_quit;   // this quit is front_gpu_lost's: its save result is noted for the next launch
 static void app_quit_finish(const char *why, int ingame) {   // 后台线程 | background thread
     // iCloud 启动同步还在做（窗口先出来了，游戏还在等它，见 main.c cloud_boot_start）：它在改存档目录，做完再退，最多 20 秒
     // The iCloud boot sync is still running (the window came up first and the game is waiting for it, see main.c cloud_boot_start): it is changing the save directory, so let it finish before quitting, at most 20 s
     { int dm_cloud_boot_wait(double max_s); dm_cloud_boot_wait(20); }
     int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms), dm_cloud_flush_wait(double sec);
-    if (!ingame) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
+    if (!ingame) { LOG("窗口：退出（不在局内，没有待存的进度）"); if (atomic_load(&g_gpu_lost_quit)) dm_gpulost_note_write(2); dm_cloud_flush_wait(10); dm_host_shutdown(why); return; }   // 刚「保存并退出」就退：那一局的 iCloud 上传可能还在排队，等它传完 | Quitting right after "Save and Exit": that run's iCloud upload may still be queued, wait for it
     uint64_t n = 0; int froze = 0; double ms = 0; int asked = dm_save_wait(3, &n, &froze, &ms);
     if (n && asked) LOG("窗口：退出前等游戏存盘 %.0f ms，期间存档提交 %llu 次%s", ms, (unsigned long long)n, froze ? "（原先暂停着：冻结世界存盘、已恢复暂停）" : "");
     else LOG("【红】窗口：未存盘退出——3 秒内没等到存档提交（%s%s）", asked ? "已请游戏存盘" : "一直没到能请存盘的状态（读取画面？）", froze ? "，原先暂停着、冻结放开过" : "");
     DM_EV("quit_save", "saved:b commits:u ms:f paused:b", n && asked, (unsigned long long)n, ms, froze);
+    if (atomic_load(&g_gpu_lost_quit)) LOG("window: a note for the next launch says the GPU stopped responding (%s)", dm_gpulost_note_write(n && asked) ? "written" : "【红】not written");
     dm_cloud_flush_wait(10);   // 存盘之后把这一局传上 iCloud 再退（没开同步时立即返回） | after saving, upload this session to iCloud before quitting (returns immediately when sync is off)
     dm_host_shutdown(why);
 }
@@ -445,6 +447,30 @@ static void app_quit(const char *why) {   // 主线程 | main thread
     // Quitting while minimized: the game thread is blocked at the graphics suspend (dm_gfx_suspend) and the guest clock is frozen, so no tick runs and nothing can be saved. Resume first (frames are still dropped, nothing is drawn to the hidden window), then ask for the save
     if (ingame && win_mini()) { void mtl_present_discard(int on); void guest_clock_freeze_for(int reason, int on); mtl_present_discard(1); dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); LOG("窗口：最小化着退出，先恢复图形与客体时钟再存盘"); }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ app_quit_finish(why, ingame); });
+}
+// The GPU was taken as lost (front.h; nvn_mtl.m's watchdog thread): quit as the menu does, which saves first. Without a window (a headless CLI run)
+// the main thread is the game's own, so the same finish runs on a thread of its own
+// At launch, after the game window is up: the last session ended with a lost GPU (front_gpu_lost's note), so tell the player once, as a sheet on the
+// game window (no modal loop); a run without a window takes the note and logs it. DM_TEST_GPU_LOST_NOTE=<saved> (tests) writes such a note first, as
+// if the last session had ended so
+static void gpulost_notice(void) {
+    const char *t = getenv("DM_TEST_GPU_LOST_NOTE"); if (t && *t) dm_gpulost_note_write(atoi(t));
+    int saved = 0; if (!dm_gpulost_note_take(&saved)) return;
+    const char *dm_ui(const char *key);
+    NSString *text = [NSString stringWithFormat:@"%s%s%s\n\n%s", dm_ui("dmGpuLostText"), saved == 2 ? "" : " ", saved == 1 ? dm_ui("dmGpuLostSaved") : saved == 0 ? dm_ui("dmGpuLostUnsaved") : "", dm_ui("dmGpuLostLogs")];
+    LOG("window: the last session ended when the GPU stopped responding (saved %d): %s", saved, g_win ? "telling the player" : "no window to tell the player on");
+    if (!g_win) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSAlert *a = [NSAlert new]; a.messageText = @(dm_ui("dmGpuLostTitle")); a.informativeText = text; [a addButtonWithTitle:@(dm_ui("dmAppOK"))];
+        [a beginSheetModalForWindow:g_win completionHandler:^(NSModalResponse r) { (void)r; LOG("window: the note about the lost GPU was closed"); }];
+        DM_EV("gpu_lost_note", "saved:d", saved);
+    });
+}
+void front_gpu_lost(void) {
+    atomic_store(&g_gpu_lost_quit, 1);
+    LOG("【红】window: the GPU stopped responding: the game saves and quits");
+    if (g_win) { dispatch_async(dispatch_get_main_queue(), ^{ app_quit("GPU lost"); }); return; }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ int dm_ingame_now(void); app_quit_finish("GPU lost", dm_ingame_now() || dm_uiscreen_ingame()); });
 }
 // The control port's app command (dm_ctl_cmds.c), done on the main thread:
 // - minimize / restore (background / foreground on the Mac) and terminate: the same actions as DM_TEST_MINI_AT / DM_TEST_TERMINATE_AT. Minimizing
@@ -896,7 +922,7 @@ static void *guest_tramp(void *p) {
 }
 
 void front_run(void (*guest)(void)) {
-    if (!getenv("DM_WINDOW")) { guest(); return; }
+    if (!getenv("DM_WINDOW")) { gpulost_notice(); guest(); return; }
     @autoreleasepool {
         int bg = bgrun(); g_launch_t = CACurrentMediaTime();
         // A background run kills AppKit's own launch activation request at its source: argv words (dmhost's product path, main, sdk) are not opened as
@@ -967,7 +993,7 @@ void front_run(void (*guest)(void)) {
         // about twice as long, so fe lines queued behind a `unit` wait went out late, together). The activity lasts for the run; idle system sleep is allowed
         if (bg) { static id act; act = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical reason:@"background test run"]; (void)act; }
         else [win makeKeyAndOrderFront:nil];
-        screen_note(); picture_screen_check();
+        screen_note(); picture_screen_check(); gpulost_notice();
         [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note(); picture_screen_check();
             if (bgrun()) bg_place(g_emul_full ? full_size() : g_emu_win); }];   // a display change may move a window that sits off every screen: put it back
         if (!bg) [NSApp activateIgnoringOtherApps:YES];

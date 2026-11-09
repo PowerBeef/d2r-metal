@@ -103,13 +103,16 @@ static int cmd_engine(const ctl_args *a, char *out, size_t cap, char *err, size_
 // fault delay ms=<毫秒>：下一次存档事务第一次写前等这么久（同 DM_TEST_SAVE_DELAY，只管一次）；fault list：各点挂着 / 经过 / 已打的次数
 // fault arm point=<point> [skip=0] [count=1]: arm a save fault while running (the DM_TEST_FS_FAILAT points: mountclone / reclone / guestname / renameback / guestopen);
 // fault delay ms=<ms>: wait that long before the next save transaction's first write (as DM_TEST_SAVE_DELAY, once only); fault list: each point's armed / seen / fired counts
+// fault arm point=gpustall: from now on every GPU submission vanishes, neither run nor reported, as in the driver that stopped taking a Mac's
+// submissions on 2026-11-08 (nvn_mtl.m mtl_test_gpu_stall): the GPU watchdog then takes the GPU as lost and the front end saves and quits
 int dm_fs_fault_arm(const char *pt, int skip, int count);
 size_t dm_fs_fault_list(char *out, size_t cap);
 void dm_fs_save_delay_once(int ms);
 static int cmd_fault(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     const char *op = dm_ctl_get(a, "op"); if (!op) op = "list";
-    if (!strcmp(op, "arm")) { const char *pt = dm_ctl_get(a, "point");
-        if (dm_fs_fault_arm(pt, (int)dm_ctl_num(a, "skip", 0), (int)dm_ctl_num(a, "count", 1))) ERR("unknown point '%s' (mountclone reclone guestname renameback guestopen), or skip < 0 / count < 1", pt ? pt : ""); }
+    if (!strcmp(op, "arm") && dm_ctl_get(a, "point") && !strcmp(dm_ctl_get(a, "point"), "gpustall")) { void mtl_test_gpu_stall(void); mtl_test_gpu_stall(); DM_EV("fault", "point:s", "gpustall"); }
+    else if (!strcmp(op, "arm")) { const char *pt = dm_ctl_get(a, "point");
+        if (dm_fs_fault_arm(pt, (int)dm_ctl_num(a, "skip", 0), (int)dm_ctl_num(a, "count", 1))) ERR("unknown point '%s' (mountclone reclone guestname renameback guestopen gpustall), or skip < 0 / count < 1", pt ? pt : ""); }
     else if (!strcmp(op, "delay")) { int ms = (int)dm_ctl_num(a, "ms", 0); if (ms < 1 || ms > 120000) ERR("ms must be 1-120000"); dm_fs_save_delay_once(ms); }
     else if (strcmp(op, "list")) ERR("op must be arm, delay or list");
     size_t n = snprintf(out, cap, ",\"faults\":"); if (n < cap) dm_fs_fault_list(out + n, cap - n);

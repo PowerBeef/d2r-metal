@@ -45,3 +45,10 @@ void dm_touch_set(const dm_touch *t, int n);
 // Timing: when a save write fails (disk full etc.) within one of the game's save transactions (between two Commits) so that this Commit is refused, or the clone / swap fails, the previously committed save is unchanged in both cases; it is called once per run of consecutive failed commits (at the first one),
 // reset by the next successful commit, so the next run of failures calls it again. The next transaction that succeeds commits as usual, and the front end need not do any recovery; a fall back to read-only at mount also calls it once. err = the first failing errno (ENOSPC = 28 means out of space). Called on the game thread; the front end switches to the main thread itself and must not block
 void front_save_failed(int err);
+// The GPU was taken as lost (nvn_mtl.m gpu_watch: work waiting and none finished for DM_GPU_LOST_S seconds): nothing reaches the GPU any more and the
+// game runs on undrawn. The front end saves, leaves a note for the next launch (gpu_lost.txt beside the settings, dm_custom_path) and quits.
+// Called once, on the watchdog's thread; must not block it. A build without a front end (graphics tests) gets nvn_mtl.m's weak one, which only logs
+void front_gpu_lost(void);
+// The next launch: when the note is there, it is removed and the front end tells the player what happened (front_mac.m, front_ios.m; the note: hle_lifecycle.c)
+int dm_gpulost_note_write(int saved);
+int dm_gpulost_note_take(int *saved);

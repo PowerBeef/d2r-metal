@@ -135,7 +135,8 @@ static int g_present_link_set;   // DM_PRESENT_LINK was given: it decides, whate
 // and the iOS package on a Mac) a second queue hung the GPU now and then: the kernel logged "AGX: Channel error 2" and the game's command buffer of
 // that frame ran exactly 4 s before the driver recovered it. 23 hangs in about 1,800 Mac runs from 2026-11-06, when the queue came in (4d31858),
 // to 11-08; native_2940 in the background, ABAB: 5 of 40 runs hung with the queue, 0 of 40 with presents on the game's queue. On the Mac the queue
-// had made no measurable difference; on the iPhone it fixed late and discarded frames, and no phone log shows such a hang (dm/verify/debugging.md)
+// had made no measurable difference; on the iPhone it fixed late and discarded frames, and no phone log shows such a hang (dm/verify/debugging.md).
+// It was not the only cause: a player's session hung on the game's queue on 2026-11-08 (the GPU watchdog, g_gpu_lost, now survives that)
 static int g_present_own_q = -1;
 static uint64_t g_pq_done;
 static uint64_t g_pq_read;
@@ -148,6 +149,20 @@ static pthread_cond_t g_cv = PTHREAD_COND_INITIALIZER;
 static uint64_t g_done;                         // 已完成的最大栅栏值（完成回调写） | Highest completed fence value (written by the completion callback)
 static _Atomic int g_last_commit_error;
 static _Atomic int g_up_pending;
+// The GPU taken as lost (gpu_watch, at the end of this file): work is waiting and no main submission has finished for DM_GPU_LOST_S seconds (default
+// 10; a hang the driver recovers takes about 4 s). Seen on a Mac on 2026-11-08: the driver reset the GPU twice in a row and refused the game's
+// submissions, Metal's own submission thread then sat in the driver for good, no command buffer ever completed or failed, the game waited on its fence
+// for ever and the full-screen display never came back, until WindowServer's watchdog restarted the session 40 s later. Once lost, nothing more is sent
+// to the GPU (gpu_withheld), every wait on it returns, and the game's loop runs on undrawn so the front end can save and quit (front_gpu_lost)
+static _Atomic int g_gpu_lost;
+static _Atomic int g_gpu_vanish;           // test (control port fault arm gpustall): every later submission vanishes, neither run nor reported, as in that driver
+static _Atomic uint64_t g_fence_pub;       // g_fence for the watchdog's thread
+// Once lost, every command buffer gets a fresh allocator: the old ones' fences count as done, but their command buffers may still sit in the driver
+static id<MTL4CommandAllocator> lost_alloc(void) {
+    NSError *e = nil; id<MTL4CommandAllocator> a = [g_dev newCommandAllocatorWithDescriptor:[MTL4CommandAllocatorDescriptor new] error:&e];
+    if (!a) MDIE("creating an MTL4CommandAllocator failed: %s", e.localizedDescription.UTF8String);
+    return a;
+}
 
 static pthread_mutex_t g_res_mu = PTHREAD_MUTEX_INITIALIZER;   // 驻留集专用锁：res_add 会在持 g_mu 的路径里调用（arena_new），不能共用 g_mu | Dedicated lock for the residency set: res_add is called on paths that hold g_mu (arena_new), so it cannot share g_mu
 static NSHashTable *g_res_objects;
@@ -552,7 +567,7 @@ static void up_owner_check(const char *where) {
 // other threads (the present thread etc.) creating a command buffer do not touch the batch: they do not read or write textures uploaded in this batch; commands that need these textures all come after this replay submission (the batch is flushed before it)
 // Old-queue command buffers (readback / diagnostics / present; to be deleted once M4-4 and M4-5 are migrated away): uploads are already on the Metal 4 queue, and there is no ordering guarantee between the two queues -
 // wait for the upload to complete after flushing it, and only then can the old queue read the upload result (mtl_read_texels waited first and flushed afterwards, the readback beat the upload, 4 failures on t_nvn upload content)
-static id<MTLCommandBuffer> q_cb(void) { if (on_sub_thread()) { up_flush(); while (atomic_load(&g_up_pending)) usleep(200); } return [g_q commandBuffer]; }
+static id<MTLCommandBuffer> q_cb(void) { if (on_sub_thread()) { up_flush(); while (atomic_load(&g_up_pending) && !atomic_load(&g_gpu_lost)) usleep(200); } return [g_q commandBuffer]; }
 static post_op *g_post; static int g_npost, g_postcap;
 // 每次提交一个自动释放池：提交跑在客体线程上（长驻、无运行循环、从不排空隐式池），Metal 回放里自动释放的对象
 // （命令缓冲、编码器、通道描述等）不放池就永远不释放。iOS 真机选角页实测宿主堆每帧涨约 47 个对象、0.22 MiB/s。
@@ -600,6 +615,7 @@ void mtl_sub_begin(void) {
         alloc_i = g_alloc_n++; g_alloc_grown++; }
     if (alloc_i < 0) { alloc_i = 0; for (int i = 1; i < g_alloc_n; i++) if (g_alloc_fence[i] < g_alloc_fence[alloc_i]) alloc_i = i; g_alloc_waits++; mtl_wait(g_alloc_fence[alloc_i], UINT64_MAX); }
     g_alloc_cur = alloc_i;
+    if (atomic_load(&g_gpu_lost)) g_alloc4[alloc_i] = lost_alloc();   // a command buffer stuck in the driver may still hold the old one: never reset it
     [g_alloc4[alloc_i] reset];
     [g_cb beginCommandBufferWithAllocator:g_alloc4[alloc_i]];
     g_commit_blocks = [NSMutableArray array];
@@ -957,6 +973,15 @@ static void gerr_flush(void) {
     for (int i = 0; i < GERR_N; i++) { uint64_t more, total;
         if (nvn_ratelog_flush(&g_gerr[i], &more, &total)) MLOG("【红】GPU errors in %s: %llu more since the last line (%llu in all)", what[i], (unsigned long long)more, (unsigned long long)total); }
 }
+// The last SUB_RING main submissions (fence, frame, what cctx_snap said), under g_mu: when the GPU is taken as lost, the one it stopped on is named
+#define SUB_RING 8
+typedef struct { uint64_t fence, frame; char what[320]; } sub_note;
+static sub_note g_sub_ring[SUB_RING];
+static void sub_ring_note(uint64_t fence, uint64_t frame, const char *what) {
+    pthread_mutex_lock(&g_mu); sub_note *e = &g_sub_ring[fence % SUB_RING]; e->fence = fence; e->frame = frame; strlcpy(e->what, what ? what : "", sizeof e->what); pthread_mutex_unlock(&g_mu);
+}
+static int gpu_withheld(dispatch_block_t no_feedback);   // below mtl_wait
+static void gpu_watch_start(void);
 static void rp_flush(void);
 static const char *cctx_snap(void);   // 这次提交里有什么（出错时打进红行；定义在 mtl_exec 之前） | What is in this submission (printed into the failure line on error; defined before mtl_exec)
 uint64_t mtl_sub_commit(void) {
@@ -972,10 +997,12 @@ uint64_t mtl_sub_commit(void) {
     if (n) memcpy(ops, g_post, n * sizeof *ops);
     NSArray<dispatch_block_t> *commit_blocks = [g_commit_blocks copy];
     MTL4CommitOptions *o = [MTL4CommitOptions new];
-    [FB_ON(o, g_cb) FB_SEL:^(FB_ARG f) { (void)f; for (dispatch_block_t block in commit_blocks) block(); }];
+    void (^fb_blocks)(FB_ARG) = ^(FB_ARG f) { (void)f; for (dispatch_block_t block in commit_blocks) block(); };
+    [FB_ON(o, g_cb) FB_SEL:fb_blocks];
     uint64_t gpu_f = atomic_load(&g_cur_frame); gpu_tag_begin(gpu_f);
     NSString *cctx = @(cctx_snap());
-    [FB_ON(o, g_cb) FB_SEL:^(FB_ARG cb) {
+    sub_ring_note(fence, gpu_f, cctx.UTF8String);
+    void (^fb_main)(FB_ARG) = ^(FB_ARG cb) {
         gpu_tag_done(gpu_f, cb.GPUStartTime, cb.GPUEndTime);
         if (cb.error) { atomic_store(&g_last_commit_error, 1); int victim = [cb.error.description containsString:@"InnocentVictim"]; uint64_t more, total;
             int t = nvn_ratelog_take(&g_gerr[victim ? GERR_VICTIM : GERR_MAIN], victim ? 1 : 8, GERR_PERIOD_NS, bp_now(), &more, &total);
@@ -995,14 +1022,18 @@ uint64_t mtl_sub_commit(void) {
         free(ops);
         pthread_mutex_lock(&g_mu); if (fence > g_done) g_done = fence; pthread_cond_broadcast(&g_cv); pthread_mutex_unlock(&g_mu);
         defer_drain();
-    }];
+    };
+    [FB_ON(o, g_cb) FB_SEL:fb_main];
     pg_commit(FB_ON(o, g_cb));   // 逐通道 GPU 计时（DM_NVN_PASSGPU）：没开时直接返回 | Per-pass GPU timing (DM_NVN_PASSGPU): returns immediately when off
     void arena_commit(uint64_t fence); arena_commit(fence);
     res_commit();
     [g_cb endCommandBuffer];
-    CBUF buffers[] = {g_cb};
-    [g_q4 commit:buffers count:1 options:o];
-    [g_q4 signalEvent:g_ev value:fence];
+    atomic_store(&g_fence_pub, fence); gpu_watch_start();
+    if (!gpu_withheld(^{ fb_blocks(nil); fb_main(nil); })) {
+        CBUF buffers[] = {g_cb};
+        [g_q4 commit:buffers count:1 options:o];
+        [g_q4 signalEvent:g_ev value:fence];
+    }
     atomic_store(&g_ev_last, fence);
     cb_committed();
     g_alloc_fence[g_alloc_cur] = fence;
@@ -1021,15 +1052,23 @@ int mtl_wait(uint64_t fence, uint64_t timeout_ns) {
     dl.tv_sec += ns / 1000000000ull; dl.tv_nsec = ns % 1000000000ull;
     pthread_mutex_lock(&g_mu);
     int r = 0;
-    while (g_done < fence) if ((r = pthread_cond_timedwait(&g_cv, &g_mu, &dl))) break;
-    int ok = g_done >= fence;
+    while (g_done < fence && !atomic_load(&g_gpu_lost)) if ((r = pthread_cond_timedwait(&g_cv, &g_mu, &dl))) break;
+    int ok = g_done >= fence || atomic_load(&g_gpu_lost);   // lost: nothing will ever finish, and nothing more runs on the GPU
     pthread_mutex_unlock(&g_mu);
     return ok;
+}
+int mtl_gpu_lost(void) { return atomic_load(&g_gpu_lost); }
+void mtl_test_gpu_stall(void) { atomic_store(&g_gpu_vanish, 1); MLOG("test: from now on every GPU submission vanishes, as in a driver that stopped taking them (fault gpustall)"); }
+// Whether a command buffer is kept from the GPU; 1 = handled here, don't commit it. Lost: its feedback runs now with no feedback object (on the
+// feedback queue, after any real feedback still queued), so the waits and the CPU-visible effects carry on; a vanishing test submission is dropped
+static int gpu_withheld(dispatch_block_t no_feedback) {
+    if (atomic_load(&g_gpu_lost)) { dispatch_async(g_feedback_q, no_feedback); return 1; }
+    return atomic_load(&g_gpu_vanish);
 }
 
 static void mtl_finish_gpu(void) {
     if (g_fence) mtl_wait(g_fence, UINT64_MAX);
-    while (atomic_load(&g_up_pending)) usleep(1000);
+    while (atomic_load(&g_up_pending) && !atomic_load(&g_gpu_lost)) usleep(1000);
 }
 void mtl_present_flush(void);
 void mtl_finish(void) { mtl_present_flush(); mtl_finish_gpu(); }   // 队列语义：已入队的出图也算队列工作 | Queue semantics: already-enqueued presents also count as queue work
@@ -1038,7 +1077,7 @@ static void present_drop_for_suspend(int classic);
 // Created only once: the game threads (pool registration, submit) and the main thread (drain before suspending) may each get here first; previously only an unlocked "is g_dev set" check guarded it, and two threads arriving together would each create a device and queue
 void mtl_init(void) { static dispatch_once_t once; dispatch_once(&once, ^{ mtl_init_once(); }); }
 // 图形还没初始化（开机头几秒就进后台）：没有在途工作要清，也别在这条线程上替游戏初始化 | Graphics not initialized yet (going to the background in the first seconds of boot): there is no in-flight work to drain, and do not initialize it on this thread on the game's behalf
-void mtl_drain(void) { if (!g_dev) return; present_drop_for_suspend(1); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu();
+void mtl_drain(void) { if (!g_dev) return; if (atomic_load(&g_gpu_lost)) { MLOG("drain: the GPU is lost, nothing to wait for"); return; } present_drop_for_suspend(1); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu();
     gerr_flush(); }   // the handlers have run: count the GPU errors no line reported (suspend and teardown)
 
 // ================= 渲染回放 =================
@@ -1261,7 +1300,7 @@ static void up_flush(void) {
     static int lost_at = -2; static uint64_t batch_n; if (lost_at == -2) { const char *e = getenv("DM_TEST_UP_LOST"); lost_at = e ? atoi(e) : -1; } int fake_lost = dsts.count && lost_at > 0 && (int)++batch_n == lost_at;
     MTL4CommitOptions *o = [MTL4CommitOptions new];
     atomic_fetch_add(&g_up_pending, 1);
-    [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
+    void (^fb_up)(FB_ARG) = ^(FB_ARG f) {
         int t = NVN_RL_FULL; uint64_t more = 0, total = 0;
         if (f.error) { t = nvn_ratelog_take(&g_gerr[GERR_UP], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
             if (t == NVN_RL_FULL) MLOG("【红】GPU error in an upload command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
@@ -1275,11 +1314,11 @@ static void up_flush(void) {
         if (d > 0) atomic_fetch_add(&g_upload_gpu_ns, (uint64_t)(d * 1e9));
         atomic_store(&g_up_alloc_busy[slot], 0);
         atomic_fetch_sub(&g_up_pending, 1);
-    }];
+    };
+    [FB_ON(o, cb) FB_SEL:fb_up];
     res_commit();
     [cb endCommandBuffer];
-    CBUF buffers[] = {cb};
-    [g_q4 commit:buffers count:1 options:o];
+    if (!gpu_withheld(^{ fb_up(nil); })) { CBUF buffers[] = {cb}; [g_q4 commit:buffers count:1 options:o]; }
     cb_committed();
     g_up_cb = nil; if (g_up_block) { defer_obj_release(g_up_block); g_up_block = nil; } g_up_block_off = g_up_block_size = 0;
     for (id obj in g_up_keep) defer_obj_release(obj);
@@ -1293,8 +1332,9 @@ static void up_begin(void) {
     up_owner_check("up_begin");
     if (g_up_cb) return;
     unsigned slot = g_up_seq++ % 3;
-    while (atomic_load(&g_up_alloc_busy[slot])) usleep(1000);
+    while (atomic_load(&g_up_alloc_busy[slot]) && !atomic_load(&g_gpu_lost)) usleep(1000);
     atomic_store(&g_up_alloc_busy[slot], 1);
+    if (atomic_load(&g_gpu_lost)) g_up_alloc4[slot] = lost_alloc();   // a command buffer stuck in the driver may still hold the old one: never reset it
     [g_up_alloc4[slot] reset];
     g_up_cb = [g_dev newCommandBuffer];
     [g_up_cb beginCommandBufferWithAllocator:g_up_alloc4[slot]];
@@ -5764,7 +5804,7 @@ static void copy_t2b(const p_copy_b2t *c) {
 // CPU 读贴图（ReadTexels）：预排布贴图以池内存为真值，解排布直读；其余从 MTLTexture blit 读回（调用方已按 NVN 规矩等过 GPU）
 // CPU texture read (ReadTexels): for packaged textures the pool memory is the ground truth, de-layout and read directly; the rest are read back from the MTLTexture by blit (the caller has already waited for the GPU per NVN rules)
 void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, uint8_t *dst, size_t row, size_t img) {
-    if (!on_sub_thread()) while (atomic_load(&g_up_pending)) usleep(200);   // 翻译在翻译线程：调用方已排空队列（批已随提交冲刷），这里只等上传在 GPU 上做完（提交线程上由 q_cb 冲刷并等） | Translation runs on the translation thread: the caller has already drained the queue (batches were flushed with the submit), so here we only wait for uploads to finish on the GPU (on the submit thread q_cb flushes and waits)
+    if (!on_sub_thread()) while (atomic_load(&g_up_pending) && !atomic_load(&g_gpu_lost)) usleep(200);   // 翻译在翻译线程：调用方已排空队列（批已随提交冲刷），这里只等上传在 GPU 上做完（提交线程上由 q_cb 冲刷并等） | Translation runs on the translation thread: the caller has already drained the queue (batches were flushed with the submit), so here we only wait for uploads to finish on the GPU (on the submit thread q_cb flushes and waits)
     xv_check(t->serial, level, layer0, "CPU读回");
     PD("U cpu_read ser=%llu lv%u sl%u xyz=%d,%d,%d size=%d,%d,%d dst=%p row=%lu img=%lu", t->serial, level, layer0, r->xoffset, r->yoffset, r->zoffset, r->width, r->height, r->depth, dst, (unsigned long)row, (unsigned long)img);
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
@@ -7303,6 +7343,7 @@ static void link_shown(uint64_t ticket, int gen, double target, double shown, ui
     if (ticket % 120 == 0) fflush(f);
 }
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts, uint64_t ev_value) {
+    if (atomic_load(&g_gpu_lost) || atomic_load(&g_gpu_vanish)) return 0;   // nothing reaches the GPU any more (gpu_watch); the caller counts the frame as done
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
     if (g_use != USE_OFF && g_use != USE_DONE) use_tick();
@@ -7371,8 +7412,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     int alloc_i = (int)(ticket % 3);
     if (g_present_alloc_fence[alloc_i]) {   // 本槽上次的命令缓冲 GPU 真正做完才复用（重置分配器、改槽里的常量） | Reuse the slot only once its previous command buffer has really finished on the GPU (resetting the allocator, rewriting the slot's constants)
         pthread_mutex_lock(&g_pq_mu);
-        while (g_present_alloc_done[alloc_i] < g_present_alloc_fence[alloc_i]) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
+        while (g_present_alloc_done[alloc_i] < g_present_alloc_fence[alloc_i] && !atomic_load(&g_gpu_lost)) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
         pthread_mutex_unlock(&g_pq_mu);
+        if (atomic_load(&g_gpu_lost)) return 0;
     }
     [g_present_alloc4[alloc_i] reset];
     id<MTL4CommandQueue> pq = !supplied && g_present_own_q ? g_present_q4 : g_q4;
@@ -7643,7 +7685,7 @@ static void present_drop_for_suspend(int classic) {
         uint64_t n = g_pq_in - g_pq_read;
         for (uint64_t k = g_pq_read + 1; k <= g_pq_in; k++) g_pres[k % PRING] = (pres_ent){k, -1};
         g_link_dropped += n; g_pq_read = g_pq_in;
-        while (g_pq_inflight) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
+        while (g_pq_inflight && !atomic_load(&g_gpu_lost)) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
         if (g_pq_done < g_pq_in) g_pq_done = g_pq_in;
         pthread_cond_broadcast(&g_pq_cv);
         if (n) MLOG("进后台：丢弃排队中未上屏的 %llu 帧（显示节拍在后台不回调）", (unsigned long long)n);
@@ -7651,7 +7693,7 @@ static void present_drop_for_suspend(int classic) {
         uint64_t n = g_pq_in - g_pq_read;
         for (uint64_t k = g_pq_read + 1; k <= g_pq_in; k++) g_pres[k % PRING] = (pres_ent){k, -1};
         g_pq_read = g_pq_in;
-        while (g_classic_busy || g_pq_inflight) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
+        while (g_classic_busy || (g_pq_inflight && !atomic_load(&g_gpu_lost))) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
         if (g_pq_done < g_pq_in) g_pq_done = g_pq_in;
         pthread_cond_broadcast(&g_pq_cv);
         MLOG("Suspend: dropped %llu queued presents the present thread had not taken (classic mode)", (unsigned long long)n);
@@ -7771,7 +7813,7 @@ void mtl_present_wait(uint64_t tk) {
         uint64_t n = tk - g_pq_read;
         for (uint64_t k = g_pq_read + 1; k <= tk; k++) g_pres[k % PRING] = (pres_ent){k, -1};
         g_link_dropped += n; g_pq_read = tk;
-        while (g_pq_inflight) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
+        while (g_pq_inflight && !atomic_load(&g_gpu_lost)) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
         if (g_pq_done < tk) g_pq_done = tk;
         pthread_cond_broadcast(&g_pq_cv);
         if (!g_stall_t0) { g_stall_t0 = last ? last : now; g_stall_drop = 0; g_stall_red = 0; g_stall_logged = 0; g_stall_n++; }
@@ -7871,5 +7913,51 @@ void mtl_wait_state_dump(void) {
          atomic_load(&g_up_pending), atomic_load(&g_up_alloc_busy[0]), atomic_load(&g_up_alloc_busy[1]), atomic_load(&g_up_alloc_busy[2]), g_up_seq, g_up_cb != nil,
          (unsigned long long)g_pq_in, (unsigned long long)g_pq_done, g_cb != nil, atomic_load(&g_sub_thread_set));
 }
+// ---------- GPU watchdog (g_gpu_lost) ----------
+// gpu_watch looks 4 times a second, and its time only runs while it does: a sleeping Mac, a suspended app or a stopped debugger never count. With
+// work waiting, the GPU is taken as lost once no main submission has finished for DM_GPU_LOST_S seconds (default 10; 0 turns the watchdog off)
+static double gpu_lost_s(void) { const char *e = getenv("DM_GPU_LOST_S"); double s = e && *e ? atof(e) : 10; return s > 0 ? s : 0; }
+// The front end saves and quits (front.h: front_mac.m, front_ios.m). A build without a front end (the graphics tests) gets this weak one, which
+// only logs; a test that gives its own defines NVN_OWN_FRONT_GPU_LOST before including this file
+#ifndef NVN_OWN_FRONT_GPU_LOST
+__attribute__((weak)) void front_gpu_lost(void) { MLOG("GPU lost: no front end to save and quit"); }
+#endif
+static void gpu_lost_declare(double idle, uint64_t done, uint64_t fence) {
+    if (atomic_exchange(&g_gpu_lost, 1)) return;
+    sub_note held = {0};
+    pthread_mutex_lock(&g_mu); for (int i = 0; i < SUB_RING; i++) if (g_sub_ring[i].fence == done + 1) held = g_sub_ring[i]; pthread_mutex_unlock(&g_mu);
+    MLOG("【红】GPU lost: no GPU work has finished for %.1f s with %llu submissions waiting (fences %llu to %llu); from now on nothing is sent to the GPU "
+         "and nothing waits for it, so the game can save and quit", idle, (unsigned long long)(fence - done), (unsigned long long)(done + 1), (unsigned long long)fence);
+    if (held.fence) MLOG("【红】GPU lost: the first waiting submission (fence %llu, frame %llu) held: %s", (unsigned long long)held.fence, (unsigned long long)held.frame, held.what);
+    mtl_wait_state_dump();
+    DM_EV("gpu_lost", "s:f waiting:u frame:u", idle, (unsigned long long)(fence - done), (unsigned long long)held.frame);
+    pthread_mutex_lock(&g_mu); pthread_cond_broadcast(&g_cv); pthread_mutex_unlock(&g_mu);   // every wait checks g_gpu_lost
+    mtl_present_discard(1);   // frames are dropped at the door from now on
+    pthread_mutex_lock(&g_pq_mu); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
+    front_gpu_lost();
+}
+static void *gpu_watch(void *u) {
+    (void)u; pthread_setname_np("nvn-gpu-watch");
+    const double lim = gpu_lost_s();
+    uint64_t last_done = UINT64_MAX, since = 0; int polls = 0;
+    while (!atomic_load(&g_gpu_lost)) {
+        usleep(250 * 1000);
+        pthread_mutex_lock(&g_mu); uint64_t done = g_done; pthread_mutex_unlock(&g_mu);
+        uint64_t fence = atomic_load(&g_fence_pub), now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+        if (fence <= done) { since = 0; continue; }   // nothing waiting
+        if (!since || done != last_done) { last_done = done; since = now; polls = 0; continue; }   // counted from the first look that sees this wait: never early
+        double idle = (now - since) / 1e9;
+        if (++polls >= (int)(lim * 4) && idle >= lim) gpu_lost_declare(idle, done, fence);
+    }
+    return NULL;
+}
+static void gpu_watch_once(void) {
+    double lim = gpu_lost_s();
+    if (lim <= 0) { MLOG("GPU watchdog: off (DM_GPU_LOST_S)"); return; }
+    pthread_t th; if (pthread_create(&th, NULL, gpu_watch, NULL)) { MLOG("【红】GPU watchdog: its thread did not start"); return; }
+    pthread_detach(th);
+    if (getenv("DM_GPU_LOST_S")) MLOG("GPU watchdog: the GPU counts as lost after %.1f s with work waiting and none finished (DM_GPU_LOST_S)", lim);
+}
+static void gpu_watch_start(void) { static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, gpu_watch_once); }
 void mtl_alloc_stats(uint64_t *waits, uint64_t *grown, int *n) { *waits = g_alloc_waits; *grown = g_alloc_grown; *n = g_alloc_n; }   // 主提交分配器池：等过几次、扩过几次、现有几个 | Main submit allocator pool: how many times it waited, how many times it grew, how many exist now
 #pragma clang attribute pop

@@ -1385,11 +1385,12 @@ static void audio_retry_intr(void) {
 // In the enter-background callback (the system gives this callback 10 seconds): wait only in a run. Wait until "a save commit has appeared after sending the background focus, and no new commit for 0.2 seconds after that" (character and shared stash are two containers and may commit separately), at most 2.5 seconds.
 // During this time the game main loop runs as usual and presented frames are simply dropped. Outside a run (main menu / character select) do not wait: there is no unsaved progress there
 static _Atomic int g_rs_busy; static _Atomic uint64_t g_rs_saved_ns;   // 失活时游戏停着、在后台线程上存的那次：进行中 / 存成的时刻（resign_save） | the save made on a background thread at resign while the game was stopped: in progress / when it committed (resign_save)
-static void background_wait_save(void) {
+// Returns what front_gpu_lost notes: 1 = saved (now, or by the resign-time save with nothing new since), 0 = not saved, 2 = no game running
+static int background_wait_save(void) {
     int dm_ingame_now(void), dm_game_paused(void); void mtl_present_discard(int on); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms); uint64_t now_ns(void);
-    if (!dm_ingame_now()) return;
+    if (!dm_ingame_now()) return 2;
     for (uint64_t t0 = now_ns(); atomic_load(&g_rs_busy) && now_ns() - t0 < 3500000000ull; ) usleep(10000);   // 失活时那次还在存：等它存完，两次别叠在一起 | the resign-time save is still running: wait for it so the two do not overlap
-    { uint64_t at = atomic_load(&g_rs_saved_ns); if (at && dm_game_paused() && now_ns() - at < 10000000000ull) { LOG("前端：进后台——失活时刚存过、游戏一直停着（没有新进度），不再存"); return; } }
+    { uint64_t at = atomic_load(&g_rs_saved_ns); if (at && dm_game_paused() && now_ns() - at < 10000000000ull) { LOG("前端：进后台——失活时刚存过、游戏一直停着（没有新进度），不再存"); return 1; } }
     // 系统输入框（数量框 / 起名框）开着：游戏那边在等它、客体时钟冻着（hle_swkbd），拍不走就存不了。先按「取消」关掉（游戏那边的输入框保持原值），再请存盘
     // The system input box (quantity / name box) is open: the game is waiting for it and the guest clock is frozen (hle_swkbd), so no tick runs and nothing can be saved. Close it with "Cancel" first (the game's own input box keeps its value), then ask for the save
     if (g_text_alert) { UIAlertController *a = g_text_alert; void (^fin)(int) = g_text_alert_finish; [a dismissViewControllerAnimated:NO completion:nil]; if (fin) fin(0); LOG("前端：进后台——系统输入框开着，按取消关掉再存盘"); }
@@ -1399,6 +1400,7 @@ static void background_wait_save(void) {
     dm_save_wait(2.5, &n, &froze, &ms);   // 游戏停着（暂停菜单开着）时冻住世界、临时放开暂停存这一次，存完写回（diag.c） | If the game is stopped (pause menu open), freeze the world and temporarily release the pause for this one save, then write it back (diag.c)
     mtl_present_discard(0);
     LOG("前端：进后台等游戏存盘 %.0f ms，期间存档提交 %llu 次%s%s", ms, (unsigned long long)n, froze ? "（原先暂停着：冻结世界存盘、已恢复暂停）" : "", n ? "" : "【红】（2.5 秒内没等到）");
+    return n > 0;
 }
 // 失活时也请游戏存一次盘（查 #22 发现的缺口）：上划进多任务界面时 App 多半只「失活」、不进后台，在那里直接划掉进程
 // 走不到进后台的存盘，丢掉距上次定时存盘（游戏 5 分钟一次）以来的进度。只置游戏「下一拍就自动存盘」的计时（同 dm_request_save），不等提交、不挡主线程；
@@ -1430,6 +1432,29 @@ static void resign_save(void) {
 // Before the App terminates / the scene disconnects (called by main.m; the system gives only a few seconds): if still in the foreground (swiped away straight from the app switcher without ever entering the background), save once the way going to the background does, then upload this run to iCloud.
 // An App that went to the background already saved then, and its graphics are suspended, so it does not save again
 static int g_in_bg;   // 进了后台还没回前台（front_ios_focus_event 1 → 2） | in the background and not yet back to the foreground (front_ios_focus_event 1 → 2)
+// The first activation after a quit with a lost GPU (its note, front_gpu_lost): tell the player once, on the same window front_save_failed would use.
+// DM_TEST_GPU_LOST_NOTE=<saved> (tests) writes such a note first, as if the last session had ended so
+static void gpulost_notice(void) {
+    static int done; if (done++) return;
+    const char *t = getenv("DM_TEST_GPU_LOST_NOTE"); if (t && *t) dm_gpulost_note_write(atoi(t));
+    int saved = 0; if (!dm_gpulost_note_take(&saved)) return;
+    UIViewController *vc = nil;
+    for (UIScene *sc in UIApplication.sharedApplication.connectedScenes)
+        if ([sc isKindOfClass:UIWindowScene.class]) for (UIWindow *w in ((UIWindowScene *)sc).windows) if (w.rootViewController && (w.isKeyWindow || !vc)) vc = w.rootViewController;
+    while (vc.presentedViewController) vc = vc.presentedViewController;
+    LOG("front end: the last session ended when the GPU stopped responding (saved %d): telling the player%s", saved, vc ? "" : " 【红】(no window)");
+    if (!vc) return;
+    NSString *msg = [NSString stringWithFormat:@"%@%@%@", SWT("dmGpuLostText"), saved == 2 ? @"" : @" ", saved == 1 ? SWT("dmGpuLostSaved") : saved == 0 ? SWT("dmGpuLostUnsaved") : @""];
+    UIAlertController *al = [UIAlertController alertControllerWithTitle:SWT("dmGpuLostTitle") message:msg preferredStyle:UIAlertControllerStyleAlert];
+    [al addAction:[UIAlertAction actionWithTitle:SWT("dmConfirm") style:UIAlertActionStyleDefault handler:nil]];
+    [vc presentViewController:al animated:YES completion:nil];
+    DM_EV("gpu_lost_note", "saved:d", saved);
+}
+// The GPU was taken as lost (front.h; nvn_mtl.m's watchdog thread): save as going to the background does, leave the note for the next launch, quit
+void front_gpu_lost(void) {
+    LOG("【红】front end: the GPU stopped responding: the game saves and quits");
+    dispatch_async(dispatch_get_main_queue(), ^{ int saved = background_wait_save(); dm_gpulost_note_write(saved); dm_host_shutdown("GPU lost"); });
+}
 void front_ios_final_save(void) {
     if (g_in_bg) { LOG("前端：终止前——进后台时已存过，不再存"); return; }
     background_wait_save();
@@ -1487,7 +1512,7 @@ void front_ios_focus_event(int ev) {
             break; }
         case 2: dm_ui_lifecycle(0); { void dm_update_foreground(void); dm_update_foreground(); void dm_cloud_foreground(void); dm_cloud_foreground(); }   // 回前台时人若停在选角页，重查一次新版本（dm/host/dm_update.c；局内不查） | If the player is on the character select page when returning to foreground, check for a new version once more (dm/host/dm_update.c; not checked in a run)
             { void dm_3d_scale_resumed(void); dm_3d_scale_resumed(); } dm_gfx_suspend(0); guest_clock_freeze_for(1, 0); g_in_bg = 0; g_audio_bg = g_audio_intr = 0; audio_apply(); dm_focus_set(2); break;   // 回前台一律当打断已过：进后台时系统自己会发一次「被打断」（真机实测），却不保证回来时补发「结束」；会话若真还被占，启动声卡失败不致命、激活时重试 | Returning to foreground always treats the interruption as over: when entering background the system itself sends one "interrupted" (measured on a real device) but does not guarantee an "ended" on return; if the session is really still occupied, failing to start the audio device is not fatal and is retried on activation
-        case 3: links_pause(0); dm_focus_set(1); audio_retry_intr(); audio_apply(); { int e = atomic_exchange(&g_save_failed_err, 0); if (e) front_save_failed(e); } break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
+        case 3: links_pause(0); dm_focus_set(1); audio_retry_intr(); audio_apply(); { int e = atomic_exchange(&g_save_failed_err, 0); if (e) front_save_failed(e); } gpulost_notice(); break;   // 激活时再对一次音频：上次恢复没成（会话还被占）的在这里重试 | Reconcile audio once more on activation: a previous resume that failed (session still occupied) is retried here
     }
 }
 

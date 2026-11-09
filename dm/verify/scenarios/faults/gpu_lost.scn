@@ -1,0 +1,22 @@
+# The GPU stops taking work in a run: from the control port's gpustall on, every GPU submission vanishes, neither run nor reported, as in the driver
+# that stopped taking a Mac's submissions on 2026-11-08 (the game then waited on its fence for ever). The GPU watchdog takes the GPU as lost after
+# DM_GPU_LOST_S, nothing waits for it any more, the game saves and quits by itself, and the note for the next launch is written (nvn_mtl.m gpu_watch,
+# front.h front_gpu_lost). DM_TEST_GPU_LOST_NOTE also starts the run as if the last session had ended so: the note is taken (and told on a window)
+name gpu_lost
+requires cli mac-app
+save warlock
+timeout 180
+env DM_GPU_LOST_S=3 DM_TEST_GPU_LOST_NOTE=1
+
+enter_game
+stick 0 1 frames=30
+fault arm gpustall
+expect gpu_lost timeout=30
+expect quit_save timeout=30
+check event fault point=gpustall
+check event quit_save saved=true
+check exit 0
+check saved
+check log_has "the last session ended when the GPU stopped responding \(saved 1\)"
+check log_has "a note for the next launch says the GPU stopped responding \(written\)"
+check no_red_log "allow=GPU lost|the GPU stopped responding"

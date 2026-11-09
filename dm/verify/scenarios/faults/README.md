@@ -7,5 +7,7 @@ Run by `fork_gate.sh full` (`dm/verify/FORK_GATE.md`). Each case injects a save 
 - later saves committing, and a valid committed save (`saves valid`, `dm/verify/d2save.py`);
 - no `save_stuck`.
 
+`gpu_lost.scn` is not a save fault: it stops every GPU submission (`fault arm gpustall`) and checks that the GPU watchdog takes the GPU as lost, the game saves and quits by itself with exit code 0, and the note for the next launch is written and taken.
+
 Points not reached on these routes: `guestname` and `renameback` (the game doesn't rename save files in a normal run); they stay covered by `dm/host/tests/t_fs.c`.
 

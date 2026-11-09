@@ -94,6 +94,7 @@ DM_GEN_ASSETS	ios-tools	ios/tools/gen_paths.py	-
 DM_GEN_ONLY	ios-tools	ios/run.sh	y
 DM_GFXUSE	gfx	gfx/nvn/nvn_mtl.m	-
 DM_GFX_FIXTURE_OUT	gfx	gfx/tests/t_mip_extent.m gfx/tests/t_reorder_chain.m gfx/tests/t_rt_range.m	-
+DM_GPU_LOST_S	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_gpu_lost.m	y
 DM_GRANNY_PRE	host	host/hle_granny.c	-
 DM_GRANNY_PRE_MB	host	host/hle_granny.c	-
 DM_GRANNY_PROF	host	host/hle_granny.c	-
@@ -387,6 +388,7 @@ DM_TEST_GLYPH	host	host/dm_padmode.c	-
 DM_TEST_GOLD	host	host/diag.c	-
 DM_TEST_GOTO_LEVEL	host	host/diag.c	y
 DM_TEST_GPU_CORES	host	host/front_mac.m	-
+DM_TEST_GPU_LOST_NOTE	host,ios	host/front_mac.m ios/Sources/front_ios.m	-
 DM_TEST_GPU_NAME	host,ios	host/front_mac.m ios/Sources/front_ios.m	-
 DM_TEST_GUEST_RETURN	host	host/main.c	-
 DM_TEST_HAND_GUARD	host	host/dm_cursor.c	-

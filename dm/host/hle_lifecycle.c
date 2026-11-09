@@ -4,10 +4,12 @@
 // Host lifecycle: graceful exit (SIGTERM; on iOS the App termination callback calls dm_host_shutdown).
 // Stop background threads (boot block prefetch), pause audio, suspend graphics (wait for in-flight NVN calls to end and drain GPU work), then _exit(0); a 1.5 s fallback goes straight to _exit(0).
 // The default action also exits in about 0.08 s (exit code 143); the value of this function is stopping background threads in order, exit code 0, and giving the iOS lifecycle callback an entry.
+// Also the note a quit after a lost GPU leaves for the next launch (dm_gpulost_note_write / _take).
 #include "hle.h"
 #include <dispatch/dispatch.h>
 #include <stdatomic.h>
 #include <signal.h>
+#include <stdio.h>
 #include <unistd.h>
 void tact_prefetch_stop(void);
 void granny_prof_dump(void);
@@ -29,6 +31,20 @@ void dm_host_shutdown(const char *why) {
     { void dm_probe_summary(const char *why); dm_probe_summary("shutdown"); }
     DM_EV("exit", "why:s code:d", "shutdown", 0);
     _exit(0);
+}
+// The note a quit after the GPU was taken as lost leaves for the next launch (front.h front_gpu_lost): gpu_lost.txt beside the settings files
+// (dm_custom_path), one line "saved <n>": 1 = the game saved first, 0 = it could not, 2 = no game was running. Taking it removes it
+int dm_custom_path(const char *name, char *p, size_t n);
+int dm_gpulost_note_write(int saved) {
+    char p[1100]; if (!dm_custom_path("gpu_lost.txt", p, sizeof p)) return 0;
+    FILE *f = fopen(p, "w"); if (!f) return 0;
+    fprintf(f, "saved %d\n", saved); fclose(f); return 1;
+}
+int dm_gpulost_note_take(int *saved) {
+    char p[1100]; if (!dm_custom_path("gpu_lost.txt", p, sizeof p)) return 0;
+    FILE *f = fopen(p, "r"); if (!f) return 0;
+    int s = 0; if (fscanf(f, "saved %d", &s) != 1) s = 0;
+    fclose(f); unlink(p); if (saved) *saved = s; return 1;
 }
 void dm_term_install(void) {
     signal(SIGTERM, SIG_IGN);                       // 不走缺省动作：交给 GCD 信号源在普通线程上收尾 | do not take the default action: hand over to the GCD signal source to wrap up on an ordinary thread
