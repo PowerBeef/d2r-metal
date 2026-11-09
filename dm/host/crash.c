@@ -164,8 +164,15 @@ void dm_guest_write_prepare(void *addr, size_t len) { int n = atomic_load_explic
 
 // 诊断模块（diag.c 的探针）与线程现场（hle_thread.c）由各自注册进来：单测只链本文件时不依赖它们
 // The diagnostics module (the probes in diag.c) and the thread state dump (hle_thread.c) each register themselves here: a unit test that links only this file does not depend on them
-static int (*g_trap_hook)(ucontext_t *uc);
-void crash_set_trap_hook(int (*fn)(ucontext_t *uc)) { g_trap_hook = fn; }
+// SIGTRAP handlers, asked in the order they were added until one takes the trap: DM_PROBE's probes (diag.c), then the live hooks' coverage
+// traps and watchpoints (dm_live.c)
+#define TRAP_HOOKS 4
+static int (*g_trap_hook[TRAP_HOOKS])(ucontext_t *uc); static _Atomic int g_ntrap_hook;
+void crash_set_trap_hook(int (*fn)(ucontext_t *uc)) {
+    int n = atomic_load(&g_ntrap_hook);
+    for (int i = 0; i < n; i++) if (g_trap_hook[i] == fn) return;
+    if (n < TRAP_HOOKS) { g_trap_hook[n] = fn; atomic_store(&g_ntrap_hook, n + 1); }
+}
 void crash_set_dump_hook(void (*fn)(void)) { g_dump_hook = fn; }
 void crash_set_wait_dump(void (*fn)(void)) { g_wait_dump = fn; }
 // 按需导出现场（不退出）：iOS 包没有无进展看门狗，冒烟判红时经 DM_LOG_PORT 发 dump 触发——各客体线程在等什么 + 图形侧等待点，和看门狗打的是同一份
@@ -217,7 +224,7 @@ static void crash_json(int sig, siginfo_t *si, ucontext_t *uc) {
 }
 static void on_crash(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
-    if (sig == SIGTRAP && g_trap_hook && g_trap_hook(uc)) return;
+    if (sig == SIGTRAP) for (int i = 0, n = atomic_load(&g_ntrap_hook); i < n; i++) if (g_trap_hook[i](uc)) return;
     if (sig == SIGSEGV || sig == SIGBUS) {
         int is_write = (int)((UC_ESR(uc) >> 6) & 1);   // ESR 的 WnR 位 | The WnR bit of ESR
         for (int i = 0, n = atomic_load_explicit(&g_nfault_hook, memory_order_acquire); i < n; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
