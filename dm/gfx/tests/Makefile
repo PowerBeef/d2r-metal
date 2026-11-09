@@ -62,6 +62,8 @@ t_aniso: t_aniso.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_aniso.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_gpu_lost: t_gpu_lost.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_gpu_lost.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_hangrec: t_hangrec.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_hangrec.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_bar: t_bar.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_bar.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_ub: t_ub.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -123,6 +125,7 @@ run: \
 	t_dirty_slots \
 	t_fuse_check \
 	t_gpu_lost \
+	t_hangrec \
 	t_hmap \
 	t_mfx_life \
 	t_mfx_on \
@@ -183,6 +186,7 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_bar
 	MTL_DEBUG_LAYER=1 ./t_aniso
 	./t_gpu_lost
+	./t_hangrec
 	MTL_DEBUG_LAYER=1 ./t_mip_extent
 	./t_link_ticks
 	MTL_DEBUG_LAYER=1 ./t_mip_extent --stencil-only

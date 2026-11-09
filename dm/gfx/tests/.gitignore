@@ -83,6 +83,8 @@ t_aniso
 t_aniso.dSYM/
 t_gpu_lost
 t_gpu_lost.dSYM/
+t_hangrec
+t_hangrec.dSYM/
 t_ratelog
 t_ratelog.dSYM/
 t_bloom_lut

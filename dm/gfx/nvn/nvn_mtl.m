@@ -163,6 +163,35 @@ static id<MTL4CommandAllocator> lost_alloc(void) {
     if (!a) MDIE("creating an MTL4CommandAllocator failed: %s", e.localizedDescription.UTF8String);
     return a;
 }
+// ---------- Hang recorder (DM_HANGREC; on unless DM_HANGREC=0): what the GPU was on when it stopped ----------
+// The session that hung the GPU on 2026-11-08 left nothing that could say which work the GPU was on. The recorder keeps, at almost no cost:
+// - pass marks: DM_NVN_PASSGPU's timestamps without its file (g_pg 2): every pass writes one at its start and one at its end into its submission's
+//   counter heap (a ring of PG_RING, cleared before reuse, so an entry never written reads 0). The GPU writes a pass's timestamps only once its work
+//   has run (t_hangrec: while a pass still runs, even its start mark reads 0; a timestamp in an encoder with no work is never written), so a record
+//   says which passes finished and which is the first that did not, not which one had started. A finished pass's marks can take a few ms to read (a
+//   record of a GPU that is fine may show its last pass or two unfinished; a hang's, 2 s in, does not: on this Mac they read within 5 ms while
+//   later work was stuck in the same or the next command buffer). MetalFX and frame generation, which encode their own
+//   passes, are noted in the pass list where they run (hr_mark: no GPU work);
+// - present marks: each present's draw writes one when it has run, so only once the queue's wait for its drawable was over;
+// - the queue log (hq): the order work went to the GPU's queues, the waits for drawables included;
+// - each submission's pass list (hr_rec) and translation summary (g_sub_ring).
+// Nothing is read back in play. hr_dump prints the record as [hang] lines: the GPU watchdog does it after DM_HANGREC_EARLY_S (2 s) with work waiting
+// and none finished, before the driver's own reset (about 4 s in) can cut the submission short, and again when it takes the GPU as lost. A submission
+// or a present that took DM_HANGREC_SLOW_MS (1000) or more on the GPU, as the hangs the driver recovered did, gets its longest passes printed
+// (hr_slow). The scene comes from the host (dm_hang_scene)
+static int hr_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_HANGREC"); v = !(e && !strcmp(e, "0")); } return v; }
+static double hr_env(const char *name, double def) { const char *e = getenv(name); double v = e && *e ? atof(e) : def; return v > 0 ? v : def; }
+static double hr_slow_s(void) { static double v; if (!v) v = hr_env("DM_HANGREC_SLOW_MS", 1000) / 1000; return v; }
+enum { HQ_MAIN, HQ_UP, HQ_WAITEV, HQ_WAITDR, HQ_PRES, HQ_SIGDR, HQ_OLD };
+typedef struct { uint64_t t, id, frame; uint8_t kind, q; } hq_ent;   // q: 0 the game's queue, 1 the present queue, 2 the old queue
+#define HQ_N 48
+static hq_ent g_hq[HQ_N]; static uint64_t g_hq_n; static os_unfair_lock g_hq_lk = OS_UNFAIR_LOCK_INIT;
+static void hq(int kind, int q, uint64_t id, uint64_t frame) {
+    if (!hr_on()) return;
+    uint64_t t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    os_unfair_lock_lock(&g_hq_lk); g_hq[g_hq_n++ % HQ_N] = (hq_ent){t, id, frame, (uint8_t)kind, (uint8_t)q}; os_unfair_lock_unlock(&g_hq_lk);
+}
+static _Atomic uint64_t g_hr_up_sent, g_hr_up_done;   // upload command buffers sent / finished (they finish in order on the game's queue)
 
 static pthread_mutex_t g_res_mu = PTHREAD_MUTEX_INITIALIZER;   // 驻留集专用锁：res_add 会在持 g_mu 的路径里调用（arena_new），不能共用 g_mu | Dedicated lock for the residency set: res_add is called on paths that hold g_mu (arena_new), so it cannot share g_mu
 static NSHashTable *g_res_objects;
@@ -497,7 +526,7 @@ int mtl_gpu_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off, uint64_
 // ---------- 提交 ----------
 // ---------- Submission ----------
 static void defer_reset(void); static void defer_fallback(void);
-static void pg_commit(id fb);
+static void pg_commit(id fb, uint64_t fence, uint64_t frame);
 typedef struct { int kind; volatile uint32_t *val; uint32_t mode, v; uint64_t addr; uint32_t type; void *vis; } post_op;   // vis：kind 3 的可见性槽表 | vis: the visibility slot table for kind 3
 // ---------- 遮挡查询（NVN_COUNTER_TYPE_SAMPLES_PASSED）----------
 // NVN 语义：通过采样数是队列上的累计计数器——ResetCounter 清零，此后每个绘制累加，ReportCounter 在 GPU 完成时写出当时的累计值（+ 时间戳）。
@@ -567,7 +596,7 @@ static void up_owner_check(const char *where) {
 // other threads (the present thread etc.) creating a command buffer do not touch the batch: they do not read or write textures uploaded in this batch; commands that need these textures all come after this replay submission (the batch is flushed before it)
 // Old-queue command buffers (readback / diagnostics / present; to be deleted once M4-4 and M4-5 are migrated away): uploads are already on the Metal 4 queue, and there is no ordering guarantee between the two queues -
 // wait for the upload to complete after flushing it, and only then can the old queue read the upload result (mtl_read_texels waited first and flushed afterwards, the readback beat the upload, 4 failures on t_nvn upload content)
-static id<MTLCommandBuffer> q_cb(void) { if (on_sub_thread()) { up_flush(); while (atomic_load(&g_up_pending) && !atomic_load(&g_gpu_lost)) usleep(200); } return [g_q commandBuffer]; }
+static id<MTLCommandBuffer> q_cb(void) { hq(HQ_OLD, 2, 0, 0); if (on_sub_thread()) { up_flush(); while (atomic_load(&g_up_pending) && !atomic_load(&g_gpu_lost)) usleep(200); } return [g_q commandBuffer]; }
 static post_op *g_post; static int g_npost, g_postcap;
 // 每次提交一个自动释放池：提交跑在客体线程上（长驻、无运行循环、从不排空隐式池），Metal 回放里自动释放的对象
 // （命令缓冲、编码器、通道描述等）不放池就永远不释放。iOS 真机选角页实测宿主堆每帧涨约 47 个对象、0.22 MiB/s。
@@ -1024,7 +1053,7 @@ uint64_t mtl_sub_commit(void) {
         defer_drain();
     };
     [FB_ON(o, g_cb) FB_SEL:fb_main];
-    pg_commit(FB_ON(o, g_cb));   // 逐通道 GPU 计时（DM_NVN_PASSGPU）：没开时直接返回 | Per-pass GPU timing (DM_NVN_PASSGPU): returns immediately when off
+    pg_commit(FB_ON(o, g_cb), fence, gpu_f);   // 逐通道 GPU 计时（DM_NVN_PASSGPU）与卡死记录：都没开时直接返回 | Per-pass GPU timing (DM_NVN_PASSGPU) and the hang recorder: returns immediately when both are off
     void arena_commit(uint64_t fence); arena_commit(fence);
     res_commit();
     [g_cb endCommandBuffer];
@@ -1033,6 +1062,7 @@ uint64_t mtl_sub_commit(void) {
         CBUF buffers[] = {g_cb};
         [g_q4 commit:buffers count:1 options:o];
         [g_q4 signalEvent:g_ev value:fence];
+        hq(HQ_MAIN, 0, fence, gpu_f);
     }
     atomic_store(&g_ev_last, fence);
     cb_committed();
@@ -1300,8 +1330,10 @@ static void up_flush(void) {
     static int lost_at = -2; static uint64_t batch_n; if (lost_at == -2) { const char *e = getenv("DM_TEST_UP_LOST"); lost_at = e ? atoi(e) : -1; } int fake_lost = dsts.count && lost_at > 0 && (int)++batch_n == lost_at;
     MTL4CommitOptions *o = [MTL4CommitOptions new];
     atomic_fetch_add(&g_up_pending, 1);
+    uint64_t hr_up = atomic_fetch_add(&g_hr_up_sent, 1) + 1;
     void (^fb_up)(FB_ARG) = ^(FB_ARG f) {
         int t = NVN_RL_FULL; uint64_t more = 0, total = 0;
+        for (uint64_t v = atomic_load(&g_hr_up_done); hr_up > v && !atomic_compare_exchange_weak(&g_hr_up_done, &v, hr_up);) {}
         if (f.error) { t = nvn_ratelog_take(&g_gerr[GERR_UP], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
             if (t == NVN_RL_FULL) MLOG("【红】GPU error in an upload command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
             else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in upload command buffers: %llu more since the last line (%llu in all)", (unsigned long long)more, (unsigned long long)total); }
@@ -1318,7 +1350,7 @@ static void up_flush(void) {
     [FB_ON(o, cb) FB_SEL:fb_up];
     res_commit();
     [cb endCommandBuffer];
-    if (!gpu_withheld(^{ fb_up(nil); })) { CBUF buffers[] = {cb}; [g_q4 commit:buffers count:1 options:o]; }
+    if (!gpu_withheld(^{ fb_up(nil); })) { CBUF buffers[] = {cb}; [g_q4 commit:buffers count:1 options:o]; hq(HQ_UP, 0, hr_up, atomic_load(&g_cur_frame)); }
     cb_committed();
     g_up_cb = nil; if (g_up_block) { defer_obj_release(g_up_block); g_up_block = nil; } g_up_block_off = g_up_block_size = 0;
     for (id obj in g_up_keep) defer_obj_release(obj);
@@ -1767,27 +1799,42 @@ static pg_stat g_pg_st[256]; static uint64_t g_pg_rep_frame;
 static int pg_on(void) {
     if (g_pg >= 0) return g_pg;
     const char *e = getenv("DM_NVN_PASSGPU"); g_pg = 0;
-    if (!e) return 0;
+    if (!e && !hr_on()) return 0;
     MTL4CounterHeapDescriptor *hd = [MTL4CounterHeapDescriptor new]; hd.type = MTL4CounterHeapTypeTimestamp; hd.count = PG_SLOTS;
-    for (int i = 0; i < PG_RING; i++) { NSError *er = nil; g_pg_buf[i] = [g_dev newCounterHeapWithDescriptor:hd error:&er]; if (!g_pg_buf[i]) { MLOG("【红】时间戳计数堆建不出：%s", er.localizedDescription.UTF8String ?: "?"); return 0; } }
+    for (int i = 0; i < PG_RING; i++) { NSError *er = nil; g_pg_buf[i] = [g_dev newCounterHeapWithDescriptor:hd error:&er]; if (!g_pg_buf[i]) { MLOG("【红】时间戳计数堆建不出：%s", er.localizedDescription.UTF8String ?: "?"); return 0; }
+        [g_pg_buf[i] invalidateCounterRange:NSMakeRange(0, PG_SLOTS)]; }   // the recorder reads entries a hung submission never wrote: they must read 0
     { uint64_t fq = [g_dev queryTimestampFrequency]; g_pg_ns_tick = fq ? 1e9 / (double)fq : 1; }
+    if (!e) { MLOG("hang recorder: on (pass and present marks, the queue log; DM_HANGREC=0 turns it off)"); return g_pg = 2; }   // marks only: nothing read back
     if (!(g_pg_f = fopen(e, "w"))) { MLOG("【红】DM_NVN_PASSGPU 打不开 %s", e); return 0; }
     int lv = bar_lv(); fprintf(g_pg_f, "# barrier_level=%d serial=%d\n", lv, g_bar_ser > 0);   // passgpu_top.py: spans are exclusive costs only at level 0 with the serial pin
     fprintf(g_pg_f, "frame\tidx\tkind\tgpu_ms\tinc_ms\tw\th\tfmt0\tdfmt\tload\tdraws\tt0_ns\tt1_ns\tpass\n");
     MLOG("[passgpu] 逐通道 GPU 计时 → %s", e);
     return g_pg = 1;
 }
+// The hang recorder's copy of each submission's pass list, by ring block (hr_dump, hr_slow): state 0 free, 1 sent, 2 finished (its feedback ran)
+typedef struct { uint64_t fence, frame; pg_pass *ps; int n, cap, state; uint32_t used; } hr_rec;
+static hr_rec g_hr_rec[PG_RING]; static pthread_mutex_t g_hr_mu = PTHREAD_MUTEX_INITIALIZER;
+static int g_pg_skip; static uint64_t g_hr_skipped;
+static void hr_slow(int b, uint64_t fence, double s);
 static void pg_sub_begin(uint64_t fence) {   // 本次提交用环里第 fence % PG_RING 块；先等 PG_RING 次之前用它的提交完成 | This submission uses block fence % PG_RING of the ring; first wait for the submission that used it PG_RING submissions ago to complete
     if (!pg_on()) return;
-    if (fence > PG_RING) mtl_wait(fence - PG_RING, UINT64_MAX);
-    g_pg_b = (int)(fence % PG_RING); g_pg_used = 0; g_pg_np = 0; g_pg_open = -1;
+    int b = (int)(fence % PG_RING);
+    g_pg_np = 0; g_pg_open = -1; g_pg_skip = 0;
+    if (g_pg == 1) { if (fence > PG_RING) mtl_wait(fence - PG_RING, UINT64_MAX); }
+    else {   // the recorder never waits: while the block's last submission is still on the GPU, this one goes unmarked
+        pthread_mutex_lock(&g_hr_mu); int busy = g_hr_rec[b].state == 1; pthread_mutex_unlock(&g_hr_mu);
+        if (busy) { g_pg_skip = 1; g_pg_used = PG_SLOTS; g_hr_skipped++; return; }   // pg_new finds no room
+    }
+    pthread_mutex_lock(&g_hr_mu); uint32_t u = g_hr_rec[b].used; g_hr_rec[b].used = 0; g_hr_rec[b].state = 0; pthread_mutex_unlock(&g_hr_mu);
+    if (u) [g_pg_buf[b] invalidateCounterRange:NSMakeRange(0, u)];
+    g_pg_b = b; g_pg_used = 0;
 }
 static pg_pass *pg_new(int kind, int nslot) {
-    if (!pg_on() || g_pg_used + nslot > PG_SLOTS) return NULL;
+    if (!pg_on() || g_pg_skip || g_pg_used + nslot > PG_SLOTS) return NULL;
     uint64_t f = atomic_load(&g_cur_frame); if (f != g_pg_frame) { g_pg_frame = f; g_pg_idx = 0; }
     if (g_pg_np == g_pg_cap) { g_pg_cap = g_pg_cap ? g_pg_cap * 2 : 128; g_pg_pass = realloc(g_pg_pass, g_pg_cap * sizeof *g_pg_pass); }
     pg_pass *p = &g_pg_pass[g_pg_np++]; memset(p, 0, sizeof *p);
-    p->frame = f; p->pass = g_stat_pass; p->idx = g_pg_idx++; p->kind = kind; p->slot = (int)g_pg_used; p->draws = -(int)g_stat_draw;
+    p->frame = f; p->pass = g_stat_pass; p->idx = kind == 3 ? -1 : g_pg_idx++; p->kind = kind; p->slot = (int)g_pg_used; p->draws = -(int)g_stat_draw;   // a hang-recorder note (kind 3) keeps DM_NVN_PASSGPU's pass indices as they were
     g_pg_used += nslot;
     return p;
 }
@@ -1843,8 +1890,25 @@ static void pg_host_render(const char *label) {
     pg_pass *p = pg_new(2, PG_RSLOTS); if (!p) return;
     p->draws = 0; strlcpy(p->load, label, sizeof p->load); g_pg_open = g_pg_np - 1;
 }
-static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回调解析；fb = FB_ON(o, g_cb)（旧接口是命令缓冲的完成回调，Metal 4 是提交选项的反馈回调） | Hands this submission's pass table to the completion callback for parsing; fb = FB_ON(o, g_cb) (on the legacy API the command buffer completion handler, on Metal 4 the commit options feedback handler)
-    if (!g_pg || !g_pg_np) return;
+// Where work that encodes its own passes (MetalFX, frame generation) runs between two of ours: an entry in the pass list (kind 3, label in load) with
+// no timestamp, since one in an encoder of its own would never be written
+static void hr_mark(const char *label) { pg_pass *p = pg_new(3, 0); if (p) { p->draws = 0; strlcpy(p->load, label, sizeof p->load); } }
+static void pg_commit(id fb, uint64_t fence, uint64_t frame) {   // 把本次提交的通道表交给完成回调解析；fb = FB_ON(o, g_cb)（旧接口是命令缓冲的完成回调，Metal 4 是提交选项的反馈回调） | Hands this submission's pass table to the completion callback for parsing; fb = FB_ON(o, g_cb) (on the legacy API the command buffer completion handler, on Metal 4 the commit options feedback handler)
+    if (g_pg <= 0 || g_pg_skip) return;
+    {   // the recorder's copy, and its feedback: a slow submission's longest passes, then the block is free again
+        int b = g_pg_b, n = g_pg_np; uint32_t used = g_pg_used; double slow = hr_slow_s();
+        pthread_mutex_lock(&g_hr_mu); hr_rec *r = &g_hr_rec[b];
+        if (n > r->cap) { r->cap = n + 64; r->ps = realloc(r->ps, (size_t)r->cap * sizeof *r->ps); }
+        if (n) memcpy(r->ps, g_pg_pass, (size_t)n * sizeof *r->ps);
+        r->n = n; r->used = used; r->fence = fence; r->frame = frame; r->state = 1;
+        pthread_mutex_unlock(&g_hr_mu);
+        [fb FB_SEL:^(FB_ARG c) {
+            double sec = c ? c.GPUEndTime - c.GPUStartTime : 0;
+            if (hr_on() && sec >= slow) hr_slow(b, fence, sec);
+            pthread_mutex_lock(&g_hr_mu); if (g_hr_rec[b].fence == fence) g_hr_rec[b].state = 2; pthread_mutex_unlock(&g_hr_mu);
+        }];
+    }
+    if (g_pg != 1 || !g_pg_np) return;
     int n = g_pg_np; pg_pass *ps = malloc(n * sizeof *ps); memcpy(ps, g_pg_pass, n * sizeof *ps);
     __typeof__(g_pg_buf[0]) buf = g_pg_buf[g_pg_b]; uint32_t used = g_pg_used;
     double ns_tick = g_pg_ns_tick;
@@ -1857,6 +1921,7 @@ static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回�
         pthread_mutex_lock(&g_pg_mu);
         for (int i = 0; t && i < n; i++) {
             pg_pass *p = &ps[i]; uint64_t a, b;
+            if (p->kind == 3) continue;   // hang-recorder notes: no timestamps
             #define OK(x) ((x) != 0)
             a = t[p->slot]; b = t[p->slot + 1];
             if (!OK(a) || !OK(b) || b < a) continue;
@@ -7112,7 +7177,7 @@ static int mfx3d_encode(id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInt
     rp_end();
     if (!mv_resolve(src) && temporal) { g_mt.reset = 1; return 0; }   // no velocities after all (an encoder failed): the game's own upscale, and the history starts anew
     if (temporal) { mt_encode(src, cw, ch); g_fg.world_frame = atomic_load(&g_cur_frame); }
-    else if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0;
+    else { hr_mark("mfx3d"); if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0; }   // the hang recorder notes where MetalFX encodes its own passes
     id<MTLTexture> mfx_out = temporal ? g_mt.out : g_mfx_3d.out; id<MTLFence> mfx_fence = temporal ? g_mv.fence : g_mfx_3d.fence;
     if (g_mv.dump_vel) g_mv.dump_out = mfx_out;
     int full = vp.originX == 0 && vp.originY == 0 && ow == dst.width && oh == dst.height;
@@ -7224,6 +7289,8 @@ static void pres_geom_log(const dm_geom_pfit *f, double dw, double dh, int mfx) 
     MLOG("present: picture %ux%u at %u,%u -> drawable %.0fx%.0f, viewport %.0f,%.0f %.0fx%.0f (%s%s)", f->sw, f->sh, f->sx, f->sy, dw, dh, f->x, f->y, f->w, f->h,
          f->kind == DM_GEOM_ONE ? "1:1" : f->kind == DM_GEOM_FILL ? "fill" : "fit", mfx ? ", MetalFX" : "");
 }
+static id<MTL4CounterHeap> g_hr_pheap; static struct { uint64_t ticket, frame; } g_hr_pres[3];
+static int g_hr_pmark = -1;   // the present slot whose draw present_encode_m4 marks (present_now arms it), -1 = none
 static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, const int crop[4], int uv_i) {
     id<MTLTexture> src = present_src(src0);
     NSUInteger cx = 0, cy = 0, cw = src.width, ch = src.height;
@@ -7272,6 +7339,7 @@ static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, c
     [g_present_args setAddress:g_present_uv[uv_i].gpuAddress atIndex:0];
     [en setViewport:vp]; [en setRenderPipelineState:taps ? g_blit_pso_down : g_blit_pso];
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    if (g_hr_pmark >= 0 && g_hr_pheap) [en writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed afterStage:MTLRenderStageFragment intoHeap:g_hr_pheap atIndex:(NSUInteger)g_hr_pmark];   // the hang recorder: this present drew
     m4_end(en);
     return 1;
 }
@@ -7341,6 +7409,20 @@ static void link_shown(uint64_t ticket, int gen, double target, double shown, ui
     if (!f) return;
     fprintf(f, "%llu\t%d\t%.6f\t%.6f\t%llu\n", (unsigned long long)ticket, gen, target, shown, (unsigned long long)frame);
     if (ticket % 120 == 0) fflush(f);
+}
+// The hang recorder's present marks (heap and slots defined before present_encode_m4, which writes the mark): one timestamp per present slot
+// (ticket % 3), written once the present's draw has run, so only once the queue's wait for its drawable was over. The slot's last command buffer has
+// finished before it is reused (present_now waits for it), so clearing the entry is safe
+static void hr_present_slot(int i, uint64_t ticket, uint64_t frame) {
+    g_hr_pmark = -1; if (!hr_on()) return;
+    static dispatch_once_t once; dispatch_once(&once, ^{
+        MTL4CounterHeapDescriptor *hd = [MTL4CounterHeapDescriptor new]; hd.type = MTL4CounterHeapTypeTimestamp; hd.count = 3; NSError *er = nil;
+        g_hr_pheap = [g_dev newCounterHeapWithDescriptor:hd error:&er];
+        if (g_hr_pheap) [g_hr_pheap invalidateCounterRange:NSMakeRange(0, 3)]; else MLOG("【红】hang recorder: the present marks' counter heap could not be made: %s", er.localizedDescription.UTF8String ?: "?"); });
+    if (!g_hr_pheap) return;
+    [g_hr_pheap invalidateCounterRange:NSMakeRange((NSUInteger)i, 1)];
+    os_unfair_lock_lock(&g_hq_lk); g_hr_pres[i].ticket = ticket; g_hr_pres[i].frame = frame; os_unfair_lock_unlock(&g_hq_lk);
+    g_hr_pmark = i;
 }
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts, uint64_t ev_value) {
     if (atomic_load(&g_gpu_lost) || atomic_load(&g_gpu_vanish)) return 0;   // nothing reaches the GPU any more (gpu_watch); the caller counts the frame as done
@@ -7418,11 +7500,14 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     }
     [g_present_alloc4[alloc_i] reset];
     id<MTL4CommandQueue> pq = !supplied && g_present_own_q ? g_present_q4 : g_q4;
-    if (pq != g_q4 && ev_value) [pq waitForEvent:g_ev value:ev_value];
-    [pq waitForDrawable:dr];
+    int hq_q = pq != g_q4;
+    if (pq != g_q4 && ev_value) { [pq waitForEvent:g_ev value:ev_value]; hq(HQ_WAITEV, hq_q, ev_value, frame); }
+    [pq waitForDrawable:dr]; hq(HQ_WAITDR, hq_q, ticket, frame);
     CBUF cb = g_present_cb[alloc_i];
     [cb beginCommandBufferWithAllocator:g_present_alloc4[alloc_i]];
-    if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) { [cb endCommandBuffer]; [pq signalDrawable:dr]; return 0; }
+    hr_present_slot(alloc_i, ticket, frame);
+    int enc_ok = present_encode_m4(cb, src, dr.texture, crop, alloc_i); g_hr_pmark = -1;
+    if (!enc_ok) { [cb endCommandBuffer]; [pq signalDrawable:dr]; hq(HQ_SIGDR, hq_q, ticket, frame); return 0; }
     mp_encode(cb, src, alloc_i);
     int fr_i = fr_encode(cb, src, ticket, frame, g_present_gen != nil, target_ts);
     [cb endCommandBuffer];
@@ -7432,6 +7517,8 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
             if (t == NVN_RL_FULL) MLOG("【红】GPU error in a present command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
             else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in present command buffers: %llu more since the last line (%llu in all)", (unsigned long long)more, (unsigned long long)total); }
         else mp_check(alloc_i, ticket);
+        if (!f.error && hr_on() && f.GPUEndTime - f.GPUStartTime >= hr_slow_s())
+            MLOG("[hang] present %llu (frame %llu) took %.0f ms on the GPU (DM_HANGREC_SLOW_MS)", (unsigned long long)ticket, (unsigned long long)frame, (f.GPUEndTime - f.GPUStartTime) * 1e3);
         fr_done(fr_i);
 #if TARGET_OS_OSX
         if (!f.error) mfx_gpu_note(f.GPUEndTime - f.GPUStartTime);
@@ -7441,7 +7528,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     }];
     CBUF buffers[] = {cb};
     pthread_mutex_lock(&g_pq_mu); g_pq_inflight++; pthread_mutex_unlock(&g_pq_mu);
-    [pq commit:buffers count:1 options:o];
+    [pq commit:buffers count:1 options:o]; hq(HQ_PRES, hq_q, ticket, frame);
     if (supplied && target_ts > 0) {
         static double leads[300], e2e[300];   // e2e：游戏入队 → 系统预定上屏（含在队列里等节拍回调的时间），输入延迟里我们这一侧能读到的全程 | e2e: game enqueue -> system-scheduled present (including the time waiting in the queue for the display-link callback), the full span of input latency that our side can read
         static uint64_t lead_n;
@@ -7458,7 +7545,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
         }
     }
     if (present_rgb_n()) present_rgb(dr.texture, ticket);
-    [pq signalDrawable:dr];
+    [pq signalDrawable:dr]; hq(HQ_SIGDR, hq_q, ticket, frame);
     g_present_alloc_fence[alloc_i] = ticket;
 #if TARGET_OS_SIMULATOR   // iOS 模拟器 SDK 没有呈现时刻回调与最短显示时长（只作画面验收用，不计节拍） | The iOS simulator SDK has no presentation-time callback and no minimum display duration (used only for picture acceptance, display-link ticks are not counted)
     (void)period; M3_PRESENT(cb, dr);
@@ -7913,6 +8000,113 @@ void mtl_wait_state_dump(void) {
          atomic_load(&g_up_pending), atomic_load(&g_up_alloc_busy[0]), atomic_load(&g_up_alloc_busy[1]), atomic_load(&g_up_alloc_busy[2]), g_up_seq, g_up_cb != nil,
          (unsigned long long)g_pq_in, (unsigned long long)g_pq_done, g_cb != nil, atomic_load(&g_sub_thread_set));
 }
+// ---------- Hang recorder: the record (hr_dump, hr_slow) ----------
+// The scene, from the host (diag.c: area, position, life, monsters, panel, loading screen); a build without one (the graphics tests) gets this
+__attribute__((weak)) void dm_hang_scene(char *o, size_t n) { strlcpy(o, "not known (no host)", n); }
+typedef struct { int known, passes, finished, notes, presents_waiting, presents_drawn; char first_open[16]; } hr_verdict;   // what hr_dump found (tests)
+static _Atomic uint64_t g_hr_slow_n; static char g_hr_slow_top[16];   // hr_slow's count and the label (or kind) of the longest pass it last saw (tests)
+static const char *hr_pass_label(const pg_pass *p) { return p->kind >= 2 ? p->load : p->kind ? "compute" : "render"; }
+static void hr_pass_what(const pg_pass *p, char *o, size_t n) {
+    if (p->kind == 0) snprintf(o, n, "render pass %llu, %dx%d fmt %u depth %u, load %s, %d draws", (unsigned long long)p->pass, p->w, p->h, p->cfmt0, p->dfmt, p->load[0] ? p->load : "-", p->draws);
+    else if (p->kind == 1) snprintf(o, n, "compute pass after pass %llu", (unsigned long long)p->pass);
+    else if (p->kind == 2) snprintf(o, n, "host work %s", p->load);
+    else snprintf(o, n, "%s encodes its own passes here", !strcmp(p->load, "mfx") ? "MetalFX temporal scaling" : !strcmp(p->load, "mfx3d") ? "MetalFX spatial scaling"
+                  : !strcmp(p->load, "fg") ? "frame generation" : p->load);
+}
+static uint64_t *hr_resolve(id<MTL4CounterHeap> h, uint32_t used) {   // the heap's first entries in ns, 0 = never written; the caller frees it
+    uint64_t *t = calloc(used ? used : 1, sizeof *t);
+    NSData *d = used && h ? [h resolveCounterRange:NSMakeRange(0, used)] : nil; const MTL4TimestampHeapEntry *r = d.bytes;
+    for (uint32_t k = 0; r && k < used && (k + 1) * sizeof *r <= d.length; k++) t[k] = (uint64_t)(r[k].timestamp * g_pg_ns_tick);
+    return t;
+}
+static int hr_rec_copy(uint64_t fence, hr_rec *out) {   // a copy of that submission's record (free out->ps); 0 = there is none
+    int b = (int)(fence % PG_RING);
+    pthread_mutex_lock(&g_hr_mu); hr_rec r = g_hr_rec[b]; int ok = r.fence == fence && r.state;
+    if (ok) { *out = r; out->ps = r.n ? malloc((size_t)r.n * sizeof *r.ps) : NULL; if (r.n) memcpy(out->ps, r.ps, (size_t)r.n * sizeof *r.ps); }
+    pthread_mutex_unlock(&g_hr_mu); return ok;
+}
+// The first unfinished submission's passes: how many finished, the first that did not (where the GPU stopped: passes run one after another, each
+// encoder ending with a barrier), the two finished before it, any MetalFX or frame generation run in between, and the next two. Times are from the
+// submission's first start mark
+static void hr_report(uint64_t fence, hr_verdict *v) {
+    hr_rec r; if (!hr_rec_copy(fence, &r)) { MLOG("[hang] submission %llu: no pass record (not sent yet, or sent unmarked: %llu so far)", (unsigned long long)fence, (unsigned long long)g_hr_skipped); return; }
+    uint64_t *t = hr_resolve(g_pg_buf[fence % PG_RING], r.used), t0 = UINT64_MAX;
+    int n = r.n, np = 0, fin = 0, notes = 0, front = -1; signed char *s = calloc(n ? (size_t)n : 1, 1);   // 2 finished, 1 only its start mark in, 0 neither, -1 a note
+    for (int i = 0; i < n; i++) { const pg_pass *p = &r.ps[i]; if (p->kind == 3) { s[i] = -1; notes++; continue; }
+        uint64_t a = t[p->slot], e = t[p->slot + 1]; s[i] = a && e ? 2 : a ? 1 : 0; np++;
+        if (s[i] == 2) fin++; else if (front < 0) front = i;
+        if (a && a < t0) t0 = a; }
+    if (front >= 0) MLOG("[hang] submission %llu (frame %llu): %d of its %d passes finished; the first that did not is #%d", (unsigned long long)fence, (unsigned long long)r.frame, fin, np, front);
+    else MLOG("[hang] submission %llu (frame %llu): all its %d passes finished; the GPU is past them (on what was encoded after the last one, or on the submission's end)", (unsigned long long)fence, (unsigned long long)r.frame, np);
+    if (v) { v->known = 1; v->passes = np; v->finished = fin; v->notes = notes; if (front >= 0) strlcpy(v->first_open, hr_pass_label(&r.ps[front]), sizeof v->first_open); }
+    int from = n, upto = front >= 0 ? front : n - 1;   // show from two finished passes before the first unfinished one (or the end), through two after it
+    for (int i = upto, k = 0; i >= 0; i--) { if (s[i] == 2 && i != front && ++k > 2) break; from = i; }
+    for (int i = from, after = 0; i < n && after <= 2; i++) {
+        const pg_pass *p = &r.ps[i]; char w[160]; hr_pass_what(p, w, sizeof w); uint64_t a = t[p->slot], e = s[i] >= 0 ? t[p->slot + 1] : 0;
+        if (s[i] < 0) MLOG("[hang]   (%s)", w);
+        else if (s[i] == 2) MLOG("[hang]   #%d finished at +%.2f ms after %.2f ms: %s", i, (e - t0) / 1e6, e >= a ? (e - a) / 1e6 : 0, w);
+        else MLOG("[hang]   #%d not finished%s: %s", i, s[i] == 1 ? " (its start mark is in: for a render pass, its vertex work ran)" : "", w);
+        if (i >= upto && s[i] >= 0) after++;
+    }
+    free(s); free(t); free(r.ps);
+}
+// Presents sent and not finished: whether each one's draw ran, which it can only once the queue's wait for its drawable was over
+static void hr_presents(hr_verdict *v) {
+    if (!g_hr_pheap) return;
+    uint64_t *t = hr_resolve(g_hr_pheap, 3), done[3];
+    struct { uint64_t ticket, frame; } pr[3]; os_unfair_lock_lock(&g_hq_lk); memcpy(pr, g_hr_pres, sizeof pr); os_unfair_lock_unlock(&g_hq_lk);
+    pthread_mutex_lock(&g_pq_mu); memcpy(done, g_present_alloc_done, sizeof done); pthread_mutex_unlock(&g_pq_mu);
+    for (int i = 0; i < 3; i++) { if (!pr[i].ticket || done[i] >= pr[i].ticket) continue;
+        MLOG("[hang] present %llu (frame %llu) has not finished: %s", (unsigned long long)pr[i].ticket, (unsigned long long)pr[i].frame, t[i] ? "its draw ran (its drawable was free), the rest of its command buffer has not"
+             : "its draw has not run: the queue is on the work before it, on its wait for a drawable, or on the draw");
+        if (v) { v->presents_waiting++; v->presents_drawn += t[i] != 0; } }
+    free(t);
+}
+static void hr_queue(void) {   // the queues' last 16 operations, oldest first, with what has finished
+    hq_ent q[HQ_N]; os_unfair_lock_lock(&g_hq_lk); uint64_t n = g_hq_n; memcpy(q, g_hq, sizeof q); os_unfair_lock_unlock(&g_hq_lk);
+    pthread_mutex_lock(&g_mu); uint64_t done = g_done; pthread_mutex_unlock(&g_mu);
+    uint64_t pd[3]; pthread_mutex_lock(&g_pq_mu); memcpy(pd, g_present_alloc_done, sizeof pd); pthread_mutex_unlock(&g_pq_mu);
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW), up = atomic_load(&g_hr_up_done);
+    static const char *const kn[] = {"main submission", "upload", "wait for the game's work up to", "wait for the drawable of present", "present", "drawable handed back, present", "made a command buffer"};
+    static const char *const qn[] = {"game queue", "present queue", "old queue"};
+    MLOG("[hang] the queues' last operations, oldest first:");
+    for (uint64_t k = n > 16 ? n - 16 : 0; k < n; k++) { const hq_ent *e = &q[k % HQ_N]; const char *st = "";
+        if (e->kind == HQ_MAIN) st = e->id <= done ? ", finished" : ", not finished";
+        else if (e->kind == HQ_UP) st = e->id <= up ? ", finished" : ", not finished";
+        else if (e->kind == HQ_PRES) st = pd[e->id % 3] >= e->id ? ", finished" : ", not finished";
+        if (e->kind == HQ_OLD) MLOG("[hang]   %8.1f ms ago, %s: %s", (now - e->t) / 1e6, qn[e->q], kn[e->kind]);
+        else MLOG("[hang]   %8.1f ms ago, %s: %s %llu (frame %llu)%s", (now - e->t) / 1e6, qn[e->q], kn[e->kind], (unsigned long long)e->id, (unsigned long long)e->frame, st);
+    }
+}
+static void hr_dump(const char *why, hr_verdict *v) {
+    if (v) memset(v, 0, sizeof *v);
+    if (!hr_on() || g_pg <= 0) return;
+    pthread_mutex_lock(&g_mu); uint64_t done = g_done; sub_note nb[2] = {{0}};
+    for (int i = 0; i < SUB_RING; i++) { if (g_sub_ring[i].fence == done) nb[0] = g_sub_ring[i]; if (g_sub_ring[i].fence == done + 1) nb[1] = g_sub_ring[i]; }
+    pthread_mutex_unlock(&g_mu);
+    MLOG("[hang] %s: main submissions finished up to %llu, sent up to %llu", why, (unsigned long long)done, (unsigned long long)atomic_load(&g_fence_pub));
+    hr_queue();
+    hr_report(done + 1, v);
+    hr_presents(v);
+    if (nb[0].fence) MLOG("[hang] the last finished submission (%llu, frame %llu) held: %s", (unsigned long long)nb[0].fence, (unsigned long long)nb[0].frame, nb[0].what);
+    if (nb[1].fence) MLOG("[hang] the first unfinished one (%llu, frame %llu) held: %s", (unsigned long long)nb[1].fence, (unsigned long long)nb[1].frame, nb[1].what);
+    char sc[256]; dm_hang_scene(sc, sizeof sc); MLOG("[hang] scene: %s", sc);
+}
+// A submission that took DM_HANGREC_SLOW_MS or more on the GPU (its feedback, on Metal's feedback queue): its five longest passes
+static void hr_slow(int b, uint64_t fence, double sec) {
+    hr_rec r; if (!hr_rec_copy(fence, &r)) { atomic_fetch_add(&g_hr_slow_n, 1); return; }
+    uint64_t *t = hr_resolve(g_pg_buf[b], r.used); int top[5] = {-1, -1, -1, -1, -1}, open = 0; double tv[5] = {0};
+    for (int i = 0; i < r.n; i++) { const pg_pass *p = &r.ps[i]; if (p->kind == 3) continue;
+        uint64_t a = t[p->slot], e = t[p->slot + 1]; if (!a || !e || e < a) { open++; continue; }
+        double ms = (e - a) / 1e6;
+        for (int j = 0; j < 5; j++) if (top[j] < 0 || ms > tv[j]) { for (int k = 4; k > j; k--) { top[k] = top[k - 1]; tv[k] = tv[k - 1]; } top[j] = i; tv[j] = ms; break; } }
+    MLOG("[hang] submission %llu (frame %llu) took %.0f ms on the GPU (DM_HANGREC_SLOW_MS); its longest passes:", (unsigned long long)fence, (unsigned long long)r.frame, sec * 1e3);
+    for (int j = 0; j < 5 && top[j] >= 0; j++) { char w[160]; hr_pass_what(&r.ps[top[j]], w, sizeof w); MLOG("[hang]   #%d %.2f ms: %s", top[j], tv[j], w); }
+    if (top[0] >= 0) strlcpy(g_hr_slow_top, hr_pass_label(&r.ps[top[0]]), sizeof g_hr_slow_top);
+    if (open) MLOG("[hang]   %d passes have no end mark (the driver may have cut the submission short)", open);
+    char sc[256]; dm_hang_scene(sc, sizeof sc); MLOG("[hang] scene: %s", sc);
+    free(t); free(r.ps); atomic_fetch_add(&g_hr_slow_n, 1);
+}
 // ---------- GPU watchdog (g_gpu_lost) ----------
 // gpu_watch looks 4 times a second, and its time only runs while it does: a sleeping Mac, a suspended app or a stopped debugger never count. With
 // work waiting, the GPU is taken as lost once no main submission has finished for DM_GPU_LOST_S seconds (default 10; 0 turns the watchdog off)
@@ -7923,6 +8117,8 @@ static double gpu_lost_s(void) { const char *e = getenv("DM_GPU_LOST_S"); double
 __attribute__((weak)) void front_gpu_lost(void) { MLOG("GPU lost: no front end to save and quit"); }
 #endif
 static void gpu_lost_declare(double idle, uint64_t done, uint64_t fence) {
+    if (atomic_load(&g_gpu_lost)) return;
+    hr_dump("the GPU is taken as lost", NULL);   // before anything is released: the waits return once it is lost, and new submissions would reuse the record
     if (atomic_exchange(&g_gpu_lost, 1)) return;
     sub_note held = {0};
     pthread_mutex_lock(&g_mu); for (int i = 0; i < SUB_RING; i++) if (g_sub_ring[i].fence == done + 1) held = g_sub_ring[i]; pthread_mutex_unlock(&g_mu);
@@ -7938,15 +8134,17 @@ static void gpu_lost_declare(double idle, uint64_t done, uint64_t fence) {
 }
 static void *gpu_watch(void *u) {
     (void)u; pthread_setname_np("nvn-gpu-watch");
-    const double lim = gpu_lost_s();
-    uint64_t last_done = UINT64_MAX, since = 0; int polls = 0;
+    const double lim = gpu_lost_s(), early = hr_env("DM_HANGREC_EARLY_S", 2), test_at = hr_env("DM_TEST_HANGREC_DUMP_S", -1);
+    uint64_t last_done = UINT64_MAX, since = 0, early_for = UINT64_MAX, t_start = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); int polls = 0, tested = 0;
     while (!atomic_load(&g_gpu_lost)) {
         usleep(250 * 1000);
         pthread_mutex_lock(&g_mu); uint64_t done = g_done; pthread_mutex_unlock(&g_mu);
         uint64_t fence = atomic_load(&g_fence_pub), now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+        if (test_at > 0 && !tested && (now - t_start) / 1e9 >= test_at) { tested = 1; hr_dump("test (DM_TEST_HANGREC_DUMP_S)", NULL); }   // the record of a GPU that is fine
         if (fence <= done) { since = 0; continue; }   // nothing waiting
         if (!since || done != last_done) { last_done = done; since = now; polls = 0; continue; }   // counted from the first look that sees this wait: never early
         double idle = (now - since) / 1e9;
+        if (idle >= early && early_for != done) { early_for = done; char w[96]; snprintf(w, sizeof w, "no GPU work has finished for %.1f s with work waiting", idle); hr_dump(w, NULL); }
         if (++polls >= (int)(lim * 4) && idle >= lim) gpu_lost_declare(idle, done, fence);
     }
     return NULL;

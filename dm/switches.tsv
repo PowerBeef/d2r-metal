@@ -94,7 +94,7 @@ DM_GEN_ASSETS	ios-tools	ios/tools/gen_paths.py	-
 DM_GEN_ONLY	ios-tools	ios/run.sh	y
 DM_GFXUSE	gfx	gfx/nvn/nvn_mtl.m	-
 DM_GFX_FIXTURE_OUT	gfx	gfx/tests/t_mip_extent.m gfx/tests/t_reorder_chain.m gfx/tests/t_rt_range.m	-
-DM_GPU_LOST_S	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_gpu_lost.m	y
+DM_GPU_LOST_S	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_gpu_lost.m gfx/tests/t_hangrec.m	y
 DM_GRANNY_PRE	host	host/hle_granny.c	-
 DM_GRANNY_PRE_MB	host	host/hle_granny.c	-
 DM_GRANNY_PROF	host	host/hle_granny.c	-
@@ -102,6 +102,9 @@ DM_GRANNY_SELFTEST	host	host/hle_granny.c	-
 DM_GRANNY_THREADS	host	host/hle_granny.c	-
 DM_GRANNY_VERIFY	host	host/hle_granny.c	-
 DM_GUEST_SPAWN_TEST	host	host/hle_guestthread.c	-
+DM_HANGREC	gfx	gfx/nvn/nvn_mtl.m	y
+DM_HANGREC_EARLY_S	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_hangrec.m	y
+DM_HANGREC_SLOW_MS	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_hangrec.m	y
 DM_HEAT	ios	ios/Sources/front_ios.m	-
 DM_HIDDEN_HZ	gfx	gfx/nvn/hle_nvn.c	-
 DM_HID_RECEIPT_LOG	host	host/hle_hid.c host/tests/t_hid_receipt.c	-
@@ -392,6 +395,7 @@ DM_TEST_GPU_LOST_NOTE	host,ios	host/front_mac.m ios/Sources/front_ios.m	-
 DM_TEST_GPU_NAME	host,ios	host/front_mac.m ios/Sources/front_ios.m	-
 DM_TEST_GUEST_RETURN	host	host/main.c	-
 DM_TEST_HAND_GUARD	host	host/dm_cursor.c	-
+DM_TEST_HANGREC_DUMP_S	gfx	gfx/nvn/nvn_mtl.m	y
 DM_TEST_HID_STALL_MS	host	host/hle_hid.c	-
 DM_TEST_HOVER_LOG	host	host/dm_cursor.c host/front_mac.m host/touch_mac.c	-
 DM_TEST_HP1	host	host/diag.c	-

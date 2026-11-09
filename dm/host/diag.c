@@ -2054,7 +2054,15 @@ static int g_loadscreen_delay_ms;
 
 // 读取画面已撤：见过读取画面、且最近一次已撤（含测试推迟）。宿主内唯一判定处
 // Loading screen taken down: a loading screen has been seen, and the most recent one has been taken down (including the test delay). The only place in the host that decides this
-int dm_loadscreen_up(void) { pthread_mutex_lock(&g_shotgate_mu); int u = g_loadscreen_seen && g_loadscreen_open; pthread_mutex_unlock(&g_shotgate_mu); return u; }   // 读取画面此刻开着（没见过 = 不算开） | The loading screen is open right now (never seen = not counted as open)
+int dm_loadscreen_up(void) { pthread_mutex_lock(&g_shotgate_mu); int u = g_loadscreen_seen && g_loadscreen_open; pthread_mutex_unlock(&g_shotgate_mu); return u; }
+// The scene for the graphics hang recorder (nvn_mtl.m hr_dump / hr_slow, which run on the GPU watchdog's thread and Metal's feedback queue): the HUD
+// copy (its own lock), and the panel and loading screen read without g_shotgate_mu, which a thread waiting on the hung GPU could hold
+void dm_hang_scene(char *o, size_t n) {
+    dm_hud_info h; dm_hud_get(&h); char panel[48]; strlcpy(panel, g_lf_panel[0] ? g_lf_panel : "none", sizeof panel);
+    const char *ls = !g_loadscreen_seen ? "never shown" : g_loadscreen_open ? "up" : "down";
+    if (!h.valid) { snprintf(o, n, "not in a game (no hero read), panel %s, loading screen %s", panel, ls); return; }
+    snprintf(o, n, "area %d at %d,%d, hero level %d, life %d/%d%s, %d monsters, panel %s, loading screen %s", h.area, h.x, h.y, h.level, h.hp, h.hp_max, h.dead ? " (dead)" : "", h.monsters, panel, ls);
+}   // 读取画面此刻开着（没见过 = 不算开） | The loading screen is open right now (never seen = not counted as open)
 int dm_loadscreen_down(void) { pthread_mutex_lock(&g_shotgate_mu); int d = g_loadscreen_seen && !g_loadscreen_open; pthread_mutex_unlock(&g_shotgate_mu); return d; }
 static void loadscreen_close_now(unsigned generation) {
     pthread_mutex_lock(&g_shotgate_mu);
