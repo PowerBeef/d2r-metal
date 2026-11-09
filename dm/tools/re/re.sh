@@ -76,6 +76,13 @@ case "$cmd" in
   import|analyze|baseline|check)
     need_free; "$PY" -I "$HERE/ghidra_db.py" "$cmd" "$@"
     ;;
+  live-index)   # the live harness's snapshot: the image part (project venv), then the map part (the project closed elsewhere)
+    need_free
+    "$DM_ROOT/build/cache/dm/venv/bin/python" -I "$HERE/live_index.py" image && "$PY" -I "$HERE/live_index.py" ghidra "$@"
+    ;;
+  live-decomp)
+    need_free; "$PY" -I "$HERE/live_index.py" decomp "$@"
+    ;;
   seed|export|autoname)
     need_free; "$PY" -I "$HERE/$cmd.py" "$@"
     ;;

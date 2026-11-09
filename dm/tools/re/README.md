@@ -55,6 +55,20 @@ dm/tools/re/re.sh addrcheck   # every main+0x… the sources cite lands in a kno
 
 In a main-checkout Claude Code session the same server is an MCP server: `claude mcp add --transport http -s local ghidra http://127.0.0.1:8000/mcp`. Worktree sessions and subagents use `re.sh q`.
 
+## The live snapshot
+
+Live runs (the hooks of `dm/host/dm_live.c`; `dm/verify/debugging.md` "Live hooks") and their reports read a snapshot of the map, so they work whether or not the project is open:
+
+```bash
+dm/tools/re/re.sh live-index                 # $DM_ROOT/re/live/index.sqlite (server stopped): about 7 s for the image part, then the map part
+dm/tools/re/re.sh live-decomp main+0x…       # one function's decompiled text with each line's instruction addresses → re/live/decomp/<offset>.json
+python3 dm/tools/re/live_index.py stats      # row counts and what built it
+```
+
+- **From the product's rewritten image** (`live_index.py image`, the project venv's capstone): every basic block's first instruction (`blocks`), every call site with its target or marked computed (`calls`), the addresses the rewriter changed, which hooks leave alone (`never_hook`, from the product's gates, cuts, observation gates, parameters, switches and register sites), and the export's names (`names`).
+- **From the project** (`live_index.py ghidra`): every function with its size and prototype, each parameter's name, type and register (`functions`, `params`), and the `/dm` structures and enums with their fields (`structs`, `fields`, `enums`).
+- `meta` records the product and when each part was built; rebuild after `re.sh seed` or a product change.
+
 ## What `seed` writes
 
 All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never overwritten.
@@ -92,4 +106,5 @@ Each step stamps what it used as it runs (`log/stamps.json`): `import` the game 
 | `dbprofile.py`, `test_dbprofile.py` | The database profile: what produced the export and what changed since (`re.sh profile`); unit test on synthetic files |
 | `test_export.py` | Unit test of the export's provenance rules (curated, bulk, seeded and analysis names) |
 | `addrcheck.py`, `test_addrcheck.py` | Checks the `main+0x…` addresses cited in the sources against the game's function table and the export; unit test on synthetic data |
+| `live_index.py`, `test_live_index.py` | The live snapshot (`re.sh live-index`, `live-decomp`): blocks, call sites and rewritten addresses from the product's image; functions, prototypes and `/dm` types from the project; the decompile cache. Unit test on synthetic data |
 | `live.py` | Reads the live hooks' output (`dm/host/dm_live.c`, `DM_LIVE=1`; `dm/verify/debugging.md` "Live hooks"): `summary` per hook and watchpoint (records, threads, rate, callers named through `guestsyms.py`, return durations, capture values, writers) and `dump`; `blocks` and `trace-spec` write the block list for coverage and the per-function list for the call-trace mode; `counts`, `cover` and `cover-diff` report them. Its output names game functions: it stays in the run folder or under `$DM_ROOT/re` |

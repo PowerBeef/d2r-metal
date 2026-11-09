@@ -19,6 +19,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, HERE)
 import guestsyms  # noqa: E402
 
 HDR = struct.Struct('<8sQQQII')          # dm_live_hdr: magic, base, size, timer_hz, rec_size, version
@@ -129,20 +130,13 @@ def image():
 
 def blocks(out, only=None):
     import capstone   # the project venv has it
+    import live_index
     img = image(); md = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM); n = 0
     with open(out, 'w', encoding='utf-8') as f:
         for s_, size in functions(only):
-            lead = {s_}; end = s_ + size
-            for addr, _, mn, ops in md.disasm_lite(img[s_:end], s_):
-                m = mn.split('.')[0]
-                if m in ('b', 'cbz', 'cbnz', 'tbz', 'tbnz', 'ret', 'br', 'braa', 'brab', 'retaa', 'retab'):
-                    lead.add(addr + 4)   # what follows a branch starts a block (a call's return point does not)
-                    if m not in ('ret', 'br', 'braa', 'brab', 'retaa', 'retab'):
-                        try:
-                            t = int(ops.split('#')[-1], 16)
-                            if s_ <= t < end: lead.add(t)
-                        except ValueError: pass
-            for a in sorted(x for x in lead if x < end): f.write(f'{a:x}\n'); n += 1
+            lead, _ = live_index.scan_function(((ad, mn, ops) for ad, _, mn, ops in md.disasm_lite(img[s_:s_ + size], s_)), s_, s_ + size)
+            for x in lead: f.write(f'{x:x}\n')
+            n += len(lead)
     print(f'BLOCKS {n} → {out}')
 
 
