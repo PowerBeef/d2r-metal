@@ -1,0 +1,20 @@
+# Live hooks on the running game (dm/host/dm_live.c, DM_LIVE=1; dm/verify/debugging.md "Live hooks"): an entry hook on the frame-graph runner
+# (main+0x1636610, once a frame), a return hook on the task-graph node runner (main+0x15f0ce4), a rewritten entry refused (main+0x15ff470 carries
+# an observation gate), disarm, and the counters after. The game must run on as if nothing were there
+name live_hooks
+requires cli
+save warlock
+env DM_LIVE=1 DM_LIVE_OUT={run}/live.bin
+timeout 120
+
+enter_game
+live do=add at=main+0x1636610 name=frame max=50
+live do=add at=main+0x15f0ce4 kind=ret name=node max=100
+sleep 4
+live do=stats
+live do=del hook=all
+live do=flush
+stick 0 1 frames=30
+check log_has re="live hooks: 0 armed: at=main\+0x1636610"
+check log_has re="live hooks: 1 armed: at=main\+0x15f0ce4 kind=ret"
+check no_red

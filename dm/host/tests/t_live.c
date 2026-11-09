@@ -2,13 +2,19 @@
 // Each relocation case (adrp, b.cond, cbz, tbz, bl, ldr literal, b) must give the same result hooked as unhooked; flags and floating-point
 // registers survive a hook; captures read registers and typed memory; filters, every, max and the rate budget work; a return hook records the
 // return value; four threads hammering one hook lose no hit; a rewritten gate and an exclusive load are refused; disarm puts the instruction
-// back. The output file has the header and one record per recorded hit
+// back. The output file has the header and one record per recorded hit. Then: a site armed again reuses its hook and trampoline; count=1 only
+// counts; a site inside an exclusive sequence is refused; block coverage traps each listed block once, puts the instruction back and reports what
+// ran, also on a second pass; a data watchpoint records each write with its writer and the value written
 #include "../dm_live.c"
 #include <assert.h>
+#include <signal.h>
 module_t g_mod[MAX_MOD]; int g_nmod;
 void dm_ctl_register(const char *n, dm_ctl_fn f) { (void)n; (void)f; }
 const char *dm_ctl_get(const ctl_args *a, const char *k) { (void)a; (void)k; return NULL; }
 double dm_ctl_num(const ctl_args *a, const char *k, double d) { (void)a; (void)k; return d; }
+static int (*g_trap)(ucontext_t *);
+void crash_set_trap_hook(int (*fn)(ucontext_t *uc)) { g_trap = fn; }
+static void on_trap(int sig, siginfo_t *si, void *uc) { (void)sig; (void)si; if (!g_trap || !g_trap(uc)) { static const char m[] = "an unclaimed trap\n"; write(2, m, sizeof m - 1); _exit(3); } }
 
 __asm__(
     ".text\n.p2align 12\n.globl _lvt_start\n_lvt_start:\n"
@@ -31,20 +37,27 @@ __asm__(
     "_lvt_gate: b _lvt_patch\n"
     "_lvt_flags: cmp x0, #5\n_lvt_flags_site: mov x2, #0\n b.eq 1f\n mov x0, #1\n ret\n1: mov x0, #2\n ret\n"
     "_lvt_fp: fadd d0, d0, d0\n ret\n"
+    "_lvt_llsc: ldxr x2, [x1]\n_lvt_llsc_mid: add x2, x2, #1\n stxr w3, x2, [x1]\n ret\n"
+    "_lvt_c1: add x0, x0, #1\n ret\n"
+    "_lvt_c2: cbz x0, 1f\n_lvt_c2_b: add x0, x0, #2\n ret\n1:\n_lvt_c2_c: mov x0, #77\n ret\n"
+    "_lvt_c3: add x0, x0, #3\n ret\n"
     ".p2align 3\n_lvt_data: .quad 0, 0\n"
     ".p2align 12\n_lvt_patch: ret\n"
     ".p2align 12\n.globl _lvt_end\n_lvt_end:\n");
 extern char lvt_start[], lvt_end[], lvt_add[], lvt_add2[], lvt_f2[], lvt_f3[], lvt_f4[], lvt_answer[], lvt_adrp[], lvt_bcond[], lvt_bcond_br[], lvt_cbz[], lvt_tbz[],
-    lvt_bl[], lvt_bl_site[], lvt_ldr[], lvt_ldrw[], lvt_ldrsw[], lvt_b[], lvt_excl[], lvt_gate[], lvt_flags[], lvt_flags_site[], lvt_fp[], lvt_patch[];
+    lvt_bl[], lvt_bl_site[], lvt_ldr[], lvt_ldrw[], lvt_ldrsw[], lvt_b[], lvt_excl[], lvt_gate[], lvt_flags[], lvt_flags_site[], lvt_fp[], lvt_patch[], lvt_llsc_mid[], lvt_c1[], lvt_c2[], lvt_c2_b[], lvt_c2_c[], lvt_c3[];
 static uint8_t *M; static int fail, count;
 #define EXPECT(name, want, got) do { long long w_ = (long long)(want), g_ = (long long)(got); count++; if (w_ != g_) { printf("✗ %s: want %#llx, got %#llx\n", name, w_, g_); fail++; } else printf("✓ %s\n", name); } while (0)
 static uint64_t off(const char *p) { return (uint64_t)(p - lvt_start); }
 static void *fn(const char *p) { return M + off(p); }
 typedef uint64_t (*f2)(uint64_t, uint64_t);
 typedef double (*fd)(double);
-static int add(const char *site, const char *extra) { char spec[512], err[256] = ""; snprintf(spec, sizeof spec, "at=0x%llx %s", (unsigned long long)(uint64_t)(M + off(site)), extra); int id = dm_live_add(spec, err, sizeof err); if (id < 0) printf("  (add %s: %s)\n", extra, err); return id; }
+static int add_fail;
+static int add(const char *site, const char *extra) { char spec[512], err[256] = ""; snprintf(spec, sizeof spec, "at=0x%llx %s", (unsigned long long)(uint64_t)(M + off(site)), extra); int id = dm_live_add(spec, err, sizeof err); if (id < 0) { add_fail++; printf("  (add %s: %s)\n", extra, err); } return id; }
 static const char *refusal(const char *site) { static char err[256]; char spec[128]; err[0] = 0; snprintf(spec, sizeof spec, "at=0x%llx", (unsigned long long)(uint64_t)(M + off(site))); return dm_live_add(spec, err, sizeof err) < 0 ? err : ""; }
 static dm_live_counts cnt(int id) { dm_live_counts c = {0}; dm_live_counts_of(id, &c); return c; }
+static volatile uint64_t g_watched[2];
+static void *writer(void *u) { dm_live_thread_start(); for (uint64_t i = 1; i <= 5; i++) { g_watched[0] = i; g_watched[1] = i * 10; } return u; }
 static void *hammer(void *u) { f2 f = (f2)fn(lvt_add2); uint64_t s = 0; for (int i = 0; i < 2000000; i++) s += f((uint64_t)i, 1); return (void *)(uintptr_t)s; }
 int main(void) {
     char out[1024]; snprintf(out, sizeof out, "%s/t_live.bin", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp"); setenv("DM_LIVE_OUT", out, 1);
@@ -99,18 +112,50 @@ int main(void) {
     EXPECT("disarm", 1, dm_live_del(h_add));
     EXPECT("the original instruction is back", 1, *(uint32_t *)fn(lvt_add) == *(uint32_t *)lvt_add);
     ((f2)fn(lvt_add))(1, 1); EXPECT("no more hits once disarmed", 1, cnt(h_add).hits);
+    // a site armed again: the same hook and trampoline, fresh counters
+    uint64_t tr0 = dm_live_tramp(h_add); int h_again = add(lvt_add, "count=1");
+    EXPECT("armed again: the same hook", h_add, h_again); EXPECT("and the same trampoline", 1, dm_live_tramp(h_again) == tr0);
+    for (int i = 0; i < 7; i++) ((f2)fn(lvt_add))(1, 1);
+    EXPECT("count=1: 7 hits, no record", 1, cnt(h_again).hits == 7 && cnt(h_again).recorded == 0);
+    EXPECT("inside an exclusive sequence is refused", 1, strstr(refusal(lvt_llsc_mid), "exclusive") != NULL);
+    // block coverage
+    struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_sigaction = on_trap; sa.sa_flags = SA_SIGINFO; sigaction(SIGTRAP, &sa, NULL);
+    char bf[1100], df[1100], err[256] = ""; snprintf(bf, sizeof bf, "%s.blocks", out); snprintf(df, sizeof df, "%s.cov", out);
+    FILE *b = fopen(bf, "w"); fprintf(b, "%llx\n%llx\n%llx\n%llx\n%llx\n%llx\n", (unsigned long long)off(lvt_c1), (unsigned long long)off(lvt_c2), (unsigned long long)off(lvt_c2_b), (unsigned long long)off(lvt_c2_c), (unsigned long long)off(lvt_c3), (unsigned long long)off(lvt_add)); fclose(b);
+    int skipped = -1, armed = cov_arm(bf, &skipped, err, sizeof err);
+    EXPECT("coverage: 5 blocks trapped, the hooked one left alone", 1, armed == 5 && skipped == 1);
+    EXPECT("a trapped block runs right the first time", 6, ((f2)fn(lvt_c1))(5, 0)); EXPECT("and after", 6, ((f2)fn(lvt_c1))(5, 0));
+    EXPECT("its instruction is back", 1, *(uint32_t *)fn(lvt_c1) == *(uint32_t *)lvt_c1);
+    EXPECT("one path of a branch", 77, ((f2)fn(lvt_c2))(0, 0));
+    EXPECT("3 blocks ran (c1, c2, c2's taken side)", 3, cov_dump(df));
+    EXPECT("the path not taken is still trapped", 1, *(uint32_t *)fn(lvt_c2_b) == COV_BRK && *(uint32_t *)fn(lvt_c3) == COV_BRK);
+    EXPECT("second pass: 3 trapped again", 3, cov_rearm());
+    EXPECT("the other path", 7, ((f2)fn(lvt_c2))(5, 0));
+    EXPECT("second pass: 2 blocks ran (c2, its other side)", 2, cov_dump(df));
+    cov_off();
+    EXPECT("coverage off: every instruction back", 1, *(uint32_t *)fn(lvt_c3) == *(uint32_t *)lvt_c3 && *(uint32_t *)fn(lvt_c1) == *(uint32_t *)lvt_c1);
+    EXPECT("and the hook still works", 2, ((f2)fn(lvt_add))(1, 1));
+    // a data watchpoint
+    int w = watch_add((uint64_t)&g_watched[1], 8, err, sizeof err);
+    EXPECT("watch set", 0, w);
+    pthread_t wt; pthread_create(&wt, NULL, writer, NULL); pthread_join(wt, NULL);
+    watch_del(-1);
+    EXPECT("the watched writes all happened", 50, g_watched[1]);
     // the file
     dm_live_flush();
     FILE *f = fopen(out, "rb"); dm_live_hdr hd = {0}; size_t got = f ? fread(&hd, sizeof hd, 1, f) : 0;
     EXPECT("header", 1, got == 1 && !memcmp(hd.magic, "DMLIVE01", 8) && hd.base == (uint64_t)M && hd.rec_size == sizeof(dm_live_rec));
-    int n_add = 0, ret_ok = 0, cap_ok = 0; dm_live_rec r;
+    int n_add = 0, ret_ok = 0, cap_ok = 0, n_w = 0, w_ok = 1; dm_live_rec r;
     while (f && fread(&r, sizeof r, 1, f) == 1) {
         if (r.hook == (uint32_t)h_add) { n_add++; cap_ok = r.cap[0] == 5 && r.cap[1] == 0xfeedfacecafebeefull && r.cap[2] == 0x22 && r.x[0] == (uint64_t)&obj; }
         if (r.hook == ((uint32_t)h_ret | DM_LIVE_RET)) ret_ok = r.x[0] == 42 && r.aux > 0;
+        if (r.hook == (DM_LIVE_WATCH | 0u)) { n_w++; w_ok &= r.cap[0] == (uint64_t)&g_watched[1] && r.cap[2] == (uint64_t)n_w * 10 && r.cap[1] != 0; }
     }
     if (f) fclose(f);
     EXPECT("the add record's captures (x1, [x0+8].q, [[x0]+4].w)", 1, n_add == 1 && cap_ok);
     EXPECT("the return record holds 42 and a duration", 1, ret_ok);
+    EXPECT("5 watch records, each with its address, writer and new value", 1, n_w == 5 && w_ok);
+    EXPECT("no hook was refused but the one meant to be", 1, add_fail);
     printf("%s %d/%d\n", fail ? "FAIL" : "OK", count - fail, count);
     return fail != 0;
 }

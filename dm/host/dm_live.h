@@ -7,6 +7,8 @@
 // One record per recorded hit, in the output file after its header. hook has DM_LIVE_RET set for a return record (x[0], x[1] = the return value,
 // aux = the call's duration in timer ticks); for an entry or instruction record aux is 0
 #define DM_LIVE_RET 0x80000000u
+// A watchpoint record: hook = DM_LIVE_WATCH | its number; cap[0] = the address written, cap[1] = the writing instruction, cap[2] = the value after
+#define DM_LIVE_WATCH 0x40000000u
 typedef struct { uint32_t hook, tid; uint64_t t, lr, sp, x[4], cap[4], aux; } dm_live_rec;
 // The output file starts with this header (DM_LIVE_OUT, default live.bin in the working folder)
 typedef struct { char magic[8]; uint64_t base, size, timer_hz; uint32_t rec_size, version; } dm_live_hdr;
@@ -22,5 +24,6 @@ typedef struct { uint64_t hits, matched, recorded, dropped; int armed, disarmed_
 int dm_live_counts_of(int id, dm_live_counts *out);
 uint64_t dm_live_tramp(int id);   // the hook's trampoline address (tests check it is in branch range)
 // The loader reserves the trampoline arena right after main, so every trampoline is in branch range of every instruction (DM_LIVE=1 only)
+void dm_live_thread_start(void);   // a new game thread: it gets the watchpoints that are set (thread.c)
 size_t dm_live_arena_size(void);
 void dm_live_set_arena(uint8_t *p, size_t sz);
