@@ -111,6 +111,8 @@ def cmd_image(a):
     sys.path.insert(0, str(HERE.parent))
     import capstone
     import guestsyms
+    import quiet
+    quiet.wait_quiet('live_index image')   # about 7 s of full CPU: never beside a gate's game tiers or a benchmark
     prod = guestsyms.product_dir(); t0 = time.time()
     with open(os.path.join(prod, 'main.patched.bin'), 'rb') as f: img = f.read()
     fns = [(s, n) for s, n, _, _ in guestsyms.load().get('main', [])]
