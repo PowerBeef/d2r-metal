@@ -104,6 +104,7 @@ run: \
 	python3 ../../tools/re/test_addrcheck.py
 	python3 ../../tools/re/test_export.py
 	python3 ../../tools/re/test_dbprofile.py
+	python3 ../../tools/re/test_live_index.py
 	$(PY) ../../tools/test_nso_fnmap.py
 	$(PY) ../../tools/test_fuzz_corpus.py
 	python3 ../../verify/test_d2save.py
