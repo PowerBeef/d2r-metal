@@ -146,6 +146,7 @@ static void host_preload(int argc, char **argv) {
     { void crash_set_modules(const module_t *m, int n); crash_set_modules(g_mod, g_nmod); }   // crash.json 的模块表（crash.c） | the module table of crash.json (crash.c)
     uint64_t ta = now_ns();
     probe_install();   // DM_PROBE 探针（诊断用） | DM_PROBE probes (for diagnostics)
+    { void dm_live_boot(void); dm_live_boot(); }   // DM_LIVE_HOOKS: live hooks armed before the game's threads start (dm_live.c, DM_LIVE=1 only)
     ticks_install();   // DM_TICKS 逐拍状态哈希（拍入口观测门） | DM_TICKS per-tick state hash (tick-entry observation gate)
     { void target_rank_install(void); target_rank_install(); }   // 触屏版自动选怪 Boss > 精英 > 普通（hle_target.c） | Touch version auto-targeting Boss > elite > normal (hle_target.c)
     hid_keys_init();   // DM_KEYS 脚本输入（按 UI 消息驱动的步骤要在消息出现前订阅） | DM_KEYS scripted input (steps driven by UI messages must subscribe before the message appears)

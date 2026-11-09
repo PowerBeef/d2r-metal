@@ -3,6 +3,7 @@
 // Multi-module loading (playing the role of Horizon's rtld): mapping, claiming thread slots, gate registration, cross-module relocation, take-over by name, segment permissions.
 // The code area (original text and patch area) is set to read-only+execute as soon as it is copied in, and from then on the loader only writes data: on iOS these two blocks must be embedded as is as signed code segments.
 #include "dm.h"
+#include "dm_live.h"
 #include <TargetConditionals.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -354,8 +355,10 @@ static void map_image(module_t *m, const char *dir) {
     char path[1024]; snprintf(path, sizeof path, "%s/%s.patched.bin", dir, m->name);
     size_t sz; uint8_t *raw = slurp(path, &sz);
     m->size = (sz + 0x3FFF) & ~0x3FFFull;
-    m->base = mmap(NULL, m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    size_t live = !strcmp(m->name, "main") ? dm_live_arena_size() : 0;   // DM_LIVE=1: the live hooks' trampoline arena right after main (dm_live.c)
+    m->base = mmap(NULL, m->size + live, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
+    if (live) dm_live_set_arena(m->base + m->size, live);
     memcpy(m->base, raw, sz); free(raw); install_key_page(m); DM_TSAN_GUEST(m->base, m->size);
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
     if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);

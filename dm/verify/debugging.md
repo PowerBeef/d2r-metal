@@ -46,6 +46,19 @@ python3 dm/tools/guestsyms.py lookup main+0x455aa4 sdk+0x2b0470
 
 When the host ends through its own exit paths it prints one `PROBE_SUMMARY <name> hits=<n>` line per installed probe, zero hits included, then `PROBE_SUMMARY end probes=<n> why=<exit|shutdown|shutdown_timeout|watchdog|signal|ticks_full|game_break|memory_cap>`. Ctrl-C (SIGINT), SIGKILL and `DM_TEST_KILL_AT` end the process without one: stop a hand-started probe run with `kill <pid>` (SIGTERM, a graceful shutdown) or the control port's `quit`. A claim that a path is *not* taken needs all three: the install line (`探针 <name>`), a run that ended the way the scenario expects (`why`), and `hits=0`. Without them the answer is unknown, not "never".
 
+## Live hooks
+
+`DM_LIVE=1` (Mac development runs only, never a released app) lets the control port's `live` command put hooks on the game's code while it runs (`dm/host/dm_live.c`; the protocol in [control_port.md](control_port.md)). `DM_LIVE_HOOKS="<spec>;<spec>…"` (or `@<file>`, one spec a line) arms them at boot instead, before the game's threads start (the spec is the `add` arguments as `name=value` words: `at=main+0x16926d0 kind=ret cap=x2`); the log names the first 50 armed and refused, then `live hooks: N armed at boot, M refused`.
+
+- **How:** the hooked instruction becomes a branch to a trampoline that saves every register, records the hit into the calling thread's ring, runs the displaced instruction (relocated when it is PC-relative: adr, adrp, b, bl, b.cond, cbz, tbz, ldr literal) and branches back. A collector thread writes the records to `DM_LIVE_OUT` (default `live.bin`) and lists the hooks in `<out>.hooks.tsv`; `python3 dm/tools/re/live.py summary <out>` gives per hook the records, threads, call rate, callers (named through `guestsyms.py`), return durations and each capture's most frequent values; `dump` lists the records.
+- **Patching** goes through a second, writable mapping of the code: the running pages never change protection, so other threads keep running. The trampolines sit in an arena the loader reserves right after `main` in `DM_LIVE=1` runs, so every one is in branch range.
+- **Kinds:** `entry` and `insn` record the registers at that instruction; `ret`, at a function's first instruction only, also records the return value and the call's duration (the return address goes through a shared return trampoline; a per-thread shadow stack matched by the stack pointer brings it back).
+- **Cost:** a hit is a few ns (about 4 ns in a tight loop, against 1.8 µs for a `DM_PROBE` trap); a capture that reads memory adds a `vm_read` (a bad pointer reads 0, never a crash). `max`, `every` and `rate` bound a hook: over `rate` hits a second it disarms itself and the log says so.
+  - The worst case, measured: the 20 hottest game sites (`$DM_ROOT/re/notes/hot.tsv`) recording every hit, about 500,000 records a second (1.8 GB a 35 s run), `bench.py ab town_loop` at this Mac's Recommended, 6 + 6 ABBA, 2026-11-09. Process CPU per frame +0.66 ms in town / +1.14 ms in the Blood Moor (+3% / +5%, p 0.002); main thread +0.35 / +0.45 ms; frame time p50 unchanged (33.36 ms); slow frames not more.
+- **It doesn't change the game:** `golden.py replay check` with 23 hooks armed at boot (those 20 sites, 4 of them reading memory, and 3 return hooks) gave every route tick-identical with byte-identical saves, and each negative control diverged (2026-11-09).
+- **Refused:** an instruction the rewriter turned into a branch into the patch area (gates, observation gates), an exclusive load or store (its loop would never succeed through a hook), a `brk`, a floating-point literal load, and a second hook on the same instruction.
+- **Tests:** `dm/host/tests/t_live.c` (every relocation case, flags and floating-point registers kept, captures, filters, budgets, return values, four threads, refusals, disarm).
+
 ## The debugger
 
 ### Stopping at a tick

@@ -511,6 +511,7 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("save_now", cmd_save_now);
     dm_ctl_register("engine", cmd_engine);
     dm_ctl_register("mem", cmd_mem);
+    { void dm_live_ctl_init(void); dm_live_ctl_init(); }   // live: hooks on the running game's code (dm_live.c, DM_LIVE=1)
     dm_ctl_register("fault", cmd_fault);
     dm_ctl_register("fe", cmd_fe);
     dm_ctl_register("inputmode", cmd_inputmode);

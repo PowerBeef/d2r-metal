@@ -35,7 +35,7 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'wheel': ['x', 'y', 'dy', 'precise', 'view'], 'drag': ['x0', 'y0', 'x1', 'y1', 'frames'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'menu_pick': ['name', 'timeout'], 'use_unit': ['type', 'cls'], 'open': ['what'], 'back': [], 'key': ['name'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
-       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': []}
+       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': [], 'live': ['do']}
 ALIAS = {'shot': 'screenshot', 'ui_click': 'menu_pick'}   # touch-script names; ui_click is menu_pick's first name
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away', 'menu_pick', 'use_unit', 'open', 'back', 'key')
 # Scheme-neutral steps (use_unit, open, back, menu_pick) are carried out through the run's control scheme: `scenario.py run --scheme pc|controller|touch`,
@@ -455,7 +455,7 @@ class Runner:
     # 步骤 | steps
     def ctl(self, cmdname, **kw):   # 参数可能就叫 name（mark、tap_ui）：命令名用别的名字 | an argument may be called name (mark, tap_ui): the command name uses another name
         if cmdname == 'screenshot' and 'path' in kw: kw['path'] = self.backend.shot_path(kw['path'])
-        raw = ('at', 'chain', 'write') if cmdname == 'mem' else ()   # hex text: write=03 must not become the number 3
+        raw = ('at', 'chain', 'write') if cmdname == 'mem' else ('at', 'cap', 'filt', 'name', 'hook') if cmdname == 'live' else ()   # hex text: write=03 must not become the number 3; a live hook's spec stays text
         args: dict[str, Any] = {k: v if k in raw else value(v) if not isinstance(v, (int, float, bool)) else v for k, v in kw.items()}
         return self.cc.cmd(cmdname, reply_timeout=float(kw.get('timeout', 0) or 0) + 120, **args)
 
