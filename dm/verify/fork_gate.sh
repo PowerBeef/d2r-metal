@@ -18,6 +18,7 @@
 #   full   beyond core: Mac App test copy and iOS-package-on-Mac scenarios, smoke_mac, fault injection, one run under Metal validation, replays
 #   long   on demand (1.5-2.5 h): benchmarks (first, while the machine is cool), random play, sanitizer hosts, fnfuzz
 #   device the real phone (when it is there): smoke.sh, lifecycle.sh
+#   A red step in quick or unit stops the run there when later tiers were asked for (DM_GATE_KEEP_GOING=1 runs them anyway)
 #   Results: $DM_ROOT/run/gate/<time>_<tiers>/ (one folder per step: log.txt, result.json, junit.xml), summary.json; latest points at the most recent run
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"; DM="$ROOT/dm"
@@ -126,7 +127,9 @@ fresh_mac_app() {   # Mac App 测试副本按 HEAD 重出（构建号对不上�
 }
 export -f fresh_mac_app
 
+TI=0
 for tier in "${TIERS[@]}"; do
+  TI=$((TI + 1))
   echo "== $tier"
   case $tier in
   quick)
@@ -221,6 +224,12 @@ for tier in "${TIERS[@]}"; do
     fi
     ;;
   esac
+  # A red in quick or unit stops the run before the long tiers (DM_GATE_KEEP_GOING=1 runs them anyway): those failures are cheap to fix and
+  # the game tiers would run 15 to 45 minutes on a tree already known to be wrong
+  if { [ "$tier" = quick ] || [ "$tier" = unit ]; } && [ $TI -lt ${#TIERS[@]} ] && [ "${DM_GATE_KEEP_GOING:-0}" != 1 ] && grep -qE $'\t(RED|ERROR)\t' "$STEPS"; then
+    echo "🔴 $tier 层有红：后面的层不跑 | $tier has a red step: the later tiers are not run (DM_GATE_KEEP_GOING=1 runs them)"
+    gate_abort "$tier is red, later tiers not run: $(awk -F'\t' '$2 == "RED" || $2 == "ERROR" { printf "%s ", $1 }' "$STEPS")"
+  fi
 done
 
 gate_summary

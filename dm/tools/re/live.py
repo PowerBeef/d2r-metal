@@ -131,6 +131,8 @@ def image():
 def blocks(out, only=None):
     import capstone   # the project venv has it
     import live_index
+    import quiet
+    quiet.wait_quiet('live.py blocks')   # seconds of full CPU: never beside a gate's game tiers or a benchmark
     img = image(); md = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM); n = 0
     with open(out, 'w', encoding='utf-8') as f:
         for s_, size in functions(only):

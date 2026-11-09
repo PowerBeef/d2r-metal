@@ -89,6 +89,7 @@ DM_FSLOG_HASH	host	host/hle_fs.c	-
 DM_GAME_RES	host,ios	host/front_mac.m ios/Sources/front_ios.m	y
 DM_GAME_SEED	host,tools	host/main.c tools/replay.py	y
 DM_GATE_BASE	tools	tools/gate_pick.py	y
+DM_GATE_KEEP_GOING	verify	verify/fork_gate.sh	y
 DM_GATE_SAVE	verify	verify/gfxq/ruler.sh verify/hostshot.sh	y
 DM_GEN_ASSETS	ios-tools	ios/tools/gen_paths.py	-
 DM_GEN_ONLY	ios-tools	ios/run.sh	y
@@ -276,6 +277,7 @@ DM_PSO_USER	gfx,host,ios	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_warm.m host/app_mac.m
 DM_PSO_WARM_WORKERS	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_pso_warm.m	y
 DM_PUMP_PROF	host	host/dm_prof.c	-
 DM_PY	tools,verify	tools/extract_game.sh tools/product.sh verify/regress.sh	y
+DM_QUIET_SKIP	tools	tools/quiet.py	y
 DM_REAL_ICLOUD	ios,ios-tools	ios/Sources/cloud_ios.m ios/tools/cloud_guard.sh	-
 DM_REAL_ICLOUD_CONFIRM	ios,ios-tools	ios/Sources/cloud_ios.m ios/tools/cloud_guard.sh	-
 DM_REQUIRE_PC_ART	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	-
