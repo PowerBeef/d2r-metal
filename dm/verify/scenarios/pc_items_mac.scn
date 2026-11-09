@@ -56,7 +56,9 @@ screenshot path=p4_scroll_dropped.png
 kbm btn=right x=0.5975 y=0.515
 expect pc_item btn=right did=use item=box timeout=5
 kbm btn=right x=0.5975 y=0.515 up=1
-expect panel act=OpenPanel name=HoradricCubeLayout timeout=5
+# By state, not by event: the panel opens about 60 ms after the press, which can be before this step's event baseline (the release's start)
+# when the control port answers slowly; an `expect panel` here missed it twice under load on 2026-11-09
+expect_state panels~=HoradricCubeLayout timeout=5
 sleep 1.5
 screenshot path=p6_cube_open.png
 kbm key=73
