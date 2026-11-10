@@ -11,6 +11,8 @@ uint64_t now_ns(void) { return bp_now(); }
 static int fail, count;
 #define EXPECT(name, want, got) do { uint64_t w=(want), g=(got); count++; printf("%s 期望 %llu → 真结果 %llu %s\n", name, (unsigned long long)w, (unsigned long long)g, w==g?"✓":"✗"); fail += w != g; } while (0)
 static int ready(mfx_t *m, NSUInteger iw, NSUInteger ow) { return mfx_ready(m, MFX_M4, MTLPixelFormatRGBA8Unorm, iw, iw * 9 / 16, ow, ow * 9 / 16); }
+// How many of these are in the residency set (the buffers a Metal 4 scaler allocates for itself are caught and made resident: nvn_mtl.m mfx_cap_begin)
+static int resident_n(NSArray *a) { int n = 0; pthread_mutex_lock(&g_res_mu); for (id o in a) n += [g_res_objects containsObject:o]; pthread_mutex_unlock(&g_res_mu); return n; }
 int main(void) { setvbuf(stdout, NULL, _IONBF, 0);
     mtl_init();
 #if MFX_M4
@@ -28,6 +30,12 @@ int main(void) { setvbuf(stdout, NULL, _IONBF, 0);
         EXPECT("第 MFX_SETTLE 次建好", 1, (uint64_t)ready(&g_mfx_pres, 320, 640));
         EXPECT("同尺寸再要直接用", 1, (uint64_t)ready(&g_mfx_pres, 320, 640));
         ws = g_mfx_pres.scaler; wi = g_mfx_pres.in; wo = g_mfx_pres.out;
+#if MFX_M4
+        EXPECT("the Metal 4 scaler allocated buffers of its own, and they were caught", 1, (uint64_t)(g_mfx_pres.own.count > 0));
+        EXPECT("every one of them is in the residency set", g_mfx_pres.own.count, (uint64_t)resident_n(g_mfx_pres.own));
+#else
+        EXPECT("the older-API scaler: nothing is caught", 0, (uint64_t)g_mfx_pres.own.count);
+#endif
         // ② 拉窗口：尺寸每次都变，一套也不建，旧的那套一直留着（还没换下）
         // ② Window resize: the size changes every time, nothing is built, and the old set stays (not replaced yet)
         int built = 0; for (int i = 0; i < 3 * MFX_SETTLE; i++) built += ready(&g_mfx_pres, 320, 700 + 8 * i);
@@ -44,11 +52,14 @@ int main(void) { setvbuf(stdout, NULL, _IONBF, 0);
     EXPECT("第 4 次出图后放大器释放", 0, (uint64_t)(ws != nil)); EXPECT("第 4 次出图后两张贴图释放", 0, (uint64_t)(wi != nil || wo != nil));
     // ④ 关掉「放大方式」：出图路径每帧见开关关着就放下，同样等 4 次出图
     // ④ "Upscaling" turned off: the present path puts the set down once it sees the switch off, again waiting 4 presents
+    NSArray *own4 = g_mfx_pres.own;   // kept alive here, to see them leave the residency set
     @autoreleasepool { ws = g_mfx_pres.scaler; wi = g_mfx_pres.in; EXPECT("单测里开关恒关（没链宿主）", 0, (uint64_t)mfx_on()); mfx_drop(&g_mfx_pres, "off"); }
+    EXPECT("put down: the scaler's own buffers are still resident for the frames in flight", own4.count, (uint64_t)resident_n(own4));
     EXPECT("关掉后表项清空", 0, (uint64_t)(g_mfx_pres.scaler != nil || g_mfx_pres.in != nil || g_mfx_pres.out != nil || g_mfx_pres.ow != 0));
     EXPECT("关掉当帧仍活着", 1, (uint64_t)(ws != nil && wi != nil));
     for (int i = 0; i < 4; i++) @autoreleasepool { mfx_retire_tick(); }
     EXPECT("关掉后 4 次出图释放", 0, (uint64_t)(ws != nil || wi != nil));
+    EXPECT("and after 4 presents its own buffers have left the residency set", 0, (uint64_t)resident_n(own4)); own4 = nil;
     // (5) The 3D upscale pass copy (encoded in the main command buffer, no settle): what is replaced goes through the replay's deferred release and waits for this submission to complete
     @autoreleasepool {
         int b0 = g_mfx_3d.builds;

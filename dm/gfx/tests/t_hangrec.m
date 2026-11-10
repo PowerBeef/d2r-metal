@@ -6,7 +6,9 @@
 // the block really ends: the record then shows the busy block with an end mark and names it as the pass the GPU may still be on (prev_done). Both
 // forms are right answers here; the test failed once in most unit runs while it accepted only the first. Once it finishes, its feedback names it as
 // the longest pass of a slow submission. Also: with nothing waiting there is no record to give, and the queue log has the submission. No GPU hang is
-// made: the busy block is an ordinary kernel that loops, well under the driver's own limit (about 4 s)
+// made: the busy block is an ordinary kernel that loops, well under the driver's own limit (about 4 s).
+// Last, work that cannot be marked from inside (MetalFX, frame generation) stands between the command buffer's own two marks: read while it runs,
+// the first is in and the second is not, so the record says the GPU has entered it
 #define NVN_OWN_FRONT_GPU_LOST   // the watchdog stays quiet (DM_GPU_LOST_S below), but the front end hook must exist
 #include "../nvn/nvn_mtl.m"
 void *front_metal_layer(void) { return NULL; }
@@ -36,6 +38,19 @@ static uint64_t submit_spin(uint32_t n) {
     [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
     spin_block(ce, 1, "spin", n); m4_end(ce);
     hr_mark("mark");
+    CENC c2 = open_enc(); spin_block(c2, 2, "tail", 1000); m4_end(c2);
+    return mtl_sub_commit();
+}
+// One submission whose middle block is work we cannot mark from inside (as MetalFX and frame generation are): "quick", then an unmarked block of
+// n loops in an encoder of its own between the command buffer's two marks (hr_own_begin / hr_own_end), then "tail"
+static uint64_t submit_own(uint32_t n) {
+    static const op_hdr end = {OP_END, 8}; uint64_t eh = (uint64_t)(uintptr_t)&end;
+    mtl_sub_begin(); mtl_sub_index(&eh, 1); mtl_exec_rest(NULL, 0); mtl_exec((const uint8_t *)&end); mtl_exec_rest(NULL, 0);
+    CENC ce = open_enc(); spin_block(ce, 0, "quick", 1000); m4_end(ce);
+    hr_own_begin("own");
+    CENC c1 = open_enc(); uint32_t *w = (uint32_t *)((uint8_t *)g_buf.contents + 64); w[1] = 54321u; w[2] = n;
+    [g_at setAddress:g_buf.gpuAddress + 64 atIndex:0]; [c1 dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)]; m4_end(c1);
+    hr_own_end();
     CENC c2 = open_enc(); spin_block(c2, 2, "tail", 1000); m4_end(c2);
     return mtl_sub_commit();
 }
@@ -84,6 +99,19 @@ int main(void) {
         EXPECT("the queue log's last entry is that main submission", 1, nq && last.kind == HQ_MAIN && last.id == f);
         hr_dump("test: nothing waiting again", &v);
         EXPECT("then nothing waits again", 0, v.known);
+        // work that encodes its own passes, between the command buffer's two marks
+        slow0 = atomic_load(&g_hr_slow_n); f = submit_own(n);
+        usleep(150 * 1000);
+        hr_dump("test: the GPU is inside work marked from the command buffer", &v);
+        EXPECT("read while the unmarked block still runs", 1, !mtl_wait(f, 0));
+        EXPECT("three passes, the unmarked block one of them", 3, v.passes); EXPECT("and no note", 0, v.notes);
+        EXPECT("only quick finished", 1, v.finished);
+        EXPECT("the record names the unmarked block as the first not finished", 1, !strcmp(v.first_open, "own"));
+        EXPECT("and says the GPU has entered it", 1, v.entered);
+        EXPECT("that submission finishes", 1, mtl_wait(f, 5000000000ull));
+        for (int i = 0; i < 100 && atomic_load(&g_hr_slow_n) == slow0; i++) usleep(10 * 1000);
+        EXPECT("its feedback reported a slow submission", 1, atomic_load(&g_hr_slow_n) - slow0);
+        EXPECT("naming the unmarked block as its longest pass", 1, !strcmp(g_hr_slow_top, "own"));
     }
     printf("%s %d/%d\n", fail ? "FAIL" : "OK", count - fail, count);
     return fail != 0;

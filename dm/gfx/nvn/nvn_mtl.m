@@ -171,8 +171,10 @@ static id<MTL4CommandAllocator> lost_alloc(void) {
 //   has run (t_hangrec: while a pass still runs, even its start mark reads 0; a timestamp in an encoder with no work is never written), so a record
 //   says which passes finished and which is the first that did not, not which one had started. A finished pass's marks can take a few ms to read (a
 //   record of a GPU that is fine may show its last pass or two unfinished; a hang's, 2 s in, does not: on this Mac they read within 5 ms while
-//   later work was stuck in the same or the next command buffer). MetalFX and frame generation, which encode their own
-//   passes, are noted in the pass list where they run (hr_mark: no GPU work);
+//   later work was stuck in the same or the next command buffer). MetalFX and frame generation encode their own passes, so no pass mark
+//   can go inside them: the command buffer writes a timestamp before and after each instead (hr_own_begin / hr_own_end). Such a timestamp is
+//   written once all work before it is complete, so the first says the GPU has reached that work and the second that it has left it
+//   (t_hangrec: read while a block between two of them ran, the first was in and the second was not, 90 times of 90, the GPU idle before 60);
 // - present marks: each present's draw writes one when it has run, so only once the queue's wait for its drawable was over;
 // - the queue log (hq): the order work went to the GPU's queues, the waits for drawables included;
 // - each submission's pass list (hr_rec) and translation summary (g_sub_ring).
@@ -1010,6 +1012,24 @@ int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1) {
 enum { GERR_MAIN, GERR_VICTIM, GERR_UP, GERR_PRESENT, GERR_N };
 #define GERR_PERIOD_NS 10000000000ull
 static nvn_ratelog g_gerr[GERR_N];
+// What kind of error it is, as a field of its own: the description alone does not tell a timeout (the work took longer than the system allows,
+// which is what a GPU hang ends as) from the system revoking the app's GPU access after too many of them. Counted per code over submits, uploads
+// and presents; the hang record prints the counts (gerr_tally)
+enum { GERR_CODES = 8 };
+static _Atomic uint64_t g_gerr_code[GERR_CODES]; static _Atomic int g_gerr_revoked_said;
+static const char *gerr_code_name(long c) { return c == 1 ? "timeout" : c == 2 ? "not permitted" : c == 3 ? "out of memory" : c == 4 ? "device removed" : c == 5 ? "access revoked" : c == 6 ? "internal" : "other"; }
+static const char *gerr_note(NSError *e, char *o, size_t n) {   // counts the error and writes "code 1 (timeout)" into o
+    long c = (long)e.code; int q = [e.domain isEqualToString:MTL4CommandQueueErrorDomain];
+    atomic_fetch_add(&g_gerr_code[q && c > 0 && c < GERR_CODES ? c : 0], 1);
+    if (q) snprintf(o, n, "code %ld (%s)", c, gerr_code_name(c)); else snprintf(o, n, "code %ld in %s", c, e.domain.UTF8String);
+    if (q && c == 5 && !atomic_exchange(&g_gerr_revoked_said, 1)) MLOG("【红】the system has revoked this app's GPU access (it does that after too many timeouts or hangs)");
+    return o;
+}
+static void gerr_tally(char *o, size_t n) {   // "timeout 3, internal 1", or "none"
+    size_t at = 0; o[0] = 0;
+    for (int c = 1; c <= GERR_CODES; c++) { int k = c % GERR_CODES; uint64_t v = atomic_load(&g_gerr_code[k]); if (v && at < n) at += (size_t)snprintf(o + at, n - at, "%s%s %llu", at ? ", " : "", k ? gerr_code_name(k) : "other", (unsigned long long)v); }
+    if (!at) strlcpy(o, "none", n);
+}
 static void gerr_flush(void) {
     static const char *const what[GERR_N] = {"submits", "submits (innocent victims)", "upload command buffers", "present command buffers"};
     for (int i = 0; i < GERR_N; i++) { uint64_t more, total;
@@ -1046,9 +1066,9 @@ uint64_t mtl_sub_commit(void) {
     sub_ring_note(fence, gpu_f, cctx.UTF8String);
     void (^fb_main)(FB_ARG) = ^(FB_ARG cb) {
         gpu_tag_done(gpu_f, cb.GPUStartTime, cb.GPUEndTime);
-        if (cb.error) { atomic_store(&g_last_commit_error, 1); int victim = [cb.error.description containsString:@"InnocentVictim"]; uint64_t more, total;
+        if (cb.error) { atomic_store(&g_last_commit_error, 1); int victim = [cb.error.description containsString:@"InnocentVictim"]; uint64_t more, total; char ec[96]; gerr_note(cb.error, ec, sizeof ec);
             int t = nvn_ratelog_take(&g_gerr[victim ? GERR_VICTIM : GERR_MAIN], victim ? 1 : 8, GERR_PERIOD_NS, bp_now(), &more, &total);
-            if (t == NVN_RL_FULL) { MLOG("【红】GPU error in submit fence=%llu (%llu so far): %s | GPU %.3f→%.3f", (unsigned long long)fence, (unsigned long long)total, cb.error.description.UTF8String, cb.GPUStartTime, cb.GPUEndTime);
+            if (t == NVN_RL_FULL) { MLOG("【红】GPU error in submit fence=%llu (%llu so far), %s: %s | GPU %.3f→%.3f", (unsigned long long)fence, (unsigned long long)total, ec, cb.error.description.UTF8String, cb.GPUStartTime, cb.GPUEndTime);
                 if (!victim) MLOG("【红】the failed submit held: %s", cctx.UTF8String); }
             else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in submits%s: %llu more since the last line (%llu in all); latest: %s", victim ? " (innocent victims)" : "",
                                                  (unsigned long long)more, (unsigned long long)total, cb.error.localizedDescription.UTF8String); }
@@ -1352,8 +1372,8 @@ static void up_flush(void) {
     void (^fb_up)(FB_ARG) = ^(FB_ARG f) {
         int t = NVN_RL_FULL; uint64_t more = 0, total = 0;
         for (uint64_t v = atomic_load(&g_hr_up_done); hr_up > v && !atomic_compare_exchange_weak(&g_hr_up_done, &v, hr_up);) {}
-        if (f.error) { t = nvn_ratelog_take(&g_gerr[GERR_UP], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
-            if (t == NVN_RL_FULL) MLOG("【红】GPU error in an upload command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
+        if (f.error) { char ec[96]; gerr_note(f.error, ec, sizeof ec); t = nvn_ratelog_take(&g_gerr[GERR_UP], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
+            if (t == NVN_RL_FULL) MLOG("【红】GPU error in an upload command buffer (%llu so far), %s: %s", (unsigned long long)total, ec, f.error.description.UTF8String);
             else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in upload command buffers: %llu more since the last line (%llu in all)", (unsigned long long)more, (unsigned long long)total); }
         if (f.error || fake_lost) {   // the recovery runs every time; its line prints with the full error lines only
             os_unfair_lock_lock(&g_up_lost_lk); if (!g_up_lost) g_up_lost = [NSHashTable weakObjectsHashTable]; for (id d in dsts) [g_up_lost addObject:d]; int n = (int)g_up_lost.allObjects.count; atomic_store(&g_up_lost_n, n); os_unfair_lock_unlock(&g_up_lost_lk);
@@ -1852,7 +1872,7 @@ static pg_pass *pg_new(int kind, int nslot) {
     uint64_t f = atomic_load(&g_cur_frame); if (f != g_pg_frame) { g_pg_frame = f; g_pg_idx = 0; }
     if (g_pg_np == g_pg_cap) { g_pg_cap = g_pg_cap ? g_pg_cap * 2 : 128; g_pg_pass = realloc(g_pg_pass, g_pg_cap * sizeof *g_pg_pass); }
     pg_pass *p = &g_pg_pass[g_pg_np++]; memset(p, 0, sizeof *p);
-    p->frame = f; p->pass = g_stat_pass; p->idx = kind == 3 ? -1 : g_pg_idx++; p->kind = kind; p->slot = (int)g_pg_used; p->draws = -(int)g_stat_draw;   // a hang-recorder note (kind 3) keeps DM_NVN_PASSGPU's pass indices as they were
+    p->frame = f; p->pass = g_stat_pass; p->idx = kind >= 3 ? -1 : g_pg_idx++; p->kind = kind; p->slot = (int)g_pg_used; p->draws = -(int)g_stat_draw;   // a hang-recorder note (kind 3) keeps DM_NVN_PASSGPU's pass indices as they were
     g_pg_used += nslot;
     return p;
 }
@@ -1911,6 +1931,16 @@ static void pg_host_render(const char *label) {
 // Where work that encodes its own passes (MetalFX, frame generation) runs between two of ours: an entry in the pass list (kind 3, label in load) with
 // no timestamp, since one in an encoder of its own would never be written
 static void hr_mark(const char *label) { pg_pass *p = pg_new(3, 0); if (p) { p->draws = 0; strlcpy(p->load, label, sizeof p->load); } }
+// The same work with marks around it (kind 4): the command buffer writes a timestamp once all work before the call is complete, so the one taken
+// before the work says the GPU has reached it and the one after says the GPU has left it. Call hr_own_begin right before the work is encoded and
+// hr_own_end right after; no encoder may be open. Like a note, it keeps DM_NVN_PASSGPU's pass indices as they were
+static int g_hr_own = -1;
+static void hr_own_begin(const char *label) {
+    pg_pass *p = pg_new(4, 2); g_hr_own = -1; if (!p || !g_cb) return;
+    p->draws = 0; strlcpy(p->load, label, sizeof p->load); g_hr_own = p->slot;
+    [(CBUF)g_cb writeTimestampIntoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)p->slot];
+}
+static void hr_own_end(void) { if (g_hr_own >= 0 && g_cb) [(CBUF)g_cb writeTimestampIntoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)g_hr_own + 1]; g_hr_own = -1; }
 static void pg_commit(id fb, uint64_t fence, uint64_t frame) {   // 把本次提交的通道表交给完成回调解析；fb = FB_ON(o, g_cb)（旧接口是命令缓冲的完成回调，Metal 4 是提交选项的反馈回调） | Hands this submission's pass table to the completion callback for parsing; fb = FB_ON(o, g_cb) (on the legacy API the command buffer completion handler, on Metal 4 the commit options feedback handler)
     if (g_pg <= 0 || g_pg_skip) return;
     {   // the recorder's copy, and its feedback: a slow submission's longest passes, then the block is free again
@@ -1948,9 +1978,9 @@ static void pg_commit(id fb, uint64_t fence, uint64_t frame) {   // 把本次提
             double ms = (b - a) / 1e6;   // 时间戳与 CPU 同为 ns（本机 sampleTimestamps 实测 1:1） | Timestamps are in ns, same as the CPU (measured 1:1 via sampleTimestamps on this machine)
             double inc = b > prev_end ? (b - (a > prev_end ? a : prev_end)) / 1e6 : 0;
             if (b > prev_end) prev_end = b;
-            fprintf(g_pg_f, "%llu\t%d\t%c\t%.4f\t%.4f\t%d\t%d\t%u\t%u\t%s\t%d\t%llu\t%llu\t%llu\n", (unsigned long long)p->frame, p->idx, "RCH"[p->kind], ms, inc,
+            fprintf(g_pg_f, "%llu\t%d\t%c\t%.4f\t%.4f\t%d\t%d\t%u\t%u\t%s\t%d\t%llu\t%llu\t%llu\n", (unsigned long long)p->frame, p->idx, "RCH?H"[p->kind], ms, inc,   /* kind 4 (MetalFX, frame generation: marks from the command buffer) is listed as host work with index -1 */
                     p->w, p->h, p->cfmt0, p->dfmt, p->load, p->draws, (unsigned long long)a, (unsigned long long)b, (unsigned long long)p->pass);
-            if (p->idx < 256 && p->frame > 300) { pg_stat *st = &g_pg_st[p->idx]; st->sum += inc; st->n++; st->last = inc; st->meta = *p; }
+            if (p->idx >= 0 && p->idx < 256 && p->frame > 300) { pg_stat *st = &g_pg_st[p->idx]; st->sum += inc; st->n++; st->last = inc; st->meta = *p; }
             if (p->frame >= g_pg_rep_frame + 300 && p->frame > 300) {   // 每 300 帧报一次前五（第 300 帧起累计） | Report the top five every 300 frames (accumulated from frame 300)
                 g_pg_rep_frame = p->frame; double tot = 0; int top[5] = {-1, -1, -1, -1, -1};
                 for (int k = 0; k < 256; k++) if (g_pg_st[k].n) { double m = g_pg_st[k].sum / g_pg_st[k].n; tot += m;
@@ -7039,7 +7069,7 @@ static id<MTLTexture> present_src(id<MTLTexture> src) {
 typedef struct { id scaler; id<MTLTexture> in, out; id<MTLFence> fence; NSUInteger iw, ih, ow, oh; MTLPixelFormat fmt; int m4, bad, main_cb, uvi; id args; id<MTLBuffer> uv[3]; const char *who, *tag, *why;
                  int settle, pn; NSUInteger piw, pih, pow_, poh; MTLPixelFormat pfmt;
                  int builds, tries, fail_on, fail_n, fail_logs; MTLPixelFormat ffmt; NSUInteger fiw, fih, fow, foh;
-                 NSUInteger lcw, lch; int kc; uint64_t last_use; float acfg; } mfx_t;
+                 NSUInteger lcw, lch; int kc; uint64_t last_use; float acfg; __strong NSArray *own; } mfx_t;   /* own: the buffers the scaler allocated for itself, kept resident by us (mfx_cap_begin) */
 // Only the present set settles (window drags change its output at every step). The 3D set's output is the game's output resolution, which never
 // changes continuously (fixed at launch on the Mac, discrete fold steps on phones), so it builds on the first request
 static mfx_t g_mfx_pres = { .who = "present", .tag = "pres", .settle = MFX_SETTLE }, g_mfx_grab = { .who = "present screenshot", .tag = "grab" },
@@ -7090,7 +7120,7 @@ static id<MTLSamplerState> mfx_samp(int linear) {   // own samplers: the 3D upsc
         sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge; sd.supportArgumentBuffers = YES; sm[i] = [g_dev newSamplerStateWithDescriptor:sd]; } });
     return sm[linear != 0];
 }
-#define MFX_OLD 24   // retire list: at most 3 entries per replacement (scaler + two textures), and with rebuilds only after the size settles no more than two or three generations are in it at once
+#define MFX_OLD 24   // retire list: at most 4 entries per replacement (scaler + two textures + the list of its own buffers; was 3), and with rebuilds only after the size settles no more than two or three generations are in it at once
 static struct { id o; uint64_t at; int res; } g_mfx_old[MFX_OLD]; static int g_mfx_nold; static uint64_t g_mfx_calls;   // res: in the residency set, to be removed when due (Metal 4 textures)
 __attribute__((weak)) int dm_video_upscale(void) { return 0; }   // the host's dm_video.c provides the strong definition (options page "Upscaling"); always off when the graphics unit tests do not link the host
 static _Atomic int g_mfx_on_now;   // mfx_on's last answer, for the feedback queue's GPU-time line (mfx_gpu_note)
@@ -7102,14 +7132,50 @@ static int mfx_on(void) {
     static _Atomic int last = -1; if (atomic_exchange(&last, on) != on) MLOG("present: MetalFX spatial upscaling %s (%s)", on ? "on" : "off", env >= 0 ? "DM_MFX" : "picture setting");
     atomic_store(&g_mfx_on_now, on); return on;
 }
+// ---- MetalFX's own buffers, kept resident ----
+// Shader Validation, 2026-11-10 (macOS 27.2, M6): the Metal 4 spatial scaler's fragment function reads a 4-byte buffer that the scaler allocates when
+// it is created, and that buffer is in no residency set when the scaler draws ("Invalid load ... MTLBuffer length 4 ... resident: No", at every
+// draw; the temporal scaler and the frame interpolator draw clean). Reading a resource that is not resident is one of the causes Apple names for
+// command buffer failures and GPU restarts; that it usually works is luck (a small buffer shares its memory with others that are resident).
+// The effect gives no access to its resources, so the buffers a scaler allocates while it is created are caught at the device: its two
+// buffer-creating methods are wrapped once, and the wrappers record only while this thread has a capture open. The caught buffers go into our
+// residency set and leave it with the scaler. DM_MFX_RESIDENT=0 turns the capture off (an A/B baseline for the validation run).
+static _Thread_local __unsafe_unretained NSMutableArray *t_mfx_cap;
+static id (*g_mfx_newbuf)(id, SEL, NSUInteger, MTLResourceOptions) __attribute__((ns_returns_retained));
+static id (*g_mfx_newbufb)(id, SEL, const void *, NSUInteger, MTLResourceOptions) __attribute__((ns_returns_retained));
+static id mfx_newbuf_hook(id self, SEL sel, NSUInteger len, MTLResourceOptions opt) __attribute__((ns_returns_retained));
+static id mfx_newbuf_hook(id self, SEL sel, NSUInteger len, MTLResourceOptions opt) { id b = g_mfx_newbuf(self, sel, len, opt); if (b && t_mfx_cap) [t_mfx_cap addObject:b]; return b; }
+static id mfx_newbufb_hook(id self, SEL sel, const void *bytes, NSUInteger len, MTLResourceOptions opt) __attribute__((ns_returns_retained));
+static id mfx_newbufb_hook(id self, SEL sel, const void *bytes, NSUInteger len, MTLResourceOptions opt) { id b = g_mfx_newbufb(self, sel, bytes, len, opt); if (b && t_mfx_cap) [t_mfx_cap addObject:b]; return b; }
+static int mfx_cap_on(void) {
+    static int on = -1; static dispatch_once_t once;
+    dispatch_once(&once, ^{ const char *e = getenv("DM_MFX_RESIDENT"); on = !(e && !strcmp(e, "0"));
+        if (!on) { MLOG("MetalFX: its own buffers are not made resident (DM_MFX_RESIDENT=0)"); return; }
+        Class c = object_getClass(g_dev);
+        Method a = class_getInstanceMethod(c, @selector(newBufferWithLength:options:)), b = class_getInstanceMethod(c, @selector(newBufferWithBytes:length:options:));
+        if (!a || !b) { on = 0; MLOG("【红】MetalFX: the device's buffer creation could not be wrapped, the scaler's own buffers are not made resident"); return; }
+        g_mfx_newbuf = (void *)method_getImplementation(a); g_mfx_newbufb = (void *)method_getImplementation(b);   // the originals first: another thread may call a wrapper the moment it is set
+        method_setImplementation(a, (IMP)mfx_newbuf_hook); method_setImplementation(b, (IMP)mfx_newbufb_hook); });
+    return on;
+}
+static NSMutableArray *mfx_cap_begin(void) { if (!mfx_cap_on()) return nil; NSMutableArray *a = [NSMutableArray array]; t_mfx_cap = a; return a; }
+// Ends the capture: the buffers created on this thread since mfx_cap_begin are resident from now on. Returns them (the effect's owner keeps the list).
+static NSArray *mfx_cap_end(NSMutableArray *a, const char *who) {
+    t_mfx_cap = nil; if (!a) return nil;
+    for (id<MTLBuffer> b in a) res_add(b);
+    if (a.count) res_commit();
+    { static int said; if (a.count && said++ < 4) { NSUInteger bytes = 0; for (id<MTLBuffer> b in a) bytes += b.length; MLOG("%s: MetalFX allocated %lu buffers of its own (%lu bytes), now resident", who, (unsigned long)a.count, (unsigned long)bytes); } }
+    return a;
+}
+static void mfx_res_out(id o, int res) { if (res == 2) { for (id b in (NSArray *)o) res_remove(b); } else if (res) res_remove(o); }   // res 2: the list of a scaler's own buffers, one entry for all of them
 static void mfx_retire(id o, int res) {   // present thread: drop the reference after 4 more presents (res: leave the residency set first)
     if (!o) return;
-    if (g_mfx_nold == MFX_OLD) { if (g_mfx_old[0].res) { res_remove(g_mfx_old[0].o); res_commit(); } for (int i = 1; i < MFX_OLD; i++) g_mfx_old[i - 1] = g_mfx_old[i]; g_mfx_old[MFX_OLD - 1].o = nil; g_mfx_nold--; }   // element-wise assignment (ARC objects can't be memmoved)
+    if (g_mfx_nold == MFX_OLD) { if (g_mfx_old[0].res) { mfx_res_out(g_mfx_old[0].o, g_mfx_old[0].res); res_commit(); } for (int i = 1; i < MFX_OLD; i++) g_mfx_old[i - 1] = g_mfx_old[i]; g_mfx_old[MFX_OLD - 1].o = nil; g_mfx_nold--; }   // element-wise assignment (ARC objects can't be memmoved)
     g_mfx_old[g_mfx_nold].o = o; g_mfx_old[g_mfx_nold].res = res; g_mfx_old[g_mfx_nold++].at = g_mfx_calls;
 }
 static void mfx_retire_tick(void) {   // called at every present (with both APIs: the older API's scaler also has to wait for the frames in flight)
     g_mfx_calls++; int k = 0, removed = 0;
-    for (int i = 0; i < g_mfx_nold; i++) if (g_mfx_calls - g_mfx_old[i].at >= 4) { if (g_mfx_old[i].res) { res_remove(g_mfx_old[i].o); removed = 1; } } else g_mfx_old[k++] = g_mfx_old[i];
+    for (int i = 0; i < g_mfx_nold; i++) if (g_mfx_calls - g_mfx_old[i].at >= 4) { if (g_mfx_old[i].res) { mfx_res_out(g_mfx_old[i].o, g_mfx_old[i].res); removed = 1; } } else g_mfx_old[k++] = g_mfx_old[i];
     for (int i = k; i < g_mfx_nold; i++) g_mfx_old[i].o = nil;
     g_mfx_nold = k; if (removed) res_commit();
 }
@@ -7119,9 +7185,9 @@ static void mfx_drop(mfx_t *m, const char *why) {
     if (!m->scaler && !m->in && !m->out) return;
     MLOG("%s: MetalFX scaler and textures put down (%s; %lux%lu -> %lux%lu), released once the frames that used them have run", m->who, why, (unsigned long)m->iw, (unsigned long)m->ih, (unsigned long)m->ow, (unsigned long)m->oh);
     DM_EV("mfx", "who:s op:s why:s iw:d ih:d ow:d oh:d", m->tag, "drop", why, (int)m->iw, (int)m->ih, (int)m->ow, (int)m->oh);
-    if (m->main_cb) { defer_obj_release(m->scaler); defer_obj_release(m->in); defer_obj_release(m->out); }   // replay thread: released after this submission has run (the textures also leave the residency set)
-    else { mfx_retire(m->scaler, 0); mfx_retire(m->in, m->m4); mfx_retire(m->out, m->m4); }
-    m->scaler = nil; m->in = m->out = nil; m->iw = m->ih = m->ow = m->oh = 0; m->pn = 0; m->lcw = m->lch = 0;
+    if (m->main_cb) { defer_obj_release(m->scaler); defer_obj_release(m->in); defer_obj_release(m->out); for (id b in m->own) defer_obj_release(b); }   // replay thread: released after this submission has run (the textures also leave the residency set)
+    else { mfx_retire(m->scaler, 0); mfx_retire(m->in, m->m4); mfx_retire(m->out, m->m4); mfx_retire(m->own, 2); }   // its own buffers leave the residency set with it, as one entry of the retire list
+    m->scaler = nil; m->in = m->out = nil; m->own = nil; m->iw = m->ih = m->ow = m->oh = 0; m->pn = 0; m->lcw = m->lch = 0;
 }
 // Upscaling turned off: put the set down and forget a remembered failure, so turning it back on tries at once
 static void mfx_off(mfx_t *m) { m->fail_on = 0; m->fail_n = 0; m->pn = 0; mfx_drop(m, "off"); }
@@ -7149,7 +7215,9 @@ static int mfx_ready(mfx_t *m, int m4, MTLPixelFormat fmt, NSUInteger iw, NSUInt
     d.colorTextureFormat = d.outputTextureFormat = fmt;
     d.inputWidth = iw; d.inputHeight = ih; d.outputWidth = ow; d.outputHeight = oh;
     d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;   // the swapchain holds sRGB-encoded (display-referred) values
+    NSMutableArray *cap = m4 ? mfx_cap_begin() : nil;   // the buffers it allocates for itself, made resident below (see "MetalFX's own buffers")
     id<MTLFXSpatialScalerBase> s = m4 ? (id<MTLFXSpatialScalerBase>)[d newSpatialScalerWithDevice:g_dev compiler:mfx_compiler()] : (id<MTLFXSpatialScalerBase>)[d newSpatialScalerWithDevice:g_dev];
+    NSArray *own = mfx_cap_end(cap, m->who);
     const char *stage = "scaler"; id<MTLTexture> in = nil, out = nil;
     if (s) host_built(1, t0, m->main_cb ? "3D MetalFX scaler" : "MetalFX scaler");   // counted with the pipelines (the scaler's own kernels)
     if (s) {
@@ -7162,6 +7230,8 @@ static int mfx_ready(mfx_t *m, int m4, MTLPixelFormat fmt, NSUInteger iw, NSUInt
         if (g_mfx_fail_inject > 0) { g_mfx_fail_inject--; in = out = nil; }
     }
     if (!s || !in || !out) {
+        for (id<MTLBuffer> b in own) res_remove(b);
+        if (own.count) res_commit();
         if (!same) m->fail_logs = 0;
         m->fail_on = 1; m->fail_n = 0; m->ffmt = fmt; m->fiw = iw; m->fih = ih; m->fow = ow; m->foh = oh;
         int k = ++m->fail_logs;   // the first failure of a key is red; retries 2-4 log the same text plainly; later ones are silent
@@ -7182,7 +7252,7 @@ static int mfx_ready(mfx_t *m, int m4, MTLPixelFormat fmt, NSUInteger iw, NSUInt
     s.colorTexture = in; s.outputTexture = out; s.inputContentWidth = iw; s.inputContentHeight = ih;
     double ms = (bp_now() - t0) / 1e6;
     mfx_drop(m, "replace");   // the old set will not be used again
-    m->scaler = s; m->in = in; m->out = out; m->iw = iw; m->ih = ih; m->ow = ow; m->oh = oh; m->m4 = m4; m->fmt = fmt;
+    m->scaler = s; m->in = in; m->out = out; m->own = own; m->iw = iw; m->ih = ih; m->ow = ow; m->oh = oh; m->m4 = m4; m->fmt = fmt;
     m->why = why; m->builds++; m->fail_on = 0; m->fail_n = 0; m->fail_logs = 0; m->lcw = m->lch = 0; m->last_use = m->main_cb ? g_sub_serial : g_mfx_calls;
     MLOG("%s: MetalFX scaler %lux%lu -> %lux%lu built in %.2f ms (%s, format %lu, %s)", m->who, (unsigned long)iw, (unsigned long)ih, (unsigned long)ow, (unsigned long)oh, ms,
          m4 ? "Metal 4" : "older API", (unsigned long)fmt, why);
@@ -7380,7 +7450,7 @@ static int mfx3d_encode(id<MTLTexture> src, NSUInteger cw, NSUInteger ch, NSUInt
     rp_end();
     if (!mv_resolve(src) && temporal) { g_mt.reset = 1; return 0; }   // no velocities after all (an encoder failed): the game's own upscale, and the history starts anew
     if (temporal) { mt_encode(src, cw, ch); g_fg.world_frame = atomic_load(&g_cur_frame); }
-    else { hr_mark("mfx3d"); if (!mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch)) return 0; }   // the hang recorder notes where MetalFX encodes its own passes
+    else { hr_own_begin("mfx3d"); int ok = mfx_scale(&g_mfx_3d, g_cb, src, 0, 0, cw, ch); hr_own_end(); if (!ok) return 0; }   // the hang recorder notes where MetalFX encodes its own passes
     id<MTLTexture> mfx_out = temporal ? g_mt.out : g_mfx_3d.out; id<MTLFence> mfx_fence = temporal ? g_mv.fence : g_mfx_3d.fence;
     if (g_mv.dump_vel) g_mv.dump_out = mfx_out;
     int full = vp.originX == 0 && vp.originY == 0 && ow == dst.width && oh == dst.height;
@@ -7716,8 +7786,8 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     [cb endCommandBuffer];
     MTL4CommitOptions *o = [MTL4CommitOptions new];
     [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
-        if (f.error) { uint64_t more, total; int t = nvn_ratelog_take(&g_gerr[GERR_PRESENT], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
-            if (t == NVN_RL_FULL) MLOG("【红】GPU error in a present command buffer (%llu so far): %s", (unsigned long long)total, f.error.description.UTF8String);
+        if (f.error) { uint64_t more, total; char ec[96]; gerr_note(f.error, ec, sizeof ec); int t = nvn_ratelog_take(&g_gerr[GERR_PRESENT], 8, GERR_PERIOD_NS, bp_now(), &more, &total);
+            if (t == NVN_RL_FULL) MLOG("【红】GPU error in a present command buffer (%llu so far), %s: %s", (unsigned long long)total, ec, f.error.description.UTF8String);
             else if (t == NVN_RL_SUMMARY) MLOG("【红】GPU errors in present command buffers: %llu more since the last line (%llu in all)", (unsigned long long)more, (unsigned long long)total); }
         else mp_check(alloc_i, ticket);
         if (!f.error && hr_on() && f.GPUEndTime - f.GPUStartTime >= hr_slow_s())
@@ -8206,14 +8276,14 @@ void mtl_wait_state_dump(void) {
 // ---------- Hang recorder: the record (hr_dump, hr_slow) ----------
 // The scene, from the host (diag.c: area, position, life, monsters, panel, loading screen); a build without one (the graphics tests) gets this
 __attribute__((weak)) void dm_hang_scene(char *o, size_t n) { strlcpy(o, "not known (no host)", n); }
-typedef struct { int known, passes, finished, notes, presents_waiting, presents_drawn; char first_open[16], prev_done[16]; } hr_verdict;   // what hr_dump found (tests); prev_done: the last pass with an end mark before first_open
+typedef struct { int known, passes, finished, notes, presents_waiting, presents_drawn, entered; char first_open[16], prev_done[16]; } hr_verdict;   /* entered: first_open is work marked from the command buffer and its start mark is in */   // what hr_dump found (tests); prev_done: the last pass with an end mark before first_open
 static _Atomic uint64_t g_hr_slow_n; static char g_hr_slow_top[16];   // hr_slow's count and the label (or kind) of the longest pass it last saw (tests)
 static const char *hr_pass_label(const pg_pass *p) { return p->kind >= 2 ? p->load : p->kind ? "compute" : "render"; }
 static void hr_pass_what(const pg_pass *p, char *o, size_t n) {
     if (p->kind == 0) snprintf(o, n, "render pass %llu, %dx%d fmt %u depth %u, load %s, %d draws", (unsigned long long)p->pass, p->w, p->h, p->cfmt0, p->dfmt, p->load[0] ? p->load : "-", p->draws);
     else if (p->kind == 1) snprintf(o, n, "compute pass after pass %llu", (unsigned long long)p->pass);
     else if (p->kind == 2) snprintf(o, n, "host work %s", p->load);
-    else snprintf(o, n, "%s encodes its own passes here", !strcmp(p->load, "mfx") ? "MetalFX temporal scaling" : !strcmp(p->load, "mfx3d") ? "MetalFX spatial scaling"
+    else snprintf(o, n, p->kind == 4 ? "%s (its own passes, marked from the command buffer)" : "%s encodes its own passes here", !strcmp(p->load, "mfx") ? "MetalFX temporal scaling" : !strcmp(p->load, "mfx3d") ? "MetalFX spatial scaling"
                   : !strcmp(p->load, "fg") ? "frame generation" : p->load);
 }
 static uint64_t *hr_resolve(id<MTL4CounterHeap> h, uint32_t used) {   // the heap's first entries in ns, 0 = never written; the caller frees it
@@ -8245,9 +8315,10 @@ static void hr_report(uint64_t fence, hr_verdict *v) {
         if (a && a < t0) t0 = a; }
     int prev = -1; for (int i = front - 1; i >= 0 && prev < 0; i--) if (s[i] == 2) prev = i;   // the last pass with an end mark before the first without one
     if (front >= 0) MLOG("[hang] submission %llu (frame %llu): %d of its %d passes finished; the first that did not is #%d", (unsigned long long)fence, (unsigned long long)r.frame, fin, np, front);
-    if (front >= 0 && prev >= 0) MLOG("[hang]   the GPU is on #%d, or still on #%d before it: an end mark can be written early, while its block runs, and rewritten when it ends", front, prev);
+    if (front >= 0 && r.ps[front].kind == 4 && s[front] == 1) MLOG("[hang]   the GPU entered #%d (%s) and has not left it: its start mark comes from the command buffer, which writes it only once all work before it is complete", front, hr_pass_label(&r.ps[front]));
+    else if (front >= 0 && prev >= 0) MLOG("[hang]   the GPU is on #%d, or still on #%d before it: an end mark can be written early, while its block runs, and rewritten when it ends", front, prev);
     else MLOG("[hang] submission %llu (frame %llu): all its %d passes finished; the GPU is past them (on what was encoded after the last one, or on the submission's end)", (unsigned long long)fence, (unsigned long long)r.frame, np);
-    if (v) { v->known = 1; v->passes = np; v->finished = fin; v->notes = notes; if (front >= 0) strlcpy(v->first_open, hr_pass_label(&r.ps[front]), sizeof v->first_open);
+    if (v) { v->known = 1; v->passes = np; v->finished = fin; v->notes = notes; v->entered = front >= 0 && r.ps[front].kind == 4 && s[front] == 1; if (front >= 0) strlcpy(v->first_open, hr_pass_label(&r.ps[front]), sizeof v->first_open);
         if (prev >= 0) strlcpy(v->prev_done, hr_pass_label(&r.ps[prev]), sizeof v->prev_done); }
     int from = n, upto = front >= 0 ? front : n - 1;   // show from two finished passes before the first unfinished one (or the end), through two after it
     for (int i = upto, k = 0; i >= 0; i--) { if (s[i] == 2 && i != front && ++k > 2) break; from = i; }
@@ -8255,7 +8326,7 @@ static void hr_report(uint64_t fence, hr_verdict *v) {
         const pg_pass *p = &r.ps[i]; char w[160]; hr_pass_what(p, w, sizeof w); uint64_t a = t[p->slot], e = s[i] >= 0 ? t[p->slot + 1] : 0;
         if (s[i] < 0) MLOG("[hang]   (%s)", w);
         else if (s[i] == 2) MLOG("[hang]   #%d finished at +%.2f ms after %.2f ms: %s", i, (e - t0) / 1e6, e >= a ? (e - a) / 1e6 : 0, w);
-        else MLOG("[hang]   #%d not finished%s: %s", i, s[i] == 1 ? " (its start mark is in: for a render pass, its vertex work ran)" : "", w);
+        else MLOG("[hang]   #%d not finished%s: %s", i, s[i] == 1 ? (p->kind == 4 ? " (entered: all work before it is complete)" : " (its start mark is in: for a render pass, its vertex work ran)") : "", w);
         if (i >= upto && s[i] >= 0) after++;
     }
     free(s); free(t); free(r.ps);
@@ -8300,6 +8371,7 @@ static void hr_dump(const char *why, hr_verdict *v) {
     hr_presents(v);
     if (nb[0].fence) MLOG("[hang] the last finished submission (%llu, frame %llu) held: %s", (unsigned long long)nb[0].fence, (unsigned long long)nb[0].frame, nb[0].what);
     if (nb[1].fence) MLOG("[hang] the first unfinished one (%llu, frame %llu) held: %s", (unsigned long long)nb[1].fence, (unsigned long long)nb[1].frame, nb[1].what);
+    { char et[160]; gerr_tally(et, sizeof et); MLOG("[hang] GPU errors that commits have reported so far, by code: %s", et); }
     char sc[256]; dm_hang_scene(sc, sizeof sc); MLOG("[hang] scene: %s", sc);
 }
 // A submission that took DM_HANGREC_SLOW_MS or more on the GPU (its feedback, on Metal's feedback queue): its five longest passes

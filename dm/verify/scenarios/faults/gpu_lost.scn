@@ -25,4 +25,5 @@ check log_has "\[hang\] no GPU work has finished for [0-9.]+ s with work waiting
 check log_has "\[hang\] the GPU is taken as lost"
 check log_has "\[hang\] submission [0-9]+ \(frame [0-9]+\): 0 of its [0-9]+ passes finished"
 check log_has "\[hang\] scene: area [0-9]+ at"
+check log_has "\[hang\] GPU errors that commits have reported so far, by code: none"
 check no_red_log "allow=GPU lost|the GPU stopped responding"

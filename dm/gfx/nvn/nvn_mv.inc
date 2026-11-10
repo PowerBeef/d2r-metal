@@ -483,8 +483,9 @@ static void mt_encode(id<MTLTexture> src, NSUInteger cw, NSUInteger ch) {
     // The scaler can't work without the jitter, and the KJITTER slot is set on the thread that records commands (dm_jitter_refresh): say so when it never shows
     if (g_mv.jit[c][0] != 0 || g_mv.jit[c][1] != 0) { g_mt.still = 0; if (!g_mt.seen) { g_mt.seen = 1; MLOG("temporal scaler: camera jitter seen (frame %llu, %.3f %.3f px)", (unsigned long long)g_mv.frame[c], s.jitterOffsetX, s.jitterOffsetY); } }
     else if (++g_mt.still == 300) MLOG("【红】temporal scaler: 300 frames in a row without camera jitter: the picture stays soft (is the KJITTER slot in this product?)");
-    hr_mark("mfx");   // the hang recorder notes where MetalFX encodes its own passes
+    hr_own_begin("mfx");   // the hang recorder notes where MetalFX encodes its own passes
     [s encodeToCommandBuffer:g_cb];
+    hr_own_end();
 }
 // At the start of every submission (replay thread): whether the setting wants it now; put everything down when it no longer does
 static void mv_sub_begin(void) {

@@ -236,8 +236,9 @@ static void fg_compose(NvShader *f) {
     s.deltaTime = (float)dt; s.nearPlane = g_mv.nearf[c]; s.farPlane = g_mv.farf[c]; s.fieldOfView = 60.0f; s.aspectRatio = (float)ow / oh;
     simd_float4x4 v, p; memcpy(&v, g_mv.view_m[c], 64); memcpy(&p, g_mv.proj_m[c], 64); s.worldToViewMatrix = v; s.viewToClipMatrix = p;
     s.jitterOffsetX = g_mv.jit[c][0] * iw * 0.5f; s.jitterOffsetY = -g_mv.jit[c][1] * ih * 0.5f; s.shouldResetHistory = reset;
-    hr_mark("fg");   // the hang recorder notes where the interpolator encodes its own passes
+    hr_own_begin("fg");   // the hang recorder notes where the interpolator encodes its own passes
     [s encodeToCommandBuffer:g_cb];
+    hr_own_end();
     // this frame's interface over the generated world
     int k = g_fg.idx = (g_fg.idx + 1) % FG_RING;
     MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];

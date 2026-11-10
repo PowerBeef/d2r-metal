@@ -177,6 +177,7 @@ DM_METAL_COLD	ios	ios/Sources/main.m	-
 DM_MFX	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_mfx_on.m	y
 DM_MFX3D	gfx	gfx/nvn/nvn_capture.c gfx/nvn/nvn_mtl.m gfx/tests/t_capture.c gfx/tests/t_mfx_on.m	-
 DM_MFXT	host	host/dm_video.c	y
+DM_MFX_RESIDENT	gfx	gfx/nvn/nvn_mtl.m	y
 DM_MFX_STACK	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_mfx_on.m	-
 DM_MOVIE	host	host/main.c	-
 DM_MOVIE_FFMPEG	ios-tools	ios/run.sh	y
