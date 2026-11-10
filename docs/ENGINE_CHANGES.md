@@ -779,6 +779,9 @@ Listed so they aren't tried again without new evidence. All on an M6 unless note
 | Small pass skips | The transparency resolve reads pyramid levels 1 and 2 every frame; nothing above 0.1 ms | 2026-11-07 |
 | The engine's dynamic resolution on real GPU times | Reverted experiment; real per-scope times are still missing (EC-022) | 2026-11-07 |
 | Zeroed top levels in the material arrays | Stamps and terrain decals vanish entirely | 2026-11-07 |
+| Filter repeated stencil masks and polygon offsets at record time | 5,900 fewer records a frame, translation thread -4.8% cycles; made moot by EC-055, which skips the sets that sent them | 2026-11-09 |
+| Filter repeated constant-buffer, sampler and vertex-buffer binds at record time | 43% / 95% / 20% of those binds repeat and a third of the recorded binds go, but process CPU did not move (within 0.35 ms a frame; translation thread -2.6% cycles), in-process A/B, 20 pairs; removed. Texture binds can't be filtered: replay rewrites them | 2026-11-09 |
+| Write-prefetch or zero whole cache lines ahead of the record pointer | Neither moved main-thread or process CPU, in-process A/B, 20 pairs each; removed | 2026-11-09 |
 | 512 px material arrays at Environment Detail High | Stamps and terrain decals shrink to a corner with the Switch's 128 px assets: the Outer Cloister's lawn became a stone court (EC-020) | 2026-11-07 |
 | Game quality level 2 and above | Level 2 mirrors characters on the ground; levels 3 and 4 crash | 2026-10-27 |
 | Temporal SMAA | Needs a velocity target the Switch build doesn't create; crashes | 2026-10-27 |
