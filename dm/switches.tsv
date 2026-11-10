@@ -202,6 +202,7 @@ DM_NVN_ATDEDUP	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_BARRIER	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_BF_WANT	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_BINDFILT	gfx	gfx/nvn/hle_nvn.c	-
+DM_NVN_BINDFILT_BUF	gfx	gfx/nvn/hle_nvn.c	y
 DM_NVN_BLOOM_Q	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_CAPTURE	gfx	gfx/nvn/nvn_capture.inc	y
 DM_NVN_CBDUMP	gfx	gfx/nvn/nvn_mtl.m	-

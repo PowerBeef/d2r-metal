@@ -400,6 +400,15 @@ Before nearly every draw the game sets a whole pipeline again (main+0x1746558: 1
 - In-process A/B: `DM_NVN_UB=off=@set:g_pipeset=0` (each thread takes the mode when it next starts a recording).
 - A new NVN record kind must be thought about once: `rec()` in `hle_nvn.c` clears `last_pipe` for every kind except draws and the binds of buffers, textures and samplers, so a new kind is safe by default and only costs speed if it should have been kept.
 
+## Buffer and sampler binds that repeat
+
+The game binds its uniform buffers, samplers and vertex buffers again before most draws, as it does its state. In the camp about four uniform-buffer binds in ten, nearly every sampler bind and one vertex-buffer bind in five name what the slot already holds in the same recording. The recorder (`hle_nvn.c`, `bbf_*`) leaves such a bind out. The replay keeps each slot until its next bind and already compared before storing, so nothing drawn changes; buffer contents play no part, since a slot is bound by address and read when a draw uses it.
+
+- Measured 2026-11-10 on an M6, headless camp, on and off in one run (10 pairs): 1.05 million fewer instructions a frame on the translation thread (0.91 to 1.19), about 5%. The recorder itself is about 1% of the process (sampled), most of it the write of each record into fresh command memory.
+- `DM_NVN_BINDFILT_BUF=0` records every such bind (an A/B baseline); `1` is the default. In-process A/B: `DM_NVN_UB=off=@set:g_bindfilt_buf=0`.
+- `DM_NVN_BINDFILT_BUF=2` is the verify mode: nothing is left out, each bind the filter would have dropped is remembered by its record's address, and the replay compares it with the slot it is about to store into. The log gets `buffer bind verify: N checked, M differ` every 300 frames and a red line for a difference. `scenarios/quadrun_verify.scn` runs it; `dm/gfx/tests/t_nvn` (10d) holds the rules.
+- Texture binds are not filtered: the replay rewrites those bindings itself.
+
 ## Interface quads drawn as runs
 The game draws its interface one quad at a time: a new 80-byte vertex range, the same samplers and textures bound again, a 4-vertex strip. With the automap open that is about 790 draws a frame, and only about 140 of them change anything but the vertex range. The replay (`dm/gfx/nvn/nvn_mtl.m`, "2D quad runs") looks ahead from such a draw; while the next commands change nothing else, it copies the quads' vertices back to back into the submission's arena and draws them as one indexed strip with a restart index after each quad. The run's later draw commands then do nothing, and the binds between them still go through the state tracker.
 - Measured 2026-11-10 on an M6, headless, camp with the automap open, on and off in one run (10 pairs): 641 quads a frame merged into 37 runs, 3.0 million fewer instructions a frame on the translation thread (2.8 to 3.2), about 12%. A captured frame replays to the same digest with the merge off, on and checked.

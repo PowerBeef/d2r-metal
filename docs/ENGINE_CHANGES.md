@@ -109,7 +109,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Setting:** none
 - **Switch:** DM_BOOT_LEARN (0 off; on by default on the Mac, off on iPhone and iPad until its memory at launch is measured there), DM_BOOT_LIST, DM_TACT_PREFETCH (0 no prefetch at all, or a developer's list), DM_TACT_PREFETCH_MB, DM_TACT_PREFETCH_THREADS
 - **Test:** unit_host, t_bootlist, core_bootlist
-- **Commit:** 46578a2
+- **Commit:** 46578a2, ada1886
 - **Measured:** Launch to the main menu on the headless host with the learned list against none: 1.27 to 0.94 s (5 pairs, every pair lower; M6, 2026-11-10); 5,113 of 5,125 listed blocks handed over decoded, the list written in 0.3 s on a background thread after the menu. A launch that only learns costs nothing measurable (1.290 against 1.284 s, 4 pairs). Until 2026-11-10 the prefetch never ran in this port: its list had to come from the repository and holds game data, so it was never there. No iPhone measurement.
 - **Status:** confirmed
 - **Covers:** main+0x1b0ee60
@@ -187,7 +187,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Setting:** none
 - **Switch:** DM_GRANNY_PRE (0 off), DM_GRANNY_PRE_MB, DM_GRANNY_THREADS, DM_GRANNY_VERIFY
 - **Test:** unit_host, core_bootlist
-- **Commit:** 46578a2
+- **Commit:** 46578a2, ada1886
 - **Measured:** With the learned boot list, 3,408 of 3,540 segments asked for before the menu were ready (M6, 2026-11-10); its share of the 0.33 s in EC-006 was not measured apart. It did nothing in this port until the boot list was learned on the machine.
 - **Status:** confirmed
 - **Covers:** main+0x11f02dc, main+0x11f0914
@@ -416,13 +416,13 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-030 Filter repeated state binds
 - **Layer:** replay layer
 - **Engine:** Binds state freely, relying on the driver to be cheap.
-- **Ours:** The recorder drops a state bind equal to the current one. Texture, sampler and buffer binds aren't filtered, since replay rewrites them.
-- **Why:** Translation thread time.
+- **Ours:** The recorder drops a state bind equal to the one this recording last made, and since 2026-11-10 a uniform-buffer, sampler or vertex-buffer bind that names what its slot already holds in this recording. The replay keeps every slot until its next bind and already treated an equal bind as nothing to do, so a repeat left out changes nothing drawn. Texture binds aren't filtered, since replay rewrites them.
+- **Why:** Translation thread time, and fewer writes to fresh command memory on the game's threads.
 - **Setting:** none
-- **Switch:** DM_NVN_BINDFILT
-- **Test:** t_ub
+- **Switch:** DM_NVN_BINDFILT, DM_NVN_BINDFILT_BUF (0 records every buffer and sampler bind, 2 verify: each bind the filter would drop is compared at replay with the slot it would store into, a difference is a red line)
+- **Test:** t_ub, t_nvn, quadrun_verify
 - **Commit:** 3178a1b
-- **Measured:** Binds -57%, submit-thread instructions -13%, replay -10% (M6, 2026-10-27). Until the host of r54 the depth-stencil state and the program shared one "seen" bit, so a recording's first program bind after a depth-stencil bind could be dropped when it equalled the previous recording's last program; it never happened in a measured run (0 of 11,884 recordings) and is fixed (t_nvn 11a).
+- **Measured:** Binds -57%, submit-thread instructions -13%, replay -10% (M6, 2026-10-27). Buffer and sampler binds, in-process A/B, M6, headless camp, 10 pairs, 2026-11-10: 1.05 million fewer instructions a frame on the translation thread (0.91 to 1.19), about 5%; process CPU within noise (-0.32 ms, interval -0.87 to +0.14). Verify mode: 3.7 million binds in the camp and 19.4 million over the 43-area tour, none differed. An earlier try (2026-11-09) measured the thread in cycles (-2.6%) and was removed as too small. Until the host of r54 the depth-stencil state and the program shared one "seen" bit, so a recording's first program bind after a depth-stencil bind could be dropped when it equalled the previous recording's last program; it never happened in a measured run (0 of 11,884 recordings) and is fixed (t_nvn 11a).
 - **Status:** confirmed
 - **Covers:** none
 
@@ -842,13 +842,12 @@ Ideas that broke the picture or the game, or measured nothing at all. Listed so 
 
 ## Measured small, open again
 
-These were closed because the gain was small. Since 2026-11-10 the rule is that small gains count: a change that keeps gameplay and the picture as they are lands when it measures a real gain, however small, and "within noise" means measure it better (instructions on the thread, or an in-process A/B), not drop it. None of these has been taken up again yet.
+These were closed because the gain was small. Since 2026-11-10 the rule is that small gains count: a change that keeps gameplay and the picture as they are lands when it measures a real gain, however small, and "within noise" means measure it better (instructions on the thread, or an in-process A/B), not drop it. Taken up again so far: the record-time filter for buffer and sampler binds (built, EC-030).
 
 | Idea | What it measured when closed | Date |
 |---|---|---|
 | Compose into the drawable | The present costs only 0.13 to 0.16 ms | 2026-11-07 |
 | Small pass skips | The transparency resolve reads pyramid levels 1 and 2 every frame; nothing above 0.1 ms | 2026-11-07 |
-| Filter repeated constant-buffer, sampler and vertex-buffer binds at record time | 43% / 95% / 20% of those binds repeat and a third of the recorded binds go, but process CPU did not move (within 0.35 ms a frame; translation thread -2.6% cycles), in-process A/B, 20 pairs; removed. Texture binds can't be filtered: replay rewrites them | 2026-11-09 |
 | Host at -O2 | No significant gain | 2026-10-27 |
 | Forward pass switch specialisation | At most -0.06 ms: the work sits in real branches | 2026-10-29 |
 | Pass overlap beyond the barrier levels | Upper bound -0.1 ms | 2026-10-27 |

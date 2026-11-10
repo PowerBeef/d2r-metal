@@ -506,13 +506,13 @@ static void hostseg_leave(const cmd_t *o, int all);
 // （每帧一两万条绑定记录），其中大半与同一命令缓冲上一次绑的逐字节相同。每个命令缓冲一份影子：本段录制里每类最后一次录下的值，相同就不录。
 // 回放按记录顺序执行、状态一直保持到下一次同类绑定（nvn_mtl.m S），被滤掉的那条在回放时本来就是同值不变，所以画面与原先逐像素相同。
 // 影子在 BeginRecording 清空（每段录制的第一次绑定都录，单独提交、被拷进别的录制都自足），CopyCommands 之后作废（拷进来的记录改了什么不知道）。
-// 贴图 / 采样器 / 缓冲绑定不滤（回放会改写贴图绑定）。DM_NVN_BINDFILT=0 关；每帧滤掉多少条在 @bindskip（bench.py 按段统计）
+// 贴图绑定不滤（回放会改写贴图绑定）；采样器 / 缓冲绑定见下面的 bbf_*。DM_NVN_BINDFILT=0 关；每帧滤掉多少条在 @bindskip（bench.py 按段统计）
 // Filter repeated state binds while recording (picture plan 2.1): before every draw the game binds blend / color / channel mask / multisample / polygon / depth-stencil state, the program, vertex attributes and
 // vertex streams again (10–20 thousand bind records per frame), and most are byte-for-byte the same as the previous bind of that kind on the same command buffer. One shadow per command buffer: the last value
 // recorded for each kind in this recording; an identical bind is not recorded. Replay executes records in order and state holds until the next bind of the same kind (nvn_mtl.m S), so a filtered bind was a
 // no-op on replay anyway and the picture is identical pixel for pixel.
 // The shadow is cleared at BeginRecording (the first bind of each kind in every recording is recorded, so a recording stays self-contained when submitted alone or copied into another one) and voided after
-// CopyCommands (the copied records may have changed anything). Texture / sampler / buffer binds are not filtered (replay rewrites texture binds). DM_NVN_BINDFILT=0 turns it off; the per-frame count of
+// CopyCommands (the copied records may have changed anything). Texture binds are not filtered (replay rewrites texture binds); sampler and buffer binds have their own filter (bbf_* below). DM_NVN_BINDFILT=0 turns it off; the per-frame count of
 // filtered binds is @bindskip (summarized per segment by bench.py)
 typedef struct {
     uint32_t have;   // 位：0–7 各目标的混合，8 颜色，9 通道掩码，10 多重采样，11 多边形，12 深度模板，13 程序，14 顶点属性，15 顶点流 | bits: 0–7 blend per target, 8 color, 9 channel mask, 10 multisample, 11 polygon, 12 depth-stencil, 13 program, 14 vertex attributes, 15 vertex streams
@@ -520,12 +520,16 @@ typedef struct {
     const prog_t *prog; uint64_t prog_serial; int prog_stages;
     int nattr, nstream; va_st attr[16]; vs_st stream[16];
     int st_vm[2], st_wm[2]; float po[3];   // pipeline-set verify mode only (DM_PIPESET=2): have bits 16 / 17 stencil value mask per face, 18 / 19 write mask per face, 20 polygon offset
+    // Buffers and samplers (bbf_* below), one valid bit per slot: uniform buffers per stage and index, samplers per stage and slot, vertex buffers per slot
+    uint16_t ubo_have[6], vbuf_have; uint64_t samp_have[6][2];
+    p_bind_buf ubo[6][16]; NVNbufferRange vbuf[16]; uint64_t samp[6][128];
 } bshadow;
+static void shadow_void(cmd_t *o) { bshadow *s = o->shadow; if (!s) return; s->have = 0; memset(s->ubo_have, 0, sizeof s->ubo_have); s->vbuf_have = 0; memset(s->samp_have, 0, sizeof s->samp_have); }
 int g_bindfilt = -1;   // -1 = 按 DM_NVN_BINDFILT（缺省开）；0 / 1 = 定死（DM_NVN_UB 同进程交替） | -1 = from DM_NVN_BINDFILT (on by default); 0 / 1 = fixed (DM_NVN_UB in-process alternation)
 static _Atomic uint64_t g_bindskip_n;
 static bshadow *shadow_get(cmd_t *o) {
     if (g_bindfilt < 0) { const char *e = getenv("DM_NVN_BINDFILT"); g_bindfilt = !e || strcmp(e, "0"); LOG("NVN：录制时滤重复状态绑定%s | NVN: filter repeated state binds while recording %s", g_bindfilt ? "开" : "关（DM_NVN_BINDFILT=0）", g_bindfilt ? "on" : "off (DM_NVN_BINDFILT=0)"); }
-    if (!g_bindfilt) { if (o->shadow) ((bshadow *)o->shadow)->have = 0; return NULL; }   // 关着时影子跟不上：作废，再开时从头记 | while off the shadow falls behind: void it, so it starts afresh when turned back on
+    if (!g_bindfilt) { shadow_void(o); return NULL; }   // 关着时影子跟不上：作废，再开时从头记 | while off the shadow falls behind: void it, so it starts afresh when turned back on
     if (!o->shadow) o->shadow = calloc(1, sizeof(bshadow));
     return o->shadow;
 }
@@ -533,6 +537,63 @@ static bshadow *shadow_get(cmd_t *o) {
 static int shadow_same(bshadow *s, int bit, void *slot, const void *v, size_t n) {
     if ((s->have >> bit & 1) && !memcmp(slot, v, n)) { atomic_fetch_add_explicit(&g_bindskip_n, 1, memory_order_relaxed); return 1; }
     memcpy(slot, v, n); s->have |= 1u << bit; return 0;
+}
+// ---------- Repeated buffer and sampler binds are not recorded either ----------
+// Uniform-buffer, sampler and vertex-buffer binds repeat as the state binds above do: in the camp about four uniform-buffer binds in ten, nearly every
+// sampler bind and one vertex-buffer bind in five name what the same slot already holds in this recording. The replay keeps each slot's binding until
+// the next bind of that slot and already treats an equal bind as nothing to do (state_op in nvn_mtl.m compares before it stores), so a repeat left
+// out of the recording changes nothing that is drawn. What it saves: the record (a write to fresh command memory on a game thread), one command in
+// the scan of the submission and one in its replay. Texture binds stay as they are: the replay rewrites those bindings itself.
+// Buffer contents play no part: a slot is bound by address and read when a draw uses it, so new contents at the same address need no new bind.
+// DM_NVN_BINDFILT_BUF=0 records every such bind (an A/B baseline; in process DM_NVN_UB=off=@set:g_bindfilt_buf=0); 1 is the default;
+// 2 is the verify mode: nothing is left out, each bind the filter would have dropped is remembered by its record's address, and the replay
+// compares it with the slot it is about to store into (the mode is read once, at the first bind; bbf_verify in nvn_mtl.m: "buffer bind verify: N checked, M differ", a difference is a red line).
+// Counted in @bindskip with the state binds.
+int g_bindfilt_buf = -1;
+__attribute__((weak)) int (*g_nvn_bbf_take)(const void *rec, size_t n);   // set by the recorder in its verify mode; declared weak in both files, which some tests compile as one unit
+static int bbf_take(const void *rec, size_t n);
+static int bbf_mode(void) {
+    if (g_bindfilt_buf < 0) { const char *e = getenv("DM_NVN_BINDFILT_BUF"); g_bindfilt_buf = e && *e ? atoi(e) : 1; if (g_bindfilt_buf == 2) g_nvn_bbf_take = bbf_take; if (g_bindfilt_buf != 1) LOG("NVN: repeated buffer and sampler binds: %s (DM_NVN_BINDFILT_BUF=%d)", g_bindfilt_buf == 2 ? "recorded and verified" : "recorded", g_bindfilt_buf); }
+    return g_bindfilt_buf;
+}
+// Verify mode: the records the filter would have dropped, by address, with a hash of their bytes (command memory is used again)
+#define BBF_TAB 8192
+static struct { const void *p; uint64_t h; } g_bbf_tab[BBF_TAB]; static pthread_mutex_t g_bbf_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t bbf_hash(const void *v, size_t n) { const uint8_t *b = v; uint64_t h = 0xcbf29ce484222325ull; for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 0x100000001b3ull; return h | 1; }
+static void bbf_note(const void *rec, size_t n) {
+    pthread_mutex_lock(&g_bbf_mu); unsigned s = (unsigned)(((uintptr_t)rec >> 3) * 0x9E3779B1u) % BBF_TAB;
+    for (int k = 0; k < 16; k++, s = (s + 1) % BBF_TAB) if (!g_bbf_tab[s].p || g_bbf_tab[s].p == rec || k == 15) { g_bbf_tab[s].p = rec; g_bbf_tab[s].h = bbf_hash(rec, n); break; }
+    pthread_mutex_unlock(&g_bbf_mu);
+}
+// The replay asks: would the filter have dropped the record at rec (n bytes)? Each note answers once
+static int bbf_take(const void *rec, size_t n) {
+    if (g_bindfilt_buf != 2) return 0;
+    int hit = 0; pthread_mutex_lock(&g_bbf_mu); unsigned s = (unsigned)(((uintptr_t)rec >> 3) * 0x9E3779B1u) % BBF_TAB;
+    for (int k = 0; k < 16; k++, s = (s + 1) % BBF_TAB) { if (!g_bbf_tab[s].p) break; if (g_bbf_tab[s].p == rec) { hit = g_bbf_tab[s].h == bbf_hash(rec, n); g_bbf_tab[s].p = (void *)1; g_bbf_tab[s].h = 0; break; } }
+    pthread_mutex_unlock(&g_bbf_mu); return hit;
+}
+// 1 = this bind repeats what the slot holds in this recording and is to be left out; 0 = record it (*verify set when the verify mode wants it noted)
+static int bbf_ubo(cmd_t *o, int st, int i, uint64_t a, uint64_t n, int *verify) {
+    int m = bbf_mode(); bshadow *s = m ? shadow_get(o) : NULL; *verify = 0;
+    if (!s || st < 0 || st >= 6 || i < 0 || i >= 16) return 0;
+    p_bind_buf v = { st, i, a, n };
+    if ((s->ubo_have[st] >> i & 1) && !memcmp(&s->ubo[st][i], &v, sizeof v)) { if (m == 2) { *verify = 1; return 0; } atomic_fetch_add_explicit(&g_bindskip_n, 1, memory_order_relaxed); return 1; }
+    s->ubo[st][i] = v; s->ubo_have[st] |= (uint16_t)(1u << i); return 0;
+}
+static int bbf_samp(cmd_t *o, int st, int first, int n, const uint64_t *h, int *verify) {
+    int m = bbf_mode(); bshadow *s = m ? shadow_get(o) : NULL; *verify = 0;
+    if (!s || st < 0 || st >= 6 || first < 0 || n <= 0 || first + n > 128) return 0;
+    int same = 1; for (int k = first; k < first + n && same; k++) same = (s->samp_have[st][k >> 6] >> (k & 63) & 1) && s->samp[st][k] == h[k - first];
+    if (same) { if (m == 2) { *verify = 1; return 0; } atomic_fetch_add_explicit(&g_bindskip_n, 1, memory_order_relaxed); return 1; }
+    for (int k = first; k < first + n; k++) { s->samp[st][k] = h[k - first]; s->samp_have[st][k >> 6] |= 1ull << (k & 63); }
+    return 0;
+}
+static int bbf_vbuf(cmd_t *o, int first, int n, const NVNbufferRange *rg, int *verify) {
+    int m = bbf_mode(); bshadow *s = m ? shadow_get(o) : NULL; *verify = 0;
+    if (!s || n <= 0) return 0;
+    unsigned mask = ((1u << n) - 1) << first;
+    if ((s->vbuf_have & mask) == mask && !memcmp(&s->vbuf[first], rg, sizeof *rg * (size_t)n)) { if (m == 2) { *verify = 1; return 0; } atomic_fetch_add_explicit(&g_bindskip_n, 1, memory_order_relaxed); return 1; }
+    memcpy(&s->vbuf[first], rg, sizeof *rg * (size_t)n); s->vbuf_have |= (uint16_t)mask; return 0;
 }
 // ---------- The game's pipeline-set function skips true repeats (rewriter PIPESET, product r54 on) ----------
 // Before nearly every draw the game's Nvn_CtxSetPipelineState (main+0x1746558) binds a whole pipeline again with 12 to 14 NVN calls, and about four sets in five
@@ -794,7 +855,7 @@ NVN(nvnCommandBufferBeginRecording, void, NVNcommandBuffer *c) {
     dm_jitter_refresh(); dm_pipeset_refresh();
     if (o->recording) LOG("【红】BeginRecording 重入");
     o->recording = 1;
-    if (o->shadow) ((bshadow *)o->shadow)->have = 0;   // 每段录制从「什么都不知道」起：第一次绑定一定录 | each recording starts knowing nothing: the first bind of each kind is always recorded
+    shadow_void(o);   // 每段录制从「什么都不知道」起：第一次绑定一定录 | each recording starts knowing nothing: the first bind of each kind is always recorded
     o->last_pipe = 0;   // and no pipeline counts as set (see the pipeline-set fast path above)
     uint8_t *p = cmd_alloc(o, 8); put_hdr(p, OP_BEGIN, 8); o->begin = p;
     hostseg_rec_begin(o);
@@ -830,7 +891,7 @@ NVN(nvnCommandBufferCopyCommands, void, NVNcommandBuffer *c, int n, const NVNcom
         }
         if (m) { pthread_mutex_lock(&g_hostseg_mu); hostseg_pin(m, -1); pthread_mutex_unlock(&g_hostseg_mu); }
     }
-    if (CB(c)->shadow) ((bshadow *)CB(c)->shadow)->have = 0;   // 拷进来的记录可能改了任何状态：影子作废 | the copied records may have changed any state: the shadow is void
+    shadow_void(CB(c));   // 拷进来的记录可能改了任何状态：影子作废 | the copied records may have changed any state: the shadow is void
     CB(c)->last_pipe = 0;
 }
 NVN(nvnCommandBufferSignalEvent, void, NVNcommandBuffer *c, const NVNevent *e, NVNeventSignalMode m, NVNeventSignalLocation loc, int flags, uint32_t v) {
@@ -936,13 +997,18 @@ NVN(nvnCommandBufferBindVertexStreamState, void, NVNcommandBuffer *c, int n, con
 }
 NVN(nvnCommandBufferBindVertexBuffers, void, NVNcommandBuffer *c, int first, int n, const NVNbufferRange *rg) {
     if (first < 0 || n < 0 || first + n > 16) { LOG("【红】BindVertexBuffers first=%d n=%d", first, n); return; }
+    int vf; if (bbf_vbuf(CB(c), first, n, rg, &vf)) return;
     p_bind_vbuf *r = RECN(c, OP_BIND_VBUF, p_bind_vbuf, r, n); r->first = first; r->n = n; memcpy(r->r, rg, sizeof *rg * n);
+    if (vf) bbf_note(r, offsetof(p_bind_vbuf, r) + sizeof *rg * (size_t)n);
 }
-NVN(nvnCommandBufferBindUniformBuffer, void, NVNcommandBuffer *c, NVNshaderStage st, int i, NVNbufferAddress a, size_t n) {
-    *REC(c, OP_BIND_UBO, p_bind_buf) = (p_bind_buf){st, i, a, n};
+static void bind_ubo(NVNcommandBuffer *c, int st, int i, uint64_t a, uint64_t n) {
+    int vf; if (bbf_ubo(CB(c), st, i, a, n, &vf)) return;
+    p_bind_buf *r = REC(c, OP_BIND_UBO, p_bind_buf); *r = (p_bind_buf){st, i, a, n};
+    if (vf) bbf_note(r, sizeof *r);
 }
+NVN(nvnCommandBufferBindUniformBuffer, void, NVNcommandBuffer *c, NVNshaderStage st, int i, NVNbufferAddress a, size_t n) { bind_ubo(c, (int)st, i, a, n); }
 NVN(nvnCommandBufferBindUniformBuffers, void, NVNcommandBuffer *c, NVNshaderStage st, int first, int n, const NVNbufferRange *rg) {
-    for (int i = 0; i < n; i++) *REC(c, OP_BIND_UBO, p_bind_buf) = (p_bind_buf){st, first + i, rg[i].address, rg[i].size};
+    for (int i = 0; i < n; i++) bind_ubo(c, (int)st, first + i, rg[i].address, rg[i].size);
 }
 NVN(nvnCommandBufferBindStorageBuffer, void, NVNcommandBuffer *c, NVNshaderStage st, int i, NVNbufferAddress a, size_t n) {
     *REC(c, OP_BIND_SSBO, p_bind_buf) = (p_bind_buf){st, i, a, n};
@@ -952,7 +1018,9 @@ NVN(nvnCommandBufferBindStorageBuffers, void, NVNcommandBuffer *c, NVNshaderStag
 }
 static void bind_handles(NVNcommandBuffer *c, int op, int st, int first, int n, const uint64_t *h) {
     if (n < 0 || n > 32) { LOG("【红】绑定句柄数 %d", n); return; }
+    int vf = 0; if (op == OP_BIND_SAMP && bbf_samp(CB(c), st, first, n, h, &vf)) return;
     p_bind_handles *r = RECN(c, op, p_bind_handles, h, n); r->stage = st; r->first = first; r->n = n; memcpy(r->h, h, 8 * n);
+    if (vf) bbf_note(r, offsetof(p_bind_handles, h) + 8 * (size_t)n);
 }
 // 图像（可写贴图）：句柄 = 贴图池号（GetImageHandle 原样返回；游戏不调 RegisterImage，图像与贴图共用登记）
 // Image (writable texture): handle = texture pool index (GetImageHandle returns it as-is; the game does not call RegisterImage, images and textures share registration)

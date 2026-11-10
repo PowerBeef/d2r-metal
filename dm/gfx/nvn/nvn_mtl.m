@@ -4237,6 +4237,16 @@ static int first_draw_covers(int i, id<MTLTexture> t, NSUInteger level) {
 
 // 下标一律两头查（命令内存在游戏手里，录制侧的检查不能当保证）：负的阶段 / 槽 / 起始号与越上界一样整条不执行
 // Indices are checked at both ends (the command memory is in the game's hands, so the record-side checks are no guarantee): a negative stage / slot / first index is skipped as a whole, like one past the upper bound
+// The verify mode of the recorder's buffer and sampler bind filter (hle_nvn.c, DM_NVN_BINDFILT_BUF=2): rec is a bind the filter would have left
+// out; the slot it is about to be stored into must already hold the same bytes
+__attribute__((weak)) int (*g_nvn_bbf_take)(const void *rec, size_t n);   // set by the recorder in its verify mode; declared weak in both files, which some tests compile as one unit
+static uint64_t g_bbf_checked, g_bbf_bad;
+static void bbf_verify(const void *rec, size_t reclen, const void *slot, const void *val, size_t n, const char *what) {
+    if (!g_nvn_bbf_take(rec, reclen)) return;
+    g_bbf_checked++;
+    if (memcmp(slot, val, n)) { g_bbf_bad++; RED_ONCE("buffer bind verify: a %s bind the filter would leave out is not a repeat at replay (frame %llu)", what, (unsigned long long)atomic_load(&g_cur_frame)); }
+    static uint64_t said; uint64_t f = atomic_load(&g_cur_frame) / 300; if (f != said) { said = f; MLOG("buffer bind verify: %llu checked, %llu differ", (unsigned long long)g_bbf_checked, (unsigned long long)g_bbf_bad); }
+}
 static int state_op(uint32_t op, const void *a) {
     switch (op) {
         case OP_SCISSOR: R.sc = *(const p_scissor *)a; R.has_sc = 1; break;
@@ -4257,11 +4267,13 @@ static int state_op(uint32_t op, const void *a) {
         }
         case OP_BIND_VATTR: { const p_bind_vattr *b = a; if (S.nattr != b->n || memcmp(S.attr, b->st, 4 * b->n)) { memcpy(S.attr, b->st, 4 * b->n); S.nattr = b->n; g_pso_dirty = 1; } break; }
         case OP_BIND_VSTREAM: { const p_bind_vstream *b = a; if (S.nstream != b->n || memcmp(S.stream, b->st, 8 * b->n)) { memcpy(S.stream, b->st, 8 * b->n); S.nstream = b->n; g_pso_dirty = 1; } break; }
-        case OP_BIND_VBUF: { const p_bind_vbuf *b = a; if (b->first >= 0 && b->n >= 0 && b->first + b->n <= 16) memcpy(&S.vbuf[b->first], b->r, sizeof *b->r * b->n); break; }
-        case OP_BIND_UBO: { const p_bind_buf *b = a; if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16 && memcmp(&S.ubo[b->stage][b->index], b, sizeof *b)) { S.ubo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
+        case OP_BIND_VBUF: { const p_bind_vbuf *b = a; if (b->first >= 0 && b->n >= 0 && b->first + b->n <= 16) { if (g_nvn_bbf_take) bbf_verify(a, offsetof(p_bind_vbuf, r) + sizeof *b->r * (size_t)b->n, &S.vbuf[b->first], b->r, sizeof *b->r * (size_t)b->n, "vertex buffer"); memcpy(&S.vbuf[b->first], b->r, sizeof *b->r * b->n); } break; }
+        case OP_BIND_UBO: { const p_bind_buf *b = a; if (g_nvn_bbf_take && b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16) bbf_verify(a, sizeof *b, &S.ubo[b->stage][b->index], b, sizeof *b, "uniform buffer");
+            if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16 && memcmp(&S.ubo[b->stage][b->index], b, sizeof *b)) { S.ubo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
         case OP_BIND_SSBO: { const p_bind_buf *b = a; if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16 && memcmp(&S.ssbo[b->stage][b->index], b, sizeof *b)) { S.ssbo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; g_tab_gen[b->stage][0]++; } break; }
         case OP_BIND_TEX: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128 && memcmp(&S.tex[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.tex[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; g_tab_gen[b->stage][1]++; } break; }
-        case OP_BIND_SAMP: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128 && memcmp(&S.samp[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.samp[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; g_tab_gen[b->stage][1]++; } break; }
+        case OP_BIND_SAMP: { const p_bind_handles *b = a; if (g_nvn_bbf_take && b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128) bbf_verify(a, offsetof(p_bind_handles, h) + 8 * (size_t)b->n, &S.samp[b->stage][b->first], b->h, 8 * (size_t)b->n, "sampler");
+            if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128 && memcmp(&S.samp[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.samp[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; g_tab_gen[b->stage][1]++; } break; }
         case OP_BIND_IMG: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 32) { if (memcmp(&S.img[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.img[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } } else RED_ONCE("图像槽越界 阶段 %d 起 %d 数 %d", b->stage, b->first, b->n); break; }
         case OP_STENCIL: {
             const p_stencil *b = a;

@@ -154,6 +154,7 @@ CHECKS = [
     ('dm/tools/pso_seed.py', 'python3 dm/tools/pso_seed.py gate --backend cli --headless', 'the pipeline warm-up check on the command-line host'),
     ('dm/gfx/nvn/hle_nvn.c', 'python3 dm/tools/scenario.py run dm/verify/scenarios/pipeset_verify.scn --headless', "the recorder: the pipeline-set fast path's verify mode"),
     ('dm/gfx/nvn/nvn_obj.h', 'python3 dm/tools/scenario.py run dm/verify/scenarios/pipeset_verify.scn --headless', "the recorder: the pipeline-set fast path's verify mode"),
+    ('dm/gfx/nvn/hle_nvn.c', 'python3 dm/tools/scenario.py run dm/verify/scenarios/quadrun_verify.scn --headless', "the recorder's buffer and sampler bind filter and the replay's shortcuts, in their verify modes"),
     ('dm/gfx/nvn/nvn_mtl.m', 'python3 dm/tools/scenario.py run dm/verify/scenarios/quadrun_verify.scn --headless', "the replay: the 2D quad runs' verify mode"),
     ('dm/gfx/nvn/nvn_mtl.m', 'python3 dm/tools/scenario.py run dm/verify/scenarios/pso_wait.scn --headless', "the replay: a run with no warm-up list, effect draws waiting for their pipelines"),
     ('dm/host/dm_bootlist.c', 'python3 dm/verify/bootlist_check.py', 'the boot list a machine learns, over two launches'),

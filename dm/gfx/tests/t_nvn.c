@@ -699,6 +699,52 @@ int main(void) {
         P(nvnCommandBufferBeginRecording)(&cf); P(nvnCommandBufferBindDepthStencilState)(&cf, &dy); P(nvnCommandBufferBindDepthStencilState)(&cf, &dy);
         NVNcommandHandle hd = P(nvnCommandBufferEndRecording)(&cf);
         EXPECT("10c 再开：从头记（dy 录一次）", 1, count_ops(hd, OP_BIND_STATE, 5));
+        // 10d the buffer and sampler binds (bbf_* in hle_nvn.c): a slot's repeat in one recording is left out; another slot, another value, a new
+        //     recording and CopyCommands all record; the verify mode records everything and remembers the repeats for the replay
+        {
+            NVNbufferRange vb[2] = {{0x1000, 64}, {0x2000, 64}}, vb2[1] = {{0x3000, 64}}; NVNseparateSamplerHandle sh[2] = {{5}, {6}}, sh2[2] = {{5}, {7}};
+            uint64_t skip1 = atomic_load(&g_bindskip_n);
+            P(nvnCommandBufferBeginRecording)(&cf);
+            for (int k = 0; k < 3; k++) {
+                P(nvnCommandBufferBindUniformBuffer)(&cf, NVN_SHADER_STAGE_VERTEX, 2, 0x5000, 256);
+                P(nvnCommandBufferBindSeparateSamplers)(&cf, NVN_SHADER_STAGE_FRAGMENT, 3, 2, sh);
+                P(nvnCommandBufferBindVertexBuffers)(&cf, 0, 2, vb);
+            }
+            P(nvnCommandBufferBindUniformBuffer)(&cf, NVN_SHADER_STAGE_VERTEX, 2, 0x5000, 512);     // another size
+            P(nvnCommandBufferBindUniformBuffer)(&cf, NVN_SHADER_STAGE_FRAGMENT, 2, 0x5000, 512);   // another stage: its own slot
+            P(nvnCommandBufferBindUniformBuffer)(&cf, NVN_SHADER_STAGE_VERTEX, 3, 0x5000, 512);     // another index
+            P(nvnCommandBufferBindSeparateSamplers)(&cf, NVN_SHADER_STAGE_FRAGMENT, 3, 2, sh2);      // one of the two differs: the whole bind is recorded
+            P(nvnCommandBufferBindSeparateSampler)(&cf, NVN_SHADER_STAGE_FRAGMENT, 4, sh2[1]);       // slot 4 now holds 7: a repeat
+            P(nvnCommandBufferBindSeparateSamplers)(&cf, NVN_SHADER_STAGE_VERTEX, 3, 2, sh);         // another stage
+            P(nvnCommandBufferBindVertexBuffers)(&cf, 1, 1, vb2);                                   // slot 1 changes
+            P(nvnCommandBufferBindVertexBuffers)(&cf, 0, 1, vb);                                    // slot 0 still holds it: a repeat
+            P(nvnCommandBufferBindVertexBuffers)(&cf, 0, 2, vb);                                    // slot 1 no longer does
+            NVNcommandHandle he = P(nvnCommandBufferEndRecording)(&cf);
+            EXPECT("10d uniform buffers: the first, another size, another stage, another index", 4, count_ops(he, OP_BIND_UBO, -1));
+            EXPECT("10d samplers: the first, a changed pair, another stage", 3, count_ops(he, OP_BIND_SAMP, -1));
+            EXPECT("10d vertex buffers: the first, slot 1 changed, both again", 3, count_ops(he, OP_BIND_VBUF, -1));
+            EXPECT("10d left out: 2 x 3 repeats, one sampler, one vertex buffer", 8, atomic_load(&g_bindskip_n) - skip1);
+            P(nvnCommandBufferBeginRecording)(&cf); P(nvnCommandBufferBindUniformBuffer)(&cf, NVN_SHADER_STAGE_VERTEX, 2, 0x5000, 512); NVNcommandHandle hf = P(nvnCommandBufferEndRecording)(&cf);
+            EXPECT("10d a new recording records a bind the last one made", 1, count_ops(hf, OP_BIND_UBO, -1));
+            P(nvnCommandBufferBeginRecording)(&cf);
+            P(nvnCommandBufferBindVertexBuffers)(&cf, 0, 2, vb); P(nvnCommandBufferCopyCommands)(&cf, 1, &hf); P(nvnCommandBufferBindVertexBuffers)(&cf, 0, 2, vb); P(nvnCommandBufferBindVertexBuffers)(&cf, 0, 2, vb);
+            NVNcommandHandle hg = P(nvnCommandBufferEndRecording)(&cf);
+            EXPECT("10d after CopyCommands the first bind is recorded again", 2, count_ops(hg, OP_BIND_VBUF, -1));
+            g_bindfilt_buf = 0;
+            P(nvnCommandBufferBeginRecording)(&cf); for (int k = 0; k < 3; k++) P(nvnCommandBufferBindUniformBuffer)(&cf, NVN_SHADER_STAGE_VERTEX, 2, 0x5000, 256);
+            NVNcommandHandle hh = P(nvnCommandBufferEndRecording)(&cf);
+            EXPECT("10d off (DM_NVN_BINDFILT_BUF=0): all three recorded", 3, count_ops(hh, OP_BIND_UBO, -1));
+            g_bindfilt_buf = 2;
+            P(nvnCommandBufferBeginRecording)(&cf); for (int k = 0; k < 3; k++) P(nvnCommandBufferBindUniformBuffer)(&cf, NVN_SHADER_STAGE_VERTEX, 2, 0x5000, 256);
+            NVNcommandHandle hi = P(nvnCommandBufferEndRecording)(&cf);
+            EXPECT("10d verify: all three recorded", 3, count_ops(hi, OP_BIND_UBO, -1));
+            { int first = 1, took = 0, again = 0;   // the first record is no repeat; the two after it are remembered, each once
+                for (const uint8_t *q = (const uint8_t *)hi;;) { op_hdr r; memcpy(&r, q, sizeof r); if (r.op == OP_END) break; if (r.op == OP_JUMP) { memcpy(&q, q + 8, 8); continue; }
+                    if (r.op == OP_BIND_UBO) { int tk = bbf_take(q + 8, sizeof(p_bind_buf)); if (first) { EXPECT("10d verify: the first bind is not marked", 0, tk); first = 0; } else { took += tk; again += bbf_take(q + 8, sizeof(p_bind_buf)); } }
+                    q += r.size; }
+                EXPECT("10d verify: both repeats are marked for the replay", 2, took); EXPECT("10d verify: a mark answers once", 0, again); }
+            g_bindfilt_buf = 1;
+        }
         P(nvnCommandBufferFinalize)(&cf);
         EXPECT("10 Finalize 放掉影子", 0, ((cmd_t *)&cf)->shadow != NULL);
     }
