@@ -58,6 +58,7 @@
 #include <unistd.h>
 #include <stdatomic.h>
 #include <objc/runtime.h>
+#include <arm_neon.h>
 #include <sys/sysctl.h>
 #include <spawn.h>
 #include <poll.h>
@@ -312,6 +313,7 @@ void bf_want_note(const char *key) {
 // ---------- Memory pools ----------
 typedef struct { uintptr_t lo, hi; uintptr_t base; __unsafe_unretained id<MTLBuffer> buf; uint64_t gpu; const void *key; int res; } pool_ent;   // res：已放进驻留集（按需，见 pool_res） | res: already put in the residency set (on demand, see pool_res)
 static pool_ent *g_pools; static int g_npool, g_cap;
+static _Atomic uint64_t g_pool_gen = 1;   // bumped under g_mu whenever g_pools changes: what a thread remembers of a pool is good while it stands (mtl_gpu_addr)
 static NSMutableArray *g_keep;                  // 持有缓冲引用（pool_ent 里是不持有的指针） | Holds the buffer references (pool_ent has non-owning pointers)
 static uint64_t g_pool_adds;
 
@@ -489,7 +491,7 @@ void mtl_pool_add(const void *mem, uint64_t size) {
     if (!buf) MDIE("内存池 %p+%#llx 建零拷贝缓冲失败", mem, (unsigned long long)size);
     pthread_mutex_lock(&g_mu);
     if (g_npool == g_cap) { g_cap = g_cap ? g_cap * 2 : 64; g_pools = realloc(g_pools, g_cap * sizeof *g_pools); }
-    g_pools[g_npool++] = (pool_ent){lo, hi, a, buf, buf.gpuAddress, mem, 0};   // 先不进驻留集：第一次被取址时才放进去（pool_res） | not in the residency set yet: put in the first time it is addressed (pool_res)
+    g_pools[g_npool++] = (pool_ent){lo, hi, a, buf, buf.gpuAddress, mem, 0}; atomic_fetch_add(&g_pool_gen, 1);   // 先不进驻留集：第一次被取址时才放进去（pool_res） | not in the residency set yet: put in the first time it is addressed (pool_res)
     g_pool_adds++;
     [g_keep addObject:buf];
     pthread_mutex_unlock(&g_mu);
@@ -500,31 +502,47 @@ void mtl_pool_del(const void *mem) {
     id<MTLBuffer> gone = nil;
     pthread_mutex_lock(&g_mu);
     for (int i = 0; i < g_npool; i++)
-        if (g_pools[i].key == mem) { gone = g_pools[i].buf; [g_keep removeObject:gone]; g_pools[i] = g_pools[--g_npool]; break; }
+        if (g_pools[i].key == mem) { gone = g_pools[i].buf; [g_keep removeObject:gone]; g_pools[i] = g_pools[--g_npool]; atomic_fetch_add(&g_pool_gen, 1); break; }
     pthread_mutex_unlock(&g_mu);
     defer_obj_release(gone);   // 退役：等用过它的提交完成后放掉，并移出驻留集（原先只从 g_keep 摘掉——驻留集强持有它，零拷贝缓冲对象永远不销毁） | retire: release after the submissions that used it complete, and remove from the residency set (it used to be only removed from g_keep - the residency set holds it strongly, so the zero-copy buffer object was never destroyed)
 }
 
-int mtl_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off) {
+// The translation thread asks for a pool's Metal buffer some ten thousand times a frame (every uniform buffer of every argument encode, every
+// vertex buffer of every draw), and each lookup took the pool lock and walked the table. Each thread now remembers the last pools it found,
+// with the pool table's generation (g_pool_gen, bumped under the lock whenever a pool is added or removed): while the generation stands, a
+// remembered pool answers without the lock. Only pools already in the residency set are remembered, so pool_res has nothing left to do for them.
+// DM_NVN_POOLFAST=0 always takes the lock, 2 also takes it after every remembered answer and compares the two (a difference is a red line).
+int g_poolfast = -1;
+typedef struct { uint64_t lo, hi, base, gpu, gen; void *buf; } pool_hit;
+static _Thread_local pool_hit t_pool_hit[4]; static _Thread_local unsigned t_pool_next;
+static _Atomic uint64_t g_pool_fast_bad;
+static int poolfast_mode(void) { if (g_poolfast < 0) { const char *e = getenv("DM_NVN_POOLFAST"); g_poolfast = !e || !*e ? 1 : !strcmp(e, "0") ? 0 : !strcmp(e, "2") ? 2 : 1; } return g_poolfast; }
+static int pool_find(uint64_t addr, uint64_t len, void **buf, uint64_t *off, uint64_t *gpu) {   // under the lock; remembers the pool for this thread
     int ok = 0;
     pthread_mutex_lock(&g_mu);
     for (int i = 0; i < g_npool; i++)
         if (addr >= g_pools[i].lo && addr + len <= g_pools[i].hi) {
-            pool_res(i); *buf = (__bridge void *)g_pools[i].buf; *off = addr - g_pools[i].base; ok = 1; break;
+            pool_res(i); *buf = (__bridge void *)g_pools[i].buf; *off = addr - g_pools[i].base; *gpu = g_pools[i].gpu + *off; ok = 1;
+            pool_hit *h = &t_pool_hit[t_pool_next++ & 3];
+            *h = (pool_hit){g_pools[i].lo, g_pools[i].hi, g_pools[i].base, g_pools[i].gpu, atomic_load(&g_pool_gen), (__bridge void *)g_pools[i].buf};
+            break;
         }
     pthread_mutex_unlock(&g_mu);
     return ok;
 }
 int mtl_gpu_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off, uint64_t *gpu) {
-    int ok = 0;
-    pthread_mutex_lock(&g_mu);
-    for (int i = 0; i < g_npool; i++)
-        if (addr >= g_pools[i].lo && addr + len <= g_pools[i].hi) {
-            pool_res(i); *buf = (__bridge void *)g_pools[i].buf; *off = addr - g_pools[i].base; *gpu = g_pools[i].gpu + *off; ok = 1; break;
-        }
-    pthread_mutex_unlock(&g_mu);
-    return ok;
+    int mode = poolfast_mode();
+    if (mode) {
+        uint64_t gen = atomic_load_explicit(&g_pool_gen, memory_order_acquire); pool_hit *t = t_pool_hit;
+        for (int k = 0; k < 4; k++) if (t[k].gen == gen && addr >= t[k].lo && addr + len <= t[k].hi) {
+            *buf = t[k].buf; *off = addr - t[k].base; *gpu = t[k].gpu + *off;
+            if (mode == 2) { void *b2 = NULL; uint64_t o2 = 0, g2 = 0; int ok2 = pool_find(addr, len, &b2, &o2, &g2);
+                if ((!ok2 || b2 != *buf || o2 != *off || g2 != *gpu) && atomic_fetch_add(&g_pool_fast_bad, 1) < 8) MLOG("【红】pool lookup: the remembered answer for %#llx+%llu differs from the table's", (unsigned long long)addr, (unsigned long long)len); }
+            return 1; }
+    }
+    return pool_find(addr, len, buf, off, gpu);
 }
+int mtl_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off) { uint64_t gpu; return mtl_gpu_addr(addr, len, buf, off, &gpu); }
 
 // ---------- 提交 ----------
 // ---------- Submission ----------
@@ -808,8 +826,19 @@ static inline void enc_r_depth_clip(RENC e, BOOL v) { [e setDepthClipMode:v ? MT
 static inline void enc_r_stencil_ref(RENC e, uint32_t f, uint32_t b) { (void)b; [e setStencilReferenceValue:f]; }
 static inline void enc_r_blend_color(RENC e, float r, float g, float b, float a) { [e setBlendColorRed:r green:g blue:b alpha:a]; }
 static inline void enc_r_visibility(RENC e, MTLVisibilityResultMode m, NSUInteger o) { [e setVisibilityResultMode:m offset:o]; }
-static inline void enc_r_vbuf(RENC e, NSUInteger i, uint64_t gpu) { (void)e; [g_vt setAddress:gpu atIndex:i]; }
-static inline void enc_r_args(RENC e, MTLRenderStages s, uint64_t gpu, NSUInteger i) { (void)e; [(s == MTLRenderStageVertex ? g_vt : g_ft) setAddress:gpu atIndex:i]; }
+// The two argument tables keep what was set on them from one draw and one pass to the next (Metal takes a snapshot of a table at each draw), and
+// only these two functions write them: an address already at its index is not set again. Every draw set the zero buffer and its vertex buffers
+// anew, and a reused argument block set its address again. DM_NVN_ATDEDUP=0 sets every time (an A/B baseline; @set:g_atdedup=0 in process).
+int g_atdedup = -1;
+static uint64_t g_at_last[2][32]; static uint32_t g_at_set[2];
+static inline int at_same(int t, NSUInteger i, uint64_t gpu) {
+    if (g_atdedup < 0) { const char *e = getenv("DM_NVN_ATDEDUP"); g_atdedup = !(e && !strcmp(e, "0")); }
+    if (i >= 32) return 0;
+    if (g_atdedup && (g_at_set[t] >> i & 1) && g_at_last[t][i] == gpu) return 1;
+    g_at_last[t][i] = gpu; g_at_set[t] |= 1u << i; return 0;
+}
+static inline void enc_r_vbuf(RENC e, NSUInteger i, uint64_t gpu) { (void)e; if (!at_same(0, i, gpu)) [g_vt setAddress:gpu atIndex:i]; }
+static inline void enc_r_args(RENC e, MTLRenderStages s, uint64_t gpu, NSUInteger i) { (void)e; int t = s != MTLRenderStageVertex; if (!at_same(t, i, gpu)) [(t ? g_ft : g_vt) setAddress:gpu atIndex:i]; }
 static inline void enc_r_draw(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n) { [e drawPrimitives:p vertexStart:v vertexCount:n]; }
 static inline void enc_r_draw_instanced(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n, NSUInteger i, NSUInteger b) { [e drawPrimitives:p vertexStart:v vertexCount:n instanceCount:i baseInstance:b]; }
 static inline void enc_r_draw_indexed(RENC e, MTLPrimitiveType p, NSUInteger n, MTLIndexType t, uint64_t gpu, NSUInteger len, NSUInteger i, NSInteger bv, NSUInteger bi) { [e drawIndexedPrimitives:p indexCount:n indexType:t indexBuffer:gpu indexBufferLength:len instanceCount:i baseVertex:bv baseInstance:bi]; }
@@ -1831,6 +1860,10 @@ static int g_pg_b; static uint32_t g_pg_used;
 static pg_pass *g_pg_pass; static int g_pg_np, g_pg_cap, g_pg_open = -1;
 static uint64_t g_pg_frame = ~0ull; static int g_pg_idx;
 static pthread_mutex_t g_pg_mu = PTHREAD_MUTEX_INITIALIZER;
+// Generations of the tables the driver-segment blocks copy, per stage: [0] the storage buffer table, [1] the texture and sampler tables. Bumped
+// wherever one of them is written (state_op, the draws that redirect a texture, every whole-state restore through args_dirty_all)
+static uint32_t g_tab_gen[6][2];
+static inline void tabs_dirty_all(void) { for (int i = 0; i < 6; i++) { g_tab_gen[i][0]++; g_tab_gen[i][1]++; } }
 static inline void args_dirty_all(void);
 typedef struct { double sum, last; uint64_t n; pg_pass meta; } pg_stat;
 static pg_stat g_pg_st[256]; static uint64_t g_pg_rep_frame;
@@ -2371,7 +2404,7 @@ static int scissor_full(const tex_t *t, const view_t *v, int has_v) {
 
 // ================= 着色器 / 描述符池 / 管线 / 绘制 =================
 // ================= Shaders / descriptor pool / pipelines / draws =================
-static pthread_mutex_t g_rmu = PTHREAD_MUTEX_INITIALIZER;
+static os_unfair_lock g_rmu = OS_UNFAIR_LOCK_INIT;   /* was a pthread mutex: taken for every argument encode, and never waited on with a condition */
 // ---------- 着色器映射表：Switch 控制段哈希 → PC metallib（dm/gfx/tools/shader_map.py 产出） ----------
 // ---------- Shader mapping table: Switch control section hash → PC metallib (produced by dm/gfx/tools/shader_map.py) ----------
 static NSMutableDictionary<NSString *, NSString *> *g_shmap;
@@ -2864,22 +2897,22 @@ static _Atomic uint64_t g_tser[1 << 20];
 // 翻译线程要登记表项时在锁内按值拷出（游戏线程可能正扩容搬家 / 改写这一项）；没登记返回 0
 // When the translation thread needs a table entry it copies it out by value under the lock (the game thread may be growing and moving the table / rewriting this entry); returns 0 if not registered
 static int treg_copy(int tid, tex_t *t, view_t *v, int *has_v) {
-    pthread_mutex_lock(&g_rmu);
+    os_unfair_lock_lock(&g_rmu);
     int ok = tid > 0 && tid < g_ntreg && g_treg[tid].ok;
     if (ok) { *t = g_treg[tid].t; if (v) *v = g_treg[tid].v; if (has_v) *has_v = g_treg[tid].has_v; }
-    pthread_mutex_unlock(&g_rmu);
+    os_unfair_lock_unlock(&g_rmu);
     return ok;
 }
 static samp_par *g_sreg; static uint8_t *g_sreg_ok; static void **g_sview; static uint64_t *g_srid; static int g_nsreg;   // g_sview：采样器号 → MTLSamplerState（持有） | g_sview: sampler ID → MTLSamplerState (retained)
 void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
     int id_ = tid; if (id_ < 0) return;
-    pthread_mutex_lock(&g_rmu);
+    os_unfair_lock_lock(&g_rmu);
     if (id_ >= g_ntreg) { int n = id_ + 1024; g_treg = realloc(g_treg, n * sizeof *g_treg); memset(g_treg + g_ntreg, 0, (n - g_ntreg) * sizeof *g_treg); g_ntreg = n; }
     g_reg_gen++;
     treg_view_drop(id_);
     g_treg[id_].ok = t != NULL; if (t) g_treg[id_].t = *t; g_treg[id_].has_v = v != NULL; if (v) g_treg[id_].v = *v;
     if (id_ < (1 << 20)) atomic_store_explicit(&g_tser[id_], t ? t->serial : 0, memory_order_release);
-    pthread_mutex_unlock(&g_rmu);
+    os_unfair_lock_unlock(&g_rmu);
 }
 // 游戏释放贴图（mtl_tex_release）时，放掉登记着它的各贴图号缓存的视图：视图（或基贴图本身）是 CFBridgingRetain 持有的，原先要等这个号被重新登记才放，
 // 号一直不再用的话，已经退役（移出驻留集）的贴图连同显存一直被钉着。号仍登记着（描述符还在池里），以后真被用到时照常重建视图。
@@ -2889,21 +2922,21 @@ void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
 // Only that serial's hash bucket is walked (tv_link); the reference is dropped with defer_obj_unref (submissions in flight may still read it; the residency set is left alone)
 static uint64_t g_treg_forgot;   // 累计放掉的视图数（持 g_rmu；资源计数行末尾） | cumulative views dropped (under g_rmu; at the end of the resource-count line)
 static void treg_forget(uint64_t ser) {
-    pthread_mutex_lock(&g_rmu);
+    os_unfair_lock_lock(&g_rmu);
     for (int i = g_tvh[tv_hash(ser)]; i;) { int tid = i - 1; i = g_treg[tid].tv_next;   // 先取下一个：放掉时本项摘链 | take the next one first: dropping unlinks this entry
         if (g_treg[tid].t.serial == ser && g_treg[tid].view) { treg_view_drop(tid); g_treg_forgot++; } }
-    pthread_mutex_unlock(&g_rmu);
+    os_unfair_lock_unlock(&g_rmu);
 }
 void mtl_reg_samp(int sid, const samp_par *sp) {
     int id_ = sid; if (id_ < 0) return;
-    pthread_mutex_lock(&g_rmu);
+    os_unfair_lock_lock(&g_rmu);
     if (id_ >= g_nsreg) { int n = id_ + 256; g_sreg = realloc(g_sreg, n * sizeof *g_sreg); g_sreg_ok = realloc(g_sreg_ok, n); g_sview = realloc(g_sview, n * sizeof *g_sview); g_srid = realloc(g_srid, n * sizeof *g_srid);
         memset(g_sreg_ok + g_nsreg, 0, n - g_nsreg); memset(g_sview + g_nsreg, 0, (n - g_nsreg) * sizeof *g_sview); memset(g_srid + g_nsreg, 0, (n - g_nsreg) * sizeof *g_srid); g_nsreg = n; }
     // deferred like treg_view_drop: submissions in flight may still hold this sampler's gpuResourceID in their argument blocks
     if (g_sview[id_]) { defer_obj_unref((__bridge id)g_sview[id_]); CFRelease(g_sview[id_]); g_sview[id_] = NULL; g_srid[id_] = 0; }
     g_reg_gen++;
     g_sreg[id_] = *sp; g_sreg_ok[id_] = 1;
-    pthread_mutex_unlock(&g_rmu);
+    os_unfair_lock_unlock(&g_rmu);
 }
 static MTLTextureType ttype(int target, int fallback) {
     switch (target) { case 0: return MTLTextureType1D; case 1: case 7: return MTLTextureType2D; case 2: return MTLTextureType3D;
@@ -3006,11 +3039,11 @@ static int aniso_want(void) {
 }
 static void aniso_latch(void) {   // 提交线程，mtl_sub_begin | submission thread, mtl_sub_begin
     int a = aniso_want(); if (a == g_aniso_cur) return;
-    pthread_mutex_lock(&g_rmu);
+    os_unfair_lock_lock(&g_rmu);
     int n = 0, was = g_aniso_cur;
     for (int i = 0; i < g_nsreg; i++) if (g_sview[i]) { defer_obj_unref((__bridge id)g_sview[i]); CFRelease(g_sview[i]); g_sview[i] = NULL; g_srid[i] = 0; n++; }
     g_aniso_cur = a; g_aniso_rebuilt = n; g_reg_gen++;
-    pthread_mutex_unlock(&g_rmu);
+    os_unfair_lock_unlock(&g_rmu);
     MLOG("纹理过滤：各向异性 %d → %d（0 = 原版；%s；重建 %d 个采样器） | texture filtering: anisotropy %d → %d (0 = original; %s; %d samplers rebuilt)", was, a,
          g_aniso >= 0 ? "g_aniso" : getenv("DM_NVN_ANISO") ? "DM_NVN_ANISO" : "选项页", n, was, a, g_aniso >= 0 ? "g_aniso" : getenv("DM_NVN_ANISO") ? "DM_NVN_ANISO" : "options page", n);
 }
@@ -3080,7 +3113,7 @@ void arena_commit(uint64_t fence) { for (NvArena *a in g_sub_arenas) { a->fence 
 // The out-parameter is __strong: an unqualified id * is __autoreleasing under ARC, which put the arena buffer in the autorelease pool at every call (twice per draw)
 static size_t arena_alloc(size_t n, __unsafe_unretained id<MTLBuffer> *buf) {   // *buf is unowned: the arena owns it
     n = (n + 255) & ~(size_t)255;
-    if (!g_cur_arena || g_cur_arena->used + n > g_cur_arena->buf.length) {
+    if (!g_cur_arena || g_cur_arena->used + n > ARENA_SZ) {   // every arena is ARENA_SZ long (arena_new)
         pthread_mutex_lock(&g_mu); g_cur_arena = arena_new(); pthread_mutex_unlock(&g_mu);
         [g_sub_arenas addObject:g_cur_arena];
     }
@@ -3138,7 +3171,7 @@ static void udc_note_draw(NvProg *pr) {
     }
 }
 static void state_reset(void) {
-    memset(&S, 0, sizeof S);
+    memset(&S, 0, sizeof S); tabs_dirty_all();
     g_pso_dirty = g_dss_dirty = 1;
     for (int i = 0; i < 8; i++) S.blend[i] = (blend_st){i, NVN_BLEND_FUNC_ONE, NVN_BLEND_FUNC_ZERO, NVN_BLEND_FUNC_ONE, NVN_BLEND_FUNC_ZERO, NVN_BLEND_EQUATION_ADD, NVN_BLEND_EQUATION_ADD};
     S.color = (color_st){0, NVN_LOGIC_OP_COPY, NVN_ALPHA_FUNC_ALWAYS}; S.chmask.mask = 0xffffffffu;
@@ -3771,7 +3804,7 @@ static uint64_t dummy_buf_gpu(void) { static uint64_t gpu; if (!gpu) gpu = dummy
 // useResource is idempotent for the same (resource, usage, stage) within one encoder: remember what this render encoder has already declared and skip repeats (a compute encoder is created anew for each dispatch, no dedup)
 static uint8_t g_args_dirty[6] = {1, 1, 1, 1, 1, 1};
 static uint64_t g_args_reg_seen, g_args_dirty_seen;
-static inline void args_dirty_all(void) { memset(g_args_dirty, 1, sizeof g_args_dirty); }
+static inline void args_dirty_all(void) { memset(g_args_dirty, 1, sizeof g_args_dirty); tabs_dirty_all(); }
 static inline void args_sync_dirty(void) {
     uint64_t reg = g_reg_gen, dirty = nvn_dirty_now();
     if (reg != g_args_reg_seen || dirty != g_args_dirty_seen) {
@@ -3823,6 +3856,49 @@ static uint64_t ui_mat_patch(const p_bind_buf *u, void *mb, uint64_t mo) {
     la = u->addr; ls = u->size; lp = g_pass.serial; lo = g_ui_moff; lg = ring_gpu + at; at += n;
     return lg;
 }
+// The driver-segment blocks (c0: the storage buffer table; c2: the texture and sampler handle tables) were built anew for every argument encode of
+// a shader that reads one: 2,560 bytes zeroed and filled per draw, 4.5% of the translation thread in the camp. A block only depends on the
+// tables it copies, so the last one built per stage and bank in this submission is kept and used again while those tables' generation
+// (g_tab_gen) is unchanged (its arena lives until the submission has run; comparing the tables themselves cost as much as building them). DM_NVN_DRVCACHE=0 builds every time, 2 also rebuilds on every reuse and
+// compares the bytes (a difference is a red line). In-process A/B: DM_NVN_UB=off=@set:g_drvcache=0.
+int g_drvcache = -1;
+static struct { uint64_t sub, gpu; const uint8_t *at; uint32_t gen; } g_drv_last[6][2];
+static uint64_t g_stat_drv_built, g_stat_drv_reused, g_drv_bad;
+void mtl_drvcache_stats(uint64_t *built, uint64_t *reused) { *built = g_stat_drv_built; *reused = g_stat_drv_reused; }
+static int drvcache_mode(void) {
+    if (g_drvcache < 0) { const char *e = getenv("DM_NVN_DRVCACHE"); g_drvcache = !e || !*e ? 1 : !strcmp(e, "0") ? 0 : !strcmp(e, "2") ? 2 : 1;
+        if (g_drvcache != 1) MLOG("driver-segment blocks: %s (DM_NVN_DRVCACHE)", g_drvcache ? "reused, every reuse checked" : "built for every encode"); }
+    return g_drvcache;
+}
+static void drv_fill(uint8_t *d, int nvn_stage, int bank) {   // the block's bytes: 0xA00, zero but for the table the shader reads
+    if (bank == 2) {   // two tables of 128 eight-byte entries, each a handle's low 32 bits: written whole, so only the bytes around them are zeroed
+        memset(d, 0, 0x168); memset(d + 0x968, 0, 0xA00 - 0x968);
+        const uint64_t *tx = S.tex[nvn_stage], *sm = S.samp[nvn_stage]; const uint64x2_t lo32 = vdupq_n_u64(0xffffffffull);
+        for (int r = 0; r < 128; r += 2) { vst1q_u8(d + 0x168 + 8 * r, vreinterpretq_u8_u64(vandq_u64(vld1q_u64(tx + r), lo32))); vst1q_u8(d + 0x568 + 8 * r, vreinterpretq_u8_u64(vandq_u64(vld1q_u64(sm + r), lo32))); }
+        return;
+    }
+    memset(d, 0, 0xA00);
+    if (bank == 0) {
+        int base = nvn_stage == 0 ? 0x110 : nvn_stage == 5 ? 0x310 : nvn_stage == 1 ? 0x510 : -1;
+        if (base < 0) RED_ONCE(45, "阶段 %d 的着色器读驱动段 c0，存储缓冲表基址未实测", nvn_stage);
+        else for (int r = 0; r < 16; r++) { uint64_t a = S.ssbo[nvn_stage][r].addr; uint32_t n = (uint32_t)S.ssbo[nvn_stage][r].size; memcpy(d + base + 16 * r, &a, 8); memcpy(d + base + 16 * r + 8, &n, 4); }
+    } else {
+        for (int r = 0; r < 128; r++) { uint32_t th = (uint32_t)S.tex[nvn_stage][r], sh_ = (uint32_t)S.samp[nvn_stage][r]; memcpy(d + 0x168 + 8 * r, &th, 4); memcpy(d + 0x568 + 8 * r, &sh_, 4); }
+    }
+}
+// The GPU address of the block for this stage and bank: the one last built in this submission while its source tables are unchanged, else a new one
+static uint64_t drv_block(int nvn_stage, int bank) {
+    int mode = drvcache_mode(); typeof(&g_drv_last[0][0]) c = nvn_stage >= 0 && nvn_stage < 6 ? &g_drv_last[nvn_stage][bank == 2] : NULL;
+    if (mode && c && c->at && c->sub == g_sub_serial && c->gen == g_tab_gen[nvn_stage][bank == 2]) {
+        g_stat_drv_reused++;
+        if (mode == 2) { uint8_t now[0xA00]; drv_fill(now, nvn_stage, bank); if (memcmp(now, c->at, sizeof now) && g_drv_bad++ < 8) MLOG("【红】driver-segment block: a reused block differs from a fresh one (stage %d bank %d, pass %llu)", nvn_stage, bank, g_stat_pass); }
+        return c->gpu;
+    }
+    __unsafe_unretained id<MTLBuffer> db; size_t doff = arena_alloc(0xA00, &db); uint8_t *d = g_cur_arena->base + doff;
+    drv_fill(d, nvn_stage, bank); g_stat_drv_built++;
+    if (c) { c->sub = g_sub_serial; c->gpu = g_cur_arena->gpu + doff; c->at = d; c->gen = g_tab_gen[nvn_stage][bank == 2]; }
+    return g_cur_arena->gpu + doff;
+}
 static int encode_args(__unsafe_unretained id en, __unsafe_unretained NvShader *sh, int nvn_stage, int metal_vertex) {
     if (!sh->ae) return 1;
     uint64_t slots[NVN_REFL_MAXB];   // 只清本着色器参数块那么长（arg_len = 8 ×（最大序号 + 1），shader_load 核过）：上限放大后每次新编的清零量不变，复用路径不清 | Only clear as much as this shader's argument block (arg_len = 8 x (max index + 1), checked in shader_load): with the larger limit each new encode clears the same amount, and the reuse path clears nothing
@@ -3840,7 +3916,7 @@ static int encode_args(__unsafe_unretained id en, __unsafe_unretained NvShader *
     int bl = passdump() && (bl_all || bl_pass[nvn_stage] != g_stat_pass);
     if (bl) { bl_pass[nvn_stage] = g_stat_pass; PD("K %llu st%d key=%s nb=%d", g_stat_pass, nvn_stage, sh->key[0] ? sh->key : sh->builtin ? sh->builtin : "?", sh->rf.nb); }
     memset(slots, 0, MIN(sh->arg_len ? sh->arg_len : sh->ae.encodedLength, sizeof slots));
-    pthread_mutex_lock(&g_rmu);   // 贴图 / 采样器登记表可能正被游戏线程扩容或改写 | The texture / sampler registration tables may be being grown or rewritten by the game thread
+    os_unfair_lock_lock(&g_rmu);   // 贴图 / 采样器登记表可能正被游戏线程扩容或改写 | The texture / sampler registration tables may be being grown or rewritten by the game thread
     for (int i = 0; i < sh->rf.nb; i++) {
         const nvn_rbind *b = &sh->rf.b[i];
         int reg = b->reg, aid = b->aid;
@@ -3918,23 +3994,12 @@ static int encode_args(__unsafe_unretained id en, __unsafe_unretained NvShader *
             // c2 = texture handle table (0x168 + 8 r) and sampler handle table (0x568 + 8 r), the values being the NVN handles the game gave at bind time; positions read outside the tables are registered at packaging time and reported a failure at load time
             int bank = b->kind == NVN_RB_DRV2 ? 2 : 0;
             if (!sh->rf.drv_read[bank]) { slots[aid] = zero_bank_gpu(); USE(zero_bank(), MTLResourceUsageRead); }
-            else {
-                __unsafe_unretained id<MTLBuffer> db; size_t doff = arena_alloc(0xA00, &db); uint8_t *d = g_cur_arena->base + doff; memset(d, 0, 0xA00);
-                if (bank == 0) {
-                    int base = nvn_stage == 0 ? 0x110 : nvn_stage == 5 ? 0x310 : nvn_stage == 1 ? 0x510 : -1;
-                    if (base < 0) RED_ONCE(45, "阶段 %d 的着色器读驱动段 c0，存储缓冲表基址未实测", nvn_stage);
-                    else for (int r = 0; r < 16; r++) { uint64_t a = S.ssbo[nvn_stage][r].addr; uint32_t n = (uint32_t)S.ssbo[nvn_stage][r].size; memcpy(d + base + 16 * r, &a, 8); memcpy(d + base + 16 * r + 8, &n, 4); }
-                } else {
-                    for (int r = 0; r < 128; r++) { uint32_t th = (uint32_t)S.tex[nvn_stage][r], sh_ = (uint32_t)S.samp[nvn_stage][r]; memcpy(d + 0x168 + 8 * r, &th, 4); memcpy(d + 0x568 + 8 * r, &sh_, 4); }
-                }
-                slots[aid] = g_cur_arena->gpu + doff;
-                USE(db, MTLResourceUsageRead);
-            }
+            else slots[aid] = drv_block(nvn_stage, bank);   // built once per submission and table state, see "driver-segment blocks"
         } else RED_ONCE(46, "绑定种类 %d 未实现", b->kind);
     }
     #undef USE
     #undef USE_SAMP
-    pthread_mutex_unlock(&g_rmu);
+    os_unfair_lock_unlock(&g_rmu);
     NSUInteger arg_len = sh->arg_len ? sh->arg_len : sh->ae.encodedLength;
     __unsafe_unretained id<MTLBuffer> ab; size_t off = arena_alloc(arg_len, &ab);
     memcpy(g_cur_arena->base + off, slots, arg_len);
@@ -4191,9 +4256,9 @@ static int state_op(uint32_t op, const void *a) {
         case OP_BIND_VSTREAM: { const p_bind_vstream *b = a; if (S.nstream != b->n || memcmp(S.stream, b->st, 8 * b->n)) { memcpy(S.stream, b->st, 8 * b->n); S.nstream = b->n; g_pso_dirty = 1; } break; }
         case OP_BIND_VBUF: { const p_bind_vbuf *b = a; if (b->first >= 0 && b->n >= 0 && b->first + b->n <= 16) memcpy(&S.vbuf[b->first], b->r, sizeof *b->r * b->n); break; }
         case OP_BIND_UBO: { const p_bind_buf *b = a; if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16 && memcmp(&S.ubo[b->stage][b->index], b, sizeof *b)) { S.ubo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
-        case OP_BIND_SSBO: { const p_bind_buf *b = a; if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16 && memcmp(&S.ssbo[b->stage][b->index], b, sizeof *b)) { S.ssbo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
-        case OP_BIND_TEX: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128 && memcmp(&S.tex[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.tex[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } break; }
-        case OP_BIND_SAMP: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128 && memcmp(&S.samp[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.samp[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } break; }
+        case OP_BIND_SSBO: { const p_bind_buf *b = a; if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16 && memcmp(&S.ssbo[b->stage][b->index], b, sizeof *b)) { S.ssbo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; g_tab_gen[b->stage][0]++; } break; }
+        case OP_BIND_TEX: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128 && memcmp(&S.tex[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.tex[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; g_tab_gen[b->stage][1]++; } break; }
+        case OP_BIND_SAMP: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 128 && memcmp(&S.samp[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.samp[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; g_tab_gen[b->stage][1]++; } break; }
         case OP_BIND_IMG: { const p_bind_handles *b = a; if (b->stage >= 0 && b->stage < 6 && b->first >= 0 && b->n >= 0 && b->first + b->n <= 32) { if (memcmp(&S.img[b->stage][b->first], b->h, 8 * b->n)) { memcpy(&S.img[b->stage][b->first], b->h, 8 * b->n); g_args_dirty[b->stage] = 1; } } else RED_ONCE(31, "图像槽越界 阶段 %d 起 %d 数 %d", b->stage, b->first, b->n); break; }
         case OP_STENCIL: {
             const p_stencil *b = a;
@@ -4390,7 +4455,7 @@ static int draw_samples_rt(NvProg *pr) {   // 采样附件保持原ser级保守g
         for (int i = 0; i < sh->rf.nb; i++) { const nvn_rbind *b = &sh->rf.b[i]; uint64_t h;
             if (b->kind == NVN_RB_IMG) h = b->reg < 32 && sh->stage < 6 ? S.img[sh->stage][b->reg] : 0; else if (b->kind == NVN_RB_TEX || b->kind == NVN_RB_TBUF) h = b->reg < 128 && sh->stage < 6 ? S.tex[sh->stage][b->reg] : 0; else continue;
             int tid = (int)(h & 0xfffff); if (!tid) continue;
-            pthread_mutex_lock(&g_rmu); uint64_t ser = tid < g_ntreg && g_treg[tid].ok ? g_treg[tid].t.serial : 0; pthread_mutex_unlock(&g_rmu);
+            os_unfair_lock_lock(&g_rmu); uint64_t ser = tid < g_ntreg && g_treg[tid].ok ? g_treg[tid].t.serial : 0; os_unfair_lock_unlock(&g_rmu);
             for (int j = 0; j < nr; j++) if (ser && ser == rs[j]) return 1; } }
     return 0;
 }
@@ -5128,7 +5193,13 @@ planned:
 // The readable-tile version of a fragment shader, specialised by constants (cached). The caches are read and filled under g_fz_fn_lock, but the
 // library load and the specialising compile run outside it: warm-up workers specialise rows here too, in the background during play, and the submit
 // thread must not wait behind one of their compiles for a cached function. Two threads compiling the same function keep the first one cached
+// In front of the string-keyed cache below: the same question asked with a plain key (the shader's key, the mask, the constants, the map), because
+// a merged pass asks it for every draw and building the string key cost 1.4% of the translation thread. Filled wherever the string cache answers
+static nvn_hmap g_bf_fast; typedef struct { char key[32]; uint8_t fbmask, lmap[8], nfc; int fx[32]; } bf_fast_key;
 static id<MTLFunction> bf_fn(NvShader *fs, const int *fx, uint8_t fbmask, const uint8_t *lmap) {
+    bf_fast_key fk; memset(&fk, 0, sizeof fk); strlcpy(fk.key, fs->key, sizeof fk.key); fk.fbmask = fbmask; memcpy(fk.lmap, lmap, 8); fk.nfc = (uint8_t)MIN(fs->rf.nfc, 32); memcpy(fk.fx, fx, sizeof(int) * fk.nfc);
+    os_unfair_lock_lock(&g_fz_fn_lock); if (!g_bf_fast.klen) g_bf_fast.klen = sizeof fk; void *fast = nvn_hm_get(&g_bf_fast, &fk); os_unfair_lock_unlock(&g_fz_fn_lock);
+    if (fast) return (__bridge id<MTLFunction>)fast;   // g_bf_fn_cache owns it for good
     size_t kl = strlen(fs->key); NSString *base = [NSString stringWithFormat:@"%.*s", (int)(kl > 2 ? kl - 2 : kl), fs->key];
     NSMutableString *k = [NSMutableString stringWithFormat:@"%02x", fbmask];
     for (int i = 0; i < fs->rf.nfc; i++) [k appendFormat:@",%d", fx[i]];
@@ -5137,6 +5208,7 @@ static id<MTLFunction> bf_fn(NvShader *fs, const int *fx, uint8_t fbmask, const 
     os_unfair_lock_lock(&g_fz_fn_lock);
     if (!g_bf_fn_cache) { g_bf_fn_cache = [NSMutableDictionary dictionary]; g_bf_lib_cache = [NSMutableDictionary dictionary]; }
     id<MTLFunction> f = g_bf_fn_cache[cacheKey]; id<MTLLibrary> lib = g_bf_lib_cache[base];
+    if (f && !nvn_hm_get(&g_bf_fast, &fk)) hm_put_id(&g_bf_fast, &fk, f);
     os_unfair_lock_unlock(&g_fz_fn_lock);
     if (f) return f;
     if (!lib) {
@@ -5156,6 +5228,7 @@ static id<MTLFunction> bf_fn(NvShader *fs, const int *fx, uint8_t fbmask, const 
     os_unfair_lock_lock(&g_fz_fn_lock);
     id<MTLFunction> have = g_bf_fn_cache[cacheKey];
     if (have) f = have; else g_bf_fn_cache[cacheKey] = f;
+    if (!nvn_hm_get(&g_bf_fast, &fk)) hm_put_id(&g_bf_fast, &fk, f);
     os_unfair_lock_unlock(&g_fz_fn_lock);
     return f;
 }
@@ -5262,7 +5335,7 @@ static int fz_p2_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, uint8_
                 // 证明照样成立，采样会被改成读片上第 0 级 / 原格式，画面就错了）。视图起始级 / 层须为 0、格式须与附件实际格式相同，否则不合并
                 // the proof would still hold, the sampling would be changed to read on-tile level 0 / the original format, and the picture would be wrong). The view's starting level / layer must be 0 and its format must equal the attachment's actual format, otherwise do not merge
                 // 视图缓存在登记表里：持 g_rmu 取，取到的视图强引用留着（游戏线程可能随即改写这一项） | The view cache lives in the registration table: fetch it under g_rmu and keep a strong reference to the view (the game thread may rewrite the entry right after)
-                int tid_ = (int)(h & 0xfffff); void *tv_ = NULL; pthread_mutex_lock(&g_rmu); if (tid_) tex_fast_rid(tid_, &tv_); id<MTLTexture> tv = (__bridge id<MTLTexture>)tv_; pthread_mutex_unlock(&g_rmu);
+                int tid_ = (int)(h & 0xfffff); void *tv_ = NULL; os_unfair_lock_lock(&g_rmu); if (tid_) tex_fast_rid(tid_, &tv_); id<MTLTexture> tv = (__bridge id<MTLTexture>)tv_; os_unfair_lock_unlock(&g_rmu);
                 uint32_t apf_ = tv.parentTexture ? (uint32_t)tv.parentTexture.pixelFormat : (uint32_t)tv.pixelFormat; uint8_t swz_[4];
                 if (R.rt.has_cview[j] && R.rt.cview[j].set_format && !(nvn_fmt_to_mtl(R.rt.cview[j].format, &apf_, swz_) && apf_)) apf_ = 0;   // 附件按换格式视图挂：取那个格式；认不出就不合 | The attachment is attached through a format-changing view: take that format; if unrecognized, do not merge
                 MTLPixelFormat apf = (MTLPixelFormat)apf_;
@@ -5621,7 +5694,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         if (!strncmp(f->key, "ebcfcd1fa0a77dbc", 16) && !g_enc && R.rt.n == 1 && R.rt.color[0] && !R.clear_c[0]) {
             uint64_t h = 0; for (int i = 0; i < f->rf.nb && !h; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128) h = S.tex[1][f->rf.b[i].reg];
             if (h) { fx_from = R.rt.color[0]->serial; fx_to = h; PD("N %llu 跳过 FXAA：ser=%llu 的读者改读 ser=%llu", g_stat_pass, (unsigned long long)fx_from, (unsigned long long)h_ser(h)); return; } }
-        else if (fx_from && !strncmp(f->key, "52aac1f2306b8fc5", 16)) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == fx_from) { S.tex[1][r] = fx_to; g_args_dirty[1] = 1; } fx_from = 0; } } }
+        else if (fx_from && !strncmp(f->key, "52aac1f2306b8fc5", 16)) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == fx_from) { S.tex[1][r] = fx_to; g_args_dirty[1] = 1; g_tab_gen[1][1]++; } fx_from = 0; } } }
     { static uint64_t bloomq_frame;
       if (bloomq_enabled() && tbdr_on() && !g_defer_replaying && pr->sh[1]) {
         // A new frame (checked here, where every chain draw passes, so the reset still comes before any chain draw of the new frame and no clear is encoded during a
@@ -5678,7 +5751,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         } else if (g_bloomq.state == 2 && !strncmp(f->key, "cc264583f2000c81", 16)) {
             if (bloomq_target(&tgt, &lv, &sl) && tgt == g_bloomq.b0_ser) { g_bloomq.state = 3; PD("C %llu 泛光 1/4 跳过 B0 上采样", g_stat_pass); return; }
         } else if (g_bloomq.state == 3 && !strncmp(f->key, "2e2d6700a2569795", 16)) {
-            if (g_bloomq.b1_h) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq.b0_ser) { S.tex[1][r] = g_bloomq.b1_h; g_args_dirty[1] = 1; } PD("D %llu 泛光 1/4 叠加改读 B1", g_stat_pass); g_bloomq_last_b0 = g_bloomq.b0_ser; g_bloomq_last_b1h = g_bloomq.b1_h; g_bloomq_last_b1s = g_bloomq.b1_ser;
+            if (g_bloomq.b1_h) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq.b0_ser) { S.tex[1][r] = g_bloomq.b1_h; g_args_dirty[1] = 1; g_tab_gen[1][1]++; } PD("D %llu 泛光 1/4 叠加改读 B1", g_stat_pass); g_bloomq_last_b0 = g_bloomq.b0_ser; g_bloomq_last_b1h = g_bloomq.b1_h; g_bloomq_last_b1s = g_bloomq.b1_ser;
                 int seen = 0; for (int i = 0; i < g_bloomq_nseen; i++) seen |= g_bloomq_seen[i][0] == g_bloomq.s_ser && g_bloomq_seen[i][1] == g_bloomq.b0_ser && g_bloomq_seen[i][2] == g_bloomq.b1_ser;
                 if (!seen) {   // new (S, B0, B1): flush the window so far, then say what the chain now runs on (a later size or format mismatch shows here)
                     int at = g_bloomq_nseen < 4 ? g_bloomq_nseen++ : g_bloomq_seen_i; g_bloomq_seen_i = (at + 1) % 4;
@@ -5691,7 +5764,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         } else if (!g_bloomq.state && g_bloomq_own_f != f_ && g_bloomq_last_b1h && h_ser(g_bloomq_last_b1h) == g_bloomq_last_b1s && !strncmp(f->key, "2e2d6700a2569795", 16)) {   // the B1 handle still points to the same texture (not recognized after a rebuild on a resolution change)
             // The bloom overlay is reached without the bloom chain having run this frame (the extrapolated frame of runtime extrapolation skipped it: outside the region the input 469 is the previous frame's LDR, so it cannot run): redirect the read to B1 as last time, overlaying the previous frame's bloom.
             // Without the redirect it would read B0 -- with bloom 1/4 on, B0's upsample is always skipped and never written, so what is read is uninitialized video memory (on M4 Pro the units in the region turn entirely green; elsewhere it is mostly 0, i.e. missing bloom)
-            int hit = 0; for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq_last_b0) { S.tex[1][r] = g_bloomq_last_b1h; hit = 1; g_args_dirty[1] = 1; }
+            int hit = 0; for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq_last_b0) { S.tex[1][r] = g_bloomq_last_b1h; hit = 1; g_args_dirty[1] = 1; g_tab_gen[1][1]++; }
             if (hit) { PD("D %llu 泛光链没跑：叠加沿用上一帧 B1", g_stat_pass); g_bloomq_stat.reused++; }
         } else if (g_bloomq.state) bloomq_abort(61, "another draw came in the middle of the chain", f_);
       }
@@ -6031,7 +6104,7 @@ static void aux_bloom_get(id<MTLLibrary> *lib, id<MTLRenderPipelineState> *pso, 
 static void mp_note_lut(NvShader *cs) {
     if (strncmp(cs->key, "552f45c348a61b86", 16)) return;
     int tid = 0; for (int i = 0; i < cs->rf.nb && !tid; i++) if (cs->rf.b[i].kind == NVN_RB_IMG && cs->rf.b[i].reg < 32) tid = (int)(S.img[5][cs->rf.b[i].reg] & 0xfffff);
-    pthread_mutex_lock(&g_rmu); id<MTLTexture> lut = tid ? tex_by_id(tid) : nil; uint64_t lser = lut ? g_treg[tid].t.serial : 0; pthread_mutex_unlock(&g_rmu);
+    os_unfair_lock_lock(&g_rmu); id<MTLTexture> lut = tid ? tex_by_id(tid) : nil; uint64_t lser = lut ? g_treg[tid].t.serial : 0; os_unfair_lock_unlock(&g_rmu);
     if (lut && lut.textureType == MTLTextureType3D) { os_unfair_lock_lock(&g_mp_lk); g_mp_lut = lut; g_mp_lut_ser = lser; os_unfair_lock_unlock(&g_mp_lk); }
 }
 static void dispatch(const p_dispatch *dp) {
@@ -6658,11 +6731,11 @@ void mtl_res_snapshot(mtl_res_count *out) {
     out->pools = (uint32_t)g_npool;
     out->pool_adds = g_pool_adds;
     pthread_mutex_unlock(&g_mu);
-    pthread_mutex_lock(&g_rmu);
+    os_unfair_lock_lock(&g_rmu);
     out->view_slots = (uint32_t)g_ntreg;
     for (int i = 0; i < g_ntreg; i++) if (g_treg[i].view) out->view_nonnull++;
     for (int i = 0; i < g_nsreg; i++) if (g_sview[i]) out->sview_nonnull++;
-    pthread_mutex_unlock(&g_rmu);
+    os_unfair_lock_unlock(&g_rmu);
 }
 // 资源计数（长时间稳定性 L3 读）：宿主按游戏拍 / 事件调用（每 250 拍、读取画面已撤、退出），不按墙钟 / 出图数取样。
 // 行格式：[nvn] 资源计数 拍 <拍号> <触发>：<名> <数值> …（名不含空格，单空格分隔）；加字段就往这一行后面追加
@@ -6672,7 +6745,7 @@ void mtl_res_counts(uint32_t tick, const char *why) {
     mtl_res_count c;
     mtl_res_snapshot(&c);
     int dl, du; uint64_t da; nvn_dirty_slot_stats(&dl, &du, &da);
-    pthread_mutex_lock(&g_rmu); uint64_t vd = g_treg_forgot; pthread_mutex_unlock(&g_rmu);
+    os_unfair_lock_lock(&g_rmu); uint64_t vd = g_treg_forgot; os_unfair_lock_unlock(&g_rmu);
     LOG("[nvn] 资源计数 拍 %u %s：渲染管线 %u 计算管线 %u 着色器 %u 深度模板 %u view非空 %u view槽 %u 存活贴图 %u 内存池存活 %u 内存池累计 %llu 采样器view非空 %u 脏页区间存活 %d 脏页区间累计 %llu c1缓冲 %u c1字节 %llu c1实际 %llu 释放贴图放掉view累计 %llu",
         tick, why, c.pso, c.cps, c.shaders, c.dss, c.view_nonnull, c.view_slots, c.live_tex,
         c.pools, (unsigned long long)c.pool_adds, c.sview_nonnull, dl, (unsigned long long)da, c.c1_bufs, (unsigned long long)c.c1_alloc, (unsigned long long)c.c1_data, (unsigned long long)vd);

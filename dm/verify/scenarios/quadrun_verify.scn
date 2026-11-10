@@ -1,11 +1,12 @@
 # 2D quad runs, verify mode (DM_NVN_QUADRUN=2; dm/gfx/nvn/nvn_mtl.m "2D quad runs"): the replay draws a run of interface quads that differ only in
 # their vertex range as one draw. In verify mode every merged quad is checked when its own command comes up: the bind state must equal the state the
 # run was drawn with, and the vertices must still be the bytes that were copied. Camp with the automap open, the inventory, the pause menu: some quads
-# must have been checked and none may differ (a difference is a red line).
+# must have been checked and none may differ (a difference is a red line). The same run checks the replay's other shortcuts in their verify
+# modes: every reused driver-segment block against a fresh one, every remembered pool against the pool table (debugging.md, "Where a draw's time goes").
 name quadrun_verify
 requires cli
 save warlock
-env DM_GAME_SEED=305419896 DM_NVN_QUADRUN=2
+env DM_GAME_SEED=305419896 DM_NVN_QUADRUN=2 DM_NVN_DRVCACHE=2 DM_NVN_POOLFAST=2
 timeout 240
 
 enter_game

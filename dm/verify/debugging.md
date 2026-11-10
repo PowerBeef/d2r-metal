@@ -422,6 +422,27 @@ A pipeline met for the first time is compiled on the translation thread and the 
 - The log names the first twelve: `pipeline <vs> / <fs> is not built yet: built off the frame, its draws wait` and `pipeline built off the frame in N ms: …; K draws waited`. Per-frame counters in `DM_NVN_TSV`: `@pso_waited` (builds that landed), `@pso_wait_draws` (draws left out); `@pso_new` counts a landed build as a new pipeline.
 - A build that fails off the frame is remembered and compiled in the frame from then on, where the failure is reported as before.
 
+## Where a draw's time goes on the translation thread
+Sampled 2026-11-10 on an M6 (`sample <pid> 60 1` on the headless host standing in the camp, automap closed, 1,244 draws a frame; shares of the thread's running time, attributed to source lines with `atos`):
+
+| Part | Share | What it is |
+|---|---|---|
+| Metal's driver | about a third | starting passes 9.4%, the draw calls 10.2%, setting pipelines 3.4%, ending passes 2.2%, the rest in small calls |
+| Argument encoding (`encode_args`) | 17% | per binding: the pool lookup for each uniform buffer, the texture and sampler ids, the driver-segment block |
+| The scan of each submission before it is replayed (`mtl_sub_index`, `sdx_walk`) | 10% | every command read once more to index what each draw reads and writes |
+| Planning at the first draw of a pass (`hoist_try`, `defer_try`, `fuse_try`, `pass_ds_need`, the merged-pass fragment lookup) | about 12% | |
+| `draw` itself | 5% | |
+| State commands (`state_op`) and the replay loop | 7% | |
+
+Three shortcuts came out of it (main, 2026-11-10); with them the same scene went from 19.06 to 16.97 million instructions a frame on that thread (11% fewer), and a captured frame replays to the same digest with each one on and off:
+- **Pools a thread remembers.** Every uniform buffer of every argument encode and every vertex buffer of every draw asked for its pool's Metal buffer under the pool lock, walking the table: some ten thousand times a frame. Each thread now remembers the last four pools it found with the table's generation (`g_pool_gen`, bumped under the lock when a pool is added or removed) and answers from that while the generation stands. On and off in one run, 10 pairs: 2.2 million fewer instructions a frame (2.0 to 2.4), about 10%. `DM_NVN_POOLFAST=0` always takes the lock; `2` also asks the table after every remembered answer and compares (a difference is a red line).
+- **Driver-segment blocks reused.** A shader that reads the driver segment got a new 2,560-byte block for every argument encode. The last one built per stage in a submission is used again while the tables it copies have not changed (`g_tab_gen`, bumped wherever a texture, sampler or storage-buffer table is written), and the fill writes the two handle tables whole instead of zeroing the block first. About 4 blocks in 10 are reused; 0.3 million instructions a frame (0.1 to 0.5). `DM_NVN_DRVCACHE=0` builds every time; `2` rebuilds on every reuse and compares the bytes.
+- **Argument-table writes that repeat are skipped.** Only `enc_r_vbuf` and `enc_r_args` write the two argument tables, and a table keeps what was set from one draw to the next, so an address already at its index is not set again (the zero buffer and an unchanged vertex buffer every draw, a reused argument block). `DM_NVN_ATDEDUP=0` sets every time.
+- Also: the registry lock taken for every argument encode is an unfair lock instead of a pthread mutex, the arena no longer asks its buffer for its length, and the merged-pass fragment lookup is answered from a plain key before any string is built.
+- In-process A/B for each: `DM_NVN_UB=off=@set:g_poolfast=0` (`g_drvcache`, `g_atdedup`). `dm/gfx/tests/t_replay_cuts` holds their rules; `scenarios/quadrun_verify.scn` runs the verify modes of all three with the quad runs'.
+- Measure by instructions (the `翻译` log line every 300 frames, or `@sub_instr` in an A/B), not by milliseconds or cycles: between runs the thread lands on different cores and clock speeds, and cycles per instruction moved from 0.22 to 0.33 with no change in the work.
+- Tried and dropped: reusing a driver-segment block when the tables compare equal byte for byte. Comparing 2 KB cost as much as building the block.
+
 ## PC mode probes
 
 Test switches for finding out how far the Switch build's own PC (keyboard and mouse) mode still works. They change nothing unless set, and players never set them.

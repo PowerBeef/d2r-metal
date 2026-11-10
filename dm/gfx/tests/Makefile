@@ -58,6 +58,8 @@ t_zskip: t_zskip.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_zskip.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_quadrun: t_quadrun.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_quadrun.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_replay_cuts: t_replay_cuts.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_replay_cuts.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_xv: t_xv.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_xv.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_aniso: t_aniso.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -160,7 +162,8 @@ run: \
 	t_ub \
 	t_xv \
 	t_zskip \
-	t_quadrun
+	t_quadrun \
+	t_replay_cuts
 	./t_copy_pitch
 	./t_nvn
 	./t_prog_key
@@ -185,6 +188,7 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_defer_chain
 	./t_zskip
 	MTL_DEBUG_LAYER=1 ./t_quadrun
+	./t_replay_cuts
 	./t_xv
 	./t_ub
 	MTL_DEBUG_LAYER=1 ./t_bar

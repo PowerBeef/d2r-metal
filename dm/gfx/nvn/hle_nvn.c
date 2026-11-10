@@ -1813,6 +1813,8 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
         trow(f, "@args_enc", (double)(ae_ - pae)); trow(f, "@args_reuse", (double)(ar_ - par)); pae = ae_; par = ar_;
         static uint64_t pqr, pqq; uint64_t qr_, qq_; mtl_quadrun_stats(&qr_, &qq_);   // 2D quad runs: runs drawn as one draw, and the quads they took in beyond the first of each
         trow(f, "@quad_runs", (double)(qr_ - pqr)); trow(f, "@quads_merged", (double)(qq_ - pqq)); pqr = qr_; pqq = qq_;
+        static uint64_t pdb, pdr; uint64_t db_, dr_; mtl_drvcache_stats(&db_, &dr_);   // driver-segment blocks built / reused (nvn_mtl.m)
+        trow(f, "@drv_built", (double)(db_ - pdb)); trow(f, "@drv_reused", (double)(dr_ - pdr)); pdb = db_; pdr = dr_;
         static uint64_t puc, pus; uint64_t uc_, us_; mtl_use_stats(&uc_, &us_);
         static uint64_t pdo; uint64_t do_ = mtl_ds_omit(); trow(f, "@ds_omit", (double)(do_ - pdo)); pdo = do_;
         trow(f, "@use_call", (double)(uc_ - puc)); trow(f, "@use_skip", (double)(us_ - pus)); puc = uc_; pus = us_;

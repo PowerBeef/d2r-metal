@@ -158,6 +158,7 @@ int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1);   // 该帧最早 GPUS
 void mtl_stats(uint64_t *passes, uint64_t *draws);
 void mtl_args_stats(uint64_t *enc, uint64_t *reuse);
 void mtl_pso_async_stats(uint64_t *landed, uint64_t *draws);   // pipelines built off the frame that landed / draws left out while waiting (nvn_mtl.m)
+void mtl_drvcache_stats(uint64_t *built, uint64_t *reused);   // driver-segment blocks built / reused within their submission (nvn_mtl.m)
 void mtl_quadrun_stats(uint64_t *runs, uint64_t *quads);   // 2D quad runs (nvn_mtl.m): runs drawn as one draw / quads merged into them
 void mtl_use_stats(uint64_t *call, uint64_t *skip);
 uint64_t mtl_ds_omit(void);   // 前瞻证明不用深度模板、未挂深度附件的通道累计数 | Cumulative number of passes with no depth attachment because the lookahead proved depth-stencil unused

@@ -131,7 +131,7 @@ static void treg_view_case(void) {
     tex_t a = tex(8, NVN_FORMAT_RGBX8); mtl_reg_tex(1501, &a, NULL); mtl_reg_tex(1502, &a, NULL);
     tex_t b = tex(8, NVN_FORMAT_RGBA8); mtl_reg_tex(1503, &b, NULL);
     __weak id wv, wb;
-    @autoreleasepool { pthread_mutex_lock(&g_rmu); wv = tex_by_id(1501); (void)tex_by_id(1502); wb = tex_by_id(1503); pthread_mutex_unlock(&g_rmu); }
+    @autoreleasepool { os_unfair_lock_lock(&g_rmu); wv = tex_by_id(1501); (void)tex_by_id(1502); wb = tex_by_id(1503); os_unfair_lock_unlock(&g_rmu); }
     EXPECT("视图缓存：三个号都缓存了视图 | view cache: all three IDs cache a view", 1, g_treg[1501].view && g_treg[1502].view && g_treg[1503].view);
     EXPECT("视图缓存：RGBX 的是带重映射的真视图 | view cache: the RGBX one is a real swizzled view", 1, ((id<MTLTexture>)wv).parentTexture != nil);
     uint64_t f0 = g_treg_forgot;
@@ -157,7 +157,7 @@ static void treg_bucket_case(void) {
     EXPECT("散列桶：找到同桶的三个序号 | buckets: three serials in one bucket found", 3, k);
     if (k < 3) return;
     tex_t t[3]; for (int i = 0; i < 3; i++) { t[i] = tex(8, NVN_FORMAT_RGBA8); t[i].serial = ser[i]; mtl_reg_tex(1601 + i, &t[i], NULL); }
-    @autoreleasepool { pthread_mutex_lock(&g_rmu); for (int i = 0; i < 3; i++) (void)tex_by_id(1601 + i); pthread_mutex_unlock(&g_rmu); }
+    @autoreleasepool { os_unfair_lock_lock(&g_rmu); for (int i = 0; i < 3; i++) (void)tex_by_id(1601 + i); os_unfair_lock_unlock(&g_rmu); }
     EXPECT("散列桶：三个号都缓存了视图 | buckets: all three IDs cache a view", 1, g_treg[1601].view && g_treg[1602].view && g_treg[1603].view);
     static const int order[3] = {1, 0, 2};   // 链是 1603 → 1602 → 1601：先中间、再链尾、最后链头 | the chain is 1603 → 1602 → 1601: middle first, then the tail, then the head
     for (int j = 0; j < 3; j++) {
@@ -168,8 +168,8 @@ static void treg_bucket_case(void) {
     }
     EXPECT("散列桶：桶空了 | buckets: the bucket is empty", 0, g_tvh[h0]);
     tex_t u = tex(8, NVN_FORMAT_RGBA8), w = tex(8, NVN_FORMAT_RGBA8);
-    mtl_reg_tex(1604, &u, NULL); @autoreleasepool { pthread_mutex_lock(&g_rmu); (void)tex_by_id(1604); pthread_mutex_unlock(&g_rmu); }
-    mtl_reg_tex(1604, &w, NULL); @autoreleasepool { pthread_mutex_lock(&g_rmu); (void)tex_by_id(1604); pthread_mutex_unlock(&g_rmu); }
+    mtl_reg_tex(1604, &u, NULL); @autoreleasepool { os_unfair_lock_lock(&g_rmu); (void)tex_by_id(1604); os_unfair_lock_unlock(&g_rmu); }
+    mtl_reg_tex(1604, &w, NULL); @autoreleasepool { os_unfair_lock_lock(&g_rmu); (void)tex_by_id(1604); os_unfair_lock_unlock(&g_rmu); }
     uint64_t f1 = g_treg_forgot; mtl_tex_release(&u);
     EXPECT("改登记：释放旧贴图不动这个号 | re-registered: releasing the old texture leaves the ID alone", 1, g_treg[1604].view != NULL && g_treg_forgot == f1);
     mtl_tex_release(&w);

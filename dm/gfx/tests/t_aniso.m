@@ -23,7 +23,7 @@ static uint64_t submit_empty(void) {   // an empty submission, the way nvn_repla
     mtl_sub_begin(); mtl_sub_index(&eh, 1); mtl_exec_rest(NULL, 0); mtl_exec((const uint8_t *)&end); mtl_exec_rest(NULL, 0);
     uint64_t f = mtl_sub_commit(); mtl_wait(f, 5000000000ull); return f;
 }
-static void build(int sid) { pthread_mutex_lock(&g_rmu); (void)samp_by_id(sid); pthread_mutex_unlock(&g_rmu); }
+static void build(int sid) { os_unfair_lock_lock(&g_rmu); (void)samp_by_id(sid); os_unfair_lock_unlock(&g_rmu); }
 int main(void) { setvbuf(stdout, NULL, _IONBF, 0);
     unsetenv("DM_NVN_ANISO");   // aniso_want caches it on its first call
     @autoreleasepool {
