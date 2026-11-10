@@ -38,7 +38,7 @@ bash dm/verify/gfxq/shoot.sh dm/host/dmhost <build output dir> <WxH> <output dir
 python3 dm/verify/gfxq/g1.py <reference dir> <test dir> [--flip <flip path>]
 ```
 
-- `shoot.sh` starts one host per frame and outputs `<output dir>/<number>.png` and `<number>.log`; with no numbers given it runs all 20 frames. When frames fail it lists the failed frames, exit code 1.
+- `shoot.sh` starts one host per frame and outputs `<output dir>/<number>.png` and `<number>.log`; with no numbers given it runs every frame in `frames.tsv` (11 today). When frames fail it lists the failed frames, exit code 1.
 - `g1.py` compares the PNGs with the same name in the two directories: it prints the FLIP mean frame by frame, and the last line gives the G1 mean and the 3 worst frames. When the test directory is missing frames or the sizes on the two sides differ it reports red, exit code 1. `--flip` defaults to `dm/third_party/flip/flip`.
 
 One complete measurement: first produce the reference directory at `2868x1320`, then produce one test directory for each candidate resolution, and compute G1 for each against the reference directory.
@@ -47,7 +47,7 @@ One complete measurement: first produce the reference directory at `2868x1320`, 
 
 The game's own video memory allocator has a budget constant (`main + 0x8524c4`), which is 260 MB in the original. Under this budget, as soon as the internal resolution is high the render targets no longer fit and the game crashes at startup, so a reference frame at native resolution cannot be drawn.
 
-The rewriter has already registered this constant as a cut (`CUTS` in `dm/tools/patch_nso.py`), and it is 512 MB in all build outputs, so reference frames can simply be produced with an ordinary build output.
+The rewriter has already registered this constant as a cut (`CUTS` in `dm/tools/patch_nso.py`), and it is 768 MiB in all build outputs, so reference frames can simply be produced with an ordinary build output.
 
 ### Rules
 

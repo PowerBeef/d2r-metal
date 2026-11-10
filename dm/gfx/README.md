@@ -1,6 +1,6 @@
 # dm/gfx — graphics layer (NVN → Metal)
 
-The Switch version of the game draws with NVN (the Switch's native graphics interface). The graphics layer reimplements this interface on top of Apple's Metal: every NVN call the game makes lands here, is recorded as a command, and is replayed as Metal commands at submit time. The game's shaders are not translated at run time; they are translated offline, once, on a computer, into Metal shader libraries (when the computer has no Apple Metal compiler, the final compile step moves to the phone; see below).
+The Switch version of the game draws with NVN (the Switch's native graphics interface). The graphics layer reimplements this interface on top of Apple's Metal: every NVN call the game makes lands here, is recorded as a command, and is replayed as Metal commands at submit time. The game's shaders are not translated at run time; they are translated offline, once, on a computer, into Metal shader libraries. Where the chain is built without Apple's Metal compiler (the launcher's installs on a player's Mac), the libraries hold the Metal source instead and the Mac App compiles it with macOS's own compiler (`dmsh_chain.py --update-lock --runtime`, `nvn_mtl.m` `lib_load`); an iOS build always needs compiled libraries.
 
 For the build steps of the whole project see `README.md` and `setup.sh` in the repository root, and for dependencies see `docs/DEPENDENCIES.md`; this page covers only the graphics layer's own matters.
 
@@ -10,7 +10,7 @@ For the build steps of the whole project see `README.md` and `setup.sh` in the r
 
 - The game's main program imports only one NVN symbol, `nvnBootstrapLoader`; all other NVN functions are obtained through it by name. The host forcibly takes over this import (`nvn/hle_nvn.c`), and not a single instruction of the original graphics driver is executed.
 - The game fetches the addresses of 523 names in total (`nvn/names.txt`). Each name has a thunk (`nvn/nvn_thunks.S`, a generated file): it first increments that function's call count and then jumps to the implementation.
-- Of these, the 216 that have call sites in the game's main program (`nvn/nvn_slots.tsv`) all have implementations: 203 are implemented according to NVN semantics, and 13 are empty implementations (`g_nops` in `hle_nvn.c`). The remaining 307 are connected to a red-reporting stub that, when called, prints `【红】NVN 未实现被调用：名字` in the log ("[red] unimplemented NVN function called: name").
+- Of these, 216 have call sites in the game's main program (`nvn/nvn_slots.tsv`): 203 are implemented according to NVN semantics, 9 are empty implementations (`g_nops` in `hle_nvn.c`) and 4 are left on the red-reporting stub on purpose (see "Known limitations"). Three functions without a static call site are implemented too (`CommandBufferSetCopyImageStride` and the two device timestamp getters). The remaining 304 are connected to the same red-reporting stub, which, when called, prints `【红】NVN 未实现被调用：名字` in the log ("[red] unimplemented NVN function called: name").
 - Every implementation gets a compile-time signature check against `nvn/nvn_protos.h` (a generated file). The calling conventions of Apple arm64 and the Switch differ for integer parameters narrower than 32 bits, so on the host side `NVNboolean` parameters are always received as `uint32_t` and only the low 8 bits are examined.
 
 ### Two layers: record and replay
@@ -72,8 +72,17 @@ Binding conventions followed during translation (file header of `tools/maxwell_r
 | `nvn/nvn_refl.m`, `nvn/nvn_refl.h` | Converts shader reflection json into fixed-length C arrays, so that drawing only walks arrays |
 | `nvn/nvn_hmap.h`, `nvn/nvn_cover.h`, `nvn/nvn_pace.h`, `nvn/nvn_pso_skey.h` | Hash table, geometric proof of full-coverage draws, presentation pacer, pipeline manifest key |
 | `nvn/nvn_builtin.h` | Hand-written MSL for the 4 compute shaders embedded in the main program |
+| `nvn/nvn_mv.inc`, `nvn/nvn_fg.inc`, `nvn/nvn_fgpace.h` | Included by `nvn_mtl.m`: the motion vectors MetalFX's temporal scaler needs, frame generation with MetalFX's frame interpolator, and when a frame starts under frame generation without a display link |
+| `nvn/nvn_rt.inc` | Included by `nvn_mtl.m`: ray tracing for the Mac's Ray Tracing row (needs hardware ray tracing and the motion vector pass) |
+| `nvn/nvn_rtex.inc` | Included by `nvn_mtl.m`: the shader pass of an extrapolated frame, which re-projects the last full frame's opaque picture and depth to this frame's camera |
+| `nvn/nvn_capture.c`, `nvn/nvn_capture.h`, `nvn/nvn_capture.inc` | NVN frame capture (`DM_NVN_CAPTURE`): the record walk and file format shared with the replayer `tests/nvn_replay`, and the host's capture of one frame |
+| `nvn/nvn_framerec.inc`, `nvn/nvn_testload.inc` | Test aids included by `nvn_mtl.m`: the frame recorder (every frame the screen is given, in order, for judging motion) and known GPU work as the control for measurements |
+| `nvn/nvn_adaptive_pace.h`, `nvn/nvn_presproj.h`, `nvn/nvn_timestamp.h`, `nvn/nvn_copy_pitch.h`, `nvn/nvn_ratelog.h` | Small pure helpers with unit tests: adaptive pacing tiers, which presented time a drawable gets, NVN counter timestamp units, the byte strides of buffer / texture copies, rate-limited error lines |
+| `nvn/nvn_protos.h`, `nvn/nvn_count.h` | Generated by `tools/gen_protos.py`: the prototypes and the function count |
+| `nvn/rt_range_check.inc` | A same-frame checker compiled only into its test build (`NVN_RT_RANGE_TEST`), not part of normal builds |
 | `nvn/include/nvn.h` | NVN interface declarations (third party; for the license see the file header) |
 | `nvn/*.tsv`, `nvn/names.txt`, `nvn/dmsh_chain.h` | The tables described above and the translation chain version header |
+| `nvn/bf_want.tsv`, `nvn/pso_allow.tsv`, `nvn/shader_map.tsv.conflicts.tsv` | Three more tables: the fragment shader keys that get an output-mapping-only "readable tile" variant (`tools/dmsh_build.py` reads it), the reviewed pipeline rows that `dm/tools/pso_seed.py check` and `gate` accept although the seed lacks them, and how key conflicts in the shader map were decided |
 | `tex/` | Texture format mapping, deswizzling, BC decompression, see [tex/README.md](tex/README.md) |
 | `metal/` | A standalone minimal Metal offscreen example, not compiled into the host, see [metal/README.md](metal/README.md) |
 | `tools/` | Offline tools, see below |
@@ -91,6 +100,9 @@ The scripts in `tools/`; usage is written in each file's header:
 | `dmsh_facts.py` | Generation and checking of the answer table `shader_facts.tsv` |
 | `dmsh_fetch.py` | Generates the "readable tile" versions of fragment shaders |
 | `c1_guard.py` | Generates `c1_full.tsv` (its header names the chain version and the guard's own hash) |
+| `dmsh_mtlcache.py` | Compiled-shader cache keyed by the Metal source: a chain change that leaves a shader's MSL as it was costs that shader no Metal compile |
+| `mv_check.py` | Offline check of the motion vectors: warps each frame's previous picture onto it with the dumped velocities and compares |
+| `ub_table.py` | Reads the host log of a `DM_NVN_UB` A/B run: each variant phase against its neighbouring baseline phases, last line `RESULT {json}` |
 | `dmsh_dryrun.py` | Dry-run conversion of the whole library, measuring only "can it be converted" |
 | `shader_map.py`, `maxwell_refs.py` | Generates the shader map; reads resource references from the machine code |
 | `nvn_slots.py`, `gen_protos.py` | Generate `nvn_slots.tsv` / `names.txt`, and `nvn_protos.h` / the thunks |
@@ -116,7 +128,7 @@ make -C dm/gfx/tex/tests run    # texture submodule unit tests; the real-data it
 make -C dm/gfx/metal run        # offscreen example self-test, see metal/README.md
 ```
 
-The tests in `dm/gfx/tests` compile the production code in directly and need a Metal device on the local machine; a few of them run under `MTL_DEBUG_LAYER=1` (the Metal validation layer). Most tests do not read the workspace; the exceptions are `t_refl` and `t_rt_range_ro`, which read the translated shader reflection json under `$DM_ROOT/build/cache/metal_shader_cache`, and `test_tbdr_budget.py` / `test_passgpu_top.py`, which create a temporary directory under `$DM_ROOT/run/gfx`. Main contents:
+The tests in `dm/gfx/tests` compile the production code in directly and need a Metal device on the local machine; a few of them run under `MTL_DEBUG_LAYER=1` (the Metal validation layer). Most tests do not read the workspace; the exceptions are `t_refl`, `t_refl_lib` and `t_rt_range_ro`, which read the translated shader reflection json under `$DM_ROOT/build/cache/metal_shader_cache`, and `test_tbdr_budget.py` / `test_passgpu_top.py`, which create a temporary directory under `$DM_ROOT/run/gfx`. Main contents:
 
 | Test | What it checks |
 |---|---|
@@ -137,6 +149,21 @@ The tests in `dm/gfx/tests` compile the production code in directly and need a M
 | `t_ratelog` | Rate-limited GPU error lines (`nvn/nvn_ratelog.h`): the first lines in full, one summary per period, the flush that counts a quiet tail, and four threads at once under ThreadSanitizer |
 | `t_pso_warm` | Pipeline keys handed to `pso_desc` are normalised and build the same descriptor as the raw state (2,000 random keys); where the user manifest lives and which manifests the warm-up reads; the user manifest's dedupe across old and normalised rows, and its recording of the seed's background rows; one load per shader when workers need it together, and a specialised function not compiled under the cache lock; the warm-up plan (order, background marker, dedupe), its counters end to end for every source combination and worker count, and the two waits |
 | `t_capture` | Frame capture (`nvn_capture.c`): every record op's pointers encode to region offsets and object indices and decode back; unknown ops are refused; the capture file round-trips its chunks, two-part chunks streamed through LZ4 included; the per-submit state text (anisotropy, MetalFX 3D) and its precedence in the replayer |
+| `t_adaptive_pace`, `t_fgpace`, `t_presproj`, `t_timestamp`, `t_copy_pitch` | The pure helpers: adaptive pacing tiers, frame starts under frame generation (`nvn/nvn_fgpace.h`), presented-time selection (`nvn/nvn_presproj.h`), NVN timestamp units (`nvn/nvn_timestamp.h`), copy strides (`nvn/nvn_copy_pitch.h`) |
+| `t_bloom_lut` | Bloom 1/4 on a real Metal replay with closed-form expectations: the full chain, every abort and mid-chain reset leaving B0 black, the cutoff's viewport and scissor guard |
+| `t_dirty_race` | The ordering race between "set read-only" and "unprotect before write" in dirty-page tracking |
+| `t_gpu_lost` | The GPU watchdog: with work waiting and none finished for `DM_GPU_LOST_S` seconds the GPU is taken as lost, every wait on it returns and nothing more is sent to it |
+| `t_hangrec` | The hang recorder: a submission that keeps the GPU busy stands in for a hung one, and the record must name the block that did not finish |
+| `t_link_ticks` | The acquire's waits on the display link, counted in its own ticks or in 60 Hz game frames |
+| `t_mfx_life`, `t_mfx_on` | MetalFX: the lifetime of the scaler sets (when one is built, replaced and put down), and policy and pixel checks on this Mac's GPU |
+| `t_prog_key` | The shader key is taken at `nvnProgramSetShaders`; the replay uses the stored key and no longer reads the control section |
+| `t_pso_pend` | Slot recycling of the parallel precompile once its table is full of predictions nobody took |
+| `t_quadrun` | 2D quad runs: the look-ahead's rules on hand-made command streams, the verify mode's check, and a real Metal replay that draws the same pixels with the merge off, on and checked |
+| `t_refl_lib` | Every reflection json of the current chain version's library goes through the parser the replay uses; one rejection fails the check |
+| `t_replay_cuts` | The translation thread's shortcuts: the pools a thread remembers, driver-segment blocks reused within a submission, repeated argument-table writes skipped |
+| `t_replay_fix`, `t_replay_san` | Regression tests for replay fixes on a real Metal replay, and for replay defects only a sanitizer shows (built as `t_replay_tsan` and `t_replay_asan`) |
+| `t_rt_srgb_view` | Render-target views that change the format: an RGBA8 texture used through an sRGB view stores the sRGB-encoded value, and presenting from an sRGB swapchain texture samples the stored bytes |
+| `test_ub_table.py` | `tools/ub_table.py` on synthetic log lines |
 | `nvn_replay` (built on demand, not in `run`) | Replays a `DM_NVN_CAPTURE` frame against this tree's replay layer and compares the presented frame with the live one (see `dm/verify/debugging.md`) |
 
 ## Common run-time switches
@@ -180,7 +207,7 @@ Comparison and testing:
 | `DM_NVN_FUSE_CHECK=1` | Same-frame check of pass merging; logs the comparison result every time |
 | `DM_TEST_NO_BC=1` | Forces the decompression path for "the GPU does not support BC compressed textures" on any machine |
 | `DM_FPS=30` or `60` | Pins the target frame rate |
-| `DM_PRESENT_HZ=N` | The frequency of presentation pacing (default 60); 0 means no frame limit and is for performance profiling only |
+| `DM_PRESENT_HZ=N` | Pins the frequency of presentation pacing; 0 means no frame limit and is for performance profiling only. Unset: 60 without a window; with a window the rate follows the refresh rate of the window's screen, at a tier that divides it evenly |
 | `DM_NVN_BARRIER=0\|1` | Pass-barrier level (default 1): 0 = every encoder waits for all earlier work and holds back all later work; 1 = a render pass's vertex stage waits only for compute and copies (see `bar_r_begin`) |
 | `DM_NVN_PASSGPU_SERIAL=1` | Measurement only: holds the pass-barrier level at 0, so passes run one after another and each `DM_NVN_PASSGPU` span is that pass's exclusive cost (frame totals are inflated); the record's first line says so for `passgpu_top.py` |
 

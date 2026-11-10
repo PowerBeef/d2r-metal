@@ -5,7 +5,7 @@ d2r-metal's verification run. It runs only what this Mac can check by itself: so
 ```bash
 dm/verify/fork_gate.sh auto             # what a change runs: quick unit, and it names the short checks the change touches (below)
 dm/verify/fork_gate.sh quick            # < 1 min: source checks
-dm/verify/fork_gate.sh quick unit       # ~3 min: + the test suites
+dm/verify/fork_gate.sh quick unit       # ~4 min: + the test suites
 dm/verify/fork_gate.sh core             # ~9 min: scenarios on the CLI host + touch cases
 dm/verify/fork_gate.sh full             # ~30 min: + Mac App, iOS package on the Mac, Metal validation, faults, replays, picture sets
 dm/verify/fork_gate.sh long             # on demand, 1.5–2.5 h: benchmarks, sanitizer runs, fuzzing

@@ -27,7 +27,7 @@ External tools:
 
 ## The gate: `fork_gate.sh`
 
-`fork_gate.sh auto|quick|unit|core|full|long|device` runs the checks below in tiers (`auto`: the tiers a change needs), each step with a machine-readable result. See [FORK_GATE.md](FORK_GATE.md).
+`fork_gate.sh auto|quick|unit|core|full|long|device` runs the checks below in tiers, each step with a machine-readable result. A change runs `auto`: `quick unit` (about 4 minutes), after printing the short checks the change touches. `core` (about 9 minutes), `full` (about 30), `long` and `device` run only when named, and the whole gate (`quick unit core full`, about 45 minutes) on the commit a release or an app rebuild is cut from. See [FORK_GATE.md](FORK_GATE.md).
 
 ## Where the reference behaviour comes from
 
@@ -68,7 +68,7 @@ Related standalone tools:
 
 ```
 python3 dm/verify/golden.py replay|shots check        # compare with the kept baselines
-python3 dm/verify/golden.py shots check --set orig,rec,rec75,phone   # the FLIP picture sets (screenshot_gate.md)
+python3 dm/verify/golden.py shots check --set orig,conv,rect,rec75,rec75t,phone   # the FLIP picture sets (screenshot_gate.md)
 python3 dm/verify/golden.py replay|shots record --reason "…"
 python3 dm/verify/golden.py prefix [--reason "…"]     # the wilderness prefix for the touch cases
 ```

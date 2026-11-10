@@ -9,11 +9,13 @@ Run the checks on the untouched code first, then again after your change. All co
 The gate runs them in tiers and prints one machine-readable last line, `FORKGATE OK|RED {json}` ([dm/verify/FORK_GATE.md](dm/verify/FORK_GATE.md)):
 
 ```
-dm/verify/fork_gate.sh auto         # every change: picks the tiers below from the files it touches, and says why
-dm/verify/fork_gate.sh quick unit   # source checks + the test suites (~3 min)
-dm/verify/fork_gate.sh core         # scenarios on the CLI host + the touch cases (~12 min)
-dm/verify/fork_gate.sh full         # host, graphics and app changes, and before rebuilding the apps: Mac App, the iOS package on the Mac, Metal validation, faults, baselines
+dm/verify/fork_gate.sh auto         # every change: runs quick unit (about 4 min) and first prints the short checks this change touches
+dm/verify/fork_gate.sh quick unit   # source checks + the test suites (about 4 min)
+dm/verify/fork_gate.sh core         # by name only: scenarios on the CLI host + the touch cases (about 9 min)
+dm/verify/fork_gate.sh full         # by name only: Mac App, the iOS package on the Mac, Metal validation, faults, baselines (about 30 min)
 ```
+
+A change runs `auto`, then by hand the short checks it printed (`dm/tools/gate_pick.py explain` lists them: one game on the headless host for host or graphics code, `regress.sh --fresh` for the rewriter, a changed scenario itself, a feature's verify mode). `auto` never picks `core`, `full`, `long` or `device`: ask for those by name. The whole gate (`quick unit core full`, about 45 minutes) runs on the commit a release or an app rebuild is cut from; `dm/tools/release_mac.sh` refuses without it (`gate_pick.py passed`). Before a branch or worktree lands on `main`, run `dm/verify/premerge.sh` in it: it builds the host, then runs `quick unit` (last line `PREMERGE OK|RED`).
 
 ### No game files needed
 
@@ -22,6 +24,7 @@ dm/verify/fork_gate.sh full         # host, graphics and app changes, and before
 | `python3 dm/i18n/scan_literals.py` | Whether any Chinese text the player can see bypasses the string table; see [dm/i18n/README.md](dm/i18n/README.md) |
 | `python3 dm/ios/tools/dm_i18n.py --check` | Whether every row of `dm/i18n/ui_text.tsv` follows the rules, and whether the checked-in `dm/host/dm_i18n_tab.h` was generated from it |
 | `python3 dm/tools/switches.py check` | Whether `dm/switches.tsv` lists every `DM_*` switch the sources read by its whole name (a name built at run time isn't seen, so don't build one), and no script sets a switch nothing reads (`switches.py gen` rewrites it) |
+| `python3 dm/tools/enginemap.py check` | Whether every change the port makes to the game's engine has a row in [docs/ENGINE_CHANGES.md](docs/ENGINE_CHANGES.md), and every row points at things that exist (rule 5). Last line `ENGINEMAP OK` / `ENGINEMAP RED` |
 
 GitHub CI (`.github/workflows/tests.yml`) runs these checks, the scenario parser, the HUD-derivatives check and the Python tool tests on every push to `main` and every pull request, with an empty workspace. The host, graphics and iOS suites need macOS 27 / Xcode 27 and partly the game's files, so they stay local. A nightly job (`fuzz.yml`) fuzzes the file parsers (`dm/tools/fuzz`).
 
@@ -68,7 +71,7 @@ Everything under the workspace `$DM_ROOT` (default `~/dm-work`) lives outside th
 
 ### 2. Comments and docs in English
 
-New comments and documentation are in English. Many existing comments are bilingual (Chinese, then English); when you edit one, you may replace the pair with the English text.
+New comments and documentation are in English. Many existing comments are bilingual (Chinese, then English); when you edit one, replace the pair with the English text; don't add new Chinese comments.
 
 Every source file opens with a comment saying what it does; the feature files in `dm/host` also name the addresses in the game program they rely on (offsets into the original 3.3.94012 image).
 
@@ -88,11 +91,16 @@ python3 dm/ios/tools/dm_i18n.py --header > dm/host/dm_i18n_tab.h
 
 New log lines are in English. A failure line carries the marker `【红】`: the tools match on it (`dm/verify/logred.sh`, `assertlib.py logred`, `dmtest.py`). Many existing log lines are in Chinese and scripts match their text; change one only together with every script that reads it. Prefer an event (`DM_EV`, [dm/verify/event_stream.md](dm/verify/event_stream.md)) for anything a test needs to see.
 
+### 5. A change to what the engine does gets a row
+
+Every rewrite entry, shader rule, hard-coded shader key, raised engine field and take-over has a row in [docs/ENGINE_CHANGES.md](docs/ENGINE_CHANGES.md): what the engine does, what we do, why, the setting, the switch, the test, the commit and the measured effect. Add or update the row in the same commit as the change. `python3 dm/tools/enginemap.py check` (the gate's `quick_enginemap` step, also run by GitHub CI) goes red otherwise. Look there before changing a picture feature, and add ideas that were tried and rejected to its list.
+
 ## Submitting a change
 
 - Say what you changed and why.
 - Say which checks you ran and paste their last lines.
 - If anything visible on screen changed, attach screenshots taken after the change.
+- If the change alters what the engine does, say which row of `docs/ENGINE_CHANGES.md` it adds or updates.
 - Confirm that no game content and no engine-analysis output is included.
 
 The pull request template lists these items.

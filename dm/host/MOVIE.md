@@ -29,7 +29,7 @@ The script writes to `$DM_ROOT/build/cache/dm/ffmpeg-ios/out` by default. `DM_MO
 
 The standard 18 resource chunks contain the global story videos. Japanese and Traditional Chinese localized openings live in the corresponding language chunks and must be added separately to the ordinary RomFS outside the app installer.
 
-Cinematics use the game's original `VoiceLanguage` selection. In builds with `DM_MOVIE_FFMPEG=1` only, the Custom page adds an independent voice-over radio (default builds keep the Custom page unchanged): Chinese text can use English voice, or switch back to Chinese voice. Tap Apply, then close and reopen the app for the change to take effect. This changes voice-over only, not the UI language.
+Cinematics use the game's original `VoiceLanguage` selection. In builds with `DM_MOVIE_FFMPEG=1` only, the port's own Options page (Extras on the Mac and iOS, Custom on the default overlay) adds an independent voice-over radio (default builds keep that page unchanged): Chinese text can use English voice, or switch back to Chinese voice. Tap Apply, then close and reopen the app for the change to take effect. This changes voice-over only, not the UI language.
 
 ## Synthetic tests, no game files
 

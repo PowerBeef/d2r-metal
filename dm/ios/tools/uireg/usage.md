@@ -113,12 +113,15 @@ A run name is the first argument of `G("…")` in `uireg.py`; below they are gro
 | `rf1`–`rf3` | One-tap restart from the pause menu, restarting three times in a row per run |
 | `wd1`, `wd2` | No-progress watchdog: no false positive when returning to the front end and sitting idle; it still triggers when nothing moves at all after launch |
 | `dc` | Death in the wild → tap `继续` (Continue) on the death screen → revive in town |
+| `map`, `mapf` | The automap in touch mode: the map the player chose comes back after a panel closes; with the automap size set to full screen in Options, the full-screen map shows directly and the setting is not rewritten |
+| `shl` | The pause menu's "Share diagnostic log": the share sheet comes up (a test switch dismisses it after 3 seconds) and the log is exported |
+| `od` | The older-device start path, forced with `DM_TEST_NO_BC=1`: the App boots with the Legacy Device Pack into the touch interface. Needs a package built with `DM_ASTC_PACK` and the "Legacy Device Pack" folder in the container's Documents; without them its first item fails |
 | `top` | Exists only in the `ipadfull` profile: the minimap and area name at the true top of the screen, and the title bars of the panels |
 
 The scope when no run name is given:
 
 - `iphone`, `ipadfull`: everything in the table above (`top` only in `ipadfull`).
-- `ipad` (the bordered profile is not the default picture on iPad): runs only the part related to the screen aspect ratio, automatically skipping `d g h j k t u v m n p ra q pk g1–g4 ex tb tp`, and skipping the casting-in-the-wild part within run `a`. They can still be run when named explicitly.
+- `ipad` (the bordered profile is not the default picture on iPad): runs only the part related to the screen aspect ratio, automatically skipping `d g h j k t u m n p ra q pk g1–g4 ex tb tp`, and skipping the casting-in-the-wild part within run `a`. They can still be run when named explicitly.
 - The tap positions of `g1`–`g4` have only been measured for the two sets `iphone` and `ipadfull`.
 
 ## Environment variables

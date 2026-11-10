@@ -6,11 +6,11 @@ The iPhone 14 family, iPhone 15 / 15 Plus and earlier models can play; they just
 
 Almost all of the game's textures use BC compression. Apple GPUs support that format only from the A17 Pro (iPhone 15 Pro) on; earlier chips cannot read it. The answer is to convert those textures offline, on a computer, into ASTC, which these devices do support — the picture is the same picture. Textures are game content, so we cannot provide this pack; it can only be generated on your own computer from your own game files.
 
-**Which devices need it**: the App decides this itself at launch, so there is no table to consult. A device that needs it shows "Supplementary Pack Required"; if it shows "One More Step for This Device" instead, the App was built without the part that goes with the pack — rebuild it as in step 4 below. If it shows "Device Not Supported … iPhone 15 Pro and later can play", that is the old text from before v1.0.9: update to the latest version first, then follow this page.
+**Which devices need it**: the App decides this itself at launch, so there is no table to consult. A device that needs it shows "Supplementary Pack Required"; if it shows "One More Step for This Device" instead, the App was built without the part that goes with the pack — rebuild it as in step 4 below.
 
 ## What you need
 
-- The "with a Mac" route (see "Getting started" on the front page), with `./setup.sh` finished.
+- The build from source (see "On iPhone and iPad, or to develop: build from source" under "Get Started" on the front page), with `./setup.sh` finished.
 - The **astcenc** encoder (Arm's open-source texture encoder, Apache 2.0). Build it from source, which takes a minute or two:
 
   ```bash
@@ -49,11 +49,11 @@ Afterwards `$D/pack` contains:
    cd dm/ios && DM_ASTC_PACK="$D/pack" ./run.sh build
    ```
 
-   An App built without this variable only says "One More Step for This Device" (older versions say "Device Not Supported") on older devices.
+   An App built without this variable only says "One More Step for This Device" on older devices.
 
 5. **Install** as usual (`./run.sh install` or Xcode).
 
-6. **Put the pack on the phone**: in the Files app open "On My iPhone → D2R Metal" and copy the **whole** `Legacy Device Pack` folder into it, at the same level as the game resource folder. Finder works too (connect the phone → Files → D2R Mobile). Then open the game.
+6. **Put the pack on the phone**: in the Files app open "On My iPhone → D2R Metal" and copy the **whole** `Legacy Device Pack` folder into it, at the same level as the game resource folder. Finder works too (connect the phone → Files → D2R Metal). Then open the game.
 
 ## Things to know
 

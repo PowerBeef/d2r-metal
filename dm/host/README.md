@@ -13,7 +13,7 @@ Every file opens with a comment saying what it does and what that is based on. A
 
 | File | What it does |
 |---|---|
-| `Makefile` | Builds the Mac host `dmhost`. `hle_*.c` and the graphics-layer sources are picked up by wildcard, so adding a file needs no change here; the missing table (`dm_hud_exp.h`) is generated from your game files and is not in the repository |
+| `Makefile` | Builds the Mac host `dmhost`. `hle_*.c` and the graphics-layer sources are picked up by wildcard, so adding one needs no change here; `dm_*.c` and the other sources are listed one by one in `SRC`, in alphabetical order, and a new one is added there. The missing table (`dm_hud_exp.h`) is generated from your game files and is not in the repository |
 | `hle_target.c` | Auto-target priority for touch taps: bosses, then elites, then normal monsters. Hooks the comparison function of the original controller targeting; the original eligibility, range and line-of-sight checks still apply |
 | `hle_private_aim.c` | Aiming by dragging a skill button: converts the right stick's on-screen direction into a direction in the game world |
 | `touch_mac.c`, `touch_mac.h` | The touch front end of the Mac host: feeds touch points tick by tick from a touch script (`DM_TOUCH_SCRIPT`); the touch cases in [dm/verify](../verify/README.md) run on it. In the Mac App it also takes the real mouse (clicks, drags, scroll-bar thumbs) and the wheel / trackpad (`dm_wheel_ui`) |
@@ -35,11 +35,12 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 | `dm_textinput.c` | Connects UI text boxes (gold amount, Chronicle search and so on) to the system keyboard |
 | `dm_textbox.c`, `dm_textbox_core.c`, `dm_textbox_core.h` | Makes plain text boxes display the color codes in item annotations correctly; `_core` is pure logic that does not touch game memory and is tested directly by the unit tests |
 
-### Controller and the two modes
+### Controller, PC controls and the interface modes
 
 | File | What it does |
 |---|---|
-| `dm_padmode.c` | The two UI layouts, controller and touch: connecting a controller brings back the original controller UI, touching the screen brings back the touch UI, with no restart |
+| `dm_padmode.c` | The interface sets and the switch between them, with no restart: touch, controller and, in the Mac App, the PC set (a controller press brings the controller layouts, the mouse or keyboard the PC set, touching the screen the touch UI) |
+| `dm_kbm.c`, `dm_kbm.h` | PC keyboard and mouse in game (the Mac App's PC control mode): keys run the game's own PC key bindings, the mouse clicks the world as D2R does on PC, and clicks on panels keep going through the Mac pointer path (`touch_mac.c`) |
 | `dm_modetx.h` | The mode-switch transaction: freeze input, the old side lets go, the game rebuilds its UI, the new side takes over, input is released. A pure state machine |
 | `dm_mode_items.h` | Registry of behavior that runs only in touch mode or only in controller mode; a new mode-specific behavior gets one row here |
 | `dm_padmap.h` | Maps the four face buttons of a physical controller to game buttons, by the letter printed on the key cap |
@@ -49,9 +50,13 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 | File | What it does |
 |---|---|
 | `dm_uiscreen.c`, `dm_uiscreen.h` | On screens narrower than 16:9 (iPad), lays the UI out at 16:9 while the 3D picture still fills the whole screen |
+| `dm_geom.h` | Picture geometry shared by the present (`dm/gfx/nvn/nvn_mtl.m`) and the front ends: where a picture of the game goes in a drawable, and which part of it is shown |
+| `dm_screen_mac.c`, `dm_screen_mac.h` | Screen geometry of the Mac App as pure functions (full-screen setup, Native width, game resolution); `tests/t_screen_mac` pins every rule |
+| `dm_gpuheap.c`, `dm_gpuheap.h` | Readings of the game's GPU heap 0, which holds every render target and never grows (the `gpuheap` event), and of its upload heap |
+| `dm_turnsmooth.c` | Smooths the local player's turn snap-back, and reads the model's turning parameters |
 | `dm_daytime.c` | The test switch `DM_TEST_DAYTIME`: pins the game's sun angle at a chosen tick |
-| `dm_tables.c` | Reports the game-derived table at start (the `Tables:` line, red in the Mac App when it is missing) |
-| `dm_hud.c`, `dm_hud.h` | The numbers on the bottom UI (level, experience percentage, belt counts), and the request for a player setting (1–8) through the game's `/players` path (controller pause menu, `DM_PLAYERS`, touch scripts) |
+| `dm_tables.c`, `dm_tables.h` | Reports the game-derived table at start (the `Tables:` line, red in the Mac App when it is missing) |
+| `dm_hud.c`, `dm_hud.h` | The numbers on the bottom UI (level, experience percentage, belt counts), and the request for a player setting (1–8) through the game's `/players` path (`DM_PLAYERS`, touch scripts) |
 
 ### Text and language
 
@@ -62,17 +67,14 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 | `dm_update.c` | The build number and new-version notice on the character select page |
 | `dm_namegen.c` | Random names when the name field is left empty: assembled from syllables, avoiding names already taken |
 
-### Endgame modes
+### Picture settings
 
 | File | What it does |
 |---|---|
-
-### Stash and items
-
-| File | What it does |
-|---|---|
-| `dm_video.c` | The picture settings on the Options Video tab (Mac: Display Mode, Resolution incl. Native, Color, Graphic Presets, 3D Resolution, Upscaling, Anti-Aliasing, Anisotropic Filtering, Environment Shadows, Shadow Quality; iOS: the Graphics rows, with 3D Resolution as `res`; both: Frame Rate and Frame Drops), stored in `sw_video.txt` with the Recommended copy (`rec_*`, `rec_v`, `rec_id`). Frame Rate and Frame Drops hold the custom keys `eco_fps` / `q3d`, saved in `sw_custom.txt` through `dm_custom.c` |
+| `dm_video.c` | The picture settings on the Options Video tab (Mac: Display Mode, Resolution incl. Native, Color, Graphic Presets, 3D Resolution, Anisotropic Filtering, Environment Shadows, Shadow Quality, Environment Detail, Ray Tracing, Frame Drops; iOS: Picture Size, 3D Resolution (stored as `res`), Color, Graphic Presets and the same Graphics rows without Ray Tracing and Frame Drops), stored in `sw_video.txt` with the Recommended copy (`rec_*`, `rec_v`, `rec_id`). MetalFX Temporal and Frame Generation have keys (`up`, `fg`) but no rows. Frame Drops holds the custom key `q3d`, saved in `sw_custom.txt` through `dm_custom.c` |
 | `dm_picrec.c`, `dm_picrec.h` | The Mac App's Recommended picture from the chip's generation, tier and GPU cores and the main screen (pure C; cases and invariants in `tests/t_picrec`) |
+| `dm_picios.c`, `dm_picios.h` | The iPhone's and iPad's Recommended Picture Size from the chip (pure C; cases in `tests/t_picios`) |
+| `dm_s3lv.h` | The Frame Drops levels: the 3D scales the dynamic 3D scale controller (`hle_oe.c`) steps down to below the chosen 3D Resolution. A pure header, shared with the Recommended model's tests |
 
 ### Convenience features
 
@@ -90,7 +92,26 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 |---|---|
 | `dm_custom.c`, `dm_custom.h` | The port's own Options page ("Extras" on the Mac and iOS): all feature switches are read and written here; modules only call `dm_custom_get` |
 | `dm_cloudsync.c` | The core of iCloud save sync: comparing and moving files between the local save directory and one cloud directory, without touching the iCloud API |
+| `dm_savebits.c` | Item bitstream and save-file helpers used by the iCloud merge (`dm_cloudmerge.c`): the game's own bitstream write and read, finding an item in the original saves, the shared stash save's name |
+| `dm_movie_decode.c`, `dm_movie_decode.h` | The optional FFmpeg cutscene backend: custom-reader demuxing and VP8 decoding to packed NV12, see [MOVIE.md](MOVIE.md) |
 | `dm_unit.h` | A small shared helper: reads which level a unit is in |
+| `dm_widget.h` | Checks that a native UI widget is the expected class (by its vtable) before its class-specific fields are read or written by offset |
+| `dm_sect.h`, `dm_uctx.h` | Shared plumbing: the registration table sections (HLE, forced take-overs, NVN implementations), and the registers in a signal context |
+
+### Test, analysis and diagnostic support
+
+| File | What it does |
+|---|---|
+| `dm_ctl.c`, `dm_ctl.h`, `dm_ctl_cmds.c` | The control port: protocol and transport, and the game-facing commands, each calling only existing host paths ([dm/verify/control_port.md](../verify/control_port.md)) |
+| `dm_events.c`, `dm_events.h` | The event stream: one JSON line per event, and the log hook that turns red and fatal lines into events ([dm/verify/event_stream.md](../verify/event_stream.md)) |
+| `dm_engine.c`, `dm_engine.h` | The engine snapshot: once per frame it reads the game's own UI and save state and publishes it to the control port (`state`, `engine`) and the event stream (`action`, `focus`, `save_stuck`). Reads game memory only |
+| `dm_live.c`, `dm_live.h` | Live hooks for the engine-analysis harness ([dm/tools/re](../tools/re/README.md)): one instruction of the game's code becomes a branch to a trampoline that records the hit. Mac development runs only (`DM_LIVE=1`) |
+| `dm_names.c`, `dm_names.h` | What the game calls its things, for the analysis tools: the model file of each render entity and the file of each texture, read from the game's own tables. Read-only |
+| `dm_lights.c`, `dm_lights.h` | The frame's lights, read from the game's own component pools (the control port's `lights`). Read-only |
+| `dm_sampler.c` | Whole-process sampling profiler for `bench.py profile`: every thread, the host's own as well as the game's |
+| `dm_prof.c`, `dm_prof.h` | Per-frame instruction counts of host modules (a test switch) |
+| `dm_staterep.m` | Reports the game state (Menu, Loading, Playing, Paused, Background) to the system's StateReporting, so its Metal performance recording can be split by state; off unless `DM_STATEREP=1` |
+| `dm_scrub.c`, `dm_scrub.h` | Share Logs scrubbing: replaces whatever could identify the player (home directory, bundle ID, computer and character names) with placeholders. Pure logic, tested by `tests/t_scrub.c` |
 
 ## tests/
 

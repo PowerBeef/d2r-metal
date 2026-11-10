@@ -79,7 +79,7 @@ Diablo II lives on its rhythm: the click, the swing, the loot hitting the ground
   <img src="docs/images/r3-chart-smooth.jpg" width="100%" alt="Two line charts of the milliseconds between images on screen, both nearly flat at 16.7. Mac mini with an M6, rays at Full, walking the Cathedral: 3,305 images in 55 seconds, 2 of them late, at 33.3 ms. iPhone 17 Pro, the world at 50%, walking the Far Oasis: 19,518 images in 325 seconds, 3 of them late, at 29.2 ms.">
 </p>
 
-<sub>One session each, skipping the first 5 seconds while the area loads in. These are the two devices we've measured ourselves. Honest footnote: with 100 monsters on screen the iPhone 17 Pro dips to about 54 fps, and generated frames add a touch of input delay, about 22 ms on an M6. Nothing a Baal run will notice.</sub>
+<sub>One session each, skipping the first 5 seconds while the area loads in. These are the two devices we've measured ourselves. Honest footnote: with 100 monsters on screen the iPhone 17 Pro dips to about 54 fps, and generated frames add a touch of input delay, about 23 ms on an M6. Nothing a Baal run will notice.</sub>
 
 <h2 align="center" id="the-launcher"><img src="docs/images/r3-plate-launcher.jpg" width="100%" alt="The Launcher"></h2>
 

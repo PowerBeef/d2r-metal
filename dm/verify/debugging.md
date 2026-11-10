@@ -127,7 +127,7 @@ Xcode's LLDB can serve the Model Context Protocol, so an agent can drive the sam
 
 Only one lldb may serve MCP at a time: with more, `lldb-mcp` stops with "too many MCP servers running". An lldb that was killed leaves its `~/.lldb/lldb-mcp-<pid>.json` behind; delete stale ones.
 
-`lldb-mcp` looks for servers only when it starts. If none is running then, it starts its own lldb (`lldb -O 'protocol start MCP'`), which keeps running after the agent exits, is reused by the next one and counts as the one server. With Xcode 27.1 that lldb starts with its standard input and output closed: it can load a target, but every `process attach` fails with "Bad file descriptor". Either start your own lldb with the server (step 1) before the agent starts, or point `LLDB_EXE_PATH` at a wrapper that gives the lldb `lldb-mcp` starts a standard input that never closes:
+`lldb-mcp` looks for servers only when it starts. If none is running then, it starts its own lldb (`lldb -O 'protocol start MCP'`), which keeps running after the agent exits, is reused by the next one and counts as the one server. With Xcode 27.1 (not rechecked on 27.2) that lldb starts with its standard input and output closed: it can load a target, but every `process attach` fails with "Bad file descriptor". Either start your own lldb with the server (step 1) before the agent starts, or point `LLDB_EXE_PATH` at a wrapper that gives the lldb `lldb-mcp` starts a standard input that never closes:
 
 ```bash
 #!/bin/bash
@@ -166,7 +166,7 @@ ASan prints "ignoring requested `__asan_handle_no_return`" once per run: the gue
 What they found (fixed):
 
 - UBSan: `nvn_mtl.m` tested `lmap[j] >= 0` on a `uint8_t` map, where 0xff means "no mapping". The test was always true, so clear colors were read from slot 255 of an 8-entry table. It now tests `< 8`.
-- UBSan: misaligned 8-byte relocation stores in `loader.c`, a misaligned 2-byte read in `dm_vault.c`, and misaligned reads of the packed sprite extents in `dm_world.c` (found by random play on the UBSan host, below). All now go through `memcpy`.
+- UBSan: misaligned 8-byte relocation stores in `loader.c`, a misaligned 2-byte read in the extra-stash code (removed since), and misaligned reads of the packed sprite extents in `dm_world.c` (found by random play on the UBSan host, below). All now go through `memcpy`.
 
 `inventory`, `pause_menu`, `save_while_paused`, `enter_game` and `bench/town_loop` run clean under all three builds. `enter_game` takes about 4 s on the normal and ASan hosts, and about 23 s on the TSan host.
 
@@ -188,7 +188,7 @@ The messages are summarized in `metal_validation.txt`; from the shell, `python3 
 
 Findings:
 
-- With shader validation on, a windowed run crashes at its first present commit inside Metal's own `-[MTL4GPUDebugCommandBuffer applyResidencySets:]` (macOS 27, still on 27.0.1; moving the layer's residency set off the queue does not help). Run shader validation headless (`--headless`): there is no present step, and all of the game's rendering is still validated. The fork is Metal 4 only, so the older-API host is no longer an option. A run with the 3D or the present scaler also reported MetalFX's own scaler shader (`MFX_SCALE_SHADER_V1_FRAG`) reading a non-resident 4-byte internal buffer at every draw; MetalFX exposes no residency hook for it. Since 2026-11-10 the host catches the buffers a Metal 4 spatial scaler allocates while it is created (19 of them, 1,096 bytes) and keeps them in its own residency set for the scaler's life (`nvn_mtl.m` `mfx_cap_begin`, "MetalFX's own buffers"): the same run then reports nothing, and with `DM_MFX_RESIDENT=0` the message is back. The temporal scaler and the frame interpolator draw clean.
+- With shader validation on, a windowed run crashes at its first present commit inside Metal's own `-[MTL4GPUDebugCommandBuffer applyResidencySets:]` (macOS 27; seen up to 27.0.1 and not rechecked on 27.2; moving the layer's residency set off the queue does not help). Run shader validation headless (`--headless`): there is no present step, and all of the game's rendering is still validated. The fork is Metal 4 only, so the older-API host is no longer an option. A run with the 3D or the present scaler also reported MetalFX's own scaler shader (`MFX_SCALE_SHADER_V1_FRAG`) reading a non-resident 4-byte internal buffer at every draw; MetalFX exposes no residency hook for it. Since 2026-11-10 the host catches the buffers a Metal 4 spatial scaler allocates while it is created (19 of them, 1,096 bytes) and keeps them in its own residency set for the scaler's life (`nvn_mtl.m` `mfx_cap_begin`, "MetalFX's own buffers"): the same run then reports nothing, and with `DM_MFX_RESIDENT=0` the message is back. The temporal scaler and the frame interpolator draw clean.
 - `api` and `shader` runs of the scenarios above report nothing. So does a `shader` run of the 43-area tour at this Mac's Recommended picture with rays forced on (`--env "$(python3 dm/tools/picture.py rec) DM_RT=1"`, 2026-11-10): 0 messages, with the host keeping the spatial scaler's buffers resident.
 - `lint`: about 46,600 redundant `setComputePipelineState` calls in a 12 s `enter_game`. They come from the texture deswizzle encoder (`dm/gfx/tex/nvn_deswizzle_gpu.m`), which sets the pipeline once per level and layer on the same encoder. This is cheap (a few ms over a load) and has not been changed.
 
@@ -267,7 +267,7 @@ python3 dm/tools/c2s.py summary ~/dm-work/run/replay/town_loop_4242             
 python3 dm/tools/c2s.py near ~/dm-work/run/replay/town_loop_4242 300 --span 5     # the packets in ticks 295-300
 ```
 
-`tickdiff.py` reports the first tick where the two records differ and the state slots that differ (player, monster, object, missile, item, seed). With per-unit rows on both sides, it also names the units and fields: `player id 1 cls 1: mode 3→5, yf 65437→32768`. It also replaces the comparator `host_savecmp.sh` used to call, which was missing from the repository. When `replay.py check` finds a divergence it also lists the recorded packets of the five ticks before it, labelled from `dm/verify/c2s_opcodes.tsv` ("run to a map location" rather than `0x03`). `c2s.py summary` counts a recording's packets by kind and turns red when a fixed-length packet has another length: each handler in the game checks its own exact length, and the table holds those lengths.
+`tickdiff.py` reports the first tick where the two records differ and the state slots that differ (player, monster, object, missile, item, seed). With per-unit rows on both sides, it also names the units and fields: `player id 1 cls 1: mode 3→5, yf 65437→32768`. Saves are compared by `dm/verify/savecmp.py`. When `replay.py check` finds a divergence it also lists the recorded packets of the five ticks before it, labelled from `dm/verify/c2s_opcodes.tsv` ("run to a map location" rather than `0x03`). `c2s.py summary` counts a recording's packets by kind and turns red when a fixed-length packet has another length: each handler in the game checks its own exact length, and the table holds those lengths.
 
 What determinism needs, and what the tool handles:
 

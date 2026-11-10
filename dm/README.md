@@ -26,10 +26,15 @@ Each module is rewritten once, offline, touching only the instructions that cann
 | `svc #n` (system call) | There is no Horizon kernel on Apple platforms | A jump to the "host gate": an entry point into the host's C code |
 | Reads of `cntpct_el0` (the system counter) | Horizon's timer has no counterpart on Apple platforms | Also goes through the host gate; the host answers as a 19.2 MHz system counter |
 
-In addition there are two tables registered per program build number, both written in `patch_nso.py`:
+In addition there are five tables registered per program build number, all written in `patch_nso.py`:
 
 - **Cuts** (`CUTS`): targeted modifications of individual instructions or data. Each entry carries the original bytes, the new bytes and a reason; before rewriting, the original bytes are checked entry by entry, and the rewrite aborts on any mismatch.
 - **Observation gates** (`OBS`): a gate inserted at the entry of some function that enters a host callback, executes the original instruction and then jumps back, so that the host can read the state at that point.
+- **Parameter slots** (`PARAMS`): a constant the game builds in one or two instructions is read from a host-filled thread slot instead (the output resolutions, the shadow map edge). The host supplies the original constant where nothing should change.
+- **Switched branches** (`SWITCHES`): a conditional branch keeps its original decision and is also taken when a host-filled thread slot is non-zero (environment shadows); a `csel` row puts the slot's value in the destination when it is non-zero (camera jitter). With the slot at 0 the original instruction's behaviour is unchanged.
+- **Pipeline-set fast path** (`PIPESET`, the `touch` kind only): the game's pipeline-set function `main+0x1746558` returns at once when it would set the pipeline that is already set; `DM_PIPESET=0` keeps the original path and `2` checks every call that would be skipped, then runs the original path.
+
+Every entry of these tables has a row in [../docs/ENGINE_CHANGES.md](../docs/ENGINE_CHANGES.md).
 
 The rewritten code is never modified again at run time: thread slot numbers are obtained indirectly through a read-only "key page", and gate addresses are fetched from thread slots. The reason is that iOS does not allow executing code written at run time, so the game code must be compiled into the App as a signed code segment.
 
@@ -86,7 +91,7 @@ The App compiles the sources of `host/` and `gfx/` in directly. The front-end in
 | `brand/` | The logo, the layered app icon and the font, with the scripts that build them into the apps |
 | `verify/` | Verification: the gate `fork_gate.sh`, the rewrite-equivalence regression `regress.sh`, our own baselines `golden.py`, the scenarios, and the record formats they use |
 | `data/` | Small data shipped with the repository: the registry of borrowed paths for the resource overlay. The startup prefetch list is not in the public repository: without it there is no prefetch, and startup skips one step of decoding ahead of time |
-| `i18n/` | The Chinese-English string table `ui_text.tsv`; `scan_literals.py` checks that all Chinese text the player can see goes through this table, with exceptions registered in `literal_whitelist.tsv` |
+| `i18n/` | The multilingual string table `ui_text.tsv` (Chinese, English, Spanish, Russian, Korean); `scan_literals.py` checks that all Chinese text the player can see goes through this table, with exceptions registered in `literal_whitelist.tsv` |
 | `third_party/` | Third-party code, see [../docs/DEPENDENCIES.md](../docs/DEPENDENCIES.md) |
 
 ## Common workflows
@@ -130,7 +135,7 @@ Usage is `dmhost <build output directory> [module…] [-- game arguments…]`. `
 
 **Build the iOS package**: `cd dm/ios && ./run.sh build`; to install on a device use `./run.sh install`. For signing configuration see the top-level README.
 
-**The gate**: `dm/verify/fork_gate.sh auto|quick|unit|core|full|long|device` runs the source checks, the test suites, the scenarios, our own baselines and the benchmarks in tiers; see [verify/FORK_GATE.md](verify/FORK_GATE.md).
+**The gate**: `dm/verify/fork_gate.sh auto|quick|unit|core|full|long|device` runs the source checks, the test suites, the scenarios, our own baselines and the benchmarks in tiers. A change runs `auto`: `quick unit` (about 4 minutes), after printing the short checks the change touches. `core` (about 9 minutes), `full` (about 30), `long` and `device` run only when named; the whole gate (`quick unit core full`, about 45 minutes) runs on the commit a release or an app rebuild is cut from. See [verify/FORK_GATE.md](verify/FORK_GATE.md).
 
 ## Files in host/
 
@@ -174,7 +179,8 @@ Usage is `dmhost <build output directory> [module…] [-- game arguments…]`. `
 
 | File | Responsible for |
 |---|---|
-| `front.h`, `front_mac.m` | The front-end interface and its Mac implementation (window, keyboard) |
+| `front.h`, `front_mac.m` | The front-end interface and its Mac implementation (window, keyboard, mouse, menus) |
+| `app_mac.m` | The macOS App form: when the host is packaged as an `.app`, sets up at startup what the command line would (window on, save and log folders, the game resource folder the player picks on first launch) |
 | `dm_input.h` | The state the front end writes for the input layer |
 | `crash.c` | Crash state printing, watchdog |
 | `diag.c` | The probe `DM_PROBE`, the UI message log `DM_UIMSG`, main-thread sampling `DM_SAMPLE` |

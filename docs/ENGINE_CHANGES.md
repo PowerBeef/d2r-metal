@@ -32,7 +32,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 | Anti-aliasing | The game's own SMAA, selected by its mode byte; off under the temporal scaler | Field | 0.31 ms edge pass | `DM_AA_MODE=0` | EC-021, EC-032 |
 | 3D upscale | MetalFX replaces the game's pass | Replaced | About 2.8 ms with motion (2026-11-04) | `DM_MFX3D=0`, `DM_MFXT=0` | EC-039, EC-040 |
 | Compose with the interface | Kept; the frame interpolator's result goes in underneath | Kept + added | About 4.6 ms (2026-11-04) | `DM_FG=0` | EC-041, EC-042 |
-| Present | Our own present thread and queue, no display link under frame generation | Replaced | 0.13 to 0.16 ms | `DM_PRESENT_LINK=1`, `DM_PRESENT_QUEUE=0` | EC-053 |
+| Present | Our own present thread, no display link under frame generation; a queue of its own on iPhone and iPad, the game's queue on Macs | Replaced | 0.13 to 0.16 ms | `DM_PRESENT_LINK=1`, `DM_PRESENT_QUEUE` | EC-053 |
 
 ## Register
 
@@ -240,7 +240,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Switch:** DM_ENV_SHADOWS
 - **Test:** full_golden_picture
 - **Commit:** 4f952ed
-- **Measured:** Shadow passes +0.70 ms in town, +0.38 in the Blood Moor with the 4096 map, at 3840 x 2160 (M6, 6 + 6 ABBA, 2026-11-04). Unmeasured on a phone.
+- **Measured:** M6 (12-core GPU), town_loop, 6 + 6 ABBA, 2026-11-04. At 3840 x 2160 (`DM_GAME_RES=3840x2160 DM_3D_SCALE_DYN=0`) with `DM_NVN_PASSGPU`: shadow passes +0.70 ms in town and +0.38 in the Blood Moor with the 4096 map, +0.55 and +0.32 with the 2100 map; whole-frame GPU p50 +0.24 ms (no difference). At Recommended (Native 2560, no pass timing): GPU p50 +0.33 ms, and slow frames (over 20.8 ms, one missed refresh) in 0.9 to 1.9% of town frames with and without, in all 12 runs: open, not a shadow cost. Pass sums are the cost; whole-frame GPU time can't rank costs at Recommended on this Mac. An earlier figure (+0.5 and +0.25 ms) used the old 1024 map. Unmeasured on a phone.
 - **Status:** confirmed
 - **Covers:** main+0x15cea80, KESHADOW
 
@@ -253,7 +253,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Switch:** DM_SHADOW_SIZE
 - **Test:** full_golden_picture
 - **Commit:** 92bcad1
-- **Measured:** Ultra against Standard at 3840 x 2160: shadow passes +0.59 ms in town, +0.55 in the Blood Moor (M6, 6 + 6 ABBA, 2026-11-04).
+- **Measured:** Ultra against Standard (2100), environment shadows on, at 3840 x 2160: shadow passes +0.59 ms in town, +0.55 in the Blood Moor; whole-frame GPU p50 -0.28 ms, which is the clock and not a gain (M6, 6 + 6 ABBA, 2026-11-04). Shadow passes 1.07 ms at 1024 against 2.14 ms at 4096 (M6, 2026-10-30).
 - **Status:** confirmed
 - **Covers:** main+0x168a580, KSHSIZE
 
@@ -533,13 +533,13 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-039 MetalFX replaces the 3D upscale
 - **Layer:** replay layer
 - **Engine:** Upscales the 3D picture with bilinear sampling, a 5-tap sharpen and an R8 mask.
-- **Ours:** Below 100% 3D scale, that draw becomes a copy, MetalFX, and a write-back of colour times the mask. On the Mac, the spatial scaler can also enlarge at the present, once per frame.
+- **Ours:** Below 100% 3D scale, that draw becomes a copy, MetalFX, and a write-back of colour times the mask. On the Mac, the spatial scaler can also enlarge at the present, once per frame. The spatial scaler creates small buffers of its own that are in no residency set, which Metal's shader validation reports at every draw; the host catches them as the scaler is made and keeps them resident.
 - **Why:** Sharper world, and the interface stays at screen resolution.
 - **Setting:** 3D Resolution
-- **Switch:** DM_MFX, DM_MFX3D, DM_MFX_STACK
+- **Switch:** DM_MFX, DM_MFX3D, DM_MFX_STACK, DM_MFX_RESIDENT
 - **Test:** mfx3d_dyn, rec75, t_mfx_on, t_mfx_life
-- **Commit:** 4ac0543, 7c2f892
-- **Measured:** iPhone 17 Pro: 11.65 to 12.28 ms, edge variance 404 to 728 (2026-10-25). M6: no significant cost in ABBA x4 (2026-10-29).
+- **Commit:** 4ac0543, 7c2f892, 0a944cf
+- **Measured:** iPhone 17 Pro: 11.65 to 12.28 ms, edge variance 404 to 728 (2026-10-25). M6: no significant cost in ABBA x4 (2026-10-29). The buffers kept resident: 19 buffers, 1,096 bytes; shader validation over the 43-area tour then reports nothing (M6, 2026-11-10).
 - **Status:** confirmed
 - **Covers:** 52aac1f2306b8fc5
 
@@ -552,7 +552,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Switch:** DM_MFXT, DM_MV
 - **Test:** rect, rec75t, core_motion
 - **Commit:** b27766f, 190d9d2, 16b1e92
-- **Measured:** About 2.8 ms with motion on an M6 at full clock (2026-11-04). Slow frames in town 1.06% to 0.00%, p 0.002, cause not established.
+- **Measured:** M6, 2560 x 1440, town_loop, 2026-11-04. About 2.8 ms with motion at full clock. At a lowered clock (`DM_NVN_PASSGPU_SERIAL=1`): the MetalFX block 1.4 to 5 ms, the motion passes 0.3 ms, the frame 8 to 13 ms; translation thread +0.7 ms; energy per frame +15% in town, +7% in the wild. Slow frames at 100% against SMAA, 6 + 6 ABBA: town 1.06% to 0.00% (p 0.002), wild 1.58% to 0.00% (p 0.10); the longest frame of a town run (median) 33.3 to 16.7 ms. Why the slow frames go is not established (the GPU staying at a higher clock is the lead).
 - **Status:** confirmed
 - **Covers:** velocity_entry
 
@@ -578,7 +578,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Switch:** DM_FG_FORE
 - **Test:** core_motion
 - **Commit:** ed27fbe
-- **Measured:** +0.5 ms GPU at 2560 x 1440 (M6, 2026-11-05).
+- **Measured:** +0.5 ms GPU at 2560 x 1440 (M6, 2026-11-05). On the open-ground walk the ground sits half way between the two real frames (off by 0.4%) and detail is 0.999 of a real frame's with sharpen 0.2.
 - **Status:** confirmed
 - **Covers:** none
 
@@ -751,23 +751,75 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Status:** confirmed
 - **Covers:** main+0x1746558, main+0x1746788, KPIPESET
 
+### EC-056 Interface quads drawn as runs
+- **Layer:** replay layer
+- **Engine:** Draws its interface one quad at a time: a new 80-byte vertex range, the same samplers and textures bound again, a 4-vertex strip. With the automap open that is about 790 draws a frame, of which about 140 change anything but the vertex range.
+- **Ours:** From such a draw the replay looks ahead; while the next commands change nothing else, it copies the quads' vertices back to back and draws them as one indexed strip with a restart index after each quad. A run never starts on the draw that opens a pass and ends at any command the look-ahead does not list. Untextured quads stay single while the interface occupies only part of the target.
+- **Why:** CPU work on the translation thread; the picture is the same.
+- **Setting:** none
+- **Switch:** DM_NVN_QUADRUN (0 off, 1 on, 2 verify: every merged quad is checked against its run when its own command comes up, a difference is a red line)
+- **Test:** t_quadrun, quadrun_verify
+- **Commit:** b17d8ac
+- **Measured:** In-process A/B, M6, headless, camp with the automap open, 10 pairs, 2026-11-10: 641 quads a frame merged into 37 runs, 3.0 million fewer instructions a frame on the translation thread (2.8 to 3.2), about 12%. A captured frame replays to the same digest off, on and checked. No iPhone measurement.
+- **Status:** confirmed
+- **Covers:** none
+
+### EC-057 Effect draws wait for their pipeline
+- **Layer:** replay layer
+- **Engine:** Has every pipeline ready, as a console driver has.
+- **Ours:** A pipeline met for the first time is normally compiled on the translation thread while the frame waits. When the draw is an overlay (it blends onto every colour output it writes, is depth-tested with a test that can fail, writes no depth or stencil, its pass has a depth plane and its fragment is not a specialised one), the pipeline is built off the frame instead and the draw is left out until it lands, a frame or two later. Everything else is compiled in the frame as before. A build that fails off the frame is compiled in the frame from then on.
+- **Why:** A new effect's pipeline stalled a frame for 48 to 123 ms; a missing effect for a frame or two is the smaller fault.
+- **Setting:** none
+- **Switch:** DM_PSO_ASYNC (0 compiles every miss in the frame), DM_PSO_ASYNC_TEST_MS
+- **Test:** t_pso_pend, pso_wait
+- **Commit:** a72687d
+- **Measured:** M6, headless, the 43-area tour with the system's Metal cache moved away and the warm-up list from before the tours, 2026-11-10: with compiles in the frame three frames stalled 48, 55 and 72 ms; with the wait the longest frame with a new pipeline took 7.4 ms, seven pipelines were built off the frame and 12 draws in all were left out. No iPhone measurement.
+- **Status:** confirmed
+- **Covers:** none
+
+### EC-058 Shortcuts on the translation thread
+- **Layer:** replay layer
+- **Engine:** Hands each call to its driver; none of this exists there.
+- **Ours:** Four shortcuts in the replay, none of which changes what is sent to the GPU. Hot lookups return unowned pointers, so nothing is retained and released per draw. Each thread remembers the last four memory pools it found, by the pool table's generation. The 2,560-byte driver-segment block of a stage is used again while the tables it copies have not changed. An argument-table write that repeats what the table holds is skipped.
+- **Why:** CPU work on the translation thread.
+- **Setting:** none
+- **Switch:** DM_NVN_POOLFAST, DM_NVN_DRVCACHE (each: 0 off, 1 on, 2 verify), DM_NVN_ATDEDUP
+- **Test:** t_replay_cuts, quadrun_verify
+- **Commit:** b17d8ac, a0158b7
+- **Measured:** M6, headless camp, 2026-11-10. Unowned lookups: 13,680 to 12,340 instructions per draw, the Objective-C runtime's share of the thread 11.4% to 1.7%. The other three together: 19.06 to 16.97 million instructions a frame (11% fewer); remembered pools alone 2.2 million (in-process A/B, 10 pairs), reused blocks 0.3 million. With EC-056, the camp with the automap open went from 27.2 to 19.65 million instructions a frame. A captured frame replays to the same digest with each on and off. No iPhone measurement.
+- **Status:** confirmed
+- **Covers:** none
+
+### EC-059 A GPU that stops taking work
+- **Layer:** host take-over
+- **Engine:** Waits on the GPU without a limit.
+- **Ours:** A watchdog: with work waiting and no main submission finished for 10 s, the GPU is taken as lost. Nothing more is sent to it, every wait on it returns, and the front end saves and quits; the next launch tells the player. A hang recorder keeps a timestamp per pass, marks around MetalFX and frame generation and a log of the last queue operations, and prints them 2 s into such a stall and again when the GPU is taken as lost.
+- **Why:** The Mac's GPU driver has hung for about 4 s, and once for good with the display off; the game then waited for ever and could not save. The cause is not known (`dm/verify/debugging.md` "The GPU hangs for 4 s").
+- **Setting:** none
+- **Switch:** DM_GPU_LOST_S (0 turns the watchdog off), DM_HANGREC, DM_HANGREC_EARLY_S, DM_HANGREC_SLOW_MS
+- **Test:** gpu_lost, t_gpu_lost, t_hangrec
+- **Commit:** da472b3, 6f7cddd, 0a944cf
+- **Measured:** The recorder on against off, town_loop on the Mac App at Recommended, 6 + 6 ABBA: no measurable difference, every p at least 0.23 (M6, 2026-11-09). The watchdog has never fired on a real hang; its test stalls the GPU on purpose.
+- **Status:** confirmed
+- **Covers:** none
+
 ## Metal 4
 
 The port runs only on Metal 4 (macOS and iOS 27 and later, decided 2026-10-27). The encoder macros at the top of `nvn_mtl.m` name the Metal 4 types.
 
-- **Queues and allocators:** one `MTL4CommandQueue` for replay and another for presents under frame generation, with `MTL4CommandAllocator`s per frame in flight. Fences come from an `MTLSharedEvent`, so a game `Sync` only clears after the GPU has really finished.
-- **Argument tables:** vertex, fragment and compute each have an `MTL4ArgumentTable`, filled from each shader's reflection. Encodes come to about one per draw (M6, 2026-11-07), and that's still a known cost.
+- **Queues and allocators:** one `MTL4CommandQueue` for replay; presents go on a second one on iPhone and iPad and share the replay's on Macs, where a second queue hung the GPU (EC-053). There are `MTL4CommandAllocator`s per frame in flight. Fences come from an `MTLSharedEvent`, so a game `Sync` only clears after the GPU has really finished.
+- **Argument tables:** vertex, fragment and compute each have an `MTL4ArgumentTable`, filled from each shader's reflection. Encodes came to about one per draw (M6, 2026-11-07). Since 2026-11-10 a table write that repeats what the table already holds is skipped and the encode's lookups are cheaper (EC-058); encodes per draw have not been counted again.
 - **Residency:** one residency set per device, holding every pool buffer and texture, attached to the queues. A new pool is committed on the spot, before any command buffer that can reach it.
 - **Barriers:** explicit, at two levels (EC-031). The game's own deferred barriers come through as at most one per draw, dispatch or pass.
 - **Tile work:** load, store and pass merging (EC-049). There are no heaps, memoryless targets, indirect command buffers, mesh or tile shaders.
-- **Pipelines:** still built through the device path, warmed in the background (EC-050). `MTL4Compiler` is used only for MetalFX.
+- **Pipelines:** still built through the device path, warmed in the background (EC-050); an effect's missing pipeline is built off the frame while its draws wait (EC-057). `MTL4Compiler` is used only for MetalFX.
 - **MetalFX:** the spatial and temporal scalers and the frame interpolator, using the 27 systems' matrices, which suit the orthographic world camera (EC-039 to EC-042).
 - **Ray tracing:** Mac only. Acceleration structures built with Metal 4 commands, compute kernels for the traces, and no ray tracing code in fragment shaders (EC-034 to EC-038).
 - **Timing:** `MTL4CounterHeap` for per-pass timestamps. Whole-frame GPU time can't rank costs on a fast Mac, so compare pass sums, energy and slow frames.
 
 ## Tried and rejected
 
-Listed so they aren't tried again without new evidence. All on an M6 unless noted.
+Ideas that broke the picture or the game, or measured nothing at all. Listed so they aren't tried again without new evidence. All on an M6 unless noted.
 
 | Idea | Result | Date |
 |---|---|---|
@@ -775,21 +827,28 @@ Listed so they aren't tried again without new evidence. All on an M6 unless note
 | 16 x 16 threadgroups for the ray kernels | Nothing measurable; removed | 2026-11-07 |
 | Fast-intersection structure usage | Nothing measurable; removed | 2026-11-07 |
 | Rays replace the raster shadow map | Dropped on the look at the player's decision; about 0.8 ms in town | 2026-11-07 |
-| Compose into the drawable | The present costs only 0.13 to 0.16 ms | 2026-11-07 |
-| Small pass skips | The transparency resolve reads pyramid levels 1 and 2 every frame; nothing above 0.1 ms | 2026-11-07 |
 | The engine's dynamic resolution on real GPU times | Reverted experiment; real per-scope times are still missing (EC-022) | 2026-11-07 |
 | Zeroed top levels in the material arrays | Stamps and terrain decals vanish entirely | 2026-11-07 |
 | Filter repeated stencil masks and polygon offsets at record time | 5,900 fewer records a frame, translation thread -4.8% cycles; made moot by EC-055, which skips the sets that sent them | 2026-11-09 |
-| Filter repeated constant-buffer, sampler and vertex-buffer binds at record time | 43% / 95% / 20% of those binds repeat and a third of the recorded binds go, but process CPU did not move (within 0.35 ms a frame; translation thread -2.6% cycles), in-process A/B, 20 pairs; removed. Texture binds can't be filtered: replay rewrites them | 2026-11-09 |
 | Write-prefetch or zero whole cache lines ahead of the record pointer | Neither moved main-thread or process CPU, in-process A/B, 20 pairs each; removed | 2026-11-09 |
 | 512 px material arrays at Environment Detail High | Stamps and terrain decals shrink to a corner with the Switch's 128 px assets: the Outer Cloister's lawn became a stone court (EC-020) | 2026-11-07 |
 | Game quality level 2 and above | Level 2 mirrors characters on the ground; levels 3 and 4 crash | 2026-10-27 |
 | Temporal SMAA | Needs a velocity target the Switch build doesn't create; crashes | 2026-10-27 |
 | Reflections field at `renderer+0x6634` | Everything turns into a mirror: nothing writes the target it reads | 2026-11-05 |
 | Bloom mode 2 | Misfires our quarter-size bloom | 2026-11-05 |
-| Host at -O2 | No significant gain | 2026-10-27 |
 | Game sharpening over MetalFX | Over-sharpens | 2026-10-27 |
 | Negative mip bias under the temporal scaler | Nothing measurable | 2026-11-04 |
 | Thread quality of service by role | No energy change on the Mac | 2026-10-27 |
+
+## Measured small, open again
+
+These were closed because the gain was small. Since 2026-11-10 the rule is that small gains count: a change that keeps gameplay and the picture as they are lands when it measures a real gain, however small, and "within noise" means measure it better (instructions on the thread, or an in-process A/B), not drop it. None of these has been taken up again yet.
+
+| Idea | What it measured when closed | Date |
+|---|---|---|
+| Compose into the drawable | The present costs only 0.13 to 0.16 ms | 2026-11-07 |
+| Small pass skips | The transparency resolve reads pyramid levels 1 and 2 every frame; nothing above 0.1 ms | 2026-11-07 |
+| Filter repeated constant-buffer, sampler and vertex-buffer binds at record time | 43% / 95% / 20% of those binds repeat and a third of the recorded binds go, but process CPU did not move (within 0.35 ms a frame; translation thread -2.6% cycles), in-process A/B, 20 pairs; removed. Texture binds can't be filtered: replay rewrites them | 2026-11-09 |
+| Host at -O2 | No significant gain | 2026-10-27 |
 | Forward pass switch specialisation | At most -0.06 ms: the work sits in real branches | 2026-10-29 |
 | Pass overlap beyond the barrier levels | Upper bound -0.1 ms | 2026-10-27 |

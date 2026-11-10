@@ -1,6 +1,6 @@
 # dm/ios — iOS shell
 
-The iOS app of D2R Mobile: it packs the host (`dm/host`), the graphics layer (`dm/gfx`) and the rewritten game program into one app, and is responsible for starting up, locating the game assets, turning touches into input the game understands, and laying touch controls over the original UI.
+The iOS app of D2R Metal: it packs the host (`dm/host`), the graphics layer (`dm/gfx`) and the rewritten game program into one app, and is responsible for starting up, locating the game assets, turning touches into input the game understands, and laying touch controls over the original UI.
 
 Read these first; this document does not repeat them:
 
@@ -278,3 +278,22 @@ Under `tools/` there are also self-tests that come with a few of the scripts: `d
 | `screen_check.py` | Checks orientation, black borders and stretching from whole-window screenshots |
 | `bootprof.sh`, `heat_ab.sh`, `gpu_read.sh`, `xtrace.sh` | Real-device measurements: startup timeline, heat comparison, GPU time, Instruments command-line recording |
 | `asset_manifest.py` | Generates the manifest for the direct asset download path |
+| `gen_paths.py`, `romfs_art.py`, `dxt5.py` | Shared parts of the generation scripts: where generated resources go, reading the original assets from your game files, DXT5 + block-linear sprite encoding and decoding |
+| `annot_strings.py` with `annot_drop.py`, `annot_ranges.py`, `annot_world.py` | The item annotations written into the overlay's string tables (drop names, value ranges, area levels and shrines); their optional tables are described in [tools/annot/README.md](tools/annot/README.md) |
+| `drop_light.py` | The lit model variants for the light on high-value drops, written into the overlay; `dm/host/dm_dropfilter.c` points the game at them |
+| `kbd_glyphs.py` | Keyboard key caps for the Mac App: they replace the gamepad button icons when the player uses the keyboard |
+| `pc_panels.py`, `pc_strings.py` | The Mac App's PC interface set: the console panels drawn smaller and higher, and the game's own PC wording in place of the console prompts |
+| `overlay_contract.py` | The overlay's build-time manifest: a fingerprint of the generator sources and exact hashes of the payload files |
+| `ios_metal.py` | The one compile convention for the iOS shader libraries (MSL → iphoneos metallib); the reflection json records the same parameters |
+| `project_free.py` | Writes `project_free.yml` for a free developer account: `project.yml` without what such an account cannot sign (called by `run.sh` for a free-account build) |
+| `build_ffmpeg_ios.sh` | Builds the optional FFmpeg static libraries for iOS, see [../host/MOVIE.md](../host/MOVIE.md) |
+| `asc_env.sh` | App Store Connect API key conventions (IDs only, never the key) |
+| `cloud_guard.sh`, `launch_guard.sh`, `save_key.sh` | Guards sourced by the Mac runners: no real iCloud in a test run, no "reopen windows" dialog blocking a launch, one test save per developer key |
+| `mlock.sh`, `macwin.sh` | The Mac game lock (another name for the `macsmoke.lock` above) and window exclusivity for multi-slot regression runs |
+| `scenario_launch.sh` | Launches the iOS package for the scenario runner (`dm/tools/scenario.py`, backends `ios-mac` and `device`) with the smoke tests' guards |
+| `frame_cmp.sh`, `frame_cmp.py` | Per-pixel comparison of one frame, real device against Mac, outside a mask of the Mac's own non-deterministic regions |
+| `burst_sad.py`, `turn_trace.py` | Motion readings: frame-to-frame displacement in a screenshot burst, and the per-frame displacement table of turn smoothing |
+| `slowframe.py`, `s3_steps.py` | Log readers: slow frames split into CPU, wait and GPU sides, and Frame Drops steps judged by the `[perf]` windows around them |
+| `soak_report.py` | Judges a soak run (`dm/tools/playbot.py soak`) from its table and host log: `SOAK OK` or `SOAK RED`, then a last `RESULT {json}` line |
+| `input_pair_check.py` | Pairs the touch events of a UI log with the host's input records (`--ui-log`, `--hid-log`) and prints the result as JSON |
+| `xtrace_report.py`, `xt_ppm.sh`, `xt_ppm_row.py`, `xt_var.sh` | Readers and drivers for `xtrace.sh` recordings: a summary of the exported tables, per-pass upper bounds of the post-processing chain, the upper bound of one shader variant |
