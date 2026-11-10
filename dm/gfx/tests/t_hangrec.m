@@ -1,7 +1,10 @@
 // Hang recorder (nvn_mtl.m hr_dump, hr_slow, the pass marks): a submission whose middle block keeps the GPU busy for about 400 ms stands in for a hung one.
 // Read while it runs, the record must say what a hang's would: the block before it finished and the busy block is the first that did not; the note for
 // work encoding its own passes (hr_mark) is listed, and the block after it is not finished either. This test is also where it was found that the GPU
-// writes a pass's timestamps only once its work has run: the busy block's start mark reads 0 while it runs. Once it finishes, its feedback names it as
+// writes a pass's timestamps only once its work has run: the busy block's start mark reads 0 while it runs. Usually. About 1 read in 25 after the GPU
+// had idled (never in 100 back-to-back runs) both of the busy block's marks are already in, the end mark holding an early time that is rewritten when
+// the block really ends: the record then shows the busy block with an end mark and names it as the pass the GPU may still be on (prev_done). Both
+// forms are right answers here; the test failed once in most unit runs while it accepted only the first. Once it finishes, its feedback names it as
 // the longest pass of a slow submission. Also: with nothing waiting there is no record to give, and the queue log has the submission. No GPU hang is
 // made: the busy block is an ordinary kernel that loops, well under the driver's own limit (about 4 s)
 #define NVN_OWN_FRONT_GPU_LOST   // the watchdog stays quiet (DM_GPU_LOST_S below), but the front end hook must exist
@@ -67,8 +70,11 @@ int main(void) {
         EXPECT("the record is there", 1, v.known);
         EXPECT("three passes", 3, v.passes);
         EXPECT("and one note", 1, v.notes);
-        EXPECT("one finished (quick)", 1, v.finished);
-        EXPECT("the first that did not is the busy block", 1, !strcmp(v.first_open, "spin"));
+        int early = v.finished == 2;   // the busy block's marks were written while it ran (see the top of this file)
+        if (early) printf("(this read met the busy block's early end mark)\n");
+        EXPECT("quick has its end mark, and the busy block has none or an early one", 1, v.finished == 1 || v.finished == 2);
+        EXPECT("the record names the busy block: as the first without an end mark, or as the one the GPU may still be on", 1,
+               early ? !strcmp(v.first_open, "tail") && !strcmp(v.prev_done, "spin") : !strcmp(v.first_open, "spin") && !strcmp(v.prev_done, "quick"));
         EXPECT("the busy submission finishes", 1, mtl_wait(f, 5000000000ull));
         printf("it took %.0f ms\n", (secs() - t0) * 1e3);
         for (int i = 0; i < 100 && atomic_load(&g_hr_slow_n) == slow0; i++) usleep(10 * 1000);   // its feedback runs on Metal's queue

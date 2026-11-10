@@ -8005,7 +8005,7 @@ void mtl_wait_state_dump(void) {
 // ---------- Hang recorder: the record (hr_dump, hr_slow) ----------
 // The scene, from the host (diag.c: area, position, life, monsters, panel, loading screen); a build without one (the graphics tests) gets this
 __attribute__((weak)) void dm_hang_scene(char *o, size_t n) { strlcpy(o, "not known (no host)", n); }
-typedef struct { int known, passes, finished, notes, presents_waiting, presents_drawn; char first_open[16]; } hr_verdict;   // what hr_dump found (tests)
+typedef struct { int known, passes, finished, notes, presents_waiting, presents_drawn; char first_open[16], prev_done[16]; } hr_verdict;   // what hr_dump found (tests); prev_done: the last pass with an end mark before first_open
 static _Atomic uint64_t g_hr_slow_n; static char g_hr_slow_top[16];   // hr_slow's count and the label (or kind) of the longest pass it last saw (tests)
 static const char *hr_pass_label(const pg_pass *p) { return p->kind >= 2 ? p->load : p->kind ? "compute" : "render"; }
 static void hr_pass_what(const pg_pass *p, char *o, size_t n) {
@@ -8029,7 +8029,11 @@ static int hr_rec_copy(uint64_t fence, hr_rec *out) {   // a copy of that submis
 }
 // The first unfinished submission's passes: how many finished, the first that did not (where the GPU stopped: passes run one after another, each
 // encoder ending with a barrier), the two finished before it, any MetalFX or frame generation run in between, and the next two. Times are from the
-// submission's first start mark
+// submission's first start mark.
+// An end mark is not proof that its block is over. Read while a long compute block ran, its two marks were sometimes already in (about 1 read in 25
+// after the GPU had idled, never in 100 back-to-back runs; t_hangrec, M6, 2026-11-10): the end mark held a time 7 to 109 ms after the start while the
+// block ran 275 to 375 ms, and was rewritten with the true end when the block finished. A barrier before the mark did not prevent it. So the pass
+// just before the first one without an end mark is named as a second suspect
 static void hr_report(uint64_t fence, hr_verdict *v) {
     hr_rec r; if (!hr_rec_copy(fence, &r)) { MLOG("[hang] submission %llu: no pass record (not sent yet, or sent unmarked: %llu so far)", (unsigned long long)fence, (unsigned long long)g_hr_skipped); return; }
     uint64_t *t = hr_resolve(g_pg_buf[fence % PG_RING], r.used), t0 = UINT64_MAX;
@@ -8038,9 +8042,12 @@ static void hr_report(uint64_t fence, hr_verdict *v) {
         uint64_t a = t[p->slot], e = t[p->slot + 1]; s[i] = a && e ? 2 : a ? 1 : 0; np++;
         if (s[i] == 2) fin++; else if (front < 0) front = i;
         if (a && a < t0) t0 = a; }
+    int prev = -1; for (int i = front - 1; i >= 0 && prev < 0; i--) if (s[i] == 2) prev = i;   // the last pass with an end mark before the first without one
     if (front >= 0) MLOG("[hang] submission %llu (frame %llu): %d of its %d passes finished; the first that did not is #%d", (unsigned long long)fence, (unsigned long long)r.frame, fin, np, front);
+    if (front >= 0 && prev >= 0) MLOG("[hang]   the GPU is on #%d, or still on #%d before it: an end mark can be written early, while its block runs, and rewritten when it ends", front, prev);
     else MLOG("[hang] submission %llu (frame %llu): all its %d passes finished; the GPU is past them (on what was encoded after the last one, or on the submission's end)", (unsigned long long)fence, (unsigned long long)r.frame, np);
-    if (v) { v->known = 1; v->passes = np; v->finished = fin; v->notes = notes; if (front >= 0) strlcpy(v->first_open, hr_pass_label(&r.ps[front]), sizeof v->first_open); }
+    if (v) { v->known = 1; v->passes = np; v->finished = fin; v->notes = notes; if (front >= 0) strlcpy(v->first_open, hr_pass_label(&r.ps[front]), sizeof v->first_open);
+        if (prev >= 0) strlcpy(v->prev_done, hr_pass_label(&r.ps[prev]), sizeof v->prev_done); }
     int from = n, upto = front >= 0 ? front : n - 1;   // show from two finished passes before the first unfinished one (or the end), through two after it
     for (int i = upto, k = 0; i >= 0; i--) { if (s[i] == 2 && i != front && ++k > 2) break; from = i; }
     for (int i = from, after = 0; i < n && after <= 2; i++) {
