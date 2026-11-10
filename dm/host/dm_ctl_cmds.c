@@ -6,6 +6,7 @@
 #include "dm_ctl.h"
 #include "dm_hud.h"
 #include "dm_engine.h"
+#include "dm_lights.h"
 #include <unistd.h>
 #include <limits.h>
 #include <strings.h>
@@ -72,9 +73,10 @@ static int cmd_state(const ctl_args *a, char *out, size_t cap, char *err, size_t
     (void)a; (void)err; (void)ecap;
     dm_hud_info h; dm_hud_get(&h);
     char panel[48]; strlcpy(panel, g_lf_panel, sizeof panel);
-    size_t n = dm_json_fields(out, cap, "in_game:b tick:u paused:b panel:s level:d hp:d hp_max:d mp:d mp_max:d area:d x:d y:d dead:b players:d holding:d belt0:d belt1:d belt2:d belt3:d portal:d points:d exp_permille:d quest_unread:b gold:d gold_stash:d items:d item_dups:d monsters:d skill_left:d skill_right:d skills:d ev_dropped:u audio_dry:u",
+    dm_lights_info li = {0}; if (h.valid) dm_lights_read(NULL, 0, h.x, h.y, &li);   // the frame's lights (dm_lights.c): counts only; `lights` lists them
+    size_t n = dm_json_fields(out, cap, "in_game:b tick:u paused:b panel:s level:d hp:d hp_max:d mp:d mp_max:d area:d x:d y:d dead:b players:d holding:d belt0:d belt1:d belt2:d belt3:d portal:d points:d exp_permille:d quest_unread:b gold:d gold_stash:d items:d item_dups:d monsters:d skill_left:d skill_right:d skills:d lights_point:d lights_spot:d lights_unit:d lights_parked:d light_player:d ev_dropped:u audio_dry:u",
                    h.valid, (unsigned long long)(h.valid ? dm_cur_tick() : 0), h.valid && dm_game_paused(), panel[0] ? panel : NULL, h.level, h.hp, h.hp_max, h.mp, h.mp_max,
-                   h.area, h.x, h.y, h.dead, h.players, h.holding, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.points, h.exp_permille, h.quest_unread, h.gold, h.gold_stash, h.items, h.item_dups, h.monsters, h.skill_left, h.skill_right, h.skills, (unsigned long long)dm_ctl_dropped(), (unsigned long long)dm_audio_dry_total());
+                   h.area, h.x, h.y, h.dead, h.players, h.holding, h.belt[0], h.belt[1], h.belt[2], h.belt[3], h.portal, h.points, h.exp_permille, h.quest_unread, h.gold, h.gold_stash, h.items, h.item_dups, h.monsters, h.skill_left, h.skill_right, h.skills, li.point, li.spot, li.unit, li.parked, li.player, (unsigned long long)dm_ctl_dropped(), (unsigned long long)dm_audio_dry_total());
     if (n < cap) dm_engine_state_json(out + n, cap - n);
     return 1;
 }
@@ -97,6 +99,20 @@ static int cmd_save_now(const ctl_args *a, char *out, size_t cap, char *err, siz
 
 // engine：整份引擎快照（面板栈带激活与优先级、焦点 / 悬停控件、光标、存盘状态）加最近 48 个手柄动作与 48 条界面消息；场景运行器在第一个红事件时存成 engine.json
 // engine: the whole engine snapshot (panel stack with active and priority, focused / hovered widget, cursor, save state) plus the latest 48 controller actions and 48 UI messages; the scenario runner stores it as engine.json at the first red event
+// lights: the frame's point, spot and unit lights as the game holds them (dm_lights.c): counts, then up to 48 lights with type (0 point, 1 spot, 2 unit),
+// world position, colour (already multiplied by power), power, radius, shadow and grid flags
+static int cmd_lights(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    (void)a; dm_hud_info h; dm_hud_get(&h); dm_light l[48]; dm_lights_info li;
+    int n = dm_lights_read(l, 48, h.valid ? h.x : -1, h.valid ? h.y : -1, &li);
+    if (n < 0) ERR("the game has no light pools yet");
+    size_t o = dm_json_fields(out, cap, "n:d point:d spot:d unit:d parked:d player:d", n, li.point, li.spot, li.unit, li.parked, li.player);
+    o += (size_t)snprintf(out + o, o < cap ? cap - o : 0, ",\"lights\":[");
+    for (int i = 0; i < n && i < 48 && o + 200 < cap; i++)
+        o += (size_t)snprintf(out + o, cap - o, "%s{\"t\":%d,\"e\":%u,\"pos\":[%.2f,%.2f,%.2f],\"colour\":[%.2f,%.2f,%.2f],\"power\":%.2f,\"radius\":%.2f,\"shadow\":%d,\"grid\":%d}", i ? "," : "",
+                              l[i].type, l[i].entity, l[i].pos[0], l[i].pos[1], l[i].pos[2], l[i].colour[0], l[i].colour[1], l[i].colour[2], l[i].power, l[i].radius, l[i].shadow, l[i].grid);
+    if (o + 2 < cap) { out[o++] = ']'; out[o] = 0; }
+    return 1;
+}
 static int cmd_engine(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) { (void)a; (void)err; (void)ecap; dm_engine_full_json(out, cap); return 1; }
 
 // fault arm point=<点> [skip=0] [count=1]：跑着时挂一个存档故障（同 DM_TEST_FS_FAILAT 的点：mountclone / reclone / guestname / renameback / guestopen）；
@@ -510,6 +526,7 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("state", cmd_state);
     dm_ctl_register("save_now", cmd_save_now);
     dm_ctl_register("engine", cmd_engine);
+    dm_ctl_register("lights", cmd_lights);
     dm_ctl_register("mem", cmd_mem);
     { void dm_live_ctl_init(void); dm_live_ctl_init(); }   // live: hooks on the running game's code (dm_live.c, DM_LIVE=1)
     dm_ctl_register("fault", cmd_fault);

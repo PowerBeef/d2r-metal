@@ -35,7 +35,7 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'wheel': ['x', 'y', 'dy', 'precise', 'view'], 'drag': ['x0', 'y0', 'x1', 'y1', 'frames'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'menu_pick': ['name', 'timeout'], 'use_unit': ['type', 'cls'], 'open': ['what'], 'back': [], 'key': ['name'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
-       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': [], 'live': ['do']}
+       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'lights': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': [], 'live': ['do']}
 ALIAS = {'shot': 'screenshot', 'ui_click': 'menu_pick'}   # touch-script names; ui_click is menu_pick's first name
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away', 'menu_pick', 'use_unit', 'open', 'back', 'key')
 # Scheme-neutral steps (use_unit, open, back, menu_pick) are carried out through the run's control scheme: `scenario.py run --scheme pc|controller|touch`,
