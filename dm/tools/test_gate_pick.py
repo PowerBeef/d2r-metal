@@ -37,7 +37,7 @@ class Pick(unittest.TestCase):
         cmds = [c for c, _, _ in g.checks(['docs/MAC.md', 'dm/host/tests/t_video.c', 'dm/tools/test_gate_pick.py'], self.root)]
         self.assertEqual(cmds, [])   # words and unit tests: the unit tier is their check
         cmds = [c for c, _, _ in g.checks(['dm/host/dm_video.c', 'dm/host/dm_kbm.c', 'dm/gfx/nvn/nvn_mtl.m'], self.root)]
-        self.assertEqual(cmds, ['python3 dm/tools/scenario.py run dm/verify/scenarios/quadrun_verify.scn --headless', g.ENTER])   # the replay's own verify run, and one game on the headless host, once
+        self.assertEqual(cmds, ['python3 dm/tools/scenario.py run dm/verify/scenarios/quadrun_verify.scn --headless', 'python3 dm/tools/scenario.py run dm/verify/scenarios/pso_wait.scn --headless', g.ENTER])   # the replay's own two runs, and one game on the headless host, once
         cmds = [c for c, _, _ in g.checks(['dm/tools/patch_nso.py', 'dm/PRODUCT', 'dm/gfx/nvn/hle_nvn.c', 'dm/gfx/nvn/pso_manifest.tsv'], self.root)]
         self.assertTrue(any('regress.sh --fresh' in c for c in cmds)); self.assertTrue(any('pipeset_verify.scn' in c for c in cmds)); self.assertTrue(any('pso_seed.py gate' in c for c in cmds))
         self.assertEqual(len(cmds), len(set(cmds)))

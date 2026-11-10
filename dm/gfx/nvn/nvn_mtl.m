@@ -3245,7 +3245,7 @@ static void pso_key_fill(pso_key *k, NvShader *vs, NvShader *fs, id<MTLFunction>
 // An entry still compiling in the background is left alone (the background block writes back by slot index). The counters g_pp_aged (recycled) / g_pp_full (not kicked, table full) go into the DM_BOOTPROF line.
 #define PSO_PEND_MAX 384
 #define PSO_PEND_AGE 8   // 丢出后过这么多次提交仍没人领就回收：预测只覆盖本次提交余下的绘制，多留几次提交给隔一两帧才走到的同一绘制 | recycle when still untaken this many submissions after the kick: a prediction only covers the rest of its own submission, and a few more submissions leave room for the same draw reached a frame or two later
-static struct { pso_key k; id<MTLRenderPipelineState> ps; uint64_t ser; int used, done, merged; } g_pp[PSO_PEND_MAX];   // ser: submission serial at the kick; merged: its program later drew in a merged pass
+static struct { pso_key k; id<MTLRenderPipelineState> ps; uint64_t ser; int used, done, merged; int want, lm, skips; uint64_t t0; } g_pp[PSO_PEND_MAX];   /* want: a draw is waiting for it (see "Pipelines a draw may wait for"); lm: its key is a merged pass's; skips: draws left out so far; t0: when it was kicked */   // ser: submission serial at the kick; merged: its program later drew in a merged pass
 static pthread_mutex_t g_pp_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_pp_cv = PTHREAD_COND_INITIALIZER;
 static uint64_t g_pp_submit_mark, g_pp_kicked, g_pp_taken, g_pp_aged, g_pp_full;   // 本次提交是否已预测过（按提交序号）；累计丢出 / 领用 / 过期回收 / 表满没丢的条数 | Whether this submission has already been predicted (by submission serial); cumulative kicked / taken / recycled as stale / not kicked because the table was full counts
 static int g_pp_live;   // 表里占着的槽数（只在提交线程上改，持 g_pp_mu） | Slots in use (changed only on the submit thread, under g_pp_mu)
@@ -3279,13 +3279,18 @@ static void pso_pend_note_merged(void *vs, void *fs) {   // submit thread, on a 
     pthread_mutex_unlock(&g_pp_mu);
 }
 static int pso_pend_find(const pso_key *k) { for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && !memcmp(&g_pp[i].k, k, sizeof *k)) return i; return -1; }
+static void pso_wait_land(const pso_key *k, id<MTLRenderPipelineState> ps, int merged, uint64_t t0, int skips);
 static void pso_pend_age(void) {   // 提交开头（提交线程）调：回收过期没人领的预测 | Called at the start of a submission (submit thread): recycle stale untaken predictions
     if (!g_pp_live) return;
-    int n = 0;
+    int n = 0, nl = 0; struct { pso_key k; id<MTLRenderPipelineState> ps; int lm, skips; uint64_t t0; } land[8];   // pipelines that draws are waiting for and that are built now
     pthread_mutex_lock(&g_pp_mu);
-    for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && g_pp[i].done && g_sub_serial - g_pp[i].ser >= PSO_PEND_AGE) { g_pp[i].ps = nil; g_pp[i].used = 0; g_pp_live--; n++; }
+    for (int i = 0; i < PSO_PEND_MAX && nl < 8; i++) if (g_pp[i].used && g_pp[i].done && g_pp[i].want) {
+        land[nl].k = g_pp[i].k; land[nl].ps = g_pp[i].ps; land[nl].lm = g_pp[i].lm; land[nl].skips = g_pp[i].skips; land[nl].t0 = g_pp[i].t0; nl++;
+        g_pp[i].ps = nil; g_pp[i].used = g_pp[i].want = 0; g_pp_live--; }
+    for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].used && g_pp[i].done && !g_pp[i].want && g_sub_serial - g_pp[i].ser >= PSO_PEND_AGE) { g_pp[i].ps = nil; g_pp[i].used = 0; g_pp_live--; n++; }
     g_pp_aged += (uint64_t)n;
     pthread_mutex_unlock(&g_pp_mu);
+    for (int i = 0; i < nl; i++) pso_wait_land(&land[i].k, land[i].ps, land[i].lm, land[i].t0, land[i].skips);
     static int logged; if (n && logged++ < 5) MLOG("并行预编：回收 %d 条过期没人领的预测（累计丢出 %llu / 领用 %llu / 回收 %llu / 表满没丢 %llu） | parallel precompile: recycled %d stale untaken predictions (kicked / taken / recycled / not kicked, table full)",
         n, (unsigned long long)g_pp_kicked, (unsigned long long)g_pp_taken, (unsigned long long)g_pp_aged, (unsigned long long)g_pp_full, n);
     if (n) (void)pso_predict_allowed();   // judge the cutoff as soon as predictions resolve, not only at the next miss (which may never come)
@@ -3296,10 +3301,10 @@ static void pso_pend_kick(const pso_key *k, NvShader *vs, NvShader *fs) {   // �
     int at = pso_pend_find(k), slot = -1;
     if (at < 0) for (int i = 0; i < PSO_PEND_MAX; i++) if (!g_pp[i].used) { slot = i; break; }
     if (at < 0 && slot < 0) {   // 表满：回收更早提交里最老的一条已编完的；全是本次提交的或都还在编，就不丢 | Table full: recycle the oldest finished entry from an earlier submission; if all are from this submission or still compiling, do not kick
-        for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].done && g_pp[i].ser < g_sub_serial && (slot < 0 || g_pp[i].ser < g_pp[slot].ser)) slot = i;
+        for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].done && !g_pp[i].want && g_pp[i].ser < g_sub_serial && (slot < 0 || g_pp[i].ser < g_pp[slot].ser)) slot = i;
         if (slot >= 0) { g_pp[slot].ps = nil; g_pp[slot].used = 0; g_pp_live--; g_pp_aged++; } else g_pp_full++;
     }
-    if (at < 0 && slot >= 0) { g_pp[slot].k = *k; g_pp[slot].ps = nil; g_pp[slot].ser = g_sub_serial; g_pp[slot].done = 0; g_pp[slot].merged = 0; g_pp[slot].used = 1; g_pp_live++; }
+    if (at < 0 && slot >= 0) { g_pp[slot].k = *k; g_pp[slot].ps = nil; g_pp[slot].ser = g_sub_serial; g_pp[slot].done = 0; g_pp[slot].merged = 0; g_pp[slot].want = g_pp[slot].lm = g_pp[slot].skips = 0; g_pp[slot].used = 1; g_pp_live++; }
     pthread_mutex_unlock(&g_pp_mu);
     if (at >= 0 || slot < 0) return;
     MTLRenderPipelineDescriptor *d = pso_desc(k, vs, fs, nil, 0); g_pp_kicked++;
@@ -3315,6 +3320,89 @@ static id<MTLRenderPipelineState> pso_pend_take(const pso_key *k) {   // 提交�
     pthread_mutex_unlock(&g_pp_mu);
     return ps;
 }
+// ---- Pipelines a draw may wait for ----
+// A pipeline met for the first time is compiled on the submit thread, and the frame waits: one such compile made a 123 ms frame on the 43-area
+// tour. Every pipeline the area tours and the scripted fights found missing from the warm-up list was of one kind: a blended draw into a pass
+// with a depth plane (an effect in the world). Leaving such a draw out for the few frames its pipeline takes to build cannot damage the picture:
+// it blends onto every colour output it writes, it is depth-tested, and it writes no depth and no stencil, so nothing drawn later depends on it.
+// So a miss of that kind is compiled off the frame (the pending table above, an entry marked "want"); its draws do nothing until the pipeline
+// lands in the cache at the start of a submission, and the row goes to the manifests then, as for a compile in the frame. Every other miss
+// (opaque geometry, full-screen steps, the interface, specialised fragments) is compiled in the frame as before.
+//   DM_PSO_ASYNC=0 compiles every miss in the frame (an A/B baseline); 1 is the default. In-process A/B: DM_NVN_UB=off=@set:g_pso_async=0.
+//   DM_PSO_ASYNC_TEST_MS=<n> makes each such build take n ms longer (tests: a wait long enough to see and to count).
+int g_pso_async = -1;
+static int g_pa_test_ms = -1;
+static uint64_t g_pa_kicked, g_pa_landed, g_pa_draws, g_pa_failed_n, g_pa_full;   // builds started off the frame / landed / draws left out while waiting / builds that failed / not started, table full
+static pso_key g_pa_failed[8]; static int g_pa_nfailed;                           // keys whose build off the frame failed: compiled in the frame from then on, where the failure is reported
+static int g_fz_checking;                                                         // (defined with the merged-pass check below)
+void mtl_pso_async_stats(uint64_t *landed, uint64_t *draws) { *landed = g_pa_landed; *draws = g_pa_draws; }
+static int pso_async_on(void) {
+    if (g_pso_async < 0) { const char *e = getenv("DM_PSO_ASYNC"), *t = getenv("DM_PSO_ASYNC_TEST_MS"); g_pso_async = !(e && !strcmp(e, "0")); g_pa_test_ms = t ? atoi(t) : 0;
+        if (!g_pso_async || g_pa_test_ms > 0) MLOG("pipelines a draw may wait for: %s%s (DM_PSO_ASYNC)", g_pso_async ? "on" : "off", g_pa_test_ms > 0 ? ", each build slowed for a test" : ""); }
+    return g_pso_async;
+}
+// Whether the draw about to use key k may be left out while k is built: see the rule above. Called on the submit thread with the draw's state in S.
+static int pso_can_wait(const pso_key *k, int merged) {
+    if (!pso_async_on() || k->fsfn || g_defer_replaying || g_fz_checking) return 0;
+    if (!k->dfmt || !S.ds.dt || S.ds.df == NVN_DEPTH_FUNC_ALWAYS || S.ds.dw || S.ds.st) return 0;
+    int wrote = 0;
+    for (int i = 0; i < 8; i++) {
+        if (!k->cfmt[i]) continue;
+        unsigned l = merged ? k->lmap[i] : (unsigned)i; if (l > 7) continue;
+        if (!((k->chmask >> (4 * l)) & 0xf)) continue;
+        if (!((k->blend_en >> l) & 1) || k->blend[l].dst_rgb == NVN_BLEND_FUNC_ZERO) return 0;   // an output it overwrites: not a pure overlay
+        wrote = 1;
+    }
+    if (!wrote) return 0;
+    for (int i = 0; i < g_pa_nfailed; i++) if (!memcmp(&g_pa_failed[i], k, sizeof *k)) return 0;
+    return 1;
+}
+static void pso_note_built(const pso_key *k, NvShader *vs, NvShader *fs, int merged, const pso_fz_desc *fz) {   // a new pipeline's row for the manifests (submit thread)
+    pso_skey sk; char shex[sizeof sk * 2 + 1]; pso_skey_from(k, vs, fs, merged, fz, &sk);
+    if (pso_skey_check(&sk) == PSO_SKEY_OK) {
+        pso_skey_hex(&sk, shex);
+        pso_record("R\t%s\n", shex);
+        pso_user_record("R\t%s\n", shex);
+    } else { static int logged; if (!logged++) MLOG("pipeline manifest: a pipeline of %s / %s has no recordable key, not written", vs->key, fs ? fs->key : "-"); }
+}
+// A pipeline that draws were waiting for is built (submit thread): into the cache, its row into the manifests.
+static void pso_wait_land(const pso_key *k, id<MTLRenderPipelineState> ps, int merged, uint64_t t0, int skips) {
+    __unsafe_unretained NvShader *vs = (__bridge NvShader *)k->vs, *fs = (__bridge NvShader *)k->fs;
+    if (!ps) { g_pa_failed_n++; if (g_pa_nfailed < 8) g_pa_failed[g_pa_nfailed++] = *k; MLOG("pipelines a draw may wait for: the build of %s / %s failed off the frame, it is compiled in the frame from now on", vs ? vs->key : "-", fs ? fs->key : "-"); return; }
+    if (!hm_get_ptr(&g_pso, k)) { hm_put_id(&g_pso, k, ps); g_bp_pso_n++; pso_note_built(k, vs, fs, merged, NULL); }
+    g_pso_dirty = 1; g_pa_landed++;
+    static int logged; if (logged++ < 12) MLOG("pipeline built off the frame in %.1f ms: %s / %s%s; %d draws waited", (bp_now() - t0) / 1e6, vs ? vs->key : "-", fs ? fs->key : "-", merged ? " (merged pass)" : "", skips);
+}
+// The draw's pipeline is not in the cache and the draw may wait. Returns 1: it is being built off the frame, leave the draw out. 2: it has just
+// been built, *out holds it. 0: it cannot be built off the frame now (the table is full, or its build failed), compile it in the frame.
+static int pso_wait_for(const pso_key *k, NvShader *vs, NvShader *fs, int merged, id<MTLRenderPipelineState> __strong *out) {
+    int r = 1, slot = -1, lm = 0, skips = 0; uint64_t t0 = 0; id<MTLRenderPipelineState> got = nil;
+    pthread_mutex_lock(&g_pp_mu);
+    int at = pso_pend_find(k);
+    if (at >= 0 && g_pp[at].done && !g_pp[at].want) r = 0;   // a prediction that has finished: the compile path below takes it, as before
+    else if (at >= 0 && g_pp[at].done) { got = g_pp[at].ps; lm = g_pp[at].lm; skips = g_pp[at].skips; t0 = g_pp[at].t0; g_pp[at].ps = nil; g_pp[at].used = g_pp[at].want = 0; g_pp_live--; r = 2; }
+    else if (at >= 0) { if (!g_pp[at].want) { g_pp[at].want = 1; g_pp[at].lm = merged; g_pp[at].t0 = bp_now(); g_pp[at].skips = 0; } g_pp[at].skips++; }   // a prediction already building: the draw waits for that one
+    else {
+        for (int i = 0; i < PSO_PEND_MAX; i++) if (!g_pp[i].used) { slot = i; break; }
+        if (slot < 0) { for (int i = 0; i < PSO_PEND_MAX; i++) if (g_pp[i].done && !g_pp[i].want && (slot < 0 || g_pp[i].ser < g_pp[slot].ser)) slot = i;
+                        if (slot >= 0) { g_pp[slot].ps = nil; g_pp[slot].used = 0; g_pp_live--; g_pp_aged++; } }
+        if (slot < 0) { g_pa_full++; r = 0; }
+        else { g_pp[slot].k = *k; g_pp[slot].ps = nil; g_pp[slot].ser = g_sub_serial; g_pp[slot].done = 0; g_pp[slot].merged = 0; g_pp[slot].want = 1; g_pp[slot].lm = merged; g_pp[slot].skips = 1; g_pp[slot].t0 = bp_now(); g_pp[slot].used = 1; g_pp_live++; }
+    }
+    pthread_mutex_unlock(&g_pp_mu);
+    if (r == 2) { pso_wait_land(k, got, lm, t0, skips); if (!got) return 0; *out = got; return 2; }
+    if (r == 1) g_pa_draws++;
+    if (slot >= 0 && r == 1) {
+        MTLRenderPipelineDescriptor *d = pso_desc(k, vs, fs, nil, merged); int wait_ms = g_pa_test_ms; g_pa_kicked++;
+        { static int logged; if (logged++ < 12) MLOG("pipeline %s / %s%s is not built yet: built off the frame, its draws wait (a blended draw that writes no depth)", vs->key, fs ? fs->key : "-", merged ? " (merged pass)" : ""); }
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            if (wait_ms > 0) usleep((useconds_t)wait_ms * 1000);
+            NSError *e = nil; id<MTLRenderPipelineState> ps = [g_dev newRenderPipelineStateWithDescriptor:d error:&e];
+            pthread_mutex_lock(&g_pp_mu); g_pp[slot].ps = ps; g_pp[slot].done = 1; pthread_cond_broadcast(&g_pp_cv); pthread_mutex_unlock(&g_pp_mu);
+        });
+    }
+    return r;
+}
 static void *pso_get_ptr(__unsafe_unretained NvProg *pr, MTLRenderPassDescriptor *unused) {
     (void)unused;
     __unsafe_unretained NvShader *vs = pr->sh[0], *fs = pr->sh[1];
@@ -3322,7 +3410,12 @@ static void *pso_get_ptr(__unsafe_unretained NvProg *pr, MTLRenderPassDescriptor
     pso_key k; pso_key_fill(&k, vs, fs, g_pso_lmap ? g_pso_fsfn : nil, g_pass.cfmt, g_pass.dfmt, g_pass.sfmt, g_pass.samples, g_pso_lmap);
     void *cached = hm_get_ptr(&g_pso, &k);
     if (cached) return cached;
-    id<MTLRenderPipelineState> ps;
+    id<MTLRenderPipelineState> ps = nil;
+    if (pso_can_wait(&k, g_pso_lmap != NULL)) {   // a blended effect draw: its pipeline is built off the frame and the draw waits (see "Pipelines a draw may wait for")
+        int w = pso_wait_for(&k, vs, fs, g_pso_lmap != NULL, &ps);
+        if (w == 1) return NULL;
+        if (w == 2) return (__bridge void *)ps;   // g_pso owns it now
+    }
     NSError *e = nil; uint64_t bt = bp_now();
     ps = g_pso_lmap ? nil : pso_pend_take(&k);
     if (g_pso_lmap) pso_pend_note_merged((__bridge void *)vs, (__bridge void *)fs);
@@ -3334,12 +3427,7 @@ static void *pso_get_ptr(__unsafe_unretained NvProg *pr, MTLRenderPassDescriptor
     }
     g_bp_pso_n++; g_bp_pso_ns += bp_now() - bt;
     if (!ps) { MLOG("【红】建渲染管线失败：%s", e.localizedDescription.UTF8String); return NULL; }
-    pso_skey sk; char shex[sizeof sk * 2 + 1]; pso_skey_from(&k, vs, fs, g_pso_lmap != NULL, g_pso_lmap ? &g_pso_fz : NULL, &sk);
-    if (pso_skey_check(&sk) == PSO_SKEY_OK) {   // rows are written in the canonical form the warm-up and the dedupe read
-        pso_skey_hex(&sk, shex);
-        pso_record("R\t%s\n", shex);
-        pso_user_record("R\t%s\n", shex);
-    } else { static int logged; if (!logged++) MLOG("pipeline manifest: a pipeline of %s / %s has no recordable key, not written", vs->key, fs ? fs->key : "-"); }
+    pso_note_built(&k, vs, fs, g_pso_lmap != NULL, g_pso_lmap ? &g_pso_fz : NULL);
     hm_put_id(&g_pso, &k, ps);
     return (__bridge void *)ps;   // g_pso owns it and never drops an entry
 }

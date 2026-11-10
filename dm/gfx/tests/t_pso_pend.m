@@ -89,4 +89,46 @@ int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0);
     pso_pend_note_merged((__bridge void *)t_vsh, (__bridge void *)t_fsh); EXPECT("merged-pass miss of a predicted program: counted", 1, g_pp_merged);
     pso_pend_note_merged((__bridge void *)t_vsh, (__bridge void *)t_fsh); EXPECT("the same prediction again: not counted twice", 1, g_pp_merged);
     pso_pend_note_merged((__bridge void *)t_fsh, (__bridge void *)t_vsh); EXPECT("another program: no match", 1, g_pp_merged);
+    // ---- Pipelines a draw may wait for (nvn_mtl.m): which draws may, and the wait itself ----
+    // An effect draw: it blends onto its one output, it is depth-tested, it writes no depth and no stencil, and its pass has a depth plane
+    #define FX_KEY(i) ({ pso_key k_ = key(i); k_.dfmt = MTLPixelFormatDepth32Float; k_.blend_en = 1; k_.blend[0] = (blend_st){0, NVN_BLEND_FUNC_SRC_ALPHA, NVN_BLEND_FUNC_ONE_MINUS_SRC_ALPHA, NVN_BLEND_FUNC_ONE, NVN_BLEND_FUNC_ONE_MINUS_SRC_ALPHA, NVN_BLEND_EQUATION_ADD, NVN_BLEND_EQUATION_ADD}; k_; })
+    #define CACHED(k) ((uint64_t)(hm_get_ptr(&g_pso, &(k)) != NULL))
+    #define TABLED(k) ({ pthread_mutex_lock(&g_pp_mu); int a_ = pso_pend_find(&(k)); pthread_mutex_unlock(&g_pp_mu); (uint64_t)(a_ >= 0); })
+    state_reset(); S.ds.dt = 1; S.ds.df = NVN_DEPTH_FUNC_LESS; S.ds.dw = 0; S.ds.st = 0; g_pso_async = 1; g_pa_test_ms = 0;
+    { pso_key k = FX_KEY(7000), o;
+      EXPECT("an effect draw may wait for its pipeline", 1, (uint64_t)pso_can_wait(&k, 0));
+      S.ds.dw = 1; EXPECT("a draw that writes depth: compiled in the frame", 0, (uint64_t)pso_can_wait(&k, 0)); S.ds.dw = 0;
+      S.ds.dt = 0; EXPECT("no depth test: in the frame", 0, (uint64_t)pso_can_wait(&k, 0)); S.ds.dt = 1;
+      S.ds.df = NVN_DEPTH_FUNC_ALWAYS; EXPECT("a depth test that always passes: in the frame", 0, (uint64_t)pso_can_wait(&k, 0)); S.ds.df = NVN_DEPTH_FUNC_LESS;
+      S.ds.st = 1; EXPECT("stencil on: in the frame", 0, (uint64_t)pso_can_wait(&k, 0)); S.ds.st = 0;
+      o = k; o.dfmt = 0; EXPECT("a pass with no depth plane (full-screen steps, the interface): in the frame", 0, (uint64_t)pso_can_wait(&o, 0));
+      o = k; o.blend_en = 0; EXPECT("not blended: in the frame", 0, (uint64_t)pso_can_wait(&o, 0));
+      o = k; o.blend[0].dst_rgb = NVN_BLEND_FUNC_ZERO; EXPECT("blending that overwrites the target: in the frame", 0, (uint64_t)pso_can_wait(&o, 0));
+      o = k; o.chmask = 0; EXPECT("a draw that writes no colour: in the frame", 0, (uint64_t)pso_can_wait(&o, 0));
+      o = k; o.cfmt[1] = MTLPixelFormatRGBA8Unorm; o.chmask = 0xff; EXPECT("a second output written without blending: in the frame", 0, (uint64_t)pso_can_wait(&o, 0));
+      o.blend_en = 3; o.blend[1] = o.blend[0]; o.blend[1].target = 1; EXPECT("both outputs blended: may wait", 1, (uint64_t)pso_can_wait(&o, 0));
+      o = k; o.fsfn = (const void *)(uintptr_t)1; EXPECT("a specialised fragment: in the frame", 0, (uint64_t)pso_can_wait(&o, 0));
+      g_defer_replaying = 1; EXPECT("the replay of a deferred pass: in the frame", 0, (uint64_t)pso_can_wait(&k, 0)); g_defer_replaying = 0;
+      g_pso_async = 0; EXPECT("DM_PSO_ASYNC=0: in the frame", 0, (uint64_t)pso_can_wait(&k, 0)); g_pso_async = 1;
+      o = k; memset(o.lmap, 0xff, sizeof o.lmap); o.lmap[0] = 0; EXPECT("a merged pass, the output mapped: may wait", 1, (uint64_t)pso_can_wait(&o, 1));
+      o.lmap[0] = 0xff; EXPECT("a merged pass, no output mapped: in the frame", 0, (uint64_t)pso_can_wait(&o, 1)); }
+    g_pp_mode = 0; wait_done(); g_sub_serial += 2 * PSO_PEND_AGE; pso_pend_age();   // an empty table
+    EXPECT("the table is empty before the waits", 0, (uint64_t)g_pp_live);
+    { id<MTLRenderPipelineState> out = nil; uint64_t landed0 = g_pa_landed, draws0 = g_pa_draws, new0 = g_bp_pso_n; pso_key k = FX_KEY(7100);
+      g_pa_test_ms = 200;
+      EXPECT("first draw of a missing pipeline: it waits", 1, (uint64_t)pso_wait_for(&k, t_vsh, t_fsh, 0, &out)); EXPECT("the build is in the table", 1, TABLED(k));
+      EXPECT("the same draw again: it still waits", 1, (uint64_t)pso_wait_for(&k, t_vsh, t_fsh, 0, &out)); EXPECT("two draws were left out", 2, g_pa_draws - draws0);
+      wait_done(); EXPECT("built, but not in the cache before a submission starts", 0, CACHED(k));
+      g_sub_serial++; pso_pend_age();
+      EXPECT("the next submission's start puts it in the cache", 1, CACHED(k)); EXPECT("and counts it", 1, g_pa_landed - landed0); EXPECT("as one new pipeline", 1, g_bp_pso_n - new0); EXPECT("and frees its table entry", 0, TABLED(k));
+      pso_key k2 = FX_KEY(7101);
+      EXPECT("another missing pipeline: its draw waits", 1, (uint64_t)pso_wait_for(&k2, t_vsh, t_fsh, 0, &out)); wait_done();
+      EXPECT("built before the submission ends: the next draw gets it at once", 2, (uint64_t)pso_wait_for(&k2, t_vsh, t_fsh, 0, &out)); EXPECT("the pipeline is handed over", 1, (uint64_t)(out != nil)); EXPECT("and is in the cache", 1, CACHED(k2));
+      pso_key k3 = FX_KEY(7102); g_pa_test_ms = 0; uint64_t aged0;
+      EXPECT("a third: its draw waits", 1, (uint64_t)pso_wait_for(&k3, t_vsh, t_fsh, 0, &out)); wait_done();
+      aged0 = g_pp_aged; g_sub_serial += 3 * PSO_PEND_AGE; pso_pend_age();
+      EXPECT("many submissions later it is not thrown away as stale", 0, g_pp_aged - aged0); EXPECT("it is in the cache", 1, CACHED(k3));
+      kick(7200); wait_done(); pso_key p = key(7200);
+      EXPECT("a finished prediction is left to the compile path", 0, (uint64_t)pso_wait_for(&p, t_vsh, t_fsh, 0, &out)); EXPECT("which can still take it", 1, (uint64_t)(pso_pend_take(&p) != nil));
+      EXPECT("the table is empty after the waits", 0, (uint64_t)g_pp_live); }
     printf("== %d 项，失败 %d ==\n", count, fail); return fail != 0; } }

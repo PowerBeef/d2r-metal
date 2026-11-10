@@ -1,0 +1,21 @@
+# Pipelines a draw may wait for (dm/gfx/nvn/nvn_mtl.m): a blended effect draw whose pipeline is not built yet waits for it off the frame instead of
+# stalling the frame; every other miss is compiled in the frame. No warm-up list here (DM_PSO_MANIFEST=off), so every pipeline of the camp and of the
+# walk into the Blood Moor is met for the first time, and each off-frame build is slowed by 200 ms so that draws do wait: some builds must have landed,
+# and nothing may be red.
+name pso_wait
+requires cli
+save warlock
+env DM_GAME_SEED=305419896 DM_PSO_MANIFEST=off DM_PSO_USER=off DM_PSO_ASYNC_TEST_MS=200
+timeout 240
+
+enter_game
+sleep 4
+walk_to 5789 4470 timeout=20
+walk_to 5789 4495 timeout=20
+walk_to 5791 4523 timeout=25
+expect_state area=2 timeout=10
+walk_to 5791 4560 timeout=25
+sleep 4
+quit
+check log_has re="pipeline built off the frame in [0-9.]+ ms: .*; [1-9][0-9]* draws waited"
+check no_red

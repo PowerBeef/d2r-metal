@@ -409,6 +409,15 @@ An ARC function cannot return an unowned object: the qualifier on a return type 
 - Measured 2026-11-10 on an M6, headless camp: 13,680 to 12,340 instructions per draw on the translation thread (about 10% fewer), the same at this Mac's Recommended picture (39.0 to 35.4 million a frame); the Objective-C runtime's share of that thread fell from 11.4% to 1.7%.
 - Metal 4 command buffers do not keep their resources alive and the API checker does not cover them, so a new unowned reference needs an owner that outlives the submission. When in doubt keep the local strong: one retain costs far less than a freed object reaching the GPU.
 
+## Effect draws that wait for their pipeline
+A pipeline met for the first time is compiled on the translation thread and the frame waits (one such compile made a 123 ms frame on the 43-area tour). Every pipeline the area tours and the scripted fights found missing from the warm-up list was of one kind: a blended draw into a pass with a depth plane, an effect in the world. Since 2026-11-10 a miss of that kind is built off the frame (`dm/gfx/nvn/nvn_mtl.m`, "Pipelines a draw may wait for"): the draw is left out until its pipeline lands in the cache at the start of a submission, and its row goes to the manifests then, as for a compile in the frame.
+- The rule (`pso_can_wait`): the draw blends onto every colour output it writes (and not with a zero destination factor), it is depth-tested with a test that can fail, it writes no depth and no stencil, its pass has a depth plane, and its fragment is not a specialised one. Everything else (opaque geometry, full-screen steps, the interface) is compiled in the frame as before, so a wait can only ever delay an overlay.
+- Measured 2026-11-10 on an M6, headless, the 43-area tour with the system's Metal cache moved away and the warm-up list from before the tours: with compiles in the frame, three frames stalled 48, 55 and 72 ms on a new pipeline; with the wait, the longest frame with a new pipeline took 7.4 ms, seven pipelines were built off the frame and 12 draws in all were left out (a frame or two each).
+- `DM_PSO_ASYNC=0` compiles every miss in the frame (an A/B baseline); `1` is the default. In-process A/B: `DM_NVN_UB=off=@set:g_pso_async=0`.
+- `DM_PSO_ASYNC_TEST_MS=<n>` makes each off-frame build take n ms longer, so that draws do wait in a test (`scenarios/pso_wait.scn`, the gate's run, has no warm-up list and 200 ms; `dm/gfx/tests/t_pso_pend` holds the rule and the wait).
+- The log names the first twelve: `pipeline <vs> / <fs> is not built yet: built off the frame, its draws wait` and `pipeline built off the frame in N ms: …; K draws waited`. Per-frame counters in `DM_NVN_TSV`: `@pso_waited` (builds that landed), `@pso_wait_draws` (draws left out); `@pso_new` counts a landed build as a new pipeline.
+- A build that fails off the frame is remembered and compiled in the frame from then on, where the failure is reported as before.
+
 ## PC mode probes
 
 Test switches for finding out how far the Switch build's own PC (keyboard and mouse) mode still works. They change nothing unless set, and players never set them.
