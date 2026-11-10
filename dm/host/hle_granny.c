@@ -322,6 +322,8 @@ static uint64_t g_chunk(uint64_t *regs, uint32_t clen, uint32_t pos) {
 static uint64_t granny_chunk(uint64_t *regs, uint32_t clen, uint32_t pos, int path) {
     if (!g_dec) g_fns();
     if (g_gprof < 0) g_gprof = getenv("DM_GRANNY_PROF") != NULL;
+    { int dm_streamlog_on(void); void dm_streamlog(char, const uint8_t *, uint32_t, uint64_t, uint64_t, long);   // DM_STREAMLOG (hle_tact.c): every chunk, in game too
+      if (dm_streamlog_on()) { uint64_t t0 = now_ns(), r = g_chunk(regs, clen, pos); dm_streamlog('G', (const uint8_t *)regs[1], (uint32_t)regs[2], clen, now_ns() - t0, (long)pos); return r; } }
     if (!g_gprof) return g_chunk(regs, clen, pos);
     if (pos == 0) { uint64_t a, b; memcpy(&a, (uint8_t *)regs[0] + 0x10, 8); memcpy(&b, (uint8_t *)regs[0] + 0x18, 8);
                     uint64_t rib = dm_prof_ribbon_ns(); int ph = rib && now_ns() >= rib;

@@ -346,10 +346,11 @@ DM_SOAK	host,ios	host/diag.c ios/Sources/front_ios.m	-
 DM_STASH_SEED	host	host/hle_fs.c	-
 DM_STATE	host,ios-tools	host/diag.c ios/TouchSmokeTests/Lifecycle.swift	-
 DM_STATEREP	host	host/dm_staterep.m	y
+DM_STREAMLOG	host	host/hle_tact.c	y
 DM_SVC	host	host/main.c	y
 DM_SYMCHECK	host	host/loader.c	-
 DM_TABLES	host	host/app_mac.m host/dm_tables.h host/tests/t_tables.c	-
-DM_TACTCHK	host	host/hle_tact.c	-
+DM_TACTCHK	host	host/hle_tact.c	y
 DM_TACT_PREFETCH	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_LAG	host	host/hle_tact.c	-
 DM_TACT_PREFETCH_MB	host	host/hle_tact.c	-

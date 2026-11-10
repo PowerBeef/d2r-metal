@@ -33,11 +33,26 @@
 // DM_TACTCHK=<file>: log one line per decode, "first 16 input bytes (hex)\tinput length\toutput length\toutput MD5\trequesting thread handle", to be compared offline against per-block MD5s of an independent decode (for acceptance).
 // Logging stops on reaching character select (the first OpenPanel MainMenuButtonRibbon) (the boot block list is generated from this log, so the boundary must be set by an event, not by the moment the process is killed)
 static FILE *g_chk; static pthread_mutex_t g_chk_lock = PTHREAD_MUTEX_INITIALIZER;
+// DM_STREAMLOG=<file>: one line per decode for the whole run, in game too (DM_TACTCHK stops at character select): what the game streams while playing.
+// Columns: ms since the log opened, frame, kind (Z = an archive block inflated here, G = one chunk of a model segment decoded by the game's own decoder), guest thread,
+// input bytes, output bytes (G: the segment's whole compressed length), microseconds, extra (Z: 1 = taken from the boot prefetch; G: bytes of the segment before this chunk),
+// the first 16 input bytes in hex (they identify a block or, at a segment's first chunk, the segment). dm/verify/debugging.md "What the game streams while you play"
+static FILE *g_slog; static pthread_mutex_t g_slog_lock = PTHREAD_MUTEX_INITIALIZER; static uint64_t g_slog_t0;
+__attribute__((weak)) uint64_t dm_nvn_frame_count(void) { return 0; }   // hle_nvn.c (not linked into every test)
+int dm_streamlog_on(void) { return g_slog != NULL; }
+void dm_streamlog(char kind, const uint8_t *in, uint32_t n, uint64_t out, uint64_t ns, long extra) {
+    if (!g_slog) return;
+    uint32_t thr_cur_handle(void); char key[33] = ""; for (uint32_t i = 0; i < 16 && i < n; i++) snprintf(key + 2 * i, 3, "%02x", in[i]);
+    pthread_mutex_lock(&g_slog_lock);
+    fprintf(g_slog, "%.3f\t%llu\t%c\t%#x\t%u\t%llu\t%.1f\t%ld\t%s\n", (now_ns() - g_slog_t0) / 1e6, (unsigned long long)dm_nvn_frame_count(), kind, thr_cur_handle(), n, (unsigned long long)out, ns / 1e3, extra, key);
+    pthread_mutex_unlock(&g_slog_lock);
+}
 static void chk_on_uimsg(const char *cat, const char *act, const char *arg) {
     (void)cat; if (strcmp(arg, "MainMenuButtonRibbon") || !strstr(act, "OpenPanel")) return;
     pthread_mutex_lock(&g_chk_lock); if (g_chk) { fclose(g_chk); g_chk = NULL; LOG("DM_TACTCHK：到选角，停记"); } pthread_mutex_unlock(&g_chk_lock);
 }
 void tact_chk_init(void) {                            // 宿主初始化时调（main.c）：早于任何解码，免得首次解码时再懒开文件 | Called at host init (main.c): earlier than any decode, so the file is not lazily opened on the first decode
+    { const char *l = getenv("DM_STREAMLOG"); if (l && *l) { if (!(g_slog = fopen(l, "w"))) die("DM_STREAMLOG: cannot open %s", l); setvbuf(g_slog, NULL, _IOLBF, 0); g_slog_t0 = now_ns(); } }
     const char *e = getenv("DM_TACTCHK"); if (!e) return;
     if (!(g_chk = fopen(e, "w"))) die("DM_TACTCHK 打不开 %s", e);
     void uimsg_subscribe(void (*)(const char *, const char *, const char *)); uimsg_subscribe(chk_on_uimsg);
@@ -255,9 +270,9 @@ static uint32_t tact_decode_zlib(uint64_t *r) {
     }
     thread_dec();
     size_t got = 0; uint64_t t0 = now_ns();
-    if (pf_take(in, n, out, cap, &got)) { dm_prof_add(PROF_TACT, now_ns() - t0, got); chk_log(in, n, out, got); return 0; }
+    if (pf_take(in, n, out, cap, &got)) { dm_prof_add(PROF_TACT, now_ns() - t0, got); chk_log(in, n, out, got); dm_streamlog('Z', in, n, got, now_ns() - t0, 1); return 0; }
     enum libdeflate_result rc = libdeflate_zlib_decompress(t_dec, in, n, out, cap, &got);
-    dm_prof_add(PROF_TACT, now_ns() - t0, got);
+    dm_prof_add(PROF_TACT, now_ns() - t0, got); dm_streamlog('Z', in, n, got, now_ns() - t0, 0);
     if (rc == LIBDEFLATE_SUCCESS) { chk_log(in, n, out, got); return 0; }
     LOG("tact：zlib 解码失败 %d（输入 %u，容量 %u）", rc, n, cap);
     return rc == LIBDEFLATE_INSUFFICIENT_SPACE ? 4 : 1;

@@ -373,6 +373,11 @@ A frame whose GPU time reads about 4000 ms (`[长帧] … GPU 4000 ms`, then a f
 - No visible change: VFX key `66b8`, combat level `66c0`, upsample `66a8`, model LOD `6621` / `6650`, atmosphere `662c` / `6630` (fog density is 0 in every shipped area).
 - Don't use: bloom mode `6628.w=2` misfires the host's bloom replacement, and reflections `6634.w=5` turn every surface into a mirror, since nothing writes the normal and roughness target they read on Switch.
 
+## What the game streams while you play
+`DM_STREAMLOG=<file>` (`dm/host/hle_tact.c`) writes one line for every archive block the host inflates and every model-segment chunk the game decodes, for the whole run (`DM_TACTCHK` stops at character select). Columns: ms since the log opened, frame, kind (`Z` block, `G` model chunk), guest thread, input bytes, output bytes, microseconds, an extra (`Z`: 1 = taken from the boot prefetch; `G`: bytes of the segment before this chunk) and the first 16 input bytes, which identify the block or segment. Use scenario `mark` steps (they report the frame) to cut the log into phases.
+- Measured 2026-11-09 on an M6, headless, camp and Blood Moor crossed four times: each crossing inflates 130 to 470 blocks (7 to 17 MiB) and decodes 130 to 320 model segments, 40 to 75 ms of CPU, all on the game's one loader thread; from the second crossing on, 99 to 100% of it is data this run already decoded. No frame ran long at a crossing and the main thread's CPU stayed under 8 ms a frame. Boot to the main menu takes 1.2 s and entering a game 1.0 s, about a third of it decoding.
+- So on a Mac there is nothing to win by caching decoded data; the question is open on a phone, where the same log can answer it.
+
 ## Pipeline sets that repeat
 Before nearly every draw the game sets a whole pipeline again (main+0x1746558: 12 to 14 NVN calls), and about four sets in five repeat the one already set. Since product r54 the rewriter's block at the function's entry returns at once on a true repeat (`patch_nso.py` `PIPESET`, `docs/ENGINE_CHANGES.md` EC-055); the host's part is `cmd_t.last_pipe` in `dm/gfx/nvn/hle_nvn.c`.
 - `DM_PIPESET=0` runs the original function every time (an A/B baseline); `1` is the default.
