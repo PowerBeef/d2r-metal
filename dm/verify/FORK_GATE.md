@@ -24,6 +24,7 @@ Several tiers can be given at once; they run in the order given.
 |---|---|
 | the game host or graphics (`dm/host/`, `dm/gfx/`), the scenario runner | one game on the headless host: `scenario.py run dm/verify/scenarios/enter_game.scn --headless` |
 | the recorder (`hle_nvn.c`, `nvn_obj.h`) | the pipeline-set fast path's verify mode: `scenarios/pipeset_verify.scn` |
+| the replay (`nvn_mtl.m`) | the 2D quad runs' verify mode: `scenarios/quadrun_verify.scn` |
 | the binary rules or the product (`patch_nso.py`, `dm/PRODUCT`, `product.sh`) | `product.sh build`, then `regress.sh --fresh` |
 | the pipeline warm-up (`pso_manifest.tsv`, `pso_allow.tsv`, `pso_seed.py`) | `pso_seed.py gate --backend cli --headless` |
 | the live hooks (`dm_live.c`) | `scenarios/live_hooks.scn` and `scenarios/engine_assumptions.scn` (the standing checks on the game's own code) |

@@ -157,6 +157,7 @@ void xv_test_counts(int *dc, int *viol);
 int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1);   // 该帧最早 GPUStart / 最晚 GPUEnd（mach 绝对时间 ns）；未全部完成或无 GPU 时间返回 0 | The frame's earliest GPUStart / latest GPUEnd (mach absolute time, ns); returns 0 if not all complete or there is no GPU time
 void mtl_stats(uint64_t *passes, uint64_t *draws);
 void mtl_args_stats(uint64_t *enc, uint64_t *reuse);
+void mtl_quadrun_stats(uint64_t *runs, uint64_t *quads);   // 2D quad runs (nvn_mtl.m): runs drawn as one draw / quads merged into them
 void mtl_use_stats(uint64_t *call, uint64_t *skip);
 uint64_t mtl_ds_omit(void);   // 前瞻证明不用深度模板、未挂深度附件的通道累计数 | Cumulative number of passes with no depth attachment because the lookahead proved depth-stencil unused
 uint64_t mtl_drawable_ns_take(void);   // 取走并清零：出图里等 nextDrawable 的累计 ns   // useResource 实发 / 同编码器去重跳过累计次数   // 参数缓冲新编 / 复用累计次数 | Take and zero: cumulative ns spent waiting for nextDrawable in present   // Cumulative useResource calls actually issued / skipped by same-encoder dedup   // Cumulative argument buffer new-encode / reuse counts

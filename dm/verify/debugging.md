@@ -395,6 +395,20 @@ Before nearly every draw the game sets a whole pipeline again (main+0x1746558: 1
 - In-process A/B: `DM_NVN_UB=off=@set:g_pipeset=0` (each thread takes the mode when it next starts a recording).
 - A new NVN record kind must be thought about once: `rec()` in `hle_nvn.c` clears `last_pipe` for every kind except draws and the binds of buffers, textures and samplers, so a new kind is safe by default and only costs speed if it should have been kept.
 
+## Interface quads drawn as runs
+The game draws its interface one quad at a time: a new 80-byte vertex range, the same samplers and textures bound again, a 4-vertex strip. With the automap open that is about 790 draws a frame, and only about 140 of them change anything but the vertex range. The replay (`dm/gfx/nvn/nvn_mtl.m`, "2D quad runs") looks ahead from such a draw; while the next commands change nothing else, it copies the quads' vertices back to back into the submission's arena and draws them as one indexed strip with a restart index after each quad. The run's later draw commands then do nothing, and the binds between them still go through the state tracker.
+- Measured 2026-11-10 on an M6, headless, camp with the automap open, on and off in one run (10 pairs): 641 quads a frame merged into 37 runs, 3.0 million fewer instructions a frame on the translation thread (2.8 to 3.2), about 12%. A captured frame replays to the same digest with the merge off, on and checked.
+- `DM_NVN_QUADRUN=0` turns it off (an A/B baseline); `1` is the default.
+- `DM_NVN_QUADRUN=2` is the verify mode: every merged quad is checked when its own command comes up (the whole bind state against the run's, the scissor, and the vertices against the bytes that were copied). The log gets `quad run verify: N checked, M differ` every 300 frames and a red line for a difference. Run it over new interface content or after changing the replay's state tracking: `scenario.py run <scn> --headless --env DM_NVN_QUADRUN=2` (`scenarios/quadrun_verify.scn` is the gate's run; `dm/gfx/tests/t_quadrun` holds the look-ahead's rules).
+- In-process A/B: `DM_NVN_UB=off=@set:g_quadrun=0`. Per-frame counters in `DM_NVN_TSV`: `@quad_runs`, `@quads_merged`; `@draws` counts a run as one draw.
+- A run never starts on the draw that opens a pass, never crosses a command the look-ahead does not know, and is not formed while a pass dump, the deferred-pass replay or the interface ghost test is on. While the interface occupies only part of the target (a screen taller than 16:9), untextured quads join no run, because each is placed by its own vertices; textured quads all take the same shift and still merge.
+- A new state command needs no thought here: the look-ahead ends a run at any command it does not list.
+
+## Unowned objects on the replay's hot path
+An ARC function cannot return an unowned object: the qualifier on a return type is ignored, so every lookup retained, autoreleased and released its result. The hot lookups in `nvn_mtl.m` (`hm_get_id`, `serial_get`, `prog_get`, `pso_get`, `dss_get`, `rp_begin_ex`, `mv_pso`, `rtx_cap_pso`) therefore return plain pointers, and a macro of the old name bridges them at the use. Assigned to an `__unsafe_unretained` local nothing is retained. The owners are the tables (`g_pso`, `g_dss` and `g_mv_pso` never drop an entry), the serial table (a deletion defers the release past the submissions in flight) and the arenas (recycled, never freed).
+- Measured 2026-11-10 on an M6, headless camp: 13,680 to 12,340 instructions per draw on the translation thread (about 10% fewer), the same at this Mac's Recommended picture (39.0 to 35.4 million a frame); the Objective-C runtime's share of that thread fell from 11.4% to 1.7%.
+- Metal 4 command buffers do not keep their resources alive and the API checker does not cover them, so a new unowned reference needs an owner that outlives the submission. When in doubt keep the local strong: one retain costs far less than a freed object reaching the GPU.
+
 ## PC mode probes
 
 Test switches for finding out how far the Switch build's own PC (keyboard and mouse) mode still works. They change nothing unless set, and players never set them.

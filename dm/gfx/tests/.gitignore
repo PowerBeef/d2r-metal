@@ -48,6 +48,8 @@ t_defer_chain
 t_defer_chain.dSYM/
 t_zskip
 t_zskip.dSYM/
+t_quadrun
+t_quadrun.dSYM/
 t_xv
 t_xv.dSYM/
 t_ub

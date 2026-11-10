@@ -217,6 +217,7 @@ DM_NVN_PASSDUMP_ALL	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_PASSGPU	gfx	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m	y
 DM_NVN_PASSGPU_SERIAL	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_PROF	gfx	gfx/nvn/hle_nvn.c	y
+DM_NVN_QUADRUN	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_REGLUM	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_RT_RANGE	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_rt_depth_ro.m gfx/tests/t_rt_range.m	-
 DM_NVN_RT_RANGE_CHECK	gfx	gfx/nvn/rt_range_check.inc	-
@@ -231,7 +232,7 @@ DM_NVN_SKIP_FS	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_SKIP_SMALL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_SNAPRAW	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_SYNC	gfx	gfx/nvn/hle_nvn.c gfx/nvn/nvn_capture.inc	y
-DM_NVN_TBDR	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_defer_chain.m gfx/tests/t_mip_extent.m gfx/tests/t_reorder_chain.m …	y
+DM_NVN_TBDR	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_defer_chain.m gfx/tests/t_mip_extent.m gfx/tests/t_quadrun.m …	y
 DM_NVN_TEST_FRZ	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_TEST_FRZ_NEG	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_TEXDUMP	gfx	gfx/nvn/nvn_mtl.m	y

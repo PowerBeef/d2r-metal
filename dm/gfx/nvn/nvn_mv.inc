@@ -133,11 +133,12 @@ static uint32_t mv_snap(const p_bind_buf *u) {
 // the marker; finished builds wait in g_mv_done until mv_sub_begin puts them in (the map belongs to the replay thread)
 static NSMutableArray *g_mv_done; static os_unfair_lock g_mv_done_lk = OS_UNFAIR_LOCK_INIT;
 static id g_mv_marker;
-static id<MTLRenderPipelineState> mv_pso(NvShader *vs) {
+// Unowned results (see hm_get_ptr in nvn_mtl.m): g_mv_pso owns the pipelines, and mv_draw already keeps them unowned.
+static void *mv_pso_p(__unsafe_unretained NvShader *vs) {
     uint32_t cfmt[8] = {MTLPixelFormatRG16Float, MTLPixelFormatR8Unorm}; pso_key k; pso_key_fill(&k, vs, nil, nil, cfmt, MTLPixelFormatDepth32Float_Stencil8, MTLPixelFormatInvalid, 1, NULL);   // depth only: the stencil plane stays as it is
     k.blend_en = 0; k.chmask = 0xffffffff; k.a2c = 0; memset(k.blend, 0, sizeof k.blend);
-    id ps = hm_get_id(&g_mv_pso, &k);
-    if (ps) return ps == g_mv_marker ? nil : ps;
+    void *ps = hm_get_ptr(&g_mv_pso, &k);
+    if (ps) return ps == (__bridge void *)g_mv_marker ? NULL : ps;
     if (!g_mv_marker) { g_mv_marker = [NSObject new]; g_mv_done = [NSMutableArray array]; }
     hm_put_id(&g_mv_pso, &k, g_mv_marker);
     MTLRenderPipelineDescriptor *d = pso_desc(&k, vs, nil, nil, 0);
@@ -147,10 +148,12 @@ static id<MTLRenderPipelineState> mv_pso(NvShader *vs) {
     dispatch_async(mv_queue(), ^{ NSError *e = nil; id<MTLRenderPipelineState> r = [g_dev newRenderPipelineStateWithDescriptor:d error:&e];
         if (!r) { MLOG("【红】motion vectors: pipeline for %s failed (%s)", who.UTF8String, e.localizedDescription.UTF8String); return; }
         os_unfair_lock_lock(&g_mv_done_lk); [g_mv_done addObject:@[key, r]]; os_unfair_lock_unlock(&g_mv_done_lk); });
-    return nil;
+    return NULL;
 }
 
-int rtx_want(void); static void rtx_sub_begin(void); static id<MTLRenderPipelineState> rtx_cap_pso(NvShader *vs);   // nvn_rt.inc
+int rtx_want(void); static void rtx_sub_begin(void); static void *rtx_cap_pso_p(__unsafe_unretained NvShader *vs);
+#define mv_pso(vs) ((__bridge id<MTLRenderPipelineState>)mv_pso_p(vs))
+#define rtx_cap_pso(vs) ((__bridge id<MTLRenderPipelineState>)rtx_cap_pso_p(vs))   // nvn_rt.inc
 // What the game draws this frame into layer 1 of the directional shadow map, its own shadow for characters: its axis is a few degrees off the key light's, so those in the key light's rays too would have two shadows
 // (nvn_rt.inc). That pass comes before the prepass, so the prepass draw can look itself up: by mesh, or by where its object stands, as a shadow can use a simpler mesh than the picture.
 enum { RTU_SLOTS = 4096 }; static struct { uint64_t key, frame; } g_rtu[RTU_SLOTS];
@@ -160,16 +163,16 @@ static uint64_t rtu_place(void) { float f[3]; int32_t q[3]; for (int i = 0; i < 
 static void rtu_put(uint64_t k, uint64_t frame) { if (!k) return; for (int i = 0; i < 32; i++) { typeof(&g_rtu[0]) e = &g_rtu[(k + i) % RTU_SLOTS]; if (e->frame != frame || e->key == k) { e->key = k; e->frame = frame; return; } } }
 static int rtu_get(uint64_t k, uint64_t frame) { if (!k) return 0; for (int i = 0; i < 32; i++) { typeof(&g_rtu[0]) e = &g_rtu[(k + i) % RTU_SLOTS]; if (e->frame != frame) return 0; if (e->key == k) return 1; } return 0; }
 static int rtu_has(const p_draw_idx *di, uint64_t frame) { return rtu_get(rtu_mesh(di), frame) || rtu_get(rtu_place(), frame); }
-static void mv_record_draw(NvProg *pr, const p_draw_idx *di);
+static void mv_record_draw(__unsafe_unretained NvProg *pr, const p_draw_idx *di);
 int rtx_chars_traced(void);
 // Replay thread, every draw. Answers 1 for a draw to skip: an opaque draw into the character shadow's layer, whose shape the rays draw instead (nvn_rt.inc)
-static int mv_note_draw(NvProg *pr, const p_draw_idx *di) {
+static int mv_note_draw(__unsafe_unretained NvProg *pr, const p_draw_idx *di) {
     if (di && di->count && di->itype != 0 && R.rt.n == 0 && R.rt.depth && R.rt.has_dview && R.rt.dview.set_layers && R.rt.dview.min_layer == 1 && R.rt.depth->d.depth == 2 && rtx_want() && rtx_chars_traced() && pr->sh[1] && pr->sh[1]->key && !strncmp(pr->sh[1]->key, "949495670492f2e4", 16)) { uint64_t f = atomic_load(&g_cur_frame); rtu_put(rtu_mesh(di), f); rtu_put(rtu_place(), f); return 1; }
     mv_record_draw(pr, di); return 0;
 }
-static void mv_record_draw(NvProg *pr, const p_draw_idx *di) {
+static void mv_record_draw(__unsafe_unretained NvProg *pr, const p_draw_idx *di) {
     if (di && di->count && di->itype != 0 && R.rt.n == 0 && R.rt.depth && R.rt.has_dview && R.rt.dview.set_layers && R.rt.dview.min_layer == 1 && R.rt.depth->d.depth == 2 && rtx_want()) { uint64_t f = atomic_load(&g_cur_frame); rtu_put(rtu_mesh(di), f); rtu_put(rtu_place(), f); }
-    NvShader *vs = pr->sh[0];
+    __unsafe_unretained NvShader *vs = pr->sh[0];
     if (!g_mv_want || !di || !vs || !vs->vel_fn || R.rt.n != 0 || !R.rt.depth || !S.ds.dw || g_pass.dfmt != MTLPixelFormatDepth32Float_Stencil8 || !di->count || di->itype == 0) return;
     if (!mv_init() || atomic_load(&g_mv_lib_ok) != 1) return;
     uint64_t frame = atomic_load(&g_cur_frame);

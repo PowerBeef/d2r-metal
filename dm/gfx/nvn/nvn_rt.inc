@@ -169,11 +169,11 @@ static int rtx_init(void) {
     return 1;
 }
 // A moving draw's capture pipeline: the shader's dm_capture entry, no rasterization. Built on the background queue, as mv_pso
-static id<MTLRenderPipelineState> rtx_cap_pso(NvShader *vs) {
+static void *rtx_cap_pso_p(__unsafe_unretained NvShader *vs) {
     uint32_t cfmt[8] = {0}; pso_key k; pso_key_fill(&k, vs, nil, nil, cfmt, MTLPixelFormatInvalid, MTLPixelFormatInvalid, 1, NULL);
     k.blend_en = 0; k.chmask = 0xfffffffe; k.a2c = 0; memset(k.blend, 0, sizeof k.blend);
-    id ps = hm_get_id(&g_mv_pso, &k);
-    if (ps) return ps == g_mv_marker ? nil : ps;
+    void *ps = hm_get_ptr(&g_mv_pso, &k);
+    if (ps) return ps == (__bridge void *)g_mv_marker ? NULL : ps;
     if (!g_mv_marker) { g_mv_marker = [NSObject new]; g_mv_done = [NSMutableArray array]; }
     hm_put_id(&g_mv_pso, &k, g_mv_marker);
     MTLRenderPipelineDescriptor *d = pso_desc(&k, vs, nil, nil, 0);
@@ -184,7 +184,7 @@ static id<MTLRenderPipelineState> rtx_cap_pso(NvShader *vs) {
     dispatch_async(mv_queue(), ^{ NSError *e = nil; id<MTLRenderPipelineState> r = [g_dev newRenderPipelineStateWithDescriptor:d error:&e];
         if (!r) { MLOG("【红】ray tracing: capture pipeline for %s failed (%s)", who.UTF8String, e.localizedDescription.UTF8String); return; }
         os_unfair_lock_lock(&g_mv_done_lk); [g_mv_done addObject:@[key, r]]; os_unfair_lock_unlock(&g_mv_done_lk); });
-    return nil;
+    return NULL;
 }
 static uint64_t rtx_fnv(uint64_t h, const void *p, size_t n) { const uint8_t *b = p; for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 1099511628211ull; return h; }
 // What says an object is where it was: its position and its bones

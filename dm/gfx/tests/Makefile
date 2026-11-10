@@ -56,6 +56,8 @@ t_defer_chain: t_defer_chain.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_defer_chain.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_zskip: t_zskip.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_zskip.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_quadrun: t_quadrun.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_quadrun.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_xv: t_xv.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_xv.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_aniso: t_aniso.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -157,7 +159,8 @@ run: \
 	t_rt_srgb_view \
 	t_ub \
 	t_xv \
-	t_zskip
+	t_zskip \
+	t_quadrun
 	./t_copy_pitch
 	./t_nvn
 	./t_prog_key
@@ -181,6 +184,7 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_reorder_chain
 	MTL_DEBUG_LAYER=1 ./t_defer_chain
 	./t_zskip
+	MTL_DEBUG_LAYER=1 ./t_quadrun
 	./t_xv
 	./t_ub
 	MTL_DEBUG_LAYER=1 ./t_bar

@@ -1,0 +1,22 @@
+# 2D quad runs, verify mode (DM_NVN_QUADRUN=2; dm/gfx/nvn/nvn_mtl.m "2D quad runs"): the replay draws a run of interface quads that differ only in
+# their vertex range as one draw. In verify mode every merged quad is checked when its own command comes up: the bind state must equal the state the
+# run was drawn with, and the vertices must still be the bytes that were copied. Camp with the automap open, the inventory, the pause menu: some quads
+# must have been checked and none may differ (a difference is a red line).
+name quadrun_verify
+requires cli
+save warlock
+env DM_GAME_SEED=305419896 DM_NVN_QUADRUN=2
+timeout 240
+
+enter_game
+sleep 6
+press PLUS
+expect panel act=OpenPanel name=PlayerInventoryExpansionLayout timeout=5
+sleep 5
+press B
+expect panel act=ClosePanel name=PlayerInventoryExpansionLayout timeout=5
+walk_to 5789 4470 timeout=20
+sleep 6
+quit
+check log_has re="quad run verify: [1-9][0-9]* checked, 0 differ" last="quad run verify:"
+check no_red

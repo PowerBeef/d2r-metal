@@ -43,7 +43,7 @@ static void rr_finish(int ranged) {
     if(g_rr_reg!=g_reg_gen||g_rr_ser!=g_ser_gen)MDIE("RT范围oracle资源代号变化，提交前停止未比");
     NSArray *candidate=rr_read(c,d);rr_copy(g_rr_initial[0],c);rr_copy(g_rr_initial[1],d);g_vis=[g_dev newBufferWithLength:VIS_SLOTS*8 options:MTLResourceStorageModeShared];g_vis_n=0;g_vis_cur=-1;g_vis_on=g_vis_counting=1;g_vs=NULL;g_nvs=g_vscap=0;g_exec_next=g_exec_cur=NULL;
     id<MTLBuffer> refvis[2];int refslot[2];
-    for(int i=0;i<2;i++){if(i)rp_end();g_vis_cur=-1;memcpy(&S,&g_rr_s[i].s,sizeof S);R=g_rr_s[i].r;g_pso_dirty=g_dss_dirty=1;rp_begin_ex(4); // 原trace两个pass均mode4，不以无扫描起点的mode0多挂模板 | In the original trace both passes are mode4; do not attach an extra stencil with mode0, which has no scan start point
+    for(int i=0;i<2;i++){if(i)rp_end();g_vis_cur=-1;memcpy(&S,&g_rr_s[i].s,sizeof S);R=g_rr_s[i].r;g_pso_dirty=g_dss_dirty=1;rp_begin_ex_p(4); // 原trace两个pass均mode4，不以无扫描起点的mode0多挂模板 | In the original trace both passes are mode4; do not attach an extra stencil with mode0, which has no scan start point
         draw(g_rr_s[i].indexed?NULL:&g_rr_s[i].dw,g_rr_s[i].indexed?&g_rr_s[i].di:NULL);refvis[i]=g_vis;refslot[i]=g_vis_cur;}rp_end();
     uint64_t original_passes=g_stat_pass-pass,original_bytes=g_bw_load-load+g_bw_store-store;NSArray *reference=rr_read(c,d);
     if(g_rr_reg!=g_reg_gen||g_rr_ser!=g_ser_gen||g_rr_dirty!=nvn_dirty_now())MDIE("RT范围oracle绑定期间资源/数据代号变化，提交前停止未比");
