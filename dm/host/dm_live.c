@@ -52,12 +52,12 @@ typedef struct {
     _Atomic uint64_t hits, matched, recorded, dropped, win_t, win_hits;
     _Atomic int armed; int disarmed_for_rate;
     uint64_t site; uint32_t orig; uint32_t *tramp;
-    int id, kind, ncap, filt, norec; char fop;
+    int id, kind, ncap, filt, norec, strcap; char fop, ftext[32];   // strcap: cap=str:<source> = 32 bytes of the text it points at, in the four capture slots
     lv_src cap[4], fsrc; uint64_t fval, max, every, rate;
     char name[48], spec[256];
 } lv_hook;
 typedef struct { uint64_t lr, sp, t; lv_hook *h; } lv_ss;
-typedef struct lv_ring { _Atomic uint64_t head, tail; uint64_t dropped; uint32_t tid; int ssn; uint64_t w_pc, w_far, w_lr, w_x[4]; lv_ss ss[LV_SS]; struct lv_ring *next; dm_live_rec rec[LV_RING]; } lv_ring;
+typedef struct lv_ring { _Atomic uint64_t head, tail; uint64_t dropped; uint32_t tid; int ssn; uint64_t w_pc, w_far, w_lr, w_wr, w_x[4]; lv_ss ss[LV_SS]; struct lv_ring *next; dm_live_rec rec[LV_RING]; } lv_ring;
 
 static uint8_t *g_base, *g_text_rw, *g_arena, *g_arena_rw; static size_t g_size, g_rx_len, g_arena_used; static uint64_t g_text_end, g_patch_off;
 static char g_modname[16];
@@ -99,7 +99,10 @@ static int ring_put(lv_ring *r, lv_hook *h, const uint64_t *ctx, uint64_t t, uin
     dm_live_rec *x = &r->rec[head & (LV_RING - 1)];
     x->hook = (uint32_t)h->id | flag; x->tid = r->tid; x->t = t; x->lr = lr; x->sp = (uint64_t)ctx + LV_FRAME; x->aux = aux;
     for (int i = 0; i < 4; i++) x->x[i] = ctx[i];
-    for (int i = 0; i < 4; i++) { uint64_t v = 0; if (!flag && i < h->ncap) src_eval(&h->cap[i], ctx, &v); x->cap[i] = v; }
+    if (!flag && h->strcap) {   // a short text (a name, a path): up to 32 bytes, as far as they can be read
+        uint64_t p = 0; memset(x->cap, 0, sizeof x->cap);
+        if (src_eval(&h->cap[0], ctx, &p) && p) for (mach_vm_size_t n = 32, got; n; n /= 2) if (mach_vm_read_overwrite(mach_task_self(), p, n, (mach_vm_address_t)x->cap, &got) == KERN_SUCCESS) break;
+    } else for (int i = 0; i < 4; i++) { uint64_t v = 0; if (!flag && i < h->ncap) src_eval(&h->cap[i], ctx, &v); x->cap[i] = v; }
     atomic_store_explicit(&r->head, head + 1, memory_order_release);
     return 1;
 }
@@ -123,7 +126,12 @@ static void rate_check(lv_hook *h) {   // every 1024 hits: over its rate a hook 
 __attribute__((used)) static void lv_hit(uint64_t *ctx, lv_hook *h) {
     uint64_t n = atomic_fetch_add_explicit(&h->hits, 1, memory_order_relaxed) + 1;
     if (h->rate && !(n & 1023)) rate_check(h);
-    if (h->filt) { uint64_t v; if (!src_eval(&h->fsrc, ctx, &v)) return; if (h->fop == '=' ? v != h->fval : !(v & h->fval)) return; }
+    if (h->filt) { uint64_t v; if (!src_eval(&h->fsrc, ctx, &v)) return;
+        if (h->fop == '~') {   // the text the value points at contains ftext (the first 96 bytes of it)
+            char t[97]; mach_vm_size_t got = 0; memset(t, 0, sizeof t);
+            for (mach_vm_size_t n = 96; n >= 12; n /= 2) if (mach_vm_read_overwrite(mach_task_self(), v, n, (mach_vm_address_t)t, &got) == KERN_SUCCESS) break;
+            if (!got || !strstr(t, h->ftext)) return;
+        } else if (h->fop == '=' ? v != h->fval : !(v & h->fval)) return; }
     uint64_t m = atomic_fetch_add_explicit(&h->matched, 1, memory_order_relaxed);   // 0-based among the matching hits
     if (h->norec) return;   // count=1: the counters only (the call-trace census)
     if (h->every > 1 && m % h->every) return;
@@ -316,14 +324,16 @@ int dm_live_add(const char *spec, char *err, size_t ecap) {
     t.kind = kv(spec, "kind", v, sizeof v) ? (!strcmp(v, "ret") ? LV_RET : !strcmp(v, "entry") ? LV_ENTRY : !strcmp(v, "insn") ? LV_INSN : -1) : LV_ENTRY;
     if (t.kind < 0) { snprintf(err, ecap, "kind is entry, insn or ret"); return -1; }
     if (kv(spec, "cap", v, sizeof v)) for (char *p = v; *p && t.ncap < 4;) {
-        if (!parse_src(p, &t.cap[t.ncap])) { snprintf(err, ecap, "cap %s: x<r>, sp, lr or [x<r>+0x…].b|h|w|q (nested [[…]+0x…])", p); return -1; }
+        if (!strncmp(p, "str:", 4)) { if (t.ncap || !parse_src(p + 4, &t.cap[0])) { snprintf(err, ecap, "cap str:<source> stands alone (it fills the four slots)"); return -1; } t.strcap = 1; t.ncap = 1; break; }
+        if (!parse_src(p, &t.cap[t.ncap])) { snprintf(err, ecap, "cap %s: x<r>, sp, lr or [x<r>+0x…].b|h|w|q (nested [[…]+0x…]), or str:<source>", p); return -1; }
         t.ncap++; char *c = strchr(p, ','); if (!c) break; p = c + 1;
     }
     if (kv(spec, "filt", v, sizeof v)) {
-        if (!parse_src(v, &t.fsrc)) { snprintf(err, ecap, "filt %s: <source>=<hex> or <source>&<hex>", v); return -1; }
-        char *o = strpbrk(v + 1, "=&");
-        if (!o) { snprintf(err, ecap, "filt %s: no = or &", v); return -1; }
-        t.filt = 1; t.fop = *o; t.fval = parse_addr(o + 1);
+        char *o = strpbrk(v + 1, "=&~"), keep = o ? *o : 0;
+        if (!o) { snprintf(err, ecap, "filt %s: <source>=<hex>, <source>&<hex> or <source>~<text>", v); return -1; }
+        *o = 0; if (!parse_src(v, &t.fsrc)) { snprintf(err, ecap, "filt %s: the source is x<r> or [x<r>+0x…].b|h|w|q", v); return -1; }
+        t.filt = 1; t.fop = keep;
+        if (keep == '~') { if (!o[1]) { snprintf(err, ecap, "filt: ~ needs a text"); return -1; } strlcpy(t.ftext, o + 1, sizeof t.ftext); } else t.fval = parse_addr(o + 1);
     }
     if (kv(spec, "max", v, sizeof v)) t.max = strtoull(v, NULL, 10);
     if (kv(spec, "every", v, sizeof v)) t.every = strtoull(v, NULL, 10);
@@ -357,7 +367,7 @@ int dm_live_add(const char *spec, char *err, size_t ecap) {
         g_site_ix[slot] = id + 1;
         atomic_store(&g_nhooks, id + 1);
     }
-    h->kind = t.kind; h->ncap = t.ncap; h->filt = t.filt; h->norec = t.norec; h->fop = t.fop; memcpy(h->cap, t.cap, sizeof h->cap); h->fsrc = t.fsrc;
+    h->kind = t.kind; h->ncap = t.ncap; h->filt = t.filt; h->norec = t.norec; h->strcap = t.strcap; memcpy(h->ftext, t.ftext, sizeof h->ftext); h->fop = t.fop; memcpy(h->cap, t.cap, sizeof h->cap); h->fsrc = t.fsrc;
     h->fval = t.fval; h->max = t.max; h->every = t.every; h->rate = t.rate; h->disarmed_for_rate = 0; memcpy(h->name, t.name, sizeof h->name); memcpy(h->spec, t.spec, sizeof h->spec);
     atomic_store(&h->hits, 0); atomic_store(&h->matched, 0); atomic_store(&h->recorded, 0); atomic_store(&h->dropped, 0); atomic_store(&h->win_t, 0); atomic_store(&h->win_hits, 0);
     atomic_store(&h->armed, 1); put_insn(at, b_to(at, (uint64_t)h->tramp));
@@ -423,6 +433,7 @@ static char *slurp_text(const char *path) {
 // One spec a line or between semicolons; # starts a comment line. The first 50 armed and refused are logged, then the counts
 static void load_specs(char *s, int *armed_out, int *refused_out) {
     int armed = 0, refused = 0; char err[256], *save = NULL;
+    for (char *c = s; *c; c++) if (*c == '#' && (c == s || c[-1] == '\n')) while (*c && *c != '\n') *c++ = ' ';   // comment lines, whatever they hold
     for (char *p = strtok_r(s, ";\n", &save); p; p = strtok_r(NULL, ";\n", &save)) {
         while (*p == ' ' || *p == '\t') p++;
         if (!*p || *p == '#') continue;
@@ -493,12 +504,12 @@ static void cov_off(void) {   // every original instruction back; the table stay
 // and there records the write (writer, address, the value now there) and turns the watch back on. New game threads get the watches when they
 // start (dm_live_thread_start). Up to 4 at once, each within one 8-byte word
 #define LV_WATCH 4
-static struct { uint64_t addr; int len, on; } g_watch[LV_WATCH];
+static struct { uint64_t addr; int len, on, mode; _Atomic uint64_t hits; uint64_t max; } g_watch[LV_WATCH];   // mode: 1 reads, 2 writes, 3 both; past max hits a watch turns itself off (a field read every draw would stall the game)
 static void debug_apply(thread_t th, int watches, uint64_t bp) {
     arm_debug_state64_t ds; memset(&ds, 0, sizeof ds);
     for (int i = 0; watches && i < LV_WATCH; i++) if (g_watch[i].on) {
         ds.__wvr[i] = g_watch[i].addr & ~7ull;
-        ds.__wcr[i] = (uint64_t)(((1u << g_watch[i].len) - 1) << (g_watch[i].addr & 7)) << 5 | (2u << 3) | (2u << 1) | 1u;   // the bytes, stores, user mode, on
+        ds.__wcr[i] = (uint64_t)(((1u << g_watch[i].len) - 1) << (g_watch[i].addr & 7)) << 5 | ((uint64_t)g_watch[i].mode << 3) | (2u << 1) | 1u;   // the bytes, loads / stores, user mode, on
     }
     if (bp) { ds.__bvr[0] = bp; ds.__bcr[0] = (0xfu << 5) | (2u << 1) | 1u; }
     thread_set_state(th, ARM_DEBUG_STATE64, (thread_state_t)&ds, ARM_DEBUG_STATE64_COUNT);
@@ -510,10 +521,10 @@ static void watch_apply_all(void) {
     vm_deallocate(mach_task_self(), (vm_address_t)th, n * sizeof *th);
 }
 void dm_live_thread_start(void) { for (int i = 0; i < LV_WATCH; i++) if (g_watch[i].on) { debug_apply(pthread_mach_thread_np(pthread_self()), 1, 0); return; } }
-static int watch_add(uint64_t addr, int len, char *err, size_t ecap) {
+static int watch_add(uint64_t addr, int len, int mode, uint64_t max, char *err, size_t ecap) {
     if (len != 1 && len != 2 && len != 4 && len != 8) { snprintf(err, ecap, "len is 1, 2, 4 or 8"); return -1; }
     if ((addr & 7) + (uint64_t)len > 8) { snprintf(err, ecap, "the watched bytes must lie within one 8-byte word"); return -1; }
-    for (int i = 0; i < LV_WATCH; i++) if (!g_watch[i].on) { g_watch[i].addr = addr; g_watch[i].len = len; g_watch[i].on = 1; watch_apply_all(); return i; }
+    for (int i = 0; i < LV_WATCH; i++) if (!g_watch[i].on) { g_watch[i].addr = addr; g_watch[i].len = len; g_watch[i].mode = mode; g_watch[i].max = max ? max : 20000; atomic_store(&g_watch[i].hits, 0); g_watch[i].on = 1; watch_apply_all(); return i; }
     snprintf(err, ecap, "all %d watchpoints are in use", LV_WATCH); return -1;
 }
 static void watch_del(int slot) { for (int i = 0; i < LV_WATCH; i++) if (slot < 0 || slot == i) g_watch[i].on = 0; watch_apply_all(); }
@@ -525,6 +536,7 @@ int dm_live_trap(ucontext_t *uc) {
         int any = 0; for (int i = 0; i < LV_WATCH; i++) any |= g_watch[i].on;
         if (!any && !g_base) return 0;
         lv_ring *r = ring_get();
+        r->w_wr = (uc->uc_mcontext->__es.__esr >> 6) & 1;
         r->w_pc = pc; r->w_far = uc->uc_mcontext->__es.__far; r->w_lr = uc->uc_mcontext->__ss.__lr; for (int i = 0; i < 4; i++) r->w_x[i] = uc->uc_mcontext->__ss.__x[i];
         debug_apply(pthread_mach_thread_np(pthread_self()), 0, pc + 4);
         return 1;
@@ -532,15 +544,17 @@ int dm_live_trap(ucontext_t *uc) {
     if (ec == 0x30 || ec == 0x31) {   // the breakpoint after a watched write
         lv_ring *r = g_base || g_watch[0].on || g_watch[1].on || g_watch[2].on || g_watch[3].on ? pthread_getspecific(g_key) : NULL;
         if (!r || !r->w_pc || pc != r->w_pc + 4) return 0;
-        int slot = 0; for (int i = 0; i < LV_WATCH; i++) if (g_watch[i].on && (r->w_far & ~7ull) == (g_watch[i].addr & ~7ull)) { slot = i; break; }
+        int slot = -1; for (int i = 0; i < LV_WATCH; i++) if (g_watch[i].on && (r->w_far & ~7ull) == (g_watch[i].addr & ~7ull)) { slot = i; break; }
+        if (slot < 0) { r->w_pc = 0; debug_apply(pthread_mach_thread_np(pthread_self()), 1, 0); return 1; }   // its watch was turned off meanwhile: no record
         uint64_t v = 0; mach_vm_size_t got = 0; mach_vm_read_overwrite(mach_task_self(), g_watch[slot].addr, (mach_vm_size_t)g_watch[slot].len, (mach_vm_address_t)&v, &got);
         uint64_t head = atomic_load_explicit(&r->head, memory_order_relaxed), tail = atomic_load_explicit(&r->tail, memory_order_acquire);
         if (head - tail < LV_RING) { dm_live_rec *x = &r->rec[head & (LV_RING - 1)];
-            x->hook = DM_LIVE_WATCH | (uint32_t)slot; x->tid = r->tid; x->t = ticks(); x->lr = r->w_lr; x->sp = uc->uc_mcontext->__ss.__sp; x->aux = 0;
+            x->hook = DM_LIVE_WATCH | (uint32_t)slot; x->aux = r->w_wr;   // aux: 1 = this access was a write x->tid = r->tid; x->t = ticks(); x->lr = r->w_lr; x->sp = uc->uc_mcontext->__ss.__sp;
             for (int i = 0; i < 4; i++) x->x[i] = r->w_x[i];
             x->cap[0] = r->w_far; x->cap[1] = r->w_pc; x->cap[2] = v; x->cap[3] = 0;
             atomic_store_explicit(&r->head, head + 1, memory_order_release); }
         r->w_pc = 0;
+        if (atomic_fetch_add(&g_watch[slot].hits, 1) + 1 >= g_watch[slot].max) g_watch[slot].on = 0;   // each other thread drops it at its next hit
         debug_apply(pthread_mach_thread_np(pthread_self()), 1, 0);
         return 1;
     }
@@ -596,6 +610,7 @@ static int cmd_live(const ctl_args *a, char *out, size_t cap, char *err, size_t 
         for (lv_ring *r = atomic_load(&g_rings); r; r = r->next) rings++;
         size_t o = (size_t)snprintf(out, cap, ",\"hooks\":%d,\"armed\":%d,\"hits\":%llu,\"recorded\":%llu,\"dropped\":%llu,\"written\":%llu,\"threads\":%d,\"out\":\"%s\"",
                                     n, armed, (unsigned long long)hits, (unsigned long long)rec, (unsigned long long)drop, (unsigned long long)g_written, rings, g_out_path);
+        for (int i = 0; i < LV_WATCH; i++) if (g_watch[i].addr) o += (size_t)snprintf(out + o, cap - o, ",\"watch%d\":\"%#llx %s %llu hits\"", i, (unsigned long long)g_watch[i].addr, g_watch[i].on ? "on" : "off", (unsigned long long)atomic_load(&g_watch[i].hits));
         if (!strcmp(d, "list")) {
             o += (size_t)snprintf(out + o, cap - o, ",\"list\":[");
             for (int i = from < 0 ? 0 : from, k = 0; i < n && o + 200 < cap; i++, k++) { lv_hook *h = &g_hooks[i];
@@ -620,13 +635,15 @@ static int cmd_live(const ctl_args *a, char *out, size_t cap, char *err, size_t 
         snprintf(out, cap, ",\"ran\":%d,\"blocks\":%d,\"file\":\"%s\"", n, g_cov_n, path); return 1; }
     if (!strcmp(d, "cover_rearm")) { if (!atomic_load(&g_cov_on)) ERR("coverage is not on"); snprintf(out, cap, ",\"rearmed\":%d", cov_rearm()); return 1; }
     if (!strcmp(d, "cover_off")) { cov_off(); LOG("live hooks: coverage off"); return 1; }
-    if (!strcmp(d, "watch")) {   // at=main+0x…|0x… [chain=off,off] [len=1|2|4|8]: chain as the mem command (read the pointer there, add the offset)
+    if (!strcmp(d, "watch")) {   // at=main+0x…|0x… [chain=off,off] [len=1|2|4|8] [mode=write|read|rw]: chain as the mem command (read the pointer there, add the offset)
         const char *at = dm_ctl_get(a, "at"), *chain = dm_ctl_get(a, "chain"); if (!at) ERR("missing at");
         uint64_t p = parse_addr(at);
         for (const char *c = chain; c && *c; c = strchr(c, ',') ? strchr(c, ',') + 1 : NULL) { uint64_t q = 0; mach_vm_size_t got = 0;
             if (mach_vm_read_overwrite(mach_task_self(), p, 8, (mach_vm_address_t)&q, &got) != KERN_SUCCESS || got != 8 || !q) ERR("no pointer at %#llx", (unsigned long long)p);
             p = q + strtoull(c, NULL, 16); }
-        int slot = watch_add(p, (int)dm_ctl_num(a, "len", 8), err, ecap); if (slot < 0) return 0;
+        const char *md = dm_ctl_get(a, "mode"); int mode = !md || !strcmp(md, "write") ? 2 : !strcmp(md, "read") ? 1 : !strcmp(md, "rw") ? 3 : 0;
+        if (!mode) ERR("mode is write (default), read or rw");
+        int slot = watch_add(p, (int)dm_ctl_num(a, "len", 8), mode, (uint64_t)dm_ctl_num(a, "max", 0), err, ecap); if (slot < 0) return 0;
         LOG("live hooks: watch %d on %#llx", slot, (unsigned long long)p); snprintf(out, cap, ",\"watch\":%d,\"addr\":\"%#llx\"", slot, (unsigned long long)p); return 1;
     }
     if (!strcmp(d, "unwatch")) { const char *w = dm_ctl_get(a, "watch"); watch_del(!w || !strcmp(w, "all") ? -1 : atoi(w)); return 1; }

@@ -40,7 +40,7 @@ class Fixture(unittest.TestCase):
             for i in range(4): f.write(rec(0, 7, 1000 * i, BASE + 0x200c, x=(0x500 + (i & 1), 0, 0, 0), cap=(3, 0, 0, 0)))   # called from after the computed site
             f.write(rec(0, 7, 5000, BASE + 0x2014, x=(0x500, 0, 0, 0), cap=(9, 0, 0, 0)))                                          # and once from the direct call
             f.write(rec(0 | live.RET, 7, 5010, BASE + 0x2014, x=(1, 0, 0, 0), aux=10))
-            f.write(rec(live.WATCH | 1, 8, 6000, 0, cap=(0x9000, BASE + 0x1014, 0x2a, 0)))
+            f.write(rec(live.WATCH | 1, 8, 6000, 0, cap=(0x9000, BASE + 0x1014, 0x2a, 0), aux=1))
         with open(os.path.join(self.run, 'live.bin.hooks.tsv'), 'w') as f:
             f.write('id\tname\tat\tkind\tspec\n0\tupd\tmain+0x1000\tret\tat=main+0x1000 kind=ret cap=[x0+0x4].w type=x0:Thing\n')
 

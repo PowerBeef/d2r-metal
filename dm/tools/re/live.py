@@ -10,6 +10,7 @@
 #   cover-diff <a> <b>              blocks that ran in b and not in a, by function (what only the second action runs)
 #   run <scenario.scn> [--name N] [--window]   run a scenario with the hooks on (headless CLI host) into the run store, then report
 #   report [run]                    everything a run holds: hooks with typed arguments, watchpoints, the census, coverage files, observed edges
+#   table [run]                     every hook on one line: hits per phase (each counts*.tsv), records, threads, callers, values
 #   edges [run]                     computed call sites resolved by what was seen: (call site, function called, count) → edges.tsv
 #   propose [run] <a> <b> --label L   functions whose blocks ran only in b, appended to re/live/proposals.tsv as naming leads
 #   view [run] main+0x… [--cov F]   one function's decompiled text with each line's coverage, hits and values → re/live/view/<run>/<offset>.html
@@ -96,15 +97,15 @@ def typed(at, kind, caps, ent, ix, spec=''):
     return out
 
 
-def summary(path, as_json=False, quiet=False, top=25):
+def summary(path, as_json=False, quiet=False, top=25, top_values=5):
     hdr, recs, hooks = read(path); ix = live_index.Index()
     hz = hdr['timer_hz'] or 1
     by = collections.defaultdict(list); watch = collections.defaultdict(list)
-    for r in recs: (watch[r[0] & 0xff] if r[0] & WATCH else by[r[0]]).append(r)
+    for r in recs: (watch[(r[0] & 0xff, r[9] & ~7)] if r[0] & WATCH else by[r[0]]).append(r)   # a watch slot is reused: its records go by slot and address
     out = {'file': path, 'records': len(recs), 'hooks': [], 'watches': []}
-    for slot in sorted(watch):   # cap[0] the address, cap[1] the writing instruction, cap[2] the value after
-        w = watch[slot]
-        out['watches'].append({'watch': slot, 'addr': f'{w[0][9]:#x}', 'writes': len(w), 'threads': len({r[1] for r in w}),
+    for slot, _ in sorted(watch):   # cap[0] the address, cap[1] the writing instruction, cap[2] the value after
+        w = watch[(slot, _)]
+        out['watches'].append({'watch': slot, 'addr': f'{w[0][9]:#x}', 'writes': sum(1 for r in w if r[13]), 'reads': sum(1 for r in w if not r[13]), 'threads': len({r[1] for r in w}),
                                'writers': [{'at': where(pc, hdr), 'n': n} for pc, n in collections.Counter(r[10] for r in w).most_common(8)],
                                'values': [{'v': f'{v:#x}', 'n': n} for v, n in collections.Counter(r[11] for r in w).most_common(8)]})
     for hid in sorted({h & ~RET for h in by} | set(hooks)):
@@ -121,15 +122,19 @@ def summary(path, as_json=False, quiet=False, top=25):
             h['dur_us'] = {'p50': round(pct(d, .5), 2), 'p95': round(pct(d, .95), 2), 'max': round(d[-1], 2)}
             h['ret_x0'] = [{'v': f'{v:#x}', 'n': n} for v, n in collections.Counter(r[5] for r in ret).most_common(5)]
         spec = hooks.get(hid, {}).get('spec', ''); caps = [c for c in (spec.split('cap=')[1].split()[0].split(',') if 'cap=' in spec else []) if c][:4]
-        h['caps'] = [[{'v': f'{v:#x}', 'n': n} for v, n in collections.Counter(r[9 + i] for r in ent).most_common(5)] for i in range(len(caps))]
+        if caps and caps[0].startswith('str:'):   # cap=str:<source>: the four slots hold up to 32 bytes of text
+            texts = collections.Counter(struct.pack('<4Q', *r[9:13]).split(b'\0')[0].decode('utf-8', 'replace') for r in ent)
+            h['caps'] = [[{'v': t, 'n': n} for t, n in texts.most_common(top_values)]]; h['texts'] = len(texts)
+        else:
+            h['caps'] = [[{'v': f'{v:#x}', 'n': n} for v, n in collections.Counter(r[9 + i] for r in ent).most_common(top_values)] for i in range(len(caps))]
         h.update(typed(h.get('at', ''), h.get('kind', ''), caps, ent, ix, spec))
         out['hooks'].append(h)
     if as_json: print(json.dumps(out, indent=1)); return out
     if quiet: return out
     print(f"{path}: {len(recs)} records, module at {hdr['base']:#x}, timer {hz} Hz")
     for w in out['watches']:
-        print(f"watch {w['watch']} on {w['addr']}: {w['writes']} writes, {w['threads']} threads")
-        for c in w['writers']: print(f"    written by {c['at']}  ×{c['n']}")
+        print(f"watch {w['watch']} on {w['addr']}: {w['writes']} writes, {w['reads']} reads, {w['threads']} threads")
+        for c in w['writers']: print(f"    accessed by {c['at']}  ×{c['n']}")
         print(f"    values {', '.join(f'{x['v']}×{x['n']}' for x in w['values'])}")
     shown = sorted((h for h in out['hooks'] if h['records'] or h['returns']), key=lambda h: -(h['records'] + h['returns']))
     if len(shown) > top: print(f'{len(shown)} hooks recorded; the {top} with most records (summary --json has all):')
@@ -301,6 +306,29 @@ def edges(d, quiet=False):
     return rows
 
 
+def table(d, callers=2):
+    """Every hook of a run on one line: its hits in each counts*.tsv the run dumped (a phase each), records, threads, top callers and values.
+    For runs that arm one hook per question (a check list): the name carries the question's id."""
+    phases = sorted((f for f in os.listdir(d) if f.startswith('counts') and f.endswith('.tsv')), key=lambda f: os.path.getmtime(os.path.join(d, f)))
+    hits = collections.defaultdict(dict); names = {}
+    for ph in phases:
+        with open(os.path.join(d, ph), encoding='utf-8') as f:
+            for line in f:
+                p = line.rstrip('\n').split('\t')
+                if p[0].isdigit(): hits[int(p[0])][ph] = (int(p[3]), int(p[4])); names[int(p[0])] = (p[2], p[1])
+    summ = {h['hook']: h for h in summary(os.path.join(d, 'live.bin'), quiet=True, top_values=6)['hooks']} if os.path.exists(os.path.join(d, 'live.bin')) else {}
+    print('hook\tname\tat\t' + '\t'.join(ph[7:-4] or 'counts' for ph in phases) + '\trecords\tthreads\tdetail')
+    for hid in sorted(names, key=lambda i: names[i][0]):
+        h = summ.get(hid, {}); det = []
+        for c in h.get('callers', [])[:callers]: det.append(f"from {c['at']} ×{c['n']}")
+        for a in h.get('args', []):
+            if a['values']: det.append(f"{a['reg']}: " + ' '.join(f"{v['v']}×{v['n']}" for v in a['values'][:4]))
+        for i, c in enumerate(h.get('caps', [])): det.append(f"{(h.get('cap_names') or [])[i] if i < len(h.get('cap_names') or []) else 'cap'}: " + ' '.join(f"{v['v']}×{v['n']}" for v in c))
+        if 'dur_us' in h: det.append(f"dur p50 {h['dur_us']['p50']} p95 {h['dur_us']['p95']} max {h['dur_us']['max']} us")
+        cells = [(f"{hits[hid][ph][0]}" + (f"/{hits[hid][ph][1]}m" if hits[hid][ph][1] != hits[hid][ph][0] else '')) if ph in hits[hid] else '-' for ph in phases]
+        print(f"{hid}\t{names[hid][0]}\t{names[hid][1]}\t" + '\t'.join(cells) + f"\t{h.get('records', 0)}\t{h.get('threads', 0)}\t" + ' | '.join(det))
+
+
 def report(d):
     meta = {}
     if os.path.exists(os.path.join(d, 'run.json')):
@@ -406,13 +434,14 @@ def main(argv):
     v = sub.add_parser('cover'); v.add_argument('file'); v.add_argument('--top', type=int, default=40)
     x = sub.add_parser('cover-diff'); x.add_argument('a'); x.add_argument('b'); x.add_argument('--top', type=int, default=60)
     rn = sub.add_parser('run'); rn.add_argument('scenario'); rn.add_argument('--name'); rn.add_argument('--window', action='store_true')
-    for nm in ('report', 'edges'): q = sub.add_parser(nm); q.add_argument('run', nargs='?')
+    for nm in ('report', 'edges', 'table'): q = sub.add_parser(nm); q.add_argument('run', nargs='?')
     pr = sub.add_parser('propose'); pr.add_argument('args', nargs='+', help='[run] <a> <b>'); pr.add_argument('--label', required=True)
     vw = sub.add_parser('view'); vw.add_argument('args', nargs='+', help='[run] main+0x…'); vw.add_argument('--cov')
     a = ap.parse_args(argv)
     if a.cmd == 'run': return cmd_run(a.scenario, a.name, a.window)
     if a.cmd == 'report': report(resolve_run(a.run)); return 0
     if a.cmd == 'edges': edges(resolve_run(a.run)); return 0
+    if a.cmd == 'table': table(resolve_run(a.run)); return 0
     if a.cmd == 'propose': propose(resolve_run(a.args[0] if len(a.args) == 3 else None), a.args[-2], a.args[-1], a.label); return 0
     if a.cmd == 'view': view(resolve_run(a.args[0] if len(a.args) == 2 else None), a.args[-1], a.cov); return 0
     if a.cmd == 'summary': summary(a.file, a.json)

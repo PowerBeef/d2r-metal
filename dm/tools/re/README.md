@@ -76,6 +76,7 @@ A live run is a folder of `$DM_ROOT/re/live/runs/<time>_<name>/` holding everyth
 ```bash
 python3 dm/tools/re/live.py run <scenario.scn> [--name N]     # headless CLI host with DM_LIVE=1 into a new run, then the report
 python3 dm/tools/re/live.py report [run]                      # hooks with typed arguments and callers, watchpoint writers, census, coverage, edges
+python3 dm/tools/re/live.py table [run]                       # one line per hook: hits per phase (each counts*.tsv), records, threads, callers, values
 python3 dm/tools/re/live.py edges [run]                       # computed call sites resolved by the recorded callers → edges.tsv
 python3 dm/tools/re/live.py propose [run] a.tsv b.tsv --label walking   # functions that ran only in b → re/live/proposals.tsv (leads for review)
 python3 dm/tools/re/live.py view [run] main+0x…               # decompiled lines with coverage, hits and values → re/live/view/<run>/<offset>.html

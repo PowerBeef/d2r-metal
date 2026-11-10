@@ -135,26 +135,38 @@ int main(void) {
     cov_off();
     EXPECT("coverage off: every instruction back", 1, *(uint32_t *)fn(lvt_c3) == *(uint32_t *)lvt_c3 && *(uint32_t *)fn(lvt_c1) == *(uint32_t *)lvt_c1);
     EXPECT("and the hook still works", 2, ((f2)fn(lvt_add))(1, 1));
+    // a text capture and a text filter
+    static const char nm1[] = "shaders/assao_blur", nm2[] = "shaders/models";
+    int h_str = add(lvt_c1, "cap=str:x0"); ((f2)fn(lvt_c1))((uint64_t)nm1, 0);
+    int h_txt = add(lvt_c3, "filt=x0~assao"); ((f2)fn(lvt_c3))((uint64_t)nm1, 0); ((f2)fn(lvt_c3))((uint64_t)nm2, 0); ((f2)fn(lvt_c3))(0, 0);
+    EXPECT("text filter: 3 hits, 1 match", 1, cnt(h_txt).hits == 3 && cnt(h_txt).recorded == 1);
     // a data watchpoint
-    int w = watch_add((uint64_t)&g_watched[1], 8, err, sizeof err);
+    int w = watch_add((uint64_t)&g_watched[1], 8, 2, 0, err, sizeof err);
     EXPECT("watch set", 0, w);
     pthread_t wt; pthread_create(&wt, NULL, writer, NULL); pthread_join(wt, NULL);
     watch_del(-1);
     EXPECT("the watched writes all happened", 50, g_watched[1]);
+    EXPECT("a read watch", 0, watch_add((uint64_t)&g_watched[0], 8, 1, 0, err, sizeof err));
+    dm_live_thread_start(); volatile uint64_t sink = 0; for (int i = 0; i < 3; i++) sink += g_watched[0];
+    watch_del(-1); (void)sink;
     // the file
     dm_live_flush();
     FILE *f = fopen(out, "rb"); dm_live_hdr hd = {0}; size_t got = f ? fread(&hd, sizeof hd, 1, f) : 0;
     EXPECT("header", 1, got == 1 && !memcmp(hd.magic, "DMLIVE01", 8) && hd.base == (uint64_t)M && hd.rec_size == sizeof(dm_live_rec));
-    int n_add = 0, ret_ok = 0, cap_ok = 0, n_w = 0, w_ok = 1; dm_live_rec r;
+    int n_add = 0, ret_ok = 0, cap_ok = 0, n_w = 0, w_ok = 1, str_ok = 0, n_r = 0; dm_live_rec r;
     while (f && fread(&r, sizeof r, 1, f) == 1) {
         if (r.hook == (uint32_t)h_add) { n_add++; cap_ok = r.cap[0] == 5 && r.cap[1] == 0xfeedfacecafebeefull && r.cap[2] == 0x22 && r.x[0] == (uint64_t)&obj; }
         if (r.hook == ((uint32_t)h_ret | DM_LIVE_RET)) ret_ok = r.x[0] == 42 && r.aux > 0;
+        if (r.hook == (uint32_t)h_str && !memcmp(r.cap, "shaders/assao_blur", 18)) str_ok = 1;
+        if (r.hook == (DM_LIVE_WATCH | 0u) && !r.aux) { n_r++; continue; }
         if (r.hook == (DM_LIVE_WATCH | 0u)) { n_w++; w_ok &= r.cap[0] == (uint64_t)&g_watched[1] && r.cap[2] == (uint64_t)n_w * 10 && r.cap[1] != 0; }
     }
     if (f) fclose(f);
     EXPECT("the add record's captures (x1, [x0+8].q, [[x0]+4].w)", 1, n_add == 1 && cap_ok);
     EXPECT("the return record holds 42 and a duration", 1, ret_ok);
     EXPECT("5 watch records, each with its address, writer and new value", 1, n_w == 5 && w_ok);
+    EXPECT("the text capture holds the name", 1, str_ok);
+    EXPECT("3 reads seen by the read watch", 3, n_r);
     EXPECT("no hook was refused but the one meant to be", 1, add_fail);
     printf("%s %d/%d\n", fail ? "FAIL" : "OK", count - fail, count);
     return fail != 0;
