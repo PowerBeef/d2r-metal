@@ -58,7 +58,7 @@ typedef struct {
     uint8_t *base;             // 映像（含补丁区）在宿主地址空间的首址 | Start address of the image (including the patch area) in the host address space
     size_t size;
     uint64_t text_end, ro_off, data_off, patch_off, key_page_off, key_page_size;   // 来自改写器 fixups 头 | From the rewriter fixups header
-    unsigned key_idx[11];   // key page index of each host key (loader.c KEY_N)
+    unsigned key_idx[12];   // key page index of each host key (loader.c KEY_N)
     const Elf64_Dyn *dyn;
     const Elf64_Sym *symtab;
     const char *strtab;
@@ -72,7 +72,7 @@ extern int g_nmod;
 // 四个线程本地槽：K18 = Switch 的 x18、KTLS = tpidr_el0、KTLR = tpidrro_el0（ThreadLocalRegion）、KGATE = 宿主门入口；实际键号由装载器写入键页
 // Four thread-local slots: K18 = the Switch's x18, KTLS = tpidr_el0, KTLR = tpidrro_el0 (ThreadLocalRegion), KGATE = host gate entry; the actual key numbers are written into the key page by the loader
 extern pthread_key_t g_key18, g_keytls, g_keytlr, g_keygate;
-extern pthread_key_t g_keyres[2], g_keyaspect, g_keyaspectui, g_keyesh, g_keyshsz, g_keyjit;
+extern pthread_key_t g_keyres[2], g_keyaspect, g_keyaspectui, g_keyesh, g_keyshsz, g_keyjit, g_keypipe;
 
 void load_modules(const char *dir, const char **names, int n);
 void run_module_inits(void);
@@ -84,7 +84,7 @@ module_t *module_of(const void *p);
 uint64_t gate_dispatch(uint64_t ret_addr, uint64_t *regs);
 // 观测门（改写器 OBS 表；编号与 patch_nso.py 一致）：只读回调，挂上即在门命中时调用
 // Observation gates (rewriter OBS table; numbering matches patch_nso.py): read-only callbacks, called on a gate hit once attached
-enum { OBS_UIMSG = 1, OBS_TICK = 2, OBS_C2S = 3, OBS_C2S_SYS = 4, OBS_SETLANG = 5, OBS_TARGET_RANK = 7, OBS_UI_PROJECT = 8, OBS_FREEZE_WORLD = 10, OBS_FREEZE_CLIENT = 11, OBS_FREEZE_ANIM = 12, OBS_FREEZE_RENDER = 13, OBS_TEXTBOX = 14, OBS_NOTICE_INPUT = 18, OBS_ERR_SMOOTH = 19, OBS_MODEL_YAW = 20, OBS_TOOLTIP = 21, OBS_RENDERER_CFG = 23, OBS_MAX = 24 };   // 6 = iOS 绑定读取（dm_touch_game_bridge.c）；15–17、22 是删掉的大秘境用过的号，保留不复用（旧产物的 gates.tsv 里还有，OBS_MAX 不能小于 23） | 6 = iOS binding read (dm_touch_game_bridge.c); 15–17 and 22 were used by the removed Greater Rift and stay reserved, never reused (an old build output's gates.tsv still has them, so OBS_MAX cannot go below 23)
+enum { OBS_UIMSG = 1, OBS_TICK = 2, OBS_C2S = 3, OBS_C2S_SYS = 4, OBS_SETLANG = 5, OBS_TARGET_RANK = 7, OBS_UI_PROJECT = 8, OBS_FREEZE_WORLD = 10, OBS_FREEZE_CLIENT = 11, OBS_FREEZE_ANIM = 12, OBS_FREEZE_RENDER = 13, OBS_TEXTBOX = 14, OBS_NOTICE_INPUT = 18, OBS_ERR_SMOOTH = 19, OBS_MODEL_YAW = 20, OBS_TOOLTIP = 21, OBS_RENDERER_CFG = 23, OBS_PIPESET = 24, OBS_MAX = 25 };   // 6 = iOS 绑定读取（dm_touch_game_bridge.c）；15–17、22 是删掉的大秘境用过的号，保留不复用（旧产物的 gates.tsv 里还有，OBS_MAX 不能小于 23） | 6 = iOS binding read (dm_touch_game_bridge.c); 15–17 and 22 were used by the removed Greater Rift and stay reserved, never reused (an old build output's gates.tsv still has them, so OBS_MAX cannot go below 23)
 void gate_obs_set(int id, void (*fn)(const uint64_t *regs));
 int gate_obs_present(int id);
 int gate_svc_present(int num);   // 产物里有没有这个 svc 号的门（剪口引入的宿主调用号用）   // 产物里有没有这个观测门（gates.tsv 登记过） | Whether the build output has a gate for this svc number (for host call numbers introduced by cuts)   // whether the build output has this observation gate (registered in gates.tsv)

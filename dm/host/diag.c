@@ -575,6 +575,9 @@ static void setlang_obs(const uint64_t *regs) {
 void probe_install(void) {
     if (gate_obs_present(OBS_SETLANG)) gate_obs_set(OBS_SETLANG, setlang_obs);
     { void dm_video_renderer_cfg_obs(const uint64_t *regs); if (gate_obs_present(OBS_RENDERER_CFG)) gate_obs_set(OBS_RENDERER_CFG, dm_video_renderer_cfg_obs); }   // Environment Detail (dm_video.c)
+    { void dm_nvn_pipeset_obs(const uint64_t *regs); int dm_nvn_pipeset_mode(void);   // pipeline-set fast path, verify mode (hle_nvn.c)
+      if (gate_obs_present(OBS_PIPESET)) gate_obs_set(OBS_PIPESET, dm_nvn_pipeset_obs);
+      else if (dm_nvn_pipeset_mode() == 2) LOG("【红】DM_PIPESET=2: this product has no pipeline-set gate (it needs r54 or later)"); }
     { void dm_ui_tooltip_obs(const uint64_t *regs); if (gate_obs_present(OBS_TOOLTIP)) gate_obs_set(OBS_TOOLTIP, dm_ui_tooltip_obs); }   // 说明框停靠（dm_cursor.c） | tooltip docking (dm_cursor.c)
     const char *ui = getenv("DM_UIMSG");
     if (ui && strcmp(ui, "1") && !(g_uifp = fopen(ui, "w"))) die("DM_UIMSG 打不开 %s", ui);

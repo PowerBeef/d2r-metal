@@ -235,7 +235,7 @@ DM_NVN_TEXRAW	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_TEXSNAP	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_TSV	gfx	gfx/nvn/hle_nvn.c gfx/tests/nvn_replay.m	y
 DM_NVN_TSV_CALLS	gfx	gfx/nvn/hle_nvn.c	y
-DM_NVN_UB	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_ub.m	-
+DM_NVN_UB	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_ub.m	y
 DM_NVN_UB_N	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_ub.m	-
 DM_NVN_UDC_AB	gfx,host	gfx/nvn/nvn_mtl.m host/diag.c	-
 DM_NVN_UNWRITTEN_DC	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_rt_range.m	y
@@ -254,6 +254,7 @@ DM_PANEL_FREEZE	host	host/diag.c host/dm_cursor.c	-
 DM_PC_DATA	ios-tools	ios/tools/gen_assets.py ios/tools/hud_v4_design.py	y
 DM_PC_MODE	host	host/dm_padmode.c host/front_mac.m	y
 DM_PERF_FILE	host	host/diag.c	y
+DM_PIPESET	gfx	gfx/nvn/hle_nvn.c	y
 DM_PLAYERS	host	host/diag.c	y
 DM_POSCHK	host	host/diag.c	-
 DM_POT_PICK	host	host/dm_beltauto.c host/dm_potpick.c	-

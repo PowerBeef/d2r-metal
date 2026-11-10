@@ -703,6 +703,63 @@ int main(void) {
         EXPECT("10 Finalize 放掉影子", 0, ((cmd_t *)&cf)->shadow != NULL);
     }
 
+    // 11. The pipeline-set fast path's host side (hle_nvn.c, rewriter PIPESET): cmd_t.last_pipe is cleared by every record that can change what a pipeline set
+    //     establishes and kept by draws, buffer binds, filtered repeats and the stencil reference; the verify mode's comparison; and the bind filter's own bit
+    //     for the program (it shared one with depth-stencil until r54's host)
+    {
+        _Alignas(16) uint8_t ctx[0x400] = {0}, pp[0x180] = {0}; NVNcommandBuffer *cg = (NVNcommandBuffer *)(ctx + 0x38); cmd_t *og = (cmd_t *)cg;
+        P(nvnCommandBufferInitialize)(cg, &dev); P(nvnCommandBufferSetMemoryCallback)(cg, mem_cb_empty);
+        NVNdepthStencilState d1, d2; NVNpolygonState py; NVNprogram *pg = (NVNprogram *)(pp + 0x98); NVNshaderData sd[1]; uint32_t vat[2] = {0}; uint64_t vst[1] = {0};
+        memset(&d1, 0, sizeof d1); memset(&d2, 0, sizeof d2); memset(&py, 0, sizeof py); memset(sd, 0, sizeof sd); ((ds_st *)&d1)->dt = 1; ((ds_st *)&d2)->dw = 1; ((poly_st *)&py)->cull = 2;
+        P(nvnProgramInitialize)(pg, &dev); P(nvnProgramSetShaders)(pg, 1, sd);
+        // 11a the program's own bit: a recording that ends on program pg, then a new one binding depth-stencil first and the same program after it
+        P(nvnCommandBufferBeginRecording)(cg); P(nvnCommandBufferBindProgram)(cg, pg, 0x1f); P(nvnCommandBufferEndRecording)(cg);
+        P(nvnCommandBufferBeginRecording)(cg); P(nvnCommandBufferBindDepthStencilState)(cg, &d1); P(nvnCommandBufferBindProgram)(cg, pg, 0x1f);
+        NVNcommandHandle h1 = P(nvnCommandBufferEndRecording)(cg);
+        EXPECT("11a a recording's first program bind is recorded even after a depth-stencil bind", 1, count_ops(h1, OP_BIND_PROGRAM, -1));
+        // 11b last_pipe
+        P(nvnCommandBufferBeginRecording)(cg);
+        EXPECT("11b BeginRecording clears last_pipe", 1, og->last_pipe == 0);
+        P(nvnCommandBufferBindDepthStencilState)(cg, &d1);
+        og->last_pipe = 0x1234;   // what the rewriter's exit block stores after a full set
+        P(nvnCommandBufferDrawArrays)(cg, 0, 0, 3); P(nvnCommandBufferSetStencilRef)(cg, 3, 7); P(nvnCommandBufferBindDepthStencilState)(cg, &d1);
+        EXPECT("11b a draw, the stencil reference and a filtered repeat keep last_pipe", 1, og->last_pipe == 0x1234);
+        P(nvnCommandBufferBindDepthStencilState)(cg, &d2);
+        EXPECT("11b a recorded state bind clears last_pipe", 1, og->last_pipe == 0);
+        og->last_pipe = 0x1234; P(nvnCommandBufferSetStencilValueMask)(cg, 3, 0xff);
+        EXPECT("11b a stencil mask clears last_pipe", 1, og->last_pipe == 0);
+        og->last_pipe = 0x1234; P(nvnCommandBufferSetPolygonOffsetClamp)(cg, 0, 0, 0);
+        EXPECT("11b a polygon offset clears last_pipe", 1, og->last_pipe == 0);
+        og->last_pipe = 0x1234; P(nvnCommandBufferSetScissor)(cg, 0, 0, 4, 4);
+        EXPECT("11b any other record clears last_pipe (scissor)", 1, og->last_pipe == 0);
+        NVNcommandHandle h2 = P(nvnCommandBufferEndRecording)(cg);
+        P(nvnCommandBufferBeginRecording)(cg); og->last_pipe = 0x1234; P(nvnCommandBufferCopyCommands)(cg, 1, &h2);
+        EXPECT("11b CopyCommands clears last_pipe", 1, og->last_pipe == 0);
+        P(nvnCommandBufferEndRecording)(cg);
+        // 11c the verify mode: a pipeline object laid out as the engine's (the offsets the game's function reads), bound in full as that function does
+        g_pipeset = 2;
+        memcpy(pp + 8, &d1, sizeof(ds_st)); pp[0x10] = 0xf0; pp[0x11] = 0x0f; { uint32_t one = 1; memcpy(pp + 0x60, &one, 4); }
+        { blend_st b = {0}; b.src_rgb = 1; memcpy(pp + 0x18, &b, sizeof b); chmask_st cm = {0xf}; memcpy(pp + 0x58, &cm, sizeof cm); color_st co = {0}; co.logic_op = 3; memcpy(pp + 0x5c, &co, sizeof co); }
+        memcpy(pp + 0x64, &py, sizeof(poly_st)); { int32_t un = 2; float fa = 1.5f, cl = 0.25f; memcpy(pp + 0x68, &un, 4); memcpy(pp + 0x6c, &fa, 4); memcpy(pp + 0x70, &cl, 4); }
+        pp[0x158] = 2; pp[0x159] = 1; { const void *a = vat, *b = vst; memcpy(pp + 0x160, &a, 8); memcpy(pp + 0x168, &b, 8); }
+        P(nvnCommandBufferBeginRecording)(cg);
+        P(nvnCommandBufferBindDepthStencilState)(cg, (NVNdepthStencilState *)(pp + 8)); P(nvnCommandBufferSetStencilValueMask)(cg, 3, pp[0x10]); P(nvnCommandBufferSetStencilMask)(cg, 3, pp[0x11]);
+        P(nvnCommandBufferBindBlendState)(cg, (NVNblendState *)(pp + 0x18)); P(nvnCommandBufferBindChannelMaskState)(cg, (NVNchannelMaskState *)(pp + 0x58));
+        P(nvnCommandBufferBindColorState)(cg, (NVNcolorState *)(pp + 0x5c)); P(nvnCommandBufferBindPolygonState)(cg, (NVNpolygonState *)(pp + 0x64));
+        P(nvnCommandBufferSetPolygonOffsetClamp)(cg, 1.5f, 2.0f, 0.25f); P(nvnCommandBufferBindMultisampleState)(cg, (NVNmultisampleState *)(pp + 0x78));
+        P(nvnCommandBufferBindProgram)(cg, pg, 0x1f); P(nvnCommandBufferBindVertexAttribState)(cg, 2, (NVNvertexAttribState *)vat); P(nvnCommandBufferBindVertexStreamState)(cg, 1, (NVNvertexStreamState *)vst);
+        uint64_t regs[2] = {(uint64_t)(uintptr_t)ctx, (uint64_t)(uintptr_t)pp}, n0 = atomic_load(&g_pv_n), b0_ = atomic_load(&g_pv_bad);
+        dm_nvn_pipeset_obs(regs);
+        EXPECT("11c verify: the pipeline just bound in full is a repeat", 1, atomic_load(&g_pv_n) == n0 + 1 && atomic_load(&g_pv_bad) == b0_);
+        pp[0x11] = 0xff; dm_nvn_pipeset_obs(regs);
+        EXPECT("11c verify: a pipeline whose stencil write mask changed in place is not", 1, atomic_load(&g_pv_bad) == b0_ + 1);
+        pp[0x11] = 0x0f; { poly_st q = {0}; q.cull = 1; NVNpolygonState other; memset(&other, 0, sizeof other); memcpy(&other, &q, sizeof q); P(nvnCommandBufferBindPolygonState)(cg, &other); }
+        dm_nvn_pipeset_obs(regs);
+        EXPECT("11c verify: nor after another polygon state was bound", 1, atomic_load(&g_pv_bad) == b0_ + 2);
+        P(nvnCommandBufferEndRecording)(cg); g_pipeset = 1;
+        P(nvnCommandBufferFinalize)(cg);
+    }
+
     // 7. 未实现函数：返回 0、报红、只报一次
     // 7. Unimplemented functions: return 0, report a failure, report only once
     unsigned ui = 0; while (strcmp(nvn_names[ui], "nvnBufferBuilderSetDefaults")) ui++;

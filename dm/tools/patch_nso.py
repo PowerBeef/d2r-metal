@@ -261,8 +261,8 @@ for off, ob, nb, why, scope in cuts:
     IMG[off:off + len(nb)] = nb
 # 键页下标固定；键页内容由装载器写入“实际键号 × 8”。
 # Key page indices are fixed; the key page content is written by the loader as "actual key number × 8".
-KEYS = {'K18': 508, 'KTLS': 509, 'KTLR': 510, 'KGATE': 511, 'KRES0': 506, 'KRES1': 507, 'KASPECT': 505, 'KASPECTUI': 504, 'KESHADOW': 503, 'KSHSIZE': 502, 'KJITTER': 501}   # KRES*: resolution parameter slots; KASPECT*: picture aspect ratio cap; KSHSIZE: directional shadow map edge (see PARAMS); KESHADOW: environment-shadow switch (see SWITCHES)
-KEY_INDEX = {k: i for i, k in enumerate(('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW', 'KSHSIZE', 'KJITTER'))}
+KEYS = {'K18': 508, 'KTLS': 509, 'KTLR': 510, 'KGATE': 511, 'KRES0': 506, 'KRES1': 507, 'KASPECT': 505, 'KASPECTUI': 504, 'KESHADOW': 503, 'KSHSIZE': 502, 'KJITTER': 501, 'KPIPESET': 500}   # KRES*: resolution parameter slots; KASPECT*: picture aspect ratio cap; KSHSIZE: directional shadow map edge (see PARAMS); KESHADOW: environment-shadow switch (see SWITCHES)
+KEY_INDEX = {k: i for i, k in enumerate(('K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW', 'KSHSIZE', 'KJITTER', 'KPIPESET'))}
 
 md = Cs(CS_ARCH_ARM64, CS_MODE_ARM); md.detail = True
 # 按函数取指令表用的反汇编器：遇到解不出的字记一条 .byte 接着往下解（md 会在第一个解不出的字处停，后面的独占窗口、跳转表、跳进窗口的分支都看不见）
@@ -835,6 +835,63 @@ if RULE_RUN:
         0x52800062, 0x51000849, B(a+20,0x6c6584)],
         'touch-run-v4：原通用合法移动仅player0请求Walk2规范为Run3，非player与其它请求保原，w8/原资格不改')
 
+# ---- Pipeline-set fast path (host only, the touch product; since r54): {NSO build ID: sites}. ----
+# The engine's pipeline-set function main+0x1746558 (context x0, pipeline x1) stores the pipeline at context + 0xe0 and then makes 12 to 14 NVN calls on the
+# command buffer at context + 0x38, every time: about four calls in five repeat the pipeline that is already set, and the function was the hottest one on
+# the game's main thread. Two blocks in the patch area, both using only x16 / x17 (dead at a function entry and after this function's last call):
+#   entry (replaces sub sp, sp, #0x60): return at once when all of these hold, else run the original instruction and go on at entry + 4:
+#     x1 != 0; [x0 + 0xe0] == x1 (the engine's current pipeline); [x0 + 0x38 + 0x40] == x1 (cmd_t.last_pipe: the host saw no pipeline-state record on this
+#     recording since this pipeline was set in full, dm/gfx/nvn/hle_nvn.c); [x0 + 0x2f0] == 0 (no sample locations: with them the function builds its own
+#     multisample state); the byte at [x0 + 0x2e5] == the byte at [x1 + 0x12] (the depth-bounds flag the function compares before SetDepthBounds);
+#     and the thread's KPIPESET slot is 1. Slot 0 = always the original path (DM_PIPESET=0). Slot 2 = verify (DM_PIPESET=2): an observation gate (OBS_PIPESET,
+#     the host compares the pipeline with what the recording last bound), then the original path. The gate block is word for word an observation gate's.
+#   exit (replaces ldp x29, x30, [sp, #0x50] at the single epilogue; x20 = the context, x19 = the command buffer there): store [x20 + 0xe0] into
+#     cmd_t.last_pipe (0 when [x20 + 0x2f0] != 0), then the original instruction and back to exit + 4.
+# With the slot at 0 the function does what it did, plus that one store into host-owned memory.
+PIPESET = {'db0507f36b84200ac05f75d76ed5026f': {'entry': 0x1746558, 'entry_word': 'ff8301d1', 'exit': 0x1746788, 'exit_word': 'fd7b45a9', 'obs': 24, 'key': 'KPIPESET',
+    # the instructions the blocks rely on: str x1, [x0, #0xe0] ; add x19, x0, #0x38 ; mov x20, x0 ; the single ret
+    'relies': [(0x1746570, '017000f9'), (0x174657c, '13e00091'), (0x1746580, 'f40300aa'), (0x174679c, 'c0035fd6')]}}
+pipeset = PIPESET.get(BUILD_ID) if RULE_RUN and PRIVATE_GATES else None
+if pipeset:
+    LDRW = lambda t, n, off: 0xB9400000 | (fit(off, 12, 4, signed=False) << 10) | (n << 5) | t
+    LDRB = lambda t, n, off: 0x39400000 | (fit(off, 12, signed=False) << 10) | (n << 5) | t
+    CMPX = lambda n, m: 0xEB00001F | (m << 16) | (n << 5)
+    CMPW = lambda n, m: 0x6B00001F | (m << 16) | (n << 5)
+    CBNZW = lambda frm, to, r: 0x35000000 | (fit(to - frm, 19, 4) << 5) | r
+    en, ex = pipeset['entry'], pipeset['exit']
+    for o, w0 in [(en, pipeset['entry_word']), (ex, pipeset['exit_word'])] + pipeset['relies']:
+        if IMG[o:o + 4] != bytes.fromhex(w0): stop(f'pipeline-set fast path: original word differs at {o:#x}: {bytes(IMG[o:o + 4]).hex()}')
+    for o in (en, ex):
+        if o in kinds or any(lo <= o < hi for wseg in windows for lo, hi in [(wseg[0].address, wseg[-1].address + 4)]): stop(f'pipeline-set fast path overlaps a rewrite site {o:#x}')
+    if en not in set(starts) or any(en < s_ <= ex for s_ in starts): stop('pipeline-set fast path: entry is not a function entry, or the exit is in another function')
+    if any(struct.unpack_from('<I', IMG, o)[0] == 0xD65F03C0 for o in range(en, ex, 4)): stop('pipeline-set fast path: a return before the patched exit')
+    w_en, w_ex = struct.unpack_from('<I', IMG, en)[0], struct.unpack_from('<I', IMG, ex)[0]
+    e0 = here(); to_slow = []
+    def to(word_fn): to_slow.append((here(), word_fn)); emit(NOP)   # a branch to the slow path, encoded once its address is known
+    to(lambda at, t: CBZX(at, t, 1))                                              # cbz x1, slow
+    emit(LDRX(16, 0, 0xe0 // 8)); emit(CMPX(16, 1)); to(lambda at, t: BCOND(at, t, 1))   # the engine's current pipeline
+    emit(LDRX(16, 0, (0x38 + 0x40) // 8)); emit(CMPX(16, 1)); to(lambda at, t: BCOND(at, t, 1))   # cmd_t.last_pipe
+    emit(LDRW(16, 0, 0x2f0)); to(lambda at, t: CBNZW(at, t, 16))                   # sample locations in use
+    emit(LDRB(16, 0, 0x2e5)); emit(LDRB(17, 1, 0x12)); emit(CMPW(16, 17)); to(lambda at, t: BCOND(at, t, 1))   # depth-bounds flag
+    emit_tp(16); emit_slot_addr(16, 17, pipeset['key']); emit(LDRX(16, 16))        # the thread's mode
+    to(lambda at, t: CBZX(at, t, 16))
+    emit(0xF100061F)                                                               # cmp x16, #1
+    to_verify = here(); emit(NOP)
+    emit(0xD65F03C0)                                                               # ret: a true repeat
+    slow = here(); emit(w_en); emit(B(here(), en + 4))
+    for at, fn in to_slow: struct.pack_into('<I', patch, at - PATCH_OFF, fn(at, slow))
+    verify = site_obs(en, pipeset['obs'], w_en)                                    # stp ; gate ; ldp ; original instruction ; b entry + 4
+    struct.pack_into('<I', patch, to_verify - PATCH_OFF, BCOND(to_verify, verify, 1))
+    x0_ = here()
+    emit(LDRX(16, 20, 0xe0 // 8)); emit(LDRW(17, 20, 0x2f0)); emit(0x7100023F)     # ldr x16, [x20, #0xe0] ; ldr w17, [x20, #0x2f0] ; cmp w17, #0
+    emit(0x9A9F0210); emit(STRX(16, 19, 0x40 // 8))                               # csel x16, x16, xzr, eq ; str x16, [x19, #0x40]
+    emit(w_ex); emit(B(here(), ex + 4))
+    for o, st_, w0, why in ((en, e0, w_en, 'pipeline-set fast path, entry: return at once on a true repeat (host slot KPIPESET, cmd_t.last_pipe); else the original function'),
+                            (ex, x0_, w_ex, 'pipeline-set fast path, exit: record the pipeline just set in cmd_t.last_pipe')):
+        new = B(o, st_); struct.pack_into('<I', IMG, o, new)
+        cuts.append((o, struct.pack('<I', w0).hex(), struct.pack('<I', new).hex(), why, '仅宿主'))
+    pipeset = dict(pipeset, entry_block=e0, slow=slow, verify=verify, exit_block=x0_); stat('pipeset')
+
 os.makedirs(outdir, exist_ok=True)
 P = lambda ext: os.path.join(outdir, f'{NAME}.{ext}')
 open(P('patched.bin'), 'wb').write(IMG + bytearray(PATCH_OFF - len(IMG)) + patch)
@@ -871,6 +928,11 @@ with open(P('params.tsv'), 'w') as f:
 with open(P('switches.tsv'), 'w') as f:
     f.write(f'# BUILD_ID\t{BUILD_ID}\n')
     for o, w0, key, why in switches: f.write(f'{o:#x}\t{w0}\t{key}\t{why}\n')
+if pipeset:
+    with open(P('pipeset.tsv'), 'w') as f:   # for structck ⑫: the two sites, their blocks, the observation gate number and the key
+        f.write(f'# BUILD_ID\t{BUILD_ID}\n')
+        f.write('\t'.join([f"{pipeset['entry']:#x}", pipeset['entry_word'], f"{pipeset['exit']:#x}", pipeset['exit_word'], f"{pipeset['entry_block']:#x}", f"{pipeset['slow']:#x}", f"{pipeset['verify']:#x}", f"{pipeset['exit_block']:#x}", str(pipeset['obs']), pipeset['key']]) + '\n')
+elif os.path.exists(P('pipeset.tsv')): os.unlink(P('pipeset.tsv'))
 with open(P('obs.tsv'), 'w') as f:
     f.write(f'# BUILD_ID\t{BUILD_ID}\n')
     for off, oid, ow, why in obs: f.write(f'{off:#x}\t{oid}\t{ow}\t{why}\n')

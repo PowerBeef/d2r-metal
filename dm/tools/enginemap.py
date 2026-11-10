@@ -6,7 +6,7 @@
   enginemap.py list     what the sources say needs a row, and which row covers it
 
 The sources are read, not imported (patch_nso.py runs at import):
-  dm/tools/patch_nso.py        CUTS, OBS, PARAMS, SWITCHES (offsets), KEYS (names)
+  dm/tools/patch_nso.py        CUTS, OBS, PARAMS, SWITCHES, PIPESET (offsets), KEYS (names)
   dm/gfx/tools/dmsh_rules.py   RULES (function names)
   dm/gfx/nvn/nvn_mtl.m, *.inc  shader keys named in code ("<16 hex digits>")
   dm/host/dm_video.c           renderer config fields the host raises (rcfg_put)
@@ -78,6 +78,8 @@ def source_items(root):
         for rows in (literal(tree, table) or {}).values():
             for row in rows:
                 items[f'main+{row[0]:#x}'] = f'patch_nso.py {table}'
+    for site in (literal(tree, 'PIPESET') or {}).values():   # the pipeline-set fast path: its two patched sites
+        for k in ('entry', 'exit'): items[f'main+{site[k]:#x}'] = 'patch_nso.py PIPESET'
     for key in literal(tree, 'KEYS') or {}:
         items[key] = 'patch_nso.py KEYS'
     rules = read(root, 'dm/gfx/tools/dmsh_rules.py')

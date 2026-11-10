@@ -17,7 +17,7 @@ d2r-metal started from `jhaizhou-ops/d2r-mobile` and has been developed independ
 
 - **Platform scope: macOS and iOS / iPadOS only**, on Apple silicon, macOS / iOS 27 and later, Metal 4 and MetalFX (see "Metal 4 only" under Architecture). There is no Android, HarmonyOS, Vulkan, tvOS or older-API code; don't add any.
 - **Out of scope for good:** features that change the game's rules or economy, or play part of it for the player. On 2026-10-27 the fork deleted those it had inherited (Greater Rift, Boss Rush, Elysium, Kill Board, free town portal / identify, Refresh Stock, auto-drink, mercenary auto-feed, auto-recast buffs, the loot filter, the Runeword helper, the extra storage, the difficulty selectors, the minimap marks and two logic-changing byte patches). The stash stays 10 columns (`inventory.bin` is never patched); Options keeps the game's `OfflineDifficultyScaling` row.
-  - Their gate numbers stay retired: OBS 15, 16, 17 and 22 (`OBS_MAX` stays 23) and svc 0x89, 0x8c, 0x8d and 0x8e. Never reuse them. The product revision only moves forward (`dm/PRODUCT`).
+  - Their gate numbers stay retired: OBS 15, 16, 17 and 22 and svc 0x89, 0x8c, 0x8d and 0x8e. Never reuse them. The product revision only moves forward (`dm/PRODUCT`).
 - **Releases and the launcher:** players install the Mac App with D2R Metal Launcher (`dm/launcher`, engine `dm/tools/install.py`, `docs/LAUNCHER.md`) from the GitHub releases; 1.0.0 (2026-10-31) was the first.
   - `dm/tools/release_mac.sh <version> --notes <file>` builds, signs, notarizes and uploads a draft from a HEAD on `origin/main` that the whole gate passed with nothing uncommitted (`fork_gate.sh quick unit core full` after the commit; `gate_pick.py passed` checks; needs the Developer ID identity, the `d2r-notary` notarytool profile and the release key in the keychain); publish it, then `release_mac.sh --check-latest`. Run `--no-upload` first and `dm/verify/launcher_update.py` / `launcher_selfupdate.py` against it.
   - The launcher and the in-game notice read GitHub's latest release, so the releases page holds only D2R Metal releases.
@@ -246,7 +246,8 @@ There is no recording of the original game on a console or emulator; to learn wh
   - `OBS`: observation gates; numbers must match the `OBS_*` enum in `dm/host/dm.h`.
   - `PARAMS`: host-filled values (a movz / movk pair, or since r48 a single movz such as the shadow map edge, `KSHSIZE`).
   - `SWITCHES`: conditional branches also taken when a host-filled slot is non-zero (environment shadows), and csel instructions whose destination takes the slot's value when it is non-zero (camera jitter, since r50); checked by `structck.py`.
-- **Products** go to `$DM_ROOT/build/cache/dm/out/<dm/PRODUCT>-<kind>` (`dm/PRODUCT`, currently `3.3.94012-r53-touch`):
+  - `PIPESET` (since r54, the `touch` product): the game's pipeline-set function main+0x1746558 returns at once on a true repeat, decided by the engine's current pipeline, the host's `cmd_t.last_pipe` and the `KPIPESET` slot (`DM_PIPESET=0` off, `2` verify; `dm/verify/debugging.md` "Pipeline sets that repeat").
+- **Products** go to `$DM_ROOT/build/cache/dm/out/<dm/PRODUCT>-<kind>` (`dm/PRODUCT`, currently `3.3.94012-r54-touch`):
   - `touch` is what the apps run.
   - `keypage` and `rules` are used by the verifiers.
 

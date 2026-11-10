@@ -1,0 +1,20 @@
+# The pipeline-set fast path, verify mode (DM_PIPESET=2; dm/gfx/nvn/hle_nvn.c, rewriter PIPESET): the game's pipeline-set function returns at once on a true
+# repeat. In verify mode every set the fast path would skip goes to the host first, which compares the pipeline's states with what this recording last bound,
+# and then runs the original function. Camp, then the walk into the Blood Moor: some sets must have been checked and none may differ (a difference is a red line)
+name pipeset_verify
+requires cli
+save warlock
+env DM_GAME_SEED=305419896 DM_PIPESET=2
+timeout 240
+
+enter_game
+sleep 4
+walk_to 5789 4470 timeout=20
+walk_to 5789 4495 timeout=20
+walk_to 5791 4523 timeout=25
+expect_state area=2 timeout=10
+walk_to 5791 4560 timeout=25
+sleep 11
+quit
+check log_has re="pipeset verify: [1-9][0-9]* checked, 0 differ" last="pipeset verify:"
+check no_red
