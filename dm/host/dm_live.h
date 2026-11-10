@@ -22,7 +22,7 @@ void dm_live_boot(void);   // after the modules are loaded: arms DM_LIVE_HOOKS (
 void dm_live_ctl_init(void);   // registers the control port's live command
 // The rest is the engine's interface for the control port and the unit test
 int dm_live_attach(uint8_t *base, size_t size, uint64_t text_end, uint64_t patch_off, const char *name);
-int dm_live_add(const char *spec, char *err, size_t ecap);   // "at=main+0x… kind=entry|insn|ret cap=… filt=… max=… every=… rate=… name=… [act=skip ret=… set=… retval=… ab=1] [cost=1] [tag=1]"; returns the hook id or -1
+int dm_live_add(const char *spec, char *err, size_t ecap);   // "at=main+0x… kind=entry|insn|ret cap=… filt=… max=… every=… rate=… name=… [act=skip ret=… set=… retval=… ab=1] [cost=1] [tag=1|set]"; returns the hook id or -1
 int dm_live_del(int id);   // disarm (the trampoline stays: a thread may still be in it); -1 = every hook
 void dm_live_flush(void);   // drain every thread's ring into the output file now
 typedef struct { uint64_t hits, matched, recorded, dropped; int armed, disarmed_for_rate; uint64_t acted; } dm_live_counts;   // acted: hits on which the hook changed the game

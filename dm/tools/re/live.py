@@ -17,7 +17,7 @@
 #   cost [run]                      cost=1 hooks: instructions and cycles a call ran on its thread (net of the hooks), per call and in all; with
 #                                   phase markers (ab=1 hooks, g_live_ab) each hook's on / off difference, paired by neighbouring phases
 #   ab [run] [--frames N]           an in-run comparison (DM_NVN_UB phases): translate-thread CPU and every @metric of nvn.tsv, paired differences
-#   draws [run] [--by v0|…|caller|fs] [--top N]   the tagged-draw log (tag=1 hooks): share of draws tied to a call, draws per tag value, callers of the rest
+#   draws [run] [--by v0|…|caller|fs] [--hook H] [--top N]   the tagged-draw log (tag=1 hooks): share of draws tied to a call, draws per tag value, callers of the rest
 #   writes [run] [--tick A[-B]] [--watch N]       watch records with the game tick they fell in: who wrote this value at tick N
 #   replay <recording> --hooks F [--name N]       replay a recorded session (replay.py record) with these hooks and watches armed from the start
 # A run is a folder of $DM_ROOT/re/live/runs (its name, `latest`, or a path). blocks and trace-spec come from the snapshot (re.sh live-index)
@@ -465,7 +465,7 @@ def draws_read(d):
     return rows
 
 
-def draws(d, by='v0', top=30):
+def draws(d, by='v0', top=30, hook=None):
     """The tagged-draw log: how many draws were made inside a tagged call, the draws per value of one tag column (with the shader pairs they
     used), and for the draws outside any tagged call, the call sites in the game that made them (where the next tag hook should go)."""
     rows = draws_read(d); hooks = read(os.path.join(d, 'live.bin'))[2] if os.path.exists(os.path.join(d, 'live.bin')) else {}
@@ -474,9 +474,12 @@ def draws(d, by='v0', top=30):
     for hk, n in collections.Counter(r['hook'] for r in tagged).most_common():
         hr = [r for r in tagged if r['hook'] == hk]
         print(f"  hook {hk} {hooks.get(int(hk), {}).get('name', '?')}: {n} draws, {n / max(1, len(frames)):.1f} a frame; distinct v0 {len({r['v0'] for r in hr})}, v1 {len({r['v1'] for r in hr})}, v2 {len({r['v2'] for r in hr})}, v3 {len({r['v3'] for r in hr})}; shader pairs {len({(r['vs'], r['fs']) for r in hr})}")
-    grp = collections.defaultdict(list)
-    for r in tagged: grp[r.get(by, '')].append(r)
-    print(f'by {by} ({len(grp)} values), most draws first:')
+    grp = collections.defaultdict(list); pick = None
+    if hook is not None:   # --hook: one tag hook's draws only (a column means something else under each hook)
+        pick = next((str(i) for i, h in hooks.items() if str(i) == str(hook) or h.get('name') == hook), str(hook))
+    for r in tagged:
+        if pick is None or r['hook'] == pick: grp[r.get(by, '')].append(r)
+    print(f"by {by}{'' if pick is None else f' of hook {pick}'} ({len(grp)} values), most draws first:")
     for k, rr in sorted(grp.items(), key=lambda kv: -len(kv[1]))[:top]:
         sh = collections.Counter((r['vs'], r['fs']) for r in rr).most_common(3)
         print(f"  {k:>18s}  {len(rr):7d} draws  {sum(int(r['count']) * max(1, int(r['instances'])) for r in rr):10d} indices  shaders " + ', '.join(f'{v[:8]}/{f[:8]}×{n}' for (v, f), n in sh))
@@ -618,7 +621,7 @@ def main(argv):
     rn = sub.add_parser('run'); rn.add_argument('scenario'); rn.add_argument('--name'); rn.add_argument('--window', action='store_true')
     for nm in ('report', 'edges', 'table', 'cost'): q = sub.add_parser(nm); q.add_argument('run', nargs='?')
     q = sub.add_parser('ab'); q.add_argument('run', nargs='?'); q.add_argument('--frames', type=int, default=180)
-    q = sub.add_parser('draws'); q.add_argument('run', nargs='?'); q.add_argument('--by', default='v0'); q.add_argument('--top', type=int, default=30)
+    q = sub.add_parser('draws'); q.add_argument('run', nargs='?'); q.add_argument('--by', default='v0'); q.add_argument('--top', type=int, default=30); q.add_argument('--hook', help="one tag hook's draws only (its name or number)")
     q = sub.add_parser('writes'); q.add_argument('run', nargs='?'); q.add_argument('--tick'); q.add_argument('--watch', type=int); q.add_argument('--limit', type=int, default=200)
     q = sub.add_parser('replay'); q.add_argument('recording'); q.add_argument('--hooks', required=True); q.add_argument('--name'); q.add_argument('--dmhost')
     pr = sub.add_parser('propose'); pr.add_argument('args', nargs='+', help='[run] <a> <b>'); pr.add_argument('--label', required=True)
@@ -630,7 +633,7 @@ def main(argv):
     if a.cmd == 'table': table(resolve_run(a.run)); return 0
     if a.cmd == 'cost': cost(resolve_run(a.run)); return 0
     if a.cmd == 'ab': ab(resolve_run(a.run), a.frames); return 0
-    if a.cmd == 'draws': draws(resolve_run(a.run), a.by, a.top); return 0
+    if a.cmd == 'draws': draws(resolve_run(a.run), a.by, a.top, a.hook); return 0
     if a.cmd == 'writes': writes(resolve_run(a.run), a.tick, a.watch, a.limit); return 0
     if a.cmd == 'replay': return cmd_replay(a.recording, a.hooks, a.name, a.dmhost)
     if a.cmd == 'propose': propose(resolve_run(a.args[0] if len(a.args) == 3 else None), a.args[-2], a.args[-1], a.label); return 0

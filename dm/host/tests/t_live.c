@@ -53,11 +53,12 @@ __asm__(
     "_lvt_loop: nop\n1: subs x0, x0, #1\n b.ne 1b\n ret\n"
     "_lvt_outer: stp x29, x30, [sp, #-16]!\n mov x0, #1000\n bl _lvt_loop\n mov x0, #1000\n bl _lvt_loop\n ldp x29, x30, [sp], #16\n ret\n"
     "_lvt_call: stp x29, x30, [sp, #-16]!\n blr x2\n ldp x29, x30, [sp], #16\n ret\n"
+    "_lvt_call2: stp x29, x30, [sp, #-16]!\n_lvt_call2_mid: add x1, x1, #1\n blr x2\n ldp x29, x30, [sp], #16\n ret\n"
     ".p2align 3\n_lvt_data: .quad 0, 0\n"
     ".p2align 12\n_lvt_patch: ret\n"
     ".p2align 12\n.globl _lvt_end\n_lvt_end:\n");
 extern char lvt_start[], lvt_end[], lvt_add[], lvt_add2[], lvt_f2[], lvt_f3[], lvt_f4[], lvt_answer[], lvt_adrp[], lvt_bcond[], lvt_bcond_br[], lvt_cbz[], lvt_tbz[],
-    lvt_bl[], lvt_bl_site[], lvt_ldr[], lvt_ldrw[], lvt_ldrsw[], lvt_b[], lvt_excl[], lvt_gate[], lvt_flags[], lvt_flags_site[], lvt_fp[], lvt_patch[], lvt_llsc_mid[], lvt_c1[], lvt_c2[], lvt_c2_b[], lvt_c2_c[], lvt_c3[], lvt_n1[], lvt_n2[], lvt_n3[], lvt_n4[], lvt_loop[], lvt_outer[], lvt_call[];
+    lvt_bl[], lvt_bl_site[], lvt_ldr[], lvt_ldrw[], lvt_ldrsw[], lvt_b[], lvt_excl[], lvt_gate[], lvt_flags[], lvt_flags_site[], lvt_fp[], lvt_patch[], lvt_llsc_mid[], lvt_c1[], lvt_c2[], lvt_c2_b[], lvt_c2_c[], lvt_c3[], lvt_n1[], lvt_n2[], lvt_n3[], lvt_n4[], lvt_loop[], lvt_outer[], lvt_call[], lvt_call2[], lvt_call2_mid[];
 static uint8_t *M; static int fail, count;
 #define EXPECT(name, want, got) do { long long w_ = (long long)(want), g_ = (long long)(got); count++; if (w_ != g_) { printf("✗ %s: want %#llx, got %#llx\n", name, w_, g_); fail++; } else printf("✓ %s\n", name); } while (0)
 static uint64_t off(const char *p) { return (uint64_t)(p - lvt_start); }
@@ -174,11 +175,18 @@ int main(void) {
     tapper();   // before the first tag hook is hit... the tap is set once a tag hook is armed: logged without a hook
     ((uint64_t (*)(uint64_t, uint64_t, void (*)(void)))fn(lvt_call))(0xabc, 0xdef, tapper);
     tapper();
+    // tag=set: inside a tagged call an instruction hook replaces the mark's values; the call's own tag becomes the outer one; over at the return
+    EXPECT("tag=set on a return hook is refused", 1, strstr(refusal2(lvt_n4, "kind=ret tag=set"), "kind=entry or insn") != NULL);
+    int h_tag2 = add(lvt_call2, "kind=ret tag=1 count=1 cap=x0"), h_set = add(lvt_call2_mid, "kind=insn tag=set count=1 cap=x1");
+    ((uint64_t (*)(uint64_t, uint64_t, void (*)(void)))fn(lvt_call2))(0x111, 0x222, tapper);
+    tapper();
     dm_live_flush();
-    { char dp[1100], line[512] = "", last[512] = "", tagged[512] = ""; int rows = -1; snprintf(dp, sizeof dp, "%s.draws.tsv", out); FILE *df_ = fopen(dp, "r");
-      while (df_ && fgets(line, sizeof line, df_)) { rows++; strlcpy(last, line, sizeof last); if (rows == 2) strlcpy(tagged, line, sizeof tagged); } if (df_) fclose(df_);
+    { char dp[1100], line[512] = "", last[512] = "", tagged[512] = "", set_row[512] = ""; int rows = -1; snprintf(dp, sizeof dp, "%s.draws.tsv", out); FILE *df_ = fopen(dp, "r");
+      while (df_ && fgets(line, sizeof line, df_)) { rows++; strlcpy(last, line, sizeof last); if (rows == 2) strlcpy(tagged, line, sizeof tagged); if (rows == 4) strlcpy(set_row, line, sizeof set_row); } if (df_) fclose(df_);
       char want[128]; snprintf(want, sizeof want, "\t1\t36\t2\t0102030405060708\t0a0b0c0d0e0f0001\t%d\tabc\tdef\t0\t0\t", h_tag);
-      EXPECT("three draws logged, the tagged one with the tag's values and the shader keys", 1, rows == 3 && strstr(tagged, want) != NULL && strstr(tagged, "\t40\n") != NULL);
+      EXPECT("five draws logged, the tagged one with the tag's values and the shader keys", 1, rows == 5 && strstr(tagged, want) != NULL && strstr(tagged, "\t40\n") != NULL);
+      char want2[128]; snprintf(want2, sizeof want2, "\t%d\t222\t0\t0\t0\t%d:111\t40\n", h_set, h_tag2);
+      EXPECT("the draw after a tag=set carries its values, with the call's tag as the outer one", 1, strstr(set_row, want2) != NULL);
       EXPECT("a count-only tag hook wrote no record", 0, cnt(h_tag).recorded);
       EXPECT("the draws outside the call are logged without a hook", 1, strstr(last, "\t-1\t\t\t\t\t\t40\n") != NULL); }
     // a watch that waits for its pointer
