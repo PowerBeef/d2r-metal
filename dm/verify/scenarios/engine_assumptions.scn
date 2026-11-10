@@ -1,0 +1,34 @@
+# Standing checks on what the port assumes about the game's own code, asked of the running game with live hooks (dm/host/dm_live.c, DM_LIVE=1;
+# dm/verify/debugging.md "Live hooks"). Each hook only counts (count=1), armed from the process's start, so the counts cover boot, the main menu,
+# entering a game, a walk and a save. A count that changes means the game took a path the port was not built for: read the note of that line.
+#   frame      main+0x1636610  the frame-graph runner: once a frame (the control: the hooks see the game run)
+#   samplers   main+0x17410dc  the device's create-sampler function: the game makes its whole sampler set by the time a game is entered, and
+#                              makes no other afterwards (the anisotropy option and the sampler table rest on a fixed set)
+#   fence      main+0x1744074  the queue's signal-fence function: never called (the host's fences are a minimal stand-in)
+#   winmode    main+0x31d8b0   the window-mode-changed callback: once, at boot (docked / handheld never changes on this host)
+#   retry      main+0xdfe2f4   the save code's retry step: never taken on a healthy save area
+#   saveall    main+0x6f2160   the server's save-all-players step, and
+#   commit     main+0xe0c0e8   the save area's commit: a requested save runs both
+name engine_assumptions
+requires cli
+save warlock
+env DM_LIVE=1 DM_LIVE_OUT={run}/live.bin "DM_LIVE_HOOKS=at=main+0x1636610 name=frame count=1 rate=0;at=main+0x17410dc name=samplers count=1 rate=0;at=main+0x1744074 name=fence count=1;at=main+0x31d8b0 name=winmode count=1;at=main+0xdfe2f4 name=retry count=1;at=main+0x6f2160 name=saveall count=1 rate=0;at=main+0xe0c0e8 name=commit count=1 rate=0"
+timeout 180
+
+enter_game
+sleep 3
+expect_live frame hits>=60
+remember live:samplers.hits as=samplers0
+stick 0.7 0.7 frames=40
+sleep 2
+save_now
+expect_live saveall hits>=1
+expect_live commit hits>=1
+expect_live samplers hits=$samplers0
+expect_live samplers hits=23
+expect_live fence hits=0
+expect_live winmode hits=1
+expect_live retry hits=0
+live do=counts file=counts.tsv
+quit
+check no_red

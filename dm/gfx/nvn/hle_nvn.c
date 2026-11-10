@@ -977,9 +977,26 @@ NVN(nvnCommandBufferSetPolygonOffsetClamp, void, NVNcommandBuffer *c, float fa, 
     if (g_pipeset == 2) { bshadow *sh = shadow_get(CB(c)); if (sh) { sh->po[0] = fa; sh->po[1] = un; sh->po[2] = cl; sh->have |= 1u << 20; } }   // verify mode
     *REC(c, OP_POLY_OFFSET, p_poly_offset) = (p_poly_offset){fa, un, cl};
 }
-NVN(nvnCommandBufferDrawArrays, void, NVNcommandBuffer *c, NVNdrawPrimitive pr, int first, int n) { *REC(c, OP_DRAW, p_draw) = (p_draw){pr, first, n}; }
+// The live harness's draw tap (dm_live.c: DM_LIVE=1 with a tag=1 hook armed; NULL otherwise, Mac only): each draw as it is recorded, with the shader keys
+// of the program last bound on its command buffer, so the harness can log which call of the game asked for it
+#if TARGET_OS_OSX
+void (*g_nvn_draw_tap)(uint64_t frame, const void *cb, int indexed, int count, int inst, const uint8_t *vkey, const uint8_t *fkey, uint64_t caller);
+uint64_t dm_nvn_frame_count(void);
+typedef void (*draw_tap_fn)(uint64_t frame, const void *cb, int indexed, int count, int inst, const uint8_t *vkey, const uint8_t *fkey, uint64_t caller);
+static void draw_tap(draw_tap_fn tap, NVNcommandBuffer *c, int indexed, int count, int inst, uint64_t caller) {
+    const bshadow *s = CB(c)->shadow; const prog_t *p = s && (s->have >> 13 & 1) ? s->prog : NULL;
+    tap(dm_nvn_frame_count(), c, indexed, count, inst, p ? p->key[0] : NULL, p ? p->key[1] : NULL, caller);
+}
+// The pointer is read once (the harness clears it from another thread when its last tag hook goes). caller = this entry's return address: the game's
+// call site when the entry was reached by a tail jump, a host stub otherwise (the harness then walks the frame chain)
+#define DRAW_TAP(c, i, n, k) do { draw_tap_fn t_ = g_nvn_draw_tap; if (__builtin_expect(t_ != NULL, 0)) draw_tap(t_, c, i, n, k, (uint64_t)__builtin_return_address(0)); } while (0)
+#else
+#define DRAW_TAP(c, i, n, k) ((void)0)
+#endif
+NVN(nvnCommandBufferDrawArrays, void, NVNcommandBuffer *c, NVNdrawPrimitive pr, int first, int n) { DRAW_TAP(c, 0, n, 1); *REC(c, OP_DRAW, p_draw) = (p_draw){pr, first, n}; }
 NVN(nvnCommandBufferDrawElementsInstanced, void, NVNcommandBuffer *c, NVNdrawPrimitive pr, NVNindexType it, int n, NVNbufferAddress ib,
     int bv, int bi, int inst) {
+    DRAW_TAP(c, 1, n, inst);
     *REC(c, OP_DRAW_IDX, p_draw_idx) = (p_draw_idx){pr, it, n, bv, bi, inst, ib};
 }
 NVN(nvnCommandBufferDispatchCompute, void, NVNcommandBuffer *c, int x, int y, int z) {

@@ -3,6 +3,7 @@
 #   - a `[live: <run>]` comment on each hooked function that recorded something: calls, rate, callers, argument and capture values, return time
 #   - a computed-call reference from each call site the run resolved to the function it reached (live.py edges), so xrefs and call graphs show it
 #   - a `dm-live` bookmark on each function coverage saw run, with its blocks run of blocks known, per coverage file
+#   - for a feature map run (featuremap.py): `[live: <run>] runs during: <action or group>` on each function that ran only during actions
 #   - with --unknown ID: the private unknowns ledger's row gets its status and a resolution carrying `[probed: <run>, <product>]`
 # Nothing here names or types anything: names stay a person's decision (live.py propose writes leads to review). Re-running replaces the same
 # run's comments. --dry-run prints what would change. The run's records carry runtime values: everything stays under $DM_ROOT/re
@@ -64,6 +65,13 @@ def gather(run):
             if m and (h['records'] or h['returns']): comments[int(m.group(1), 16)] = comment_lines(rid, h)
     edges = live.edges(run, quiet=True)
     ix = live_index.Index()
+    fp = os.path.join(run, 'features.tsv')   # a feature map run (featuremap.py): when each function runs
+    if os.path.exists(fp):
+        with open(fp, encoding='utf-8') as fh:
+            for ln in fh.read().split('\n')[1:]:
+                c = ln.split('\t')
+                if len(c) > 3 and c[0].startswith('main+'):
+                    comments.setdefault(int(c[0][5:], 16), []).append(f"[live: {rid}] runs during: {c[2]}" + ('' if c[3] == '1' else ' (a branch: the function also runs while idle)'))
     for f in sorted(os.listdir(run)):
         if f.startswith('cov') and f.endswith('.tsv'):
             for func, n in live.by_function(live.cov_read(os.path.join(run, f))).items():

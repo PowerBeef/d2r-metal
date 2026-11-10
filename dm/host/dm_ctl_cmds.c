@@ -113,6 +113,34 @@ static int cmd_lights(const ctl_args *a, char *out, size_t cap, char *err, size_
     if (o + 2 < cap) { out[o++] = ']'; out[o] = 0; }
     return 1;
 }
+// warp level=<area id>: move the hero to an area with the game's own level change (as DM_TEST_GOTO_LEVEL: any act, no waypoint needed). One at a
+// time, and let the area load before the next (expect_state area=…): chained at once, the game exits.
+// spawn cls=<monster class> [dx=6] [dy=0] [count=1]: that many monsters on free ground near the hero (as DM_TEST_SPAWN), for a scripted fight.
+// Both wait up to 3 s for the tick thread to carry the request out (it does nothing outside a game)
+static int req_wait(unsigned before, char *err, size_t ecap) {
+    extern _Atomic unsigned g_req_done;
+    for (int i = 0; i < 300; i++) { if (atomic_load(&g_req_done) != before) return 1; usleep(10 * 1000); }
+    ERR("not carried out within 3 s (not in a game, or its ticks are held)");
+}
+static int cmd_warp(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    extern _Atomic int g_req_warp; extern _Atomic unsigned g_req_done;
+    int lv = (int)dm_ctl_num(a, "level", 0); if (lv < 1 || lv > 255) ERR("level is an area id (levels.txt), 1 to 255");
+    dm_hud_info h; dm_hud_get(&h); if (!h.valid) ERR("not in a game");
+    if (h.dead) ERR("the hero is dead (a warp then ends the session)");
+    unsigned before = atomic_load(&g_req_done); atomic_store(&g_req_warp, lv);
+    if (!req_wait(before, err, ecap)) { atomic_store(&g_req_warp, 0); return 0; }
+    snprintf(out, cap, ",\"level\":%d,\"from\":%d", lv, h.area); return 1;
+}
+static int cmd_spawn(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    extern _Atomic uint64_t g_req_spawn; extern _Atomic unsigned g_req_done;
+    int cls = (int)dm_ctl_num(a, "cls", -1), dx = (int)dm_ctl_num(a, "dx", 6), dy = (int)dm_ctl_num(a, "dy", 0), n = (int)dm_ctl_num(a, "count", 1);
+    if (cls < 0 || cls > 0xffff) ERR("cls is a monster class number");
+    if (dx < -100 || dx > 100 || dy < -100 || dy > 100 || n < 1 || n > 200) ERR("dx, dy within 100 cells; count 1 to 200");
+    dm_hud_info h; dm_hud_get(&h); if (!h.valid) ERR("not in a game");
+    unsigned before = atomic_load(&g_req_done); atomic_store(&g_req_spawn, (uint64_t)cls | (uint64_t)(dx + 128) << 16 | (uint64_t)(dy + 128) << 24 | (uint64_t)n << 32);
+    if (!req_wait(before, err, ecap)) { atomic_store(&g_req_spawn, 0); return 0; }
+    snprintf(out, cap, ",\"cls\":%d,\"count\":%d", cls, n); return 1;
+}
 static int cmd_engine(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) { (void)a; (void)err; (void)ecap; dm_engine_full_json(out, cap); return 1; }
 
 // fault arm point=<点> [skip=0] [count=1]：跑着时挂一个存档故障（同 DM_TEST_FS_FAILAT 的点：mountclone / reclone / guestname / renameback / guestopen）；
@@ -527,6 +555,8 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("save_now", cmd_save_now);
     dm_ctl_register("engine", cmd_engine);
     dm_ctl_register("lights", cmd_lights);
+    dm_ctl_register("warp", cmd_warp);
+    dm_ctl_register("spawn", cmd_spawn);
     dm_ctl_register("mem", cmd_mem);
     { void dm_live_ctl_init(void); dm_live_ctl_init(); }   // live: hooks on the running game's code (dm_live.c, DM_LIVE=1)
     dm_ctl_register("fault", cmd_fault);

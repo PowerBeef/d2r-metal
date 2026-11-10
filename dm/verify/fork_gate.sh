@@ -200,6 +200,7 @@ for tier in "${TIERS[@]}"; do
     step long_regress 2400 -- bash -c 'python3 "$DM/tools/bench.py" regress "$DM/verify/bench/town_loop.scn" --reps 6; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'   # 对留存基线（bench.py baseline save）；没有基线为 ⚪ | against the kept baseline (bench.py baseline save); none = ⚪
     # One true cold start of the Mac App (a fresh bundle ID, so an empty Metal cache), in front: a row of its warm-up times goes to $DM_ROOT/run/pso/cold.tsv.
     # Informational (INFO_STEPS); a run still disturbed after its redos is ⚪
+    step long_pso_warps 900 -- python3 "$DM/tools/pso_seed.py" gate --backend cli --headless --survey --route "$DM/verify/bench/warp_tour.scn"   # all 43 warp stops in one session: red if the tour breaks; pipelines the warm-up seed lacks are listed (the fights vary, so some turn up)
     step long_pso_cold 1200 -- bash -c 'python3 "$DM/tools/pso_seed.py" cold --backend mac-app; rc=$?; [ $rc -eq 3 ] && exit 0; exit $rc'
     step long_playbot 3600 -- python3 "$DM/tools/playbot.py" run --seed 1 --episodes 4 --intents 15   # 试玩机器人：玩家意图 + 不变量（dm/tools/playbot.py） | the playtest bot: player intents + invariants (dm/tools/playbot.py)
     step long_soak 3600 -- python3 "$DM/tools/playbot.py" soak --minutes 30 --seed 2   # Mac 浸泡：soak_report.py 的四条判据 | Mac soak: soak_report.py's four criteria

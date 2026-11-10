@@ -8,6 +8,15 @@
 //   system call (vm_read, so a bad pointer is a zero, never a crash).
 // - Return hooks swap the return address for a shared return trampoline (a per-thread shadow stack, matched by the stack pointer).
 // - Budgets per hook: max (records), every (1 in N), rate (hits a second, then the hook disarms itself), and a filter on one value.
+// - Hooks that change the game (DM_LIVE_PATCH=1 as well, experiments only): act=skip returns from a function at its entry (ret= sets x0),
+//   set=x<r>:<hex>,… rewrites registers at the hook, retval= replaces a return value. ab=1 makes them act only while g_live_ab is non-zero, so
+//   one run can alternate with and without the change (live do=ab, or DM_NVN_UB "<name>=@set:g_live_ab=1").
+// - cost=1 on a return hook counts the instructions and cycles the call ran on its thread (thread_selfcounts), net of the hook's own cost
+//   and of cost hooks nested inside it: what a clock cannot give, since a hook's own time swamps a short call.
+// - Tick markers (dm_live_tick) put the game's tick number in the record stream, so a record can be placed at "tick N" and two runs of one
+//   recorded session line up. Watches listed in DM_LIVE_HOOKS wait for their pointer chain and arm themselves (a watch from the process's start).
+// - tag=1 on a return hook marks the thread for the call's duration with the hook's captures; the graphics recorder logs each draw recorded
+//   on a marked thread (<out>.draws.tsv): which call of the game asked for which draw.
 // Mac development runs only (DM_LIVE=1): never in a released app, and the iPhone's signed pages can't be written. No game addresses of its own.
 #include <TargetConditionals.h>
 #include "dm_live.h"
@@ -23,6 +32,7 @@ uint64_t dm_live_tramp(int id) { (void)id; return 0; }
 size_t dm_live_arena_size(void) { return 0; }
 void dm_live_set_arena(uint8_t *p, size_t sz) { (void)p; (void)sz; }
 void dm_live_thread_start(void) {}
+void dm_live_tick(uint64_t tick) { (void)tick; }
 #else
 #include "dm.h"
 #include "dm_ctl.h"
@@ -49,15 +59,20 @@ enum { LV_INSN, LV_ENTRY, LV_RET };
 
 typedef struct { int8_t reg; uint8_t n, size; int32_t off[4]; } lv_src;   // n = 0: the register; else n levels of [value + off], the last read with size bytes
 typedef struct {
-    _Atomic uint64_t hits, matched, recorded, dropped, win_t, win_hits;
+    _Atomic uint64_t hits, matched, recorded, dropped, win_t, win_hits, acted;
     _Atomic int armed; int disarmed_for_rate;
     uint64_t site; uint32_t orig; uint32_t *tramp;
     int id, kind, ncap, filt, norec, strcap; char fop, ftext[32];   // strcap: cap=str:<source> = 32 bytes of the text it points at, in the four capture slots
-    lv_src cap[4], fsrc; uint64_t fval, max, every, rate;
+    lv_src cap[4], fsrc, fsrc2; uint64_t fval, max, every, rate;
+    // fcmp: the filter's right side is fsrc2 (a second source), not fval. skip: return at once (skipret: with x0 = skipval); nset register
+    // rewrites; forceret: the return value becomes retval; ab: those act only while g_live_ab; patchable: the trampoline has the skip test.
+    // cost: count the call's instructions and cycles; tag: mark the thread with the captures for the call; cal: the calibration hook
+    int fcmp, skip, skipret, forceret, nset, ab, patchable, cost, tag, cal; int8_t setreg[4]; uint64_t setval[4], skipval, retval;
     char name[48], spec[256];
 } lv_hook;
-typedef struct { uint64_t lr, sp, t; lv_hook *h; } lv_ss;
-typedef struct lv_ring { _Atomic uint64_t head, tail; uint64_t dropped; uint32_t tid; int ssn; uint64_t w_pc, w_far, w_lr, w_wr, w_x[4]; lv_ss ss[LV_SS]; struct lv_ring *next; dm_live_rec rec[LV_RING]; } lv_ring;
+typedef struct { uint64_t lr, sp, t; lv_hook *h; int cost, tag, norec; uint64_t c1[2], pre[2], ovh0[2]; } lv_ss;   // c1: the counters as the call starts; pre: what the entry hook itself ran; ovh0: the thread's hook overhead then
+#define LV_TAGS 4               // nested tag hooks per thread
+typedef struct lv_ring { _Atomic uint64_t head, tail; uint64_t dropped; uint32_t tid; int ssn, ntag; uint64_t w_pc, w_far, w_lr, w_wr, w_x[4], ovh[2]; struct { int hook; uint64_t v[4]; } tag[LV_TAGS]; lv_ss ss[LV_SS]; struct lv_ring *next; dm_live_rec rec[LV_RING]; } lv_ring;
 
 static uint8_t *g_base, *g_text_rw, *g_arena, *g_arena_rw; static size_t g_size, g_rx_len, g_arena_used; static uint64_t g_text_end, g_patch_off;
 static char g_modname[16];
@@ -70,6 +85,12 @@ static FILE *g_out, *g_hooks_f; static char g_out_path[1024]; static uint64_t g_
 #define LV_SITES (1u << 18)
 static int32_t *g_site_ix;   // open addressing: hook id + 1 by site, so arming is not a scan and a site armed again reuses its hook and trampoline
 static uint64_t g_timer_hz;
+extern int thread_selfcounts(int type, void *buf, size_t nbytes);   // this thread's {instructions, cycles} so far (libsystem_kernel)
+int g_live_ab;   // ab=1 hooks change the game only while this is non-zero
+#define LV_CAL 2400
+static uint64_t g_cal_self[2], g_cal_nest[2], g_cal_s[2][LV_CAL]; static int g_cal_n;
+static int u64_cmp(const void *a, const void *b) { uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b; return x < y ? -1 : x > y; }   // a cost hook's own {instructions, cycles}: inside its measurement, and around it (what an enclosing cost hook sees on top)
+static FILE *g_draws_f; static pthread_mutex_t g_draws_mu = PTHREAD_MUTEX_INITIALIZER; static uint64_t g_draws_n, g_draws_max = 2000000;
 
 static inline uint64_t ticks(void) { uint64_t t; __asm__ volatile("mrs %0, cntvct_el0" : "=r"(t)); return t; }
 static uint64_t timer_hz(void) { uint64_t f; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f)); return f; }
@@ -93,26 +114,38 @@ static int src_eval(const lv_src *s, const uint64_t *ctx, uint64_t *out) {
     }
     *out = v; return 1;
 }
-static int ring_put(lv_ring *r, lv_hook *h, const uint64_t *ctx, uint64_t t, uint32_t flag, uint64_t lr, uint64_t aux) {
+static int ring_put(lv_ring *r, lv_hook *h, const uint64_t *ctx, uint64_t t, uint32_t flag, uint64_t lr, uint64_t aux, const uint64_t *capv) {
     uint64_t head = atomic_load_explicit(&r->head, memory_order_relaxed), tail = atomic_load_explicit(&r->tail, memory_order_acquire);
     if (head - tail >= LV_RING) { r->dropped++; return 0; }
     dm_live_rec *x = &r->rec[head & (LV_RING - 1)];
     x->hook = (uint32_t)h->id | flag; x->tid = r->tid; x->t = t; x->lr = lr; x->sp = (uint64_t)ctx + LV_FRAME; x->aux = aux;
     for (int i = 0; i < 4; i++) x->x[i] = ctx[i];
-    if (!flag && h->strcap) {   // a short text (a name, a path): up to 32 bytes, as far as they can be read
+    if (capv) memcpy(x->cap, capv, sizeof x->cap);   // the caller's four values (a tag hook's captures, a cost record's counts)
+    else if (!flag && h->strcap) {   // a short text (a name, a path): up to 32 bytes, as far as they can be read
         uint64_t p = 0; memset(x->cap, 0, sizeof x->cap);
         if (src_eval(&h->cap[0], ctx, &p) && p) for (mach_vm_size_t n = 32, got; n; n /= 2) if (mach_vm_read_overwrite(mach_task_self(), p, n, (mach_vm_address_t)x->cap, &got) == KERN_SUCCESS) break;
     } else for (int i = 0; i < 4; i++) { uint64_t v = 0; if (!flag && i < h->ncap) src_eval(&h->cap[i], ctx, &v); x->cap[i] = v; }
     atomic_store_explicit(&r->head, head + 1, memory_order_release);
     return 1;
 }
+// A marker record from the host itself (no hook): the game's tick number, so live.py can say which tick a record fell in
+static void ring_mark(uint32_t hook, uint64_t v) {
+    if (!g_out) return;
+    lv_ring *r = ring_get(); uint64_t head = atomic_load_explicit(&r->head, memory_order_relaxed), tail = atomic_load_explicit(&r->tail, memory_order_acquire);
+    if (head - tail >= LV_RING) { r->dropped++; return; }
+    dm_live_rec *x = &r->rec[head & (LV_RING - 1)]; memset(x, 0, sizeof *x);
+    x->hook = hook; x->tid = r->tid; x->t = ticks(); x->cap[0] = v;
+    atomic_store_explicit(&r->head, head + 1, memory_order_release);
+}
+void dm_live_tick(uint64_t tick) { ring_mark(DM_LIVE_TICK, tick); }
 
 // ---- patching through the writable alias ----
 static void put_insn(uint64_t at, uint32_t w) {   // one aligned word: other threads see the old or the new instruction, never a mix
     __atomic_store_n((uint32_t *)(g_text_rw + (at - (uint64_t)g_base)), w, __ATOMIC_RELEASE);
     sys_icache_invalidate((void *)at, 4);
 }
-static void disarm(lv_hook *h) { if (atomic_exchange(&h->armed, 0)) put_insn(h->site, h->orig); }
+static void tags_off(void);
+static void disarm(lv_hook *h) { if (atomic_exchange(&h->armed, 0)) { put_insn(h->site, h->orig); if (h->tag) tags_off(); } }
 static void rate_check(lv_hook *h) {   // every 1024 hits: over its rate a hook disarms itself (the collector reports it; logging here could run on a small game stack)
     uint64_t t = ticks(), w = atomic_load(&h->win_t), n = atomic_load(&h->hits);
     if (!w) { atomic_store(&h->win_t, t); atomic_store(&h->win_hits, n); return; }
@@ -124,30 +157,57 @@ static void rate_check(lv_hook *h) {   // every 1024 hits: over its rate a hook 
 
 // ---- what the trampolines call ----
 __attribute__((used)) static void lv_hit(uint64_t *ctx, lv_hook *h) {
+    uint64_t c0[2] = {0, 0}; if (h->cost) thread_selfcounts(1, c0, sizeof c0);
+    if (h->patchable) ctx[16] = 0;   // the trampoline tests x16 after the restore: 0 = run the function (x16 is scratch at a function's entry)
     uint64_t n = atomic_fetch_add_explicit(&h->hits, 1, memory_order_relaxed) + 1;
     if (h->rate && !(n & 1023)) rate_check(h);
-    if (h->filt) { uint64_t v; if (!src_eval(&h->fsrc, ctx, &v)) return;
+    if (h->filt) { uint64_t v, rhs = h->fval; if (!src_eval(&h->fsrc, ctx, &v) || (h->fcmp && !src_eval(&h->fsrc2, ctx, &rhs))) return;
         if (h->fop == '~') {   // the text the value points at contains ftext (the first 96 bytes of it)
             char t[97]; mach_vm_size_t got = 0; memset(t, 0, sizeof t);
             for (mach_vm_size_t n = 96; n >= 12; n /= 2) if (mach_vm_read_overwrite(mach_task_self(), v, n, (mach_vm_address_t)t, &got) == KERN_SUCCESS) break;
             if (!got || !strstr(t, h->ftext)) return;
-        } else if (h->fop == '=' ? v != h->fval : !(v & h->fval)) return; }
+        } else if (h->fop == '=' ? v != rhs : !(v & rhs)) return; }
     uint64_t m = atomic_fetch_add_explicit(&h->matched, 1, memory_order_relaxed);   // 0-based among the matching hits
-    if (h->norec) return;   // count=1: the counters only (the call-trace census)
+    if ((h->nset || h->skip) && (!h->ab || g_live_ab)) {   // change the game (DM_LIVE_PATCH=1): on every matching hit, whatever the record budget
+        for (int i = 0; i < h->nset; i++) ctx[h->setreg[i]] = h->setval[i];
+        if (h->skip && h->patchable) { if (h->skipret) ctx[0] = h->skipval; ctx[16] = 1; }
+        atomic_fetch_add_explicit(&h->acted, 1, memory_order_relaxed);
+    }
+    if (h->norec && !h->tag) return;   // count=1: the counters only (the call-trace census); with tag=1 the thread is still marked, without records
     if (h->every > 1 && m % h->every) return;
     if (h->max && (h->every > 1 ? m / h->every : m) >= h->max) return;
-    lv_ring *r = ring_get(); uint64_t t = ticks();
-    if (ring_put(r, h, ctx, t, 0, ctx[30], 0)) atomic_fetch_add_explicit(&h->recorded, 1, memory_order_relaxed); else atomic_fetch_add_explicit(&h->dropped, 1, memory_order_relaxed);
-    if (h->kind == LV_RET && r->ssn < LV_SS) { r->ss[r->ssn++] = (lv_ss){ctx[30], (uint64_t)ctx + LV_FRAME, t, h}; ctx[30] = (uint64_t)g_ret_tramp; }
+    lv_ring *r = ring_get(); uint64_t t = ticks(), cv[4] = {0, 0, 0, 0}, *capv = NULL;
+    if (h->tag) { for (int i = 0; i < h->ncap; i++) src_eval(&h->cap[i], ctx, &cv[i]); capv = cv; }
+    if (!h->cal && !h->norec) { if (ring_put(r, h, ctx, t, 0, ctx[30], 0, capv)) atomic_fetch_add_explicit(&h->recorded, 1, memory_order_relaxed); else atomic_fetch_add_explicit(&h->dropped, 1, memory_order_relaxed); }
+    if (h->kind == LV_RET && r->ssn < LV_SS) {
+        lv_ss *e = &r->ss[r->ssn++]; e->lr = ctx[30]; e->sp = (uint64_t)ctx + LV_FRAME; e->t = t; e->h = h; e->cost = h->cost; e->tag = 0; e->norec = h->norec;
+        ctx[30] = (uint64_t)g_ret_tramp;
+        if (h->tag && r->ntag < LV_TAGS) { r->tag[r->ntag].hook = h->id; memcpy(r->tag[r->ntag].v, cv, sizeof cv); r->ntag++; e->tag = 1; }
+        if (h->cost) { e->ovh0[0] = r->ovh[0]; e->ovh0[1] = r->ovh[1]; thread_selfcounts(1, e->c1, sizeof e->c1); e->pre[0] = e->c1[0] - c0[0]; e->pre[1] = e->c1[1] - c0[1]; }   // the last thing before the function runs
+    }
 }
 __attribute__((used)) static void lv_ret(uint64_t *ctx) {
     lv_ring *r = ring_get(); uint64_t sp = (uint64_t)ctx + LV_FRAME;
-    while (r->ssn > 0 && r->ss[r->ssn - 1].sp < sp) r->ssn--;   // deeper frames left without returning here (a longjmp): drop them
+    while (r->ssn > 0 && r->ss[r->ssn - 1].sp < sp) { if (r->ss[r->ssn - 1].tag && r->ntag > 0) r->ntag--; r->ssn--; }   // deeper frames left without returning here (a longjmp): drop them
     if (!r->ssn || r->ss[r->ssn - 1].sp != sp) { LOG("【红】live hooks: a return came back that the shadow stack does not hold"); abort(); }   // no way back to the caller: a ret hook not on a function's first instruction, or a stack switched under it
-    lv_ss e = r->ss[--r->ssn]; uint64_t t = ticks();
-    if (ring_put(r, e.h, ctx, t, DM_LIVE_RET, e.lr, t - e.t)) atomic_fetch_add_explicit(&e.h->recorded, 1, memory_order_relaxed); else atomic_fetch_add_explicit(&e.h->dropped, 1, memory_order_relaxed);
+    lv_ss e = r->ss[--r->ssn]; uint64_t c2[2] = {0, 0}, cv[4] = {0, 0, 0, 0}, *capv = NULL;
+    if (e.cost) thread_selfcounts(1, c2, sizeof c2);   // the first thing after the function returned
+    uint64_t t = ticks();
+    if (e.cost) {   // cap 0, 1 = net instructions and cycles (less the hook's own share and the cost hooks that ran inside); cap 2, 3 = as counted
+        for (int k = 0; k < 2; k++) { uint64_t raw = c2[k] - e.c1[k], sub = g_cal_self[k] + (r->ovh[k] - e.ovh0[k]); cv[k] = raw > sub ? raw - sub : 0; cv[2 + k] = raw; }
+        capv = cv; if (e.h->cal && g_cal_n < LV_CAL) { g_cal_s[0][g_cal_n] = cv[2]; g_cal_s[1][g_cal_n++] = cv[3]; }
+    }
+    if (!e.h->cal && !e.norec) { if (ring_put(r, e.h, ctx, t, DM_LIVE_RET, e.lr, t - e.t, capv)) atomic_fetch_add_explicit(&e.h->recorded, 1, memory_order_relaxed); else atomic_fetch_add_explicit(&e.h->dropped, 1, memory_order_relaxed); }
+    if (e.h->forceret && (!e.h->ab || g_live_ab)) { ctx[0] = e.h->retval; atomic_fetch_add_explicit(&e.h->acted, 1, memory_order_relaxed); }   // the record above holds what the function really returned
+    if (e.tag && r->ntag > 0) r->ntag--;
     ctx[30] = e.lr;
+    if (e.cost) { uint64_t c3[2] = {0, 0}; thread_selfcounts(1, c3, sizeof c3);   // this hook's whole cost, for the cost hooks around it
+        for (int k = 0; k < 2; k++) r->ovh[k] += e.pre[k] + (c3[k] - c2[k]) + g_cal_self[k] + g_cal_nest[k]; }
 }
+// What a cost hook itself costs, measured on an empty function made of a trampoline and a ret: its share inside its own measurement
+// (g_cal_self), and the rest of it (g_cal_nest), which an enclosing cost hook would otherwise count as the game's
+static uint32_t *arena_take(void);
+static void cost_calibrate(void);
 
 // ---- code generation ----
 typedef struct { uint32_t w[LV_TRAMP_MAX / 4]; int n; uint64_t lit[16]; int nlit, lfix[16]; uint64_t pc; } tb;   // pc = where w[0] will run
@@ -231,6 +291,33 @@ static void arena_put(uint32_t *at, const tb *b) {
     sys_icache_invalidate(at, (size_t)b->n * 4);
 }
 
+static void cost_calibrate(void) {
+    static lv_hook cal; uint32_t *at = arena_take(); if (!at) return;
+    memset(&cal, 0, sizeof cal); cal.kind = LV_RET; cal.cost = 1; cal.cal = 1; cal.id = -1;
+    tb b; memset(&b, 0, sizeof b); b.pc = (uint64_t)at;
+    emit_save(&b); emit_call(&b, (uint64_t)lv_hit, 1, (uint64_t)&cal); emit_restore(&b); emit(&b, 0xD65F03C0u);   // the hooked "function" is the ret itself
+    if (!finish(&b) || b.n > LV_TRAMP_MAX / 4 - 1) return;
+    b.w[LV_TRAMP_MAX / 4 - 1] = 0xD65F03C0u; b.n = LV_TRAMP_MAX / 4;   // and a bare ret in the slot's last word: the same loop without the hook
+    arena_put(at, &b);
+    void (*volatile fn)(void) = (void (*)(void))(uintptr_t)at, (*volatile plain)(void) = (void (*)(void))(uintptr_t)(at + LV_TRAMP_MAX / 4 - 1); enum { N = 100, B = 24 };
+    for (int i = 0; i < 200; i++) fn();
+    // Batches of N calls and the middle value of each figure: a reading varies by an instruction or two (where in the system call the count
+    // is taken), and an interrupt's instructions land in some batch. While the two shares are still 0 the ring's overhead sum is what the
+    // hook's own readings covered
+    g_cal_n = 0; lv_ring *r = ring_get(); static uint64_t all[2][B], mine[2][B];
+    for (int bi = 0; bi < B; bi++) {
+        uint64_t a[2] = {0, 0}, z[2] = {0, 0}, y[2] = {0, 0}, o0[2] = {r->ovh[0], r->ovh[1]};
+        thread_selfcounts(1, a, sizeof a); for (int i = 0; i < N; i++) fn(); thread_selfcounts(1, z, sizeof z); for (int i = 0; i < N; i++) plain(); thread_selfcounts(1, y, sizeof y);
+        for (int k = 0; k < 2; k++) { uint64_t whole = (z[k] - a[k] + N / 2) / N, bare = (y[k] - z[k] + N / 2) / N; all[k][bi] = whole > bare ? whole - bare : 0; mine[k][bi] = (r->ovh[k] - o0[k] + N / 2) / N; }
+    }
+    for (int k = 0; k < 2; k++) {   // around = the whole hook (hooked loop less plain loop, and the two branches a real hook adds) less what its own readings cover
+        qsort(all[k], B, 8, u64_cmp); qsort(mine[k], B, 8, u64_cmp); qsort(g_cal_s[k], (size_t)g_cal_n, 8, u64_cmp);
+        uint64_t whole = all[k][B / 2] + (k ? 0 : 2), self = g_cal_n ? g_cal_s[k][g_cal_n / 2] : 0, in = self + mine[k][B / 2];
+        g_cal_self[k] = self; g_cal_nest[k] = whole > in ? whole - in : 0; }
+    LOG("live hooks: a cost hook's own share: %llu instructions and %llu cycles inside its measurement, %llu and %llu around it", (unsigned long long)g_cal_self[0], (unsigned long long)g_cal_self[1],
+        (unsigned long long)g_cal_nest[0], (unsigned long long)g_cal_nest[1]);
+}
+
 // ---- attach: the writable alias of the code, the arena in branch range, the return trampoline, the output ----
 static uint8_t *alias_rw(uint8_t *p, size_t sz) {
     mach_vm_address_t a = 0; vm_prot_t cur = 0, max = 0;
@@ -276,13 +363,17 @@ int dm_live_attach(uint8_t *base, size_t size, uint64_t text_end, uint64_t patch
         char p[1100]; snprintf(p, sizeof p, "%s.hooks.tsv", g_out_path); if ((g_hooks_f = fopen(p, "w"))) fputs("id\tname\tat\tkind\tspec\n", g_hooks_f);
     } else LOG("【红】live hooks: cannot write %s", g_out_path);
     { void crash_set_trap_hook(int (*fn)(ucontext_t *uc)); crash_set_trap_hook(dm_live_trap); }
+    { const char *dm = getenv("DM_LIVE_DRAWS_MAX"); if (dm && *dm) g_draws_max = strtoull(dm, NULL, 10); }
+    cost_calibrate();
+    { extern void (*g_tick_mark_fn)(uint64_t tick); g_tick_mark_fn = dm_live_tick; }   // diag.c's tick entry
     pthread_t th; pthread_create(&th, NULL, collector, NULL); pthread_detach(th);
     pthread_mutex_unlock(&g_mu);
     LOG("live hooks: on for %s (code %#llx, arena %#llx, output %s)", name, (unsigned long long)lo, (unsigned long long)(uint64_t)g_arena, g_out_path);
     return 0;
 }
 
-// ---- the spec: at=main+0x… kind=entry|insn|ret cap=src,src filt=src=value|src&mask max=N every=N rate=N name=text ----
+// ---- the spec: at=main+0x… kind=entry|insn|ret cap=src,src filt=src=value|src&mask|src=src max=N every=N rate=N name=text
+//      act=skip ret=hex set=x<r>:hex,… retval=hex ab=1 (DM_LIVE_PATCH=1) cost=1 tag=1 ----
 static int parse_src(const char *s, lv_src *o) {
     memset(o, 0, sizeof *o); int n = 0; while (s[n] == '[') n++;
     const char *p = s + n;
@@ -309,6 +400,7 @@ static const char *kv(const char *spec, const char *key, char *buf, size_t cap) 
     }
     return NULL;
 }
+static void tags_on(void);
 int dm_live_add(const char *spec, char *err, size_t ecap) {
     char v[256];
     if (!g_base) { snprintf(err, ecap, "live hooks are not attached"); return -1; }
@@ -333,12 +425,32 @@ int dm_live_add(const char *spec, char *err, size_t ecap) {
         if (!o) { snprintf(err, ecap, "filt %s: <source>=<hex>, <source>&<hex> or <source>~<text>", v); return -1; }
         *o = 0; if (!parse_src(v, &t.fsrc)) { snprintf(err, ecap, "filt %s: the source is x<r> or [x<r>+0x…].b|h|w|q", v); return -1; }
         t.filt = 1; t.fop = keep;
-        if (keep == '~') { if (!o[1]) { snprintf(err, ecap, "filt: ~ needs a text"); return -1; } strlcpy(t.ftext, o + 1, sizeof t.ftext); } else t.fval = parse_addr(o + 1);
+        if (keep == '~') { if (!o[1]) { snprintf(err, ecap, "filt: ~ needs a text"); return -1; } strlcpy(t.ftext, o + 1, sizeof t.ftext); }
+        else if ((o[1] == '[' || (o[1] == 'x' && o[2] >= '0' && o[2] <= '9') || !strcmp(o + 1, "sp") || !strcmp(o + 1, "lr")) && parse_src(o + 1, &t.fsrc2)) t.fcmp = 1;   // against another value read at the hit
+        else t.fval = parse_addr(o + 1);
     }
     if (kv(spec, "max", v, sizeof v)) t.max = strtoull(v, NULL, 10);
     if (kv(spec, "every", v, sizeof v)) t.every = strtoull(v, NULL, 10);
     if (kv(spec, "count", v, sizeof v)) t.norec = atoi(v) != 0;
-    if (t.norec && t.kind == LV_RET) { snprintf(err, ecap, "count=1 records nothing, so it has no returns: use kind=entry"); return -1; }
+    if (kv(spec, "act", v, sizeof v)) { if (strcmp(v, "skip")) { snprintf(err, ecap, "act is skip"); return -1; } t.skip = 1; }
+    if (kv(spec, "ret", v, sizeof v)) { t.skipret = 1; t.skipval = parse_addr(v); }
+    if (kv(spec, "retval", v, sizeof v)) { t.forceret = 1; t.retval = parse_addr(v); }
+    if (kv(spec, "set", v, sizeof v)) for (char *p = v; *p;) {
+        char *e = NULL; long r = *p == 'x' ? strtol(p + 1, &e, 10) : -1;
+        if (r < 0 || r > 30 || e == p + 1 || *e != ':' || t.nset == 4) { snprintf(err, ecap, "set %s: x<r>:<hex>, up to four, comma-separated", v); return -1; }
+        char *c = strchr(e + 1, ','); if (c) *c = 0;
+        t.setreg[t.nset] = (int8_t)r; t.setval[t.nset++] = parse_addr(e + 1); if (!c) break; p = c + 1;
+    }
+    if (kv(spec, "ab", v, sizeof v)) t.ab = atoi(v) != 0;
+    if (kv(spec, "cost", v, sizeof v)) t.cost = atoi(v) != 0;
+    if (kv(spec, "tag", v, sizeof v)) t.tag = atoi(v) != 0;
+    if (t.skip && t.kind != LV_ENTRY) { snprintf(err, ecap, "act=skip returns from a function: kind=entry, on its first instruction"); return -1; }
+    if (t.skipret && !t.skip) { snprintf(err, ecap, "ret= goes with act=skip (retval= replaces a return value on kind=ret)"); return -1; }
+    if (t.forceret && t.kind != LV_RET) { snprintf(err, ecap, "retval= needs kind=ret"); return -1; }
+    if ((t.cost || t.tag) && t.kind != LV_RET) { snprintf(err, ecap, "cost=1 and tag=1 cover a whole call: kind=ret"); return -1; }
+    if (t.tag && t.strcap) { snprintf(err, ecap, "tag=1 carries the four capture values, not a text"); return -1; }
+    if (t.norec && t.kind == LV_RET && !t.tag) { snprintf(err, ecap, "count=1 records nothing, so it has no returns: use kind=entry (with tag=1 it marks the thread without records)"); return -1; }
+    if (t.skip || t.nset || t.forceret) { const char *pe = getenv("DM_LIVE_PATCH"); if (!pe || strcmp(pe, "1")) { snprintf(err, ecap, "a hook that changes the game needs DM_LIVE_PATCH=1 (experiments only)"); return -1; } }
     t.rate = kv(spec, "rate", v, sizeof v) ? strtoull(v, NULL, 10) : 2000000;   // default: a hook over 2 million hits a second disarms itself; rate=0 = no limit
     if (kv(spec, "name", v, sizeof v)) strlcpy(t.name, v, sizeof t.name); else snprintf(t.name, sizeof t.name, "%s+%#llx", g_modname, (unsigned long long)(at - (uint64_t)g_base));
     strlcpy(t.spec, spec, sizeof t.spec);
@@ -349,27 +461,32 @@ int dm_live_add(const char *spec, char *err, size_t ecap) {
     pthread_mutex_lock(&g_mu);
     uint32_t slot = (uint32_t)(((at - (uint64_t)g_base) >> 2) * 2654435761u) & (LV_SITES - 1); int old = -1;
     for (; g_site_ix[slot]; slot = (slot + 1) & (LV_SITES - 1)) if (g_hooks[g_site_ix[slot] - 1].site == at) { old = g_site_ix[slot] - 1; break; }
-    lv_hook *h; int id;
-    if (old >= 0) {   // armed here before: the same hook and trampoline, with the new settings and fresh counters
+    lv_hook *h; int id, fresh = old < 0;
+    if (!fresh) {   // armed here before: the same hook and trampoline, with the new settings and fresh counters
         h = &g_hooks[id = old];
         if (atomic_load(&h->armed)) { pthread_mutex_unlock(&g_mu); snprintf(err, ecap, "hook %d is already armed there", old); return -1; }
         if (op != h->orig) { pthread_mutex_unlock(&g_mu); snprintf(err, ecap, "the instruction there changed since hook %d (a coverage trap?)", old); return -1; }
     } else {
         id = atomic_load(&g_nhooks);
         if (id >= LV_MAX) { pthread_mutex_unlock(&g_mu); snprintf(err, ecap, "too many hooks (%d)", LV_MAX); return -1; }
+        h = &g_hooks[id]; memset(h, 0, sizeof *h); h->id = id; h->site = at; h->orig = op;
+    }
+    if (fresh || (t.skip && !h->patchable)) {   // a hook that may skip gets a trampoline with the test (the old one stays: a thread may be in it)
         uint32_t *tr = arena_take(); if (!tr) { pthread_mutex_unlock(&g_mu); snprintf(err, ecap, "the trampoline arena is full"); return -1; }
-        h = &g_hooks[id]; memset(h, 0, sizeof *h); h->id = id; h->site = at; h->orig = op; h->tramp = tr;
         tb b; memset(&b, 0, sizeof b); b.pc = (uint64_t)tr;
         emit_save(&b); emit_call(&b, (uint64_t)lv_hit, 1, (uint64_t)h); emit_restore(&b);
+        if (t.skip) { emit(&b, 0xB4000050u); emit(&b, 0xD65F03C0u); }   // cbz x16, +8; ret: lv_hit left 1 in x16 to return to the caller at once
         if (!relocate(&b, at, op, err, ecap) || !finish(&b)) { g_arena_used -= LV_TRAMP_MAX; pthread_mutex_unlock(&g_mu); if (!*err) snprintf(err, ecap, "the trampoline does not fit"); return -1; }
         if (!b_fits(at, (uint64_t)tr)) { g_arena_used -= LV_TRAMP_MAX; pthread_mutex_unlock(&g_mu); snprintf(err, ecap, "the arena is out of branch range"); return -1; }
-        arena_put(tr, &b);
-        g_site_ix[slot] = id + 1;
-        atomic_store(&g_nhooks, id + 1);
+        arena_put(tr, &b); h->tramp = tr; h->patchable = t.skip;
     }
+    if (fresh) { g_site_ix[slot] = id + 1; atomic_store(&g_nhooks, id + 1); }
     h->kind = t.kind; h->ncap = t.ncap; h->filt = t.filt; h->norec = t.norec; h->strcap = t.strcap; memcpy(h->ftext, t.ftext, sizeof h->ftext); h->fop = t.fop; memcpy(h->cap, t.cap, sizeof h->cap); h->fsrc = t.fsrc;
+    h->fsrc2 = t.fsrc2; h->fcmp = t.fcmp; h->skip = t.skip; h->skipret = t.skipret; h->skipval = t.skipval; h->forceret = t.forceret; h->retval = t.retval; h->nset = t.nset;
+    memcpy(h->setreg, t.setreg, sizeof h->setreg); memcpy(h->setval, t.setval, sizeof h->setval); h->ab = t.ab; h->cost = t.cost; h->tag = t.tag;
     h->fval = t.fval; h->max = t.max; h->every = t.every; h->rate = t.rate; h->disarmed_for_rate = 0; memcpy(h->name, t.name, sizeof h->name); memcpy(h->spec, t.spec, sizeof h->spec);
-    atomic_store(&h->hits, 0); atomic_store(&h->matched, 0); atomic_store(&h->recorded, 0); atomic_store(&h->dropped, 0); atomic_store(&h->win_t, 0); atomic_store(&h->win_hits, 0);
+    atomic_store(&h->hits, 0); atomic_store(&h->matched, 0); atomic_store(&h->recorded, 0); atomic_store(&h->dropped, 0); atomic_store(&h->acted, 0); atomic_store(&h->win_t, 0); atomic_store(&h->win_hits, 0);
+    if (t.tag) tags_on();
     atomic_store(&h->armed, 1); put_insn(at, b_to(at, (uint64_t)h->tramp));
     if (g_hooks_f) fprintf(g_hooks_f, "%d\t%s\t%s+%#llx\t%s\t%s\n", id, h->name, g_modname, (unsigned long long)(at - (uint64_t)g_base), h->kind == LV_RET ? "ret" : h->kind == LV_ENTRY ? "entry" : "insn", spec);
     pthread_mutex_unlock(&g_mu);
@@ -384,10 +501,51 @@ int dm_live_del(int id) {
 int dm_live_counts_of(int id, dm_live_counts *o) {
     if (id < 0 || id >= atomic_load(&g_nhooks)) return 0;
     lv_hook *h = &g_hooks[id];
-    *o = (dm_live_counts){atomic_load(&h->hits), atomic_load(&h->matched), atomic_load(&h->recorded), atomic_load(&h->dropped), atomic_load(&h->armed), h->disarmed_for_rate};
+    *o = (dm_live_counts){atomic_load(&h->hits), atomic_load(&h->matched), atomic_load(&h->recorded), atomic_load(&h->dropped), atomic_load(&h->armed), h->disarmed_for_rate, atomic_load(&h->acted)};
     return 1;
 }
 uint64_t dm_live_tramp(int id) { return id >= 0 && id < atomic_load(&g_nhooks) ? (uint64_t)g_hooks[id].tramp : 0; }
+
+// ---- tagged draws: the graphics recorder calls this for each draw it records while the tap is set (hle_nvn.c) ----
+extern void (*g_nvn_draw_tap)(uint64_t frame, const void *cb, int indexed, int count, int inst, const uint8_t *vkey, const uint8_t *fkey, uint64_t caller);   // hle_nvn.c (Mac)
+static int g_draws_all = 1;   // also log draws made outside any tagged call (hook -1), so the log says what share is tied to a call; DM_LIVE_DRAWS_UNTAGGED=0 leaves them out
+static void live_draw_tap(uint64_t frame, const void *cb, int indexed, int count, int inst, const uint8_t *vkey, const uint8_t *fkey, uint64_t caller) {
+    lv_ring *r = pthread_getspecific(g_key); if (!g_draws_f) return;
+    if (caller - (uint64_t)g_base >= g_text_end) {   // the direct caller is a host stub (some entries are reached through one): the first return address up the frame chain that is the game's
+        void **fp = __builtin_frame_address(0);
+        for (int i = 0; i < 8 && fp; i++) { uint64_t ra = (uint64_t)fp[1]; if (ra - (uint64_t)g_base < g_text_end) { caller = ra; break; }
+            void **nx = (void **)fp[0]; if (nx <= fp || (uint64_t)nx - (uint64_t)fp > (1u << 20)) break; fp = nx; }
+    }
+    uint64_t coff = caller - (uint64_t)g_base < g_text_end ? caller - (uint64_t)g_base : caller;   // the game's call site of the draw: an offset into the module, or the address when none was found
+    if (!r || !r->ntag) { if (!g_draws_all) return;
+        uint64_t vk0 = 0, fk0 = 0; if (vkey) memcpy(&vk0, vkey, 8); if (fkey) memcpy(&fk0, fkey, 8);
+        pthread_mutex_lock(&g_draws_mu);
+        if (g_draws_n < g_draws_max) fprintf(g_draws_f, "%llu\t%llu\t%u\t%llx\t%d\t%d\t%d\t%016llx\t%016llx\t-1\t\t\t\t\t\t%llx\n", (unsigned long long)g_draws_n, (unsigned long long)frame, (unsigned)pthread_mach_thread_np(pthread_self()),
+            (unsigned long long)(uintptr_t)cb, indexed, count, inst, (unsigned long long)__builtin_bswap64(vk0), (unsigned long long)__builtin_bswap64(fk0), (unsigned long long)coff);
+        g_draws_n++; pthread_mutex_unlock(&g_draws_mu); return; }
+    uint64_t vk = 0, fk = 0; if (vkey) memcpy(&vk, vkey, 8); if (fkey) memcpy(&fk, fkey, 8);
+    const uint64_t *v = r->tag[r->ntag - 1].v; char outer[96] = ""; size_t o = 0;
+    for (int i = 0; i + 1 < r->ntag && o + 28 < sizeof outer; i++) o += (size_t)snprintf(outer + o, sizeof outer - o, "%s%d:%llx", i ? "," : "", r->tag[i].hook, (unsigned long long)r->tag[i].v[0]);
+    pthread_mutex_lock(&g_draws_mu);
+    if (g_draws_n < g_draws_max) fprintf(g_draws_f, "%llu\t%llu\t%u\t%llx\t%d\t%d\t%d\t%016llx\t%016llx\t%d\t%llx\t%llx\t%llx\t%llx\t%s\t%llx\n", (unsigned long long)g_draws_n, (unsigned long long)frame, r->tid,
+        (unsigned long long)(uintptr_t)cb, indexed, count, inst, (unsigned long long)__builtin_bswap64(vk), (unsigned long long)__builtin_bswap64(fk), r->tag[r->ntag - 1].hook,
+        (unsigned long long)v[0], (unsigned long long)v[1], (unsigned long long)v[2], (unsigned long long)v[3], outer, (unsigned long long)coff);
+    else if (g_draws_n == g_draws_max) LOG("live hooks: the draw log is full (%llu rows, DM_LIVE_DRAWS_MAX): later draws are not logged", (unsigned long long)g_draws_max);
+    g_draws_n++;
+    pthread_mutex_unlock(&g_draws_mu);
+}
+static _Atomic int g_tags_armed;   // tag hooks armed now: the recorder's tap is set only while there is one
+static void tags_on(void) {   // a tag hook is armed: set the recorder's tap; the first one opens <out>.draws.tsv
+    atomic_fetch_add(&g_tags_armed, 1);
+    if (g_draws_f) { g_nvn_draw_tap = live_draw_tap; return; }
+    char p[1100]; snprintf(p, sizeof p, "%s.draws.tsv", g_out_path);
+    if (!(g_draws_f = fopen(p, "w"))) { LOG("【红】live hooks: cannot write %s", p); return; }
+    setvbuf(g_draws_f, NULL, _IOFBF, 1 << 20);
+    fputs("n\tframe\ttid\tcb\tindexed\tcount\tinstances\tvs\tfs\thook\tv0\tv1\tv2\tv3\touter\tcaller\n", g_draws_f);
+    { const char *u = getenv("DM_LIVE_DRAWS_UNTAGGED"); if (u && !strcmp(u, "0")) g_draws_all = 0; }
+    g_nvn_draw_tap = live_draw_tap;
+}
+static void tags_off(void) { if (atomic_fetch_sub(&g_tags_armed, 1) == 1) g_nvn_draw_tap = NULL; }   // the last tag hook went: draws are no longer logged
 
 // ---- the collector ----
 void dm_live_flush(void) {
@@ -404,12 +562,17 @@ void dm_live_flush(void) {
     if (g_out) fflush(g_out);
     if (g_hooks_f) fflush(g_hooks_f);
     pthread_mutex_unlock(&g_drain_mu);
+    if (g_draws_f) { pthread_mutex_lock(&g_draws_mu); fflush(g_draws_f); pthread_mutex_unlock(&g_draws_mu); }
 }
+static void wpend_try(void);
+static int wpend_add(const char *spec, char *err, size_t ecap);
 static void *collector(void *u) {
     (void)u; pthread_setname_np("dm-live-collect");
     for (;;) {
         usleep(20 * 1000);
+        { static int ab_last; int ab = g_live_ab; if (ab != ab_last) { ab_last = ab; ring_mark(DM_LIVE_AB, (uint64_t)ab); } }   // a phase change of an in-run comparison, within 20 ms
         dm_live_flush();
+        wpend_try();
         int n = atomic_load(&g_nhooks);
         for (int i = 0; i < n; i++) if (g_hooks[i].disarmed_for_rate == 1) {
             g_hooks[i].disarmed_for_rate = 2;   // told
@@ -430,14 +593,14 @@ static char *slurp_text(const char *path) {
     if (fread(s, 1, (size_t)n, f) != (size_t)n) { free(s); fclose(f); return NULL; }
     fclose(f); return s;
 }
-// One spec a line or between semicolons; # starts a comment line. The first 50 armed and refused are logged, then the counts
+// One spec a line or between semicolons; # starts a comment line; a line starting with watch is a data watch that waits for its pointers. The first 50 armed and refused are logged, then the counts
 static void load_specs(char *s, int *armed_out, int *refused_out) {
     int armed = 0, refused = 0; char err[256], *save = NULL;
     for (char *c = s; *c; c++) if (*c == '#' && (c == s || c[-1] == '\n')) while (*c && *c != '\n') *c++ = ' ';   // comment lines, whatever they hold
     for (char *p = strtok_r(s, ";\n", &save); p; p = strtok_r(NULL, ";\n", &save)) {
         while (*p == ' ' || *p == '\t') p++;
         if (!*p || *p == '#') continue;
-        err[0] = 0; int id = dm_live_add(p, err, sizeof err);
+        err[0] = 0; int id = !strncmp(p, "watch ", 6) ? wpend_add(p + 6, err, sizeof err) : dm_live_add(p, err, sizeof err);   // watch at=… [chain=…] [len=] [mode=] [max=]: armed when its pointer chain resolves
         if (id < 0) { if (refused++ < 50) LOG("live hooks: refused %s: %s", p, err); }   // a long list (the call-trace mode) meets refusals by design
         else if (armed++ < 50) LOG("live hooks: %d armed: %s", id, p);
     }
@@ -446,10 +609,10 @@ static void load_specs(char *s, int *armed_out, int *refused_out) {
 }
 static int counts_dump(const char *path) {   // every hook's counters as a table (the call-trace census: too many for a reply)
     FILE *f = fopen(path, "w"); if (!f) return -1;
-    fputs("hook\tat\tname\thits\tmatched\trecorded\tarmed\n", f); int n = atomic_load(&g_nhooks);
+    fputs("hook\tat\tname\thits\tmatched\trecorded\tarmed\tacted\n", f); int n = atomic_load(&g_nhooks);
     for (int i = 0; i < n; i++) { lv_hook *h = &g_hooks[i];
-        fprintf(f, "%d\t%s+%#llx\t%s\t%llu\t%llu\t%llu\t%d\n", i, g_modname, (unsigned long long)(h->site - (uint64_t)g_base), h->name, (unsigned long long)atomic_load(&h->hits),
-                (unsigned long long)atomic_load(&h->matched), (unsigned long long)atomic_load(&h->recorded), atomic_load(&h->armed)); }
+        fprintf(f, "%d\t%s+%#llx\t%s\t%llu\t%llu\t%llu\t%d\t%llu\n", i, g_modname, (unsigned long long)(h->site - (uint64_t)g_base), h->name, (unsigned long long)atomic_load(&h->hits),
+                (unsigned long long)atomic_load(&h->matched), (unsigned long long)atomic_load(&h->recorded), atomic_load(&h->armed), (unsigned long long)atomic_load(&h->acted)); }
     fclose(f); return n;
 }
 
@@ -527,6 +690,35 @@ static int watch_add(uint64_t addr, int len, int mode, uint64_t max, char *err, 
     for (int i = 0; i < LV_WATCH; i++) if (!g_watch[i].on) { g_watch[i].addr = addr; g_watch[i].len = len; g_watch[i].mode = mode; g_watch[i].max = max ? max : 20000; atomic_store(&g_watch[i].hits, 0); g_watch[i].on = 1; watch_apply_all(); return i; }
     snprintf(err, ecap, "all %d watchpoints are in use", LV_WATCH); return -1;
 }
+static int watch_resolve(const char *at, const char *chain, uint64_t *out) {   // chain as the mem command: read the pointer there, add the offset; 0 = a pointer on the way is still null
+    uint64_t p = parse_addr(at);
+    for (const char *c = chain; c && *c; c = strchr(c, ',') ? strchr(c, ',') + 1 : NULL) { uint64_t q = 0; mach_vm_size_t got = 0;
+        if (mach_vm_read_overwrite(mach_task_self(), p, 8, (mach_vm_address_t)&q, &got) != KERN_SUCCESS || got != 8 || !q) { *out = p; return 0; }
+        p = q + strtoull(c, NULL, 16); }
+    *out = p; return 1;
+}
+// Watches that wait: listed with the hooks at the process's start (or live do=watch … wait=1), tried by the collector every 20 ms until the
+// pointer chain resolves. A write in the first 20 ms after the last pointer is set can be missed
+static struct { char at[80], chain[80]; int len, mode; _Atomic int on; uint64_t max; } g_wpend[LV_WATCH];
+static int wpend_add(const char *spec, char *err, size_t ecap) {
+    char v[96]; int i = 0; while (i < LV_WATCH && atomic_load(&g_wpend[i].on)) i++;
+    if (i == LV_WATCH) { snprintf(err, ecap, "all %d waiting watches are in use", LV_WATCH); return -1; }
+    if (!kv(spec, "at", v, sizeof v)) { snprintf(err, ecap, "watch: missing at="); return -1; }
+    strlcpy(g_wpend[i].at, v, sizeof g_wpend[i].at); g_wpend[i].chain[0] = 0; if (kv(spec, "chain", v, sizeof v)) strlcpy(g_wpend[i].chain, v, sizeof g_wpend[i].chain);
+    g_wpend[i].len = kv(spec, "len", v, sizeof v) ? atoi(v) : 8; g_wpend[i].max = kv(spec, "max", v, sizeof v) ? strtoull(v, NULL, 10) : 0;
+    g_wpend[i].mode = !kv(spec, "mode", v, sizeof v) || !strcmp(v, "write") ? 2 : !strcmp(v, "read") ? 1 : !strcmp(v, "rw") ? 3 : 0;
+    if (!g_wpend[i].mode) { snprintf(err, ecap, "watch: mode is write (default), read or rw"); return -1; }
+    if (g_wpend[i].len != 1 && g_wpend[i].len != 2 && g_wpend[i].len != 4 && g_wpend[i].len != 8) { snprintf(err, ecap, "watch: len is 1, 2, 4 or 8"); return -1; }
+    atomic_store(&g_wpend[i].on, 1); wpend_try(); return i;
+}
+static void wpend_try(void) {
+    for (int i = 0; i < LV_WATCH; i++) if (atomic_load(&g_wpend[i].on)) { uint64_t p = 0; char err[160] = "";
+        if (!watch_resolve(g_wpend[i].at, g_wpend[i].chain, &p)) continue;
+        int one = 1; if (!atomic_compare_exchange_strong(&g_wpend[i].on, &one, 0)) continue;
+        int slot = watch_add(p, g_wpend[i].len, g_wpend[i].mode, g_wpend[i].max, err, sizeof err);
+        if (slot < 0) LOG("【红】live hooks: the waiting watch at %s: %s", g_wpend[i].at, err);
+        else LOG("live hooks: watch %d on %#llx (at=%s chain=%s)", slot, (unsigned long long)p, g_wpend[i].at, g_wpend[i].chain); }
+}
 static void watch_del(int slot) { for (int i = 0; i < LV_WATCH; i++) if (slot < 0 || slot == i) g_watch[i].on = 0; watch_apply_all(); }
 
 // ---- the trap handler (crash.c's SIGTRAP chain): coverage traps, watchpoints and their step breakpoints ----
@@ -549,7 +741,7 @@ int dm_live_trap(ucontext_t *uc) {
         uint64_t v = 0; mach_vm_size_t got = 0; mach_vm_read_overwrite(mach_task_self(), g_watch[slot].addr, (mach_vm_size_t)g_watch[slot].len, (mach_vm_address_t)&v, &got);
         uint64_t head = atomic_load_explicit(&r->head, memory_order_relaxed), tail = atomic_load_explicit(&r->tail, memory_order_acquire);
         if (head - tail < LV_RING) { dm_live_rec *x = &r->rec[head & (LV_RING - 1)];
-            x->hook = DM_LIVE_WATCH | (uint32_t)slot; x->aux = r->w_wr;   // aux: 1 = this access was a write x->tid = r->tid; x->t = ticks(); x->lr = r->w_lr; x->sp = uc->uc_mcontext->__ss.__sp;
+            x->hook = DM_LIVE_WATCH | (uint32_t)slot; x->aux = r->w_wr; x->tid = r->tid; x->t = ticks(); x->lr = r->w_lr; x->sp = uc->uc_mcontext->__ss.__sp;   // aux: 1 = this access was a write
             for (int i = 0; i < 4; i++) x->x[i] = r->w_x[i];
             x->cap[0] = r->w_far; x->cap[1] = r->w_pc; x->cap[2] = v; x->cap[3] = 0;
             atomic_store_explicit(&r->head, head + 1, memory_order_release); }
@@ -587,13 +779,13 @@ void dm_live_boot(void) {
 }
 #define ERR(...) do { snprintf(err, ecap, __VA_ARGS__); return 0; } while (0)
 // live do=add at=main+0x… [kind=entry|insn|ret] [cap=…] [filt=…] [max=N] [every=N] [rate=N] [name=…] → hook (its number; id is the control port's own)
-// live do=del hook=N|all; live do=list [from=N]; live do=stats; live do=flush
+// live do=del hook=N|all; live do=list [from=N]; live do=stats; live do=flush; live do=ab [on=0|1]
 static int cmd_live(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
     if (!live_on()) ERR("live hooks need DM_LIVE=1 (Mac development runs)");
     if (!attach_main(err, ecap)) return 0;
     const char *d = dm_ctl_get(a, "do"); if (!d) d = "add";
     if (!strcmp(d, "add")) {
-        char spec[1024] = ""; static const char *const keys[] = {"at", "kind", "cap", "filt", "max", "every", "rate", "count", "name", "type"};   // type: a hint for live.py (x0:Unit), carried in the hooks table
+        char spec[1024] = ""; static const char *const keys[] = {"at", "kind", "cap", "filt", "max", "every", "rate", "count", "name", "type", "act", "ret", "set", "retval", "ab", "cost", "tag"};   // type: a hint for live.py (x0:Unit), carried in the hooks table
         for (unsigned i = 0; i < sizeof keys / sizeof *keys; i++) { const char *v = dm_ctl_get(a, keys[i]); if (v) { size_t l = strlen(spec); snprintf(spec + l, sizeof spec - l, "%s%s=%s", l ? " " : "", keys[i], v); } }
         int id = dm_live_add(spec, err, ecap); if (id < 0) return 0;
         snprintf(out, cap, ",\"hook\":%d,\"name\":\"%s\"", id, g_hooks[id].name); LOG("live hooks: %d armed: %s", id, spec); return 1;
@@ -603,20 +795,27 @@ static int cmd_live(const ctl_args *a, char *out, size_t cap, char *err, size_t 
         int n = dm_live_del(!strcmp(i, "all") ? -1 : atoi(i)); if (n < 0) ERR("no hook %s", i);
         snprintf(out, cap, ",\"disarmed\":%d", n); return 1;
     }
+    if (!strcmp(d, "ab")) {   // ab=1 hooks act while on=1 (the other phase of an in-run comparison is on=0)
+        const char *on = dm_ctl_get(a, "on"); if (on) g_live_ab = atoi(on) != 0;
+        snprintf(out, cap, ",\"ab\":%d", g_live_ab); return 1;
+    }
     if (!strcmp(d, "flush")) { dm_live_flush(); snprintf(out, cap, ",\"written\":%llu", (unsigned long long)g_written); return 1; }
     if (!strcmp(d, "stats") || !strcmp(d, "list")) {
         int n = atomic_load(&g_nhooks), from = (int)dm_ctl_num(a, "from", 0); uint64_t hits = 0, rec = 0, drop = 0; int armed = 0, rings = 0;
         for (int i = 0; i < n; i++) { hits += atomic_load(&g_hooks[i].hits); rec += atomic_load(&g_hooks[i].recorded); drop += atomic_load(&g_hooks[i].dropped); armed += atomic_load(&g_hooks[i].armed); }
         for (lv_ring *r = atomic_load(&g_rings); r; r = r->next) rings++;
-        size_t o = (size_t)snprintf(out, cap, ",\"hooks\":%d,\"armed\":%d,\"hits\":%llu,\"recorded\":%llu,\"dropped\":%llu,\"written\":%llu,\"threads\":%d,\"out\":\"%s\"",
-                                    n, armed, (unsigned long long)hits, (unsigned long long)rec, (unsigned long long)drop, (unsigned long long)g_written, rings, g_out_path);
+        uint64_t acted = 0; for (int i = 0; i < n; i++) acted += atomic_load(&g_hooks[i].acted);
+        size_t o = (size_t)snprintf(out, cap, ",\"hooks\":%d,\"armed\":%d,\"hits\":%llu,\"recorded\":%llu,\"dropped\":%llu,\"acted\":%llu,\"ab\":%d,\"draws\":%llu,\"written\":%llu,\"threads\":%d,\"out\":\"%s\"",
+                                    n, armed, (unsigned long long)hits, (unsigned long long)rec, (unsigned long long)drop, (unsigned long long)acted, g_live_ab, (unsigned long long)g_draws_n, (unsigned long long)g_written, rings, g_out_path);
+        for (int i = 0; i < LV_WATCH; i++) if (atomic_load(&g_wpend[i].on)) o += (size_t)snprintf(out + o, cap - o, ",\"waiting%d\":\"%s chain=%s\"", i, g_wpend[i].at, g_wpend[i].chain);
         for (int i = 0; i < LV_WATCH; i++) if (g_watch[i].addr) o += (size_t)snprintf(out + o, cap - o, ",\"watch%d\":\"%#llx %s %llu hits\"", i, (unsigned long long)g_watch[i].addr, g_watch[i].on ? "on" : "off", (unsigned long long)atomic_load(&g_watch[i].hits));
         if (!strcmp(d, "list")) {
             o += (size_t)snprintf(out + o, cap - o, ",\"list\":[");
             for (int i = from < 0 ? 0 : from, k = 0; i < n && o + 200 < cap; i++, k++) { lv_hook *h = &g_hooks[i];
                 o += (size_t)snprintf(out + o, cap - o, "%s{\"hook\":%d,\"name\":\"%s\",\"armed\":%d,\"hits\":%llu,\"matched\":%llu,\"recorded\":%llu,\"dropped\":%llu%s}", k ? "," : "", i, h->name,
                                       atomic_load(&h->armed), (unsigned long long)atomic_load(&h->hits), (unsigned long long)atomic_load(&h->matched), (unsigned long long)atomic_load(&h->recorded),
-                                      (unsigned long long)atomic_load(&h->dropped), h->disarmed_for_rate ? ",\"rate_disarmed\":1" : ""); }
+                                      (unsigned long long)atomic_load(&h->dropped), h->disarmed_for_rate ? ",\"rate_disarmed\":1" : "");
+                if (atomic_load(&h->acted) && o + 40 < cap) { o--; o += (size_t)snprintf(out + o, cap - o, ",\"acted\":%llu}", (unsigned long long)atomic_load(&h->acted)); } }
             if (o + 2 < cap) { out[o++] = ']'; out[o] = 0; }
         }
         return 1;
@@ -637,17 +836,19 @@ static int cmd_live(const ctl_args *a, char *out, size_t cap, char *err, size_t 
     if (!strcmp(d, "cover_off")) { cov_off(); LOG("live hooks: coverage off"); return 1; }
     if (!strcmp(d, "watch")) {   // at=main+0x…|0x… [chain=off,off] [len=1|2|4|8] [mode=write|read|rw]: chain as the mem command (read the pointer there, add the offset)
         const char *at = dm_ctl_get(a, "at"), *chain = dm_ctl_get(a, "chain"); if (!at) ERR("missing at");
-        uint64_t p = parse_addr(at);
-        for (const char *c = chain; c && *c; c = strchr(c, ',') ? strchr(c, ',') + 1 : NULL) { uint64_t q = 0; mach_vm_size_t got = 0;
-            if (mach_vm_read_overwrite(mach_task_self(), p, 8, (mach_vm_address_t)&q, &got) != KERN_SUCCESS || got != 8 || !q) ERR("no pointer at %#llx", (unsigned long long)p);
-            p = q + strtoull(c, NULL, 16); }
+        if (dm_ctl_num(a, "wait", 0) != 0) {   // wait=1: arm it when the chain's pointers exist
+            char spec[400]; const char *md0 = dm_ctl_get(a, "mode"); snprintf(spec, sizeof spec, "at=%s chain=%s len=%d mode=%s max=%llu", at, chain ? chain : "", (int)dm_ctl_num(a, "len", 8), md0 ? md0 : "write", (unsigned long long)dm_ctl_num(a, "max", 0));
+            int w = wpend_add(spec, err, ecap); if (w < 0) return 0;
+            snprintf(out, cap, ",\"waiting\":%d", w); return 1;
+        }
+        uint64_t p = 0; if (!watch_resolve(at, chain, &p)) ERR("no pointer at %#llx", (unsigned long long)p);
         const char *md = dm_ctl_get(a, "mode"); int mode = !md || !strcmp(md, "write") ? 2 : !strcmp(md, "read") ? 1 : !strcmp(md, "rw") ? 3 : 0;
         if (!mode) ERR("mode is write (default), read or rw");
         int slot = watch_add(p, (int)dm_ctl_num(a, "len", 8), mode, (uint64_t)dm_ctl_num(a, "max", 0), err, ecap); if (slot < 0) return 0;
         LOG("live hooks: watch %d on %#llx", slot, (unsigned long long)p); snprintf(out, cap, ",\"watch\":%d,\"addr\":\"%#llx\"", slot, (unsigned long long)p); return 1;
     }
     if (!strcmp(d, "unwatch")) { const char *w = dm_ctl_get(a, "watch"); watch_del(!w || !strcmp(w, "all") ? -1 : atoi(w)); return 1; }
-    ERR("do is add, del, list, stats, flush, load, counts, cover, cover_dump, cover_rearm, cover_off, watch or unwatch");
+    ERR("do is add, del, list, stats, flush, ab, load, counts, cover, cover_dump, cover_rearm, cover_off, watch or unwatch");
 }
 void dm_live_ctl_init(void) { dm_ctl_register("live", cmd_live); }
 #endif

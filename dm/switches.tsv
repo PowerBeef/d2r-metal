@@ -142,8 +142,11 @@ DM_LAUNCHER_TEST_ROOT	other	launcher/Tests/LauncherCoreTests/InstallFromFeedTest
 DM_LAUNCHER_VERSION	tools	tools/launcher_app.sh	-
 DM_LINK_TRACE	gfx	gfx/nvn/nvn_mtl.m	y
 DM_LIVE	host	host/dm_live.c	y
+DM_LIVE_DRAWS_MAX	host	host/dm_live.c	y
+DM_LIVE_DRAWS_UNTAGGED	host	host/dm_live.c	y
 DM_LIVE_HOOKS	host	host/dm_live.c	y
 DM_LIVE_OUT	host	host/dm_live.c host/tests/t_live.c	y
+DM_LIVE_PATCH	host	host/dm_live.c host/tests/t_live.c	y
 DM_LOADHASH	host	host/loader.c	-
 DM_LOCAL_ENV	ios-tools	ios/tools/local_env.sh	y
 DM_LOCAL_ENV_FILE	ios-tools	ios/tools/local_env.sh	-
@@ -415,6 +418,7 @@ DM_TEST_ICLOUD_SUB	ios	ios/Sources/cloud_ios.m	-
 DM_TEST_IDIOM	ios	ios/Sources/front_ios.m	-
 DM_TEST_JOY_ISO	ios	ios/Sources/front_ios.m	-
 DM_TEST_KBD_TYPE	ios	ios/Sources/front_ios.m	-
+DM_TEST_KEEP_LIFE	host	host/diag.c	y
 DM_TEST_KEYRACE	host	host/main.c	-
 DM_TEST_KILL	host	host/diag.c	-
 DM_TEST_KILL_AT	host	host/dm_cloudmerge.c host/hle_fs.c	y
@@ -481,7 +485,7 @@ DM_TEST_SEEK_NOACT	host	host/dm_world.c	-
 DM_TEST_SHARELOG	host	host/front_mac.m	-
 DM_TEST_SHARELOG_CLOSE	ios	ios/Sources/dm_sharelog.m	-
 DM_TEST_SKILL_ADD	host	host/dm_actions.c	-
-DM_TEST_SPAWN	host	host/diag.c	-
+DM_TEST_SPAWN	host	host/diag.c	y
 DM_TEST_SS_ALT	host	host/dm_actions.c	-
 DM_TEST_SS_REJECT	host	host/dm_actions.c	-
 DM_TEST_STAT	host	host/diag.c	-

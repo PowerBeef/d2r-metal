@@ -6,6 +6,8 @@
 #   run_scenario                         a whole scenario file into the run store
 #   lookup / struct                      the snapshot: what an address is, a structure's fields
 #   report / counts / cover / cover_diff / edges / view / ingest   the run store's reports (live.py) and the write-back (re.sh ingest)
+#   cost / draws / writes / replay / feature_map                   call costs, tagged draws, watch records by tick, a recorded session replayed
+#                                                                  with new hooks, and the map of code by feature (featuremap.py)
 # Register (main checkout): claude mcp add dm-live -s local -- "$DM_ROOT/re/venv/bin/python" -I "$PWD/dm/tools/re/live_mcp.py"
 # What the tools return names game functions and carries runtime values: for the session only, never for a commit, an issue or a web page.
 # One game run at a time: game_start refuses while a session is up.
@@ -117,14 +119,50 @@ def build():
         off = int(where.split('+')[-1], 16); ix = live_index.Index(); f = ix.function(off)
         if not f: return f'{where}: no function there (snapshot: re.sh live-index)'
         args = ', '.join(f'x{r} {n}: {t}' for r, (n, t) in sorted(ix.args(f[0]).items())); c = ix.call(off)
+        import featuremap   # noqa: PLC0415
+        feats = featuremap.lookup(f[0])   # when it runs, from the feature maps merged so far (featuremap.py merge)
         return (f'main+{f[0]:#x} {f[2]} (+{off - f[0]:#x} of {f[1]:#x}); args: {args or "none known"}; blocks: {len(ix.leaders(f[0]))}'
-                + (f'; rewritten: {ix.never_hook(off)}' if ix.never_hook(off) else '') + (f'; call site → {"computed" if c[1] is None else f"main+{c[1]:#x}"}' if c else ''))
+                + (f'; rewritten: {ix.never_hook(off)}' if ix.never_hook(off) else '') + (f'; call site → {"computed" if c[1] is None else f"main+{c[1]:#x}"}' if c else '')
+                + (f"; runs during: {feats[-1][0]} ({'never while idle' if feats[-1][1] else 'a branch of code that runs anyway'}; {feats[-1][2]}; run {feats[-1][3]})" if feats else ''))
 
     @mcp.tool()
     def struct(name: str) -> str:
         """A /dm structure's fields from the snapshot (offset, name, type, size), for typed captures: cap=[x0+0x<offset>].w with type=x0:<name>."""
         ix = live_index.Index(); rows = ix.db.execute('select off, name, type, size from fields where struct = ? order by off', (name,)).fetchall() if ix.db else []
         return '\n'.join(f'+{o:#x}\t{n}\t{t}\t{s_}' for o, n, t, s_ in rows) or f'no structure {name}'
+
+    @mcp.tool()
+    def feature_map(plan: str, name: str = '') -> str:
+        """Drive a headless game through a plan's actions with block coverage and tag each function by the actions it ran in alone
+        (featuremap.py: `action <label>` blocks of scenario steps). Returns the per-action summary; `lookup` then shows a function's tag."""
+        if S.r is not None: return 'a game session is up: game_stop first (one game run at a time)'
+        import featuremap   # noqa: PLC0415
+        out = text_of(lambda: featuremap.run(plan, name or None)); text_of(lambda: featuremap.merge(live.resolve_run('latest')))
+        return out
+
+    @mcp.tool()
+    def cost(run: str = 'latest') -> str:
+        """cost=1 hooks of a run: instructions and cycles each call ran on its thread, net of the hooks; with ab=1 hooks and `live do=ab`
+        phases, each hook's on / off difference."""
+        return text_of(lambda: live.cost(live.resolve_run(run)))
+
+    @mcp.tool()
+    def draws(run: str = 'latest', by: str = 'v0', top: int = 30) -> str:
+        """The tagged-draw log of a run (a kind=ret tag=1 hook marks its thread; the recorder logs each draw): share of draws tied to a call,
+        draws per tag value, and the game call sites of the untagged rest."""
+        return text_of(lambda: live.draws(live.resolve_run(run), by, top))
+
+    @mcp.tool()
+    def writes(run: str = 'latest', tick: str = '', watch: int | None = None) -> str:
+        """Watch records by game tick (tick = N or A-B): who wrote the watched bytes at that tick, and the value."""
+        return text_of(lambda: live.writes(live.resolve_run(run), tick or None, watch))
+
+    @mcp.tool()
+    def replay(recording: str, hooks: str, name: str = '') -> str:
+        """Replay a recorded session (a replay.py recording folder, e.g. $DM_ROOT/data/switch/golden/replay/walk) with the hooks and
+        `watch …` lines of a file armed from the process's start. The same session answers a new question each time."""
+        if S.r is not None: return 'a game session is up: game_stop first (one game run at a time)'
+        return text_of(lambda: live.cmd_replay(recording, hooks, name or None))
 
     @mcp.tool()
     def report(run: str = 'latest') -> str:

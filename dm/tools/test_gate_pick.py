@@ -43,6 +43,8 @@ class Pick(unittest.TestCase):
         self.assertEqual(len(cmds), len(set(cmds)))
         cmds = [c for c, _, _ in g.checks(['dm/verify/scenarios/c.scn', 'dm/verify/scenarios/a.scn', 'dm/verify/scenarios/gone.scn'], self.root)]
         self.assertEqual(cmds, ['python3 dm/tools/scenario.py run dm/verify/scenarios/c.scn --headless'])   # a Mac-App-only or deleted scenario has no short check
+        cmds = [c for c, _, _ in g.checks(['dm/host/dm_live.c'], self.root)]
+        self.assertTrue(any('live_hooks.scn' in c and 'engine_assumptions.scn' in c for c in cmds)); self.assertIn(g.ENTER, cmds)   # the live hooks' scenarios, and a game
         for pattern, cmd, what in g.CHECKS: self.assertTrue(cmd and what, pattern)
 
     def test_cli_prints_the_per_change_tiers(self):

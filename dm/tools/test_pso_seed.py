@@ -195,6 +195,9 @@ class RunToolsTest(unittest.TestCase):
             p = Path(d) / 'cli.scn'; p.write_text(pso_seed.row_text(cli, 'create'), encoding='utf-8')
             self.assertEqual(parse_scn(str(p))[0]['env'], {'DM_GAME_SEED': '305419896', **pso_seed.CLI_REC})
             self.assertNotIn('requires', pso_seed.front_text('create', 'ios-mac', {}))
+            tour_all = pso_seed.warp_tour_text()   # every warp stop in one session: the committed route is the generator's output
+            self.assertEqual(tour_all.count('\ngoto '), len(pso_seed.WARPS)); self.assertIn('DM_TEST_KEEP_LIFE=1', tour_all)
+            self.assertEqual(tour_all, (Path(pso_seed.__file__).resolve().parents[1] / 'verify' / 'bench' / 'warp_tour.scn').read_text(encoding='utf-8'))
 
     def test_cold_summary(self):
         log = '\n'.join([

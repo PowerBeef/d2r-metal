@@ -4,7 +4,10 @@
 // return value; four threads hammering one hook lose no hit; a rewritten gate and an exclusive load are refused; disarm puts the instruction
 // back. The output file has the header and one record per recorded hit. Then: a site armed again reuses its hook and trampoline; count=1 only
 // counts; a site inside an exclusive sequence is refused; block coverage traps each listed block once, puts the instruction back and reports what
-// ran, also on a second pass; a data watchpoint records each write with its writer and the value written
+// ran, also on a second pass; a data watchpoint records each write with its writer and the value written. Hooks that change the game need
+// DM_LIVE_PATCH=1: skip a function (with a return value), rewrite an argument, replace a return value, each only while g_live_ab with ab=1;
+// a filter can compare two values read at the hit; cost=1 counts a call's instructions net of the hooks, nested ones too; a tick marker
+// lands in the file; tag=1 marks the thread for the call and the draw tap logs a draw made inside it; a watch waits for its pointer
 #include "../dm_live.c"
 #include <assert.h>
 #include <signal.h>
@@ -12,6 +15,8 @@ module_t g_mod[MAX_MOD]; int g_nmod;
 void dm_ctl_register(const char *n, dm_ctl_fn f) { (void)n; (void)f; }
 const char *dm_ctl_get(const ctl_args *a, const char *k) { (void)a; (void)k; return NULL; }
 double dm_ctl_num(const ctl_args *a, const char *k, double d) { (void)a; (void)k; return d; }
+void (*g_tick_mark_fn)(uint64_t tick);   // diag.c's and hle_nvn.c's in the host
+void (*g_nvn_draw_tap)(uint64_t frame, const void *cb, int indexed, int count, int inst, const uint8_t *vkey, const uint8_t *fkey, uint64_t caller);
 static int (*g_trap)(ucontext_t *);
 void crash_set_trap_hook(int (*fn)(ucontext_t *uc)) { g_trap = fn; }
 static void on_trap(int sig, siginfo_t *si, void *uc) { (void)sig; (void)si; if (!g_trap || !g_trap(uc)) { static const char m[] = "an unclaimed trap\n"; write(2, m, sizeof m - 1); _exit(3); } }
@@ -41,11 +46,18 @@ __asm__(
     "_lvt_c1: add x0, x0, #1\n ret\n"
     "_lvt_c2: cbz x0, 1f\n_lvt_c2_b: add x0, x0, #2\n ret\n1:\n_lvt_c2_c: mov x0, #77\n ret\n"
     "_lvt_c3: add x0, x0, #3\n ret\n"
+    "_lvt_n1: add x0, x0, #1\n ret\n"
+    "_lvt_n2: add x0, x0, x1\n ret\n"
+    "_lvt_n3: mov x0, #7\n ret\n"
+    "_lvt_n4: add x0, x0, x1\n ret\n"
+    "_lvt_loop: nop\n1: subs x0, x0, #1\n b.ne 1b\n ret\n"
+    "_lvt_outer: stp x29, x30, [sp, #-16]!\n mov x0, #1000\n bl _lvt_loop\n mov x0, #1000\n bl _lvt_loop\n ldp x29, x30, [sp], #16\n ret\n"
+    "_lvt_call: stp x29, x30, [sp, #-16]!\n blr x2\n ldp x29, x30, [sp], #16\n ret\n"
     ".p2align 3\n_lvt_data: .quad 0, 0\n"
     ".p2align 12\n_lvt_patch: ret\n"
     ".p2align 12\n.globl _lvt_end\n_lvt_end:\n");
 extern char lvt_start[], lvt_end[], lvt_add[], lvt_add2[], lvt_f2[], lvt_f3[], lvt_f4[], lvt_answer[], lvt_adrp[], lvt_bcond[], lvt_bcond_br[], lvt_cbz[], lvt_tbz[],
-    lvt_bl[], lvt_bl_site[], lvt_ldr[], lvt_ldrw[], lvt_ldrsw[], lvt_b[], lvt_excl[], lvt_gate[], lvt_flags[], lvt_flags_site[], lvt_fp[], lvt_patch[], lvt_llsc_mid[], lvt_c1[], lvt_c2[], lvt_c2_b[], lvt_c2_c[], lvt_c3[];
+    lvt_bl[], lvt_bl_site[], lvt_ldr[], lvt_ldrw[], lvt_ldrsw[], lvt_b[], lvt_excl[], lvt_gate[], lvt_flags[], lvt_flags_site[], lvt_fp[], lvt_patch[], lvt_llsc_mid[], lvt_c1[], lvt_c2[], lvt_c2_b[], lvt_c2_c[], lvt_c3[], lvt_n1[], lvt_n2[], lvt_n3[], lvt_n4[], lvt_loop[], lvt_outer[], lvt_call[];
 static uint8_t *M; static int fail, count;
 #define EXPECT(name, want, got) do { long long w_ = (long long)(want), g_ = (long long)(got); count++; if (w_ != g_) { printf("✗ %s: want %#llx, got %#llx\n", name, w_, g_); fail++; } else printf("✓ %s\n", name); } while (0)
 static uint64_t off(const char *p) { return (uint64_t)(p - lvt_start); }
@@ -55,6 +67,10 @@ typedef double (*fd)(double);
 static int add_fail;
 static int add(const char *site, const char *extra) { char spec[512], err[256] = ""; snprintf(spec, sizeof spec, "at=0x%llx %s", (unsigned long long)(uint64_t)(M + off(site)), extra); int id = dm_live_add(spec, err, sizeof err); if (id < 0) { add_fail++; printf("  (add %s: %s)\n", extra, err); } return id; }
 static const char *refusal(const char *site) { static char err[256]; char spec[128]; err[0] = 0; snprintf(spec, sizeof spec, "at=0x%llx", (unsigned long long)(uint64_t)(M + off(site))); return dm_live_add(spec, err, sizeof err) < 0 ? err : ""; }
+static const char *refusal2(const char *site, const char *extra) { static char err[256]; char spec[256]; err[0] = 0; snprintf(spec, sizeof spec, "at=0x%llx %s", (unsigned long long)(uint64_t)(M + off(site)), extra); return dm_live_add(spec, err, sizeof err) < 0 ? err : ""; }
+static void tapper(void) { static const uint8_t vk[8] = {1, 2, 3, 4, 5, 6, 7, 8}, fk[8] = {0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0, 1}; if (g_nvn_draw_tap) g_nvn_draw_tap(5, (void *)0x1234, 1, 36, 2, vk, fk, (uint64_t)M + 0x40); }
+static volatile uint64_t g_late[2], *volatile g_late_p;
+static void *late_writer(void *u) { dm_live_thread_start(); for (uint64_t i = 1; i <= 3; i++) g_late[1] = i * 7; return u; }
 static dm_live_counts cnt(int id) { dm_live_counts c = {0}; dm_live_counts_of(id, &c); return c; }
 static volatile uint64_t g_watched[2];
 static void *writer(void *u) { dm_live_thread_start(); for (uint64_t i = 1; i <= 5; i++) { g_watched[0] = i; g_watched[1] = i * 10; } return u; }
@@ -118,6 +134,63 @@ int main(void) {
     for (int i = 0; i < 7; i++) ((f2)fn(lvt_add))(1, 1);
     EXPECT("count=1: 7 hits, no record", 1, cnt(h_again).hits == 7 && cnt(h_again).recorded == 0);
     EXPECT("inside an exclusive sequence is refused", 1, strstr(refusal(lvt_llsc_mid), "exclusive") != NULL);
+    // hooks that change the game: refused without DM_LIVE_PATCH=1, then skip, set, retval, each under ab
+    EXPECT("a changing hook is refused without DM_LIVE_PATCH=1", 1, strstr(refusal2(lvt_n1, "act=skip ret=0x63"), "DM_LIVE_PATCH") != NULL);
+    setenv("DM_LIVE_PATCH", "1", 1);
+    EXPECT("act=skip on a return hook is refused", 1, strstr(refusal2(lvt_n1, "kind=ret act=skip"), "kind=entry") != NULL);
+    EXPECT("retval= on an entry hook is refused", 1, strstr(refusal2(lvt_n1, "retval=0x1"), "kind=ret") != NULL);
+    EXPECT("cost=1 on an entry hook is refused", 1, strstr(refusal2(lvt_n1, "cost=1"), "kind=ret") != NULL);
+    int h_skip = add(lvt_n1, "act=skip ret=0x63");
+    EXPECT("act=skip: the function does not run, x0 is ret=", 0x63, ((f2)fn(lvt_n1))(5, 0));
+    EXPECT("act=skip: counted as acted and recorded", 1, cnt(h_skip).acted == 1 && cnt(h_skip).recorded == 1);
+    dm_live_del(h_skip); int h_skab = add(lvt_n1, "act=skip ret=0x63 ab=1 filt=x1=0x1");
+    EXPECT("the site armed again keeps its hook", h_skip, h_skab);
+    g_live_ab = 0; EXPECT("ab=1, off: the function runs", 6, ((f2)fn(lvt_n1))(5, 1));
+    g_live_ab = 1; EXPECT("ab=1, on: skipped", 0x63, ((f2)fn(lvt_n1))(5, 1));
+    EXPECT("ab=1, on, filter not met: runs", 6, ((f2)fn(lvt_n1))(5, 0));
+    EXPECT("acted once", 1, cnt(h_skab).acted);
+    add(lvt_n2, "set=x1:0x10");
+    EXPECT("set=x1: the argument is rewritten", 0x15, ((f2)fn(lvt_n2))(5, 1));
+    int h_rv = add(lvt_n3, "kind=ret retval=0x2a");
+    EXPECT("retval=: the caller gets the new value", 0x2a, ((f2)fn(lvt_n3))(0, 0));
+    // a site first armed plain, armed again with act=skip: a new trampoline with the test
+    dm_live_del(h_again); uint64_t tr1 = dm_live_tramp(h_add); int h_sk2 = add(lvt_add, "act=skip ret=0x7 count=1");
+    EXPECT("plain site armed again with act=skip: same hook, new trampoline", 1, h_sk2 == h_add && dm_live_tramp(h_sk2) != tr1);
+    EXPECT("and it skips", 7, ((f2)fn(lvt_add))(1, 1));
+    dm_live_del(h_sk2); add(lvt_add, "count=1");
+    EXPECT("armed plain again on the skipping trampoline: runs", 2, ((f2)fn(lvt_add))(1, 1));
+    // a filter comparing two values read at the hit
+    int h_f2s = add(lvt_n4, "filt=x0=x1");
+    ((f2)fn(lvt_n4))(3, 3); ((f2)fn(lvt_n4))(3, 4); ((f2)fn(lvt_n4))(9, 9);
+    EXPECT("filt=x0=x1: 2 of 3 match", 2, cnt(h_f2s).matched);
+    // cost: instructions of a call, net of the hooks; an enclosing cost hook does not count the inner hook
+    int h_cost = add(lvt_loop, "kind=ret cost=1 rate=0 name=loop");
+    for (int i = 0; i < 20; i++) ((f2)fn(lvt_loop))(1000, 0);
+    int h_outer = add(lvt_outer, "kind=ret cost=1 rate=0 name=outer");
+    for (int i = 0; i < 20; i++) ((f2)fn(lvt_outer))(0, 0);
+    // tick marker, tagged draws
+    dm_live_tick(77); g_live_ab = 0; usleep(60 * 1000); g_live_ab = 1; usleep(60 * 1000);   // the collector notes the phase change
+    int h_tag = add(lvt_call, "kind=ret tag=1 count=1 cap=x0,x1");   // count=1 with tag=1: the mark without records
+    tapper();   // before the first tag hook is hit... the tap is set once a tag hook is armed: logged without a hook
+    ((uint64_t (*)(uint64_t, uint64_t, void (*)(void)))fn(lvt_call))(0xabc, 0xdef, tapper);
+    tapper();
+    dm_live_flush();
+    { char dp[1100], line[512] = "", last[512] = "", tagged[512] = ""; int rows = -1; snprintf(dp, sizeof dp, "%s.draws.tsv", out); FILE *df_ = fopen(dp, "r");
+      while (df_ && fgets(line, sizeof line, df_)) { rows++; strlcpy(last, line, sizeof last); if (rows == 2) strlcpy(tagged, line, sizeof tagged); } if (df_) fclose(df_);
+      char want[128]; snprintf(want, sizeof want, "\t1\t36\t2\t0102030405060708\t0a0b0c0d0e0f0001\t%d\tabc\tdef\t0\t0\t", h_tag);
+      EXPECT("three draws logged, the tagged one with the tag's values and the shader keys", 1, rows == 3 && strstr(tagged, want) != NULL && strstr(tagged, "\t40\n") != NULL);
+      EXPECT("a count-only tag hook wrote no record", 0, cnt(h_tag).recorded);
+      EXPECT("the draws outside the call are logged without a hook", 1, strstr(last, "\t-1\t\t\t\t\t\t40\n") != NULL); }
+    // a watch that waits for its pointer
+    char wspec[160]; snprintf(wspec, sizeof wspec, "at=0x%llx chain=8 len=8", (unsigned long long)(uint64_t)&g_late_p);
+    { struct sigaction sa0; memset(&sa0, 0, sizeof sa0); sa0.sa_sigaction = on_trap; sa0.sa_flags = SA_SIGINFO; sigaction(SIGTRAP, &sa0, NULL); }
+    char werr[256] = ""; EXPECT("a waiting watch is taken", 0, wpend_add(wspec, werr, sizeof werr));
+    EXPECT("and is not armed while its pointer is null", 0, g_watch[0].on);
+    g_late_p = &g_late[0]; wpend_try();
+    EXPECT("armed once the pointer is there", 1, g_watch[0].on && g_watch[0].addr == (uint64_t)&g_late[1]);
+    pthread_t lw; pthread_create(&lw, NULL, late_writer, NULL); pthread_join(lw, NULL);
+    EXPECT("its writes were seen", 3, atomic_load(&g_watch[0].hits));
+    watch_del(-1); g_watch[0].addr = 0;
     // block coverage
     struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_sigaction = on_trap; sa.sa_flags = SA_SIGINFO; sigaction(SIGTRAP, &sa, NULL);
     char bf[1100], df[1100], err[256] = ""; snprintf(bf, sizeof bf, "%s.blocks", out); snprintf(df, sizeof df, "%s.cov", out);
@@ -153,11 +226,17 @@ int main(void) {
     dm_live_flush();
     FILE *f = fopen(out, "rb"); dm_live_hdr hd = {0}; size_t got = f ? fread(&hd, sizeof hd, 1, f) : 0;
     EXPECT("header", 1, got == 1 && !memcmp(hd.magic, "DMLIVE01", 8) && hd.base == (uint64_t)M && hd.rec_size == sizeof(dm_live_rec));
-    int n_add = 0, ret_ok = 0, cap_ok = 0, n_w = 0, w_ok = 1, str_ok = 0, n_r = 0; dm_live_rec r;
+    int n_add = 0, ret_ok = 0, cap_ok = 0, n_w = 0, w_ok = 1, str_ok = 0, n_r = 0, tick_ok = 0, ab_ok = 0, rv_ok = 0, n_late = 0, late_ok = 1; uint64_t c_loop = 0, c_outer = 0, c_loop_raw = 0, cl[64], co[64]; int n_cl = 0, n_co = 0; dm_live_rec r;
     while (f && fread(&r, sizeof r, 1, f) == 1) {
         if (r.hook == (uint32_t)h_add) { n_add++; cap_ok = r.cap[0] == 5 && r.cap[1] == 0xfeedfacecafebeefull && r.cap[2] == 0x22 && r.x[0] == (uint64_t)&obj; }
         if (r.hook == ((uint32_t)h_ret | DM_LIVE_RET)) ret_ok = r.x[0] == 42 && r.aux > 0;
         if (r.hook == (uint32_t)h_str && !memcmp(r.cap, "shaders/assao_blur", 18)) str_ok = 1;
+        if (r.hook == DM_LIVE_TICK && r.cap[0] == 77) tick_ok = 1;
+        if (r.hook == DM_LIVE_AB && r.cap[0] == 1) ab_ok = 1;
+        if (r.hook == ((uint32_t)h_rv | DM_LIVE_RET)) rv_ok = r.x[0] == 7;
+        if (r.hook == ((uint32_t)h_cost | DM_LIVE_RET) && n_cl < 64) { cl[n_cl++] = r.cap[0]; c_loop_raw = r.cap[2]; }
+        if (r.hook == ((uint32_t)h_outer | DM_LIVE_RET) && n_co < 64) co[n_co++] = r.cap[0];
+        if (r.hook == (DM_LIVE_WATCH | 0u) && r.cap[0] == (uint64_t)&g_late[1]) { n_late++; late_ok &= r.cap[2] == (uint64_t)n_late * 7 && r.tid != 0 && r.t != 0; continue; }
         if (r.hook == (DM_LIVE_WATCH | 0u) && !r.aux) { n_r++; continue; }
         if (r.hook == (DM_LIVE_WATCH | 0u)) { n_w++; w_ok &= r.cap[0] == (uint64_t)&g_watched[1] && r.cap[2] == (uint64_t)n_w * 10 && r.cap[1] != 0; }
     }
@@ -167,6 +246,14 @@ int main(void) {
     EXPECT("5 watch records, each with its address, writer and new value", 1, n_w == 5 && w_ok);
     EXPECT("the text capture holds the name", 1, str_ok);
     EXPECT("3 reads seen by the read watch", 3, n_r);
+    EXPECT("the tick marker is in the file", 1, tick_ok);
+    EXPECT("and the phase marker", 1, ab_ok);
+    EXPECT("the retval hook recorded the real return value", 1, rv_ok);
+    EXPECT("3 records from the watch that waited, each with its thread and time", 1, n_late == 3 && late_ok);
+    if (n_cl) { qsort(cl, (size_t)n_cl, 8, u64_cmp); c_loop = cl[n_cl / 2]; } if (n_co) { qsort(co, (size_t)n_co, 8, u64_cmp); c_outer = co[n_co / 2]; }   // the middle of the 20 calls
+    printf("  cost: loop net %llu (as counted %llu), outer net %llu; hook share %llu inside, %llu around\n", (unsigned long long)c_loop, (unsigned long long)c_loop_raw, (unsigned long long)c_outer, (unsigned long long)g_cal_self[0], (unsigned long long)g_cal_nest[0]);
+    EXPECT("cost: a 2002-instruction call counts 2002, give or take 6", 1, c_loop >= 2002 - 6 && c_loop <= 2002 + 6);
+    EXPECT("cost: the caller of two such calls counts 4011, give or take 12, the inner hooks left out", 1, c_outer >= 4011 - 12 && c_outer <= 4011 + 12);
     EXPECT("no hook was refused but the one meant to be", 1, add_fail);
     printf("%s %d/%d\n", fail ? "FAIL" : "OK", count - fail, count);
     return fail != 0;

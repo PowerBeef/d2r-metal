@@ -1,0 +1,47 @@
+# A first feature map: the hero's panels, moving, a fight, and one area of each kind. Public scenario steps only (dm/verify/scenarios/README.md).
+# Run: $DM_ROOT/re/venv/bin/python dm/tools/re/featuremap.py run dm/tools/re/featuremap_basic.plan
+save warlock
+env DM_GAME_SEED=305419896 DM_TEST_KEEP_LIFE=1
+setup
+  enter_game
+  sleep 4
+action ui/inventory
+  open inventory
+  sleep 2
+  back
+  sleep 2
+action ui/pause
+  open pause
+  sleep 2
+  back
+  sleep 2
+action move/walk
+  stick 0.7 0.7 frames=50
+  sleep 2
+  stick -0.7 -0.7 frames=50
+  sleep 2
+action area/a1_wilderness
+  goto a1_coldplains
+  sleep 3
+action area/a1_dungeon
+  goto a1_den
+  sleep 3
+action area/a2_town
+  goto a2_town
+  sleep 3
+action area/a3_town
+  goto a3_town
+  sleep 3
+action area/a4_town
+  goto a4_town
+  sleep 3
+action area/a5_town
+  goto a5_town
+  sleep 3
+# DM_TEST_KEEP_LIFE keeps the level-1 test hero alive through the fight (a dead hero cannot be moved to another area)
+action area/a1_wilderness_again
+  goto a1_coldplains
+  sleep 3
+action combat/fight
+  fight cls=19 count=2 rounds=6
+  sleep 3

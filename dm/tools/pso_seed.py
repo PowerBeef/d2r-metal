@@ -9,10 +9,12 @@
 #                                    the background marker line is kept; 'KEPT S n R n C n', then RESULT {json}
 #   check <manifest|run dir>... [--allow FILE]   rows neither the seed nor the reviewed allow-list (dm/gfx/nvn/pso_allow.tsv) holds, decoded;
 #                                    'PSO_CHECK OK|RED rows=<n>'
-#   gate [--backend mac-app|cli|ios-mac] [--headless]   runs dm/verify/bench/town_loop.scn (mac-app at this Mac's Recommended in full screen, cli with
-#                                    Recommended's features forced, ios-mac as is) and checks its manifest: 'PSO_GATE OK|RED rows=<n>'
+#   gate [--backend mac-app|cli|ios-mac] [--headless] [--route FILE] [--survey]   runs dm/verify/bench/town_loop.scn (mac-app at this Mac's Recommended in full screen, cli with
+#                                    Recommended's features forced, ios-mac as is) and checks its manifest: 'PSO_GATE OK|RED rows=<n>'. --route takes another
+#                                    route; --survey (the warp tour, whose fights differ from run to run) lists missing rows as 'PSO_GATE SURVEY rows=<n>', exit 0
 #   record [--set front,act1,tour,warps|all] [--only <backend>] [--front create|menu] [--out DIR] [--keep]   runs the 71-row route matrix (matrix())
 #                                    under the game lock and harvests each run's manifest to DIR/<NN>_<set>_<name>.tsv; 'RUN <NN> <name> OK|RED|UNAVAIL rows=<n>'
+#   warp-tour                        prints dm/verify/bench/warp_tour.scn: all the warp stops in one session, for `gate --route`
 #   merge --dir DIR [--seed FILE] [--write]   the new seed from a record folder: the seed's own rows, then the new front and Act 1 rows, the
 #                                    background marker, the seed's background rows, the new tour rows
 #   cold [--backend mac-app|ios-mac] [--route FILE] [--env K=V]... [--user-manifest FILE] [--launcher-warm] [--keep]   one true cold start (mac-app: a
@@ -238,6 +240,19 @@ def tour_text(stop, z, y, env):
     for _ in range(z): lines += ['press keys=ZR', 'sleep 0.5']
     lines += [f'tap 0.5 {y}', 'sleep 6', 'stick x=0.7 y=-0.7 frames=40', 'sleep 2', 'stick x=-0.7 y=0.7 frames=80', 'sleep 2', 'quit', 'check no_red']
     return '\n'.join(lines) + '\n'
+
+
+def warp_tour_text():
+    """dm/verify/bench/warp_tour.scn: every warp stop in one session (the scenario step `goto`), a few steps both ways in each. With
+    `gate --route` it checks the seed against every stop's pipelines; DM_TEST_KEEP_LIFE keeps the level-1 test hero alive among the monsters."""
+    lines = ['# Warp tour: every warp stop of the pipeline seed (pso_seed.WARPS: dungeons, boss levels, open areas between waypoints) in one session, a few',
+             '# steps both ways in each. With `pso_seed.py gate --backend cli --headless --route` on this file it checks that the warm-up seed holds every',
+             "# pipeline those areas need (the long tier's long_pso_warps); as a scenario it is the long walk through the game's areas for any other check.",
+             '# DM_TEST_KEEP_LIFE: the level-1 test hero would die among the monsters, and a dead hero cannot be warped.',
+             '# Generated: python3 dm/tools/pso_seed.py warp-tour > dm/verify/bench/warp_tour.scn (test_pso_seed.py compares)',
+             'name warp_tour', 'save warlock', 'env DM_GAME_SEED=305419896 DM_TEST_KEEP_LIFE=1', 'timeout 900', '', 'enter_game', 'sleep 3']
+    for stop, _ in WARPS: lines += [f'goto {stop} settle=3', 'stick 0.7 -0.7 frames=30', 'sleep 1', 'stick -0.7 0.7 frames=30', 'sleep 1']
+    return '\n'.join(lines + ['quit', 'check no_red']) + '\n'
 
 
 def warp_text(stop, level, env):
@@ -675,9 +690,12 @@ def cmd_gate(a, argv):
     else: rows, bad, errors = check([out], a.seed, a.allow)
     print_check(rows, bad, errors)
     ok = code == 0 and not rows and not bad and not errors
-    print(f"PSO_GATE {'OK' if ok else 'RED'} rows={len(rows)}" + ('' if code == 0 else f" (scenario RED: {res.get('reason')})"))
-    print('RESULT ' + _json.dumps(dict(name='pso_seed gate', backend=a.backend, verdict='OK' if ok else 'RED', rows=[decode(t, v) for t, v in rows], dir=out)))
-    return 0 if ok else 1
+    # --survey: a route whose content varies from run to run (what the monsters of the warp tour do): missing rows are listed for a merge, not judged
+    survey = a.survey and code == 0 and not bad and not errors and rows
+    verdict = 'SURVEY' if survey else 'OK' if ok else 'RED'
+    print(f"PSO_GATE {verdict} rows={len(rows)}" + ('' if code == 0 else f" (scenario RED: {res.get('reason')})"))
+    print('RESULT ' + _json.dumps(dict(name='pso_seed gate', backend=a.backend, verdict=verdict, rows=[decode(t, v) for t, v in rows], dir=out)))
+    return 0 if ok or survey else 1
 
 
 def parse_env(items):
@@ -812,12 +830,13 @@ def main(argv):
     c.add_argument('paths', nargs='+'); c.add_argument('--seed', default=SEED); c.add_argument('--allow', default=ALLOW)
     g = sub.add_parser('gate', help='one route, then check')
     g.add_argument('--backend', default='mac-app', choices=('mac-app', 'cli', 'ios-mac')); g.add_argument('--headless', action='store_true')
-    g.add_argument('--route', default=TOWN); g.add_argument('--out'); g.add_argument('--seed', default=SEED); g.add_argument('--allow', default=ALLOW)
+    g.add_argument('--route', default=TOWN); g.add_argument('--survey', action='store_true', help='rows the seed lacks are listed, not red'); g.add_argument('--out'); g.add_argument('--seed', default=SEED); g.add_argument('--allow', default=ALLOW)
     r = sub.add_parser('record', help='record the route matrix')
     r.add_argument('--set', default='all'); r.add_argument('--only', choices=('cli', 'mac-app', 'ios-mac')); r.add_argument('--front', default='create', choices=('create', 'menu'))
     r.add_argument('--out'); r.add_argument('--keep', action='store_true')
     m = sub.add_parser('merge', help='build the new seed from a record folder')
     m.add_argument('--dir', required=True); m.add_argument('--seed', default=SEED); m.add_argument('--write', action='store_true')
+    sub.add_parser('warp-tour', help='print dm/verify/bench/warp_tour.scn')
     o = sub.add_parser('cold', help='one true cold start')
     o.add_argument('--backend', default='mac-app', choices=('mac-app', 'ios-mac')); o.add_argument('--route', default=TOWN); o.add_argument('--env', action='append', default=[])
     o.add_argument('--user-manifest'); o.add_argument('--launcher-warm', action='store_true'); o.add_argument('--keep', action='store_true'); o.add_argument('--out')
@@ -826,6 +845,7 @@ def main(argv):
     if a.cmd == 'gate': return cmd_gate(a, argv)
     if a.cmd == 'record': return cmd_record(a, argv)
     if a.cmd == 'merge': return cmd_merge(a)
+    if a.cmd == 'warp-tour': sys.stdout.write(warp_tour_text()); return 0
     if a.cmd == 'cold': return cmd_cold(a, argv)
     if a.cmd == 'normalise':
         with open(a.input, encoding='utf-8', errors='replace') as f: lines = f.readlines()

@@ -35,9 +35,19 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 'y', 'hold'], 'wheel': ['x', 'y', 'dy', 'precise', 'view'], 'drag': ['x0', 'y0', 'x1', 'y1', 'frames'], 'msg': ['spec'], 'world_tap': ['x', 'y'],
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'menu_pick': ['name', 'timeout'], 'use_unit': ['type', 'cls'], 'open': ['what'], 'back': [], 'key': ['name'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
-       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'lights': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': [], 'live': ['do']}
+       'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'lights': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': [], 'live': ['do'],
+       'warp': ['level'], 'spawn': ['cls', 'count'], 'goto': ['where', 'timeout'], 'fight': ['cls', 'count', 'rounds']}
 ALIAS = {'shot': 'screenshot', 'ui_click': 'menu_pick'}   # touch-script names; ui_click is menu_pick's first name
-MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away', 'menu_pick', 'use_unit', 'open', 'back', 'key')
+MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away', 'menu_pick', 'use_unit', 'open', 'back', 'key', 'goto', 'fight')
+# goto <stop | area id>: the control port's warp, then wait for the area. Stops by name: the five towns and the warp stops of the pipeline seed (pso_seed.WARPS)
+TOWNS = {'a1_town': 1, 'a2_town': 40, 'a3_town': 75, 'a4_town': 103, 'a5_town': 109}
+
+
+def warp_stops():
+    import pso_seed   # noqa: PLC0415 -- it imports this module
+    return {**TOWNS, **dict(pso_seed.WARPS)}
+
+
 # Scheme-neutral steps (use_unit, open, back, menu_pick) are carried out through the run's control scheme: `scenario.py run --scheme pc|controller|touch`,
 # else the first of the scenario's `schemes` header. A scenario without that header keeps its own env (DM_PC_MODE=1 = pc). A step a scheme cannot do yet
 # ends the run as not judged for that scheme (⚪, exit 3), never RED; `only=<scheme>[,<scheme>]` on a step runs it in those schemes only
@@ -45,7 +55,7 @@ SCHEMES = ('pc', 'controller', 'touch')
 OPEN_KEYS = {'pause': 'esc', 'inventory': 'i'}   # the PC bindings that open them
 # PC keys by name: (Mac key code, Windows virtual key). On the Mac App a PC key goes through AppKit (the fe line, front_mac.m), elsewhere into the PC layer (kbm)
 PC_KEYS = {'esc': (53, 27), 'return': (36, 13), 'space': (49, 32), 'i': (34, 73), 'c': (8, 67), 't': (17, 84), '1': (18, 49)}
-LOCAL = ('expect', 'expect_no', 'expect_state', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture', 'expect_mem')
+LOCAL = ('expect', 'expect_no', 'expect_state', 'expect_live', 'sleep', 'log', 'remember', 'export_save', 'gpu_capture', 'expect_mem')
 HEADER = ('name', 'save', 'env', 'timeout', 'window', 'requires', 'front', 'schemes')
 CHECKS = ('no_red', 'no_red_log', 'saved', 'exit', 'event', 'no_event', 'actions', 'saves_valid', 'save_pairs', 'log_has')
 LOG_HAS_KW = ('re', 'file', 'min', 'last')
@@ -118,6 +128,8 @@ def parse(path):
             kw = {**dict(zip(pos, args, strict=False)), **kw}; args = []
         if op == 'expect_mem': expect_mem_parse(path, n, kw)
         if op in ('expect', 'expect_no') and not args: raise ScenarioError(f'{path}:{n}: {op} needs an event type')
+        if op == 'expect_live' and (len(args) != 1 or not kw): raise ScenarioError(f'{path}:{n}: expect_live needs a hook (its name or number) and conditions (hits>=1 matched=0 …)')
+        if op == 'goto' and not kw.get('where'): raise ScenarioError(f'{path}:{n}: goto needs a stop name or an area id')
         if op == 'sleep' and (not args or not re.fullmatch(r'[\d.]+', args[0])): raise ScenarioError(f'{path}:{n}: sleep needs seconds')
         if op == 'remember' and not args: raise ScenarioError(f'{path}:{n}: remember needs a state field')
         if op == 'export_save' and (not args or not re.fullmatch(r'[a-z0-9_]+', args[0])): raise ScenarioError(f'{path}:{n}: export_save needs a name of a-z 0-9 _')
@@ -455,7 +467,7 @@ class Runner:
     # 步骤 | steps
     def ctl(self, cmdname, **kw):   # 参数可能就叫 name（mark、tap_ui）：命令名用别的名字 | an argument may be called name (mark, tap_ui): the command name uses another name
         if cmdname == 'screenshot' and 'path' in kw: kw['path'] = self.backend.shot_path(kw['path'])
-        raw = ('at', 'chain', 'write') if cmdname == 'mem' else ('at', 'cap', 'filt', 'name', 'hook', 'file', 'chain', 'watch', 'type', 'mode') if cmdname == 'live' else ()   # hex text: write=03 must not become the number 3; a live hook's spec stays text
+        raw = ('at', 'chain', 'write') if cmdname == 'mem' else ('at', 'cap', 'filt', 'name', 'hook', 'file', 'chain', 'watch', 'type', 'mode', 'act', 'ret', 'set', 'retval') if cmdname == 'live' else ()   # hex text: write=03 must not become the number 3; a live hook's spec stays text
         args: dict[str, Any] = {k: v if k in raw else value(v) if not isinstance(v, (int, float, bool)) else v for k, v in kw.items()}
         return self.cc.cmd(cmdname, reply_timeout=float(kw.get('timeout', 0) or 0) + 120, **args)
 
@@ -463,25 +475,53 @@ class Runner:
         kw = dict(kw); t = float(kw.pop('timeout', 30))
         return self.cc.wait_for(ev, timeout=t, after=after, **{k: value(v) for k, v in kw.items()})
 
-    def expect_state(self, kw):
-        kw = dict(kw); t = float(kw.pop('timeout', 5)); conds = []
-        for k, v in kw.items():   # 名=值；名 后面可带 > < >= <= ! ~（如 hp>=1 写成 hp>=1 也行；panels~=HUDPanel = 列表里有 / 串里含） | name=value; the name may end in > < >= <= ! ~ (hp>=1 works as written; panels~=HUDPanel = the list holds it / the string contains it)
+    @staticmethod
+    def conds(kw):   # 名=值；名 后面可带 > < >= <= ! ~（如 hp>=1 写成 hp>=1 也行；panels~=HUDPanel = 列表里有 / 串里含） | name=value; the name may end in > < >= <= ! ~ (hp>=1 works as written; panels~=HUDPanel = the list holds it / the string contains it)
+        out = []
+        for k, v in kw.items():
             m = re.fullmatch(r'(\w+)([<>!~]?)', k)
             if not m: raise ScenarioError(f'bad condition {k}={v}')
-            conds.append((m.group(1), m.group(2) + '=' if m.group(2) in ('<', '>', '!', '~') else '=', value(v) if isinstance(v, str) else v))
-        def ok(st, f, op, v):
-            x = st.get(f)
-            if op == '~=': return isinstance(x, (list, str)) and (str(v) in x if isinstance(x, str) else any(str(i) == str(v) for i in x))
-            if op == '=': return x == v or str(x) == str(v)
-            if op == '!=': return x != v and str(x) != str(v)
-            try: return x >= v if op == '>=' else x <= v
-            except TypeError: return False
+            out.append((m.group(1), m.group(2) + '=' if m.group(2) in ('<', '>', '!', '~') else '=', value(v) if isinstance(v, str) else v))
+        return out
+
+    @staticmethod
+    def cond_ok(st, f, op, v):
+        x = st.get(f)
+        if op == '~=': return isinstance(x, (list, str)) and (str(v) in x if isinstance(x, str) else any(str(i) == str(v) for i in x))
+        if op == '=': return x == v or str(x) == str(v)
+        if op == '!=': return x != v and str(x) != str(v)
+        try: return x >= v if op == '>=' else x <= v
+        except TypeError: return False
+
+    def expect_state(self, kw):
+        kw = dict(kw); t = float(kw.pop('timeout', 5)); conds = self.conds(kw)
         end = time.time() + t
         while True:
             last = self.cc.cmd('state')
-            bad = [f'{f}{op}{v} (is {last.get(f)!r})' for f, op, v in conds if not ok(last, f, op, v)]
+            bad = [f'{f}{op}{v} (is {last.get(f)!r})' for f, op, v in conds if not self.cond_ok(last, f, op, v)]
             if not bad: return last
             if time.time() > end: raise ScenarioError('state: ' + '; '.join(bad))
+            time.sleep(0.2)
+
+    def live_hook(self, who):
+        """One live hook's counters by its name or number (live do=list, page by page): hits, matched, recorded, dropped, acted, armed."""
+        frm = 0
+        while True:
+            r = self.cc.cmd('live', do='list', **{'from': frm}); lst = r.get('list') or []
+            for h in lst:
+                if str(h.get('hook')) == str(who) or h.get('name') == who: return {'acted': 0, **h}
+            frm += len(lst)
+            if not lst or frm >= int(r.get('hooks', 0)): return None
+
+    def expect_live(self, who, kw):
+        """expect_live <hook> hits>=1 matched=0 … [timeout=5]: a standing check on what the game's code did (a function ran, never ran, ran N times)."""
+        kw = dict(kw); t = float(kw.pop('timeout', 5)); conds = self.conds(kw); end = time.time() + t
+        while True:
+            h = self.live_hook(who)
+            if h is None: raise ScenarioError(f'no live hook {who!r} (armed with live do=add name=… or DM_LIVE_HOOKS)')
+            bad = [f'{f}{op}{v} (is {h.get(f)!r})' for f, op, v in conds if not self.cond_ok(h, f, op, v)]
+            if not bad: return {k: h[k] for k in ('hook', 'name', 'hits', 'matched', 'recorded', 'acted') if k in h}
+            if time.time() > end: raise ScenarioError(f'live hook {who}: ' + '; '.join(bad))
             time.sleep(0.2)
 
     def macro(self, op, kw):
@@ -496,6 +536,22 @@ class Runner:
             m = self.cc.mark(); self.ctl('msg', spec=f"CharacterSelect:LoadCharacter:{kw.get('slot', 0)}")
             self.cc.wait_for('game_enter', timeout=60, after=m); self.cc.wait_for('loading_done', timeout=120, after=m)
             return 'in game'
+        if op == 'goto':   # goto <stop | area id> [timeout=40] [settle=3]: warp, wait until the hero is in the area, then let it load and settle
+            w = str(kw.get('where', '')); lv = int(w) if w.isdigit() else warp_stops().get(w)
+            if not lv: raise ScenarioError(f'goto: {w!r} is neither an area id nor a stop ({", ".join(sorted(warp_stops()))})')
+            if self.cc.cmd('state').get('area') == lv: return f'already in area {lv}'
+            self.ctl('warp', level=lv); self.expect_state({'area': lv, 'timeout': kw.get('timeout', 40)}); time.sleep(float(kw.get('settle', 3)))
+            return f'area {lv}'
+        if op == 'fight':   # fight [cls=19] [count=2] [rounds=6] [pace=1.5] [retreat=50]: monsters of a class spawned by the hero, then a tap on one of them each round (walk up and attack)
+            # It stops when none is left on screen, or when the hero's life is at or under retreat % (a dead hero ends the session at the next act change)
+            cls = int(kw.get('cls', 19)); hits = 0; self.ctl('spawn', cls=cls, count=int(kw.get('count', 2)), dx=int(kw.get('dx', 5)), dy=int(kw.get('dy', 3))); time.sleep(1)
+            for _ in range(int(kw.get('rounds', 6))):
+                st = self.cc.cmd('state')
+                if st.get('dead') or st.get('hp', 0) * 100 <= st.get('hp_max', 1) * float(kw.get('retreat', 50)): return f"{hits} attacks, stopped at life {st.get('hp')}/{st.get('hp_max')}"
+                try: self.ctl('tap_unit', type=1, cls=cls, timeout=4); hits += 1
+                except dmctl.CtlError: break
+                time.sleep(float(kw.get('pace', 1.5)))
+            return f'{hits} attacks'
         if op == 'open_pause':   # 局内 ＋ 开总面板，暂停页在默认页签左边第三个 | in a game + opens the combined panel; the pause page is the third tab left of the default
             m = self.cc.mark(); self.ctl('press', keys='PLUS')
             self.cc.wait_for('panel', timeout=10, after=m, act='OpenPanel', name='UISwitcher')
@@ -578,6 +634,7 @@ class Runner:
             except TimeoutError: return 'not seen'
             raise ScenarioError(f'unexpected event: {json.dumps(e, ensure_ascii=False)}')
         if op == 'expect_state': return self.expect_state(kw)
+        if op == 'expect_live': return self.expect_live(st['args'][0], kw)
         if op == 'expect_mem':   # expect_mem <at> [len] [chain=...] hex=<bytes> [timeout=5]: polls the control port's mem until the bytes read are these
             # an error reply (a null pointer on the chain before the object exists, main not loaded yet) is polled again too; the last one is reported at the timeout
             want = str(kw['hex']).lower(); t = float(kw.get('timeout', 5)); q = {k: kw[k] for k in ('at', 'len', 'chain') if k in kw}
@@ -611,7 +668,13 @@ class Runner:
             shutil.rmtree(dst, ignore_errors=True); os.makedirs(os.path.dirname(dst), exist_ok=True); os.rename(tmp, dst)
             return f'save_ref_{name} written'
         if op == 'remember':   # remember 字段 [as=名]：把 state 的这个字段记下来 | remember field [as=name]: keep this state field
-            st_now = self.cc.cmd('state'); f = st['args'][0] if st['args'] else ''
+            f = st['args'][0] if st['args'] else ''
+            m = re.fullmatch(r'live:([^.]+)\.(\w+)', f)   # remember live:<hook>.<counter> [as=name]: a live hook's counter (hits, matched, recorded, acted)
+            if m:
+                h = self.live_hook(m.group(1))
+                if h is None or m.group(2) not in h: raise ScenarioError(f'no live hook counter {f!r}')
+                self.vars[kw.get('as', m.group(1))] = h[m.group(2)]; return f"{kw.get('as', m.group(1))} = {h[m.group(2)]!r}"
+            st_now = self.cc.cmd('state')
             if f not in st_now: raise ScenarioError(f'state has no field {f!r}')
             self.vars[kw.get('as', f)] = st_now[f]; return f"{kw.get('as', f)} = {st_now[f]!r}"
         if op == 'log': self.say('  # ' + ' '.join(st['args'])); return None

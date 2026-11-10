@@ -106,6 +106,7 @@ run: \
 	python3 ../../tools/re/test_dbprofile.py
 	python3 ../../tools/re/test_live_index.py
 	python3 ../../tools/re/test_live.py
+	python3 ../../tools/re/test_featuremap.py
 	python3 ../../tools/test_quiet.py
 	$(PY) ../../tools/test_nso_fnmap.py
 	$(PY) ../../tools/test_fuzz_corpus.py

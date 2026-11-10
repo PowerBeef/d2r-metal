@@ -154,6 +154,8 @@ CHECKS = [
     ('dm/tools/pso_seed.py', 'python3 dm/tools/pso_seed.py gate --backend cli --headless', 'the pipeline warm-up check on the command-line host'),
     ('dm/gfx/nvn/hle_nvn.c', 'python3 dm/tools/scenario.py run dm/verify/scenarios/pipeset_verify.scn --headless', "the recorder: the pipeline-set fast path's verify mode"),
     ('dm/gfx/nvn/nvn_obj.h', 'python3 dm/tools/scenario.py run dm/verify/scenarios/pipeset_verify.scn --headless', "the recorder: the pipeline-set fast path's verify mode"),
+    ('dm/host/dm_live.c', 'python3 dm/tools/scenario.py run dm/verify/scenarios/live_hooks.scn dm/verify/scenarios/engine_assumptions.scn --headless', 'the live hooks on a running game, and the standing checks they carry'),
+    ('dm/verify/bench/warp_tour.scn', 'python3 dm/tools/pso_seed.py gate --backend cli --headless --survey --route dm/verify/bench/warp_tour.scn', 'the tour of every warp stop, with the pipelines the warm-up seed lacks listed (5½ min)'),
     ('dm/verify/scenarios/*.scn', 'python3 dm/tools/scenario.py run {file} --headless', 'the changed scenario itself'),
     ('dm/host/*', ENTER, 'a game on the headless host'),
     ('dm/gfx/*', ENTER, 'a game on the headless host'),

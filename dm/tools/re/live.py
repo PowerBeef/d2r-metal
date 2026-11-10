@@ -14,6 +14,12 @@
 #   edges [run]                     computed call sites resolved by what was seen: (call site, function called, count) → edges.tsv
 #   propose [run] <a> <b> --label L   functions whose blocks ran only in b, appended to re/live/proposals.tsv as naming leads
 #   view [run] main+0x… [--cov F]   one function's decompiled text with each line's coverage, hits and values → re/live/view/<run>/<offset>.html
+#   cost [run]                      cost=1 hooks: instructions and cycles a call ran on its thread (net of the hooks), per call and in all; with
+#                                   phase markers (ab=1 hooks, g_live_ab) each hook's on / off difference, paired by neighbouring phases
+#   ab [run] [--frames N]           an in-run comparison (DM_NVN_UB phases): translate-thread CPU and every @metric of nvn.tsv, paired differences
+#   draws [run] [--by v0|…|caller|fs] [--top N]   the tagged-draw log (tag=1 hooks): share of draws tied to a call, draws per tag value, callers of the rest
+#   writes [run] [--tick A[-B]] [--watch N]       watch records with the game tick they fell in: who wrote this value at tick N
+#   replay <recording> --hooks F [--name N]       replay a recorded session (replay.py record) with these hooks and watches armed from the start
 # A run is a folder of $DM_ROOT/re/live/runs (its name, `latest`, or a path). blocks and trace-spec come from the snapshot (re.sh live-index)
 # when it exists; without it they read the product's rewritten image and need the project venv's capstone
 # The output can name game functions (the export's names) and carries runtime values: it stays in the run folder or under $DM_ROOT/re
@@ -43,6 +49,8 @@ HDR = struct.Struct('<8sQQQII')          # dm_live_hdr: magic, base, size, timer
 REC = struct.Struct('<IIQQQ4Q4QQ')       # dm_live_rec: hook, tid, t, lr, sp, x[4], cap[4], aux
 RET = 0x80000000
 WATCH = 0x40000000
+TICK = 0x20000000   # a tick marker from the host: cap[0] = the tick number
+AB = 0x10000000     # a phase marker: cap[0] = g_live_ab's new value
 
 
 def read(path):
@@ -51,7 +59,10 @@ def read(path):
     magic, base, size, hz, rs, ver = HDR.unpack_from(b, 0)
     if magic != b'DMLIVE01' or rs != REC.size: raise SystemExit(f'{path}: not a live hooks file (magic {magic!r}, record {rs} bytes)')
     hdr = {'base': base, 'size': size, 'timer_hz': hz, 'version': ver}
-    recs = [REC.unpack_from(b, o) for o in range(HDR.size, len(b) - REC.size + 1, REC.size)]
+    every = [REC.unpack_from(b, o) for o in range(HDR.size, len(b) - REC.size + 1, REC.size)]
+    recs = [r for r in every if r[0] not in (TICK, AB)]   # the markers go to the header: [(time, tick)] and [(time, value)], by time
+    marks = sorted((r[2], r[9]) for r in every if r[0] == TICK); hdr['tick_t'] = [m[0] for m in marks]; hdr['tick_n'] = [m[1] for m in marks]
+    hdr['ab'] = sorted((r[2], r[9]) for r in every if r[0] == AB)
     hooks = {}
     tsv = path + '.hooks.tsv'
     if os.path.exists(tsv):
@@ -71,6 +82,29 @@ def where(addr, hdr):
 
 
 def pct(v, q): return v[min(len(v) - 1, int(len(v) * q))] if v else 0
+
+
+def tick_at(hdr, t):
+    """The game tick a record's time fell in (the last marker at or before it); None before the first marker or in a run without markers."""
+    i = bisect.bisect_right(hdr.get('tick_t') or [], t) - 1
+    return hdr['tick_n'][i] if i >= 0 else None
+
+
+def boot_ci(xs, seed=1, n=4000):
+    """A 95% bootstrap interval of the mean."""
+    import random
+    r = random.Random(seed); k = len(xs); ms = sorted(sum(r.choice(xs) for _ in range(k)) / k for _ in range(n))
+    return ms[int(n * .025)], ms[int(n * .975) - 1]
+
+
+def paired(phases, key):
+    """Mean on-phase value less the mean of its neighbouring off phases, per on phase: [(difference)]. phases = [(on, {key: value})] in order."""
+    out = []
+    for i, (on, v) in enumerate(phases):
+        if not on or key not in v: continue
+        adj = [phases[j][1][key] for j in (i - 1, i + 1) if 0 <= j < len(phases) and not phases[j][0] and key in phases[j][1]]
+        if adj: out.append(v[key] - sum(adj) / len(adj))
+    return out
 
 
 def typed(at, kind, caps, ent, ix, spec=''):
@@ -122,6 +156,10 @@ def summary(path, as_json=False, quiet=False, top=25, top_values=5):
             h['dur_us'] = {'p50': round(pct(d, .5), 2), 'p95': round(pct(d, .95), 2), 'max': round(d[-1], 2)}
             h['ret_x0'] = [{'v': f'{v:#x}', 'n': n} for v, n in collections.Counter(r[5] for r in ret).most_common(5)]
         spec = hooks.get(hid, {}).get('spec', ''); caps = [c for c in (spec.split('cap=')[1].split()[0].split(',') if 'cap=' in spec else []) if c][:4]
+        if ret and re.search(r'(^| )cost=1', spec):   # a cost hook's return records: cap 0, 1 = net instructions and cycles of the call
+            ins = sorted(r[9] for r in ret); cyc = sorted(r[10] for r in ret)
+            h['cost'] = {'calls': len(ret), 'instr': {'p50': pct(ins, .5), 'p95': pct(ins, .95), 'mean': round(sum(ins) / len(ins), 1), 'total': sum(ins)},
+                         'cycles': {'p50': pct(cyc, .5), 'mean': round(sum(cyc) / len(cyc), 1), 'total': sum(cyc)}}
         if caps and caps[0].startswith('str:'):   # cap=str:<source>: the four slots hold up to 32 bytes of text
             texts = collections.Counter(struct.pack('<4Q', *r[9:13]).split(b'\0')[0].decode('utf-8', 'replace') for r in ent)
             h['caps'] = [[{'v': t, 'n': n} for t, n in texts.most_common(top_values)]]; h['texts'] = len(texts)
@@ -143,24 +181,32 @@ def summary(path, as_json=False, quiet=False, top=25, top_values=5):
               + (f", {h['per_s']}/s, gap p50 {h['gap_ms']['p50']} ms p95 {h['gap_ms']['p95']} ms" if h.get('per_s') else ''))
         for c in h['callers']: print(f"    called from {c['at']}  ×{c['n']}")
         if 'dur_us' in h: print(f"    duration p50 {h['dur_us']['p50']} us, p95 {h['dur_us']['p95']} us, max {h['dur_us']['max']} us; x0 at return {', '.join(f'{x['v']}×{x['n']}' for x in h['ret_x0'])}")
+        if 'cost' in h: print(f"    cost per call: {h['cost']['instr']['p50']} instructions (p95 {h['cost']['instr']['p95']}), {h['cost']['cycles']['p50']} cycles; {h['cost']['instr']['total']} instructions in {h['cost']['calls']} calls")
         for a in h.get('args', []):
             if a['values']: print(f"    {a['reg']} {a['name']} ({a['type']}): {', '.join(f'{x['v']}×{x['n']}' for x in a['values'])}")
         for i, c in enumerate(h['caps']): print(f"    cap {(h.get('cap_names') or [])[i] if i < len(h.get('cap_names') or []) else i}: {', '.join(f'{x['v']}×{x['n']}' for x in c)}")
     return out
 
 
-def dump(path, hook=None, limit=50):
-    hdr, recs, hooks = read(path); hz = hdr['timer_hz'] or 1; n = 0
-    t0 = recs[0][2] if recs else 0
+def tick_range(text):
+    if not text: return None
+    a, _, b = str(text).partition('-'); return int(a), int(b or a)
+
+
+def dump(path, hook=None, limit=50, tick=None):
+    hdr, recs, hooks = read(path); hz = hdr['timer_hz'] or 1; n = 0; tr = tick_range(tick)
+    recs.sort(key=lambda r: r[2]); t0 = recs[0][2] if recs else 0
     for r in recs:
+        tk = tick_at(hdr, r[2]); tt = '' if tk is None else f' tick {tk}'
+        if tr and (tk is None or not tr[0] <= tk <= tr[1]): continue
         if r[0] & WATCH:
-            if hook is None: print(f"{(r[2] - t0) / hz:10.6f} s  watch {r[0] & 0xff} tid {r[1]}  {r[9]:#x} = {r[11]:#x}  by {where(r[10], hdr)}")
+            if hook is None: print(f"{(r[2] - t0) / hz:10.6f} s{tt}  watch {r[0] & 0xff} tid {r[1]}  {r[9]:#x} = {r[11]:#x}  by {where(r[10], hdr)}")
             continue
         hid = r[0] & ~RET
         if hook is not None and hid != hook: continue
         kind = 'ret' if r[0] & RET else 'hit'
         extra = f" dur {r[13] / hz * 1e6:.1f} us" if r[0] & RET else ' cap ' + ' '.join(f'{c:#x}' for c in r[9:13])
-        print(f"{(r[2] - t0) / hz:10.6f} s  hook {hid} {hooks.get(hid, {}).get('name', '?')} {kind} tid {r[1]}  x0 {r[5]:#x} x1 {r[6]:#x}  from {where(r[3], hdr)}{extra}")
+        print(f"{(r[2] - t0) / hz:10.6f} s{tt}  hook {hid} {hooks.get(hid, {}).get('name', '?')} {kind} tid {r[1]}  x0 {r[5]:#x} x1 {r[6]:#x}  from {where(r[3], hdr)}{extra}")
         n += 1
         if n >= limit: break
 
@@ -343,6 +389,142 @@ def report(d):
     return out
 
 
+def cost(d):
+    """cost=1 hooks of a run: what each call ran on its own thread, net of the hooks (and of cost hooks nested inside it). With phase markers,
+    each hook's difference between the phases where ab=1 hooks acted and their neighbours where they did not."""
+    path = os.path.join(d, 'live.bin'); hdr, recs, hooks = read(path); hz = hdr['timer_hz'] or 1
+    ids = [h for h, v in hooks.items() if re.search(r'(^| )cost=1', v.get('spec', ''))]
+    if not ids: print('no cost=1 hook in this run'); return []
+    span = (max(r[2] for r in recs) - min(r[2] for r in recs)) / hz if recs else 0; rows = []
+    print('hook\tname\tat\tcalls\tinstr p50\tinstr p95\tinstr mean\tcycles p50\tinstr total\tinstr/s')
+    for hid in ids:
+        ret = [r for r in recs if r[0] == hid | RET]
+        if not ret: print(f"{hid}\t{hooks[hid]['name']}\t{hooks[hid]['at']}\t0"); continue
+        ins = sorted(r[9] for r in ret); cyc = sorted(r[10] for r in ret)
+        rows.append({'hook': hid, 'name': hooks[hid]['name'], 'calls': len(ret), 'instr_p50': pct(ins, .5), 'instr_mean': sum(ins) / len(ins), 'instr_total': sum(ins), 'cycles_p50': pct(cyc, .5)})
+        print(f"{hid}\t{hooks[hid]['name']}\t{hooks[hid]['at']}\t{len(ret)}\t{pct(ins, .5)}\t{pct(ins, .95)}\t{sum(ins) / len(ins):.1f}\t{pct(cyc, .5)}\t{sum(ins)}\t{sum(ins) / span if span else 0:.0f}")
+    ab = hdr.get('ab') or []
+    if len(ab) >= 4:   # phases between markers; the first 0.25 s of each left out (the switch lands within 20 ms, caches settle)
+        print(f'{len(ab)} phase changes: on = the phases where ab=1 hooks acted; difference = on less the mean of the neighbouring off phases (95% interval)')
+        for hid in ids:
+            ph = []
+            for (t0, v), (t1, _) in zip(ab, ab[1:]):
+                rr = [r for r in recs if r[0] == hid | RET and t0 + hz // 4 <= r[2] < t1]
+                d_ = {'calls_s': len(rr) / ((t1 - t0 - hz // 4) / hz)} if t1 - t0 > hz // 4 else {}
+                if rr: d_['instr'] = sum(r[9] for r in rr) / len(rr); d_['cycles'] = sum(r[10] for r in rr) / len(rr); d_['instr_s'] = sum(r[9] for r in rr) / ((t1 - t0 - hz // 4) / hz)
+                ph.append((bool(v), d_))
+            line = f"{hid}\t{hooks[hid]['name']}"
+            for key, label in (('instr', 'instructions a call'), ('cycles', 'cycles a call'), ('calls_s', 'calls a second'), ('instr_s', 'instructions a second')):
+                df = paired(ph, key); off = [v[key] for on, v in ph if not on and key in v]
+                if len(df) > 2 and off: lo, hi = boot_ci(df); line += f"\t{label}: off {sum(off) / len(off):.1f}, on {sum(df) / len(df):+.1f} [{lo:+.1f}, {hi:+.1f}] n={len(df)}"
+            print(line)
+    return rows
+
+
+def ab(d, frames=180):
+    """An in-run comparison driven by DM_NVN_UB (phases of N frames, base and each named class in turn): the translate thread's CPU and cycles a
+    frame from the host log's phase lines, and every @metric of nvn.tsv by phase (frames 45 on), as paired differences with a 95% interval."""
+    import statistics
+    lp = os.path.join(d, 'host.log')
+    if not os.path.exists(lp): raise SystemExit(f'no host.log in {d}')
+    with open(lp, encoding='utf-8', errors='replace') as f: log = f.read()
+    ph = {}
+    for m in re.finditer(r'UB 上屏 (\d+) (\S+) 帧 \d+ 均 [\d.]+ ms 2拍 \d+ 3拍 \d+ 4拍以上 \d+ 丢弃 \d+ 翻译每帧 CPU ([\d.]+) ms 周期 ([\d.]+) M', log):
+        ph[int(m.group(1))] = {'name': m.group(2), 'translate_cpu_ms': float(m.group(3)), 'translate_Mcycles': float(m.group(4))}
+    if not ph: raise SystemExit('no DM_NVN_UB phase lines in the host log (run with DM_NVN_UB="<name>=@set:g_live_ab=1" and DM_NVN_TSV for the metrics)')
+    tsv = collections.defaultdict(lambda: collections.defaultdict(list)); tp = os.path.join(d, 'nvn.tsv')
+    if os.path.exists(tp):
+        with open(tp, encoding='utf-8') as f:
+            for line in f:
+                c = line.rstrip('\n').split('\t')
+                if len(c) == 3 and c[1].startswith('@') and int(c[0]) % frames >= 45: tsv[int(c[0]) // frames][c[1]].append(float(c[2]))
+    for k in ph:
+        for m, v in tsv.get(k, {}).items(): ph[k][m] = statistics.mean(v)
+    names = sorted({v['name'] for v in ph.values()} - {'base'}); order = sorted(k for k in ph if k >= 2)
+    keys = ['translate_cpu_ms', 'translate_Mcycles'] + sorted({m for k in ph for m in ph[k] if m.startswith('@')})
+    print(f"{len(ph)} phases of {frames} frames; base phases {sum(1 for k in order if ph[k]['name'] == 'base')}")
+    for key in keys:
+        base = [ph[k][key] for k in order if ph[k]['name'] == 'base' and key in ph[k]]
+        if not base: continue
+        row = f'{key:20s} base {statistics.mean(base):10.3f}'
+        for nm in names:
+            df = paired([(ph[k]['name'] == nm, ph[k]) for k in order if ph[k]['name'] in ('base', nm)], key)
+            if len(df) > 2: lo, hi = boot_ci(df); row += f' | {nm} {statistics.mean(df):+9.3f} [{lo:+.3f}, {hi:+.3f}] n={len(df)}'
+        print(row)
+
+
+def draws_read(d):
+    path = os.path.join(d, 'live.bin.draws.tsv')
+    if not os.path.exists(path): raise SystemExit(f'no draw log in {d} (arm a kind=ret tag=1 hook; the recorder then logs draws to live.bin.draws.tsv)')
+    rows = []
+    with open(path, encoding='utf-8') as f:
+        cols = f.readline().rstrip('\n').split('\t')
+        for line in f:
+            p = line.rstrip('\n').split('\t')
+            if len(p) >= len(cols): rows.append(dict(zip(cols, p)))
+    return rows
+
+
+def draws(d, by='v0', top=30):
+    """The tagged-draw log: how many draws were made inside a tagged call, the draws per value of one tag column (with the shader pairs they
+    used), and for the draws outside any tagged call, the call sites in the game that made them (where the next tag hook should go)."""
+    rows = draws_read(d); hooks = read(os.path.join(d, 'live.bin'))[2] if os.path.exists(os.path.join(d, 'live.bin')) else {}
+    tagged = [r for r in rows if r['hook'] != '-1']; frames = {r['frame'] for r in rows}
+    print(f'{len(rows)} draws in {len(frames)} frames; {len(tagged)} ({100 * len(tagged) / max(1, len(rows)):.1f}%) inside a tagged call')
+    for hk, n in collections.Counter(r['hook'] for r in tagged).most_common():
+        hr = [r for r in tagged if r['hook'] == hk]
+        print(f"  hook {hk} {hooks.get(int(hk), {}).get('name', '?')}: {n} draws, {n / max(1, len(frames)):.1f} a frame; distinct v0 {len({r['v0'] for r in hr})}, v1 {len({r['v1'] for r in hr})}, v2 {len({r['v2'] for r in hr})}, v3 {len({r['v3'] for r in hr})}; shader pairs {len({(r['vs'], r['fs']) for r in hr})}")
+    grp = collections.defaultdict(list)
+    for r in tagged: grp[r.get(by, '')].append(r)
+    print(f'by {by} ({len(grp)} values), most draws first:')
+    for k, rr in sorted(grp.items(), key=lambda kv: -len(kv[1]))[:top]:
+        sh = collections.Counter((r['vs'], r['fs']) for r in rr).most_common(3)
+        print(f"  {k:>18s}  {len(rr):7d} draws  {sum(int(r['count']) * max(1, int(r['instances'])) for r in rr):10d} indices  shaders " + ', '.join(f'{v[:8]}/{f[:8]}×{n}' for (v, f), n in sh))
+    rest = [r for r in rows if r['hook'] == '-1']
+    if rest:
+        print(f'{len(rest)} draws outside any tagged call, by the game call site that made them:')
+        for c, n in collections.Counter(r['caller'] for r in rest).most_common(12): print(f"  {n:8d}  main+0x{c} {guestsyms.lookup(f'main+0x{c}')}")
+    return {'draws': len(rows), 'tagged': len(tagged), 'frames': len(frames)}
+
+
+def writes(d, tick=None, watch=None, limit=200):
+    """Watch records with the game tick each fell in: who wrote (or read) the watched bytes at tick N, and the value then."""
+    hdr, recs, _ = read(os.path.join(d, 'live.bin')); tr = tick_range(tick); n = 0
+    for r in sorted((r for r in recs if r[0] & WATCH), key=lambda r: r[2]):
+        tk = tick_at(hdr, r[2])
+        if tr and (tk is None or not tr[0] <= tk <= tr[1]): continue
+        if watch is not None and r[0] & 0xff != watch: continue
+        print(f"tick {tk if tk is not None else '?'}\twatch {r[0] & 0xff}\t{'write' if r[13] else 'read'}\t{r[9]:#x} = {r[11]:#x}\tby {where(r[10], hdr)}\tcalled from {where(r[3], hdr)}\ttid {r[1]}")
+        n += 1
+        if n >= limit: print(f'… (--limit {limit})'); break
+    if not n: print('no watch record' + (f' in ticks {tick}' if tick else '') + (' (and no tick markers: the run never entered a game?)' if not hdr.get('tick_t') else ''))
+    return n
+
+
+def cmd_replay(rec, hooks_file, name=None, dmhost=None):
+    """Replay a recorded session (replay.py record: command packets by tick) with hooks and watches armed from the process's start: the same
+    session can be asked a new question each time. The replay's per-tick state is compared with the recording, so a hook that changed the game
+    shows as the first divergent tick."""
+    sys.path.insert(0, os.path.dirname(HERE))
+    import replay   # noqa: PLC0415
+    import tickdiff   # noqa: PLC0415
+    rec = os.path.abspath(rec); d = new_run(name or 'replay_' + os.path.basename(rec.rstrip('/')))
+    os.environ.update(DM_LIVE='1', DM_LIVE_OUT=os.path.join(d, 'live.bin'), DM_LIVE_HOOKS='@' + os.path.abspath(hooks_file))
+    rc, ticks = replay.replay(rec, dmhost or replay.default_host(), os.path.join(d, 'replay'))
+    cmp_ = 'not compared (no per-tick state)'
+    if os.path.exists(ticks) and os.path.exists(os.path.join(rec, 'ticks.jsonl')):
+        c = tickdiff.compare(tickdiff.load(rec), tickdiff.load(ticks))
+        cmp_ = f"identical to the recording over {c['common']} ticks" if c['same'] else f"differ from the recording first at tick {(c['first'] or {}).get('tick')} ({c['diverged']} of {c['common']} ticks): a hook changed the game, or the replay is not deterministic"
+    with open(hooks_file, encoding='utf-8') as f: text = f.read()
+    verdict = f'replay exit {rc}; ticks {cmp_}'
+    run_meta(d, scenario=f'replay of {rec}', scenario_text=text, verdict=verdict)
+    for nm in ('host.log',):
+        if os.path.exists(os.path.join(d, 'replay', nm)): os.replace(os.path.join(d, 'replay', nm), os.path.join(d, nm))
+    print(verdict); print(f'RUN {os.path.basename(d)} → {d}')
+    if os.path.exists(os.path.join(d, 'live.bin')): report(d)
+    return rc
+
+
 def propose(d, a, b, label):
     """Functions with blocks that ran only in coverage file b: naming leads, appended to re/live/proposals.tsv for review (never written to the map by a tool)."""
     only = cov_read(os.path.join(d, b)) - cov_read(os.path.join(d, a)); per = by_function(only); ix = live_index.Index(); rows = []
@@ -427,14 +609,18 @@ def main(argv):
     ap = argparse.ArgumentParser(prog='live.py', description='Read the live hooks output (dm_live.c).')
     sub = ap.add_subparsers(dest='cmd', required=True)
     s = sub.add_parser('summary'); s.add_argument('file'); s.add_argument('--json', action='store_true')
-    d = sub.add_parser('dump'); d.add_argument('file'); d.add_argument('--hook', type=int); d.add_argument('--limit', type=int, default=50)
+    d = sub.add_parser('dump'); d.add_argument('file'); d.add_argument('--hook', type=int); d.add_argument('--limit', type=int, default=50); d.add_argument('--tick', help='N or A-B: only records in these game ticks')
     b = sub.add_parser('blocks'); b.add_argument('--out', required=True); b.add_argument('--only')
     t = sub.add_parser('trace-spec'); t.add_argument('--out', required=True); t.add_argument('--only'); t.add_argument('--records', type=int, default=0)
     c = sub.add_parser('counts'); c.add_argument('file'); c.add_argument('--top', type=int, default=40)
     v = sub.add_parser('cover'); v.add_argument('file'); v.add_argument('--top', type=int, default=40)
     x = sub.add_parser('cover-diff'); x.add_argument('a'); x.add_argument('b'); x.add_argument('--top', type=int, default=60)
     rn = sub.add_parser('run'); rn.add_argument('scenario'); rn.add_argument('--name'); rn.add_argument('--window', action='store_true')
-    for nm in ('report', 'edges', 'table'): q = sub.add_parser(nm); q.add_argument('run', nargs='?')
+    for nm in ('report', 'edges', 'table', 'cost'): q = sub.add_parser(nm); q.add_argument('run', nargs='?')
+    q = sub.add_parser('ab'); q.add_argument('run', nargs='?'); q.add_argument('--frames', type=int, default=180)
+    q = sub.add_parser('draws'); q.add_argument('run', nargs='?'); q.add_argument('--by', default='v0'); q.add_argument('--top', type=int, default=30)
+    q = sub.add_parser('writes'); q.add_argument('run', nargs='?'); q.add_argument('--tick'); q.add_argument('--watch', type=int); q.add_argument('--limit', type=int, default=200)
+    q = sub.add_parser('replay'); q.add_argument('recording'); q.add_argument('--hooks', required=True); q.add_argument('--name'); q.add_argument('--dmhost')
     pr = sub.add_parser('propose'); pr.add_argument('args', nargs='+', help='[run] <a> <b>'); pr.add_argument('--label', required=True)
     vw = sub.add_parser('view'); vw.add_argument('args', nargs='+', help='[run] main+0x…'); vw.add_argument('--cov')
     a = ap.parse_args(argv)
@@ -442,10 +628,15 @@ def main(argv):
     if a.cmd == 'report': report(resolve_run(a.run)); return 0
     if a.cmd == 'edges': edges(resolve_run(a.run)); return 0
     if a.cmd == 'table': table(resolve_run(a.run)); return 0
+    if a.cmd == 'cost': cost(resolve_run(a.run)); return 0
+    if a.cmd == 'ab': ab(resolve_run(a.run), a.frames); return 0
+    if a.cmd == 'draws': draws(resolve_run(a.run), a.by, a.top); return 0
+    if a.cmd == 'writes': writes(resolve_run(a.run), a.tick, a.watch, a.limit); return 0
+    if a.cmd == 'replay': return cmd_replay(a.recording, a.hooks, a.name, a.dmhost)
     if a.cmd == 'propose': propose(resolve_run(a.args[0] if len(a.args) == 3 else None), a.args[-2], a.args[-1], a.label); return 0
     if a.cmd == 'view': view(resolve_run(a.args[0] if len(a.args) == 2 else None), a.args[-1], a.cov); return 0
     if a.cmd == 'summary': summary(a.file, a.json)
-    elif a.cmd == 'dump': dump(a.file, a.hook, a.limit)
+    elif a.cmd == 'dump': dump(a.file, a.hook, a.limit, a.tick)
     elif a.cmd == 'blocks': blocks(a.out, a.only)
     elif a.cmd == 'trace-spec': trace_spec(a.out, a.only, a.records)
     elif a.cmd == 'counts': counts(a.file, a.top)

@@ -61,6 +61,48 @@ class ReportTest(Fixture):
         self.assertEqual((w['watch'], w['addr'], w['writes'], w['values'][0]['v']), (1, '0x9000', 1, '0x2a'))
         self.assertTrue(w['writers'][0]['at'].startswith('main+0x1014'))
 
+    def test_markers_cost_writes_draws(self):
+        """Tick and phase markers leave the record list and date the records; a cost hook's return records give per-call instructions and the
+        on / off difference by phase; watch records are listed by tick; the draw log is summarised by tag value and by call site."""
+        run = os.path.join(self.d, 'runs', 'r2'); os.makedirs(run)
+        with open(os.path.join(run, 'live.bin'), 'wb') as f:
+            f.write(live.HDR.pack(b'DMLIVE01', BASE, 0x10000, 1000, live.REC.size, 1))
+            for k in range(8):   # eight phases of 1000 timer units, off / on in turn; a tick every 250
+                f.write(rec(live.AB, 1, 1000 * k, 0, cap=(k & 1, 0, 0, 0)))
+                for j in range(4): f.write(rec(live.TICK, 2, 1000 * k + 250 * j, 0, cap=(100 + 4 * k + j, 0, 0, 0)))
+                for j in range(5):   # 5 calls a phase after the settling quarter: 500 instructions a call off, 440 on
+                    f.write(rec(3, 7, 1000 * k + 300 + 100 * j, BASE + 0x2014))
+                    f.write(rec(3 | live.RET, 7, 1000 * k + 310 + 100 * j, BASE + 0x2014, cap=(440 if k & 1 else 500, 200, 900, 400), aux=10))
+            f.write(rec(live.WATCH | 0, 9, 2600, BASE + 0x2014, cap=(0x7000, BASE + 0x1010, 0x55, 0), aux=1))
+        with open(os.path.join(run, 'live.bin.hooks.tsv'), 'w', encoding='utf-8') as f:
+            f.write('id\tname\tat\tkind\tspec\n3\tupd\tmain+0x1000\tret\tat=main+0x1000 kind=ret cost=1\n')
+        hdr, recs, _ = live.read(os.path.join(run, 'live.bin'))
+        self.assertEqual((len(hdr['tick_t']), len(hdr['ab']), len(recs)), (32, 8, 81))
+        self.assertEqual((live.tick_at(hdr, 2600), live.tick_at(hdr, 0), live.tick_at({'tick_t': [], 'tick_n': []}, 5)), (110, 100, None))
+        h = next(x for x in live.summary(os.path.join(run, 'live.bin'), quiet=True)['hooks'] if x['hook'] == 3)
+        self.assertEqual((h['cost']['calls'], h['cost']['instr']['total']), (40, 20 * 500 + 20 * 440))
+        out = self.printed(live.cost, run)
+        self.assertIn('instructions a call: off 500.0, on -60.0 [-60.0, -60.0] n=3', out)   # the phase after the last marker has no end: left out
+        out = self.printed(live.writes, run, '110')
+        self.assertIn('tick 110\twatch 0\twrite\t0x7000 = 0x55\tby main+0x1010', out)
+        self.assertIn('no watch record in ticks 5', self.printed(live.writes, run, '5'))
+        with open(os.path.join(run, 'live.bin.draws.tsv'), 'w', encoding='utf-8') as f:
+            f.write('n\tframe\ttid\tcb\tindexed\tcount\tinstances\tvs\tfs\thook\tv0\tv1\tv2\tv3\touter\tcaller\n')
+            for i in range(6): f.write(f'{i}\t{i // 3}\t7\t1000\t1\t36\t1\taaaaaaaaaaaaaaaa\tbbbbbbbbbbbbbbbb\t3\t{0x10 + (i & 1):x}\t0\t0\t0\t\t2014\n')
+            for i in range(2): f.write(f'{6 + i}\t1\t7\t1000\t0\t3\t1\tcccccccccccccccc\tdddddddddddddddd\t-1\t\t\t\t\t\t200c\n')
+        out = self.printed(live.draws, run)
+        self.assertIn('8 draws in 2 frames; 6 (75.0%) inside a tagged call', out)
+        self.assertIn('hook 3 upd: 6 draws, 3.0 a frame; distinct v0 2', out)
+        self.assertIn('2 draws outside any tagged call', out); self.assertIn('main+0x200c', out)
+
+    @staticmethod
+    def printed(fn, *a):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): fn(*a)
+        return buf.getvalue()
+
     def test_edges_only_computed_sites(self):
         rows = live.edges(self.run, quiet=True)
         self.assertEqual(rows, [(0x2008, 0x1000, 4)])                           # the direct call at 0x2010 is not an observed edge

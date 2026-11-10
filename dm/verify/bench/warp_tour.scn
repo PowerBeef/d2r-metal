@@ -1,0 +1,229 @@
+# Warp tour: every warp stop of the pipeline seed (pso_seed.WARPS: dungeons, boss levels, open areas between waypoints) in one session, a few
+# steps both ways in each. With `pso_seed.py gate --backend cli --headless --route` on this file it checks that the warm-up seed holds every
+# pipeline those areas need (the long tier's long_pso_warps); as a scenario it is the long walk through the game's areas for any other check.
+# DM_TEST_KEEP_LIFE: the level-1 test hero would die among the monsters, and a dead hero cannot be warped.
+# Generated: python3 dm/tools/pso_seed.py warp-tour > dm/verify/bench/warp_tour.scn (test_pso_seed.py compares)
+name warp_tour
+save warlock
+env DM_GAME_SEED=305419896 DM_TEST_KEEP_LIFE=1
+timeout 900
+
+enter_game
+sleep 3
+goto a1_coldplains settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a1_den settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a1_pit settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a1_crypt settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a1_tower1 settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a1_tower5 settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a1_barracks settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a1_jail settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a1_cathedral settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a1_catacombs4 settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_rockywaste settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_sewers settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_harem settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_cellar settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_stonytomb settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_halls settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_maggot settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_tunnels settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_tomb settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a2_duriel settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a3_spiderforest settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a3_lowerkurast settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a3_travincal settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a3_swampypit settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a3_flayerdungeon settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a3_sewers settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a3_temple settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a3_durance1 settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a3_durance3 settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a4_steppes settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a4_plains settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a4_city settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a4_chaos settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_foothills settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_crystalline settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_glacial settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_tundra settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_summit settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_nihlathak settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_vaught settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_keep1 settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_throne settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+goto a5_chamber settle=3
+stick 0.7 -0.7 frames=30
+sleep 1
+stick -0.7 0.7 frames=30
+sleep 1
+quit
+check no_red

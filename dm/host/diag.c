@@ -802,6 +802,9 @@ static void test_hp1(uint64_t unit) {
     if (sc > 512) sc = 512; uint32_t pair[2];
     for (uint32_t i = 0; i < sc; i++) if (tk_rd(sb + 8 * i, pair, sizeof pair) && pair[0] == 6u << 16) { uint32_t to = g_hp1_to; if (pair[1] > to) *(uint32_t *)(sb + 8 * i + 4) = to; return; }
 }
+// Test switch DM_TEST_KEEP_LIFE=1: the controlled player's maximum life (stat 7) is raised to 20,000 and every tick the life (stat 6) goes back up to it, so the level-1 test hero
+// survives a scripted fight or a tour of the dungeons in one session (a dead hero cannot be warped: the session ends). It goes through the game's
+// own stat setter main+0x5bc1f0(unit, stat, value, 0), as DM_TEST_GOLD does (in hud_tick, where the getter is at hand). Never set in the product
 static void state_dump_monsters(uint64_t G, char *out, size_t cap, size_t *used) {   // 怪物表 G+0x2630：每只 id / 类别 / stat 100（人数档）/ stat 7（最大生命 ×256），至多 64 只 | Monster table G+0x2630: per monster id / class / stat 100 (/players setting) / stat 7 (max life ×256), at most 64 monsters
     int count = 0;
     int w = snprintf(out + *used, cap - *used, ",\"monsters\":["); if (w < 0 || (size_t)w >= cap - *used) return; *used += (size_t)w;
@@ -944,6 +947,15 @@ static void cube_diag_tick(uint64_t G, uint64_t player) {   // 合成请求后 2
 // All three "who is the controlled player" sites go by it: the per-tick feature entry hud_tick, the state dump state_dump, the position check poschk. A corpse left in the player table after the character dies is also a player-type unit with "mode ≠ 0 and coordinates",
 // so counting units present reports "living player + own corpse" as non-unique. That is a stale measuring criterion, not two players on the field
 static uint32_t local_player_id(void) { uint32_t slot = 8, lid = 0xffffffffu; module_t *mm = main_mod(); if (mm && tk_rd((uint64_t)mm->base + 0x2d20e4c, &slot, 4) && slot < 8) tk_rd((uint64_t)mm->base + 0x2d60380 + 4 * slot, &lid, 4); return lid; }
+// Control-port test requests (dm_ctl_cmds.c `warp` and `spawn`): carried out on the tick thread, where the switches DM_TEST_GOTO_LEVEL and DM_TEST_SPAWN act.
+// g_req_warp = the area's id; g_req_spawn = class | (dx + 128) << 16 | (dy + 128) << 24 | count << 32; 0 = none. g_req_done counts those carried out
+_Atomic int g_req_warp; _Atomic uint64_t g_req_spawn; _Atomic unsigned g_req_done;
+static void spawn_near(module_t *main, uint64_t G, uint64_t room, const uint16_t *c, int cls, int dx, int dy, int count, uint32_t tq, const char *why) {   // count monsters of a class on free ground around the player's cell + (dx, dy)
+    for (int k = 0; k < count; k++) {
+        int32_t pos[2] = { c[1] + dx + (k ? (k * 7) % 13 - 6 : 0), c[3] + dy + (k ? (k * 5) % 11 - 5 : 0) }; uint64_t rr = 0; ((void (*)(uint64_t, uint64_t, int32_t *, int, int, uint64_t *, int, int))(main->base + 0x7160d0))(G, room, pos, 3, 0x400, &rr, 4, 100);
+        uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(main->base + 0x7ce630))(G, rr, 1, cls, pos[0], pos[1], 1, 0, 0x10) : 0;
+        LOG("%s：拍 %u 在 %d,%d（玩家 %d,%d）刷类号 %d → %s", why, tq, pos[0], pos[1], c[1], c[3], cls, u ? "成" : "败"); }
+}
 static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本级经验‰ / 腰带四列件数 / 回城次数 + 当前人数档 → g_hud（前端 dm_hud_get） | Every tick: controlled player's level / current-level experience ‰ / item counts of the four belt columns / town portal count + current /players setting → g_hud (front end dm_hud_get)
     dm_hud_info h = {0};
     uint64_t player = 0, inv = 0, u = 0, next = 0;
@@ -977,7 +989,11 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
         // otherwise it reads the base layer +0x30. stat_read reads only the base layer, so with +life / +mana gear the maximum comes out low and "current > max" appears (the level 88 Sorceress's 967 was read as 809)
         module_t *mm = main_mod();
         if (mm) { int (*get)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(mm->base + 0x5b9290);
-            h.hp = get(player, 6, 0) >> 8; h.hp_max = get(player, 7, 0) >> 8; h.mp = get(player, 8, 0) >> 8; h.mp_max = get(player, 9, 0) >> 8; }
+            h.hp = get(player, 6, 0) >> 8; h.hp_max = get(player, 7, 0) >> 8; h.mp = get(player, 8, 0) >> 8; h.mp_max = get(player, 9, 0) >> 8;
+            { static int kl = -1; if (kl < 0) kl = getenv("DM_TEST_KEEP_LIFE") != NULL;
+              if (kl) { int cur = get(player, 6, 0), max = get(player, 7, 0); void (*set)(uint64_t, int, int, int) = (void (*)(uint64_t, int, int, int))(mm->base + 0x5bc1f0);
+                  if (cur > 0 && max < 20000 << 8) { set(player, 7, 20000 << 8, 0); max = get(player, 7, 0); }   // a maximum no single hit reaches
+                  if (cur > 0 && cur < max) set(player, 6, max, 0); } } }   // not from 0: dead stays dead
         uint32_t sp = 0, kp = 0, pm = 0; stat_read(player, 4, &sp); stat_read(player, 5, &kp); h.points = (int)(sp + kp);
         if (mm) { int (*get)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(mm->base + 0x5b9290); h.gold = get(player, 14, 0); h.gold_stash = get(player, 15, 0); }   // 身上金币 stat 14、箱内金币 stat 15 | gold on the character stat 14, gold in the stash stat 15
         if (tk_rd(player + 0xC, &pm, 4)) h.dead = dm_hud_player_mode_dead(pm);   // 单位 +0xC = 动画模式（dm_hud.h） | Unit +0xC = animation mode (dm_hud.h)
@@ -1059,10 +1075,14 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
       uint64_t pp = 0, room = 0; uint16_t c[4] = {0};
       if (!st && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= (uint32_t)at && tk_rd(player + 0x38, &pp, 8) && pp && tk_rd(pp, c, 8) && tk_rd(pp + 0x20, &room, 8) && room) { st = 1;
           // A fifth number spawns that many, spread around the point (a crowd, for picture and pacing tests)
-          for (int k = 0; k < count; k++) {
-          int32_t pos[2] = { c[1] + dx + (k ? (k * 7) % 13 - 6 : 0), c[3] + dy + (k ? (k * 5) % 11 - 5 : 0) }; uint64_t rr = 0; ((void (*)(uint64_t, uint64_t, int32_t *, int, int, uint64_t *, int, int))(main->base + 0x7160d0))(G, room, pos, 3, 0x400, &rr, 4, 100);
-          uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(main->base + 0x7ce630))(G, rr, 1, cls, pos[0], pos[1], 1, 0, 0x10) : 0;
-          LOG("DM_TEST_SPAWN：拍 %u 在 %d,%d（玩家 %d,%d）刷类号 %d → %s", tq, pos[0], pos[1], c[1], c[3], cls, u ? "成" : "败"); } } }
+          spawn_near(main, G, room, c, cls, dx, dy, count, tq, "DM_TEST_SPAWN"); } }
+    // The control port's warp and spawn (see g_req_warp above): the same two game calls, asked for while the game runs
+    if (main && player && (atomic_load(&g_req_warp) || atomic_load(&g_req_spawn))) { uint32_t tq = 0; tk_rd(G + 0x170, &tq, 4);
+        int lv = atomic_exchange(&g_req_warp, 0); uint64_t sp = atomic_exchange(&g_req_spawn, 0);
+        if (lv > 0) { ((void (*)(uint64_t, uint64_t, int, int))(main->base + 0x634000))(G, player, lv, 11); LOG("warp: tick %u to area %d", tq, lv); atomic_fetch_add(&g_req_done, 1); }
+        uint64_t pp = 0, room = 0; uint16_t c[4] = {0};
+        if (sp && tk_rd(player + 0x38, &pp, 8) && pp && tk_rd(pp, c, 8) && tk_rd(pp + 0x20, &room, 8) && room) {
+            spawn_near(main, G, room, c, (int)(sp & 0xffff), (int)(sp >> 16 & 0xff) - 128, (int)(sp >> 24 & 0xff) - 128, (int)(sp >> 32 & 0xff), tq, "spawn"); atomic_fetch_add(&g_req_done, 1); } }
     // 测试开关 DM_TEST_MAP_FULL=<拍>：到拍切到全屏地图（同触摸点小地图，dm_ui_map_full；要小地图本来开着）
     // Test switch DM_TEST_MAP_FULL=<tick>: at the tick switch to the full-screen map (same as tapping the minimap by touch, dm_ui_map_full; the minimap must already be open)
     { static int at = -1; uint32_t tq = 0; if (at < 0) { const char *e = getenv("DM_TEST_MAP_FULL"); at = e ? atoi(e) : 0; }
@@ -1966,13 +1986,15 @@ static void break_at_tick(void) {
     else LOG("DM_BREAK_AT_TICK：%u 秒内没有调试器，照常往下走", wait_s);
 }
 static int g_ctl_track;   // 有控制通道（DM_CTL_PORT / DM_LOG_PORT）：产品拍入口也跟时限零点，控制口 pause / step 才换算得了 | a control channel is configured (DM_CTL_PORT / DM_LOG_PORT): the product tick entry also tracks the deadline origin, so control-port pause / step can convert it
-static void tick_gate_product(const uint64_t *regs) { g_lastG = regs[0]; players_apply(); hud_tick(regs[0]); freeze_tick(regs[0]); if (g_ctl_track) hold_track_origin(); break_at_tick(); }   // 产品缺省的拍入口：只落地难度档、发布 HUD 数字 | The product default tick entry: only applies the difficulty level and publishes the HUD numbers
+void (*g_tick_mark_fn)(uint64_t tick);   // the live harness's tick marker (dm_live.c sets it when its hooks attach, DM_LIVE=1 on the Mac; NULL otherwise)
+static void tick_gate_product(const uint64_t *regs) { g_lastG = regs[0]; if (g_tick_mark_fn) g_tick_mark_fn((uint64_t)ev_tick()); players_apply(); hud_tick(regs[0]); freeze_tick(regs[0]); if (g_ctl_track) hold_track_origin(); break_at_tick(); }   // 产品缺省的拍入口：只落地难度档、发布 HUD 数字 | The product default tick entry: only applies the difficulty level and publishes the HUD numbers
 static void tick_gate(const uint64_t *regs) {         // 拍入口：先注入本拍命令包，再取状态哈希 | Tick entry: first inject this tick's command packets, then take the state hash
     {   // 拍入口只在一条客体线程上跑：state_dump / ticks_hash 的 static 缓冲靠这一点不竞争。换线程即中止，别让输出悄悄写乱 | The tick entry runs on only one guest thread: the static buffers of state_dump / ticks_hash rely on this to be race-free. Abort if the thread changes, do not let the output silently get garbled
         static _Atomic uintptr_t owner; uintptr_t me = (uintptr_t)pthread_self(), exp = 0;
         if (!atomic_compare_exchange_strong(&owner, &exp, me) && exp != me) { LOG("【红】拍入口换了线程（首个 %#lx，本次 %#lx）：static 缓冲会竞争", (unsigned long)exp, (unsigned long)me); abort(); }
     }
     g_lastG = regs[0];
+    if (g_tick_mark_fn) g_tick_mark_fn((uint64_t)ev_tick());
     players_apply();
     hud_tick(regs[0]);
     break_at_tick();
