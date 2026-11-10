@@ -465,24 +465,73 @@ def draws_read(d):
     return rows
 
 
+def names_read(d):
+    """The name tables of a run: what the control port's `names path=…` dumped (names*.tsv) and what nameof= hooks wrote as the game ran
+    (live.bin.names.tsv): {kind: {key: name}}."""
+    out = collections.defaultdict(dict)
+    for f in sorted(os.listdir(d)):
+        if not ('names' in f and f.endswith('.tsv')): continue   # names*.tsv (the control port's dump) and live.bin.names.tsv (nameof= hooks)
+        with open(os.path.join(d, f), encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                p = line.rstrip('\n').split('\t')
+                if len(p) == 3 and p[0] != 'kind':
+                    try: out[p[0]][int(p[1], 16)] = p[2]
+                    except ValueError: pass
+    return out
+
+
+def shader_names():
+    """Shader key -> `package#index` from the port's shader map (dm/gfx/nvn/shader_map.tsv), for the draw log's vs / fs keys."""
+    out = {}; p = os.path.join(os.path.dirname(os.path.dirname(HERE)), 'gfx', 'nvn', 'shader_map.tsv')
+    if os.path.exists(p):
+        with open(p, encoding='utf-8', errors='replace') as f:
+            for line in f:
+                c = line.split('\t')
+                if len(c) > 3 and re.fullmatch(r'[0-9a-f]{16}', c[3]): out.setdefault(c[3], f"{c[0].removesuffix('.bin')}#{c[1]}")
+    return out
+
+
+def tag_kinds(spec):
+    """names=v0:model,v1:texture in a tag hook's spec: which name table each of its values is looked up in."""
+    m = re.search(r'(?:^| )names=(\S+)', spec or '')
+    return dict(x.split(':', 1) for x in m.group(1).split(',') if ':' in x) if m else {}
+
+
 def draws(d, by='v0', top=30, hook=None):
     """The tagged-draw log: how many draws were made inside a tagged call, the draws per value of one tag column (with the shader pairs they
-    used), and for the draws outside any tagged call, the call sites in the game that made them (where the next tag hook should go)."""
+    used), and for the draws outside any tagged call, the call sites in the game that made them (where the next tag hook should go). Shader keys
+    are named from the port's shader map; a tag value is named when its hook says which table it belongs to (names=v0:model) and the run
+    dumped the game's names (`names path=names.tsv` while the things were alive)."""
     rows = draws_read(d); hooks = read(os.path.join(d, 'live.bin'))[2] if os.path.exists(os.path.join(d, 'live.bin')) else {}
-    tagged = [r for r in rows if r['hook'] != '-1']; frames = {r['frame'] for r in rows}
+    names = names_read(d); sh = shader_names(); kinds = {str(i): tag_kinds(h.get('spec', '')) for i, h in hooks.items()}
+    def shn(k): return sh.get(k, k[:8])
+    def named(hk, col, v):
+        tab = names.get(kinds.get(hk, {}).get(col, ''), {})
+        try: return tab.get(int(v, 16)) if v else None
+        except ValueError: return None
+    def short(n): return n.rsplit('/', 1)[-1] if n else ''
+    tagged = [r for r in rows if r['hook'] != '-1']; frames = {r['frame'] for r in rows}; nf = max(1, len(frames))
     print(f'{len(rows)} draws in {len(frames)} frames; {len(tagged)} ({100 * len(tagged) / max(1, len(rows)):.1f}%) inside a tagged call')
     for hk, n in collections.Counter(r['hook'] for r in tagged).most_common():
         hr = [r for r in tagged if r['hook'] == hk]
-        print(f"  hook {hk} {hooks.get(int(hk), {}).get('name', '?')}: {n} draws, {n / max(1, len(frames)):.1f} a frame; distinct v0 {len({r['v0'] for r in hr})}, v1 {len({r['v1'] for r in hr})}, v2 {len({r['v2'] for r in hr})}, v3 {len({r['v3'] for r in hr})}; shader pairs {len({(r['vs'], r['fs']) for r in hr})}")
+        print(f"  hook {hk} {hooks.get(int(hk), {}).get('name', '?')}: {n} draws, {n / nf:.1f} a frame; distinct v0 {len({r['v0'] for r in hr})}, v1 {len({r['v1'] for r in hr})}, v2 {len({r['v2'] for r in hr})}, v3 {len({r['v3'] for r in hr})}; shader pairs {len({(r['vs'], r['fs']) for r in hr})}")
+        for col, kind in sorted(kinds.get(hk, {}).items()):   # the hook's named values: draws by name
+            if kind not in names: print(f"      {col} is a {kind}: no name table in this run (names path=names.tsv)"); continue
+            byname = collections.Counter(named(hk, col, r[col]) or ('(solid colour)' if kind == 'texture' and r[col] in ('', '0') else f'(no name: {r[col]})') for r in hr)
+            known = sum(c for k, c in byname.items() if not k.startswith('(no name'))
+            print(f"      by {kind} ({col}): {100 * known / max(1, n):.1f}% of its draws named, {len(byname)} names")
+            for k, c in byname.most_common(top if hook is not None else 6): print(f"        {c:7d}  {c / nf:7.1f} a frame  {k}")
+        if not kinds.get(hk):   # no named value: the shaders say what kind of draw it is
+            for (v, f), c in collections.Counter((r['vs'], r['fs']) for r in hr).most_common(top if hook is not None else 4): print(f"        {c:7d}  {c / nf:7.1f} a frame  {shn(v)} / {shn(f)}")
     grp = collections.defaultdict(list); pick = None
     if hook is not None:   # --hook: one tag hook's draws only (a column means something else under each hook)
         pick = next((str(i) for i, h in hooks.items() if str(i) == str(hook) or h.get('name') == hook), str(hook))
     for r in tagged:
-        if pick is None or r['hook'] == pick: grp[r.get(by, '')].append(r)
+        if pick is None or r['hook'] == pick: grp[(r['hook'], r.get(by, ''))].append(r)
     print(f"by {by}{'' if pick is None else f' of hook {pick}'} ({len(grp)} values), most draws first:")
-    for k, rr in sorted(grp.items(), key=lambda kv: -len(kv[1]))[:top]:
-        sh = collections.Counter((r['vs'], r['fs']) for r in rr).most_common(3)
-        print(f"  {k:>18s}  {len(rr):7d} draws  {sum(int(r['count']) * max(1, int(r['instances'])) for r in rr):10d} indices  shaders " + ', '.join(f'{v[:8]}/{f[:8]}×{n}' for (v, f), n in sh))
+    for (hk, k), rr in sorted(grp.items(), key=lambda kv: -len(kv[1]))[:top]:
+        shd = collections.Counter((r['vs'], r['fs']) for r in rr).most_common(3)
+        print(f"  {k:>18s}  {len(rr):7d} draws  {sum(int(r['count']) * max(1, int(r['instances'])) for r in rr):10d} indices  {short(named(hk, by, k)) or ''}  shaders " + ', '.join(f'{shn(v)}/{shn(f)}×{n}' for (v, f), n in shd))
     rest = [r for r in rows if r['hook'] == '-1']
     if rest:
         print(f'{len(rest)} draws outside any tagged call, by the game call site that made them:')

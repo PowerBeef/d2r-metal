@@ -7,6 +7,7 @@
 #include "dm_hud.h"
 #include "dm_engine.h"
 #include "dm_lights.h"
+#include "dm_names.h"
 #include <unistd.h>
 #include <limits.h>
 #include <strings.h>
@@ -140,6 +141,14 @@ static int cmd_spawn(const ctl_args *a, char *out, size_t cap, char *err, size_t
     unsigned before = atomic_load(&g_req_done); atomic_store(&g_req_spawn, (uint64_t)cls | (uint64_t)(dx + 128) << 16 | (uint64_t)(dy + 128) << 24 | (uint64_t)n << 32);
     if (!req_wait(before, err, ecap)) { atomic_store(&g_req_spawn, 0); return 0; }
     snprintf(out, cap, ",\"cls\":%d,\"count\":%d", cls, n); return 1;
+}
+// names path=<file>: what the game calls its things now, as a table (dm_names.c): each render entity's model file and each texture's file under
+// the pointers a draw can carry. For the analysis tools: dump it while the things are alive (right after a tagged-draw sample)
+static int cmd_names(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    const char *p = dm_ctl_get(a, "path"); if (!p || !*p) ERR("missing path");
+    int m = 0, t = 0, n = dm_names_dump(p, &m, &t); if (n < 0) ERR("no table written (the game has no registry yet, or %s cannot be written)", p);
+    LOG("names: %d models, %d textures (%d rows) → %s", m, t, n, p);
+    snprintf(out, cap, ",\"models\":%d,\"textures\":%d,\"rows\":%d", m, t, n); return 1;
 }
 static int cmd_engine(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) { (void)a; (void)err; (void)ecap; dm_engine_full_json(out, cap); return 1; }
 
@@ -556,6 +565,7 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("engine", cmd_engine);
     dm_ctl_register("lights", cmd_lights);
     dm_ctl_register("warp", cmd_warp);
+    dm_ctl_register("names", cmd_names);
     dm_ctl_register("spawn", cmd_spawn);
     dm_ctl_register("mem", cmd_mem);
     { void dm_live_ctl_init(void); dm_live_ctl_init(); }   // live: hooks on the running game's code (dm_live.c, DM_LIVE=1)

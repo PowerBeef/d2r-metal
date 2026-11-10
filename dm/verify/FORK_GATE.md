@@ -27,6 +27,7 @@ Several tiers can be given at once; they run in the order given.
 | the binary rules or the product (`patch_nso.py`, `dm/PRODUCT`, `product.sh`) | `product.sh build`, then `regress.sh --fresh` |
 | the pipeline warm-up (`pso_manifest.tsv`, `pso_allow.tsv`, `pso_seed.py`) | `pso_seed.py gate --backend cli --headless` |
 | the live hooks (`dm_live.c`) | `scenarios/live_hooks.scn` and `scenarios/engine_assumptions.scn` (the standing checks on the game's own code) |
+| the name reader (`dm_names.c`) | `scenarios/names.scn` |
 | the warp tour (`bench/warp_tour.scn`) | `pso_seed.py gate --backend cli --headless --survey --route dm/verify/bench/warp_tour.scn` (5½ min; red if the tour breaks, missing pipelines listed) |
 | a curated scenario that runs on the command-line host | that scenario, `--headless` |
 

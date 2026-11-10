@@ -94,6 +94,20 @@ class ReportTest(Fixture):
         self.assertIn('8 draws in 2 frames; 6 (75.0%) inside a tagged call', out)
         self.assertIn('hook 3 upd: 6 draws, 3.0 a frame; distinct v0 2', out)
         self.assertIn('2 draws outside any tagged call', out); self.assertIn('main+0x200c', out)
+        # names: the hook says what its v0 is; the run's tables (a dump and a nameof= file) give the names; shader keys come from the port's map
+        self.assertEqual(live.tag_kinds('at=main+0x1000 kind=ret tag=1 names=v0:model,v1:texture cap=x0'), {'v0': 'model', 'v1': 'texture'})
+        self.assertEqual(live.tag_kinds('at=main+0x1000 kind=ret'), {})
+        with open(os.path.join(run, 'live.bin.hooks.tsv'), 'w', encoding='utf-8') as f:
+            f.write('id\tname\tat\tkind\tspec\n3\tupd\tmain+0x1000\tret\tat=main+0x1000 kind=ret tag=1 names=v0:model\n')
+        with open(os.path.join(run, 'names_camp.tsv'), 'w', encoding='utf-8') as f: f.write('kind\tkey\tname\nmodel\t10\tdata/hd/env/anvil.model\ntexture\t10\tdata/hd/ui/belt\n')
+        with open(os.path.join(run, 'live.bin.names.tsv'), 'w', encoding='utf-8') as f: f.write('kind\tkey\tname\nmodel\t11\tdata/hd/env/forge.model\n')
+        self.assertEqual(live.names_read(run)['model'], {0x10: 'data/hd/env/anvil.model', 0x11: 'data/hd/env/forge.model'})
+        old = live.shader_names; live.shader_names = lambda: {'aaaaaaaaaaaaaaaa': 'vs_models_v#2'}
+        try: out = self.printed(live.draws, run)
+        finally: live.shader_names = old
+        self.assertIn('by model (v0): 100.0% of its draws named, 2 names', out); self.assertIn('data/hd/env/anvil.model', out)
+        self.assertIn('anvil.model  shaders vs_models_v#2/bbbbbbbb', out)
+        self.assertTrue(all(len(k) == 16 for k in list(live.shader_names())[:50]) and len(live.shader_names()) > 1000)   # the real map parses
 
     @staticmethod
     def printed(fn, *a):

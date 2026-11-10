@@ -50,6 +50,7 @@ __asm__(
     "_lvt_n2: add x0, x0, x1\n ret\n"
     "_lvt_n3: mov x0, #7\n ret\n"
     "_lvt_n4: add x0, x0, x1\n ret\n"
+    "_lvt_n5: add x0, x0, x1\n ret\n"
     "_lvt_loop: nop\n1: subs x0, x0, #1\n b.ne 1b\n ret\n"
     "_lvt_outer: stp x29, x30, [sp, #-16]!\n mov x0, #1000\n bl _lvt_loop\n mov x0, #1000\n bl _lvt_loop\n ldp x29, x30, [sp], #16\n ret\n"
     "_lvt_call: stp x29, x30, [sp, #-16]!\n blr x2\n ldp x29, x30, [sp], #16\n ret\n"
@@ -58,7 +59,7 @@ __asm__(
     ".p2align 12\n_lvt_patch: ret\n"
     ".p2align 12\n.globl _lvt_end\n_lvt_end:\n");
 extern char lvt_start[], lvt_end[], lvt_add[], lvt_add2[], lvt_f2[], lvt_f3[], lvt_f4[], lvt_answer[], lvt_adrp[], lvt_bcond[], lvt_bcond_br[], lvt_cbz[], lvt_tbz[],
-    lvt_bl[], lvt_bl_site[], lvt_ldr[], lvt_ldrw[], lvt_ldrsw[], lvt_b[], lvt_excl[], lvt_gate[], lvt_flags[], lvt_flags_site[], lvt_fp[], lvt_patch[], lvt_llsc_mid[], lvt_c1[], lvt_c2[], lvt_c2_b[], lvt_c2_c[], lvt_c3[], lvt_n1[], lvt_n2[], lvt_n3[], lvt_n4[], lvt_loop[], lvt_outer[], lvt_call[], lvt_call2[], lvt_call2_mid[];
+    lvt_bl[], lvt_bl_site[], lvt_ldr[], lvt_ldrw[], lvt_ldrsw[], lvt_b[], lvt_excl[], lvt_gate[], lvt_flags[], lvt_flags_site[], lvt_fp[], lvt_patch[], lvt_llsc_mid[], lvt_c1[], lvt_c2[], lvt_c2_b[], lvt_c2_c[], lvt_c3[], lvt_n1[], lvt_n2[], lvt_n3[], lvt_n4[], lvt_loop[], lvt_outer[], lvt_call[], lvt_call2[], lvt_call2_mid[], lvt_n5[];
 static uint8_t *M; static int fail, count;
 #define EXPECT(name, want, got) do { long long w_ = (long long)(want), g_ = (long long)(got); count++; if (w_ != g_) { printf("✗ %s: want %#llx, got %#llx\n", name, w_, g_); fail++; } else printf("✓ %s\n", name); } while (0)
 static uint64_t off(const char *p) { return (uint64_t)(p - lvt_start); }
@@ -175,6 +176,16 @@ int main(void) {
     tapper();   // before the first tag hook is hit... the tap is set once a tag hook is armed: logged without a hook
     ((uint64_t (*)(uint64_t, uint64_t, void (*)(void)))fn(lvt_call))(0xabc, 0xdef, tapper);
     tapper();
+    // nameof=: a key and the text it goes with, once per key: a C text, the game's string object, a literal
+    { static const char cname[] = "props/anvil.model"; struct { const char *p; uint64_t len, cap; char pad[8]; uint64_t key; } gs = {"ui/belt_row", 11, 0x9a, {0}, 0xbeef};
+      int h_n1 = add(lvt_n5, "count=1 nameof=model:x1:str:x0"); (void)h_n1;
+      for (int i = 0; i < 3; i++) ((f2)fn(lvt_n5))((uint64_t)cname, 0x91f);
+      dm_live_del(h_n1); add(lvt_n5, "count=1 nameof=texture:[x0+0x20].q:gstr:x0");
+      ((f2)fn(lvt_n5))((uint64_t)&gs, 0); dm_live_del(h_n1); add(lvt_n5, "count=1 nameof=texture:x1:lit:text_glyphs");
+      ((f2)fn(lvt_n5))(0, 0x77); ((f2)fn(lvt_n5))(0, 0);   // a zero key is no key
+      EXPECT("a bad nameof is refused", 1, strstr(refusal2(lvt_n4, "nameof=model:x1"), "nameof") != NULL);
+      dm_live_flush(); char np[1100], all[1024] = ""; snprintf(np, sizeof np, "%s.names.tsv", out); FILE *nf = fopen(np, "r"); size_t nr = nf ? fread(all, 1, sizeof all - 1, nf) : 0; if (nf) fclose(nf); all[nr] = 0;
+      EXPECT("names: one row a key, in the three text forms", 1, !strcmp(all, "kind\tkey\tname\nmodel\t91f\tprops/anvil.model\ntexture\tbeef\tui/belt_row\ntexture\t77\ttext_glyphs\n")); }
     // tag=set: inside a tagged call an instruction hook replaces the mark's values; the call's own tag becomes the outer one; over at the return
     EXPECT("tag=set on a return hook is refused", 1, strstr(refusal2(lvt_n4, "kind=ret tag=set"), "kind=entry or insn") != NULL);
     int h_tag2 = add(lvt_call2, "kind=ret tag=1 count=1 cap=x0"), h_set = add(lvt_call2_mid, "kind=insn tag=set count=1 cap=x1");

@@ -55,6 +55,7 @@ SRC=\
 	dm_kbm.c \
 	dm_lights.c \
 	dm_live.c \
+	dm_names.c \
 	dm_movie_decode.c \
 	dm_namegen.c \
 	dm_padmode.c \

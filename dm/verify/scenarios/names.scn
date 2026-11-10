@@ -1,0 +1,14 @@
+# What the game calls its things, read from its own tables (dm/host/dm_names.c, the control port's `names`): each render entity's model file and
+# each texture's file. The analysis tools join the table with the live harness's draw log; this checks that both tables are still where the
+# reader looks (hundreds of models and textures in the camp), which a change of the game's layout would empty.
+name names
+requires cli
+save warlock
+timeout 120
+
+enter_game
+sleep 3
+names names.tsv
+quit
+check log_has re="names: [1-9][0-9][0-9]+ models, [1-9][0-9][0-9]+ textures"
+check no_red
