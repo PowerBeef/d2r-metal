@@ -204,10 +204,11 @@ static NSHashTable *g_res_objects;
 // Test switch DM_RES_CENSUS=1 (not normally on): records every object that has entered the residency set (weak references); on the tick of the memory readout line it reports the count and size of those "still in the residency set" and those "removed from the residency set but not yet destroyed".
 // The latter = GPU memory we no longer use but someone still holds a reference to (for example an autorelease pool on a guest thread that is never drained)
 static NSHashTable *g_res_ever; static int g_res_census = -1;
+static _Atomic uint64_t g_res_ns, g_res_changes, g_res_pending, g_res_adds;
 static void res_add(id<MTLResource> r) {
     if (!r) return;
     pthread_mutex_lock(&g_res_mu);
-    [g_res addAllocation:(id<MTLAllocation>)r];
+    [g_res addAllocation:(id<MTLAllocation>)r]; atomic_fetch_add(&g_res_pending, 1); atomic_fetch_add(&g_res_adds, 1);
     if (!g_res_objects) g_res_objects = [NSHashTable weakObjectsHashTable];
     [g_res_objects addObject:r];
     if (g_res_census < 0) g_res_census = getenv("DM_RES_CENSUS") != NULL;
@@ -218,7 +219,7 @@ static void res_add(id<MTLResource> r) {
 static void res_remove(id<MTLResource> r) {
     if (!r) return;
     pthread_mutex_lock(&g_res_mu);
-    [g_res removeAllocation:(id<MTLAllocation>)r];
+    [g_res removeAllocation:(id<MTLAllocation>)r]; atomic_fetch_add(&g_res_pending, 1);
     [g_res_objects removeObject:r];
     g_res_dirty = 1;
     pthread_mutex_unlock(&g_res_mu);
@@ -238,9 +239,16 @@ static void res_check(id r, const char *what, int reg) {
         MLOG("【红】驻留缺失 #%d：%s 槽 %d %s %p（父链 %d 层）分配 %lu B 存储 %lu%s", nbad, what, reg, is_tex ? "贴图" : "缓冲", (__bridge void *)a, hops, (unsigned long)a.allocatedSize, (unsigned long)a.storageMode,
              t ? [NSString stringWithFormat:@" 格式 %lu %lux%lu 类型 %lu 用途 %#lx", (unsigned long)t.pixelFormat, (unsigned long)t.width, (unsigned long)t.height, (unsigned long)t.textureType, (unsigned long)t.usage].UTF8String : ""); }
 }
+// The residency set's changes take effect at its commit, and the system does the work of making new allocations resident there. An area change
+// adds and removes hundreds of textures at once: g_res_ns / g_res_changes / g_res_adds count the time and the changes for the frame table
+// (@res_commit_ms, @res_changes, @res_adds). Measured over the 43-area tour at this Mac's Recommended (M6, 2026-11-10): about 5 us per allocation added and
+// 4 us per one removed, 0.9 ms in the median frame with 50 changes or more, 0.13 ms a frame over the whole tour. Asking for residency right after the
+// commit (requestResidency) changed neither that nor the GPU time of the frames that follow
+void mtl_res_stats(uint64_t *ns, uint64_t *changes, uint64_t *adds) { *ns = atomic_load(&g_res_ns); *changes = atomic_load(&g_res_changes); *adds = atomic_load(&g_res_adds); }
 static void res_commit(void) {
     pthread_mutex_lock(&g_res_mu);
-    if (g_res_dirty) { [g_res commit]; g_res_dirty = 0; }
+    if (g_res_dirty) { uint64_t t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); [g_res commit]; g_res_dirty = 0;
+        atomic_fetch_add(&g_res_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0); atomic_fetch_add(&g_res_changes, atomic_exchange(&g_res_pending, 0)); }
     pthread_mutex_unlock(&g_res_mu);
 }
 
@@ -1851,7 +1859,8 @@ static void pass_dims(RPD *pd, NSUInteger nc, NSUInteger *w, NSUInteger *h) {
 // Each line: frame idx kind gpu_ms inc_ms w h fmt0 dfmt load draws t0_ns t1_ns (kind: R render / C compute; load: L load / C clear for each color attachment + depth)
 // On TBDR passes overlap in the pipeline (the later pass's vertex stage is earlier than the end of the earlier pass's fragment stage): gpu_ms = this pass's start-to-end span (including queueing) and cannot be summed;
 // attribution uses the timeline increment inc_ms = t1 − max(t0, latest t1 of the passes completed so far); the sum of the increments of all passes = total time the GPU is busy (command buffers complete in submission order)
-typedef struct { uint64_t frame, pass; int idx, kind, w, h, draws, slot; uint32_t cfmt0, dfmt; char load[12]; } pg_pass;   // pass：全局通道号（同 DM_NVN_PASSDUMP 各行的通道号，供两份记录对接） | pass: global pass number (same as the pass number in the DM_NVN_PASSDUMP lines, for joining the two records)
+typedef struct { uint64_t frame, pass; int idx, kind, w, h, draws, slot, pre; uint32_t cfmt0, dfmt; char load[12]; } pg_pass;   /* pre: the slot of the mark the command buffer wrote before this pass's encoder opened (pg_pre_arm), or -1 */   // pass：全局通道号（同 DM_NVN_PASSDUMP 各行的通道号，供两份记录对接） | pass: global pass number (same as the pass number in the DM_NVN_PASSDUMP lines, for joining the two records)
+static int g_pg_pre = -1;   // the slot of a mark written before the next pass (pg_pre_arm), or -1
 #define PG_SLOTS 4096   // 计数采样缓冲上限 32768 字节 = 4096 个时间戳（本机报错实测） | Counter sample buffer limit 32768 bytes = 4096 timestamps (measured from the error on this machine)
 #define PG_RING 8
 static int g_pg = -1; static FILE *g_pg_f;
@@ -1900,13 +1909,25 @@ static void pg_sub_begin(uint64_t fence) {   // 本次提交用环里第 fence %
     }
     pthread_mutex_lock(&g_hr_mu); uint32_t u = g_hr_rec[b].used; g_hr_rec[b].used = 0; g_hr_rec[b].state = 0; pthread_mutex_unlock(&g_hr_mu);
     if (u) [g_pg_buf[b] invalidateCounterRange:NSMakeRange(0, u)];
-    g_pg_b = b; g_pg_used = 0;
+    g_pg_b = b; g_pg_used = 0; g_pg_pre = -1;
+}
+// A mark before a pass: the command buffer writes a timestamp once all work before the call is complete, so one written right before a pass's encoder
+// opens says, when it is in, that the GPU has finished everything before that pass. A pass's own two marks cannot say that (they can be in while
+// earlier work has not run: debugging.md, "The GPU hangs for 4 s"). With one before every pass the hang record brackets where the GPU is exactly.
+// Call with no encoder open; the next pass entry takes the mark. DM_HANGREC_PRE=0 turns these marks off
+static int g_hr_pre_on = -1;
+static void pg_pre_arm(void) {
+    if (g_hr_pre_on < 0) { const char *e = getenv("DM_HANGREC_PRE"); g_hr_pre_on = !(e && !strcmp(e, "0")); }
+    g_pg_pre = -1;
+    if (!g_hr_pre_on || !pg_on() || g_pg_skip || !g_cb || g_pg_used + 1 > PG_SLOTS) return;
+    g_pg_pre = (int)g_pg_used++; [(CBUF)g_cb writeTimestampIntoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)g_pg_pre];
 }
 static pg_pass *pg_new(int kind, int nslot) {
     if (!pg_on() || g_pg_skip || g_pg_used + nslot > PG_SLOTS) return NULL;
     uint64_t f = atomic_load(&g_cur_frame); if (f != g_pg_frame) { g_pg_frame = f; g_pg_idx = 0; }
     if (g_pg_np == g_pg_cap) { g_pg_cap = g_pg_cap ? g_pg_cap * 2 : 128; g_pg_pass = realloc(g_pg_pass, g_pg_cap * sizeof *g_pg_pass); }
     pg_pass *p = &g_pg_pass[g_pg_np++]; memset(p, 0, sizeof *p);
+    p->pre = kind == 3 ? -1 : g_pg_pre; if (kind != 3) g_pg_pre = -1;   // a note takes no mark
     p->frame = f; p->pass = g_stat_pass; p->idx = kind >= 3 ? -1 : g_pg_idx++; p->kind = kind; p->slot = (int)g_pg_used; p->draws = -(int)g_stat_draw;   // a hang-recorder note (kind 3) keeps DM_NVN_PASSGPU's pass indices as they were
     g_pg_used += nslot;
     return p;
@@ -1916,7 +1937,7 @@ static pg_pass *pg_new(int kind, int nslot) {
 // Record the pass info (attachments, size, load actions) before opening a render pass; the older API attaches stage-boundary sampling to the descriptor, while Metal 4 writes timestamps after opening / before ending the encoder (pg_render_begin / pg_render_finish).
 // When we moved to Metal 4 the descriptor lost its sampling attachment, this whole block was short-circuited and the readback at submit time was removed too, so neither API produced numbers any more; this restores both
 static void pg_render(RPD *pd, NSUInteger nc) {
-    pg_pass *p = pg_new(0, PG_RSLOTS); if (!p) return;
+    pg_pre_arm(); pg_pass *p = pg_new(0, PG_RSLOTS); if (!p) return;
     p->pass = g_stat_pass + 1;   // the pass is counted once it opens: the number its DM_NVN_PASSDUMP P / K / B lines carry (compute passes keep the pass they follow)
     id<MTLTexture> t0 = nil; int k = 0;
     for (NSUInteger i = 0; i < nc && i < 8; i++) { id<MTLTexture> t = pd.colorAttachments[i].texture; if (!t) continue;
@@ -1935,7 +1956,7 @@ static void pg_render_finish(RENC e) {   // 收渲染编码器之前：写通道
     if (g_pg_open >= 0 && e) [e writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed afterStage:MTLRenderStageFragment intoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)g_pg_pass[g_pg_open].slot + 1];
 }
 static CENC pg_compute(void) {
-    pg_pass *p = pg_new(1, 2);
+    pg_pre_arm(); pg_pass *p = pg_new(1, 2);
     if (!p) { args_dirty_all(); return enc_c_begin(NULL); }
     p->draws = 0; args_dirty_all();
     CENC ce = enc_c_begin(NULL);   // Metal 4：开编码器后写起点，收编码器前写终点（pg_compute_end） | Metal 4: write the start point after opening the encoder, write the end point before ending it (pg_compute_end)
@@ -1960,7 +1981,7 @@ static void pg_host_end(id ce) {
     [(CENC)ce writeTimestampWithGranularity:MTL4TimestampGranularityPrecise intoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)g_pg_pass[g_pg_hopen].slot + 1]; g_pg_hopen = -1;
 }
 static void pg_host_render(const char *label) {
-    pg_pass *p = pg_new(2, PG_RSLOTS); if (!p) return;
+    pg_pre_arm(); pg_pass *p = pg_new(2, PG_RSLOTS); if (!p) return;
     p->draws = 0; strlcpy(p->load, label, sizeof p->load); g_pg_open = g_pg_np - 1;
 }
 // Where work that encodes its own passes (MetalFX, frame generation) runs between two of ours: an entry in the pass list (kind 3, label in load) with
@@ -1971,7 +1992,7 @@ static void hr_mark(const char *label) { pg_pass *p = pg_new(3, 0); if (p) { p->
 // hr_own_end right after; no encoder may be open. Like a note, it keeps DM_NVN_PASSGPU's pass indices as they were
 static int g_hr_own = -1;
 static void hr_own_begin(const char *label) {
-    pg_pass *p = pg_new(4, 2); g_hr_own = -1; if (!p || !g_cb) return;
+    g_pg_pre = -1; pg_pass *p = pg_new(4, 2); g_hr_own = -1; if (!p || !g_cb) return;   // its own start mark is such a mark already
     p->draws = 0; strlcpy(p->load, label, sizeof p->load); g_hr_own = p->slot;
     [(CBUF)g_cb writeTimestampIntoHeap:g_pg_buf[g_pg_b] atIndex:(NSUInteger)p->slot];
 }
@@ -8476,7 +8497,7 @@ void mtl_wait_state_dump(void) {
 // ---------- Hang recorder: the record (hr_dump, hr_slow) ----------
 // The scene, from the host (diag.c: area, position, life, monsters, panel, loading screen); a build without one (the graphics tests) gets this
 __attribute__((weak)) void dm_hang_scene(char *o, size_t n) { strlcpy(o, "not known (no host)", n); }
-typedef struct { int known, passes, finished, notes, presents_waiting, presents_drawn, entered; char first_open[16], prev_done[16]; } hr_verdict;   /* entered: first_open is work marked from the command buffer and its start mark is in */   // what hr_dump found (tests); prev_done: the last pass with an end mark before first_open
+typedef struct { int known, passes, finished, notes, presents_waiting, presents_drawn, entered, at_n; char first_open[16], prev_done[16], at[16]; } hr_verdict;   /* at / at_n: by the marks written before passes, the first pass the GPU may be on and how many passes that bracket holds (0 = no such mark is in) */   /* entered: first_open is work marked from the command buffer and its start mark is in */   // what hr_dump found (tests); prev_done: the last pass with an end mark before first_open
 static _Atomic uint64_t g_hr_slow_n; static char g_hr_slow_top[16];   // hr_slow's count and the label (or kind) of the longest pass it last saw (tests)
 static const char *hr_pass_label(const pg_pass *p) { return p->kind >= 2 ? p->load : p->kind ? "compute" : "render"; }
 static void hr_pass_what(const pg_pass *p, char *o, size_t n) {
@@ -8518,6 +8539,18 @@ static void hr_report(uint64_t fence, hr_verdict *v) {
     if (front >= 0 && r.ps[front].kind == 4 && s[front] == 1) MLOG("[hang]   the GPU entered #%d (%s) and has not left it: its start mark comes from the command buffer, which writes it only once all work before it is complete", front, hr_pass_label(&r.ps[front]));
     else if (front >= 0 && prev >= 0) MLOG("[hang]   the GPU is on #%d, or still on #%d before it: an end mark can be written early, while its block runs, and rewritten when it ends", front, prev);
     else MLOG("[hang] submission %llu (frame %llu): all its %d passes finished; the GPU is past them (on what was encoded after the last one, or on the submission's end)", (unsigned long long)fence, (unsigned long long)r.frame, np);
+    {   // the exact bracket: the last pass whose before-mark is in (everything before it is complete) and the next pass whose before-mark is not
+        int reach = -1, stop = -1, any = 0;
+        for (int i = 0; i < n; i++) { const pg_pass *p = &r.ps[i]; int ps = p->pre >= 0 ? p->pre : p->kind == 4 ? p->slot : -1; if (ps < 0) continue; any = 1; if (t[ps]) { reach = i; stop = -1; } else if (stop < 0) stop = i; }
+        int between = 0; for (int i = reach < 0 ? 0 : reach; i < (stop < 0 ? n : stop); i++) if (s[i] >= 0) between++;
+        if (!any) MLOG("[hang]   no pass of this submission has a mark before it (DM_HANGREC_PRE=0, or the marks ran out)");
+        else if (reach < 0) MLOG("[hang]   exact: no mark before any pass is in, so the GPU has not finished the work before #%d, this submission's first marked pass", stop);
+        else if (stop < 0) MLOG("[hang]   exact: all work before #%d (%s) is complete and no marked pass follows it: the GPU is on it, on the %d after it, or on the submission's end", reach, hr_pass_label(&r.ps[reach]), between - 1);
+        else if (between <= 1) MLOG("[hang]   exact: the GPU is on #%d (%s): all work before it is complete and it has not finished, by the marks the command buffer writes before #%d and #%d", reach, hr_pass_label(&r.ps[reach]), reach, stop);
+        else { int lastp = reach; for (int i = reach; i < stop; i++) if (s[i] >= 0) lastp = i;
+            MLOG("[hang]   exact: the GPU is on one of the %d passes #%d to #%d (%s first): all work before #%d is complete, the work before #%d is not", between, reach, lastp, hr_pass_label(&r.ps[reach]), reach, stop); }
+        if (v) { v->at_n = reach >= 0 ? between : 0; if (reach >= 0) strlcpy(v->at, hr_pass_label(&r.ps[reach]), sizeof v->at); }
+    }
     if (v) { v->known = 1; v->passes = np; v->finished = fin; v->notes = notes; v->entered = front >= 0 && r.ps[front].kind == 4 && s[front] == 1; if (front >= 0) strlcpy(v->first_open, hr_pass_label(&r.ps[front]), sizeof v->first_open);
         if (prev >= 0) strlcpy(v->prev_done, hr_pass_label(&r.ps[prev]), sizeof v->prev_done); }
     int from = n, upto = front >= 0 ? front : n - 1;   // show from two finished passes before the first unfinished one (or the end), through two after it

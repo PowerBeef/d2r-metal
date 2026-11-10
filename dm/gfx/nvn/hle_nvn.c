@@ -1898,6 +1898,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
         trow(f, "@lib_new", (double)(lib_ - plib)); trow(f, "@pso_new", (double)(pso_ - ppso));
         static uint64_t ppl, ppd; uint64_t pl_, pd_; mtl_pso_async_stats(&pl_, &pd_);   // pipelines built off the frame that landed, and draws left out while waiting for one
         trow(f, "@pso_waited", (double)(pl_ - ppl)); trow(f, "@pso_wait_draws", (double)(pd_ - ppd)); ppl = pl_; ppd = pd_;
+        { static uint64_t prn, prc, pra; uint64_t rn_, rc_, ra_; mtl_res_stats(&rn_, &rc_, &ra_); trow(f, "@res_commit_ms", (rn_ - prn) / 1e6); trow(f, "@res_changes", (double)(rc_ - prc)); trow(f, "@res_adds", (double)(ra_ - pra)); prn = rn_; prc = rc_; pra = ra_; }   // the residency set: time in its commits this frame, allocations added or removed
         {   // 长帧日志：本帧各项先记进环，等 8 帧后 GPU 时间到了再决定打不打（见下） | long-frame log: this frame's items are first recorded into the ring; whether to print is decided 8 frames later, once the GPU time has arrived (see below)
             static uint64_t plns, ppns, pup, prup, pub; uint64_t lns, pns, up, rup, ub; mtl_create_ns(&lns, &pns); mtl_pkg_stats(&up, &rup); ub = mtl_upload_bytes();
             lf_rec *r = &g_lf[f % LFN]; r->f = f; r->fr = fr; r->nv = nv; r->ls = g_nvn_loadscreen_up ? g_nvn_loadscreen_up() : 0; r->t_s = (now_ns() - g_t0_ns) / 1e9; r->pso = (unsigned)(pso_ - ppso); r->lib = (unsigned)(lib_ - plib);

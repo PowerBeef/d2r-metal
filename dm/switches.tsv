@@ -107,6 +107,7 @@ DM_GRANNY_VERIFY	host	host/hle_granny.c	-
 DM_GUEST_SPAWN_TEST	host	host/hle_guestthread.c	-
 DM_HANGREC	gfx	gfx/nvn/nvn_mtl.m	y
 DM_HANGREC_EARLY_S	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_hangrec.m	y
+DM_HANGREC_PRE	gfx	gfx/nvn/nvn_mtl.m	y
 DM_HANGREC_SLOW_MS	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_hangrec.m	y
 DM_HEAT	ios	ios/Sources/front_ios.m	-
 DM_HIDDEN_HZ	gfx	gfx/nvn/hle_nvn.c	-

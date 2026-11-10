@@ -157,6 +157,7 @@ void xv_test_counts(int *dc, int *viol);
 int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1);   // 该帧最早 GPUStart / 最晚 GPUEnd（mach 绝对时间 ns）；未全部完成或无 GPU 时间返回 0 | The frame's earliest GPUStart / latest GPUEnd (mach absolute time, ns); returns 0 if not all complete or there is no GPU time
 void mtl_stats(uint64_t *passes, uint64_t *draws);
 void mtl_args_stats(uint64_t *enc, uint64_t *reuse);
+void mtl_res_stats(uint64_t *ns, uint64_t *changes, uint64_t *adds);   // time spent committing the residency set and the allocations added or removed in those commits (nvn_mtl.m)
 void mtl_pso_async_stats(uint64_t *landed, uint64_t *draws);   // pipelines built off the frame that landed / draws left out while waiting (nvn_mtl.m)
 void mtl_drvcache_stats(uint64_t *built, uint64_t *reused);   // driver-segment blocks built / reused within their submission (nvn_mtl.m)
 void mtl_quadrun_stats(uint64_t *runs, uint64_t *quads);   // 2D quad runs (nvn_mtl.m): runs drawn as one draw / quads merged into them

@@ -34,11 +34,11 @@ static CENC open_enc(void) {
 static uint64_t submit_spin(uint32_t n) {
     static const op_hdr end = {OP_END, 8}; uint64_t eh = (uint64_t)(uintptr_t)&end;
     mtl_sub_begin(); mtl_sub_index(&eh, 1); mtl_exec_rest(NULL, 0); mtl_exec((const uint8_t *)&end); mtl_exec_rest(NULL, 0);
-    CENC ce = open_enc(); spin_block(ce, 0, "quick", 1000);
+    pg_pre_arm(); CENC ce = open_enc(); spin_block(ce, 0, "quick", 1000);   // a mark before each encoder: "quick" and "tail" carry one, "spin" shares quick's encoder
     [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
     spin_block(ce, 1, "spin", n); m4_end(ce);
     hr_mark("mark");
-    CENC c2 = open_enc(); spin_block(c2, 2, "tail", 1000); m4_end(c2);
+    pg_pre_arm(); CENC c2 = open_enc(); spin_block(c2, 2, "tail", 1000); m4_end(c2);
     return mtl_sub_commit();
 }
 // One submission whose middle block is work we cannot mark from inside (as MetalFX and frame generation are): "quick", then an unmarked block of
@@ -46,12 +46,12 @@ static uint64_t submit_spin(uint32_t n) {
 static uint64_t submit_own(uint32_t n) {
     static const op_hdr end = {OP_END, 8}; uint64_t eh = (uint64_t)(uintptr_t)&end;
     mtl_sub_begin(); mtl_sub_index(&eh, 1); mtl_exec_rest(NULL, 0); mtl_exec((const uint8_t *)&end); mtl_exec_rest(NULL, 0);
-    CENC ce = open_enc(); spin_block(ce, 0, "quick", 1000); m4_end(ce);
+    pg_pre_arm(); CENC ce = open_enc(); spin_block(ce, 0, "quick", 1000); m4_end(ce);
     hr_own_begin("own");
     CENC c1 = open_enc(); uint32_t *w = (uint32_t *)((uint8_t *)g_buf.contents + 64); w[1] = 54321u; w[2] = n;
     [g_at setAddress:g_buf.gpuAddress + 64 atIndex:0]; [c1 dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)]; m4_end(c1);
     hr_own_end();
-    CENC c2 = open_enc(); spin_block(c2, 2, "tail", 1000); m4_end(c2);
+    pg_pre_arm(); CENC c2 = open_enc(); spin_block(c2, 2, "tail", 1000); m4_end(c2);
     return mtl_sub_commit();
 }
 static double secs(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9; }
@@ -90,6 +90,7 @@ int main(void) {
         EXPECT("quick has its end mark, and the busy block has none or an early one", 1, v.finished == 1 || v.finished == 2);
         EXPECT("the record names the busy block: as the first without an end mark, or as the one the GPU may still be on", 1,
                early ? !strcmp(v.first_open, "tail") && !strcmp(v.prev_done, "spin") : !strcmp(v.first_open, "spin") && !strcmp(v.prev_done, "quick"));
+        EXPECT("the marks before the encoders bracket it: the first encoder's two blocks, never the tail", 1, v.at_n == 2 && !strcmp(v.at, "quick"));
         EXPECT("the busy submission finishes", 1, mtl_wait(f, 5000000000ull));
         printf("it took %.0f ms\n", (secs() - t0) * 1e3);
         for (int i = 0; i < 100 && atomic_load(&g_hr_slow_n) == slow0; i++) usleep(10 * 1000);   // its feedback runs on Metal's queue
@@ -108,6 +109,7 @@ int main(void) {
         EXPECT("only quick finished", 1, v.finished);
         EXPECT("the record names the unmarked block as the first not finished", 1, !strcmp(v.first_open, "own"));
         EXPECT("and says the GPU has entered it", 1, v.entered);
+        EXPECT("the exact bracket is that block alone", 1, v.at_n == 1 && !strcmp(v.at, "own"));
         EXPECT("that submission finishes", 1, mtl_wait(f, 5000000000ull));
         for (int i = 0; i < 100 && atomic_load(&g_hr_slow_n) == slow0; i++) usleep(10 * 1000);
         EXPECT("its feedback reported a slow submission", 1, atomic_load(&g_hr_slow_n) - slow0);

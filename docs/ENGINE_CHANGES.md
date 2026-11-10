@@ -421,7 +421,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Setting:** none
 - **Switch:** DM_NVN_BINDFILT, DM_NVN_BINDFILT_BUF (0 records every buffer and sampler bind, 2 verify: each bind the filter would drop is compared at replay with the slot it would store into, a difference is a red line)
 - **Test:** t_ub, t_nvn, quadrun_verify
-- **Commit:** 3178a1b
+- **Commit:** 3178a1b, d09708a
 - **Measured:** Binds -57%, submit-thread instructions -13%, replay -10% (M6, 2026-10-27). Buffer and sampler binds, in-process A/B, M6, headless camp, 10 pairs, 2026-11-10: 1.05 million fewer instructions a frame on the translation thread (0.91 to 1.19), about 5%; process CPU within noise (-0.32 ms, interval -0.87 to +0.14). Verify mode: 3.7 million binds in the camp and 19.4 million over the 43-area tour, none differed. An earlier try (2026-11-09) measured the thread in cycles (-2.6%) and was removed as too small. Until the host of r54 the depth-stencil state and the program shared one "seen" bit, so a recording's first program bind after a depth-stencil bind could be dropped when it equalled the previous recording's last program; it never happened in a measured run (0 of 11,884 recordings) and is fixed (t_nvn 11a).
 - **Status:** confirmed
 - **Covers:** none
@@ -793,10 +793,10 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-059 A GPU that stops taking work
 - **Layer:** host take-over
 - **Engine:** Waits on the GPU without a limit.
-- **Ours:** A watchdog: with work waiting and no main submission finished for 10 s, the GPU is taken as lost. Nothing more is sent to it, every wait on it returns, and the front end saves and quits; the next launch tells the player. A hang recorder keeps a timestamp per pass, marks around MetalFX and frame generation and a log of the last queue operations, and prints them 2 s into such a stall and again when the GPU is taken as lost.
+- **Ours:** A watchdog: with work waiting and no main submission finished for 10 s, the GPU is taken as lost. Nothing more is sent to it, every wait on it returns, and the front end saves and quits; the next launch tells the player. A hang recorder keeps two timestamps per pass, one the command buffer writes before each pass (in only once all earlier work is complete, so the record can say exactly which pass the GPU is on), marks around MetalFX and frame generation and a log of the last queue operations, and prints them 2 s into such a stall and again when the GPU is taken as lost.
 - **Why:** The Mac's GPU driver has hung for about 4 s, and once for good with the display off; the game then waited for ever and could not save. The cause is not known (`dm/verify/debugging.md` "The GPU hangs for 4 s").
 - **Setting:** none
-- **Switch:** DM_GPU_LOST_S (0 turns the watchdog off), DM_HANGREC, DM_HANGREC_EARLY_S, DM_HANGREC_SLOW_MS
+- **Switch:** DM_GPU_LOST_S (0 turns the watchdog off), DM_HANGREC, DM_HANGREC_PRE, DM_HANGREC_EARLY_S, DM_HANGREC_SLOW_MS
 - **Test:** gpu_lost, t_gpu_lost, t_hangrec
 - **Commit:** da472b3, 6f7cddd, 0a944cf
 - **Measured:** The recorder on against off, town_loop on the Mac App at Recommended, 6 + 6 ABBA: no measurable difference, every p at least 0.23 (M6, 2026-11-09). The watchdog has never fired on a real hang; its test stalls the GPU on purpose.
@@ -809,7 +809,7 @@ The port runs only on Metal 4 (macOS and iOS 27 and later, decided 2026-10-27). 
 
 - **Queues and allocators:** one `MTL4CommandQueue` for replay; presents go on a second one on iPhone and iPad and share the replay's on Macs, where a second queue hung the GPU (EC-053). There are `MTL4CommandAllocator`s per frame in flight. Fences come from an `MTLSharedEvent`, so a game `Sync` only clears after the GPU has really finished.
 - **Argument tables:** vertex, fragment and compute each have an `MTL4ArgumentTable`, filled from each shader's reflection. Encodes came to about one per draw (M6, 2026-11-07). Since 2026-11-10 a table write that repeats what the table already holds is skipped and the encode's lookups are cheaper (EC-058); encodes per draw have not been counted again.
-- **Residency:** one residency set per device, holding every pool buffer and texture, attached to the queues. A new pool is committed on the spot, before any command buffer that can reach it.
+- **Residency:** one residency set per device, holding every pool buffer and texture, attached to the queues. A new pool is committed on the spot, before any command buffer that can reach it. A commit costs about 5 µs per allocation added and 4 µs per one removed: 0.9 ms in the median frame of an area change, 0.13 ms a frame over a tour of 43 areas (M6, 2026-11-10; `@res_commit_ms`, `@res_changes`, `@res_adds` in the frame table).
 - **Barriers:** explicit, at two levels (EC-031). The game's own deferred barriers come through as at most one per draw, dispatch or pass.
 - **Tile work:** load, store and pass merging (EC-049). There are no heaps, memoryless targets, indirect command buffers, mesh or tile shaders.
 - **Pipelines:** still built through the device path, warmed in the background (EC-050); an effect's missing pipeline is built off the frame while its draws wait (EC-057). `MTL4Compiler` is used only for MetalFX.
@@ -838,6 +838,8 @@ Ideas that broke the picture or the game, or measured nothing at all. Listed so 
 | Bloom mode 2 | Misfires our quarter-size bloom | 2026-11-05 |
 | Game sharpening over MetalFX | Over-sharpens | 2026-10-27 |
 | Negative mip bias under the temporal scaler | Nothing measurable | 2026-11-04 |
+| Asking for residency right after the residency set's commit (`requestResidency`) | Over the 43-area tour at Recommended the commits took the same time (1.19 against 1.22 s in all) and the frames after an area change no less GPU time; removed | 2026-11-10 |
+| Folding a clear-only pass into the next pass's load | The clear-only passes store 57 MB a frame but take under 0.012 ms each, and the one pass that loads what such a pass stored takes 0.014 ms in all: about 0.01 ms to gain on an M6; not built. A phone may differ | 2026-11-10 |
 | Thread quality of service by role | No energy change on the Mac | 2026-10-27 |
 
 ## Measured small, open again
