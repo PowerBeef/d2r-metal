@@ -746,7 +746,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Setting:** none
 - **Switch:** DM_PIPESET (0 off, 1 on, 2 verify: every set the fast path would skip is compared with what the recording last bound, a difference is a red line)
 - **Test:** t_nvn, pipeset_verify, structck
-- **Commit:** this commit
+- **Commit:** a09f480
 - **Measured:** In-process A/B, M6, 2026-11-09, 20 paired phases each. Off against on, headless camp: process CPU +0.39 ms a frame (+2.6%), main thread +0.12 ms (+3.3%), translation thread +4.7% cycles, energy +5.9%. At Recommended (2560 x 1440, Temporal, Frame Generation): process CPU +0.38 ms (+2.2%), main thread +0.16 ms (+3.9%), energy +7.4% (interval 3 to 12%). NVN calls a frame 23,950 to 12,476 on the walk into the Blood Moor. Verify mode: about 8.3 million sets checked over camp, moor, a fight, a dungeon, panels and a crowd, none differed. No iPhone measurement.
 - **Status:** confirmed
 - **Covers:** main+0x1746558, main+0x1746788, KPIPESET
