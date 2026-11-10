@@ -47,6 +47,52 @@ def connect(path=None):
     db = sqlite3.connect(str(path)); db.executescript(SCHEMA); return db
 
 
+class Index:
+    """Read side of the snapshot for reports: what an address is, a function's arguments by register, a structure's field at an offset."""
+    def __init__(self, path=None):
+        p = Path(path) if path else LIVE / 'index.sqlite'
+        self.db = sqlite3.connect(str(p)) if p.exists() else None
+
+    def one(self, q, *a):
+        return self.db.execute(q, a).fetchone() if self.db else None
+
+    def meta(self):
+        return dict(self.db.execute('select key, value from meta')) if self.db else {}
+
+    def function(self, off):
+        """(entry, size, name) of the function holding off, or None."""
+        r = self.one('select off, size, name from functions where off <= ? order by off desc limit 1', off)
+        return r if r and off < r[0] + max(r[1], 4) else None
+
+    def args(self, func):
+        """{register number: (name, type)} of a function's register parameters (storage x<n> / w<n>)."""
+        out = {}
+        for name, typ, st in (self.db.execute('select name, type, storage from params where func = ? order by ord', (func,)) if self.db else ()):
+            reg = st.split(':')[0]
+            if reg[:1] in 'xw' and reg[1:].isdigit(): out[int(reg[1:])] = (name, typ)
+        return out
+
+    def field(self, typ, off):
+        """'Struct.field' for an offset into the structure a pointer type names, or None."""
+        st = typ.replace('*', '').strip()
+        r = self.one('select name, off from fields where struct = ? and off <= ? and off + size > ? order by off desc limit 1', st, off, off)
+        return f"{st}.{r[0]}" + (f'+{off - r[1]:#x}' if off != r[1] else '') if r else None
+
+    def call(self, off):
+        """(function, target or None) when off is a call site."""
+        return self.one('select func, target from calls where off = ?', off)
+
+    def never_hook(self, off):
+        r = self.one('select why from never_hook where off = ?', off); return r[0] if r else None
+
+    def leaders(self, func):
+        return [r[0] for r in self.db.execute('select off from blocks where func = ? order by off', (func,))] if self.db else []
+
+    def entries(self, lo=0, hi=1 << 40):
+        """Function entries from the image part (the product's own function table)."""
+        return [r[0] for r in self.db.execute('select distinct func from blocks where func >= ? and func < ? order by func', (lo, hi))] if self.db else []
+
+
 def scan_function(insns, start, end):
     """Block leaders and call sites of one function from its decoded instructions (address, mnemonic, operand text).
     A leader is the entry, a branch's target inside the function and whatever follows a branch or return (a call's return point is not one).

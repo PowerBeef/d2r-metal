@@ -80,6 +80,9 @@ case "$cmd" in
     need_free
     "$DM_ROOT/build/cache/dm/venv/bin/python" -I "$HERE/live_index.py" image && "$PY" -I "$HERE/live_index.py" ghidra "$@"
     ;;
+  ingest)   # a live run's findings into the project as evidence (ingest.py): comments, computed-call references, coverage bookmarks
+    need_free; "$PY" -I "$HERE/ingest.py" "$@"
+    ;;
   live-decomp)
     need_free; "$PY" -I "$HERE/live_index.py" decomp "$@"
     ;;

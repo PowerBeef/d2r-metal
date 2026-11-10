@@ -455,7 +455,7 @@ class Runner:
     # 步骤 | steps
     def ctl(self, cmdname, **kw):   # 参数可能就叫 name（mark、tap_ui）：命令名用别的名字 | an argument may be called name (mark, tap_ui): the command name uses another name
         if cmdname == 'screenshot' and 'path' in kw: kw['path'] = self.backend.shot_path(kw['path'])
-        raw = ('at', 'chain', 'write') if cmdname == 'mem' else ('at', 'cap', 'filt', 'name', 'hook', 'file', 'chain', 'watch') if cmdname == 'live' else ()   # hex text: write=03 must not become the number 3; a live hook's spec stays text
+        raw = ('at', 'chain', 'write') if cmdname == 'mem' else ('at', 'cap', 'filt', 'name', 'hook', 'file', 'chain', 'watch', 'type') if cmdname == 'live' else ()   # hex text: write=03 must not become the number 3; a live hook's spec stays text
         args: dict[str, Any] = {k: v if k in raw else value(v) if not isinstance(v, (int, float, bool)) else v for k, v in kw.items()}
         return self.cc.cmd(cmdname, reply_timeout=float(kw.get('timeout', 0) or 0) + 120, **args)
 

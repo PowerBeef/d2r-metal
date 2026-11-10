@@ -69,6 +69,26 @@ python3 dm/tools/re/live_index.py stats      # row counts and what built it
 - **From the project** (`live_index.py ghidra`): every function with its size and prototype, each parameter's name, type and register (`functions`, `params`), and the `/dm` structures and enums with their fields (`structs`, `fields`, `enums`).
 - `meta` records the product and when each part was built; rebuild after `re.sh seed` or a product change.
 
+## Live runs: the run store, reports, the write-back and the MCP server
+
+A live run is a folder of `$DM_ROOT/re/live/runs/<time>_<name>/` holding everything one run of the game with the hooks on produced (`run.json`: the host commit, the product and whether the snapshot matches it; the scenario; the records, the census, the coverage files; `summary.json`). Commands take a run's name, `latest` or nothing.
+
+```bash
+python3 dm/tools/re/live.py run <scenario.scn> [--name N]     # headless CLI host with DM_LIVE=1 into a new run, then the report
+python3 dm/tools/re/live.py report [run]                      # hooks with typed arguments and callers, watchpoint writers, census, coverage, edges
+python3 dm/tools/re/live.py edges [run]                       # computed call sites resolved by the recorded callers → edges.tsv
+python3 dm/tools/re/live.py propose [run] a.tsv b.tsv --label walking   # functions that ran only in b → re/live/proposals.tsv (leads for review)
+python3 dm/tools/re/live.py view [run] main+0x…               # decompiled lines with coverage, hits and values → re/live/view/<run>/<offset>.html
+dm/tools/re/re.sh ingest [run] [--dry-run]                    # the findings into the project (server stopped)
+dm/tools/re/re.sh ingest [run] --unknown u-…-NN --resolution "what the run showed" [--status contradicted]
+```
+
+- **Typed values.** A hook on a function's first instruction lists the function's register arguments from the snapshot with their most frequent values. Most prototypes in the map are still the analysis's guesses, so say what a register points at in the hook itself: `type=x0:Unit` (the engine ignores it) makes `cap=[x0+0x4].w` read as `Unit.class_id`.
+- **Edges.** A recorded call whose return address follows a call through a register names that site's target (a job runner reaching its jobs, a vtable call reaching its method). Record callers with `live.py trace-spec --records N` over a range.
+- **The view** is a local file with decompiled text: it stays on this machine. It needs the function's decompile cache, built on demand when the query server is stopped.
+- **`re.sh ingest`** writes a `[live: <run>]` comment on each function a hook recorded, a computed-call reference for each resolved edge (so `q xrefs` and call graphs show it) and a `dm-live` bookmark on each function coverage saw run. It names and types nothing: names stay a person's decision. With `--unknown` it also closes a row of the unknowns ledger with a `[probed: <run>, <product>]` resolution and runs `unknowns.py check`. It refuses a run made on another product than the snapshot's.
+- **`live_mcp.py`** is the same as tools for a Claude Code session, plus a game kept alive between calls: `game_start` / `game_step` (one scenario line: `live do=add …`, `stick 0 1 frames=60`, `state`) / `game_stop`, `run_scenario`, `lookup`, `struct`, `report`, `counts`, `cover`, `cover_diff`, `edges`, `view`, `ingest`. Register it from the main checkout: `claude mcp add dm-live -s local -- "$DM_ROOT/re/venv/bin/python" -I "$PWD/dm/tools/re/live_mcp.py"`.
+
 ## What `seed` writes
 
 All of it is re-runnable; hand-given names (Ghidra's `USER_DEFINED`) are never overwritten.
@@ -107,4 +127,7 @@ Each step stamps what it used as it runs (`log/stamps.json`): `import` the game 
 | `test_export.py` | Unit test of the export's provenance rules (curated, bulk, seeded and analysis names) |
 | `addrcheck.py`, `test_addrcheck.py` | Checks the `main+0x…` addresses cited in the sources against the game's function table and the export; unit test on synthetic data |
 | `live_index.py`, `test_live_index.py` | The live snapshot (`re.sh live-index`, `live-decomp`): blocks, call sites and rewritten addresses from the product's image; functions, prototypes and `/dm` types from the project; the decompile cache. Unit test on synthetic data |
+| `ingest.py` | Writes a live run's findings into the project (`re.sh ingest`): comments, computed-call references, coverage bookmarks, the unknowns ledger |
+| `live_mcp.py` | The MCP server `dm-live`: the reports and a game kept alive between calls, for a Claude Code session |
+| `test_live.py` | Unit test of the report and write-back logic on synthetic records and a hand-built snapshot |
 | `live.py` | Reads the live hooks' output (`dm/host/dm_live.c`, `DM_LIVE=1`; `dm/verify/debugging.md` "Live hooks"): `summary` per hook and watchpoint (records, threads, rate, callers named through `guestsyms.py`, return durations, capture values, writers) and `dump`; `blocks` and `trace-spec` write the block list for coverage and the per-function list for the call-trace mode; `counts`, `cover` and `cover-diff` report them. Its output names game functions: it stays in the run folder or under `$DM_ROOT/re` |

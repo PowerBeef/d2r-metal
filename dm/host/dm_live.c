@@ -579,7 +579,7 @@ static int cmd_live(const ctl_args *a, char *out, size_t cap, char *err, size_t 
     if (!attach_main(err, ecap)) return 0;
     const char *d = dm_ctl_get(a, "do"); if (!d) d = "add";
     if (!strcmp(d, "add")) {
-        char spec[1024] = ""; static const char *const keys[] = {"at", "kind", "cap", "filt", "max", "every", "rate", "count", "name"};
+        char spec[1024] = ""; static const char *const keys[] = {"at", "kind", "cap", "filt", "max", "every", "rate", "count", "name", "type"};   // type: a hint for live.py (x0:Unit), carried in the hooks table
         for (unsigned i = 0; i < sizeof keys / sizeof *keys; i++) { const char *v = dm_ctl_get(a, keys[i]); if (v) { size_t l = strlen(spec); snprintf(spec + l, sizeof spec - l, "%s%s=%s", l ? " " : "", keys[i], v); } }
         int id = dm_live_add(spec, err, ecap); if (id < 0) return 0;
         snprintf(out, cap, ",\"hook\":%d,\"name\":\"%s\"", id, g_hooks[id].name); LOG("live hooks: %d armed: %s", id, spec); return 1;
