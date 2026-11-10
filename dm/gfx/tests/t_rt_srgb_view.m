@@ -53,6 +53,6 @@ int main(void) { @autoreleasepool {
     EXPECT("呈现：另一张交换链贴图各自一个视图", 1, v2 != v && v2.parentTexture == s2);
     id<MTLTexture> plain = tex_mtl(&t);
     EXPECT("呈现：非 sRGB 交换链原样采样", 1, present_src(plain) == plain);
-    EXPECT("全程没有报红", 0, g_red_once[48] + g_red_once[49] + g_red_once[50]);
+    EXPECT("全程没有报红", 0, atomic_load(&g_red_once_n));
     printf("== %d 项，失败 %d ==\n", count, fail); return fail != 0;
 } }

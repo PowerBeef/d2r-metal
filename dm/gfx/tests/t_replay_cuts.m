@@ -1,5 +1,6 @@
 // The translation thread's shortcuts (nvn_mtl.m): the pools a thread remembers (mtl_gpu_addr), the driver-segment blocks reused within a
-// submission (drv_block, g_tab_gen), and the argument-table writes that are skipped when they repeat (at_same). Each must give what the plain
+// submission (drv_block, g_tab_gen), the argument-table writes that are skipped when they repeat (at_same), and the faster scan of a
+// submission (sdx_walk against sdx_walk_ref). Each must give what the plain
 // path gives. No GPU work is submitted.
 #include "../nvn/nvn_mtl.m"
 #include <pthread.h>
@@ -85,6 +86,44 @@ static void at_cases(void) {
     g_atdedup = 0; at_same(0, 16, 0x7000); EXPECT("DM_NVN_ATDEDUP=0: always set", 0, at_same(0, 16, 0x7000)); g_atdedup = 1;
     EXPECT("what was set while it was off is remembered when it is on again", 1, at_same(0, 16, 0x7000));
 }
+// ---------- the submission scan (sdx_walk against sdx_walk_ref) ----------
+typedef struct { uint8_t *p; size_t n; } chain;
+static void emit(chain *c, unsigned op, const void *a, size_t n) { size_t z = (8 + n + 7) & ~7ull; op_hdr h = {op, (uint32_t)z}; memcpy(c->p + c->n, &h, 8); if (n) memcpy(c->p + c->n + 8, a, n); c->n += z; }
+static tex_t tex8(void) { static uint64_t ser = 9000; tex_t t = {.serial = ser++}; t.d.width = t.d.height = 8; t.d.depth = t.d.samples = 1; t.d.levels = 1; t.d.target = NVN_TEXTURE_TARGET_2D; t.d.format = NVN_FORMAT_RGBA8; return t; }
+static void bind2(chain *c, unsigned op, uint64_t h0, uint64_t h1) { p_bind_handles b = {.stage = 1, .first = 0, .n = 2}; b.h[0] = h0; b.h[1] = h1; emit(c, op, &b, sizeof b); }
+static void scan_cases(void) {
+    // a program whose fragment shader has six bindings, two of them textures (slots 0 and 1) and one an image (slot 2)
+    static prog_t pg; static NvProg *keep; memset(&pg, 0, sizeof pg); pg.serial = 7700; keep = [NvProg new];
+    NvShader *vs = [NvShader new], *fs = [NvShader new]; vs->stage = 0; fs->stage = 1; keep->sh[0] = vs; keep->sh[1] = fs; serial_put(pg.serial, keep);
+    fs->rf.nb = 6; fs->rf.b[0] = (nvn_rbind){.kind = NVN_RB_CBUF, .reg = 0}; fs->rf.b[1] = (nvn_rbind){.kind = NVN_RB_TEX, .reg = 0}; fs->rf.b[2] = (nvn_rbind){.kind = NVN_RB_SAMP, .reg = 0};
+    fs->rf.b[3] = (nvn_rbind){.kind = NVN_RB_TEX, .reg = 1}; fs->rf.b[4] = (nvn_rbind){.kind = NVN_RB_IMG, .reg = 2}; fs->rf.b[5] = (nvn_rbind){.kind = NVN_RB_CBUF, .reg = 3};
+    sdx_rd(fs); EXPECT("a shader's read slots: its two textures and its image, in binding order", 1, fs->rd_n == 3 && fs->rd_slot[0] == 0 && fs->rd_slot[1] == 1 && fs->rd_slot[2] == 130);
+    sdx_rd(vs); EXPECT("a shader with no texture binding reads no slot", 0, vs->rd_n);
+    // two render targets; texture 1601 is target A itself (a later pass reads what an earlier one drew), 1602 an ordinary texture
+    static tex_t A, B, T; A = tex8(); B = tex8(); T = tex8(); mtl_reg_tex(1601, &A, NULL); mtl_reg_tex(1602, &T, NULL);
+    chain c = {pages(1 << 16), 0}; p_draw d = {NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3}; p_bind_program bp = {&pg, 3};
+    p_set_rt ra = {.n = 1}; ra.color[0] = &A; p_set_rt rb = {.n = 1}; rb.color[0] = &B;
+    emit(&c, OP_SET_RT, &ra, sizeof ra); emit(&c, OP_BIND_PROGRAM, &bp, sizeof bp); bind2(&c, OP_BIND_TEX, 1602, 0); emit(&c, OP_DRAW, &d, sizeof d);
+    emit(&c, OP_SET_RT, &rb, sizeof rb); bind2(&c, OP_BIND_TEX, 1601, 1602); emit(&c, OP_DRAW, &d, sizeof d);
+    bind2(&c, OP_BIND_TEX, 1601, 1602); emit(&c, OP_DRAW, &d, sizeof d);                 // the same bind again: the shortcut
+    bind2(&c, OP_BIND_IMG, 1601, 0); bind2(&c, OP_BIND_TEX, 1601, 1602); emit(&c, OP_DRAW, &d, sizeof d);
+    emit(&c, OP_END, NULL, 0);
+    uint64_t hh = (uint64_t)(uintptr_t)c.p; setenv("DM_NVN_TBDR", "1", 1);
+    state_reset(); memset(&R, 0, sizeof R);
+    g_sdxfast = 0; mtl_sub_index(&hh, 1); uint32_t n_ref = g_sdx_n; int ok_ref = g_sdx_ok;
+    EXPECT("the reference scan indexes the stream", 1, ok_ref); EXPECT("and finds events (target A is read by the second pass)", 1, n_ref > 0);
+    g_sdxfast = 1; mtl_sub_index(&hh, 1);
+    EXPECT("the fast scan finds as many events", n_ref, g_sdx_n);
+    g_sdxfast = 2; uint64_t bad0 = g_sdxfast_bad, chk0 = g_sdxfast_checked; mtl_sub_index(&hh, 1);
+    EXPECT("both scans on the same submission: compared once", 1, g_sdxfast_checked - chk0); EXPECT("and they agree", 0, g_sdxfast_bad - bad0);
+    // the repeated bind must not hide a registration made in between: the same bind twice, the scan sees the serial of its time
+    g_sdxfast = 1; static tex_t T2; T2 = tex8();
+    chain c2 = {pages(1 << 16), 0}; bind2(&c2, OP_BIND_TEX, 1602, 0); bind2(&c2, OP_BIND_TEX, 1602, 0); emit(&c2, OP_END, NULL, 0); hh = (uint64_t)(uintptr_t)c2.p;
+    mtl_sub_index(&hh, 1); EXPECT("a bound texture's serial is in its slot", T.serial, g_pp_slot[1][0]);
+    mtl_reg_tex(1602, &T2, NULL); mtl_sub_index(&hh, 1); EXPECT("after the id is registered to another texture, the next scan reads the new serial", T2.serial, g_pp_slot[1][0]);
+    g_sdxfast = 2; bad0 = g_sdxfast_bad; mtl_sub_index(&hh, 1); EXPECT("and the two scans still agree", 0, g_sdxfast_bad - bad0);
+    g_sdxfast = 1;
+}
 int main(void) { @autoreleasepool { setvbuf(stdout, NULL, _IONBF, 0); mtl_init();
-    pool_cases(); drv_cases(); at_cases();
+    pool_cases(); drv_cases(); at_cases(); scan_cases();
     printf("== %d checks, %d failed ==\n", count, fail); return fail != 0; } }

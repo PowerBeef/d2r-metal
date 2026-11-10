@@ -228,6 +228,7 @@ DM_NVN_RT_RANGE_CHECK	gfx	gfx/nvn/rt_range_check.inc	-
 DM_NVN_RULER	gfx,host	gfx/nvn/nvn_mtl.m host/diag.c	y
 DM_NVN_RULER_NEG	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SAMPHIST	gfx	gfx/nvn/nvn_mtl.m	-
+DM_NVN_SDXFAST	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_SHMAP	gfx,host,ios	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m host/app_mac.m ios/Sources/main.m	y
 DM_NVN_SHOT	gfx	gfx/nvn/nvn_mtl.m gfx/tests/nvn_replay.m	y
 DM_NVN_SHOT_OUT	gfx	gfx/nvn/nvn_mtl.m	y

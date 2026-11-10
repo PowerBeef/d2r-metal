@@ -780,13 +780,13 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-058 Shortcuts on the translation thread
 - **Layer:** replay layer
 - **Engine:** Hands each call to its driver; none of this exists there.
-- **Ours:** Four shortcuts in the replay, none of which changes what is sent to the GPU. Hot lookups return unowned pointers, so nothing is retained and released per draw. Each thread remembers the last four memory pools it found, by the pool table's generation. The 2,560-byte driver-segment block of a stage is used again while the tables it copies have not changed. An argument-table write that repeats what the table holds is skipped.
+- **Ours:** Five shortcuts in the replay, none of which changes what is sent to the GPU. Hot lookups return unowned pointers, so nothing is retained and released per draw. Each thread remembers the last four memory pools it found, by the pool table's generation. The 2,560-byte driver-segment block of a stage is used again while the tables it copies have not changed. An argument-table write that repeats what the table holds is skipped. The scan that indexes each submission before it is replayed takes a draw's reads from a list of slots kept per shader, and does not apply a texture bind that repeats the last one for its stage.
 - **Why:** CPU work on the translation thread.
 - **Setting:** none
-- **Switch:** DM_NVN_POOLFAST, DM_NVN_DRVCACHE (each: 0 off, 1 on, 2 verify), DM_NVN_ATDEDUP
+- **Switch:** DM_NVN_POOLFAST, DM_NVN_DRVCACHE, DM_NVN_SDXFAST (each: 0 off, 1 on, 2 verify), DM_NVN_ATDEDUP
 - **Test:** t_replay_cuts, quadrun_verify
 - **Commit:** b17d8ac, a0158b7
-- **Measured:** M6, headless camp, 2026-11-10. Unowned lookups: 13,680 to 12,340 instructions per draw, the Objective-C runtime's share of the thread 11.4% to 1.7%. The other three together: 19.06 to 16.97 million instructions a frame (11% fewer); remembered pools alone 2.2 million (in-process A/B, 10 pairs), reused blocks 0.3 million. With EC-056, the camp with the automap open went from 27.2 to 19.65 million instructions a frame. A captured frame replays to the same digest with each on and off. No iPhone measurement.
+- **Measured:** M6, headless camp, 2026-11-10. Unowned lookups: 13,680 to 12,340 instructions per draw, the Objective-C runtime's share of the thread 11.4% to 1.7%. The other three together: 19.06 to 16.97 million instructions a frame (11% fewer); remembered pools alone 2.2 million (in-process A/B, 10 pairs), reused blocks 0.3 million. The faster scan: 0.36 million fewer (0.20 to 0.53, 10 pairs), compared with the reference scan over 9,605 submissions of the 43-area tour with no difference. With EC-056, the camp with the automap open went from 27.2 to 19.65 million instructions a frame. A captured frame replays to the same digest with each on and off. No iPhone measurement.
 - **Status:** confirmed
 - **Covers:** none
 
