@@ -82,6 +82,7 @@ Also, besides diagnostics, `diag.c` holds the entry hook of every server tick: w
 |---|---|
 | `dm_potpick.c` | Picks up matching potions automatically when the belt is not full |
 | `dm_beltauto.c` | Refills the belt with potions when the inventory is opened |
+| `dm_bootlist.c` | Learns which data blocks the game decodes before its main menu and writes the list beside the saves, so the next launch decodes them ahead of the game (`hle_tact.c`, `hle_granny.c`) |
 | `dm_dropfilter.c` | The light beam and landing sound for high-value drops |
 | `dm_drophaptic.c` | Haptic feedback when a high-value item lands, in three strengths |
 | `dm_townwp.c` | Entering a game, or a quick restart, puts you next to the town waypoint |

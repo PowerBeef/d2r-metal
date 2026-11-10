@@ -737,6 +737,7 @@ int64_t dm_data_logical_size(const char *hostpath, int64_t phys_size) {   // 列
     char hp2[1100]; if (snprintf(hp2, sizeof hp2, "%s.holes", hostpath) >= (int)sizeof hp2) return phys_size;
     FILE *f = fopen(hp2, "r"); if (!f) return phys_size; long long size = -1; int ok = fscanf(f, "size %lld", &size) == 1; fclose(f); return ok && size >= 0 ? size : phys_size;
 }
+void dm_data_forget_fd(int fd) { if (fd >= 0 && fd < 4096 && g_hm[fd]) { holemap *m = g_hm[fd]; g_hm[fd] = NULL; free(m->log); free(m->len); free(m->phys); free(m); } }
 ssize_t dm_data_pread(int fd, void *buf, size_t n, off_t off) {   // 语义同 pread（可能短读）；剔零档案按区段表换算 | Same semantics as pread (may short-read); zero-stripped archives are translated through the extent table
     holemap *m = fd >= 0 && fd < 4096 ? g_hm[fd] : NULL;
     if (!m) return pread(fd, buf, n, off);
@@ -765,6 +766,8 @@ ssize_t dm_data_pread(int fd, void *buf, size_t n, off_t off) {   // 语义同 p
     }
     return (ssize_t)done;
 }
+void (*g_fs_open_hook)(int fd, const char *hostpath);
+void (*g_fs_read_hook)(int fd, int64_t off, const void *buf, size_t n);
 HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Result, h_fs_OpenFile, uint64_t *out, const char *path, int mode) {
     int wr = (mode & (MODE_WRITE | MODE_APPEND)) != 0; if (wr) t_wopen_failed_txn = 0;
     PATH_LOCK(); char hp[1024]; int ro = 0;
@@ -779,6 +782,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
     g_fmode[fd] = (uint8_t)mode; *out = (uint64_t)fd; g_fd2s[fd] = (mode & (MODE_WRITE | MODE_APPEND)) && is_d2s(path);
     if (fd < 4096) g_hm[fd] = NULL;   // 区段表只登记前 4096 个 fd（同 dm_data_note_fd / CloseFile），iOS 软上限 4096、Mac 缺省 256，再大的 fd 也可能有（F-SAVE-13） | the extent table only covers the first 4096 fds (same as dm_data_note_fd / CloseFile); the iOS soft limit is 4096 and the Mac default 256, but larger fds are possible (F-SAVE-13)
     if (!(mode & (MODE_WRITE | MODE_APPEND))) dm_data_note_fd(fd, hp);
+    { void (*oh)(int, const char *) = g_fs_open_hook; if (oh) oh(fd, hp); }   // every open: an fd number is used again, and the observer must forget what it stood for
     { const char *c = strchr(path, ':'); size_t ln = c ? (size_t)(c - path) : 0; g_fsave[fd] = 0;
       for (int i = 0; c && i < g_nmnt; i++) if (strlen(g_mnt[i].name) == ln && !strncmp(g_mnt[i].name, path, ln)) g_fsave[fd] = g_mnt[i].commit[0] != 0; }
     fslog_init();
@@ -797,6 +801,7 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
         got += r;
     }
     *out = got;
+    { void (*rh)(int, int64_t, const void *, size_t) = g_fs_read_hook; if (rh) rh((int)h, off, buf, got); }
     if (g_flag.bootprof) dm_prof_add(PROF_FS_READ, now_ns() - t0, got);
     if (g_fslog) { pthread_mutex_lock(&g_fslog_lock);
         static int hash_on = -1; if (hash_on < 0) hash_on = getenv("DM_FSLOG_HASH") != NULL;   // DM_FSLOG_HASH=1：末尾加一列读到内容的 FNV-1a 64（对比两份资源包读到的字节是否一致） | DM_FSLOG_HASH=1: append a column with the FNV-1a 64 of the content read (to compare whether the bytes read from two resource packs match)
@@ -854,7 +859,7 @@ HLE_FORCE("_ZN2nn2fs9FlushFileENS0_10FileHandleE", "fsp-srv；宿主 write 已�
 HLE_FORCE("_ZN2nn2fs9CloseFileENS0_10FileHandleE", "fsp-srv → close(2)", void, h_fs_CloseFile, uint64_t h) {
     if (!h) return;  g_fmode[(int)h & 0xffff] = 0; g_fsave[(int)h & 0xffff] = 0;
     int d2s = g_fd2s[(int)h & 0xffff]; g_fd2s[(int)h & 0xffff] = 0;
-    if ((int)h >= 0 && (int)h < 4096 && g_hm[(int)h]) { holemap *m = g_hm[(int)h]; g_hm[(int)h] = NULL; free(m->log); free(m->len); free(m->phys); free(m); }
+    dm_data_forget_fd((int)h);
     close((int)h); if (d2s) atomic_store(&g_d2s_wseq, dm_seq_next()); }   // 先关再取号：取号时内容已落到文件 | Close first, then take the number: by then the content is in the file
 HLE_FORCE("_ZN2nn2fs15GetFileOpenModeENS0_10FileHandleE", "fsp-srv；打开方式由宿主记录", int, h_fs_GetFileOpenMode, uint64_t h) { return g_fmode[(int)h & 0xffff]; }
 

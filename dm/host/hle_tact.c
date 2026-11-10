@@ -24,6 +24,7 @@
 #include "../third_party/libdeflate/libdeflate.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <pthread/qos.h>
 #include <stdatomic.h>
@@ -99,7 +100,7 @@ static struct libdeflate_decompressor *thread_dec(void) {
 // Worker thread 0x1005 consumes the async load task queue, so the order within a stream is also shuffled every run (measured lag: median 340, max 1,609 blocks) ⇒ nothing is discarded by lag (DM_TACT_PREFETCH_LAG can set it, default no discard),
 // memory is bounded by the cap alone; on reaching character select (MainMenuButtonRibbon) the background threads stop and the remaining cache is freed (blocks in the list that this run did not ask for do not hold memory long term).
 enum { PF_EMPTY, PF_BUSY, PF_READY, PF_GONE };
-typedef struct { uint16_t fi; uint8_t sid; uint64_t off; uint32_t n, dl, next, pos; uint8_t key[16]; _Atomic int st; uint8_t *cmp, *dec; } pf_ent;
+typedef struct { uint16_t fi; uint8_t sid; _Atomic uint8_t asked; uint64_t off; uint32_t n, dl, next, pos; uint8_t key[16]; _Atomic int st; uint8_t *cmp, *dec; } pf_ent;   // asked: the game asked for this block (the learned list's "unused" count)
 #define PF_MAXS 8
 static struct { uint32_t h, n, cap, *ix, next, cur, ev; } g_ps[PF_MAXS]; static int g_nps;   // 流：线程句柄、块数、下标表、后台下一个、已取走位置、丢弃扫描位置（均持 g_pfl） | Streams: thread handle, block count, index table, next one for the background, consumed position, discard-scan position (all under g_pfl)
 static pf_ent *g_pf; static uint32_t g_npf; static int *g_pffd; static int g_npffd;
@@ -157,6 +158,7 @@ static int pf_take(const uint8_t *in, uint32_t n, uint8_t *out, uint32_t cap, si
     for (uint32_t i1 = g_pfh[pf_hash(in, n)]; i1; i1 = g_pf[i1 - 1].next) {
         pf_ent *e = &g_pf[i1 - 1];
         if (e->n != n || memcmp(e->key, in, 16)) continue;
+        atomic_store_explicit(&e->asked, 1, memory_order_relaxed);
         int st = atomic_load(&e->st);
         if (st == PF_GONE) continue;
         if (st == PF_EMPTY) {                          // 还没轮到：同键唯一时认领（免得后台再白解），当场解 | Not reached yet: claim it if the key is unique (so the background does not decode it again for nothing) and decode on the spot
@@ -203,25 +205,33 @@ static void tact_data_path(const char *rom, const char *name, char *out, size_t 
     char rel[300]; snprintf(rel, sizeof rel, "data/%s", name);
     if (!dm_overlay_file(rel, out, n)) snprintf(out, n, "%s/%s", rom, name);
 }
-void tact_prefetch_start(const char *outdir) {
-    const char *e = getenv("DM_TACT_PREFETCH"); char def[1100];
-    if (e && !strcmp(e, "0")) { LOG("DM_TACT_PREFETCH=0：启动块预取关闭"); return; }
-    if (!e) { snprintf(def, sizeof def, "%s/bootlist.tsv", outdir); if (access(def, R_OK)) return; e = def; }
-    char want[40], have[40], cuts[1100]; snprintf(cuts, sizeof cuts, "%s/main.cuts.tsv", outdir);
-    build_id_of(cuts, want, sizeof want); build_id_of(e, have, sizeof have);
-    if (want[0] && strcmp(want, have)) { LOG("DM_TACT_PREFETCH：清单 %s 的 main 构建号「%s」与产物「%s」不符，不启用预取", e, have[0] ? have : "无", want); return; }
-    FILE *f = fopen(e, "r"); if (!f) die("DM_TACT_PREFETCH 打不开 %s", e);
+// Which list: DM_TACT_PREFETCH=<file> (a developer's; a fault in it stops the host), else bootlist.tsv in the build output directory when a
+// developer put one there, else the list this machine learned (dm_bootlist.c; a fault in that one only means no prefetch this launch).
+static int g_pf_learned;   // the list in use is the learned one
+static int pf_fault(int strict, const char *fmt, ...) {
+    char m[512]; va_list ap; va_start(ap, fmt); vsnprintf(m, sizeof m, fmt, ap); va_end(ap);
+    if (strict) die("%s", m);
+    LOG("%s; no prefetch this launch", m); return 0;
+}
+static void pf_unload(void) {
+    for (int k = 0; k < g_nps; k++) free(g_ps[k].ix);
+    memset(g_ps, 0, sizeof g_ps); g_nps = 0; free(g_pf); g_pf = NULL; g_npf = 0;
+    for (int i = 0; i < g_npffd; i++) if (g_pffd && g_pffd[i] >= 0) { dm_data_forget_fd(g_pffd[i]); close(g_pffd[i]); }
+    free(g_pffd); g_pffd = NULL; g_npffd = 0; memset(g_pfh, 0, sizeof g_pfh);
+}
+static int pf_load(const char *e, int strict) {
+    FILE *f = fopen(e, "r"); if (!f) return pf_fault(strict, "DM_TACT_PREFETCH 打不开 %s", e);
     char rom[1024]; const char *rs = getenv("DM_ROMFS");
     if (rs) snprintf(rom, sizeof rom, "%s/data", rs); else snprintf(rom, sizeof rom, "%s%s/data/switch/3.3.94012/Update/RomFS/data", getenv("DM_ROOT") ?: getenv("HOME"), getenv("DM_ROOT") ? "" : "/dm-work");
-    char names[64][32]; uint32_t cap = 0; char line[256];
-    while (fgets(line, sizeof line, f)) {
+    char names[64][32]; uint32_t cap = 0; char line[256]; int bad = 0;
+    while (!bad && fgets(line, sizeof line, f)) {
         char fn[32], kh[40]; unsigned long long off; unsigned n, dl, th = 0;
         int nf = sscanf(line, "%31s %llu %u %u %39s %x", fn, &off, &n, &dl, kh, &th);
         if (nf < 5 || strlen(kh) != 32) continue;
         int fi = 0; while (fi < g_npffd && strcmp(names[fi], fn)) fi++;
-        if (fi == g_npffd) { if (g_npffd == 64) die("DM_TACT_PREFETCH：数据文件超过 64 个"); strcpy(names[g_npffd++], fn); }
+        if (fi == g_npffd) { if (g_npffd == 64) { bad = 1; break; } strcpy(names[g_npffd++], fn); }
         int si = 0; while (si < g_nps && g_ps[si].h != th) si++;
-        if (si == g_nps) { if (g_nps == PF_MAXS) die("DM_TACT_PREFETCH：发起线程超过 %d 个", PF_MAXS); g_ps[g_nps++].h = th; }
+        if (si == g_nps) { if (g_nps == PF_MAXS) si = PF_MAXS - 1; else g_ps[g_nps++].h = th; }   // more asking threads than streams: the rest share the last stream
         if (g_npf == cap) { cap = cap ? cap * 2 : 8192; g_pf = realloc(g_pf, cap * sizeof *g_pf); }
         pf_ent *x = &g_pf[g_npf]; memset(x, 0, sizeof *x); x->fi = (uint16_t)fi; x->sid = (uint8_t)si; x->off = off; x->n = n; x->dl = dl;
         for (int i = 0; i < 16; i++) { unsigned v; sscanf(kh + 2 * i, "%2x", &v); x->key[i] = (uint8_t)v; }
@@ -231,31 +241,56 @@ void tact_prefetch_start(const char *outdir) {
         g_npf++;
     }
     fclose(f);
-    if (!g_npf) die("DM_TACT_PREFETCH 清单为空：%s", e);
-    g_pffd = malloc(g_npffd * sizeof *g_pffd);
-    for (int i = 0; i < g_npffd; i++) { char p[1100]; tact_data_path(rom, names[i], p, sizeof p); if ((g_pffd[i] = open(p, O_RDONLY)) < 0) die("DM_TACT_PREFETCH 打不开数据文件 %s", p); dm_data_note_fd(g_pffd[i], p); }
+    if (bad) { pf_unload(); return pf_fault(strict, "DM_TACT_PREFETCH：数据文件超过 64 个（%s）", e); }
+    if (!g_npf) { pf_unload(); return pf_fault(strict, "DM_TACT_PREFETCH 清单为空：%s", e); }
+    int nfd = g_npffd; g_pffd = malloc(nfd * sizeof *g_pffd); for (int i = 0; i < nfd; i++) g_pffd[i] = -1;
+    for (int i = 0; i < nfd; i++) { char p[1100]; tact_data_path(rom, names[i], p, sizeof p);
+        if ((g_pffd[i] = open(p, O_RDONLY)) < 0) { pf_unload(); return pf_fault(strict, "DM_TACT_PREFETCH 打不开数据文件 %s", p); }
+        dm_data_note_fd(g_pffd[i], p); }
     for (uint32_t i = g_npf; i-- > 0;) { unsigned h = pf_hash(g_pf[i].key, g_pf[i].n); g_pf[i].next = g_pfh[h]; g_pfh[h] = i + 1; }
+    return 1;
+}
+void tact_prefetch_start(const char *outdir) {
+    const char *e = getenv("DM_TACT_PREFETCH"); char def[1100]; int strict = e != NULL;
+    if (e && !strcmp(e, "0")) { LOG("DM_TACT_PREFETCH=0：启动块预取关闭"); return; }
+    char want[40], have[40], cuts[1100]; snprintf(cuts, sizeof cuts, "%s/main.cuts.tsv", outdir); build_id_of(cuts, want, sizeof want);
+    const char *lp = dm_bootlist_start(want);   // from here the game's archive reads and block decodes are noted, up to the main menu
+    void uimsg_subscribe(void (*)(const char *, const char *, const char *));
+    if (!e) { snprintf(def, sizeof def, "%s/bootlist.tsv", outdir); if (!access(def, R_OK)) e = def; else if (lp && !access(lp, R_OK)) { e = lp; g_pf_learned = 1; } }
+    if (!e) { if (lp) uimsg_subscribe(pf_on_uimsg); return; }
+    build_id_of(e, have, sizeof have);
+    if (g_pf_learned ? strcmp(want[0] ? want : "-", have) != 0 : (want[0] && strcmp(want, have))) {
+        LOG("DM_TACT_PREFETCH：清单 %s 的 main 构建号「%s」与产物「%s」不符，不启用预取", e, have[0] ? have : "无", want);
+        g_pf_learned = 0; if (lp) uimsg_subscribe(pf_on_uimsg); return; }
+    if (!pf_load(e, strict)) { g_pf_learned = 0; if (lp) uimsg_subscribe(pf_on_uimsg); return; }
     const char *mb = getenv("DM_TACT_PREFETCH_MB"), *nt = getenv("DM_TACT_PREFETCH_THREADS");
     g_pfcap = (mb ? atoll(mb) : 256) << 20; int th = nt ? atoi(nt) : 2;   // 缺省 256 MiB（真机启动期 footprint 峰值 ≤ 3 GB 的前提下；超了降 128） | default 256 MiB (on the premise that the real device boot-period footprint peak is ≤ 3 GB; lower to 128 if exceeded)
     const char *lg = getenv("DM_TACT_PREFETCH_LAG"); g_pflag = lg ? (uint32_t)atoi(lg) : UINT32_MAX / 2;
     for (int i = 0; i < th; i++) { pthread_t t; if (pthread_create(&t, NULL, pf_worker, NULL)) die("DM_TACT_PREFETCH 起线程失败"); pthread_detach(t); }
     char sb[256] = ""; for (int k = 0; k < g_nps; k++) snprintf(sb + strlen(sb), sizeof sb - strlen(sb), "%s%#x:%u", k ? " " : "", g_ps[k].h, g_ps[k].n);
-    LOG("DM_TACT_PREFETCH：清单 %u 块（%d 个数据文件；按线程分流 %s），%d 线程，封顶 %lld MiB", g_npf, g_npffd, sb, th, (long long)(g_pfcap >> 20));
-    void uimsg_subscribe(void (*)(const char *, const char *, const char *)); uimsg_subscribe(pf_on_uimsg);   // 到选角收尾（不依赖 DM_BOOTPROF） | wrap-up on reaching character select (does not depend on DM_BOOTPROF)
+    LOG("DM_TACT_PREFETCH：清单 %u 块（%d 个数据文件；按线程分流 %s），%d 线程，封顶 %lld MiB%s", g_npf, g_npffd, sb, th, (long long)(g_pfcap >> 20), g_pf_learned ? " (the list this machine learned)" : "");
+    uimsg_subscribe(pf_on_uimsg);   // 到选角收尾（不依赖 DM_BOOTPROF） | wrap-up on reaching character select (does not depend on DM_BOOTPROF)
+}
+static int pf_known(const uint8_t *key, uint32_t n) {
+    for (uint32_t i1 = g_pfh[pf_hash(key, n)]; i1; i1 = g_pf[i1 - 1].next) if (g_pf[i1 - 1].n == n && !memcmp(g_pf[i1 - 1].key, key, 16)) return 1;
+    return 0;
 }
 static void tact_prefetch_finish(void) {             // 到选角：停后台、释放剩余缓存、报账（只做一次） | on reaching character select: stop the background, release the remaining cache, report the totals (done only once)
-    static _Atomic int once; if (!g_pf || atomic_exchange(&once, 1)) return;
+    static _Atomic int once; if (atomic_exchange(&once, 1)) return;
+    if (!g_pf) { dm_bootlist_finish(0, 0, 0, NULL); return; }
     pthread_mutex_lock(&g_pfl);
-    atomic_store(&g_pfstop, 1); uint32_t left = 0;
-    for (uint32_t i = 0; i < g_npf; i++) if (atomic_load(&g_pf[i].st) == PF_READY) { pf_free(&g_pf[i]); left++; }
+    atomic_store(&g_pfstop, 1); uint32_t left = 0, unused = 0;
+    for (uint32_t i = 0; i < g_npf; i++) { if (atomic_load(&g_pf[i].st) == PF_READY) { pf_free(&g_pf[i]); left++; } if (!atomic_load(&g_pf[i].asked)) unused++; }
     pthread_cond_broadcast(&g_pfc); pthread_mutex_unlock(&g_pfl);
     { void granny_finish(const char *); granny_finish("到选角"); }
     if (left) LOG("DM_TACT_PREFETCH：到选角时缓存里还有 %u 块没人要，已释放", left);
     LOG("DM_TACT_PREFETCH：命中 %u（其中等后台解完 %u，共等 %.3f s）未命中 %u 丢弃 %u；缓存峰值 %.1f MiB；后台已解 %u / %u 块",
         atomic_load(&g_pfhit), atomic_load(&g_pfwait), atomic_load(&g_pfwait_ns) / 1e9, atomic_load(&g_pfmiss), atomic_load(&g_pfdrop),
         atomic_load(&g_pfpeak) / 1048576.0, atomic_load(&g_pfdone), g_npf);
+    dm_bootlist_finish(g_pf_learned ? 1 : -1, g_npf, unused, pf_known);
 }
 
+uint32_t thr_cur_handle(void);
 static uint32_t tact_decode_zlib(uint64_t *r) {
     uint8_t *out = (uint8_t *)r[0]; uint32_t cap = (uint32_t)r[1];
     const uint8_t *in = (const uint8_t *)r[2]; uint32_t n = (uint32_t)r[3], flags = (uint32_t)r[4];
@@ -270,10 +305,10 @@ static uint32_t tact_decode_zlib(uint64_t *r) {
     }
     thread_dec();
     size_t got = 0; uint64_t t0 = now_ns();
-    if (pf_take(in, n, out, cap, &got)) { dm_prof_add(PROF_TACT, now_ns() - t0, got); chk_log(in, n, out, got); dm_streamlog('Z', in, n, got, now_ns() - t0, 1); return 0; }
+    if (pf_take(in, n, out, cap, &got)) { dm_prof_add(PROF_TACT, now_ns() - t0, got); chk_log(in, n, out, got); dm_streamlog('Z', in, n, got, now_ns() - t0, 1); if (dm_bootlist_learning()) dm_bootlist_decode(in, n, (uint32_t)got, thr_cur_handle()); return 0; }
     enum libdeflate_result rc = libdeflate_zlib_decompress(t_dec, in, n, out, cap, &got);
     dm_prof_add(PROF_TACT, now_ns() - t0, got); dm_streamlog('Z', in, n, got, now_ns() - t0, 0);
-    if (rc == LIBDEFLATE_SUCCESS) { chk_log(in, n, out, got); return 0; }
+    if (rc == LIBDEFLATE_SUCCESS) { chk_log(in, n, out, got); if (dm_bootlist_learning()) dm_bootlist_decode(in, n, (uint32_t)got, thr_cur_handle()); return 0; }
     LOG("tact：zlib 解码失败 %d（输入 %u，容量 %u）", rc, n, cap);
     return rc == LIBDEFLATE_INSUFFICIENT_SPACE ? 4 : 1;
 }

@@ -48,6 +48,19 @@ typedef struct { const char *name; void *fn; const char *why; } hle_force_ent;
 int dm_opmode(void);
 ssize_t dm_data_pread(int fd, void *buf, size_t n, off_t off);   // 资源档案的读：有「.holes」区段表的剔零档案按表换算（hle_fs.c） | Resource archive reads: zero-stripped archives with a ".holes" extent table are translated through the table (hle_fs.c)
 void dm_data_note_fd(int fd, const char *hostpath);
+void dm_data_forget_fd(int fd);   // before closing an fd that dm_data_note_fd saw: frees its extent table
+// Observers of the game's file opens and its reads (hle_fs.c calls them when set). dm_bootlist.c sets them while it learns the boot list
+extern void (*g_fs_open_hook)(int fd, const char *hostpath);
+extern void (*g_fs_read_hook)(int fd, int64_t off, const void *buf, size_t n);
+// The boot list this machine learns (dm_bootlist.c)
+int dm_bootlist_learning(void);
+const char *dm_bootlist_path(void);
+const char *dm_bootlist_start(const char *build_id);
+void dm_bootlist_decode(const uint8_t *in, uint32_t n, uint32_t dl, uint32_t thread);
+void dm_bootlist_finish(int in_use, uint32_t listed, uint32_t unused, int (*known)(const uint8_t *key, uint32_t n));
+void dm_bootlist_join(void);
+uint32_t dm_bootlist_dedup(void *ents, uint32_t n);
+int dm_bootlist_stale(uint32_t learned, uint32_t unlisted, uint32_t listed, uint32_t unused);
 int dm_overlay_file(const char *rel, char *out, size_t n);   // 覆盖层里的文件：DM_ROMFS_OVERLAY 可以有多层（冒号分隔，前面的优先），逐层找 <层>/<rel>，找到写进 out 返回 1（hle_fs.c） | File in the overlay: DM_ROMFS_OVERLAY may have several layers (colon-separated, earlier ones take priority); look for <layer>/<rel> layer by layer, and on a hit write it to out and return 1 (hle_fs.c)
 void dm_set_opmode(int m);          // 变化时按游戏打开的开关推送通知 30 / 31 | On change, push notification 30 / 31 according to the switches the game has turned on
 // 焦点（1 前台 / 2 失焦 / 3 后台）：前端在生命周期变化时调，变化即推送通知 15

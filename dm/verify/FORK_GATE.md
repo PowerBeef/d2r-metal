@@ -27,6 +27,7 @@ Several tiers can be given at once; they run in the order given.
 | the replay (`nvn_mtl.m`) | the 2D quad runs' verify mode: `scenarios/quadrun_verify.scn`; a run with no warm-up list: `scenarios/pso_wait.scn` |
 | the binary rules or the product (`patch_nso.py`, `dm/PRODUCT`, `product.sh`) | `product.sh build`, then `regress.sh --fresh` |
 | the pipeline warm-up (`pso_manifest.tsv`, `pso_allow.tsv`, `pso_seed.py`) | `pso_seed.py gate --backend cli --headless` |
+| the boot list or the block decoders (`dm_bootlist.c`, `hle_tact.c`, `hle_granny.c`) | two launches with one list: `dm/verify/bootlist_check.py` (the first writes the list, the second is handed its blocks decoded) |
 | the live hooks (`dm_live.c`) | `scenarios/live_hooks.scn` and `scenarios/engine_assumptions.scn` (the standing checks on the game's own code) |
 | the name reader (`dm_names.c`) | `scenarios/names.scn` |
 | the warp tour (`bench/warp_tour.scn`) | `pso_seed.py gate --backend cli --headless --survey --route dm/verify/bench/warp_tour.scn` (5½ min; red if the tour breaks, missing pipelines listed) |

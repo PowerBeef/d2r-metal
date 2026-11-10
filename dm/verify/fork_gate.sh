@@ -165,6 +165,8 @@ for tier in "${TIERS[@]}"; do
     # Pipeline warm-up coverage: the town route with Recommended's features forced builds no pipeline that the seed (dm/gfx/nvn/pso_manifest.tsv) or
     # the reviewed allow-list (pso_allow.tsv) lacks (PSO_GATE OK rows=0)
     step core_pso_cli 900 -- python3 "$DM/tools/pso_seed.py" gate --backend cli --headless
+    # The boot list a machine learns: the first launch writes it, the second is handed its blocks decoded (bootlist_check.py)
+    step core_bootlist 300 -- python3 "$DM/verify/bootlist_check.py"
     ;;
   full)
     lock_on 15

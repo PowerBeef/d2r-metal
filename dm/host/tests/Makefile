@@ -41,6 +41,7 @@ run: \
 	$(B)/t_modetx \
 	$(B)/t_movie \
 	$(B)/t_movie_loop \
+	$(B)/t_bootlist \
 	$(B)/t_namegen \
 	$(B)/t_oe \
 	$(B)/t_padmap \
@@ -166,6 +167,7 @@ run: \
 	$(B)/t_target_rank 2>/dev/null
 	$(B)/t_hud_dead
 	$(B)/t_namegen
+	$(B)/t_bootlist
 	$(B)/t_minimap_lift
 	TMPDIR="$(abspath $(B))" $(B)/t_ui_taps
 	$(B)/t_mv_restore
@@ -232,6 +234,8 @@ $(B)/t_mv_restore: t_mv_restore.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_mv_restore.c
 $(B)/t_modetx: t_modetx.c ../dm_modetx.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_modetx.c
+$(B)/t_bootlist: t_bootlist.c ../dm_bootlist.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_bootlist.c ../dm_bootlist.c
 $(B)/t_namegen: t_namegen.c ../dm_namegen.c | $(B)
 	clang -O1 -Wall -Werror -o $@ t_namegen.c ../dm_namegen.c
 $(B)/t_cloudsync: t_cloudsync.c ../dm_cloudsync.c ../dm.h | $(B)

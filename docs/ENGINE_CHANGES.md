@@ -104,13 +104,13 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-006 Data block decompression in the host
 - **Layer:** binary rule
 - **Engine:** Inflates each data block with its own zlib code.
-- **Ours:** The entry jumps to the host, which uses libdeflate.
+- **Ours:** The entry jumps to the host, which uses libdeflate. Before the main menu the host also decodes blocks ahead of the game on two background threads, from a list of the blocks this machine's game asked for at its last launch. The host learns that list itself: it notes the archive pages the game reads and the blocks it decodes, finds each block in those pages at the menu, and writes the list beside the saves. A list that no longer fits (more than 5% of a launch's blocks missing from it, or more than 10% of it unused) is written again. A block is handed over only when its whole compressed content matches.
 - **Why:** Load speed. Output matched on every block compared.
 - **Setting:** none
-- **Switch:** none
-- **Test:** unit_host
+- **Switch:** DM_BOOT_LEARN (0 off; on by default on the Mac, off on iPhone and iPad until its memory at launch is measured there), DM_BOOT_LIST, DM_TACT_PREFETCH (0 no prefetch at all, or a developer's list), DM_TACT_PREFETCH_MB, DM_TACT_PREFETCH_THREADS
+- **Test:** unit_host, t_bootlist, core_bootlist
 - **Commit:** 46578a2
-- **Measured:** none: inherited; not remeasured here.
+- **Measured:** Launch to the main menu on the headless host with the learned list against none: 1.27 to 0.94 s (5 pairs, every pair lower; M6, 2026-11-10); 5,113 of 5,125 listed blocks handed over decoded, the list written in 0.3 s on a background thread after the menu. A launch that only learns costs nothing measurable (1.290 against 1.284 s, 4 pairs). Until 2026-11-10 the prefetch never ran in this port: its list had to come from the repository and holds game data, so it was never there. No iPhone measurement.
 - **Status:** confirmed
 - **Covers:** main+0x1b0ee60
 
@@ -182,13 +182,13 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-012 Model segment decoding gates
 - **Layer:** binary rule
 - **Engine:** Decodes model data block by block on its streaming paths.
-- **Ours:** The call sites go through the host, which forwards them unchanged by default.
-- **Why:** The hook point for pre-decoding.
+- **Ours:** The call sites go through the host. Model files the boot prefetch has decoded (EC-006) have their animation segments decoded ahead on two background threads with the game's own decoder; when the game asks for a segment whose compressed bytes match, it gets the finished result. Anything else is forwarded unchanged.
+- **Why:** Load speed before the main menu.
 - **Setting:** none
-- **Switch:** none
-- **Test:** unit_host
+- **Switch:** DM_GRANNY_PRE (0 off), DM_GRANNY_PRE_MB, DM_GRANNY_THREADS, DM_GRANNY_VERIFY
+- **Test:** unit_host, core_bootlist
 - **Commit:** 46578a2
-- **Measured:** none: inherited; forwards by default.
+- **Measured:** With the learned boot list, 3,408 of 3,540 segments asked for before the menu were ready (M6, 2026-11-10); its share of the 0.33 s in EC-006 was not measured apart. It did nothing in this port until the boot list was learned on the machine.
 - **Status:** confirmed
 - **Covers:** main+0x11f02dc, main+0x11f0914
 
@@ -785,7 +785,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Setting:** none
 - **Switch:** DM_NVN_POOLFAST, DM_NVN_DRVCACHE, DM_NVN_SDXFAST (each: 0 off, 1 on, 2 verify), DM_NVN_ATDEDUP
 - **Test:** t_replay_cuts, quadrun_verify
-- **Commit:** b17d8ac, a0158b7
+- **Commit:** b17d8ac, a0158b7, bc19855
 - **Measured:** M6, headless camp, 2026-11-10. Unowned lookups: 13,680 to 12,340 instructions per draw, the Objective-C runtime's share of the thread 11.4% to 1.7%. The other three together: 19.06 to 16.97 million instructions a frame (11% fewer); remembered pools alone 2.2 million (in-process A/B, 10 pairs), reused blocks 0.3 million. The faster scan: 0.36 million fewer (0.20 to 0.53, 10 pairs), compared with the reference scan over 9,605 submissions of the 43-area tour with no difference. With EC-056, the camp with the automap open went from 27.2 to 19.65 million instructions a frame. A captured frame replays to the same digest with each on and off. No iPhone measurement.
 - **Status:** confirmed
 - **Covers:** none

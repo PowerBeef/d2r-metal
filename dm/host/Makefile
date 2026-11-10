@@ -38,6 +38,7 @@ SRC=\
 	romfs_validate.c \
 	dm_actions.c \
 	dm_beltauto.c \
+	dm_bootlist.c \
 	dm_cloudsync.c \
 	dm_ctl.c \
 	dm_ctl_cmds.c \
