@@ -11,7 +11,7 @@
 #                                    'PSO_CHECK OK|RED rows=<n>'
 #   gate [--backend mac-app|cli|ios-mac] [--headless]   runs dm/verify/bench/town_loop.scn (mac-app at this Mac's Recommended in full screen, cli with
 #                                    Recommended's features forced, ios-mac as is) and checks its manifest: 'PSO_GATE OK|RED rows=<n>'
-#   record [--set front,act1,tour|all] [--only <backend>] [--front create|menu] [--out DIR] [--keep]   runs the 28-row route matrix (matrix())
+#   record [--set front,act1,tour,warps|all] [--only <backend>] [--front create|menu] [--out DIR] [--keep]   runs the 71-row route matrix (matrix())
 #                                    under the game lock and harvests each run's manifest to DIR/<NN>_<set>_<name>.tsv; 'RUN <NN> <name> OK|RED|UNAVAIL rows=<n>'
 #   merge --dir DIR [--seed FILE] [--write]   the new seed from a record folder: the seed's own rows, then the new front and Act 1 rows, the
 #                                    background marker, the seed's background rows, the new tour rows
@@ -184,14 +184,23 @@ FORCES = [('orig', {}), ('smaa_shadows', {'DM_AA_MODE': '2', 'DM_ENV_SHADOWS': '
 # Waypoint stops of the local all-waypoint save save_ref_tour: (name, ZR presses to the act's tab, the stop's row on the waypoint list)
 TOUR = [('a1_darkwood', 0, 0.446), ('a1_catacombs', 0, 0.822), ('a2_town', 1, 0.222), ('a2_faroasis', 1, 0.521), ('a2_arcane', 1, 0.747), ('a3_docks', 2, 0.222),
         ('a3_flayer', 2, 0.446), ('a4_town', 3, 0.222), ('a4_riverflame', 3, 0.371), ('a5_town', 4, 0.222), ('a5_frigid', 4, 0.296), ('a5_arreat', 4, 0.371)]
+# Warp stops (since 2026-11-09): one area per run, reached with DM_TEST_GOTO_LEVEL from the standard save, for what the waypoint tour never enters:
+# dungeons, boss levels and the open areas between waypoints. A survey of these 43 found 202 rows the seed lacked (none in open areas next to a tour
+# stop, 2 to 26 in most dungeons). (name, the area's id in levels.txt)
+WARPS = [('a1_coldplains', 3), ('a1_den', 8), ('a1_pit', 12), ('a1_crypt', 18), ('a1_tower1', 21), ('a1_tower5', 25), ('a1_barracks', 28), ('a1_jail', 29),
+         ('a1_cathedral', 33), ('a1_catacombs4', 37), ('a2_rockywaste', 41), ('a2_sewers', 47), ('a2_harem', 50), ('a2_cellar', 52), ('a2_stonytomb', 55),
+         ('a2_halls', 56), ('a2_maggot', 61), ('a2_tunnels', 65), ('a2_tomb', 66), ('a2_duriel', 73), ('a3_spiderforest', 76), ('a3_lowerkurast', 79),
+         ('a3_travincal', 83), ('a3_swampypit', 86), ('a3_flayerdungeon', 88), ('a3_sewers', 92), ('a3_temple', 94), ('a3_durance1', 100), ('a3_durance3', 102),
+         ('a4_steppes', 104), ('a4_plains', 105), ('a4_city', 106), ('a4_chaos', 108), ('a5_foothills', 110), ('a5_crystalline', 113), ('a5_glacial', 115),
+         ('a5_tundra', 117), ('a5_summit', 120), ('a5_nihlathak', 121), ('a5_vaught', 124), ('a5_keep1', 128), ('a5_throne', 131), ('a5_chamber', 132)]
 LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 COLD_ID = 'org.d2rmobile.mac.cold'   # cold runs' Mac App bundle IDs: COLD_ID + timestamp, removed afterwards
 COLD_REDO = 2   # a cold start the desk disturbed is redone this many times, each from a fresh cold state, before it is reported not judged
 
 
 def matrix():
-    """The 28 recording rows: front end (Mac App, iOS package), Act 1 (Mac App and iOS package town / combat, CLI town / combat under each force),
-    then the tour stops (Mac App). Mac App rows run at this Mac's Recommended in full screen."""
+    """The 71 recording rows: front end (Mac App, iOS package), Act 1 (Mac App and iOS package town / combat, CLI town / combat under each force),
+    the tour stops and then the warp stops (Mac App). Mac App rows run at this Mac's Recommended in full screen."""
     rows = [dict(nn='01', set='front', name='mac_front', backend='mac-app', route='front'), dict(nn='02', set='front', name='ios_front', backend='ios-mac', route='front'),
             dict(nn='03', set='act1', name='mac_town', backend='mac-app', route=TOWN), dict(nn='04', set='act1', name='mac_combat', backend='mac-app', route=COMBAT),
             dict(nn='05', set='act1', name='ios_town', backend='ios-mac', route=TOWN), dict(nn='06', set='act1', name='ios_combat', backend='ios-mac', route=COMBAT)]
@@ -201,6 +210,8 @@ def matrix():
             rows.append(dict(nn=f'{n:02d}', set='act1', name=f'cli_{rname}_{tag}', backend='cli', route=route, env=dict(env))); n += 1
     for stop, z, y in TOUR:
         rows.append(dict(nn=f'{n:02d}', set='tour', name=f'tour_{stop}', backend='mac-app', route='tour', stop=(stop, z, y))); n += 1
+    for stop, level in WARPS:
+        rows.append(dict(nn=f'{n:02d}', set='warps', name=f'warp_{stop}', backend='mac-app', route='warp', stop=(stop, level))); n += 1
     for r in rows:
         r['env'] = {**(REC_ENV if r['backend'] == 'mac-app' else {}), **r.get('env', {})}
     return rows
@@ -229,6 +240,14 @@ def tour_text(stop, z, y, env):
     return '\n'.join(lines) + '\n'
 
 
+def warp_text(stop, level, env):
+    """One warp stop: enter with the standard save, let DM_TEST_GOTO_LEVEL move the hero to the area, step both ways."""
+    lines = [f'# generated by dm/tools/pso_seed.py: warp stop {stop} (area {level})', f'name pso_warp_{stop}', 'requires mac-app', 'save warlock',
+             env_line({'DM_GAME_SEED': '0x12345678', 'DM_TEST_GOTO_LEVEL': f'150:{level}', **env}), 'timeout 200', '', 'enter_game', 'sleep 9',
+             f'expect_state area={level} timeout=10', 'stick x=0.7 y=-0.7 frames=40', 'sleep 2', 'stick x=-0.7 y=0.7 frames=80', 'sleep 2', 'quit', 'check no_red']
+    return '\n'.join(lines) + '\n'
+
+
 def route_text(route, env):
     """A copy of a route file with extra env lines (an env header line counts wherever it is; every backend passes it to the game)."""
     with open(route, encoding='utf-8') as f: text = f.read()
@@ -238,6 +257,7 @@ def route_text(route, env):
 def row_text(row, front):
     if row['route'] == 'front': return front_text('create' if row['backend'] == 'mac-app' else front, row['backend'], row['env'])
     if row['route'] == 'tour': return tour_text(*row['stop'], row['env'])
+    if row['route'] == 'warp': return warp_text(*row['stop'], row['env'])
     return route_text(row['route'], row['env'])
 
 
@@ -558,7 +578,7 @@ def cmd_record(a, argv):
     import json as _json, shutil, scenario   # noqa: E401, PLC0415
     held = scenario.game_lock(__file__, argv, 'pso_seed record ~50 min', True)
     if held is not None: return held
-    sets = {'front', 'act1', 'tour'} if a.set == 'all' else set(a.set.split(','))
+    sets = {'front', 'act1', 'tour', 'warps'} if a.set == 'all' else set(a.set.split(','))
     rows = [r for r in matrix() if r['set'] in sets and (not a.only or r['backend'] == a.only)]
     out = a.out or os.path.join(DM_ROOT, 'run', 'pso', stamp_now()); os.makedirs(os.path.join(out, 'runs'), exist_ok=True)
     shutil.copyfile(SEED, os.path.join(out, 'seed_before.tsv'))
@@ -601,11 +621,12 @@ def cmd_record(a, argv):
 
 def cmd_merge(a):
     import glob, json as _json   # noqa: E401, PLC0415
-    sections = {'front': [], 'act1': [], 'tour': []}
+    sections = {'front': [], 'act1': [], 'tour': [], 'warps': []}
     for p in sorted(glob.glob(os.path.join(a.dir, '[0-9][0-9]_*.tsv'))):
         part = os.path.basename(p).split('_', 2)
         if len(part) == 3 and part[1] in sections:
             with open(p, encoding='utf-8', errors='replace') as f: sections[part[1]] += f.readlines()
+    sections['tour'] += sections.pop('warps')   # warp stops are warmed like tour stops: in the background, after the tour's rows
     meta = {}
     try:
         with open(os.path.join(a.dir, 'record.json'), encoding='utf-8') as f: meta = _json.load(f)

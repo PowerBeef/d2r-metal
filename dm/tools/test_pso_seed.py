@@ -174,11 +174,12 @@ class RunToolsTest(unittest.TestCase):
 
     def test_matrix_and_routes(self):
         m = pso_seed.matrix()
-        self.assertEqual(len(m), 28); self.assertEqual(len({r['nn'] for r in m}), 28)
-        self.assertEqual([r['nn'] for r in m], [f'{i:02d}' for i in range(1, 29)])
+        self.assertEqual(len(m), 71); self.assertEqual(len({r['nn'] for r in m}), 71)
+        self.assertEqual([r['nn'] for r in m], [f'{i:02d}' for i in range(1, 72)])
         self.assertFalse([r for r in m if r['env'].get('DM_AA_MODE') == '3' or (r['env'].get('DM_AA_MODE') == '0' and r['env'].get('DM_MFXT') != '1')])   # AA off only with the temporal scaler
         self.assertTrue(all(r['env'].get('DM_TEST_VIDEO_FIRSTBOOT') == '1' for r in m if r['backend'] == 'mac-app'))
-        self.assertEqual(sum(r['set'] == 'tour' for r in m), 12)
+        self.assertEqual(sum(r['set'] == 'tour' for r in m), 12); self.assertEqual(sum(r['set'] == 'warps' for r in m), 43)
+        self.assertEqual(len({r['stop'][1] for r in m if r['set'] == 'warps'}), 43)   # no area twice
         with tempfile.TemporaryDirectory() as d:
             texts = [pso_seed.front_text(v, b, pso_seed.REC_ENV if b == 'mac-app' else {}) for v in ('create', 'menu') for b in ('mac-app', 'ios-mac')]
             texts += [pso_seed.row_text(r, 'create') for r in m]
@@ -188,6 +189,8 @@ class RunToolsTest(unittest.TestCase):
                 self.assertTrue(steps and checks, t)
             tour = pso_seed.row_text(next(r for r in m if r['name'] == 'tour_a3_flayer'), 'create')
             self.assertEqual(tour.count('press keys=ZR'), 2); self.assertIn('tap 0.5 0.446', tour); self.assertIn('save tour', tour)
+            warp = pso_seed.row_text(next(r for r in m if r['name'] == 'warp_a1_den'), 'create')
+            self.assertIn('DM_TEST_GOTO_LEVEL=150:8', warp); self.assertIn('expect_state area=8', warp); self.assertIn('save warlock', warp); self.assertIn('DM_TEST_VIDEO_FIRSTBOOT=1', warp)
             cli = next(r for r in m if r['name'] == 'cli_town_rec_mfx3d')
             p = Path(d) / 'cli.scn'; p.write_text(pso_seed.row_text(cli, 'create'), encoding='utf-8')
             self.assertEqual(parse_scn(str(p))[0]['env'], {'DM_GAME_SEED': '305419896', **pso_seed.CLI_REC})
