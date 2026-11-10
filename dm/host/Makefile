@@ -53,6 +53,7 @@ SRC=\
 	dm_hud.c \
 	dm_i18n.c \
 	dm_kbm.c \
+	dm_lights.c \
 	dm_live.c \
 	dm_movie_decode.c \
 	dm_namegen.c \
