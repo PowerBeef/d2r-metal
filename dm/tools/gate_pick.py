@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
-"""Pick the gate's tiers from what a change touches (fork_gate.sh auto).
+"""What to run for a change (fork_gate.sh auto), and what a release needs.
 
-  gate_pick.py tiers [--base REF]     the tiers, in order, on one line: quick unit [core] [full]
-  gate_pick.py explain [--base REF]   the same, then every changed file with the tier it asks for and why
+  gate_pick.py tiers [--base REF]     the tiers a change runs, on one line: quick unit
+  gate_pick.py explain [--base REF]   the same, then the checks this change touches (to run by hand) and every changed file with the tier
+                                      that exercises it when the whole gate runs
+  gate_pick.py release                the tiers a release or an app rebuild needs: quick unit core full
   gate_pick.py lint [--gate FILE]     every step line of fork_gate.sh: each "$DM/..." path names a file, no step name twice
   gate_pick.py passed [--sha REV]     the newest gate run that passed quick unit core full on that commit with nothing uncommitted
                                       (what a release and an app rebuild need); exit 1 when there is none
+
+The rule since 2026-11-10 (the player's decision: the game tiers were run per change and got in the way): a change runs the quick and unit
+tiers and the few checks it touches (CHECKS below: its scenario on the headless host, the rewrite regression for a rewriter change, the
+pipeline check for a seed change, a verify mode). The whole gate runs once, on the commit a release or an app rebuild is cut from
+(release_mac.sh refuses without it), so nothing reaches players ungated. What that costs: a regression only the game tiers catch shows
+at release time, not at the change that made it.
 
 The change is everything between the merge base with origin/main (or --base, or DM_GATE_BASE) and the working tree:
 commits not pushed yet, staged and unstaged edits, deletions and new files. The three files setup.sh rewrites are
 never part of it.
 
-Each file takes the tier of the first rule that matches it (RULES below; `*` in a pattern also matches `/`), and the
-gate runs up to the highest: quick and unit always, core when a file needs a game run on the command-line host, full
-when it needs the Mac App, the iOS app on the Mac, the replays or the picture sets (all host code does). A curated scenario asks for core when it runs on the
-command-line host and for full when its `requires` line leaves that host out. Files no rule names ask for core.
+RULES still says which tier exercises each file when the whole gate runs (`*` in a pattern also matches `/`): explain prints it, so
+it is plain what a change leaves for the release run. A curated scenario is exercised in core when it runs on the command-line host
+and in full when its `requires` line leaves that host out. Files no rule names count as core.
 
-auto never picks long or device, and it does not replace full before rebuilding the apps or making a release.
+auto never picks core, full, long or device: ask for those tiers by name.
 """
 import argparse
 import fnmatch
@@ -128,10 +135,43 @@ def classify(path, root=ROOT):
 
 
 def pick(files, root=ROOT):
-    """The tiers to run, in order, and each file's (tier, reason)."""
+    """The tiers that exercise these files when the whole gate runs, in order, and each file's (tier, reason). A change itself runs PER_CHANGE."""
     each = {f: classify(f, root) for f in files}
     top = max([ORDER.index('unit')] + [ORDER.index(t) for t, _ in each.values()])
     return list(ORDER[:top + 1]), each
+
+PER_CHANGE = ('quick', 'unit')
+
+# The checks a change touches: (pattern, command, what it is). Every rule that matches adds its command once; {file} is the changed file.
+# They are short (seconds to about a minute each), run on the headless command-line host and take nobody's screen.
+ENTER = 'python3 dm/tools/scenario.py run dm/verify/scenarios/enter_game.scn --headless'
+CHECKS = [
+    ('dm/tools/patch_nso.py', 'dm/tools/product.sh build && dm/verify/regress.sh --fresh', 'the rewrite regression on a fresh product'),
+    ('dm/PRODUCT', 'dm/tools/product.sh build && dm/verify/regress.sh --fresh', 'the rewrite regression on a fresh product'),
+    ('dm/tools/product.sh', 'dm/tools/product.sh build && dm/verify/regress.sh --fresh', 'the rewrite regression on a fresh product'),
+    ('dm/gfx/nvn/pso_manifest.tsv', 'python3 dm/tools/pso_seed.py gate --backend cli --headless', 'the pipeline warm-up check on the command-line host'),
+    ('dm/gfx/nvn/pso_allow.tsv', 'python3 dm/tools/pso_seed.py gate --backend cli --headless', 'the pipeline warm-up check on the command-line host'),
+    ('dm/tools/pso_seed.py', 'python3 dm/tools/pso_seed.py gate --backend cli --headless', 'the pipeline warm-up check on the command-line host'),
+    ('dm/gfx/nvn/hle_nvn.c', 'python3 dm/tools/scenario.py run dm/verify/scenarios/pipeset_verify.scn --headless', "the recorder: the pipeline-set fast path's verify mode"),
+    ('dm/gfx/nvn/nvn_obj.h', 'python3 dm/tools/scenario.py run dm/verify/scenarios/pipeset_verify.scn --headless', "the recorder: the pipeline-set fast path's verify mode"),
+    ('dm/verify/scenarios/*.scn', 'python3 dm/tools/scenario.py run {file} --headless', 'the changed scenario itself'),
+    ('dm/host/*', ENTER, 'a game on the headless host'),
+    ('dm/gfx/*', ENTER, 'a game on the headless host'),
+    ('dm/tools/scenario.py', ENTER, 'a game on the headless host'),
+]
+
+
+def checks(files, root=ROOT):
+    """The commands this change's files ask for, in CHECKS order, each once: [(command, what, [files])]. Unit tests are the unit tier's;
+    a scenario that cannot run on the command-line host has no short check (it runs at the release)."""
+    out = {}
+    for pattern, cmd, what in CHECKS:
+        for f in files:
+            if not fnmatch.fnmatchcase(f, pattern) or classify(f, root)[0] == 'unit': continue
+            if pattern.endswith('.scn') and (scenario_tier(f, root) != 'core' or not os.path.exists(os.path.join(root, f))): continue
+            out.setdefault(cmd.replace('{file}', f), (what, []))[1].append(f)
+    return [(cmd, what, fs) for cmd, (what, fs) in out.items()]
+
 
 STEP = re.compile(r'(?:^|[;&|]\s*|\bthen\s+|\bdo\s+)step\s+("?[\w$]+"?)\s+\d+\s+--\s+(.*)$')
 DMPATH = re.compile(r'"\$DM/([^"$]*)"([^\s"\'$;)]*)')
@@ -188,7 +228,7 @@ def passed(sha, runs):
 
 def main():
     ap = argparse.ArgumentParser(description="Pick the gate's tiers from what a change touches (fork_gate.sh auto).")
-    ap.add_argument('what', choices=('tiers', 'explain', 'lint', 'passed'))
+    ap.add_argument('what', choices=('tiers', 'explain', 'release', 'lint', 'passed'))
     ap.add_argument('--sha', help='passed: the commit (default HEAD)')
     ap.add_argument('--runs', default=os.path.join(os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work'), 'run', 'gate'), help='passed: the gate runs folder')
     ap.add_argument('--gate', default=os.path.join(ROOT, 'dm', 'verify', 'fork_gate.sh'), help='lint: the gate script')
@@ -204,14 +244,20 @@ def main():
         for problem in problems: print('  ' + problem)
         print(f"GATE_LINT {'RED' if problems or not n else 'OK'} {n} steps{', ' + str(len(problems)) + ' problems' if problems else ''}")
         return 1 if problems or not n else 0
+    if a.what == 'release':
+        print(' '.join(RELEASE_TIERS)); return 0
     mb, files = changed(a.base)
     tiers, each = pick(files)
-    print(' '.join(tiers))
+    print(' '.join(PER_CHANGE))
     if a.what == 'explain':
-        print(f"GATE_PICK against {a.base} (merge base {mb[:9]}): {len(files)} changed file{'s' if len(files) != 1 else ''} → {' '.join(tiers)}")
+        print(f"GATE_PICK against {a.base} (merge base {mb[:9]}): {len(files)} changed file{'s' if len(files) != 1 else ''} → {' '.join(PER_CHANGE)} now; the whole gate ({' '.join(RELEASE_TIERS)}) at the next release or app rebuild")
+        todo = checks(files)
+        for cmd, what, fs in todo:
+            print(f"  also run: {cmd}   # {what} ({', '.join(fs[:3])}{' …' if len(fs) > 3 else ''})")
+        if not todo: print('  no extra check for these files')
         rows = sorted(each.items(), key=lambda kv: (-ORDER.index(kv[1][0]), kv[0]))
         for f, (t, why) in rows[:40]:
-            print(f'  {t:<5} {f}: {why}')
+            print(f'  at the release, {t:<5} exercises {f}: {why}')
         if len(rows) > 40:
             print(f'  … and {len(rows) - 40} more')
         long_only = [f for f in files if any(fnmatch.fnmatchcase(f, p) for p in LONG_ONLY)]

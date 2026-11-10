@@ -31,6 +31,25 @@ class Pick(unittest.TestCase):
         self.assertEqual(self.tiers('README.md', 'docs/MAC.md', 'dm/gfx/README.md', 'dm/switches.tsv', '.github/workflows/tests.yml'), ['quick', 'unit'])
         self.assertEqual(self.tiers('dm/host/tests/t_video.c', 'dm/tools/test_gate_pick.py', 'dm/launcher/Sources/x.swift'), ['quick', 'unit'])
 
+    def test_a_change_runs_quick_and_unit_plus_what_it_touches(self):   # the rule since 2026-11-10: the game tiers run at a release, not per change
+        self.assertEqual(g.PER_CHANGE, ('quick', 'unit')); self.assertEqual(g.RELEASE_TIERS, ('quick', 'unit', 'core', 'full'))
+        self.write('dm/verify/scenarios/c.scn', 'name c\nenter_game\n'); self.write('dm/verify/scenarios/a.scn', 'name a\nrequires mac-app\nenter_game\n')
+        cmds = [c for c, _, _ in g.checks(['docs/MAC.md', 'dm/host/tests/t_video.c', 'dm/tools/test_gate_pick.py'], self.root)]
+        self.assertEqual(cmds, [])   # words and unit tests: the unit tier is their check
+        cmds = [c for c, _, _ in g.checks(['dm/host/dm_video.c', 'dm/host/dm_kbm.c', 'dm/gfx/nvn/nvn_mtl.m'], self.root)]
+        self.assertEqual(cmds, [g.ENTER])   # one game on the headless host, once
+        cmds = [c for c, _, _ in g.checks(['dm/tools/patch_nso.py', 'dm/PRODUCT', 'dm/gfx/nvn/hle_nvn.c', 'dm/gfx/nvn/pso_manifest.tsv'], self.root)]
+        self.assertTrue(any('regress.sh --fresh' in c for c in cmds)); self.assertTrue(any('pipeset_verify.scn' in c for c in cmds)); self.assertTrue(any('pso_seed.py gate' in c for c in cmds))
+        self.assertEqual(len(cmds), len(set(cmds)))
+        cmds = [c for c, _, _ in g.checks(['dm/verify/scenarios/c.scn', 'dm/verify/scenarios/a.scn', 'dm/verify/scenarios/gone.scn'], self.root)]
+        self.assertEqual(cmds, ['python3 dm/tools/scenario.py run dm/verify/scenarios/c.scn --headless'])   # a Mac-App-only or deleted scenario has no short check
+        for pattern, cmd, what in g.CHECKS: self.assertTrue(cmd and what, pattern)
+
+    def test_cli_prints_the_per_change_tiers(self):
+        run = lambda *a: subprocess.run([sys.executable, os.path.join(g.ROOT, 'dm', 'tools', 'gate_pick.py'), *a], capture_output=True, text=True, cwd=g.ROOT).stdout
+        self.assertEqual(run('tiers', '--base', 'HEAD').splitlines()[0], 'quick unit'); self.assertEqual(run('explain', '--base', 'HEAD').splitlines()[0], 'quick unit')
+        self.assertEqual(run('release').strip(), 'quick unit core full')
+
     def test_core(self):
         self.assertEqual(self.tiers('dm/verify/motion_gate.py'), ['quick', 'unit', 'core'])   # no rule names it
         self.assertEqual(self.tiers('dm/verify/fork_gate.sh'), ['quick', 'unit', 'core'])

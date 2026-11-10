@@ -3,7 +3,7 @@
 d2r-metal's verification run. It runs only what this Mac can check by itself: source checks, the test suites, scenarios on our own builds, the touch cases, faults, sanitizers and benchmarks. The reference behaviour comes from the original image (rewrite equivalence), our own baselines (`golden.py`) and the private analysis of the game's code; see [README.md](README.md#where-the-reference-behaviour-comes-from).
 
 ```bash
-dm/verify/fork_gate.sh auto             # the tiers this change needs (below)
+dm/verify/fork_gate.sh auto             # what a change runs: quick unit, and it names the short checks the change touches (below)
 dm/verify/fork_gate.sh quick            # < 1 min: source checks
 dm/verify/fork_gate.sh quick unit       # ~3 min: + the test suites
 dm/verify/fork_gate.sh core             # ~9 min: scenarios on the CLI host + touch cases
@@ -14,17 +14,21 @@ dm/verify/fork_gate.sh device           # when the iPhone is reachable
 
 Several tiers can be given at once; they run in the order given.
 
-## Picking the tiers: `auto`
+## What a change runs: `auto`
 
-`fork_gate.sh auto` runs the tiers the change needs and first prints why, file by file (`dm/tools/gate_pick.py explain`; test `test_gate_pick.py`). The change is everything since the merge base with `origin/main` (`DM_GATE_BASE` names another base): commits not pushed yet, edits, deletions and new files, never the three files `setup.sh` rewrites. Each file asks for a tier and the gate runs up to the highest:
+**The rule since 2026-11-10:** a change runs the `quick` and `unit` tiers (about 4 minutes) and the few short checks it touches. The whole gate (`quick unit core full`) runs once, on the commit a release or an app rebuild is cut from: `release_mac.sh` refuses to upload, and the app rebuild stops, without a run that passed on that commit with nothing uncommitted (`gate_pick.py passed`), so nothing reaches players ungated. The game tiers used to run for nearly every change (40 minutes, some of it in front) and got in the way of the work. What the rule costs: a regression only the game tiers catch shows at release time, among more commits, not at the change that made it.
 
-| Asks for | Files |
+`fork_gate.sh auto` runs `quick unit` and first prints what else this change asks for (`dm/tools/gate_pick.py explain`; test `test_gate_pick.py`). The change is everything since the merge base with `origin/main` (`DM_GATE_BASE` names another base): commits not pushed yet, edits, deletions and new files, never the three files `setup.sh` rewrites. The checks it names are run by hand, on the headless command-line host (`CHECKS` in `gate_pick.py`):
+
+| The change touches | Also run |
 |---|---|
-| quick unit | docs (`*.md`, `docs/`), unit tests, the switch registry, the launcher, release packaging, the engine-analysis and check tools, benchmarks, brand art, GitHub CI |
-| core | scenario saves and helpers, the gate script, a curated scenario that runs on the CLI host, and any file no rule names |
-| full | the game host (`dm/host/`: the Mac App runs the same program and the iOS app compiles every host source, while 19 scenarios run only on the Mac App and 8 only on the iOS app), graphics (`dm/gfx/`), the iOS app, game data, the binary rules and product, the scenario runner, pipeline warm-up, third-party code, the apps' text, the baselines and the rays replay, picture and fault scenarios, and a curated scenario whose `requires` line leaves out the CLI host (19 run only on the Mac App) |
+| the game host or graphics (`dm/host/`, `dm/gfx/`), the scenario runner | one game on the headless host: `scenario.py run dm/verify/scenarios/enter_game.scn --headless` |
+| the recorder (`hle_nvn.c`, `nvn_obj.h`) | the pipeline-set fast path's verify mode: `scenarios/pipeset_verify.scn` |
+| the binary rules or the product (`patch_nso.py`, `dm/PRODUCT`, `product.sh`) | `product.sh build`, then `regress.sh --fresh` |
+| the pipeline warm-up (`pso_manifest.tsv`, `pso_allow.tsv`, `pso_seed.py`) | `pso_seed.py gate --backend cli --headless` |
+| a curated scenario that runs on the command-line host | that scenario, `--headless` |
 
-The rules are `RULES` in `gate_pick.py`, first match wins. `auto` never picks `long` or `device`, and it doesn't replace `full` before rebuilding the apps or making a release: `release_mac.sh` refuses to upload, and the app rebuild stops, without a run of `quick unit core full` that passed on that commit with nothing uncommitted (`gate_pick.py passed`). A change to the gate script gets `core`: `quick_gate` checks that the script parses and that every step names files that exist (`gate_pick.py lint`).
+A feature with a verify mode or a test of its own runs that too. `explain` also lists, file by file, the tier that exercises each file when the whole gate runs (`RULES`, first match wins), so it is plain what a change leaves for the release run. `gate_pick.py release` prints the tiers a release needs. Ask for `core`, `full`, `long` or `device` by name: `auto` never picks them. Run the game tiers for a change only when the player asks, or for a rewriter or save-code change you would not want to find broken at release time; say so first.
 
 ## Results
 

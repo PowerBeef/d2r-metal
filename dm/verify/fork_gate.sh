@@ -1,7 +1,7 @@
 #!/bin/bash
 # d2r-metal 自己的验收闸门：只用本机能跑的检查（不靠模拟器真值录制），按层跑，每步经 dmtest.py 出机器可读结果，末行 FORKGATE OK|RED {json}。
 #   用法：dm/verify/fork_gate.sh [层…]      层 = quick | unit | core | full | long | device，缺省 quick unit；可写多层（core 含不含 unit 由调用方决定）
-#   dm/verify/fork_gate.sh auto        按改动挑层（dm/tools/gate_pick.py：文档与单测 quick unit，宿主 core，图形、两个 App、游戏数据 full）；发版与重装 App 前照旧跑 full
+#   dm/verify/fork_gate.sh auto        what a change runs since 2026-11-10: quick unit, after printing the short checks the change touches (dm/tools/gate_pick.py explain); the whole gate runs before a release or an app rebuild
 #   quick  源码检查（< 1 分钟）：字面量、中英表、开关登记、场景解析、HUD 派生物不入库
 #   unit   单测（约 3 分钟）：宿主、图形、iOS 单测，改写等价回归 regress.sh
 #   core   游戏局（≤ 15 分钟）：精选场景无窗口并行 3 局 + 触屏功能用例（持 Mac 游戏锁）
@@ -11,7 +11,6 @@
 #   结果：$DM_ROOT/run/gate/<时间>_<层>/（每步一个目录：log.txt、result.json、junit.xml），summary.json；latest 指向最近一次
 # d2r-metal's own acceptance gate: only checks that run on this machine (no emulator ground-truth recordings), in tiers; every step goes through dmtest.py for a machine-readable result; last line FORKGATE OK|RED {json}.
 #   Usage: dm/verify/fork_gate.sh [tier...]      tier = quick | unit | core | full | long | device, default quick unit; several tiers may be given
-#   dm/verify/fork_gate.sh auto        the tiers this change needs (dm/tools/gate_pick.py: docs and unit tests quick unit, the host core, graphics, the apps and game data full); full still runs before a release or an app rebuild
 #   quick  source checks (< 1 min): literals, string table, switch registry, scenario parsing, no HUD derivatives in git
 #   unit   unit tests (~3 min): host, graphics, iOS, rewrite equivalence regress.sh
 #   core   game runs (<= 15 min): curated scenarios headless, 3 at a time + the touch function cases (under the Mac game lock)
@@ -43,7 +42,7 @@ PYEOF
 }
 gate_abort() { gate_summary "$1"; exit 2; }   # gate_abort <reason>: stop before the tiers ran to the end, still with the verdict line
 TIERS=("$@"); [ ${#TIERS[@]} -gt 0 ] || TIERS=(quick unit)
-if [ "${TIERS[*]}" = auto ]; then   # the tiers the change against origin/main needs (DM_GATE_BASE names another base), with each file's reason
+if [ "${TIERS[*]}" = auto ]; then   # what a change runs (quick unit), after the checks it touches and what each file leaves for the release run
   PICK=$(python3 "$DM/tools/gate_pick.py" explain) || { echo "🔴 gate_pick.py 失败 | failed"; gate_abort "gate_pick.py failed"; }
   read -ra TIERS <<< "$(head -1 <<< "$PICK")"; tail -n +2 <<< "$PICK"
 fi
