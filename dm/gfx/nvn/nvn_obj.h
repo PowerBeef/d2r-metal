@@ -5,6 +5,7 @@
 // Objects are stored in place in the NVN object memory allocated by the game, with size not exceeding the reserved size in nvn.h (FITS static assertion).
 // State objects (Blend / Color / ... 4–0x18 bytes) are small structs the game copies by value; their layout is packed in place with bit-fields.
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #include "nvn.h"
@@ -69,7 +70,9 @@ typedef struct {
     PFNNVNCOMMANDBUFFERMEMORYCALLBACKPROC cb; void *cb_data;
     NVNdevice *dev;
     void *shadow;                        // 录制时滤重复状态绑定用的影子（宿主 calloc，hle_nvn.c bshadow；Finalize / 同址重建时放） | shadow for filtering repeated state binds while recording (host calloc, hle_nvn.c bshadow; freed at Finalize / re-init at the same address)
+    uint64_t last_pipe;                  // the engine pipeline object last set in full on this recording with no pipeline-state record since; 0 = none. Written by the rewriter's block at the end of the game's pipeline-set function (main+0x1746558, patch_nso.py PIPESET) and read by its fast path at fixed offset 0x40, cleared by hle_nvn.c
 } cmd_t;                                                                                     FITS(cmd_t, NVNcommandBuffer);
+_Static_assert(offsetof(cmd_t, last_pipe) == 0x40, "patch_nso.py PIPESET reads cmd_t.last_pipe at command buffer + 0x40");
 
 // ---------- 状态对象（默认值按 NVN / GL 默认） ----------
 // ---------- State objects (defaults follow the NVN / GL defaults) ----------

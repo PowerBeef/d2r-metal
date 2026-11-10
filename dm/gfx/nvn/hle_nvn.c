@@ -519,6 +519,7 @@ typedef struct {
     blend_st blend[8]; color_st color; chmask_st chmask; ms_st ms; poly_st poly; ds_st ds;
     const prog_t *prog; uint64_t prog_serial; int prog_stages;
     int nattr, nstream; va_st attr[16]; vs_st stream[16];
+    int st_vm[2], st_wm[2]; float po[3];   // pipeline-set verify mode only (DM_PIPESET=2): have bits 16 / 17 stencil value mask per face, 18 / 19 write mask per face, 20 polygon offset
 } bshadow;
 int g_bindfilt = -1;   // -1 = 按 DM_NVN_BINDFILT（缺省开）；0 / 1 = 定死（DM_NVN_UB 同进程交替） | -1 = from DM_NVN_BINDFILT (on by default); 0 / 1 = fixed (DM_NVN_UB in-process alternation)
 static _Atomic uint64_t g_bindskip_n;
@@ -532,6 +533,59 @@ static bshadow *shadow_get(cmd_t *o) {
 static int shadow_same(bshadow *s, int bit, void *slot, const void *v, size_t n) {
     if ((s->have >> bit & 1) && !memcmp(slot, v, n)) { atomic_fetch_add_explicit(&g_bindskip_n, 1, memory_order_relaxed); return 1; }
     memcpy(slot, v, n); s->have |= 1u << bit; return 0;
+}
+// ---------- The game's pipeline-set function skips true repeats (rewriter PIPESET, product r54 on) ----------
+// Before nearly every draw the game's Nvn_CtxSetPipelineState (main+0x1746558) binds a whole pipeline again with 12 to 14 NVN calls, and about four sets in five
+// repeat the pipeline already set (about 27,000 of 36,500 NVN calls a frame in the Rogue Encampment). The rewriter's block at the function's entry returns at once
+// when the engine's current pipeline (context + 0xe0) and cmd_t.last_pipe both equal the new one, the context's two side inputs are unchanged (no sample
+// locations, the same depth-bounds flag) and the thread's KPIPESET slot is 1; its block at the function's end stores the pipeline in last_pipe.
+// The host's part is to clear last_pipe whenever a record that can change the state such a set establishes goes into this command buffer (rec() below: everything
+// except draws and the binds of buffers, textures and samplers), when a recording begins and after CopyCommands. A bind the filter above drops is the same value
+// as the pipeline's, so it changes nothing and clears nothing. DM_PIPESET=0 turns the fast path off (the slot stays 0: the original function always runs);
+// Each thread's slot is set at its start and again whenever it starts a recording (thread.c dm_pipeset_refresh), so a mode set in-process applies per recording.
+// DM_PIPESET=2 is the verify mode: the block calls dm_nvn_pipeset_obs instead of returning and then runs the original function, and the host checks that every
+// state the pipeline carries equals what this recording last bound. Any difference is a red line: a skipped set would have changed something.
+int g_pipeset = -1;   // -1 = from DM_PIPESET (1 by default); 0 / 1 / 2 = fixed (DM_NVN_UB in-process alternation: each thread takes it when it next starts recording)
+int dm_nvn_pipeset_mode(void) {
+    if (g_pipeset < 0) { const char *e = getenv("DM_PIPESET"); g_pipeset = !e || !*e ? 1 : !strcmp(e, "0") ? 0 : !strcmp(e, "2") ? 2 : 1; }
+    return g_pipeset;
+}
+static _Atomic uint64_t g_pv_n, g_pv_bad, g_pv_nofilt;
+static const prog_t *snap_prog(const NVNprogram *p);
+void dm_nvn_pipeset_obs(const uint64_t *regs) {   // OBS_PIPESET, verify mode only: x0 = the engine's context, x1 = the pipeline object; the fast path's own conditions all held
+    const uint8_t *ctx = (const uint8_t *)regs[0], *p = (const uint8_t *)regs[1]; if (!ctx || !p) return;
+    const cmd_t *o = (const cmd_t *)(ctx + 0x38); const bshadow *s = o->shadow; const char *bad = NULL;
+    if (o->magic != MAGIC('C', 'M', 'D', 'B')) bad = "the command buffer at context + 0x38 is not ours";
+    else if (!s || !g_bindfilt) { atomic_fetch_add(&g_pv_nofilt, 1); return; }   // no bind filter, nothing to compare with
+    else {
+        #define PV_HAVE(b) ((s->have >> (b)) & 1)
+        uint32_t nb; memcpy(&nb, p + 0x60, 4); float fa, cl; int32_t un; memcpy(&fa, p + 0x6c, 4); memcpy(&un, p + 0x68, 4); memcpy(&cl, p + 0x70, 4);
+        float po[3] = {fa, (float)un, cl}; const void *va, *vs; memcpy(&va, p + 0x160, 8); memcpy(&vs, p + 0x168, 8); int na = p[0x158], ns = p[0x159];
+        const prog_t *sp = snap_prog((const NVNprogram *)(p + 0x98));
+        if (!PV_HAVE(12) || memcmp(&s->ds, p + 8, sizeof(ds_st))) bad = "depth-stencil state";
+        else if (!PV_HAVE(16) || !PV_HAVE(17) || s->st_vm[0] != p[0x10] || s->st_vm[1] != p[0x10]) bad = "stencil value mask";
+        else if (!PV_HAVE(18) || !PV_HAVE(19) || s->st_wm[0] != p[0x11] || s->st_wm[1] != p[0x11]) bad = "stencil write mask";
+        else if (!PV_HAVE(9) || memcmp(&s->chmask, p + 0x58, sizeof(chmask_st))) bad = "channel mask";
+        else if (!PV_HAVE(8) || memcmp(&s->color, p + 0x5c, sizeof(color_st))) bad = "colour state";
+        else if (!PV_HAVE(11) || memcmp(&s->poly, p + 0x64, sizeof(poly_st))) bad = "polygon state";
+        else if (!PV_HAVE(20) || memcmp(s->po, po, sizeof po)) bad = "polygon offset";
+        else if (!PV_HAVE(10) || memcmp(&s->ms, p + 0x78, sizeof(ms_st))) bad = "multisample state";
+        else if (!PV_HAVE(13) || s->prog != sp || s->prog_serial != (sp ? sp->serial : 0) || s->prog_stages != 0x1f) bad = "program";
+        else if (na > 16 || !PV_HAVE(14) || s->nattr != na || (na && memcmp(s->attr, va, 4 * (size_t)na))) bad = "vertex attributes";
+        else if (ns > 16 || !PV_HAVE(15) || s->nstream != ns || (ns && memcmp(s->stream, vs, 8 * (size_t)ns))) bad = "vertex streams";
+        else for (uint32_t i = 0; i < nb && i < 8 && !bad; i++) { blend_st b; memcpy(&b, p + 0x18 + 8 * i, sizeof b); if (!PV_HAVE(b.target) || memcmp(&s->blend[b.target], &b, sizeof b)) bad = "blend state"; }
+        #undef PV_HAVE
+    }
+    atomic_fetch_add(&g_pv_n, 1);
+    if (bad && atomic_fetch_add(&g_pv_bad, 1) < 8) LOG("【红】pipeset verify: a set the fast path would skip is not a repeat: %s (pipeline %p, context %p)", bad, (void *)p, (void *)ctx);
+}
+static void pipeset_report(uint64_t frame) {   // once a frame; a line every 300 frames in verify mode
+    if (g_pipeset != 2 || frame % 300) return;
+    LOG("[nvn] pipeset verify: %llu checked, %llu differ, %llu without the bind filter", (unsigned long long)atomic_load(&g_pv_n), (unsigned long long)atomic_load(&g_pv_bad), (unsigned long long)atomic_load(&g_pv_nofilt));
+}
+static void pv_stencil(cmd_t *o, int which, int f, int m) {   // verify mode: what the unfiltered stencil masks were last set to
+    bshadow *s = g_pipeset == 2 ? shadow_get(o) : NULL; if (!s || which > 1) return;
+    for (int i = 0; i < 2; i++) if (f & (1 << i)) { (which ? s->st_wm : s->st_vm)[i] = m; s->have |= 1u << ((which ? 18 : 16) + i); }
 }
 static void shadow_free(cmd_t *o) { if (o->magic == MAGIC('C', 'M', 'D', 'B') && o->shadow) free(o->shadow); o->shadow = NULL; }
 NVN(nvnCommandBufferInitialize, NVNboolean, NVNcommandBuffer *c, NVNdevice *d) {
@@ -734,12 +788,14 @@ static uint8_t *cmd_alloc(cmd_t *o, uint32_t size) {
     uint8_t *p = o->cur; o->cur += size; put_hdr(p, 0, size); return p;
 }
 __attribute__((weak)) void dm_jitter_refresh(void) {}   // thread.c
+__attribute__((weak)) void dm_pipeset_refresh(void) {}   // thread.c
 NVN(nvnCommandBufferBeginRecording, void, NVNcommandBuffer *c) {
     cmd_t *o = CB(c);
-    dm_jitter_refresh();
+    dm_jitter_refresh(); dm_pipeset_refresh();
     if (o->recording) LOG("【红】BeginRecording 重入");
     o->recording = 1;
     if (o->shadow) ((bshadow *)o->shadow)->have = 0;   // 每段录制从「什么都不知道」起：第一次绑定一定录 | each recording starts knowing nothing: the first bind of each kind is always recorded
+    o->last_pipe = 0;   // and no pipeline counts as set (see the pipeline-set fast path above)
     uint8_t *p = cmd_alloc(o, 8); put_hdr(p, OP_BEGIN, 8); o->begin = p;
     hostseg_rec_begin(o);
 }
@@ -775,6 +831,7 @@ NVN(nvnCommandBufferCopyCommands, void, NVNcommandBuffer *c, int n, const NVNcom
         if (m) { pthread_mutex_lock(&g_hostseg_mu); hostseg_pin(m, -1); pthread_mutex_unlock(&g_hostseg_mu); }
     }
     if (CB(c)->shadow) ((bshadow *)CB(c)->shadow)->have = 0;   // 拷进来的记录可能改了任何状态：影子作废 | the copied records may have changed any state: the shadow is void
+    CB(c)->last_pipe = 0;
 }
 NVN(nvnCommandBufferSignalEvent, void, NVNcommandBuffer *c, const NVNevent *e, NVNeventSignalMode m, NVNeventSignalLocation loc, int flags, uint32_t v) {
     (void)loc; (void)flags;
@@ -808,6 +865,9 @@ static void *rec(NVNcommandBuffer *c, uint32_t op, size_t payload) {
     uint32_t sz = (uint32_t)((8 + payload + 7) & ~(size_t)7);
     uint8_t *p = cmd_alloc(CB(c), sz); put_hdr(p, op, sz);
     memset(p + 8, 0, sz - 8);
+    // The pipeline-set fast path: any record other than a draw or a bind of buffers, textures or samplers may change what a pipeline set established
+    static const uint64_t keep = 1ull << OP_DRAW | 1ull << OP_DRAW_IDX | 1ull << OP_BIND_VBUF | 1ull << OP_BIND_UBO | 1ull << OP_BIND_SSBO | 1ull << OP_BIND_TEX | 1ull << OP_BIND_SAMP | 1ull << OP_BIND_IMG;
+    if (op >= 64 || !(keep >> op & 1)) CB(c)->last_pipe = 0;
     return p + 8;
 }
 #define REC(c, OP, T) ((T *)rec((c), (OP), sizeof(T)))
@@ -846,7 +906,7 @@ NVN(nvnCommandBufferBindProgram, void, NVNcommandBuffer *c, const NVNprogram *p,
 }
 static void bind_state(NVNcommandBuffer *c, int kind, const void *st, size_t n) {
     bshadow *s = shadow_get(CB(c));
-    if (s) { void *slot = NULL; int bit = 8 + kind;
+    if (s) { void *slot = NULL; int bit = 7 + kind;   // kinds 1..5 = bits 8..12, as the bshadow comment lists them (it was 8 + kind until r54's host: depth-stencil then shared bit 13 with the program, so at the start of a recording a program bind after a depth-stencil bind was compared with the previous recording's program)
         switch (kind) {
             case 0: { blend_st b; memcpy(&b, st, sizeof b); slot = &s->blend[b.target]; bit = b.target; break; }   // 混合按目标各记一份（回放 S.blend[target]） | blend is kept per target (replay S.blend[target])
             case 1: slot = &s->color; break; case 2: slot = &s->chmask; break; case 3: slot = &s->ms; break; case 4: slot = &s->poly; break; case 5: slot = &s->ds; break;
@@ -908,10 +968,13 @@ NVN(nvnCommandBufferBindSeparateSamplers, void, NVNcommandBuffer *c, NVNshaderSt
 NVN(nvnCommandBufferBindSeparateSampler, void, NVNcommandBuffer *c, NVNshaderStage st, int i, NVNseparateSamplerHandle h) {
     bind_handles(c, OP_BIND_SAMP, st, i, 1, &h.value);
 }
-NVN(nvnCommandBufferSetStencilValueMask, void, NVNcommandBuffer *c, NVNface f, int m) { *REC(c, OP_STENCIL, p_stencil) = (p_stencil){f, m, 0, 0, 0}; }
-NVN(nvnCommandBufferSetStencilMask, void, NVNcommandBuffer *c, NVNface f, int m) { *REC(c, OP_STENCIL, p_stencil) = (p_stencil){f, 0, m, 0, 1}; }
-NVN(nvnCommandBufferSetStencilRef, void, NVNcommandBuffer *c, NVNface f, int v) { *REC(c, OP_STENCIL, p_stencil) = (p_stencil){f, 0, 0, v, 2}; }
+NVN(nvnCommandBufferSetStencilValueMask, void, NVNcommandBuffer *c, NVNface f, int m) { pv_stencil(CB(c), 0, (int)f, m); *REC(c, OP_STENCIL, p_stencil) = (p_stencil){f, m, 0, 0, 0}; }
+NVN(nvnCommandBufferSetStencilMask, void, NVNcommandBuffer *c, NVNface f, int m) { pv_stencil(CB(c), 1, (int)f, m); *REC(c, OP_STENCIL, p_stencil) = (p_stencil){f, 0, m, 0, 1}; }
+NVN(nvnCommandBufferSetStencilRef, void, NVNcommandBuffer *c, NVNface f, int v) {   // the reference value is not part of a pipeline set: it leaves last_pipe as it was
+    uint64_t lp = CB(c)->last_pipe; *REC(c, OP_STENCIL, p_stencil) = (p_stencil){f, 0, 0, v, 2}; CB(c)->last_pipe = lp;
+}
 NVN(nvnCommandBufferSetPolygonOffsetClamp, void, NVNcommandBuffer *c, float fa, float un, float cl) {
+    if (g_pipeset == 2) { bshadow *sh = shadow_get(CB(c)); if (sh) { sh->po[0] = fa; sh->po[1] = un; sh->po[2] = cl; sh->have |= 1u << 20; } }   // verify mode
     *REC(c, OP_POLY_OFFSET, p_poly_offset) = (p_poly_offset){fa, un, cl};
 }
 NVN(nvnCommandBufferDrawArrays, void, NVNcommandBuffer *c, NVNdrawPrimitive pr, int first, int n) { *REC(c, OP_DRAW, p_draw) = (p_draw){pr, first, n}; }
@@ -1378,7 +1441,7 @@ static void dump_frame(void) {
     if (g_tsv) fflush(g_tsv);
     if (g_frame <= (uint64_t)nframes) LOG("[nvn] %s %llu：%u 个函数 %llu 次调用 |%s", g_frame ? "帧" : "初始化", g_frame, nfn, total, line);
     else if (g_frame % 300 == 0) LOG("[nvn] 帧 %llu：%u 个函数 %llu 次调用", g_frame, nfn, total);
-    g_frame++; cs_dump();
+    pipeset_report(g_frame); g_frame++; cs_dump();
     // 每 300 帧读一次常驻内存，交图形层打内存读数行（mtl_mem_stat，低频封顶）。内存看门狗：常驻超过上限就报红自行退出——只在 Mac 宿主上缺省开（24 GB：宿主内存失控
     // 会把整机拖进内核崩溃，同机别的程序两次如此），或测试时用 DM_MEM_CAP_GB=<整数> 指定；玩家的 iOS 包不设上限（被系统杀之前自己退没有意义，反而多一种闪退）
     // Every 300 frames read resident memory and hand it to the graphics layer to print the memory readout line (mtl_mem_stat, low frequency, capped). Memory watchdog: when resident memory exceeds the cap, log a failure and exit on its own. On by default only on the Mac host (24 GB: runaway host memory
@@ -1404,7 +1467,8 @@ __attribute__((weak)) void dm_perf_present(double iv_ms) { (void)iv_ms; }   // �
 uint64_t dm_nvn_sub_cpu_ns(void) { return atomic_load(&g_cum_sub_cpu_ns); }   // 提交（不含出图）累计 CPU 纳秒 | Cumulative CPU nanoseconds of submit (excluding present)
 static uint64_t sub_cyc(void) { return atomic_load(&g_cum_sub_cyc); }
 extern uint64_t (*g_ub_sub_cpu_ns)(void), (*g_ub_sub_cyc)(void);
-__attribute__((constructor)) static void ub_sub_register(void) { g_ub_sub_cpu_ns = dm_nvn_sub_cpu_ns; g_ub_sub_cyc = sub_cyc; }   // 同进程交替测量（nvn_mtl.m ub_frame）按相取翻译 CPU / 周期 | In-process alternating measurement (nvn_mtl.m ub_frame) takes translation CPU / cycles per phase
+extern int *g_ub_pipeset;
+__attribute__((constructor)) static void ub_sub_register(void) { g_ub_sub_cpu_ns = dm_nvn_sub_cpu_ns; g_ub_sub_cyc = sub_cyc; g_ub_pipeset = &g_pipeset; }   // 同进程交替测量（nvn_mtl.m ub_frame）按相取翻译 CPU / 周期 | In-process alternating measurement (nvn_mtl.m ub_frame) takes translation CPU / cycles per phase
 __attribute__((weak)) int dm_thermal_now(void) { return -1; }   // 缺省（Mac）；iOS front_ios.m 覆盖   // 缺省（Mac）；iOS 前端 front_ios.m 的强定义覆盖它 | Default (Mac); overridden by iOS front_ios.m   // default (Mac); the strong definition in the iOS front end front_ios.m overrides it
 // 长帧日志的逐帧环（GPU 时间滞后 8 帧才有，所以先存后判）
 // Per-frame ring for the long-frame log (GPU time only arrives 8 frames late, so store first and judge later)

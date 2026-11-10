@@ -373,14 +373,49 @@ for n, (roff, form) in _hreg.items():
         bad(f'分支门 svc #{n:#x} {roff:#x}：块不符模板'); continue
     if gates.get(ks[0] + 12) != ('svc', n, roff): bad(f'分支门 svc #{n:#x} gates.tsv 行不符：{gates.get(ks[0] + 12)}')
     seen.add(ks[0] + 12); nbranch += 1
+# ⑫ Pipeline-set fast path (pipeset.tsv, the touch product since r54; patch_nso.py PIPESET): the entry and the exit of the engine's pipeline-set function are
+#   cuts that branch into the patch area, and both blocks equal their templates word for word:
+#   entry: cbz x1, slow ; ldr x16,[x0,#0xe0] ; cmp x16,x1 ; b.ne slow ; ldr x16,[x0,#0x78] ; cmp x16,x1 ; b.ne slow ; ldr w16,[x0,#0x2f0] ; cbnz w16, slow ;
+#          ldrb w16,[x0,#0x2e5] ; ldrb w17,[x1,#0x12] ; cmp w16,w17 ; b.ne slow ; slot fetch (KPIPESET) into x16 ; ldr x16,[x16] ; cbz x16, slow ; cmp x16,#1 ;
+#          b.ne verify ; ret ; slow: original instruction ; b entry+4 ; verify: an observation gate block (as ⑦) whose gates.tsv row is (obs, number, entry)
+#   exit:  ldr x16,[x20,#0xe0] ; ldr w17,[x20,#0x2f0] ; cmp w17,#0 ; csel x16,x16,xzr,eq ; str x16,[x19,#0x40] ; original instruction ; b exit+4
+#   Only x16 / x17 and the flags are written before the original instruction on any path that goes on; the return path leaves x0–x15, x18–x30 and sp untouched.
+npipe = 0
+_pp = f'{out_dir}/{mod}.pipeset.tsv'
+if os.path.exists(_pp):
+    _rows = [l.rstrip('\n').split('\t') for l in open(_pp, encoding='utf-8') if not l.startswith('#')]
+    if len(_rows) != 1 or len(_rows[0]) != 10: bad('pipeset.tsv: one row of ten columns expected')
+    else:
+        en, ew, ex, xw, e0, slow, ver, x0 = (int(v, 16) if i not in (1, 3) else int.from_bytes(bytes.fromhex(v), 'little') for i, v in enumerate(_rows[0][:8]))
+        oid, key = int(_rows[0][8]), _rows[0][9]
+        bc = lambda at, to_, cond: 0x54000000 | ((((to_ - at) >> 2) & 0x7FFFF) << 5) | cond
+        cbz = lambda at, to_, r, nz=0, sf=1: (0x34000000 | sf << 31 | nz << 24) | ((((to_ - at) >> 2) & 0x7FFFF) << 5) | r
+        ks = keyseq(e0 + 52) if PO <= e0 < len(pat) else None
+        want = {e0: cbz(e0, slow, 1), e0 + 4: 0xF9407010, e0 + 8: 0xEB01021F, e0 + 12: bc(e0 + 12, slow, 1), e0 + 16: 0xF9403C10, e0 + 20: 0xEB01021F, e0 + 24: bc(e0 + 24, slow, 1),
+                e0 + 28: 0xB942F010, e0 + 32: cbz(e0 + 32, slow, 16, nz=1, sf=0), e0 + 36: 0x394B9410, e0 + 40: 0x39404831, e0 + 44: 0x6B11021F, e0 + 48: bc(e0 + 48, slow, 1),
+                e0 + 68: 0xF9400210, e0 + 72: cbz(e0 + 72, slow, 16), e0 + 76: 0xF100061F, e0 + 80: bc(e0 + 80, ver, 1), e0 + 84: 0xD65F03C0,
+                slow: ew, slow + 4: B(slow + 4, en + 4),
+                x0: 0xF9407290, x0 + 4: 0xB942F291, x0 + 8: 0x7100023F, x0 + 12: 0x9A9F0210, x0 + 16: 0xF9002270, x0 + 20: xw, x0 + 24: B(x0 + 24, ex + 4)}
+        vk = keyseq(ver + 4) if PO <= ver < len(pat) else None
+        if W(orig, en) != ew or W(orig, ex) != xw: bad('pipeset: original words differ from the registered ones')
+        elif en not in _starts: bad(f'pipeset: entry {en:#x} is not a function entry')
+        elif btarget(en) != e0 or btarget(ex) != x0 or slow != e0 + 88 or (W(pat, e0 + 52) & 31) != 16 or key not in KEY or not ks or ks != (e0 + 68, KEY[key]):
+            bad('pipeset: site heads or the entry block layout do not match')
+        elif any(W(pat, a) != v for a, v in want.items()):
+            bad(f'pipeset: block words differ from the template at {[hex(a) for a, v in want.items() if W(pat, a) != v][:6]}')
+        elif W(pat, ver) != 0xA9BF7BFD or not vk or vk[1] != KEY.get('KGATE') or W(pat, vk[0]) & 0xFFC00000 != 0xF9400000 or W(pat, vk[0] + 4) != LDR_X29_SP \
+                or W(pat, vk[0] + 8) != 0xD63F03C0 or W(pat, vk[0] + 12) != 0xA8C17BFD or W(pat, vk[0] + 16) != ew or W(pat, vk[0] + 20) != B(vk[0] + 20, en + 4):
+            bad('pipeset: the verify block is not an observation gate block')
+        elif gates.get(vk[0] + 12) != ('obs', oid, en): bad(f'pipeset: gates.tsv row differs: {gates.get(vk[0] + 12)}')
+        else: seen.add(vk[0] + 12); npipe = 1; pipekey = key
 if set(gates) != seen: bad(f'gates.tsv 有多余行 {len(set(gates) - seen)}')
 
 # ⑥ 线程槽
 # ⑥ Thread slots
 _base = {'K18', 'KTLS', 'KTLR', 'KGATE'}; _extra = set(KEY) - _base   # 额外键 = 参数门键（KRES* / KASPECT* …；改写器全局键表，三模块表头都列）：须是 K 开头大写名、键号低于基础四键 | Extra keys = parameter-gate keys (KRES* / KASPECT* ...; the rewriter's global key table, listed in the headers of all three modules): must be uppercase names starting with K, with key numbers below the four base keys
-if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW', 'KSHSIZE', 'KJITTER'} \
-        or not {k for *_, k in params} | {k for _, _, k, _ in switches} <= set(KEY) or set(KEY.values()) != set(range(11)):
-    bad(f'header key page indices are not valid: {KEY} (eleven keys with indices exactly 0..10)')
+if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KASPECTUI', 'KESHADOW', 'KSHSIZE', 'KJITTER', 'KPIPESET'} \
+        or not {k for *_, k in params} | {k for _, _, k, _ in switches} <= set(KEY) or set(KEY.values()) != set(range(12)):
+    bad(f'header key page indices are not valid: {KEY} (twelve keys with indices exactly 0..11)')
 kv = {v: k for k, v in KEY.items()}; nk = {}
 for o in range(PO, len(pat) - 4, 4):
     w = W(pat, o)
@@ -393,7 +428,8 @@ expected = {}
 for kind in sites.values():
     key = {'x18': 'K18', 'W': 'K18', 'tpidr_r': 'KTLS', 'tpidr_w': 'KTLS', 'tpidrro_r': 'KTLR'}.get(kind)
     if key: expected[key] = expected.get(key, 0) + 1
-expected['KGATE'] = len(gsites) + len(obs) + nbranch
+expected['KGATE'] = len(gsites) + len(obs) + nbranch + npipe
+if npipe: expected[pipekey] = expected.get(pipekey, 0) + 1
 for _, _, _, key in params: expected[key] = expected.get(key, 0) + 1
 for _, _, key, _ in switches: expected[key] = expected.get(key, 0) + 1
 if any(nk.get(k, 0) != v for k, v in expected.items()) or any(k not in expected and v for k, v in nk.items()):

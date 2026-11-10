@@ -422,7 +422,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Switch:** DM_NVN_BINDFILT
 - **Test:** t_ub
 - **Commit:** 3178a1b
-- **Measured:** Binds -57%, submit-thread instructions -13%, replay -10% (M6, 2026-10-27).
+- **Measured:** Binds -57%, submit-thread instructions -13%, replay -10% (M6, 2026-10-27). Until the host of r54 the depth-stencil state and the program shared one "seen" bit, so a recording's first program bind after a depth-stencil bind could be dropped when it equalled the previous recording's last program; it never happened in a measured run (0 of 11,884 recordings) and is fixed (t_nvn 11a).
 - **Status:** confirmed
 - **Covers:** none
 
@@ -737,6 +737,19 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Measured:** none: a bound check.
 - **Status:** confirmed
 - **Covers:** main+0xaa9f88
+
+### EC-055 Pipeline sets skip true repeats
+- **Layer:** binary rule
+- **Engine:** Before nearly every draw its pipeline-set function (main+0x1746558) binds a whole pipeline again with 12 to 14 NVN calls, with no check for a repeat. About four sets in five repeat the pipeline already set: three quarters of the 36,500 NVN calls a frame in the Rogue Encampment.
+- **Ours:** A block at the function's entry returns at once when the engine's current pipeline and the host's record of the last pipeline set in full on this recording both equal the new one, the context's two side inputs are unchanged (no sample locations, the same depth-bounds flag) and a host slot says so. A block at its end records the pipeline. The host clears its record whenever anything that can change such state is recorded, when a recording begins and after copied commands. Slot 0 runs the original function every time.
+- **Why:** CPU work on the game's own threads; the bind filter (EC-030) could only keep the repeats off the translation thread.
+- **Setting:** none
+- **Switch:** DM_PIPESET (0 off, 1 on, 2 verify: every set the fast path would skip is compared with what the recording last bound, a difference is a red line)
+- **Test:** t_nvn, pipeset_verify, structck
+- **Commit:** this commit
+- **Measured:** In-process A/B, M6, 2026-11-09, 20 paired phases each. Off against on, headless camp: process CPU +0.39 ms a frame (+2.6%), main thread +0.12 ms (+3.3%), translation thread +4.7% cycles, energy +5.9%. At Recommended (2560 x 1440, Temporal, Frame Generation): process CPU +0.38 ms (+2.2%), main thread +0.16 ms (+3.9%), energy +7.4% (interval 3 to 12%). NVN calls a frame 23,950 to 12,476 on the walk into the Blood Moor. Verify mode: about 8.3 million sets checked over camp, moor, a fight, a dungeon, panels and a crowd, none differed. No iPhone measurement.
+- **Status:** confirmed
+- **Covers:** main+0x1746558, main+0x1746788, KPIPESET
 
 ## Metal 4
 

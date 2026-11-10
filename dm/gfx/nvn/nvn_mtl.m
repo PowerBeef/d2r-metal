@@ -917,9 +917,11 @@ int g_fx_dedup = 1;
 int g_la_cache = 1;   // 每次绘制的反射摘要 / 全零事实表 / 全零集合删除这三处按对象缓存（udc_note_draw、zskip_can_draw）；0 = 每次现算（同进程交替测量对照用）   // 渲染编码器固定功能状态同值不重发（draw 里的 FX_SET）；0 = 每次绘制照发（同进程交替测量对照用） | Per-object caching for the per-draw reflection summary / all-zero fact table / all-zero set removal (udc_note_draw, zskip_can_draw); 0 = computed every time (for in-process alternating measurement comparison)   // Render encoder fixed-function state not resent if unchanged (FX_SET in draw); 0 = sent on every draw (for in-process alternating measurement comparison)
 int g_blit_bar = 1;   // Metal 4 复用拷贝编码器时的屏障（blit()）；0 = 不设，只供同进程交替量开销（数据可能乱序） | Barrier when reusing the blit encoder on Metal 4 (blit()); 0 = not set, only for measuring overhead with in-process alternation (data may be reordered)
 int g_bar_lv = -1;   // pass-barrier level (see bar_r_begin)
+int *g_ub_pipeset;   // hle_nvn.c: the pipeline-set fast path's mode (g_pipeset), for in-process alternation on a device too
 static int *ub_var(const char *nm) {
     extern int g_bloom_q, g_dm_present_link, g_tbdr_rt, g_blit_bar, g_sdx_attdedup, g_tbdr_sub, g_aniso, g_bar_lv;
     static const struct { const char *n; int *p; } t[] = { {"g_bloom_q", &g_bloom_q}, {"g_dm_present_link", &g_dm_present_link}, {"g_frz_on", &g_frz_on}, {"g_fx_dedup", &g_fx_dedup}, {"g_la_cache", &g_la_cache}, {"g_tbdr_rt", &g_tbdr_rt}, {"g_blit_bar", &g_blit_bar}, {"g_sdx_attdedup", &g_sdx_attdedup}, {"g_tbdr_sub", &g_tbdr_sub}, {"g_aniso", &g_aniso}, {"g_bar_lv", &g_bar_lv} };
+    if (!strcmp(nm, "g_pipeset") && g_ub_pipeset) return g_ub_pipeset;   // hle_nvn.c registers it (this file is also built without that one)
     for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(nm, t[i].n)) return t[i].p;
     return dlsym(RTLD_DEFAULT, nm);
 }
