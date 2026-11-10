@@ -517,7 +517,7 @@ def draws(d, by='v0', top=30, hook=None):
         print(f"  hook {hk} {hooks.get(int(hk), {}).get('name', '?')}: {n} draws, {n / nf:.1f} a frame; distinct v0 {len({r['v0'] for r in hr})}, v1 {len({r['v1'] for r in hr})}, v2 {len({r['v2'] for r in hr})}, v3 {len({r['v3'] for r in hr})}; shader pairs {len({(r['vs'], r['fs']) for r in hr})}")
         for col, kind in sorted(kinds.get(hk, {}).items()):   # the hook's named values: draws by name
             if kind not in names: print(f"      {col} is a {kind}: no name table in this run (names path=names.tsv)"); continue
-            byname = collections.Counter(named(hk, col, r[col]) or ('(solid colour)' if kind == 'texture' and r[col] in ('', '0') else f'(no name: {r[col]})') for r in hr)
+            byname = collections.Counter(named(hk, col, r[col]) or ('(no texture)' if kind == 'texture' and r[col] in ('', '0') else f'(no name: {r[col]})') for r in hr)
             known = sum(c for k, c in byname.items() if not k.startswith('(no name'))
             print(f"      by {kind} ({col}): {100 * known / max(1, n):.1f}% of its draws named, {len(byname)} names")
             for k, c in byname.most_common(top if hook is not None else 6): print(f"        {c:7d}  {c / nf:7.1f} a frame  {k}")

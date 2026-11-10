@@ -18,6 +18,7 @@ class FakeHost:
     """连到运行器监听口的假宿主：主菜单事件先发，X → 选角面板，LoadCharacter → 进局 + 读取画面撤下。 | A fake host that connects to the runner's listening socket: main menu event first, X -> character select panel, LoadCharacter -> game enter + loading screen gone."""
     def __init__(self, port, fail_cmd=None, mem_errors=0):
         self.port, self.fail_cmd, self.seq, self.in_game, self.got, self.mem_errors = port, fail_cmd, 0, False, [], mem_errors
+        self.area, self.taps = 1, 3   # the hero's area (warp moves it); monsters left to tap
         threading.Thread(target=self.run, daemon=True).start()
 
     def ev(self, kind, **kw):
@@ -36,10 +37,13 @@ class FakeHost:
                 if r['cmd'] == 'press' and r.get('keys') == 'X': self.ev('panel', act='OpenPanel', name='CharacterSelectPanel')
                 if r['cmd'] == 'msg': self.in_game = True; self.ev('game_enter'); self.ev('loading_done', tick=16)
                 if r['cmd'] == 'press' and r.get('keys') == 'PLUS': self.ev('panel', act='OpenPanel', name='PlayerInventoryExpansionLayout')
-                if r['cmd'] == 'state': out = dict(in_game=self.in_game, hp=40, panel='AutoMap')
+                if r['cmd'] == 'state': out = dict(in_game=self.in_game, hp=40, hp_max=40, dead=False, area=self.area, panel='AutoMap')
+                if r['cmd'] == 'warp': self.area = int(r['level'])
+                if r['cmd'] == 'live' and r.get('do') == 'list': out = dict(hooks=2, list=[dict(hook=0, name='frame', hits=120, matched=120, recorded=0), dict(hook=1, name='fence', hits=0, matched=0, recorded=0, acted=0)][int(r.get('from', 0)):])
                 if r['cmd'] == 'boom': self.ev('crash', sig=11)
                 if r['cmd'] == 'mem': out = dict(at='0x7100000010', hex='02' + '00' * (int(r.get('len', 8)) - 1))   # as the host: len bytes, 8 without it
                 ok = r['cmd'] != self.fail_cmd
+                if r['cmd'] == 'tap_unit': self.taps -= 1; ok = self.taps >= 0   # then none is left on screen
                 if r['cmd'] == 'mem' and self.mem_errors > 0: self.mem_errors -= 1; ok, out = False, {}   # the first reads fail, as through a pointer still null
                 rep = dict(id=r['id'], cmd=r['cmd'], ok=ok, **out, **({} if ok else {'err': 'no pointer at 0x0' if r['cmd'] == 'mem' else 'nope'}))
                 self.s.sendall(b'[dm] RE ' + json.dumps(rep).encode() + b'\n')
@@ -96,6 +100,24 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual((code, res['verdict']), (0, 'OK'), res)
         self.assertEqual([g['cmd'] for g in host.got][:4], ['state', 'state', 'press', 'msg'])   # 第二个 state：看选角页是不是已经开着 | the second state: whether character select is already open
         self.assertTrue(os.path.exists(self.dir / 'out' / 'steps.tsv'))
+
+    def test_goto_fight_and_live_checks(self):
+        """goto warps by stop name or area id and waits for the area; fight spawns each class, taps what is left and presses the skill buttons;
+        expect_live and remember live: read a hook's counters from `live do=list`."""
+        res, code, host = self.run_scn('enter_game\ngoto a1_den settle=0\nexpect_state area=8\ngoto 40 settle=0\ngoto 40 settle=0\n'
+                                       'fight cls=19,5 count=2 rounds=6 pace=0 skill=X,Y\nexpect_live frame hits>=60\nremember live:frame.hits as=f0\n'
+                                       'expect_live frame hits=$f0 matched=120\nexpect_live fence hits=0 acted=0\nexpect_live 1 hits=0\n')
+        self.assertEqual((code, res['verdict']), (0, 'OK'), res)
+        got = host.got; self.assertEqual([g['level'] for g in got if g['cmd'] == 'warp'], [8, 40])   # the third goto finds the hero already there
+        self.assertEqual([(g['cls'], g['count']) for g in got if g['cmd'] == 'spawn'], [(19, 2), (5, 2)])
+        self.assertEqual(len([g for g in got if g['cmd'] == 'tap_unit']), 5)   # three found, then one miss of each class ends the fight
+        self.assertEqual([g['keys'] for g in got if g['cmd'] == 'press' and g.get('keys') in ('X', 'Y')][1:], ['X', 'Y', 'X'])   # after enter_game's own X
+        res, code, _ = self.run_scn('enter_game\nexpect_live frame hits=0 timeout=0.4\n')
+        self.assertEqual(code, 1); self.assertIn('live hook frame: hits=0 (is 120)', res['reason'])
+        res, code, _ = self.run_scn('enter_game\nexpect_live nosuch hits=0\n'); self.assertIn("no live hook 'nosuch'", res['reason'])
+        res, code, _ = self.run_scn('enter_game\ngoto nowhere\n'); self.assertIn('neither an area id nor a stop', res['reason'])
+        for bad in ('expect_live frame\n', 'expect_live hits=1\n', 'goto\n'):
+            with self.assertRaises(scenario.ScenarioError): scenario.parse(self.scn(bad, 'bad.scn'))
 
     def test_failed_command_and_failed_expect_are_red(self):
         res, code, _ = self.run_scn('press A\n', fail_cmd='press')

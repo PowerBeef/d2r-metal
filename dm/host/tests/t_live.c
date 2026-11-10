@@ -153,8 +153,10 @@ int main(void) {
     EXPECT("acted once", 1, cnt(h_skab).acted);
     add(lvt_n2, "set=x1:0x10");
     EXPECT("set=x1: the argument is rewritten", 0x15, ((f2)fn(lvt_n2))(5, 1));
-    int h_rv = add(lvt_n3, "kind=ret retval=0x2a");
+    int h_rv = add(lvt_n3, "kind=ret retval=0x2a max=1");
     EXPECT("retval=: the caller gets the new value", 0x2a, ((f2)fn(lvt_n3))(0, 0));
+    EXPECT("retval=: and still after the record budget is used up", 0x2a, ((f2)fn(lvt_n3))(0, 0));
+    EXPECT("one call recorded (entry and return), two acted on", 1, cnt(h_rv).recorded == 2 && cnt(h_rv).acted == 2);
     // a site first armed plain, armed again with act=skip: a new trampoline with the test
     dm_live_del(h_again); uint64_t tr1 = dm_live_tramp(h_add); int h_sk2 = add(lvt_add, "act=skip ret=0x7 count=1");
     EXPECT("plain site armed again with act=skip: same hook, new trampoline", 1, h_sk2 == h_add && dm_live_tramp(h_sk2) != tr1);

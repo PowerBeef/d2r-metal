@@ -28,7 +28,7 @@ class FeatureMapTest(unittest.TestCase):
         self.assertEqual(featuremap.tag_of(['ui/inventory', 'ui/pause']), 'ui/* (2)')
         self.assertEqual(featuremap.tag_of(['ui/inventory', 'move/walk']), 'ui/inventory+move/walk')
         self.assertEqual(featuremap.tag_of(['walk', 'run']), 'walk+run')
-        self.assertEqual(featuremap.tag_of(['a/1', 'b/2', 'c/3', 'd/4']), 'shared (4 actions)')
+        self.assertEqual(featuremap.tag_of(['a/1', 'b/2', 'c/3', 'a/4']), 'shared: a x2, b x1, c x1')
 
     def test_features(self):
         """Functions at 0x1000 (runs while idle, one more block in the walk), 0x2000 (inventory only), 0x3000 (both panels)."""

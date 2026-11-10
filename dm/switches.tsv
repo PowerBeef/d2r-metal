@@ -143,6 +143,7 @@ DM_LAUNCHER_VERSION	tools	tools/launcher_app.sh	-
 DM_LINK_TRACE	gfx	gfx/nvn/nvn_mtl.m	y
 DM_LIVE	host	host/dm_live.c	y
 DM_LIVE_DRAWS_MAX	host	host/dm_live.c	y
+DM_LIVE_DRAWS_TAGGED	host	host/dm_live.c	y
 DM_LIVE_DRAWS_UNTAGGED	host	host/dm_live.c	y
 DM_LIVE_HOOKS	host	host/dm_live.c	y
 DM_LIVE_OUT	host	host/dm_live.c host/tests/t_live.c	y

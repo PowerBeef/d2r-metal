@@ -9,7 +9,9 @@
 //   spot light (0x4c): +0x0c power over the cone's solid angle (not a number when the cone is empty: point-light entities carry such a component too),
 //     +0x10 colour x that, +0x1c range, +0x20 shadow slot (-1 = none), +0x40 entity
 //   unit light (0x54): +0x0c power / 4 pi, +0x10 colour x that, +0x1c radius, +0x2c cube-shadow index (-1 = none), +0x3d grid flag, +0x40 entity
-// A light's component holds no position: it is the transform of the same entity. Six unit lights sit at the world origin in every scene read (their units are
+// A light's component holds no position: it is the transform of the same entity. World x and z are 2 x the tile + 1 on flat ground; a thing above the
+// ground is shifted by the same amount in both (read 2026-11-10 in nine areas).
+// A light's component holds no position either way: see the transform. Six unit lights sit at the world origin in every scene read (their units are
 // not in play); they are counted as parked and left out.
 #include "dm.h"
 #include "dm_lights.h"
@@ -49,7 +51,9 @@ int dm_lights_read(dm_light *out, int cap, int px, int py, dm_lights_info *info)
             for (int a = 0; a < 3; a++) l.colour[a] = f32(c, 0x10 + 4 * a);
             l.shadow = i32(c, k[t].shadow < 0 ? 0x28 : k[t].shadow) >= 0 && k[t].shadow >= 0; l.grid = t == DM_LIGHT_UNIT && c[0x3d] != 0;
             if (t == DM_LIGHT_UNIT && fabsf(l.pos[0]) < 8 && fabsf(l.pos[2]) < 8) { in.parked++; continue; }
-            if (t == DM_LIGHT_UNIT && px >= 0 && fabsf(l.pos[0] - (2.0f * (float)px + 1)) < 4 && fabsf(l.pos[2] - (2.0f * (float)py + 1)) < 4) in.player = 1;
+            // The player's own light: at the player's tile on flat ground; on raised ground it is shifted by the same amount in x and z (its height
+            // along the view diagonal: +8 at height 15 in Lower Kurast, +16 at height 21 in Harrogath), so x - z still equals the tile's and x stays near
+            if (t == DM_LIGHT_UNIT && px >= 0 && fabsf((l.pos[0] - l.pos[2]) - 2.0f * (float)(px - py)) < 4 && fabsf(l.pos[0] - (2.0f * (float)px + 1)) < 48) in.player = 1;
             if (t == DM_LIGHT_POINT) in.point++; else if (t == DM_LIGHT_SPOT) in.spot++; else in.unit++;
             if (out && n < cap) out[n] = l;
             n++;

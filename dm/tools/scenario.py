@@ -542,16 +542,23 @@ class Runner:
             if self.cc.cmd('state').get('area') == lv: return f'already in area {lv}'
             self.ctl('warp', level=lv); self.expect_state({'area': lv, 'timeout': kw.get('timeout', 40)}); time.sleep(float(kw.get('settle', 3)))
             return f'area {lv}'
-        if op == 'fight':   # fight [cls=19] [count=2] [rounds=6] [pace=1.5] [retreat=50]: monsters of a class spawned by the hero, then a tap on one of them each round (walk up and attack)
-            # It stops when none is left on screen, or when the hero's life is at or under retreat % (a dead hero ends the session at the next act change)
-            cls = int(kw.get('cls', 19)); hits = 0; self.ctl('spawn', cls=cls, count=int(kw.get('count', 2)), dx=int(kw.get('dx', 5)), dy=int(kw.get('dy', 3))); time.sleep(1)
-            for _ in range(int(kw.get('rounds', 6))):
+        if op == 'fight':   # fight [cls=19[,5,…]] [count=2] [rounds=6] [pace=1.5] [retreat=50] [skill=X[,Y,…]]: monsters spawned by the hero, then each round a tap on one of them (walk up and attack)
+            # and, with skill=, a press of those controller buttons (the skills bound to them). Several classes: count of each. It stops when none is left on
+            # screen, or when the hero's life is at or under retreat % (a dead hero ends the session at the next act change; DM_TEST_KEEP_LIFE=1 avoids that)
+            classes = [int(c) for c in str(kw.get('cls', 19)).split(',')]; skills = [b for b in str(kw.get('skill', '')).split(',') if b]; hits = casts = 0
+            for i, cls in enumerate(classes): self.ctl('spawn', cls=cls, count=int(kw.get('count', 2)), dx=int(kw.get('dx', 5)) - 3 * i, dy=int(kw.get('dy', 3)) + 2 * i)
+            time.sleep(1)
+            for n in range(int(kw.get('rounds', 6))):
                 st = self.cc.cmd('state')
-                if st.get('dead') or st.get('hp', 0) * 100 <= st.get('hp_max', 1) * float(kw.get('retreat', 50)): return f"{hits} attacks, stopped at life {st.get('hp')}/{st.get('hp_max')}"
-                try: self.ctl('tap_unit', type=1, cls=cls, timeout=4); hits += 1
-                except dmctl.CtlError: break
+                if st.get('dead') or st.get('hp', 0) * 100 <= st.get('hp_max', 1) * float(kw.get('retreat', 50)): return f"{hits} attacks, {casts} skill presses, stopped at life {st.get('hp')}/{st.get('hp_max')}"
+                found = False
+                for cls in classes[n % len(classes):] + classes[:n % len(classes)]:
+                    try: self.ctl('tap_unit', type=1, cls=cls, timeout=3); hits += 1; found = True; break
+                    except dmctl.CtlError: continue
+                if not found: break
                 time.sleep(float(kw.get('pace', 1.5)))
-            return f'{hits} attacks'
+                if skills: self.ctl('press', keys=skills[n % len(skills)], frames=12); casts += 1; time.sleep(0.5)
+            return f'{hits} attacks' + (f', {casts} skill presses' if skills else '')
         if op == 'open_pause':   # 局内 ＋ 开总面板，暂停页在默认页签左边第三个 | in a game + opens the combined panel; the pause page is the third tab left of the default
             m = self.cc.mark(); self.ctl('press', keys='PLUS')
             self.cc.wait_for('panel', timeout=10, after=m, act='OpenPanel', name='UISwitcher')

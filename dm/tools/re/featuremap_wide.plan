@@ -1,0 +1,131 @@
+# A wider feature map: the combined panel's tabs, the waypoint, the stash, an NPC's dialog and its second entry, moving, the skill buttons, a save, a
+# fight with two monster classes, and two or three areas of every act. Public scenario steps only (dm/verify/scenarios/README.md); a step that
+# fails ends its action, not the map. About four minutes on a headless host. The town steps fit the camp of this seed: from the spawn by the
+# waypoint (5789,4414), the stash (object 267) and an NPC (class 155) stand about 20 cells east and 28 south (5808,4442).
+# Run: python3 dm/tools/re/featuremap.py run dm/tools/re/featuremap_wide.plan    (then: featuremap.py merge)
+save warlock
+env DM_GAME_SEED=305419896 DM_TEST_KEEP_LIFE=1
+setup
+  enter_game
+  sleep 6
+action ui/automap_close
+  msg PanelManager:ClosePanel:AutoMap
+  sleep 2
+action ui/panel_open
+  press PLUS
+  sleep 2
+action ui/panel_tab_r1
+  press R
+  sleep 2
+action ui/panel_tab_r2
+  press R
+  sleep 2
+action ui/panel_tab_r3
+  press R
+  sleep 2
+action ui/panel_tab_r4
+  press R
+  sleep 2
+action ui/panel_tab_l1
+  press L
+  sleep 2
+action ui/panel_close
+  press B
+  sleep 2
+action idle_after_panels
+  sleep 5
+action object/waypoint
+  use_unit 2 119
+  sleep 3
+  back
+  sleep 2
+action object/stash
+  walk_to 5800 4414 timeout=12
+  walk_to 5806 4434 timeout=12
+  use_unit 2 267
+  sleep 3
+  back
+  sleep 2
+action npc/dialog
+  use_unit 1 155
+  sleep 3
+action npc/dialog_pick
+  press DOWN
+  press A
+  sleep 3
+  back
+  sleep 1
+  back
+  sleep 2
+action idle_after_town
+  sleep 5
+action move/stick
+  stick 0.7 0.7 frames=50
+  sleep 2
+  stick -0.7 -0.7 frames=50
+  sleep 2
+action save/requested
+  save_now
+  sleep 2
+action area/a1_coldplains
+  goto a1_coldplains
+  sleep 3
+action skill/button_a
+  press A frames=20
+  sleep 2
+action skill/button_x
+  press X frames=20
+  sleep 2
+action skill/button_y
+  press Y frames=20
+  sleep 2
+action skill/button_zr
+  press ZR frames=20
+  sleep 2
+action combat/fallen
+  fight cls=19 count=3 rounds=6
+  sleep 3
+action combat/zombie
+  fight cls=5 count=2 rounds=6
+  sleep 3
+action idle_after_fights
+  sleep 6
+action area/a1_den
+  goto a1_den
+  sleep 3
+action area/a1_catacombs4
+  goto a1_catacombs4
+  sleep 3
+action area/a2_town
+  goto a2_town
+  sleep 3
+action area/a2_sewers
+  goto a2_sewers
+  sleep 3
+action area/a2_tomb
+  goto a2_tomb
+  sleep 3
+action area/a3_town
+  goto a3_town
+  sleep 3
+action area/a3_lowerkurast
+  goto a3_lowerkurast
+  sleep 3
+action area/a3_durance3
+  goto a3_durance3
+  sleep 3
+action area/a4_town
+  goto a4_town
+  sleep 3
+action area/a4_chaos
+  goto a4_chaos
+  sleep 3
+action area/a5_town
+  goto a5_town
+  sleep 3
+action area/a5_glacial
+  goto a5_glacial
+  sleep 3
+action area/a5_throne
+  goto a5_throne
+  sleep 3

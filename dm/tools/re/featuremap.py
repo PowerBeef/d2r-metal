@@ -8,7 +8,8 @@
 #                                      writes into the analysis project as comments (a tag is evidence of when code runs, never a name)
 # Plan (text, # comments):   save <name>   |   env K=V …   |   setup + its steps (run once, before coverage)   |   action <label> + its steps
 #   Labels group by a prefix: ui/inventory, ui/skills, move/walk, area/a2_sewers. An action labelled idle… is a baseline window, like the first
-#   one (--idle seconds, default 10): its blocks count as running anyway. End an action with its own `sleep` so what it starts can finish.
+#   one (--idle seconds, default 10): its blocks count as running anyway. A function that ran in many actions of several groups is tagged
+#   `shared: area x13, combat x2`. End an action with its own `sleep` so what it starts can finish.
 # The run folder and features.tsv name game functions: they stay under $DM_ROOT/re. Needs the snapshot (re.sh live-index) and $DM_ROOT/re/venv
 import argparse
 import collections
@@ -44,11 +45,12 @@ def parse_plan(path):
 
 
 def tag_of(acts):
-    """One function's tag from the actions it ran in: the action, the group they share (ui/*), up to three joined, or how many."""
+    """One function's tag from the actions it ran in: the action, the group they share (ui/*), up to three joined, or the groups with how many
+    actions of each (shared: area x13, combat x2)."""
     if len(acts) == 1: return acts[0]
-    groups = {a.split('/')[0] for a in acts}
-    if len(groups) == 1 and all('/' in a for a in acts): return f'{groups.pop()}/* ({len(acts)})'
-    return '+'.join(acts) if len(acts) <= 3 else f'shared ({len(acts)} actions)'
+    groups = collections.Counter(a.split('/')[0] for a in acts)
+    if len(groups) == 1 and all('/' in a for a in acts): return f'{next(iter(groups))}/* ({len(acts)})'
+    return '+'.join(acts) if len(acts) <= 3 else 'shared: ' + ', '.join(f'{g} x{n}' for g, n in groups.most_common())
 
 
 def features(d):

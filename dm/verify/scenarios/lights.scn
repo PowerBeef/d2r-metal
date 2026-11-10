@@ -1,9 +1,11 @@
 # The frame's lights as the host reads them from the game's component pools (dm/host/dm_lights.c): in the Rogue Encampment the camp's fires are point
-# lights and the player carries a unit light that sits at the player's own tile, here and after a walk. `lights` lists them; `state` carries the counts
+# lights and the player carries a unit light that sits at the player's own tile, here and after a walk; then in four more areas (a cave with torches
+# and monsters, a desert town, a town on raised ground in Act 3 and one in Act 5, where the player's light is shifted by its height, and the
+# Chaos Sanctuary with dozens of lights). `lights` lists them; `state` carries the counts.
 name lights
 save warlock
-env DM_GAME_SEED=305419896
-timeout 200
+env DM_GAME_SEED=305419896 DM_TEST_KEEP_LIFE=1
+timeout 300
 
 enter_game
 sleep 3
@@ -12,5 +14,18 @@ lights
 walk_to 5789 4470 timeout=20
 sleep 1
 expect_state lights_point>=3 light_player=1 timeout=10
+goto a1_den
+expect_state lights_point>=6 lights_unit>=2 light_player=1 timeout=10
+goto a2_town
+expect_state lights_point>=2 lights_spot>=1 light_player=1 timeout=10
+goto a3_lowerkurast
+expect_state lights_unit>=1 light_player=1 timeout=10
+stick 0.7 0.7 frames=25
+sleep 1
+expect_state light_player=1 timeout=10
+goto a5_town
+expect_state light_player=1 timeout=10
+goto a4_chaos
+expect_state lights_point>=10 lights_unit>=10 timeout=10
 quit
 check no_red
