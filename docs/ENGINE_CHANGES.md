@@ -844,12 +844,12 @@ Ideas that broke the picture or the game, or measured nothing at all. Listed so 
 
 ## Measured small, open again
 
-These were closed because the gain was small. Since 2026-11-10 the rule is that small gains count: a change that keeps gameplay and the picture as they are lands when it measures a real gain, however small, and "within noise" means measure it better (instructions on the thread, or an in-process A/B), not drop it. Taken up again so far: the record-time filter for buffer and sampler binds (built, EC-030); the host at -O2 (adopted 2026-11-11: measured in instructions and cycles this time, eight ABBA pairs on a camp hold: the process runs 2.4% fewer instructions and about 2% fewer cycles, the translation thread 4.9% fewer instructions; -O3 adds half a percent only).
+These were closed because the gain was small. Since 2026-11-10 the rule is that small gains count: a change that keeps gameplay and the picture as they are lands when it measures a real gain, however small, and "within noise" means measure it better (instructions on the thread, or an in-process A/B), not drop it. Taken up again so far: the record-time filter for buffer and sampler binds (built, EC-030); the host at -O2 (adopted 2026-11-11: measured in instructions and cycles this time, eight ABBA pairs on a camp hold: the process runs 2.4% fewer instructions and about 2% fewer cycles, the translation thread 4.9% fewer instructions; -O3 adds half a percent only). The four GPU-side rows below were measured again on 2026-11-11 at this Mac's Recommended picture with rays: each ceiling is still under 1% of the GPU frame, which at 30 drawn frames a second has 11 ms to spare, and each has a cost that is not small; they stay open, not built.
 
-| Idea | What it measured when closed | Date |
-|---|---|---|
-| Compose into the drawable | The present costs only 0.13 to 0.16 ms | 2026-11-07 |
-| Small pass skips | The transparency resolve reads pyramid levels 1 and 2 every frame; nothing above 0.1 ms | 2026-11-07 |
-| Forward pass switch specialisation | At most -0.06 ms: the work sits in real branches | 2026-10-29 |
-| Pass overlap beyond the barrier levels | Upper bound -0.1 ms | 2026-10-27 |
-| A newer or system Opus decoder in place of the SDK's software one | Never built. Sampled in a fight (2 ms sampler, 58 s): the mixer and stream threads use 5.7% of one core, 3.8% of it inside the SDK's decoder, which is native ARM code already; the bound for a replacement is a fraction of that, and its sound would have to match | 2026-11-11 |
+| Idea | What it measured | What building it would cost | Date |
+|---|---|---|---|
+| Compose into the drawable | The present costs 0.13 to 0.16 ms (2026-11-07). The ceiling is that copy | The last pass, or frame generation's output, would write into a drawable taken before the GPU work it waits for: a drawable held longer, in the part of the present path the GPU hangs were found in | 2026-11-11 |
+| Small pass skips | At Recommended with rays (21.7 ms frame, camp): the 48 smallest passes take 1.6 ms together, none above 0.15 ms; the pyramid levels the transparency resolve reads take about 0.1 ms in all | Proof, every frame, that a pass's output is not read; a wrong skip is a wrong picture | 2026-11-11 |
+| Forward pass switch specialisation | At most -0.06 ms: the work sits in real branches (2026-10-29). The pass is 2.0 ms of 21.7 today | A pipeline variant per switch set: more rows to warm up and more first-use compiles | 2026-11-11 |
+| Pass overlap beyond the barrier levels | Upper bound -0.1 ms (2026-10-27). Passes overlap by 15.6% today at barrier level 1 | Fewer barriers between passes that share targets, in the code the pass marks and the hang record rely on | 2026-11-11 |
+| A newer or system Opus decoder in place of the SDK's software one | Never built. Sampled in a fight (2 ms sampler, 58 s): the mixer and stream threads use 5.7% of one core, 3.8% of it inside the SDK's decoder, which is native ARM code already; the bound for a replacement is a fraction of that | A second decoder to carry, and its sound would have to match | 2026-11-11 |
