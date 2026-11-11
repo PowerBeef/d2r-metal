@@ -26,14 +26,14 @@ enum { RT_NEW_PER_FRAME = 24, RT_WORLD = 1, RT_CHAR = 2, RT_MAX_INST = 8192, RT_
 typedef struct { float ivp[16]; float iview[16]; float pvp[16]; float view[4]; float dir[4]; uint32_t size[2]; float bias, maxd; float ao_r, ao_cam[3], ao_pow; uint32_t ao_rays, ao_shift, tiles[2]; float l_src, l_stop, sun; uint32_t key_shift; float l_fill; float dir2[3], char_sun, refl_reach, dark; } rtx_u;
 static struct {
     int inited, bad; NSMutableDictionary<NSNumber *, RtBlas *> *blas;
-    __strong id<MTLBuffer> cap, scratch, inst, unif; __strong id<MTLAccelerationStructure> tlas; NSUInteger tlas_bytes; __strong id<MTLComputePipelineState> noppso, rpso, rbpso, cpso, kpso, kblurpso, aopso, blurpso, lpso, lblurpso; __strong id<MTLBuffer> aoraw, lraw, kraw, craw, rraw; __strong id<MTL4ArgumentTable> ct;
+    __strong id<MTLBuffer> cap, scratch, inst, unif; __strong id<MTLAccelerationStructure> tlas; NSUInteger tlas_bytes; __strong id<MTLComputePipelineState> noppso, rpso, rbpso, cpso, kpso, kblurpso, aopso, blurpso, lpso, lblurpso, allpso; __strong id<MTLBuffer> aoraw, lraw, kraw, craw, rraw; __strong id<MTL4ArgumentTable> ct, bt;
     uint64_t built_frame, frames, built_blas, built_tris, reused, since; float cam[3]; float dir[3]; size_t as_bytes; float bias, ao_r, ao_p; int dir_logged, mode, ao_rays, ao_shift, ao_chars, local, key_shift; float l_src, l_stop, sun, l_fill, char_sun, char_dir[3], refl_reach, refl_k, refl_seen, dark; int show; int char_on, refl_on;
 } g_rtx;
 static const char *g_rtx_who = "";
 // The row's level, read at each submission: Light traces the key light, the occlusion and the materials; Standard adds the characters' own shadows; Full adds the local lights. DM_RT_CHAR, DM_RT_LOCAL and DM_RT_AO can still turn a part off at launch
 static int g_rtx_lv = 3;
 #define RTX_TG MTLSizeMake(32, 32, 1)   // the kernels' threadgroup (16 x 16 measured the same, 2026-11-07)
-typedef struct { __unsafe_unretained id<MTLComputePipelineState> pso; uint64_t raw, plane; MTLSize grid; } blur_t;   // a trace's blur, run after every trace is in flight: one barrier for all of them instead of one per part (Cathedral −1.1 ms a frame, ABBA 4+4, 2026-11-07; the picture is the same by construction)
+typedef struct { __unsafe_unretained id<MTLComputePipelineState> pso; uint64_t raw, plane; MTLSize grid; int kind; } blur_t;   /* kind: 0 key, 1 characters, 2 occlusion, 3 local lights, 4 mirror rays (rt_blur_all's order) */   // a trace's blur, run after every trace is in flight: one barrier for all of them instead of one per part (Cathedral −1.1 ms a frame, ABBA 4+4, 2026-11-07; the picture is the same by construction)
 #define RTX_CHAR_NOW() (g_rtx.char_on && g_rtx_lv >= 2)
 #define RTX_LOCAL_NOW() (g_rtx.local && g_rtx_lv >= 3)
 int rtx_chars_traced(void) { return g_rtx.inited && !g_rtx.bad && RTX_CHAR_NOW(); }
@@ -131,7 +131,24 @@ static const char *g_rtx_msl =
     "kernel void rt_ao_blur(uint2 id [[thread_position_in_grid]], depth2d<float> dp [[texture(0)]], texture2d<float> last [[texture(2)]], constant U& u [[buffer(0)]], const device uchar *in [[buffer(1)]], device uchar *out [[buffer(2)]]) {\n"
     "  uint2 gs = u.size >> u.ao_shift; if (id.x >= gs.x || id.y >= gs.y) return; uint at = id.y * gs.x + id.x; if (rt_dark(u, last, id << u.ao_shift)) { out[at] = in[at]; return; } float d = dp.read(id << u.ao_shift), sum = 0, wt = 0;\n"
     "  for (int y = -2; y < 2; y++) for (int x = -2; x < 2; x++) { int2 q = int2(id) + int2(x, y); if (q.x < 0 || q.y < 0 || q.x >= int(gs.x) || q.y >= int(gs.y)) continue; float dq = dp.read(uint2(q) << u.ao_shift); float w = abs(dq - d) < 0.0015 ? 1.0 : 0.0; sum += w * float(in[uint(q.y) * gs.x + uint(q.x)]); wt += w; }\n"
-    "  float v = (wt > 0 ? sum / wt : float(in[at])) / 255.0; out[at] = uchar(pow(v, u.ao_pow) * 255 + 0.5); }\n";
+    "  float v = (wt > 0 ? sum / wt : float(in[at])) / 255.0; out[at] = uchar(pow(v, u.ao_pow) * 255 + 0.5); }\n"
+    // The five blurs in one kernel, for when every plane is on the half grid (the default): each of them compares the same 16 depths around the same
+    // pixel, so one pass reads them once and sums each plane that was traced (mask bit 0 key, 1 characters, 2 occlusion, 3 local lights, 4 mirror rays).
+    // Each plane's sum runs in the order its own kernel has, so the bytes written are the same (rays_replay.sh compares them)
+    "kernel void rt_blur_all(uint2 id [[thread_position_in_grid]], depth2d<float> dp [[texture(0)]], texture2d<float> last [[texture(2)]], constant U& u [[buffer(0)]],\n"
+    "    const device uchar *kin [[buffer(1)]], device uchar *kout [[buffer(2)]], const device uchar *cin [[buffer(3)]], device uchar *cout [[buffer(4)]], const device uchar *ain [[buffer(5)]], device uchar *aout [[buffer(6)]],\n"
+    "    const device uchar4 *lin [[buffer(7)]], device uchar4 *lout [[buffer(8)]], const device uchar4 *rin [[buffer(9)]], device uchar4 *rout [[buffer(10)]], constant uint& mask [[buffer(11)]]) {\n"
+    "  uint2 gs = u.size >> 1; if (id.x >= gs.x || id.y >= gs.y) return; uint at = id.y * gs.x + id.x; uint m = mask;\n"
+    "  if (rt_dark(u, last, id * 2)) { if (m & 1) kout[at] = kin[at]; if (m & 2) cout[at] = cin[at]; if (m & 4) aout[at] = ain[at]; if (m & 8) lout[at] = lin[at]; if (m & 16) rout[at] = uchar4(0); return; }\n"
+    "  float d = dp.read(id * 2), wt = 0, wr = 0, ks = 0, cs = 0, as = 0; float4 ls = 0, rs = 0;\n"
+    "  for (int y = -2; y < 2; y++) for (int x = -2; x < 2; x++) { int2 q = int2(id) + int2(x, y); if (q.x < 0 || q.y < 0 || q.x >= int(gs.x) || q.y >= int(gs.y)) continue; float dq = dp.read(uint2(q) * 2); if (!(abs(dq - d) < 0.0015)) continue;\n"
+    "    uint qa = uint(q.y) * gs.x + uint(q.x); wt += 1; if (m & 1) ks += float(kin[qa]); if (m & 2) cs += float(cin[qa]); if (m & 4) as += float(ain[qa]); if (m & 8) ls += float4(lin[qa]);\n"
+    "    if ((m & 16) && ((q.x + q.y) & 1) == 0) { rs += float4(rin[qa]); wr += 1; } }\n"
+    "  if (m & 1) kout[at] = wt > 0 ? uchar(ks / wt + 0.5) : kin[at];\n"
+    "  if (m & 2) cout[at] = wt > 0 ? uchar(cs / wt + 0.5) : cin[at];\n"
+    "  if (m & 4) { float v = (wt > 0 ? as / wt : float(ain[at])) / 255.0; aout[at] = uchar(pow(v, u.ao_pow) * 255 + 0.5); }\n"
+    "  if (m & 8) lout[at] = wt > 0 ? uchar4(ls / wt + 0.5) : lin[at];\n"
+    "  if (m & 16) rout[at] = wr > 0 ? uchar4(rs / wr + 0.5) : uchar4(0); }\n";
 __attribute__((weak)) int dm_video_rt(void) { return 0; }   // the host's dm_video.c
 __attribute__((weak)) int dm_video_rt_level(void) { return 3; }
 __attribute__((weak)) float dm_env_wetness(void) { return 0.0f; }   // the host's dm_video.c: how damp this place is
@@ -161,6 +178,10 @@ static int rtx_init(void) {
     g_rtx.cap = [g_dev newBufferWithLength:RT_CAP_BYTES options:MTLResourceStorageModePrivate]; g_rtx.scratch = [g_dev newBufferWithLength:RT_SCRATCH_BYTES options:MTLResourceStorageModePrivate];
     g_rtx.inst = [g_dev newBufferWithLength:RT_MAX_INST * sizeof(MTLIndirectAccelerationStructureInstanceDescriptor) * MV_RING options:MTLResourceStorageModeShared]; g_rtx.unif = [g_dev newBufferWithLength:RT_U_STRIDE * MV_RING options:MTLResourceStorageModeShared];
     MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 3; ad.maxBufferBindCount = 5; g_rtx.ct = [g_dev newArgumentTableWithDescriptor:ad error:&e];
+    { const char *b1 = getenv("DM_RT_BLUR1"); if (!(b1 && !strcmp(b1, "0"))) {   // the five blurs as one kernel (rt_blur_all); without it the per-plane kernels run as before
+        id<MTLFunction> fa_ = [lib newFunctionWithName:@"rt_blur_all"]; NSError *e2 = nil; g_rtx.allpso = fa_ ? [g_dev newComputePipelineStateWithFunction:fa_ error:&e2] : nil;
+        MTL4ArgumentTableDescriptor *bd = [MTL4ArgumentTableDescriptor new]; bd.maxTextureBindCount = 3; bd.maxBufferBindCount = 12; g_rtx.bt = g_rtx.allpso ? [g_dev newArgumentTableWithDescriptor:bd error:&e2] : nil;
+        if (!g_rtx.allpso || !g_rtx.bt) { g_rtx.allpso = nil; MLOG("ray tracing: the merged blur is not available (%s), one blur per plane", e2.localizedDescription.UTF8String); } } else MLOG("ray tracing: one blur per plane (DM_RT_BLUR1=0)"); }
     if (!g_rtx.kpso || !g_rtx.kblurpso || !g_rtx.kraw || !g_rtx.cap || !g_rtx.scratch || !g_rtx.inst || !g_rtx.unif || !g_rtx.ct) { MLOG("【红】ray tracing: can't start (%s)", e.localizedDescription.UTF8String); g_rtx.bad = 1; return 0; }
     res_add(g_rtx.cap); res_add(g_rtx.scratch); res_add(g_rtx.inst); res_add(g_rtx.unif); res_commit();
     g_rtx.blas = [NSMutableDictionary dictionary];
@@ -348,7 +369,7 @@ static void rtx_frame(void) {
             MTLSize kg = MTLSizeMake(u.size[0] >> u.key_shift, u.size[1] >> u.key_shift, 1);
             pg_host_begin(ce, "rt_key");
             [g_rtx.ct setAddress:g_rtx.kraw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.kpso]; [ce dispatchThreads:kg threadsPerThreadgroup:RTX_TG];
-            blurs[nblur++] = (blur_t){g_rtx.kblurpso, g_rtx.kraw.gpuAddress, support_gpu() + 4096, kg};
+            blurs[nblur++] = (blur_t){g_rtx.kblurpso, g_rtx.kraw.gpuAddress, support_gpu() + 4096, kg, 0};
             pg_host_end(ce);
         }
         int con = 0;
@@ -356,7 +377,7 @@ static void rtx_frame(void) {
             MTLSize kg = MTLSizeMake(u.size[0] >> u.key_shift, u.size[1] >> u.key_shift, 1);
             pg_host_begin(ce, "rt_char");
             [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; [g_rtx.ct setAddress:g_rtx.craw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.cpso]; [ce dispatchThreads:kg threadsPerThreadgroup:RTX_TG];
-            blurs[nblur++] = (blur_t){g_rtx.kblurpso, g_rtx.craw.gpuAddress, support_gpu() + 4096 + 3 * (uint64_t)u.size[0] * u.size[1], kg};
+            blurs[nblur++] = (blur_t){g_rtx.kblurpso, g_rtx.craw.gpuAddress, support_gpu() + 4096 + 3 * (uint64_t)u.size[0] * u.size[1], kg, 1};
             con = 1;
             pg_host_end(ce);
         }
@@ -364,7 +385,7 @@ static void rtx_frame(void) {
             uint64_t plane = support_gpu() + 4096 + (uint64_t)u.size[0] * u.size[1];
             pg_host_begin(ce, "rt_ao");
             [g_rtx.ct setAddress:g_rtx.aoraw.gpuAddress atIndex:2]; [ce setComputePipelineState:g_rtx.aopso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> u.ao_shift, u.size[1] >> u.ao_shift, 1) threadsPerThreadgroup:RTX_TG];
-            blurs[nblur++] = (blur_t){g_rtx.blurpso, g_rtx.aoraw.gpuAddress, plane, MTLSizeMake(u.size[0] >> u.ao_shift, u.size[1] >> u.ao_shift, 1)};
+            blurs[nblur++] = (blur_t){g_rtx.blurpso, g_rtx.aoraw.gpuAddress, plane, MTLSizeMake(u.size[0] >> u.ao_shift, u.size[1] >> u.ao_shift, 1), 2};
             pg_host_end(ce);
         }
         // 6. the first four local lights of each pixel's tile: rays at half the picture each way, then the same box
@@ -376,7 +397,7 @@ static void rtx_frame(void) {
                 pg_host_begin(ce, "rt_local");
                 [g_rtx.ct setTexture:g_mv.depth.gpuResourceID atIndex:0]; [g_rtx.ct setTexture:(MTLResourceID){trid} atIndex:1]; [g_rtx.ct setAddress:u_gpu atIndex:0]; [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; [g_rtx.ct setAddress:g_rtx.lraw.gpuAddress atIndex:2]; [g_rtx.ct setAddress:gc atIndex:3]; [g_rtx.ct setAddress:gl atIndex:4];
                 [ce setComputePipelineState:g_rtx.lpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1) threadsPerThreadgroup:RTX_TG];
-                blurs[nblur++] = (blur_t){g_rtx.lblurpso, g_rtx.lraw.gpuAddress, plane, MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1)};
+                blurs[nblur++] = (blur_t){g_rtx.lblurpso, g_rtx.lraw.gpuAddress, plane, MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1), 3};
                 lon = 1; pg_host_end(ce);
             } else { static int once; if (!once++) MLOG("ray tracing: the local light lists aren't bound (shader %s)", g_rtx_who); }
         }
@@ -388,13 +409,23 @@ static void rtx_frame(void) {
                 pg_host_begin(ce, "rt_refl");
                 [g_rtx.ct setTexture:g_mv.depth.gpuResourceID atIndex:0]; [g_rtx.ct setAddress:u_gpu atIndex:0]; [g_rtx.ct setResource:g_rtx.tlas.gpuResourceID atBufferIndex:1]; [g_rtx.ct setAddress:g_rtx.rraw.gpuAddress atIndex:2];
                 [ce setComputePipelineState:g_rtx.rpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1) threadsPerThreadgroup:RTX_TG];
-                blurs[nblur++] = (blur_t){g_rtx.rbpso, g_rtx.rraw.gpuAddress, plane, MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1)};
+                blurs[nblur++] = (blur_t){g_rtx.rbpso, g_rtx.rraw.gpuAddress, plane, MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1), 4};
                 ron = 1; pg_host_end(ce);
             }
         }
         if (nblur) {   // every trace is in flight together; one barrier, then the blurs (depth, last frame and the constants are still bound from the traces)
             pg_host_begin(ce, "rt_blurs"); [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-            for (int i = 0; i < nblur; i++) { [g_rtx.ct setAddress:blurs[i].raw atIndex:1]; [g_rtx.ct setAddress:blurs[i].plane atIndex:2]; [ce setComputePipelineState:blurs[i].pso]; [ce dispatchThreads:blurs[i].grid threadsPerThreadgroup:RTX_TG]; }
+            // One kernel for all of them when every plane is on the half grid (rt_blur_all), else one kernel per plane as before. DM_RT_BLUR1=0: always per plane
+            if (g_rtx.allpso && g_rtx.bt && u.key_shift == 1 && u.ao_shift == 1) {
+                uint32_t mask = 0; uint64_t mgpu = u_gpu + RT_U_STRIDE - 16;   // the mask sits in the tail of this frame's slot of the constants
+                [ce setArgumentTable:g_rtx.bt]; [g_rtx.bt setTexture:g_mv.depth.gpuResourceID atIndex:0]; [g_rtx.bt setTexture:last.gpuResourceID atIndex:2]; [g_rtx.bt setAddress:u_gpu atIndex:0];
+                for (int k = 0; k < 5; k++) { [g_rtx.bt setAddress:u_gpu atIndex:(NSUInteger)(1 + 2 * k)]; [g_rtx.bt setAddress:u_gpu atIndex:(NSUInteger)(2 + 2 * k)]; }   // a plane that was not traced is never touched: any valid address
+                for (int i = 0; i < nblur; i++) { mask |= 1u << blurs[i].kind; [g_rtx.bt setAddress:blurs[i].raw atIndex:(NSUInteger)(1 + 2 * blurs[i].kind)]; [g_rtx.bt setAddress:blurs[i].plane atIndex:(NSUInteger)(2 + 2 * blurs[i].kind)]; }
+                memcpy((uint8_t *)g_rtx.unif.contents + ui + RT_U_STRIDE - 16, &mask, 4); [g_rtx.bt setAddress:mgpu atIndex:11];
+                [ce setComputePipelineState:g_rtx.allpso]; [ce dispatchThreads:MTLSizeMake(u.size[0] >> 1, u.size[1] >> 1, 1) threadsPerThreadgroup:RTX_TG];
+                [ce setArgumentTable:g_rtx.ct];
+                { static int said; if (!said++) MLOG("ray tracing: the %d blurs run as one kernel (mask %#x)", nblur, mask); }
+            } else for (int i = 0; i < nblur; i++) { [g_rtx.ct setAddress:blurs[i].raw atIndex:1]; [g_rtx.ct setAddress:blurs[i].plane atIndex:2]; [ce setComputePipelineState:blurs[i].pso]; [ce dispatchThreads:blurs[i].grid threadsPerThreadgroup:RTX_TG]; }
             pg_host_end(ce);
         }
         uint32_t *hdr = (uint32_t *)((uint8_t *)support_buf().contents + 2048); hdr[1] = u.size[0]; hdr[2] = u.size[1]; hdr[3] = g_rtx.ao_rays > 0; hdr[4] = (uint32_t)g_rtx.ao_shift; hdr[5] = (uint32_t)lon; hdr[6] = (uint32_t)g_rtx.key_shift; hdr[7] = (uint32_t)con; hdr[8] = (uint32_t)ron; memcpy(&hdr[9], &g_rtx.refl_k, 4); hdr[10] = refl_off; memcpy(&hdr[11], &g_rtx.refl_seen, 4); hdr[12] = (uint32_t)g_rtx.show; { float wt_ = dm_env_wetness(); memcpy(&hdr[13], &wt_, 4); }
