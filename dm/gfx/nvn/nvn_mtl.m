@@ -7995,7 +7995,15 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     [g_present_alloc4[alloc_i] reset];
     id<MTL4CommandQueue> pq = !supplied && g_present_own_q ? g_present_q4 : g_q4;
     int hq_q = pq != g_q4;
-    if (pq != g_q4 && ev_value) { [pq waitForEvent:g_ev value:ev_value]; hq(HQ_WAITEV, hq_q, ev_value, frame); }
+    // A present on its own queue must not start before the game's work it shows has finished. The queue can wait for that itself (waitForEvent on the
+    // event the game's queue signals) or this thread can (mtl_wait). On Macs a queue that waits on another queue's event hangs the GPU now and then:
+    // native_2940_mac in the background with presents on their own queue hung in 13 of 60 runs with the queue's wait (4 s GPU frames, kernel
+    // "AGX: Channel error 2", the GPU stopped on a different pass each time) and in 0 of 60 with this thread's (M6, macOS 27.2, 2026-11-11). So a Mac
+    // never lets one queue wait on another's event. iPhone and iPad keep the queue's wait, which their frame pacing was measured with and where no
+    // such hang has been seen. DM_PRESENT_EVWAIT=cpu / queue forces either
+    static int evcpu = -1; if (evcpu < 0) { const char *e = getenv("DM_PRESENT_EVWAIT"); evcpu = e && *e ? !strcmp(e, "cpu") : !TARGET_OS_IPHONE;
+        if (pq != g_q4) MLOG("present: the game's work is waited for by %s (DM_PRESENT_EVWAIT)", evcpu ? "this thread" : "the present queue"); }
+    if (pq != g_q4 && ev_value) { if (evcpu) { mtl_wait(ev_value, 2000000000ull); if (atomic_load(&g_gpu_lost)) return 0; } else [pq waitForEvent:g_ev value:ev_value]; hq(HQ_WAITEV, hq_q, ev_value, frame); }
     [pq waitForDrawable:dr]; hq(HQ_WAITDR, hq_q, ticket, frame);
     CBUF cb = g_present_cb[alloc_i];
     [cb beginCommandBufferWithAllocator:g_present_alloc4[alloc_i]];
@@ -8550,6 +8558,11 @@ static void hr_report(uint64_t fence, hr_verdict *v) {
         else { int lastp = reach; for (int i = reach; i < stop; i++) if (s[i] >= 0) lastp = i;
             MLOG("[hang]   exact: the GPU is on one of the %d passes #%d to #%d (%s first): all work before #%d is complete, the work before #%d is not", between, reach, lastp, hr_pass_label(&r.ps[reach]), reach, stop); }
         if (v) { v->at_n = reach >= 0 ? between : 0; if (reach >= 0) strlcpy(v->at, hr_pass_label(&r.ps[reach]), sizeof v->at); }
+        // what the bracketed passes are (at most six), and the pass before them, whatever window the lines below show
+        for (int i = reach > 0 ? reach - 1 : 0, shown = 0; reach >= 0 && i < (stop < 0 ? n : stop) && shown < 7; i++) { if (s[i] < 0) continue; char w[160]; hr_pass_what(&r.ps[i], w, sizeof w); shown++;
+            MLOG("[hang]   exact: #%d%s: %s (its own marks: %s)", i, i < reach ? ", the last pass before it" : "", w, s[i] == 2 ? "start and end in" : s[i] == 1 ? "start in" : "none in"); }
+        if (getenv("DM_HANGREC_ALL")) for (int i = 0; i < n; i++) { char w[160]; hr_pass_what(&r.ps[i], w, sizeof w); const pg_pass *p = &r.ps[i]; int ps = p->pre >= 0 ? p->pre : p->kind == 4 ? p->slot : -1;
+            MLOG("[hang]   all: #%d %s | before-mark %s | own marks %s", i, w, ps < 0 ? "none" : t[ps] ? "in" : "not in", s[i] < 0 ? "-" : s[i] == 2 ? "start and end in" : s[i] == 1 ? "start in" : "none in"); }
     }
     if (v) { v->known = 1; v->passes = np; v->finished = fin; v->notes = notes; v->entered = front >= 0 && r.ps[front].kind == 4 && s[front] == 1; if (front >= 0) strlcpy(v->first_open, hr_pass_label(&r.ps[front]), sizeof v->first_open);
         if (prev >= 0) strlcpy(v->prev_done, hr_pass_label(&r.ps[prev]), sizeof v->prev_done); }

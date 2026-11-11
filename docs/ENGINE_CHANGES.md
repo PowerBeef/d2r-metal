@@ -715,13 +715,13 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-053 Present
 - **Layer:** present
 - **Engine:** Acquires a texture, waits for vertical sync there, and queues a present.
-- **Ours:** The present thread draws the swap texture to a `CAMetalLayer`. With frame generation there's no display link: as in Apple's guide, each image stays on screen at least 90% of a refresh, a frame starts from the last generated image's real time plus two refreshes minus a lead. On an iPhone or iPad presents go on a queue of their own; on Macs they share the game's queue, as a second queue hung the Mac's GPU about one run in eighty.
+- **Ours:** The present thread draws the swap texture to a `CAMetalLayer`. With frame generation there's no display link: as in Apple's guide, each image stays on screen at least 90% of a refresh, a frame starts from the last generated image's real time plus two refreshes minus a lead. On an iPhone or iPad presents go on a queue of their own; on Macs they share the game's queue. A second queue hung the Mac's GPU, and the cause was found on 2026-11-11: the present queue waited on the event the game's queue signals, and a queue waiting on another queue's event stalls the GPU there now and then. On a Mac the present thread now does that wait itself whenever presents have their own queue.
 - **Why:** A late link callback cost a whole refresh on the Mac; on the phone a late generated frame discarded the real one.
 - **Setting:** none
-- **Switch:** DM_PRESENT_LINK, DM_PRESENT_QUEUE, DM_FG_LEAD_MS, DM_PRESENT_HZ
+- **Switch:** DM_PRESENT_LINK, DM_PRESENT_QUEUE, DM_PRESENT_EVWAIT, DM_FG_LEAD_MS, DM_PRESENT_HZ
 - **Test:** native_2940_mac, t_fgpace, t_pace, t_adaptive_pace, t_link_ticks
 - **Commit:** 4eda105, 4d31858
-- **Measured:** Mac town: 15 late and 12 discarded to 0 (M6, 2026-11-06). iPhone 17 Pro town: 1.7 to 1.9% late to 0.06 to 0.11%, none discarded (2026-11-06). The Mac's own present queue: native_2940_mac in the background, 5 of 40 runs with a 4 s GPU hang (kernel `AGX: Channel error 2`) against 0 of 40 on the game's queue (M6, 2026-11-08).
+- **Measured:** Mac town: 15 late and 12 discarded to 0 (M6, 2026-11-06). iPhone 17 Pro town: 1.7 to 1.9% late to 0.06 to 0.11%, none discarded (2026-11-06). The Mac's own present queue: native_2940_mac in the background, 5 of 40 runs with a 4 s GPU hang (kernel `AGX: Channel error 2`) against 0 of 40 on the game's queue (M6, 2026-11-08). With the own queue and the queue's event wait 13 of 60 hung; with the present thread's wait 0 of 60, and 0 of 30 more once it was the default (M6, macOS 27.2, 2026-11-11).
 - **Status:** confirmed
 - **Covers:** none
 
@@ -796,7 +796,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Ours:** A watchdog: with work waiting and no main submission finished for 10 s, the GPU is taken as lost. Nothing more is sent to it, every wait on it returns, and the front end saves and quits; the next launch tells the player. A hang recorder keeps two timestamps per pass, one the command buffer writes before each pass (in only once all earlier work is complete, so the record can say exactly which pass the GPU is on), marks around MetalFX and frame generation and a log of the last queue operations, and prints them 2 s into such a stall and again when the GPU is taken as lost.
 - **Why:** The Mac's GPU driver has hung for about 4 s, and once for good with the display off; the game then waited for ever and could not save. The cause is not known (`dm/verify/debugging.md` "The GPU hangs for 4 s").
 - **Setting:** none
-- **Switch:** DM_GPU_LOST_S (0 turns the watchdog off), DM_HANGREC, DM_HANGREC_PRE, DM_HANGREC_EARLY_S, DM_HANGREC_SLOW_MS
+- **Switch:** DM_GPU_LOST_S (0 turns the watchdog off), DM_HANGREC, DM_HANGREC_PRE, DM_HANGREC_ALL, DM_HANGREC_EARLY_S, DM_HANGREC_SLOW_MS
 - **Test:** gpu_lost, t_gpu_lost, t_hangrec
 - **Commit:** da472b3, 6f7cddd, 0a944cf, 28f0979
 - **Measured:** The recorder on against off, town_loop on the Mac App at Recommended, 6 + 6 ABBA: no measurable difference, every p at least 0.23 (M6, 2026-11-09). The watchdog has never fired on a real hang; its test stalls the GPU on purpose.
@@ -807,7 +807,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 
 The port runs only on Metal 4 (macOS and iOS 27 and later, decided 2026-10-27). The encoder macros at the top of `nvn_mtl.m` name the Metal 4 types.
 
-- **Queues and allocators:** one `MTL4CommandQueue` for replay; presents go on a second one on iPhone and iPad and share the replay's on Macs, where a second queue hung the GPU (EC-053). There are `MTL4CommandAllocator`s per frame in flight. Fences come from an `MTLSharedEvent`, so a game `Sync` only clears after the GPU has really finished.
+- **Queues and allocators:** one `MTL4CommandQueue` for replay; presents go on a second one on iPhone and iPad and share the replay's on Macs. On a Mac a queue never waits on another queue's event: that hung the GPU (EC-053). There are `MTL4CommandAllocator`s per frame in flight. Fences come from an `MTLSharedEvent`, so a game `Sync` only clears after the GPU has really finished.
 - **Argument tables:** vertex, fragment and compute each have an `MTL4ArgumentTable`, filled from each shader's reflection. Encodes came to about one per draw (M6, 2026-11-07). Since 2026-11-10 a table write that repeats what the table already holds is skipped and the encode's lookups are cheaper (EC-058); encodes per draw have not been counted again.
 - **Residency:** one residency set per device, holding every pool buffer and texture, attached to the queues. A new pool is committed on the spot, before any command buffer that can reach it. A commit costs about 5 µs per allocation added and 4 µs per one removed: 0.9 ms in the median frame of an area change, 0.13 ms a frame over a tour of 43 areas (M6, 2026-11-10; `@res_commit_ms`, `@res_changes`, `@res_adds` in the frame table).
 - **Barriers:** explicit, at two levels (EC-031). The game's own deferred barriers come through as at most one per draw, dispatch or pass.

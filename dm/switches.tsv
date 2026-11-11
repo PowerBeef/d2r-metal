@@ -106,6 +106,7 @@ DM_GRANNY_THREADS	host	host/hle_granny.c	-
 DM_GRANNY_VERIFY	host	host/hle_granny.c	-
 DM_GUEST_SPAWN_TEST	host	host/hle_guestthread.c	-
 DM_HANGREC	gfx	gfx/nvn/nvn_mtl.m	y
+DM_HANGREC_ALL	gfx	gfx/nvn/nvn_mtl.m	y
 DM_HANGREC_EARLY_S	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_hangrec.m	y
 DM_HANGREC_PRE	gfx	gfx/nvn/nvn_mtl.m	y
 DM_HANGREC_SLOW_MS	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_hangrec.m	y
@@ -273,6 +274,7 @@ DM_PLAYERS	host	host/diag.c	y
 DM_POSCHK	host	host/diag.c	-
 DM_POT_PICK	host	host/dm_beltauto.c host/dm_potpick.c	-
 DM_PRELOAD	host	host/main.c	-
+DM_PRESENT_EVWAIT	gfx	gfx/nvn/nvn_mtl.m	y
 DM_PRESENT_HZ	gfx	gfx/nvn/hle_nvn.c	y
 DM_PRESENT_INTERVAL	gfx	gfx/nvn/hle_nvn.c	-
 DM_PRESENT_LATENCY	gfx	gfx/nvn/nvn_mtl.m	y
