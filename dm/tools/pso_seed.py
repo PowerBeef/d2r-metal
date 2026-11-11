@@ -12,7 +12,8 @@
 #   gate [--backend mac-app|cli|ios-mac] [--headless] [--route FILE] [--survey]   runs dm/verify/bench/town_loop.scn (mac-app at this Mac's Recommended in full screen, cli with
 #                                    Recommended's features forced, ios-mac as is) and checks its manifest: 'PSO_GATE OK|RED rows=<n>'. --route takes another
 #                                    route; --survey (the warp tour, whose fights differ from run to run) lists missing rows as 'PSO_GATE SURVEY rows=<n>', exit 0
-#   record [--set front,act1,tour,warps,skills|all] [--only <backend>] [--front create|menu] [--out DIR] [--keep]   runs the 77-row route matrix (matrix())
+#   record [--set front,act1,tour,warps,skills|all] [--only <backend>] [--front create|menu] [--class C,…] [--out DIR] [--keep]   runs the 98-row route matrix (matrix());
+#                                    --class keeps only the skills rows of those classes (their codes in the game's tables: ama sor nec pal bar dru ass war)
 #                                    under the game lock and harvests each run's manifest to DIR/<NN>_<set>_<name>.tsv; 'RUN <NN> <name> OK|RED|UNAVAIL rows=<n>'
 #   warp-tour                        prints dm/verify/bench/warp_tour.scn: all the warp stops in one session, for `gate --route`
 #   merge --dir DIR [--seed FILE] [--write]   the new seed from a record folder: the seed's own rows, then the new front and Act 1 rows, the
@@ -178,6 +179,7 @@ ALLOW = os.path.join(DM, 'gfx', 'nvn', 'pso_allow.tsv')
 TOWN = os.path.join(DM, 'verify', 'bench', 'town_loop.scn')
 COMBAT = os.path.join(DM, 'verify', 'bench', 'combat.scn')
 SKILLS = os.path.join(DM, 'verify', 'bench', 'skill_tour.scn')   # the generated Warlock casts every skill of the class (save_ref_warlock_hero)
+CLASS_ROUTES = ('ama', 'sor', 'nec', 'pal', 'bar', 'dru', 'ass')   # the other classes: their routes and heroes come from skill_routes.py
 HARVEST = 'pso_user.harvest.tsv'   # a run's manifest copied out of the iOS package's container
 REC_ENV = {'DM_TEST_VIDEO_FIRSTBOOT': '1'}   # Mac App rows: this Mac's Recommended picture, full screen
 CLI_REC = {'DM_AA_MODE': '2', 'DM_ENV_SHADOWS': '1', 'DM_3D_SCALE': '0.75', 'DM_MFX3D': '1'}   # Recommended's features forced on the CLI host, which has no Recommended
@@ -202,9 +204,11 @@ COLD_REDO = 2   # a cold start the desk disturbed is redone this many times, eac
 
 
 def matrix():
-    """The 77 recording rows: front end (Mac App, iOS package), Act 1 (Mac App and iOS package town / combat, CLI town / combat under each force),
-    the tour stops, the warp stops (Mac App), then the skills route (Mac App, and CLI under each force: a skill's effects are drawn with pipelines
-    no walk through the areas builds). Mac App rows run at this Mac's Recommended in full screen."""
+    """The 98 recording rows: front end (Mac App, iOS package), Act 1 (Mac App and iOS package town / combat, CLI town / combat under each force),
+    the tour stops, the warp stops (Mac App), then the skills routes: the Warlock's (Mac App, and CLI under each force: a skill's effects are drawn
+    with pipelines no walk through the areas builds) and each other class's, made by skill_routes.py (Mac App, CLI as it is and with the temporal
+    scaler: the Warlock's six runs found 87 to 116 rows each and 117 between them, so three settings find nearly all).
+    Mac App rows run at this Mac's Recommended in full screen."""
     rows = [dict(nn='01', set='front', name='mac_front', backend='mac-app', route='front'), dict(nn='02', set='front', name='ios_front', backend='ios-mac', route='front'),
             dict(nn='03', set='act1', name='mac_town', backend='mac-app', route=TOWN), dict(nn='04', set='act1', name='mac_combat', backend='mac-app', route=COMBAT),
             dict(nn='05', set='act1', name='ios_town', backend='ios-mac', route=TOWN), dict(nn='06', set='act1', name='ios_combat', backend='ios-mac', route=COMBAT)]
@@ -219,6 +223,10 @@ def matrix():
     rows.append(dict(nn=f'{n:02d}', set='skills', name='mac_skills', backend='mac-app', route=SKILLS)); n += 1
     for tag, env in FORCES:
         rows.append(dict(nn=f'{n:02d}', set='skills', name=f'cli_skills_{tag}', backend='cli', route=SKILLS, env=dict(env))); n += 1
+    for cls in CLASS_ROUTES:
+        rows.append(dict(nn=f'{n:02d}', set='skills', name=f'mac_skills_{cls}', backend='mac-app', route='skills', stop=cls)); n += 1
+        for tag, env in FORCES:
+            if tag in ('orig', 'temporal'): rows.append(dict(nn=f'{n:02d}', set='skills', name=f'cli_skills_{cls}_{tag}', backend='cli', route='skills', stop=cls, env=dict(env))); n += 1
     for r in rows:
         r['env'] = {**(REC_ENV if r['backend'] == 'mac-app' else {}), **r.get('env', {})}
     return rows
@@ -278,6 +286,9 @@ def row_text(row, front):
     if row['route'] == 'front': return front_text('create' if row['backend'] == 'mac-app' else front, row['backend'], row['env'])
     if row['route'] == 'tour': return tour_text(*row['stop'], row['env'])
     if row['route'] == 'warp': return warp_text(*row['stop'], row['env'])
+    if row['route'] == 'skills':
+        import skill_routes   # noqa: PLC0415
+        return skill_routes.route_text(row['stop'], row['env'], row['backend'])
     return route_text(row['route'], row['env'])
 
 
@@ -600,6 +611,7 @@ def cmd_record(a, argv):
     if held is not None: return held
     sets = {'front', 'act1', 'tour', 'warps', 'skills'} if a.set == 'all' else set(a.set.split(','))
     rows = [r for r in matrix() if r['set'] in sets and (not a.only or r['backend'] == a.only)]
+    if getattr(a, 'cls', None): rows = [r for r in rows if r['set'] != 'skills' or (r['route'] == 'skills' and r['stop'] in a.cls.split(',')) or (r['route'] == SKILLS and 'war' in a.cls.split(','))]
     out = a.out or os.path.join(DM_ROOT, 'run', 'pso', stamp_now()); os.makedirs(os.path.join(out, 'runs'), exist_ok=True)
     shutil.copyfile(SEED, os.path.join(out, 'seed_before.tsv'))
     built, results = None, []
@@ -615,7 +627,12 @@ def cmd_record(a, argv):
         with open(os.path.join(out, 'record.tsv'), 'a', encoding='utf-8') as led:
             for r in rows:
                 name = f"{r['nn']}_{r['set']}_{r['name']}"; run = os.path.join(out, 'runs', f"{r['nn']}_{r['name']}")
-                if (r['route'] == 'tour' and not os.path.isdir(scenario.save_dir('tour'))) or (r['route'] == SKILLS and not os.path.isdir(scenario.save_dir('warlock_hero'))):   # a local save this machine has not made
+                if r['route'] == 'skills':   # a class's hero is made here the first time (a windowed run in the background)
+                    import skill_routes   # noqa: PLC0415
+                    if not os.path.isdir(scenario.save_dir(skill_routes.save_name(r['stop']))):
+                        run_scn(skill_routes.hero_text(r['stop']), 'cli', os.path.join(out, 'runs', f"hero_{r['stop']}"))
+                if (r['route'] == 'tour' and not os.path.isdir(scenario.save_dir('tour'))) or (r['route'] == SKILLS and not os.path.isdir(scenario.save_dir('warlock_hero'))) \
+                        or (r['route'] == 'skills' and not os.path.isdir(scenario.save_dir(skill_routes.save_name(r['stop'])))):   # a local save this machine has not made
                     verdict, n = 'UNAVAIL', 0
                 else:
                     res, code = run_scn(row_text(r, a.front), r['backend'], run)
@@ -837,7 +854,7 @@ def main(argv):
     g.add_argument('--backend', default='mac-app', choices=('mac-app', 'cli', 'ios-mac')); g.add_argument('--headless', action='store_true')
     g.add_argument('--route', default=TOWN); g.add_argument('--survey', action='store_true', help='rows the seed lacks are listed, not red'); g.add_argument('--out'); g.add_argument('--seed', default=SEED); g.add_argument('--allow', default=ALLOW)
     r = sub.add_parser('record', help='record the route matrix')
-    r.add_argument('--set', default='all'); r.add_argument('--only', choices=('cli', 'mac-app', 'ios-mac')); r.add_argument('--front', default='create', choices=('create', 'menu'))
+    r.add_argument('--set', default='all'); r.add_argument('--class', dest='cls'); r.add_argument('--only', choices=('cli', 'mac-app', 'ios-mac')); r.add_argument('--front', default='create', choices=('create', 'menu'))
     r.add_argument('--out'); r.add_argument('--keep', action='store_true')
     m = sub.add_parser('merge', help='build the new seed from a record folder')
     m.add_argument('--dir', required=True); m.add_argument('--seed', default=SEED); m.add_argument('--write', action='store_true')

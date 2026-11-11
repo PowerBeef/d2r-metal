@@ -229,3 +229,5 @@ sleep 3
 quit
 check no_red
 check no_red_log
+# the hero must be a Warlock (class 7): another class learns none of these skills and the route would pass having built nothing
+check log_has re="DM_TEST_SKILL_ADD：职业 7 "

@@ -525,7 +525,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Setting:** Ray Tracing
 - **Switch:** DM_RT, DM_RT_BLUR1 (0: one blur per plane)
 - **Test:** video_rt_mac, dm/verify/rays_replay.sh
-- **Commit:** acb1b72
+- **Commit:** acb1b72, b660127
 - **Measured:** Cathedral -1.1 ms (M6, ABBA, p 0.03, 2026-11-07). The merged blur, camp at Recommended with rays, ABBA: the blurs fall from 7.0 and 7.5% of the GPU frame to 2.7 and 2.7%, about 0.9 ms of a 19.4 ms frame (M6, 2026-11-11; shares, because the GPU's clock moved the frame between 17 and 24 ms from run to run). Every plane matches the kept ones byte for byte either way.
 - **Status:** confirmed
 - **Covers:** none
@@ -681,8 +681,8 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Setting:** none
 - **Switch:** DM_PSO_MANIFEST, DM_PSO_USER, DM_PSO_PREDICT, DM_PSO_WARM_WORKERS
 - **Test:** core_pso_cli, full_pso_mac, full_pso_ios, t_pso_warm, t_pso_skey
-- **Commit:** 46578a2
-- **Measured:** Warm compiles about 2 in 1000 frames (M6, 2026-10-27). The seed's routes since 2026-11-11 include one that casts every skill of the Warlock (`bench/skill_tour.scn`): a skill's effects use pipelines no walk through the areas builds, and that route alone added 117 rows (87 to 116 new ones per picture setting).
+- **Commit:** 46578a2, c3e2693
+- **Measured:** Warm compiles about 2 in 1000 frames (M6, 2026-10-27). The seed's routes since 2026-11-11 include one that casts every skill of the Warlock (`bench/skill_tour.scn`): a skill's effects use pipelines no walk through the areas builds, and that route alone added 117 rows (87 to 116 new ones per picture setting). The same route for the seven other classes added 273 more (17 to about 100 a class); the seed holds 1,130 pipelines.
 - **Status:** confirmed
 - **Covers:** none
 
