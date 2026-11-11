@@ -12,7 +12,7 @@
 #   gate [--backend mac-app|cli|ios-mac] [--headless] [--route FILE] [--survey]   runs dm/verify/bench/town_loop.scn (mac-app at this Mac's Recommended in full screen, cli with
 #                                    Recommended's features forced, ios-mac as is) and checks its manifest: 'PSO_GATE OK|RED rows=<n>'. --route takes another
 #                                    route; --survey (the warp tour, whose fights differ from run to run) lists missing rows as 'PSO_GATE SURVEY rows=<n>', exit 0
-#   record [--set front,act1,tour,warps|all] [--only <backend>] [--front create|menu] [--out DIR] [--keep]   runs the 71-row route matrix (matrix())
+#   record [--set front,act1,tour,warps,skills|all] [--only <backend>] [--front create|menu] [--out DIR] [--keep]   runs the 77-row route matrix (matrix())
 #                                    under the game lock and harvests each run's manifest to DIR/<NN>_<set>_<name>.tsv; 'RUN <NN> <name> OK|RED|UNAVAIL rows=<n>'
 #   warp-tour                        prints dm/verify/bench/warp_tour.scn: all the warp stops in one session, for `gate --route`
 #   merge --dir DIR [--seed FILE] [--write]   the new seed from a record folder: the seed's own rows, then the new front and Act 1 rows, the
@@ -177,6 +177,7 @@ DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 ALLOW = os.path.join(DM, 'gfx', 'nvn', 'pso_allow.tsv')
 TOWN = os.path.join(DM, 'verify', 'bench', 'town_loop.scn')
 COMBAT = os.path.join(DM, 'verify', 'bench', 'combat.scn')
+SKILLS = os.path.join(DM, 'verify', 'bench', 'skill_tour.scn')   # the generated Warlock casts every skill of the class (save_ref_warlock_hero)
 HARVEST = 'pso_user.harvest.tsv'   # a run's manifest copied out of the iOS package's container
 REC_ENV = {'DM_TEST_VIDEO_FIRSTBOOT': '1'}   # Mac App rows: this Mac's Recommended picture, full screen
 CLI_REC = {'DM_AA_MODE': '2', 'DM_ENV_SHADOWS': '1', 'DM_3D_SCALE': '0.75', 'DM_MFX3D': '1'}   # Recommended's features forced on the CLI host, which has no Recommended
@@ -201,8 +202,9 @@ COLD_REDO = 2   # a cold start the desk disturbed is redone this many times, eac
 
 
 def matrix():
-    """The 71 recording rows: front end (Mac App, iOS package), Act 1 (Mac App and iOS package town / combat, CLI town / combat under each force),
-    the tour stops and then the warp stops (Mac App). Mac App rows run at this Mac's Recommended in full screen."""
+    """The 77 recording rows: front end (Mac App, iOS package), Act 1 (Mac App and iOS package town / combat, CLI town / combat under each force),
+    the tour stops, the warp stops (Mac App), then the skills route (Mac App, and CLI under each force: a skill's effects are drawn with pipelines
+    no walk through the areas builds). Mac App rows run at this Mac's Recommended in full screen."""
     rows = [dict(nn='01', set='front', name='mac_front', backend='mac-app', route='front'), dict(nn='02', set='front', name='ios_front', backend='ios-mac', route='front'),
             dict(nn='03', set='act1', name='mac_town', backend='mac-app', route=TOWN), dict(nn='04', set='act1', name='mac_combat', backend='mac-app', route=COMBAT),
             dict(nn='05', set='act1', name='ios_town', backend='ios-mac', route=TOWN), dict(nn='06', set='act1', name='ios_combat', backend='ios-mac', route=COMBAT)]
@@ -214,6 +216,9 @@ def matrix():
         rows.append(dict(nn=f'{n:02d}', set='tour', name=f'tour_{stop}', backend='mac-app', route='tour', stop=(stop, z, y))); n += 1
     for stop, level in WARPS:
         rows.append(dict(nn=f'{n:02d}', set='warps', name=f'warp_{stop}', backend='mac-app', route='warp', stop=(stop, level))); n += 1
+    rows.append(dict(nn=f'{n:02d}', set='skills', name='mac_skills', backend='mac-app', route=SKILLS)); n += 1
+    for tag, env in FORCES:
+        rows.append(dict(nn=f'{n:02d}', set='skills', name=f'cli_skills_{tag}', backend='cli', route=SKILLS, env=dict(env))); n += 1
     for r in rows:
         r['env'] = {**(REC_ENV if r['backend'] == 'mac-app' else {}), **r.get('env', {})}
     return rows
@@ -593,7 +598,7 @@ def cmd_record(a, argv):
     import json as _json, shutil, scenario   # noqa: E401, PLC0415
     held = scenario.game_lock(__file__, argv, 'pso_seed record ~50 min', True)
     if held is not None: return held
-    sets = {'front', 'act1', 'tour', 'warps'} if a.set == 'all' else set(a.set.split(','))
+    sets = {'front', 'act1', 'tour', 'warps', 'skills'} if a.set == 'all' else set(a.set.split(','))
     rows = [r for r in matrix() if r['set'] in sets and (not a.only or r['backend'] == a.only)]
     out = a.out or os.path.join(DM_ROOT, 'run', 'pso', stamp_now()); os.makedirs(os.path.join(out, 'runs'), exist_ok=True)
     shutil.copyfile(SEED, os.path.join(out, 'seed_before.tsv'))
@@ -610,7 +615,7 @@ def cmd_record(a, argv):
         with open(os.path.join(out, 'record.tsv'), 'a', encoding='utf-8') as led:
             for r in rows:
                 name = f"{r['nn']}_{r['set']}_{r['name']}"; run = os.path.join(out, 'runs', f"{r['nn']}_{r['name']}")
-                if r['route'] == 'tour' and not os.path.isdir(scenario.save_dir('tour')):
+                if (r['route'] == 'tour' and not os.path.isdir(scenario.save_dir('tour'))) or (r['route'] == SKILLS and not os.path.isdir(scenario.save_dir('warlock_hero'))):   # a local save this machine has not made
                     verdict, n = 'UNAVAIL', 0
                 else:
                     res, code = run_scn(row_text(r, a.front), r['backend'], run)
@@ -629,19 +634,19 @@ def cmd_record(a, argv):
         if built: trash(built)
     meta = dict(name='pso_seed record', dir=out, rev=git_short(), front=a.front, runs=results)
     with open(os.path.join(out, 'record.json'), 'w', encoding='utf-8') as f: _json.dump(meta, f, indent=1)
-    ok = all(x['verdict'] == 'OK' or (x['verdict'] == 'UNAVAIL' and x['set'] == 'tour') for x in results)
+    ok = all(x['verdict'] == 'OK' or (x['verdict'] == 'UNAVAIL' and x['set'] in ('tour', 'skills')) for x in results)
     print('RESULT ' + _json.dumps(dict(meta, verdict='OK' if ok else 'RED')))
     return 0 if ok else 1
 
 
 def cmd_merge(a):
     import glob, json as _json   # noqa: E401, PLC0415
-    sections = {'front': [], 'act1': [], 'tour': [], 'warps': []}
+    sections = {'front': [], 'act1': [], 'tour': [], 'warps': [], 'skills': []}
     for p in sorted(glob.glob(os.path.join(a.dir, '[0-9][0-9]_*.tsv'))):
         part = os.path.basename(p).split('_', 2)
         if len(part) == 3 and part[1] in sections:
             with open(p, encoding='utf-8', errors='replace') as f: sections[part[1]] += f.readlines()
-    sections['tour'] += sections.pop('warps')   # warp stops are warmed like tour stops: in the background, after the tour's rows
+    sections['tour'] += sections.pop('warps') + sections.pop('skills')   # warp stops and skills are warmed like tour stops: in the background, after the tour's rows
     meta = {}
     try:
         with open(os.path.join(a.dir, 'record.json'), encoding='utf-8') as f: meta = _json.load(f)

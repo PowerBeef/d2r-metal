@@ -164,6 +164,7 @@ CHECKS = [
     ('dm/host/dm_live.c', 'python3 dm/tools/scenario.py run dm/verify/scenarios/live_hooks.scn dm/verify/scenarios/engine_assumptions.scn --headless', 'the live hooks on a running game, and the standing checks they carry'),
     ('dm/host/dm_names.c', 'python3 dm/tools/scenario.py run dm/verify/scenarios/names.scn --headless', "the name tables read from the running game"),
     ('dm/verify/bench/warp_tour.scn', 'python3 dm/tools/pso_seed.py gate --backend cli --headless --survey --route dm/verify/bench/warp_tour.scn', 'the tour of every warp stop, with the pipelines the warm-up seed lacks listed (5½ min)'),
+    ('dm/verify/bench/skill_tour.scn', 'python3 dm/tools/pso_seed.py gate --backend cli --headless --survey --route dm/verify/bench/skill_tour.scn', "the Warlock's skills cast in turn, with the pipelines the warm-up seed lacks listed (4 min; needs the generated save, scenarios/saves/warlock_hero.scn)"),
     ('dm/verify/scenarios/*.scn', 'python3 dm/tools/scenario.py run {file} --headless', 'the changed scenario itself'),
     ('dm/host/*', ENTER, 'a game on the headless host'),
     ('dm/gfx/*', ENTER, 'a game on the headless host'),

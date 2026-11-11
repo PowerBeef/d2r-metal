@@ -142,6 +142,19 @@ static int cmd_spawn(const ctl_args *a, char *out, size_t cap, char *err, size_t
     if (!req_wait(before, err, ecap)) { atomic_store(&g_req_spawn, 0); return 0; }
     snprintf(out, cap, ",\"cls\":%d,\"count\":%d", cls, n); return 1;
 }
+// c2s hex=<bytes>: sends one client packet as the game itself would (test set-up: 3c <skill id, two bytes> 00 00 ffffffff selects the right-hand
+// skill, 00 80 in place of 00 00 the left-hand one). The packet goes out on the game's thread within a frame; it is the game's own send function,
+// so the game treats it as the player's
+static int cmd_c2s(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
+    int dm_test_c2s_push(const uint8_t *, int);
+    const char *h = dm_ctl_get(a, "hex"); if (!h || !*h) ERR("missing hex");
+    uint8_t pk[32]; int n = 0; unsigned v;
+    for (; h[0] && h[1] && n < 32 && sscanf(h, "%2x", &v) == 1; h += 2) pk[n++] = (uint8_t)v;
+    if (*h || !n) ERR("hex is 1 to 32 bytes, two hex digits each");
+    dm_hud_info hi; dm_hud_get(&hi); if (!hi.valid) ERR("not in a game");
+    if (!dm_test_c2s_push(pk, n)) ERR("the packet queue is full");
+    snprintf(out, cap, ",\"op\":%d,\"len\":%d", pk[0], n); return 1;
+}
 // names path=<file>: what the game calls its things now, as a table (dm_names.c): each render entity's model file and each texture's file under
 // the pointers a draw can carry. For the analysis tools: dump it while the things are alive (right after a tagged-draw sample)
 static int cmd_names(const ctl_args *a, char *out, size_t cap, char *err, size_t ecap) {
@@ -567,6 +580,7 @@ void dm_ctl_commands_init(void) {
     dm_ctl_register("warp", cmd_warp);
     dm_ctl_register("names", cmd_names);
     dm_ctl_register("spawn", cmd_spawn);
+    dm_ctl_register("c2s", cmd_c2s);
     dm_ctl_register("mem", cmd_mem);
     { void dm_live_ctl_init(void); dm_live_ctl_init(); }   // live: hooks on the running game's code (dm_live.c, DM_LIVE=1)
     dm_ctl_register("fault", cmd_fault);

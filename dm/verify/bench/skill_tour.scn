@@ -1,0 +1,231 @@
+# The Warlock casts every skill of the class once or twice in the Blood Moor, among a few monsters: a route for the pipeline survey and the warm-up
+# seed (dm/tools/pso_seed.py), since a skill's effects are drawn with pipelines no walk through the areas ever builds. The hero is the generated
+# Warlock (scenarios/saves/warlock_hero.scn makes save_ref_warlock_hero); the test switches raise the level, give the skill points and spend one
+# on each skill in an order that meets every prerequisite; each skill is then made the right-hand skill with the game's own packet (the control
+# port's c2s) and cast with the right mouse button in PC control mode. Skill ids are the game's own numbers for the class's 30 skills.
+# The list of points ends on a second point for the first skill: the switch's last entry is not learned (seen with either of two skills last).
+name skill_tour
+requires cli mac-app
+save warlock_hero
+timeout 420
+env DM_ROMFS_OVERLAY=auto-mac DM_PC_MODE=1 DM_GAME_SEED=305419896 DM_TEST_KEEP_LIFE=1
+env DM_TEST_STAT=12=40,5=40,8=256000,9=256000 DM_TEST_SKILL_ADD=300:373:1,383:1,385:1,395:1,374:1,375:1,378:1,391:1,393:1,394:1,376:1,388:1,389:1,396:1,399:1,377:1,380:1,387:1,390:1,398:1,379:1,384:1,386:1,397:1,400:1,381:1,382:1,392:1,401:1,402:1,373:1
+
+expect main_menu timeout=120
+enter_game
+sleep 16
+goto 2
+spawn cls=19 count=6
+sleep 3
+c2s hex=3c75010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c81010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c8b010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c77010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c87010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c89010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c8a010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c78010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c84010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c85010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c8c010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c8f010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c79010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c7c010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c83010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c86010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c8e010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c7b010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c80010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c82010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c90010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c7d010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c7e010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c88010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c91010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+c2s hex=3c92010000ffffffff
+sleep 0.4
+kbm btn=right x=0.62 y=0.40
+kbm btn=right x=0.62 y=0.40 up=1
+sleep 1.6
+kbm btn=right x=0.42 y=0.46
+kbm btn=right x=0.42 y=0.46 up=1
+sleep 2.0
+sleep 3
+quit
+check no_red
+check no_red_log

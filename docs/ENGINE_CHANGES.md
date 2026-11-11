@@ -520,13 +520,13 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-038 Rays: traces first, one barrier
 - **Layer:** replay layer
 - **Engine:** Has no ray tracing on Switch.
-- **Ours:** All traces run in one go, then one barrier, then the blurs.
-- **Why:** Fewer stalls between kernels. The result planes are byte-identical to the old order.
+- **Ours:** All traces run in one go, then one barrier, then the blurs. Since 2026-11-11 the five blurs are one kernel when every plane is on the half grid (the default): each of them compared the same 16 depths around a pixel, so they are read once and each plane that was traced is summed in its own order.
+- **Why:** Fewer stalls between kernels, and four fifths of the blurs' depth reads gone. The result planes are byte-identical to the old order and to one blur per plane.
 - **Setting:** Ray Tracing
-- **Switch:** DM_RT
+- **Switch:** DM_RT, DM_RT_BLUR1 (0: one blur per plane)
 - **Test:** video_rt_mac, dm/verify/rays_replay.sh
 - **Commit:** acb1b72
-- **Measured:** Cathedral -1.1 ms (M6, ABBA, p 0.03, 2026-11-07).
+- **Measured:** Cathedral -1.1 ms (M6, ABBA, p 0.03, 2026-11-07). The merged blur, camp at Recommended with rays, ABBA: the blurs fall from 7.0 and 7.5% of the GPU frame to 2.7 and 2.7%, about 0.9 ms of a 19.4 ms frame (M6, 2026-11-11; shares, because the GPU's clock moved the frame between 17 and 24 ms from run to run). Every plane matches the kept ones byte for byte either way.
 - **Status:** confirmed
 - **Covers:** none
 
@@ -682,7 +682,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Switch:** DM_PSO_MANIFEST, DM_PSO_USER, DM_PSO_PREDICT, DM_PSO_WARM_WORKERS
 - **Test:** core_pso_cli, full_pso_mac, full_pso_ios, t_pso_warm, t_pso_skey
 - **Commit:** 46578a2
-- **Measured:** Warm compiles about 2 in 1000 frames (M6, 2026-10-27).
+- **Measured:** Warm compiles about 2 in 1000 frames (M6, 2026-10-27). The seed's routes since 2026-11-11 include one that casts every skill of the Warlock (`bench/skill_tour.scn`): a skill's effects use pipelines no walk through the areas builds, and that route alone added 117 rows (87 to 116 new ones per picture setting).
 - **Status:** confirmed
 - **Covers:** none
 

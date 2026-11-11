@@ -348,6 +348,14 @@ static void test_bindtbl(uint8_t *b, uint64_t pl) {
     char t[400]; int k = 0; for (int i = 0; i < 32; i++) k += snprintf(t + k, sizeof t - k, "%s%d", i == 16 ? " ‖ " : i ? "," : "", cur[i]);
     LOG("测试 DM_TEST_BINDTBL：绑定表 [%s]", t);
 }
+// A client packet a test asks for through the control port (c2s hex=...): queued here, sent on the game's own thread by the block next to DM_TEST_C2S.
+// One writer (the control port's thread), one reader
+enum { C2S_Q = 16 };
+static struct { uint8_t pk[32]; int len; } g_c2s_q[C2S_Q]; static _Atomic unsigned g_c2s_w, g_c2s_r;
+int dm_test_c2s_push(const uint8_t *pk, int len) {
+    unsigned w = atomic_load(&g_c2s_w); if (len < 1 || len > 32 || w - atomic_load(&g_c2s_r) >= C2S_Q) return 0;
+    memcpy(g_c2s_q[w % C2S_Q].pk, pk, (size_t)len); g_c2s_q[w % C2S_Q].len = len; atomic_store(&g_c2s_w, w + 1); return 1;
+}
 void dm_actions_pump(void) {
     uint8_t *b = ab(); if (!b) return; uint64_t root = *(uint64_t *)(b + 0x2f05458); if (!root) return;
     uint64_t pl = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c));
@@ -626,8 +634,8 @@ void dm_actions_pump(void) {
         // 按写的顺序一个技能发够再发下一个（有前置的技能把前置写在前面）；进局后列一次已学技能，每个技能发完记一行它的基础等级
         // Skills are processed in the order written, one skill receiving all its points before the next (for a skill with prerequisites, list the prerequisites
         // first); after joining a game the learned skills are listed once, and each skill logs one line with its base level once its points have been sent
-        static int at = -1, n, cur, sent, listed; static struct { int sk, cnt; } q[12]; static uint64_t nx;
-        if (at < 0) { const char *e = getenv("DM_TEST_SKILL_ADD"); at = 0; if (e) { at = atoi(e); const char *c = strchr(e, ':'); while (c && n < 12 && sscanf(c + 1, "%d:%d", &q[n].sk, &q[n].cnt) == 2) { n++; c = strchr(c + 1, ','); } } }
+        static int at = -1, n, cur, sent, listed; static struct { int sk, cnt; } q[40]; static uint64_t nx;   // 40: a class has 30 skills
+        if (at < 0) { const char *e = getenv("DM_TEST_SKILL_ADD"); at = 0; if (e) { at = atoi(e); const char *c = strchr(e, ':'); while (c && n < 40 && sscanf(c + 1, "%d:%d", &q[n].sk, &q[n].cnt) == 2) { n++; c = strchr(c + 1, ','); } } }
         uint64_t f = dm_guest_frame(); int (*gs)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(b + 0x5b9290);
         if (at > 0 && pl) {
             if (!listed && f > 300) { listed = 1; char o[400]; int k2 = 0; o[0] = 0; uint64_t l = *(uint64_t *)(pl + 0x100), nd = l ? *(uint64_t *)l : 0;
@@ -640,7 +648,9 @@ void dm_actions_pump(void) {
         static int n = -1; static struct { uint64_t at; uint8_t pk[32]; int len; } q[8];
         if (n < 0) { n = 0; const char *e = getenv("DM_TEST_C2S"); while (e && *e && n < 8) { q[n].at = strtoull(e, NULL, 10); const char *c = strchr(e, ':'); if (!c) break; c++; int l = 0; unsigned v;
                 while (l < 32 && sscanf(c, "%2x", &v) == 1 && c[0] != ';' && c[1] != ';' && c[1]) { q[n].pk[l++] = (uint8_t)v; c += 2; } q[n].len = l; n++; e = strchr(c, ';'); if (e) e++; } }
-        uint64_t f = dm_guest_frame(); for (int i = 0; pl && i < n; i++) if (q[i].at && f >= q[i].at) { q[i].at = 0; ((void (*)(const uint8_t *, int))(b + 0x2ceab0))(q[i].pk, q[i].len); LOG("测试 DM_TEST_C2S：帧 %llu 发包 %02x（长 %d）", (unsigned long long)f, q[i].pk[0], q[i].len); } }
+        uint64_t f = dm_guest_frame(); for (int i = 0; pl && i < n; i++) if (q[i].at && f >= q[i].at) { q[i].at = 0; ((void (*)(const uint8_t *, int))(b + 0x2ceab0))(q[i].pk, q[i].len); LOG("测试 DM_TEST_C2S：帧 %llu 发包 %02x（长 %d）", (unsigned long long)f, q[i].pk[0], q[i].len); }
+        // the control port's c2s command (dm_test_c2s_push): the same send, when a scenario asks for it rather than at a set frame
+        for (unsigned r = atomic_load(&g_c2s_r); pl && r != atomic_load(&g_c2s_w); r++) { ((void (*)(const uint8_t *, int))(b + 0x2ceab0))(g_c2s_q[r % C2S_Q].pk, g_c2s_q[r % C2S_Q].len); atomic_store(&g_c2s_r, r + 1); } }
     dm_custom_ui_pump(root); DM_PROF(0, "a.swapskill", swapskill_pump(b, pl)); { void dm_chronicle_closex(uint64_t); dm_chronicle_closex(root); }
     uint32_t use = atomic_exchange(&g_use, 0); int force_merc = use ? atomic_exchange(&g_use_merc, 0) : 0;
     if (use && pl) { uint64_t it = ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + 4 * 0x400), use & 0x7f, use, 4);

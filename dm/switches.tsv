@@ -322,6 +322,7 @@ DM_RT_AO_HALF	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_AO_P	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_AO_R	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_BIAS	gfx	gfx/nvn/nvn_rt.inc	y
+DM_RT_BLUR1	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_CHAR	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_CHAR_SUN	gfx	gfx/nvn/nvn_rt.inc	y
 DM_RT_COMP	gfx	gfx/nvn/hle_nvn.c	-

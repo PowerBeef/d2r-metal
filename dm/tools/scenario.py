@@ -36,7 +36,7 @@ POS = {'press': ['keys', 'frames'], 'stick': ['x', 'y', 'frames'], 'tap': ['x', 
        'walk_to': ['x', 'y', 'timeout'], 'screenshot': ['path', 'frames'], 'ui_dump': ['want'], 'step': ['n'], 'save_now': ['timeout'],
        'tap_ui': ['name', 'timeout'], 'await_ui': ['name', 'timeout'], 'menu_pick': ['name', 'timeout'], 'use_unit': ['type', 'cls'], 'open': ['what'], 'back': [], 'key': ['name'], 'tap_unit': ['type', 'cls', 'timeout'], 'app': ['do'], 'quit': ['save'],
        'pause': [], 'resume': [], 'wait': [], 'dump': [], 'state': [], 'ping': [], 'mark': ['name'], 'crash': ['kind'], 'engine': [], 'lights': [], 'mem': ['at', 'len'], 'fault': ['op', 'point'], 'fe': ['line'], 'inputmode': [], 'kbm': [], 'live': ['do'],
-       'warp': ['level'], 'spawn': ['cls', 'count'], 'names': ['path'], 'goto': ['where', 'timeout'], 'fight': ['cls', 'count', 'rounds']}
+       'warp': ['level'], 'spawn': ['cls', 'count'], 'c2s': ['hex'], 'names': ['path'], 'goto': ['where', 'timeout'], 'fight': ['cls', 'count', 'rounds']}
 ALIAS = {'shot': 'screenshot', 'ui_click': 'menu_pick'}   # touch-script names; ui_click is menu_pick's first name
 MACROS = ('enter_game', 'open_pause', 'close_pause', 'background', 'system_quit', 'swipe_away', 'menu_pick', 'use_unit', 'open', 'back', 'key', 'goto', 'fight')
 # goto <stop | area id>: the control port's warp, then wait for the area. Stops by name: the five towns and the warp stops of the pipeline seed (pso_seed.WARPS)
