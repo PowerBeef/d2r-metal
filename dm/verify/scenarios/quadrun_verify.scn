@@ -6,7 +6,7 @@
 name quadrun_verify
 requires cli
 save warlock
-env DM_GAME_SEED=305419896 DM_NVN_QUADRUN=2 DM_NVN_DRVCACHE=2 DM_NVN_POOLFAST=2 DM_NVN_SDXFAST=2 DM_NVN_BINDFILT_BUF=2
+env DM_GAME_SEED=305419896 DM_NVN_QUADRUN=2 DM_NVN_DRVCACHE=2 DM_NVN_POOLFAST=2 DM_NVN_SDXFAST=2 DM_NVN_BINDFILT_BUF=2 DM_NVN_FSROLE=2
 timeout 240
 
 enter_game
@@ -22,4 +22,5 @@ quit
 check log_has re="quad run verify: [1-9][0-9]* checked, 0 differ" last="quad run verify:"
 check log_has re="submission scan verify: [1-9][0-9]* checked, 0 differ" last="submission scan verify:"
 check log_has re="buffer bind verify: [1-9][0-9]* checked, 0 differ" last="buffer bind verify:"
+check log_has re="shader role verify: [1-9][0-9]* checked, 0 differ" last="shader role verify:"
 check no_red

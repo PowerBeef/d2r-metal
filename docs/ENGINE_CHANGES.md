@@ -780,13 +780,13 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 ### EC-058 Shortcuts on the translation thread
 - **Layer:** replay layer
 - **Engine:** Hands each call to its driver; none of this exists there.
-- **Ours:** Five shortcuts in the replay, none of which changes what is sent to the GPU. Hot lookups return unowned pointers, so nothing is retained and released per draw. Each thread remembers the last four memory pools it found, by the pool table's generation. The 2,560-byte driver-segment block of a stage is used again while the tables it copies have not changed. An argument-table write that repeats what the table holds is skipped. The scan that indexes each submission before it is replayed takes a draw's reads from a list of slots kept per shader, and does not apply a texture bind that repeats the last one for its stage.
+- **Ours:** Seven shortcuts in the replay, none of which changes what is sent to the GPU. Hot lookups return unowned pointers, so nothing is retained and released per draw. Each thread remembers the last four memory pools it found, by the pool table's generation. The 2,560-byte driver-segment block of a stage is used again while the tables it copies have not changed. An argument-table write that repeats what the table holds is skipped. The scan that indexes each submission before it is replayed takes a draw's reads from a list of slots kept per shader, and does not apply a texture bind that repeats the last one for its stage. Opening a pass fetches each attachment descriptor once instead of some sixty times. A fragment shader's part in the frame (the bloom chain's steps, the upscale, the compose) is worked out from its key once per shader, where every draw compared key strings; a draw with no part in the bloom chain skips the chain's bookkeeping unless a chain is in progress.
 - **Why:** CPU work on the translation thread.
 - **Setting:** none
-- **Switch:** DM_NVN_POOLFAST, DM_NVN_DRVCACHE, DM_NVN_SDXFAST (each: 0 off, 1 on, 2 verify), DM_NVN_ATDEDUP
+- **Switch:** DM_NVN_POOLFAST, DM_NVN_DRVCACHE, DM_NVN_SDXFAST, DM_NVN_FSROLE (each: 0 off, 1 on, 2 verify), DM_NVN_ATDEDUP
 - **Test:** t_replay_cuts, quadrun_verify
 - **Commit:** b17d8ac, a0158b7, bc19855
-- **Measured:** M6, headless camp, 2026-11-10. Unowned lookups: 13,680 to 12,340 instructions per draw, the Objective-C runtime's share of the thread 11.4% to 1.7%. The other three together: 19.06 to 16.97 million instructions a frame (11% fewer); remembered pools alone 2.2 million (in-process A/B, 10 pairs), reused blocks 0.3 million. The faster scan: 0.36 million fewer (0.20 to 0.53, 10 pairs), compared with the reference scan over 9,605 submissions of the 43-area tour with no difference. With EC-056, the camp with the automap open went from 27.2 to 19.65 million instructions a frame. A captured frame replays to the same digest with each on and off. No iPhone measurement.
+- **Measured:** M6, headless camp, 2026-11-10. Unowned lookups: 13,680 to 12,340 instructions per draw, the Objective-C runtime's share of the thread 11.4% to 1.7%. The other three together: 19.06 to 16.97 million instructions a frame (11% fewer); remembered pools alone 2.2 million (in-process A/B, 10 pairs), reused blocks 0.3 million. The faster scan: 0.36 million fewer (0.20 to 0.53, 10 pairs), compared with the reference scan over 9,605 submissions of the 43-area tour with no difference. With EC-056, the camp with the automap open went from 27.2 to 19.65 million instructions a frame. A captured frame replays to the same digest with each on and off. No iPhone measurement. Descriptors fetched once: 18.43 to 18.31 million instructions a frame; shader roles: 18.31 to 18.21, with 2.7 million answers compared with the string compares in verify mode and none different (2026-11-11, host at -O2; the count repeats within 0.02 million between runs).
 - **Status:** confirmed
 - **Covers:** none
 
@@ -844,12 +844,12 @@ Ideas that broke the picture or the game, or measured nothing at all. Listed so 
 
 ## Measured small, open again
 
-These were closed because the gain was small. Since 2026-11-10 the rule is that small gains count: a change that keeps gameplay and the picture as they are lands when it measures a real gain, however small, and "within noise" means measure it better (instructions on the thread, or an in-process A/B), not drop it. Taken up again so far: the record-time filter for buffer and sampler binds (built, EC-030).
+These were closed because the gain was small. Since 2026-11-10 the rule is that small gains count: a change that keeps gameplay and the picture as they are lands when it measures a real gain, however small, and "within noise" means measure it better (instructions on the thread, or an in-process A/B), not drop it. Taken up again so far: the record-time filter for buffer and sampler binds (built, EC-030); the host at -O2 (adopted 2026-11-11: measured in instructions and cycles this time, eight ABBA pairs on a camp hold: the process runs 2.4% fewer instructions and about 2% fewer cycles, the translation thread 4.9% fewer instructions; -O3 adds half a percent only).
 
 | Idea | What it measured when closed | Date |
 |---|---|---|
 | Compose into the drawable | The present costs only 0.13 to 0.16 ms | 2026-11-07 |
 | Small pass skips | The transparency resolve reads pyramid levels 1 and 2 every frame; nothing above 0.1 ms | 2026-11-07 |
-| Host at -O2 | No significant gain | 2026-10-27 |
 | Forward pass switch specialisation | At most -0.06 ms: the work sits in real branches | 2026-10-29 |
 | Pass overlap beyond the barrier levels | Upper bound -0.1 ms | 2026-10-27 |
+| A newer or system Opus decoder in place of the SDK's software one | Never built. Sampled in a fight (2 ms sampler, 58 s): the mixer and stream threads use 5.7% of one core, 3.8% of it inside the SDK's decoder, which is native ARM code already; the bound for a replacement is a fraction of that, and its sound would have to match | 2026-11-11 |

@@ -2277,52 +2277,57 @@ static void *rp_begin_ex_p(int clear_only) {
     if (rt_range_on()) dirty0=nvn_dirty_now();
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     RPD *pd = [RPD new];
+    // The attachment descriptors are fetched once: every pd_d / pd_cs[i] is one or two message sends, and this routine read them
+    // some sixty times a pass
+    MTLRenderPassDepthAttachmentDescriptor *pd_d = pd.depthAttachment; MTLRenderPassStencilAttachmentDescriptor *pd_s = pd.stencilAttachment;
+    MTLRenderPassColorAttachmentDescriptorArray *pd_cs = pd.colorAttachments;
     int any = 0;
     for (int i = 0; i < R.rt.n; i++) {
         if (!R.rt.color[i] || (clear_only == 1 && !R.clear_c[i])) continue;
-        attach(pd.colorAttachments[i], R.rt.color[i], &R.rt.cview[i], R.rt.has_cview[i], 1);
-        if (!pd.colorAttachments[i].texture) continue;
+        MTLRenderPassColorAttachmentDescriptor *ca = pd_cs[i];
+        attach(ca, R.rt.color[i], &R.rt.cview[i], R.rt.has_cview[i], 1);
+        if (!ca.texture) continue;
         any = 1;
-        pd.colorAttachments[i].loadAction = R.clear_c[i] ? MTLLoadActionClear : MTLLoadActionLoad;
-        pd.colorAttachments[i].clearColor = R.cc[i];
-        int cov = tbdr_on() && !R.clear_c[i] && (g_fd_dw || g_fd_di) && fz_load_covers(i, pd.colorAttachments[i].texture, pd.colorAttachments[i].level);
+        ca.loadAction = R.clear_c[i] ? MTLLoadActionClear : MTLLoadActionLoad;
+        ca.clearColor = R.cc[i];
+        int cov = tbdr_on() && !R.clear_c[i] && (g_fd_dw || g_fd_di) && fz_load_covers(i, ca.texture, ca.level);
         if (!R.clear_c[i] && (g_fd_dw || g_fd_di) && !cov) PD("Q %llu c%d 读入不可省 why=%d", g_stat_pass + 1, i, g_fd_why);
         if (cov) {
             static int probe = -1; if (probe < 0) { probe = getenv("DM_NVN_LOADPROBE") ? atoi(getenv("DM_NVN_LOADPROBE")) : 0; if (probe) MLOG("DM_NVN_LOADPROBE：读入可省的附件改清成哨兵色并回读核对"); }
-            if (probe) { pd.colorAttachments[i].loadAction = MTLLoadActionClear; int pm = probe == 1 && pf_is_float(pd.colorAttachments[i].texture.pixelFormat) ? 3 : probe;   // 浮点格式缺省用 NaN 哨兵：固定哨兵值会被真实输出撞上（实测撞上过） | Float formats use a NaN sentinel by default: a fixed sentinel value can be hit by real output (it has been hit in practice)
-                pd.colorAttachments[i].clearColor = pm == 3 ? MTLClearColorMake(NAN, NAN, NAN, NAN) : probe == 2 ? MTLClearColorMake(0.777, 0.222, 0.555, 0.888) : MTLClearColorMake(0.123, 0.456, 0.789, 0.321);
+            if (probe) { ca.loadAction = MTLLoadActionClear; int pm = probe == 1 && pf_is_float(ca.texture.pixelFormat) ? 3 : probe;   // 浮点格式缺省用 NaN 哨兵：固定哨兵值会被真实输出撞上（实测撞上过） | Float formats use a NaN sentinel by default: a fixed sentinel value can be hit by real output (it has been hit in practice)
+                ca.clearColor = pm == 3 ? MTLClearColorMake(NAN, NAN, NAN, NAN) : probe == 2 ? MTLClearColorMake(0.777, 0.222, 0.555, 0.888) : MTLClearColorMake(0.123, 0.456, 0.789, 0.321);
                 if (!g_lp) g_lp = [NSMutableArray array];
-                [g_lp addObject:@[pd.colorAttachments[i].texture, @(pd.colorAttachments[i].level), @(pd.colorAttachments[i].slice), @(g_stat_pass + 1), @(i), @(R.rt.color[i]->serial), @(pm)]]; }
-            else pd.colorAttachments[i].loadAction = MTLLoadActionDontCare;
+                [g_lp addObject:@[ca.texture, @(ca.level), @(ca.slice), @(g_stat_pass + 1), @(i), @(R.rt.color[i]->serial), @(pm)]]; }
+            else ca.loadAction = MTLLoadActionDontCare;
             g_fd_n++;
         }
-        xv_touch_add(R.rt.color[i]->serial, (uint32_t)pd.colorAttachments[i].level, (uint32_t)pd.colorAttachments[i].slice,
-                     pd.colorAttachments[i].loadAction != MTLLoadActionLoad);
-        if (g_xv_n) { xv_ent *xe = xv_find(R.rt.color[i]->serial, (uint32_t)pd.colorAttachments[i].level, (uint32_t)pd.colorAttachments[i].slice);
-            if (xe && (xe->state == XV_INVALID || xe->state == XV_PROBE)) { if (pd.colorAttachments[i].loadAction == MTLLoadActionLoad) { xv_ent copy = *xe; xv_violation(&copy, "作附件读入旧内容"); } else xv_good(xe); } }
-        pd.colorAttachments[i].storeAction = MTLStoreActionStore;
+        xv_touch_add(R.rt.color[i]->serial, (uint32_t)ca.level, (uint32_t)ca.slice,
+                     ca.loadAction != MTLLoadActionLoad);
+        if (g_xv_n) { xv_ent *xe = xv_find(R.rt.color[i]->serial, (uint32_t)ca.level, (uint32_t)ca.slice);
+            if (xe && (xe->state == XV_INVALID || xe->state == XV_PROBE)) { if (ca.loadAction == MTLLoadActionLoad) { xv_ent copy = *xe; xv_violation(&copy, "作附件读入旧内容"); } else xv_good(xe); } }
+        ca.storeAction = MTLStoreActionStore;
     }
     // clear_only：0 全挂 1 只为清除 2 深度模板都不挂 3 只挂模板 4 只挂深度（3 / 4 由 pass_ds_need 前瞻证明整通道只用那一项）
     // clear_only: 0 attach all 1 only for clears 2 neither depth nor stencil attached 3 stencil only 4 depth only (3 / 4: the pass_ds_need lookahead proves the whole pass uses only that one)
     if (R.rt.depth && clear_only == 3) {   // 只挂模板：合一格式的深度平面不进 tile、不读不写（Metal 允许深度附件空、模板附件挂合一贴图） | Stencil only: the depth plane of the combined format does not enter the tile and is neither read nor written (Metal allows an empty depth attachment with the combined texture on the stencil attachment)
-        attach(pd.stencilAttachment, R.rt.depth, &R.rt.dview, R.rt.has_dview, 0);
-        MTLPixelFormat pf = pd.stencilAttachment.texture.pixelFormat;
+        attach(pd_s, R.rt.depth, &R.rt.dview, R.rt.has_dview, 0);
+        MTLPixelFormat pf = pd_s.texture.pixelFormat;
         if (pf == MTLPixelFormatDepth32Float_Stencil8 || pf == MTLPixelFormatStencil8) {
-            any = 1; pd.stencilAttachment.loadAction = R.clear_s ? MTLLoadActionClear : MTLLoadActionLoad;
-            pd.stencilAttachment.clearStencil = R.cs; pd.stencilAttachment.storeAction = MTLStoreActionStore;
-        } else pd.stencilAttachment.texture = nil;   // 没有模板平面：模板测试恒过，什么都不挂 | No stencil plane: the stencil test always passes, attach nothing
+            any = 1; pd_s.loadAction = R.clear_s ? MTLLoadActionClear : MTLLoadActionLoad;
+            pd_s.clearStencil = R.cs; pd_s.storeAction = MTLStoreActionStore;
+        } else pd_s.texture = nil;   // 没有模板平面：模板测试恒过，什么都不挂 | No stencil plane: the stencil test always passes, attach nothing
     } else if (R.rt.depth && clear_only != 2 && !(clear_only == 1 && !R.clear_d && !R.clear_s)) {
-        attach(pd.depthAttachment, R.rt.depth, &R.rt.dview, R.rt.has_dview, 0);
-        if (pd.depthAttachment.texture) {
+        attach(pd_d, R.rt.depth, &R.rt.dview, R.rt.has_dview, 0);
+        if (pd_d.texture) {
             any = 1;
-            pd.depthAttachment.loadAction = R.clear_d ? MTLLoadActionClear : MTLLoadActionLoad;
-            pd.depthAttachment.clearDepth = R.cd; pd.depthAttachment.storeAction = MTLStoreActionStore;
-            MTLPixelFormat pf = pd.depthAttachment.texture.pixelFormat;
+            pd_d.loadAction = R.clear_d ? MTLLoadActionClear : MTLLoadActionLoad;
+            pd_d.clearDepth = R.cd; pd_d.storeAction = MTLStoreActionStore;
+            MTLPixelFormat pf = pd_d.texture.pixelFormat;
             if (clear_only != 4 && (pf == MTLPixelFormatDepth32Float_Stencil8 || pf == MTLPixelFormatStencil8)) {   // 4：只挂深度 | 4: depth only
-                pd.stencilAttachment.texture = pd.depthAttachment.texture; pd.stencilAttachment.level = pd.depthAttachment.level;
-                pd.stencilAttachment.slice = pd.depthAttachment.slice;
-                pd.stencilAttachment.loadAction = R.clear_s ? MTLLoadActionClear : MTLLoadActionLoad;
-                pd.stencilAttachment.clearStencil = R.cs; pd.stencilAttachment.storeAction = MTLStoreActionStore;
+                pd_s.texture = pd_d.texture; pd_s.level = pd_d.level;
+                pd_s.slice = pd_d.slice;
+                pd_s.loadAction = R.clear_s ? MTLLoadActionClear : MTLLoadActionLoad;
+                pd_s.clearStencil = R.cs; pd_s.storeAction = MTLStoreActionStore;
             }
         }
     }
@@ -2334,7 +2339,7 @@ static void *rp_begin_ex_p(int clear_only) {
     // Bandwidth ledger: attachments with Load count as load, all attachments count as store (currently always Store)
     int nload = 0, natt = 0;
     for (int i = 0; i < R.rt.n; i++) {
-        MTLRenderPassColorAttachmentDescriptor *c = pd.colorAttachments[i];
+        MTLRenderPassColorAttachmentDescriptor *c = pd_cs[i];
         if (!c.texture) continue;
         uint64_t b = att_bytes(c.texture, c.level); natt++; g_bw_store += b; if (c.loadAction == MTLLoadActionLoad) { g_bw_load += b; nload++; }
         if (R.rt.has_cview[i] && R.rt.cview[i].set_format) PD("V %llu c%d 视图格式 %#x（基贴图 NVN 格式 %#x）", g_stat_pass + 1, i, R.rt.cview[i].format, R.rt.color[i]->d.format);
@@ -2343,43 +2348,43 @@ static void *rp_begin_ex_p(int clear_only) {
            c.loadAction == MTLLoadActionClear ? "clear" : c.loadAction == MTLLoadActionDontCare ? "dontcare" : "load");
     }
     {   // 深度与模板平面分开记（合一格式 5 字节 = 深度 4 + 模板 1；只挂一项时只记那一项） | Depth and stencil planes are counted separately (combined format 5 bytes = depth 4 + stencil 1; when only one is attached only that one is counted)
-        id<MTLTexture> dt = pd.depthAttachment.texture, stt = pd.stencilAttachment.texture;
-        uint64_t whole = att_bytes(dt ? dt : stt, dt ? pd.depthAttachment.level : pd.stencilAttachment.level);
+        id<MTLTexture> dt = pd_d.texture, stt = pd_s.texture;
+        uint64_t whole = att_bytes(dt ? dt : stt, dt ? pd_d.level : pd_s.level);
         int comb = (dt ? dt : stt).pixelFormat == MTLPixelFormatDepth32Float_Stencil8;
         uint64_t db = dt ? (comb ? whole / 5 * 4 : whole) : 0, sb = stt && stt != dt ? (comb ? whole / 5 : whole) : stt ? whole - db : 0;
-        if (dt) { natt++; g_bw_store += db; if (pd.depthAttachment.loadAction == MTLLoadActionLoad) { g_bw_load += db; nload++; } }
-        if (stt) { natt += !dt; g_bw_store += sb; if (pd.stencilAttachment.loadAction == MTLLoadActionLoad) { g_bw_load += sb; nload += !dt; } }
+        if (dt) { natt++; g_bw_store += db; if (pd_d.loadAction == MTLLoadActionLoad) { g_bw_load += db; nload++; } }
+        if (stt) { natt += !dt; g_bw_store += sb; if (pd_s.loadAction == MTLLoadActionLoad) { g_bw_load += sb; nload += !dt; } }
         if (dt) PD("P %llu d ser=%llu fmt=%lu %lux%lu %s", g_stat_pass + 1, R.rt.depth->serial, (unsigned long)dt.pixelFormat,
-                   (unsigned long)dt.width, (unsigned long)dt.height, pd.depthAttachment.loadAction == MTLLoadActionClear ? "clear" : "load");
+                   (unsigned long)dt.width, (unsigned long)dt.height, pd_d.loadAction == MTLLoadActionClear ? "clear" : "load");
         else if (stt) PD("P %llu s ser=%llu fmt=%lu %lux%lu %s（只挂模板）", g_stat_pass + 1, R.rt.depth->serial, (unsigned long)stt.pixelFormat,
-                   (unsigned long)stt.width, (unsigned long)stt.height, pd.stencilAttachment.loadAction == MTLLoadActionClear ? "clear" : "load");
+                   (unsigned long)stt.width, (unsigned long)stt.height, pd_s.loadAction == MTLLoadActionClear ? "clear" : "load");
     }
     if (natt && nload == natt) g_pass_full_rw++;
     g_nsd = 0;
     {
-        for (int i = 0; i < R.rt.n && i < 8; i++) { MTLRenderPassColorAttachmentDescriptor *c = pd.colorAttachments[i]; if (!c.texture) continue;
+        for (int i = 0; i < R.rt.n && i < 8; i++) { MTLRenderPassColorAttachmentDescriptor *c = pd_cs[i]; if (!c.texture) continue;
             g_sd[g_nsd] = (sd_att){0}; g_sd[g_nsd].ser = R.rt.color[i]->serial; g_sd[g_nsd].bytes = att_bytes(c.texture, c.level); g_sd[g_nsd].lv = (uint32_t)c.level; g_sd[g_nsd].sl = (uint32_t)(c.texture.textureType == MTLTextureType3D ? c.depthPlane : c.slice); g_sd[g_nsd].idx = i; g_sd[g_nsd].load = c.loadAction == MTLLoadActionLoad; g_sd[g_nsd].wrote = R.clear_c[i] != 0; g_nsd++;
             c.storeAction = MTLStoreActionUnknown; }
-        id<MTLTexture> dt = pd.depthAttachment.texture, stt = pd.stencilAttachment.texture;
-        uint64_t db = att_bytes(dt, pd.depthAttachment.level), sb = 0;
-        if (stt) { int comb = stt.pixelFormat == MTLPixelFormatDepth32Float_Stencil8; sb = att_bytes(stt, pd.stencilAttachment.level) / (comb ? 5 : 1); if (stt == dt) db -= sb; }   // 合一格式 5 字节 = 深度 4 + 模板 1（只挂模板时也只记 1） | Combined format 5 bytes = depth 4 + stencil 1 (when only stencil is attached, only 1 is counted)
-        if (dt) { g_sd[g_nsd] = (sd_att){0}; g_sd[g_nsd].ser = R.rt.depth->serial; g_sd[g_nsd].bytes = db; g_sd[g_nsd].lv = (uint32_t)pd.depthAttachment.level; g_sd[g_nsd].sl = (uint32_t)pd.depthAttachment.slice; g_sd[g_nsd].idx = -1; g_sd[g_nsd].depth = 1; g_sd[g_nsd].load = pd.depthAttachment.loadAction == MTLLoadActionLoad; g_sd[g_nsd].wrote = R.clear_d != 0; g_nsd++;
-                  pd.depthAttachment.storeAction = MTLStoreActionUnknown; }
-        if (stt) { g_sd[g_nsd] = (sd_att){0}; g_sd[g_nsd].ser = R.rt.depth->serial; g_sd[g_nsd].bytes = sb; g_sd[g_nsd].lv = (uint32_t)pd.stencilAttachment.level; g_sd[g_nsd].sl = (uint32_t)pd.stencilAttachment.slice; g_sd[g_nsd].idx = -1; g_sd[g_nsd].depth = 2; g_sd[g_nsd].load = pd.stencilAttachment.loadAction == MTLLoadActionLoad; g_sd[g_nsd].wrote = R.clear_s != 0; g_nsd++;
-                   pd.stencilAttachment.storeAction = MTLStoreActionUnknown; }
+        id<MTLTexture> dt = pd_d.texture, stt = pd_s.texture;
+        uint64_t db = att_bytes(dt, pd_d.level), sb = 0;
+        if (stt) { int comb = stt.pixelFormat == MTLPixelFormatDepth32Float_Stencil8; sb = att_bytes(stt, pd_s.level) / (comb ? 5 : 1); if (stt == dt) db -= sb; }   // 合一格式 5 字节 = 深度 4 + 模板 1（只挂模板时也只记 1） | Combined format 5 bytes = depth 4 + stencil 1 (when only stencil is attached, only 1 is counted)
+        if (dt) { g_sd[g_nsd] = (sd_att){0}; g_sd[g_nsd].ser = R.rt.depth->serial; g_sd[g_nsd].bytes = db; g_sd[g_nsd].lv = (uint32_t)pd_d.level; g_sd[g_nsd].sl = (uint32_t)pd_d.slice; g_sd[g_nsd].idx = -1; g_sd[g_nsd].depth = 1; g_sd[g_nsd].load = pd_d.loadAction == MTLLoadActionLoad; g_sd[g_nsd].wrote = R.clear_d != 0; g_nsd++;
+                  pd_d.storeAction = MTLStoreActionUnknown; }
+        if (stt) { g_sd[g_nsd] = (sd_att){0}; g_sd[g_nsd].ser = R.rt.depth->serial; g_sd[g_nsd].bytes = sb; g_sd[g_nsd].lv = (uint32_t)pd_s.level; g_sd[g_nsd].sl = (uint32_t)pd_s.slice; g_sd[g_nsd].idx = -1; g_sd[g_nsd].depth = 2; g_sd[g_nsd].load = pd_s.loadAction == MTLLoadActionLoad; g_sd[g_nsd].wrote = R.clear_s != 0; g_nsd++;
+                   pd_s.storeAction = MTLStoreActionUnknown; }
     }
     memset(R.clear_c, 0, sizeof R.clear_c); R.clear_d = R.clear_s = 0;
     {   // 通道信息（口径同原先每次绘制现取：颜色取各附件基贴图格式，采样数取最后一个颜色附件、有深度则取深度） | Pass info (same convention as the former per-draw fetch: colors take each attachment's base texture format; sample count takes the last color attachment, or depth if there is depth)
         uint64_t ser = g_pass.serial + 1; memset(&g_pass, 0, sizeof g_pass); g_pass.serial = ser;
-        for (int i = 0; i < R.rt.n && i < 8; i++) { id<MTLTexture> t = R.rt.color[i] ? pd.colorAttachments[i].texture : nil;
+        for (int i = 0; i < R.rt.n && i < 8; i++) { id<MTLTexture> t = R.rt.color[i] ? pd_cs[i].texture : nil;
             if (t) { g_pass.cfmt[i] = (uint32_t)t.pixelFormat; g_pass.samples = (uint32_t)t.sampleCount; } }
-        id<MTLTexture> dt = R.rt.depth ? pd.depthAttachment.texture : nil, stt = R.rt.depth ? pd.stencilAttachment.texture : nil;   // 深度 / 模板附件分开取（可能只挂其一） | Depth / stencil attachments are fetched separately (possibly only one of them is attached)
+        id<MTLTexture> dt = R.rt.depth ? pd_d.texture : nil, stt = R.rt.depth ? pd_s.texture : nil;   // 深度 / 模板附件分开取（可能只挂其一） | Depth / stencil attachments are fetched separately (possibly only one of them is attached)
         g_pass.hd = dt && dt.pixelFormat != MTLPixelFormatStencil8; g_pass.hs = stt != nil;
         g_pass.dfmt = g_pass.hd ? (uint32_t)dt.pixelFormat : 0; g_pass.sfmt = stt ? (uint32_t)stt.pixelFormat : 0;
         if (dt || stt) g_pass.samples = (uint32_t)(dt ? dt : stt).sampleCount;
         pass_dims(pd, (NSUInteger)R.rt.n, &g_pass.tw, &g_pass.th);
         if (rt_range_on()) { g_pass.reg_gen = reg0; g_pass.ser_gen = ser0; }
-        if (rt_range_on()) { g_pass.range_dirty=dirty0; g_pass.range_color=pd.colorAttachments[0].texture; g_pass.range_depth=pd.depthAttachment.texture; }
+        if (rt_range_on()) { g_pass.range_dirty=dirty0; g_pass.range_color=pd_cs[0].texture; g_pass.range_depth=pd_d.texture; }
         g_enc_pso = nil; g_enc_dss = nil; g_enc_fx.valid = 0;
     }
     if (g_vis_on) {
@@ -2397,7 +2402,7 @@ static void *rp_begin_ex_p(int clear_only) {
     g_enc = enc_r_begin(pd); pg_render_begin(g_enc);
     args_dirty_all();
     g_stat_pass++;
-    if (enc_label_on()) { id<MTLTexture> lt = pd.colorAttachments[0].texture ?: pd.depthAttachment.texture ?: pd.stencilAttachment.texture; g_el_w = (int)lt.width; g_el_h = (int)lt.height; g_el_draws = 0; g_el_key[0] = 0; }
+    if (enc_label_on()) { id<MTLTexture> lt = pd_cs[0].texture ?: pd_d.texture ?: pd_s.texture; g_el_w = (int)lt.width; g_el_h = (int)lt.height; g_el_draws = 0; g_el_key[0] = 0; }
     return (__bridge void *)g_enc;
 }
 // 开通道前的空剪裁预检查：第一个有效目标的选中级尺寸是实际pass最小边界的上界。
@@ -2480,8 +2485,38 @@ static void shmap_load(void) {
     // The argument buffer encoded last time
     __unsafe_unretained id<MTLBuffer> ab_buf; uint64_t ab_gpu; size_t ab_off; uint64_t ab_pass;   // unowned: an arena buffer, never freed
     int8_t zf_state, zf_nf; zskip_fact zf;   // 全零跳过事实表的查表结果缓存（0 未查 / 1 无 / 2 有）；键不变，表长（单测可增补）没变就不重查   // ab_pass：编这块参数的渲染通道序号——只在同一通道内复用（跨通道 / 跨提交的块所在 arena 可能已回收重写） | Cached lookup result in the all-zero skip fact table (0 not looked up / 1 absent / 2 present); with the key unchanged and the table length (unit tests may append) unchanged, no re-lookup   // ab_pass: render pass index where this argument block was encoded; reused only within the same pass (across passes / submissions the arena holding the block may have been recycled and rewritten)
-    id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; id<MTLFunction> vel_fn, cap_fn; int rt_fwd; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
+    id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; id<MTLFunction> vel_fn, cap_fn; int rt_fwd; uint8_t role; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
 @implementation NvShader @end
+// A fragment shader's part in the frame (the passes the host replaces or follows), worked out from its key once per shader. Every draw used to compare its
+// fragment shader's key with these strings: three or four strncmp calls a draw. DM_NVN_FSROLE=0 compares the strings as before (an A/B baseline;
+// in-process A/B: DM_NVN_UB=off=@set:g_fsrole=0). 0 in the field means not worked out yet, so a shader object made by hand (tests) needs no setup.
+enum { FSR_UNSET, FSR_NONE, FSR_FXAA, FSR_UPSAMPLE, FSR_BLOOM_CUT, FSR_BLOOM_DOWN, FSR_BLOOM_UP, FSR_BLOOM_APPLY, FSR_COMPOSE };
+#define FSK_FXAA        "ebcfcd1fa0a77dbc"
+#define FSK_UPSAMPLE    "52aac1f2306b8fc5"   // the game's 3D upscale pass (ps_upsample_p)
+#define FSK_BLOOM_CUT   "2938a5b71b8e21b2"
+#define FSK_BLOOM_DOWN  "019ce2f82edbda84"
+#define FSK_BLOOM_UP    "cc264583f2000c81"
+#define FSK_BLOOM_APPLY "2e2d6700a2569795"
+#define FSK_COMPOSE     "9a650561e5c40791"   // the game's compose pass
+int g_fsrole = -1;
+static int fs_role_of(const char *key) {
+    static const struct { const char *k; int r; } t[] = { {FSK_FXAA, FSR_FXAA}, {FSK_UPSAMPLE, FSR_UPSAMPLE}, {FSK_BLOOM_CUT, FSR_BLOOM_CUT}, {FSK_BLOOM_DOWN, FSR_BLOOM_DOWN},
+                                                          {FSK_BLOOM_UP, FSR_BLOOM_UP}, {FSK_BLOOM_APPLY, FSR_BLOOM_APPLY}, {FSK_COMPOSE, FSR_COMPOSE} };
+    for (unsigned i = 0; i < sizeof t / sizeof *t; i++) if (!strncmp(key, t[i].k, 16)) return t[i].r;
+    return FSR_NONE;
+}
+static inline int fs_role(NvShader *s) { if (!s->role) s->role = (uint8_t)fs_role_of(s->key); return s->role; }
+static inline int fsrole_on(void) { if (g_fsrole < 0) { const char *e = getenv("DM_NVN_FSROLE"); g_fsrole = !e || !*e ? 1 : !strcmp(e, "0") ? 0 : !strcmp(e, "2") ? 2 : 1; } return g_fsrole; }
+// DM_NVN_FSROLE=2 answers by the strings, compares every answer with the role's and counts (a difference is a red line); the log gets
+// "shader role verify: N checked, M differ" every 300 frames.
+static uint64_t g_fsrole_checked, g_fsrole_bad;
+static void fsrole_bad(const char *key, int role) { RED_ONCE("shader role verify: the key %s and role %d disagree (first case)", key, role); }
+static int fs_is_verify(NvShader *f, int role, const char *key) {
+    int by_str = !strncmp(f->key, key, 16), by_role = fs_role(f) == role; g_fsrole_checked++;
+    if (by_str != by_role) { g_fsrole_bad++; fsrole_bad(f->key, role); }
+    return by_str;
+}
+#define FS_IS(f, NAME) (fsrole_on() == 1 ? fs_role(f) == FSR_##NAME : g_fsrole == 2 ? fs_is_verify(f, FSR_##NAME, FSK_##NAME) : !strncmp((f)->key, FSK_##NAME, 16))
 #include "nvn_pso_skey.h"
 @interface NvProg : NSObject { @public NvShader *sh[6]; __unsafe_unretained NvShader *fl_sh[6]; uint8_t fl_ok, fl_img, fl_img_w; uint32_t fl_cmask; } @end   // fl_*：按绘制要用的反射摘要（udc_note_draw），按 sh[] 核对后复用 | fl_*: reflection summary used per draw (udc_note_draw), reused after checking against sh[]
 @implementation NvProg @end
@@ -5839,18 +5874,21 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     // Experimental switch DM_NVN_NOFXAA=1 (off by default; keep or drop decided by the visual ruler + looking at the picture on a real machine): skips the FXAA full-screen draw, and the later sharpening / upscale reads FXAA's input instead (the tone mapping result)
     { static int nofxaa = -1; static uint64_t fx_from, fx_to; if (nofxaa < 0) { const char *e = getenv("DM_NVN_NOFXAA"); nofxaa = e && !strcmp(e, "1"); if (nofxaa) MLOG("DM_NVN_NOFXAA=1：跳过 FXAA"); }
       if (nofxaa && tbdr_on() && !g_defer_replaying && pr->sh[1]) { __unsafe_unretained NvShader *f = pr->sh[1];
-        if (!strncmp(f->key, "ebcfcd1fa0a77dbc", 16) && !g_enc && R.rt.n == 1 && R.rt.color[0] && !R.clear_c[0]) {
+        if (FS_IS(f, FXAA) && !g_enc && R.rt.n == 1 && R.rt.color[0] && !R.clear_c[0]) {
             uint64_t h = 0; for (int i = 0; i < f->rf.nb && !h; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128) h = S.tex[1][f->rf.b[i].reg];
             if (h) { fx_from = R.rt.color[0]->serial; fx_to = h; PD("N %llu 跳过 FXAA：ser=%llu 的读者改读 ser=%llu", g_stat_pass, (unsigned long long)fx_from, (unsigned long long)h_ser(h)); return; } }
-        else if (fx_from && !strncmp(f->key, "52aac1f2306b8fc5", 16)) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == fx_from) { S.tex[1][r] = fx_to; g_args_dirty[1] = 1; g_tab_gen[1][1]++; } fx_from = 0; } } }
+        else if (fx_from && FS_IS(f, UPSAMPLE)) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == fx_from) { S.tex[1][r] = fx_to; g_args_dirty[1] = 1; g_tab_gen[1][1]++; } fx_from = 0; } } }
     { static uint64_t bloomq_frame;
-      if (bloomq_enabled() && tbdr_on() && !g_defer_replaying && pr->sh[1]) {
+      // A draw whose shader has no part in the bloom chain has nothing to do here unless a chain is in progress (then it aborts the chain). With the roles on,
+      // such a draw skips the block: the new-frame reset below then happens at the frame's first chain draw instead of its first draw, which is still before any
+      // chain draw of the new frame (a chain left in the middle keeps state != 0, so the very next draw enters as before)
+      if (bloomq_enabled() && tbdr_on() && !g_defer_replaying && pr->sh[1] && (fsrole_on() != 1 || g_bloomq.state || (fs_role(pr->sh[1]) >= FSR_BLOOM_CUT && fs_role(pr->sh[1]) <= FSR_BLOOM_APPLY))) {
         // A new frame (checked here, where every chain draw passes, so the reset still comes before any chain draw of the new frame and no clear is encoded during a
         // deferred replay): a chain left in the middle leaves B0 undefined for whatever still reads it, so clear it
         uint64_t f_ = atomic_load(&g_cur_frame);
         if (bloomq_frame != f_) { bloomq_frame = f_; if (g_bloomq.state) { g_bloomq_stat.midchain++; bloomq_clear_b0(&g_bloomq.b0_tex, g_bloomq.b0_lv, g_bloomq.b0_sl); } bloomq_reset(); bloomq_summary(f_, 0); }
         __unsafe_unretained NvShader *f = pr->sh[1]; uint64_t tgt = 0; int lv = 0, sl = 0;
-        if (!strncmp(f->key, "2938a5b71b8e21b2", 16)) {
+        if (FS_IS(f, BLOOM_CUT)) {
             int had = g_bloomq.state, engage = 0; tex_t pb0 = g_bloomq.b0_tex; int plv = g_bloomq.b0_lv, psl = g_bloomq.b0_sl;
             if (had) { g_bloomq_stat.midchain++; bloomq_reset(); }   // a second cutoff in the middle of a chain
             uint64_t h = 0; tex_t st = {0}; float c1[2] = {0};
@@ -5890,15 +5928,15 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
                 PD("A %llu 泛光 1/4 起点 S=%llu B0=%llu", g_stat_pass, (unsigned long long)g_bloomq.s_ser, (unsigned long long)g_bloomq.b0_ser); R.clear_c[0] = 0;   // the whole B0 level is not needed: drop its pending clear too, otherwise a clear-only pass would be opened just for it
                 return;
             }
-        } else if (g_bloomq.state == 1 && !strncmp(f->key, "019ce2f82edbda84", 16)) {
+        } else if (g_bloomq.state == 1 && FS_IS(f, BLOOM_DOWN)) {
             uint64_t src = 0; for (int i = 0; i < f->rf.nb; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128) { src = h_ser(S.tex[1][f->rf.b[i].reg]); break; }
             if (src == g_bloomq.b0_ser && bloomq_target(&tgt, &lv, &sl) && bloomq_capture()) { R.clear_c[0] = 0; g_bloomq.b1_ser = tgt; g_bloomq.state = 2; PD("B %llu 泛光 1/4 原生截取 B0=%llu B1=%llu", g_stat_pass, (unsigned long long)g_bloomq.b0_ser, (unsigned long long)g_bloomq.b1_ser); return; }
             bloomq_abort(62, "the capture into B1 was not drawn", f_);
-        } else if (g_bloomq.state == 2 && !strncmp(f->key, "019ce2f82edbda84", 16)) {
+        } else if (g_bloomq.state == 2 && FS_IS(f, BLOOM_DOWN)) {
             for (int i = 0; i < f->rf.nb; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128 && h_ser(S.tex[1][f->rf.b[i].reg]) == g_bloomq.b1_ser) { g_bloomq.b1_h = S.tex[1][f->rf.b[i].reg]; break; }
-        } else if (g_bloomq.state == 2 && !strncmp(f->key, "cc264583f2000c81", 16)) {
+        } else if (g_bloomq.state == 2 && FS_IS(f, BLOOM_UP)) {
             if (bloomq_target(&tgt, &lv, &sl) && tgt == g_bloomq.b0_ser) { g_bloomq.state = 3; PD("C %llu 泛光 1/4 跳过 B0 上采样", g_stat_pass); return; }
-        } else if (g_bloomq.state == 3 && !strncmp(f->key, "2e2d6700a2569795", 16)) {
+        } else if (g_bloomq.state == 3 && FS_IS(f, BLOOM_APPLY)) {
             if (g_bloomq.b1_h) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq.b0_ser) { S.tex[1][r] = g_bloomq.b1_h; g_args_dirty[1] = 1; g_tab_gen[1][1]++; } PD("D %llu 泛光 1/4 叠加改读 B1", g_stat_pass); g_bloomq_last_b0 = g_bloomq.b0_ser; g_bloomq_last_b1h = g_bloomq.b1_h; g_bloomq_last_b1s = g_bloomq.b1_ser;
                 int seen = 0; for (int i = 0; i < g_bloomq_nseen; i++) seen |= g_bloomq_seen[i][0] == g_bloomq.s_ser && g_bloomq_seen[i][1] == g_bloomq.b0_ser && g_bloomq_seen[i][2] == g_bloomq.b1_ser;
                 if (!seen) {   // new (S, B0, B1): flush the window so far, then say what the chain now runs on (a later size or format mismatch shows here)
@@ -5909,7 +5947,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
                          (unsigned long long)g_bloomq.b0_ser, MAX(g_bloomq.b0_tex.d.width >> g_bloomq.b0_lv, 1u), MAX(g_bloomq.b0_tex.d.height >> g_bloomq.b0_lv, 1u), g_bloomq.b0_lv, (unsigned long long)g_bloomq.b1_ser, (unsigned long)g_bloomq_fmt, (unsigned long long)f_); }
                 g_bloomq_stat.applied++; bloomq_reset(); }
             else bloomq_abort(63, "no handle for B1 at the apply", f_);
-        } else if (!g_bloomq.state && g_bloomq_own_f != f_ && g_bloomq_last_b1h && h_ser(g_bloomq_last_b1h) == g_bloomq_last_b1s && !strncmp(f->key, "2e2d6700a2569795", 16)) {   // the B1 handle still points to the same texture (not recognized after a rebuild on a resolution change)
+        } else if (!g_bloomq.state && g_bloomq_own_f != f_ && g_bloomq_last_b1h && h_ser(g_bloomq_last_b1h) == g_bloomq_last_b1s && FS_IS(f, BLOOM_APPLY)) {   // the B1 handle still points to the same texture (not recognized after a rebuild on a resolution change)
             // The bloom overlay is reached without the bloom chain having run this frame (the extrapolated frame of runtime extrapolation skipped it: outside the region the input 469 is the previous frame's LDR, so it cannot run): redirect the read to B1 as last time, overlaying the previous frame's bloom.
             // Without the redirect it would read B0 -- with bloom 1/4 on, B0's upsample is always skipped and never written, so what is read is uninitialized video memory (on M4 Pro the units in the region turn entirely green; elsewhere it is mostly 0, i.e. missing bloom)
             int hit = 0; for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq_last_b0) { S.tex[1][r] = g_bloomq_last_b1h; hit = 1; g_args_dirty[1] = 1; g_tab_gen[1][1]++; }
@@ -5918,8 +5956,9 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
       }
     }
     if (pr->sh[1] && pr->sh[1]->rt_fwd && rtx_want()) { rtx_who(pr->sh[1]->key); rtx_frame(); }   // the first draw that reads the shadow map, after the depth prepass: this frame's ray-traced mask
-    if (pr->sh[1] && !strncmp(pr->sh[1]->key, "9a650561e5c40791", 16)) { test_load_gpu(); fg_compose(pr->sh[1]); }   // the game's compose pass: the generated frame first (frame generation)
-    if (pr->sh[1] && !strncmp(pr->sh[1]->key, "52aac1f2306b8fc5", 16) && mfx3d_draw(pr->sh[1])) return;   // 游戏的 3D 放大趟（ps_upsample_p）改用 MetalFX | the game's 3D upscale pass (ps_upsample_p) through MetalFX
+    if (g_fsrole == 2) { static uint64_t said; uint64_t f = atomic_load(&g_cur_frame) / 300; if (f != said) { said = f; MLOG("shader role verify: %llu checked, %llu differ", (unsigned long long)g_fsrole_checked, (unsigned long long)g_fsrole_bad); } }
+    if (pr->sh[1] && FS_IS(pr->sh[1], COMPOSE)) { test_load_gpu(); fg_compose(pr->sh[1]); }   // the game's compose pass: the generated frame first (frame generation)
+    if (pr->sh[1] && FS_IS(pr->sh[1], UPSAMPLE) && mfx3d_draw(pr->sh[1])) return;   // 游戏的 3D 放大趟（ps_upsample_p）改用 MetalFX | the game's 3D upscale pass (ps_upsample_p) through MetalFX
     if (S.poly.cull == NVN_FACE_FRONT_AND_BACK) return;
     // 续用的通道可能是少挂深度 / 模板开的（开法 2 / 3 / 4）：这次绘制要的平面没挂，就在它之前切开（重开时按新前瞻挂）
     // The continued render pass may have been opened with fewer depth / stencil attachments (open modes 2 / 3 / 4): if the plane this draw needs is not attached, split before it (on reopen, attach per the new lookahead)

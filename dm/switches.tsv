@@ -215,6 +215,7 @@ DM_NVN_DIRTYCHECK	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_DRVCACHE	gfx	gfx/nvn/nvn_mtl.m	y
 DM_NVN_ENC_LABEL	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_FRAMES	gfx	gfx/nvn/hle_nvn.c	y
+DM_NVN_FSROLE	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_FUSE_CHECK	gfx	gfx/nvn/nvn_mtl.m gfx/tests/t_fuse_check.m	y
 DM_NVN_HILITE	gfx	gfx/nvn/nvn_mtl.m	-
 DM_NVN_LOADPROBE	gfx	gfx/nvn/nvn_mtl.m	-

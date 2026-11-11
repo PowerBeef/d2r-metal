@@ -4,7 +4,9 @@ DM_ROOT ?= $(HOME)/dm-work
 # Minimum system version: the graphics backend (gfx/nvn/nvn_mtl.m) is built entirely on Metal 4, which exists from macOS 26; without stating it explicitly the compiler takes the version of the local system.
 # The packaging script (tools/mac_app.sh) takes the same number through print-macos-min, writes it into Info.plist, and checks that the number in the executable equals it
 MACOS_MIN ?= 27.0   # macOS 27 and later only (iOS 27 and later): Metal 4, no older-API backend
-CFLAGS=-O1 -g -Wall -Wno-unused-function -mmacosx-version-min=$(MACOS_MIN)
+# -O2 since 2026-11-11 (it was -O1): on a camp hold the process runs 2.4% fewer instructions and about 2% fewer cycles (eight ABBA pairs), the translation
+# thread 4.9% fewer instructions; -O3 adds another half percent only. The iOS package is built by Xcode at its own level.
+CFLAGS=-O2 -g -Wall -Wno-unused-function -mmacosx-version-min=$(MACOS_MIN)
 MOVIE_FFMPEG ?= 0
 MOVIE_PREFIX ?=
 ifeq ($(MOVIE_FFMPEG),1)
