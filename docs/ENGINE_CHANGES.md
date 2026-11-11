@@ -682,7 +682,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Switch:** DM_PSO_MANIFEST, DM_PSO_USER, DM_PSO_PREDICT, DM_PSO_WARM_WORKERS
 - **Test:** core_pso_cli, full_pso_mac, full_pso_ios, t_pso_warm, t_pso_skey
 - **Commit:** 46578a2, c3e2693
-- **Measured:** Warm compiles about 2 in 1000 frames (M6, 2026-10-27). The seed's routes since 2026-11-11 include one that casts every skill of the Warlock (`bench/skill_tour.scn`): a skill's effects use pipelines no walk through the areas builds, and that route alone added 117 rows (87 to 116 new ones per picture setting). The same route for the seven other classes added 273 more (17 to about 100 a class); the seed holds 1,130 pipelines.
+- **Measured:** Warm compiles about 2 in 1000 frames (M6, 2026-10-27). The seed's routes since 2026-11-11 include one that casts every skill of the Warlock (`bench/skill_tour.scn`): a skill's effects use pipelines no walk through the areas builds, and that route alone added 117 rows (87 to 116 new ones per picture setting). The same route for the seven other classes added 273 more (17 to about 100 a class), and a second recording of every class 15 more (Paladin and Druid only: a few of their effects vary from run to run); the seed holds 1,145 rows.
 - **Status:** confirmed
 - **Covers:** none
 
