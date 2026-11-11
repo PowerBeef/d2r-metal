@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import warnings
 
 HERE = Path(__file__).resolve().parent
@@ -182,9 +183,17 @@ class RunToolsTest(unittest.TestCase):
         self.assertEqual(len({r['stop'][1] for r in m if r['set'] == 'warps'}), 43)   # no area twice
         self.assertEqual([(r['backend'], r['route']) for r in m if r['set'] == 'skills'][:6], [('mac-app', pso_seed.SKILLS)] + [('cli', pso_seed.SKILLS)] * len(pso_seed.FORCES))   # the Warlock's route: the Mac App, then the CLI host under each force
         self.assertEqual([(r['stop'], r['backend']) for r in m if r['route'] == 'skills'], [(c, b) for c in pso_seed.CLASS_ROUTES for b in ('mac-app', 'cli', 'cli')])   # each other class: the Mac App and two CLI settings
-        with tempfile.TemporaryDirectory() as d:
+        # A class's route is written from the game's own skill table, which a checkout without game files (CI) does not have: the test supplies three skills
+        # (id, required level, passive, right hand) so the route text is the same everywhere
+        import skill_routes  # noqa: PLC0415
+        fake = mock.patch.object(skill_routes, 'skills', lambda cls, data=None: [(36, 1, False, True), (37, 1, True, True), (38, 6, False, False)])
+        with tempfile.TemporaryDirectory() as d, fake:
             texts = [pso_seed.front_text(v, b, pso_seed.REC_ENV if b == 'mac-app' else {}) for v in ('create', 'menu') for b in ('mac-app', 'ios-mac')]
             texts += [pso_seed.row_text(r, 'create') for r in m]
+            sor = pso_seed.row_text(next(r for r in m if r['name'] == 'cli_skills_sor_orig'), 'create')
+            self.assertIn('DM_TEST_SKILL_ADD=300:36:1,37:1,38:1,36:1', sor); self.assertIn('c2s hex=3c24000000ffffffff', sor); self.assertIn('c2s hex=3c26000080ffffffff', sor)
+            self.assertNotIn('3c25', sor)   # a passive skill is learned, never cast
+            self.assertIn('check log_has re="DM_TEST_SKILL_ADD：职业 1 "', sor); self.assertIn('save hero_sor', sor)
             for i, t in enumerate(texts):
                 p = Path(d) / f'{i}.scn'; p.write_text(t, encoding='utf-8')
                 meta, steps, checks = parse_scn(str(p))
