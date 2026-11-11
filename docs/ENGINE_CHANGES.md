@@ -798,7 +798,7 @@ The game builds one frame as a graph of GPU and CPU jobs and hands the result to
 - **Setting:** none
 - **Switch:** DM_GPU_LOST_S (0 turns the watchdog off), DM_HANGREC, DM_HANGREC_PRE, DM_HANGREC_EARLY_S, DM_HANGREC_SLOW_MS
 - **Test:** gpu_lost, t_gpu_lost, t_hangrec
-- **Commit:** da472b3, 6f7cddd, 0a944cf
+- **Commit:** da472b3, 6f7cddd, 0a944cf, 28f0979
 - **Measured:** The recorder on against off, town_loop on the Mac App at Recommended, 6 + 6 ABBA: no measurable difference, every p at least 0.23 (M6, 2026-11-09). The watchdog has never fired on a real hang; its test stalls the GPU on purpose.
 - **Status:** confirmed
 - **Covers:** none
